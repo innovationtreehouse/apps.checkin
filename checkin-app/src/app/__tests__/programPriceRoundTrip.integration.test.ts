@@ -6,8 +6,8 @@
  *
  * Unlike price-cents.test.ts (which tests dollarsToCentsOrNull in isolation),
  * these push a decimal dollar string through the REAL create/update routes and
- * read back the persisted Program, guarding the $25.99 -> $25 truncation
- * regression at the DB boundary.
+ * read back the persisted Program, guarding against $25.99 -> $25 truncation at the
+ * DB boundary.
  *   CREATE conversion: src/app/api/programs/route.ts:109-110
  *   PATCH  conversion: src/app/api/programs/[id]/route.ts:108-109
  */
@@ -74,7 +74,7 @@ describe('Program price round-trip (dollars -> cents) Integration Tests', () => 
 
     describe('CREATE: POST /api/programs', () => {
         it('persists a decimal price as exact cents (no $25.99 -> $25 truncation)', async () => {
-            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
 
             const name = `${PROGRAM_NAME_TAG} decimal`;
             const req = new Request('http://localhost:4000/api/programs', {
@@ -90,7 +90,7 @@ describe('Program price round-trip (dollars -> cents) Integration Tests', () => 
         });
 
         it('persists a whole-dollar price as cents and keeps an empty price null', async () => {
-            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
 
             const name = `${PROGRAM_NAME_TAG} wholedollar`;
             const req = new Request('http://localhost:4000/api/programs', {
@@ -106,7 +106,7 @@ describe('Program price round-trip (dollars -> cents) Integration Tests', () => 
         });
 
         it('keeps both prices null when omitted', async () => {
-            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
 
             const name = `${PROGRAM_NAME_TAG} null`;
             const req = new Request('http://localhost:4000/api/programs', {
@@ -124,11 +124,11 @@ describe('Program price round-trip (dollars -> cents) Integration Tests', () => 
 
     describe('PATCH: PATCH /api/programs/[id]', () => {
         it('persists decimal prices as exact cents on update', async () => {
-            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
 
             const name = `${PROGRAM_NAME_TAG} patch`;
             const program = await prisma.program.create({
-                data: { name, leadMentorId: leadId, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), orgMemberPriceCents: 100, nonOrgMemberPriceCents: 200 },
+                data: { appliesToYear: 2026, name, leadMentorId: leadId, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), orgMemberPriceCents: 100, nonOrgMemberPriceCents: 200 },
             });
 
             const req = new Request(`http://localhost:4000/api/programs/${program.id}`, {
@@ -144,11 +144,11 @@ describe('Program price round-trip (dollars -> cents) Integration Tests', () => 
         });
 
         it('clears a price back to null when set to empty string', async () => {
-            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
 
             const name = `${PROGRAM_NAME_TAG} patch clear`;
             const program = await prisma.program.create({
-                data: { name, leadMentorId: leadId, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), orgMemberPriceCents: 5000 },
+                data: { appliesToYear: 2026, name, leadMentorId: leadId, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), orgMemberPriceCents: 5000 },
             });
 
             const req = new Request(`http://localhost:4000/api/programs/${program.id}`, {

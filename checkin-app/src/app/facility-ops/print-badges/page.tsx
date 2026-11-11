@@ -12,6 +12,7 @@ import { DataTable, type DataTableColumn } from "@/components/admin/DataTable";
 import BadgeDocument from "@/components/admin/BadgeDocument";
 import StickerDocument from "@/components/admin/StickerDocument";
 import { computeDisplayNames } from "@/components/admin/badgeNames";
+import { goesBy } from "@/lib/person/name";
 
 type ParticipantRow = {
   id: number;
@@ -57,30 +58,25 @@ export default function PrintBadgesPage() {
   const pendingSaves = useRef<Record<number, { value: string; timer: ReturnType<typeof setTimeout> }>>({});
   const inflightSaves = useRef(new Set<Promise<SavedNickname | null>>());
 
-  const fetchParticipants = useCallback(() => {
+  // Only the current search term's answer lands, so a slower earlier search never replaces it.
+  useEffect(() => {
+    if (!ready) return;
+    let current = true;
     const url = new URL('/api/people/search', window.location.origin);
     if (searchTerm) url.searchParams.set('q', searchTerm);
-
-    return fetch(url.toString())
+    fetch(url.toString())
       .then(async (res) => {
         const data = await res.json();
-        if (data.people) {
-          setParticipants(data.people);
-        }
+        if (current && data.people) setParticipants(data.people);
       })
       .catch((e) => {
-        console.error("Failed to search people for badges:", e);
+        if (current) console.error("Failed to search people for badges:", e);
       })
       .finally(() => {
-        setLoading(false);
+        if (current) setLoading(false);
       });
-  }, [searchTerm]);
-
-  useEffect(() => {
-    if (ready) {
-      fetchParticipants();
-    }
-  }, [ready, fetchParticipants]);
+    return () => { current = false; };
+  }, [ready, searchTerm]);
 
   // Load available membership years on mount.
   useEffect(() => {
@@ -100,9 +96,11 @@ export default function PrintBadgesPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready]);
 
-  // Reload the roster when the selected year changes.
+  // Reload the roster when the selected year changes. Only the selected year's answer
+  // lands: the opening no-year read is still in flight when the current year is picked.
   useEffect(() => {
     if (!ready) return;
+    let current = true;
     const url = new URL('/api/people/search', window.location.origin);
     url.searchParams.set('roster', 'active');
     if (selectedYear) url.searchParams.set('year', selectedYear);
@@ -111,12 +109,14 @@ export default function PrintBadgesPage() {
         if (!res.ok) throw new Error(`roster request failed: ${res.status}`);
         return res.json();
       })
-      .then(data => setRoster(data.people ?? []))
+      .then(data => { if (current) setRoster(data.people ?? []); })
       .catch(e => {
+        if (!current) return;
         console.error("Failed to load the active-member roster for badge names:", e);
         setRoster(null);
         notifications.show({ color: 'red', message: 'Could not load the active member roster, so badge names cannot be resolved. Reload to retry.', autoClose: false });
       });
+    return () => { current = false; };
   }, [ready, selectedYear]);
 
   // The draft is dropped once the record holds its value, so the box goes back to
@@ -212,11 +212,10 @@ export default function PrintBadgesPage() {
   const printedNames = useMemo(() => computeDisplayNames(roster ?? []), [roster]);
   const printedYears = useMemo(() => new Map((roster ?? []).map(m => [m.id, m.year])), [roster]);
 
-  // Off-roster people get a bare first name — no disambiguation. Running them through
-  // computeDisplayNames over the search results made names shift when the query changed
-  // (#1651). A bare first name can collide, but it is stable across searches.
-  const offRosterName = (p: ParticipantRow) =>
-    (p.nickname ?? '').trim() || (p.name ?? '').trim().split(/\s+/)[0] || `User #${p.id}`;
+  // Off-roster people get the bare name they go by — no disambiguation, which would run
+  // against the search results and change a printed name whenever the query changes. A
+  // bare name can collide, but it is stable across searches.
+  const offRosterName = (p: ParticipantRow) => goesBy(p) || `User #${p.id}`;
 
   // The badge name and this column read the same maps, so the column is proof of what
   // will print.

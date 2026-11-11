@@ -7,10 +7,9 @@ import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { fromWhere } from "@/lib/membership/lifecycle";
 
 // Denies a pending membership scholarship / payment-plan request — the sibling
-// of POST /api/finance-ops/membership-payment-plans (approve) that membership
-// previously lacked, so a declined request had no board action and sat
-// PENDING_PAYMENT on the queue indefinitely. This gives the board a dedicated
-// deny control (docs/architecture/PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md §5 item 4).
+// of POST /api/finance-ops/membership-payment-plans (approve). It is the board's
+// deny control, so a declined request does not sit on the queue indefinitely
+// (docs/architecture/PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md §5 item 4).
 //
 // Silent by design, like every other board decision (approve on both sides,
 // program deny): sends NO automatic applicant email — the Scholarship Review
@@ -63,7 +62,7 @@ export const POST = withAuth(
             // false) leaves count at 0 with no audit row written.
             const count = await prisma.$transaction(async (tx) => {
                 const { count } = await tx.orgMembershipProcess.updateMany({
-                    // Deny CAS: from-state status from the definition (#1080); isPaymentPlanRequested stays literal.
+                    // Deny CAS: from-state status from the definition; isPaymentPlanRequested stays literal.
                     where: { id: processId, isPaymentPlanRequested: true, ...fromWhere('PENDING_PAYMENT') },
                     data: { isPaymentPlanRequested: false },
                 });

@@ -4,7 +4,7 @@
 /**
  * The signIn() callback in auth-options.ts: a Google account must have a verified email
  * before it is linked to a person record for the first time. An already-linked Google
- * account signs in as before; other providers are unaffected.
+ * account signs in normally; other providers are unaffected.
  */
 
 import prisma from '@/lib/prisma';

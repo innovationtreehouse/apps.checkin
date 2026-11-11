@@ -1,4 +1,5 @@
 import { CompletedReceiptSchema, type CompletedReceipt } from "@checkin/receipt-types";
+import { UNREADABLE_RECEIPT_ERRORS } from "./unreadable-receipt";
 
 export type ParseStoredReceiptResult =
   | { ok: true; receipt: CompletedReceipt }
@@ -15,12 +16,12 @@ export function parseStoredReceipt(receiptJson: string): ParseStoredReceiptResul
   try {
     raw = JSON.parse(receiptJson);
   } catch {
-    return { ok: false, error: "Stored receipt data is not valid JSON" };
+    return { ok: false, error: UNREADABLE_RECEIPT_ERRORS.notJson };
   }
 
   const result = CompletedReceiptSchema.safeParse(raw);
   if (!result.success) {
-    return { ok: false, error: "Stored receipt data failed validation" };
+    return { ok: false, error: UNREADABLE_RECEIPT_ERRORS.invalid };
   }
 
   return { ok: true, receipt: result.data };

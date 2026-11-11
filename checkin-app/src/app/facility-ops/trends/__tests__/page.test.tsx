@@ -52,8 +52,18 @@ describe("facility-ops/trends page", () => {
     fireEvent.click(screen.getByText("Week"));
 
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("period=week")),
+      expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("period=week"), expect.anything()),
     );
+  });
+
+  it("keeps the controls and shows the failure, not an empty table, when the load fails", async () => {
+    setSession({ id: 1, isBoardMember: true });
+    mockFetchJson({ "/api/programs": [] });
+    renderWithProviders(<ParticipationTrendsPage />);
+
+    expect(await screen.findByText("Couldn't load the trends")).toBeInTheDocument();
+    expect(screen.getByText("Week")).toBeInTheDocument();
+    expect(screen.queryByText("No visit data found for this time range.")).not.toBeInTheDocument();
   });
 
   it("shows the source-breakdown table only once the toggle is switched on", async () => {

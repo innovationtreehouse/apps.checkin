@@ -28,3 +28,13 @@ export const STATE_COLORS: Record<string, string> = {
 
 /** The answer when finance searches or links a QuickBooks Vendor while QuickBooks is off. */
 export const QB_OFF = "QuickBooks isn't connected here, so Vendors can't be searched or linked";
+
+/** Why the QuickBooks drain is holding an expense back. NEEDS_FINANCE stays general: posts may have failed, or the expense's own data stops it. */
+export const NOT_SENT: Record<string, string> = {
+  NOT_TEST_DATA: "Not sent to QuickBooks: not test data",
+  TEST_DATA_REFUSED: "Not sent to QuickBooks: test data is never posted in prod",
+  NEEDS_FINANCE: "Not sent to QuickBooks: it waits for finance to fix what stops it posting",
+  AMBIGUOUS: "Not sent to QuickBooks: waiting for finance to pick the matching entry or link the reimbursee's vendor",
+  UNBOOKED: "Not sent to QuickBooks: the app does not book it on its own; finance books it or matches it",
+  SKIPPED: "Not sent to QuickBooks: finance skipped it",
+};

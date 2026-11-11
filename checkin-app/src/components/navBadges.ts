@@ -228,8 +228,8 @@ export function navBadgeFor(href: string, counts: TodoCounts | null): NavBadge[]
     }
     case '/system-status': {
       // Red alert: things broken about the deployment itself — failing system-config
-      // checks (env-var/deploy gaps, e.g. Zoho e-sign unconfigured) plus cron sweeps
-      // that stopped running OR stopped working. Distinct from the
+      // checks (env-var/deploy gaps, e.g. Zoho e-sign unconfigured), cron sweeps
+      // that stopped running OR stopped working, and open incidents. Distinct from the
       // green/gray queue badges — this is "infra broken," not "you have a task."
       // Admins + board only (the counts are absent from the payload for everyone else).
       //
@@ -242,11 +242,14 @@ export function navBadgeFor(href: string, counts: TodoCounts | null): NavBadge[]
       // "unhealthy", not "not running": the count also covers a sweep that runs every
       // night and cannot finish its work. Which one it is, is a panel-level detail.
       const cron = counts.configHealth?.unhealthyCronJobs ?? 0;
-      const n = config + cron;
+      // Open incidents from the incident engine; listed on the Open problems panel.
+      const incidents = counts.configHealth?.openIncidents ?? 0;
+      const n = config + cron + incidents;
       if (n === 0) return [];
       const parts = [
         ...(config > 0 ? [`${config} config ${config === 1 ? 'issue' : 'issues'}`] : []),
         ...(cron > 0 ? [`${cron} cron job${plural(cron, '', 's')} unhealthy`] : []),
+        ...(incidents > 0 ? [`${incidents} open problem${plural(incidents, '', 's')}`] : []),
       ];
       return [{ count: n, color: 'red', label: parts.join(', ') }];
     }
@@ -263,7 +266,7 @@ const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
  * Badge for a section *sub-tab*, off the same shared counts. Lives here beside
  * navBadgeFor so the tab number and the section-nav number are derived from one
  * file — a new admin badge is one edit, and nav vs tab can't silently slice
- * different fields for the same thing (they used to). Returns null when the tab
+ * different fields for the same thing. Returns null when the tab
  * has nothing to show. Layouts own the <Badge> JSX (variant, active-tab color
  * pins); this owns only count + intent-color + label.
  *
@@ -279,6 +282,8 @@ export function tabBadgeFor(href: string, counts: TodoCounts | null): NavBadge |
   const gray = (n: number, label: string): NavBadge | null =>
     n > 0 ? { count: n, color: 'gray', label } : null;
   switch (href) {
+    case '/settings/membership':
+      return settingsMisconfigBadge(counts);
     // Membership Ops. Gray, informational: every in-flight application the
     // Applications page lists (status != ACTIVE). Distinct from the /membership-ops
     // section badge, which is green board-actionable (BLOCKED) only.

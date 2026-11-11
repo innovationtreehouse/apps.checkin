@@ -54,8 +54,8 @@ type SyncFetch = { ok: true; run: SyncRun | null } | { ok: false };
 
 // Polling budget after a manual sync: 20 × 6s ≈ 2 minutes. Bounded on purpose —
 // every poll queries the mirror and keeps the scale-to-zero Aurora cluster awake,
-// which is the cost that makes the automatic sync daily rather than continuous
-// (infra#129). A sync still running at the cap is not lost, just no longer watched;
+// which is the cost that makes the automatic sync daily rather than continuous.
+// A sync still running at the cap is not lost, just no longer watched;
 // the status line picks it up on the next page load.
 const POLL_INTERVAL_MS = 6_000;
 const POLL_MAX_ATTEMPTS = 20;

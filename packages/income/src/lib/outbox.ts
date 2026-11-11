@@ -1,26 +1,40 @@
-import { appKeyOf, findOrCreate, type FindOrCreateResult, type QuickBooksClient, type TxnWrite, type WriteLine } from "@checkin/quickbooks";
+import { SWEEP_DAYS, appKeyOf, findOrCreate, postFailure, postFailureError, type BooksMapRole, type PostFailure, type FindOrCreateResult, type QuickBooksClient, type TxnWrite, type WriteLine } from "@checkin/quickbooks";
 import { db, isUniqueConstraintError } from "../db";
 import type { PayoutReconciliation } from "../generated/prisma/client";
 import type { MirrorBalanceTxn, MirrorOrderLine, MirrorPayout, PayoutMirror, QbDeposit } from "../contract";
-import { getIncomeConfig, incomeRuntime, isoDay, type IncomePosting } from "../runtime";
+import { getIncomeConfig, incomeRuntime, isoDay } from "../runtime";
 import { readIncomeSettings } from "../services/settingsService";
 import { bucketProblems, checkBuckets, type BucketProblem } from "./buckets";
 import { buildDepositLines } from "./deposit-lines";
+import { expectedOf, type ExpectedDeposit } from "./intake";
 import { toQbDeposit } from "./qb-deposits";
+import type { TxClient } from "./audit";
+import {
+  BANK_ROLE,
+  DEPOSIT_SOURCE,
+  SHOPIFY_LINE_ROLES,
+  bucketClasses,
+  closedNote,
+  isBenevity,
+  roleAccounts,
+  rowKey,
+  type RoleAccounts,
+} from "./sources";
 import {
   RECON_KIND,
   RECON_ORIGIN,
   RECON_RESOLUTION,
   RECON_STATUS,
   addDays,
+  answeredEntryRef,
   audit,
-  incomeKey,
   isClaimed,
   lockReconciliation,
   nextNote,
   matchWindow,
-  otherLaneClaims,
+  postingOnAt,
   runReconcile,
+  stampOf,
   windowDays,
   type ReconcileResult,
 } from "./reconcile";
@@ -51,6 +65,9 @@ export const isPostable = (r: Pick<PayoutReconciliation, "status" | "kind">) =>
 const isHeld = (r: Pick<PayoutReconciliation, "status" | "kind">) =>
   r.status === RECON_STATUS.OPEN && r.kind === RECON_KIND.NEEDS_MAPPING;
 
+/** The fields a post or hold writes; the expected deposit is the handing lane's, written only by intake. */
+type RowData = Partial<Omit<PayoutReconciliation, "expected">>;
+
 type RowActor = { userId: number | null; username?: string; correlationId?: string };
 
 /** A payout's sales: its transactions, their order lines, and finance's decision for each item that has one. */
@@ -59,28 +76,71 @@ interface PayoutSales {
   orderLines: MirrorOrderLine[];
   /** variantId → bucket id, or null for general income. An item with no entry is undecided. */
   categories: Map<string, number | null>;
+  /** variantId → the QuickBooks account its sales book to. An item with no entry is undecided. */
+  accounts: Map<string, string>;
+  /** The books map's account for custom items; a sale of one waits while it is unset. */
+  customItemsAccountId?: string;
+  /** orderGid → the order's current subtotal. An order with no entry is not checked for missing lines. */
+  subtotals: Map<string, number>;
 }
 
-async function payoutSales(orgId: string, payoutGid: string, mirror: PayoutMirror): Promise<PayoutSales> {
+async function payoutSales(orgId: string, payoutGid: string, mirror: PayoutMirror, roles: RoleAccounts): Promise<PayoutSales> {
   const txns = await mirror.transactions(payoutGid);
   const orderGids = [...new Set(txns.flatMap((t) => (t.orderGid ? [t.orderGid] : [])))];
-  const orderLines = orderGids.length ? await mirror.orderLines(orderGids) : [];
+  const [orderLines, subtotals] = orderGids.length ? await Promise.all([mirror.orderLines(orderGids), mirror.orderSubtotals(orderGids)]) : [[], []];
   const variantIds = [...new Set(orderLines.flatMap((l) => (l.variantId ? [l.variantId] : [])))];
   const mapped = await db.incomeItemCategory.findMany({ where: { orgId, variantId: { in: variantIds } } });
-  return { txns, orderLines, categories: new Map(mapped.map((m) => [m.variantId, m.budgetOwnerId])) };
+  return {
+    txns,
+    orderLines,
+    categories: new Map(mapped.map((m) => [m.variantId, m.budgetOwnerId])),
+    accounts: new Map(mapped.flatMap((m) => (m.quickBooksAccountId ? [[m.variantId, m.quickBooksAccountId] as const] : []))),
+    customItemsAccountId: roles.SHOPIFY_CUSTOM_ITEMS,
+    subtotals: new Map(subtotals.map((s) => [s.orderGid, s.subtotalCents])),
+  };
 }
 
 /**
- * Why a payout's deposit can't be built yet, naming its undecided items and unusable buckets,
- * or null when every sale has a usable decision. Custom items carry no variant and book as
- * general income.
+ * Whether an order's lines fall short of its subtotal, so the mirror lost at least one. Each line
+ * counts its current units with its discount prorated, within a cent of rounding per line.
+ * ponytail: a lost line passes once refunds take the subtotal down to the lines still held; compare against the original subtotal if the mirror ever keeps it.
+ */
+function missingLines(lines: MirrorOrderLine[], subtotalCents: number): boolean {
+  const current = lines.reduce((s, l) => (l.quantity ? s + ((l.priceCents * l.quantity - l.discountCents) * l.currentQuantity) / l.quantity : s), 0);
+  return current + lines.length < subtotalCents;
+}
+
+/**
+ * Why a payout's deposit can't be built yet, naming its undecided items (no bucket choice or no
+ * account), unusable buckets, custom items while their account is unset, and sales the mirror holds
+ * no or only some lines for, or null when every sale has a usable decision. Custom items carry no
+ * variant and book as general income. Orders are named by gid: an order's name can carry its
+ * buyer's, and income keeps no record of who bought.
  */
 export function mappingGap(sales: PayoutSales, problem: BucketProblem): string | null {
+  const lined = new Set(sales.orderLines.map((l) => l.orderGid));
+  const noLines = new Set<string>();
+  const missing = new Set<string>();
+  const noOrder = new Set<string>();
+  for (const t of sales.txns) {
+    if (!["charge", "refund"].includes(t.type.toLowerCase())) continue;
+    if (!t.orderGid) noOrder.add(t.txnGid);
+    else if (!lined.has(t.orderGid)) noLines.add(t.orderGid);
+    else {
+      const subtotal = sales.subtotals.get(t.orderGid);
+      const orderGid = t.orderGid;
+      if (subtotal !== undefined && missingLines(sales.orderLines.filter((l) => l.orderGid === orderGid), subtotal)) missing.add(orderGid);
+    }
+  }
   const undecided = new Set<string>();
   const broken = new Map<number, string>();
+  let customUnmapped = false;
   for (const l of sales.orderLines) {
-    if (!l.variantId) continue;
-    if (!sales.categories.has(l.variantId)) {
+    if (!l.variantId) {
+      customUnmapped ||= !sales.customItemsAccountId;
+      continue;
+    }
+    if (!sales.categories.has(l.variantId) || !sales.accounts.has(l.variantId)) {
       undecided.add(l.variantId);
       continue;
     }
@@ -91,8 +151,33 @@ export function mappingGap(sales: PayoutSales, problem: BucketProblem): string |
   const parts = [
     ...(undecided.size ? [`undecided items: ${[...undecided].sort().join(", ")}`] : []),
     ...[...broken].sort(([a], [b]) => a - b).map(([id, issue]) => `bucket ${id} ${issue}`),
+    ...(customUnmapped ? ["custom items: no account picked for Shopify: custom items"] : []),
+    ...(noLines.size ? [`orders with no lines: ${[...noLines].sort().join(", ")}`] : []),
+    ...(missing.size ? [`orders with missing lines: ${[...missing].sort().join(", ")}`] : []),
+    ...(noOrder.size ? [`transactions with no order: ${[...noOrder].sort().join(", ")}`] : []),
   ];
   return parts.length ? parts.join("; ") : null;
+}
+
+/** What finance is told about a deposit with a line that names no account: one handed over before its lines named accounts or before fees reduced income. */
+export const NO_LINE_ACCOUNT =
+  "handed over before every line named its QuickBooks account (the giving-platform account rules, or fees taken from income), so the app can't tell which accounts it books to; book it by hand or dismiss it";
+
+/** Why a Benevity deposit can't be built yet: a line without its account, or its unusable buckets; null when it can. */
+export function expectedGap(expected: ExpectedDeposit, problem: BucketProblem): string | null {
+  if (expected.lines.some((l) => l.accountId === undefined)) return NO_LINE_ACCOUNT;
+  const broken = new Map<number, string>();
+  for (const l of expected.lines) {
+    const issue = l.budgetOwnerId == null ? undefined : problem(l.budgetOwnerId);
+    if (l.budgetOwnerId != null && issue) broken.set(l.budgetOwnerId, issue);
+  }
+  return [...broken].sort(([a], [b]) => a - b).map(([id, issue]) => `bucket ${id} ${issue}`).join("; ") || null;
+}
+
+/** The books-map roles a row's deposit needs that the map leaves unset. A Benevity row needs only its bank: its lines name their accounts. */
+export function missingRoles(row: Pick<PayoutReconciliation, "source" | "expected">, accounts: RoleAccounts): BooksMapRole[] {
+  const roles = isBenevity(row) ? [expectedOf(row)?.bankRole ?? BANK_ROLE.benevity] : [BANK_ROLE.shopify, ...Object.values(SHOPIFY_LINE_ROLES)];
+  return [...new Set(roles)].filter((r) => !accounts[r]);
 }
 
 /** Move a row under the lock when `from` still holds for it; otherwise return it unchanged. Null when busy. */
@@ -101,7 +186,7 @@ async function moveRow(
   id: number,
   wait: boolean,
   from: (r: PayoutReconciliation) => boolean,
-  data: Partial<PayoutReconciliation>,
+  data: RowData,
   action: string,
   actor: RowActor & { reason?: string },
 ): Promise<PayoutReconciliation | null> {
@@ -138,27 +223,48 @@ function holdForMapping(
   );
 }
 
-/** The deposit income would create for a payout: its lines split by bucket Class, summing to the payout net. */
-async function depositWrite(payout: MirrorPayout, payoutDate: string, sales: PayoutSales, posting: IncomePosting): Promise<TxnWrite> {
-  const lines = buildDepositLines({ payoutNetCents: payout.netCents, ...sales });
+/** What a deposit is built from: a payout's sales, or another lane's expected deposit. */
+type DepositBasis = { payout: MirrorPayout; sales: PayoutSales } | { expected: ExpectedDeposit };
 
-  const buckets = new Map(lines.some((l) => l.budgetOwnerId !== null) ? (await getIncomeConfig().owners?.list() ?? []).map((o) => [o.id, o]) : []);
-  const { accounts } = posting;
-  const bank = getIncomeConfig().bankAccountId;
-  if (!bank) throw new Error("the bank account is not configured");
+/**
+ * The deposit income would create for a row. A payout's sale lines split by item account and bucket;
+ * an expected deposit's lines are the lane's own, each on the account it names. Roles and Classes
+ * resolve through the books map. Both sum to the row's net.
+ */
+async function depositWrite(payoutDate: string, basis: DepositBasis, accounts: RoleAccounts): Promise<TxnWrite> {
+  const lines =
+    "expected" in basis
+      ? basis.expected.lines.map((l) => ({ accountId: l.accountId, role: l.role, budgetOwnerId: l.budgetOwnerId, amountCents: l.amountCents, description: l.description }))
+      : buildDepositLines({ payoutNetCents: basis.payout.netCents, ...basis.sales }).map((l) => {
+          if (l.account !== "income") return { ...l, accountId: undefined, role: SHOPIFY_LINE_ROLES[l.account], description: undefined };
+          if (!l.accountId) throw new Error("a sale line has no QuickBooks account");
+          return { ...l, accountId: l.accountId, role: undefined, description: undefined };
+        });
+  const bankRole = "expected" in basis ? basis.expected.bankRole : BANK_ROLE.shopify;
+
+  const bucketed = lines.some((l) => l.budgetOwnerId !== null);
+  const [owners, classes] = bucketed ? await Promise.all([getIncomeConfig().owners?.list() ?? [], bucketClasses()]) : [[], new Map<number, string>()];
+  const buckets = new Map(owners.map((o) => [o.id, o]));
+  const account = (role: string | undefined) => {
+    const id = role && accounts[role as keyof RoleAccounts];
+    if (!id) throw new Error(`the books-map role ${role} has no QuickBooks account`);
+    return id;
+  };
   return {
     entity: "Deposit",
     fields: {
       txnDate: payoutDate,
-      depositToAccountId: bank,
-      memo: "Shopify payout",
+      depositToAccountId: account(bankRole),
+      memo: "expected" in basis ? (basis.expected.memo ?? "Benevity disbursement") : "Shopify payout",
       lines: lines.map((l): WriteLine => {
-        if (l.budgetOwnerId === null) return { amountCents: l.amountCents, accountId: accounts[l.account] };
+        const base = { amountCents: l.amountCents, accountId: l.accountId ?? account(l.role), ...(l.description ? { description: l.description } : {}) };
+        if (l.budgetOwnerId === null) return base;
         const bucket = buckets.get(l.budgetOwnerId);
         if (!bucket) throw new Error(`bucket ${l.budgetOwnerId} is not in the owner directory`);
         if (bucket.archivedAt) throw new Error(`bucket ${l.budgetOwnerId} is archived`);
-        if (!bucket.quickBooksClassId) throw new Error(`bucket ${l.budgetOwnerId} has no QuickBooks Class`);
-        return { amountCents: l.amountCents, accountId: accounts[l.account], classId: bucket.quickBooksClassId };
+        const classId = classes.get(l.budgetOwnerId);
+        if (!classId) throw new Error(`bucket ${l.budgetOwnerId} has no QuickBooks Class`);
+        return { ...base, classId };
       }),
     },
   };
@@ -172,8 +278,7 @@ export interface PostGate {
   mayCreate: boolean;
 }
 
-/** The queue note on a payout whose deposit would land in closed books. */
-export const CLOSED_NOTE = "dated in closed books in QuickBooks; it can only be matched or skipped";
+export { CLOSED_NOTE } from "./sources";
 
 /** What the created-since lookup found for a payout whose create may already have landed. */
 export type OwnEntry =
@@ -188,17 +293,19 @@ const appKeysOf = (entry: { PrivateNote?: string }) => appKeyOf(entry)?.split(" 
 /**
  * Look for the deposit the app created for an attempted payout: every deposit QuickBooks
  * created since the first attempt, kept when its memo carries the payout's key. An entry
- * carrying more than one key is never taken as the payout's own. Throws when the read fails.
+ * carrying more than one key is never taken as the payout's own. A voided deposit keeps its
+ * memo at a zero total, so a $0 deposit is not the payout's own unless the payout nets to $0.
+ * Throws when the read fails.
  */
 export async function ownEntry(
   client: QuickBooksClient,
   orgId: string,
-  row: Pick<PayoutReconciliation, "id" | "payoutGid">,
+  row: Pick<PayoutReconciliation, "id" | "orgId" | "source" | "payoutGid" | "payoutNetCents">,
   since: Date,
 ): Promise<OwnEntry> {
   const { entries, full } = await client.createdSince("Deposit", since);
-  const key = incomeKey(row.payoutGid);
-  const keyed = entries.filter((e) => appKeysOf(e).includes(key));
+  const key = rowKey(row);
+  const keyed = entries.filter((e) => appKeysOf(e).includes(key) && (e.TotalAmt !== 0 || row.payoutNetCents === 0));
   if (full) return { kind: "unsure", note: "the app may already have booked this payout: QuickBooks returned a full page of new deposits" };
   const shared = keyed.find((e) => appKeysOf(e).length > 1);
   if (shared) return { kind: "unsure", note: `the app may already have booked this payout: deposit ${shared.Id} carries more than one app key` };
@@ -212,7 +319,7 @@ export async function ownEntry(
 type PostResult = FindOrCreateResult | { kind: "own"; deposit: QbDeposit } | { kind: "conflict"; note: string };
 
 /** A deposit the post saw, held as created (its key) or matched. */
-function holdingData(d: QbDeposit, origin: string): Partial<PayoutReconciliation> {
+function holdingData(d: QbDeposit, origin: string): RowData {
   return {
     status: origin === RECON_ORIGIN.CREATED ? RECON_STATUS.POSTED : RECON_STATUS.MATCHED,
     kind: null,
@@ -234,7 +341,7 @@ function holdingData(d: QbDeposit, origin: string): Partial<PayoutReconciliation
  * claim is still this post's. found → link (POSTED when it carries the payout's key);
  * created → POSTED; ambiguous or a lookup conflict → finance's queue; failed → POST_FAILED;
  * closed or needs-finance → NO_DEPOSIT, finance books it or skips it. A payout with an
- * undecided item or unusable bucket holds as NEEDS_MAPPING first. Returns null when another
+ * undecided item, unusable bucket or sale missing lines holds as NEEDS_MAPPING first. Returns null when another
  * holder has the reconcile lock and `wait` is off. `book` admits a NO_DEPOSIT payout.
  */
 export async function postPayout(
@@ -242,39 +349,49 @@ export async function postPayout(
   id: number,
   gate: PostGate,
   wait: boolean,
-  opts: { actor?: RowActor; problem?: BucketProblem; sales?: PayoutSales; book?: boolean } = {},
+  opts: { actor?: RowActor; problem?: BucketProblem; sales?: PayoutSales; book?: boolean; accounts?: RoleAccounts; benevityWindowDays?: number } = {},
 ): Promise<{ outcome: PostOutcome; row: PayoutReconciliation } | null> {
   const actor = opts.actor ?? { userId: null };
   const { mirror, posting } = getIncomeConfig();
-  if (!mirror || !posting?.mirrorNewestWins) throw new Error("income posting is not enabled");
+  if (!posting) throw new Error("income posting is not enabled");
   const postable = (r: PayoutReconciliation) =>
     isPostable(r) || (!!opts.book && r.status === RECON_STATUS.OPEN && r.kind === RECON_KIND.NO_DEPOSIT);
   const row = await db.payoutReconciliation.findUniqueOrThrow({ where: { id } });
-  const payout = await mirror.payout(row.payoutGid);
-  // Booked only from an API row still paid at the net it was queued with; loaded history never.
-  if (
-    !postable(row) ||
-    payout?.status !== "paid" ||
-    payout.source !== "api" ||
-    payout.netCents !== row.payoutNetCents
-  ) {
-    return { outcome: "waiting", row };
-  }
+  if (!postable(row)) return { outcome: "waiting", row };
 
-  const sales = opts.sales ?? (await payoutSales(orgId, payout.payoutGid, mirror));
-  const gap = mappingGap(sales, opts.problem ?? (await bucketProblems(orgId)));
+  const accounts = opts.accounts ?? (await roleAccounts());
+  let basis: DepositBasis;
+  let gap: string | null;
+  const expected = expectedOf(row);
+  if (isBenevity(row)) {
+    if (!expected) throw new Error(`Benevity row ${id} has no expected deposit`);
+    basis = { expected };
+    gap = expectedGap(expected, opts.problem ?? (await bucketProblems(orgId)));
+  } else {
+    // A Shopify payout is booked only from a newest-wins mirror's API row, still paid at the net it was queued with.
+    if (!mirror || !posting.mirrorNewestWins) throw new Error("income posting is not enabled");
+    const payout = await mirror.payout(row.payoutGid);
+    if (payout?.status !== "paid" || payout.source !== "api" || payout.netCents !== row.payoutNetCents) {
+      return { outcome: "waiting", row };
+    }
+    const sales = opts.sales ?? (await payoutSales(orgId, payout.payoutGid, mirror, accounts));
+    basis = { payout, sales };
+    gap = mappingGap(sales, opts.problem ?? (await bucketProblems(orgId)));
+  }
   if (gap) {
     const held = await holdForMapping(orgId, id, gap, wait, actor, postable);
     return held && heldOutcome(held);
   }
+  // A row whose roles finance has not mapped waits, as an unbound lane does.
+  if (missingRoles(row, accounts).length) return { outcome: "waiting", row };
 
-  const window = matchWindow(row.payoutDate);
+  const window = matchWindow(row.payoutDate, row.source, opts.benevityWindowDays ?? (await readIncomeSettings(db, orgId)).benevityMatchWindowDays);
   let write: TxnWrite | null = null;
-  let buildError = "";
+  let buildErr: unknown;
   try {
-    write = await depositWrite(payout, row.payoutDate, sales, posting);
+    write = await depositWrite(row.payoutDate, basis, accounts);
   } catch (e) {
-    buildError = e instanceof Error ? e.message : String(e);
+    buildErr = e;
   }
 
   const claimedAt = new Date();
@@ -296,7 +413,7 @@ export async function postPayout(
 
   let result: PostResult;
   if (!write) {
-    result = { kind: "failed", error: buildError };
+    result = { kind: "failed", ...postFailure(buildErr) };
   } else {
     let own: OwnEntry = { kind: "none" };
     if (claim.attempted) {
@@ -311,18 +428,17 @@ export async function postPayout(
     } else if (own.kind !== "none") {
       result = { kind: "conflict", note: own.note };
     } else {
-      const [foreign, held, excluded] = await Promise.all([
-        otherLaneClaims(orgId),
+      const [held, excluded] = await Promise.all([
         db.payoutReconciliation.findMany({ where: { orgId, depositId: { not: null } }, select: { depositId: true } }),
         db.incomeQbMatchExclusion.findMany({ where: { orgId }, select: { qbTxnId: true } }),
       ]);
       result = await findOrCreate(posting.client, {
         write,
-        key: incomeKey(claimed.payoutGid),
+        key: rowKey(claimed),
         window,
         closedThrough: gate.closedThrough,
         mayCreate: gate.mayCreate,
-        claimedIds: new Set([...foreign, ...held.flatMap((h) => (h.depositId ? [h.depositId] : []))]),
+        claimedIds: new Set(held.flatMap((h) => (h.depositId ? [h.depositId] : []))),
         excludedIds: new Set(excluded.map((e) => e.qbTxnId)),
       });
     }
@@ -333,8 +449,12 @@ export async function postPayout(
   if (result.kind === "found") {
     const foundId = result.id;
     [found] = (await posting.client.depositsBetween(window.from, window.to)).filter((x) => x.Id === foundId).map(toQbDeposit);
-    if (!found) result = { kind: "failed", error: `deposit ${foundId} is not in the payout's window` };
+    if (!found) result = { kind: "failed", error: `deposit ${foundId} is not in the payout's window`, failure: "bug" };
   }
+
+  // Reported only once the claim holds, so a post that lost the payout to another stays quiet.
+  const reportFailed = (failure: PostFailure) =>
+    incomeRuntime.failed("deposit-build", write ? postFailureError(failure) : buildErr, `payout reconciliation ${id}`);
 
   const settleIn = () => db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM payout_reconciliations WHERE id = ${id} FOR UPDATE`;
@@ -349,7 +469,7 @@ export async function postPayout(
     }
 
     // An outcome that sets a note keeps any warning about another stray app entry on the row.
-    const settle = async (outcome: PostOutcome, action: string, data: Partial<PayoutReconciliation>, reason?: string) => {
+    const settle = async (outcome: PostOutcome, action: string, data: RowData, reason?: string) => {
       const note = data.qbNote === undefined ? {} : { qbNote: nextNote(current.qbNote, data.depositId ?? null, data.qbNote) };
       const saved = await tx.payoutReconciliation.update({ where: { id }, data: { ...data, ...note, postClaimedAt: null } });
       await audit(tx, orgId, action, current, saved, { ...actor, reason });
@@ -383,10 +503,12 @@ export async function postPayout(
       case "conflict":
         return toQueue(RECON_KIND.AMBIGUOUS_DEPOSIT, result.note);
       case "closed":
-        return toQueue(RECON_KIND.NO_DEPOSIT, CLOSED_NOTE);
+        return toQueue(RECON_KIND.NO_DEPOSIT, closedNote(current, gate.mayCreate));
       case "needs-finance":
         return toQueue(RECON_KIND.NO_DEPOSIT, null);
       case "failed":
+        // The post failed whether or not this update commits, so the report stands either way.
+        reportFailed(result);
         if (current.kind === RECON_KIND.POST_FAILED) {
           return { outcome: "failed" as const, row: await tx.payoutReconciliation.update({ where: { id }, data: { postClaimedAt: null } }) };
         }
@@ -406,7 +528,7 @@ export async function postPayout(
   }
 }
 
-/** Park a payout larger than the per-run cents cap for finance; it is never auto-created. */
+/** Park a row larger than its source's per-run cents cap for finance; it is never auto-created. */
 async function parkOverCap(orgId: string, id: number, netCents: number, maxCents: number): Promise<boolean> {
   const parked = await moveRow(
     orgId,
@@ -420,20 +542,23 @@ async function parkOverCap(orgId: string, id: number, netCents: number, maxCents
   return parked !== null;
 }
 
-/** Stamp income's switch-on the first time a connected drain runs; a set stamp never moves. */
-async function switchOn(orgId: string, now: Date): Promise<Date> {
+/** Stamp a source's switch-on the first time a drain posts it; a set stamp never moves. */
+async function switchOn(orgId: string, source: string, now: Date): Promise<void> {
   await db.incomeOrgSettings.upsert({ where: { orgId }, create: { orgId }, update: {} });
   // Set only while null, in one statement, so overlapping runs never move it.
-  await db.incomeOrgSettings.updateMany({ where: { orgId, qbPostingOnAt: null }, data: { qbPostingOnAt: now } });
-  const { qbPostingOnAt } = await db.incomeOrgSettings.findUniqueOrThrow({ where: { orgId }, select: { qbPostingOnAt: true } });
-  if (!qbPostingOnAt) throw new Error("income switch-on was not recorded");
-  return qbPostingOnAt;
+  if (source === DEPOSIT_SOURCE.BENEVITY) {
+    await db.incomeOrgSettings.updateMany({ where: { orgId, benevityQbPostingOnAt: null }, data: { benevityQbPostingOnAt: now } });
+  } else {
+    await db.incomeOrgSettings.updateMany({ where: { orgId, qbPostingOnAt: null }, data: { qbPostingOnAt: now } });
+  }
 }
 
 /**
  * The last closed date: QuickBooks' books closing date, or the day before switch-on when none
  * is set. Null when neither exists, so nothing may be created.
  */
+export function closedThroughOf(closeDate: string | null, onAt: Date): string;
+export function closedThroughOf(closeDate: string | null, onAt: Date | null): string | null;
 export function closedThroughOf(closeDate: string | null, onAt: Date | null): string | null {
   return closeDate ?? (onAt ? addDays(isoDay(onAt), -1) : null);
 }
@@ -443,8 +568,8 @@ export function closedThroughOf(closeDate: string | null, onAt: Date | null): st
  * check every assigned bucket (alerting finance once per bucket that has become unusable), then
  * post the outbox's WAITING rows and every NEEDS_MAPPING row, oldest first. A payout first seen
  * after switch-on books itself, however late it arrived; one seen before goes to finance as
- * NO_DEPOSIT on its first turn, unless it matches. A payout with an undecided item or unusable bucket holds as
- * NEEDS_MAPPING until finance decides. Creates stop at the org's count and cents caps, which
+ * NO_DEPOSIT on its first turn, unless it matches. A payout with an undecided item, unusable bucket or sale
+ * missing lines holds as NEEDS_MAPPING until the gap closes. Creates stop at the org's count and cents caps, which
  * fire the finance alert; failures and amount matches do not count. The host calls it in a
  * try/catch; it returns counts only.
  */
@@ -453,82 +578,120 @@ export async function drainIncomeOutbox(orgId: string, now: Date = new Date()): 
   if (reconcile.status !== "ran") return { reconcile, post: reconcile.status };
   const { mirror, posting, alerts } = getIncomeConfig();
   // A cap hit must reach finance, so the drain never creates without the alert bound.
-  if (!mirror || !posting || !alerts) return { reconcile, post: "unbound" };
-  if (!posting.mirrorNewestWins) return { reconcile, post: "gated" };
+  if (!posting || !alerts) return { reconcile, post: "unbound" };
+  // Shopify payouts post only from a newest-wins mirror; Benevity deposits need no mirror.
+  const shopifyPosts = !!mirror && posting.mirrorNewestWins;
+  const dueWhere = {
+    orgId,
+    ...(shopifyPosts ? {} : { source: DEPOSIT_SOURCE.BENEVITY }),
+    OR: [{ status: RECON_STATUS.WAITING }, { status: RECON_STATUS.OPEN, kind: RECON_KIND.NEEDS_MAPPING }],
+  };
+  const benevityDue = (await db.payoutReconciliation.count({ where: { ...dueWhere, source: DEPOSIT_SOURCE.BENEVITY } })) > 0;
+  if (!shopifyPosts && !benevityDue) return { reconcile, post: mirror ? "gated" : "unbound" };
 
-  // After reconcile, so every payout the mirror already holds is dated before the stamp.
-  const onAt = await switchOn(orgId, now);
+  // After reconcile, so every payout the mirror already holds is dated before the stamp. Each
+  // source switches on only when it posts, so one source's rows never start the other's clock.
+  if (shopifyPosts) await switchOn(orgId, DEPOSIT_SOURCE.SHOPIFY, now);
+  if (benevityDue) await switchOn(orgId, DEPOSIT_SOURCE.BENEVITY, now);
+  const switchedOn = await postingOnAt(orgId);
+  const onAtOf = (source: string) => {
+    const at = stampOf(switchedOn, source);
+    if (!at) throw new Error(`income switch-on for ${source} was not recorded`);
+    return at;
+  };
   let closeDate: string | null;
   try {
     closeDate = await posting.client.bookCloseDate();
   } catch {
     return { reconcile, post: "unreadable" };
   }
-  const closedThrough = closeDate ?? addDays(isoDay(onAt), -1);
 
   const problem = await checkBuckets(orgId);
   const caps = await readIncomeSettings(db, orgId);
+  const accounts = await roleAccounts();
   const today = isoDay(now);
   const due = (
     await db.payoutReconciliation.findMany({
-      where: {
-        orgId,
-        OR: [{ status: RECON_STATUS.WAITING }, { status: RECON_STATUS.OPEN, kind: RECON_KIND.NEEDS_MAPPING }],
-      },
+      where: dueWhere,
       orderBy: [{ payoutDate: "asc" }, { id: "asc" }],
-      select: { id: true, payoutGid: true, payoutDate: true, payoutNetCents: true, status: true, kind: true, createdAt: true },
     })
-  ).filter((r) => isHeld(r) || r.createdAt > onAt || today <= addDays(r.payoutDate, windowDays()));
+  ).filter((r) => isHeld(r) || r.createdAt > onAtOf(r.source) || today <= addDays(r.payoutDate, windowDays(r.source, caps.benevityMatchWindowDays)));
 
   const post: PostCounts = { posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, over_cap: 0, held: 0, capped: null };
-  let createdCents = 0;
-  const alert = (cap: "count" | "cents", remaining: number) =>
-    alerts.postCapReached({ orgId, cap, created: post.posted, createdCents, remaining });
+  // The count cap is the org's across sources; each source has its own cents cap.
+  const createdCents: Record<string, number> = {};
+  const centsCap = (source: string) => (source === DEPOSIT_SOURCE.BENEVITY ? caps.benevityMaxCreateCentsPerRun : caps.maxCreateCentsPerRun);
+  const alert = (cap: "count" | "cents", remaining: number, source: string) =>
+    alerts.postCapReached({ orgId, cap, created: post.posted, createdCents: createdCents[source] ?? 0, remaining });
 
   for (const [i, r] of due.entries()) {
     const cents = Math.abs(r.payoutNetCents);
+    const cap = centsCap(r.source);
+    const sofar = createdCents[r.source] ?? 0;
+    const onAt = onAtOf(r.source);
     const mayCreate = r.createdAt > onAt;
-    // The mapping check comes before the caps so a held payout keeps its reason.
-    const sales = await payoutSales(orgId, r.payoutGid, mirror);
-    const gap = mappingGap(sales, problem);
+    // The mapping check comes before the caps so a held row keeps its reason.
+    const expected = isBenevity(r) ? expectedOf(r) : null;
+    const sales = expected || !mirror ? undefined : await payoutSales(orgId, r.payoutGid, mirror, accounts);
+    const gap = expected ? expectedGap(expected, problem) : sales ? mappingGap(sales, problem) : null;
     if (gap) {
       const held = await holdForMapping(orgId, r.id, gap, false);
       if (!held) return { reconcile, post: "busy" };
       post[heldOutcome(held).outcome]++;
       continue;
     }
-    // Only a payout the app may create is held to the caps.
+    // A row whose roles finance has not mapped is skipped before the caps, so it never counts or parks.
+    if (missingRoles(r, accounts).length) {
+      post.waiting++;
+      continue;
+    }
+    // Only a row the app may create is held to the caps.
     if (mayCreate) {
-      if (cents > caps.maxCreateCentsPerRun) {
-        if (!(await parkOverCap(orgId, r.id, r.payoutNetCents, caps.maxCreateCentsPerRun))) return { reconcile, post: "busy" };
+      if (cents > cap) {
+        if (!(await parkOverCap(orgId, r.id, r.payoutNetCents, cap))) return { reconcile, post: "busy" };
         post.over_cap++;
-        await alert("cents", 1);
+        await alert("cents", 1, r.source);
         continue;
       }
-      if (post.posted >= caps.maxCreatesPerRun || createdCents + cents > caps.maxCreateCentsPerRun) {
+      if (post.posted >= caps.maxCreatesPerRun || sofar + cents > cap) {
+        // ponytail: the cents cap stops the whole run, as with one source; skip just that source if Benevity volume grows.
         post.capped = post.posted >= caps.maxCreatesPerRun ? "count" : "cents";
-        await alert(post.capped, due.length - i);
+        await alert(post.capped, due.length - i, r.source);
         break;
       }
     }
-    const turn = await postPayout(orgId, r.id, { closedThrough, mayCreate }, false, { problem, sales });
+    const closedThrough = closedThroughOf(closeDate, onAt);
+    const turn = await postPayout(orgId, r.id, { closedThrough, mayCreate }, false, { problem, sales, accounts, benevityWindowDays: caps.benevityMatchWindowDays });
     if (!turn) return { reconcile, post: "busy" };
     post[turn.outcome]++;
-    if (turn.outcome === "posted") createdCents += cents;
+    if (turn.outcome === "posted") createdCents[r.source] = sofar + cents;
   }
   return { reconcile, post };
+}
+
+/** Whether finance excluded an app entry from matching, or answered its warning on this payout. */
+async function financeAnswered(tx: TxClient, orgId: string, id: number, entryId: string): Promise<boolean> {
+  if (await tx.incomeQbMatchExclusion.findUnique({ where: { orgId_qbTxnId: { orgId, qbTxnId: entryId } }, select: { id: true } })) return true;
+  const answer = await tx.incomeAuditLog.findFirst({
+    where: {
+      orgId,
+      entityType: "payout_reconciliation",
+      entityId: String(id),
+      actorUserId: { not: null },
+      after: { contains: JSON.stringify(answeredEntryRef(entryId)) },
+    },
+    select: { id: true },
+  });
+  return answer !== null;
 }
 
 /** What one orphan sweep read and reported. */
 export type SweepResult = { status: "unbound" } | { status: "ran"; read: number; flagged: number; full: boolean };
 
-/** How far back the orphan sweep looks for attempted payouts. */
-export const SWEEP_DAYS = 30;
-
 /**
  * The daily orphan sweep: one read of every deposit QuickBooks created since the oldest
  * attempt in the last SWEEP_DAYS, and a queue note on each payout whose key an entry carries
- * but which does not hold that entry. A full page alerts finance that some entries went
+ * but which does not hold that entry. A capped read alerts finance that some entries went
  * unseen. Reads QuickBooks only; finance voids or links what it reports. Unconfigured or
  * unbound, it reads nothing.
  */
@@ -544,21 +707,27 @@ export async function runIncomeOrphanSweep(orgId: string, now: Date = new Date()
   const { entries, full } = await posting.client.createdSince("Deposit", oldest.qbCreateAttemptedAt);
   if (full) await alerts.sweepIncomplete({ orgId, since: oldest.qbCreateAttemptedAt });
 
-  const rows = await db.payoutReconciliation.findMany({ where: { orgId } });
-  const byKey = new Map(rows.map((r) => [incomeKey(r.payoutGid), r]));
+  const rows = await db.payoutReconciliation.findMany({ where: { orgId }, select: { id: true, orgId: true, source: true, payoutGid: true } });
+  const byKey = new Map(rows.map((r) => [rowKey(r), r.id] as const));
   let flagged = 0;
   const note = (e: { Id: string }) => `app entry ${e.Id} is not linked; void or link it`;
   for (const e of entries) {
+    // A voided entry keeps its memo at a zero total.
+    if (e.TotalAmt === 0) continue;
     for (const key of appKeysOf(e)) {
-      const row = byKey.get(key);
-      if (!row || row.depositId === e.Id || isClaimed(row, now.getTime()) || row.qbNote?.includes(note(e))) continue;
-      const qbNote = nextNote(row.qbNote, null, note(e));
-      await db.$transaction(async (tx) => {
-        const saved = await tx.payoutReconciliation.update({ where: { id: row.id }, data: { qbNote } });
+      const id = byKey.get(key);
+      if (id === undefined) continue;
+      // Under the lock finance's match, dismiss and clear take, so a decision made meanwhile wins.
+      const noted = await db.$transaction(async (tx) => {
+        await lockReconciliation(tx, orgId, true);
+        const row = await tx.payoutReconciliation.findUniqueOrThrow({ where: { id } });
+        if (row.depositId === e.Id || isClaimed(row, now.getTime()) || row.qbNote?.includes(note(e))) return false;
+        if (await financeAnswered(tx, orgId, id, e.Id)) return false;
+        const saved = await tx.payoutReconciliation.update({ where: { id }, data: { qbNote: nextNote(row.qbNote, null, note(e)) } });
         await audit(tx, orgId, "reconciliation.orphan_entry", row, saved, { userId: null, reason: note(e) });
+        return true;
       });
-      row.qbNote = qbNote;
-      flagged++;
+      if (noted) flagged++;
     }
   }
   return { status: "ran", read: entries.length, flagged, full };

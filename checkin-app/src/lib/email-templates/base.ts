@@ -23,7 +23,7 @@ export function sourceLine(source?: VisitSource | null): string {
         // rather than implying it was measured.
         : source === 'AUTO_CLOSE' ? 'the system automatically'
         : null;
-    return label ? `<p style="color: #6b7280;">📍 via ${label}</p>` : '';
+    return label ? `📍 via ${label}` : '';
 }
 
 /**

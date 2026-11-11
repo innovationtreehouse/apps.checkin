@@ -3,8 +3,9 @@ import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
-import { LIVE_PERSON } from "@/lib/person/filters";
+import { anyMergedAway } from "@/lib/person/archivedPeople";
 import { bgSubjectKey, householdMembershipStatus, membershipMergeBlock } from "@/lib/person/merge/guard";
+import { carriedComplianceDate } from "@/lib/person/merge/plan";
 
 export const dynamic = 'force-dynamic';
 
@@ -47,7 +48,6 @@ export const GET = withAuth(
                         // unit — see @/lib/person/merge/plan.ts). Kept explicit, not a bare include.
                         emailVerified: true,
                         dateOfBirth: true,
-                        mergedIntoId: true,
                         household: {
                             select: {
                                 id: true,
@@ -59,7 +59,6 @@ export const GET = withAuth(
                                     // Tombstones are not members: the page's
                                     // isLeadWithOthers guard must match the POST's, and
                                     // the membership block counts live members only.
-                                    where: LIVE_PERSON,
                                     select: { id: true, name: true, isHouseholdLead: true }
                                 }
                             }
@@ -77,21 +76,27 @@ export const GET = withAuth(
                 return p;
             };
 
-            const [pA, pB] = await Promise.all([getParticipant(aId), getParticipant(bId)]);
+            // Read apart from the select above, so the raw dates stay out of `participants`
+            // and only a date the survivor would adopt leaves this route.
+            const getBgSubject = (id: number) => prisma.person.findUnique({
+                where: { id },
+                select: { lastBackgroundCheck: true },
+            });
 
-            if (!pA || !pB) {
+            const [pA, pB, bgA, bgB] = await Promise.all([getParticipant(aId), getParticipant(bId), getBgSubject(aId), getBgSubject(bId)]);
+
+            if (!pA || !pB || !bgA || !bgB) {
+                if (await anyMergedAway(prisma, [aId, bId])) {
+                    return apiError("Cannot analyze: one of these participants has already been merged.", 409);
+                }
                 return apiError("Participant not found", 404);
-            }
-
-            if (pA.mergedIntoId != null || pB.mergedIntoId != null) {
-                return apiError("Cannot analyze: one of these participants has already been merged.", 409);
             }
 
             // Mirrors the POST guard so the picker warns before the operator commits.
             // The rule is asymmetric (it turns on which record is merged away) and the
             // keeper isn't fixed until the UI scores and the operator swaps, so both
             // directions are reported and the page applies the live one.
-            // householdMembers is already LIVE_PERSON-filtered, so "others" is the count.
+            // "others" is every household member but the subject.
             const subject = (p: typeof pA) => ({
                 status: householdMembershipStatus(p.household),
                 liveOthers: p.household?.householdMembers.filter(m => m.id !== p.id).length ?? 0,
@@ -183,12 +188,19 @@ export const GET = withAuth(
                 collisions.push({ type: 'openVisit', message: 'Both have an open building visit. Close one visit first.' });
             }
 
+            // The date the keeper would adopt; whether the household then qualifies is settled after the merge.
+            const bgNotice = (keep: typeof bgA, merged: typeof bgB) => {
+                const date = carriedComplianceDate(keep.lastBackgroundCheck, merged.lastBackgroundCheck);
+                return date ? { date } : null;
+            };
+
             return NextResponse.json({
                 participants: [pA, pB],
                 membershipBlock: {
                     aAsKeeper: membershipMergeBlock(a, b),
                     bAsKeeper: membershipMergeBlock(b, a),
                 },
+                bgNotice: { aAsKeeper: bgNotice(bgA, bgB), bAsKeeper: bgNotice(bgB, bgA) },
                 collisions,
             });
         } catch (error) {

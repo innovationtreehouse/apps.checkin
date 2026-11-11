@@ -4,6 +4,7 @@ import { withAuth } from "@/lib/auth";
 import { ReviewError } from "@/lib/membership/review";
 import { archiveApplication } from "@/lib/membership/archive";
 import { apiError } from "@/lib/api-response";
+import { reviewErrorResponse } from "@/lib/domainErrorResponse";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +27,7 @@ export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (
         return NextResponse.json({ outcome });
     } catch (error) {
         if (error instanceof ReviewError) {
-            return NextResponse.json({ error: error.message, code: error.code }, { status: error.code === "not_found" ? 404 : error.code === "same_household_applicant" ? 403 : 409 });
+            return reviewErrorResponse(error);
         }
         logger.error("Close application error:", error);
         return apiError("Internal Server Error", 500);

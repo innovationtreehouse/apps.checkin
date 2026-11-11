@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { Anchor, Badge, Button, Card, Center, Code, Group, List, Loader, Stack, Text, Title } from "@mantine/core";
+import { LoadError } from "@checkin/component-ui";
+import { useLoad } from "@/lib/api";
 
 type DailyStat = {
   date: string;
@@ -126,6 +128,154 @@ export function ConfigHealthBox() {
                 </Text>
               </Group>
               <Text size="xs" c="dimmed">{c.detail}</Text>
+            </List.Item>
+          ))}
+        </List>
+      )}
+    </Card>
+  );
+}
+
+// Mirrors ActiveIncident in lib/opsIncidentView.ts (firstSeenAt arrives JSON-serialized).
+type Incident = {
+  key: string;
+  status: 'watching' | 'open';
+  kind: string;
+  cause: string;
+  lanes: string[];
+  firstSeenAt: string;
+  runsSeen: number;
+  itemsAffected: number;
+};
+
+/**
+ * Incidents the engine has not closed, from GET /api/system-status/config-health
+ * (admins + board only). "Open" incidents have sent their notice and count toward the
+ * red System Status pill; "watching" ones were seen below the alert threshold.
+ * What each kind means and what to do: docs/ops/production-runbook.md § Alerts.
+ */
+export function OpenProblemsBox() {
+  const [incidents, setIncidents] = useState<Incident[] | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/system-status/config-health')
+      .then((res) => (res.ok ? res.json() : Promise.reject()))
+      .then((data: { incidents?: unknown }) => (Array.isArray(data.incidents) ? setIncidents(data.incidents as Incident[]) : setFailed(true)))
+      .catch(() => setFailed(true));
+  }, []);
+
+  const openCount = incidents?.filter((i) => i.status === 'open').length ?? 0;
+
+  return (
+    <Card withBorder radius="md" padding="lg">
+      <Group gap="sm" mb="md">
+        <Title order={4}>Open problems</Title>
+        {openCount > 0 && <Badge color="red" circle title={`${openCount} open problem(s)`} />}
+      </Group>
+
+      {failed ? (
+        <Text c="yellow">Unable to load open problems.</Text>
+      ) : !incidents ? (
+        <Text c="dimmed">Checking for open problems…</Text>
+      ) : incidents.length === 0 ? (
+        <Text c="dimmed">No open problems.</Text>
+      ) : (
+        <List spacing="sm" listStyleType="none">
+          {incidents.map((i) => (
+            <List.Item key={i.key}>
+              <Group justify="space-between" wrap="nowrap" align="flex-start">
+                <Group gap="xs">
+                  <Badge variant="light">{i.kind}</Badge>
+                  <Code>{i.cause}</Code>
+                  <span>{i.lanes.join(', ')}</span>
+                </Group>
+                <Text c={i.status === 'open' ? 'red' : 'yellow'} fw={i.status === 'open' ? 700 : undefined} ta="right">
+                  ● {i.status === 'open' ? 'Open' : 'Watching'}
+                </Text>
+              </Group>
+              <Text size="xs" c="dimmed" title={i.firstSeenAt}>
+                First seen {timeAgo(i.firstSeenAt)} · {i.runsSeen} run{i.runsSeen === 1 ? '' : 's'}, {i.itemsAffected} item{i.itemsAffected === 1 ? '' : 's'}
+              </Text>
+            </List.Item>
+          ))}
+        </List>
+      )}
+    </Card>
+  );
+}
+
+// Mirrors Problem in lib/problems.ts (failedAt arrives JSON-serialized).
+type StuckItem = { library: string; id: string; step: string; href: string | null; failedAt: string };
+type ProblemsPayload = { problems?: { items?: unknown; unread?: unknown; notices?: unknown }; cronJobs?: unknown };
+
+/**
+ * The receipt flow's Problems list: each library's own lines, every stuck item, oldest first, with a
+ * link to its own page (which shows the error) and when it failed, then every scheduled job that has not run on time. From GET /api/system-status/config-health.
+ */
+export function ProblemsBox() {
+  const [data, setData] = useState<{ items: StuckItem[]; unread: string[]; notices: string[]; staleJobs: CronJob[] } | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/system-status/config-health')
+      .then((res) => (res.ok ? res.json() : Promise.reject()))
+      .then(({ problems, cronJobs }: ProblemsPayload) => {
+        if (!Array.isArray(problems?.items) || !Array.isArray(problems?.unread) || !Array.isArray(problems?.notices) || !Array.isArray(cronJobs)) return setFailed(true);
+        setData({
+          items: problems.items as StuckItem[],
+          unread: problems.unread as string[],
+          notices: problems.notices as string[],
+          staleJobs: (cronJobs as CronJob[]).filter((j) => j.stale),
+        });
+      })
+      .catch(() => setFailed(true));
+  }, []);
+
+  const total = data ? data.items.length + data.staleJobs.length + data.unread.length + data.notices.length : 0;
+
+  return (
+    <Card withBorder radius="md" padding="lg">
+      <Group gap="sm" mb="md">
+        <Title order={4}>Problems</Title>
+        {total > 0 && <Badge color="red">{total}</Badge>}
+      </Group>
+
+      {failed ? (
+        <Text c="yellow">Unable to load the Problems list.</Text>
+      ) : !data ? (
+        <Text c="dimmed">Checking for problems…</Text>
+      ) : total === 0 ? (
+        <Text c="dimmed">Nothing is stuck.</Text>
+      ) : (
+        <List spacing="sm" listStyleType="none">
+          {data.unread.map((library) => (
+            <List.Item key={`unread-${library}`}>
+              <Text c="yellow">Could not read {library}&apos;s stuck items.</Text>
+            </List.Item>
+          ))}
+          {data.notices.map((notice) => (
+            <List.Item key={`notice-${notice}`}>
+              <Text c="red">{notice}</Text>
+            </List.Item>
+          ))}
+          {data.items.map((i) => (
+            <List.Item key={`${i.library}-${i.step}-${i.id}`}>
+              <Group gap="xs">
+                <Badge variant="light">{i.library}</Badge>
+                <span>{i.step}</span>
+                {i.href ? <Anchor href={i.href}><Code>{i.id}</Code></Anchor> : <Code>{i.id}</Code>}
+              </Group>
+              <Text size="xs" c="dimmed" title={i.failedAt}>Failed {timeAgo(i.failedAt)}</Text>
+            </List.Item>
+          ))}
+          {data.staleJobs.map((j) => (
+            <List.Item key={`job-${j.job}`}>
+              <Group gap="xs">
+                <Badge variant="light" color="orange">scheduled job</Badge>
+                <Code>{j.job}</Code>
+              </Group>
+              <Text size="xs" c="dimmed" title={j.lastSuccessAt}>Has not run on time; last ran {timeAgo(j.lastSuccessAt)}</Text>
             </List.Item>
           ))}
         </List>
@@ -302,7 +452,7 @@ export function SystemVersionBox() {
         const currentSha = localData.version;
         setCurrentVersion(currentSha);
 
-        if (currentSha && !currentSha.startsWith('unknown')) {
+        if (currentSha && currentSha !== 'dev') {
           const ghRes = await fetch('https://api.github.com/repos/innovationtreehouse/apps.checkin/commits/main');
           if (!ghRes.ok) throw new Error('Failed to fetch latest version from GitHub');
 
@@ -393,26 +543,30 @@ export function SystemVersionBox() {
 
 type HeartbeatRow = { metric: string; timestamp: string; value: number };
 
-export function KioskHeartbeatBox() {
-  const [rows, setRows] = useState<HeartbeatRow[] | null>(null);
-  const [loading, setLoading] = useState(true);
+const CLOCK_WARN_SECONDS = 30;
 
-  useEffect(() => {
-    fetch("/api/system-status/kiosk-heartbeat")
-      .then((res) => (res.ok ? res.json() : Promise.reject(res)))
-      .then((data: { heartbeat?: HeartbeatRow[] }) => {
-        setRows(Array.isArray(data?.heartbeat) ? data.heartbeat : []);
-      })
-      .catch(() => setRows(null))
-      .finally(() => setLoading(false));
-  }, []);
+function clockLine(skewSeconds: number | undefined): string {
+  if (skewSeconds === undefined) return "Kiosk clock: can't confirm, nothing recent to compare.";
+  const off = Math.abs(skewSeconds);
+  if (off < CLOCK_WARN_SECONDS) return "Kiosk clock agrees with the server.";
+  const amount = off < 120 ? `${off}s` : `${Math.floor(off / 60)}m`;
+  return `Kiosk clock is ${amount} ${skewSeconds > 0 ? "ahead of" : "behind"} the server. The server refuses kiosk requests more than 60s off, and scans queue until the clock is fixed.`;
+}
+
+export function KioskHeartbeatBox() {
+  // No retry: this box reports health, and retries would hide a down server.
+  const { data, error, reload } = useLoad<{ heartbeat?: HeartbeatRow[] }>("/api/system-status/kiosk-heartbeat", { retry: false });
+  const rows = data ? (Array.isArray(data.heartbeat) ? data.heartbeat : []) : null;
+
+  const lastSeen = rows?.find((r) => r.metric === "kiosk_last_seen");
+  const skew = rows?.find((r) => r.metric === "kiosk_clock_skew")?.value;
+  const clockOff = skew !== undefined && Math.abs(skew) >= CLOCK_WARN_SECONDS;
 
   let body: string;
-  if (loading) body = "Checking…";
-  else if (rows == null) body = "Unable to read kiosk last-seen.";
-  else if (rows.length === 0) body = "No kiosk request since this task started (stale during overnight curfew is expected).";
+  if (!rows) body = "Checking…";
+  else if (!lastSeen) body = "No kiosk request since this task started (stale during overnight curfew is expected).";
   else {
-    const age = rows[0].value;
+    const age = lastSeen.value;
     const minutes = Math.floor(age / 60);
     body = minutes < 1 ? `Kiosk last seen ${age}s ago` : `Kiosk last seen ${minutes}m ago`;
   }
@@ -420,26 +574,17 @@ export function KioskHeartbeatBox() {
   return (
     <Card withBorder radius="md" padding="lg">
       <Title order={4} mb="xs">Kiosk last seen</Title>
-      <Text size="sm" c="dimmed">{body}</Text>
+      {error ? <LoadError what="kiosk last-seen" message={error} onRetry={reload} /> : <Text size="sm" c="dimmed">{body}</Text>}
+      {rows && !error && (
+        <Text size="sm" c={clockOff ? "red" : "dimmed"} fw={clockOff ? 700 : undefined}>{clockLine(skew)}</Text>
+      )}
     </Card>
   );
 }
 
 export function BadgeScanChart() {
-  const [stats, setStats] = useState<DailyStat[] | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    fetch('/api/system-status/health')
-      .then(res => res.json())
-      .then(data => {
-        if (data && data.days) {
-          setStats(data.days);
-        }
-      })
-      .catch((err) => console.error("Failed to load system health:", err))
-      .finally(() => setLoading(false));
-  }, []);
+  const { data, error, reload } = useLoad<{ days?: DailyStat[] }>("/api/system-status/health");
+  const stats = data?.days ?? null;
 
   return (
     <Card withBorder radius="md" padding="lg">
@@ -449,7 +594,9 @@ export function BadgeScanChart() {
         indicate faster responses.
       </Text>
 
-      {loading ? (
+      {error ? (
+        <LoadError what="metrics" message={error} onRetry={reload} />
+      ) : !data ? (
         <Center py="xl"><Loader /></Center>
       ) : stats ? (
         <SvgLineChart data={stats} />

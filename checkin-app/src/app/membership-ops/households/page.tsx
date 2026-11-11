@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useRequireRole } from '@/hooks/useRequireRole';
+import { MEMBERSHIP_OPS_ADMIN_ROLES } from '@/lib/nav/sections/membershipOps';
 import { Badge, Button, Group, List, Modal, Stack, Table, Text, Textarea, TextInput, Tooltip } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
-import { AlertBanner } from '@/components/admin/AlertBanner';
+import { LoadError } from '@checkin/component-ui';
+import { useLoad } from '@/lib/api';
 import { AdminEditHouseholdModal } from '@/components/admin/AdminEditHouseholdModal';
 import { sharesHousehold } from '@/lib/conflictOfInterest';
 import { formatDateOnly } from '@/lib/time';
@@ -15,17 +17,17 @@ import { isMembershipLapsed } from '@/lib/membership/lapsed';
 import { PageLoader } from "@/components/ui/PageLoader";
 import { householdQueryMatcher, personQueryMatcher } from "@/lib/searchId";
 
+type GrantYear = { year: number; label: string };
+
 type Household = {
   id: number;
   name?: string | null;
   orgMembership?: { status: string; memberSince?: string | null } | null;
-  // Renewal season only: the coming cycle is already settled — the member finished
-  // renewal, or an admin already used the override.
+  // The live year is already settled: the member paid, or the Board granted it.
   settledForComingYear?: boolean;
   validUntil?: string | null;
   householdMembers?: { id: number; name?: string | null; email?: string | null; isBoardMember?: boolean; emailUndeliverableAt?: string | null }[] | null;
-  renewalGrantable?: boolean;
-  // An application (initial or renewal) is at PENDING_PAYMENT: granting certifies it.
+  // An application (joining or renewing) is at PENDING_PAYMENT: granting certifies it.
   awaitingPayment?: boolean;
   bgValidUntil?: string | null;
 };
@@ -36,17 +38,16 @@ const fmtDate = (s?: string | null) =>
   s ? formatDateOnly(s, { year: "numeric", month: "short", day: "numeric" }) : "—";
 
 export default function AdminHouseholdsPage() {
-  const { user: me, ready, loading: authLoading } = useRequireRole(['isSysadmin', 'isBoardMember']);
+  const { user: me, ready, loading: authLoading } = useRequireRole(MEMBERSHIP_OPS_ADMIN_ROLES);
   // Certifying a payment is Board-only (the server 403s a sysadmin), so a Grant that
-  // would certify — coming-year always, current-year at PENDING_PAYMENT — is hidden
-  // from anyone else. A current-year Grant that only opens an application stays.
+  // would certify is hidden from anyone else. One that only opens an application stays.
   const isBoard = me?.isBoardMember === true;
   const router = useRouter();
 
-  const [households, setHouseholds] = useState<Household[]>([]);
-  const [renewalSeason, setRenewalSeason] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const { data, error, reload } = useLoad<{ households: Household[]; grantYears?: GrantYear[] }>(ready ? '/api/membership-ops/households' : null);
+  const households = data?.households ?? [];
+  // The year in progress and, inside the renewal window, the coming year.
+  const [yearInProgress, comingYear] = data?.grantYears ?? [];
   const [editHouseholdId, setEditHouseholdId] = useState<number | null>(null);
   const [filter, setFilter] = useState("");
   const [confirmDenyOpened, { open: openConfirmDeny, close: closeConfirmDeny }] = useDisclosure(false);
@@ -54,30 +55,8 @@ export default function AdminHouseholdsPage() {
   const [grantOpened, { open: openGrantModal, close: closeGrantModal }] = useDisclosure(false);
   const [pendingGrantHouseholdId, setPendingGrantHouseholdId] = useState<number | null>(null);
   const [grantReason, setGrantReason] = useState("");
-  // Which grant the reason modal confirms: this membership year, or the coming one.
-  const [grantMode, setGrantMode] = useState<"current" | "comingYear">("comingYear");
-
-  const fetchHouseholds = useCallback(() => fetch('/api/membership-ops/households')
-    .then(async (res) => {
-      if (res.ok) {
-        const data = await res.json();
-        setHouseholds(data.households);
-        setRenewalSeason(data.renewalSeason ?? false);
-      } else {
-        setError("Failed to fetch households.");
-      }
-    })
-    .catch(() => {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    })
-    .finally(() => {
-      setLoading(false);
-    }),
-  []);
-
-  useEffect(() => {
-    if (ready) fetchHouseholds();
-  }, [ready, fetchHouseholds]);
+  // The year the reason modal confirms.
+  const [pendingGrantYear, setPendingGrantYear] = useState<GrantYear | null>(null);
 
   const revokeMembership = async (householdId: number) => {
     try {
@@ -88,7 +67,7 @@ export default function AdminHouseholdsPage() {
       });
 
       if (res.ok) {
-        fetchHouseholds();
+        reload();
         notifications.show({ message: 'Membership revoked.' });
       } else {
         const data = await res.json().catch(() => ({}));
@@ -99,21 +78,20 @@ export default function AdminHouseholdsPage() {
     }
   };
 
-  // Both grants pay an application (money only): the current year's ("Grant Membership")
-  // or the coming year's renewal (renewal season). The background check still applies,
-  // and the server rejects a board member's own household.
-  const grant = async (householdId: number, reason: string, mode: "current" | "comingYear") => {
+  // A grant pays an application (money only) and records the year on its button. The
+  // background check still applies, and the server rejects a board member's own household.
+  const grant = async (householdId: number, reason: string, grantYear: GrantYear) => {
     try {
       const res = await fetch('/api/membership-ops/households', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(mode === "comingYear" ? { householdId, comingYear: true, reason } : { householdId, active: true, reason })
+        body: JSON.stringify({ householdId, year: grantYear.year, reason })
       });
 
       if (res.ok) {
         const data = await res.json().catch(() => ({}));
-        fetchHouseholds();
-        notifications.show({ message: data.message || (mode === "comingYear" ? 'Granted for the coming year.' : 'Membership granted.') });
+        reload();
+        notifications.show({ message: data.message || `Granted ${grantYear.label}.` });
       } else {
         const data = await res.json().catch(() => ({}));
         notifications.show({ color: 'red', message: data.error || 'Failed to grant membership.', autoClose: false });
@@ -123,20 +101,20 @@ export default function AdminHouseholdsPage() {
     }
   };
 
-  const openGrant = (householdId: number, mode: "current" | "comingYear") => {
-    setGrantMode(mode);
+  const openGrant = (householdId: number, grantYear: GrantYear) => {
+    setPendingGrantYear(grantYear);
     setPendingGrantHouseholdId(householdId);
     setGrantReason("");
     openGrantModal();
   };
 
   const confirmGrant = async () => {
-    if (pendingGrantHouseholdId === null || !grantReason.trim()) return;
+    if (pendingGrantHouseholdId === null || pendingGrantYear === null || !grantReason.trim()) return;
     closeGrantModal();
     const householdId = pendingGrantHouseholdId;
     const reason = grantReason.trim();
     setPendingGrantHouseholdId(null);
-    await grant(householdId, reason, grantMode);
+    await grant(householdId, reason, pendingGrantYear);
   };
 
   // Deny blocks login for every member of the household; restore (deny=false) returns it
@@ -159,7 +137,7 @@ export default function AdminHouseholdsPage() {
       });
 
       if (res.ok) {
-        fetchHouseholds();
+        reload();
         notifications.show({ message: deny ? 'Membership denied — members can no longer log in.' : 'Membership restored.' });
       } else {
         const data = await res.json().catch(() => ({}));
@@ -178,12 +156,16 @@ export default function AdminHouseholdsPage() {
     await doSetDenied(householdId, true);
   };
 
-  if (authLoading || loading) {
+  if (authLoading) {
     return <PageLoader />;
   }
 
   if (!ready) {
     return null;
+  }
+
+  if (!data && !error) {
+    return <PageLoader />;
   }
 
   // An unnamed household is listed as "Household #id", so that is what its name
@@ -203,7 +185,7 @@ export default function AdminHouseholdsPage() {
         member of the household — a household containing a board member must have that role removed first.
       </Text>
 
-      <AlertBanner message={error} tone="error" />
+      {error && <LoadError what="the households" message={error} onRetry={reload} />}
 
       <TextInput
         placeholder="Filter by household or participant name, email, or ID"
@@ -212,7 +194,7 @@ export default function AdminHouseholdsPage() {
         maw={400}
       />
 
-      <Table.ScrollContainer minWidth={600}>
+      {data && <Table.ScrollContainer minWidth={600}>
         <Table verticalSpacing="sm" highlightOnHover>
           <Table.Thead>
             <Table.Tr>
@@ -242,6 +224,9 @@ export default function AdminHouseholdsPage() {
                 (p) => p.email?.toLowerCase().endsWith('@innovationtreehouse.org')
               ) ?? false;
               const settledForComingYear = household.settledForComingYear === true;
+              const awaitingPayment = household.awaitingPayment === true;
+              const showGrantInProgress = !!yearInProgress && (isBoard || !awaitingPayment) &&
+                (!hasActiveMembership || (!isStaffHousehold && (awaitingPayment || isMembershipLapsed(household.validUntil))));
 
               return (
                 <Table.Tr key={household.id}>
@@ -334,31 +319,31 @@ export default function AdminHouseholdsPage() {
                         </Button>
                       ) : (
                         <>
-                          {(hasActiveMembership || isBoard || !household.awaitingPayment) && <Button
+                          {hasActiveMembership && <Button
                             size="xs" fz={15}
                             variant="light"
-                            color={hasActiveMembership ? 'red' : 'treehouseGreen'}
-                            disabled={ownHouseholdConflict || (!hasActiveMembership && isStaffHousehold)}
+                            color="red"
+                            disabled={ownHouseholdConflict}
+                            title={ownHouseholdConflict ? ownHouseholdTitle : undefined}
+                            onClick={() => revokeMembership(household.id)}
+                          >
+                            Revoke Membership
+                          </Button>}
+                          {showGrantInProgress && <Button
+                            size="xs" fz={15}
+                            variant="light"
+                            color="treehouseGreen"
+                            disabled={ownHouseholdConflict || isStaffHousehold}
                             title={
-                              !hasActiveMembership && isStaffHousehold
+                              isStaffHousehold
                                 ? "Staff households can't be granted membership."
                                 : ownHouseholdConflict
                                   ? ownHouseholdTitle
                                   : undefined
                             }
-                            onClick={() => hasActiveMembership ? revokeMembership(household.id) : openGrant(household.id, "current")}
+                            onClick={() => openGrant(household.id, yearInProgress)}
                           >
-                            {hasActiveMembership ? "Revoke Membership" : "Grant Membership"}
-                          </Button>}
-                          {hasActiveMembership && (isBoard || !household.awaitingPayment) && !isStaffHousehold && isMembershipLapsed(household.validUntil) && <Button
-                            size="xs" fz={15}
-                            variant="light"
-                            color="treehouseGreen"
-                            disabled={ownHouseholdConflict}
-                            title={ownHouseholdConflict ? ownHouseholdTitle : undefined}
-                            onClick={() => openGrant(household.id, "current")}
-                          >
-                            Grant Membership
+                            Grant {yearInProgress.label}
                           </Button>}
                           <Button
                             size="xs" fz={15}
@@ -373,19 +358,17 @@ export default function AdminHouseholdsPage() {
                         </>
                       )}
                     </Group>
-                    {/* Three states: hidden unless actionable-or-settled (not started, mid-flow,
-                        stale BG, staff, COI, out of season all hide); a settled cycle shows a
-                        disabled "Granted for coming year" as positive confirmation (#1047); a
-                        grantable renewal (PENDING_PAYMENT + cleared, fresh BG) shows it live. */}
-                    {renewalSeason && isBoard && !isDenied && !isStaffHousehold && !ownHouseholdConflict && (household.renewalGrantable || settledForComingYear) && (
+                    {/* Inside the renewal window only. A settled live year shows as a disabled
+                        confirmation; an application awaiting payment shows it live. */}
+                    {comingYear && isBoard && !isDenied && !isStaffHousehold && !ownHouseholdConflict && (awaitingPayment || settledForComingYear) && (
                       <Button
                         size="xs" fz={15}
                         variant="light"
                         disabled={settledForComingYear}
-                        title={settledForComingYear ? "This household is already set for the coming year." : undefined}
-                        onClick={() => openGrant(household.id, "comingYear")}
+                        title={settledForComingYear ? "This household is already set for this year." : undefined}
+                        onClick={() => openGrant(household.id, comingYear)}
                       >
-                        {settledForComingYear ? "Granted for coming year" : "Grant for coming year"}
+                        {settledForComingYear ? "Granted" : "Grant"} {comingYear.label}
                       </Button>
                     )}
                     </Stack>
@@ -403,13 +386,13 @@ export default function AdminHouseholdsPage() {
             )}
           </Table.Tbody>
         </Table>
-      </Table.ScrollContainer>
+      </Table.ScrollContainer>}
 
       <AdminEditHouseholdModal
         householdId={editHouseholdId}
         opened={editHouseholdId !== null}
         onClose={() => setEditHouseholdId(null)}
-        onSaved={() => fetchHouseholds()}
+        onSaved={() => reload()}
       />
 
       <Modal
@@ -428,13 +411,11 @@ export default function AdminHouseholdsPage() {
       <Modal
         opened={grantOpened}
         onClose={closeGrantModal}
-        title={<Text span fw={700} fz="lg">{grantMode === "comingYear" ? "Grant for Coming Year" : "Grant Membership"}</Text>}
+        title={<Text span fw={700} fz="lg">Grant {pendingGrantYear?.label}</Text>}
         centered
       >
         <Text mb="sm">
-          {grantMode === "comingYear"
-            ? "Grant this household's membership for the coming year, completing its payment gate without a Shopify payment."
-            : "Mark this household's application as paid without a Shopify payment. The membership becomes active once its background check clears; if there is no application yet, one is opened for the family to complete."}
+          Mark this household&apos;s application as paid for {pendingGrantYear?.label} without a Shopify payment. The membership becomes active once its background check clears; if there is no application yet, one is opened for the family to complete.
         </Text>
         <Textarea
           value={grantReason}

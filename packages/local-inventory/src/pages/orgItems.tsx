@@ -1,14 +1,16 @@
 "use client";
 import { useState } from "react";
 import {
-  ActionIcon, Badge, Button, Group, Modal, NumberInput, Pagination, Select, Table, Tabs, Text, TextInput, Title, Tooltip,
+  ActionIcon, Box, Button, Group, Modal, NumberInput, Pagination, Select, Table, Text, TextInput, Title, Tooltip,
 } from "@mantine/core";
 import { useDebouncedValue } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { IconChevronDown, IconChevronUp, IconEdit, IconPlus, IconSelector, IconTrash } from "@tabler/icons-react";
 import { formatGtinDisplay } from "../lib/gtin";
-import { api, errorMessage, lastPage, PAGE_SIZE, useCanManage, useCanSeeReceiving, useCatalogNames, useLoad } from "../components/api";
-import LoadError from "../components/LoadError";
+import {
+  api, CatalogNamesUnavailable, errorMessage, lastPage, notifyNavCounts, PAGE_SIZE, useCanManage, useCatalogNames, useLoad, withProvisionalNames, type ProvisionalName,
+} from "../components/api";
+import { CatalogPicker, LoadError, useSetUrlFilters, useUrlChoice, useUrlPage } from "@checkin/component-ui";
 
 interface LocationRef { id: number; name: string }
 interface OrgItemRow {
@@ -21,37 +23,30 @@ interface OrgItemRow {
   location: LocationRef | null;
   backstockLocation: LocationRef | null;
 }
-interface LogRow {
-  id: number;
-  changedAt: string;
-  changeType: string;
-  gtin13: string;
-  fieldChanged: string;
-  valueBefore: string | null;
-  valueAfter: string | null;
-}
-interface ItemForm {
-  gtin13: string;
-  /** The on-hand count when the form was loaded; a changed count is checked against it. */
-  loadedQuantity: number;
-  existingQuantity: number;
-  desiredQuantity: number;
-  locationId: string | null;
-  backstockLocationId: string | null;
-}
-
-const FIELD_LABELS: Record<string, string> = {
-  existingQuantity: "Existing Quantity",
-  desiredQuantity: "Desired Quantity",
-  locationId: "Location",
-  backstockLocationId: "Backstock Location",
-};
+interface OrgItemsBag { OrgItem: OrgItemRow[]; InventoryProvisionalItem: ProvisionalName[] }
 
 const toId = (v: string | null) => (v ? Number(v) : null);
 
+/** A row's editable values, in the form's types. */
+const editableValues = (item: OrgItemRow | null) => ({
+  existingQuantity: item?.existingQuantity ?? 0,
+  desiredQuantity: item?.desiredQuantity ?? 0,
+  locationId: item?.locationId ? String(item.locationId) : null,
+  backstockLocationId: item?.backstockLocationId ? String(item.backstockLocationId) : null,
+});
+type EditableValues = ReturnType<typeof editableValues>;
+
+interface ItemForm extends EditableValues {
+  gtin13: string;
+  /** The values when the form was loaded; a save sends only what differs, checked against these. */
+  loaded: EditableValues;
+}
+
 /** The columns the org-items route can order by. */
-type SortCol = "gtin13" | "location" | "backstock";
-type SortDir = "asc" | "desc";
+const SORT_COLS = ["gtin13", "location", "backstock"] as const;
+type SortCol = (typeof SORT_COLS)[number];
+const SORT_DIRS = ["asc", "desc"] as const;
+type SortDir = (typeof SORT_DIRS)[number];
 const TH_SORT_STYLE = { cursor: "pointer", userSelect: "none" } as const;
 
 function SortHeader({ col, label, sortBy, sortDir, onSort }: {
@@ -72,17 +67,20 @@ function SortHeader({ col, label, sortBy, sortDir, onSort }: {
 
 function ItemsTable({ unlocated }: { unlocated: boolean }) {
   const canManage = useCanManage();
-  const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
-  const [sortBy, setSortBy] = useState<SortCol>("gtin13");
-  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [sortBy] = useUrlChoice("sortBy", SORT_COLS, "gtin13");
+  const [sortDir] = useUrlChoice("sortDir", SORT_DIRS, "asc");
+  const setFilters = useSetUrlFilters();
   const [q] = useDebouncedValue(search.trim(), 300);
   const filter = new URLSearchParams({ ...(q ? { q } : {}), ...(unlocated ? { unlocated: "true" } : {}) });
   const order = new URLSearchParams({ sortBy, sortDir });
-  const rows = useLoad<OrgItemRow[]>(`/org-items?${filter}&${order}&page=${page}&limit=${PAGE_SIZE}`);
-  const count = useLoad<{ total: number }>(`/org-items/count?${filter}`);
+  const count = useLoad<{ total: number }>(`/org-items/count?${filter}`, { keepPrevious: true });
+  const [page, setPage] = useUrlPage(count.data ? lastPage(count.data.total) : null);
+  const rows = useLoad<OrgItemsBag>(`/org-items?${filter}&${order}&page=${page}&limit=${PAGE_SIZE}`, { keepPrevious: true });
   const locations = useLoad<LocationRef[]>("/locations");
-  const names = useCatalogNames((rows.data ?? []).map((r) => r.gtin13));
+  const items = rows.data?.OrgItem ?? null;
+  const catalogNames = useCatalogNames((items ?? []).map((r) => r.gtin13));
+  const names = withProvisionalNames(catalogNames, rows.data?.InventoryProvisionalItem);
 
   const [form, setForm] = useState<ItemForm | null>(null);
   const [isNew, setIsNew] = useState(false);
@@ -93,59 +91,74 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
   const reload = () => { rows.reload(); count.reload(); };
 
   function toggleSort(col: SortCol) {
-    if (sortBy === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else { setSortBy(col); setSortDir("asc"); }
-    setPage(1);
+    const dir = sortBy === col && sortDir === "asc" ? "desc" : "asc";
+    setFilters({ sortBy: col === "gtin13" ? null : col, sortDir: dir === "asc" ? null : dir });
   }
   const sortProps = { sortBy, sortDir, onSort: toggleSort };
 
   function openEdit(item: OrgItemRow | null) {
     setIsNew(item === null);
-    setForm({
-      gtin13: item?.gtin13 ?? "",
-      loadedQuantity: item?.existingQuantity ?? 0,
-      existingQuantity: item?.existingQuantity ?? 0,
-      desiredQuantity: item?.desiredQuantity ?? 0,
-      locationId: item?.locationId ? String(item.locationId) : null,
-      backstockLocationId: item?.backstockLocationId ? String(item.backstockLocationId) : null,
-    });
+    const loaded = editableValues(item);
+    setForm({ gtin13: item?.gtin13 ?? "", loaded, ...loaded });
   }
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
     if (!form) return;
     setSaving(true);
-    const body = {
-      desiredQuantity: form.desiredQuantity,
-      locationId: toId(form.locationId),
-      backstockLocationId: toId(form.backstockLocationId),
+    const { loaded } = form;
+    const changes = {
+      ...(form.existingQuantity !== loaded.existingQuantity && { existingQuantity: form.existingQuantity, expectedQuantity: loaded.existingQuantity }),
+      ...(form.desiredQuantity !== loaded.desiredQuantity && { desiredQuantity: form.desiredQuantity, expectedDesiredQuantity: loaded.desiredQuantity }),
+      ...(form.locationId !== loaded.locationId && { locationId: toId(form.locationId), expectedLocationId: toId(loaded.locationId) }),
+      ...(form.backstockLocationId !== loaded.backstockLocationId && {
+        backstockLocationId: toId(form.backstockLocationId),
+        expectedBackstockLocationId: toId(loaded.backstockLocationId),
+      }),
     };
-    const count = form.existingQuantity === form.loadedQuantity
-      ? {}
-      : { existingQuantity: form.existingQuantity, expectedQuantity: form.loadedQuantity };
     try {
       await (isNew
         ? api("/org-items", {
           method: "POST",
-          body: JSON.stringify({ gtin13: form.gtin13.replace(/\D/g, ""), existingQuantity: form.existingQuantity, ...body }),
+          body: JSON.stringify({
+            gtin13: form.gtin13,
+            existingQuantity: form.existingQuantity,
+            desiredQuantity: form.desiredQuantity,
+            locationId: toId(form.locationId),
+            backstockLocationId: toId(form.backstockLocationId),
+          }),
         })
-        : api(`/org-items/${form.gtin13}`, { method: "PUT", body: JSON.stringify({ ...body, ...count }) }));
+        : api(`/org-items/${form.gtin13}`, { method: "PUT", body: JSON.stringify(changes) }));
+      notifyNavCounts();
       notifications.show({ message: isNew ? "Item added" : "Item updated", color: "green" });
       setForm(null);
       reload();
     } catch (err) {
-      notifications.show({ message: errorMessage(err), color: "red" });
+      notifications.show({ message: errorMessage(err), color: "red", autoClose: false });
       if (!isNew) await reloadForm(form.gtin13);
     } finally {
       setSaving(false);
     }
   }
 
-  /** Refresh the open form's on-hand count from the server, keeping the manager's other edits. */
+  /** Show what moved on the server in the open form and check against it, keeping the manager's other edits. */
   async function reloadForm(gtin13: string) {
     reload();
-    const fresh = await api<OrgItemRow>(`/org-items/${gtin13}`).catch(() => null);
-    if (fresh) setForm((f) => (f ? { ...f, loadedQuantity: fresh.existingQuantity, existingQuantity: fresh.existingQuantity } : f));
+    const row = await api<{ OrgItem: OrgItemRow }>(`/org-items/${gtin13}`).then((bag) => bag.OrgItem, () => null);
+    if (!row) return;
+    const fresh = editableValues(row);
+    setForm((f) => {
+      if (!f) return f;
+      const latest = <K extends keyof EditableValues>(field: K) => (fresh[field] !== f.loaded[field] ? fresh[field] : f[field]);
+      return {
+        ...f,
+        loaded: fresh,
+        existingQuantity: latest("existingQuantity"),
+        desiredQuantity: latest("desiredQuantity"),
+        locationId: latest("locationId"),
+        backstockLocationId: latest("backstockLocationId"),
+      };
+    });
   }
 
   async function remove() {
@@ -153,11 +166,12 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
     setSaving(true);
     try {
       await api(`/org-items/${removeTarget.gtin13}`, { method: "DELETE" });
+      notifyNavCounts();
       notifications.show({ message: "Item removed from organization inventory", color: "green" });
       setRemoveTarget(null);
       reload();
     } catch (err) {
-      notifications.show({ message: errorMessage(err), color: "red" });
+      notifications.show({ message: errorMessage(err), color: "red", autoClose: false });
     } finally {
       setSaving(false);
     }
@@ -170,9 +184,9 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
     <>
       <Group justify="space-between" mb="md">
         <TextInput
-          placeholder="Search by part number or location…"
+          placeholder="Search by name, Part ID or location…"
           value={search}
-          onChange={(e) => { setSearch(e.currentTarget.value); setPage(1); }}
+          onChange={(e) => { setSearch(e.currentTarget.value); if (page > 1) setFilters({}); }}
           maw={400}
           style={{ flex: 1 }}
         />
@@ -181,11 +195,12 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
         )}
       </Group>
       {rows.error && <LoadError what="inventory" message={rows.error} onRetry={reload} />}
+      <CatalogNamesUnavailable lookup={catalogNames} />
       <Table striped highlightOnHover withTableBorder>
         <Table.Thead>
           <Table.Tr>
             <Table.Th>Name</Table.Th>
-            <SortHeader col="gtin13" label="Part No." {...sortProps} />
+            <SortHeader col="gtin13" label="Part ID" {...sortProps} />
             <Table.Th>Have</Table.Th>
             <Table.Th>Desired</Table.Th>
             <SortHeader col="location" label="Location" {...sortProps} />
@@ -194,11 +209,11 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
-          {rows.data === null ? (
+          {items === null ? (
             <Table.Tr><Table.Td colSpan={7}><Text c="dimmed">Loading…</Text></Table.Td></Table.Tr>
-          ) : rows.data.length === 0 ? (
+          ) : items.length === 0 ? (
             <Table.Tr><Table.Td colSpan={7}><Text c="dimmed">No items found</Text></Table.Td></Table.Tr>
-          ) : rows.data.map((item) => (
+          ) : items.map((item) => (
             <Table.Tr key={item.id}>
               <Table.Td>{label(item.gtin13)}</Table.Td>
               <Table.Td ff="monospace">{formatGtinDisplay(item.gtin13)}</Table.Td>
@@ -236,7 +251,7 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
         {form && (
           <form onSubmit={save}>
             {isNew && (
-              <TextInput label="GTIN-13" required value={form.gtin13} onChange={(e) => setForm({ ...form, gtin13: e.currentTarget.value })} mb="sm" />
+              <Box mb="sm"><CatalogPicker label="Part" value={form.gtin13 || null} onChange={(v) => setForm({ ...form, gtin13: v ?? "" })} /></Box>
             )}
             <NumberInput label="Have (existing quantity)" value={form.existingQuantity} onChange={(v) => setForm({ ...form, existingQuantity: Number(v) || 0 })} min={0} allowDecimal={false} mb="sm" />
             <NumberInput label="Desired quantity" value={form.desiredQuantity} onChange={(v) => setForm({ ...form, desiredQuantity: Number(v) || 0 })} min={0} allowDecimal={false} mb="sm" />
@@ -244,7 +259,7 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
             <Select label="Backstock location" data={locationOptions} value={form.backstockLocationId} onChange={(v) => setForm({ ...form, backstockLocationId: v })} clearable mb="md" />
             <Group justify="flex-end">
               <Button variant="default" onClick={() => setForm(null)}>Cancel</Button>
-              <Button type="submit" loading={saving}>Save</Button>
+              <Button type="submit" loading={saving} disabled={isNew && !form.gtin13}>Save</Button>
             </Group>
           </form>
         )}
@@ -263,57 +278,22 @@ function ItemsTable({ unlocated }: { unlocated: boolean }) {
   );
 }
 
-function InventoryLog() {
-  const [page, setPage] = useState(1);
-  const rows = useLoad<LogRow[]>(`/inventory-log?page=${page}&limit=${PAGE_SIZE}`);
-  const count = useLoad<{ total: number }>("/inventory-log/count");
-  if (rows.error) return <LoadError what="the inventory log" message={rows.error} onRetry={rows.reload} />;
-  if (rows.data === null) return <Text c="dimmed">Loading…</Text>;
-  if (rows.data.length === 0) return <Text c="dimmed">No log entries yet.</Text>;
+/** /inventory/org-items — on-hand stock by location. */
+export default function OrgItemsPage() {
   return (
     <>
-      <Table striped highlightOnHover withTableBorder>
-        <Table.Thead>
-          <Table.Tr>
-            <Table.Th>When</Table.Th><Table.Th>Type</Table.Th><Table.Th>Part No.</Table.Th>
-            <Table.Th>Field</Table.Th><Table.Th>Before</Table.Th><Table.Th>After</Table.Th>
-          </Table.Tr>
-        </Table.Thead>
-        <Table.Tbody>
-          {rows.data.map((entry) => (
-            <Table.Tr key={entry.id}>
-              <Table.Td>{new Date(entry.changedAt).toLocaleString()}</Table.Td>
-              <Table.Td><Badge color={entry.changeType === "manual" ? "gray" : "blue"} variant="light">{entry.changeType}</Badge></Table.Td>
-              <Table.Td ff="monospace">{formatGtinDisplay(entry.gtin13)}</Table.Td>
-              <Table.Td>{FIELD_LABELS[entry.fieldChanged] ?? entry.fieldChanged}</Table.Td>
-              <Table.Td>{entry.valueBefore ?? "—"}</Table.Td>
-              <Table.Td>{entry.valueAfter ?? "—"}</Table.Td>
-            </Table.Tr>
-          ))}
-        </Table.Tbody>
-      </Table>
-      <Pagination mt="md" value={page} onChange={setPage} total={lastPage(count.data?.total ?? 0)} />
+      <Title order={3} mb="md">Organization Inventory</Title>
+      <ItemsTable unlocated={false} />
     </>
   );
 }
 
-/** /inventory/org-items — on-hand stock by location, items without a location, and the change log. */
-export default function OrgItemsPage() {
-  const canManage = useCanManage();
-  const canSeeLog = useCanSeeReceiving();
+/** /inventory/unlocated — items with no location set. */
+export function UnlocatedItemsPage() {
   return (
     <>
-      <Title order={3} mb="md">Organization Inventory</Title>
-      <Tabs defaultValue="all" keepMounted={false}>
-        <Tabs.List mb="md">
-          <Tabs.Tab value="all">All Inventory</Tabs.Tab>
-          {canManage && <Tabs.Tab value="attention" color="yellow">Needs a location</Tabs.Tab>}
-          {canSeeLog && <Tabs.Tab value="log">Inventory Log</Tabs.Tab>}
-        </Tabs.List>
-        <Tabs.Panel value="all"><ItemsTable unlocated={false} /></Tabs.Panel>
-        {canManage && <Tabs.Panel value="attention"><ItemsTable unlocated /></Tabs.Panel>}
-        {canSeeLog && <Tabs.Panel value="log"><InventoryLog /></Tabs.Panel>}
-      </Tabs>
+      <Title order={3} mb="md">Needs a location</Title>
+      <ItemsTable unlocated />
     </>
   );
 }

@@ -25,17 +25,42 @@ export type RecognitionStatus =
   | "provisional"
   | "non_inventory";
 
-export type UsageBehavior =
-  | "Single Use"
-  | "Short Life Consumable"
-  | "Long Life Consumable"
-  | "Durable";
+export const USAGE_BEHAVIORS = [
+  "Single Use",
+  "Short Life Consumable",
+  "Long Life Consumable",
+  "Durable",
+] as const;
+export type UsageBehavior = (typeof USAGE_BEHAVIORS)[number];
 
 export { ResolvedInventoryDeltaSchema, ResolvedInventoryDeltaLineItemSchema } from "./resolved-inventory-delta";
 export type { ResolvedInventoryDelta, ResolvedInventoryDeltaLineItem } from "./resolved-inventory-delta";
 
-export { CompletedReceiptSchema, CompletedReceiptLineItemSchema, MAX_LINE_QUANTITY } from "./completed-receipt";
-export type { CompletedReceipt, CompletedReceiptLineItem } from "./completed-receipt";
+export {
+  CompletedReceiptSchema,
+  CompletedReceiptLineItemSchema,
+  CompletedReceiptFinanceReviewSchema,
+  CompletedReceiptSubmitterConfirmationSchema,
+  CURRENCY_CODE,
+  DEFAULT_CURRENCY,
+  FINANCIAL_REVIEW_REASONS,
+  MAX_LINE_QUANTITY,
+} from "./completed-receipt";
+export type {
+  CompletedReceipt,
+  CompletedReceiptLineItem,
+  CompletedReceiptFinanceReview,
+  CompletedReceiptSubmitterConfirmation,
+  FinancialReviewReason,
+} from "./completed-receipt";
+
+// X13 — receipt → donations in-kind donor contract
+export { InKindDonorSchema, DONOR_NAME_MAX, DONOR_COMPANY_MAX } from "./in-kind-donor";
+export type { InKindDonor } from "./in-kind-donor";
+
+// Capital send — donations → expense donated-capital lines
+export { DonatedCapitalLineSchema } from "./donated-capital-line";
+export type { DonatedCapitalLine } from "./donated-capital-line";
 
 export {
   RECEIPT_CONTRACT_VERSION,

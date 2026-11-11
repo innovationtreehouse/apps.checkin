@@ -5,7 +5,7 @@
  * Integration tests for POST /api/scan that exercise the REAL check-in /
  * check-out logic in lib/attendance/ against a live database.
  *
- * The pre-existing scanRoute.test.ts mocks processCheckin/processCheckout away,
+ * scanRoute.test.ts mocks processCheckin/processCheckout away,
  * so the facility-open gate, visit creation, the check-in→check-out transition,
  * and the debounce all went untested. These tests close that gap. Authentication
  * is mocked to a kiosk identity so the focus stays on the scan state machine.

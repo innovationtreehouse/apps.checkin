@@ -2,6 +2,8 @@
  * Unsaved edits to a receipt on its detail page, and the writes that save them. Amounts are kept
  * as the dollar strings a person typed; the routes take dollars as numbers.
  */
+import { centsToDecimalString, dollarsToCents } from "@checkin/money";
+import { disagreementText, lineTotalAfterEdit, receiptMath, type ReceiptMath, type StoredLine } from "../lib/lineMath";
 import { MAX_LINE_ITEMS } from "../lib/schemas";
 
 export interface ServerLine {
@@ -32,6 +34,8 @@ export interface DraftLine {
   manufacturer: string;
   quantity: string;
   unitPrice: string;
+  /** The line total as typed; blank, or a saved line's stored total, leaves it to quantity × unit price. */
+  total: string;
   isDelayed: boolean;
 }
 
@@ -64,18 +68,15 @@ export interface SaveOp {
 }
 
 export const EMPTY_DRAFT: Draft = { header: {}, lines: {}, added: [], removed: [] };
-export const EMPTY_LINE: DraftLine = { description: "", partNumber: "", manufacturer: "", quantity: "1", unitPrice: "0.00", isDelayed: false };
+export const EMPTY_LINE: DraftLine = { description: "", partNumber: "", manufacturer: "", quantity: "1", unitPrice: "0.00", total: "", isDelayed: false };
 
-export const toDollars = (cents: number | null | undefined) => ((cents ?? 0) / 100).toFixed(2);
-
-/** Signed dollars for a cents amount, e.g. "-$1.50". */
-export const signedDollars = (cents: number) => `${cents < 0 ? "-" : ""}$${(Math.abs(cents) / 100).toFixed(2)}`;
+export const toDollars = (cents: number | null | undefined) => centsToDecimalString(cents ?? 0);
 
 /** A typed dollar amount in cents; null unless it is a non-negative number. */
 export function parseCents(value: string): number | null {
   const v = value.trim().replace(/^\$/, "");
   if (!/^(\d+\.?\d*|\.\d+)$/.test(v)) return null;
-  return Math.round(parseFloat(v) * 100);
+  return dollarsToCents(v);
 }
 
 /** A typed quantity; null unless it is a positive number. */
@@ -91,18 +92,21 @@ export function lineFromServer(l: ServerLine): DraftLine {
     manufacturer: l.manufacturer ?? "",
     quantity: String(l.quantity),
     unitPrice: toDollars(l.unitPriceCents),
+    total: toDollars(l.totalPriceCents),
     isDelayed: l.isDelayed,
   };
 }
 
 export function headerFromServer(r: ServerReceipt): Header {
   return {
-    retailer: r.retailer ?? "",
-    receiptDate: r.receiptDate ?? "",
+    // Trimmed, so a stored value of only spaces shows as the blank it is and the save asks for it.
+    retailer: (r.retailer ?? "").trim(),
+    receiptDate: (r.receiptDate ?? "").trim(),
     shipping: toDollars(r.shippingCents),
     tax: toDollars(r.taxCents),
     discount: toDollars(r.discountCents),
-    receiptTotal: toDollars(r.receiptTotalCents),
+    // A total OCR could not read stays blank, so the submitter types it rather than keeping $0.00.
+    receiptTotal: r.receiptTotalCents === null ? "" : toDollars(r.receiptTotalCents),
   };
 }
 
@@ -116,19 +120,62 @@ export function draftHeader(r: ServerReceipt, draft: Draft): Header {
   return { ...headerFromServer(r), ...draft.header };
 }
 
-/** Line cost in cents, as the server's math check counts it (quantity × unit price, unrounded). */
-export function lineCents(line: DraftLine): number | null {
-  const quantity = parseQuantity(line.quantity);
-  const unit = parseCents(line.unitPrice);
-  return quantity === null || unit === null ? null : quantity * unit;
+/**
+ * Whether a person typed this line's total: a saved line's draft edits hold one, or an added line
+ * has one. A blank field leaves the total to the stored or calculated one.
+ */
+export function totalTyped(total: string | undefined): boolean {
+  return Boolean(total?.trim());
 }
 
-/** Lines + shipping + tax − discount, in cents, the sum the receipt total must equal; null while any amount is unreadable. */
-export function calculatedCents(lines: DraftLine[], header: Header): number | null {
-  const parts = [...lines.map(lineCents), parseCents(header.shipping), parseCents(header.tax)];
-  const discount = parseCents(header.discount);
-  if (discount === null || parts.some((p) => p === null)) return null;
-  return (parts as number[]).reduce((a, b) => a + b, 0) - discount;
+/** A draft line as the server would store it; null while its quantity, unit price or typed total is unreadable. */
+function storedLine(line: DraftLine, typed: boolean, saved?: ServerLine): StoredLine | null {
+  const quantity = parseQuantity(line.quantity);
+  const unitPriceCents = parseCents(line.unitPrice);
+  if (quantity === null || unitPriceCents === null) return null;
+  const after = { quantity, unitPriceCents };
+  if (typed) {
+    const typed = parseCents(line.total);
+    return typed === null ? null : { ...after, totalPriceCents: typed };
+  }
+  return { ...after, totalPriceCents: saved ? lineTotalAfterEdit(saved, after) : Math.round(quantity * unitPriceCents) };
+}
+
+export interface Balance {
+  /** Each line's total as the server would store it, kept lines then added ones. */
+  lineTotalsCents: (number | null)[];
+  subtotalCents: number | null;
+  /** Lines + shipping + tax − discount. */
+  calculatedCents: number | null;
+  /** Calculated minus the receipt total. */
+  differenceCents: number | null;
+  /** The server's math check; null while any amount is unreadable. */
+  math: ReceiptMath | null;
+  /** Each line whose total no rounding of quantity × unit price explains, as a sentence. */
+  disagreements: string[];
+}
+
+const sumOrNull = (values: (number | null)[]) => (values.some((v) => v === null) ? null : (values as number[]).reduce((a, b) => a + b, 0));
+
+/** The receipt's figures as the draft would save them. */
+export function draftBalance(r: ServerReceipt, draft: Draft): Balance {
+  const kept = r.lineItems.filter((l) => !draft.removed.includes(l.id)).map((l) => storedLine({ ...lineFromServer(l), ...draft.lines[l.id] }, totalTyped(draft.lines[l.id]?.total), l));
+  const lines = [...kept, ...draft.added.map((a) => storedLine(a, totalTyped(a.total)))];
+  const header = draftHeader(r, draft);
+  const [shipping, tax, discount, total] = [header.shipping, header.tax, header.discount, header.receiptTotal].map(parseCents);
+  const lineTotalsCents = lines.map((l) => l?.totalPriceCents ?? null);
+  const subtotalCents = sumOrNull(lineTotalsCents);
+  const calculatedCents = subtotalCents === null || shipping === null || tax === null || discount === null ? null : subtotalCents + shipping + tax - discount;
+  const differenceCents = calculatedCents === null || total === null ? null : calculatedCents - total;
+  const readable = differenceCents === null ? null : (lines as StoredLine[]);
+  const math = readable && total !== null ? receiptMath(readable, shipping ?? 0, tax ?? 0, discount ?? 0, total) : null;
+  const disagreements = readable && math ? math.disagreeing.map((i) => disagreementText(readable[i], i)) : [];
+  return { lineTotalsCents, subtotalCents, calculatedCents, differenceCents, math, disagreements };
+}
+
+/** The server's math check on the receipt as the draft would save it. */
+export function draftMath(r: ServerReceipt, draft: Draft): ReceiptMath | null {
+  return draftBalance(r, draft).math;
 }
 
 /**
@@ -153,6 +200,7 @@ export function draftProblem(r: ServerReceipt, draft: Draft): string | null {
   if (lines.some((l) => !l.description.trim())) return "Every line needs a description.";
   if (lines.some((l) => parseQuantity(l.quantity) === null)) return "Every quantity must be a positive number.";
   if (lines.some((l) => parseCents(l.unitPrice) === null)) return "Every unit price must be a dollar amount.";
+  if (lines.some((l) => l.total.trim() !== "" && parseCents(l.total) === null)) return "Every line total must be a dollar amount.";
   return null;
 }
 
@@ -168,11 +216,19 @@ function lineBody(line: Partial<DraftLine>, fields: (keyof DraftLine)[]): Record
     const v = line[f];
     if (f === "quantity") body.quantity = Number(v);
     else if (f === "unitPrice") body.unitPrice = dollarsOf(String(v));
+    else if (f === "total") {
+      if (String(v).trim()) body.totalPrice = dollarsOf(String(v));
+    }
     else if (f === "partNumber" || f === "manufacturer") body[f] = String(v).trim() || null;
     else if (f === "description") body.description = String(v).trim();
     else body[f] = v;
   }
   return body;
+}
+
+/** Whether a receipt OCR could not read holds details: a failed reading saves nothing, so a person typed them. */
+export function hasTypedDetails(r: ServerReceipt): boolean {
+  return Boolean(r.retailer || r.receiptDate || r.taxCents || r.shippingCents || r.discountCents) || r.receiptTotalCents !== null || r.lineItems.length > 0;
 }
 
 export function isDirty(r: ServerReceipt, draft: Draft): boolean {
@@ -198,7 +254,11 @@ export function planSave(r: ServerReceipt, draft: Draft): SaveOp[] {
   for (const l of r.lineItems) {
     const edits = draft.lines[l.id];
     if (!edits || draft.removed.includes(l.id)) continue;
-    const fields = changed(lineFromServer(l), edits);
+    const fields: (keyof DraftLine)[] = changed(lineFromServer(l), edits).filter((f) => f !== "total");
+    // A typed total is sent when it differs from the stored one, or when the quantity or unit price
+    // changes, since the server would otherwise recalculate it. A cleared total leaves it to the server.
+    const totalChanged = edits.total !== toDollars(l.totalPriceCents) || fields.includes("quantity") || fields.includes("unitPrice");
+    if (totalTyped(edits.total) && totalChanged) fields.push("total");
     if (fields.length > 0) ops.push({ path: `/line-items/${l.id}`, method: "PATCH", body: lineBody(edits, fields) });
   }
   for (const a of draft.added) {

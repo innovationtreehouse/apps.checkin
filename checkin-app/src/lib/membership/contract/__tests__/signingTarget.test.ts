@@ -47,8 +47,8 @@ describe("signingMockActive", () => {
     });
 
     it("works under a production BUILD on a dev instance (cloud-dev runs the prod image)", async () => {
-        // Regression guard: an earlier NODE_ENV fuse would have made the radio
-        // inert on cloud-dev, whose container sets NODE_ENV=production (see #951).
+        // A NODE_ENV fuse would make the radio inert on cloud-dev,
+        // whose container sets NODE_ENV=production.
         setEnv({ CHECKIN_ENV: "dev", NODE_ENV: "production", ...ALL_SECRETS });
         findUnique.mockResolvedValue({ devSigningTarget: "debug" });
         expect(await signingMockActive()).toBe(true);

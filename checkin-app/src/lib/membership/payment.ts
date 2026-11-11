@@ -1,6 +1,9 @@
 import prisma from "@/lib/prisma";
+import { ServiceError } from "@checkin/component-kit";
+import { PAYMENT_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { emailHouseholdLeads } from "@/lib/emailRecipients";
+import { logBackendError, logger } from "@/lib/logger";
 import { notifyBoardPaidReject } from "@/lib/membership/boardAlerts";
 import { openPersonBgForNewMember } from "@/lib/membership/personBgTriggers";
 import { openPersonAgreementForNewMember } from "@/lib/membership/personAgreementTriggers";
@@ -9,7 +12,13 @@ import { systemActor, personOrSystemActor } from "@/lib/auditActor";
 import { fromWhere } from "@/lib/membership/lifecycle";
 import { setHouseholdStatus, raiseDeniedHouseholdActivity, type HouseholdStatus } from "@/lib/membership/householdStatus";
 import { isOrderReversed } from "@/lib/finance/reconcile/exceptions";
+import { recordUnreportedReversal } from "@/lib/finance/reconcile/liveOrder";
+import { liveMembershipYear } from "@/lib/membership/renewal";
+import { householdHasDisputedCheck } from "@/lib/membership/checkStanding";
 import type { Prisma } from "@/generated/prisma/client";
+
+// Loaded on use: settleHouseholdBg imports review.ts, and a static import closes that cycle at load.
+const settleModule = () => import("@/lib/membership/settleHouseholdBg");
 
 /**
  * Payment phase (PENDING_PAYMENT -> ACTIVE).
@@ -25,9 +34,9 @@ import type { Prisma } from "@/generated/prisma/client";
  */
 
 
-export class PaymentError extends Error {
+export class PaymentError extends ServiceError {
     constructor(public readonly code: "not_found" | "wrong_phase" | "forbidden", message: string) {
-        super(message);
+        super(PAYMENT_ERROR_STATUS[code], message, code);
         this.name = "PaymentError";
     }
 }
@@ -75,12 +84,7 @@ export async function ensurePaymentLink(processId: number): Promise<{ amountCent
     const storeDomain = config.shopifyStoreDomain();
     if (!variantId || !storeDomain) return { amountCents, checkoutUrl: null };
 
-    // TODO(#278): the code is appended to a public cart link, so entitlement is
-    // currently honor-system — nothing stops a non-volunteer from reusing it, and
-    // the orders/paid webhook does not validate it (see
-    // api/webhooks/shopify/route.ts). Long-term: gate the coupon to an
-    // auto-managed Shopify customer segment of volunteer households so Shopify
-    // enforces who can redeem it.
+    // Anyone holding this code can redeem it; reconciliation flags unentitled use afterwards.
     const discountCode = membership.isVolunteerFamily ? settings?.volunteerFamilyDiscountCode ?? null : null;
     return { amountCents, checkoutUrl: buildMembershipCheckoutUrl(storeDomain, variantId, processId, discountCode) };
 }
@@ -123,7 +127,9 @@ export type ActivateOutcome =
  * still conditional on the status it read.
  *
  * - A board certify (via "manual") must find the process awaiting payment under
- *   the lock; otherwise it throws.
+ *   the lock; otherwise it throws. With `requireRequested` it must also find the
+ *   payment-plan request still open, and closes it in the write that settles, so
+ *   a racing denial and this approval cannot both take effect.
  * - A refunded, cancelled or disputed order records nothing (`refunded`); the board is told.
  * - A DENIED household changes nothing; the board is told.
  * - BLOCKED records a real membership payment (stays BLOCKED, refund needed).
@@ -131,11 +137,15 @@ export type ActivateOutcome =
  *   so a later clearance can never activate an unpaid application.
  * - Any other paid order — duplicate, after certify, after close, before payment
  *   was due — records nothing and returns `nothing_due`.
+ *
+ * Recording a payment records the membership year it bought, on BLOCKED too: a
+ * board reset and clearance can still activate that row.
  */
 async function settle(
     processId: number,
-    opts: { via: "payment" | "manual"; actorId?: number; shopifyOrderId?: string; hasMembershipItem?: boolean; reason?: string },
-): Promise<{ outcome: ActivateOutcome; householdId?: number }> {
+    opts: { via: "payment" | "manual"; actorId?: number; shopifyOrderId?: string; hasMembershipItem?: boolean; reason?: string; appliesToYear?: number | null; requireRequested?: boolean },
+): Promise<{ outcome: ActivateOutcome; householdId?: number; disputed?: boolean }> {
+    if (opts.shopifyOrderId) await recordUnreportedReversal(opts.shopifyOrderId);
     const result = await prisma.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
         const process = await tx.orgMembershipProcess.findUnique({ where: { id: processId } });
@@ -147,7 +157,11 @@ async function settle(
         if (!membership) throw new PaymentError("not_found", "Membership not found.");
 
         if (opts.via === "manual") {
-            if (process.status !== "PENDING_PAYMENT" || process.paidAt) {
+            if (opts.requireRequested && !(process.isPaymentPlanRequested && process.status === "PENDING_PAYMENT")) {
+                throw new PaymentError("wrong_phase", "No pending payment-plan request");
+            }
+            if (process.paidAt) throw new PaymentError("wrong_phase", "This application is already paid.");
+            if (process.status !== "PENDING_PAYMENT") {
                 throw new PaymentError("wrong_phase", "This application is not awaiting payment.");
             }
             if (membership.status === "DENIED") {
@@ -170,6 +184,8 @@ async function settle(
         };
         const actor = personOrSystemActor(opts.actorId, "webhook:shopify-order");
         const missingItem = opts.via === "payment" && opts.hasMembershipItem === false;
+        const closesRequest = opts.via === "manual" && opts.requireRequested === true;
+        const approvalAudit = closesRequest ? { paymentPlanApproved: true, isPaymentPlanRequested: false } : {};
 
         if (process.status === "BLOCKED") {
             // Checked before stamping paidAt: a board reset of a paid BLOCKED row
@@ -181,7 +197,7 @@ async function settle(
             // Stays BLOCKED (stageEnteredAt untouched); refund needed.
             const { count } = await tx.orgMembershipProcess.updateMany({
                 where: { id: processId, ...fromWhere("BLOCKED"), paidAt: null },
-                data: { paidAt: now, ...payMeta },
+                data: { paidAt: now, appliesToYear: opts.appliesToYear ?? null, ...payMeta },
             });
             if (count === 0) return { outcome: "nothing_due" as const };
             await tx.auditLog.create({
@@ -208,7 +224,10 @@ async function settle(
             return { outcome: "no_item" as const };
         }
 
-        const activating = !!process.bgClearedAt;
+        // Every adult's standing is re-read under the locks: a rejection since the check
+        // was stamped holds the payment unactivated, and settle then blocks it.
+        const disputed = !!process.bgClearedAt && (await householdHasDisputedCheck(tx, membership.householdId));
+        const activating = !!process.bgClearedAt && !disputed;
         if (activating) {
             const applied = await setHouseholdStatus(tx, process.orgMembershipId!, {
                 from: ["NONE", "REVOKED", "ACTIVE"],
@@ -219,8 +238,9 @@ async function settle(
             if (!applied) return { outcome: "denied" as const, householdId: membership.householdId };
         }
         const { count } = await tx.orgMembershipProcess.updateMany({
-            where: { id: processId, ...fromWhere("PENDING_PAYMENT"), paidAt: null },
-            data: { paidAt: now, stageEnteredAt: now, ...payMeta, status: activating ? "ACTIVE" : "PENDING_BG_CLEARANCE" },
+            where: { id: processId, ...fromWhere("PENDING_PAYMENT"), paidAt: null, ...(closesRequest ? { isPaymentPlanRequested: true } : {}) },
+            // Leaving PENDING_PAYMENT ends any payment-plan request, approved or not.
+            data: { paidAt: now, stageEnteredAt: now, appliesToYear: opts.appliesToYear ?? null, ...payMeta, status: activating ? "ACTIVE" : "PENDING_BG_CLEARANCE", isPaymentPlanRequested: false, ...(disputed ? { bgClearedAt: null } : {}) },
         });
         // Under the row lock the status can't have moved; if it did, roll the household write back.
         if (count === 0) throw new PaymentError("wrong_phase", "This application is not awaiting payment.");
@@ -232,23 +252,26 @@ async function settle(
                 affectedEntityId: processId,
                 oldData: { status: process.status },
                 newData: activating
-                    ? { status: "ACTIVE", via: opts.via, ...(certificationNote ? { certificationNote } : {}) }
-                    : { status: "PENDING_BG_CLEARANCE", via: opts.via, paid: true, ...(certificationNote ? { certificationNote } : {}) },
+                    ? { status: "ACTIVE", via: opts.via, ...(certificationNote ? { certificationNote } : {}), ...approvalAudit }
+                    : { status: "PENDING_BG_CLEARANCE", via: opts.via, paid: true, ...(disputed ? { bgCleared: false, reason: "a person in the household has a disputed background check" } : {}), ...(certificationNote ? { certificationNote } : {}), ...approvalAudit },
             },
         });
         return activating
             ? { outcome: "active" as const, householdId: membership.householdId, isInitial: process.kind === "INITIAL" }
-            : { outcome: "held" as const };
+            : { outcome: "held" as const, ...(disputed ? { householdId: membership.householdId, disputed } : {}) };
     });
 
     // Side effects outside the transaction: a slow/failed send must not roll back
     // the write, and only the call that actually recorded the change emits one.
     if (result.outcome === "active" && "isInitial" in result) {
-        await sendCongrats(result.householdId, result.isInitial);
+        const { householdId, isInitial } = result;
+        await afterActivationCommitted("congrats email", processId, householdId, () => sendCongrats(householdId, isInitial));
         // A brand-new (INITIAL) member just activated: open PERSON_BG for the
         // household's check-obligated adults, and the per-adult agreements.
-        if (result.isInitial) await openPersonBgForNewMember(result.householdId, new Date());
-        if (result.isInitial) await openPersonAgreementForNewMember(result.householdId, new Date());
+        if (isInitial) {
+            await afterActivationCommitted("person background-check trigger", processId, householdId, () => openPersonBgForNewMember(householdId, new Date()));
+            await afterActivationCommitted("person agreement trigger", processId, householdId, () => openPersonAgreementForNewMember(householdId, new Date()));
+        }
     }
     if (result.outcome === "denied") {
         await raiseDeniedHouseholdActivity({
@@ -258,7 +281,26 @@ async function settle(
         });
     }
     if (result.outcome === "paid_while_blocked") await notifyBoardPaidReject(processId);
+    if ("disputed" in result && result.disputed && result.householdId !== undefined) {
+        const { householdId } = result;
+        await afterActivationCommitted("background-check settle", processId, householdId, async () => (await settleModule()).settleHouseholdBg(householdId));
+    }
     return result;
+}
+
+/**
+ * Runs a step whose failure must not change what the settlement reports: the payment
+ * has committed, and a retry finds it already recorded, so a throw would only report a
+ * saved payment as failed.
+ */
+async function afterActivationCommitted(step: string, processId: number, householdId: number, run: () => Promise<unknown>): Promise<void> {
+    try {
+        await run();
+    } catch (error) {
+        const context = { processId, householdId };
+        logger.error(`activation ${step} failed:`, context, error);
+        await logBackendError(error, `activation ${step}`, context);
+    }
 }
 
 async function auditNoItem(tx: Prisma.TransactionClient, processId: number, status: "BLOCKED" | "PENDING_PAYMENT", shopifyOrderId?: string) {
@@ -277,7 +319,7 @@ async function auditNoItem(tx: Prisma.TransactionClient, processId: number, stat
 /** Record a payment against a process (see settle). Returns the process row. */
 export async function activate(
     processId: number,
-    opts: { via: "payment" | "manual"; actorId?: number; shopifyOrderId?: string; hasMembershipItem?: boolean; reason?: string },
+    opts: { via: "payment" | "manual"; actorId?: number; shopifyOrderId?: string; hasMembershipItem?: boolean; reason?: string; appliesToYear?: number | null; requireRequested?: boolean },
 ) {
     await settle(processId, opts);
     return prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
@@ -287,9 +329,10 @@ export async function activate(
  * Board override: certify a payment plan and activate without a Shopify payment.
  * Rejects (403) an actor who is not a Board member (a sysadmin is not enough) and
  * the actor's own household; activate() rejects (409) under the row lock unless
- * the process is awaiting payment.
+ * the process is awaiting payment. Records `year`, or with none the live year.
+ * `requireRequested` makes this the decision on an open payment-plan request (see settle).
  */
-export async function certifyPaymentPlan(processId: number, actorId: number, opts?: { reason?: string }) {
+export async function certifyPaymentPlan(processId: number, actorId: number, opts?: { reason?: string; year?: number; requireRequested?: boolean }) {
     // Only the Board certifies a payment (owner ruling 10-15). Checked here so every
     // caller (grant, renewal grant, payment-plan approve, certify-payment) is covered.
     const actor = await prisma.person.findUnique({ where: { id: actorId }, select: { isBoardMember: true } });
@@ -302,12 +345,17 @@ export async function certifyPaymentPlan(processId: number, actorId: number, opt
     if (await hasHouseholdConflict(prisma, actorId, process.orgMembership?.householdId)) {
         throw new PaymentError("forbidden", "You cannot certify your own household's membership — someone outside your household must.");
     }
-    return activate(processId, { via: "manual", actorId, reason: opts?.reason });
+    const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
+    const appliesToYear = opts?.year ?? liveMembershipYear(settings?.orgMembershipYearBoundary, new Date());
+    return activate(processId, { via: "manual", actorId, reason: opts?.reason, appliesToYear, requireRequested: opts?.requireRequested });
 }
 
-/** Shopify path (webhook + reconcile): settle a paid order and say what it did. */
-export async function activateByProcessId(processId: number, shopifyOrderId: string, hasMembershipItem: boolean) {
-    const { outcome } = await settle(processId, { via: "payment", shopifyOrderId, hasMembershipItem });
+/** An order's membership line and the year it buys; the year is null when no boundary is set. */
+export type MembershipLine = { appliesToYear: number | null };
+
+/** Shopify path (webhook + reconcile): settle a paid order and say what it did. A null line means no membership product. */
+export async function activateByProcessId(processId: number, shopifyOrderId: string, line: MembershipLine | null) {
+    const { outcome } = await settle(processId, { via: "payment", shopifyOrderId, hasMembershipItem: line !== null, appliesToYear: line?.appliesToYear });
     return { outcome, process: await prisma.orgMembershipProcess.findUnique({ where: { id: processId } }) };
 }
 
@@ -317,17 +365,10 @@ export async function activateByProcessId(processId: number, shopifyOrderId: str
  * years reads as if we don't know them.
  */
 export async function sendCongrats(householdId: number, isInitial: boolean) {
-    const base = config.baseUrl();
-    const subject = isInitial
-        ? "Welcome to the Treehouse — your membership is active!"
-        : "Thank you for renewing — your Treehouse membership is active!";
-    const lead = isInitial
-        ? "Congratulations! Your household membership is now active. Welcome to the Innovation Treehouse community."
-        : "Thank you for renewing! Your household membership is active again — we're glad to have your family back at the Innovation Treehouse.";
     await emailHouseholdLeads(
         householdId,
-        subject,
-        `<p>${lead}</p><p><a href="${base}">Visit your dashboard</a></p>`,
+        isInitial ? "membership.welcome" : "membership.renewed",
+        { actionLink: config.baseUrl() },
         "Congrats email failed:",
     );
 }

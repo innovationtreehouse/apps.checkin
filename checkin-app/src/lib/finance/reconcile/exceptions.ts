@@ -31,44 +31,62 @@ interface ExceptionRef {
     programId?: number | null;
     personId?: number | null;
     severity?: Severity;
+    /** What the raiser sees on the order now; a resolved row reopens when it differs from what was stored. */
+    evidence?: string;
+    /** A person asked for this row to be tracked: reopen it even with no new evidence. */
+    reopen?: boolean;
 }
 
+/** The board escalation a recorded exception owes, sent once its row has committed. */
+export type PaymentExceptionNotice = { kind: PaymentExceptionKind; severity: Severity; exceptionId: number };
+
 /**
- * Upsert a PaymentException, idempotent across daily runs. One open row per
- * (kind, order, person); a resolved row that re-detects reopens (the problem came back). A
- * newly-opened or reopened row escalates to the board (CRITICAL emails immediately;
- * WARN is surfaced on the dashboard + red-dot only — see notifyBoardPaymentException).
+ * Upsert a PaymentException, idempotent across daily runs. One row per (kind, order,
+ * person). A resolved row on an order reopens only when its stored evidence changes,
+ * so seeing the same condition again leaves the Board's resolution alone. A raise with
+ * no order is itself a new event (a denial, a Board click) and always reopens, as does
+ * a ref with `reopen`.
+ * Returns the notice owed by a newly-opened, reopened or newly-critical row. Inside a
+ * transaction, pass an orderless ref: a unique violation would abort the transaction.
  */
-export async function raisePaymentException(kind: PaymentExceptionKind, ref: ExceptionRef): Promise<void> {
+export async function recordPaymentException(db: DbClient, kind: PaymentExceptionKind, ref: ExceptionRef): Promise<PaymentExceptionNotice | null> {
     const severity: Severity = ref.severity ?? (CRITICAL_KINDS.has(kind) ? "CRITICAL" : "WARN");
     const orderId = ref.shopifyOrderId ?? null;
 
     // Find an existing row for this (kind, order, person). When orderId is null the
     // unique index treats rows as distinct, so fall back to the linked entity.
     const existing = orderId
-        ? await prisma.paymentException.findFirst({ where: { kind, shopifyOrderId: orderId, personId: ref.personId ?? null } })
-        : await prisma.paymentException.findFirst({
+        ? await db.paymentException.findFirst({ where: { kind, shopifyOrderId: orderId, personId: ref.personId ?? null } })
+        : await db.paymentException.findFirst({
               where: { kind, shopifyOrderId: null, processId: ref.processId ?? null, programId: ref.programId ?? null, personId: ref.personId ?? null },
           });
 
     if (existing) {
-        if (existing.status !== "RESOLVED" && severity === "CRITICAL" && existing.severity !== "CRITICAL") {
-            await prisma.paymentException.update({ where: { id: existing.id }, data: { severity } });
-            await notifyBoardPaymentException(kind, severity, existing.id);
-            return;
-        }
+        const evidence = ref.evidence ?? existing.evidence;
         if (existing.status === "RESOLVED") {
-            await prisma.paymentException.update({
-                where: { id: existing.id },
-                data: { status: "OPEN", severity, resolvedAt: null, resolvedById: null, resolutionNote: null, detectedAt: new Date() },
+            const changed = !!ref.evidence && !!existing.evidence && ref.evidence !== existing.evidence;
+            if (orderId && !changed && !ref.reopen) {
+                // ponytail: a row with no stored evidence adopts the first it sees, so a further
+                // refund between its resolution and the next daily pass does not reopen it.
+                if (evidence !== existing.evidence) await db.paymentException.update({ where: { id: existing.id }, data: { evidence } });
+                return null;
+            }
+            // Conditional, so of two concurrent raises only one reopens and notifies.
+            const { count } = await db.paymentException.updateMany({
+                where: { id: existing.id, status: "RESOLVED", evidence: existing.evidence },
+                data: { status: "OPEN", severity, evidence, resolvedAt: null, resolvedById: null, resolutionNote: null, detectedAt: new Date() },
             });
-            await notifyBoardPaymentException(kind, severity, existing.id);
+            return count > 0 ? { kind, severity, exceptionId: existing.id } : null;
         }
-        return; // already tracked and still open/acknowledged — nothing to do.
+        const escalated = severity === "CRITICAL" && existing.severity !== "CRITICAL";
+        if (escalated || evidence !== existing.evidence) {
+            await db.paymentException.update({ where: { id: existing.id }, data: { evidence, ...(escalated ? { severity } : {}) } });
+        }
+        return escalated ? { kind, severity, exceptionId: existing.id } : null;
     }
 
     try {
-        const created = await prisma.paymentException.create({
+        const created = await db.paymentException.create({
             data: {
                 kind,
                 severity,
@@ -76,14 +94,24 @@ export async function raisePaymentException(kind: PaymentExceptionKind, ref: Exc
                 processId: ref.processId ?? null,
                 programId: ref.programId ?? null,
                 personId: ref.personId ?? null,
+                evidence: ref.evidence ?? null,
             },
         });
-        await notifyBoardPaymentException(kind, severity, created.id);
+        return { kind, severity, exceptionId: created.id };
     } catch (e: unknown) {
         // Unique-index race (two runs, same order) — the other run created it. Safe.
-        if (isPrismaError(e, "P2002")) return;
+        if (isPrismaError(e, "P2002")) return null;
         throw e;
     }
+}
+
+/**
+ * Record a PaymentException and escalate it to the board (CRITICAL emails immediately;
+ * WARN is surfaced on the dashboard + red-dot only — see notifyBoardPaymentException).
+ */
+export async function raisePaymentException(kind: PaymentExceptionKind, ref: ExceptionRef): Promise<void> {
+    const notice = await recordPaymentException(prisma, kind, ref);
+    if (notice) await notifyBoardPaymentException(notice.kind, notice.severity, notice.exceptionId);
 }
 
 /** Problems that mean the order's money went back to the payer. */

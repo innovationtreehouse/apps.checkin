@@ -25,12 +25,15 @@
     "db:generate": "prisma generate",
     "db:deploy": "node --env-file=.env node_modules/.bin/prisma migrate deploy",
     "test": "vitest run",
+    "typecheck": "tsc --noEmit",
     "db:seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
-    "@checkin/donations": "*",
-    "@checkin/money": "*",
     "@checkin/component-kit": "*",
+    "@checkin/component-ui": "*",
+    "@checkin/donations": "*",
+    "@checkin/gtin": "*",
+    "@checkin/money": "*",
     "@checkin/pg-kit": "*",
     "@checkin/quickbooks": "*",
     "@checkin/receipt-types": "*",
@@ -44,6 +47,7 @@
   },
   "devDependencies": {
     "@checkin/pg-test-harness": "*",
+    "@checkin/receipt-contract-fixtures": "*",
     "@types/node": "^22.0.0",
     "@types/pg": "^8.0.0",
     "dotenv": "^17.0.0",

@@ -107,10 +107,10 @@ describe('mintPersonId (integration)', () => {
         expect(after).toBe(before + 1);
     });
 
-    // The review amendment. Without the setval, a minted row raises MAX(id) while
+    // Without the setval, a minted row raises MAX(id) while
     // Person_id_seq stays put, so the very next sequence-minted insert — a test
     // fixture, or any site the guard missed — draws the id just handed out and
-    // dies on the PK. This is the regression adminParticipants.integration hits.
+    // dies on the PK.
     test('7. a sequence-minted insert right after a mint gets minted + 1, not a collision', async () => {
         // Precondition — the state a fixture-heavy suite is actually in: the
         // counter level with the table's high-water mark, and the sequence level

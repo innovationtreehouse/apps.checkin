@@ -1,5 +1,5 @@
 /**
- * Freshness push wiring (review finding F7 — the pull→push inversion).
+ * Freshness push wiring.
  *
  * This function writes its own run freshness into the dedicated monitoring DB so the
  * watchdog can read it there instead of holding a credential to THIS service's database.

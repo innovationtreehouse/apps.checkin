@@ -11,6 +11,7 @@ import { runMatchAudit } from '../matchAudit';
 
 const prismaMock = {
     boardSettings: { findUnique: jest.fn() },
+    membershipYearVariant: { findMany: jest.fn() },
     program: { findMany: jest.fn() },
     orgMembershipProcess: { findMany: jest.fn() },
     programParticipant: { findMany: jest.fn() },
@@ -25,6 +26,7 @@ jest.mock('@/lib/prisma', () => ({
     __esModule: true,
     default: {
         boardSettings: { findUnique: (...a: unknown[]) => prismaMock.boardSettings.findUnique(...a) },
+        membershipYearVariant: { findMany: (...a: unknown[]) => prismaMock.membershipYearVariant.findMany(...a) },
         program: { findMany: (...a: unknown[]) => prismaMock.program.findMany(...a) },
         orgMembershipProcess: { findMany: (...a: unknown[]) => prismaMock.orgMembershipProcess.findMany(...a) },
         programParticipant: { findMany: (...a: unknown[]) => prismaMock.programParticipant.findMany(...a) },
@@ -70,6 +72,7 @@ beforeEach(() => {
     mirrorMock.lineVariantStats.mockResolvedValue({ lines: 10, withVariant: 10 });
     mirrorMock.ordersForVariants.mockResolvedValue([]);
     mirrorMock.orderLegacyIdsPresent.mockResolvedValue(new Set());
+    prismaMock.membershipYearVariant.findMany.mockResolvedValue([]);
     prismaMock.boardSettings.findUnique.mockResolvedValue({
         orgMembershipVariantId: '111',
     });

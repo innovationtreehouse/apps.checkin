@@ -31,6 +31,14 @@ Things every domain takes as true because they are handled outside the app.
 
 - Every Board member is an insider. If an outside Board member ever joins, every
   rule that grants the Board access is reconsidered.
+- Conflicts of interest are checked by household. The app treats a person's
+  household as the practical stand-in for the Ethics Policy's "family". Family
+  outside the household, and business ties, are a deliberate limit: they are not
+  modelled, and people declare them themselves.
+  [Decision — *Policy: Ethics Policy, Art. III §III.2*]
+- Background-check review volume is low enough that a person handles mistakes,
+  through a Board reset, rather than a dedicated app feature. So a mistaken
+  rejection has no withdraw of its own.  [Decision]
 
 ---
 
@@ -169,6 +177,9 @@ however many times it is sent.
 
 - **A retry or catch-up only finishes what is missing.** It never replays what
   already happened.
+
+- **A record whose create may have landed looks for its own entry first,** before
+  anything creates, matches, skips or dismisses it.
 
 - **Where the system cannot tell a repeat from a new event, it holds the event
   for a person.**
@@ -332,6 +343,61 @@ name — that someone would have to edit and redeploy to change. The reason is n
 engineering taste: other organisations may run parts of this, so anything true
 only of us has to be something they can replace. Which also means the goal is not
 reusability in the abstract, and this principle never asks for a plugin system.
+
+---
+
+## The books are finance's
+
+The accounting system is where finance keeps the books, and the app works
+alongside finance there, never over it. These hold wherever the app touches the
+books: expenses, income and donations. Catching up late follows *urgency of
+consistency follows risk*, and no double booking follows *apply once*.
+
+- **The app only adds to the books.** It never pays, voids, edits or deletes
+  anything there. A correction is finance's to make, in the accounting system.
+
+- **The app has one create-only way of writing to the books, and a closed list of
+  what it writes.** It creates Purchases, Bills, Deposits and Vendors, and the
+  journal entry for a gift of goods, each with only the fields listed for it. A
+  Purchase is paid by card or cash, never by check. Writing any other entry type,
+  or another field, changes this rule.
+
+- **Finance's books come first.** Nothing dated on or before the closing date
+  finance sets in the books is booked. With no closing date set, nothing dated
+  before the area's posting switched on is booked, and when the date cannot be
+  read nothing is booked. Matching to an entry finance booked is allowed in a
+  closed year, because it changes nothing in the books. Until the app starts posting in an area, it only matches what
+  finance has booked; anything it cannot match goes to finance to book or skip.
+  After that it books on its own, matching finance's entries first.
+
+- **A split amount is whole cents and sums exactly.** Whenever the app splits an
+  amount across parts, such as an expense's tax, shipping and discount across its
+  lines or a store charge across its order lines, each part is whole cents and
+  the parts sum to the amount exactly. Each part takes its share rounded down,
+  and the leftover cents go one each to the parts with the largest fractions; a
+  tie goes to the larger part, then the earlier one. Parts that are all zero
+  share the amount equally.
+
+- **Nothing is booked twice, and the app never guesses a match.** When the app
+  cannot tell which entry something matches, finance decides.
+
+- **A later change in the books goes back to finance.** If an entry the app
+  booked or matched changes or disappears afterwards, finance is told. The app
+  never corrects it or matches it again on its own.
+
+- **Finance is told at the alert address.** Finance and QuickBooks alerts go
+  to the alert address, a group address set in app settings. It is not a
+  person's address, so personal email opt-outs do not apply. With no address
+  set, no alert is sent and System Status shows the gap; no one else is sent
+  it instead.
+
+- **Only production reaches the real company.** Development uses only the
+  accounting system's test company, and staging has none. The production company
+  is set in infrastructure configuration, never in code or an in-app setting,
+  and the app never holds the accounting system's client secret.
+
+The tell is the app reaching into the books to fix something. Whatever it would
+fix, finance fixes.
 
 ---
 

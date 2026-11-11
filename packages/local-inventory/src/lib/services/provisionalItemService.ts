@@ -4,6 +4,9 @@ import type { ProvisionalItemRepository } from "../repositories/provisionalItemR
 import type { ProvisionalResolutionRepository } from "../repositories/provisionalResolutionRepository";
 import type { InventoryRepository } from "../repositories/inventoryRepository";
 import { ServiceError } from "@checkin/component-kit";
+import { formatGtinDisplay } from "../gtin";
+import { methodsFor, type QuantityMethod } from "../mergeConflictMethods";
+import { logRemovedOrgItem } from "./inventoryService";
 import {
   assertProvisionalTransition,
   assertMergeConflictTransition,
@@ -31,6 +34,22 @@ export async function lockOrgItemPair(tx: Prisma.TransactionClient, orgId: strin
 export async function lockProvisional(tx: Prisma.TransactionClient, orgId: string, provisionalGtin13: string) {
   await tx.$queryRaw`SELECT id FROM provisional_items WHERE org_id = ${orgId} AND provisional_gtin13 = ${provisionalGtin13} FOR UPDATE`;
   return tx.inventoryProvisionalItem.findFirst({ where: { orgId, provisionalGtin13 } });
+}
+
+/**
+ * The GTIN a stock add on `gtin13` lands on. A provisional GTIN since resolved by the global
+ * catalog receives under its real GTIN, unless a unit conflict on it is still open: then it joins
+ * the provisional stock that the conflict's resolution settles. The locks order this against a
+ * merge or resolution.
+ */
+export async function receivingGtin13(tx: Prisma.TransactionClient, orgId: string, gtin13: string): Promise<string> {
+  const provisional = await lockProvisional(tx, orgId, gtin13);
+  if (!provisional?.resolvedToGtin13) return gtin13;
+  await lockOrgItemPair(tx, orgId, gtin13, provisional.resolvedToGtin13);
+  const openConflict = await tx.inventoryMergeConflict.findFirst({
+    where: { orgId, provisionalGtin13: gtin13, status: "pending" },
+  });
+  return openConflict ? gtin13 : provisional.resolvedToGtin13;
 }
 
 export function createProvisionalItemService({
@@ -87,7 +106,9 @@ export function createProvisionalItemService({
             },
             update: { existingQuantity: { increment: provisionalQty } },
           }));
-          await tx.orgItem.delete({ where: { orgGtin: { orgId, gtin13: provisionalGtin13 } } });
+          const removed = await tx.orgItem.delete({ where: { orgGtin: { orgId, gtin13: provisionalGtin13 } } });
+          // A real row that already existed, or that a racing receipt inserted, keeps its own settings.
+          if (existingRow || realQty !== provisionalQty) await logRemovedOrgItem(tx, removed, null);
         }
         await tx.inventoryLog.create({
           data: realQty === provisionalQty
@@ -105,7 +126,7 @@ export function createProvisionalItemService({
         await tx.provisionalItemLog.create({
           data: {
             orgId, provisionalItemId: provisionalId, gtin13: provisionalGtin13,
-            eventType: finalStatus, notes: `renamed to ${realGtin13}`,
+            eventType: finalStatus, notes: `renamed to ${formatGtinDisplay(realGtin13)}`,
             performedBy: null, createdAt: now,
           },
         });
@@ -144,7 +165,8 @@ export function createProvisionalItemService({
         data: { existingQuantity: newQty },
       });
       if (provisionalRow) {
-        await tx.orgItem.delete({ where: { orgGtin: { orgId, gtin13: provisionalGtin13 } } });
+        const removed = await tx.orgItem.delete({ where: { orgGtin: { orgId, gtin13: provisionalGtin13 } } });
+        await logRemovedOrgItem(tx, removed, null);
       }
       await tx.inventoryLog.create({
         data: {
@@ -156,7 +178,7 @@ export function createProvisionalItemService({
       await tx.provisionalItemLog.create({
         data: {
           orgId, provisionalItemId: provisionalId, gtin13: provisionalGtin13,
-          eventType: finalStatus, notes: `merged into ${realGtin13}, qty: ${newQty}`,
+          eventType: finalStatus, notes: `merged into ${formatGtinDisplay(realGtin13)}, qty: ${newQty}`,
           performedBy: null, createdAt: now,
         },
       });
@@ -255,10 +277,13 @@ export function createProvisionalItemService({
 
       const now = new Date();
       await db.$transaction(async (tx) => {
-        await tx.inventoryProvisionalItem.update({
-          where: { id: provisional.id },
+        // The status was read outside this transaction; a concurrent approve or map that
+        // already moved the provisional's stock wins.
+        const claimed = await tx.inventoryProvisionalItem.updateMany({
+          where: { id: provisional.id, status: "pending" },
           data: { status: nextStatus, rejectionReason: rejectionReason ?? null, reviewedAt: now },
         });
+        if (claimed.count === 0) throw new ServiceError(409, "Provisional item was already resolved");
         await tx.provisionalItemLog.create({
           data: {
             orgId, provisionalItemId: provisional.id, gtin13: provisionalGtin13,
@@ -313,7 +338,7 @@ export function createProvisionalItemService({
     async resolveConflict(
       conflictId: number,
       orgId: string,
-      resolution: { quantityMethod: "use_provisional" | "use_existing" | "sum" },
+      resolution: { quantityMethod: QuantityMethod },
       userId: number,
       username?: string,
     ) {
@@ -331,10 +356,11 @@ export function createProvisionalItemService({
         const { provisionalRow, existingRow: realRow } = await lockOrgItemPair(
           tx, orgId, conflict.provisionalGtin13, conflict.realGtin13,
         );
-        if (!realRow) throw new ServiceError(400, "Real GTIN org item not found");
-
         const provisionalQty = provisionalRow?.existingQuantity ?? 0;
-        const existingQty = realRow.existingQuantity;
+        const existingQty = realRow?.existingQuantity ?? 0;
+        if (!methodsFor(provisionalQty).some((m) => m.value === resolution.quantityMethod)) {
+          throw new ServiceError(409, "The provisional item holds no stock, so its count can't replace the real count");
+        }
 
         let finalQuantity: number;
         if (resolution.quantityMethod === "use_provisional") finalQuantity = provisionalQty;
@@ -349,22 +375,41 @@ export function createProvisionalItemService({
         });
         if (closed.count === 0) throw new ServiceError(400, "Conflict is already resolved");
 
-        await tx.orgItem.update({
-          where: { orgGtin: { orgId, gtin13: conflict.realGtin13 } },
-          data: { existingQuantity: finalQuantity },
-        });
+        let valueBefore = existingQty;
+        let valueAfter = finalQuantity;
+        if (realRow) {
+          await tx.orgItem.update({
+            where: { orgGtin: { orgId, gtin13: conflict.realGtin13 } },
+            data: { existingQuantity: finalQuantity },
+          });
+        } else if (finalQuantity > 0) {
+          // A missing real row is unlocked, so a first receipt can insert it concurrently; the
+          // increment folds that receipt in. Nothing to land means the removed row stays removed.
+          ({ existingQuantity: valueAfter } = await tx.orgItem.upsert({
+            where: { orgGtin: { orgId, gtin13: conflict.realGtin13 } },
+            create: {
+              orgId, gtin13: conflict.realGtin13, existingQuantity: finalQuantity,
+              desiredQuantity: provisionalRow?.desiredQuantity,
+              locationId: provisionalRow?.locationId,
+              backstockLocationId: provisionalRow?.backstockLocationId,
+            },
+            update: { existingQuantity: { increment: finalQuantity } },
+          }));
+          valueBefore = valueAfter - finalQuantity;
+        }
 
         if (provisionalRow) {
-          await tx.orgItem.delete({
+          const removed = await tx.orgItem.delete({
             where: { orgGtin: { orgId, gtin13: conflict.provisionalGtin13 } },
           });
+          await logRemovedOrgItem(tx, removed, userId, username);
         }
 
         await tx.inventoryLog.create({
           data: {
             orgId, userId, username: username ?? null, changedAt: now, changeType: "manual",
             gtin13: conflict.realGtin13, fieldChanged: "existingQuantity",
-            valueBefore: String(existingQty), valueAfter: String(finalQuantity), receiptId: null,
+            valueBefore: String(valueBefore), valueAfter: String(valueAfter), receiptId: null,
           },
         });
 
@@ -386,3 +431,28 @@ export function createProvisionalItemService({
 }
 
 export type ProvisionalItemService = ReturnType<typeof createProvisionalItemService>;
+
+/**
+ * Applies a provisional's stored catalog decision once. A failure is recorded on the provisional
+ * (the first failure time kept, the last error replaced) and it then waits for Retry on the
+ * Problems list; a success clears both. Returns whether it applied.
+ */
+export async function reconcileRecorded(
+  db: Db,
+  service: Pick<ProvisionalItemService, "reconcileProvisionalOnCreate">,
+  orgId: string,
+  provisionalGtin13: string,
+): Promise<boolean> {
+  const row = { orgId, provisionalGtin13 };
+  try {
+    await service.reconcileProvisionalOnCreate(orgId, provisionalGtin13);
+  } catch (err) {
+    console.error(`[local-inventory/provisional] applying the catalog's decision to ${provisionalGtin13} failed`, err);
+    const reconcileLastError = err instanceof Error ? err.message : String(err);
+    await db.inventoryProvisionalItem.updateMany({ where: row, data: { reconcileLastError } });
+    await db.inventoryProvisionalItem.updateMany({ where: { ...row, reconcileFirstFailedAt: null }, data: { reconcileFirstFailedAt: new Date() } });
+    return false;
+  }
+  await db.inventoryProvisionalItem.updateMany({ where: { ...row, reconcileFirstFailedAt: { not: null } }, data: { reconcileFirstFailedAt: null, reconcileLastError: null } });
+  return true;
+}

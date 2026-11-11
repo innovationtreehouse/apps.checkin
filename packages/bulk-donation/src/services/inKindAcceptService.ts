@@ -1,14 +1,18 @@
-// The in-kind accept step (design #2182): every gift, with or without a receipt, is accepted,
+// The in-kind accept step (docs/rules/revenue.md, Donations): every gift, with or without a receipt, is accepted,
 // refused or returned by a finance holder who is outside the uploader's or recorder's household,
 // or by a Board member when every finance holder is conflicted. The screen's warnings never block.
 import { z } from "zod";
 import { db, type DbOrTx } from "../db";
-import { getInKindDirectory, getOrgId, getOwnerDirectory } from "../runtime";
+import { getInKindCapital, getInKindDirectory, getInventoryApply, getOrgId, getOwnerDirectory } from "../runtime";
 import { recordEvent } from "../repositories/audit";
+import { inventorySourceKey } from "../contract";
 import type { AuditContext } from "../workflows/disbursement.actor";
 import { QB_MATCH_STATE } from "../lib/qb-match";
 import { MAX_IN_KIND_LINES, MAX_IN_KIND_LINE_VALUE_CENTS, MAX_IN_KIND_TOTAL_CENTS } from "./manualInKindService";
-import { ServiceError } from "@checkin/component-kit";
+import { CapitalReviewLineSchema, type CapitalReviewLine } from "../contract";
+import { ServiceError, kindOf, toHttpError } from "@checkin/component-kit";
+import { formatGtinDisplay } from "@checkin/gtin";
+import { allocateCents } from "@checkin/money";
 
 export type InKindSource = "receipt" | "manual";
 export type InKindOutcome = "ACCEPTED" | "REFUSED" | "RETURNED";
@@ -17,12 +21,14 @@ export const InKindDecisionInputSchema = z.object({
   outcome: z.enum(["accept", "refuse", "return"]),
   bucketId: z.number().int().positive().optional(),
   lineValues: z
-    .array(z.object({ lineId: z.number().int().positive(), valueCents: z.number().int().nonnegative().max(MAX_IN_KIND_LINE_VALUE_CENTS) }))
+    .array(z.object({ lineId: z.number().int().positive(), valueCents: z.number().int().positive().max(MAX_IN_KIND_LINE_VALUE_CENTS) }))
     .max(MAX_IN_KIND_LINES)
     .refine((values) => values.reduce((sum, v) => sum + v.valueCents, 0) <= MAX_IN_KIND_TOTAL_CENTS, { message: "The gift's total is over the limit" })
     .optional(),
   /** The decider's attestation that they are outside the donor's household; the app cannot check it. */
   confirmOutsideDonorHousehold: z.literal(true),
+  /** The decider's attestation that the goods exist and arrived, not only the receipt; a first accept requires it. */
+  confirmGoodsReceived: z.literal(true).optional(),
 });
 export type InKindDecisionInput = z.infer<typeof InKindDecisionInputSchema>;
 
@@ -30,10 +36,10 @@ const OUTCOME: Record<InKindDecisionInput["outcome"], InKindOutcome> = { accept:
 const BOOKED_STATES: readonly string[] = [QB_MATCH_STATE.MATCHED, QB_MATCH_STATE.CREATED];
 
 /**
- * What a gift waits on, most urgent first. `withdrawal` and `replay` are anomalies finance
- * settles; `booking` means ready, waiting on the QuickBooks drain.
+ * What a gift waits on, most urgent first. `replay` is an anomaly finance settles; `capital` means a line waits on the expense library's capital review; `booking` means
+ * ready, waiting on the QuickBooks drain.
  */
-export type WaitingOn = "withdrawal" | "replay" | "donor" | "uploader" | "value" | "decision" | "bucket" | "booking";
+export type WaitingOn = "replay" | "donor" | "uploader" | "value" | "decision" | "bucket" | "capital" | "booking";
 
 interface GiftLine {
   id: number;
@@ -42,6 +48,8 @@ interface GiftLine {
   quantity: number;
   valueCents: number | null;
   suggestedValueCents: number | null;
+  /** The account finance set by hand on a held line; it wins over every account rule. */
+  quickBooksAccountId: string | null;
 }
 
 /** Both in-kind tables in one shape. `donorLastName` feeds the warnings and never leaves this file. */
@@ -56,8 +64,6 @@ interface Gift {
   donorRecordedAt: Date | null;
   donorLastName: string | null;
   donorReplacedAt: Date | null;
-  withdrawnAfterMoneyAt: Date | null;
-  withdrawalSettledAt: Date | null;
   replayConflictAt: Date | null;
   uploadedByUserId: number | null;
   recordedByUserId: number | null;
@@ -66,6 +72,7 @@ interface Gift {
   decidedAt: Date | null;
   budgetOwnerId: number | null;
   bucketAssignedAt: Date | null;
+  capitalSubmittedAt: Date | null;
   lines: GiftLine[];
 }
 
@@ -75,6 +82,7 @@ const DECISION_SELECT = {
   decidedAt: true,
   budgetOwnerId: true,
   bucketAssignedAt: true,
+  capitalSubmittedAt: true,
 } as const;
 
 const RECEIPT_SELECT = {
@@ -86,12 +94,10 @@ const RECEIPT_SELECT = {
   donorRecordedAt: true,
   donorLastName: true,
   donorReplacedAt: true,
-  withdrawnAfterMoneyAt: true,
-  withdrawalSettledAt: true,
   replayConflictAt: true,
   uploadedByUserId: true,
   ...DECISION_SELECT,
-  lines: { select: { id: true, gtin13: true, description: true, quantity: true, valueCents: true }, orderBy: { lineNumber: "asc" } },
+  lines: { select: { id: true, gtin13: true, description: true, quantity: true, valueCents: true, quickBooksAccountId: true }, orderBy: { lineNumber: "asc" } },
 } as const;
 
 const MANUAL_SELECT = {
@@ -101,7 +107,7 @@ const MANUAL_SELECT = {
   donorLastName: true,
   recordedByUserId: true,
   ...DECISION_SELECT,
-  lines: { select: { id: true, gtin13: true, description: true, quantity: true, valueCents: true, suggestedValueCents: true }, orderBy: { id: "asc" } },
+  lines: { select: { id: true, gtin13: true, description: true, quantity: true, valueCents: true, suggestedValueCents: true, quickBooksAccountId: true }, orderBy: { id: "asc" } },
 } as const;
 
 type ReceiptRow = Awaited<ReturnType<typeof findReceipts>>[number];
@@ -135,8 +141,6 @@ function fromManual(m: ManualRow): Gift {
     moneyReceivedAt: m.recordedAt,
     donorRecordedAt: m.recordedAt,
     donorReplacedAt: null,
-    withdrawnAfterMoneyAt: null,
-    withdrawalSettledAt: null,
     replayConflictAt: null,
     uploadedByUserId: null,
   };
@@ -145,6 +149,31 @@ function fromManual(m: ManualRow): Gift {
 async function loadGift(handle: DbOrTx, orgId: string, source: InKindSource, id: number): Promise<Gift | null> {
   const [row] = source === "receipt" ? (await findReceipts(handle, { orgId, id })).map(fromReceipt) : (await findManuals(handle, { orgId, id })).map(fromManual);
   return row ?? null;
+}
+
+/**
+ * Spreads the difference between `totalCents` and the values (a receipt's tax, shipping or
+ * discount) across them by value, so they sum to the total exactly.
+ */
+export function spreadToTotal(values: number[], totalCents: number): number[] {
+  const extra = allocateCents(totalCents - values.reduce((a, b) => a + b, 0), values);
+  return values.map((v, i) => v + extra[i]);
+}
+
+/** An accepted gift's lines as capital review takes them: a receipt's lines carry its tax and shipping. */
+function capitalReviewLines(g: Gift, budgetOwnerId: number): CapitalReviewLine[] {
+  const values = g.lines.map((l) => l.valueCents ?? 0);
+  const costs = g.source === "receipt" && g.receiptTotalCents !== null ? spreadToTotal(values, g.receiptTotalCents) : values;
+  return g.lines.map((l, i) => ({
+    giftSource: g.source,
+    giftId: g.id,
+    giftLineId: l.id,
+    description: l.description ?? (l.gtin13 ? formatGtinDisplay(l.gtin13) : "Donated item"),
+    quantity: l.quantity,
+    costCents: costs[i],
+    acquisitionDate: g.receiptDate ?? g.donationDate,
+    budgetOwnerId,
+  }));
 }
 
 /** A receipt gift books at the receipt's total; one without a receipt at the values finance set. */
@@ -240,78 +269,125 @@ async function readBookings(handle: DbOrTx, orgId: string, where: { source?: InK
   return out;
 }
 
-const sideState = (sides: { side: string; matchState: string }[], side: "revenue" | "expense") => sides.find((s) => s.side === side)?.matchState ?? null;
+interface Posting {
+  matchState: string;
+  qbNote: string | null;
+}
 
-/** What the gift waits on, most urgent first; empty once both sides are booked or it will never book. */
-function waitingOn(g: Gift, buckets: Map<number, Bucket>, sides: { side: string; matchState: string }[]): WaitingOn[] {
-  if (g.withdrawalSettledAt) return [];
+/** Each gift's way to QuickBooks: its match state and finance's note. */
+async function readPostings(handle: DbOrTx, orgId: string, where: { source?: InKindSource; giftId?: number } = {}): Promise<Map<string, Posting>> {
+  const rows = await handle.inKindPosting.findMany({ where: { orgId, ...where }, select: { source: true, giftId: true, matchState: true, qbNote: true } });
+  return new Map(rows.map((r) => [bookingKey(r.source, r.giftId), { matchState: r.matchState, qbNote: r.qbNote }]));
+}
+
+const sideState = (sides: { side: string; matchState: string }[], side: "revenue" | "expense" | "journal") => sides.find((s) => s.side === side)?.matchState ?? null;
+/** A side's booking: the hand entry finance booked for it, or the app's one journal entry, which books both. */
+const bookedSide = (sides: { side: string; matchState: string }[], side: "revenue" | "expense") => sideState(sides, side) ?? sideState(sides, "journal");
+
+/** What the gift waits on, most urgent first; empty once both sides are booked, finance skipped it, or it will never book. */
+function waitingOn(g: Gift, buckets: Map<number, Bucket>, sides: { side: string; matchState: string }[], inCapitalReview: Set<string>, posting: Posting | undefined): WaitingOn[] {
   const out: WaitingOn[] = [];
-  if (g.withdrawnAfterMoneyAt) out.push("withdrawal");
   if (g.replayConflictAt) out.push("replay");
-  if (g.decisionOutcome === "REFUSED" || g.decisionOutcome === "RETURNED" || g.withdrawnAfterMoneyAt) return out;
+  if (g.decisionOutcome === "REFUSED" || g.decisionOutcome === "RETURNED") return out;
   if (!g.donorRecordedAt) out.push("donor");
   if (g.source === "receipt" && g.uploadedByUserId === null) out.push("uploader");
   if (g.source === "receipt" && g.receiptTotalCents === null) out.push("value");
   if (!g.decisionOutcome) out.push("decision");
   else if (g.budgetOwnerId === null || buckets.get(g.budgetOwnerId)?.held !== false) out.push("bucket");
-  const booked = ["revenue", "expense"].every((side) => BOOKED_STATES.includes(sideState(sides, side as "revenue" | "expense") ?? ""));
-  if (!booked) out.push("booking");
+  if (g.decisionOutcome === "ACCEPTED" && (g.capitalSubmittedAt === null || inCapitalReview.has(bookingKey(g.source, g.id)))) out.push("capital");
+  const booked = (["revenue", "expense"] as const).every((side) => BOOKED_STATES.includes(bookedSide(sides, side) ?? ""));
+  if (!booked && posting?.matchState !== QB_MATCH_STATE.DISMISSED) out.push("booking");
   return out;
 }
 
 /**
- * The finance queue: every gift with something left to do, from either source, with what the
- * accept screen shows. It carries no donor field. A receipt gift whose money has not arrived is
- * still being uploaded and is left out.
+ * The finance queue: every gift with something left to do or a QuickBooks note for finance, from
+ * either source, with what the accept screen shows. It carries no donor field. A receipt gift whose
+ * money has not arrived is still being uploaded and is left out.
  */
 async function listQueue(orgId: string, callerId: number) {
-  const [receipts, manuals, buckets, bookings] = await Promise.all([findReceipts(db, { orgId }), findManuals(db, { orgId }), readBuckets(), readBookings(db, orgId)]);
+  const [receipts, manuals, buckets, bookings, postings, awaiting] = await Promise.all([
+    findReceipts(db, { orgId }),
+    findManuals(db, { orgId }),
+    readBuckets(),
+    readBookings(db, orgId),
+    readPostings(db, orgId),
+    getInKindCapital().awaitingReview(orgId),
+  ]);
+  const inCapitalReview = new Set(awaiting.map((a) => bookingKey(a.giftSource, a.giftId)));
   const waiting = [...receipts.filter((r) => r.moneyReceivedAt !== null).map(fromReceipt), ...manuals.map(fromManual)]
     .map((g) => {
       const sides = bookings.get(bookingKey(g.source, g.id)) ?? [];
-      return { g, sides, waits: waitingOn(g, buckets, sides) };
+      const posting = postings.get(bookingKey(g.source, g.id));
+      return { g, sides, posting, waits: waitingOn(g, buckets, sides, inCapitalReview, posting) };
     })
-    .filter((w) => w.waits.length > 0);
-  // ponytail: every waiting gift in one list; paging arrives with the drain (step 4).
+    // A gift with nothing left to wait on stays while it carries a note, such as the sweep's stray entry.
+    .filter((w) => w.waits.length > 0 || !!w.posting?.qbNote);
+  // ponytail: every waiting gift in one list; page it when the queue outgrows one screen.
   const lk = await readLookups(waiting.map((w) => w.g), callerId);
   return waiting
-    .map(({ g, sides, waits }) => {
-      const conflict = conflictFacts(g, callerId, lk);
-      const warn = warnings(g, callerId, lk);
-      const bucket = g.budgetOwnerId === null ? undefined : buckets.get(g.budgetOwnerId);
-      return {
-        id: g.id,
-        source: g.source,
-        receiptId: g.receiptId,
-        receiptTotalCents: g.receiptTotalCents,
-        receiptDate: g.receiptDate,
-        donationDate: g.donationDate,
-        moneyReceivedAt: g.moneyReceivedAt,
-        donorRecordedAt: g.donorRecordedAt,
-        withdrawnAfterMoneyAt: g.withdrawnAfterMoneyAt,
-        withdrawalSettledAt: g.withdrawalSettledAt,
-        replayConflictAt: g.replayConflictAt,
-        donorReplacedAt: g.donorReplacedAt,
-        uploadedByUserId: g.uploadedByUserId,
-        recordedByUserId: g.recordedByUserId,
-        budgetOwnerId: g.budgetOwnerId,
-        budgetOwnerName: bucket?.name ?? null,
-        bucketAssignedAt: g.bucketAssignedAt,
-        bucketHeld: g.budgetOwnerId !== null && bucket?.held !== false,
-        totalValueCents: totalValueCents(g),
-        outcome: g.decisionOutcome,
-        decidedAt: g.decidedAt,
-        state: waits[0],
-        waitingOn: waits,
-        revenueBooking: sideState(sides, "revenue"),
-        expenseBooking: sideState(sides, "expense"),
-        ...warn,
-        callerConflicted: conflict.callerConflicted,
-        allFinanceConflicted: conflict.allFinanceConflicted,
-        lines: g.lines,
-      };
-    })
+    .map((w) => queueRow(w, buckets, callerId, lk))
     .sort((a, b) => (a.moneyReceivedAt?.getTime() ?? 0) - (b.moneyReceivedAt?.getTime() ?? 0));
+}
+
+/** One gift's queue row, as the queue and finance's QuickBooks actions reply with it. */
+function queueRow(
+  { g, sides, posting, waits }: { g: Gift; sides: { side: string; matchState: string }[]; posting: Posting | undefined; waits: WaitingOn[] },
+  buckets: Map<number, Bucket>,
+  callerId: number,
+  lk: Lookups,
+) {
+  const conflict = conflictFacts(g, callerId, lk);
+  const warn = warnings(g, callerId, lk);
+  const bucket = g.budgetOwnerId === null ? undefined : buckets.get(g.budgetOwnerId);
+  return {
+    id: g.id,
+    source: g.source,
+    receiptId: g.receiptId,
+    receiptTotalCents: g.receiptTotalCents,
+    receiptDate: g.receiptDate,
+    donationDate: g.donationDate,
+    moneyReceivedAt: g.moneyReceivedAt,
+    donorRecordedAt: g.donorRecordedAt,
+    replayConflictAt: g.replayConflictAt,
+    donorReplacedAt: g.donorReplacedAt,
+    uploadedByUserId: g.uploadedByUserId,
+    recordedByUserId: g.recordedByUserId,
+    budgetOwnerId: g.budgetOwnerId,
+    budgetOwnerName: bucket?.name ?? null,
+    bucketAssignedAt: g.bucketAssignedAt,
+    bucketHeld: g.budgetOwnerId !== null && bucket?.held !== false,
+    totalValueCents: totalValueCents(g),
+    outcome: g.decisionOutcome,
+    decidedAt: g.decidedAt,
+    state: waits[0] ?? null,
+    waitingOn: waits,
+    revenueBooking: bookedSide(sides, "revenue"),
+    expenseBooking: bookedSide(sides, "expense"),
+    qbState: posting?.matchState ?? null,
+    qbNote: posting?.qbNote ?? null,
+    ...warn,
+    callerConflicted: conflict.callerConflicted,
+    allFinanceConflicted: conflict.allFinanceConflicted,
+    lines: g.lines,
+  };
+}
+
+/** One gift's queue row, whether or not it still waits on anything (a skipped or booked gift has left the queue). */
+async function queueItem(orgId: string, callerId: number, source: InKindSource, id: number) {
+  const g = await loadGift(db, orgId, source, id);
+  if (!g) throw new ServiceError(404, "In-kind gift not found");
+  const [buckets, bookings, postings, awaiting, lk] = await Promise.all([
+    readBuckets(),
+    readBookings(db, orgId, { source, giftId: id }),
+    readPostings(db, orgId, { source, giftId: id }),
+    getInKindCapital().awaitingReview(orgId),
+    readLookups([g], callerId),
+  ]);
+  const sides = bookings.get(bookingKey(source, id)) ?? [];
+  const posting = postings.get(bookingKey(source, id));
+  const waits = waitingOn(g, buckets, sides, new Set(awaiting.map((a) => bookingKey(a.giftSource, a.giftId))), posting);
+  return queueRow({ g, sides, posting, waits }, buckets, callerId, lk);
 }
 
 async function lockGift(tx: DbOrTx, source: InKindSource, id: number): Promise<void> {
@@ -329,7 +405,6 @@ async function assignableBucket(bucketId: number | undefined): Promise<number> {
 
 /** Why a gift cannot be decided yet, or null when it can. */
 function notDecidable(g: Gift): string | null {
-  if (g.withdrawnAfterMoneyAt) return "This gift was withdrawn; settle the withdrawal instead";
   if (g.replayConflictAt) return "This gift's receipt was resent with different values; settle that first";
   if (!g.donorRecordedAt) return "This gift has no donor yet";
   if (g.source === "receipt" && g.uploadedByUserId === null) return "This gift's uploader is not recorded yet";
@@ -378,7 +453,7 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
   const callerId = audit.actorUserId;
   const entity = (g: Gift) => (source === "receipt" ? { entityType: "in_kind" as const, entityId: g.receiptId } : { entityType: "manual_in_kind" as const, entityId: g.id });
 
-  return db.$transaction(async (tx) => {
+  const { view, send } = await db.$transaction(async (tx) => {
     await lockGift(tx, source, id);
     const gift = await loadGift(tx, orgId, source, id);
     if (!gift) throw new ServiceError(404, "In-kind gift not found");
@@ -400,17 +475,27 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
     if (gift.decisionOutcome) {
       if (gift.decisionOutcome !== "ACCEPTED" || input.outcome !== "accept" || input.lineValues) throw new ServiceError(409, "This gift is already decided");
       const sides = (await readBookings(tx, orgId, { source, giftId: id })).get(bookingKey(source, id)) ?? [];
-      if (sides.length > 0) throw new ServiceError(409, "This gift has started booking; its bucket can no longer change");
-      const to = await assignableBucket(input.bucketId);
-      await writeBucket(tx, source, id, { budgetOwnerId: to, bucketAssignedByUserId: callerId, bucketAssignedAt: now });
-      await recordEvent(tx, { orgId, ...entity(gift), eventType: "IN_KIND_BUCKET_CHANGED", ...audit, payload: { from: gift.budgetOwnerId, to } });
-      return decisionView({ ...gift, budgetOwnerId: to, bucketAssignedAt: now });
+      const posting = await tx.inKindPosting.findUnique({ where: { orgId_source_giftId: { orgId, source, giftId: id } }, select: { matchState: true, qbCreateAttemptedAt: true } });
+      // An attempted create may have landed in QuickBooks carrying the old bucket's Class.
+      if (sides.length > 0 || posting?.matchState === QB_MATCH_STATE.POSTING || posting?.qbCreateAttemptedAt) {
+        throw new ServiceError(409, "This gift has started booking; its bucket can no longer change");
+      }
+      // The current bucket is kept as is, held or not; resubmitting it only resends to capital review.
+      const to = gift.budgetOwnerId !== null && input.bucketId === gift.budgetOwnerId ? gift.budgetOwnerId : await assignableBucket(input.bucketId);
+      const unchanged = to === gift.budgetOwnerId;
+      if (!unchanged) {
+        await writeBucket(tx, source, id, { budgetOwnerId: to, bucketAssignedByUserId: callerId, bucketAssignedAt: now });
+        await recordEvent(tx, { orgId, ...entity(gift), eventType: "IN_KIND_BUCKET_CHANGED", ...audit, payload: { from: gift.budgetOwnerId, to } });
+      }
+      const result = unchanged ? gift : { ...gift, budgetOwnerId: to, bucketAssignedAt: now };
+      return { view: decisionView(result), send: gift.capitalSubmittedAt === null ? capitalReviewLines(gift, to) : null };
     }
 
     const outcome = OUTCOME[input.outcome];
     const decided: DecisionData = { decisionOutcome: outcome, decidedByUserId: callerId, decidedAt: now, donorHouseholdAttestedAt: now };
     let lines = gift.lines;
     if (outcome === "ACCEPTED") {
+      if (!input.confirmGoodsReceived) throw new ServiceError(400, "Accepting a gift confirms the goods exist and arrived");
       Object.assign(decided, { budgetOwnerId: await assignableBucket(input.bucketId), bucketAssignedByUserId: callerId, bucketAssignedAt: now });
       if (source === "receipt") {
         if (input.lineValues) throw new ServiceError(400, "A gift with a receipt keeps the receipt's values");
@@ -443,10 +528,49 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
       ...entity(gift),
       eventType: "IN_KIND_DECIDED",
       ...audit,
-      payload: { outcome, budgetOwnerId: result.budgetOwnerId, totalValueCents: totalValueCents(result), ...warn },
+      payload: { outcome, budgetOwnerId: result.budgetOwnerId, totalValueCents: totalValueCents(result), ...(outcome === "ACCEPTED" ? { goodsConfirmed: true } : {}), ...warn },
     });
-    return decisionView(result);
+    return { view: decisionView(result), send: decided.budgetOwnerId === undefined ? null : capitalReviewLines(result, decided.budgetOwnerId) };
   });
+
+  if (send) await sendToCapitalReview(orgId, source, id, send);
+  return view;
+}
+
+/**
+ * Sends an accepted gift's lines once its decision has committed: the expense library has its own
+ * database, so the send cannot share the accept's transaction. Until a send succeeds the gift waits
+ * on capital review, and accepting it again resends; the callee keys each line, so a resend does nothing.
+ * A send the callee refuses would be refused again, so finance sees why instead of being told to resend.
+ * A bug, such as a 401 or 403 from the callee, is our wiring, never the accepting person's permission: a 500 that says so.
+ */
+async function sendToCapitalReview(orgId: string, source: InKindSource, id: number, lines: CapitalReviewLine[]): Promise<void> {
+  const fault = (err: unknown) => {
+    console.error(`[bulk-donation] in-kind ${source} gift ${id} accepted; its capital review send hit a fault in our wiring`, err);
+    const answer = new ServiceError(500, "The gift is accepted, but sending its lines to capital review hit a fault in our software; tell whoever runs the system");
+    answer.cause = err;
+    return answer;
+  };
+  // We built these lines, so lines our own schema rejects are our bug, not the callee's refusal.
+  const parsed = CapitalReviewLineSchema.array().safeParse(lines);
+  if (!parsed.success) throw fault(parsed.error);
+  try {
+    await getInKindCapital().submit(orgId, parsed.data);
+  } catch (err) {
+    const kind = kindOf(err);
+    const answered = toHttpError(err);
+    if (kind === "data") {
+      throw new ServiceError(answered?.status ?? 422, `The gift is accepted, but capital review refused its lines: ${answered?.message ?? (err instanceof Error ? err.message : String(err))}`, answered?.code);
+    }
+    if (kind === "bug") throw fault(err);
+    console.error(`[bulk-donation] in-kind ${source} gift ${id} accepted; its capital review send failed`, err);
+    const failed = new ServiceError(502, "The gift is accepted, but its lines did not reach capital review; accept it again to resend them");
+    failed.cause = err;
+    throw failed;
+  }
+  const data = { capitalSubmittedAt: new Date() };
+  if (source === "receipt") await db.inKindDonation.update({ where: { id }, data });
+  else await db.manualInKindDonation.update({ where: { id }, data });
 }
 
 /**
@@ -458,7 +582,7 @@ async function listByBucket(orgId: string, callerId: number, seeAll: boolean) {
   if (buckets?.length === 0) return [];
   const where = { orgId, decisionOutcome: "ACCEPTED", ...(buckets ? { budgetOwnerId: { in: buckets } } : {}) };
   const [receipts, manuals] = await Promise.all([
-    db.inKindDonation.findMany({ where: { ...where, withdrawnAfterMoneyAt: null }, select: RECEIPT_SELECT, orderBy: { id: "asc" } }),
+    db.inKindDonation.findMany({ where, select: RECEIPT_SELECT, orderBy: { id: "asc" } }),
     db.manualInKindDonation.findMany({ where, select: MANUAL_SELECT, orderBy: { id: "asc" } }),
   ]);
   return [...receipts.map(fromReceipt), ...manuals.map(fromManual)].map((g) => ({
@@ -471,4 +595,179 @@ async function listByBucket(orgId: string, callerId: number, seeAll: boolean) {
   }));
 }
 
-export const inKindAcceptService = { listQueue, decide, listByBucket };
+const DONOR_SELECT = { donorFirstName: true, donorLastName: true, donorCompanyName: true } as const;
+
+/**
+ * What the gift's page shows beyond the queue row: the donor, and for a gift without a receipt its
+ * recorder and inventory load, with why the load failed while it has not loaded.
+ */
+async function readPageExtras(orgId: string, source: InKindSource, id: number) {
+  if (source === "receipt") {
+    const donor = await db.inKindDonation.findFirstOrThrow({ where: { id, orgId }, select: DONOR_SELECT });
+    return { ...donor, recordedAt: null, recordedByUsername: null, inventoryLoadedAt: null, inventoryLoadFailureReason: null };
+  }
+  const row = await db.manualInKindDonation.findFirstOrThrow({
+    where: { id, orgId },
+    select: { ...DONOR_SELECT, recordedAt: true, recordedByUsername: true, inventoryLoadedAt: true },
+  });
+  const inventoryLoadFailureReason = row.inventoryLoadedAt ? null : await readLoadFailure(id);
+  return { ...row, inventoryLoadFailureReason };
+}
+
+/** The page loads without the reason when inventory cannot answer, and keeps its "Load again". */
+async function readLoadFailure(id: number): Promise<string | null> {
+  try {
+    return await getInventoryApply().failureReason(inventorySourceKey(id));
+  } catch (err) {
+    console.warn(`[bulk-donation] reading in-kind donation ${id}'s inventory load failure failed`, err);
+    return null;
+  }
+}
+
+/** The gift's history, oldest first; donor-read audit rows are left out. */
+function readHistory(orgId: string, entityType: "in_kind" | "manual_in_kind", entityId: string) {
+  return db.workflowEvent.findMany({
+    where: { orgId, entityType, entityId, eventType: { not: "DONOR_DATA_READ" } },
+    select: { id: true, eventType: true, actorUsername: true, occurredAt: true, payload: true },
+    orderBy: [{ occurredAt: "asc" }, { id: "asc" }],
+  });
+}
+
+/**
+ * One gift for its own page: header, donor, lines, state, history and where it went. A gift without a receipt loads its goods under its own inventory source key;
+ * a receipt gift's goods are received through its receipt, so it has none.
+ */
+async function getGift(orgId: string, source: InKindSource, id: number) {
+  const gift = await loadGift(db, orgId, source, id);
+  if (!gift) throw new ServiceError(404, "In-kind gift not found");
+  const entityType = source === "receipt" ? "in_kind" : "manual_in_kind";
+  const entityId = source === "receipt" && gift.receiptId ? gift.receiptId : String(id);
+  const [extras, buckets, bookings, postings, events, awaiting] = await Promise.all([
+    readPageExtras(orgId, source, id),
+    readBuckets(),
+    readBookings(db, orgId, { source, giftId: id }),
+    readPostings(db, orgId, { source, giftId: id }),
+    readHistory(orgId, entityType, entityId),
+    getInKindCapital().awaitingReview(orgId),
+  ]);
+  const sides = bookings.get(bookingKey(source, id)) ?? [];
+  const waits = waitingOn(gift, buckets, sides, new Set(awaiting.map((w) => bookingKey(w.giftSource, w.giftId))), postings.get(bookingKey(source, id)));
+  const bucket = gift.budgetOwnerId === null ? undefined : buckets.get(gift.budgetOwnerId);
+  return {
+    id,
+    source,
+    receiptId: gift.receiptId,
+    receiptTotalCents: gift.receiptTotalCents,
+    receiptDate: gift.receiptDate,
+    donationDate: gift.donationDate,
+    moneyReceivedAt: source === "receipt" ? gift.moneyReceivedAt : null,
+    recordedAt: extras.recordedAt,
+    recordedByUsername: extras.recordedByUsername,
+    donorFirstName: extras.donorFirstName,
+    donorLastName: extras.donorLastName,
+    donorCompanyName: extras.donorCompanyName,
+    donorRecordedAt: gift.donorRecordedAt,
+    donorReplacedAt: gift.donorReplacedAt,
+    replayConflictAt: gift.replayConflictAt,
+    outcome: gift.decisionOutcome,
+    decidedAt: gift.decidedAt,
+    budgetOwnerId: gift.budgetOwnerId,
+    budgetOwnerName: bucket?.name ?? null,
+    bucketHeld: gift.budgetOwnerId !== null && bucket?.held !== false,
+    bucketAssignedAt: gift.bucketAssignedAt,
+    totalValueCents: totalValueCents(gift),
+    state: waits[0] ?? null,
+    waitingOn: waits,
+    revenueBooking: bookedSide(sides, "revenue"),
+    expenseBooking: bookedSide(sides, "expense"),
+    inventorySourceKey: source === "manual" ? inventorySourceKey(id) : null,
+    inventoryLoadedAt: extras.inventoryLoadedAt,
+    inventoryLoadFailureReason: extras.inventoryLoadFailureReason,
+    lines: gift.lines,
+    events,
+  };
+}
+
+/** An accepted gift as its journal entry books it: one line per gift line, a receipt's tax and shipping spread across them. */
+export interface GiftToBook {
+  source: InKindSource;
+  id: number;
+  /** The gift's audit entity: a receipt gift's receipt id, or a gift without one's own id. */
+  entityType: "in_kind" | "manual_in_kind";
+  entityId: string;
+  txnDate: string | null;
+  /** When the app first held the gift, compared with the lane's switch-on. */
+  createdAt: Date;
+  totalCents: number;
+  budgetOwnerId: number;
+  lines: { id: number; description: string; valueCents: number; gtin13: string | null; quickBooksAccountId: string | null }[];
+}
+
+function toBook(g: Gift): GiftToBook | null {
+  const total = totalValueCents(g);
+  if (g.budgetOwnerId === null || total === null || g.moneyReceivedAt === null) return null;
+  return {
+    source: g.source,
+    id: g.id,
+    entityType: g.source === "receipt" ? "in_kind" : "manual_in_kind",
+    entityId: g.source === "receipt" && g.receiptId ? g.receiptId : String(g.id),
+    txnDate: g.receiptDate ?? g.donationDate,
+    createdAt: g.moneyReceivedAt,
+    totalCents: total,
+    budgetOwnerId: g.budgetOwnerId,
+    lines: capitalReviewLines(g, g.budgetOwnerId).map((l, i) => ({
+      id: l.giftLineId,
+      description: l.description,
+      valueCents: l.costCents,
+      gtin13: g.lines[i].gtin13,
+      quickBooksAccountId: g.lines[i].quickBooksAccountId,
+    })),
+  };
+}
+
+/** What readiness reads outside the drain's transactions: buckets and capital review live in other databases. */
+export interface ReadinessContext {
+  buckets: Map<number, Bucket>;
+  inCapitalReview: Set<string>;
+}
+
+async function readReadiness(orgId: string): Promise<ReadinessContext> {
+  const [buckets, awaiting] = await Promise.all([readBuckets(), getInKindCapital().awaitingReview(orgId)]);
+  return { buckets, inCapitalReview: new Set(awaiting.map((a) => bookingKey(a.giftSource, a.giftId))) };
+}
+
+/**
+ * Every gift still to book. `ready` waits on nothing but booking, so a gift whose line is in
+ * capital review is never among them; `open` adds those waiting on anything else first.
+ */
+async function giftsToBook(orgId: string, ctx: ReadinessContext): Promise<{ ready: GiftToBook[]; open: GiftToBook[] }> {
+  const [receipts, manuals, bookings, postings] = await Promise.all([findReceipts(db, { orgId }), findManuals(db, { orgId }), readBookings(db, orgId), readPostings(db, orgId)]);
+  const ready: GiftToBook[] = [];
+  const open: GiftToBook[] = [];
+  for (const g of [...receipts.filter((r) => r.moneyReceivedAt !== null).map(fromReceipt), ...manuals.map(fromManual)]) {
+    const key = bookingKey(g.source, g.id);
+    const waits = waitingOn(g, ctx.buckets, bookings.get(key) ?? [], ctx.inCapitalReview, postings.get(key));
+    const gift = waits.includes("booking") ? toBook(g) : null;
+    if (!gift) continue;
+    open.push(gift);
+    // A drifted gift stays open, so it can rival a hand booking, but only finance moves it.
+    if (waits.length === 1 && postings.get(key)?.matchState !== QB_MATCH_STATE.DRIFT) ready.push(gift);
+  }
+  return { ready, open };
+}
+
+/** Locks the gift and returns it only while it waits on nothing but booking. */
+async function lockReadyGift(tx: DbOrTx, orgId: string, source: InKindSource, id: number, ctx: ReadinessContext): Promise<GiftToBook | null> {
+  await lockGift(tx, source, id);
+  const gift = await loadGift(tx, orgId, source, id);
+  if (!gift) return null;
+  const sides = (await readBookings(tx, orgId, { source, giftId: id })).get(bookingKey(source, id)) ?? [];
+  const posting = (await readPostings(tx, orgId, { source, giftId: id })).get(bookingKey(source, id));
+  const waits = waitingOn(gift, ctx.buckets, sides, ctx.inCapitalReview, posting);
+  return waits.length === 1 && waits[0] === "booking" ? toBook(gift) : null;
+}
+
+export const inKindAcceptService = { listQueue, queueItem, decide, listByBucket, getGift };
+
+/** What the in-kind drain reads; not part of any route. */
+export const inKindReadiness = { readReadiness, giftsToBook, lockReadyGift };

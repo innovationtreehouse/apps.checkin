@@ -9,7 +9,8 @@
  * projection grows one.
  *
  * Money and vendor are `internal` (what was spent, with whom); line text,
- * quantities and workflow status are `public`. Ids that tie back to the
+ * quantities, workflow status and the count of the receipt's lines still open
+ * on the receive queue (`openBackorders`) are `public`. Ids that tie back to the
  * receipt library are `internal`, as on the generated models.
  *
  * Hand-authored, not generated: it describes an API response, not a table. This
@@ -26,6 +27,7 @@ export const classifications = {
     receiptTotalCents: "internal",
     currency: "public",
     lineItemCount: "public",
+    openBackorders: "public",
     validationNotes: "internal",
     createdAt: "public",
     updatedAt: "public",
@@ -42,6 +44,7 @@ export const classifications = {
     discountCents: "internal",
     receiptDate: "public",
     isInKind: "internal",
+    openBackorders: "public",
   },
   WorkflowReceiptLineView: {
     receiptLineItemId: "internal",
@@ -66,4 +69,11 @@ export const relations = {
   WorkflowReceiptView: {
     lineItems: { model: "WorkflowReceiptLineView", isList: true },
   },
+} as const;
+
+// Finance marks: the fields whose presence in a response makes it a logged finance view.
+export const marks = {
+  WorkflowReceiptSummary: ["vendorName", "receiptTotalCents"],
+  WorkflowReceiptView: ["vendorName", "receiptTotalCents", "taxCents", "shippingCents", "discountCents"],
+  WorkflowReceiptLineView: ["unitPriceCents", "totalPriceCents"],
 } as const;

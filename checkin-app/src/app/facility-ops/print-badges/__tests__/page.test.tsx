@@ -24,6 +24,7 @@ import { screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { pdf } from "@react-pdf/renderer";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl } from "@/test-helpers/rtl";
 import { notifications } from "@mantine/notifications";
+import { jsonBody } from "@/test-helpers/jsonBody";
 import PrintBadgesPage from "../page";
 
 beforeEach(() => {
@@ -175,10 +176,9 @@ describe("facility-ops/print-badges page", () => {
     expect(screen.getByRole("button", { name: "Generate Sticker (1)" })).toBeInTheDocument();
   });
 
-  // #1625. The Printed Name column exists so this pair of assertions is writable at all:
+  // The Printed Name column exists so this pair of assertions is writable at all:
   // it is the only place the value the badge will print is observable without generating
-  // a PDF. Both were red against the old behaviour, where the name was computed over the
-  // current print batch inside BadgeDocument.
+  // a PDF.
   it("keeps the printed name fixed to the ACTIVE roster, not the current selection", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson(johnRoutes);
@@ -197,7 +197,7 @@ describe("facility-ops/print-badges page", () => {
     // assertion diff instead of being cut off by jest's equal-length test timeout.
   }, 15000);
 
-  // #1628. Both Johns are ACTIVE members, so "is a member" cannot be what decides this —
+  // Both Johns are ACTIVE members, so "is a member" cannot be what decides this —
   // only settling the current renewal cycle can. The column is the operator's warning
   // that a blank badge is coming, before the sheet is in the printer.
   it("shows the membership year only for a household that settled this cycle", async () => {
@@ -259,9 +259,8 @@ describe("facility-ops/print-badges page", () => {
     expect(printedNameCell("John Smith")).toBe("John S.");
   }, 15000);
 
-  // #1651. Off-roster people get a bare first name — no disambiguation among themselves.
-  // This is stable across search-box changes (the old behaviour ran computeDisplayNames
-  // over the search results, so names shifted when the query changed).
+  // Off-roster people get a bare first name — no disambiguation among themselves, so
+  // the name is stable across search-box changes.
   it("gives off-roster people a bare first name, without moving a member's name", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson({
@@ -286,8 +285,8 @@ describe("facility-ops/print-badges page", () => {
     expect(printedNameCell("John Smith")).toBe("John");
   }, 15000);
 
-  // #1651. The old code ran computeDisplayNames over the search results for off-roster
-  // people, so narrowing the search could change an off-roster person's badge name.
+  // Off-roster names are computed without the search results, so narrowing the search
+  // cannot change an off-roster person's badge name.
   it("keeps off-roster badge names stable when the search box narrows", async () => {
     setSession({ id: 1, isSysadmin: true });
     const offRosterPeople = [
@@ -595,5 +594,55 @@ describe("facility-ops/print-badges page", () => {
       expect.objectContaining({ color: "red", autoClose: false }),
     );
     logged.mockRestore();
+  });
+});
+
+describe("a load that answers after a newer one", () => {
+  const answer = (body: unknown) => ({ ok: true, status: 200, ...jsonBody(body) }) as Response;
+
+  it("keeps the selected year's roster when the opening no-year roster answers last", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    let finishNoYear: () => void = () => {};
+    global.fetch = jest.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.searchParams.get("roster") === "years") return answer({ years: ["2026-2027"], current: "2026-2027" });
+      if (url.searchParams.get("roster") === "active") {
+        if (url.searchParams.get("year")) return answer({ people: johnRoster });
+        return new Promise<Response>((resolve) => {
+          finishNoYear = () => resolve(answer({ people: johnRoster.map((m) => ({ ...m, year: null })) }));
+        });
+      }
+      return answer({ people: johns });
+    }) as unknown as typeof fetch;
+    renderWithProviders(<PrintBadgesPage />);
+    await screen.findByText("John Smith");
+    await waitFor(() => expect(yearCell("John Smith")).toBe("2026-2027"));
+
+    await act(async () => { finishNoYear(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(yearCell("John Smith")).toBe("2026-2027");
+  });
+
+  it("keeps the latest search's rows when an earlier search answers last", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    let finishKi: () => void = () => {};
+    global.fetch = jest.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.searchParams.get("roster")) return answer({ people: [] });
+      const q = url.searchParams.get("q");
+      if (q === "Ki") return new Promise<Response>((resolve) => { finishKi = () => resolve(answer({ people: participants })); });
+      if (q === "Kim") return answer({ people: [participants[0]] });
+      return answer({ people: participants });
+    }) as unknown as typeof fetch;
+    renderWithProviders(<PrintBadgesPage />);
+    await screen.findByText("Bo Board");
+
+    const box = screen.getByPlaceholderText("Search by name, email, or ID...");
+    fireEvent.change(box, { target: { value: "Ki" } });
+    fireEvent.change(box, { target: { value: "Kim" } });
+    await waitFor(() => expect(screen.queryByText("Bo Board")).not.toBeInTheDocument());
+
+    await act(async () => { finishKi(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(screen.queryByText("Bo Board")).not.toBeInTheDocument();
+    expect(screen.getByText("Kim Keyholder")).toBeInTheDocument();
   });
 });

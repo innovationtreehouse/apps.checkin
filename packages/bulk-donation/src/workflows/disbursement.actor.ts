@@ -2,8 +2,9 @@ import { createActor } from 'xstate';
 import { db as defaultDb, isUniqueConstraintError, type DbOrTx } from '../db';
 import { disbursementMachine } from './disbursement.machine';
 import { assertEventAccepted, isLegalTransition, isConsumedTriggerReplay } from './disbursement.invariants';
-import { runAccountDetermination, isAllOwnersReady, type AccountDeterminationResult } from '../lib/disbursement-processor';
+import { runAccountDetermination, isAllOwnersReady, type AccountDeterminationResult, type ConflictRecord } from '../lib/disbursement-processor';
 import { recordEvent } from '../repositories/audit';
+import { handOverDeposit } from '../lib/deposit-handover';
 import type { DisbursementEvent } from './disbursement.events';
 
 /** Who/why context recorded on every workflow event. System actions pass nothing. */
@@ -149,7 +150,7 @@ async function persistStateTx(
     if (previousState === 'on_hold') {
       await resolvePendingHolds(tx, orgId, disbursementId, now, auditBase);
     }
-    const conflicts = (determinationResult as { type: 'ACCOUNT_UNRESOLVED'; conflicts: Array<{ txId: number; reason: 'NO_MATCH' | 'MULTIPLE_MATCHES'; matchedRows: unknown[] }> }).conflicts;
+    const conflicts = (determinationResult as { type: 'ACCOUNT_UNRESOLVED'; conflicts: ConflictRecord[] }).conflicts;
     for (const conflict of conflicts) {
       await tx.disbursementHold.create({
         data: {
@@ -236,9 +237,7 @@ const MAX_TX_RETRIES = 5;
  *   - a Serializable write-conflict / deadlock, which Prisma surfaces as P2034 (and which
  *     the raw driver may also report as Postgres 40001 / 40P01).
  *
- * Under SQLite this never fired because the better-sqlite3 adapter holds one connection and
- * serializes whole transactions; Postgres actually runs them concurrently, so the retry is
- * what now provides that safety.
+ * Postgres runs these transactions concurrently, so the retry is what keeps a cycle consistent.
  */
 function isRetryableTxConflict(err: unknown): boolean {
   if (isUniqueConstraintError(err)) return true;
@@ -268,6 +267,7 @@ export async function sendDisbursementEvent(
         },
         { isolationLevel: 'Serializable' },
       );
+      await handOverDeposit(orgId, disbursementId);
       return;
     } catch (err) {
       if (attempt < MAX_TX_RETRIES && isRetryableTxConflict(err)) continue;

@@ -1,4 +1,4 @@
-/** Provisional-item proposal route factories (#1286). */
+/** Provisional-item proposal route factories. */
 import { mapServiceErrors, parseBody, parseId, query } from "@checkin/component-kit";
 import { z } from "zod";
 import { createProposalRepository } from "../repositories/proposal";
@@ -34,7 +34,7 @@ export const list: CatalogRouteHandler = async ({ req }) => {
 };
 
 // The approved provisional gets a real GTIN; return the resulting Item so the
-// client learns the new gtin13 (the source's `realGtin13`) from a real field.
+// client learns the new gtin13 from a real field.
 export const approve: CatalogRouteHandler = async ({ req, params }) => {
   const id = parseId(params.id);
   const overrides = await parseBody(req, approveSchema);

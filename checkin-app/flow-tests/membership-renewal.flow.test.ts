@@ -25,7 +25,7 @@
  * afterAll so the next file sees the seed's membership year.
  */
 
-import { loginAs, api, type Session } from "./helpers";
+import { loginAs, api, queuedReviewFor, setBgRecheckMonths, type Session } from "./helpers";
 
 type State = {
     membershipStatus: string | null;
@@ -33,29 +33,29 @@ type State = {
     external: { bgCleared: boolean } | null;
 };
 type RenewalStatus = { renewalDue: boolean; dueDate?: string | null };
-type Settings = { settings: { orgMembershipYearBoundary: string | null } };
+type Settings = { settings: { BoardSettings: { orgMembershipYearBoundary: string | null } } };
 type Sweep = { opened: number; skipped: number };
-type ReviewQueue = {
-    queue: { id: number; orgMembership: { household: { householdMembers: { id: number }[] } | null } | null }[];
-};
 
 const isoDay = (d: Date) => d.toISOString().slice(0, 10);
 
 describe("flow: annual membership renewal (CUJS A2)", () => {
     let board: Session;
     let originalBoundary: string | null = null;
+    let restoreRecheck: () => Promise<void> = async () => {};
 
     beforeAll(async () => {
         board = await loginAs("boardmember@example.com");
+        restoreRecheck = await setBgRecheckMonths(board, 29);
         const before = await api<Settings>(board, "/api/settings/membership");
         expect(before.status).toBe(200);
-        originalBoundary = before.json.settings.orgMembershipYearBoundary;
+        originalBoundary = before.json.settings.BoardSettings.orgMembershipYearBoundary;
     });
 
     afterAll(async () => {
+        await restoreRecheck();
         await api(board, "/api/settings/membership", {
             method: "PUT",
-            body: JSON.stringify({ orgMembershipYearBoundary: originalBoundary }),
+            body: JSON.stringify({ perYearVariantClient: true, orgMembershipYearBoundary: originalBoundary }),
         });
     });
 
@@ -76,7 +76,7 @@ describe("flow: annual membership renewal (CUJS A2)", () => {
         const boundary = isoDay(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000));
         const put = await api(board, "/api/settings/membership", {
             method: "PUT",
-            body: JSON.stringify({ orgMembershipYearBoundary: boundary }),
+            body: JSON.stringify({ perYearVariantClient: true, orgMembershipYearBoundary: boundary }),
         });
         expect(put.status).toBe(200);
 
@@ -122,16 +122,16 @@ describe("flow: annual membership renewal (CUJS A2)", () => {
         }
         expect((await api<State>(lead, "/api/membership")).json.process?.status).toBe("PENDING_PAYMENT");
 
-        // Two distinct reviewers approve the check, both naming the same lead.
-        const queue = await api<ReviewQueue>(board, "/api/membership/reviews");
-        expect(queue.status).toBe(200);
-        const queued = queue.json.queue.find((q) => q.id === processId);
+        // The consent opened a check review for the household; two distinct reviewers
+        // approve it, the first naming the lead.
+        const queued = await queuedReviewFor(board, lead.personaId);
         expect(queued).toBeDefined();
-        const subjectPersonIds = [queued!.orgMembership!.household!.householdMembers[0].id];
+        expect(queued!.subjectPerson).toBeNull();
+        const subjectPersonIds = [lead.personaId];
         for (const reviewer of [board, reviewer2]) {
             const approve = await api(reviewer, "/api/membership/reviews", {
                 method: "POST",
-                body: JSON.stringify({ processId, result: "APPROVE", subjectPersonIds }),
+                body: JSON.stringify({ processId: queued!.id, result: "APPROVE", subjectPersonIds }),
             });
             expect(approve.status).toBe(200);
         }

@@ -1,7 +1,7 @@
-// Pure helpers for the multi-select household enrollment flow on
-// programs/[id]/page.tsx. Extracted so the money-path logic — 409-as-success
+// Pure helpers for the multi-select household enrollment flow in
+// useProgramEnrollment.ts. Kept apart so the money-path logic — 409-as-success
 // idempotency, per-member error aggregation, and the Shopify cart assembly —
-// is unit-testable without rendering the page. The page imports both; tests in
+// is unit-testable without rendering the page. The hook imports them; tests in
 // __tests__/enroll.test.ts exercise them directly.
 
 export type EnrollOutcome = {
@@ -50,6 +50,9 @@ export function aggregateEnrollOutcomes(outcomes: EnrollOutcome[]): {
  * activates each (webhooks/shopify/route.ts). Constraint: holds only while one
  * household = one membership tier = one variant.
  *
+ * `signature` is the server's checkout signature (POST discount-code); the
+ * order activates nobody without it.
+ *
  * `discountCode` (single-pool model only — see mintMemberDiscountCode in
  * lib/shopify/discounts.ts) is prepended as `discount=<code>`, mirroring
  * buildMembershipCheckoutUrl's existing discount-code convention.
@@ -59,6 +62,7 @@ export function buildShopifyCheckoutUrl(
     variantId: string,
     enrolledIds: number[],
     programId: string | number,
+    signature: string,
     discountCode?: string | null,
 ): string {
     const accountIds = enrolledIds.join(',');
@@ -66,6 +70,7 @@ export function buildShopifyCheckoutUrl(
     if (discountCode) parts.push(`discount=${encodeURIComponent(discountCode)}`);
     parts.push(`attributes[CheckMeIn_Account_ID]=${accountIds}`);
     parts.push(`attributes[Program_ID]=${programId}`);
+    parts.push(`attributes[CheckMeIn_Checkout_Sig]=${encodeURIComponent(signature)}`);
     return `https://${storeDomain}/cart/${variantId}:${enrolledIds.length}?${parts.join('&')}`;
 }
 

@@ -10,7 +10,7 @@
  * or ResolvedInventoryDeltaSchema; bump MINOR for additive, backward-compatible
  * changes. Receivers should reject payloads whose MAJOR differs from their own.
  */
-export const RECEIPT_CONTRACT_VERSION = "1.1.0";
+export const RECEIPT_CONTRACT_VERSION = "1.3.0";
 
 /** Extract the MAJOR component of a semver string (e.g. "1.4.2" -> 1). */
 export function majorVersion(version: string): number {

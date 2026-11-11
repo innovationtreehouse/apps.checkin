@@ -1,9 +1,8 @@
 "use client";
-import { useState } from "react";
 import { SegmentedControl, Table, Title } from "@mantine/core";
-import { cents, ownerName, paged, useLoad, useOwners } from "../components/api";
-import LoadError from "../components/LoadError";
-import Pager from "../components/Pager";
+import { ownerName, paged, useLoad, useOwners } from "../components/api";
+import { formatCents } from "@checkin/money";
+import { LoadError, Pager, useUrlChoice, useUrlPage } from "@checkin/component-ui";
 
 export interface GiftRow {
   id: number;
@@ -20,17 +19,19 @@ export interface GiftRow {
   donationDate: string | null;
 }
 
+const ASSIGNED = ["all", "true", "false"] as const;
+
 /** /donations/transactions — every imported gift and who it belongs to. */
 export default function TransactionsPage() {
-  const [filter, setFilter] = useState("all");
-  const [page, setPage] = useState(1);
-  const gifts = useLoad<GiftRow[]>(paged(filter === "all" ? "/transactions" : `/transactions?assigned=${filter}`, page));
+  const [filter, setFilter] = useUrlChoice("assigned", ASSIGNED, "all");
+  const [page, setPage] = useUrlPage();
+  const gifts = useLoad<GiftRow[]>(paged(filter === "all" ? "/transactions" : `/transactions?assigned=${filter}`, page), { keepPrevious: true });
   const owners = useOwners();
 
   return (
     <>
       <Title order={3} mb="md">Gifts</Title>
-      <SegmentedControl mb="md" value={filter} onChange={(v) => { setFilter(v); setPage(1); }}
+      <SegmentedControl mb="md" value={filter} onChange={setFilter}
         data={[{ value: "all", label: "All" }, { value: "true", label: "Assigned" }, { value: "false", label: "Unassigned" }]} />
       {gifts.error && <LoadError what="gifts" message={gifts.error} onRetry={gifts.reload} />}
       <Table striped>
@@ -46,8 +47,8 @@ export default function TransactionsPage() {
               <Table.Td>{g.donationDate ?? "—"}</Table.Td>
               <Table.Td>{[g.donorFirstName, g.donorLastName].filter(Boolean).join(" ") || "—"}</Table.Td>
               <Table.Td>{g.companyName ?? "—"}</Table.Td>
-              <Table.Td>{cents(g.donationAmountCents)}</Table.Td>
-              <Table.Td>{cents(g.matchAmountCents)}</Table.Td>
+              <Table.Td>{formatCents(g.donationAmountCents)}</Table.Td>
+              <Table.Td>{formatCents(g.matchAmountCents)}</Table.Td>
               <Table.Td>{g.isOrganizationalLevel ? "Organizational level" : ownerName(owners.data, g.ownerId)}</Table.Td>
             </Table.Tr>
           ))}

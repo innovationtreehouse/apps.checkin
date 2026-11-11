@@ -1,8 +1,9 @@
 // Ports the host (checkin-app) binds via configureBulkDonation(). The library never imports the
 // host or another library; every crossing is one of these, bound once at boot.
 import { z } from "zod";
-import type { QuickBooksClient } from "@checkin/quickbooks";
-import type { ResolvedInventoryDelta } from "@checkin/receipt-types";
+import type { OnFailure } from "@checkin/component-kit";
+import type { BooksMap, BooksMapRole, QboAccountList, QuickBooksClient } from "@checkin/quickbooks";
+import type { DonatedCapitalLine, ResolvedInventoryDelta } from "@checkin/receipt-types";
 
 /** The acting host user, projected to what rows stamp (actor ids and usernames). */
 export interface BulkDonationPrincipal {
@@ -36,12 +37,7 @@ export interface OwnerDirectory {
 }
 
 /** The in-kind donor entered at receipt upload (X13). Never null: upload requires a donor. */
-export const InKindDonorSchema = z.object({
-  firstName: z.string().min(1),
-  lastName: z.string().min(1),
-  companyName: z.string().nullable(),
-});
-export type InKindDonor = z.infer<typeof InKindDonorSchema>;
+export { InKindDonorSchema, type InKindDonor } from "@checkin/receipt-types";
 
 /** A catalog item as the no-receipt in-kind picker shows it (X10). */
 export const CatalogItemSummarySchema = z.object({
@@ -62,6 +58,8 @@ export interface CatalogLookup {
  */
 export interface InventoryApply {
   apply(delta: ResolvedInventoryDelta): Promise<void>;
+  /** Why the last load under this source key failed; null once it loads, or if it never failed. */
+  failureReason(sourceKey: string): Promise<string | null>;
 }
 
 /** Per-source idempotency key for X11, beside the receipt pipeline's `receipt:<id>`. */
@@ -70,21 +68,57 @@ export function inventorySourceKey(inKindDonationId: number): string {
 }
 
 /**
- * What the QuickBooks drain books with: checkin's one guarded client (null while the guard keeps
- * QuickBooks off), the bank account Benevity disbursements land in, and whether this is prod.
- * Outside prod only a disbursement whose id starts with "TEST-" is sent; prod never sends one.
+ * What the in-kind drain books with: checkin's one guarded client (null while the guard keeps
+ * QuickBooks off) and the books map, which names every account an in-kind journal entry uses.
  */
-export interface DonationQbPosting {
+export interface InKindQbPosting {
   client(): Promise<QuickBooksClient | null>;
-  bankAccountId: string;
-  prod: boolean;
-  /** Tells finance the daily orphan sweep read a full page, so some Deposits went unchecked. */
+  booksMap: BooksMap;
+  /** Tells finance the daily orphan sweep read a full page, so some JournalEntries went unchecked. */
   sweepIncomplete(event: { orgId: string; since: Date }): Promise<void>;
 }
 
-/** QuickBooks Deposits another lane (income) holds, kept out of this lane's matching. */
-export interface OtherLaneClaims {
-  claimedDepositIds(orgId: string): Promise<string[]>;
+/** One deposit line: a gift or match line on its rule's QuickBooks account, net of its fees, and the gift's bucket (null at organization level). */
+export type DonationDepositLine = {
+  accountId: string;
+  budgetOwnerId: number | null;
+  amountCents: number;
+  description?: string;
+};
+
+/** The deposit a completed disbursement should land as; income books or matches it. */
+export type DonationExpectedDeposit = {
+  /** YYYY-MM-DD. */
+  txnDate: string;
+  netCents: number;
+  bankRole: BooksMapRole;
+  lines: DonationDepositLine[];
+  memo?: string;
+};
+
+/** A completed disbursement the daily job could not hand to income, and why in plain words. */
+export type DepositHandOverFailure = { disbursementId: string; reason: string };
+
+/** What income made of a disbursement's deposit. */
+export type DonationDepositStatus =
+  | { state: "waiting" }
+  | { state: "booked" | "matched"; depositId: string; txnDate: string | null; totalCents: number | null }
+  | { state: "with_finance"; kind: string | null; note: string | null }
+  | { state: "drifted"; note: string | null }
+  | { state: "dismissed"; reason: string | null };
+
+/**
+ * Income, which books and matches every deposit. Donation hands each completed disbursement over
+ * after its own commit, re-sends any income does not know, and reads back what became of it.
+ * Outside prod only a disbursement whose id starts with "TEST-" is handed over; prod never hands one over.
+ */
+export interface IncomeDeposits {
+  expectDeposit(orgId: string, disbursementId: string, expected: DonationExpectedDeposit): Promise<unknown>;
+  /** Per disbursement id; an id income has no row for is absent. */
+  depositStatus(orgId: string, disbursementIds: string[]): Promise<Record<string, DonationDepositStatus>>;
+  /** Tells finance about completed disbursements the daily job could not hand over. */
+  handOverFailing(failures: DepositHandOverFailure[]): Promise<void>;
+  prod: boolean;
 }
 
 /**
@@ -104,16 +138,46 @@ export interface InKindDirectory {
   largeValueCents(): Promise<number>;
 }
 
+export { DonatedCapitalLineSchema as CapitalReviewLineSchema, type DonatedCapitalLine as CapitalReviewLine } from "@checkin/receipt-types";
+
+/** Donations → the expense library's capital review, for donated equipment. */
+export interface InKindCapital {
+  /** Sends an accepted gift's lines; the callee keeps those at or over its capital thresholds. A resend does nothing. */
+  submit(orgId: string, lines: DonatedCapitalLine[]): Promise<void>;
+  /** The gifts with a line still waiting on capital review. */
+  awaitingReview(orgId: string): Promise<{ giftSource: string; giftId: number }[]>;
+  /** The gift's lines capital review made assets; each books to a fixed-asset account. */
+  assetLineIds(orgId: string, gift: { giftSource: "receipt" | "manual"; giftId: number }): Promise<number[]>;
+}
+
+/** One donated part to resolve: the gift line, its GTIN-13, and whether capital review made it an asset. */
+export interface DonatedPart {
+  lineId: number;
+  gtin13: string;
+  isCapital: boolean;
+}
+
+/** Donations → the expense library's account rules: each part's account, or why none resolves. */
+export interface InKindAccounts {
+  resolve(orgId: string, parts: DonatedPart[]): Promise<({ lineId: number } & ({ accountId: string } | { reason: string }))[]>;
+}
+
 export interface BulkDonationConfig {
   auth: BulkDonationAuth;
   /** Called once per request: the host may resolve it from its own store, so never at boot. */
   org: () => Promise<OrgIdentity>;
+  onFailure?: OnFailure;
   owners?: OwnerDirectory;
   catalog?: CatalogLookup;
   inventory?: InventoryApply;
-  qb?: DonationQbPosting;
-  otherLaneClaims?: OtherLaneClaims;
+  inKindQb?: InKindQbPosting;
+  deposits?: IncomeDeposits;
   inKind?: InKindDirectory;
+  capital?: InKindCapital;
+  /** QuickBooks' live account list, read when an account rule saves an account. */
+  quickBooksAccounts?: QboAccountList;
+  /** Each gift line's account from the expense account rules. */
+  partAccounts?: InKindAccounts;
 }
 
 /** The slice of a route context a factory consumes: request + path params. */

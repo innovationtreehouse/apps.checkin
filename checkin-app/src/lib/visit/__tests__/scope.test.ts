@@ -56,9 +56,8 @@ describe("visitSubject", () => {
         expect(await visitSubject(ACTOR, MEMBER)).toBeNull();
     });
 
-    // LIVE_PERSON is in the lookup, so a merged-away id resolves to nobody —
-    // including when the actor names themselves.
-    it("refuses an unknown or merged-away subject", async () => {
+    // An unknown id resolves to nobody, including when the actor names themselves.
+    it("refuses an unknown subject", async () => {
         personFindFirst.mockResolvedValue(null);
         expect(await visitSubject(ACTOR, MEMBER)).toBeNull();
         expect(await visitSubject(ACTOR, ACTOR)).toBeNull();

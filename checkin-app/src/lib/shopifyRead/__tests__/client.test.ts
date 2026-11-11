@@ -114,7 +114,7 @@ describe('wiring', () => {
         await freshClient().latestSyncRun();
 
         // min 0 + a fast idle reap is what lets the shared Aurora cluster auto-pause;
-        // a pool that holds a connection open would keep it awake forever (PR #1030).
+        // a pool that holds a connection open would keep it awake forever.
         expect(poolCtor).toHaveBeenCalledTimes(1);
         expect(poolCtor.mock.calls[0][0]).toMatchObject({
             connectionString: MIRROR_URL,
@@ -223,9 +223,14 @@ describe('order reads', () => {
     });
 
     it('orderLines drops removed and variant-less lines', async () => {
-        db.shopOrderLine.findMany.mockResolvedValue([{ variantLegacyId: '9', quantity: 2 }]);
-        expect(await freshClient().orderLines('gid://shopify/Order/1')).toEqual([{ variantId: '9', quantity: 2 }]);
+        db.shopOrderLine.findMany.mockResolvedValue([{ variantLegacyId: '9', quantity: 2, currentQuantity: 1 }]);
+        expect(await freshClient().orderLines('gid://shopify/Order/1')).toEqual([{ variantId: '9', quantity: 2, currentQuantity: 1 }]);
         expect(whereOf(db.shopOrderLine.findMany)).toEqual({ orderGid: 'gid://shopify/Order/1', variantLegacyId: { not: null }, removed: false });
+    });
+
+    it('orderLines falls back to the original quantity for a row synced before current_quantity', async () => {
+        db.shopOrderLine.findMany.mockResolvedValue([{ variantLegacyId: '9', quantity: 2, currentQuantity: null }]);
+        expect(await freshClient().orderLines('gid://shopify/Order/1')).toEqual([{ variantId: '9', quantity: 2, currentQuantity: 2 }]);
     });
 
     it('orderLineVariantIds reads distinct non-null variants', async () => {
@@ -234,11 +239,11 @@ describe('order reads', () => {
         expect(db.shopOrderLine.findMany.mock.calls[0][0].distinct).toEqual(['variantLegacyId']);
     });
 
-    it('disputedOrderGids counts API-synced disputes on real, API-synced orders only', async () => {
-        db.shopBalanceTransaction.findMany.mockResolvedValue([{ orderGid: 'g1' }, { orderGid: 'g2' }]);
+    it('orderDisputeCounts counts API-synced disputes on real, API-synced orders only', async () => {
+        db.shopBalanceTransaction.findMany.mockResolvedValue([{ orderGid: 'g1' }, { orderGid: 'g1' }, { orderGid: 'g2' }]);
         db.shopOrder.findMany.mockResolvedValue([{ shopifyGid: 'g1' }]);
 
-        expect(await freshClient().disputedOrderGids(['g1', 'g2', 'g3'])).toEqual(new Set(['g1']));
+        expect(await freshClient().orderDisputeCounts(['g1', 'g2', 'g3'])).toEqual(new Map([['g1', 2]]));
         expect(whereOf(db.shopBalanceTransaction.findMany).AND).toEqual([API_SOURCE]);
         expect(whereOf(db.shopBalanceTransaction.findMany).OR).toEqual([
             { type: { contains: 'dispute', mode: 'insensitive' } },
@@ -344,14 +349,24 @@ describe('income reads', () => {
 
     it('incomeOrderLines reads live lines in order and names the variant id', async () => {
         db.shopOrderLine.findMany.mockResolvedValue([
-            { orderGid: 'g1', variantLegacyId: '111', title: 'Membership Fee', sku: null, quantity: 1, priceCents: 5000, discountCents: 0 },
+            { orderGid: 'g1', variantLegacyId: '111', title: 'Membership Fee', sku: null, quantity: 1, currentQuantity: null, priceCents: 5000, discountCents: 0 },
+            { orderGid: 'g1', variantLegacyId: '222', title: 'Class Seat', sku: null, quantity: 3, currentQuantity: 2, priceCents: 2500, discountCents: 0 },
         ]);
         expect(await freshClient().incomeOrderLines(['g1'])).toEqual([
-            { orderGid: 'g1', variantId: '111', title: 'Membership Fee', sku: null, quantity: 1, priceCents: 5000, discountCents: 0 },
+            { orderGid: 'g1', variantId: '111', title: 'Membership Fee', sku: null, quantity: 1, currentQuantity: 1, priceCents: 5000, discountCents: 0 },
+            { orderGid: 'g1', variantId: '222', title: 'Class Seat', sku: null, quantity: 3, currentQuantity: 2, priceCents: 2500, discountCents: 0 },
         ]);
         const args = db.shopOrderLine.findMany.mock.calls[0][0];
         expect(args.where).toEqual({ orderGid: { in: ['g1'] }, removed: false });
         expect(args.orderBy).toEqual([{ orderGid: 'asc' }, { lineGid: 'asc' }]);
+    });
+
+    it('incomeOrderSubtotals selects only the gid and subtotal, never a customer column', async () => {
+        db.shopOrder.findMany.mockResolvedValue([{ shopifyGid: 'g1', subtotalCents: 5000 }]);
+        expect(await freshClient().incomeOrderSubtotals(['g1'])).toEqual([{ orderGid: 'g1', subtotalCents: 5000 }]);
+        const args = db.shopOrder.findMany.mock.calls[0][0];
+        expect(args.where).toEqual({ shopifyGid: { in: ['g1'] } });
+        expect(args.select).toEqual({ shopifyGid: true, subtotalCents: true });
     });
 
     it('incomeItemsSeen skips test orders and test-loaded rows', async () => {
@@ -368,6 +383,7 @@ describe('income reads', () => {
         expect(await client.incomePaidPayoutsSince(issuedAt)).toEqual([]);
         expect(await client.incomePayout('p1')).toBeNull();
         expect(await client.incomeOrderLines(['g1'])).toEqual([]);
+        expect(await client.incomeOrderSubtotals(['g1'])).toEqual([]);
         expect(poolCtor).not.toHaveBeenCalled();
     });
 });

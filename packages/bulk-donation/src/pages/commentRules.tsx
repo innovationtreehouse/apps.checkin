@@ -1,17 +1,15 @@
 "use client";
-import { useState } from "react";
 import { Button, Table, Text, Title } from "@mantine/core";
 import { act, api, ownerName, paged, useCanWrite, useLoad, useOwners, when } from "../components/api";
-import LoadError from "../components/LoadError";
-import Pager from "../components/Pager";
+import { LoadError, Pager, useUrlPage } from "@checkin/component-ui";
 
 interface RuleRow { id: number; comment: string; ownerId: number; createdAt: string }
 
 /** /donations/comment-rules — donor comments that assign an owner automatically. */
 export default function CommentRulesPage() {
   const canWrite = useCanWrite();
-  const [page, setPage] = useState(1);
-  const rules = useLoad<RuleRow[]>(paged("/comment-rules", page));
+  const [page, setPage] = useUrlPage();
+  const rules = useLoad<RuleRow[]>(paged("/comment-rules", page), { keepPrevious: true });
   const owners = useOwners();
 
   return (

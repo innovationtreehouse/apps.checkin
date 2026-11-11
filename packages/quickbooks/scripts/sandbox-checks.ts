@@ -1,4 +1,4 @@
-// Live checks of what the closed-books gate relies on (docs/in-design/QB_CLOSED_BOOKS.md §2, §6).
+// Live checks of what the closed-books gate relies on (packages/quickbooks/README.md, Sandbox checks).
 // Sandbox only. Run it twice: once with the sandbox books not closed (the unset read), then after closing
 // them the way finance does: Settings → Account and settings → Advanced → Close the books, a closing
 // date before today, "Required password" (the closed-period refusal).
@@ -7,7 +7,7 @@
 // into the bank account QBO_SANDBOX_DEPOSIT_ACCOUNT (default "Checking"), booked to the income account
 // QBO_SANDBOX_INCOME_ACCOUNT (default "Services"), each named as the Chart of Accounts shows it.
 // Creates up to two [checkin-test] Deposits in the sandbox per run.
-import { QboRequestError, QuickBooksClient, appKeyOf, qboEnvFromEnv, qbKey, type TxnWrite } from "../src/client";
+import { QboRequestError, QuickBooksClient, appKeyOf, qboEnvFromEnv, qbKey, qboString, type TxnWrite } from "../src/client";
 import type { QboPreferences } from "../src/types";
 import { CREATE } from "../src/internal";
 import { fileAccessTokenSource, loadTokens, tokenFileFromEnv } from "../src/local";
@@ -68,5 +68,24 @@ const { Id } = await client[CREATE](deposit(today), key);
 const { entries, full } = await client.createdSince("Deposit", since);
 const hits = entries.filter((d) => appKeyOf(d)?.split(" ").includes(key)).map((d) => d.Id);
 report(hits.length === 1 && hits[0] === Id, `created-since finds Deposit ${Id} by key (hits: ${hits.join(",") || "none"}, full page: ${full})`);
+
+// 4. Every entity the read covers accepts the query and answers oldest first, since each page starts at the last row's CreateTime.
+for (const entity of ["Deposit", "Purchase", "Bill", "JournalEntry"] as const) {
+  try {
+    const read = await client.createdSince(entity, new Date("2000-01-01T00:00:00Z"));
+    const times = read.entries.map((e) => Date.parse(e.MetaData?.CreateTime ?? ""));
+    const ordered = times.every((t, i) => !Number.isNaN(t) && (i === 0 || times[i - 1] <= t));
+    report(ordered, `created-since reads ${entity}: ${times.length} entries, oldest first: ${ordered}, full: ${read.full}`);
+  } catch (e) {
+    report(false, `created-since read of ${entity} failed (${String(e)})`);
+  }
+}
+
+// 5. An id lookup returns every row. The default-page limit shows only with more than 100 Deposits in the sandbox.
+const depositIds = (await client.createdSince("Deposit", new Date("2000-01-01T00:00:00Z"))).entries.map((d) => d.Id).slice(0, 1000);
+const byId = await client.depositsByIds(depositIds);
+const unbounded = await client.query<{ Id: string }>(`SELECT * FROM Deposit WHERE Id IN (${depositIds.map(qboString).join(", ")})`);
+report(byId.length === depositIds.length, `id lookup returns ${byId.length} of ${depositIds.length} Deposits; with no MAXRESULTS, ${unbounded.length}`);
+if (depositIds.length <= 100) console.log("NOTE  100 or fewer Deposits: this run does not exercise QuickBooks' default page size");
 
 process.exit(failed ? 1 : 0);

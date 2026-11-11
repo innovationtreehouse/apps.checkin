@@ -1,5 +1,5 @@
 /**
- * Advisory-lock guard (F19). The monitoring relay and watchdog are intended to run at reserved
+ * Advisory-lock guard. The monitoring relay and watchdog are intended to run at reserved
  * concurrency = 1, but that flag is invisible to the code: two overlapping invocations fail
  * fast with {@link ConcurrentRunError} instead of draining the outbox concurrently.
  */

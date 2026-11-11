@@ -3,7 +3,7 @@
  */
 /**
  * Integration tests for the person-scoped PERSON_BG_NEEDED / DOB_MISSING buckets
- * of GET /api/membership-audit/compliance (Phase 1, warn-only). Asserts a ≥18
+ * of GET /api/membership-audit/compliance (warn-only). Asserts a ≥18
  * non-fresh program participant / volunteer / lead surfaces, under-18 and fresh
  * people are omitted, a program volunteer with no membership still appears in the
  * person-level list, and a missing-DOB person lands in the data-hygiene bucket.
@@ -106,7 +106,7 @@ describe('GET /api/membership-audit/compliance — person BG buckets', () => {
         // No DOB, not declared adult → DOB_MISSING, not NEEDED.
         missingDobId = (await makePerson('nodob', { dateOfBirth: null })).id;
 
-        const program = await prisma.program.create({ data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `${TAG} program`, leadMentorId: leadId } });
+        const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `${TAG} program`, leadMentorId: leadId } });
         programId = program.id;
         await prisma.programParticipant.create({ data: { programId, personId: participantId } });
         await prisma.programParticipant.create({ data: { programId, personId: freshId } });

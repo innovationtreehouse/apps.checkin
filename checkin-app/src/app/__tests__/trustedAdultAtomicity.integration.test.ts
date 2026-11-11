@@ -2,15 +2,14 @@
  * @jest-environment node
  */
 /**
- * Atomicity: every mutating trusted-adult op now writes its state change and its
+ * Atomicity: every mutating trusted-adult op writes its state change and its
  * audit row inside ONE prisma.$transaction. If the audit insert fails, the state
  * change must roll back with it — no granted/denied/revoked record left without
  * an audit trail.
  *
  * We force the audit insert to throw by wrapping the interactive transaction's
- * `tx` client so `tx.auditLog.create` blows up. Against the old non-transactional
- * code (state update + separate audit await) the update would already be
- * committed and these assertions would fail.
+ * `tx` client so `tx.auditLog.create` blows up. With a state update and a separate
+ * audit await, the update would already be committed and these assertions would fail.
  */
 
 import {

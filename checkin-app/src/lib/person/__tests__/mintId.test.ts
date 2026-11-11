@@ -37,7 +37,7 @@ describe('mintPersonId', () => {
         // this is what keeps it from being MAX+1.
         expect(sql).toContain('GREATEST');
         // Push the sequence up too, so the next sequence insert can't draw the
-        // id we just handed out (the review amendment).
+        // id we just handed out.
         expect(sql).toContain('setval');
     });
 });

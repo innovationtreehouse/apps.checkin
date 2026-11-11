@@ -48,6 +48,15 @@ const noPrismaValueImport = [
   },
 ];
 
+// A page's role gate comes from its nav section module, so the page and the nav
+// cannot drift. An empty list is the plain sign-in gate.
+const literalRoleGateRules = [
+  {
+    selector: "CallExpression[callee.name='useRequireRole'] > ArrayExpression[elements.length>0]",
+    message: "Pass the role constant exported by the page's nav section (lib/nav/sections), not a literal list.",
+  },
+];
+
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
@@ -79,6 +88,7 @@ const eslintConfig = defineConfig([
         "error",
         ...bareConsoleErrorRules,
         ...nodeEnvRules,
+        ...literalRoleGateRules,
       ],
     },
   },

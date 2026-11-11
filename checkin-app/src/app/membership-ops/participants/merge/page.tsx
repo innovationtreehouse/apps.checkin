@@ -2,16 +2,16 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Alert, Anchor, Box, Button, Card, Group, List, Paper, Radio, SimpleGrid, Stack, Text, TextInput, Title } from "@mantine/core";
-import Link from "next/link";
+import { Alert, Box, Button, Card, Group, List, Paper, Radio, SimpleGrid, Stack, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { AlertBanner } from "@/components/admin/AlertBanner";
-import { MergedBadge } from "@/components/ui/MergedBadge";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { MEMBERSHIP_OPS_ADMIN_ROLES } from "@/lib/nav/sections/membershipOps";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { formatPhone } from "@/lib/phone";
 import { formatDateOnly } from "@/lib/time";
 import { searchId } from "@/lib/searchId";
+import { useLoad } from "@/lib/api";
 
 interface ParticipantMergeView {
   id: number;
@@ -21,10 +21,13 @@ interface ParticipantMergeView {
   googleId?: string;
   emailVerified?: string | null;
   dateOfBirth?: string | null;
-  mergedIntoId?: number | null;
   _count: { visits: number, rawBadgeLogs: number, programParticipants: number, programVolunteers: number };
   household?: { id: number, name: string, _count?: { householdMembers: number }, householdMembers: Record<string, unknown>[] } | null;
   [key: string]: unknown;
+}
+
+interface BgNotice {
+  date: string;
 }
 
 // Per-field conflict radios — mirrors the server's CONFLICT_FIELDS (route.ts).
@@ -79,26 +82,18 @@ function isSearchable(query: string) {
 }
 
 // Results for a picker that is still searching. They clear once a person is picked
-// or the query gets too short, and otherwise stay up until the next response lands.
+// or the query gets too short, and otherwise stay up until the current query's answer lands.
 function usePeopleSearch(query: string, picked: boolean) {
-  const [people, setPeople] = useState<ParticipantMergeView[]>([]);
   const active = !picked && isSearchable(query);
-  const [wasActive, setWasActive] = useState(active);
-  if (wasActive !== active) {
-    setWasActive(active);
-    if (!active) setPeople([]);
-  }
-  useEffect(() => {
-    if (!active) return;
-    fetch(`/api/people/search?q=${encodeURIComponent(query)}`)
-      .then(r => r.json())
-      .then(d => setPeople(d.people || []));
-  }, [query, active]);
-  return people;
+  const { data } = useLoad<{ people?: ParticipantMergeView[] }>(
+    active ? `/api/people/search?q=${encodeURIComponent(query)}` : null,
+    { keepPrevious: true },
+  );
+  return data?.people ?? [];
 }
 
 export default function MergeParticipants() {
-  const { ready, loading: authLoading } = useRequireRole(['isSysadmin', 'isBoardMember']);
+  const { ready, loading: authLoading } = useRequireRole(MEMBERSHIP_OPS_ADMIN_ROLES);
   const router = useRouter();
   const [searchA, setSearchA] = useState("");
   const [searchB, setSearchB] = useState("");
@@ -129,6 +124,7 @@ export default function MergeParticipants() {
   // keeper's value). Reset below whenever the keeper flips (Swap Kept/Merged) or
   // analysis lands.
   const [fieldChoices, setFieldChoices] = useState<Record<string, "keep" | "merge">>({});
+  const [emailChangeReason, setEmailChangeReason] = useState("");
 
   const mergeParticipant = keepId === analyzedA?.id ? analyzedB : analyzedA;
   const keepParticipant = keepId === analyzedA?.id ? analyzedA : analyzedB;
@@ -139,6 +135,10 @@ export default function MergeParticipants() {
   const membershipBlockReason = (keeperIsA ? membershipBlock?.aAsKeeper : membershipBlock?.bAsKeeper) ?? null;
   const swapDirectionBlock = (keeperIsA ? membershipBlock?.bAsKeeper : membershipBlock?.aAsKeeper) ?? null;
   const swapClearsMembershipBlock = !!membershipBlockReason && !swapDirectionBlock;
+
+  // The background-check date the survivor would adopt, per direction like the block above.
+  const [bgNotices, setBgNotices] = useState<{ aAsKeeper: BgNotice | null; bAsKeeper: BgNotice | null } | null>(null);
+  const bgNotice = (keeperIsA ? bgNotices?.aAsKeeper : bgNotices?.bAsKeeper) ?? null;
 
   const conflicts: ConflictField[] = keepParticipant && mergeParticipant
     ? CONFLICT_FIELDS.filter((f) => {
@@ -167,48 +167,61 @@ export default function MergeParticipants() {
     }
   }
 
-  // Picking (or un-picking) either side re-runs the analysis for the pair.
+  // Picking (or un-picking) either side drops the analysis; the effect below re-runs it.
   const pick = (a: ParticipantMergeView | null, b: ParticipantMergeView | null) => {
     setPA(a);
     setPB(b);
-    if (a && b) {
-      setLoading(true);
-      fetch(`/api/membership-ops/participants/merge/analyze?a=${a.id}&b=${b.id}`)
-        .then(r => r.json())
-        .then(d => {
-          if (d.participants) {
-            setAnalyzedA(d.participants[0]);
-            setAnalyzedB(d.participants[1]);
-            setMembershipBlock(d.membershipBlock ?? null);
-
-            // Recommend keeping the one with more activity or better data
-            const score = (p: ParticipantMergeView) => {
-              let s = 0;
-              s += p._count.visits * 2;
-              s += p._count.rawBadgeLogs;
-              s += p._count.programParticipants * 5;
-              s += p._count.programVolunteers * 5;
-              if (p.email) s += 10;
-              if (p.phone) s += 10;
-              if (p.googleId) s += 20; // real account
-              return s;
-            };
-            const sA = score(d.participants[0]);
-            const sB = score(d.participants[1]);
-
-            setKeepId(sA >= sB ? a.id : b.id);
-          }
-        })
-        .catch(() => setError("Failed to analyze participants"))
-        .finally(() => setLoading(false));
-    } else {
-      setAnalyzedA(null);
-      setAnalyzedB(null);
-      setKeepId(null);
-      setPreviewMode(false);
-      setMembershipBlock(null);
-    }
+    setAnalyzedA(null);
+    setAnalyzedB(null);
+    setKeepId(null);
+    setPreviewMode(false);
+    setMembershipBlock(null);
+    setBgNotices(null);
+    setLoading(!!(a && b));
   };
+
+  // Only the selected pair's response lands, so what is on screen is always the
+  // current selection, and a merge deletes the record the operator was shown.
+  const aId = pA?.id;
+  const bId = pB?.id;
+  useEffect(() => {
+    if (aId === undefined || bId === undefined) return;
+    let selected = true;
+    fetch(`/api/membership-ops/participants/merge/analyze?a=${aId}&b=${bId}`)
+      .then(r => r.json())
+      .then(d => {
+        if (selected && d.participants) {
+          setAnalyzedA(d.participants[0]);
+          setAnalyzedB(d.participants[1]);
+          setMembershipBlock(d.membershipBlock ?? null);
+          setBgNotices(d.bgNotice ?? null);
+
+          // Recommend keeping the one with more activity or better data
+          const score = (p: ParticipantMergeView) => {
+            let s = 0;
+            s += p._count.visits * 2;
+            s += p._count.rawBadgeLogs;
+            s += p._count.programParticipants * 5;
+            s += p._count.programVolunteers * 5;
+            if (p.email) s += 10;
+            if (p.phone) s += 10;
+            if (p.googleId) s += 20; // real account
+            return s;
+          };
+          const sA = score(d.participants[0]);
+          const sB = score(d.participants[1]);
+
+          setKeepId(sA >= sB ? aId : bId);
+        }
+      })
+      .catch(() => {
+        if (selected) setError("Failed to analyze participants");
+      })
+      .finally(() => {
+        if (selected) setLoading(false);
+      });
+    return () => { selected = false; };
+  }, [aId, bId]);
 
   if (authLoading) {
     return <PageLoader />;
@@ -226,16 +239,17 @@ export default function MergeParticipants() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          keepId,
-          mergeId: keepId === pA?.id ? pB?.id : pA?.id,
-          fieldChoices
+          keepId: keepParticipant?.id,
+          mergeId: mergeParticipant?.id,
+          fieldChoices,
+          ...(emailChangeReason.trim() && { emailChangeReason }),
         })
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         setSuccess(true);
       } else if (typeof data.error === "string" && data.error.includes("lead of a household with other members")) {
-        notifications.show({ color: "red", message: data.error, autoClose: 4000 });
+        notifications.show({ color: "red", message: data.error, autoClose: false });
         // No page-level reload here; clear the stale analyzed selection so the
         // user re-picks (and re-analyzes) against current household state.
         pick(null, null);
@@ -288,9 +302,8 @@ export default function MergeParticipants() {
     <Card withBorder radius="md" padding="lg" style={{ borderColor: isKept ? "var(--mantine-color-green-6)" : "var(--mantine-color-red-6)", borderWidth: 2 }}>
       <Group gap="xs" mb="sm">
         <Title order={4} c={isKept ? "green" : "red"}>
-          {isKept ? "Keep and augment" : "Merge and tombstone"}
+          {isKept ? "Keep and augment" : "Merge and delete"}
         </Title>
-        <MergedBadge person={p} />
       </Group>
 
       <Box mb="md">
@@ -365,11 +378,8 @@ export default function MergeParticipants() {
       <div>
         <Text c="dimmed">
           Combine two participant records. The data from the merged record (visits, programs, etc)
-          will be moved to the kept record. The merged record will be tombstoned.
+          will be moved to the kept record. The merged record will be deleted, and an archive of it names the kept record.
         </Text>
-        <Anchor component={Link} href="/membership-ops/participants/tombstones" size="sm">
-          View tombstone census
-        </Anchor>
       </div>
 
       {!previewMode && <AlertBanner message={error} tone="error" />}
@@ -470,11 +480,27 @@ export default function MergeParticipants() {
           <Text my="sm"><strong>This action is extremely difficult to undo.</strong> Please review the changes below.</Text>
 
           <List spacing="xs" my="lg">
-            <List.Item><strong>{mergeParticipant.name || mergeParticipant.email || `ID ${mergeParticipant.id}`}</strong> will be tombstoned.</List.Item>
+            <List.Item><strong>{mergeParticipant.name || mergeParticipant.email || `ID ${mergeParticipant.id}`}</strong> will be deleted, and an archive of the record will name the kept participant.</List.Item>
             <List.Item>All visits, program enrollments, RSVPs, and fee payments will be transferred to <strong>{keepParticipant.name || keepParticipant.email || `ID ${keepParticipant.id}`}</strong>.</List.Item>
             <List.Item>Missing personal info on the kept participant will be filled in from the merged participant.</List.Item>
-            <List.Item>Raw badge scans will remain on the tombstoned record for audit purposes.</List.Item>
+            <List.Item>Raw badge scans will move to the kept participant.</List.Item>
           </List>
+
+          {bgNotice && (
+            <Alert color="yellow" variant="light" mb="md" title="Background-check date will change">
+              <strong>{keepParticipant.name || keepParticipant.email || `ID ${keepParticipant.id}`}</strong> will
+              end up with the background-check date {formatDateOnly(bgNotice.date)}, carried over
+              from <strong>{mergeParticipant.name || mergeParticipant.email || `ID ${mergeParticipant.id}`}</strong>.
+            </Alert>
+          )}
+
+          <TextInput
+            mb="md"
+            label="Reason for the sign-in email change"
+            description="A board member must give one when either person holds a position of trust."
+            value={emailChangeReason}
+            onChange={(e) => setEmailChangeReason(e.currentTarget.value)}
+          />
 
           {error && (
             <Alert color="red" variant="light" mb="md" fw={700}>
@@ -484,7 +510,7 @@ export default function MergeParticipants() {
 
           <Group justify="flex-end">
             <Button variant="default" onClick={() => setPreviewMode(false)} disabled={merging}>Cancel</Button>
-            <Button color="red" onClick={handleMerge} disabled={merging} loading={merging}>Confirm Merge &amp; Tombstone</Button>
+            <Button color="red" onClick={handleMerge} disabled={merging} loading={merging}>Confirm Merge &amp; Delete</Button>
           </Group>
         </Card>
       ) : null}

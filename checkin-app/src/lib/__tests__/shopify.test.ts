@@ -61,6 +61,20 @@ describe('setProgramProductOffSale', () => {
         expect(logIntegrationError).toHaveBeenCalledWith('shopify', expect.any(Error), expect.objectContaining({ operation: 'setProgramProductOffSale' }));
         expect(sendEmail).toHaveBeenCalledWith('admin@test.com', 'Shopify Integration Error', expect.stringContaining('retried on the next daily run'));
     });
+
+    it('treats a product Shopify no longer has (404) as already off sale, with no alert', async () => {
+        process.env.SHOPIFY_STORE_DOMAIN = 'test.myshopify.com';
+        process.env.SHOPIFY_CLIENT_ID = 'test_client_id';
+        process.env.SHOPIFY_CLIENT_SECRET = 'test_client_secret';
+        mockTokenResponse(fetchMock);
+        fetchMock.mockResolvedValueOnce({ ok: false, status: 404, text: async () => '{"errors":"Not Found"}' });
+
+        const result = await setProgramProductOffSale({ shopifyProductId: '4242' });
+
+        expect(result).toBe(true);
+        expect(logIntegrationError).not.toHaveBeenCalled();
+        expect(sendEmail).not.toHaveBeenCalled();
+    });
 });
 
 describe('createShopifySingleVariantProgram', () => {
@@ -193,6 +207,16 @@ describe('createShopifySingleVariantProgram', () => {
         expect(JSON.parse((productCall[1] as RequestInit).body as string)).toMatchObject({
             product: { variants: [{ price: '35.00', requires_shipping: false, inventory_management: 'shopify', inventory_policy: 'deny' }] },
         });
+    });
+
+    it.each([[0, 'shopify', 'deny'], [null, null, 'continue']])('a cap of %s creates the variant with inventory_management %s and policy %s', async (cap, management, policy) => {
+        mockTokenResponse(fetchMock);
+        fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ product: { id: 700, variants: [{ id: 800 }] } }) });
+
+        await createShopifySingleVariantProgram('Capped Program', 3500, cap);
+
+        const body = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+        expect(body.product.variants[0]).toMatchObject({ inventory_management: management, inventory_policy: policy });
     });
 
     it('returns null and emails admins when product creation fails', async () => {

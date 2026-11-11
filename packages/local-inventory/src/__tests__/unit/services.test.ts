@@ -157,7 +157,7 @@ describeDb("InventoryService", () => {
     await svc.createItem(TEST_ORG_ID, { gtin13: "1000000000008", existingQuantity: 5 }, 1);
     await svc.applyQtyChange(TEST_ORG_ID, "1000000000008", 2, { userId: null, changeType: "received", receiptId: "r-8" });
     await expect(
-      svc.updateItem(TEST_ORG_ID, "1000000000008", { existingQuantity: 3, desiredQuantity: 9, expectedQuantity: 5 }, 1),
+      svc.updateItem(TEST_ORG_ID, "1000000000008", { existingQuantity: 3, desiredQuantity: 9, expectedQuantity: 5, expectedDesiredQuantity: 0 }, 1),
     ).rejects.toMatchObject({ status: 409, message: "Stock changed since you loaded this page; recount." });
     const item = await svc.getItem(TEST_ORG_ID, "1000000000008");
     expect(item).toMatchObject({ existingQuantity: 7, desiredQuantity: 0 });
@@ -172,9 +172,42 @@ describeDb("InventoryService", () => {
     });
   });
 
+  it("refuses a stale desired quantity or location and leaves the other manager's value", async () => {
+    const svc = makeInventoryService();
+    const location = await db.location.create({ data: { orgId: TEST_ORG_ID, name: "Stale bin" } });
+    await svc.createItem(TEST_ORG_ID, { gtin13: "1000000000010", desiredQuantity: 6, locationId: location.id }, 1);
+    const stale = /changed since you loaded/;
+
+    await expect(svc.updateItem(TEST_ORG_ID, "1000000000010", { desiredQuantity: 9, expectedDesiredQuantity: 4 }, 1))
+      .rejects.toMatchObject({ status: 409, message: expect.stringMatching(stale) });
+    await expect(svc.updateItem(TEST_ORG_ID, "1000000000010", { locationId: null, expectedLocationId: null }, 1))
+      .rejects.toMatchObject({ status: 409, message: expect.stringMatching(stale) });
+    await expect(svc.updateItem(TEST_ORG_ID, "1000000000010", { backstockLocationId: location.id, expectedBackstockLocationId: location.id }, 1))
+      .rejects.toMatchObject({ status: 409, message: expect.stringMatching(stale) });
+
+    expect(await svc.getItem(TEST_ORG_ID, "1000000000010")).toMatchObject({ desiredQuantity: 6, locationId: location.id, backstockLocationId: null });
+  });
+
+  it("writes a field whose expected value matches, leaving fields not sent", async () => {
+    const svc = makeInventoryService();
+    const location = await db.location.create({ data: { orgId: TEST_ORG_ID, name: "Current bin" } });
+    await svc.createItem(TEST_ORG_ID, { gtin13: "1000000000011", desiredQuantity: 6, locationId: location.id }, 1);
+
+    const updated = await svc.updateItem(TEST_ORG_ID, "1000000000011", { desiredQuantity: 9, expectedDesiredQuantity: 6 }, 1);
+
+    expect(updated).toMatchObject({ desiredQuantity: 9, locationId: location.id });
+  });
+
+  it("requires the expected value with each field written", async () => {
+    const svc = makeInventoryService();
+    await svc.createItem(TEST_ORG_ID, { gtin13: "1000000000012" }, 1);
+    await expect(svc.updateItem(TEST_ORG_ID, "1000000000012", { desiredQuantity: 3 }, 1)).rejects.toMatchObject({ status: 400 });
+    await expect(svc.updateItem(TEST_ORG_ID, "1000000000012", { locationId: null }, 1)).rejects.toMatchObject({ status: 400 });
+  });
+
   it("throws 404 updating a non-existent item", async () => {
     const svc = makeInventoryService();
-    await expect(svc.updateItem(TEST_ORG_ID, "9999999999999", { desiredQuantity: 1 }, 1)).rejects.toMatchObject({
+    await expect(svc.updateItem(TEST_ORG_ID, "9999999999999", { desiredQuantity: 1, expectedDesiredQuantity: 0 }, 1)).rejects.toMatchObject({
       status: 404,
     });
   });
@@ -281,41 +314,49 @@ describeDb("ReceiveQueueService", () => {
     });
   });
 
-  it("cancel keeps the line, stamped with its actor, and logs it", async () => {
+  it("cancel keeps the line, stamped with its actor and reason, and logs it", async () => {
     const svc = makeReceiveQueueService();
     const item = await seedQueueItem();
-    await svc.cancel(item.id, TEST_ORG_ID, 42, "manager");
+    await svc.cancel(item.id, TEST_ORG_ID, 42, "  Supplier discontinued it ", "manager");
 
     expect(await svc.listQueue(TEST_ORG_ID)).toHaveLength(0);
     const kept = (await svc.listQueue(TEST_ORG_ID, true)).find((i) => i.id === item.id);
-    expect(kept).toMatchObject({ cancelledBy: 42, cancelledByUsername: "manager", fulfilledAt: null });
+    expect(kept).toMatchObject({ cancelledBy: 42, cancelledByUsername: "manager", cancelReason: "Supplier discontinued it", fulfilledAt: null });
     expect(kept?.cancelledAt).not.toBeNull();
     expect(await db.inventoryLog.findFirst({ where: { gtin13: item.gtin13 } })).toMatchObject({
-      userId: 42, username: "manager", fieldChanged: "receiveQueue", valueBefore: "3", valueAfter: "cancelled",
+      userId: 42, username: "manager", fieldChanged: "receiveQueue", valueBefore: "3", valueAfter: "cancelled: Supplier discontinued it",
     });
   });
 
   it("a cancelled line cannot be fulfilled or cancelled again", async () => {
     const svc = makeReceiveQueueService();
     const item = await seedQueueItem();
-    await svc.cancel(item.id, TEST_ORG_ID, 1);
+    await svc.cancel(item.id, TEST_ORG_ID, 1, "Ordered twice");
     await expect(svc.fulfill(item.id, TEST_ORG_ID, 1)).rejects.toMatchObject({ status: 409 });
-    await expect(svc.cancel(item.id, TEST_ORG_ID, 1)).rejects.toMatchObject({ status: 409 });
+    await expect(svc.cancel(item.id, TEST_ORG_ID, 1, "Ordered twice")).rejects.toMatchObject({ status: 409 });
     expect(await db.orgItem.count({ where: { gtin13: item.gtin13 } })).toBe(0);
   });
 
   it("throws 409 cancelling a fulfilled item", async () => {
     const svc = makeReceiveQueueService();
     const item = await seedQueueItem(TEST_ORG_ID, true);
-    await expect(svc.cancel(item.id, TEST_ORG_ID, 1)).rejects.toMatchObject({
+    await expect(svc.cancel(item.id, TEST_ORG_ID, 1, "Ordered twice")).rejects.toMatchObject({
       status: 409,
     });
   });
 
   it("throws 404 cancelling a non-existent item", async () => {
     const svc = makeReceiveQueueService();
-    await expect(svc.cancel(9999, TEST_ORG_ID, 1)).rejects.toMatchObject({
+    await expect(svc.cancel(9999, TEST_ORG_ID, 1, "Ordered twice")).rejects.toMatchObject({
       status: 404,
     });
+  });
+
+  it("refuses a blank reason and leaves the line open and unlogged", async () => {
+    const svc = makeReceiveQueueService();
+    const item = await seedQueueItem();
+    await expect(svc.cancel(item.id, TEST_ORG_ID, 1, "   ")).rejects.toMatchObject({ status: 400 });
+    expect(await svc.listQueue(TEST_ORG_ID)).toHaveLength(1);
+    expect(await db.inventoryLog.count({ where: { gtin13: item.gtin13 } })).toBe(0);
   });
 });

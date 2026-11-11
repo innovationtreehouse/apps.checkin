@@ -1,7 +1,7 @@
 # Test coverage plan — `checkin-app`
 
-**Status: target met and now CI-enforced.** `jest.config.js` `coverageThreshold`
-requires **lines 85 / branches 75 / functions 75** globally (gated by
+**Status: target met and now CI-enforced.** `checkin-app/coverage-floor.json`, read by `jest.config.js`,
+sets the global floor (gated by
 `SKIP_COVERAGE_THRESHOLD`), exceeding the original 80%-lines goal. The dated
 47.6% baseline (2026-07-01) that motivated this plan is obsolete — the tooling is
 the ground truth now: `npm run test:coverage` from `checkin-app/`.

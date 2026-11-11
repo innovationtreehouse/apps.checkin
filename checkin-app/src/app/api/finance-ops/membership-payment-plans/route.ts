@@ -4,15 +4,16 @@ import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { handler } from "@/security/handler";
 import { apiError } from "@/lib/api-response";
+import { PAYMENT_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { certifyPaymentPlan, PaymentError } from "@/lib/membership/payment";
 import { fromWhere } from "@/lib/membership/lifecycle";
-import { LIVE_PERSON } from "@/lib/person/filters";
 
 export const GET = handler('GET /api/finance-ops/membership-payment-plans', async () => {
     const requests = await prisma.orgMembershipProcess.findMany({
-        // Queue read = the PENDING_PAYMENT from-state the POST acts on; status from the definition (#1080).
+        // Queue read = the PENDING_PAYMENT from-state the POST acts on; status from the definition.
         where: {
             isPaymentPlanRequested: true,
+            orgMembership: { household: { archivedAt: null } },
             ...fromWhere('PENDING_PAYMENT'),
         },
         // Selects stay narrow: finance holds everyones:pii here for the lead
@@ -31,7 +32,7 @@ export const GET = handler('GET /api/finance-ops/membership-payment-plans', asyn
                             id: true,
                             name: true,
                             householdMembers: {
-                                where: { isHouseholdLead: true, ...LIVE_PERSON },
+                                where: { isHouseholdLead: true },
                                 select: { id: true, name: true, email: true },
                             },
                         },
@@ -65,41 +66,15 @@ export const POST = withAuth(
                 return apiError("Unauthorized", 401);
             }
 
-            // Only act on a genuinely-requested, still-awaiting-payment process, so
-            // approving a stale/nonexistent request is a no-op error, mirroring the
-            // GET queue's filter.
-            const process = await prisma.orgMembershipProcess.findFirst({
-                // Approve probe: from-state status from the definition (#1080); isPaymentPlanRequested stays literal.
-                where: { id: processId, isPaymentPlanRequested: true, ...fromWhere('PENDING_PAYMENT') },
-                select: { id: true },
-            });
-            if (!process) {
-                return apiError("No pending payment-plan request", 409);
-            }
-
-            // Reuse the membership activation path: certifies the plan and activates
-            // without a Shopify payment (holding for background clearance if not yet
-            // cleared). Then clear the request flag so it drops off the queue.
-            await certifyPaymentPlan(processId, auth.user.id, { reason });
-            await prisma.orgMembershipProcess.update({
-                where: { id: processId },
-                data: { isPaymentPlanRequested: false },
-            });
-
-            await prisma.auditLog.create({
-                data: {
-                    actorId: auth.user.id,
-                    action: "EDIT",
-                    tableName: "OrgMembershipProcess",
-                    affectedEntityId: processId,
-                    newData: { paymentPlanApproved: true, isPaymentPlanRequested: false },
-                },
-            });
+            // Certifies the plan and activates without a Shopify payment (holding for
+            // background clearance if not yet cleared). Under the row lock it refuses a
+            // request no longer open, and closes this one with its audit row.
+            await certifyPaymentPlan(processId, auth.user.id, { reason, requireRequested: true });
 
             return NextResponse.json({ success: true });
         } catch (error) {
             if (error instanceof PaymentError) {
-                return apiError(error.message, error.code === "not_found" ? 404 : error.code === "forbidden" ? 403 : 409);
+                return apiError(error.message, PAYMENT_ERROR_STATUS[error.code]);
             }
             logger.error("Failed to approve membership payment plan:", error);
             return apiError("Failed to approve payment plan", 500);

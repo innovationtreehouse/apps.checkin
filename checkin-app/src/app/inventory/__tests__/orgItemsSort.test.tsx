@@ -1,17 +1,20 @@
+jest.mock("next/navigation", () => jest.requireActual("@/test-helpers/rtl").navMock({ followUrl: true }));
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import OrgItemsPage from "@checkin/local-inventory/pages/orgItems";
+import { resetRtl } from "@/test-helpers/rtl";
+
+beforeEach(() => resetRtl());
 
 const loaded: string[] = [];
 
 jest.mock("@checkin/local-inventory/components/api", () => ({
   ...jest.requireActual("@checkin/local-inventory/components/api"),
   useCanManage: () => false,
-  useCanSeeReceiving: () => false,
-  useCatalogNames: () => new Map(),
+  useCatalogNames: () => ({ names: new Map(), missing: new Set(), failed: new Set() }),
   useLoad: (path: string | null) => {
     if (path) loaded.push(path);
-    return { data: path?.startsWith("/org-items/count") ? { total: 0 } : [], error: null, reload: jest.fn() };
+    return { data: path?.startsWith("/org-items/count") ? { total: 0 } : path?.startsWith("/org-items") ? { OrgItem: [], InventoryProvisionalItem: [] } : [], error: null, reload: jest.fn() };
   },
 }));
 
@@ -37,10 +40,10 @@ const header = (name: string) => screen.getByRole("columnheader", { name });
 describe("Org inventory table sort", () => {
   beforeEach(() => { loaded.length = 0; });
 
-  it("lists by part number ascending until a header is clicked", () => {
+  it("lists by Part ID ascending until a header is clicked", () => {
     render(<MantineProvider><OrgItemsPage /></MantineProvider>);
     expect(lastOrder()).toEqual(["gtin13", "asc", "1"]);
-    expect(header("Part No.")).toHaveAttribute("aria-sort", "ascending");
+    expect(header("Part ID")).toHaveAttribute("aria-sort", "ascending");
   });
 
   it("sorts by a clicked column, and reverses on a second click", () => {
@@ -48,7 +51,7 @@ describe("Org inventory table sort", () => {
     fireEvent.click(header("Location"));
     expect(lastOrder()).toEqual(["location", "asc", "1"]);
     expect(header("Location")).toHaveAttribute("aria-sort", "ascending");
-    expect(header("Part No.")).toHaveAttribute("aria-sort", "none");
+    expect(header("Part ID")).toHaveAttribute("aria-sort", "none");
 
     fireEvent.click(header("Location"));
     expect(lastOrder()).toEqual(["location", "desc", "1"]);

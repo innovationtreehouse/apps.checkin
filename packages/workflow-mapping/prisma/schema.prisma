@@ -17,18 +17,19 @@ datasource db {
   provider = "postgresql"
 }
 
-// The S5 drain cursor (id = 1): the id of the last catalog OrgEvent this library applied.
-model WorkflowSystemData {
+// A catalog OrgEvent this library has applied (id = the catalog event id). Catch-up consumes any
+// event in neither this table nor WorkflowFailedOrgEvent.
+model WorkflowAppliedOrgEvent {
   /// @sensitivity:public
-  id             Int @id
-  /// @sensitivity:internal
-  orgEventCursor Int @default(0) @map("org_event_cursor")
+  id        Int      @id
+  /// @sensitivity:public
+  appliedAt DateTime @default(now()) @map("applied_at")
 
-  @@map("system_data")
+  @@map("applied_org_events")
 }
 
-// A catalog OrgEvent whose reaction failed (id = the catalog event id). Catch-up retries it by
-// id; the row is deleted once it applies.
+// A catalog OrgEvent whose reaction failed (id = the catalog event id). It waits for a person's
+// retry; the row is deleted once it applies. failedAt is its first failure, failureReason its latest.
 model WorkflowFailedOrgEvent {
   /// @sensitivity:public
   id            Int      @id
@@ -56,6 +57,7 @@ model ReceivedReceipt {
   /// @sensitivity:public
   state           String   @default("pending_review")
   /// @sensitivity:personal
+  /// @financeMark
   receiptJson     String   @map("receipt_json")
   /// @sensitivity:internal
   validationNotes String?  @map("validation_notes")
@@ -69,6 +71,19 @@ model ReceivedReceipt {
   // Lease held while one caller pushes; cleared when the push settles, reclaimable once stale.
   /// @sensitivity:public
   applyClaimedAt     DateTime? @map("apply_claimed_at")
+  // Not read or written; dropped in a later release, once no running code writes it.
+  /// @sensitivity:public
+  applySweepAttempts Int       @default(0) @map("apply_sweep_attempts")
+  // When a push first failed; set while null, cleared when the receipt resolves. Set means stuck,
+  // with its latest error in validationNotes.
+  /// @sensitivity:public
+  applyFirstFailedAt DateTime? @map("apply_first_failed_at")
+  // Set when inventory may have taken the delta without its stamp; never cleared, so lines stay locked.
+  /// @sensitivity:public
+  inventoryUnconfirmedAt DateTime? @map("inventory_unconfirmed_at")
+  // Set when matching was deferred because the catalog was unreachable; cleared when a person runs it or sends the receipt.
+  /// @sensitivity:internal
+  matchingPendingSince   DateTime? @map("matching_pending_since")
   /// @sensitivity:public
   createdAt       DateTime @default(now()) @map("created_at")
   /// @sensitivity:public
@@ -92,6 +107,9 @@ model ReceivedReceiptLineStatus {
   assignedGtin13         String?  @map("assigned_gtin13")
   /// @sensitivity:public
   provisionalItemGtin13  String?  @map("provisional_item_gtin13")
+  // The name the manager proposed for the provisional part; null when not provisional.
+  /// @sensitivity:public
+  proposedName           String?  @map("proposed_name")
   // Conversion factor (inventory units per receipt-line unit) for this line:
   // the matched reference's factor for auto-recognized lines, or the human-
   // entered factor for manual associate / provisional. Carried onto the S3
@@ -129,6 +147,7 @@ model WorkflowAuditLog {
   /// @sensitivity:public
   toState           String?  @map("to_state")
   /// @sensitivity:internal
+  /// @financeMark
   details           String?
   /// @sensitivity:public
   createdAt         DateTime @default(now()) @map("created_at")

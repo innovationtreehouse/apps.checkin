@@ -2,14 +2,14 @@
  * @jest-environment node
  */
 /**
- * Boundary coverage for the income library (#1283 §6/§7). Asserts the boundary
+ * Boundary coverage for the income library. Asserts the boundary
  * layer directly, independent of the route files:
  *
  *   1. Income's tiering: every field of the four Prisma row models, the settings
  *      model and the five synthetic views is `internal`, except a Prisma row's
  *      `id` (`public`); the settings model, keyed by org, has no public field.
  *      No pii, personal or secret anywhere.
- *   2. The §7 pins: the synthetic views list no mirror customer column and no
+ *   2. The view limits: the synthetic views list no mirror customer column and no
  *      QuickBooks deposit `Line[]`, `PrivateNote` or entity ref, so the stripper
  *      drops them even if an adapter passes one through.
  *   3. The stripper honours the map: the finance view (everyones:internal) keeps
@@ -47,7 +47,7 @@ const VIEW_FIELDS: Record<string, string[]> = {
     IncomePayoutView: ['payoutGid', 'issuedAt', 'status', 'netCents', 'currency', 'source'],
     IncomeBalanceTxnView: ['txnGid', 'type', 'orderGid', 'orderName', 'amountCents', 'feeCents', 'netCents', 'source'],
     IncomeQbDepositView: ['id', 'txnDate', 'totalCents', 'depositToAccount'],
-    IncomeItemView: ['variantId', 'title', 'sku', 'budgetOwnerId', 'budgetOwnerName', 'decision', 'bucketIssue'],
+    IncomeItemView: ['variantId', 'title', 'sku', 'budgetOwnerId', 'budgetOwnerName', 'decision', 'bucketIssue', 'quickBooksAccountId'],
     IncomeReconciliationCount: ['total', 'status', 'matched', 'opened', 'drifted'],
 };
 
@@ -71,17 +71,20 @@ function sampleRow(fields: string[]): Record<string, unknown> {
     return Object.fromEntries(fields.map((f, i) => [f, `v${i}`]));
 }
 
-describe('income tiering (§7)', () => {
+describe('income tiering', () => {
     it('the generated map holds exactly the four income row models and the settings model', () => {
         expect(Object.keys(incomeGenerated.classifications).sort()).toEqual([...PRISMA_MODELS, SETTINGS_MODEL].sort());
     });
 
-    it('IncomeOrgSettings: the per-run caps, the switch-on stamp and their org key are internal', () => {
+    it('IncomeOrgSettings: the per-run caps, the switch-on stamps and their org key are internal', () => {
         expect(tiersOf(SETTINGS_MODEL)).toEqual({
             orgId: 'internal',
             maxCreatesPerRun: 'internal',
             maxCreateCentsPerRun: 'internal',
+            benevityMaxCreateCentsPerRun: 'internal',
+            benevityMatchWindowDays: 'internal',
             qbPostingOnAt: 'internal',
+            benevityQbPostingOnAt: 'internal',
         });
     });
 
@@ -124,7 +127,7 @@ describe('income field-stripping', () => {
     });
 
     it('IncomeOrgSettings: the finance view keeps every cap', () => {
-        const row = { orgId: 'treehouse', maxCreatesPerRun: 25, maxCreateCentsPerRun: 2_500_000 };
+        const row = { orgId: 'treehouse', maxCreatesPerRun: 25, maxCreateCentsPerRun: 2_500_000, benevityMaxCreateCentsPerRun: 2_500_000 };
         expect(stripValue(SETTINGS_MODEL, row, FINANCE_TOKENS, ctx())).toEqual(row);
     });
 
@@ -133,7 +136,7 @@ describe('income field-stripping', () => {
         expect(out).toEqual({});
     });
 
-    it('finance reads the audit actor and before/after (§7: internal, intended view)', () => {
+    it('finance reads the audit actor and before/after (internal, intended view)', () => {
         const row = {
             id: 1,
             orgId: 'treehouse',

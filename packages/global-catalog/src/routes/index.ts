@@ -1,5 +1,5 @@
 /**
- * Route-factory barrel (#1286 track 4). The host mounts each factory under
+ * Route-factory barrel. The host mounts each factory under
  * /api/catalog/* by wrapping it in checkin's handler() from a re-export stub;
  * the factories here stay host-free (see contract.ts / runtime.ts).
  */

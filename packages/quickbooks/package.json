@@ -13,16 +13,22 @@
     "./oauth": {
       "types": "./src/oauth.ts",
       "import": "./src/oauth.ts"
+    },
+    "./accountTypes": {
+      "types": "./src/accountTypes.ts",
+      "import": "./src/accountTypes.ts"
     }
   },
   "scripts": {
     "test": "vitest run",
+    "typecheck": "tsc --noEmit",
     "consent": "tsx scripts/consent.ts",
     "consent:manual": "tsx scripts/consent-manual.ts",
     "pull": "tsx scripts/pull.ts",
     "sandbox-checks": "tsx scripts/sandbox-checks.ts"
   },
   "dependencies": {
+    "@checkin/component-kit": "*",
     "@checkin/money": "*"
   },
   "devDependencies": {

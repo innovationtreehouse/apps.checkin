@@ -1,5 +1,6 @@
 // Which QuickBooks company a deployment may reach, decided only from our own config, never
 // from anything read back from QuickBooks. Pure: callers pass every input.
+import { KindedError } from "@checkin/component-kit";
 import type { QboEnv, QboRealm } from "./types";
 
 export interface QboTargetConfig {
@@ -34,18 +35,18 @@ export function assertQboTarget(cfg: QboTargetConfig): void {
  * production company; prod refuses those keys. `devClientId` is our config, never a secret.
  */
 export function assertQboClientId(checkinEnv: string | undefined, clientId: string, devClientId: string | undefined): void {
-  if (!devClientId) throw new Error("QBO_DEV_CLIENT_ID must be set");
+  if (!devClientId) throw new KindedError("settings", "QuickBooks settings are wrong: QBO_DEV_CLIENT_ID must be set. The infra operator sets it to the client id of the development keys, which Finance supplies.");
   if (checkinEnv === "prod") {
-    if (clientId === devClientId) throw new Error("CHECKIN_ENV=prod refuses the development QuickBooks keys");
+    if (clientId === devClientId) throw new KindedError("settings", "QuickBooks settings are wrong: CHECKIN_ENV=prod refuses the development QuickBooks keys. Finance re-runs the consent with the production keys.");
   } else if (clientId !== devClientId) {
-    throw new Error("Off prod, QuickBooks tokens must come from the development keys");
+    throw new KindedError("settings", "QuickBooks settings are wrong: off prod, QuickBooks tokens must come from the development keys. Finance re-runs the consent with the development keys.");
   }
 }
 
 /** Stamped into every sandbox write's PrivateNote. */
 export const TEST_NOTE_MARKER = "[checkin-test]";
-/** Prefixes every sandbox Vendor's DisplayName. */
-export const TEST_VENDOR_PREFIX = "TEST-";
+/** Marks test data: every sandbox Vendor's DisplayName, a test expense's vendor, a test disbursement's id. */
+export const TEST_PREFIX = "TEST-";
 // The sandbox is a public Intuit company: nothing written there may name the org.
 const ORG_NAME = /treehouse/i;
 
@@ -56,7 +57,7 @@ const ORG_NAME = /treehouse/i;
 export function assertPayloadMarked(env: QboEnv, entity: string, body: Record<string, unknown>): void {
   const marked =
     entity === "Vendor"
-      ? typeof body.DisplayName === "string" && body.DisplayName.startsWith(TEST_VENDOR_PREFIX)
+      ? typeof body.DisplayName === "string" && body.DisplayName.startsWith(TEST_PREFIX)
       : typeof body.PrivateNote === "string" && body.PrivateNote.includes(TEST_NOTE_MARKER);
   if (env === "production") {
     if (marked) throw new Error("QBO production write carries the test marker");

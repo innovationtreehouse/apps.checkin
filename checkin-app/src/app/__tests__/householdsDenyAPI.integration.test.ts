@@ -196,8 +196,8 @@ describe('POST /api/membership-ops/households — Deny Membership', () => {
         const blocked = await prisma.orgMembershipProcess.create({
             data: { orgMembershipId: membership.id, kind: 'INITIAL', status: 'BLOCKED', paidAt: new Date() },
         });
-        const legacy = await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: membership.id, kind: 'RENEWAL', status: 'RENEWAL_PENDING_BG' },
+        const unclosable = await prisma.orgMembershipProcess.create({
+            data: { orgMembershipId: membership.id, kind: 'RENEWAL', status: 'PENDING_BG_CLEARANCE' },
         });
         try {
             const paid = await post({ householdId: lead.householdId, deny: false });
@@ -210,13 +210,31 @@ describe('POST /api/membership-ops/households — Deny Membership', () => {
             expect((await stuck.json()).error).toContain('a step a restore cannot close');
             expect((await prisma.orgMembership.findUnique({ where: { id: membership.id } }))?.status).toBe('DENIED');
 
-            await prisma.orgMembershipProcess.delete({ where: { id: legacy.id } });
+            await prisma.orgMembershipProcess.delete({ where: { id: unclosable.id } });
             const res = await post({ householdId: lead.householdId, deny: false });
             expect(res.status).toBe(200);
             const closed = await prisma.orgMembershipProcess.findUnique({ where: { id: blocked.id } });
             expect([closed?.status, closed?.archivedFromStatus]).toEqual(['ARCHIVED', 'BLOCKED']);
             const audit = await prisma.auditLog.findFirst({ where: { actorId: boardId, tableName: 'OrgMembershipProcess', affectedEntityId: blocked.id } });
             expect(audit?.newData).toMatchObject({ status: 'ARCHIVED', reason: 'household restored' });
+        } finally {
+            await prisma.orgMembershipProcess.deleteMany({ where: { orgMembershipId: membership.id } });
+        }
+    });
+
+    it('restore closes an unpaid legacy RENEWAL_PENDING_BG application', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+        const lead = await prisma.person.create({
+            data: { email: `restore-legacy-${TAG}@example.com`, name: 'Legacy Lead', household: { create: { name: "Test HH" } } },
+        });
+        const membership = await prisma.orgMembership.create({ data: { householdId: lead.householdId, status: 'DENIED' } });
+        const legacy = await prisma.orgMembershipProcess.create({
+            data: { orgMembershipId: membership.id, kind: 'RENEWAL', status: 'RENEWAL_PENDING_BG' },
+        });
+        try {
+            expect((await post({ householdId: lead.householdId, deny: false })).status).toBe(200);
+            const closed = await prisma.orgMembershipProcess.findUnique({ where: { id: legacy.id } });
+            expect([closed?.status, closed?.archivedFromStatus]).toEqual(['ARCHIVED', 'RENEWAL_PENDING_BG']);
         } finally {
             await prisma.orgMembershipProcess.deleteMany({ where: { orgMembershipId: membership.id } });
         }

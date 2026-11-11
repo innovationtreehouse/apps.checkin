@@ -1,10 +1,11 @@
 import { httpError } from "@checkin/component-kit";
+import { DEFAULT_CURRENCY } from "@checkin/receipt-types";
 import { db } from "../db";
 import { receivedReceiptStateEnum, type ReceivedReceiptState } from "../db/schema";
 import { executePushAndSettle, type ApplyResult } from "../lib/apply-receipt";
 import { insertAuditEvent } from "../lib/audit";
 import { parseStoredReceipt } from "../lib/parse-receipt";
-import { getOrg, requireActor } from "../runtime";
+import { getOrgId, ports, requireActor } from "../runtime";
 import {
   areAllLinesResolved,
   assertWorkflowMappingTransition,
@@ -18,15 +19,26 @@ function asState(raw: string): ReceivedReceiptState {
   return state;
 }
 
+/** Open receive-queue lines per receipt, in one call for every resolved receipt given; only a resolved receipt has queued lines. */
+export async function openBackorders(rows: { receiptId: string; state: string }[]): Promise<Map<string, number>> {
+  const ids = rows.filter((r) => r.state === "resolved").map((r) => r.receiptId);
+  return ids.length ? ports().inventorySink.openBackorders(ids) : new Map();
+}
+
 export const receiptService = {
-  /** Queue rows, newest first; `states` filters (e.g. APPLY_FAILED_QUEUE_STATES). */
-  async list(states?: string[]) {
+  /** Queue rows, newest first; `states` filters (e.g. APPLY_FAILED_QUEUE_STATES), `receiptIds` narrows to those receipts. */
+  async list(states?: string[], receiptIds?: string[]) {
     await requireActor();
     const filter = states?.map(asState);
     const rows = await db.receivedReceipt.findMany({
-      where: { orgId: (await getOrg()).id, ...(filter ? { state: { in: filter } } : {}) },
+      where: {
+        orgId: await getOrgId(),
+        ...(filter ? { state: { in: filter } } : {}),
+        ...(receiptIds ? { receiptId: { in: receiptIds } } : {}),
+      },
       orderBy: { createdAt: "desc" },
     });
+    const backorders = await openBackorders(rows);
 
     return rows.map((row) => {
       const parsed = parseStoredReceipt(row.receiptJson);
@@ -38,8 +50,9 @@ export const receiptService = {
         state: row.state,
         vendorName: r?.vendorName ?? null,
         receiptTotalCents: r?.receiptTotalCents ?? null,
-        currency: r?.currency ?? "USD",
+        currency: r?.currency ?? DEFAULT_CURRENCY,
         lineItemCount: r?.lineItems.length ?? 0,
+        openBackorders: backorders.get(row.receiptId) ?? 0,
         validationNotes: row.validationNotes,
         createdAt: row.createdAt.toISOString(),
         updatedAt: row.updatedAt.toISOString(),
@@ -47,13 +60,13 @@ export const receiptService = {
     });
   },
 
-  /** Badge counts for the mapping queue and the apply-failed queue. */
+  /** Counts for the Receiving tabs; `applying` is in progress and needs no one. */
   async counts(): Promise<Record<"pending_review" | "apply_failed" | "applying", number>> {
     await requireActor();
     const rows = await db.receivedReceipt.groupBy({
       by: ["state"],
       _count: { _all: true },
-      where: { orgId: (await getOrg()).id, state: { in: ["pending_review", "apply_failed", "applying"] } },
+      where: { orgId: await getOrgId(), state: { in: ["pending_review", "apply_failed", "applying"] } },
     });
     const counts = { pending_review: 0, apply_failed: 0, applying: 0 };
     for (const row of rows) {
@@ -68,6 +81,7 @@ export const receiptService = {
   async detail(receiptId: number) {
     await requireActor();
     const { receiptJson, ...receipt } = await loadReceipt(receiptId);
+    const backorders = await openBackorders([receipt]);
     const parsed = parseStoredReceipt(receiptJson);
     if (!parsed.ok) throw httpError(422, parsed.error);
     const p = parsed.receipt;
@@ -88,6 +102,7 @@ export const receiptService = {
       discountCents: p.discountCents,
       receiptDate: p.receiptDate,
       isInKind: p.isInKind,
+      openBackorders: backorders.get(receipt.receiptId) ?? 0,
       lineItems: p.lineItems.map((li) => ({
         receiptLineItemId: li.receiptLineItemId,
         lineNumber: li.lineNumber,
@@ -123,7 +138,7 @@ export const receiptService = {
     // Compare-and-set: a concurrent proceed (manual or auto) that already moved it wins.
     const { count } = await db.receivedReceipt.updateMany({
       where: { id: receiptId, state: received.state },
-      data: { state: nextState },
+      data: { state: nextState, matchingPendingSince: null },
     });
     if (count !== 1) throw httpError(409, "Receipt was already proceeded");
 
@@ -191,7 +206,7 @@ export const receiptService = {
     const before = opts.before && !Number.isNaN(opts.before.getTime()) ? opts.before : null;
     const rows = await db.workflowAuditLog.findMany({
       where: {
-        orgId: (await getOrg()).id,
+        orgId: await getOrgId(),
         ...(opts.receiptId ? { receivedReceiptId: opts.receiptId } : {}),
         ...(before ? { createdAt: { lt: before } } : {}),
       },

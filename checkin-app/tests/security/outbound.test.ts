@@ -90,13 +90,13 @@ describe('outboundCall — pii surface (email.admin-notify)', () => {
 
 describe('outboundCall — secret is unconditionally stripped', () => {
     // `secret` is not even a registerable outbound tier (VALID_SENSITIVE_TIERS =
-    // pii/personal/internal). Register a test surface granting EVERY valid tier
-    // up to internal, so a leaked secret can't be blamed on a missing tier grant
-    // — the internal fields on the same row prove the surface is maximally open.
+    // pii/personal/internal/hardship). Register a test surface granting EVERY valid
+    // tier, so a leaked secret can't be blamed on a missing tier grant — the
+    // internal fields on the same row prove the surface is maximally open.
     beforeAll(() => {
         defineOutbound({
             surface: 'test.max-tier',
-            tiers: ['public', 'pii', 'personal', 'internal'],
+            tiers: ['public', 'pii', 'personal', 'internal', 'hardship'],
         });
     });
 

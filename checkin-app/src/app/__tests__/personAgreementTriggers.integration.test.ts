@@ -61,7 +61,7 @@ async function makePerson(
 
 async function attachToProgram(slug: string, personId: number, dates: { startAt?: Date; endAt?: Date } = {}) {
     const program = await prisma.program.create({
-        data: { name: `${TAG} ${slug} program`, startAt: dates.startAt ?? new Date('2026-01-01'), endAt: dates.endAt ?? new Date('2026-12-31') },
+        data: { appliesToYear: 2026, name: `${TAG} ${slug} program`, startAt: dates.startAt ?? new Date('2026-01-01'), endAt: dates.endAt ?? new Date('2026-12-31') },
     });
     await prisma.programParticipant.create({ data: { programId: program.id, personId } });
     return program.id;

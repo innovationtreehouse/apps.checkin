@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
+import { KindedError } from "@checkin/component-kit";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { db } from "../../db";
-import type { MailboxReader, MailHoldCeilingEvent, MailMessage, MailPart } from "../../contract";
+import { db, getPrisma } from "../../db";
+import type { MailAgingOutEvent, MailboxReader, MailHoldCeilingEvent, MailListingFailedEvent, MailMessage, MailPart } from "../../contract";
 import { MAX_FILE_BYTES } from "../../lib/file-type";
 import {
   MAIL_CAP,
@@ -9,13 +10,17 @@ import {
   MAIL_HELD_CAP,
   MAIL_HELD_CEILING,
   MAIL_TIME_BUDGET_MS,
+  MAIL_WINDOW_DAYS,
   INLINE_FLOOR_BYTES,
   readMailbox,
 } from "../../services/mailIntake";
+import { createMemoryFileStore } from "../../lib/fileStorage";
+import { createGmailReader } from "../../lib/gmail";
+import { mailQueueService } from "../../services/mailQueueService";
 import { describeDb } from "../helpers/db";
 import type { ReceiptLimits } from "../../lib/limits";
 import { receiptService } from "../../services/receiptService";
-import { actAs, ALICE, BOB, clearAll, configure, manualDetails, okOcr, stateOf, TEST_ORG_ID, textFile } from "../helpers/setup";
+import { actAs, ALICE, BOB, clearAll, configure, FINANCE, manualDetails, okOcr, stateOf, TEST_ORG_ID, textFile } from "../helpers/setup";
 
 const GOOGLE_PASS = "mx.google.com; dkim=pass header.i=@example.org; spf=pass; dmarc=pass (p=NONE sp=NONE) header.from=example.org";
 const b64 = (s: string) => Buffer.from(s).toString("base64url");
@@ -27,7 +32,8 @@ function fakeMailbox() {
   const attachments = new Map<string, string>();
   const downloads: string[] = [];
   const reader: MailboxReader = {
-    listRecent: async () => [...messages.keys()],
+    address: "receipts@example.org",
+    listRecent: async (days) => [...messages.values()].filter((m) => Number(m.internalDate) > Date.now() - days * DAY_MS).map((m) => m.id),
     getMessage: async (id) => messages.get(id) ?? Promise.reject(new Error(`no message ${id}`)),
     getAttachment: async (_messageId, attachmentId) => {
       downloads.push(attachmentId);
@@ -39,20 +45,28 @@ function fakeMailbox() {
 
 let mail: ReturnType<typeof fakeMailbox>;
 let alerts: MailHoldCeilingEvent[];
+let agingAlerts: MailAgingOutEvent[];
+let listingAlerts: MailListingFailedEvent[];
+const DAY_MS = 24 * 60 * 60_000;
 
 const attachment = (id: string, content: string, over: Partial<MailPart> = {}): MailPart => {
   mail.attachments.set(id, content);
   return { mimeType: "application/pdf", filename: `${id}.pdf`, body: { attachmentId: id, size: content.length }, ...over };
 };
 
-/** A message; `auth` lists its Authentication-Results headers top first, `from` its From headers. */
+/** A message; `auth` lists its Authentication-Results headers top first, `from` its From headers, `ageMs` how long ago it arrived. */
 function send(
   id: string,
-  { from = ["Alice <alice@example.org>"], auth = [GOOGLE_PASS], parts }: { from?: string[]; auth?: string[]; parts?: MailPart[] } = {},
+  {
+    from = ["Alice <alice@example.org>"],
+    auth = [GOOGLE_PASS],
+    parts,
+    ageMs = 0,
+  }: { from?: string[]; auth?: string[]; parts?: MailPart[]; ageMs?: number } = {},
 ): void {
   mail.messages.set(id, {
     id,
-    internalDate: String(Date.now()),
+    internalDate: String(Date.now() - ageMs),
     payload: {
       mimeType: "multipart/mixed",
       headers: [
@@ -64,14 +78,22 @@ function send(
   });
 }
 
+const testAlerts = () => ({
+  mailHoldCeilingReached: async (event: MailHoldCeilingEvent) => void alerts.push(event),
+  mailAgingOut: async (event: MailAgingOutEvent) => void agingAlerts.push(event),
+  mailListingFailed: async (event: MailListingFailedEvent) => void listingAlerts.push(event),
+});
+
 beforeEach(async () => {
   await clearAll();
   mail = fakeMailbox();
   alerts = [];
+  agingAlerts = [];
+  listingAlerts = [];
   configure({
     ocr: okOcr(),
     mailbox: mail.reader,
-    alerts: { mailHoldCeilingReached: async (event) => void alerts.push(event) },
+    alerts: testAlerts(),
     people: { submitterByEmail: async (address) => (address === "alice@example.org" ? ALICE : null) },
   });
 });
@@ -83,7 +105,7 @@ describeDb("mail intake", () => {
 
     const [receipt] = await db.receipt.findMany();
     expect(receipt).toMatchObject({ intakeSource: "email", uploadedByUserId: ALICE.id, mimeType: "application/pdf" });
-    expect(Buffer.from(receipt.fileBlob).toString()).toBe(pdf("m1"));
+    expect(Buffer.from(receipt.fileBlob ?? []).toString()).toBe(pdf("m1"));
     expect(await stateOf(receipt.id)).toBe("submitter_review");
     const [item] = await db.receiptMailItem.findMany();
     expect(item).toMatchObject({ status: "assigned", receiptId: receipt.id, senderAddress: "alice@example.org", fileBlob: null });
@@ -102,7 +124,7 @@ describeDb("mail intake", () => {
     expect(await readMailbox()).toMatchObject({ receipts: 0, held: 1 });
     expect(await db.receipt.count()).toBe(0);
     const [item] = await db.receiptMailItem.findMany();
-    expect(item).toMatchObject({ status: "held", senderAddress: "stranger@example.org", mimeType: "application/pdf", receiptId: null });
+    expect(item).toMatchObject({ status: "held", holdReason: "not_a_submitter", senderAddress: "stranger@example.org", mimeType: "application/pdf", receiptId: null });
     expect(Buffer.from(item.fileBlob ?? []).toString()).toBe(pdf("m1"));
   });
 
@@ -117,7 +139,7 @@ describeDb("mail intake", () => {
     send("plain", { parts: [{ mimeType: "text/plain", body: { data: b64("Order 42 total $5.00") } }] });
     send("html", { parts: [{ mimeType: "text/html", body: { data: b64("<p>Order 43 total 7.50</p>") } }] });
     expect(await readMailbox()).toMatchObject({ receipts: 2, ignored: 0 });
-    const files = (await db.receipt.findMany()).map((r) => [r.mimeType, Buffer.from(r.fileBlob).toString()]);
+    const files = (await db.receipt.findMany()).map((r) => [r.mimeType, Buffer.from(r.fileBlob ?? []).toString()]);
     expect(files).toEqual(expect.arrayContaining([["text/plain", "Order 42 total $5.00"], ["text/plain", "<p>Order 43 total 7.50</p>"]]));
   });
 
@@ -299,6 +321,390 @@ describeDb("mail intake flood limits", () => {
       return getMessage(id);
     };
     expect(await readMailbox()).toMatchObject({ messages: 1, receipts: 1, unread: 1 });
+    expect(agingAlerts).toEqual([]);
+  });
+});
+
+/** Records the ids each run fetches. */
+function trackFetches(): string[] {
+  const fetched: string[] = [];
+  const { getMessage } = mail.reader;
+  mail.reader.getMessage = async (id) => {
+    fetched.push(id);
+    return getMessage(id);
+  };
+  return fetched;
+}
+
+describeDb("mail intake re-reads", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("does not fetch a message whose files were all read or held", async () => {
+    send("member");
+    send("stranger", { from: ["stranger@example.org"] });
+    expect(await readMailbox()).toMatchObject({ receipts: 1, held: 1 });
+    const fetched = trackFetches();
+    expect(await readMailbox()).toMatchObject({ messages: 0, receipts: 0, held: 0, skipped: 2 });
+    expect(fetched).toEqual([]);
+  });
+
+  it("fetches a message again while it is partly read", async () => {
+    configure({ ocr: okOcr(), mailbox: mail.reader, alerts: testAlerts(), people: { submitterByEmail: async () => ({ ...ALICE, raisedMailLimit: true }) } });
+    for (let i = 0; i < MAIL_CAP - 1; i++) send(`m${i}`);
+    send("two", { parts: [attachment("a", pdf("a")), attachment("b", pdf("b"))] });
+    expect(await readMailbox()).toMatchObject({ receipts: MAIL_CAP, deferred: 1 });
+    const fetched = trackFetches();
+    expect(await readMailbox()).toMatchObject({ receipts: 1 });
+    expect(fetched).toEqual(["two"]);
+    fetched.length = 0;
+    await readMailbox();
+    expect(fetched).toEqual([]);
+  });
+
+  it("marks a message at risk before reading it, so a run dying part way through leaves it to fetch again", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    send("m1", { parts: [attachment("a", pdf("a")), attachment("b", pdf("b"))] });
+    const { getAttachment } = mail.reader;
+    let markedDuringRead = false;
+    mail.reader.getAttachment = async (messageId, attachmentId) => {
+      if (attachmentId !== "b") return getAttachment(messageId, attachmentId);
+      markedDuringRead = (await db.receiptMailAtRisk.count({ where: { gmailMessageId: "m1" } })) === 1;
+      throw new Error("Gmail request failed: 500");
+    };
+    expect(await readMailbox()).toMatchObject({ receipts: 1, failed: 1 });
+    expect(markedDuringRead).toBe(true);
+
+    mail.reader.getAttachment = getAttachment;
+    const fetched = trackFetches();
+    expect(await readMailbox()).toMatchObject({ receipts: 1 });
+    expect(fetched).toEqual(["m1"]);
+  });
+
+  it("reads mail 10 days old after the runs were down", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    send("m1");
+    vi.setSystemTime(Date.now() + 10 * DAY_MS);
+    expect(await readMailbox()).toMatchObject({ receipts: 1 });
+    expect(agingAlerts).toEqual([]);
+  });
+});
+
+describeDb("mail intake ageing alert", () => {
+  const old = (MAIL_WINDOW_DAYS - 1) * DAY_MS + 60_000;
+  const raised = () =>
+    configure({ ocr: okOcr(), mailbox: mail.reader, alerts: testAlerts(), people: { submitterByEmail: async () => ({ ...ALICE, raisedMailLimit: true }) } });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("alerts finance once when mail older than two days is put off by the cap", async () => {
+    raised();
+    for (let i = 0; i <= MAIL_CAP; i++) send(`m${i}`, { ageMs: old });
+    await readMailbox();
+    expect(agingAlerts).toHaveLength(1);
+    expect(agingAlerts[0]).toMatchObject({ orgId: TEST_ORG_ID, messages: 1 });
+    expect(agingAlerts[0].oldestReceivedAt).toBeInstanceOf(Date);
+  });
+
+  it("stays quiet when the mail put off is recent enough for the next run", async () => {
+    raised();
+    for (let i = 0; i <= MAIL_CAP; i++) send(`m${i}`);
+    await readMailbox();
+    expect(agingAlerts).toEqual([]);
+  });
+
+  it("alerts for old mail the run never reached, counting every unread message", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    send("m1", { ageMs: old + 2_000 });
+    send("m2", { ageMs: old + 1_000 });
+    send("m3", { ageMs: old });
+    const { getMessage } = mail.reader;
+    let first = true;
+    mail.reader.getMessage = async (id) => {
+      if (first) vi.setSystemTime(Date.now() + MAIL_TIME_BUDGET_MS);
+      first = false;
+      return getMessage(id);
+    };
+    expect(await readMailbox()).toMatchObject({ messages: 1, unread: 2 });
+    expect(agingAlerts).toMatchObject([{ messages: 2 }]);
+  });
+
+  it("alerts for a newer unread message at its own last chance, not with the oldest unread", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    send("m1", { ageMs: old + 1_000 });
+    send("m2", { ageMs: old });
+    send("newer");
+    const { getMessage } = mail.reader;
+    let first = true;
+    mail.reader.getMessage = async (id) => {
+      if (first) vi.setSystemTime(Date.now() + MAIL_TIME_BUDGET_MS);
+      first = false;
+      return getMessage(id);
+    };
+    expect(await readMailbox()).toMatchObject({ messages: 1, unread: 2 });
+    expect(agingAlerts).toMatchObject([{ messages: 1 }]);
+
+    vi.setSystemTime(Date.now() + old);
+    mail.reader.listRecent = async () => {
+      throw new Error("Gmail request failed: 401");
+    };
+    await readMailbox();
+    expect(agingAlerts).toMatchObject([{ messages: 1 }, { messages: 1 }]);
+  });
+
+  it("alerts for a message that cannot be fetched, since its age is unknown, keeping the known oldest date", async () => {
+    raised();
+    for (let i = 0; i <= MAIL_CAP; i++) send(`m${i}`, { ageMs: old });
+    const { getMessage } = mail.reader;
+    const listRecent = mail.reader.listRecent;
+    mail.reader.listRecent = async (days) => [...(await listRecent(days)), "gone"];
+    mail.reader.getMessage = async (id) => (id === "gone" ? Promise.reject(new Error("Gmail request failed: 500")) : getMessage(id));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await readMailbox()).toMatchObject({ failed: 1 });
+    expect(agingAlerts).toMatchObject([{ messages: 2 }]);
+    expect(agingAlerts[0].oldestReceivedAt).toBeInstanceOf(Date);
+  });
+
+  /** Two stored rows past their last chance, with messages the listing no longer returns. */
+  async function storedAtRisk() {
+    send("a", { ageMs: old });
+    send("b", { ageMs: old });
+    mail.reader.listRecent = async () => [];
+    const receivedAt = new Date(Date.now() - old);
+    await db.receiptMailAtRisk.createMany({ data: ["a", "b"].map((gmailMessageId) => ({ orgId: TEST_ORG_ID, gmailMessageId, receivedAt })) });
+  }
+
+  it("finishes the run and still alerts when saving one re-dated row fails", async () => {
+    await storedAtRisk();
+    const update = vi.spyOn(getPrisma().receiptMailAtRisk, "update").mockRejectedValueOnce(new Error("row lock timeout"));
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await readMailbox()).toMatchObject({ status: "ok" });
+    const failedRowId = update.mock.calls[0][0].where.id;
+    update.mockRestore();
+    expect(agingAlerts).toMatchObject([{ messages: 2 }]);
+    expect(logged).toHaveBeenCalledWith(`[receipt] mail ageing re-date failed for row ${failedRowId}:`, expect.any(Error));
+  });
+
+  it("fetches at-risk messages one at a time", async () => {
+    await storedAtRisk();
+    const { getMessage } = mail.reader;
+    let inFlight = 0;
+    let peak = 0;
+    mail.reader.getMessage = async (id) => {
+      peak = Math.max(peak, ++inFlight);
+      await new Promise((resolve) => setImmediate(resolve));
+      inFlight--;
+      return getMessage(id);
+    };
+    await readMailbox();
+    expect(agingAlerts).toMatchObject([{ messages: 2 }]);
+    expect(peak).toBe(1);
+  });
+
+  it("alerts for an old message whose reading failed", async () => {
+    send("m1", { ageMs: old });
+    configure({
+      ocr: okOcr(),
+      mailbox: mail.reader,
+      alerts: testAlerts(),
+      people: {
+        submitterByEmail: async () => {
+          throw new Error("people lookup down");
+        },
+      },
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await readMailbox()).toMatchObject({ failed: 1 });
+    expect(agingAlerts).toMatchObject([{ messages: 1 }]);
+  });
+
+  /** A run where reading any message fails, as with a people lookup that is down. */
+  const failingReads = () =>
+    configure({
+      ocr: okOcr(),
+      mailbox: mail.reader,
+      alerts: testAlerts(),
+      people: {
+        submitterByEmail: async () => {
+          throw new Error("people lookup down");
+        },
+      },
+    });
+  const healthyReads = () =>
+    configure({ ocr: okOcr(), mailbox: mail.reader, alerts: testAlerts(), people: { submitterByEmail: async () => ALICE } });
+  const age = (days: number) => vi.setSystemTime(Date.now() + days * DAY_MS);
+
+  it("alerts on a later run for a message that failed earlier and has since left the listing", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    failingReads();
+    send("m1");
+    await readMailbox();
+    expect(agingAlerts).toEqual([]);
+
+    // The runs on the last days of the window never happened; the listing no longer has the message.
+    age(MAIL_WINDOW_DAYS + 1);
+    mail.messages.delete("m1");
+    healthyReads();
+    await readMailbox();
+    expect(agingAlerts).toMatchObject([{ messages: 1 }]);
+    expect(agingAlerts[0].oldestReceivedAt).toBeInstanceOf(Date);
+  });
+
+  it("retries an alert whose send failed, then does not repeat it", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    send("m1", { ageMs: old });
+    configure({
+      ocr: okOcr(),
+      mailbox: mail.reader,
+      alerts: { ...testAlerts(), mailAgingOut: async () => { throw new Error("send failed"); } },
+      people: { submitterByEmail: async () => { throw new Error("people lookup down"); } },
+    });
+    await readMailbox();
+    expect(agingAlerts).toEqual([]);
+
+    failingReads();
+    await readMailbox();
+    expect(agingAlerts).toHaveLength(1);
+    await readMailbox();
+    expect(agingAlerts).toHaveLength(1);
+  });
+
+  it("alerts once, not daily, for a message that cannot be fetched", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const listRecent = mail.reader.listRecent;
+    mail.reader.listRecent = async (days) => [...(await listRecent(days)), "gone"];
+    await readMailbox();
+    await readMailbox();
+    expect(agingAlerts).toMatchObject([{ messages: 1, oldestReceivedAt: null }]);
+  });
+
+  it("clears a stored message once it reads clean, so it never alerts", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    failingReads();
+    send("m1");
+    await readMailbox();
+    expect(await db.receiptMailAtRisk.count()).toBe(1);
+
+    healthyReads();
+    expect(await readMailbox()).toMatchObject({ receipts: 1 });
+    expect(await db.receiptMailAtRisk.count()).toBe(0);
+    expect(agingAlerts).toEqual([]);
+  });
+
+  it("drops an alerted message once the listing no longer has it", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    failingReads();
+    send("m1", { ageMs: old });
+    await readMailbox();
+    expect(agingAlerts).toHaveLength(1);
+    expect(await db.receiptMailAtRisk.count()).toBe(1);
+
+    mail.messages.delete("m1");
+    await readMailbox();
+    expect(await db.receiptMailAtRisk.count()).toBe(0);
+    expect(agingAlerts).toHaveLength(1);
+  });
+});
+
+describeDb("mail intake listing failure", () => {
+  const failListing = () => {
+    mail.reader.listRecent = async () => {
+      throw new KindedError("connection", "Gmail request failed: 401");
+    };
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  };
+
+  it("alerts finance on each failing run and reports the failure", async () => {
+    failListing();
+    expect(await readMailbox()).toMatchObject({ status: "listing_failed", messages: 0 });
+    expect(await readMailbox()).toMatchObject({ status: "listing_failed" });
+    expect(listingAlerts).toEqual([{ orgId: TEST_ORG_ID, kind: "connection" }, { orgId: TEST_ORG_ID, kind: "connection" }]);
+  });
+
+  it("hands each listing failure to the on-failure port", async () => {
+    failListing();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await readMailbox();
+  });
+
+  it.each([
+    [401, "connection"],
+    [403, "connection"],
+    [404, "settings"],
+    [429, "system"],
+    [503, "system"],
+  ] as const)("names the cause of a Gmail %i in the alert", async (status, kind) => {
+    vi.stubGlobal("fetch", async () => new Response("{}", { status }));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    mail.reader.listRecent = createGmailReader("receipts@example.org", async () => "token").listRecent;
+    try {
+      expect(await readMailbox()).toMatchObject({ status: "listing_failed" });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(listingAlerts).toEqual([{ orgId: TEST_ORG_ID, kind }]);
+  });
+
+  it("reads a Gmail that cannot be reached as an outage", async () => {
+    vi.stubGlobal("fetch", async () => {
+      throw new TypeError("fetch failed");
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    mail.reader.listRecent = createGmailReader("receipts@example.org", async () => "token").listRecent;
+    try {
+      await readMailbox();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(listingAlerts).toEqual([{ orgId: TEST_ORG_ID, kind: "system" }]);
+  });
+
+  it("reads an unsorted failure, such as a token-source error, as a bug", async () => {
+    mail.reader.listRecent = async () => {
+      throw new Error("token source failed");
+    };
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await readMailbox();
+    expect(listingAlerts).toEqual([{ orgId: TEST_ORG_ID, kind: "bug" }]);
+  });
+
+  it("still reports the failure when the alert send fails", async () => {
+    failListing();
+    configure({
+      ocr: okOcr(),
+      mailbox: mail.reader,
+      alerts: { ...testAlerts(), mailListingFailed: async () => { throw new Error("send failed"); } },
+      people: { submitterByEmail: async () => ALICE },
+    });
+    expect(await readMailbox()).toMatchObject({ status: "listing_failed" });
+  });
+
+  it("still sends the stored ageing alert and the replies owed", async () => {
+    await db.receiptMailAtRisk.create({ data: { orgId: TEST_ORG_ID, gmailMessageId: "earlier", receivedAt: new Date(Date.now() - MAIL_WINDOW_DAYS * DAY_MS) } });
+    send("m1");
+    await readMailbox();
+    const sent: string[] = [];
+    configure({
+      ocr: okOcr(),
+      mailbox: mail.reader,
+      alerts: testAlerts(),
+      people: { submitterByEmail: async () => ALICE },
+      replies: {
+        contactOf: async () => ({ email: "alice@example.org", name: "Alice" }),
+        send: async (ack) => {
+          sent.push(ack.to);
+          return true;
+        },
+      },
+    });
+    failListing();
+    expect(await readMailbox()).toMatchObject({ status: "listing_failed", replied: 1 });
+    expect(sent).toEqual(["alice@example.org"]);
+    expect(agingAlerts).toMatchObject([{ messages: 1 }]);
   });
 });
 
@@ -308,9 +714,23 @@ describeDb("mail intake sender authentication", () => {
     expect((await db.receiptMailItem.findFirstOrThrow()).senderAddress).toBe(address);
   };
 
-  it("holds a message whose DMARC did not pass", async () => {
+  it("holds a message whose DMARC did not pass, recording that the sender is unverified", async () => {
     send("m1", { auth: [GOOGLE_PASS.replace("dmarc=pass", "dmarc=fail")] });
     await heldAs("alice@example.org");
+    expect((await db.receiptMailItem.findFirstOrThrow()).holdReason).toBe("unverified_sender");
+  });
+
+  it("holds a message whose From address is not ASCII, recording that the sender is unverified", async () => {
+    send("m1", { from: ["Alice <alic\u00e9@example.org>"] });
+    expect(await readMailbox()).toMatchObject({ receipts: 0, held: 1 });
+    expect((await db.receiptMailItem.findFirstOrThrow()).holdReason).toBe("unverified_sender");
+  });
+
+  it("holds a member's message that passed DMARC on SPF alone, with no aligned DKIM signature", async () => {
+    send("m1", { auth: ["mx.google.com; dkim=pass header.i=@mailer.example.net; spf=pass; dmarc=pass header.from=example.org"] });
+    send("m2", { auth: ["mx.google.com; spf=pass; dmarc=pass header.from=example.org"] });
+    expect(await readMailbox()).toMatchObject({ receipts: 0, held: 2 });
+    expect((await db.receiptMailItem.findMany()).map((i) => i.holdReason)).toEqual(["unverified_sender", "unverified_sender"]);
   });
 
   it("reads only the topmost Authentication-Results header, and only Google's", async () => {
@@ -349,6 +769,17 @@ describeDb("mail intake sender authentication", () => {
     await heldAs("stranger@example.org");
     expect(Buffer.from((await db.receiptMailItem.findFirstOrThrow()).fileBlob ?? []).toString()).toBe("fwd total 9.99");
   });
+
+  it("never opens a message forwarded as an attachment, and counts it ignored", async () => {
+    send("m1", {
+      parts: [
+        { mimeType: "text/plain", body: { data: b64("see attached") } },
+        { mimeType: "message/rfc822", filename: "receipt.eml", parts: [{ mimeType: "text/plain", body: { data: b64("Order total 12.00") } }] },
+      ],
+    });
+    expect(await readMailbox()).toMatchObject({ receipts: 0, held: 0, ignored: 2 });
+    expect(await db.receiptMailItem.count()).toBe(0);
+  });
 });
 
 describeDb("mail intake over a sender's daily upload limit", () => {
@@ -360,7 +791,7 @@ describeDb("mail intake over a sender's daily upload limit", () => {
     configure({
       ocr: okOcr(),
       mailbox: mail.reader,
-      alerts: { mailHoldCeilingReached: async (event) => void alerts.push(event) },
+      alerts: testAlerts(),
       limits,
       people: {
         submitterByEmail: async (address) => {
@@ -398,7 +829,9 @@ describeDb("mail intake over a sender's daily upload limit", () => {
     expect(deferred).toMatchObject({ gmailMessageId: "m2", senderAddress: "alice@example.org", receiptId: null });
     expect(Buffer.from(deferred.fileBlob ?? []).toString()).toBe(pdf("m2"));
 
+    const fetched = trackFetches();
     expect(await readMailbox()).toMatchObject({ receipts: 0, overLimit: 0, skipped: 2 });
+    expect(fetched).toEqual(["m2"]);
 
     withLimits({ mailUploadsPerPersonPerDay: 30 });
     mail.messages.clear();
@@ -449,7 +882,7 @@ describeDb("mail intake over a sender's daily upload limit", () => {
     const id = await deferredFor("alice@example.org");
     withLimits({}, {});
     expect(await readMailbox()).toMatchObject({ receipts: 0 });
-    expect(await db.receiptMailItem.findUniqueOrThrow({ where: { id } })).toMatchObject({ status: "held" });
+    expect(await db.receiptMailItem.findUniqueOrThrow({ where: { id } })).toMatchObject({ status: "held", holdReason: "not_a_submitter" });
   });
 
   it("counts deferred files toward the held ceiling", async () => {
@@ -490,5 +923,114 @@ describeDb("mail intake over a sender's daily upload limit", () => {
     send("m1");
     send("m2");
     expect(await readMailbox()).toMatchObject({ receipts: 1, overLimit: 1 });
+  });
+
+  it("stores the sender check's verdict on every item", async () => {
+    send("passed");
+    send("spf-only", { auth: ["mx.google.com; spf=pass smtp.mailfrom=alice@example.org; dmarc=pass header.from=example.org"] });
+    send("no-record", { auth: ["mx.google.com; spf=pass; dmarc=none header.from=example.org"] });
+    send("no-from", { from: ["a@example.org, b@example.org"] });
+    await readMailbox();
+    const items = await db.receiptMailItem.findMany();
+    expect(Object.fromEntries(items.map((i) => [i.gmailMessageId, [i.status, i.dmarcVerdict]]))).toEqual({
+      passed: ["assigned", "pass"],
+      "spf-only": ["held", "fail"],
+      "no-record": ["held", "none"],
+      "no-from": ["held", "fail"],
+    });
+  });
+});
+
+describeDb("mail intake with files in the store", () => {
+  let store: ReturnType<typeof createMemoryFileStore>;
+
+  function configureStore(limits: Partial<ReceiptLimits> = {}): void {
+    configure({
+      ocr: okOcr(),
+      mailbox: mail.reader,
+      alerts: testAlerts(),
+      limits,
+      fileStore: store,
+      storeNewFilesInBucket: true,
+      people: { submitterByEmail: async (address) => (address === "alice@example.org" ? ALICE : null) },
+    });
+  }
+
+  const stored = (key: string | null) => Buffer.from(store.objects.get(key ?? "") ?? []).toString();
+
+  /** Mails two files from Alice under a limit of one: one receipt, and one item deferred in the store. */
+  async function deferOne() {
+    configureStore({ mailUploadsPerPersonPerDay: 1 });
+    send("m1");
+    send("m2");
+    expect(await readMailbox()).toMatchObject({ receipts: 1, overLimit: 1 });
+    const item = await db.receiptMailItem.findFirstOrThrow({ where: { status: "deferred" } });
+    expect(item).toMatchObject({ fileBlob: null, fileSize: pdf("m2").length });
+    expect(item.fileKey).toMatch(/^mail-items\//);
+    expect(stored(item.fileKey)).toBe(pdf("m2"));
+    mail.messages.clear();
+    return item;
+  }
+
+  beforeEach(() => {
+    store = createMemoryFileStore();
+    configureStore();
+  });
+
+  it("stores a mailed receipt's file, leaving no mail object", async () => {
+    send("m1");
+    expect(await readMailbox()).toMatchObject({ receipts: 1 });
+    const receipt = await db.receipt.findFirstOrThrow();
+    expect(receipt).toMatchObject({ fileBlob: null, fileKey: `receipts/${receipt.id}` });
+    expect([...store.objects.keys()]).toEqual([receipt.fileKey]);
+  });
+
+  it("holds an unknown sender's file in the store and not in the row", async () => {
+    send("m1", { from: ["Stranger <stranger@example.org>"] });
+    expect(await readMailbox()).toMatchObject({ held: 1 });
+    const item = await db.receiptMailItem.findFirstOrThrow();
+    expect(item).toMatchObject({ status: "held", fileBlob: null, fileSize: pdf("m1").length });
+    expect(stored(item.fileKey)).toBe(pdf("m1"));
+  });
+
+  it("a held file the store refuses leaves no row", async () => {
+    configure({
+      ocr: okOcr(),
+      mailbox: mail.reader,
+      alerts: testAlerts(),
+      storeNewFilesInBucket: true,
+      fileStore: { ...store, put: async () => Promise.reject(new Error("s3 down")) },
+      people: { submitterByEmail: async () => null },
+    });
+    send("m1", { from: ["Stranger <stranger@example.org>"] });
+    expect(await readMailbox()).toMatchObject({ held: 0, failed: 1 });
+    expect(await db.receiptMailItem.count()).toBe(0);
+  });
+
+  it("a retried deferred item becomes a stored receipt and its mail object is deleted", async () => {
+    const item = await deferOne();
+    configureStore({ mailUploadsPerPersonPerDay: 30 });
+    expect(await readMailbox()).toMatchObject({ receipts: 1 });
+    const after = await db.receiptMailItem.findUniqueOrThrow({ where: { id: item.id } });
+    expect(after).toMatchObject({ status: "assigned", fileKey: null, fileBlob: null });
+    expect(store.objects.has(item.fileKey ?? "")).toBe(false);
+    expect(stored(`receipts/${after.receiptId}`)).toBe(pdf("m2"));
+  });
+
+  it("a released deferred item becomes a stored receipt and its mail object is deleted", async () => {
+    const item = await deferOne();
+    actAs(FINANCE);
+    const { receiptId } = await mailQueueService.assign(item.id, { release: true });
+    expect(await db.receiptMailItem.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "assigned", fileKey: null });
+    expect(store.objects.has(item.fileKey ?? "")).toBe(false);
+    expect(stored(`receipts/${receiptId}`)).toBe(pdf("m2"));
+  });
+
+  it("a deferred item whose object is gone counts as failed and stays deferred", async () => {
+    const item = await deferOne();
+    store.objects.delete(item.fileKey ?? "");
+    configureStore({ mailUploadsPerPersonPerDay: 30 });
+    expect(await readMailbox()).toMatchObject({ receipts: 0, failed: 1 });
+    expect(await db.receiptMailItem.findUniqueOrThrow({ where: { id: item.id } })).toMatchObject({ status: "deferred" });
   });
 });

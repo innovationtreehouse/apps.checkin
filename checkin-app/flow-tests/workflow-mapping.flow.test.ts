@@ -1,11 +1,11 @@
 /**
- * Receipt mapping (#1289): the persona matrix over all 10 routes, and a manager
+ * Receipt mapping: the persona matrix over all 10 routes, and a manager
  * journey from proceed through apply into org inventory (X4) and expense (X5).
  * Real HTTP against the running dev server and the seeded workflow-mapping DB
  * (see docker-compose.flow.yml + packages/workflow-mapping/prisma/seed.ts).
  *
- * X3 (catalog reads), X4 and X5 are bound, so a pushed receipt resolves; the
- * catalog submissions port is inert, so propose answers 502.
+ * X3 (catalog reads), X4, X5 and X8 (catalog submissions) are bound, so a pushed
+ * receipt resolves and propose reaches the catalog, which validates what it is sent.
  */
 import { loginAs, api, type Session } from "./helpers";
 
@@ -28,7 +28,7 @@ const WRITES: Array<[string, unknown?]> = [
   ["/api/workflow-mapping/receipts/1/retry-apply"],
   ["/api/workflow-mapping/receipts/1/lines/1/associate", { gtin13: "0022222222220" }],
   ["/api/workflow-mapping/receipts/1/lines/1/propose", {
-    proposedName: "Denied", proposedCategoryId: 1, proposedSubcategoryId: 1, proposedUsageBehavior: "Consumable",
+    proposedName: "Denied", proposedCategoryId: 1, proposedSubcategoryId: 1, proposedUsageBehavior: "Durable",
   }],
   ["/api/workflow-mapping/receipts/1/lines/1/non-inventory"],
 ];
@@ -41,20 +41,20 @@ type Detail = {
   WorkflowReceiptView: Record<string, unknown> & { lineItems: Array<Record<string, unknown>> };
   ReceivedReceiptLineStatus: LineRow[];
 };
-type ExpenseRow = { id: string; vendorName: string | null };
+type ExpenseDetail = { Expense: { id: string; vendorName: string | null } };
 type AuditRow = { eventType: string; receivedReceiptId: number | null; actorUsername?: string | null };
 
 const post = (s: Session, path: string, body?: unknown) =>
   api(s, path, { method: "POST", ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
 
 async function stock(s: Session): Promise<number> {
-  const res = await api<{ existingQuantity: number }>(s, `/api/inventory/org-items/${GTIN}`);
-  return res.status === 404 ? 0 : res.json.existingQuantity;
+  const res = await api<{ OrgItem: { existingQuantity: number } }>(s, `/api/inventory/org-items/${GTIN}`);
+  return res.status === 404 ? 0 : res.json.OrgItem.existingQuantity;
 }
 
 /** The expense booked from a receipt, read as FINANCE; the expense id is the receipt's receiptId. */
 async function bookedExpense(receiptId: string) {
-  return api<ExpenseRow>(await loginAs(FINANCE), `/api/expense/expenses/${receiptId}`);
+  return api<ExpenseDetail>(await loginAs(FINANCE), `/api/expense/expenses/${receiptId}`);
 }
 
 async function seeded(s: Session, vendor: string): Promise<ReceiptRow> {
@@ -127,7 +127,7 @@ describe("workflow mapping — manager journey", () => {
     expect(await stock(m)).toBe(before + 5);
     const expense = await bookedExpense("seed-wm-proceed");
     expect(expense.status).toBe(200);
-    expect(expense.json).toMatchObject({ id: "seed-wm-proceed", vendorName: "Seed Hardware" });
+    expect(expense.json.Expense).toMatchObject({ id: "seed-wm-proceed", vendorName: "Seed Hardware" });
 
     const detail = await api<Detail>(m, `/api/workflow-mapping/receipts/${receipt.id}`);
     expect(detail.json.ReceivedReceipt.inventoryAppliedAt).not.toBeNull();
@@ -153,7 +153,7 @@ describe("workflow mapping — manager journey", () => {
     const before = await stock(m);
     const line = `/api/workflow-mapping/receipts/${receipt.id}/lines/${open.id}`;
 
-    // Catalog submissions are not bound yet, so propose fails loudly.
+    // The catalog rejects a usage behavior outside its list; the failure surfaces as 502 and the line stays open.
     expect((await post(m, `${line}/propose`, {
       proposedName: "Towels", proposedCategoryId: 1, proposedSubcategoryId: 1, proposedUsageBehavior: "Consumable",
     })).status).toBe(502);
@@ -163,6 +163,6 @@ describe("workflow mapping — manager journey", () => {
     const after = await api<Detail>(m, `/api/workflow-mapping/receipts/${receipt.id}`);
     expect(after.json.ReceivedReceipt.state).toBe("resolved");
     expect(await stock(m)).toBe(before + 2);
-    expect((await bookedExpense("seed-wm-mapping")).json).toMatchObject({ id: "seed-wm-mapping", vendorName: "Seed Supply" });
+    expect((await bookedExpense("seed-wm-mapping")).json.Expense).toMatchObject({ id: "seed-wm-mapping", vendorName: "Seed Supply" });
   });
 });

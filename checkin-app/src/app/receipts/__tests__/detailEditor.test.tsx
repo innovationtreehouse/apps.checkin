@@ -1,16 +1,21 @@
+import { HttpError } from "@checkin/component-ui";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
+import { notifications } from "@mantine/notifications";
 import ReceiptDetailPage from "@checkin/receipt/pages/detail";
 
 const mockReload = jest.fn();
+const mockPush = jest.fn();
+let mockPathname = "/receipts/r1";
+let mockSearch = new URLSearchParams();
 const mockSend = jest.fn<Promise<boolean>, unknown[]>();
 const mockApi = jest.fn<Promise<unknown>, unknown[]>();
 
 jest.mock("next/navigation", () => ({
   useParams: () => ({ id: "r1" }),
-  usePathname: () => "/receipts/r1",
-  useSearchParams: () => new URLSearchParams(),
-  useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
+  usePathname: () => mockPathname,
+  useSearchParams: () => mockSearch,
+  useRouter: () => ({ push: mockPush, replace: jest.fn() }),
 }));
 jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 1 } } }) }));
 jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
@@ -30,11 +35,15 @@ const receipt = {
   lineItems: [line(11, "Screws", 2, 500), line(12, "Bolts", 1, 1000)],
 };
 let mockReceipt: unknown = receipt;
+let mockAudit: unknown = null;
+let mockIsFinance = false;
+// The state the server's flow moves a resubmitted receipt to.
+let mockLandsIn = "financial_review";
 
 jest.mock("@checkin/receipt/components/api", () => ({
   ...jest.requireActual("@checkin/receipt/components/api"),
-  useLoad: (path: string | null) => ({ data: path === "/r1" ? mockReceipt : null, error: null, reload: mockReload }),
-  useRoles: () => ({ isFinance: false, isBoard: false }),
+  useLoad: (path: string | null) => ({ data: path === "/r1" ? mockReceipt : path === "/r1/audit-logs" ? mockAudit : null, error: null, reload: mockReload }),
+  useRoles: () => ({ isFinance: mockIsFinance, isBoard: false }),
   send: (...args: unknown[]) => mockSend(...args),
   api: (...args: unknown[]) => mockApi(...args),
 }));
@@ -52,12 +61,19 @@ beforeAll(() => {
 beforeEach(() => {
   jest.clearAllMocks();
   mockReceipt = receipt;
+  mockAudit = null;
+  mockIsFinance = false;
+  mockPathname = "/receipts/r1";
+  mockSearch = new URLSearchParams();
+  mockLandsIn = "financial_review";
   mockSend.mockResolvedValue(true);
-  mockApi.mockResolvedValue({});
+  mockApi.mockImplementation(async (path) => (String(path).endsWith("/resubmit") ? { ...receipt, state: mockLandsIn } : {}));
 });
 
-const wrap = () => render(<MantineProvider><ReceiptDetailPage /></MantineProvider>);
+const wrap = () => render(<MantineProvider><ReceiptDetailPage queueBase="/finance/review" /></MantineProvider>);
 const type = (label: string, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } });
+const shown = () => (notifications.show as jest.Mock).mock.calls.map((c) => c[0]);
+const resubmitted = () => mockApi.mock.calls.some((c) => c[0] === "/r1/resubmit");
 
 describe("correcting a receipt whose totals don't add up", () => {
   it("shows how far the lines are from the receipt total, and when they match", () => {
@@ -67,12 +83,114 @@ describe("correcting a receipt whose totals don't add up", () => {
     expect(screen.getByText("Matches the receipt total")).toBeInTheDocument();
   });
 
-  it("saves a line's new price, then resubmits", async () => {
+  it("offers one Save changes button, with no separate Resubmit", () => {
+    wrap();
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /resubmit/i })).not.toBeInTheDocument();
+  });
+
+  it("saves, then resubmits when the lines add up to the total", async () => {
     wrap();
     type("Line 2 unit price", "10.50");
-    fireEvent.click(screen.getByRole("button", { name: "Save and resubmit" }));
-    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/resubmit", "POST", {}, "Resubmitted"));
-    expect(mockApi).toHaveBeenCalledWith("/r1/line-items/12", { method: "PATCH", body: JSON.stringify({ unitPrice: 10.5 }) });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(resubmitted()).toBe(true));
+    expect(mockApi.mock.calls.map((c) => c[0])).toEqual(["/r1/line-items/12", "/r1/resubmit"]);
+    expect(shown()).toContainEqual({ message: "Saved and resubmitted: Finance review", color: "green" });
+  });
+
+  it("saves without resubmitting while the totals are still off, and says by how much", async () => {
+    wrap();
+    type("Line 2 unit price", "10.25");
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(shown()).toContainEqual({ message: "Saved. Still $0.25 off; stays in Totals off.", color: "yellow", autoClose: false }));
+    expect(mockApi).toHaveBeenCalledWith("/r1/line-items/12", { method: "PATCH", body: JSON.stringify({ unitPrice: 10.25 }) });
+    expect(resubmitted()).toBe(false);
+  });
+
+  it("keeps a line's stored total when a corrected unit price still rounds to it", () => {
+    wrap();
+    // Line 2 is stored as $10.00; 3 × $3.33 is $9.99, which rounds to it.
+    type("Line 2 quantity", "3");
+    type("Line 2 unit price", "3.33");
+    type("Receipt total", "26.50");
+    expect(screen.getByLabelText("Line 2 total")).toHaveValue("10.00");
+    expect(screen.getByText("Matches the receipt total")).toBeInTheDocument();
+  });
+
+  it("shows a calculated line total a cent off, and saves the total a person types", async () => {
+    // The receipt prints 3 @ $3.33 with no line total; the line is calculated as $9.99.
+    mockReceipt = { ...receipt, receiptTotalCents: 2650, lineItems: [line(11, "Screws", 2, 500), line(12, "Hinges", 3, 333)] };
+    wrap();
+    expect(screen.getByLabelText("Line 2 total")).toHaveValue("9.99");
+    expect(screen.getByText("Difference: -$0.01")).toBeInTheDocument();
+    type("Line 2 total", "10.00");
+    expect(screen.getByText("Matches the receipt total")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(resubmitted()).toBe(true));
+    expect(mockApi).toHaveBeenCalledWith("/r1/line-items/12", { method: "PATCH", body: JSON.stringify({ totalPrice: 10 }) });
+  });
+
+  it("keeps a typed total that equals the stored one when the unit price changes, and saves it", async () => {
+    // Line 2 is stored as $10.00; the unit price is corrected and the printed $10.00 typed back in.
+    mockReceipt = { ...receipt, receiptTotalCents: 2650, lineItems: [line(11, "Screws", 2, 500), { ...line(12, "Hinges", 3, 333), totalPriceCents: 1000 }] };
+    wrap();
+    type("Line 2 unit price", "3.30");
+    expect(screen.getByLabelText("Line 2 total")).toHaveValue("9.90");
+    type("Line 2 total", "10.00");
+    expect(screen.getByLabelText("Line 2 total")).toHaveValue("10.00");
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(mockApi).toHaveBeenCalledWith("/r1/line-items/12", { method: "PATCH", body: JSON.stringify({ unitPrice: 3.3, totalPrice: 10 }) }));
+  });
+
+  it("names a line whose printed total no rounding explains, and matches once its unit price is corrected", async () => {
+    // Read as 1 × $9.90 against a printed $10.00 line.
+    mockReceipt = { ...receipt, receiptTotalCents: 2650, lineItems: [line(11, "Screws", 2, 500), { ...line(12, "Bolts", 1, 990), totalPriceCents: 1000 }] };
+    wrap();
+    expect(screen.getByText("Line 2: total $10.00 is not 1 × $9.90 ($9.90)")).toBeInTheDocument();
+    type("Line 2 unit price", "10.00");
+    expect(screen.getByText("Matches the receipt total")).toBeInTheDocument();
+  });
+
+  it("does not claim success or leave the page when the flow puts it back in Totals off", async () => {
+    mockSearch = new URLSearchParams("queue=validation_failed");
+    mockLandsIn = "validation_failed";
+    wrap();
+    type("+ Shipping", "5.50");
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(resubmitted()).toBe(true));
+    expect(shown()).toContainEqual({ message: "Saved. The totals still don't add up; stays in Totals off.", color: "yellow", autoClose: false });
+    expect(shown().some((n) => n.color === "green")).toBe(false);
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("returns to the finance queue once the receipt leaves Totals off", async () => {
+    mockSearch = new URLSearchParams("queue=validation_failed");
+    wrap();
+    type("+ Shipping", "5.50");
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/finance/review?queue=validation_failed"));
+  });
+
+  it("resubmits a saved receipt that already adds up, with nothing to save", async () => {
+    mockReceipt = { ...receipt, receiptTotalCents: 2650 };
+    wrap();
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(resubmitted()).toBe(true));
+    expect(mockApi).toHaveBeenCalledTimes(1);
+    expect(shown()).toContainEqual({ message: "Resubmitted: Finance review", color: "green" });
+  });
+
+  it("keeps a failed resubmit on screen, naming what was saved", async () => {
+    mockApi.mockImplementation(async (path) => {
+      if (String(path).endsWith("/resubmit")) throw new HttpError("Receipt is not in validation_failed", 409);
+      return {};
+    });
+    wrap();
+    type("+ Shipping", "5.50");
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() =>
+      expect(shown()).toContainEqual({ title: "Saved, but couldn't resubmit", message: "Receipt is not in validation_failed", color: "red", autoClose: false }),
+    );
   });
 
   it("adds a line before removing one", async () => {
@@ -91,12 +209,12 @@ describe("correcting a receipt whose totals don't add up", () => {
   });
 
   it("does not resubmit when a save fails", async () => {
-    mockApi.mockRejectedValue(new Error("Receipt total must be a number"));
+    mockApi.mockRejectedValue(new HttpError("Receipt total must be a number", 409));
     wrap();
     type("Receipt total", "26.50");
-    fireEvent.click(screen.getByRole("button", { name: "Save and resubmit" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(mockApi).toHaveBeenCalled());
-    expect(mockSend).not.toHaveBeenCalled();
+    expect(resubmitted()).toBe(false);
   });
 
   it("saves part number, manufacturer, quantity and backordered on a line", async () => {
@@ -116,18 +234,38 @@ describe("correcting a receipt whose totals don't add up", () => {
     });
   });
 
-  it("posts a new line once, however many times Save and resubmit is clicked", async () => {
+  it("posts a new line once, however many times Save changes is clicked", async () => {
     let finish: (v: unknown) => void = () => {};
     mockApi.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
     wrap();
     fireEvent.click(screen.getByRole("button", { name: "+ Add line" }));
     type("Line 3 description", "Glue");
-    const resubmit = screen.getByRole("button", { name: "Save and resubmit" });
-    fireEvent.click(resubmit);
-    fireEvent.click(resubmit);
+    type("Line 3 unit price", "0.50");
+    const save = screen.getByRole("button", { name: "Save changes" });
+    fireEvent.click(save);
+    fireEvent.click(save);
     finish({});
-    await waitFor(() => expect(mockSend).toHaveBeenCalledTimes(1));
-    expect(mockApi).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(resubmitted()).toBe(true));
+    expect(mockApi.mock.calls.map((c) => c[0])).toEqual(["/r1/line-items", "/r1/resubmit"]);
+  });
+
+  it("edits the date with a date picker and saves it as YYYY-MM-DD", async () => {
+    wrap();
+    const date = screen.getByLabelText("Date");
+    expect(date).toHaveAttribute("type", "date");
+    fireEvent.change(date, { target: { value: "2026-09-30" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(mockApi).toHaveBeenCalledWith("/r1", { method: "PATCH", body: JSON.stringify({ receiptDate: "2026-09-30" }) }));
+  });
+
+  it("shows a stored retailer of only spaces as blank, and asks for it on save", async () => {
+    mockReceipt = { ...receipt, retailer: "   " };
+    wrap();
+    expect(screen.getByLabelText("Retailer")).toHaveValue("");
+    type("+ Shipping", "5.50");
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(shown()).toContainEqual({ title: "Receipt not saved", message: "The retailer is required.", color: "red", autoClose: false }));
+    expect(mockApi).not.toHaveBeenCalled();
   });
 
   it("is read-only once the receipt was sent to receiving", () => {
@@ -150,7 +288,88 @@ describe("reviewing an OCR-read receipt", () => {
     wrap();
     type("Retailer", "Acme Hardware");
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
-    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/submitter-confirm", "POST", {}, "Confirmed"));
+    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/submitter-confirm", "POST", {}, "Confirmed", "Couldn't confirm this receipt"));
     expect(mockApi).toHaveBeenCalledWith("/r1", { method: "PATCH", body: JSON.stringify({ retailer: "Acme Hardware" }) });
+  });
+
+  it("saves without resubmitting", async () => {
+    mockReceipt = { ...receipt, state: "submitter_review", validationNotes: null };
+    wrap();
+    type("Retailer", "Acme Hardware");
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(shown()).toContainEqual({ message: "Saved", color: "green" }));
+    expect(resubmitted()).toBe(false);
+  });
+});
+
+describe("typing the details of a receipt OCR could not read", () => {
+  const unread = {
+    ...receipt, state: "ocr_failed", validationNotes: "OCR failed: not configured", retailer: null, receiptDate: null,
+    receiptTotalCents: null, taxCents: 0, shippingCents: 0, lineItems: [],
+  };
+
+  it("still offers reading it again, and refuses to move on while details are blank", () => {
+    mockReceipt = unread;
+    wrap();
+    expect(screen.getByRole("button", { name: "Read it again" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+  });
+
+  it("saves the typed details, then sends the receipt on through the flow", async () => {
+    mockReceipt = { ...unread, lineItems: [line(11, "Screws", 1, 500)] };
+    wrap();
+    type("Retailer", "Acme");
+    type("Date", "2026-10-01");
+    type("Receipt total", "5.00");
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(resubmitted()).toBe(true));
+    expect(mockApi.mock.calls.map((c) => c[0])).toEqual(["/r1", "/r1/resubmit"]);
+    expect(shown()).toContainEqual({ message: "Saved and resubmitted: Finance review", color: "green" });
+  });
+
+  it("sends on details saved before a failed resubmit, with nothing left to save", async () => {
+    mockReceipt = { ...unread, retailer: "Acme", receiptDate: "2026-10-01", receiptTotalCents: 500, lineItems: [line(11, "Screws", 1, 500)] };
+    wrap();
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(resubmitted()).toBe(true));
+  });
+});
+
+describe("a submitter's tax or date correction in finance review", () => {
+  const edit = (id: number, userId: number, fieldChanged: string, valueBefore: string, valueAfter: string) => ({
+    id, action: "field_edit", userId, username: "alice", fieldChanged, valueBefore, valueAfter, changedAt: "2026-10-02T00:00:00Z",
+  });
+
+  it("tells finance a date the submitter entered from a tax they changed, on the reason and beside each field", () => {
+    mockIsFinance = true;
+    mockReceipt = { ...receipt, uploadedByUserId: 7, state: "financial_review", validationNotes: null, financialReviewReasons: ["submitter_correction"] };
+    mockAudit = [edit(1, 7, "receiptDate", "null", "2026-10-01"), edit(2, 7, "taxCents", "100", "150"), edit(3, 99, "taxCents", "150", "0")];
+    wrap();
+    expect(screen.getByText("Finance review: the submitter entered the date (2026-10-01); the submitter changed the tax from $1.00 to $1.50")).toBeInTheDocument();
+    expect(screen.getByText(/\(entered by the submitter\)/)).toBeInTheDocument();
+    expect(screen.getByText(/\(the submitter changed it from \$1\.00\)/)).toBeInTheDocument();
+  });
+
+  it("keeps the general reason for a viewer without the audit log", () => {
+    mockReceipt = { ...receipt, state: "financial_review", validationNotes: null, financialReviewReasons: ["submitter_correction"] };
+    wrap();
+    expect(screen.getByText("Finance review: the submitter changed the tax or date")).toBeInTheDocument();
+  });
+});
+
+describe("the submitter's confirmation of a reimbursement", () => {
+  it("asks the uploader to confirm its lines and amounts", async () => {
+    mockReceipt = { ...receipt, state: "submitter_review", validationNotes: null, needsReimbursement: true, reimburseePersonId: 1 };
+    wrap();
+    expect(screen.queryByRole("button", { name: "Confirm" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "These lines and amounts are right" }));
+    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/submitter-confirm", "POST", {}, "Confirmed", "Couldn't confirm this receipt"));
+  });
+
+  it("for someone else's reimbursement, leaves the confirmation to the person reimbursed", () => {
+    mockReceipt = { ...receipt, state: "submitter_review", validationNotes: null, needsReimbursement: true, reimburseePersonId: 2 };
+    wrap();
+    expect(screen.queryByRole("button", { name: "These lines and amounts are right" })).not.toBeInTheDocument();
+    expect(screen.getByText("The person reimbursed confirms the lines and amounts.")).toBeInTheDocument();
   });
 });

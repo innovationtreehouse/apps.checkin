@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from 'react';
+import { NEW_PROGRAM_ROLES } from '@/lib/nav/sections/programOps';
 import { useRouter } from 'next/navigation';
 import { Alert, Box, Button, Card, Checkbox, Group, NumberInput, SimpleGrid, Stack, Text, TextInput } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
@@ -18,7 +19,7 @@ type ParticipantOption = {
 };
 
 export default function CreateProgramPage() {
-  const { user, ready, loading: authLoading } = useRequireRole(['isSysadmin', 'isBoardMember'], { redirectTo: '/system-status' });
+  const { user, ready, loading: authLoading } = useRequireRole(NEW_PROGRAM_ROLES, { redirectTo: '/program-ops/programs' });
   const router = useRouter();
 
   const [name, setName] = useState("");

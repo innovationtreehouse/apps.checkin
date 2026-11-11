@@ -3,7 +3,7 @@
  * boot; routes read it through the accessors below. Binding touches no
  * database — the services below build lazily on first request.
  */
-import { defineRuntime } from "@checkin/component-kit";
+import { defineRuntime, NotWiredError, settleCounts } from "@checkin/component-kit";
 import { db } from "./lib/db";
 import { createInventoryRepository } from "./lib/repositories/inventoryRepository";
 import { createLocationRepository } from "./lib/repositories/locationRepository";
@@ -13,8 +13,9 @@ import { createReceiveQueueRepository } from "./lib/repositories/receiveQueueRep
 import { createInventoryService } from "./lib/services/inventoryService";
 import { createLocationService } from "./lib/services/locationService";
 import { createProvisionalItemService } from "./lib/services/provisionalItemService";
+import { createReceiptService, type ReceiptService } from "./lib/services/receiptService";
 import { createReceiveQueueService } from "./lib/services/receiveQueueService";
-import { inertCatalogEventSource, type CatalogEventSource, type InventoryPrincipal, type InventoryRuntimeConfig, type OrgIdentity } from "./contract";
+import { inertCatalogEventSource, type CatalogEventSource, type InventoryPrincipal, type InventoryRuntimeConfig } from "./contract";
 
 export const localInventoryRuntime = defineRuntime<InventoryRuntimeConfig, InventoryPrincipal>("local-inventory");
 const requireRuntime = localInventoryRuntime.require;
@@ -25,10 +26,6 @@ export const configureLocalInventory = localInventoryRuntime.configure;
 export const getPrincipal = localInventoryRuntime.getPrincipal;
 
 /** Org identity for the current request. */
-export function getOrg(): Promise<OrgIdentity> {
-  return requireRuntime().org();
-}
-
 /** The current request's org id, the scope of every inventory row. */
 export const getOrgId = localInventoryRuntime.getOrgId;
 
@@ -37,23 +34,37 @@ export function getCatalogEventSource(): CatalogEventSource {
   return requireRuntime().catalogEventSource ?? inertCatalogEventSource;
 }
 
+/** Whether the catalog the host bound has an active item with this GTIN; throws when the host bound none. */
+export async function catalogHasActiveItem(gtin13: string): Promise<boolean> {
+  const catalog = requireRuntime().catalog;
+  if (!catalog) throw new NotWiredError("local-inventory catalog");
+  return (await catalog.getActiveItem(gtin13)) != null;
+}
+
+/** GTINs of up to `take` active catalog items matching the query; throws when the host bound no catalog. */
+export async function catalogSearchGtins(query: string, take: number): Promise<string[]> {
+  const catalog = requireRuntime().catalog;
+  if (!catalog) throw new NotWiredError("local-inventory catalog");
+  return (await catalog.searchItems(query, take)).map((item) => item.gtin13);
+}
+
 function buildServices() {
   const inventoryRepo = createInventoryRepository(db);
   const inventoryService = createInventoryService({ inventoryRepo, db });
   const provisionalRepo = createProvisionalItemRepository(db);
+  const receiveQueueRepo = createReceiveQueueRepository(db);
+  const provisionalItemService = createProvisionalItemService({
+    provisionalRepo,
+    resolutionRepo: createProvisionalResolutionRepository(db),
+    inventoryRepo,
+    db,
+  });
   return {
     inventoryService,
     locationService: createLocationService({ locationRepo: createLocationRepository(db), db }),
-    provisionalItemService: createProvisionalItemService({
-      provisionalRepo,
-      resolutionRepo: createProvisionalResolutionRepository(db),
-      inventoryRepo,
-      db,
-    }),
-    receiveQueueService: createReceiveQueueService({
-      receiveQueueRepo: createReceiveQueueRepository(db),
-      db,
-    }),
+    provisionalItemService,
+    receiptService: createReceiptService({ provisionalItemService, inventoryRepo, receiveQueueRepo, db }),
+    receiveQueueService: createReceiveQueueService({ receiveQueueRepo, db }),
   };
 }
 
@@ -65,7 +76,26 @@ export function getServices(): ReturnType<typeof buildServices> {
   return services;
 }
 
-/** The host nav's pill counts for the current org: open receive-queue lines. */
-export async function getNavCounts(): Promise<{ openBackorders: number }> {
-  return { openBackorders: await getServices().receiveQueueService.countOpen(await getOrgId()) };
+/** What the host binds its inventory crossings to: stock applied once per receipt or donation, and why a donation's apply failed. */
+export const inventoryApply: Pick<ReceiptService, "applyReceipt" | "applyDonation" | "donationFailureReason"> = {
+  applyReceipt: (...args) => getServices().receiptService.applyReceipt(...args),
+  applyDonation: (...args) => getServices().receiptService.applyDonation(...args),
+  donationFailureReason: (...args) => getServices().receiptService.donationFailureReason(...args),
+};
+
+/** What the host binds receiving's backorder count to: each receipt's lines still open on the receive queue. */
+export const openBackordersByReceipt = (orgId: string, receiptIds: string[]): Promise<Map<string, number>> =>
+  getServices().receiveQueueService.openBackordersByReceipt(orgId, receiptIds);
+
+/** An org's items with no location: the Needs a location list and its pill. */
+export const unlocatedWhere = (orgId: string) => ({ orgId, locationId: null });
+
+/** The host nav's pill counts for the current org: open receive-queue lines, pending merge conflicts and unlocated items. A failed count is left out. */
+export async function getNavCounts(): Promise<Partial<Record<"openBackorders" | "pendingMergeConflicts" | "unlocated", number>>> {
+  const orgId = await getOrgId();
+  return settleCounts("local-inventory", {
+    openBackorders: () => getServices().receiveQueueService.countOpen(orgId),
+    pendingMergeConflicts: () => db.inventoryMergeConflict.count({ where: { orgId, status: "pending" } }),
+    unlocated: () => db.orgItem.count({ where: unlocatedWhere(orgId) }),
+  });
 }

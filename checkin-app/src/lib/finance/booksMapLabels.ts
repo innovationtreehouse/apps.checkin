@@ -1,0 +1,14 @@
+import type { BooksMapRole } from "@checkin/quickbooks";
+
+/** Each books-map role as finance sees it on the books map screen. */
+export const BOOKS_MAP_ROLE_LABELS: Record<BooksMapRole, string> = {
+  SHOPIFY_BANK: "Shopify payouts: bank account",
+  SHOPIFY_CHARGE_REMAINDER: "Shopify: card remainder",
+  SHOPIFY_FEES: "Shopify: fees",
+  SHOPIFY_ADJUSTMENTS: "Shopify: adjustments",
+  SHOPIFY_CUSTOM_ITEMS: "Shopify: custom items",
+  BENEVITY_BANK: "Benevity disbursements: bank account",
+  EXPENSE_PAYMENT: "Organisation card",
+  INKIND_INCOME: "Gifts of goods: in-kind income",
+  INKIND_CLEARING: "Gifts of goods: clearing account (finance's past bookings)",
+};

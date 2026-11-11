@@ -4,6 +4,11 @@ import { z } from "zod";
 // clearing any real bulk purchase.
 export const MAX_LINE_QUANTITY = 100_000;
 
+/** An ISO 4217 code; money formatting throws on anything else. */
+export const CURRENCY_CODE = /^[A-Z]{3}$/;
+/** The currency of a receipt that names none. */
+export const DEFAULT_CURRENCY = "USD";
+
 const cents = z.number().int().nonnegative();
 
 export const CompletedReceiptLineItemSchema = z.object({
@@ -25,16 +30,51 @@ export const CompletedReceiptLineItemSchema = z.object({
   // and remap to the real GTIN once global-catalog resolves it.
   isProvisional: z.boolean().optional(),
   provisionalName: z.string().optional(),
+  // Receiving marked the line non-inventory (e.g. a pizza order): it has no catalog item, so
+  // finance picks its owner and QuickBooks account by hand on every expense.
+  nonInventory: z.boolean().optional(),
+});
+
+/** Why a receipt waited on finance review. */
+export const FINANCIAL_REVIEW_REASONS = ["tax", "old_date", "future_date", "submitter_correction"] as const;
+export type FinancialReviewReason = (typeof FINANCIAL_REVIEW_REASONS)[number];
+
+// Finance's approval of a receipt that waited on finance review.
+export const CompletedReceiptFinanceReviewSchema = z.object({
+  outcome: z.literal("approved"),
+  reasons: z.array(z.enum(FINANCIAL_REVIEW_REASONS)),
+  // The approving checkin Person.id.
+  decidedByPersonId: z.number().int().positive(),
+  note: z.string().nullable().optional(),
+  // The receipt's tax when finance approved it; the approval covers that amount only.
+  taxCents: cents.optional(),
+  decidedAt: z.string().datetime(),
+});
+
+// The confirmation of a reimbursement's receipt as read, its lines and amounts: the submitter's
+// signature on every line, given by the person reimbursed.
+export const CompletedReceiptSubmitterConfirmationSchema = z.object({
+  // The person reimbursed, whose signature it is (checkin Person.id).
+  confirmedByPersonId: z.number().int().positive(),
+  // The Board member who confirmed on their behalf, when the person reimbursed has no account.
+  onBehalfByPersonId: z.number().int().positive().optional(),
+  // That Board member's reason.
+  onBehalfReason: z.string().optional(),
+  confirmedAt: z.string().datetime(),
 });
 
 export const CompletedReceiptSchema = z.object({
-  receiptId: z.string(),
+  receiptId: z.string().min(1),
   orgId: z.string(),
   submitterId: z.number().int(),
   vendorName: z.string().nullable(),
   receiptNumber: z.string().nullable(),
   orderNumber: z.string().nullable(),
-  currency: z.string().default("USD"),
+  currency: z
+    .string()
+    .transform((code) => code.trim().toUpperCase() || DEFAULT_CURRENCY)
+    .pipe(z.string().regex(CURRENCY_CODE))
+    .default(DEFAULT_CURRENCY),
   taxCents: cents,
   shippingCents: cents,
   discountCents: cents,
@@ -53,8 +93,17 @@ export const CompletedReceiptSchema = z.object({
   // In-kind donation paperwork: the money side goes to donations instead of expense; the goods
   // load into inventory like any other receipt. Defaults false (a purchase).
   isInKind: z.boolean().optional().default(false),
+  // Absent when the receipt never waited on finance review.
+  financeReview: CompletedReceiptFinanceReviewSchema.optional(),
+  // Absent on a card charge, and on a reimbursement nobody confirmed (a backfill).
+  submitterConfirmation: CompletedReceiptSubmitterConfirmationSchema.optional(),
+  // The receipt org's settings hold this receipt's tax for finance review (tax-exempt org,
+  // review-with-tax on, tax above zero, not in-kind).
+  taxReviewRequired: z.boolean().optional(),
   lineItems: z.array(CompletedReceiptLineItemSchema).min(1),
 });
 
 export type CompletedReceiptLineItem = z.infer<typeof CompletedReceiptLineItemSchema>;
 export type CompletedReceipt = z.infer<typeof CompletedReceiptSchema>;
+export type CompletedReceiptFinanceReview = z.infer<typeof CompletedReceiptFinanceReviewSchema>;
+export type CompletedReceiptSubmitterConfirmation = z.infer<typeof CompletedReceiptSubmitterConfirmationSchema>;

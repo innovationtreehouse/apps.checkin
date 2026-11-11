@@ -18,27 +18,23 @@ describe("membership-audit/unclaimed page", () => {
   });
 
   it("shows an error state (not a false all-clear) when the load fails", async () => {
-    const spy = jest.spyOn(console, "error").mockImplementation(() => {});
-    global.fetch = jest.fn(() => Promise.reject(new Error("boom"))) as unknown as typeof fetch;
+    mockFetchJson({});
     renderWithProviders(<UnclaimedHouseholdsIndex />);
 
-    expect(await screen.findByText("Couldn't load unclaimed households.")).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load unclaimed households")).toBeInTheDocument();
     expect(screen.queryByText("No unclaimed accounts.")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
-    spy.mockRestore();
   });
 
   it("Retry clears the error state and shows the reloaded list", async () => {
-    const spy = jest.spyOn(console, "error").mockImplementation(() => {});
-    global.fetch = jest.fn(() => Promise.reject(new Error("boom"))) as unknown as typeof fetch;
+    mockFetchJson({});
     renderWithProviders(<UnclaimedHouseholdsIndex />);
-    await screen.findByText("Couldn't load unclaimed households.");
+    await screen.findByText("Couldn't load unclaimed households");
 
     mockFetchJson({ "/api/membership-audit/unclaimed-households": { households: [] } });
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
 
     expect(await screen.findByText("No unclaimed accounts.")).toBeInTheDocument();
-    expect(screen.queryByText("Couldn't load unclaimed households.")).not.toBeInTheDocument();
-    spy.mockRestore();
+    expect(screen.queryByText("Couldn't load unclaimed households")).not.toBeInTheDocument();
   });
 });

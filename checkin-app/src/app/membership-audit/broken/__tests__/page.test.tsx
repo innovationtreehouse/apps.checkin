@@ -2,7 +2,7 @@
 jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories run hoisted, before imports exist
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
 
 import { screen, fireEvent } from "@testing-library/react";
 import { renderWithProviders, mockFetchJson, resetRtl } from "@/test-helpers/rtl";
@@ -35,27 +35,23 @@ describe("membership-audit/broken page", () => {
   });
 
   it("shows an error state (not a false all-clear) when the load fails", async () => {
-    const spy = jest.spyOn(console, "error").mockImplementation(() => {});
-    global.fetch = jest.fn(() => Promise.reject(new Error("boom"))) as unknown as typeof fetch;
+    mockFetchJson({});
     renderWithProviders(<BrokenHouseholdsPage />);
 
-    expect(await screen.findByText("Couldn't load broken households.")).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load broken households")).toBeInTheDocument();
     expect(screen.queryByText("No broken households.")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
-    spy.mockRestore();
   });
 
   it("Retry clears the error state and shows the reloaded list", async () => {
-    const spy = jest.spyOn(console, "error").mockImplementation(() => {});
-    global.fetch = jest.fn(() => Promise.reject(new Error("boom"))) as unknown as typeof fetch;
+    mockFetchJson({});
     renderWithProviders(<BrokenHouseholdsPage />);
-    await screen.findByText("Couldn't load broken households.");
+    await screen.findByText("Couldn't load broken households");
 
     mockFetchJson({ "/api/admin/broken-households": { households: [] } });
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
 
     expect(await screen.findByText("No broken households.")).toBeInTheDocument();
-    expect(screen.queryByText("Couldn't load broken households.")).not.toBeInTheDocument();
-    spy.mockRestore();
+    expect(screen.queryByText("Couldn't load broken households")).not.toBeInTheDocument();
   });
 });

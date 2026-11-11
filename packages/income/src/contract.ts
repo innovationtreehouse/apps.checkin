@@ -52,11 +52,19 @@ export interface MirrorOrderLine {
   title: string;
   sku: string | null;
   quantity: number;
+  /** Units still on the line after edits and refunds. */
+  currentQuantity: number;
   priceCents: number;
   discountCents: number;
 }
 
-/** A variant the mirror has seen, with its latest title and SKU. */
+/** An order's current subtotal (shop_order): its lines after discounts, edits and refunds. */
+export interface MirrorOrderSubtotal {
+  orderGid: string;
+  subtotalCents: number;
+}
+
+/** A variant finance can decide on, with its latest title and SKU. */
 export interface MirrorItem {
   variantId: string;
   title: string;
@@ -70,6 +78,8 @@ export interface PayoutMirror {
   payout(gid: string): Promise<MirrorPayout | null>;
   transactions(payoutGid: string): Promise<MirrorBalanceTxn[]>;
   orderLines(orderGids: string[]): Promise<MirrorOrderLine[]>;
+  orderSubtotals(orderGids: string[]): Promise<MirrorOrderSubtotal[]>;
+  /** Every variant sold, plus any the host holds that has not sold, with the id `MirrorOrderLine.variantId` carries. */
   itemsSeen(): Promise<MirrorItem[]>;
 }
 
@@ -100,14 +110,6 @@ export interface QbDeposit {
   depositToAccount: string | null;
   /** The app key a deposit the app created carries; absent on hand-booked deposits. */
   appKey?: string;
-}
-
-/**
- * QuickBooks deposits another lane (bulk donation) holds. Income never claims one, and that
- * lane reads income's holds through incomeClaimedDepositIds.
- */
-export interface OtherLaneClaims {
-  claimedDepositIds(orgId: string): Promise<string[]>;
 }
 
 /**

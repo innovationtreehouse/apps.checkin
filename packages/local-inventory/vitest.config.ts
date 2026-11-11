@@ -8,10 +8,10 @@ export default defineConfig({
     // `npm test` stays green without Docker.
     globalSetup: ["./test/globalSetup.ts"],
     setupFiles: ["./test/setupEnv.ts", "./src/__tests__/setup-node.ts"],
-    include: ["src/__tests__/unit/**/*.test.ts"],
+    include: ["src/__tests__/unit/**/*.test.ts", "src/__tests__/integration/**/*.test.ts"],
     environment: "node",
     pool: "forks",
-    // DB-backed unit suites share one inventory DB and clean via resetDb at their own start,
+    // DB-backed suites share one inventory DB and clean via resetDb at their own start,
     // so files must not run in parallel against each other.
     fileParallelism: false,
   },

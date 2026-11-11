@@ -21,9 +21,9 @@ jest.mock("@react-pdf/renderer", () => ({
 
 describe("BadgeDocument", () => {
   it("renders names without role pills, and chunks front/back pages of 8", () => {
-    // Every fixture row carries both role flags, so a pill that came back would render.
-    // displayName arrives pre-resolved from the page (#1625) — BadgeDocument prints it
-    // verbatim and no longer derives anything from the batch it was handed.
+    // Every fixture row carries both role flags, so any role pill would render.
+    // displayName arrives pre-resolved from the page — BadgeDocument prints it verbatim
+    // and derives nothing from the batch it is handed.
     const badges = Array.from({ length: 9 }, (_, i) => ({
       id: i + 1,
       displayName: `Person ${i + 1}`,
@@ -46,7 +46,7 @@ describe("BadgeDocument", () => {
     expect(screen.getAllByTestId("pdf-page")).toHaveLength(4);
   });
 
-  // #1628. The year is per badge, so one print run mixes renewed and not-renewed
+  // The year is per badge, so one print run mixes renewed and not-renewed
   // households. Rendering nothing rather than an empty <Text> keeps the header row to a
   // single child (the logo stays at flex-start either way under space-between), so no
   // stray element can pick up yearText's marginLeft or a future style.

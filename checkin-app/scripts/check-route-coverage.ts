@@ -2,7 +2,7 @@
 /**
  * CI lint — verifies the security policy layer can't be routed around.
  *
- * Checks (advisory in Sprint 1; flipped to blocking in Sprint 4):
+ * Checks (advisory by default; CI passes --strict to block):
  *   1. Every src/app/api/<x>/route.ts file exports HTTP verbs registered in src/security/registry.ts
  *      (or a per-library module under src/security/registry/) — by defineRoute, or by
  *      defineFileRoute for a file route served through fileHandler().
@@ -20,7 +20,7 @@
  *      (scripts/legacy-authz-routes.txt) — no NEW route can ship on old authz.
  *   7. Routes with NO registered verb must not use bare `include: { rel: true }`
  *      — with no handler() response stripper in front of them, every column of
- *      the related model reaches the wire (see 62dd6d80, GET /api/household).
+ *      the related model reaches the wire.
  *
  * Uses string/regex parsing — fast, no AST library to load. Trade-off: a
  * sufficiently-obfuscated bypass slips past, but this lint is one layer
@@ -508,9 +508,8 @@ function main() {
     console.log(`${errors.length} error(s), ${warnings.length} warning(s)`);
 
     if (errors.length > 0) {
-        // The legacy-authz ratchet blocks unconditionally — advisory mode was
-        // the migration on-ramp for EXISTING routes, and grandfathering is the
-        // baseline file's job. A new route on old authz has no advisory tier.
+        // The legacy-authz ratchet blocks unconditionally — grandfathering EXISTING
+        // routes is the baseline file's job. A new route on old authz has no advisory tier.
         const ratchet = errors.filter(f => f.rule === 'new-route-old-authz');
         if (ADVISORY_MODE && ratchet.length === 0) {
             console.log('(advisory mode — exiting 0; pass --strict to fail the build)');

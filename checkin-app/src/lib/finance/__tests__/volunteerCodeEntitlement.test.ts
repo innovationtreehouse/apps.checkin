@@ -37,7 +37,7 @@ describe("usesVolunteerCodeUnentitled", () => {
         expect(usesVolunteerCodeUnentitled(order(["SUMMER26"]), "VOLFAM", false)).toBe(false);
     });
 
-    it("an empty code list is never evidence (pre-#1048 rows mirror no codes)", () => {
+    it("an empty code list is never evidence (some rows mirror no codes)", () => {
         expect(usesVolunteerCodeUnentitled(order([]), "VOLFAM", false)).toBe(false);
     });
 

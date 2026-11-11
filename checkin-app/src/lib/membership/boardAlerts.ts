@@ -1,9 +1,11 @@
+import prisma from "@/lib/prisma";
 import { emailBoardMembers } from "@/lib/emailRecipients";
 import { config } from "@/lib/config";
+import { logger } from "@/lib/logger";
 
 /**
- * Board-facing membership email alerts. Kept dependency-free (delegates to the
- * prisma + email + logger only emailRecipients helper) so both the review path
+ * Board-facing membership email alerts. Kept dependency-light (prisma plus the
+ * emailRecipients helper) so both the review path
  * (review.ts) and the payment path (payment.ts) can fire them without an import
  * cycle.
  */
@@ -16,19 +18,42 @@ import { config } from "@/lib/config";
  * automatically.)
  */
 export async function notifyBoardPaidReject(processId: number): Promise<void> {
-    const base = config.baseUrl();
-    await emailBoardMembers(
-        "Membership: a paid application was blocked at background check",
-        `<p>A household that already paid did not pass background-check review (application #${processId}). The membership has <strong>not</strong> been activated and a refund may be needed — please review and contact the household. <a href="${base}/membership-ops/applications">Open applications</a></p>`,
-        "Paid-reject board ping failed:",
-    );
+    await emailBoardMembers("board.paidReject", {
+        processId: String(processId),
+        actionLink: `${config.baseUrl()}/membership-ops/applications`,
+    }, "Paid-reject board ping failed:");
+}
+
+/**
+ * Email board members that a check review was rejected where no paid application
+ * was blocked: an ACTIVE household, one with no open application, or one
+ * whose open application is unpaid. Nothing changes on the membership; the Board decides.
+ * Never throws: it runs after the decision has committed.
+ * A paid application blocked by the rejection gets `notifyBoardPaidReject` instead.
+ */
+export async function notifyBoardCheckRejected(reviewId: number): Promise<void> {
+    const review = await prisma.orgMembershipProcess.findUnique({
+        where: { id: reviewId },
+        select: { subjectPerson: { select: { name: true, household: { select: { name: true } } } } },
+    }).catch((error: unknown) => {
+        logger.error("Check-rejected board ping failed:", { reviewId }, error);
+        return null;
+    });
+    const person = review?.subjectPerson;
+    if (!person) return;
+    await emailBoardMembers("board.checkRejected", {
+        personName: person.name,
+        householdName: person.household.name,
+        reviewId: String(reviewId),
+        actionLink: `${config.baseUrl()}/membership-ops/applications`,
+    }, "Check-rejected board ping failed:");
 }
 
 /** One-line human description per payment-exception kind, for the board email. */
 const EXCEPTION_BLURB: Record<string, string> = {
     PAID_WHILE_BLOCKED: "a household paid but its application is blocked at background check — a refund may be needed",
     NO_ITEM: "a paid order did not contain the membership/program product",
-    UNMATCHED_ORDER: "a paid order could not be attributed to an application awaiting payment (no or ambiguous match, a duplicate payment, or a payment after the application was closed or certified)",
+    UNMATCHED_ORDER: "a paid order could not be attributed to an application awaiting payment (no or ambiguous match, a duplicate payment, a payment after the application was closed or certified), or a paid program order can't be shown to come from the named children's own household — nobody was activated",
     REFUND: "a membership/enrollment's order was refunded (an application still waiting on its check is held, not activated)",
     CHARGEBACK: "a chargeback/dispute was filed against an active membership/enrollment's payment",
     CANCELLED: "an active membership/enrollment's order was cancelled",
@@ -36,7 +61,7 @@ const EXCEPTION_BLURB: Record<string, string> = {
     AMOUNT_MISMATCH: "a payment does not cover the expected membership fee/price",
     DISCOUNT_UNAUTHORIZED: "an order used a discount its household isn't entitled to (the volunteer code on a non-volunteer membership, or a program member code from another household or an unsettled one)",
     ACTIVE_WITHOUT_PAYMENT: "a membership/enrollment is active with no matching payment on file",
-    DENIED_HOUSEHOLD_ACTIVITY: "something happened to a household the board denied (a payment, an approval or an application) — its status was not changed",
+    DENIED_HOUSEHOLD_ACTIVITY: "a household the board denied needs the board: something reached it after the denial (a payment, an approval or an application) and its status was not changed, or, where a program is named, one of its members is enrolled in, volunteers on or leads that program — remove that by hand once the program's leaders know",
     PAYMENT_UNVERIFIABLE: "an active membership/enrollment records a Shopify order that isn't in the mirror — its payment can't be verified",
     DUPLICATE_PAYMENT: "a paid program order bought a seat for someone already enrolled (paid, comped or approved) — a refund may be needed",
     UNCLAIMED_SEATS: "a paid program order bought seats no pending enrollment uses (withdrawn, expired or extra) — money taken, seat unused",
@@ -57,11 +82,10 @@ export async function notifyBoardPaymentException(
     exceptionId: number,
 ): Promise<void> {
     if (severity !== "CRITICAL") return; // WARN → dashboard + red-dot only.
-    const base = config.baseUrl();
-    const blurb = EXCEPTION_BLURB[kind] ?? "a payment problem was detected";
-    await emailBoardMembers(
-        `Payment problem (${kind}) — board action needed`,
-        `<p>A payment problem needs the board's attention: ${blurb} (#${exceptionId}). Nothing was changed automatically. <a href="${base}/finance-ops/payments">Open payment problems</a></p>`,
-        "Payment-exception board ping failed:",
-    );
+    await emailBoardMembers("board.paymentException", {
+        kind,
+        blurb: EXCEPTION_BLURB[kind] ?? "a payment problem was detected",
+        exceptionId: String(exceptionId),
+        actionLink: `${config.baseUrl()}/finance-ops/payments`,
+    }, "Payment-exception board ping failed:");
 }

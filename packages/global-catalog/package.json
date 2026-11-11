@@ -29,11 +29,13 @@
     "db:generate": "prisma generate",
     "db:deploy": "node --env-file=.env node_modules/.bin/prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@checkin/gtin": "*",
     "@checkin/component-kit": "*",
+    "@checkin/component-ui": "*",
+    "@checkin/gtin": "*",
     "@checkin/pg-kit": "*",
     "@checkin/receipt-types": "*",
     "@checkin/workflows": "*",

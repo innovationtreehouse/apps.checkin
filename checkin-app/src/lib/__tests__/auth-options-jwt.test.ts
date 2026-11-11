@@ -46,8 +46,10 @@ jest.mock('@/lib/prisma', () => ({
         personRole: { count: jest.fn().mockResolvedValue(0) },
         auditLog: { count: jest.fn().mockResolvedValue(0) },
         // createParticipantWithHousehold mints the person id through
-        // mintPersonId(tx), which is one $queryRaw on the tx client (#1693).
+        // mintPersonId(tx), which is one $queryRaw on the tx client.
         $queryRaw: jest.fn().mockResolvedValue([{ value: 2503 }]),
+        $executeRaw: jest.fn(),
+        personMailAlias: { findMany: jest.fn().mockResolvedValue([]) },
         $transaction: jest.fn((cb: (tx: unknown) => unknown) => cb(prismaMockTx)),
     },
 }));
@@ -76,7 +78,7 @@ const mockUpdate = (prisma as unknown as { person: { update: jest.Mock } })
 const mockCheckinEnv = config.checkinEnv as jest.Mock;
 
 // The transaction client the `$transaction` mock above hands to its callback — same object as
-// `prisma` itself is fine here since createParticipantWithHousehold only touches household/participant.
+// `prisma` itself is fine here since createParticipantWithHousehold only touches household, participant and mail aliases.
 const prismaMockTx = prisma as unknown as { household: { create: jest.Mock }; person: { create: jest.Mock } };
 
 type JwtCallback = NonNullable<NonNullable<typeof authOptions.callbacks>['jwt']>;
@@ -103,7 +105,7 @@ function dbParticipant(overrides: Record<string, unknown> = {}) {
         canAccessStaging: false,
         ...overrides,
     } as Record<string, unknown>;
-    // Claims now derive from `roles` (PersonRole rows), not the boolean columns —
+    // Claims derive from `roles` (PersonRole rows), not the boolean columns —
     // translate this fixture's flat flags into the shape auth-options actually reads.
     const roles = (Object.keys(FLAG_TO_KIND) as RoleFlag[])
         .filter((flag) => merged[flag])
@@ -131,19 +133,6 @@ describe('jwt() callback — revocation enforcement on refresh', () => {
         expect(result).toEqual({});
         expect((result as { id?: unknown }).id).toBeUndefined();
         expect((result as { isSysadmin?: unknown }).isSysadmin).toBeUndefined();
-    });
-
-    it('merge tombstone (LIVE_PERSON filter misses) ⇒ returns an empty token', async () => {
-        // A merged-away person keeps its row and its roles; the filter in the where clause
-        // is what makes the lookup miss, so assert the clause itself as well as the outcome.
-        mockFindUnique.mockResolvedValue(null);
-
-        const result = await callRefresh({ id: 7, isBoardMember: true });
-
-        expect(mockFindUnique).toHaveBeenCalledWith(
-            expect.objectContaining({ where: { id: 7, mergedIntoId: null } }),
-        );
-        expect(result).toEqual({});
     });
 
     it('email changed since sign-in ⇒ returns an empty token', async () => {
@@ -196,7 +185,7 @@ describe('jwt() callback — revocation enforcement on refresh', () => {
         })) as Record<string, unknown>;
 
         expect(mockFindUnique).toHaveBeenCalledWith(
-            expect.objectContaining({ where: { id: 7, mergedIntoId: null } }),
+            expect.objectContaining({ where: { id: 7 } }),
         );
         expect(result.denied).toBe(false);
         expect(result.isSysadmin).toBe(true);
@@ -320,7 +309,7 @@ describe('jwt() callback — initial sign-in branch (user present)', () => {
 
         // Resolved by email on sign-in (not by id).
         expect(mockFindUnique).toHaveBeenCalledWith(
-            expect.objectContaining({ where: { email: 'p@example.com', mergedIntoId: null } }),
+            expect.objectContaining({ where: { email: 'p@example.com' } }),
         );
         expect(result.id).toBe(7);
         expect(result.isSysadmin).toBe(true);
@@ -329,7 +318,7 @@ describe('jwt() callback — initial sign-in branch (user present)', () => {
         expect(result.emailVerified).toBe(true);
     });
 
-    it('lowercases a mixed-case user.email before the lookup (#292 read normalization)', async () => {
+    it('lowercases a mixed-case user.email before the lookup (read normalization)', async () => {
         mockFindUnique.mockResolvedValue(dbParticipant({ isSysadmin: false }));
 
         await jwt({
@@ -342,7 +331,7 @@ describe('jwt() callback — initial sign-in branch (user present)', () => {
         // Stored emails are lowercased on write, so the sign-in lookup key must be too —
         // otherwise Google's casing misses the row and NextAuth mints a duplicate.
         expect(mockFindUnique).toHaveBeenCalledWith(
-            expect.objectContaining({ where: { email: 'john.doe@example.com', mergedIntoId: null } }),
+            expect.objectContaining({ where: { email: 'john.doe@example.com' } }),
         );
     });
 

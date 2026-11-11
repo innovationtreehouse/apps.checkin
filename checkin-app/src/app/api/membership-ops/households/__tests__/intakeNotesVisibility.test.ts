@@ -32,15 +32,18 @@ jest.mock("@/lib/emergencyContacts/service", () => ({
     getPrimaryValidContact: jest.fn().mockResolvedValue(null),
 }));
 jest.mock("@/lib/prisma", () => {
+    const household = { findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn() };
     const tx = {
+        household,
         person: { update: jest.fn(), updateMany: jest.fn(), findUniqueOrThrow: jest.fn() },
         auditLog: { create: jest.fn() },
         account: { deleteMany: jest.fn() },
+        $executeRaw: jest.fn(),
     };
     return {
         __esModule: true,
         default: {
-            household: { findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn() },
+            household,
             boardSettings: { findUnique: jest.fn().mockResolvedValue(null) },
             person: { findUnique: jest.fn() },
             auditLog: { create: jest.fn() },
@@ -155,7 +158,7 @@ describe("other admin routes returning a Household row: sysadmin-only caller get
 
     it("POST /api/membership-ops/participants/[id]/household", async () => {
         signIn(SYSADMIN_ONLY);
-        db.person.findUnique.mockResolvedValue({ id: 5, name: "Mover", householdId: 20, mergedIntoId: null });
+        db.person.findUnique.mockResolvedValue({ id: 5, name: "Mover", householdId: 20 });
         db.household.findUnique.mockResolvedValue(HOUSEHOLD);
         db.tx.person.updateMany.mockResolvedValue({ count: 1 });
         db.tx.person.findUniqueOrThrow.mockResolvedValue({ id: 5, name: "Mover", householdId: 10, isHouseholdLead: false, household: HOUSEHOLD });

@@ -6,5 +6,4 @@ export {
   parseProvisionalSequence,
   formatProvisionalDisplay,
   formatGtinDisplay,
-  formatItemId,
 } from "@checkin/gtin";

@@ -2,15 +2,16 @@
  * @jest-environment node
  */
 /**
- * X3/X8/X10 bindings: the host's catalog reader, bound by each consumer's configureRuntime(),
+ * The host's catalog reader, bound by each consumer's configureRuntime(),
  * reading a real global-catalog database migrated from its committed migrations, and
  * workflow-mapping's catalog submissions writing to it. The
- * last tests point the catalog at a missing database to show the display reads fall
- * back and the reference check fails closed.
+ * last test points the catalog at a port nothing listens on to show every read passes the
+ * outage up as a system failure.
  */
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
+import { kindOf } from '@checkin/component-kit';
 import { getPrisma as getCatalogPrisma } from '@checkin/global-catalog';
 import { getCatalogItem, searchCatalog } from '@checkin/bulk-donation';
 import { getExpenseRuntime } from '@checkin/expense';
@@ -145,30 +146,34 @@ describe('workflow-mapping CatalogSubmissions bound to the catalog', () => {
     });
 });
 
-describe('catalog database down', () => {
+describe('catalog database unreachable', () => {
     // The catalog client is a lazy global singleton: clear it so the next read builds one
-    // against a database that does not exist.
+    // against a port nothing listens on.
     beforeAll(() => {
         delete (globalThis as Record<string, unknown>).__gcPrisma;
-        process.env.CATALOG_DATABASE_URL = withDb(base, `${DB}_missing`);
+        const unreachable = new URL(withDb(base, DB));
+        unreachable.hostname = '127.0.0.1';
+        unreachable.port = '1';
+        process.env.CATALOG_DATABASE_URL = unreachable.toString();
     });
 
-    it('display reads return the inert result', async () => {
-        const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    async function failureKind(read: () => Promise<unknown>): Promise<string> {
+        return read().then(
+            () => 'answered',
+            (err: unknown) => kindOf(err),
+        );
+    }
+
+    it('every read passes the outage up as a system failure', async () => {
         const reader = getExpenseRuntime().catalog;
-        expect(await reader.listCategories()).toEqual([]);
-        expect(await reader.listSubcategories()).toEqual([]);
-        expect(await reader.getItem(GTIN)).toBeNull();
-        expect(await ports().catalogReader.lookupItems('Hardware Co', [{ index: 0, partNumber: 'HB-1' }])).toEqual([]);
-        expect(warn).toHaveBeenCalledTimes(4);
-        warn.mockRestore();
-    });
-
-    it('the reference check fails closed', async () => {
-        const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
-        await expect(
-            ports().catalogReader.checkReferences({ retailer: 'Hardware Co', partNumber: 'HB-1', manufacturer: 'Acme' }),
-        ).rejects.toThrow();
-        warn.mockRestore();
+        expect(await failureKind(() => reader.listCategories())).toBe('system');
+        expect(await failureKind(() => reader.listSubcategories())).toBe('system');
+        expect(await failureKind(() => reader.getItem(GTIN))).toBe('system');
+        expect(await failureKind(() => reader.getItemNames([GTIN]))).toBe('system');
+        expect(await failureKind(() => ports().catalogReader.lookupItems('Hardware Co', [{ index: 0, partNumber: 'HB-1' }]))).toBe('system');
+        expect(
+            await failureKind(() => ports().catalogReader.checkReferences({ retailer: 'Hardware Co', partNumber: 'HB-1', manufacturer: 'Acme' })),
+        ).toBe('system');
+        expect(await failureKind(() => searchCatalog('hex'))).toBe('system');
     });
 });

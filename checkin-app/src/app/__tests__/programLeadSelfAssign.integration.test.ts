@@ -61,7 +61,7 @@ describe('program lead assignment refuses self and own household', () => {
         householdIds.push(outsider.householdId);
 
         const program = await prisma.program.create({
-            data: { name: `${TAG} existing`, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), leadMentorId: outsiderId },
+            data: { appliesToYear: 2026, name: `${TAG} existing`, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), leadMentorId: outsiderId },
         });
         programId = program.id;
     });

@@ -33,6 +33,7 @@ export function recordingSinks() {
       },
     },
     inventorySink: {
+      openBackorders: async () => new Map(),
       applyDelta: async (d: ResolvedInventoryDelta) => {
         calls.inventory.push(d);
         if (fail.inventory) throw new Error("inventory down");
@@ -57,8 +58,8 @@ export async function clearAll(): Promise<void> {
   await db.workflowAuditLog.deleteMany({});
   await db.receivedReceiptLineStatus.deleteMany({});
   await db.receivedReceipt.deleteMany({});
-  await db.workflowSystemData.deleteMany({});
   await db.workflowFailedOrgEvent.deleteMany({});
+  await db.workflowAppliedOrgEvent.deleteMany({});
 }
 
 let seq = 0;
@@ -127,6 +128,7 @@ export async function makeLineStatus(
     recognitionStatus?: ReceivedReceiptLineStatus;
     assignedGtin13?: string | null;
     provisionalItemGtin13?: string | null;
+    proposedName?: string | null;
   } = {},
 ) {
   return db.receivedReceiptLineStatus.create({
@@ -136,6 +138,7 @@ export async function makeLineStatus(
       recognitionStatus: opts.recognitionStatus ?? "recognized",
       assignedGtin13: opts.assignedGtin13 ?? null,
       provisionalItemGtin13: opts.provisionalItemGtin13 ?? null,
+      proposedName: opts.proposedName ?? null,
     },
   });
 }

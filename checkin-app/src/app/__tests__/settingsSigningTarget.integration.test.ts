@@ -51,7 +51,7 @@ describe('PUT /api/settings/membership — devSigningTarget', () => {
         PUT(new Request('http://localhost/api/settings/membership', {
             method: 'PUT',
             headers: { cookie: 'session=test' },
-            body: JSON.stringify(body),
+            body: JSON.stringify({ ...(body as object), perYearVariantClient: true }),
         }) as unknown as import('next/server').NextRequest);
 
     it('accepts and persists the target on a dev instance', async () => {

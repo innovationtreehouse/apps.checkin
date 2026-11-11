@@ -4,6 +4,7 @@ import type { ExpenseEvent } from "../workflows/expense.events";
 import type { ExpenseMachineContext } from "../workflows/expense.guards";
 import { NEUTRAL_CONTEXT } from "../workflows/expense.guards";
 import { ServiceError } from "@checkin/component-kit";
+import { oweOutcomeNotice, owesOutcome, sendOutcomeNotices } from "./outcome-notices";
 
 type Db = PrismaClient;
 
@@ -48,7 +49,8 @@ export interface AdvanceWorkflowOptions extends TransitionOptions {
 /**
  * Validates the transition against the XState machine and applies it using the
  * provided interactive-transaction client.  Callers must wrap this in a
- * db.$transaction() callback to ensure atomicity with any surrounding writes.
+ * db.$transaction() callback to ensure atomicity with any surrounding writes. Entering a final state
+ * that owes an outcome email records it in the same transaction; the caller sends it after commit.
  */
 export async function advanceWorkflowInTx(
   tx: DbLike,
@@ -83,6 +85,7 @@ export async function advanceWorkflowInTx(
       notes: auditNotes,
     },
   });
+  await oweOutcomeNotice(tx, expenseId, nextState);
 
   return nextState;
 }
@@ -97,5 +100,6 @@ export async function advanceWorkflow(opts: AdvanceWorkflowOptions): Promise<str
   await db.$transaction(async (tx) => {
     nextState = await advanceWorkflowInTx(tx, rest);
   });
+  if (owesOutcome(nextState)) await sendOutcomeNotices([rest.expenseId]);
   return nextState;
 }

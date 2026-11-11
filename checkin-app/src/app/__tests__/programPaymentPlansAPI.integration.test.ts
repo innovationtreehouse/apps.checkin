@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * Integration tests for the previously-untested payment-plan routes:
+ * Integration tests for the payment-plan routes:
  *   GET  /api/finance-ops/payment-plans               (board-only queue)
  *   POST /api/finance-ops/payment-plans               (board approves → ACTIVE)
  *   POST /api/programs/[id]/request-payment-plan   (request, with IDOR guard)
@@ -47,7 +47,7 @@ const { __getSentEmails, __clearSentEmails } =
 
 const TAG = 'payment-plans-test';
 
-// GET is now a security handler() and POST a withAuth() wrapper — both take a
+// GET is a security handler() and POST a withAuth() wrapper — both take a
 // NextRequest. Plain Request carries the fields authenticateRequest reads.
 function nextReq(url = 'http://localhost/api/finance-ops/payment-plans', init?: RequestInit) {
     return new Request(url, init) as unknown as import('next/server').NextRequest;
@@ -73,7 +73,7 @@ describe('Program payment-plan routes', () => {
         householdIds.push(mentor.householdId);
 
         const program = await prisma.program.create({
-            data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Program ${TAG}`, leadMentorId: mentorId, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01') },
+            data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Program ${TAG}`, leadMentorId: mentorId, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01') },
         });
         programId = program.id;
 
@@ -84,7 +84,7 @@ describe('Program payment-plan routes', () => {
         householdIds.push(board.householdId);
 
         // A second board member in a DIFFERENT household — the non-conflicted
-        // approver, and (since #1083 gated sysadmins out of finance-ops) the
+        // approver, and (since finance-ops excludes sysadmins) the
         // remedy when the first board member has a household conflict.
         const board2 = await prisma.person.create({
             data: { name: 'PP Board Two', email: `board2-${TAG}@example.com`, isBoardMember: true, household: { create: { name: "Test HH2" } } },
@@ -288,6 +288,7 @@ describe('Program payment-plan routes', () => {
             const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
             const shopifyProgram = await prisma.program.create({
                 data: {
+                    appliesToYear: 2026,
                     startAt: new Date('2026-01-01'),
                     endAt: new Date('2026-12-31'),
                     name: `PP Shopify Program ${TAG}`,
@@ -386,8 +387,8 @@ describe('Program payment-plan routes', () => {
             });
             expect(row?.status).toBe('PENDING'); // unchanged — nothing approved
 
-            // Sysadmins are gated out of finance-ops entirely (#1083), so they are
-            // no longer the COI remedy here — a non-conflicted board member is.
+            // Sysadmins are gated out of finance-ops entirely, so they are
+            // not the COI remedy here — a non-conflicted board member is.
             mockSession.mockResolvedValue({ user: { id: boardId, isSysadmin: true } });
             const denied = await PlansPost(nextReq('http://localhost', {
                 method: 'POST',
@@ -539,7 +540,7 @@ describe('Program payment-plan routes', () => {
 
             beforeAll(async () => {
                 const p = await prisma.program.create({
-                    data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Apply Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-apply-pp' },
+                    data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Apply Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-apply-pp' },
                 });
                 shopifyProgramId = p.id;
             });
@@ -654,7 +655,7 @@ describe('Program payment-plan routes', () => {
         it('denies a pending request: no Shopify op, hold persists, denial stamped', async () => {
             const fetchSpy = jest.spyOn(global, 'fetch');
             const shopifyProgram = await prisma.program.create({
-                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Refuse Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-refuse-pp' },
+                data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Refuse Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-refuse-pp' },
             });
             try {
                 // inventoryHeldAt set, as APPLICATION would have stamped it.
@@ -682,7 +683,7 @@ describe('Program payment-plan routes', () => {
                 });
                 expect(audit).not.toBeNull();
 
-                expect(fetchSpy).not.toHaveBeenCalled(); // no Shopify op at all — this supersedes the earlier deny-time +1
+                expect(fetchSpy).not.toHaveBeenCalled(); // no Shopify op at all
 
                 // Double-refuse: the second call finds isPaymentPlanRequested
                 // already false -> 409, no-op.
@@ -701,7 +702,7 @@ describe('Program payment-plan routes', () => {
             process.env.CHECKIN_ENV = 'local';
             const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
             const shopifyProgram = await prisma.program.create({
-                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Reapply Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-reapply-pp' },
+                data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Reapply Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-reapply-pp' },
             });
             const reqParams = (id: string | number) => ({ params: Promise.resolve({ id: String(id) }) });
             try {
@@ -761,6 +762,7 @@ describe('Program payment-plan routes', () => {
             // whole journey still fires no Shopify HTTP call.
             const scholarshipProgram = await prisma.program.create({
                 data: {
+                    appliesToYear: 2026,
                     startAt: new Date('2026-01-01'),
                     endAt: new Date('2026-12-31'),
                     name: `PP Scholarship Program ${TAG}`,
@@ -878,7 +880,7 @@ describe('Program payment-plan routes', () => {
             // Default env: shopifyMockActive() is false and no credentials are
             // configured, so the push fails after the -1 is recorded.
             const p = await prisma.program.create({
-                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Rollback Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-rollback-pp' },
+                data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Rollback Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-rollback-pp' },
             });
             try {
                 await prisma.programParticipant.create({
@@ -1002,7 +1004,7 @@ describe('Program payment-plan routes', () => {
             expect(row.isPaymentPlanRequested).toBe(false);
         });
 
-        it('deny override works on a hold-failed row', async () => {
+        it('denying a hold-failed row returns it to unpaid and keeps the denial in the audit log', async () => {
             await enroll(selfId, { requested: true, held: false }); // PENDING_HOLD_FAILED
             mockSession.mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
             const res = await RefusePost(new Request('http://localhost/api/finance-ops/payment-plans/refuse', {
@@ -1016,7 +1018,14 @@ describe('Program payment-plan routes', () => {
             });
             expect(row.status).toBe('PENDING');
             expect(row.isPaymentPlanRequested).toBe(false);
-            expect(row.paymentPlanDeniedAt).not.toBeNull();
+            expect(row.inventoryHeldAt).toBeNull();
+            expect(row.paymentPlanDeniedAt).toBeNull();
+
+            const audit = await prisma.auditLog.findFirstOrThrow({
+                where: { tableName: 'ProgramParticipant', affectedEntityId: selfId, secondaryAffectedEntity: programId, actorId: boardId },
+                orderBy: { id: 'desc' },
+            });
+            expect(audit.newData).toMatchObject({ reason: 'payment_plan_denied_no_hold' });
         });
     });
 
@@ -1063,7 +1072,7 @@ describe('Program payment-plan routes', () => {
         let restoreBoardSettings: () => Promise<void> = async () => {};
         beforeAll(async () => {
             const p = await prisma.program.create({
-                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Email Behavior Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01') },
+                data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Email Behavior Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01') },
             });
             emailProgramId = p.id;
             // Pin the review-team address list so the exact-recipients assertions are
@@ -1247,7 +1256,7 @@ describe('Program payment-plan routes', () => {
                 },
             });
             const p = await prisma.program.create({
-                data: { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Ack Rollback Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-ack-rollback-pp' },
+                data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Ack Rollback Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-ack-rollback-pp' },
             });
             // Only a −1 the stock writer could not even record takes the failure branch.
             jest.mocked(shopify.changeProgramStockWith).mockRejectedValueOnce(new shopify.StockNotRecordedError('stock carry could not be written'));

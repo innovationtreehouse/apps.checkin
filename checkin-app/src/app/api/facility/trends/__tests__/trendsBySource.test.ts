@@ -1,7 +1,7 @@
 /**
  * @jest-environment node
  *
- * Issue #1676: `bySource` decomposes a bucket's HOURS by `arrivedVia`, alongside
+ * `bySource` decomposes a bucket's HOURS by `arrivedVia`, alongside
  * the existing volunteer/participant and structured/unstructured splits. It must
  * never decompose unique-people counts — one person can carry more than one
  * source in the same bucket (a scan AND a roster mark), so per-source unique

@@ -1,8 +1,13 @@
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
-import { getConfigHealth } from "@/lib/configHealth";
+import prisma from "@/lib/prisma";
+import { alertAddressCheck, getConfigHealth } from "@/lib/configHealth";
 import { getCronJobStatuses } from "@/lib/cronRuns";
+import { getActiveIncidents } from "@/lib/opsIncidentView";
+import { getProblems } from "@/lib/problems";
+import { getQuickBooksHealth } from "@/lib/quickbooks/health";
+import { getReceiptMailboxHealth } from "@/lib/receipt/mailboxHealth";
 
 export const dynamic = "force-dynamic";
 
@@ -13,13 +18,28 @@ export const dynamic = "force-dynamic";
  *
  * Two halves, both feeding the same red nav badge via /api/nav/todo-counts (which reads
  * only the counts; this is the detail view):
- *   - `checks`   — static env/config presence (lib/configHealth.ts).
+ *   - `checks`   — static env/config presence (lib/configHealth.ts), the alert address, then
+ *                  the receipt mailbox and QuickBooks rows (lib/receipt/mailboxHealth.ts,
+ *                  lib/quickbooks/health.ts), which read live and so stay off the badge.
  *   - `cronJobs` — last successful run per cron sweep (lib/cronRuns.ts). Rides on this
  *                  route rather than its own: same page, same gate, same question, and a
  *                  new registered route would need its registry entry landed separately.
+ *   - `incidents` — incidents not yet closed (lib/opsIncidentView.ts), for the Open problems
+ *                  panel. Rides here for the same reason.
+ *   - `problems` — the receipt flow's stuck items, oldest first, the libraries' own lines
+ *                  (counts only), and any library whose items could not be read
+ *                  (lib/problems.ts). Rides here for the same reason.
  */
 export const GET = withAuth({}, async (_req, auth) => {
     if (auth.type !== "session") return apiError("Unauthorized", 401);
     if (!(auth.user.isSysadmin || auth.user.isBoardMember)) return apiError("Forbidden", 403);
-    return NextResponse.json({ checks: getConfigHealth(), cronJobs: await getCronJobStatuses() });
+    const [settings, quickBooks, mailbox, cronJobs, incidents, problems] = await Promise.all([
+        prisma.boardSettings.findUnique({ where: { id: 1 }, select: { alertEmailAddress: true } }),
+        getQuickBooksHealth(),
+        getReceiptMailboxHealth(),
+        getCronJobStatuses(),
+        getActiveIncidents(),
+        getProblems(),
+    ]);
+    return NextResponse.json({ checks: [...getConfigHealth(), alertAddressCheck(settings?.alertEmailAddress), ...mailbox, ...quickBooks], cronJobs, incidents, problems });
 });

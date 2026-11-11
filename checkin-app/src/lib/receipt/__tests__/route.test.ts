@@ -1,15 +1,11 @@
 /**
  * @jest-environment node
  */
-import type { NextRequest as NextRequestType } from "next/server";
-import { recordReceiptDonorReads } from "@checkin/bulk-donation";
+import { MAX_UPLOAD_BODY_BYTES as RECEIPT_UPLOAD_CEILING, type ReceiptRouteCtx } from "@checkin/receipt";
+import { accessOf, receiptRoute } from "@/lib/receipt/route";
+import { MAX_UPLOAD_BODY_BYTES } from "@/lib/requestBodyLimit";
 import type { Role } from "@/security/core";
 import type { HandlerContext } from "@/security/handler";
-import { accessOf, readJsonCapped, receiptRoute } from "@/lib/receipt/route";
-
-jest.mock("@checkin/bulk-donation", () => ({ recordReceiptDonorReads: jest.fn() }));
-
-const { NextRequest } = jest.requireActual<{ NextRequest: typeof NextRequestType }>("next/server");
 
 describe("accessOf", () => {
   it("acts org-wide only for the finance and board views", () => {
@@ -20,73 +16,28 @@ describe("accessOf", () => {
   });
 });
 
-describe("readJsonCapped", () => {
-  const bytes = (text: string) => new TextEncoder().encode(text);
-  async function* body(text: string) {
-    yield bytes(text);
-  }
-
-  it("parses a JSON body within the cap", async () => {
-    await expect(readJsonCapped(body('[{"a":1}]'), null, 100, "split it")).resolves.toEqual([{ a: 1 }]);
-  });
-
-  it("refuses an over-cap batch with the caller's message", async () => {
-    const big = JSON.stringify([{ fileBase64: "x".repeat(200) }]);
-    await expect(readJsonCapped(body(big), null, 100, "split it")).rejects.toMatchObject({ status: 413, message: "split it" });
-    await expect(readJsonCapped(body("[]"), "101", 100, "split it")).rejects.toMatchObject({ status: 413, message: "split it" });
-  });
-
-  it("answers 400 for a body that is not JSON", async () => {
-    await expect(readJsonCapped(body("not json"), null, 100, "split it")).rejects.toMatchObject({ status: 400 });
+describe("upload ceiling", () => {
+  it("matches the API's body limit", () => {
+    expect(RECEIPT_UPLOAD_CEILING).toBe(MAX_UPLOAD_BODY_BYTES);
   });
 });
 
-describe("receiptRoute donor-read audit", () => {
-  const recordReads = jest.mocked(recordReceiptDonorReads);
-  const USER = {
-    id: 7,
-    name: "Fin Ance",
-    isSysadmin: false,
-    isKeyholder: false,
-    isBoardMember: false,
-    isBackgroundCheckReviewer: false,
-    isOperations: false,
+describe("receiptRoute", () => {
+  const mounted = async (role: Role, auth: unknown) => {
+    const factory = jest.fn<Promise<Record<string, unknown>>, [ReceiptRouteCtx]>(async () => ({}));
+    await receiptRoute(factory)({ params: {}, role, auth } as unknown as HandlerContext);
+    return factory.mock.calls[0][0];
   };
+  const session = { type: "session", user: { id: 7 } };
 
-  function ctx(role: Role, path = "/api/receipts"): HandlerContext<Record<string, string>> {
-    return { req: new NextRequest(`http://localhost${path}`), auth: { type: "session", user: USER }, params: {}, role };
-  }
-
-  const donorRow = (id: string) => ({ id, donorFirstName: "Dana", donorLastName: "Giver", donorCompanyName: null });
-  const plainRow = (id: string) => ({ id, donorFirstName: null, donorLastName: null, donorCompanyName: null });
-
-  beforeEach(() => recordReads.mockReset());
-
-  it.each<Role>(["isFinance", "isBoardMember"])("writes one row for a single receipt read under the %s view", async (role) => {
-    await receiptRoute(async () => ({ ReceiptView: donorRow("r1") }))(ctx(role, "/api/receipts/r1"));
-    expect(recordReads).toHaveBeenCalledTimes(1);
-    expect(recordReads).toHaveBeenCalledWith({ actorUserId: 7, actorUsername: "Fin Ance", route: "GET /api/receipts/r1" }, ["r1"]);
+  it("names the submitter only under the submitter view", async () => {
+    expect((await mounted("authenticated", session)).submitterActorId).toBe(7);
+    expect((await mounted("isFinance", session)).submitterActorId).toBeNull();
+    expect((await mounted("isBoardMember", session)).submitterActorId).toBeNull();
   });
 
-  it("writes one row per donor a list returns, in one batch, and none for receipts without a donor", async () => {
-    const rows = [donorRow("r1"), plainRow("r2"), donorRow("r3"), { id: "r4", donorFirstName: null, donorLastName: null, donorCompanyName: "Acme" }];
-    await receiptRoute(async () => ({ ReceiptView: rows }))(ctx("isFinance"));
-    expect(recordReads).toHaveBeenCalledTimes(1);
-    expect(recordReads.mock.calls[0][1]).toEqual(["r1", "r3", "r4"]);
-  });
-
-  it("writes nothing under a view that strips donor fields", async () => {
-    await receiptRoute(async () => ({ ReceiptView: [donorRow("r1")] }))(ctx("authenticated"));
-    expect(recordReads).not.toHaveBeenCalled();
-  });
-
-  it("writes nothing when no receipt shown has a donor", async () => {
-    await receiptRoute(async () => ({ ReceiptView: [plainRow("r1")], ReceiptPushResult: { pushed: true } }))(ctx("isFinance"));
-    expect(recordReads).not.toHaveBeenCalled();
-  });
-
-  it("fails the read when the audit write fails", async () => {
-    recordReads.mockRejectedValueOnce(new Error("db down"));
-    await expect(receiptRoute(async () => ({ ReceiptView: donorRow("r1") }))(ctx("isFinance"))).rejects.toThrow("db down");
+  it("leaves the submitter unnamed without a session person", async () => {
+    expect((await mounted("authenticated", { type: "kiosk" })).submitterActorId).toBeNull();
+    expect((await mounted("authenticated", { type: "session", user: { id: "x" } })).submitterActorId).toBeNull();
   });
 });

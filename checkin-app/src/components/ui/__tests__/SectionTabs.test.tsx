@@ -81,7 +81,7 @@ describe("SectionTabs guarded onChange", () => {
   });
 });
 
-// #1155: without min-width:max-content the tab row shrinks to the ScrollArea instead of
+// Without min-width:max-content the tab row shrinks to the ScrollArea instead of
 // overflowing it, and the count Badge (overflow:hidden, so its automatic minimum size is
 // 0) collapses to zero width — the pill renders as an empty capsule. jsdom does no
 // layout, so this asserts the style that prevents it rather than the resulting width.

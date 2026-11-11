@@ -71,7 +71,7 @@ export default function UnconfirmedShopifyStockPage() {
         });
       } else {
         const data = await res.json().catch(() => ({}));
-        notifications.show({ color: 'red', message: data.error || "Action failed.", autoClose: 6000 });
+        notifications.show({ color: 'red', message: data.error || "Action failed.", autoClose: false });
         fetchRows();
       }
     } catch {

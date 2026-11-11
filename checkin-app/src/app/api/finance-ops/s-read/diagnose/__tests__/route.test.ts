@@ -6,7 +6,7 @@
  * 403 plain member, through the REAL handler() with a mocked session, which must
  * never probe the mirror or the Lambda), and the code→verdict table: each pg
  * error code the mirror probe can throw must map to the layer it proves broken.
- * That table IS the feature — a regression here turns the diagnostic back into
+ * That table IS the feature — a wrong entry here turns the diagnostic into
  * the opaque 500 it exists to replace.
  */
 import type { NextRequest } from 'next/server';
@@ -179,7 +179,7 @@ describe('latest-run + clock steps', () => {
         expect(latest.detail).toContain('Shopify 429: throttled');
     });
 
-    it('a future startedAt fails the clock step as a timezone regression — the #1041/#1042 bug class', async () => {
+    it('a future startedAt fails the clock step as a timezone regression', async () => {
         latestSyncRunMock.mockResolvedValue({
             status: 'COMPLETED', kind: 'INCREMENTAL',
             startedAt: new Date(Date.now() + 5 * 3600_000), finishedAt: null, counts: null, error: null,

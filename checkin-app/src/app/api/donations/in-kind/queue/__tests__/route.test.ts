@@ -10,6 +10,10 @@ import { getServerSession } from 'next-auth/next';
 import { routes } from '@checkin/bulk-donation';
 import { GET } from '../route';
 
+jest.mock('@/lib/finance/financeViewLog', () => ({
+    ...jest.requireActual('@/lib/finance/financeViewLog'),
+    recordFinanceViewCall: jest.fn().mockResolvedValue(undefined),
+}));
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 jest.mock('@checkin/bulk-donation', () => ({
     routes: { inKind: { listQueue: jest.fn() } },
@@ -38,35 +42,35 @@ const DONOR_NEEDED = {
     receiptDate: '2026-10-01',
     moneyReceivedAt: '2026-10-02T12:00:00.000Z',
     donorRecordedAt: null,
-    withdrawnAfterMoneyAt: null,
+    replayConflictAt: null,
 };
-const WITHDRAWN = {
+const REPLAYED = {
     ...DONOR_NEEDED,
     id: 2,
     receiptId: 'r-2',
     donorRecordedAt: '2026-10-02T12:05:00.000Z',
-    withdrawnAfterMoneyAt: '2026-10-03T09:00:00.000Z',
+    replayConflictAt: '2026-10-03T09:00:00.000Z',
 };
 
 describe('GET /api/donations/in-kind/queue', () => {
     beforeEach(() => {
         jest.clearAllMocks();
-        jest.mocked(routes.inKind.listQueue).mockResolvedValue({ InKindQueueItemView: [DONOR_NEEDED, WITHDRAWN] });
+        jest.mocked(routes.inKind.listQueue).mockResolvedValue({ InKindQueueItemView: [DONOR_NEEDED, REPLAYED] });
     });
 
     it.each([{ isFinance: true }, { isBoardMember: true }])('returns the queue as a bare array to %p', async (flags) => {
         signIn(flags);
         const res = await get();
         expect(res.status).toBe(200);
-        expect(await res.json()).toEqual([DONOR_NEEDED, WITHDRAWN]);
+        expect(await res.json()).toEqual([DONOR_NEEDED, REPLAYED]);
     });
 
     it('strips any field outside the queue view, such as a donor name', async () => {
         jest.mocked(routes.inKind.listQueue).mockResolvedValue({
-            InKindQueueItemView: [{ ...WITHDRAWN, donorFirstName: 'Pat', donorLastName: 'Doe', donorCompanyName: 'Acme' }],
+            InKindQueueItemView: [{ ...REPLAYED, donorFirstName: 'Pat', donorLastName: 'Doe', donorCompanyName: 'Acme' }],
         });
         signIn({ isFinance: true });
-        expect(await (await get()).json()).toEqual([WITHDRAWN]);
+        expect(await (await get()).json()).toEqual([REPLAYED]);
     });
 
     it.each([{ isSysadmin: true }, { isOperations: true }, { isInventoryManager: true }, {}])(

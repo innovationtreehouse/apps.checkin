@@ -5,7 +5,6 @@ import prisma from "@/lib/prisma";
 import { apiError } from "@/lib/api-response";
 import { resolveScholarshipRecipients, notifyReviewTeam, sendScholarshipAck, resolveAckCopy } from "@/lib/scholarshipEmails";
 import { config } from "@/lib/config";
-import { LIVE_PERSON } from "@/lib/person/filters";
 import { fromWhere } from "@/lib/membership/lifecycle";
 import { ScholarshipRequestKind } from "@/generated/prisma/client";
 import { scholarshipRequestKindLabel } from "@/lib/scholarshipRequestKind";
@@ -29,12 +28,12 @@ export const POST = withAuth({}, async (req, auth) => {
 
         const process = await prisma.orgMembershipProcess.findUnique({
             where: { id: processId },
-            include: { orgMembership: { include: { household: { include: { householdMembers: { where: { isHouseholdLead: true, ...LIVE_PERSON }, select: { id: true } } } } } } },
+            include: { orgMembership: { include: { household: { include: { householdMembers: { where: { isHouseholdLead: true }, select: { id: true } } } } } } },
         });
 
-        if (!process || !process.orgMembership) {
+        if (!process || !process.orgMembership?.household) {
             // orgMembership is null only for a PERSON_BG process, which has no membership fee to
-            // plan — treat as not-found for this household-membership-only endpoint.
+            // plan, and household is null for an archived one — treat both as not-found.
             return apiError("Membership application not found", 404);
         }
 

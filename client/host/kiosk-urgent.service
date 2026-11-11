@@ -1,0 +1,6 @@
+[Unit]
+Description=Apply a forced kiosk update
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/kioskctl check-urgent

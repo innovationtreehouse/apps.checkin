@@ -5,17 +5,12 @@ name: Migration safety (populated DB)
 # always-empty DB that CI's own drift check (ci.yml "Check migrations match
 # schema") and every local dev setup use.
 #
-# Motivating incident: on 2026-07-02 Prisma generated three "rename"
-# migrations as DROP+ADD / DROP TABLE+CREATE TABLE instead of RENAMEs. They
-# passed CI and every local run because those DBs are always freshly created
-# (empty tables) — then migration 20260702054206 failed on dev's populated
-# RSVP with `23502: column "personId" of relation "RSVP" contains null
-# values`, and because `prisma migrate deploy` does not wrap a migration in a
-# transaction, it PARTIALLY applied (FeePayment's ALTER committed, RSVP's
-# rolled back), wedging every deploy behind a P3009 for over a day until
-# manual surgery + PR #791 (rewriting them as RENAMEs). No CI job had ever
-# applied a NEW migration on top of a POPULATED database. This job closes
-# that gap.
+# Prisma can generate a rename as DROP+ADD or DROP TABLE+CREATE TABLE. That
+# applies cleanly to an empty table but fails on one with rows (`23502: column
+# ... contains null values`). `prisma migrate deploy` does not wrap a migration
+# in a transaction, so such a failure can apply it PARTIALLY and block every
+# later deploy behind a P3009 until the database is repaired by hand. This job
+# applies each NEW migration on top of a POPULATED database to catch that.
 #
 # Every job is a required check on main, so the workflow runs on every PR.
 # The `changes` job decides which migration chains the PR touches; each job
@@ -30,8 +25,7 @@ name: Migration safety (populated DB)
 # nothing to replay on top of a base DB that already has that chain applied.
 # Detected by shape (deletes >=2 migration dirs, adds exactly 1) and routed to
 # a different check: does the PR's one baseline dump the SAME schema as the
-# full chain it replaces? Normal PRs are entirely unaffected — same steps,
-# same conditions, as before.
+# full chain it replaces? Normal PRs take the replay check.
 on:
   pull_request:
     # pull_request triggers evaluate against the BASE branch's workflow file,
@@ -224,8 +218,8 @@ jobs:
           npm -w checkin-app exec -- prisma db seed
 
       # `prisma db seed` (seedBaseline) only populates Household/Person/Tool/
-      # ToolStatus/Program — it never creates Event/RSVP rows. RSVP is one of
-      # the tables the 2026-07-02 incident hit, so top it up here with rows
+      # ToolStatus/Program — it never creates Event/RSVP rows. A destructive
+      # rename only fails on a table with rows, so top these up here with rows
       # referencing the seed's own baseline data (the "Woodworking 101"
       # program + its personas) — this is what makes a destructive or
       # non-applying migration on those tables fail here instead of on dev.
@@ -251,18 +245,17 @@ jobs:
             AND pe.email IN ('parent.family@example.com', 'parent2.family@example.com');
           SQL
 
-      # The actual regression test: apply ONLY the PR's new migrations on top
-      # of a database that already has real rows in the tables they touch.
-      # Failing here means the migration doesn't apply to a real database —
-      # exactly what wedged dev on 2026-07-02. Skipped for a coalesce PR: it
+      # Apply ONLY the PR's new migrations on top of a database that already has
+      # real rows in the tables they touch. Failing here means the migration
+      # doesn't apply to a real database. Skipped for a coalesce PR: it
       # deletes the whole chain this base DB already has applied, so there is
       # nothing to "apply on top of" — see the coalesce-path steps below.
       - name: Apply PR's new migrations on top of the populated DB
         if: steps.base.outputs.skip == 'false' && steps.base.outputs.coalesce == 'false'
         run: npm -w checkin-app exec -- prisma migrate deploy
 
-      # Proves the migrations land exactly on schema.prisma (Prisma 7:
-      # --from-url was removed, use --from-config-datasource).
+      # Proves the migrations land exactly on schema.prisma (Prisma 7
+      # takes --from-config-datasource, not --from-url).
       - name: Drift check — migrations match schema.prisma
         if: steps.base.outputs.skip == 'false' && steps.base.outputs.coalesce == 'false'
         run: npm -w checkin-app exec -- prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
@@ -464,8 +457,8 @@ jobs:
   #    coalesce flow operates on the UNRELEASED tail only (scoped reconcile).
   #    Even reconcile.sql edits inside a released directory count — history is
   #    history.
-  #    (Job name keeps its historical "(+ accumulation warning)" suffix only
-  #    because branch protection pins required checks by name.)
+  #    (Branch protection pins required checks by name, which fixes this job's
+  #    "(+ accumulation warning)" suffix.)
   history:
     name: Released migrations immutable (+ accumulation warning)
     needs: changes

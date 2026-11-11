@@ -22,6 +22,7 @@ export const receiptMachine = setup({
       on: {
         // Guards evaluated in priority order — first match wins.
         RUN_PIPELINE: [
+          { guard: 'detailsMissing',       target: 'submitter_review'  },
           { guard: 'isDuplicate',          target: 'duplicate_flagged' },
           { guard: 'mathInvalid',          target: 'validation_failed' },
           { guard: 'needsSubmitterReview', target: 'submitter_review'  },
@@ -29,6 +30,7 @@ export const receiptMachine = setup({
           {                                target: 'receipt_finalized' },
         ],
         DISCARD: { target: 'discarded' },
+        REJECT:  { target: 'rejected'  },
       },
     },
 
@@ -37,13 +39,16 @@ export const receiptMachine = setup({
         OCR_SUCCEEDED: { target: 'uploaded'   },
         OCR_FAILED:    { target: 'ocr_failed' },
         DISCARD:       { target: 'discarded'  },
+        REJECT:        { target: 'rejected'   },
       },
     },
 
     ocr_failed: {
       on: {
         OCR_RETRY: { target: 'auto_upload' },
+        RESUBMIT:  { target: 'uploaded'    },
         DISCARD:   { target: 'discarded'   },
+        REJECT:    { target: 'rejected'    },
       },
     },
 
@@ -51,6 +56,7 @@ export const receiptMachine = setup({
       on: {
         DUPLICATE_CLEARED: { target: 'uploaded'  },
         DISCARD:           { target: 'discarded' },
+        REJECT:            { target: 'rejected'  },
       },
     },
 
@@ -58,6 +64,7 @@ export const receiptMachine = setup({
       on: {
         RESUBMIT: { target: 'uploaded'  },
         DISCARD:  { target: 'discarded' },
+        REJECT:   { target: 'rejected'  },
       },
     },
 
@@ -66,6 +73,7 @@ export const receiptMachine = setup({
         SUBMITTER_CONFIRMED: { target: 'uploaded'  },
         SUBMITTER_DISCARDED: { target: 'discarded' },
         DISCARD:             { target: 'discarded' },
+        REJECT:              { target: 'rejected'  },
       },
     },
 
@@ -80,6 +88,7 @@ export const receiptMachine = setup({
     flow_error: {
       on: {
         RUN_PIPELINE: [
+          { guard: 'detailsMissing',       target: 'submitter_review'  },
           { guard: 'isDuplicate',          target: 'duplicate_flagged' },
           { guard: 'mathInvalid',          target: 'validation_failed' },
           { guard: 'needsSubmitterReview', target: 'submitter_review'  },
@@ -87,6 +96,7 @@ export const receiptMachine = setup({
           {                                target: 'receipt_finalized' },
         ],
         DISCARD: { target: 'discarded' },
+        REJECT:  { target: 'rejected'  },
       },
     },
 

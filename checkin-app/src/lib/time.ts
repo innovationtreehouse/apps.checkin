@@ -76,8 +76,7 @@ export function formatVisitRange(
 /**
  * Format a date as a value for an <input type="datetime-local"> (yyyy-MM-ddTHH:mm).
  *
- * NOTE: datetime-local is inherently local, so this uses the BROWSER's timezone — matching the
- * inline `getTime() - getTimezoneOffset()*60000` conversions it replaces. It deliberately does
+ * NOTE: datetime-local is inherently local, so this uses the BROWSER's timezone. It deliberately does
  * NOT use APP_TIMEZONE; switching to that would change the displayed value.
  */
 export function toDatetimeLocal(date: Date | string | number | null | undefined): string {
@@ -118,6 +117,21 @@ export function formatDateOnly(date: Date | string | number | null | undefined, 
  */
 export function parseDateOnly(value: string | null | undefined): Date | null {
     return value ? new Date(value) : null;
+}
+
+const YMD = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/**
+ * A "yyyy-mm-dd" day at a server-local wall-clock `time` ("hh:mm:ss.sss"), for a
+ * day-range filter's bounds. Null when the value is malformed or names a day the
+ * calendar lacks (`2026-02-31`), which `Date` would otherwise roll into March.
+ */
+export function parseDayAt(value: string, time: string): Date | null {
+    const m = YMD.exec(value);
+    if (!m) return null;
+    const d = new Date(`${value}T${time}`);
+    const [year, month, day] = m.slice(1).map(Number);
+    return d.getFullYear() === year && d.getMonth() + 1 === month && d.getDate() === day ? d : null;
 }
 
 /** Numeric y/m/d parts of an instant in the organisation's zone. */
@@ -176,7 +190,7 @@ export function calculateAge(dob: Date | string, asOf: Date | string = orgCalend
  * Unknown (null/undefined) DOB resolves to `unknownIs`, default 'adult': UI and
  * household-lead callers rely on that (a null-DOB member stays promotable to
  * lead, blank forms don't show youth fields). Safety checks must pass
- * `{ unknownIs: 'youth' }` so missing data fails closed (#300).
+ * `{ unknownIs: 'youth' }` so missing data fails closed.
  */
 export function isYouth(
     dob: Date | string | null | undefined,

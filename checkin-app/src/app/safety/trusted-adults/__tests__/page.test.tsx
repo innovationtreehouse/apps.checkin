@@ -11,6 +11,14 @@ import AdminTrustedAdultsPage from "../page";
 
 beforeEach(() => { resetRtl(); (notifications.show as jest.Mock).mockClear(); });
 
+// Override buttons stay disabled until the previous override's reload finishes.
+const enabledButton = (name: string) =>
+  waitFor(() => {
+    const button = screen.getByRole("button", { name });
+    expect(button).toBeEnabled();
+    return button;
+  });
+
 const trustedAdults = [
   {
     id: 1,
@@ -97,8 +105,7 @@ describe("safety/trusted-adults page", () => {
     );
     await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Recorded: DENIED." })));
 
-    // Cancelling the modal must NOT fire a decision (the old window.prompt returned null,
-    // which `?? ""` swallowed into an empty-note REQUEST_INFO).
+    // Cancelling the modal must NOT fire a decision, least of all an empty-note REQUEST_INFO.
     fireEvent.click(screen.getByRole("button", { name: "Request info" }));
     fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
@@ -222,6 +229,25 @@ describe("safety/trusted-adults page", () => {
     expect(screen.getByRole("button", { name: "Request info" })).toBeDisabled();
   });
 
+  it("on a declined change over a live approval, offers Revoke approval and no Force deny", async () => {
+    const declined = [
+      {
+        ...trustedAdults[0],
+        reviews: [
+          { ...trustedAdults[0].reviews[0], id: 11, status: "DENIED" },
+          { ...trustedAdults[0].reviews[0], id: 10, status: "APPROVED", reviewBy: new Date(Date.now() + 86400000).toISOString() },
+        ],
+      },
+    ];
+    setSession({ id: 1, isBoardMember: true, householdId: 1 });
+    mockFetchJson({ "/api/safety/trusted-adults": { trustedAdults: declined } });
+    renderWithProviders(<AdminTrustedAdultsPage />);
+    await screen.findByText("Guardian House");
+
+    expect(screen.getByRole("button", { name: "Revoke approval" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Force deny" })).not.toBeInTheDocument();
+  });
+
   it("shows override actions for a decided-but-not-revoked review, and force-approves only with a note", async () => {
     const decided = [
       {
@@ -258,7 +284,7 @@ describe("safety/trusted-adults page", () => {
       ),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Force deny" }));
+    fireEvent.click(await enabledButton("Force deny"));
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/safety/trusted-adults/override",
@@ -266,7 +292,7 @@ describe("safety/trusted-adults page", () => {
       ),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
+    fireEvent.click(await enabledButton("Revoke"));
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/safety/trusted-adults/override",

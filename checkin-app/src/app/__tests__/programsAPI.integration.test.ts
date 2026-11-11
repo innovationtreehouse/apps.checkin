@@ -72,10 +72,10 @@ describe('Programs API Integration Tests', () => {
         // Create mock programs
         await prisma.program.createMany({
             data: [
-                { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Public API Test Program', phase: 'RUNNING', orgMemberOnly: false, minAge: 10, maxAge: 18, leadMentorNotificationSettings: { notifyRsvp: true } },
-                { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Draft API Test Program', phase: 'PLANNING', orgMemberOnly: false, leadMentorId: leadId },
-                { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Member Only API Test Program', phase: 'RUNNING', orgMemberOnly: true },
-                { startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Public Member Only API Test Program', phase: 'RUNNING', orgMemberOnly: true, publiclyVisible: true }
+                { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Public API Test Program', phase: 'RUNNING', orgMemberOnly: false, minAge: 10, maxAge: 18, leadMentorNotificationSettings: { notifyRsvp: true } },
+                { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Draft API Test Program', phase: 'PLANNING', orgMemberOnly: false, leadMentorId: leadId },
+                { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Member Only API Test Program', phase: 'RUNNING', orgMemberOnly: true },
+                { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Public Member Only API Test Program', phase: 'RUNNING', orgMemberOnly: true, publiclyVisible: true }
             ]
         });
     });
@@ -158,7 +158,7 @@ describe('Programs API Integration Tests', () => {
              expect(orgMemberOnly).toBeDefined(); // Revealed because admin
         });
 
-        // #1397: membership fee paid, background check still with the board — the catalog
+        // Membership fee paid, background check still with the board — the catalog
         // shows them members-only programs, same as an ACTIVE household.
         it('reveals member-only programs to a household that has paid but is awaiting background clearance', async () => {
              const paidPending = await prisma.person.create({
@@ -204,7 +204,7 @@ describe('Programs API Integration Tests', () => {
         // Expected keys are DERIVED from the generated classifications rather than
         // listed here: the route's PUBLIC_PROGRAM_SELECT is a hand-maintained copy of
         // policy data, so a hardcoded list would rot in lockstep with it. Adding a
-        // non-public column to Program now fails this test instead of leaking.
+        // non-public column to Program fails this test instead of leaking.
         it.each([
             ['anonymous', null],
             ['admin session', { user: { id: undefined as number | undefined, isSysadmin: true } }],
@@ -225,12 +225,12 @@ describe('Programs API Integration Tests', () => {
 
              expect(publicActive).toBeDefined();
              expect(publicColumns).not.toHaveLength(0); // guard: a broken import would vacuously pass
-             expect(Object.keys(publicActive).sort()).toEqual([...publicColumns, '_count'].sort());
+             expect(Object.keys(publicActive).sort()).toEqual([...publicColumns, '_count', 'enrollmentClosedBy'].sort());
              expect(publicActive._count).toEqual({ participants: 0, volunteers: 0, events: 0 });
         });
     });
 
-    // ── ops-stg ACCESS GATE regression (Finding 1, 2026-07-20) ──────────────────
+    // ── ops-stg ACCESS GATE ─────────────────────────────────────────────────────
     // This route is a bare `export async function GET` — no withAuth, no
     // handler()/registry entry — that calls getOptionalSessionUser directly and
     // treats "no session" as the public-catalog happy path (correct in prod/dev).
@@ -250,7 +250,7 @@ describe('Programs API Integration Tests', () => {
             else process.env.CHECKIN_ENV = CHECKIN_ENV_BEFORE;
         });
 
-        it('DENIES an anonymous caller — the regression case for Finding 1', async () => {
+        it('DENIES an anonymous caller', async () => {
             (getServerSession as jest.Mock).mockResolvedValue(null);
 
             const req = new Request('http://localhost:4000/api/programs', { method: 'GET' });
@@ -276,7 +276,7 @@ describe('Programs API Integration Tests', () => {
         });
 
         it('DENIES an authenticated admin who is NOT a verified org member and has no canAccessStaging flag', async () => {
-            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
 
             const req = new Request('http://localhost:4000/api/programs', { method: 'GET' });
             const res = await GET(req as unknown as import("next/server").NextRequest);
@@ -310,7 +310,7 @@ describe('Programs API Integration Tests', () => {
         });
 
         it('should missing required program name', async () => {
-             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
 
              const req = new Request('http://localhost:4000/api/programs', {
                  method: 'POST',
@@ -321,7 +321,7 @@ describe('Programs API Integration Tests', () => {
         });
 
         it('should require max participants', async () => {
-             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
 
              const req = new Request('http://localhost:4000/api/programs', {
                  method: 'POST',
@@ -334,7 +334,7 @@ describe('Programs API Integration Tests', () => {
         });
 
         it('should allow admins to create a program', async () => {
-             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
 
              const req = new Request('http://localhost:4000/api/programs', {
                  method: 'POST',
@@ -353,7 +353,7 @@ describe('Programs API Integration Tests', () => {
         });
 
         it('clamps publiclyVisible to false on create when the program is not members-only', async () => {
-             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isBoardMember: true } });
 
              const req = new Request('http://localhost:4000/api/programs', {
                  method: 'POST',

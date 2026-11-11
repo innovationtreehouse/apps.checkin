@@ -1,7 +1,7 @@
 import type { PresenceDirection, VisitSource } from "@/generated/prisma/client";
 import type { DbClient } from "@/lib/db-client";
 
-/** M2 classify output. String, not a Prisma enum — new park reasons must not
+/** Classify output. String, not a Prisma enum — new park reasons must not
  *  require ALTER TYPE ... ADD VALUE. */
 export const PresenceClass = {
     PROJECTED: "PROJECTED",

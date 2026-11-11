@@ -81,7 +81,7 @@ describe("SignInPage", () => {
         expect(wordmark).toHaveStyle({ textTransform: "lowercase" });
     });
 
-    it("(regression) shows the primary sign-in button when signed out and not on a local instance", () => {
+    it("shows the primary sign-in button when signed out and not on a local instance", () => {
         renderWithProviders(<SignInPage />);
 
         expect(screen.getByRole("button", { name: /sign in with google/i })).toBeInTheDocument();

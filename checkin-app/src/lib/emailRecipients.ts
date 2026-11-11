@@ -1,13 +1,14 @@
 import prisma from "@/lib/prisma";
 import { sendEmail, runPaced } from "@/lib/email";
-import { logger } from "@/lib/logger";
-import { LIVE_PERSON } from "@/lib/person/filters";
+import { sendTemplated } from "@/lib/email-templates/send";
+import type { TemplateCtx, TemplateKey } from "@/lib/email-templates/registry";
+import { logBackendError, logger } from "@/lib/logger";
 
 /**
- * Email fan-out helpers. Kept dependency-free (prisma + email + logger only) so
- * any path can resolve-and-send without an import cycle. Callers build their own
- * subject/html (with NEXTAUTH_URL base, escapeHtml, etc.) and pass a distinct
- * errorLabel; these helpers only resolve recipients and swallow send/query errors.
+ * Email fan-out helpers. Kept dependency-light (prisma + email + templates + logger only) so
+ * any path can resolve-and-send without an import cycle. Callers name a template,
+ * fill its tokens and pass a distinct errorLabel; these helpers only resolve
+ * recipients and swallow send/query errors, except where a helper says it throws.
  */
 
 export interface HouseholdRecipient { email: string; settings: Record<string, unknown> | null; }
@@ -26,7 +27,6 @@ export async function resolveHouseholdRecipients(
             where: {
                 householdId,
                 ...(alsoPersonId ? { OR: [{ isHouseholdLead: true }, { id: alsoPersonId }] } : { isHouseholdLead: true }),
-                ...LIVE_PERSON,
             },
             select: { email: true, notificationSettings: true },
         });
@@ -47,57 +47,86 @@ export async function resolveHouseholdRecipients(
 }
 
 /**
- * Send one email to each recipient. sendEmail never rejects (failures resolve to
- * `false` and are already persisted via logIntegrationError) — this just fans out,
- * nothing left to catch here.
+ * Send one templated email to each recipient. sendTemplated never rejects
+ * (failures resolve to `false` and are already persisted via logIntegrationError)
+ * — this just fans out, nothing left to catch here.
  */
-function fanOutEmails(emails: string[], subject: string, html: string): Promise<boolean[]> {
-    return runPaced(emails.map((email) => () => sendEmail(email, subject, html)));
+function fanOutEmails<K extends TemplateKey>(emails: string[], key: K, ctx: TemplateCtx<K>): Promise<boolean[]> {
+    return runPaced(emails.map((email) => () => sendTemplated(key, email, ctx)));
 }
 
 /** Email every lead of a household. Resolve + fan-out; all errors logged and swallowed. */
-export async function emailHouseholdLeads(householdId: number, subject: string, html: string, errorLabel: string): Promise<void> {
+export async function emailHouseholdLeads<K extends TemplateKey>(householdId: number, key: K, ctx: TemplateCtx<K>, errorLabel: string): Promise<void> {
     try {
         const leads = await prisma.person.findMany({
-            where: { householdId, isHouseholdLead: true, ...LIVE_PERSON },
+            where: { householdId, isHouseholdLead: true },
             select: { email: true },
         });
         const emails = leads.map((l) => l.email).filter((e): e is string => !!e);
-        await fanOutEmails(emails, subject, html);
+        await fanOutEmails(emails, key, ctx);
     } catch (e) {
         logger.error(errorLabel, e);
     }
 }
 
-/** Email every board member with an address on file. Resolve + fan-out; all errors logged and swallowed. */
-export async function emailBoardMembers(subject: string, html: string, errorLabel: string): Promise<void> {
+async function boardMemberEmails(): Promise<string[]> {
+    const board = await prisma.person.findMany({
+        where: { isBoardMember: true, email: { not: null } },
+        select: { email: true },
+    });
+    return board.map((b) => b.email).filter((e): e is string => !!e);
+}
+
+/**
+ * Email every board member with an address on file. Resolve + fan-out; all errors logged and swallowed.
+ * Resolves to how many sends the provider accepted, which is 0 after any swallowed error.
+ */
+export async function emailBoardMembers<K extends TemplateKey>(key: K, ctx: TemplateCtx<K>, errorLabel: string): Promise<number> {
     try {
-        const board = await prisma.person.findMany({
-            where: { isBoardMember: true, email: { not: null }, ...LIVE_PERSON },
-            select: { email: true },
-        });
-        const emails = board.map((b) => b.email).filter((e): e is string => !!e);
-        await fanOutEmails(emails, subject, html);
+        const sent = await fanOutEmails(await boardMemberEmails(), key, ctx);
+        return sent.filter(Boolean).length;
+    } catch (e) {
+        logger.error(errorLabel, e);
+        return 0;
+    }
+}
+
+/** Email every sysadmin and board member with an address on file. Returns whether anyone was reached; a failed query throws. */
+export async function emailSysadminsAndBoard<K extends TemplateKey>(key: K, ctx: TemplateCtx<K>): Promise<boolean> {
+    const people = await prisma.person.findMany({
+        where: { OR: [{ isSysadmin: true }, { isBoardMember: true }], email: { not: null } },
+        select: { email: true },
+    });
+    const sent = await fanOutEmails(people.map((p) => p.email).filter((e): e is string => !!e), key, ctx);
+    return sent.some(Boolean);
+}
+
+/** The scholarship review notice's board fallback, which builds its own HTML. */
+export async function emailBoardMembersHtml(subject: string, html: string, errorLabel: string): Promise<void> {
+    try {
+        const emails = await boardMemberEmails();
+        await runPaced(emails.map((email) => () => sendEmail(email, subject, html)));
     } catch (e) {
         logger.error(errorLabel, e);
     }
 }
 
 /**
- * Email every FINANCE holder with an address on file, or the board when no one
- * holds FINANCE, so a finance control flag always reaches a person. Resolve +
- * fan-out; all errors logged and swallowed.
+ * Send one finance or ops alert to the alert address setting, a group address, so no
+ * personal opt-out applies. Unset, nothing is sent and the gap is logged; System Status
+ * shows it too. Resolves to whether the provider accepted the send; never rejects.
  */
-export async function notifyFinanceAlert(subject: string, html: string, errorLabel: string): Promise<void> {
+export async function emailAlert<K extends TemplateKey>(key: K, ctx: TemplateCtx<K>): Promise<boolean> {
     try {
-        const finance = await prisma.person.findMany({
-            where: { roles: { some: { role: "FINANCE" } }, email: { not: null }, ...LIVE_PERSON },
-            select: { email: true },
-        });
-        const emails = finance.map((f) => f.email).filter((e): e is string => !!e);
-        if (emails.length === 0) return emailBoardMembers(subject, html, errorLabel);
-        await fanOutEmails(emails, subject, html);
+        const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { alertEmailAddress: true } });
+        const to = settings?.alertEmailAddress?.trim();
+        if (!to) {
+            await logBackendError(new Error("Alert not sent: the alert address is not set"), "emailAlert", { key });
+            return false;
+        }
+        return await sendTemplated(key, to, ctx);
     } catch (e) {
-        logger.error(errorLabel, e);
+        logger.error(`emailAlert ${key} failed:`, e);
+        return false;
     }
 }

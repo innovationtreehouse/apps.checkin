@@ -15,6 +15,10 @@
       "types": "./src/pages/*.tsx",
       "import": "./src/pages/*.tsx"
     },
+    "./components/*": {
+      "types": "./src/components/*.tsx",
+      "import": "./src/components/*.tsx"
+    },
     "./nav": {
       "types": "./src/nav.ts",
       "import": "./src/nav.ts"
@@ -29,11 +33,14 @@
     "db:generate": "prisma generate",
     "db:deploy": "node --env-file=.env node_modules/.bin/prisma migrate deploy",
     "test": "vitest run",
+    "typecheck": "tsc --noEmit",
     "db:seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
-    "@checkin/money": "*",
     "@checkin/component-kit": "*",
+    "@checkin/component-ui": "*",
+    "@checkin/gtin": "*",
+    "@checkin/money": "*",
     "@checkin/pg-kit": "*",
     "@checkin/quickbooks": "*",
     "@checkin/receipt-types": "*",

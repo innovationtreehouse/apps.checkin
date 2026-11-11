@@ -64,6 +64,7 @@ describe('My Events API Integration Tests', () => {
 
         const program1 = await prisma.program.create({
             data: {
+                appliesToYear: 2026,
                 startAt: new Date('2026-01-01'),
                 endAt: new Date('2026-12-31'),
                 name: 'Mine Test Program 1',
@@ -76,6 +77,7 @@ describe('My Events API Integration Tests', () => {
 
         const program2 = await prisma.program.create({
             data: {
+                appliesToYear: 2026,
                 startAt: new Date('2026-01-01'),
                 endAt: new Date('2026-12-31'),
                 name: 'Mine Test Program 2',
@@ -89,6 +91,7 @@ describe('My Events API Integration Tests', () => {
         // Program 3 has a lead mentor and no enrollments/volunteers.
         const program3 = await prisma.program.create({
             data: {
+                appliesToYear: 2026,
                 startAt: new Date('2026-01-01'),
                 endAt: new Date('2026-12-31'),
                 name: 'Mine Test Program 3',

@@ -95,12 +95,12 @@ export const REGISTRY: Record<string, TemplateSpec> = { ... }
 ### 4. Render + send — one door, `sendTemplated`
 
 ```
-sendTemplated(key, to, ctx) → Promise<boolean> {
+sendTemplated(key, to, ctx, headers?) → Promise<boolean> {
   row   = EmailTemplate[key]  ?? REGISTRY[key].{defaultSubject,defaultBody}   // never blank
   subj  = substitute(row.subject, ctx, REGISTRY[key], { escape: false })      // RAW — subject isn't HTML
   body  = substitute(row.body,    ctx, REGISTRY[key], { escape: true }) → split blank lines → <p>
   html  = baseEmailLayout(body)                                               // branding for free
-  return sendEmail(to, subj, html)                                            // existing choke-point, returns boolean
+  return sendEmail(to, subj, html, headers)                                   // existing choke-point, returns boolean
 }
 ```
 
@@ -150,7 +150,7 @@ diff is behavior-neutral on wording. The old inline builders and hardcoded subje
 
 ### 8. Admin UI — new Settings tab, board-gated
 
-- New top tab **"Email Templates"** in `SettingsTabs` (`src/components/admin/SettingsTabs.tsx`),
+- New top tab **"Email Templates"**: a `SETTINGS.links` entry (`src/lib/nav/sections/settings.ts`; the settings layout renders that list as its tabs),
   route `src/app/settings/templates/page.tsx`. The `settings` layout already admits
   board + sysadmin; the page self-gates `useRequireRole(["isSysadmin","isBoardMember"])`
   like its siblings.
@@ -158,9 +158,9 @@ diff is behavior-neutral on wording. The old inline builders and hardcoded subje
   `sampleCtx` (client-side, reusing the shared substitute fn so preview can't drift from send)
   → save (token-validated) → optional **send-to-self** (reuse the outreach test-send pattern).
 
-## Key list (39)
+## Key list (49)
 
-37 keys are in the registry. The 2 `outreach.*` keys join it in step 5, because outreach has
+47 keys are in the registry. The 2 `outreach.*` keys join it in step 5, because outreach has
 no default copy in code today (the Board writes it, and it is empty until they do).
 `link` tokens are noted; everything else is `text`. Tokens are named after the words they
 stand for in today's copy, so a key without a link today has no `actionLink`.
@@ -205,10 +205,11 @@ stand for in today's copy, so a key without a link today has no `actionLink`.
 | `membership.welcome` | `sendCongrats`, first membership | family | `actionLink` ("Visit your dashboard") |
 | `membership.renewed` | `sendCongrats`, renewal | family | `actionLink` ("Visit your dashboard") |
 
-### board — 5
+### board — 7
 | key | trigger | recipient | tokens |
 |-----|---------|-----------|--------|
 | `board.paidReject` | `notifyBoardPaidReject` | board | processId, `actionLink` ("Open applications") |
+| `board.checkRejected` | `notifyBoardCheckRejected`, a check-review rejection that blocks no paid application | board | personName, householdName, reviewId, `actionLink` ("Open applications") |
 | `board.paymentException` | `notifyBoardPaymentException` | board | kind, **blurb**, exceptionId, `actionLink` ("Open payment problems") |
 | `board.pendingDigest` | pending-participants digest | board | approachingCount, overdueCount, approachingList, overdueList |
 | `board.unpaidClaims` | program sale sweep | board | programName, names, `actionLink` ("Open the program") |
@@ -216,11 +217,32 @@ stand for in today's copy, so a key without a link today has no `actionLink`.
 
 > See sub-decision B (blurb) below.
 
-### finance — 2
+### finance — 11
 | key | trigger | recipient | tokens |
 |-----|---------|-----------|--------|
 | `finance.receiptMailCeiling` | receipt mail intake hits its hold ceiling | FINANCE, else board | unresolved, refused, `actionLink` ("Open the incoming receipt queue") |
 | `finance.incomePostCap` | income run stops at its per-run cap | FINANCE, else board | created, limit, remaining, `actionLink` ("Open income reconciliation") |
+| `finance.receiptMailAgeing` | receipt mail run leaves messages unread past the window | FINANCE, else board | messages, since, `actionLink` ("Open the incoming receipt queue") |
+| `finance.receiptMailboxUnreadable` | receipt mail run cannot list the mailbox: Gmail refused access | FINANCE, else board | `actionLink` ("Open the incoming receipt queue") |
+| `finance.receiptMailboxUnanswered` | receipt mail run cannot list the mailbox: Gmail did not answer | FINANCE, else board | `actionLink` ("Open the incoming receipt queue") |
+| `finance.receiptMailboxNotFound` | receipt mail run cannot list the mailbox: no such mailbox | FINANCE, else board | `actionLink` ("Open the incoming receipt queue") |
+| `finance.receiptMailboxFailed` | receipt mail run cannot list the mailbox: unexpected failure | FINANCE, else board | `actionLink` ("Open the incoming receipt queue") |
+| `finance.incomeBucketUnusable` | a budget-owner bucket can't take sales | FINANCE, else board | bucketName, issue, itemCount, `actionLink` ("Open income items") |
+| `finance.incomeSweepIncomplete` | income orphan sweep reads a full page | FINANCE, else board | since, `actionLink` ("Open income reconciliation") |
+| `finance.expensePaymentAccount` | books-map payment account can't post | FINANCE, else board | accountId, accountKind, `actionLink` ("Open the books map") |
+| `finance.expenseSweepIncomplete` | expense orphan sweep reads a full page | FINANCE, else board | since, `actionLink` ("Open expenses") |
+| `finance.donationDepositHandOver` | daily job cannot hand a finished giving-platform batch to income; once per batch | FINANCE, else board | batches, `actionLink` ("Open booking batches") |
+| `finance.inKindSweepIncomplete` | in-kind orphan sweep reads a full page | FINANCE, else board | since, `actionLink` ("Open the in-kind queue") |
+| `finance.inKindDrainStopped` | in-kind drain stops on its failure streak, a lost connection, or three gifts refused with one fault code | FINANCE, else board | failures, remaining, cause, `actionLink` ("Open the in-kind queue") |
+
+### receipt — 2
+| key | trigger | recipient | tokens |
+|-----|---------|-----------|--------|
+| `receipt.mailReplyCredited` | `sendMailReply`, the person a mailed receipt is credited to | credited person | creditedName, from, when, `actionLink` ("Review it in My receipts") |
+| `receipt.mailReplySender` | `sendMailReply`, a sender whose receipt is credited to someone else | sender | when, creditedName |
+
+> Both carry the `Auto-Submitted: auto-replied` header, which is why `sendTemplated` takes optional
+> headers.
 
 ### shopify — 1
 | key | trigger | recipient | tokens |
@@ -325,7 +347,7 @@ not a zero-visual-change one. Uniform branding is a stated goal of this work.
    `outreach.*` registry entries here; their default wording is a Board decision.
 6. Grep-to-zero enforcement test (`sendEmail(` only in `email.ts` + renderer).
 7. Admin tab: `settings/templates` page + API route (list/get/save + validate + send-to-self),
-   add `"templates"` to `SettingsTabs`.
+   add the templates link to `SETTINGS.links`.
 8. **Follow-up release (contract): drop the moved `BoardSettings` columns + old
    `settings/email`/`settings/outreach` controls** — only after step 5 has fully deployed and
    the drain window has passed. Per `DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`: during a rolling

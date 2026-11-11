@@ -14,5 +14,5 @@ export const GET = handler("GET /api/donations/in-kind/manual", (ctx) =>
 );
 
 export const POST = handler("POST /api/donations/in-kind/manual", (ctx) =>
-  componentRoute(routes.inKind.recordManual((donor) => refuseOwnHouseholdDonor(prisma, ctx.auth, donor)))(ctx),
+  componentRoute(routes.inKind.recordManual((donor) => refuseOwnHouseholdDonor(prisma, ctx.auth, donor, "ManualInKindDonation")))(ctx),
 );

@@ -1,19 +1,20 @@
 /**
  * The Revenue Ops section (path /finance-ops; finance-ops/layout.tsx, shared by
- * /income and /donations). It admits FINANCE or BOARD; the finance tools are
- * board-only, and Income and Donations are the libraries' tabs. The Shopify tab
+ * /income). It admits FINANCE or BOARD; the payment-plan tabs are for both, the
+ * other finance tools are board-only, and Income is the library's tab. The Shopify tab
  * groups the Board-only Shopify tools with income's Shopify payout screens.
  */
 import type { RoleFlag } from "@/lib/roles";
 import { INCOME_NAV_LINKS, INCOME_TAB, type IncomeNavCount, type IncomeNavLink } from "@checkin/income/nav";
-import { DONATIONS_TAB } from "@checkin/bulk-donation/nav";
 import type { NavSection, SectionLink } from "@/lib/nav/types";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
 import { FINANCE_OR_BOARD, anyRole, firstVisibleHref } from "@/lib/nav/gates";
 import { libraryCount, type NavBadge } from "@/components/navBadges";
 
-/** The finance tools' gate; each of those pages and its API routes enforce it too. */
+/** The board-only finance tools' page gate. */
 export const FINANCE_TOOL_ROLES: readonly RoleFlag[] = ["isBoardMember"];
+/** Who reads the payment-plan queues; only the board decides a request. */
+export const PAYMENT_PLAN_ROLES: readonly RoleFlag[] = FINANCE_OR_BOARD;
 export const REVENUE_OPS_ROLES = FINANCE_OR_BOARD;
 
 const boardOnly = anyRole(FINANCE_TOOL_ROLES);
@@ -45,8 +46,8 @@ export const INCOME_SCREEN_LINKS: readonly SectionLink[] =
   INCOME_NAV_LINKS.filter((l) => !SHOPIFY_INCOME_HREFS.includes(l.href)).map(incomeScreen);
 
 export const FINANCE_NAV_LINKS: readonly SectionLink[] = [
-  { name: "Program Payment Plan", href: "/finance-ops/payment-plan", icon: "⏳", visible: boardOnly },
-  { name: "Membership Payment Plan", href: "/finance-ops/membership-payment-plan", icon: "⏳", visible: boardOnly },
+  { name: "Program Payment Plan", href: "/finance-ops/payment-plan", icon: "⏳", visible: anyRole(PAYMENT_PLAN_ROLES) },
+  { name: "Membership Payment Plan", href: "/finance-ops/membership-payment-plan", icon: "⏳", visible: anyRole(PAYMENT_PLAN_ROLES) },
   { name: "Shopify", href: SHOPIFY_NAV_LINKS[0].href, icon: "🛍️", subLinks: SHOPIFY_NAV_LINKS },
 ];
 
@@ -57,14 +58,6 @@ export const REVENUE_OPS: NavSection = {
   links: [
     ...FINANCE_NAV_LINKS,
     { ...incomeScreen(INCOME_TAB), subLinks: INCOME_SCREEN_LINKS },
-    {
-      ...DONATIONS_TAB,
-      library: "bulk-donation",
-      badge: (c) => {
-        const n = libraryCount(c, "bulk-donation", "unassignedQueue") + libraryCount(c, "bulk-donation", "disbursementHolds");
-        return n > 0 ? { count: n, color: "red", label: `${n} unassigned gifts and disbursement holds` } : null;
-      },
-    },
   ],
   visible: anyRole(REVENUE_OPS_ROLES),
   hrefFor: (u, c) => firstVisibleHref(REVENUE_OPS, u, c),

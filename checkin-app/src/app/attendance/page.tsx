@@ -4,7 +4,7 @@ import { Suspense, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { PageLoader } from "@/components/ui/PageLoader";
-// Bare /attendance is now just the entry point — the Current view lives at
+// Bare /attendance is just the entry point — the Current view lives at
 // /attendance/current. Redirect here, preserving query params so signed kiosk
 // URLs (/attendance?mode=kiosk&sig=...&ts=...&nonce=...) keep working.
 function Redirect() {

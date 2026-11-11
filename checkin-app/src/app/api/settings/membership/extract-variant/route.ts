@@ -1,3 +1,4 @@
+import { formatCents } from "@checkin/money";
 import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
@@ -33,7 +34,7 @@ export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (
         if (variants.length === 0) return apiError("The product at that URL has no variants — check the link.", 400);
         if (variants.length > 1) {
             const listing = variants
-                .map((v) => `${v.id} — ${v.title} — ${v.priceCents != null ? `$${(v.priceCents / 100).toFixed(2)}` : "price unknown"}`)
+                .map((v) => `${v.id} — ${v.title} — ${v.priceCents != null ? formatCents(v.priceCents) : "price unknown"}`)
                 .join("; ");
             return apiError(`The product has ${variants.length} variants — paste the ID of the right one into the variant-ID field: ${listing}`, 409);
         }

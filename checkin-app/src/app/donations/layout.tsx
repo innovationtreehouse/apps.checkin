@@ -1,45 +1,59 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useSession } from "next-auth/react";
-import { Box } from "@mantine/core";
-import { SectionTabs } from "@/components/ui/SectionTabs";
-import { CountBadge } from "@/components/ui/CountBadge";
-import { DONATION_NAV_LINKS } from "@checkin/bulk-donation/nav";
-import { REVENUE_OPS } from "@/lib/nav/sections/revenueOps";
-import RevenueOpsLayout from "../finance-ops/layout";
+import { usePathname } from "next/navigation";
+import { Box, Center, Loader, Stack, Text } from "@mantine/core";
+import { SectionTabs, activeTab } from "@/components/ui/SectionTabs";
+import { TabBadge } from "@/components/ui/CountBadge";
+import { PageContainer } from "@/components/ui/PageContainer";
+import { sectionTabBadge } from "@/components/navBadges";
+import { visibleLinks } from "@/lib/nav/gates";
+import { DONATIONS, donationsRolesFor } from "@/lib/nav/sections/donations";
+import { useRequireRole } from "@/hooks/useRequireRole";
+import { useTodoCounts } from "@/hooks/useTodoCounts";
 
-type NavCounts = { unassignedQueue: number; disbursementHolds: number };
-
-const donationLinks = DONATION_NAV_LINKS.map(({ name, href, icon }) => ({ name, href, icon }));
-
-/** Revenue Ops chrome and gate, with the donation screens as a second tab row. */
+/**
+ * Donations chrome and gate: the Benevity and In-Kind tabs, and the open tab's
+ * screens as a pill row. The donation screens admit FINANCE or BOARD; the
+ * no-receipt in-kind gift screen also admits OPERATIONS and INVENTORY_MANAGER.
+ */
 export default function DonationsLayout({ children }: { children: React.ReactNode }) {
-  const { data: session } = useSession();
-  const authorized = REVENUE_OPS.visible(session?.user, null);
-  const [counts, setCounts] = useState<NavCounts | null>(null);
+  const pathname = usePathname() ?? "";
+  const { user, loading, ready } = useRequireRole(donationsRolesFor(pathname));
+  const counts = useTodoCounts(ready);
 
-  useEffect(() => {
-    if (!authorized) return;
-    fetch("/api/donations/nav-counts")
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: NavCounts | null) => setCounts(data))
-      // Badges are best-effort; a failed fetch just shows none.
-      .catch(() => setCounts(null));
-  }, [authorized]);
+  if (loading) {
+    return (
+      <Center mih="60vh">
+        <Stack align="center">
+          <Loader />
+          <Text>Verifying Donations Access...</Text>
+        </Stack>
+      </Center>
+    );
+  }
 
+  if (!ready) return null;
+
+  const links = visibleLinks(DONATIONS, user, counts);
+  const subLinks = activeTab(links, pathname, true)?.subLinks;
   return (
-    <RevenueOpsLayout>
+    <PageContainer>
       <SectionTabs
-        links={donationLinks}
-        mb="md"
-        badgeFor={(href) => {
-          const field = DONATION_NAV_LINKS.find((l) => l.href === href)?.badge;
-          const n = field && counts ? counts[field] : 0;
-          return n > 0 ? <CountBadge intent="action">{n}</CountBadge> : null;
-        }}
+        links={links}
+        prefixMatch
+        mb={subLinks ? "xs" : "md"}
+        badgeFor={(href) => <TabBadge badge={sectionTabBadge(links, href, counts)} />}
       />
+      {subLinks && (
+        <SectionTabs
+          links={subLinks}
+          prefixMatch
+          mb="md"
+          variant="pills"
+          badgeFor={(href) => <TabBadge badge={sectionTabBadge(subLinks, href, counts)} />}
+        />
+      )}
       <Box style={{ minWidth: 0 }}>{children}</Box>
-    </RevenueOpsLayout>
+    </PageContainer>
   );
 }

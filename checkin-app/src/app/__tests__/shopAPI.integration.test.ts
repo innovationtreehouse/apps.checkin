@@ -284,7 +284,7 @@ describe('Shop API Integration Tests', () => {
              expect(auditRows[0].oldData).toBeNull();
         });
 
-        // Denied-household lockout (auth-consistency §5 risk #2 / GAP-1). Certifier
+        // Denied-household lockout. Certifier
         // status is re-queried from the DB, bypassing the denial-stripped session,
         // so a denied certifier would still pass the MAY_CERTIFY_OTHERS gate. The
         // denied check must reject before the lookup. No certification row is written.
@@ -558,8 +558,11 @@ describe('Shop API Integration Tests', () => {
             const res = await post({ id: boardMember.id, isBoardMember: true }, boardMember.id, 'MAY_CERTIFY_OTHERS');
             expect(res.status).toBe(403);
             expect(await levelOf(boardMember.id)).toBeUndefined();
-            const rows = await refusals(boardMember.id, SELF_GRANT_REFUSAL_TABLE);
-            expect(rows).toHaveLength(1);
+            // Scoped to this grant: an earlier suite's refusal row can carry an actor id that minting has since reissued.
+            const rows = await prisma.auditLog.findMany({
+                where: { actorId: boardMember.id, tableName: SELF_GRANT_REFUSAL_TABLE, newData: { path: ['table'], equals: 'ToolStatus' } },
+            });
+            expect(rows.map(r => r.affectedEntityId)).toEqual([boardMember.id]);
             expect(normalizeAuditData(rows[0].newData)).toMatchObject({ reason: 'own_household', table: 'ToolStatus' });
         });
     });

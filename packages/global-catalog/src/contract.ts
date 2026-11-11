@@ -1,5 +1,5 @@
 /**
- * The injection seam (#1286 §3). The host application (checkin) implements these
+ * The injection seam. The host application (checkin) implements these
  * and calls configureCatalog() once at boot; the library reads the configured
  * runtime. The dependency arrow points one way — the library NEVER imports the
  * host, so "understand the catalog" stays "read this package."
@@ -13,7 +13,7 @@ export interface CatalogPrincipal {
   name: string | null;
 }
 
-/** Org identity stamped on proposals / provisional items / OrgEvent (#1286 §6). */
+/** Org identity stamped on proposals / provisional items / OrgEvent. */
 export interface OrgIdentity {
   id: string;
   name: string;
@@ -31,13 +31,13 @@ export interface CatalogAuth {
 export interface CatalogRuntimeConfig {
   auth: CatalogAuth;
   /**
-   * Org identity for the current request, as an async ACCESSOR (#1286 §6): the
+   * Org identity for the current request, as an async ACCESSOR: the
    * host resolves it lazily (never at boot); single-org returns the one row,
    * multi-org later resolves the current org per request — same seam.
    */
   org: () => Promise<OrgIdentity>;
   /**
-   * S5 consumers, by name. The catalog calls each in-process after a transaction that wrote
+   * Org-event consumers, by name. The catalog calls each in-process after a transaction that wrote
    * OrgEvent rows commits; a consumer that throws replays from its own cursor.
    */
   orgEventConsumers?: Record<string, OrgEventConsumer>;
