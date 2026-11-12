@@ -8,7 +8,7 @@ import { db } from "../db";
 import type { Prisma } from "../generated/prisma/client";
 import type { ReceiptPrincipal } from "../contract";
 import { getOrgId, ports, requireActor } from "../runtime";
-import { intakeDeferred, STORED_STATUSES, type DmarcVerdict } from "./mailIntake";
+import { intakeDeferred, MAIL_CATCH_UP_BUDGET_MS, MAIL_CATCH_UP_CAP, mailRunState, startMailRun, STORED_STATUSES, type DmarcVerdict } from "./mailIntake";
 import { intakeMailedReceipt } from "./receiptService";
 import { closeUnreplyable } from "./mailReplies";
 import { deleteStoredFiles, readStoredFile } from "../lib/fileStorage";
@@ -223,5 +223,30 @@ export const mailQueueService = {
       await auditIgnored(tx, actor, "file_unignored", "ignored_file", entry.fileHash, entry.reason);
       return entry;
     });
+  },
+
+  /** Whether a mail run holds the lease now (`running` or `idle`), and the last finished run's counts. */
+  async catchUpState() {
+    await requireActor();
+    const { running, lastRunAt, lastRun } = await mailRunState();
+    return { status: running ? "running" : "idle", lastRunAt, lastRun };
+  },
+
+  /**
+   * Starts one mail intake pass with the catch-up cap and budget, after the request answers;
+   * `busy` while the cron or another catch-up holds the lease. A start is audited with who asked.
+   */
+  async catchUp() {
+    const actor = await requireActor();
+    const run = await startMailRun({ cap: MAIL_CATCH_UP_CAP, budgetMs: MAIL_CATCH_UP_BUDGET_MS });
+    if (run.status === "unbound") throw new ServiceError(409, "No receipt mailbox is set up.");
+    if (run.status === "started") {
+      run.done.catch((err: unknown) => console.error("[receipt] mail catch-up run failed:", err));
+      await db.receiptAuditLog.create({
+        data: { receiptId: null, userId: actor.id, username: actor.name, action: "mail_catch_up_started", fieldChanged: "mail_intake", valueAfter: `cap ${MAIL_CATCH_UP_CAP}` },
+      });
+    }
+    const { lastRunAt, lastRun } = await mailRunState();
+    return { status: run.status, lastRunAt, lastRun };
   },
 };

@@ -434,6 +434,22 @@ model ReceiptMailAtRisk {
   @@map("receipt_mail_at_risk")
 }
 
+// The org's mail intake run: held while `until` is in the future, so the cron and finance's
+// catch-up never read the mailbox at once. A run releases it with its counts; a crashed process's lease expires.
+model ReceiptMailLease {
+  /// @sensitivity:internal
+  orgId     String    @id @map("org_id")
+  /// @sensitivity:internal
+  until     DateTime
+  /// @sensitivity:internal
+  lastRunAt DateTime? @map("last_run_at")
+  // The last finished run's MailRunSummary.
+  /// @sensitivity:internal
+  lastRun   Json?     @map("last_run")
+
+  @@map("receipt_mail_lease")
+}
+
 // One email owed per receipt outcome: to its uploader, and to the person reimbursed when that
 // is someone else. Written in the transaction that makes the outcome, so it is owed exactly once.
 model ReceiptOutcomeNotice {

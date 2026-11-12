@@ -146,6 +146,12 @@ export const classifications = {
         alertedAt: 'internal',
         createdAt: 'internal',
     },
+    ReceiptMailLease: {
+        orgId: 'internal',
+        until: 'internal',
+        lastRunAt: 'internal',
+        lastRun: 'internal',
+    },
     ReceiptOutcomeNotice: {
         id: 'internal',
         orgId: 'internal',
@@ -202,6 +208,8 @@ export const relations = {
     ReceiptMailReply: {
     },
     ReceiptMailAtRisk: {
+    },
+    ReceiptMailLease: {
     },
     ReceiptOutcomeNotice: {
     },
