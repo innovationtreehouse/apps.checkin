@@ -8,7 +8,7 @@ import { callerId } from "../lib/caller";
 import type { Expense, Prisma } from "../generated/prisma/client";
 import { EXPENSE_ACTION_VIEWS, type ExpenseActionView } from "../nav";
 import { logError } from "../lib/logger";
-import { approvableByCallerWhere, boardAuthorizationRefusal, reimburseeUnknown } from "../lib/signoff";
+import { approvableByCallerWhere, approvesAsStandIn, boardAuthorizationRefusal, reimburseeUnknown } from "../lib/signoff";
 import { boardApprovalNeeded, isConflicted, signoffFactsByLine } from "../lib/signoff-facts";
 import { callerLinesFor } from "./signoffService";
 
@@ -26,17 +26,20 @@ export interface ExpenseAwaitingApproval {
 
 /**
  * The expenses waiting on the caller's approval, each with the lines whose main act for the
- * caller (from lineActions) is approval, newest first. Candidates are the expenses the query can
- * tell have a line the caller may approve (approvableByCallerWhere); their facts are read
- * together and lineActions decides. "Waiting on you" lists all of them
- * (allExpensesAwaitingMyApproval); a badge poll reads a bounded slice (expensesAwaitingMyApproval).
+ * caller (from lineActions) is approval as the line's bucket approver, newest first. A line the
+ * caller approves only as a Board member counts in Finance review's Board tab instead
+ * (boardApprovalsWaiting), split by the same approvesAsStandIn, so no line counts in both.
+ * Candidates are the expenses the query can tell have a line the caller may approve
+ * (approvableByCallerWhere); their facts are read together and lineActions decides. "Waiting on
+ * you" lists all of them (allExpensesAwaitingMyApproval); a badge poll reads a bounded slice
+ * (expensesAwaitingMyApproval).
  */
 async function awaitingApproval(principal: ExpensePrincipal, bounded: boolean): Promise<ExpenseAwaitingApproval[]> {
   const me = callerId(principal);
   const dir = getExpenseRuntime().signoff;
   const buckets = await dir.bucketsApprovedBy(me);
-  if (buckets.length === 0 && !principal.isBoard) return [];
-  const where = approvableByCallerWhere(me, await dir.householdIds(me), buckets, principal.isBoard);
+  if (buckets.length === 0) return [];
+  const where = approvableByCallerWhere(me, await dir.householdIds(me), buckets);
   const candidates = await db.expense.findMany({
     where: { orgId: await getOrgId(), ...where },
     orderBy: [{ submittedAt: "desc" }, { id: "asc" }],
@@ -48,7 +51,7 @@ async function awaitingApproval(principal: ExpensePrincipal, bounded: boolean): 
     if (bounded && out.length === SIGNOFF_BADGE_EXPENSE_CAP) break;
     const lineItemIds = linesOf
       .get(expense.id)!
-      .filter((line) => line.actions.some((a) => a.act === "approve" && a.primary))
+      .filter((line) => line.actions.some((a) => a.act === "approve" && a.primary) && !approvesAsStandIn(line.facts, me))
       .map((line) => line.lineItemId);
     if (lineItemIds.length > 0) out.push({ expenseId: expense.id, lineItemIds });
   }

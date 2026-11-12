@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { describeDb } from "../helpers/db";
 import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem } from "../helpers/seed";
 import { expenses } from "../../routes";
-import { SIGNOFF_BADGE_CANDIDATE_CAP, SIGNOFF_BADGE_EXPENSE_CAP, expenseActionCounts, expensesAwaitingMyApproval, signoffsAwaitingCount } from "../../services/badgeCounts";
+import { SIGNOFF_BADGE_EXPENSE_CAP, expenseActionCounts, expensesAwaitingMyApproval, signoffsAwaitingCount } from "../../services/badgeCounts";
 import type { ExpensePrincipal, ExpenseRouteHandler } from "../../contract";
 
 // submitter 1 · approvers 2 and 9 (bucket 100), 6 (bucket 200) · org-level bucket 7 · finance 3 and 8 · board 5 · 8 and 9 in the submitter's household
@@ -68,7 +68,6 @@ describeDb("lines waiting on the caller's approval", () => {
   let both: string;
   let mixed: string;
   let moved: string;
-  let orgLevel: string;
   let approversOwn: string;
 
   beforeEach(async () => {
@@ -81,7 +80,7 @@ describeDb("lines waiting on the caller's approval", () => {
     await seedLines({}, [{ ownerId: 100, status: "exception_raised" }]);
     await seedLines({ backfill: true }, [{ ownerId: 100 }]);
     moved = await seedLines({}, [{ ownerId: 100, status: "finance_assigned" }]);
-    orgLevel = await seedLines({}, [{ ownerId: 7 }]);
+    await seedLines({}, [{ ownerId: 7 }]);
   });
 
   describe.each(ROLES)("for %s", (_name, p) => {
@@ -105,19 +104,12 @@ describeDb("lines waiting on the caller's approval", () => {
     expect((await expenseActionCounts(APPROVER)).owner_approval).toBe(3);
   });
 
-  it("counts for a Board member only the lines no bucket approver can approve", async () => {
+  it("counts nothing for a Board member who approves no bucket: their approvals count in Finance review", async () => {
+    await seedLines({ submitterId: 6 }, [{ ownerId: 200 }]);
     as(BOARD);
-    expect(await viewIds(BOARD)).toEqual([orgLevel]);
-    expect(await signoffsAwaitingCount(BOARD)).toBe(1);
-    expect((await expenseActionCounts(BOARD)).owner_approval).toBe(1);
-  });
-
-  it("counts for a Board member a line whose only approver is conflicted", async () => {
-    const ownReceipt = await seedLines({ submitterId: 6 }, [{ ownerId: 200 }]);
-    as(BOARD);
-    expect(await viewIds(BOARD)).toEqual([orgLevel, ownReceipt].sort());
-    expect(await signoffsAwaitingCount(BOARD)).toBe(2);
-    expect(await viewIds(OTHER_APPROVER)).toEqual([both]);
+    expect(await viewIds(BOARD)).toEqual([]);
+    expect(await signoffsAwaitingCount(BOARD)).toBe(0);
+    expect((await expenseActionCounts(BOARD)).owner_approval).toBe(0);
   });
 
   it("counts only the lines in the approver's own bucket", async () => {
@@ -148,22 +140,6 @@ describeDb("lines waiting on the caller's approval", () => {
     expect((await expenseActionCounts(OTHER_APPROVER)).owner_approval).toBe(SIGNOFF_BADGE_EXPENSE_CAP);
     expect(await viewIds(OTHER_APPROVER)).toContain(both);
     expect(await viewIds(OTHER_APPROVER)).toHaveLength(SIGNOFF_BADGE_EXPENSE_CAP + 1);
-  });
-
-  it("reads at most the candidate cap for the badges, leaving older work out of the count but not the list", async () => {
-    for (let i = 0; i < SIGNOFF_BADGE_CANDIDATE_CAP; i++) await seedLines({ submittedAt: later(i) }, [{ ownerId: 100 }]);
-    as(BOARD);
-    expect(await signoffsAwaitingCount(BOARD)).toBe(0);
-    expect((await expenseActionCounts(BOARD)).owner_approval).toBe(0);
-    expect(await viewIds(BOARD)).toEqual([orgLevel]);
-  });
-
-  it("counts a Board member's work while the candidates exactly fill the cap", async () => {
-    // beforeEach seeds five Board candidates: both, mixed, approversOwn, moved and orgLevel.
-    for (let i = 0; i < SIGNOFF_BADGE_CANDIDATE_CAP - 5; i++) await seedLines({ submittedAt: later(i) }, [{ ownerId: 100 }]);
-    as(BOARD);
-    expect(await signoffsAwaitingCount(BOARD)).toBe(1);
-    expect(await viewIds(BOARD)).toEqual([orgLevel]);
   });
 
   it("counts nothing for FINANCE outside its own buckets, and hides the view from it", async () => {

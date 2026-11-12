@@ -7,7 +7,7 @@ import { expect, it } from "vitest";
 import { db } from "../../db";
 import { describeDb } from "../helpers/db";
 import { bindPorts, directory, ORG, principal, seedApproval, seedExpense, seedLineItem } from "../helpers/seed";
-import { APPROVABLE_STATUSES, approvableByCallerWhere, approvalRefusal } from "../../lib/signoff";
+import { APPROVABLE_STATUSES, approvableByCallerWhere, approvalRefusal, approvesAsStandIn } from "../../lib/signoff";
 import { signoffFactsForExpenses } from "../../lib/signoff-facts";
 import { allExpensesAwaitingMyApproval, approvalPoll, expenseActionCounts, signoffsAwaitingCount } from "../../services/badgeCounts";
 import { callerLines } from "../../services/signoffService";
@@ -74,7 +74,7 @@ async function seedRandomExpenses(seed: number, count: number): Promise<void> {
   }
 }
 
-/** The expenses with a line approvalRefusal lets the caller approve, read without the prefilter. */
+/** The expenses with a line approvalRefusal lets the caller approve as its bucket approver, read without the prefilter. */
 async function approvableByRule(p: ExpensePrincipal): Promise<Set<string>> {
   const expenses = await db.expense.findMany({ where: { orgId: ORG, state: "owner_approval", backfill: false } });
   const facts = await signoffFactsForExpenses(db, expenses, { readOnly: true });
@@ -82,7 +82,7 @@ async function approvableByRule(p: ExpensePrincipal): Promise<Set<string>> {
   for (const e of expenses) {
     const { byLine, filled, approvals } = facts.get(e.id)!;
     for (const [lineId, f] of byLine) {
-      if (APPROVABLE_STATUSES.has(approvals.get(lineId)?.status ?? "") && approvalRefusal(f, filled.get(lineId) ?? [], p.id) === null) out.add(e.id);
+      if (APPROVABLE_STATUSES.has(approvals.get(lineId)?.status ?? "") && !approvesAsStandIn(f, p.id) && approvalRefusal(f, filled.get(lineId) ?? [], p.id) === null) out.add(e.id);
     }
   }
   return out;
@@ -90,11 +90,11 @@ async function approvableByRule(p: ExpensePrincipal): Promise<Set<string>> {
 
 /** The ids of the expenses the prefilter keeps for the caller. */
 async function prefiltered(p: ExpensePrincipal): Promise<string[]> {
-  const where = approvableByCallerWhere(p.id, await dir.householdIds(p.id), await dir.bucketsApprovedBy(p.id), p.isBoard);
+  const where = approvableByCallerWhere(p.id, await dir.householdIds(p.id), await dir.bucketsApprovedBy(p.id));
   return (await db.expense.findMany({ where: { orgId: ORG, ...where }, select: { id: true } })).map((e) => e.id).sort();
 }
 
-/** What the badge read finds when it reads every open expense in owner approval with lineActions. */
+/** What the badge read finds when it reads every open expense in owner approval with lineActions, leaving out Board stand-in lines. */
 async function awaitingByEveryCandidate(p: ExpensePrincipal) {
   const expenses = await db.expense.findMany({
     where: { orgId: ORG, state: "owner_approval", backfill: false },
@@ -102,7 +102,7 @@ async function awaitingByEveryCandidate(p: ExpensePrincipal) {
   });
   const out = [];
   for (const e of expenses) {
-    const lineItemIds = (await callerLines(p, e, true)).filter((l) => l.actions.some((a) => a.act === "approve" && a.primary)).map((l) => l.lineItemId);
+    const lineItemIds = (await callerLines(p, e, true)).filter((l) => l.actions.some((a) => a.act === "approve" && a.primary) && !approvesAsStandIn(l.facts, p.id)).map((l) => l.lineItemId);
     if (lineItemIds.length > 0) out.push({ expenseId: e.id, lineItemIds });
   }
   return out;

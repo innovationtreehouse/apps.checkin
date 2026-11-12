@@ -290,16 +290,17 @@ export function approvalRefusal(facts: SignoffFacts, filled: FilledSeat[], userI
 }
 
 /**
- * Expenses with a line `me` may approve, as a query over the expense rows: every check of
- * approvalRefusal and the approve act that reads only the expense and `me`. It keeps each expense
- * with a line they allow, and may keep more: a merged-away party's stored id is not in `mine`, and whether a Board stand-in's approval is the line's main
- * act needs the other approvers' households, so lineActions decides. `household` is everyone in
- * `me`'s household, merged-away people included; `buckets` are the buckets `me` approves.
+ * Expenses with a line `me` may approve as its bucket approver, as a query over the expense rows:
+ * every check of approvalRefusal and the approve act that reads only the expense and `me`. It keeps
+ * each expense with such a line, and may keep more: a merged-away party's stored id is not in
+ * `mine`, so lineActions decides. A Board member's approval in a bucket approver's place is Finance
+ * review's (boardApprovalsWaiting), not this. `household` is everyone in `me`'s household,
+ * merged-away people included; `buckets` are the buckets `me` approves.
  */
-export function approvableByCallerWhere(me: number, household: number[], buckets: number[], isBoard: boolean): Prisma.ExpenseWhereInput {
+export function approvableByCallerWhere(me: number, household: number[], buckets: number[]): Prisma.ExpenseWhereInput {
   const mine = [...new Set([me, ...household])];
   const mates = mine.filter((id) => id !== me);
-  const waiting: Prisma.LineItemOwnerApprovalWhereInput = { status: { in: [...APPROVABLE_STATUSES] }, ...(isBoard ? {} : { ownerId: { in: buckets } }) };
+  const waiting: Prisma.LineItemOwnerApprovalWhereInput = { status: { in: [...APPROVABLE_STATUSES] }, ownerId: { in: buckets } };
   return {
     backfill: false,
     state: "owner_approval",
