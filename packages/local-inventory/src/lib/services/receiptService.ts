@@ -8,6 +8,7 @@ import { formatGtinDisplay, isProvisionalGtin13 } from "../gtin";
 import { applyQtyChangeIn } from "./inventoryService";
 import { receivingGtin13, reconcileRecorded, type ProvisionalItemService } from "./provisionalItemService";
 import { ServiceError } from "@checkin/component-kit";
+import { FAILED_AGAIN } from "../retry";
 
 export type ApplyLineItem = {
   gtin13: string;
@@ -299,7 +300,7 @@ export function createReceiptService({
 
     /**
      * Applies a failed delta once from its stored lines. 404 when this org has no such failed delta.
-     * A failure is recorded on the row, not thrown, so its error stays on the item's own page.
+     * A failure is recorded on the row and answers 409 with no error text, so the error stays on the row.
      */
     async retryFailedDelta(orgId: string, where: Prisma.ReceivedInventoryDeltaWhereInput): Promise<void> {
       const row = await db.receivedInventoryDelta.findFirst({ where: { orgId, status: "failed", ...where }, select: { deltaJson: true } });
@@ -307,7 +308,11 @@ export function createReceiptService({
       const stored = storedDeltaSchema.safeParse(parseJson(row.deltaJson));
       if (!stored.success) throw new ServiceError(409, "The stored inventory delta can't be read");
       const { source, lineItems } = stored.data;
-      await apply(orgId, source, lineItems).catch(() => undefined);
+      try {
+        await apply(orgId, source, lineItems);
+      } catch {
+        throw new ServiceError(409, FAILED_AGAIN);
+      }
     },
 
     /** Why the donation's last apply failed; null once it applies, or if it never failed. */
