@@ -75,17 +75,18 @@ merged. Confirm a merged PR's files are on `main` (`git show origin/main:<path>`
 before starting the next.
 
 1. **Boundary: register the family route.** Registry entries only:
-   - `GET /api/membership/check-started` and `POST /api/membership/check-started`
-     in the registry, with role and token grants for any signed-in person. The
-     handler narrows the subject.
-   - The view for the synthetic `state` field, and its classification if the
-     registry needs one.
+   - `GET`, `POST` and `DELETE /api/membership/check-started` in the registry, with
+     role and token grants for any signed-in person. The handler narrows the
+     subject: whom the caller may mark (D4) and whom they may dismiss (CS-4).
+   - The view for the synthetic `state` and `mayDismiss` fields, and their
+     classification if the registry needs one.
 
    It ships no route file. The route-coverage lint treats a registry entry with no
    route file as the sanctioned register-first state: it warns and does not block.
    Only security tests (`src/security/__tests__/`) may accompany it.
 2. **App: build it.** Everything in the design file:
-   - `markCheckStarted` and `householdCheckStarted`, plus the legacy clause.
+   - `markCheckStarted`, `dismissCheckStarted` and `householdCheckStarted`, plus
+     the legacy clause.
    - The advance gate, `blockedResetStatus` and settle changes.
    - The new route files.
    - The /membership panel and the Board applications page.
@@ -104,7 +105,7 @@ before starting the next.
    - Delete `BG_CHECK_STARTED.md`.
    - Trim this file to the legacy clause and step 3.
 
-   Answers to CS-1 to CS-3 are needed before this PR starts.
+   The answer to CS-4 is needed before this PR starts.
 3. **App: drop the legacy clause** once the exit condition holds:
    - Delete `legacyHouseholdCheckStarted` and its three callers.
    - Delete `openRequestedReview`.
