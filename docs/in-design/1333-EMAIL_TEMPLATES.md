@@ -158,20 +158,19 @@ diff is behavior-neutral on wording. The old inline builders and hardcoded subje
   `sampleCtx` (client-side, reusing the shared substitute fn so preview can't drift from send)
   → save (token-validated) → optional **send-to-self** (reuse the outreach test-send pattern).
 
-## Key list (49)
+## Key list (62)
 
-47 keys are in the registry. The 2 `outreach.*` keys join it in step 5, because outreach has
+60 keys are in the registry. The 2 `outreach.*` keys join it in step 5, because outreach has
 no default copy in code today (the Board writes it, and it is empty until they do).
 `link` tokens are noted; everything else is `text`. Tokens are named after the words they
 stand for in today's copy, so a key without a link today has no `actionLink`.
 
-### checkin and attendance — 4
+### checkin and attendance — 3
 | key | trigger | recipient | tokens |
 |-----|---------|-----------|--------|
 | `checkin.receipt` | `sendCheckinNotifications` participant (`checkinReceiptTemplate`) | participant | name, emoji, visitWord, action, date, time, via |
 | `checkin.householdMember` | `sendCheckinNotifications` household leads (`householdMemberTemplate`) | household lead | leadName, memberName, emoji, arrivalWord, action, date, time, via |
 | `attendance.selfCorrectionFlag` | significant visit edit/delete (`attendance/manual/[id]`) | board | scope, change, visitId, actorName, verb, whose, score, detail |
-| `attendance.keyholderHandover` | last keyholder names a successor (`keyholderGuard`) | named keyholder | leaverName, when, peopleInside |
 
 > Resolved (flag A): `sendNotification` CHECKIN/CHECKOUT is **dead** — test-only, no prod
 > caller. The live check-in mail is the first two rows above. No `checkin.notify`/`checkout.notify`
@@ -205,7 +204,7 @@ stand for in today's copy, so a key without a link today has no `actionLink`.
 | `membership.welcome` | `sendCongrats`, first membership | family | `actionLink` ("Visit your dashboard") |
 | `membership.renewed` | `sendCongrats`, renewal | family | `actionLink` ("Visit your dashboard") |
 
-### board — 7
+### board — 6
 | key | trigger | recipient | tokens |
 |-----|---------|-----------|--------|
 | `board.paidReject` | `notifyBoardPaidReject` | board | processId, `actionLink` ("Open applications") |
@@ -217,32 +216,59 @@ stand for in today's copy, so a key without a link today has no `actionLink`.
 
 > See sub-decision B (blurb) below.
 
-### finance — 11
+### ops — 5
 | key | trigger | recipient | tokens |
 |-----|---------|-----------|--------|
-| `finance.receiptMailCeiling` | receipt mail intake hits its hold ceiling | FINANCE, else board | unresolved, refused, `actionLink` ("Open the incoming receipt queue") |
-| `finance.incomePostCap` | income run stops at its per-run cap | FINANCE, else board | created, limit, remaining, `actionLink` ("Open income reconciliation") |
-| `finance.receiptMailAgeing` | receipt mail run leaves messages unread past the window | FINANCE, else board | messages, since, `actionLink` ("Open the incoming receipt queue") |
-| `finance.receiptMailboxUnreadable` | receipt mail run cannot list the mailbox: Gmail refused access | FINANCE, else board | `actionLink` ("Open the incoming receipt queue") |
-| `finance.receiptMailboxUnanswered` | receipt mail run cannot list the mailbox: Gmail did not answer | FINANCE, else board | `actionLink` ("Open the incoming receipt queue") |
-| `finance.receiptMailboxNotFound` | receipt mail run cannot list the mailbox: no such mailbox | FINANCE, else board | `actionLink` ("Open the incoming receipt queue") |
-| `finance.receiptMailboxFailed` | receipt mail run cannot list the mailbox: unexpected failure | FINANCE, else board | `actionLink` ("Open the incoming receipt queue") |
-| `finance.incomeBucketUnusable` | a budget-owner bucket can't take sales | FINANCE, else board | bucketName, issue, itemCount, `actionLink` ("Open income items") |
-| `finance.incomeSweepIncomplete` | income orphan sweep reads a full page | FINANCE, else board | since, `actionLink` ("Open income reconciliation") |
-| `finance.expensePaymentAccount` | books-map payment account can't post | FINANCE, else board | accountId, accountKind, `actionLink` ("Open the books map") |
-| `finance.expenseSweepIncomplete` | expense orphan sweep reads a full page | FINANCE, else board | since, `actionLink` ("Open expenses") |
-| `finance.donationDepositHandOver` | daily job cannot hand a finished giving-platform batch to income; once per batch | FINANCE, else board | batches, `actionLink` ("Open booking batches") |
-| `finance.inKindSweepIncomplete` | in-kind orphan sweep reads a full page | FINANCE, else board | since, `actionLink` ("Open the in-kind queue") |
-| `finance.inKindDrainStopped` | in-kind drain stops on its failure streak, a lost connection, or three gifts refused with one fault code | FINANCE, else board | failures, remaining, cause, `actionLink` ("Open the in-kind queue") |
+| `ops.incidentOpened` | a job run's failure opens an incident (`opsIncidents`) | the alert address setting (nothing sent if unset) | kind, cause, lanes, status, summary, firstSeen, runsSeen, items, todo, `actionLink` ("Open System Status") |
+| `ops.incidentReminder` | an incident is still open when its reminder falls due | the alert address setting (nothing sent if unset) | same as `ops.incidentOpened` |
+| `ops.incidentEscalated` | an incident has been open for 2 weeks | the Board address setting (nothing sent if unset) | same as `ops.incidentOpened` |
+| `ops.incidentRecovered` | a run covers every lane of an open incident without failing it | the alert address setting (nothing sent if unset) | same as `ops.incidentOpened` |
+| `ops.problemsDigest` | daily, while anything on the Problems list is stuck or a job has not run on time (`sendProblemsDigest`) | the alert address setting (nothing sent if unset); also the Board address setting once anything has waited over 14 days | count, items, `actionLink` ("Open System Status") |
 
-### receipt — 2
+> The ops emails carry codes, counts and dates only: no amounts, donor or vendor names, or
+> memo or error text.
+
+### finance — 13
+| key | trigger | recipient | tokens |
+|-----|---------|-----------|--------|
+| `finance.receiptMailCeiling` | receipt mail intake hits its hold ceiling | the alert address setting (nothing sent if unset) | unresolved, refused, `actionLink` ("Open the incoming receipt queue") |
+| `finance.incomePostCap` | income run stops at its per-run cap | the alert address setting (nothing sent if unset) | created, limit, remaining, `actionLink` ("Open income reconciliation") |
+| `finance.receiptMailAgeing` | receipt mail run leaves messages unread past the window | the alert address setting (nothing sent if unset) | messages, since, `actionLink` ("Open the incoming receipt queue") |
+| `finance.receiptMailboxUnreadable` | receipt mail run cannot list the mailbox: Gmail refused access | the alert address setting (nothing sent if unset) | `actionLink` ("Open the incoming receipt queue") |
+| `finance.receiptMailboxUnanswered` | receipt mail run cannot list the mailbox: Gmail did not answer | the alert address setting (nothing sent if unset) | `actionLink` ("Open the incoming receipt queue") |
+| `finance.receiptMailboxNotFound` | receipt mail run cannot list the mailbox: no such mailbox | the alert address setting (nothing sent if unset) | `actionLink` ("Open the incoming receipt queue") |
+| `finance.receiptMailboxFailed` | receipt mail run cannot list the mailbox: unexpected failure | the alert address setting (nothing sent if unset) | `actionLink` ("Open the incoming receipt queue") |
+| `finance.incomeBucketUnusable` | a budget-owner bucket can't take sales | the alert address setting (nothing sent if unset) | bucketName, issue, itemCount, `actionLink` ("Open income items") |
+| `finance.incomeSweepIncomplete` | income orphan sweep reads a full page | the alert address setting (nothing sent if unset) | since, `actionLink` ("Open income reconciliation") |
+| `finance.expensePaymentAccount` | books-map payment account can't post | the alert address setting (nothing sent if unset) | accountId, accountKind, `actionLink` ("Open the books map") |
+| `finance.expenseSweepIncomplete` | expense orphan sweep reads a full page | the alert address setting (nothing sent if unset) | since, `actionLink` ("Open expenses") |
+| `finance.donationDepositHandOver` | daily job cannot hand a finished giving-platform batch to income; once per batch | the alert address setting (nothing sent if unset) | batches, `actionLink` ("Open booking batches") |
+| `finance.inKindSweepIncomplete` | in-kind orphan sweep reads a full page | the alert address setting (nothing sent if unset) | since, `actionLink` ("Open the in-kind queue") |
+
+### receipt — 4
 | key | trigger | recipient | tokens |
 |-----|---------|-----------|--------|
 | `receipt.mailReplyCredited` | `sendMailReply`, the person a mailed receipt is credited to | credited person | creditedName, from, when, `actionLink` ("Review it in My receipts") |
 | `receipt.mailReplySender` | `sendMailReply`, a sender whose receipt is credited to someone else | sender | when, creditedName |
+| `receipt.mailRefused` | `sendMailReply`, a mail from which no receipt was accepted | sender | when |
+| `receipt.rejected` | a receipt is not accepted (`purchaseOutcomeMail`) | uploader; also the person reimbursed when that is someone else | name, receipt, retailer, date, `actionLink` ("Open the receipt") |
 
-> Both carry the `Auto-Submitted: auto-replied` header, which is why `sendTemplated` takes optional
-> headers.
+> The three `sendMailReply` notices carry the `Auto-Submitted: auto-replied` header, which is
+> why `sendTemplated` takes optional headers.
+
+### expense — 2
+| key | trigger | recipient | tokens |
+|-----|---------|-----------|--------|
+| `expense.lineRejected` | a line of a receipt is not approved (`purchaseOutcomeMail`) | uploader; also the person reimbursed when that is someone else | name, receipt, retailer, date, `actionLink` ("Open the receipt") |
+| `expense.reimbursementComplete` | a reimbursement is approved (`purchaseOutcomeMail`) | uploader; also the person reimbursed when that is someone else | name, receipt, retailer, date, `actionLink` ("Open the receipt") |
+
+> `receipt` is "your receipt" to the uploader and "a receipt for your reimbursement" to the
+> person reimbursed. These three outcome notices respect the recipient's opt-out.
+
+### lifecycle — 1
+| key | trigger | recipient | tokens |
+|-----|---------|-----------|--------|
+| `lifecycle.driftDigest` | lifecycle drift check finds rows off their state diagram (`lifecycleDrift`) | sysadmins and board | newCount, stillPresentCount, newList, stillPresentList, `actionLink` ("Open the Lifecycle panel") |
 
 ### shopify — 1
 | key | trigger | recipient | tokens |
