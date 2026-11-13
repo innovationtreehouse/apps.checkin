@@ -167,9 +167,9 @@ How the pieces are built is described in
   was done by hand or isn't needed, and carries a note; a blank note is
   refused. A closed receipt can't be reopened. `[Decision — owner]`
 
-- The person who uploaded a receipt, or anyone in their household, may map its
-  lines in Part mapping (link, propose or mark not inventory) and send it to
-  apply. There is no conflict-of-interest check on mapping: it decides what the
+- Inventory managers map a receipt's lines in Part mapping (link, propose or
+  mark not inventory) and send it to apply. There is no conflict-of-interest
+  check on mapping: it decides what the
   goods are, not what is paid. Finance and the expense sign-off seats decide
   the money side, under the conflict rules in `expenses.md`.
   `[Decision — owner]`
