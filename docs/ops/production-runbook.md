@@ -159,7 +159,7 @@ the database, catalog events) and a kind.
 
 | Kind | Alerts when | One incident per |
 | --- | --- | --- |
-| System | Two runs in a row fail, or a lane stops | cause and kind, listing every lane hit |
+| System | Two runs in a row fail | cause and kind, listing every lane hit |
 | Connection | The first run fails | cause and kind |
 | Settings, with work waiting | The first run fails | cause and kind |
 | Bug | A new code, on its first run | lane and code |

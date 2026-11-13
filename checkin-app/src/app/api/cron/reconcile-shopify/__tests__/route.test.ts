@@ -99,8 +99,8 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
         const run = jest.mocked(evaluateRun).mock.calls[0][0];
         expect(run.lanes).toEqual(['reconcile-shopify', 'expense intake', 'expense intake-replay']);
         expect(run.failures).toEqual([
-            { lane: 'expense intake', cause: 'intake', kind: 'connection', code: 'connection', count: 1, stopped: false },
-            { lane: 'reconcile-shopify', cause: 'reconcile-shopify', kind: 'bug', code: 'program stock crashed', count: 1, stopped: false },
+            { lane: 'expense intake', cause: 'intake', kind: 'connection', code: 'connection', count: 1 },
+            { lane: 'reconcile-shopify', cause: 'reconcile-shopify', kind: 'bug', code: 'program stock crashed', count: 1 },
         ]);
         logged.mockRestore();
     });
@@ -114,8 +114,8 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
         const run = jest.mocked(evaluateRun).mock.calls[0][0];
         expect(run.lanes).toEqual(['reconcile-shopify']);
         expect(run.failures).toEqual([
-            { lane: 'expense intake', cause: 'intake', kind: 'bug', code: 'expense crashed', count: 1, stopped: false },
-            { lane: 'expense intake-replay', cause: 'intake', kind: 'bug', code: 'expense crashed', count: 1, stopped: false },
+            { lane: 'expense intake', cause: 'intake', kind: 'bug', code: 'expense crashed', count: 1 },
+            { lane: 'expense intake-replay', cause: 'intake', kind: 'bug', code: 'expense crashed', count: 1 },
         ]);
         logged.mockRestore();
     });

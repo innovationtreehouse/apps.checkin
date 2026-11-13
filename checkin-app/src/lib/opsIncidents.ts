@@ -12,14 +12,13 @@ import { formatDateTime } from "@/lib/time";
  * keys follow the ops alerting design; see docs/ops/production-runbook.md § Alerts.
  */
 
-/** One kind of failure a lane met in a run. `count` is the items it affected; `stopped` means the lane gave up on the run. */
+/** One kind of failure a lane met in a run. `count` is the items it affected. */
 export interface RunFailure {
     lane: string;
     cause: string;
     kind: FailureKind;
     code: string;
     count: number;
-    stopped?: boolean;
 }
 
 /**
@@ -69,7 +68,6 @@ interface Observation {
     lanes: string[];
     codes: string[];
     count: number;
-    stopped: boolean;
 }
 
 /** The key of a stopped job's incident. */
@@ -88,23 +86,22 @@ function observe(report: RunReport): Observation[] {
     for (const f of report.failures) {
         if (f.kind === "data" || (f.kind === "settings" && f.count <= 0)) continue;
         const key = f.kind === "bug" ? `${f.lane}:${f.code}` : `${f.cause}:${f.kind}`;
-        const o = byKey.get(key) ?? { key, cause: f.cause, kind: f.kind, lanes: [], codes: [], count: 0, stopped: false };
+        const o = byKey.get(key) ?? { key, cause: f.cause, kind: f.kind, lanes: [], codes: [], count: 0 };
         o.lanes = union(o.lanes, [f.lane]);
         o.codes = union(o.codes, [f.code]);
         o.count += f.count;
-        o.stopped ||= !!f.stopped;
         byKey.set(key, o);
     }
     for (const job of report.staleJobs ?? []) {
         const key = staleKey(job);
-        byKey.set(key, { key, cause: "cron", kind: "system", lanes: [job], codes: ["stale"], count: 0, stopped: true });
+        byKey.set(key, { key, cause: "cron", kind: "system", lanes: [job], codes: ["stale"], count: 0 });
     }
     return [...byKey.values()];
 }
 
-/** System failures alert on the second run in a row or when a lane stopped; connection, settings and bug alert on the first. */
-function meetsThreshold(row: OpsIncident, stopped: boolean): boolean {
-    return row.kind !== "system" || stopped || row.runsSeen >= 2;
+/** System failures alert on the second run in a row; a stopped job, connection, settings and bug alert on the first. */
+function meetsThreshold(row: OpsIncident): boolean {
+    return row.kind !== "system" || isStaleKey(row.key) || row.runsSeen >= 2;
 }
 
 function covers(report: RunReport, row: OpsIncident): boolean {
@@ -251,9 +248,9 @@ async function record(o: Observation, open: OpsIncident | undefined, recent: Ops
     }
 }
 
-async function notify(row: OpsIncident, stopped: boolean, delivery: Delivery, now: Date, events: IncidentEvent[]): Promise<void> {
+async function notify(row: OpsIncident, delivery: Delivery, now: Date, events: IncidentEvent[]): Promise<void> {
     if (!row.notifiedAt) {
-        if (!meetsThreshold(row, stopped)) return;
+        if (!meetsThreshold(row)) return;
         await claimAndSend(row, "notifiedAt", "opened", delivery.alertTo, "ops.incidentOpened", delivery, now, events);
         return;
     }
@@ -292,7 +289,7 @@ export async function evaluateIncidents(report: RunReport, delivery: Delivery): 
     for (const o of observations) {
         const row = await record(o, open.get(o.key), recent.get(o.key), now);
         recent.delete(o.key);
-        if (row) await notify(row, o.stopped, delivery, now, events);
+        if (row) await notify(row, delivery, now, events);
     }
 
     const seen = new Set(observations.map((o) => o.key));
