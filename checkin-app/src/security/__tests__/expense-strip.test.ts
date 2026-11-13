@@ -11,9 +11,10 @@
  */
 import { stripValue } from '@/security/stripper';
 import type { CallerContext } from '@/security/access-resolvers';
-import type { Token } from '@/security/core';
+import { getRoute, type Token } from '@/security/core';
 import * as expenseGenerated from '@/security/generated/expense-classifications';
 import * as expenseSynthetic from '@/security/expenseSyntheticClassifications';
+import '@/security/registry';
 
 const ctx: CallerContext = {
     selfId: 1,
@@ -124,6 +125,26 @@ describe('expense stripper', () => {
 
     it('the finance view sees the submitter and reimbursee', () => {
         expect(strip('Expense', expense(), FINANCE_VIEW)).toEqual(expense());
+    });
+
+    describe("a stuck expense's last error on its detail read", () => {
+        const view = (role: string) =>
+            getRoute('GET /api/expense/expenses/[id]')?.orderedView.find(([r]) => r === role)?.[1] ?? [];
+        const stuck = { id: 'e-1', qbMatchState: 'NEEDS_FINANCE', qbFirstFailedAt: '2026-11-01T00:00:00Z', qbLastError: 'QBO create Purchase failed: socket hang up' };
+
+        it.each(['isFinance', 'isBoardMember'])('reaches the %s view', (role) => {
+            expect(strip('Expense', stuck, view(role))).toEqual(stuck);
+        });
+
+        it('is stripped from a bucket approver, who keeps when it got stuck', () => {
+            expect(strip('Expense', stuck, view('authenticated'))).toEqual({ id: 'e-1', qbMatchState: 'NEEDS_FINANCE', qbFirstFailedAt: '2026-11-01T00:00:00Z' });
+        });
+
+        it('is stripped from its own submitter too: the gate admits approvers only, and the approver view grants no their_own', () => {
+            expect(getRoute('GET /api/expense/expenses/[id]')?.authorize).toBe('expense-approver');
+            const own = { ...stuck, submitterId: ctx.selfId };
+            expect(strip('Expense', own, view('authenticated'))).not.toHaveProperty('qbLastError');
+        });
     });
 
     it('an internal-only view strips who signed, through the line relation too', () => {

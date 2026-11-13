@@ -179,7 +179,7 @@ model Expense {
   // cleared when that step succeeds. Set means stuck.
   /// @sensitivity:internal
   qbFirstFailedAt    DateTime? @map("qb_first_failed_at")
-  // The latest error of that failed step, shown only on the expense's own page.
+  // The latest error of that failed step; the expense's own page shows it to finance and the Board while it is stuck.
   /// @sensitivity:personal
   qbLastError        String?   @map("qb_last_error")
   // When a post claimed the expense (POSTING) before calling QuickBooks; cleared when it settles.
