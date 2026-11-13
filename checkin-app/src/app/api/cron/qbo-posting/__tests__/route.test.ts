@@ -90,7 +90,7 @@ describe('GET /api/cron/qbo-posting', () => {
 
         expect(jest.mocked(evaluateRun).mock.calls[0][0]).toEqual({
             lanes: ['qbo-posting', 'expense posting'],
-            failures: [{ lane: 'expense posting', cause: 'quickbooks', kind: 'system', code: 'HTTP 503', count: 1, stopped: false }],
+            failures: [{ lane: 'expense posting', cause: 'quickbooks', kind: 'system', code: 'HTTP 503', count: 1 }],
         });
         expect(create.mock.calls[0][0].data).toMatchObject({ failuresByKind: { system: 1 } });
     });
@@ -120,7 +120,7 @@ describe('GET /api/cron/qbo-posting', () => {
 
         const run = jest.mocked(evaluateRun).mock.calls[0][0];
         expect(run.lanes).toEqual(['qbo-posting']);
-        expect(run.failures).toEqual([{ lane: 'expense posting', cause: 'quickbooks', kind: 'bug', code: 'expense crashed', count: 1, stopped: false }]);
+        expect(run.failures).toEqual([{ lane: 'expense posting', cause: 'quickbooks', kind: 'bug', code: 'expense crashed', count: 1 }]);
         logged.mockRestore();
     });
 
@@ -131,7 +131,7 @@ describe('GET /api/cron/qbo-posting', () => {
         await GET(req());
 
         expect(jest.mocked(evaluateRun).mock.calls[0][0].failures).toEqual([
-            { lane: 'qbo-posting', cause: 'qbo-posting', kind: 'bug', code: 'income sweep crashed', count: 1, stopped: false },
+            { lane: 'qbo-posting', cause: 'qbo-posting', kind: 'bug', code: 'income sweep crashed', count: 1 },
         ]);
         logged.mockRestore();
     });

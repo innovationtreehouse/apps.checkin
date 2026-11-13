@@ -5,11 +5,10 @@ import type { RunFailure } from "@/lib/opsIncidents";
 import { recordFaultCodes } from "@/lib/qboFaultCodes";
 import { evaluateRun } from "@/lib/runIncidents";
 
-/** What one job run's lanes reported, which lanes it reached, and which it stopped early. */
+/** What one job run's lanes reported and which lanes it reached. */
 export interface Run {
     reports: FailureReport[];
     reached: Set<string>;
-    stopped: Set<string>;
 }
 
 // On globalThis: the ports bind in the instrumentation chunk and the runs start in route chunks, which load this module apart.
@@ -26,7 +25,7 @@ const CAUSES: Record<string, string> = {
     "income deposit-build": "quickbooks",
 };
 
-export const newRun = (): Run => ({ reports: [], reached: new Set(), stopped: new Set() });
+export const newRun = (): Run => ({ reports: [], reached: new Set() });
 
 /** Runs a job's work inside `run`, so every report its lanes make lands on it. */
 export const inRun = <T>(run: Run, work: () => Promise<T>): Promise<T> => current.run(run, work);
@@ -59,18 +58,13 @@ export function laneReached(...lanes: string[]): void {
     for (const lane of lanes) run?.reached.add(lane);
 }
 
-/** Marks a lane the run stopped early, so a system failure on it alerts on this run. */
-export function laneStopped(lane: string): void {
-    current.getStore()?.stopped.add(lane);
-}
-
 /** One failure per lane, kind and code. Each item counts once, however many times its lane reported it this run. */
 function runFailures(run: Run): RunFailure[] {
     const byKey = new Map<string, RunFailure & { items: Set<string> }>();
     for (const r of run.reports) {
         const code = r.faultCodes?.join("+") ?? (r.status === undefined ? r.kind : `HTTP ${r.status}`);
         const key = `${r.lane}\n${r.kind}\n${code}`;
-        const f = byKey.get(key) ?? { lane: r.lane, cause: CAUSES[r.lane] ?? r.lane, kind: r.kind, code, count: 0, stopped: run.stopped.has(r.lane), items: new Set<string>() };
+        const f = byKey.get(key) ?? { lane: r.lane, cause: CAUSES[r.lane] ?? r.lane, kind: r.kind, code, count: 0, items: new Set<string>() };
         f.items.add(r.detail ?? "");
         byKey.set(key, f);
     }
