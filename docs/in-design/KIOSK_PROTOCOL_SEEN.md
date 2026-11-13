@@ -5,56 +5,25 @@ because the server forgets which build each kiosk is running as soon as the
 scan is answered. This design records, per kiosk, the last protocol version
 the server received and when.
 
-## Decisions for the owner
+## Decisions
 
-Each has a recommendation. The design below is written to the recommendations;
-another choice changes only the section named.
+The owner ruled on each of these on 2026-11-13. The design below follows the
+rulings.
 
-**KP-IDENT — how a kiosk is identified.**
-- **A. By its signing key (recommended).** Each kiosk signs with its own
-  key, and the server already finds which configured key matched. A short
-  fingerprint of that public key is the kiosk's identity. The kiosk does not
-  change.
-- B. By a kiosk id the kiosk sends. This needs a kiosk build. Kiosk changes
-  belong to the kiosk owner, and the id would be just another unsigned label
-  unless it goes into the signed body.
-
-**KP-STORE — what a row holds.**
-- **A. One row per kiosk and version, with first and last seen
-  (recommended).** The latest version for a kiosk is its row with the latest
-  last-seen time. Each version also keeps the last time it was seen, so "has
-  anything sent version 5 in the last 30 days?" is one lookup, even after the
-  kiosk upgrades. The row count stays tiny: kiosks times versions.
-- B. One row per kiosk, holding the latest version only. This is what the
-  finding asks for, but an upgrade overwrites the evidence that an older
-  version was seen recently.
-
-**KP-WRITE — write cost.**
-- **A. One upsert per scan (recommended).** Fire-and-forget after the scan,
-  like the response-time metric the scan route already inserts on every scan
-  (`checkin-app/src/app/api/scan/route.ts:577`). Last-seen is exact. No new
-  state.
-- B. Write only when the version changes, or when last-seen is more than an
-  hour old, using an in-process cache. Fewer writes, but it adds a per-task
-  cache and last-seen becomes approximate. Worth it only if scan volume
-  grows by orders of magnitude.
-
-**KP-VIEW — how the reading reaches System Status.**
-- **A. The heartbeat route returns the new model (recommended).** This means
-  a registry PR first, which adds the model to the route's `returns`. The
-  registry then names where the data comes from.
-- B. Synthesize `SystemMetricLog` rows with the fingerprint in the metric
-  name (`kiosk_protocol:<fp>:<version>`). This needs no boundary PR, the same
-  trick open PR #2375 uses for build strings. But the registry would then say
-  `SystemMetricLog` for data that comes from another table.
-
-**KP-WHO — who sees it.**
-- **A. Sysadmins and Board members (recommended).** These are the same
-  people who see the kiosk heartbeat today
-  (`checkin-app/src/security/registry.ts:876`).
-- B. Keyholders as well. Keyholders can open the health page, but the
-  heartbeat box is not granted to them. A protocol number tells a keyholder
-  nothing they can act on.
+- **KP-IDENT: a kiosk is identified by the signing key that verified it.**
+  The identity is a short fingerprint of that public key. The kiosk does not
+  change. There is one kiosk today.  [Decision — owner]
+- **KP-STORE: one row per kiosk, holding its latest version and when it was
+  last seen.** Kiosks do not move back to older builds, so the latest
+  version is all that is needed. There is no per-version history and no
+  first-seen time.  [Decision — owner]
+- **KP-WRITE: one upsert on every scan.** Each upsert also refreshes the
+  last-seen time.  [Decision — owner]
+- **KP-VIEW: the kiosk heartbeat route returns the kiosk row.** A boundary
+  PR adds the model to the `returns` of
+  `GET /api/system-status/kiosk-heartbeat`.  [Decision — owner]
+- **KP-WHO: sysadmins and Board members see it**, the same people who see
+  the kiosk heartbeat today.  [Decision — owner]
 
 ## Problem
 
@@ -68,19 +37,18 @@ kiosk still needs the old branches.
 
 ## Objective
 
-For each kiosk, the server records every protocol version it has received
-and when each was first and last seen. Sysadmins and Board members can see
-this on System Status. The kiosk owner can read off it when a version-gated
-branch has had no traffic.
+For each kiosk, the server records the protocol version it last received and
+when. Sysadmins and Board members can see this on System Status. The kiosk
+owner can read off it when no kiosk needs a version-gated branch any more.
 
 ## Executive summary
 
 - **Kiosk:** no change. The kiosk already sends its protocol version on
   every scan (`client/client.py:192`).
-- **Scan path:** after each scan, the server upserts one small row. This
-  never delays, fails or changes a scan.
+- **Scan path:** after each scan, the server upserts the kiosk's one row.
+  This never delays, fails or changes a scan.
 - **Operators (sysadmin, Board):** the kiosk heartbeat box on System Status
-  lists each kiosk key's protocol versions, with when each was last seen.
+  shows each kiosk's current protocol version and when it was last seen.
 - **Kiosk owner:** gets the evidence for deleting old protocol branches.
   Deleting them is out of scope here.
 - **Cost:** one new table, created by an expand-only migration. One upsert
@@ -149,24 +117,20 @@ read (`checkin-app/src/app/api/system-status/health/route.ts:71`). The kiosk
 heartbeat lives only in process memory (`checkin-app/src/lib/kioskSeen.ts`)
 and is lost when the service scales to zero each night.
 
-New model (KP-STORE A):
+New model, one row per kiosk (KP-STORE):
 
 ```prisma
-/// The scan protocol versions each kiosk signing key has sent, and when.
-/// One row per key and version. Rows are never deleted.
+/// The scan protocol version each kiosk signing key last sent, and when.
+/// One row per key. Rows are never deleted.
 model KioskProtocolSeen {
   /// First 16 hex of SHA-256 over the kiosk's Ed25519 public key.
   /// @sensitivity:internal
-  keyFingerprint  String
+  keyFingerprint  String   @id
   /// The version the server acted on: an absent protocolVersion is 1.
   /// @sensitivity:internal
   protocolVersion Int
   /// @sensitivity:internal
-  firstSeenAt     DateTime @default(now())
-  /// @sensitivity:internal
   lastSeenAt      DateTime
-
-  @@id([keyFingerprint, protocolVersion])
 }
 ```
 
@@ -181,14 +145,14 @@ than the server's, refused with 426 (`route.ts:190`), *is* recorded: it shows
 a kiosk running ahead of the server.
 
 **Migration: expand-only** (`docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`
-rule 1). It is one `CREATE TABLE` with the composite primary key and no
+rule 1). It is one `CREATE TABLE` with a single-column primary key and no
 foreign keys, so rule 8's foreign-key index rule does not apply. Old tasks
 draining during the rolling deploy never read or write the table. The app's
 DML role gets privileges on the new table through the default privileges in
 rule 9. The PR confirms that the AWS cluster bootstrap grants the same.
 Nothing is contracted later.
 
-### 3. Write cost (KP-WRITE A)
+### 3. Write cost (KP-WRITE)
 
 The upsert runs in the scan route's `finally`, next to the response-time
 metric (`route.ts:574-582`). It is fire-and-forget: a rejected promise is
@@ -196,13 +160,13 @@ logged and never thrown.
 
 ```ts
 prisma.kioskProtocolSeen.upsert({
-  where: { keyFingerprint_protocolVersion: { keyFingerprint, protocolVersion } },
+  where: { keyFingerprint },
   create: { keyFingerprint, protocolVersion, lastSeenAt: now },
-  update: { lastSeenAt: now },
+  update: { protocolVersion, lastSeenAt: now },
 })
 ```
 
-The `where` names only the unique key and there are no nested writes, so
+The `where` names only the primary key and there are no nested writes, so
 Prisma issues a native `INSERT … ON CONFLICT` on Postgres. Two scans at the
 same moment cannot collide on create.
 
@@ -211,19 +175,19 @@ the badge log, the visit and a metric row per scan. The write never runs
 while the kiosk rests, because a resting kiosk sends no scans. So it cannot
 wake the curfewed service or keep the database from pausing.
 
-### 4. Where an operator sees it (KP-VIEW A, KP-WHO A)
+### 4. Where an operator sees it (KP-VIEW, KP-WHO)
 
 The reading goes in the **Kiosk last seen** box on System Status → Health
 (`checkin-app/src/components/admin/SystemHealthPanels.tsx:556`,
-`KioskHeartbeatBox`). It shows one line per key fingerprint, latest version
-first, with each version's last-seen time. A key no longer in
+`KioskHeartbeatBox`). It shows one line per key fingerprint, with its
+protocol version and when it was last seen. A key no longer in
 `KIOSK_PUBLIC_KEY` is labelled "key removed".
 
 It is served by the existing `GET /api/system-status/kiosk-heartbeat`
 (`checkin-app/src/app/api/system-status/kiosk-heartbeat/route.ts`), which adds
 a `KioskProtocolSeen` array to its envelope.
 
-Boundary entries (registry PR, before the route PR):
+Boundary entry, changed in its own registry PR before the route PR:
 
 - `checkin-app/src/security/registry.ts:875`, the `defineRoute` for
   `GET /api/system-status/kiosk-heartbeat`. `returns` becomes
@@ -231,9 +195,7 @@ Boundary entries (registry PR, before the route PR):
   are unchanged: sysadmin and Board, `everyones:internal`. The entry's
   comment is updated to say the route also returns stored rows.
 
-No other route or view changes. The registry's `returns` is typed off the
-generated classifications, so the registry PR can only build once the model
-exists. That is why PR 1, which adds the model, comes first.
+No other route or view changes.
 
 ### 5. How this tells the kiosk owner when old code can go
 
@@ -246,12 +208,18 @@ Each legacy branch is gated on a version threshold
 | 5 | late, out-of-order or doubtful-clock replays are held instead of applied (`:355-356`) |
 | 6 | a keyholder's check-out decides the close (`:197`, `LegacyKiosk`) |
 
-A branch gated below version N can be deleted when both hold:
+A branch gated below version N can be deleted when both hold for every key
+still in `KIOSK_PUBLIC_KEY`:
 
-1. Every kiosk key still configured has its latest version at N or above.
-2. No row with a version below N has been seen for a quiet period the kiosk
-   owner picks, long enough to cover a kiosk that was off and comes back on
-   an old build.
+1. Its row's current version is N or above. Kiosks do not move back to an
+   older build, so once a kiosk reaches N it stays there.
+2. Its last-seen time is recent. A current version on a row that has not been
+   seen for weeks describes a kiosk that may since have been rebuilt or
+   replaced. The kiosk owner picks what counts as recent.
+
+A configured key with no row has never scanned since recording began. Its
+version is unknown, so it blocks deletion until it scans or the key is
+removed.
 
 One part of the legacy handling is not gated on a version: the old close
 fields `forceCloseConfirmed`, `forceCloseToken` and a bare `shownEmpty`
@@ -282,8 +250,12 @@ one to merge.
 3. **Show it.** Route and UI PR. The heartbeat route reads the table and
    returns the rows. `KioskHeartbeatBox` renders them.
 
-If the owner picks KP-VIEW B, PR 2 drops out and PR 3 synthesizes
-`SystemMetricLog` rows instead.
+The registry PR comes before the route PR but cannot come before PR 1.
+`returns` is typed against the models in the generated classifications
+(`checkin-app/src/security/core.ts:329`). A registry entry naming
+`KioskProtocolSeen` does not compile until the model exists on `main`. PR 1
+writes the row but exposes nothing, so nothing leaves the server before the
+registry PR lands.
 
 ## Alternatives considered
 
@@ -292,6 +264,13 @@ If the owner picks KP-VIEW B, PR 2 drops out and PR 3 synthesizes
   owner's question spans weeks.
 - **Rows in `SystemMetricLog`.** The 30-day purge erases the evidence. The
   table also has no column for the kiosk.
+- **One row per kiosk and version, with first-seen.** It would keep when each
+  older version was last seen. Kiosks do not move back to older builds, so
+  the current version answers the same question.
+- **Write only when the version changes.** Fewer writes, but it needs a
+  per-task cache, and last-seen would go stale.
+- **Synthesized `SystemMetricLog` rows on the heartbeat route.** This would
+  need no boundary PR, but the registry would name the wrong source model.
 - **Log lines only.** A log could answer the question, but only by hand
   through CloudWatch, with nothing on System Status.
 
