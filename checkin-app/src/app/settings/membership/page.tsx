@@ -8,12 +8,13 @@ import { errorMessage, LoadError, showError, showSuccess } from "@checkin/compon
 import { useSeedForm } from "@/hooks/useSeedForm";
 import { api, useLoad } from "@/lib/api";
 import { useUnsavedGuard, shallowEqual } from "@/components/UnsavedChangesProvider";
-import { useCheckinEnv } from "@/components/EnvProvider";
+import { useCheckinEnv, useDevMocks, useShopifyStoreDomain } from "@/components/EnvProvider";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { useSession } from "next-auth/react";
 import { LibraryReleaseCard } from "@/components/admin/LibraryReleaseCard";
 import { membershipYearLabel, variantSlotYears } from "@/lib/programYear";
+import { VariantPicker } from "./VariantPicker";
 
 interface Settings {
   standardMembershipFeeCents: number;
@@ -67,8 +68,10 @@ export default function MembershipSettingsPage() {
   const [slots, setSlots] = useState<YearSlot[]>([]);
   const [savedSlots, setSavedSlots] = useState<YearSlot[]>([]);
   const [slotErrors, setSlotErrors] = useState<Record<number, string>>({});
-  // The slot year being extracted, or "single" for the single-variant field.
-  const [extracting, setExtracting] = useState<number | "single" | null>(null);
+  // Variant IDs are typed only where Shopify cannot be read; elsewhere they come from a product URL.
+  const shopifyMock = useDevMocks().shopify;
+  const storeDomain = useShopifyStoreDomain();
+  const typedVariantIds = shopifyMock || !storeDomain;
   const [discountCode, setDiscountCode] = useState("");
   // Dev-instance-only: where contract signing requests go ('zoho' | 'debug').
   // Strictly CHECKIN_ENV=dev, not useIsDevInstance()'s not-prod: the API only
@@ -153,24 +156,6 @@ export default function MembershipSettingsPage() {
       setSavedSlots(slots);
     } catch (e) { showError(errorMessage(e)); }
     finally { setSaving(false); }
-  };
-
-  // Ask the server to pull the variant ID out of the pasted product URL (the
-  // Shopify admin UI hides the lone variant of a single-variant product, so
-  // there is nowhere to copy it from). Fills the variant-ID field only —
-  // nothing is persisted until the admin presses Save settings.
-  const extractVariant = async (slot: number | "single", url: string, fill: (variantId: string) => void) => {
-    setExtracting(slot);
-    try {
-      const { variantId } = await api<{ variantId: string }>("/api/settings/membership/extract-variant", {
-        method: "POST",
-        body: JSON.stringify({ productUrl: url.trim() }),
-        invalidate: false,
-      });
-      fill(variantId);
-      showSuccess(`Variant ${variantId} filled in — press Save settings to keep it.`);
-    } catch (e) { showError(errorMessage(e)); }
-    finally { setExtracting(null); }
   };
 
   const updateSlot = (year: number, change: Partial<YearSlot>) => {
@@ -295,32 +280,15 @@ export default function MembershipSettingsPage() {
 
             <Title order={4} mt="lg" mb="sm">Shopify checkout</Title>
             <Stack gap="md">
-              <Group align="flex-end" gap="sm" wrap="wrap">
-                <TextInput
-                  label="Membership product URL"
-                  description="Paste the product's storefront page URL; “Extract variant from URL” fills the variant ID below from it."
-                  placeholder="https://your-store.myshopify.com/products/membership"
-                  w={420}
-                  value={productUrl}
-                  onChange={(e) => setProductUrl(e.currentTarget.value)}
-                />
-                <Button
-                  variant="light"
-                  loading={extracting === "single"}
-                  disabled={extracting !== null || !productUrl.trim()}
-                  onClick={() => extractVariant("single", productUrl, (id) => { setVariantId(id); setFieldErrors((f) => ({ ...f, variantId: undefined })); })}
-                >
-                  Extract variant from URL
-                </Button>
-              </Group>
-              <TextInput
-                label="Membership product variant ID"
-                description="The Shopify variant ID of the membership product. We build the “Pay with Shopify” link from it as https://<store>/cart/<variantId>:1."
-                placeholder="1234567890"
-                w={260}
+              <VariantPicker
+                name="Membership product"
+                urlLabel="Membership product URL"
+                idLabel="Membership product variant ID"
+                value={{ variantId, productUrl }}
+                onChange={(next) => { setVariantId(next.variantId); setProductUrl(next.productUrl); setFieldErrors((f) => ({ ...f, variantId: undefined })); }}
+                editableId={typedVariantIds}
+                canClear
                 error={fieldErrors.variantId ?? (variantId.trim() === "" ? "Required for checkout — not configured." : undefined)}
-                value={variantId}
-                onChange={(e) => { setVariantId(e.currentTarget.value); setFieldErrors((f) => ({ ...f, variantId: undefined })); }}
               />
               <TextInput
                 label="Volunteer discount code"
@@ -339,31 +307,16 @@ export default function MembershipSettingsPage() {
                       <Title order={5}>{label}</Title>
                       {i === 1 && slot.variantId.trim() === "" && <Badge color="red">needs variant</Badge>}
                     </Group>
-                    <Group align="flex-end" gap="sm" wrap="wrap">
-                      <TextInput
-                        label={`${label} product URL`}
-                        placeholder="https://your-store.myshopify.com/products/membership"
-                        w={420}
-                        value={slot.productUrl}
-                        onChange={(e) => updateSlot(slot.year, { productUrl: e.currentTarget.value })}
-                      />
-                      <Button
-                        variant="light"
-                        aria-label={`Extract variant from URL for ${label}`}
-                        loading={extracting === slot.year}
-                        disabled={extracting !== null || !slot.productUrl.trim()}
-                        onClick={() => extractVariant(slot.year, slot.productUrl, (variantId) => updateSlot(slot.year, { variantId }))}
-                      >
-                        Extract variant from URL
-                      </Button>
-                    </Group>
-                    <TextInput
-                      label={`${label} variant ID`}
-                      placeholder="1234567890"
-                      w={260}
+                    <VariantPicker
+                      name={label}
+                      urlLabel={`${label} product URL`}
+                      idLabel={`${label} variant ID`}
+                      extractLabel={`Extract variant from URL for ${label}`}
+                      value={slot}
+                      onChange={(next) => updateSlot(slot.year, next)}
+                      editableId={typedVariantIds}
+                      canClear={!savedSlots[i]?.variantId}
                       error={slotErrors[slot.year]}
-                      value={slot.variantId}
-                      onChange={(e) => updateSlot(slot.year, { variantId: e.currentTarget.value })}
                     />
                   </Stack>
                 );
