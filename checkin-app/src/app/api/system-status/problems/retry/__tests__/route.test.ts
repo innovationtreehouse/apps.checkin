@@ -21,7 +21,7 @@ const mockSession = getServerSession as jest.MockedFunction<typeof getServerSess
 const retry = jest.mocked(retryProblem);
 const auditCreate = jest.fn();
 
-const ITEM = { library: 'expense', step: 'QuickBooks posting', id: 'e1' };
+const ITEM = { library: 'receipt', step: 'flow', id: 'r1' };
 
 function signIn(claims: Record<string, boolean>) {
     mockSession.mockResolvedValue({
@@ -48,7 +48,6 @@ beforeEach(() => {
     retry.mockReset();
     auditCreate.mockReset().mockResolvedValue({});
     prisma.auditLog.create = auditCreate as unknown as typeof prisma.auditLog.create;
-    jest.spyOn(console, 'error').mockImplementation(() => {});
 });
 
 afterEach(() => jest.restoreAllMocks());
@@ -64,7 +63,7 @@ describe('POST /api/system-status/problems/retry', () => {
         const res = await press();
 
         expect(res.status).toBe(200);
-        expect(await res.json()).toEqual({ results: [{ step: 'QuickBooks posting', id: 'e1', ok: true }] });
+        expect(await res.json()).toEqual({ results: [{ step: 'flow', id: 'r1', ok: true }] });
         expect(retry).toHaveBeenCalledTimes(1);
         expect(retry).toHaveBeenCalledWith(ITEM);
     });
@@ -84,15 +83,49 @@ describe('POST /api/system-status/problems/retry', () => {
         expect(auditCreate).not.toHaveBeenCalled();
     });
 
-    it.each([404, 409, 503])('answers %i with ok false and no error text when the library refuses', async (status) => {
+    it.each([
+        ['expense', 'QuickBooks posting'],
+        ['expense', 'QuickBooks processing'],
+        ['gifts', 'QuickBooks posting'],
+    ])('403s a sysadmin retrying %s %s, a QuickBooks step, without retrying or auditing', async (library, step) => {
         signIn({ isSysadmin: true });
+
+        const res = await press({ library, step, id: 'e1' });
+
+        expect(res.status).toBe(403);
+        expect(retry).not.toHaveBeenCalled();
+        expect(auditCreate).not.toHaveBeenCalled();
+    });
+
+    it('lets BOARD retry a QuickBooks step', async () => {
+        signIn({ isBoardMember: true });
+        retry.mockResolvedValue();
+
+        const res = await press({ library: 'gifts', step: 'QuickBooks posting', id: 'receipt 4' });
+
+        expect(res.status).toBe(200);
+        expect(retry).toHaveBeenCalledTimes(1);
+    });
+
+    it("lets a sysadmin retry a step that does not post to QuickBooks", async () => {
+        signIn({ isSysadmin: true });
+        retry.mockResolvedValue();
+
+        const res = await press({ library: 'expense', step: 'intake', id: 'r2' });
+
+        expect(res.status).toBe(200);
+        expect(retry).toHaveBeenCalledWith({ library: 'expense', step: 'intake', id: 'r2' });
+    });
+
+    it.each([404, 409, 503])('answers %i with ok false and no error text when the library refuses', async (status) => {
+        signIn({ isBoardMember: true });
         retry.mockRejectedValue(new ServiceError(status, 'The gift for Pat Example was not posted'));
 
         const res = await press();
 
         expect(res.status).toBe(status);
         const text = await res.text();
-        expect(JSON.parse(text)).toEqual({ results: [{ step: 'QuickBooks posting', id: 'e1', ok: false }] });
+        expect(JSON.parse(text)).toEqual({ results: [{ step: 'flow', id: 'r1', ok: false }] });
         expect(text).not.toMatch(/Pat|posted/);
     });
 
@@ -109,19 +142,20 @@ describe('POST /api/system-status/problems/retry', () => {
             action: 'CREATE',
             tableName: 'PROBLEM_RETRY',
             affectedEntityId: 0,
-            newData: { library: 'expense', step: 'QuickBooks posting', id: 'e1', ok: false },
+            newData: { library: 'receipt', step: 'flow', id: 'r1', ok: false },
         });
     });
 
     it('answers an opaque 500, logged and audited, when the retry throws anything else', async () => {
-        signIn({ isSysadmin: true });
+        signIn({ isBoardMember: true });
+        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
         retry.mockRejectedValue(new Error('connection to Pat Example lost'));
 
         const res = await press();
 
         expect(res.status).toBe(500);
         expect(await res.text()).not.toMatch(/Pat/);
-        expect(console.error).toHaveBeenCalled();
+        expect(logged).toHaveBeenCalled();
         expect(auditCreate.mock.calls[0][0].data.newData).toMatchObject({ ok: false });
     });
 
