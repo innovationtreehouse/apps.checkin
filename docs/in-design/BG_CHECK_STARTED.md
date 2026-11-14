@@ -111,6 +111,13 @@ follow-up PR once the old in-flight applications have drained. No migration.
   Dismissal is also allowed after a Board reset has cleared a review's decisions:
   for example, two people with similar names both had reviews opened, one never did
   the check, and the Board reset the reviews.
+- **CS-5** `[Decision — owner]` for the direction; the rule amendment it needs is
+  **pending the Board**. A review sent back after a rejection must not strand a
+  family. The Board, and only the Board, may close a review as "opened for the wrong
+  person", with a written reason and an audit row. Background-check reviewers
+  cannot. The rejection stays on record against that review and is never deleted.
+  It stops counting against the person, who may then be marked again. The reviewer
+  household bar still applies.
 
 These close the open question in PR2779-F02 (the #2779 rule was never ruled on) by
 replacing that rule's text. They also close the remainder of PR2779-F03 (a second
@@ -233,7 +240,7 @@ Refused:
   person cleared off it, and closing the review would discard it.
 
 So dismissal never stands in for a rejection. Once a rejection exists, the review
-goes through the existing paths and nothing else.
+goes through the existing paths, plus the Board's close below, and nothing else.
 
 A written reason is required. The work runs under the review's row lock, the same
 lock `attest` takes, so a dismissal and a first decision cannot both land. The
@@ -267,6 +274,124 @@ runs for the household. An application that already moved on to payment because 
 the dismissed mark stays where it is: payment runs in parallel with the check, and
 activation still needs a lead's clearance, which a dismissed mark never gave. The
 person may be marked again at any time.
+
+### The Board closes a review opened for the wrong person
+
+**The stranded case.** A review is rejected, but it was opened for the wrong
+person: two people with similar names, one of whom never took the check. Two
+things then hold the family:
+
+- A Board reset of the BLOCKED review sends it back. The person stays disputed
+  until two new approvals, which never come, because there is no check to approve.
+- The existing wrong-person reset clears the person off the review. That does free
+  the *person*: their standing reads only reviews that name them, so they are no
+  longer disputed. But the review now names nobody and still holds the rejection.
+  A review that holds a rejection cannot be closed, and the household cannot
+  qualify while a review requested for it waits to be named. The *household* is
+  stuck instead.
+
+Today nobody can free them without recording approvals that never happened.
+
+**Choice: extend the wrong-person reset rather than add a path.** The Board's
+existing reset route (`POST /api/membership-ops/applications/review-override`,
+Board only, `boardResetReview` in `checkin-app/src/lib/membership/review.ts`) gains
+one option, `closeAsWrongPerson: true`. This is the simpler and safer choice:
+
+- **It already carries every guard this needs.**
+  - It is Board only; reviewers cannot reach it.
+  - The reason is required.
+  - It has the household bar: no actor in the subject's or the requesting household
+    (`reviewHouseholds` with `refuseSelfGrant`).
+  - It refuses a denied household.
+  - It takes the review's row lock, as `attest` does, and writes an audit row.
+  - It settles afterwards.
+
+  A separate dismiss path would copy all of that, and two copies drift.
+- **The fact belongs where the wrong-person reset already is.** "This review was
+  opened for the wrong person" is the Board's existing judgement. Closing the review
+  instead of returning it to the queue is a second outcome of the same judgement,
+  not a different act.
+- **No boundary change.** The route is on the legacy-authz baseline and gains only a
+  body field. There is no new route and no registry or classification change.
+- **The reviewers' dismissal stays narrow.** It never touches a rejection, so the
+  table of allowed and refused states above stays as it is. Everything involving a
+  rejection is the Board's, on one route.
+
+**What `closeAsWrongPerson` does:**
+
+- **Where it applies:** any open check review (PENDING_BG_REVIEW or BLOCKED), named
+  or not. That includes:
+  - a BLOCKED review;
+  - a sent-back review;
+  - a review left naming nobody, holding a rejection, after an earlier wrong-person
+    reset.
+
+  `requestedForHouseholdId` is not required, unlike the plain wrong-person reset.
+- **Closes the review as it stands:** ARCHIVED from its current status, with
+  `archivedFromStatus` set. Unlike a reset, **it deletes no attestation**. The
+  rejection and its note stay on the review's own rows, and the subject stays named
+  as the person the review was opened for. The rejection is then on record against
+  that review, and never deleted.
+- **Writes one audit row** with the actor, the reason and
+  `{ action: "closed: opened for the wrong person", status: "ARCHIVED" }`.
+- **Settles every household the review touches**, as a reset does. An application
+  BLOCKED by this review resumes, because the review is no longer BLOCKED. The
+  household qualifies again once a lead holds a clearance.
+
+**Why the rejection stops counting.** A person's standing, the household's
+"waiting to be named" test and the hold on closing a review all read only open
+reviews (`personBgOpen`: PENDING_BG_REVIEW and BLOCKED). An ARCHIVED review counts
+against nobody. The person may be marked again: the mark opens a fresh review with
+no history, which needs two approvals like any other. The build PR confirms that no
+reader counts a rejection on an ARCHIVED review. A search on `main` finds the
+attestation result read only in `attest`.
+
+**Side effect.** If the closed review was one the person already owed (opened by
+activation or the yearly sweep), the obligation closes with it. The sweep's daily
+run reopens it if the person still needs a check. The obligation is surfaced for
+follow-up and gates nothing.
+
+**Pending the Board.** This undoes the effect of a rejection without two
+approvals, which Board ruling B5/B25 forbids today. It ships only once the Board has
+adopted the amendment below (see the migration file).
+
+#### Draft amendment to B5/B25, for the Board — not decided
+
+Needs Board approval. Nothing here is a rule until the Board adopts it.
+
+Current text (`docs/rules/membership.md`, *Application and review*):
+
+> - Nobody clears a blocked application on their own. After a rejection the check
+>   needs two approvals again, from two independent reviewers.  [Decision — Board ruling B5/B25]
+
+Proposed:
+
+> - Nobody clears a blocked application on their own. After a rejection the check
+>   needs two approvals again, from two independent reviewers, unless the Board
+>   records, with a written reason, that the review was opened for the wrong person.
+>   That review is then closed with its rejection kept on record against it; the
+>   rejection no longer counts against the person it named, and any later check of
+>   theirs is reviewed afresh and needs two approvals like any other. No one in the
+>   household of the person named, or of the household that asked for the review,
+>   may record it.  [Decision — Board ruling B5/B25, as amended]
+
+What it changes, in one sentence: a rejection on a review the Board finds was
+opened for the wrong person no longer needs two approvals to stop counting against
+that person. Nothing else changes: no rejection is deleted, and no clearance is
+granted.
+
+The two procedure lines that follow from it, applied with the amendment and not
+before:
+
+> - A check review that still carries a rejection cannot be closed; it needs a
+>   decision from two new reviewers, unless the Board closes it as opened for the
+>   wrong person.  [Decision]
+>
+> - A reviewer who believes the named person is wrong asks the Board for a
+>   wrong-person reset, which returns the review to no person, or closes it when it
+>   was opened for the wrong person altogether. The person cleared off a returned
+>   review keeps any rejection it held, and naming them again brings it back; a
+>   closed review keeps its rejection on record and counts against nobody.  [Decision]
 
 ### How a family's first check now starts
 
@@ -489,3 +614,11 @@ These are named for the build PR. None run for this doc.
   sees no clearance date or review state for another adult; `state` has only the
   two values.
 - The Board applications page derives "started" from the rows it already has.
+- `closeAsWrongPerson` (only with the Board amendment):
+  - Board only: a reviewer is refused at the route.
+  - The household bar and the denied-household refusal apply.
+  - It works from BLOCKED, from a sent-back review, and from an unnamed review
+    holding a rejection.
+  - Attestations are kept and the review is ARCHIVED, with one audit row.
+  - The person is no longer disputed, and the blocked application resumes.
+  - A new mark opens a fresh review needing two approvals.

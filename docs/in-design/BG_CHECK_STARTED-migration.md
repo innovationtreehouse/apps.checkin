@@ -108,6 +108,17 @@ before starting the next.
    - Delete `BG_CHECK_STARTED.md`.
    - Trim this file to the legacy clause and step 3.
 
+2b. **App: the Board's close-as-wrong-person, after the Board adopts the B5/B25
+   amendment.** Based on `main` after step 2. Before that, it waits.
+   - `closeAsWrongPerson` on `boardResetReview` and the review-override route body.
+     There is no boundary change: the route is on the legacy baseline.
+   - The Board's button beside the wrong-person reset.
+   - In the same PR: apply the amended B5/B25 line and its two procedure lines from
+     the design file to `docs/rules/membership.md`, with the Board's adoption noted
+     in the PR body, not in the rule.
+
+   Step 2 deletes the design file, so step 2 first moves the close section and the
+   draft amendment into this file. Step 2b then deletes them from here.
 3. **App: drop the legacy clause** once the exit condition holds:
    - Delete `legacyHouseholdCheckStarted` and its three callers.
    - Delete `openRequestedReview`.
