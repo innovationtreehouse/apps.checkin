@@ -556,7 +556,7 @@ model InKindPosting {
   // When the gift's post first failed; set while null, cleared when a post settles without failing. Set means stuck.
   /// @sensitivity:internal
   qbFirstFailedAt     DateTime? @map("qb_first_failed_at")
-  // The latest failed post's error, shown only on the gift's own page.
+  // The latest failed post's error, kept while the gift is stuck. Nothing reads it; the in-kind queue shows the same text from qbNote.
   /// @sensitivity:internal
   qbLastError         String?   @map("qb_last_error")
   /// @sensitivity:internal
