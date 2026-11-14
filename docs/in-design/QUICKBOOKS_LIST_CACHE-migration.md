@@ -75,7 +75,8 @@ PR 2 extracts the design's "Rules this design establishes" into `docs/rules/`:
   rules.
 
 The `docs/rules/revenue.md` line saying that a stored account that later reads
-as another type is flagged on System Status keeps its wording (QL-7). It
-becomes true for every pick when PR 4 lands.
+as another type is flagged on System Status keeps its wording (QL-7). When PR 4
+lands, it holds for every kind of pick except gift-of-goods lines, which posting
+holds in the in-kind queue instead.
 
 After the last PR merges, delete both files.
