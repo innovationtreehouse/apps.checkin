@@ -272,12 +272,14 @@ async function readBookings(handle: DbOrTx, orgId: string, where: { source?: InK
 interface Posting {
   matchState: string;
   qbNote: string | null;
+  qbFirstFailedAt: Date | null;
+  qbLastError: string | null;
 }
 
-/** Each gift's way to QuickBooks: its match state and finance's note. */
+/** Each gift's way to QuickBooks: its match state, finance's note, and when its post first failed and why it last failed. */
 async function readPostings(handle: DbOrTx, orgId: string, where: { source?: InKindSource; giftId?: number } = {}): Promise<Map<string, Posting>> {
-  const rows = await handle.inKindPosting.findMany({ where: { orgId, ...where }, select: { source: true, giftId: true, matchState: true, qbNote: true } });
-  return new Map(rows.map((r) => [bookingKey(r.source, r.giftId), { matchState: r.matchState, qbNote: r.qbNote }]));
+  const rows = await handle.inKindPosting.findMany({ where: { orgId, ...where }, select: { source: true, giftId: true, matchState: true, qbNote: true, qbFirstFailedAt: true, qbLastError: true } });
+  return new Map(rows.map(({ source, giftId, ...posting }) => [bookingKey(source, giftId), posting]));
 }
 
 const sideState = (sides: { side: string; matchState: string }[], side: "revenue" | "expense" | "journal") => sides.find((s) => s.side === side)?.matchState ?? null;
@@ -651,7 +653,8 @@ async function getGift(orgId: string, source: InKindSource, id: number) {
     getInKindCapital().awaitingReview(orgId),
   ]);
   const sides = bookings.get(bookingKey(source, id)) ?? [];
-  const waits = waitingOn(gift, buckets, sides, new Set(awaiting.map((w) => bookingKey(w.giftSource, w.giftId))), postings.get(bookingKey(source, id)));
+  const posting = postings.get(bookingKey(source, id));
+  const waits = waitingOn(gift, buckets, sides, new Set(awaiting.map((w) => bookingKey(w.giftSource, w.giftId))), posting);
   const bucket = gift.budgetOwnerId === null ? undefined : buckets.get(gift.budgetOwnerId);
   return {
     id,
@@ -680,6 +683,8 @@ async function getGift(orgId: string, source: InKindSource, id: number) {
     waitingOn: waits,
     revenueBooking: bookedSide(sides, "revenue"),
     expenseBooking: bookedSide(sides, "expense"),
+    qbFirstFailedAt: posting?.qbFirstFailedAt ?? null,
+    qbLastError: posting?.qbLastError ?? null,
     inventorySourceKey: source === "manual" ? inventorySourceKey(id) : null,
     inventoryLoadedAt: extras.inventoryLoadedAt,
     inventoryLoadFailureReason: extras.inventoryLoadFailureReason,

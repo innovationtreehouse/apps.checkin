@@ -9,6 +9,7 @@ const mockApi = jest.fn<Promise<unknown>, unknown[]>();
 let mockCanWrite = true;
 let mockGift: unknown = null;
 let mockPath: string | null = null;
+let mockError: string | null = null;
 
 jest.mock("next/navigation", () => ({ useParams: () => ({ id: "4" }) }));
 jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 1 } } }) }));
@@ -17,7 +18,7 @@ jest.mock("@checkin/bulk-donation/components/api", () => ({
   ...jest.requireActual("@checkin/bulk-donation/components/api"),
   useLoad: (path: string | null) => {
     mockPath = path;
-    return { data: mockGift, error: null, reload: mockReload };
+    return { data: mockGift, error: mockError, reload: mockReload };
   },
   useCanWrite: () => mockCanWrite,
   api: (...args: unknown[]) => mockApi(...args),
@@ -76,6 +77,7 @@ beforeAll(() => {
 beforeEach(() => {
   jest.clearAllMocks();
   mockCanWrite = true;
+  mockError = null;
   mockApi.mockResolvedValue({});
 });
 
@@ -167,5 +169,38 @@ describe("in-kind gift page", () => {
     expect(screen.getByRole("link", { name: "its receipt" })).toHaveAttribute("href", "/receipts/r-77");
     expect(screen.getByText(/^The receipt was resent with different values/)).toBeInTheDocument();
     expect(screen.queryByText("Suggested")).not.toBeInTheDocument();
+  });
+});
+
+describe("a stuck gift's last error", () => {
+  const ERROR = "QBO create JournalEntry failed: socket hang up";
+  const STUCK = { qbFirstFailedAt: "2026-11-01T00:00:00.000Z", qbLastError: ERROR };
+
+  it.each([
+    ["a gift without a receipt", manual, ManualGiftPage],
+    ["a receipt gift", receipt, ReceiptGiftPage],
+  ])("shows the last error on %s while it is stuck", (_what, gift, Page) => {
+    mockGift = { ...gift, ...STUCK };
+    wrap(<Page />);
+    expect(screen.getByText(`Last error: ${ERROR}`)).toBeInTheDocument();
+  });
+
+  it("says no error was recorded when a stuck gift has none", () => {
+    mockGift = { ...manual, qbFirstFailedAt: STUCK.qbFirstFailedAt, qbLastError: null };
+    wrap(<ManualGiftPage />);
+    expect(screen.getByText("Last error: no error recorded")).toBeInTheDocument();
+  });
+
+  it("shows no error line once the gift is no longer stuck", () => {
+    mockGift = { ...manual, qbFirstFailedAt: null, qbLastError: ERROR };
+    wrap(<ManualGiftPage />);
+    expect(screen.queryByText(/Last error/)).not.toBeInTheDocument();
+  });
+
+  it("shows a reader the route refuses no error line", () => {
+    mockGift = { ...manual, ...STUCK };
+    mockError = "You don't have permission to view this.";
+    wrap(<ManualGiftPage />);
+    expect(screen.queryByText(/Last error/)).not.toBeInTheDocument();
   });
 });
