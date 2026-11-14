@@ -310,7 +310,8 @@ export function createReceiptService({
       const { source, lineItems } = stored.data;
       try {
         await apply(orgId, source, lineItems);
-      } catch {
+      } catch (err) {
+        console.error(`[local-inventory/receipt] retrying the inventory delta for ${sourceKey(source)} failed`, err);
         throw new ServiceError(409, FAILED_AGAIN);
       }
     },

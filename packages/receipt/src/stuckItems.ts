@@ -41,7 +41,7 @@ export async function retryStuckItem({ id, step }: { id: string; step: string })
   if (step !== FLOW && step !== PUSH) throw new ServiceError(404, `No step ${step} in receipt`);
   if (!(await isStuck(id, step))) throw new ServiceError(404, "No receipt stuck in this step");
   // A failure is recorded on the receipt, which the check below reads.
-  await (step === FLOW ? runFullFlow(id, null) : pushReceipt(id, null)).catch(() => undefined);
+  await (step === FLOW ? runFullFlow(id, null) : pushReceipt(id, null)).catch((err: unknown) => console.error(`[receipt] retrying ${step} for receipt ${id} failed:`, err));
   if (await isStuck(id, step)) throw new ServiceError(409, STILL_STUCK);
 }
 

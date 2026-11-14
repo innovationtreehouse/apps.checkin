@@ -167,12 +167,13 @@ describeDb("retryStuckItem", () => {
   it("a delta retry that fails again answers 409 with fixed text and leaves the delta stuck", async () => {
     await expect(getServices().receiptService.applyReceipt(TEST_ORG_ID, "r1", undefined, [{ gtin13: GTIN, quantityDelta: OVERFLOW }])).rejects.toThrow();
     const [item] = await stuckItems();
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     const err = await retryStuckItem(item).catch((e: unknown) => e);
 
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining("receipt:r1"), expect.anything());
     expect(err).toBeInstanceOf(ServiceError);
     expect(err).toMatchObject({ status: 409, message: FAILED_AGAIN });
-
     expect(await stuckItems()).toEqual([item]);
   });
 

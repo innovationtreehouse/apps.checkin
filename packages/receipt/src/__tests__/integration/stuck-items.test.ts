@@ -117,9 +117,11 @@ describeDb("stuckItems", () => {
   it("a flow retry that fails again answers 409 with fixed text, and the receipt stays stuck", async () => {
     const id = await makeReceipt("flow_error", { firstFailedAt: new Date() });
     vi.spyOn(receiptRepo, "find").mockRejectedValueOnce(new Error("secret detail"));
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     const err = await retryStuckItem({ id, step: "flow" }).catch((e: unknown) => e);
 
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining(id), expect.objectContaining({ message: "secret detail" }));
     expect(err).toBeInstanceOf(ServiceError);
     expect(err).toMatchObject({ status: 409, message: STILL_STUCK });
     expect(await stuckItems()).toEqual([expect.objectContaining({ id, step: "flow" })]);
