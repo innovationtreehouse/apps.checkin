@@ -160,6 +160,8 @@ describe('bulk-donation field-stripping (comment rules)', () => {
             waitingOn: ['decision'],
             inventorySourceKey: null,
             inventoryLoadFailureReason: null,
+            qbFirstFailedAt: '2026-10-03T00:00:00.000Z',
+            qbLastError: 'QuickBooks 500',
             lines: [{ id: 5, gtin13: null, description: 'Bench vise', quantity: 2, valueCents: 2500, suggestedValueCents: null, quickBooksAccountId: null }],
             events: [{ id: 8, eventType: 'IN_KIND_MONEY_RECEIVED', actorUsername: null, occurredAt: '2026-10-02T00:00:00.000Z', payload: null }],
         };
