@@ -66,45 +66,42 @@ IDs stay stable so later threads can cite them.
   that later reads as another type is flagged on System Status keeps its
   wording, which this makes true for every pick.  [Decision — owner]
 
-## Rules this relies on or changes
+## Rules this design establishes
 
-These changes are extracted into `docs/rules/` when the copy ships (PR 2 below).
+1. An expense line's account comes from finance's own mapping rules and account
+   list, which finance keeps by hand. Finance picks the accounts on that list,
+   Classes and the books map's accounts one at a time. The app keeps a
+   read-only copy of QuickBooks' account and Class lists to offer and check
+   those picks, and never creates a mapping from it. It never copies the vendor
+   list, and never matches vendor names on its own.
+   [Decision — deliberate limit]
+2. Every save that checks an account's type reads the type from the app's copy
+   of QuickBooks' account list. A save whose account the copy doesn't list, or
+   lists under a type the save doesn't accept, is refused until finance or the
+   Board updates the copy; the save itself never reads QuickBooks.
+   [Decision — owner]
+3. An item's bucket is checked against the app's copy of QuickBooks' Class list;
+   a Class the copy doesn't show as active is refused until the copy is updated.
+   [Decision — owner]
+4. The app's copy of QuickBooks' account and Class lists refreshes once a day,
+   and finance or the Board may refresh it at any time. It is used at any age;
+   System Status flags it after two days without a refresh.  [Decision — owner]
 
-**`docs/rules/expenses.md`, the deliberate limit on bulk imports.** It becomes:
+## Rules this relies on
 
-> - An expense line's account comes from finance's own mapping rules and account
->   list, which finance keeps by hand. Finance picks the accounts on that list,
->   Classes and the books map's accounts one at a time. The app keeps a
->   read-only copy of QuickBooks' account and Class lists to offer and check
->   those picks, and never creates a mapping from it. It never copies the vendor
->   list, and never matches vendor names on its own.
->   [Decision — deliberate limit]
-
-**`docs/rules/revenue.md`, account types.** The words "reading the type from
-QuickBooks, and refuse the save while QuickBooks can't be read" become:
-
-> reading the type from the app's copy of QuickBooks' account list. A save
-> whose account the copy doesn't list is refused until finance or the Board
-> updates the copy; the save itself never reads QuickBooks.
-
-**`docs/rules/revenue.md`, bucket assignment.** "While the books can't be
-reached to check, the assignment is refused" becomes:
-
-> The Class is checked against the app's copy of QuickBooks' Class list; a
-> Class the copy doesn't show as active is refused until the copy is updated.
-
-**`docs/rules/revenue.md`, a new line beside the books map rules:**
-
-> - The app's copy of QuickBooks' account and Class lists refreshes once a day,
->   and finance or the Board may refresh it at any time. It is used at any age;
->   System Status flags it after two days without a refresh.  [Decision — owner]
-
-These rules stay as they are:
-
+- `docs/rules/expenses.md`: the deliberate limit that the app never imports the
+  chart of accounts, the Class list or the vendor list in bulk. Rule 1 above
+  narrows it.
+- `docs/rules/revenue.md`: every account the app books to must be of a type
+  listed for its line or role, checked on save. Rule 2 above changes where
+  that check reads the type from.
+- `docs/rules/revenue.md`: an item can be assigned only to a bucket whose Class
+  is active. Rule 3 above changes where that check reads the Class
+  from.
 - `docs/rules/revenue.md`: a stored account that later reads as another type is
-  flagged on System Status and never rewritten. That check stays live (QL-6).
-  Today the row covers books map roles only; PR 4 widens it to every stored
-  pick (QL-7, §4).
+  flagged on System Status and never rewritten. The roles row checks books map
+  roles against QuickBooks live (QL-6); the picks row checks every other stored
+  pick against the copy (QL-7, §4).
 - `docs/rules/revenue.md`: while Classes can't be read, a payout with a sale
   assigned to a bucket waits. That check happens at posting, so it stays live.
 - `docs/conventions.md`, "A shared helper has one home" and "One process, one
@@ -177,10 +174,9 @@ model QuickBooksList {
 - The table has no `orgId`, because the books map it serves has none.
 - It doesn't record who refreshed. A refresh changes nothing in the books, and
   the route logs who called it.
-- The migration only creates the table. It is safe while old code is still
-  serving. The table starts empty, and an empty copy refuses every save that
-  needs it until the first refresh (§4). The first daily run fills it, and
-  finance can fill it sooner with "Update now".
+- An empty copy refuses every save that needs it until the first refresh
+  (§4). The daily run fills it, and finance or the Board can fill it sooner
+  with "Update now".
 - With `CHECKIN_ENV=local`, the app keeps returning the stand-in lists
   (`LOCAL_QUICKBOOKS_ACCOUNTS`, `LOCAL_QUICKBOOKS_CLASSES`) and never touches
   the table, as it does now.
@@ -247,36 +243,33 @@ the message names what is missing: "QuickBooks' list in the app doesn't have
 that account" (or "lists it as <type>"), followed by "If you changed it in
 QuickBooks, press Update now, then save again."
 
-No refusal carries this code today. `accountTypeRefusal`
-(`packages/quickbooks/src/accountTypes.ts:52`) returns only a message, and every
-site that throws it passes no code. PR 2 changes this:
+Where the code comes from:
 
 - `@checkin/quickbooks` exports the code as a constant, `QUICKBOOKS_LIST_STALE`,
-  next to `accountTypeRefusal`. The function keeps returning `string | null`,
-  and its logic is unchanged. Only its "no account" wording changes, to name
-  the app's copy rather than QuickBooks.
+  next to `accountTypeRefusal` (`packages/quickbooks/src/accountTypes.ts:52`).
+  That function returns `string | null`, and its "no account" wording names the
+  app's copy rather than QuickBooks.
 - Every site that throws an `accountTypeRefusal` passes the constant as the
   error's code, because a missing entry and a wrong type can both come from an
   out-of-date copy:
 
   | Throw site | Throws |
   |---|---|
-  | `checkin-app/src/lib/finance/booksMap.ts:51` | `badRequest(refusal)` → `ApiResponseError(400, refusal, QUICKBOOKS_LIST_STALE)` |
-  | `packages/expense/src/lib/account-types.ts:19` | `ServiceError(400, refusal)` → adds the code |
-  | `packages/bulk-donation/src/routes/rules.ts:38` | `httpError(400, refusal)` → adds the code |
-  | `packages/bulk-donation/src/lib/in-kind-resolve.ts:249` | `ServiceError(400, refusal)` → adds the code |
-  | `packages/income/src/routes.ts:127` | `httpError(400, refusal)` → adds the code |
+  | `checkin-app/src/lib/finance/booksMap.ts:51` | `ApiResponseError(400, refusal, QUICKBOOKS_LIST_STALE)` |
+  | `packages/expense/src/lib/account-types.ts:19` | `ServiceError(400, refusal, QUICKBOOKS_LIST_STALE)` |
+  | `packages/bulk-donation/src/routes/rules.ts:38` | `httpError(400, refusal, QUICKBOOKS_LIST_STALE)` |
+  | `packages/bulk-donation/src/lib/in-kind-resolve.ts:249` | `ServiceError(400, refusal, QUICKBOOKS_LIST_STALE)` |
+  | `packages/income/src/routes.ts:127` | `httpError(400, refusal, QUICKBOOKS_LIST_STALE)` |
 
 - Income's Class check in `setCategory`
   (`packages/income/src/services/itemCategoryService.ts:83`) throws its
-  inactive-Class refusal, a 422, with the same code. Its 503 for an unreachable
-  QuickBooks goes away, since that check now reads the copy.
+  inactive-Class refusal, a 422, with the same code. It reads the copy, so it
+  has no refusal for an unreachable QuickBooks.
 
-`ServiceError`, `httpError` and `ApiResponseError` each already take a code, and
-the host renders it as `{ error, code }`. The client kit's fetch helper
-(`packages/component-ui/src/http.ts`) doesn't show `code` to pages yet, so PR 3
-adds that. A page that gets this code puts `QuickBooksListsRefresh` beside the
-refusal message.
+`ServiceError`, `httpError` and `ApiResponseError` each take a code, and the
+host renders it as `{ error, code }`. The client kit's fetch helper
+(`packages/component-ui/src/http.ts`) hands `code` to pages, and a page that
+gets this code puts `QuickBooksListsRefresh` beside the refusal message.
 
 **An old copy** (QL-3) is still used. A new System Status row, "QuickBooks
 lists", is green with "Refreshed <time>". It turns red after two days without a
@@ -298,22 +291,19 @@ branch (`docs/conventions.md`, "A simple machine with a known risk").
   exactly the same way. The copy only adds the gap between the change and the
   next refresh.
 - **What catches it later:** the checks that catch a type change after a live
-  save today, plus the row PR 4 adds.
+  save, plus the picks row.
 
   | Stored pick | Caught by |
   |---|---|
   | Books map roles | System Status's account-types row (`misTypedRoleAccounts`, `checkin-app/src/lib/finance/booksMap.ts:118`), which reads QuickBooks live |
   | Expense payment account | Posting (`resolvePosting`, `checkin-app/src/lib/expense/configure.ts:228`), which refuses to post and alerts finance |
   | Gift-of-goods lines | Posting (`unusable`, `packages/bulk-donation/src/lib/in-kind-accounts.ts:17`), which holds the gift for finance |
-  | Expense account list and rules, held expense lines, donation account map, income items | System Status's new picks row (PR 4, below), which reads the copy |
+  | Expense account list and rules, held expense lines, donation account map, income items | System Status's picks row (below), which reads the copy |
 
 - **Cleanup:** finance re-picks the account. The type is checked again on that
   save.
 
-Before PR 4, nothing re-checked the picks in the last row of the table once
-they were saved. PR 4 closes that gap (QL-7).
-
-**The picks row (PR 4).** System Status gets a second row, "QuickBooks picks:
+**The picks row** (QL-7). System Status gets a second row, "QuickBooks picks:
 account types". It checks every stored pick outside the books map against the
 copy, using the same type lists the saves use:
 
@@ -342,14 +332,10 @@ copy, using the same type lists the saves use:
   books map role is checked live and every other pick is checked against the
   copy.
 
-The planned interim fix, which runs the account-type check only when the
-account changes, still holds under this design. It can land first: it also lets
-edits that don't touch the account skip the copy.
-
 ### 5. Security boundary
 
-Two new routes mean two new registry entries. They ship in their own boundary
-PR, before the route PR (`AGENTS.md`, boundary isolation rule):
+Two new routes mean two new registry entries, which are boundary changes
+(`AGENTS.md`, boundary isolation rule):
 
 | Entry | Authorize | Returns | View |
 |---|---|---|---|
@@ -359,7 +345,7 @@ PR, before the route PR (`AGENTS.md`, boundary isolation rule):
 Both go in `checkin-app/src/security/registry/budgetOwner.ts`, next to the other
 books-map routes.
 
-The boundary PR also adds one synthetic classification, in
+They return one new synthetic classification, in
 `checkin-app/src/security/budgetOwnerSyntheticClassifications.ts`:
 
 ```ts
@@ -377,46 +363,22 @@ These are not boundary changes:
 - `QuickBooksAccountOption` and `QuickBooksClassOption`, which keep their shape.
   The pickers return the same fields, read from the copy.
 - The refusal's `code`. It is an error envelope, not a classified response.
-
-### 6. PRs, in order
-
-Every PR is based on `main`; none is stacked.
-
-1. **Boundary:** the two registry entries and `QuickBooksListsStatus`. They do
-   nothing until the routes exist, so this PR can open straight away.
-2. **The copy:** the table and its migration, `refreshQuickBooksLists`, the
-   daily step in `qbo-posting`, and the switch of `listQuickBooksAccounts`,
-   `listQuickBooksClasses` and income's Class check on save over to the copy,
-   with the `quickbooks-list-stale` refusal: the `QUICKBOOKS_LIST_STALE` constant,
-   the code at the five throw sites and in income's Class check (§4), and the
-   `quickbooks lists-refresh` lane in `finishRun.ts` (§3). It carries the `docs/rules` edits
-   above and deletes this doc. It doesn't depend on PR 1, so the two can run in
-   parallel. Until PR 3 lands, the refusal's text names "Update now" but no page
-   shows the button yet. The daily run is the only refresh in that gap, so merge
-   PR 3 soon after PR 2, or hold PR 2 until PR 3 is ready.
-3. **Update now:** the two routes, the `QuickBooksListsRefresh` button in
-   `@checkin/component-ui`, the client kit change that shows the refusal's
-   `code`, the button on the Books map and the eight picker screens listed in
-   §3, and the System Status row. It goes after PRs 1 and 2 merge.
-4. **Picks row:** each library's `misTypedQuickBooksPicks` read and the new
-   System Status row (§4). It reads the copy, so it goes after PR 2 merges. It
-   needs nothing from PRs 1 or 3, so it can run in parallel with PR 3. It adds
-   no route and no response field: System Status rows already have a
-   classified shape, so PR 4 doesn't touch the security boundary.
+- The picks row. System Status rows already have a classified shape, and the
+  row adds no route and no response field.
 
 ## Tests
 
-- PR 2: unit tests showing that a save whose entry is in the copy makes no
+- The copy: unit tests showing that a save whose entry is in the copy makes no
   QuickBooks call; that a missing entry, a wrong type and an empty copy are
   each refused with `quickbooks-list-stale` and make no QuickBooks call; and
   that posting readers still call QuickBooks. One integration test showing
   that a refresh replaces both rows in one transaction, and that a failed read
   leaves both rows as they were.
-- PR 3: route tests for the Finance-or-Board gate and the 503 wording, and a
+- Update now: route tests for the Finance-or-Board gate and the 503 wording, and a
   component test showing that the button reloads its page's options and appears
   beside a `quickbooks-list-stale` refusal. No flow test is needed, because no
   flow-test server reaches QuickBooks.
-- PR 4: each library's read flags a missing pick and a pick of the wrong type,
+- The picks row: each library's read flags a missing pick and a pick of the wrong type,
   and passes one of an accepted type. A held line already booked is skipped. The
   host row is green, red with lines, and "Not checked" for an empty copy, and
   makes no QuickBooks call.
