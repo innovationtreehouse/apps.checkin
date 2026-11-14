@@ -14,6 +14,7 @@ import { notifyNavRefresh } from '@/lib/nav-refresh';
 import { sharesHousehold } from '@/lib/conflictOfInterest';
 import { scholarshipRequestKindLabel } from '@/lib/scholarshipRequestKind';
 
+import { useUrlChoice } from '@checkin/component-ui';
 import { PageLoader } from "@/components/ui/PageLoader";
 
 type HouseholdLead = { id: number; name: string | null; email: string | null };
@@ -38,6 +39,8 @@ const PAST_IDENTITY_COLUMNS: DataTableColumn<PastMembershipDecision>[] = [
   { header: 'Household', render: (row) => <Text fw={500}>{row.householdName}</Text> },
 ];
 
+const VIEWS = ['pending', 'past'] as const;
+
 export default function MembershipPaymentPlansPage() {
   const { formatDateTime } = useOrgTime();
   const { user: me, ready, loading: authLoading } = useRequireRole(PAYMENT_PLAN_ROLES);
@@ -47,7 +50,7 @@ export default function MembershipPaymentPlansPage() {
 
   const [requests, setRequests] = useState<MembershipPaymentPlanRequest[]>([]);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<'pending' | 'past'>('pending');
+  const [view, setView] = useUrlChoice('view', VIEWS, 'pending');
   const [message, setMessage] = useState("");
   const [confirmApproveOpened, { open: openConfirmApprove, close: closeConfirmApprove }] = useDisclosure(false);
   const [pendingApproval, setPendingApproval] = useState<number | null>(null);
@@ -232,7 +235,7 @@ export default function MembershipPaymentPlansPage() {
 
       <SegmentedControl
         value={view}
-        onChange={(v) => setView(v === 'past' ? 'past' : 'pending')}
+        onChange={setView}
         data={[{ label: 'Pending', value: 'pending' }, { label: 'Past', value: 'past' }]}
         style={{ alignSelf: 'flex-start' }}
       />

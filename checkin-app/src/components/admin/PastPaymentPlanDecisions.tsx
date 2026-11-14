@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from 'react';
-import { Button, Group, Stack, Text } from '@mantine/core';
+import { Button, Checkbox, Group, Stack, Text } from '@mantine/core';
+import { useUrlFilter, useUrlPage } from '@checkin/component-ui';
 import { AlertBanner } from '@/components/admin/AlertBanner';
 import { DataTable, type DataTableColumn } from '@/components/admin/DataTable';
 import { useOrgTime } from '@/components/TimezoneProvider';
@@ -15,26 +16,38 @@ export type PaymentPlanDecisionRow = {
   decidedByName: string | null;
 };
 
-/** One page of decided payment-plan requests, newest first, from a `/past` endpoint. */
+/**
+ * One page of decided payment-plan requests, newest first, from a `/past` endpoint. Decisions for
+ * archived households are hidden unless the viewer ticks "Show archived families".
+ */
 export function PastPaymentPlanDecisions<T extends PaymentPlanDecisionRow>({ endpoint, identityColumns }: {
   endpoint: string;
   identityColumns: DataTableColumn<T>[];
 }) {
   const { formatDateTime } = useOrgTime();
-  const [page, setPage] = useState(0);
-  const [loaded, setLoaded] = useState<{ page: number; rows: T[]; error: string } | null>(null);
+  const [page, setPage] = useUrlPage();
+  const [archived, setArchived] = useUrlFilter('archived');
+  const query = `page=${page - 1}${archived === '1' ? '&archived=1' : ''}`;
+  const [loaded, setLoaded] = useState<{ query: string; rows: T[]; error: string } | null>(null);
 
   useEffect(() => {
-    fetch(`${endpoint}?page=${page}`)
+    fetch(`${endpoint}?${query}`)
       .then(async (res) => {
         if (!res.ok) throw new Error();
         const rows: T[] = await res.json();
-        setLoaded({ page, rows, error: '' });
+        setLoaded({ query, rows, error: '' });
       })
-      .catch(() => setLoaded({ page, rows: [], error: 'Failed to load past requests.' }));
-  }, [endpoint, page]);
+      .catch(() => setLoaded({ query, rows: [], error: 'Failed to load past requests.' }));
+  }, [endpoint, query]);
 
-  if (loaded?.page !== page) return <PageLoader />;
+  const showArchived = (
+    <Checkbox
+      label="Show archived families"
+      checked={archived === '1'}
+      onChange={(e) => setArchived(e.currentTarget.checked ? '1' : '')}
+    />
+  );
+  if (loaded?.query !== query) return <Stack>{showArchived}<PageLoader /></Stack>;
   const { rows, error } = loaded;
 
   const columns: DataTableColumn<T>[] = [
@@ -59,10 +72,11 @@ export function PastPaymentPlanDecisions<T extends PaymentPlanDecisionRow>({ end
 
   return (
     <Stack>
+      {showArchived}
       <AlertBanner message={error} tone="error" />
       <DataTable columns={columns} rows={rows} getRowKey={(row) => row.id} emptyMessage="No decided requests." />
       <Group justify="flex-end">
-        <Button variant="default" size="xs" disabled={page === 0} onClick={() => setPage(page - 1)}>Newer</Button>
+        <Button variant="default" size="xs" disabled={page === 1} onClick={() => setPage(page - 1)}>Newer</Button>
         <Button variant="default" size="xs" disabled={rows.length < PAST_PAGE_SIZE} onClick={() => setPage(page + 1)}>Older</Button>
       </Group>
     </Stack>
