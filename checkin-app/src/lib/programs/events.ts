@@ -251,7 +251,7 @@ export async function manualEditAttendance(
             const scanned = closed.filter(v => v.arrivedVia === "SCANNER");
             if (scanned.length > 0) {
                 await tx.visit.updateMany({
-                    where: { id: { in: scanned.map(v => v.id) } },
+                    where: { id: { in: scanned.map(v => v.id) }, ...LIVE_VISIT },
                     data: { associatedEventId: null }
                 });
                 await tx.auditLog.createMany({
@@ -261,7 +261,7 @@ export async function manualEditAttendance(
                         tableName: "Visit",
                         affectedEntityId: v.id,
                         secondaryAffectedEntity: targetId,
-                        oldData: { associatedEventId: eventId },
+                        oldData: { arrivedAt: v.arrivedAt, departedAt: v.departedAt, associatedEventId: eventId },
                         newData: { associatedEventId: null, type: "lead_attendance_correction", status: "Absent" },
                     }))
                 });
