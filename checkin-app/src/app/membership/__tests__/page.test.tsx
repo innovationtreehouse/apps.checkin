@@ -362,6 +362,43 @@ describe("membership page", () => {
       expect(mock.reads()).toBe(4);
     });
 
+    it("locks Save and Submit until a successful read hydrates the form, once every read fails", async () => {
+      setSession({ id: 1 });
+      const mock = mockReads([[true, state(intake)], [false, { error: "down" }, 503], [false, { error: "down" }, 503], [false, { error: "down" }, 503], [true, saved]]);
+      renderWithProviders(<MembershipPage />);
+      await screen.findByText("Your household");
+      jest.useFakeTimers();
+
+      fireEvent.change(emName(), { target: { value: "Aunt Jo" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save progress" }));
+      await waitFor(() => expect(mock.reads()).toBe(2));
+      await act(() => jest.advanceTimersByTimeAsync(2000));
+      await act(() => jest.advanceTimersByTimeAsync(4000));
+      await waitFor(() => expect(mock.reads()).toBe(4));
+
+      expect(await screen.findByText(reloadWarning)).toBeInTheDocument();
+      const saveButton = screen.getByRole("button", { name: "Save progress" });
+      const submitButton = screen.getByRole("button", { name: "Submit & continue" });
+      await waitFor(() => expect(saveButton).toBeDisabled());
+      expect(submitButton).toBeDisabled();
+      fireEvent.click(saveButton);
+      fireEvent.click(submitButton);
+      await act(() => jest.advanceTimersByTimeAsync(60000));
+      expect(intakeCalls(mock)).toHaveLength(1);
+      expect(screen.getByText(reloadWarning)).toBeInTheDocument();
+      expect(emName().value).toBe("Aunt Jo");
+
+      invalidateLoads();
+      await waitFor(() => expect(emName().value).toBe("From server"));
+      expect(saveButton).toBeEnabled();
+      expect(submitButton).toBeEnabled();
+      expect(screen.queryByText(reloadWarning)).not.toBeInTheDocument();
+
+      fireEvent.click(saveButton);
+      await waitFor(() => expect(intakeCalls(mock)).toHaveLength(2));
+      expect(JSON.parse(String(intakeCalls(mock)[1][1]?.body)).secondaryParent).toMatchObject({ id: 7, name: "Sam Second" });
+    });
+
     it("keeps unsaved input on a later reload when that read fails", async () => {
       setSession({ id: 1 });
       const mock = mockReads([[true, state(intake)], [false, { error: "denied" }], [true, saved]]);
@@ -378,6 +415,7 @@ describe("membership page", () => {
       await waitFor(() => expect(mock.reads()).toBe(3));
       await settleAfter("/api/membership");
       expect(emName().value).toBe("Uncle Bo");
+      expect(screen.getByRole("button", { name: "Save progress" })).toBeDisabled();
     });
 
     it("fills in the saved people's ids, so a second save updates them", async () => {
