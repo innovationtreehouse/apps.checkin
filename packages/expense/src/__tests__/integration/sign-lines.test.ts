@@ -110,7 +110,7 @@ describeDb("the To sign and Board lists", () => {
     expect((await signaturesWaiting(BOARD)).map((w) => [w.toSign, w.board])).toEqual([[[], lines]]);
   });
 
-  it("still lists an older waiting expense behind more than a page of newer fully signed ones", async () => {
+  it("still lists an older waiting expense behind more than a page of newer Treasurer-signed candidates with an open Board seat", async () => {
     const waiting = await expenseWith([{ status: "approved", decidedByUserId: 2 }], { submittedAt: new Date("2026-01-01T00:00:00Z") });
     for (let day = 1; day <= 30; day++) {
       const signed = await expenseWith([{ status: "approved", decidedByUserId: 2 }], { submittedAt: new Date(Date.UTC(2026, 1, day)) });

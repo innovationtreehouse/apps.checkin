@@ -354,7 +354,8 @@ export interface SignaturesWaiting {
  * stand-in only where no one else can act. Lists at most SIGNOFF_BADGE_EXPENSE_CAP open expenses
  * (newest first), as the sign-off badges do; an expense with nothing for the caller is left out.
  * Candidates have an approved line missing a Treasurer or Board seat; whether a line takes the
- * Board seat needs the facts, so candidates are read a page at a time until the cap is met.
+ * Board seat needs the facts, so candidates are read a page at a time until the cap is met or
+ * none are left: a long run of candidates with nothing for the caller is read in full.
  */
 export async function signaturesWaiting(principal: ExpensePrincipal): Promise<SignaturesWaiting[]> {
   if (!principal.isFinance && !principal.isBoard) return [];
