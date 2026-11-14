@@ -65,7 +65,7 @@ services:
       CRON_SECRET: flow-test-cron    # throwaway; the e2e specs read it inside this container
     volumes:
       - ..:/repo
-      # .next lives in the container, so each stack starts with an empty build cache and `down -v` discards it.
+      # An anonymous volume hides the host's checkin-app/.next from the container; `down -v` discards it.
       - /repo/checkin-app/.next
     ports:
       - "4000:4000"
