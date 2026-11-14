@@ -86,6 +86,25 @@ describe("createAnthropicOcr — call shape", () => {
   });
 });
 
+describe("createAnthropicOcr — rotation", () => {
+  it("tells the model how far to turn a rotated image", async () => {
+    createMock.mockResolvedValue(jsonResponse(VALID_INPUT));
+    await ocr.extract(Buffer.from([0x89, 0x50]), "image/png", 90);
+    const content = createMock.mock.calls[0][0].messages[0].content;
+    expect(content[1]).toEqual({ type: "text", text: "This image is stored turned: rotate it 90 degrees clockwise to read it upright." });
+  });
+
+  it.each<[string, string, number | undefined]>([
+    ["an upright image", "image/png", 0],
+    ["an image with no turn given", "image/png", undefined],
+    ["a PDF, which never shows turned", "application/pdf", 90],
+  ])("adds no turn for %s", async (_label, mimeType, rotation) => {
+    createMock.mockResolvedValue(jsonResponse(VALID_INPUT));
+    await ocr.extract(Buffer.from([0x89, 0x50]), mimeType, rotation);
+    expect(createMock.mock.calls[0][0].messages[0].content).toHaveLength(2);
+  });
+});
+
 describe("createAnthropicOcr — results", () => {
   it("maps structured data", async () => {
     createMock.mockResolvedValue(jsonResponse(VALID_INPUT));

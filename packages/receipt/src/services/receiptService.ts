@@ -386,7 +386,7 @@ export function ocrFailureNote({ kind, error }: OcrFailure): string {
 
 /** Read the file from `auto_upload` and land in `uploaded` (then the pipeline) or `ocr_failed`. */
 async function applyOcr(id: string, actor: ReceiptPrincipal): Promise<void> {
-  const file = await db.receipt.findUniqueOrThrow({ where: { id }, select: { fileBlob: true, fileKey: true, mimeType: true } });
+  const file = await db.receipt.findUniqueOrThrow({ where: { id }, select: { fileBlob: true, fileKey: true, mimeType: true, rotation: true } });
   // A missing file reads as null; a store outage throws.
   const stored = await readStoredFile(file).then(
     (bytes): Uint8Array | OcrFailure => bytes ?? { success: false, kind: "data", error: "the receipt file is missing" },
@@ -395,7 +395,7 @@ async function applyOcr(id: string, actor: ReceiptPrincipal): Promise<void> {
       return { success: false, kind: "system", error: "the receipt file could not be fetched from storage" };
     },
   );
-  const raw: OcrResult = stored instanceof Uint8Array ? await ports().ocr.extract(Buffer.from(stored), file.mimeType) : stored;
+  const raw: OcrResult = stored instanceof Uint8Array ? await ports().ocr.extract(Buffer.from(stored), file.mimeType, file.rotation) : stored;
   const parsed = raw.success ? OcrDataSchema.safeParse(raw.data) : null;
   const result: OcrResult = !raw.success
     ? raw
