@@ -118,6 +118,19 @@ describe("sendTemplated", () => {
         expect(send.mock.calls[0][2]).toContain('You can manage it <a href="https://x.test/p?a=1&amp;b=2">here</a>.');
     });
 
+    it("renders a site-relative link token as a link", async () => {
+        await sendTemplated("program.assignment", "a@example.org", { programName: "Robotics", actionLink: "/programs/1" });
+
+        expect(send.mock.calls[0][2]).toContain('<a href="/programs/1">here</a>');
+    });
+
+    it.each(["javascript:alert(1)", "data:text/html,<b>x</b>"])("renders a %s link token as text, not a link", async (actionLink) => {
+        await sendTemplated("program.assignment", "a@example.org", { programName: "Robotics", actionLink });
+
+        expect(send.mock.calls[0][2]).not.toContain("<a href");
+        expect(send.mock.calls[0][2]).toContain(actionLink.replace(/</g, "&lt;").replace(/>/g, "&gt;"));
+    });
+
     it("returns false when sendEmail fails, so callers can retry", async () => {
         send.mockResolvedValue(false);
 
