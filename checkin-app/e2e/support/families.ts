@@ -118,7 +118,8 @@ export async function asViewer(browser: Browser, email: string, steps: (page: Pa
 /**
  * Signs the agreement through the dev Zoho mock from the membership page. The mock page renders
  * its button on the server, and a click that lands before hydration does nothing, so the click
- * repeats until the completion request goes out, and that request must answer 200.
+ * repeats until the completion request goes out, and that request must answer 200. A signature
+ * that completes the external step moves the page straight on to payment.
  */
 export async function signAgreement(page: Page): Promise<void> {
   const isComplete = (url: string) => new URL(url).pathname === "/api/dev/zoho-sign/complete";
@@ -133,5 +134,5 @@ export async function signAgreement(page: Page): Promise<void> {
     await expect.poll(() => sent, { timeout: 2_000 }).toBe(true);
   }).toPass({ timeout: 30_000 });
   expect((await completed).status()).toBe(200);
-  await expect(page.getByText(/^Signed/)).toBeVisible();
+  await expect(page.getByText(/^Signed/).or(page.getByRole("heading", { name: "Membership fee" })).first()).toBeVisible();
 }
