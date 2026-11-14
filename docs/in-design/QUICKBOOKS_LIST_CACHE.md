@@ -32,6 +32,8 @@ straight away after changing something in QuickBooks.
 - **Posting:** no change. The daily run still reads QuickBooks live.
 - **Sysadmins and the Board:** System Status gets one new row showing when the
   lists were last refreshed. It turns red after two days without a refresh.
+  A second new row flags any stored pick outside the books map whose account is
+  missing from the copy or of the wrong type (QL-7).
 - **Not changing:** finance still picks every mapping one at a time, vendors
   are still searched live, and nothing is booked from the copy.
 - **Cost:** one table, one step at the start of the daily `qbo-posting` run, two
@@ -57,6 +59,12 @@ IDs stay stable so later threads can cite them.
   it in the same place.  [Decision — owner]
 - **QL-6.** The daily posting runs and System Status's existing QuickBooks rows
   keep reading QuickBooks live.  [Decision — owner]
+- **QL-7.** System Status flags a mistyped account on every stored QuickBooks
+  pick, not only books map roles. The new coverage is the expense account list
+  and rules, held expense lines, the donation account map and income items, and
+  it reads the copy. The `docs/rules/revenue.md` rule that a stored account
+  that later reads as another type is flagged on System Status keeps its
+  wording, which this makes true for every pick.  [Decision — owner]
 
 ## Rules this relies on or changes
 
@@ -95,8 +103,8 @@ These rules stay as they are:
 
 - `docs/rules/revenue.md`: a stored account that later reads as another type is
   flagged on System Status and never rewritten. That check stays live (QL-6).
-  The row covers books map roles only; §4 lists what catches every other kind
-  of pick.
+  Today the row covers books map roles only; PR 4 widens it to every stored
+  pick (QL-7, §4).
 - `docs/rules/revenue.md`: while Classes can't be read, a payout with a sale
   assigned to a bucket waits. That check happens at posting, so it stays live.
 - `docs/conventions.md`, "A shared helper has one home" and "One process, one
@@ -289,22 +297,50 @@ branch (`docs/conventions.md`, "A simple machine with a known risk").
   type changed in QuickBooks the next day. The stored pick is then wrong in
   exactly the same way. The copy only adds the gap between the change and the
   next refresh.
-- **What catches it later:** the same checks that catch a type change after a
-  live save today. None of them read the copy.
+- **What catches it later:** the checks that catch a type change after a live
+  save today, plus the row PR 4 adds.
 
   | Stored pick | Caught by |
   |---|---|
   | Books map roles | System Status's account-types row (`misTypedRoleAccounts`, `checkin-app/src/lib/finance/booksMap.ts:118`), which reads QuickBooks live |
   | Expense payment account | Posting (`resolvePosting`, `checkin-app/src/lib/expense/configure.ts:228`), which refuses to post and alerts finance |
   | Gift-of-goods lines | Posting (`unusable`, `packages/bulk-donation/src/lib/in-kind-accounts.ts:17`), which holds the gift for finance |
-  | Expense account list and rules, held expense lines, donation account map, income items | Nothing re-checks these after a save, today or under this design |
+  | Expense account list and rules, held expense lines, donation account map, income items | System Status's new picks row (PR 4, below), which reads the copy |
 
 - **Cleanup:** finance re-picks the account. The type is checked again on that
   save.
 
-Nothing in this design changes what catches a type change after a save.
-Widening System Status's account-types row to cover the last row of the table
-would close that gap for live saves as well, which makes it separate work.
+Before PR 4, nothing re-checked the picks in the last row of the table once
+they were saved. PR 4 closes that gap (QL-7).
+
+**The picks row (PR 4).** System Status gets a second row, "QuickBooks picks:
+account types". It checks every stored pick outside the books map against the
+copy, using the same type lists the saves use:
+
+| Stored pick | Where it is stored | Types it must have |
+|---|---|---|
+| Expense account list | `ExpenseQbAccount.qbAccount` | `LISTED_TYPES` (`packages/expense/src/lib/account-types.ts:14`) |
+| Expense account rules | `AccountMapping.qbAccount` | `bookableTypes(isCapital)` |
+| Held expense lines | `ExpenseLineItem.manualQbAccount`, on lines not yet booked | `bookableTypes(line.isCapital)` |
+| Donation account map | `AccountMap.donationAccountId`, `matchAccountId` | `LINE_ACCOUNT_TYPES.givingGift` |
+| Income items | `IncomeItemCategory.quickBooksAccountId` | `LINE_ACCOUNT_TYPES.storeSale` |
+
+- Each library owns its tables, so each one exports a read,
+  `misTypedQuickBooksPicks(accounts)`. It takes the copy's accounts and returns
+  one plain-language line per pick that is missing or of a type it doesn't
+  accept, built with `accountTypeRefusal`, the way `misTypedRoleAccounts` does
+  for roles. The host's health check calls the three reads with the copy and
+  joins their lines into the row.
+- The row is green with "Every stored pick is of a type it accepts." It is red
+  with the lines otherwise, and each line names the screen where finance
+  re-picks. Like the roles row, it never rewrites a stored value.
+- It reads the copy, never QuickBooks, so the row works during an outage. It
+  is only as current as the copy. The copy's own row (above) turns red when the
+  copy is two days old. While the copy is empty, the row reads "Not checked:
+  the QuickBooks lists have not been copied yet."
+- The existing roles row keeps reading QuickBooks live (QL-6), so a
+  books map role is checked live and every other pick is checked against the
+  copy.
 
 The planned interim fix, which runs the account-type check only when the
 account changes, still holds under this design. It can land first: it also lets
@@ -362,6 +398,11 @@ Every PR is based on `main`; none is stacked.
    `@checkin/component-ui`, the client kit change that shows the refusal's
    `code`, the button on the Books map and the eight picker screens listed in
    §3, and the System Status row. It goes after PRs 1 and 2 merge.
+4. **Picks row:** each library's `misTypedQuickBooksPicks` read and the new
+   System Status row (§4). It reads the copy, so it goes after PR 2 merges. It
+   needs nothing from PRs 1 or 3, so it can run in parallel with PR 3. It adds
+   no route and no response field: System Status rows already have a
+   classified shape, so PR 4 doesn't touch the security boundary.
 
 ## Tests
 
@@ -375,6 +416,10 @@ Every PR is based on `main`; none is stacked.
   component test showing that the button reloads its page's options and appears
   beside a `quickbooks-list-stale` refusal. No flow test is needed, because no
   flow-test server reaches QuickBooks.
+- PR 4: each library's read flags a missing pick and a pick of the wrong type,
+  and passes one of an accepted type. A held line already booked is skipped. The
+  host row is green, red with lines, and "Not checked" for an empty copy, and
+  makes no QuickBooks call.
 
 ## Alternatives considered
 
