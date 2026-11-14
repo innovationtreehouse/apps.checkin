@@ -5,7 +5,7 @@ import { createAccountMap, updateAccountMap } from "../../routes/rules";
 import { accountMapService } from "../../services/accountMapService";
 
 vi.mock("../../services/accountMapService", () => ({
-  accountMapService: { createAccountMap: vi.fn(async () => ({ id: 1 })), updateAccountMap: vi.fn(async () => ({ id: 1 })) },
+  accountMapService: { createAccountMap: vi.fn(async () => ({ id: 1 })), updateAccountMap: vi.fn(async () => ({ id: 1 })), findAccountMap: vi.fn(async () => null) },
 }));
 
 const ACCOUNTS = [
@@ -50,6 +50,23 @@ describe("account rule save", () => {
   it("refuses a match account on update", async () => {
     await expect(updateAccountMap({ req: rule({ matchAccountId: "8001" }), params: { id: "1" } })).rejects.toMatchObject({ status: 400 });
     expect(accountMapService.updateAccountMap).not.toHaveBeenCalled();
+  });
+
+  it("saves a rule whose accounts are unchanged without reading QuickBooks", async () => {
+    vi.mocked(accountMapService.findAccountMap).mockResolvedValueOnce({ donationAccountId: "8001", matchAccountId: "8003" } as never);
+    const read = vi.fn(async () => ACCOUNTS);
+    configure(read);
+    await updateAccountMap({ req: rule({ donationAccountId: "8001", matchAccountId: "8003" }), params: { id: "1" } });
+    expect(read).not.toHaveBeenCalled();
+    expect(accountMapService.updateAccountMap).toHaveBeenCalled();
+  });
+
+  it("checks only the account that changed", async () => {
+    vi.mocked(accountMapService.findAccountMap).mockResolvedValueOnce({ donationAccountId: "8003", matchAccountId: "8003" } as never);
+    await expect(updateAccountMap({ req: rule({ donationAccountId: "8003", matchAccountId: "8001" }), params: { id: "1" } })).rejects.toMatchObject({
+      status: 400,
+      message: "A rule's match account takes an Income or Other Income account; Checking is Bank",
+    });
   });
 
   it("saves a rule without accounts without reading QuickBooks", async () => {

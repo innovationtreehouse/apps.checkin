@@ -22,6 +22,10 @@ export const accountMapService = {
     return db.accountMap.findMany({ where: { orgId }, orderBy: { id: "asc" }, ...page });
   },
 
+  async findAccountMap(orgId: string, id: number) {
+    return db.accountMap.findFirst({ where: { id, orgId } });
+  },
+
   async createAccountMap(orgId: string, data: AccountMapData, actor: AuditActor) {
     return db.$transaction(async (tx) => {
       const created = await tx.accountMap.create({
