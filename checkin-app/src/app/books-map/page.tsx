@@ -115,7 +115,6 @@ export default function BooksMapPage() {
                   value={r.quickBooksAccountId}
                   placeholder="Not set"
                   searchable
-                  clearable
                   disabled={!isFinance}
                   onChange={(v) => void save(`/api/books-map/accounts/${r.role}`, { quickBooksAccountId: v }, "Account not saved")}
                 />
@@ -139,7 +138,6 @@ export default function BooksMapPage() {
                   value={r.quickBooksClassId}
                   placeholder="Not set"
                   searchable
-                  clearable
                   disabled={!isFinance}
                   onChange={(v) => void save(`/api/books-map/classes/${r.budgetOwnerId}`, { quickBooksClassId: v }, "Class not saved")}
                 />

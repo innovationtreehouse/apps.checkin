@@ -363,6 +363,10 @@ Things the app takes as true because they are handled outside it.
   system. Archiving keeps the row, because finance records point at it.
   [Decision]
 
+- A bucket is created with its class. Finance may change a bucket's class but
+  not clear it, and no two buckets share a class.
+  [Decision — owner]
+
 - Finance may restore an archived bucket. It comes back with its class, owner
   and treasurers. An archived bucket keeps its class, so no other bucket can
   hold that class when it returns. Each restore is recorded.
