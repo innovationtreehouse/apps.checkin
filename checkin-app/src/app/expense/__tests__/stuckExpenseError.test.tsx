@@ -3,10 +3,11 @@ import { MantineProvider } from "@mantine/core";
 import ExpenseDetailPage from "@checkin/expense/pages/expenseDetail";
 
 let mockLoads: Record<string, unknown> = {};
+let mockRoles = { isFinance: true, isBoard: false };
 
 jest.mock("@checkin/expense/components/api", () => ({
   useLoad: (path: string | null) => ({ data: path ? mockLoads[path] ?? null : null, error: null, reload: () => {} }),
-  useRoles: () => ({ isFinance: true, isBoard: false }),
+  useRoles: () => mockRoles,
   send: jest.fn(),
 }));
 
@@ -28,7 +29,8 @@ beforeAll(() => {
 
 const ERROR = "QBO create Purchase failed: socket hang up";
 
-function show(fields: Record<string, unknown>) {
+function show(fields: Record<string, unknown>, roles = { isFinance: true, isBoard: false }) {
+  mockRoles = roles;
   mockLoads = {
     "/expenses/e1": {
       id: "e1", vendorName: "Acme", receiptDate: "2026-10-01", receiptTotalCents: 1000, taxCents: 0, shippingCents: 0,
@@ -42,13 +44,23 @@ function show(fields: Record<string, unknown>) {
 }
 
 describe("a stuck expense's last error", () => {
-  it("shows the last error while the expense is stuck", () => {
-    show({ qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: "2026-11-01T00:00:00Z", qbLastError: ERROR });
+  const STUCK = { qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: "2026-11-01T00:00:00Z" };
+
+  it.each([
+    ["finance", { isFinance: true, isBoard: false }],
+    ["the Board", { isFinance: false, isBoard: true }],
+  ])("shows %s the last error while the expense is stuck", (_who, roles) => {
+    show({ ...STUCK, qbLastError: ERROR }, roles);
     expect(screen.getByText(`Last error: ${ERROR}`)).toBeInTheDocument();
   });
 
-  it("shows no error line when the response carries none, as for a reader without the personal tier", () => {
-    show({ qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: "2026-11-01T00:00:00Z" });
+  it("says no error was recorded when a stuck expense has none", () => {
+    show(STUCK);
+    expect(screen.getByText("Last error: no error recorded")).toBeInTheDocument();
+  });
+
+  it("shows a bucket approver no error line", () => {
+    show({ ...STUCK, qbLastError: ERROR }, { isFinance: false, isBoard: false });
     expect(screen.queryByText(/Last error/)).not.toBeInTheDocument();
   });
 

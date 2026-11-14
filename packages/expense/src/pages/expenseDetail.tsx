@@ -569,7 +569,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
         />
       )}
       <ReasonsAlert reasons={reasons} currency={e.currency} />
-      {e.qbFirstFailedAt && e.qbLastError && <Text size="sm" c="red">Last error: {e.qbLastError}</Text>}
+      {(isFinance || isBoard) && e.qbFirstFailedAt && <Text size="sm" c="red">Last error: {e.qbLastError ?? "no error recorded"}</Text>}
       {e.qbMatchState && NOT_SENT[e.qbMatchState] && <Text size="sm" c="orange">{NOT_SENT[e.qbMatchState]}</Text>}
       {isFinance && (e.qbMatchState === "NEEDS_FINANCE" || open("QB_AWAITING_MATCH") || open("QB_VENDOR_MISSING") || open("QB_UNBOOKED")) && (
         <Paper withBorder p="sm">
