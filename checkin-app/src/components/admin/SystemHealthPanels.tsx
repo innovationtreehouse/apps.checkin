@@ -1,9 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
+import { useSession } from "next-auth/react";
 import { Anchor, Badge, Button, Card, Center, Code, Group, List, Loader, Stack, Text, Title } from "@mantine/core";
 import { LoadError } from "@checkin/component-ui";
 import { useLoad } from "@/lib/api";
+import { mayRetry } from "@/lib/problemsRetryRoles";
 
 type DailyStat = {
   date: string;
@@ -211,13 +213,18 @@ type ProblemsPayload = { problems?: { items?: unknown; unread?: unknown; notices
 
 /**
  * The receipt flow's Problems list: each library's own lines, every stuck item, oldest first, with a
- * link to its own page (which shows the error) and when it failed, then every scheduled job that has not run on time. From GET /api/system-status/config-health.
+ * link to its own page (which shows the error), when it failed and a Retry button, then every scheduled job that has not run on time.
+ * From GET /api/system-status/config-health; Retry and Retry all POST /api/system-status/problems/retry.
  */
 export function ProblemsBox() {
   const [data, setData] = useState<{ items: StuckItem[]; unread: string[]; notices: string[]; staleJobs: CronJob[] } | null>(null);
   const [failed, setFailed] = useState(false);
 
-  useEffect(() => {
+  const viewer = useSession().data?.user;
+  const [retrying, setRetrying] = useState<{ done: number; total: number } | null>(null);
+  const [retried, setRetried] = useState<string | null>(null);
+
+  const load = useCallback(() =>
     fetch('/api/system-status/config-health')
       .then((res) => (res.ok ? res.json() : Promise.reject()))
       .then(({ problems, cronJobs }: ProblemsPayload) => {
@@ -229,8 +236,29 @@ export function ProblemsBox() {
           staleJobs: (cronJobs as CronJob[]).filter((j) => j.stale),
         });
       })
-      .catch(() => setFailed(true));
-  }, []);
+      .catch(() => setFailed(true)), []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // One item at a time, in list order; a refused or failed item (a 403 too) stays listed after the refresh.
+  const retry = async (items: StuckItem[]) => {
+    let ok = 0;
+    for (const [n, i] of items.entries()) {
+      setRetrying({ done: n, total: items.length });
+      const res = await fetch('/api/system-status/problems/retry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ library: i.library, step: i.step, id: i.id }),
+      }).catch(() => null);
+      const body: { results?: { ok?: unknown }[] } | null = res ? await res.json().catch(() => null) : null;
+      if (body?.results?.[0]?.ok === true) ok += 1;
+    }
+    setRetried(`${ok} of ${items.length} retried; ${items.length - ok} still stuck.`);
+    setRetrying(null);
+    await load();
+  };
 
   const total = data ? data.items.length + data.staleJobs.length + data.unread.length + data.notices.length : 0;
 
@@ -248,6 +276,19 @@ export function ProblemsBox() {
       ) : total === 0 ? (
         <Text c="dimmed">Nothing is stuck.</Text>
       ) : (
+        <Stack gap="sm">
+        {data.items.length > 0 && (
+          <Group gap="sm">
+            <Button size="xs" variant="light" disabled={retrying !== null} onClick={() => retry(data.items)}>
+              Retry all
+            </Button>
+            {retrying ? (
+              <Text size="sm" c="dimmed">Retrying {retrying.done + 1} of {retrying.total}…</Text>
+            ) : retried && (
+              <Text size="sm" c="dimmed">{retried}</Text>
+            )}
+          </Group>
+        )}
         <List spacing="sm" listStyleType="none">
           {data.unread.map((library) => (
             <List.Item key={`unread-${library}`}>
@@ -265,6 +306,11 @@ export function ProblemsBox() {
                 <Badge variant="light">{i.library}</Badge>
                 <span>{i.step}</span>
                 {i.href ? <Anchor href={i.href}><Code>{i.id}</Code></Anchor> : <Code>{i.id}</Code>}
+                {mayRetry(viewer, i) && (
+                  <Button size="compact-xs" variant="subtle" disabled={retrying !== null} onClick={() => retry([i])}>
+                    Retry
+                  </Button>
+                )}
               </Group>
               <Text size="xs" c="dimmed" title={i.failedAt}>Failed {timeAgo(i.failedAt)}</Text>
             </List.Item>
@@ -279,6 +325,7 @@ export function ProblemsBox() {
             </List.Item>
           ))}
         </List>
+        </Stack>
       )}
     </Card>
   );

@@ -1,4 +1,4 @@
-import type { StuckItem } from "@checkin/component-kit";
+import { ServiceError, type StuckItem } from "@checkin/component-kit";
 import { config } from "@/lib/config";
 import { getCronJobStatuses } from "@/lib/cronRuns";
 import { sendTemplated } from "@/lib/email-templates/send";
@@ -11,22 +11,55 @@ export interface Problem extends StuckItem {
     library: string;
 }
 
+type Retry = (item: { id: string; step: string }) => Promise<void>;
+
 /**
- * Each receipt-flow library's "stuck items" port, and its own Problems lines where it has them;
- * one with no database configured is not read.
+ * Each receipt-flow library's "stuck items" and "retry" ports, and its own Problems lines where it
+ * has them; one with no database configured is not read.
  */
-const SOURCES: { library: string; env: string; read: () => Promise<StuckItem[]>; notices?: () => Promise<string[]> }[] = [
+const SOURCES: { library: string; env: string; read: () => Promise<StuckItem[]>; retry: Retry; notices?: () => Promise<string[]> }[] = [
     {
         library: "receipt",
         env: "RECEIPT_DATABASE_URL",
         read: async () => (await import("@checkin/receipt")).stuckItems(),
+        retry: async (item) => (await import("@checkin/receipt")).retryStuckItem(item),
         notices: async () => (await import("@checkin/receipt")).problemNotices(),
     },
-    { library: "workflow mapping", env: "WORKFLOW_MAPPING_DATABASE_URL", read: async () => (await import("@checkin/workflow-mapping")).stuckItems() },
-    { library: "expense", env: "EXPENSE_DATABASE_URL", read: async () => (await import("@checkin/expense")).stuckItems() },
-    { library: "gifts", env: "BULK_DONATION_DATABASE_URL", read: async () => (await import("@checkin/bulk-donation")).stuckItems() },
-    { library: "local inventory", env: "LOCAL_INVENTORY_DATABASE_URL", read: async () => (await import("@checkin/local-inventory")).stuckItems() },
+    {
+        library: "workflow mapping",
+        env: "WORKFLOW_MAPPING_DATABASE_URL",
+        read: async () => (await import("@checkin/workflow-mapping")).stuckItems(),
+        retry: async (item) => (await import("@checkin/workflow-mapping")).retryStuckItem(item),
+    },
+    {
+        library: "expense",
+        env: "EXPENSE_DATABASE_URL",
+        read: async () => (await import("@checkin/expense")).stuckItems(),
+        retry: async (item) => (await import("@checkin/expense")).retryStuckItem(item),
+    },
+    {
+        library: "gifts",
+        env: "BULK_DONATION_DATABASE_URL",
+        read: async () => (await import("@checkin/bulk-donation")).stuckItems(),
+        retry: async (item) => (await import("@checkin/bulk-donation")).retryStuckItem(item),
+    },
+    {
+        library: "local inventory",
+        env: "LOCAL_INVENTORY_DATABASE_URL",
+        read: async () => (await import("@checkin/local-inventory")).stuckItems(),
+        retry: async (item) => (await import("@checkin/local-inventory")).retryStuckItem(item),
+    },
 ];
+
+/**
+ * Runs one listed item's step once, through the library the Problems list names it by. A library
+ * that is not listed or has no database answers 404; the library's own retry answers the rest.
+ */
+export async function retryProblem({ library, step, id }: { library: string; step: string; id: string }): Promise<void> {
+    const source = SOURCES.find((s) => s.library === library && process.env[s.env]);
+    if (!source) throw new ServiceError(404, "No such library on the Problems list");
+    await source.retry({ id, step });
+}
 
 /**
  * Every stuck item across the receipt flow, oldest first, and the libraries' own lines

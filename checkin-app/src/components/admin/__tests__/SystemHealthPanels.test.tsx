@@ -1,6 +1,9 @@
+type Rtl = typeof import("@/test-helpers/rtl");
+jest.mock("next-auth/react", () => jest.requireActual<Rtl>("@/test-helpers/rtl").authMock());
+
 import { act, screen, fireEvent } from "@testing-library/react";
 import { invalidateLoads } from "@checkin/component-ui";
-import { renderWithProviders, mockFetchJson, resetRtl } from "@/test-helpers/rtl";
+import { renderWithProviders, mockFetchJson, resetRtl, setSession } from "@/test-helpers/rtl";
 import { SystemVersionBox, BadgeScanChart, SReadDiagnosticsBox, CronRunsBox, KioskHeartbeatBox, OpenProblemsBox, ProblemsBox } from "../SystemHealthPanels";
 
 beforeEach(() => resetRtl());
@@ -283,6 +286,68 @@ describe("ProblemsBox", () => {
     expect(screen.getByText(/Could not read gifts/)).toBeInTheDocument();
     expect(screen.getByText("Receipt reading failed 3 times in the last day")).toBeInTheDocument();
     expect(screen.getByText("5")).toBeInTheDocument();
+  });
+
+  const stuck = [
+    { library: "expense", id: "e1", step: "QuickBooks posting", href: null, failedAt: "2026-11-01T12:00:00.000Z" },
+    { library: "gifts", id: "receipt 4", step: "QuickBooks posting", href: null, failedAt: "2026-11-02T12:00:00.000Z" },
+    { library: "receipt", id: "r9", step: "flow", href: null, failedAt: "2026-11-03T12:00:00.000Z" },
+  ];
+  const retryBodies = (fetchFn: jest.Mock) =>
+    fetchFn.mock.calls
+      .filter(([url]) => String(url).includes("/problems/retry"))
+      .map(([, init]) => JSON.parse(String((init as RequestInit).body)));
+
+  it("Retry runs one item's step, then refreshes the list", async () => {
+    setSession({ id: 1, isBoardMember: true });
+    const fetchFn = mockFetchJson({
+      "/api/system-status/config-health": { problems: { items: stuck, unread: [], notices: [] }, cronJobs: [] },
+      "/api/system-status/problems/retry": { results: [{ step: "flow", id: "r9", ok: true }] },
+    });
+    renderWithProviders(<ProblemsBox />);
+
+    fireEvent.click((await screen.findAllByRole("button", { name: "Retry" }))[2]);
+
+    expect(await screen.findByText("1 of 1 retried; 0 still stuck.")).toBeInTheDocument();
+    expect(retryBodies(fetchFn)).toEqual([{ library: "receipt", step: "flow", id: "r9" }]);
+    expect(fetchFn.mock.calls.filter(([url]) => String(url).includes("config-health"))).toHaveLength(2);
+  });
+
+  it("hides Retry on a QuickBooks step from a sysadmin, who still retries the rest", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({ "/api/system-status/config-health": { problems: { items: stuck, unread: [], notices: [] }, cronJobs: [] } });
+    renderWithProviders(<ProblemsBox />);
+
+    expect(await screen.findAllByRole("button", { name: "Retry" })).toHaveLength(1);
+    expect(screen.getByText("r9").closest("li")).toContainElement(screen.getByRole("button", { name: "Retry" }));
+  });
+
+  it("Retry all retries every item one at a time in list order, goes on past a refusal and a failure, then refreshes", async () => {
+    setSession({ id: 1, isBoardMember: true });
+    // The second answers as a refused (403) press does: no results.
+    const answers: unknown[] = [{ results: [{ ok: true }] }, { error: "Forbidden" }, { results: [{ ok: false }] }];
+    let inFlight = 0;
+    let most = 0;
+    const fetchFn = mockFetchJson({
+      "/api/system-status/config-health": { problems: { items: stuck, unread: [], notices: [] }, cronJobs: [] },
+      "/api/system-status/problems/retry": () => answers.shift(),
+    });
+    const inner = fetchFn.getMockImplementation()!;
+    fetchFn.mockImplementation(async (input, init) => {
+      inFlight += 1;
+      most = Math.max(most, inFlight);
+      await Promise.resolve();
+      inFlight -= 1;
+      return inner(input, init);
+    });
+    renderWithProviders(<ProblemsBox />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Retry all" }));
+
+    expect(await screen.findByText("1 of 3 retried; 2 still stuck.")).toBeInTheDocument();
+    expect(retryBodies(fetchFn)).toEqual(stuck.map(({ library, step, id }) => ({ library, step, id })));
+    expect(most).toBe(1);
+    expect(fetchFn.mock.calls.filter(([url]) => String(url).includes("config-health"))).toHaveLength(2);
   });
 
   it("says so when nothing is stuck", async () => {
