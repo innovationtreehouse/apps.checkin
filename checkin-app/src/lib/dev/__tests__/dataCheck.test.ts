@@ -32,7 +32,7 @@ describe("runDevDataCheck", () => {
         process.env.CHECKIN_ENV = original;
     });
 
-    function fakeDb() {
+    function fakeDb(database = "checkin_dev") {
         const statements: string[] = [];
         const tx = {
             $executeRawUnsafe: jest.fn(async (sql: string) => {
@@ -41,6 +41,7 @@ describe("runDevDataCheck", () => {
             }),
             $queryRawUnsafe: jest.fn(async (sql: string) => {
                 statements.push(sql);
+                if (sql.includes("current_database()")) return [{ name: database }];
                 if (sql.includes('FROM "Person"') && sql.includes("email")) {
                     return [
                         { id: 1, email: SEEDED, householdId: 10 },
@@ -69,6 +70,28 @@ describe("runDevDataCheck", () => {
         const { db } = fakeDb();
         await expect(runDevDataCheck(db)).rejects.toThrow(/dev or local/);
         expect(db.$transaction).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ["dev", "checkmein"],
+        ["dev", "checkin_prod"],
+        ["local", "checkin_prod"],
+        ["local", "checkin_dev_copy"],
+    ])("refuses to read when CHECKIN_ENV is %p and the database is %p", async (env, database) => {
+        process.env.CHECKIN_ENV = env;
+        const { db, statements } = fakeDb(database);
+        await expect(runDevDataCheck(db)).rejects.toThrow(/refuses to read/);
+        expect(statements.some((s) => s.includes('"Person"'))).toBe(false);
+    });
+
+    it.each([
+        ["dev", "checkin_dev"],
+        ["local", "checkmein"],
+        ["local", "checkin_test_abc_1"],
+    ])("runs when CHECKIN_ENV is %p and the database is %p", async (env, database) => {
+        process.env.CHECKIN_ENV = env;
+        const { db } = fakeDb(database);
+        await expect(runDevDataCheck(db)).resolves.toBeDefined();
     });
 
     it("reads inside a read-only transaction and reports counts with no personal data", async () => {

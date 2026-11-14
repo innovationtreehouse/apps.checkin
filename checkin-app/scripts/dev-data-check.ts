@@ -11,7 +11,6 @@ import { runDevDataCheck } from "../src/lib/dev/dataCheck";
  */
 
 // Receipts are counted for information only; they are mostly anonymous and outside the check.
-// The error text stays out of the output: workflow logs are public, and a connection error names hosts.
 async function countReceipts(): Promise<number | "unavailable"> {
     try {
         return await getReceiptPrisma().receipt.count();
@@ -20,6 +19,7 @@ async function countReceipts(): Promise<number | "unavailable"> {
     }
 }
 
+// Error text stays out of the output: workflow logs are public, and a connection error names hosts.
 async function main(): Promise<void> {
     const report = await runDevDataCheck(prisma);
     const receipts = await countReceipts();
@@ -28,7 +28,7 @@ async function main(): Promise<void> {
 
 main()
     .then(() => process.exit(0))
-    .catch((e) => {
-        console.error(e instanceof Error ? e.message : e);
+    .catch(() => {
+        console.error("dev-data-check failed");
         process.exit(1);
     });

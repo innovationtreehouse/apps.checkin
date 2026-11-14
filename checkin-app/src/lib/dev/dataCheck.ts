@@ -76,6 +76,12 @@ export function classifyPeople(people: PersonRow[], householdIds: number[]) {
 
 const bare = (quoted: string) => quoted.replace(/^"|"$/g, "");
 
+/** The database each environment's check may read: dev's own, or a local or integration-test one. */
+export function isAllowedDatabase(env: string, name: string): boolean {
+    if (env === "dev") return name === "checkin_dev";
+    return name === "checkmein" || name.startsWith("checkin_test_");
+}
+
 export async function runDevDataCheck(db: DataCheckDb): Promise<DevDataReport> {
     const env = config.checkinEnv();
     if (env !== "dev" && env !== "local") {
@@ -85,6 +91,11 @@ export async function runDevDataCheck(db: DataCheckDb): Promise<DevDataReport> {
     return db.$transaction(async (tx) => {
         // The database refuses any write for the rest of this transaction.
         await tx.$executeRawUnsafe("SET TRANSACTION READ ONLY");
+
+        const [{ name }] = (await tx.$queryRawUnsafe("SELECT current_database() AS name")) as { name: string }[];
+        if (!isAllowedDatabase(env, name)) {
+            throw new Error(`dev-data-check refuses to read a database that is not the ${env} database`);
+        }
 
         const people = (await tx.$queryRawUnsafe(
             `SELECT id, email, "householdId" FROM ${PERSON}`,
