@@ -269,12 +269,6 @@ export interface MailAgingOutEvent {
   oldestReceivedAt: Date | null;
 }
 
-export interface MailListingFailedEvent {
-  orgId: string;
-  /** Why the listing failed, which decides the alert's wording. */
-  kind: FailureKind;
-}
-
 /** One acknowledgement of a mailed receipt, to one recipient. */
 /** Why a mailed file was not accepted; `no_receipt` stands for a whole message that held nothing to read. */
 export type MailRefusalReason = "too_large" | "wrong_type" | "empty" | "forwarded" | "ceiling" | "no_receipt";
@@ -341,7 +335,6 @@ export interface OutcomeMail {
 export interface ReceiptAlerts {
   mailHoldCeilingReached(event: MailHoldCeilingEvent): Promise<void>;
   mailAgingOut(event: MailAgingOutEvent): Promise<void>;
-  mailListingFailed(event: MailListingFailedEvent): Promise<void>;
 }
 
 /** Where receipt and held-mail files live. The host binds it; the library takes no storage dependency. */

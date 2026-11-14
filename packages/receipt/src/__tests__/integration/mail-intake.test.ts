@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { KindedError } from "@checkin/component-kit";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { db, getPrisma } from "../../db";
-import type { MailAgingOutEvent, MailboxReader, MailHoldCeilingEvent, MailListingFailedEvent, MailMessage, MailPart } from "../../contract";
+import type { MailAgingOutEvent, MailboxReader, MailHoldCeilingEvent, MailMessage, MailPart } from "../../contract";
 import { MAX_FILE_BYTES } from "../../lib/file-type";
 import {
   MAIL_CAP,
@@ -49,7 +49,6 @@ function fakeMailbox() {
 let mail: ReturnType<typeof fakeMailbox>;
 let alerts: MailHoldCeilingEvent[];
 let agingAlerts: MailAgingOutEvent[];
-let listingAlerts: MailListingFailedEvent[];
 const DAY_MS = 24 * 60 * 60_000;
 
 const attachment = (id: string, content: string, over: Partial<MailPart> = {}): MailPart => {
@@ -84,7 +83,6 @@ function send(
 const testAlerts = () => ({
   mailHoldCeilingReached: async (event: MailHoldCeilingEvent) => void alerts.push(event),
   mailAgingOut: async (event: MailAgingOutEvent) => void agingAlerts.push(event),
-  mailListingFailed: async (event: MailListingFailedEvent) => void listingAlerts.push(event),
 });
 
 beforeEach(async () => {
@@ -92,7 +90,6 @@ beforeEach(async () => {
   mail = fakeMailbox();
   alerts = [];
   agingAlerts = [];
-  listingAlerts = [];
   configure({
     ocr: okOcr(),
     mailbox: mail.reader,
@@ -705,12 +702,14 @@ describeDb("mail intake listing failure", () => {
     };
     vi.spyOn(console, "error").mockImplementation(() => {});
   };
+  const loggedKind = (kind: string) =>
+    expect(console.error).toHaveBeenCalledWith(`[receipt] mailbox listing failed (${kind}):`, expect.anything());
 
-  it("alerts finance on each failing run and reports the failure", async () => {
+  it("reports the failure on each failing run", async () => {
     failListing();
     expect(await readMailbox()).toMatchObject({ status: "listing_failed", messages: 0 });
     expect(await readMailbox()).toMatchObject({ status: "listing_failed" });
-    expect(listingAlerts).toEqual([{ orgId: TEST_ORG_ID, kind: "connection" }, { orgId: TEST_ORG_ID, kind: "connection" }]);
+    loggedKind("connection");
   });
 
   it("hands each listing failure to the on-failure port", async () => {
@@ -725,7 +724,7 @@ describeDb("mail intake listing failure", () => {
     [404, "settings"],
     [429, "system"],
     [503, "system"],
-  ] as const)("names the cause of a Gmail %i in the alert", async (status, kind) => {
+  ] as const)("logs the cause of a Gmail %i", async (status, kind) => {
     vi.stubGlobal("fetch", async () => new Response("{}", { status }));
     vi.spyOn(console, "error").mockImplementation(() => {});
     mail.reader.listRecent = createGmailReader("receipts@example.org", async () => "token").listRecent;
@@ -734,7 +733,7 @@ describeDb("mail intake listing failure", () => {
     } finally {
       vi.unstubAllGlobals();
     }
-    expect(listingAlerts).toEqual([{ orgId: TEST_ORG_ID, kind }]);
+    loggedKind(kind);
   });
 
   it("reads a Gmail that cannot be reached as an outage", async () => {
@@ -748,7 +747,7 @@ describeDb("mail intake listing failure", () => {
     } finally {
       vi.unstubAllGlobals();
     }
-    expect(listingAlerts).toEqual([{ orgId: TEST_ORG_ID, kind: "system" }]);
+    loggedKind("system");
   });
 
   it("reads an unsorted failure, such as a token-source error, as a bug", async () => {
@@ -757,18 +756,7 @@ describeDb("mail intake listing failure", () => {
     };
     vi.spyOn(console, "error").mockImplementation(() => {});
     await readMailbox();
-    expect(listingAlerts).toEqual([{ orgId: TEST_ORG_ID, kind: "bug" }]);
-  });
-
-  it("still reports the failure when the alert send fails", async () => {
-    failListing();
-    configure({
-      ocr: okOcr(),
-      mailbox: mail.reader,
-      alerts: { ...testAlerts(), mailListingFailed: async () => { throw new Error("send failed"); } },
-      people: { submitterByEmail: async () => ALICE },
-    });
-    expect(await readMailbox()).toMatchObject({ status: "listing_failed" });
+    loggedKind("bug");
   });
 
   it("still sends the stored ageing alert and the replies owed", async () => {

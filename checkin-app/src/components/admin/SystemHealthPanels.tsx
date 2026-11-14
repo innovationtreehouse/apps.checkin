@@ -211,10 +211,11 @@ type ProblemsPayload = { problems?: { items?: unknown; unread?: unknown; notices
 
 /**
  * The receipt flow's Problems list: each library's own lines, every stuck item, oldest first, with a
- * link to its own page (which shows the error) and when it failed, then every scheduled job that has not run on time. From GET /api/system-status/config-health.
+ * link to its own page (which shows the error) and when it failed, then every scheduled job that has not run on time
+ * or whose latest run reported failures (without the run's error text). From GET /api/system-status/config-health.
  */
 export function ProblemsBox() {
-  const [data, setData] = useState<{ items: StuckItem[]; unread: string[]; notices: string[]; staleJobs: CronJob[] } | null>(null);
+  const [data, setData] = useState<{ items: StuckItem[]; unread: string[]; notices: string[]; staleJobs: CronJob[]; failingJobs: CronJob[] } | null>(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
@@ -227,12 +228,14 @@ export function ProblemsBox() {
           unread: problems.unread as string[],
           notices: problems.notices as string[],
           staleJobs: (cronJobs as CronJob[]).filter((j) => j.stale),
+          // Mirrors failingJob in lib/problems.ts: a late job is listed as late only.
+          failingJobs: (cronJobs as CronJob[]).filter((j) => j.lastError && !j.stale),
         });
       })
       .catch(() => setFailed(true));
   }, []);
 
-  const total = data ? data.items.length + data.staleJobs.length + data.unread.length + data.notices.length : 0;
+  const total = data ? data.items.length + data.staleJobs.length + data.failingJobs.length + data.unread.length + data.notices.length : 0;
 
   return (
     <Card withBorder radius="md" padding="lg">
@@ -278,14 +281,23 @@ export function ProblemsBox() {
               <Text size="xs" c="dimmed" title={j.lastSuccessAt}>Has not run on time; last ran {timeAgo(j.lastSuccessAt)}</Text>
             </List.Item>
           ))}
+          {data.failingJobs.map((j) => (
+            <List.Item key={`failing-${j.job}`}>
+              <Group gap="xs">
+                <Badge variant="light" color="orange">scheduled job</Badge>
+                <Code>{j.job}</Code>
+              </Group>
+              <Text size="xs" c="dimmed" title={j.lastErrorAt}>Last run reported failures {timeAgo(j.lastErrorAt ?? j.lastSuccessAt)}</Text>
+            </List.Item>
+          ))}
         </List>
       )}
     </Card>
   );
 }
 
-// Mirrors CronJobStatus in lib/cronRuns.ts (lastSuccessAt arrives JSON-serialized).
-type CronJob = { job: string; lastSuccessAt: string; stale: boolean; lastError?: string };
+// Mirrors CronJobStatus in lib/cronRuns.ts (its dates arrive JSON-serialized).
+type CronJob = { job: string; lastSuccessAt: string; stale: boolean; lastError?: string; lastErrorAt?: string };
 
 /** "3 hours ago" / "2 days ago" — coarse on purpose; the exact stamp is the title text. */
 function timeAgo(iso: string): string {

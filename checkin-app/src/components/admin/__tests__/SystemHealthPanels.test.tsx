@@ -285,6 +285,38 @@ describe("ProblemsBox", () => {
     expect(screen.getByText("5")).toBeInTheDocument();
   });
 
+  it("lists a job whose latest run reported failures, without its error text, and a late one only once", async () => {
+    const problems = { items: [], unread: [], notices: [] };
+    mockFetchJson({
+      "/api/system-status/config-health": {
+        problems,
+        cronJobs: [
+          { job: "reconcile-shopify", lastSuccessAt: "2026-11-07T12:00:00.000Z", stale: false, lastError: "1 item(s) failed", lastErrorAt: "2026-11-07T12:00:00.000Z" },
+          { job: "nightly", lastSuccessAt: "2026-11-03T12:00:00.000Z", stale: true, lastError: "boom", lastErrorAt: "2026-11-07T12:00:00.000Z" },
+        ],
+      },
+    });
+    renderWithProviders(<ProblemsBox />);
+
+    expect(await screen.findByText("reconcile-shopify")).toBeInTheDocument();
+    expect(screen.getByText(/^Last run reported failures/)).toBeInTheDocument();
+    expect(screen.getAllByText("nightly")).toHaveLength(1);
+    expect(screen.getByText(/^Has not run on time/)).toBeInTheDocument();
+    expect(screen.queryByText(/item\(s\) failed|boom/)).not.toBeInTheDocument();
+    expect(screen.getByText("2")).toBeInTheDocument();
+  });
+
+  it("drops the job once its latest run is clean", async () => {
+    mockFetchJson({
+      "/api/system-status/config-health": {
+        problems: { items: [], unread: [], notices: [] },
+        cronJobs: [{ job: "reconcile-shopify", lastSuccessAt: "2026-11-07T12:00:00.000Z", stale: false }],
+      },
+    });
+    renderWithProviders(<ProblemsBox />);
+    expect(await screen.findByText("Nothing is stuck.")).toBeInTheDocument();
+  });
+
   it("says so when nothing is stuck", async () => {
     mockFetchJson({ "/api/system-status/config-health": { problems: { items: [], unread: [], notices: [] }, cronJobs: [] } });
     renderWithProviders(<ProblemsBox />);

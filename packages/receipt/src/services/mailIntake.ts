@@ -831,13 +831,8 @@ async function readLeased(reader: MailboxReader, orgId: string, started: number,
     ids = await reader.listRecent(MAIL_WINDOW_DAYS);
   } catch (err) {
     const kind = kindOf(err);
+    // The cron run counts `listing_failed` as a failure, so the Problems list shows it.
     console.error(`[receipt] mailbox listing failed (${kind}):`, err);
-    // Sent every run the listing fails: mail is ageing out unread for as long as it lasts.
-    try {
-      await ports().alerts.mailListingFailed({ orgId, kind });
-    } catch (alertErr) {
-      console.error("[receipt] mailbox listing alert failed:", alertErr);
-    }
   }
   if (ids) await readListed(ids, reader);
   await alertAtRisk(reader);

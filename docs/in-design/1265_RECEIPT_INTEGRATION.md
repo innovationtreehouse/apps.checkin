@@ -326,9 +326,9 @@ crashed run, a missed day or a failed send only delays it, and it is marked sent
 only after it is sent, so it is not repeated. A message that cannot be fetched
 has no known age, so it alerts on the first run that fails to fetch it.
 
-**Mailbox that cannot be listed** (`[Decision]`). The run alerts finance on every
-run the listing fails, still sends the acknowledgements owed, and the cron run
-records a failure, so System Status shows it. `ponytail:` ceiling is a cron that
+**Mailbox that cannot be listed** (`[Decision]`). The run still sends the
+acknowledgements owed, and the cron run records a failure, so the Problems list
+on System Status (and its daily email) shows the job until a run lists the mailbox. `ponytail:` ceiling is a cron that
 does not run at all for longer than 30 days, which System Status shows as not
 running, or a flood bigger than the per-run caps drain inside 30 days; widen the
 window or the caps if either happens.
