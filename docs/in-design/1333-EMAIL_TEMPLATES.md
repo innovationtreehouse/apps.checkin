@@ -219,14 +219,15 @@ stand for in today's copy, so a key without a link today has no `actionLink`.
 ### ops — 5
 | key | trigger | recipient | tokens |
 |-----|---------|-----------|--------|
-| `ops.incidentOpened` | a job run's failure opens an incident (`opsIncidents`) | the alert address setting (nothing sent if unset) | kind, cause, lanes, status, summary, firstSeen, runsSeen, items, todo, `actionLink` ("Open System Status") |
+| `ops.incidentOpened` | a job run's failure opens an incident (`opsIncidents`): a connection, settings or bug failure on its first run; a system failure on the second run in a row, or the first when a lane stopped | the alert address setting (nothing sent if unset) | kind, cause, lanes, status, summary, firstSeen, runsSeen, items, todo, `actionLink` ("Open System Status") |
 | `ops.incidentReminder` | an incident is still open when its reminder falls due | the alert address setting (nothing sent if unset) | same as `ops.incidentOpened` |
 | `ops.incidentEscalated` | an incident has been open for 2 weeks | the Board address setting (nothing sent if unset) | same as `ops.incidentOpened` |
 | `ops.incidentRecovered` | a run covers every lane of an open incident without failing it | the alert address setting (nothing sent if unset) | same as `ops.incidentOpened` |
-| `ops.problemsDigest` | daily, while anything on the Problems list is stuck or a job has not run on time (`sendProblemsDigest`) | the alert address setting (nothing sent if unset); also the Board address setting once anything has waited over 14 days | count, items, `actionLink` ("Open System Status") |
+| `ops.problemsDigest` | daily, while an item has been stuck over a day, a job has not run on time, a library's stuck items could not be read, or a library has a notice of its own (`sendProblemsDigest`) | the alert address setting (nothing sent if unset); also the Board address setting once a stuck item or late job has waited over 14 days | count, items, `actionLink` ("Open System Status") |
 
-> The ops emails carry codes, counts and dates only: no amounts, donor or vendor names, or
-> memo or error text.
+> The incident emails carry codes, counts and dates only, with no amounts, donor or vendor
+> names, or memo text. The digest carries ids, steps and dates only, with no error text,
+> amounts, or donor or vendor names.
 
 ### finance — 13
 | key | trigger | recipient | tokens |
