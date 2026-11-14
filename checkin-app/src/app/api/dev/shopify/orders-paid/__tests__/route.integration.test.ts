@@ -19,6 +19,7 @@ import { POST } from '@/app/api/dev/shopify/orders-paid/route';
 import { POST as WEBHOOK_POST } from '@/app/api/webhooks/shopify/route';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
+import { liveMembershipYear } from '@/lib/membership/renewal';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 
@@ -45,7 +46,11 @@ function jsonReq(body?: unknown) {
 
 describe('POST /api/dev/shopify/orders-paid (dev mock)', () => {
     let originalFetch: typeof global.fetch;
-    let prevSettings: { orgMembershipVariantId: string | null } | null;
+    let prevSettings: { orgMembershipVariantId: string | null; orgMembershipYearBoundary: Date | null } | null;
+    const BOUNDARY = new Date('2000-09-01T00:00:00Z');
+    const LIVE_ROW_VARIANT = 'dev-mock-variant-route-live-year';
+    const liveYear = liveMembershipYear(BOUNDARY, new Date())!;
+    let prevLiveRow: { membershipYear: number; shopifyVariantId: string; productUrl: string | null } | null = null;
 
     async function wipe() {
         const hhs = await prisma.household.findMany({ where: { name: { contains: TAG } }, select: { id: true } });
@@ -74,8 +79,8 @@ describe('POST /api/dev/shopify/orders-paid (dev mock)', () => {
     async function setVariant(variantId: string | null) {
         await prisma.boardSettings.upsert({
             where: { id: 1 },
-            create: { id: 1, orgMembershipVariantId: variantId },
-            update: { orgMembershipVariantId: variantId },
+            create: { id: 1, orgMembershipVariantId: variantId, orgMembershipYearBoundary: BOUNDARY },
+            update: { orgMembershipVariantId: variantId, orgMembershipYearBoundary: BOUNDARY },
         });
     }
 
@@ -98,7 +103,8 @@ describe('POST /api/dev/shopify/orders-paid (dev mock)', () => {
         for (const k of SHOPIFY_ENV_KEYS) delete process.env[k];
 
         const existing = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        prevSettings = existing ? { orgMembershipVariantId: existing.orgMembershipVariantId } : null;
+        prevSettings = existing ? { orgMembershipVariantId: existing.orgMembershipVariantId, orgMembershipYearBoundary: existing.orgMembershipYearBoundary } : null;
+        prevLiveRow = await prisma.membershipYearVariant.findUnique({ where: { membershipYear: liveYear } });
         await wipe();
 
         global.fetch = jest.fn(async (input, init) => {
@@ -114,6 +120,8 @@ describe('POST /api/dev/shopify/orders-paid (dev mock)', () => {
 
     afterAll(async () => {
         await wipe();
+        await prisma.membershipYearVariant.deleteMany({ where: { membershipYear: liveYear } });
+        if (prevLiveRow) await prisma.membershipYearVariant.create({ data: prevLiveRow });
         if (prevSettings) {
             await prisma.boardSettings.update({ where: { id: 1 }, data: prevSettings });
         } else {
@@ -173,12 +181,13 @@ describe('POST /api/dev/shopify/orders-paid (dev mock)', () => {
         expect(res.status).toBe(404);
     });
 
-    it('settles via the synthetic mock variant when none is configured on BoardSettings', async () => {
-        // A local seed never sets a membership variant; the mock falls back to
-        // DEV_MOCK_MEMBERSHIP_VARIANT_ID (config), which the inbound handler echoes,
+    it('settles via the synthetic mock variant when the live year has no row', async () => {
+        // A local seed writes no variant row; the mock falls back to
+        // DEV_MOCK_MEMBERSHIP_VARIANT_ID (config), which the inbound handler accepts,
         // so the membership fee still settles end-to-end instead of dead-ending on a 409.
         asSession();
         await setVariant(null);
+        await prisma.membershipYearVariant.deleteMany({ where: { membershipYear: liveYear } });
         const { processId } = await makeProc();
         const res = await POST(jsonReq({ processId }));
         expect(res.status).toBe(200);
@@ -187,9 +196,14 @@ describe('POST /api/dev/shopify/orders-paid (dev mock)', () => {
         expect(proc?.paidAt).not.toBeNull();
     });
 
-    it('200s, fires the real inbound webhook, and advances the process (PENDING_PAYMENT -> PENDING_BG_CLEARANCE)', async () => {
+    it("200s, fires the real inbound webhook with the live year's variant, and advances the process (PENDING_PAYMENT -> PENDING_BG_CLEARANCE)", async () => {
         asSession();
-        await setVariant('dev-mock-variant-route-test');
+        await setVariant(null);
+        await prisma.membershipYearVariant.upsert({
+            where: { membershipYear: liveYear },
+            create: { membershipYear: liveYear, shopifyVariantId: LIVE_ROW_VARIANT },
+            update: { shopifyVariantId: LIVE_ROW_VARIANT },
+        });
         const { processId } = await makeProc();
 
         const res = await POST(jsonReq({ processId }));
@@ -202,6 +216,7 @@ describe('POST /api/dev/shopify/orders-paid (dev mock)', () => {
         const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
         expect(proc?.status).toBe('PENDING_BG_CLEARANCE');
         expect(proc?.paidAt).not.toBeNull();
+        expect(proc?.appliesToYear).toBe(liveYear);
     });
 
     // fireProgram — the { programId, participantIds } branch at the route level.

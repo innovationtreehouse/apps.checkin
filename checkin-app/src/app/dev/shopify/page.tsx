@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import prisma from "@/lib/prisma";
 import { config } from "@/lib/config";
+import { liveYearVariantId } from "@/lib/membership/payment";
 import DevShopifyClient from "./DevShopifyClient";
 
 export const dynamic = "force-dynamic";
@@ -22,9 +23,8 @@ export default async function DevShopifyPage() {
         select: { id: true, orgMembership: { select: { household: { select: { name: true } }, isVolunteerFamily: true } } },
     });
 
-    const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-    // Mock synthesizes a membership variant (config), so the fire tool is always usable on local.
-    const hasVariant = config.shopifyMockActive() || !!settings?.orgMembershipVariantId;
+    const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
+    const hasVariant = (await liveYearVariantId(settings?.orgMembershipYearBoundary, new Date())) !== null;
 
     const pendingParticipants = await prisma.programParticipant.findMany({
         where: { status: "PENDING" },
