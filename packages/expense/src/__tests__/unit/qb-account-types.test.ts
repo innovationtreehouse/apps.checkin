@@ -46,6 +46,13 @@ describe("expense QuickBooks account save", () => {
     expect(db.$transaction).not.toHaveBeenCalled();
   });
 
+  it("renames an account without reading QuickBooks", async () => {
+    vi.mocked(db.expenseQbAccount.findFirst).mockResolvedValueOnce({ id: 1, qbAccount: "8006" } as never);
+    configureExpense({ org: async () => ({ id: ORG, name: "Org One" }) });
+    await updateQbAccount({ req: body("8006"), params: { id: "1" }, principal: finance });
+    expect(db.$transaction).toHaveBeenCalled();
+  });
+
   it("answers 503 while QuickBooks isn't bound", async () => {
     configureExpense({ org: async () => ({ id: ORG, name: "Org One" }) });
     await expect(createQbAccount({ req: body("8006"), params: {}, principal: finance })).rejects.toMatchObject({ status: 503 });
