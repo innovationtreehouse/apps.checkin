@@ -95,6 +95,8 @@ These rules stay as they are:
 
 - `docs/rules/revenue.md`: a stored account that later reads as another type is
   flagged on System Status and never rewritten. That check stays live (QL-6).
+  The row covers books map roles only; §4 lists what catches every other kind
+  of pick.
 - `docs/rules/revenue.md`: while Classes can't be read, a payout with a sale
   assigned to a bucket waits. That check happens at posting, so it stays live.
 - `docs/conventions.md`, "A shared helper has one home" and "One process, one
@@ -270,9 +272,39 @@ refusal message.
 
 **An old copy** (QL-3) is still used. A new System Status row, "QuickBooks
 lists", is green with "Refreshed <time>". It turns red after two days without a
-successful refresh. If finance changes a stored account's type in QuickBooks
-during a long outage, the existing account-types row still catches it, because
-that row reads QuickBooks live.
+successful refresh.
+
+**A type that changed in QuickBooks after the last refresh.** A save is checked
+against the type in the copy. Suppose finance changes an account's type in
+QuickBooks, then saves a pick of that account before the copy refreshes. If the
+old type is one the save accepts, the save goes through. If the new type is one
+the save accepts but the old type isn't, the save is refused with the stale-list
+code, and "Update now" fixes it. The first case is an accepted risk, not a
+branch (`docs/conventions.md`, "A simple machine with a known risk").
+
+- **How it happens:** an account's type is changed in QuickBooks, which is rare,
+  and a save picks that account before the next refresh, which is at most a day
+  away, or longer during an outage.
+- **Why it is no worse than today:** an account checked live on save can have its
+  type changed in QuickBooks the next day. The stored pick is then wrong in
+  exactly the same way. The copy only adds the gap between the change and the
+  next refresh.
+- **What catches it later:** the same checks that catch a type change after a
+  live save today. None of them read the copy.
+
+  | Stored pick | Caught by |
+  |---|---|
+  | Books map roles | System Status's account-types row (`misTypedRoleAccounts`, `checkin-app/src/lib/finance/booksMap.ts:118`), which reads QuickBooks live |
+  | Expense payment account | Posting (`resolvePosting`, `checkin-app/src/lib/expense/configure.ts:228`), which refuses to post and alerts finance |
+  | Gift-of-goods lines | Posting (`unusable`, `packages/bulk-donation/src/lib/in-kind-accounts.ts:17`), which holds the gift for finance |
+  | Expense account list and rules, held expense lines, donation account map, income items | Nothing re-checks these after a save, today or under this design |
+
+- **Cleanup:** finance re-picks the account. The type is checked again on that
+  save.
+
+Nothing in this design changes what catches a type change after a save.
+Widening System Status's account-types row to cover the last row of the table
+would close that gap for live saves as well, which makes it separate work.
 
 The planned interim fix, which runs the account-type check only when the
 account changes, still holds under this design. It can land first: it also lets
