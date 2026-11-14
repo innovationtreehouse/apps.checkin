@@ -7,7 +7,7 @@ import { logBackendError, logger } from "@/lib/logger";
 import { notifyBoardPaidReject } from "@/lib/membership/boardAlerts";
 import { openPersonBgForNewMember } from "@/lib/membership/personBgTriggers";
 import { openPersonAgreementForNewMember } from "@/lib/membership/personAgreementTriggers";
-import { config } from "@/lib/config";
+import { config, DEV_MOCK_MEMBERSHIP_VARIANT_ID } from "@/lib/config";
 import { systemActor, personOrSystemActor } from "@/lib/auditActor";
 import { fromWhere } from "@/lib/membership/lifecycle";
 import { setHouseholdStatus, raiseDeniedHouseholdActivity, type HouseholdStatus } from "@/lib/membership/householdStatus";
@@ -23,8 +23,8 @@ const settleModule = () => import("@/lib/membership/settleHouseholdBg");
 /**
  * Payment phase (PENDING_PAYMENT -> ACTIVE).
  *
- * Every household pays through the same Shopify membership product (its
- * checkout permalink is set in BoardSettings). Volunteer households get the
+ * Every household pays through the live membership year's Shopify variant (a
+ * MembershipYearVariant row). Volunteer households get the
  * board's discount code appended to that link so Shopify applies their discount
  * at checkout — our membership fee figures are only what applicants *see*. The membership
  * process id rides along as a cart attribute so the orders/paid webhook can
@@ -61,11 +61,20 @@ export function buildMembershipCheckoutUrl(
 }
 
 /**
+ * The variant a checkout sells at `now`: the live year's row, else the dev mock
+ * variant while the Shopify mock is active, else null. Never another year's row.
+ */
+export async function liveYearVariantId(boundary: Date | null | undefined, now: Date): Promise<string | null> {
+    const year = liveMembershipYear(boundary, now);
+    const row = year === null ? null : await prisma.membershipYearVariant.findUnique({ where: { membershipYear: year }, select: { shopifyVariantId: true } });
+    return row?.shopifyVariantId ?? (config.shopifyMockActive() ? DEV_MOCK_MEMBERSHIP_VARIANT_ID : null);
+}
+
+/**
  * Resolve the membership fee amount and the Shopify checkout link for a process in
- * PENDING_PAYMENT. The link is built from SHOPIFY_STORE_DOMAIN +
- * BoardSettings.orgMembershipVariantId, with the volunteer discount code appended
- * for volunteer households. If the store domain or variant isn't configured,
- * returns the amount with a null link.
+ * PENDING_PAYMENT. The link is built from SHOPIFY_STORE_DOMAIN + liveYearVariantId,
+ * with the volunteer discount code appended for volunteer households. If the store
+ * domain or variant isn't configured, returns the amount with a null link.
  */
 export async function ensurePaymentLink(processId: number): Promise<{ amountCents: number; checkoutUrl: string | null }> {
     const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
@@ -80,7 +89,7 @@ export async function ensurePaymentLink(processId: number): Promise<{ amountCent
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
     const amountCents = membership.isVolunteerFamily ? settings?.volunteerMembershipFeeCents ?? 0 : settings?.standardMembershipFeeCents ?? 0;
 
-    const variantId = settings?.orgMembershipVariantId;
+    const variantId = await liveYearVariantId(settings?.orgMembershipYearBoundary, new Date());
     const storeDomain = config.shopifyStoreDomain();
     if (!variantId || !storeDomain) return { amountCents, checkoutUrl: null };
 

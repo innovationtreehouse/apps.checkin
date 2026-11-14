@@ -5,15 +5,16 @@ Everything here expires when the change has run. The design is in
 
 ## Where it stands
 
-Nothing is built. There is no year column on the settlement record and no per-year
-variant table; the coverage probes still infer the year from `stageEnteredAt`; and
-the single variant id `BoardSettings.orgMembershipVariantId` is read in eight
-production files. The prerequisites have landed: coverage follows the live
-membership year (#1812), and both board grants pay a real application through
-`certifyPaymentPlan` (#2003), so no grant is a bare status change any more.
+PRs 1 to 8 are built. Every payment records its year, settled rows are filled,
+coverage reads the recorded year, settings hold a variant per year, and the
+checkout sells the live year's row (PR 8). The board entered the 2026-27 row in dev
+and production on 2026-11-13.
 
-Ten pull requests finish this. The owner has answered every question; one PR waits
-on an operations step in production (the board entering variants).
+Left: PR 9 (renewals stop without a coming-year variant) and PR 10 (retire the
+single variant). The single variant id `BoardSettings.orgMembershipVariantId` is
+still read by the settings route and page, the registry, and the transitional entry
+in `membershipVariantYears` (through the webhook, the reconciler, reversals, the
+match audit and `income/appItems.ts`). PR 10 removes all of them.
 
 ## Decisions settled
 
@@ -224,7 +225,11 @@ Shopify products.
 - **Migration safety:** none.
 - **Blocked on:** PR 6.
 
-### PR 8: checkout sells the live year [app]
+### PR 8: checkout sells the live year [app] (built)
+
+Built as `liveYearVariantId` in `payment.ts`, shared by the checkout link, the dev
+orders-paid route and the dev Shopify page. The nav count asks about the live year
+and the coming year together and counts a year once when they are the same.
 
 - **Files:**
   - `ensurePaymentLink` in `checkin-app/src/lib/membership/payment.ts`: the variant
