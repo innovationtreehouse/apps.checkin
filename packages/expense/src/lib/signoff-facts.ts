@@ -9,6 +9,7 @@ import { dropHandSetAccount } from "./account-types";
 import { advanceWorkflowInTx, type Actor } from "./workflow-engine";
 import { ServiceError } from "@checkin/component-kit";
 import { liveIds } from "./livePeople";
+import { taxWaitsOnFinance } from "./reasons";
 
 type SignoffExpense = Pick<
   Expense,
@@ -237,6 +238,19 @@ export async function boardApprovalNeeded(db: Db, expense: Pick<SignoffExpense, 
 /** What still holds a line: its unfilled seats, then the Board's approval when the expense needs it. */
 export function lineHolds(approvalNeeded: boolean, facts: SignoffFacts, filled: FilledSeat[]): LineHold[] {
   return [...missingSeats(facts, filled), ...(approvalNeeded ? (["BOARD_APPROVAL"] as const) : [])];
+}
+
+/** Whether the stored expense's tax waits on finance; while it does, the expense neither closes nor posts. */
+export async function storedTaxWaits(db: Db, expenseId: string): Promise<boolean> {
+  const { taxCents, receiptReview, taxApproval } = await db.expense.findUniqueOrThrow({
+    where: { id: expenseId },
+    select: {
+      taxCents: true,
+      receiptReview: { select: { taxReviewRequired: true, reasons: true, approvedTaxCents: true } },
+      taxApproval: { select: { taxCents: true } },
+    },
+  });
+  return taxWaitsOnFinance(taxCents, receiptReview, taxApproval?.taxCents ?? null);
 }
 
 /**

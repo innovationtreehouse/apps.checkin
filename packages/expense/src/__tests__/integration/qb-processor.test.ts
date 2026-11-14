@@ -62,6 +62,7 @@ beforeEach(() => {
 describeDb("checkAndProcessExpense — happy path", () => {
   it("emits a QB event, completes, and allocates tax to the penny", async () => {
     const id = await seedExpense({ state: "qb_pending", taxCents: 10, receiptTotalCents: 110 });
+    await db.expenseReceiptReview.create({ data: { expenseId: id, taxReviewRequired: false, reasons: [] } });
     const li1 = await seedLineItem(id, { partNumber: "PN-1", totalPriceCents: 75 });
     const li2 = await seedLineItem(id, { partNumber: "PN-2", totalPriceCents: 25 });
     catalogResolvesAll({ [li1]: "0000000000017", [li2]: "0000000000024" });

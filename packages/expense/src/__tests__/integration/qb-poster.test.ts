@@ -911,6 +911,30 @@ describeDb("QB-2 posting — checks at post time", () => {
     expect(await postExpenseToQb(ORG, id)).toBe("waiting");
     expect(qbo.posts).toHaveLength(0);
   });
+
+  it("tax waiting on finance holds the post, and finance's approval of that amount releases it", async () => {
+    const { id } = await outboxed("2026-09-10");
+    await db.expense.update({ where: { id }, data: { state: "qb_pending", taxCents: 100 } });
+
+    expect(await postExpenseToQb(ORG, id)).toBe("waiting");
+    expect(await drainExpenseOutbox()).toMatchObject({ posted: 0, waiting: 1 });
+    expect(qbo.posts).toHaveLength(0);
+    expect((await expenseRow(id)).qbMatchState).toBe("UNMATCHED");
+    expect((await expenseReasons(principal(3, { isFinance: true }), id)).map((r) => r.code)).toContain("TAX_NOT_REVIEWED");
+
+    await db.expenseTaxApproval.create({ data: { expenseId: id, taxCents: 100, approvedByUserId: 3 } });
+    expect(await postExpenseToQb(ORG, id)).toBe("posted");
+  });
+
+  it("tax changed after finance approved it holds the post again", async () => {
+    const { id } = await outboxed("2026-09-10");
+    await db.expenseTaxApproval.create({ data: { expenseId: id, taxCents: 100, approvedByUserId: 3 } });
+    await db.expense.update({ where: { id }, data: { taxCents: 120 } });
+
+    expect(await postExpenseToQb(ORG, id)).toBe("waiting");
+    expect(qbo.posts).toHaveLength(0);
+    expect((await db.expenseFlag.findFirstOrThrow({ where: { expenseId: id } })).detail).toBe("closed but not posted: the expense's tax waits on finance");
+  });
 });
 
 describeDb("QB-2 posting — claim, call, settle", () => {
