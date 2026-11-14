@@ -180,6 +180,3 @@ any Docker-backed tier.
 - Each run uploads the HTML report, the JSON results and the traces as the
   `playwright-report` artifact. Open a trace with
   `npx playwright show-trace <trace.zip>`.
-- Locally, delete `checkin-app/.next` before `test:e2e:standalone`. The repo is
-  bind-mounted into the container, so a stale Turbopack cache from an earlier
-  revision makes `next dev` Fast-Refresh-reload pages in a loop.
