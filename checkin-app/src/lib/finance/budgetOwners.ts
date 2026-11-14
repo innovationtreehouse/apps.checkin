@@ -79,6 +79,7 @@ function rethrowClassTaken(error: unknown): never {
 export async function createBudgetOwner(actorId: number, body: Record<string, unknown>) {
     const name = readName(body.name);
     const quickBooksClassId = body.quickBooksClassId === undefined ? null : readClassId(body.quickBooksClassId);
+    if (!quickBooksClassId) throw badRequest("A bucket needs a QuickBooks Class.");
     if (body.isOrgLevel !== undefined && typeof body.isOrgLevel !== "boolean") throw badRequest("isOrgLevel must be a boolean");
     const isOrgLevel = body.isOrgLevel === true;
     return prisma.$transaction(async (tx) => {
@@ -115,6 +116,10 @@ export async function updateBudgetOwner(actorId: number, id: number, body: Recor
         });
         if (!stored) throw notFound("Bucket not found");
         const { ownerId, _count, ...before } = stored;
+        // A bucket with no Class keeps saving without one; a bucket with one never loses it.
+        if (data.quickBooksClassId === null && before.quickBooksClassId !== null) {
+            throw badRequest("A bucket's QuickBooks Class can be changed but not cleared.");
+        }
         if (data.isOrgLevel === true && !before.isOrgLevel && (ownerId !== null || _count.treasurers > 0)) {
             // Only the Board removes approvers, so finance's change waits for it.
             throw new ApiResponseError(409, "The Board must remove this bucket's owner and treasurers first.");

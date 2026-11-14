@@ -32,7 +32,9 @@ function mockServer(write: Reply, reads: Reads = {}) {
   global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input.toString();
     if (init?.method) return write();
-    if (url.includes("/quickbooks-classes")) return reads.classes ? reads.classes() : jsonResponse(200, []);
+    if (url.includes("/quickbooks-classes")) {
+      return reads.classes ? reads.classes() : jsonResponse(200, [{ id: "12", name: "Shop", active: true }]);
+    }
     if (url.includes("/approver-options")) {
       return reads.approverOptions ? reads.approverOptions() : jsonResponse(200, [{ id: 9, name: "Tess Treasurer" }]);
     }
@@ -47,9 +49,15 @@ function mockServer(write: Reply, reads: Reads = {}) {
 
 const ok: Reply = async () => jsonResponse(200, {});
 
+async function pickNewClass() {
+  fireEvent.click(await screen.findByRole("textbox", { name: "QuickBooks Class" }));
+  fireEvent.click(await screen.findByRole("option", { name: "Shop" }));
+}
+
 async function createBucket() {
   renderWithProviders(<BudgetsPage />);
   fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "Shop" } });
+  await pickNewClass();
   fireEvent.click(screen.getByRole("button", { name: "Create" }));
 }
 
@@ -62,6 +70,24 @@ beforeEach(() => {
 
 describe("budgets page create submit", () => {
   const writeCount = () => (global.fetch as jest.Mock).mock.calls.filter(([, init]) => init?.method).length;
+
+  it("enables Create only once a name and a QuickBooks Class are set, and sends the Class", async () => {
+    mockServer(ok);
+    renderWithProviders(<BudgetsPage />);
+    fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "Shop" } });
+    expect(screen.getByRole("button", { name: "Create" })).toBeDisabled();
+
+    await pickNewClass();
+    const button = screen.getByRole("button", { name: "Create" });
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+
+    await waitFor(() => expect(writeCount()).toBe(1));
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/api/budget-owners",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ name: "Shop", isOrgLevel: false, quickBooksClassId: "12" }) }),
+    );
+  });
 
   it("sends one create while the first is in flight", async () => {
     let release: (res: Response) => void = () => {};
