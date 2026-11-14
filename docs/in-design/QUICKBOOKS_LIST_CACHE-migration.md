@@ -7,7 +7,7 @@ Everything here stops being true once the last PR merges. The last step is
 
 ## Where it stands
 
-- Designed, not built. The owner has settled every question, QL-1 to QL-7.
+- Designed, not built. The owner has settled every question, QL-1 to QL-8.
 - Today, no account-type refusal carries a code. `accountTypeRefusal` returns
   only a message, and none of its throw sites pass a code. The client kit's
   fetch helper doesn't hand `code` to pages.
