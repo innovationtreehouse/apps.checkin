@@ -243,14 +243,34 @@ export async function manualEditAttendance(
             if (openVisit) {
                 return OPEN_VISIT_REFUSAL;
             }
-            // Only closed visits remain; safe to clear on an Absent
-            // correction — as a TOMBSTONE, never a row removal.
-            // A lead's Absent mark must be as reversible and reviewable as
-            // the member's own delete, and an already-tombstoned row is
-            // left alone: it is the record of an earlier deletion.
-            const doomed = await tx.visit.findMany({
+            const closed = await tx.visit.findMany({
                 where: { personId: targetId, associatedEventId: eventId, ...LIVE_VISIT }
             });
+            // A badged visit proves the person was in the building, so Absent
+            // only detaches it from this session; it still counts toward facility hours.
+            const scanned = closed.filter(v => v.arrivedVia === "SCANNER");
+            if (scanned.length > 0) {
+                await tx.visit.updateMany({
+                    where: { id: { in: scanned.map(v => v.id) } },
+                    data: { associatedEventId: null }
+                });
+                await tx.auditLog.createMany({
+                    data: scanned.map(v => ({
+                        actorId: userId,
+                        action: "EDIT",
+                        tableName: "Visit",
+                        affectedEntityId: v.id,
+                        secondaryAffectedEntity: targetId,
+                        oldData: { associatedEventId: eventId },
+                        newData: { associatedEventId: null, type: "lead_attendance_correction", status: "Absent" },
+                    }))
+                });
+            }
+            // Any other visit is cleared as a TOMBSTONE, never a row removal,
+            // so a lead's Absent mark is as reversible and reviewable as the
+            // member's own delete. An already-tombstoned row is left alone: it
+            // is the record of an earlier deletion.
+            const doomed = closed.filter(v => v.arrivedVia !== "SCANNER");
             if (doomed.length > 0) {
                 await tx.visit.updateMany({
                     where: { id: { in: doomed.map(v => v.id) }, ...LIVE_VISIT },
