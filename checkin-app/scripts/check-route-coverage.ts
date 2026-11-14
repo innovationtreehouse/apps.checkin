@@ -37,6 +37,9 @@ import {
     APP_THIRD_PARTY_FETCH_FILES,
     NON_LOOPBACK_URL_RE,
     PACKAGE_EGRESS_FILES,
+    PACKAGE_SKIP_DIR_RE,
+    PACKAGE_SKIP_FILE_RE,
+    PACKAGE_SOURCE_FILE_RE,
     THIRD_PARTY_HOST_RE,
     THIRD_PARTY_SDK_RE,
 } from '../src/security/egressAllowlist';
@@ -57,9 +60,6 @@ const ALLOWED_THIRD_PARTY_FETCH_FILES = new Set<string>(
 
 // Package egress keys are relative to the monorepo root.
 const MONOREPO_ROOT = path.resolve(REPO_ROOT, '..');
-const PACKAGE_SKIP_DIR_RE = /^(node_modules|dist|generated|__tests__|__fixtures__|fixtures|test|tests)$/;
-const PACKAGE_SOURCE_FILE_RE = /\.(tsx?|[cm]?js)$/;
-const PACKAGE_SKIP_FILE_RE = /\.(test|spec)\.(tsx?|[cm]?js)$/;
 const VERB_EXPORT_RE = /export\s+(?:const|async\s+function|function)\s+(GET|POST|PUT|PATCH|DELETE)\b/g;
 /** `export { a as GET, POST }` — each specifier exports its `as` alias, else its own name. */
 const EXPORT_LIST_RE = /export\s*\{([^}]*)\}/g;
