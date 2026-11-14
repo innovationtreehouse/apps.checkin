@@ -215,9 +215,10 @@ describe('ReceiptDuplicateGroup', () => {
         expect(stripValue('ReceiptDuplicateGroup', group(), FINANCE_VIEW, ctx())).toEqual(group());
     });
 
-    it('an internal-only view strips the receipt ids, the kept receipt and the rejection reason', () => {
+    it('an internal-only view keeps the public receipt ids and strips the rejection reason and uploader', () => {
         expect(stripValue('ReceiptDuplicateGroup', group(), INTERNAL_ONLY, ctx())).toEqual({
-            members: [{ state: 'rejected' }, { state: 'duplicate_flagged' }],
+            members: [{ id: 'r-1', state: 'rejected', copyOfId: 'r-2' }, { id: 'r-2', state: 'duplicate_flagged', copyOfId: null }],
+            dismissed: ['r-3'],
         });
     });
 
@@ -234,8 +235,8 @@ describe('ReceiptDuplicateQueueRow', () => {
         expect(stripValue('ReceiptDuplicateQueueRow', row, FINANCE_VIEW, ctx())).toEqual(row);
     });
 
-    it('an internal-only view strips the receipt id and the rejected marker', () => {
-        const { id: _id, includesRejected: _rejected, ...rest } = row;
+    it('an internal-only view keeps the public receipt id and strips the rejected marker', () => {
+        const { includesRejected: _rejected, ...rest } = row;
         expect(stripValue('ReceiptDuplicateQueueRow', row, INTERNAL_ONLY, ctx())).toEqual(rest);
     });
 });

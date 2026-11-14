@@ -80,27 +80,30 @@
  * its members in upload order and the ids of the receipts dismissed against it.
  * ReceiptDuplicateMember — one member: its id, state, how it is shown (the
  * state, or a rejection with its reason) and, for a member rejected as a copy,
- * the id of the receipt kept in its place (`copyOfId`). Members may be other
- * submitters' receipts, so the ids are `pii`, as `copyOfId` is on ReceiptView;
- * the label carries a rejection reason, `personal` like `validationNotes`; the
- * uploader's name (`uploaderName`) is `pii`, for finance and the Board only.
+ * the id of the receipt kept in its place (`copyOfId`). The ids are `public`, as
+ * Receipt.id is; the label carries a rejection reason, `personal` like
+ * `validationNotes`; the uploader's name (`uploaderName`) is `pii`, for finance
+ * and the Board only.
  *
  * ReceiptDuplicateQueueRow — one group in Finance review's Duplicates tab: its
  * oldest held member's id, vendor, date and total, how many live members it has,
- * whether one is rejected, and when the oldest was held. The id and the rejected
- * marker describe other submitters' receipts, so they are `pii`, as on ReceiptView.
+ * whether one is rejected, and when the oldest was held. The id is `public`, as
+ * Receipt.id is; the rejected marker describes other submitters' receipts, so it
+ * is `pii`.
  *
  * On ReceiptView, `duplicateNotice` names the viewer's own other copy of the
  * receipt and never another person's, so its uploader reads it (`internal`).
- * `copyOfId` and `copyOfLabel` name the receipt kept in place of one rejected as
- * a copy, which may be another person's, so they are `pii`.
+ * `copyOfId` names the receipt kept in place of one rejected as a copy and is
+ * `public`, as Receipt.id is, so the uploader reads it. `copyOfLabel` describes
+ * that receipt, which may be another person's, by its retailer and upload time,
+ * so it is `pii`.
  *
  * Hand-authored, not generated: these describe API responses, not tables. This
  * is a security-boundary artifact — changes ship in a boundary PR.
  */
 export const classifications = {
   ReceiptView: {
-    id: "internal",
+    id: "public",
     orgId: "internal",
     uploadedByUserId: "internal",
     uploadedAt: "internal",
@@ -142,7 +145,7 @@ export const classifications = {
     purchaseOutcome: "personal",
     rejectionUnacknowledged: "internal",
     duplicateNotice: "internal",
-    copyOfId: "pii",
+    copyOfId: "public",
     copyOfLabel: "pii",
     rotation: "internal",
   },
@@ -228,17 +231,17 @@ export const classifications = {
     personId: "public",
   },
   ReceiptDuplicateGroup: {
-    dismissed: "pii",
+    dismissed: "public",
   },
   ReceiptDuplicateMember: {
-    id: "pii",
+    id: "public",
     state: "internal",
     label: "personal",
-    copyOfId: "pii",
+    copyOfId: "public",
     uploaderName: "pii",
   },
   ReceiptDuplicateQueueRow: {
-    id: "pii",
+    id: "public",
     retailer: "internal",
     receiptDate: "internal",
     receiptTotalCents: "internal",

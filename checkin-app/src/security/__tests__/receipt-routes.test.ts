@@ -422,12 +422,12 @@ describe('the discard route', () => {
     it.each([
         ['FINANCE', { isFinance: true }],
         ['the Board', { isBoardMember: true }],
-    ] as [string, Flags][])("returns %s nothing of another person's receipt", async (_who, flags) => {
+    ] as [string, Flags][])("returns %s only the public id of another person's receipt", async (_who, flags) => {
         signIn(5, { ...flags, ageBand: 'adult', isActiveOrgMember: true });
         const other = { id: 'r-1', uploadedByUserId: 8, receiptTotalCents: 6989, donorFirstName: 'Pat' };
         const res = await handler(DISCARD, async () => ({ ReceiptView: other }))(request(DISCARD), params);
         expect(res.status).toBe(200);
-        expect(await res.json()).toEqual({});
+        expect(await res.json()).toEqual({ id: 'r-1' });
     });
 });
 
@@ -457,9 +457,9 @@ describe('the submitter view', () => {
         }
     });
 
-    it("returns nothing of another person's receipt", () => {
+    it("returns only the public id of another person's receipt", () => {
         const out = stripValue('ReceiptView', row, own, { selfId: 8 } as CallerContext);
-        expect(out).toEqual({ lineItems: [{}] });
+        expect(out).toEqual({ id: 'r-1', lineItems: [{}] });
     });
 
     it("returns the uploader the duplicate flag's time on every receipt route", () => {
@@ -473,13 +473,13 @@ describe('the submitter view', () => {
         }
     });
 
-    it("strips the kept receipt from the uploader on every receipt route, and keeps the notice of their own copy", () => {
+    it("gives the uploader the kept receipt's id but not its label on every receipt route, and keeps the notice of their own copy", () => {
         const copy = { ...row, copyOfId: 'r-kept', copyOfLabel: 'Acme, uploaded 3 Oct', duplicateNotice: { matchId: 'r-mine', uploadedAt: '2026-10-03T00:00:00.000Z' } };
         for (const endpoint of jsonRoutes) {
             const submitter = new Map(getRoute(endpoint)!.orderedView).get('authenticated');
             if (!submitter || !getRoute(endpoint)!.returns?.includes('ReceiptView')) continue;
             const out = stripValue('ReceiptView', copy, submitter, ctx) as Record<string, unknown>;
-            expect({ endpoint, leaked: 'copyOfId' in out || 'copyOfLabel' in out }).toEqual({ endpoint, leaked: false });
+            expect({ endpoint, id: out.id, copyOfId: out.copyOfId, leaked: 'copyOfLabel' in out }).toEqual({ endpoint, id: copy.id, copyOfId: 'r-kept', leaked: false });
             expect(out.duplicateNotice).toEqual(copy.duplicateNotice);
         }
     });

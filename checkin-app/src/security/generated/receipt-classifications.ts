@@ -11,7 +11,7 @@ export const classifications = {
         ocrEnabled: 'internal',
     },
     Receipt: {
-        id: 'internal',
+        id: 'public',
         orgId: 'internal',
         uploadedByUserId: 'internal',
         uploadedAt: 'internal',
