@@ -11,8 +11,9 @@
  *
  * A manual "Absent" must not delete a live check-in: an Absent
  * edit against an OPEN visit (departedAt = null) is rejected with 400 so the row
- * proving the participant is physically on-site survives. Only CLOSED visits are
- * removed on an Absent correction. See the manualEditAttendance block below.
+ * proving the participant is physically on-site survives. An Absent correction
+ * unlinks a closed badged visit and removes any other closed one. See the
+ * manualEditAttendance block below.
  */
 import { PATCH } from '@/app/api/events/[id]/route';
 import prisma from '@/lib/prisma';
@@ -212,6 +213,56 @@ describe('PATCH /api/events/[id] — cancel, manual attendance, past-event guard
             // (admin != participant): 30 * 1 * 2 = 60. Always flagged (delete floor).
             expect((audit!.newData as { significance?: { score: number; flagged: boolean } })?.significance)
                 .toEqual({ score: 60, flagged: true });
+        });
+
+        it('keeps a badged visit on Absent, unlinked from the event and still counted toward facility hours', async () => {
+            const event = await makeEvent('manual-absent-scanned', -2 * HOUR);
+            const visit = await prisma.visit.create({
+                data: {
+                    personId: participantId,
+                    arrivedAt: new Date(Date.now() - 90 * MIN),
+                    departedAt: new Date(Date.now() - 60 * MIN),
+                    arrivedVia: 'SCANNER',
+                    departedVia: 'SCANNER',
+                    associatedEventId: event.id,
+                },
+            });
+
+            const res = await patch(event.id, { action: 'manualEditAttendance', participantId, status: 'Absent' });
+            expect(res.status).toBe(200);
+
+            const kept = await prisma.visit.findUniqueOrThrow({ where: { id: visit.id } });
+            expect(kept).toMatchObject({ associatedEventId: null, deletedAt: null, arrivedAt: visit.arrivedAt, departedAt: visit.departedAt });
+            // The facility trends count exactly the completed, undeleted visits.
+            expect(await prisma.visit.count({
+                where: { id: visit.id, departedAt: { not: null }, deletedAt: null },
+            })).toBe(1);
+
+            const audit = await prisma.auditLog.findFirst({
+                where: { tableName: 'Visit', affectedEntityId: visit.id },
+            });
+            expect(audit).toMatchObject({ action: 'EDIT', actorId: adminId, oldData: { associatedEventId: event.id } });
+        });
+
+        it('still tombstones a typed visit on Absent', async () => {
+            const event = await makeEvent('manual-absent-typed', -2 * HOUR);
+            const visit = await prisma.visit.create({
+                data: {
+                    personId: participantId,
+                    arrivedAt: new Date(Date.now() - 90 * MIN),
+                    departedAt: new Date(Date.now() - 60 * MIN),
+                    arrivedVia: 'TYPED',
+                    departedVia: 'TYPED',
+                    associatedEventId: event.id,
+                },
+            });
+
+            const res = await patch(event.id, { action: 'manualEditAttendance', participantId, status: 'Absent' });
+            expect(res.status).toBe(200);
+
+            const gone = await prisma.visit.findUniqueOrThrow({ where: { id: visit.id } });
+            expect(gone.deletedAt).not.toBeNull();
+            expect(gone.associatedEventId).toBe(event.id);
         });
 
         it('rejects and deletes nothing when an open visit coexists with a closed one', async () => {
