@@ -1,4 +1,5 @@
-import type { StuckItem } from "@checkin/component-kit";
+import { ServiceError, type StuckItem } from "@checkin/component-kit";
+import type { Prisma } from "./generated/prisma/client";
 import { db } from "./db";
 import { pushReceipt, runFullFlow } from "./lib/receipt-flow";
 import { DAY_MS } from "./lib/limits";
@@ -7,14 +8,18 @@ import { getOrgId } from "./runtime";
 const FLOW = "flow";
 const PUSH = "push to mapping";
 
+const STUCK_IN = {
+  [FLOW]: { details: { state: "flow_error" } },
+  [PUSH]: { pushedAt: null, details: { state: "receipt_finalized" } },
+} satisfies Record<string, Prisma.ReceiptWhereInput>;
+
+/** What a retry that left the receipt stuck answers; the error itself stays on the receipt's page. */
+export const STILL_STUCK = "Retried, and it failed again; the receipt's page shows why";
+
 /** Receipts stuck in the flow (`flow_error`) or finalized and not delivered to mapping, timed by their first failure. */
 export async function stuckItems(): Promise<StuckItem[]> {
   const rows = await db.receipt.findMany({
-    where: {
-      orgId: await getOrgId(),
-      firstFailedAt: { not: null },
-      OR: [{ details: { state: "flow_error" } }, { pushedAt: null, details: { state: "receipt_finalized" } }],
-    },
+    where: { orgId: await getOrgId(), firstFailedAt: { not: null }, OR: [STUCK_IN[FLOW], STUCK_IN[PUSH]] },
     select: { id: true, firstFailedAt: true, details: { select: { state: true } } },
   });
   return rows.flatMap((r) =>
@@ -22,19 +27,22 @@ export async function stuckItems(): Promise<StuckItem[]> {
   );
 }
 
+async function isStuck(id: string, step: keyof typeof STUCK_IN): Promise<boolean> {
+  const where = { id, orgId: await getOrgId(), firstFailedAt: { not: null }, ...STUCK_IN[step] };
+  return (await db.receipt.count({ where })) > 0;
+}
+
 /**
- * Runs `step` once for one stuck receipt, and throws when it is still stuck. Safe to repeat: the
- * flow runs only from `uploaded` or `flow_error`, and a push only for a finalized receipt not yet
- * delivered, so a receipt that already moved on is left alone.
+ * Runs `step` once for one stuck receipt. Safe to repeat: the flow runs only from `uploaded` or
+ * `flow_error`, and a push only for a finalized receipt not yet delivered. A receipt not stuck in
+ * `step` answers 404; one still stuck afterwards answers 409, with no error text.
  */
 export async function retryStuckItem({ id, step }: { id: string; step: string }): Promise<void> {
-  if (step !== FLOW && step !== PUSH) throw new Error(`receipt has no step "${step}"`);
-  const row = await db.receipt.findFirst({ where: { id, orgId: await getOrgId() }, select: { pushedAt: true, details: { select: { state: true } } } });
-  if (!row) throw new Error(`receipt ${id} not found`);
-  const state = row.details?.state;
-  if (step === FLOW && state === "flow_error") await runFullFlow(id, null).catch(() => undefined);
-  if (step === PUSH && state === "receipt_finalized" && !row.pushedAt) await pushReceipt(id, null);
-  if ((await stuckItems()).some((item) => item.id === id && item.step === step)) throw new Error(`receipt ${id} is still stuck in ${step}`);
+  if (step !== FLOW && step !== PUSH) throw new ServiceError(404, `No step ${step} in receipt`);
+  if (!(await isStuck(id, step))) throw new ServiceError(404, "No receipt stuck in this step");
+  // A failure is recorded on the receipt, which the check below reads.
+  await (step === FLOW ? runFullFlow(id, null) : pushReceipt(id, null)).catch((err: unknown) => console.error(`[receipt] retrying ${step} for receipt ${id} failed:`, err));
+  if (await isStuck(id, step)) throw new ServiceError(409, STILL_STUCK);
 }
 
 /** Failed readings within a day that make the Problems list's reading line. */

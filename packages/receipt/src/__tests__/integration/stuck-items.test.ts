@@ -2,10 +2,12 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { beforeEach, expect, it } from "vitest";
+import { ServiceError } from "@checkin/component-kit";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { db } from "../../db";
+import { receiptRepo } from "../../repositories/receipt";
 import { receiptService } from "../../services/receiptService";
-import { READING_FAILURES_NOTICE_AT, problemNotices, retryStuckItem, stuckItems } from "../../stuckItems";
+import { READING_FAILURES_NOTICE_AT, STILL_STUCK, problemNotices, retryStuckItem, stuckItems } from "../../stuckItems";
 import { describeDb } from "../helpers/db";
 import { ALICE, TEST_ORG_ID, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile } from "../helpers/setup";
 
@@ -38,6 +40,7 @@ beforeEach(async () => {
   ports = recordingPorts();
   configure({ receiptSink: ports.receiptSink });
 });
+afterEach(() => vi.restoreAllMocks());
 
 describeDb("stuckItems", () => {
   it("lists a flow error and a failed push, each with its page and first failure time, and no error text", async () => {
@@ -71,7 +74,7 @@ describeDb("stuckItems", () => {
     expect(first.firstFailedAt).toBeInstanceOf(Date);
 
     ports.fail.push = new Error("second");
-    await expect(retryStuckItem({ id: r.id, step: "push to mapping" })).rejects.toThrow();
+    await expect(retryStuckItem({ id: r.id, step: "push to mapping" })).rejects.toMatchObject({ status: 409, message: STILL_STUCK });
 
     expect(await failure(r.id)).toEqual({ firstFailedAt: first.firstFailedAt, lastError: "second" });
     expect(await stuckItems()).toEqual([{ id: r.id, step: "push to mapping", href: `/receipts/${r.id}`, failedAt: first.firstFailedAt }]);
@@ -95,7 +98,7 @@ describeDb("stuckItems", () => {
     await retryStuckItem({ id: r.id, step: "push to mapping" });
     const sent = ports.calls.pushes.length;
 
-    await retryStuckItem({ id: r.id, step: "push to mapping" });
+    await expect(retryStuckItem({ id: r.id, step: "push to mapping" })).rejects.toMatchObject({ status: 404 });
 
     expect(ports.calls.pushes).toHaveLength(sent);
   });
@@ -111,9 +114,30 @@ describeDb("stuckItems", () => {
     expect(await failure(r.id)).toEqual({ firstFailedAt: null, lastError: null });
   });
 
-  it("refuses a step it does not know", async () => {
+  it("a flow retry that fails again answers 409 with fixed text, and the receipt stays stuck", async () => {
     const id = await makeReceipt("flow_error", { firstFailedAt: new Date() });
-    await expect(retryStuckItem({ id, step: "elsewhere" })).rejects.toThrow();
+    vi.spyOn(receiptRepo, "find").mockRejectedValueOnce(new Error("secret detail"));
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const err = await retryStuckItem({ id, step: "flow" }).catch((e: unknown) => e);
+
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining(id), expect.objectContaining({ message: "secret detail" }));
+    expect(err).toBeInstanceOf(ServiceError);
+    expect(err).toMatchObject({ status: 409, message: STILL_STUCK });
+    expect(await stuckItems()).toEqual([expect.objectContaining({ id, step: "flow" })]);
+  });
+
+  it("answers 404 for an unknown receipt, another org's, one not stuck in that step, or an unknown step", async () => {
+    const flow = await makeReceipt("flow_error", { firstFailedAt: new Date() });
+    const other = await makeReceipt("flow_error", { orgId: "00000000-0000-0000-0000-000000000099", firstFailedAt: new Date() });
+    const pushed = await makeReceipt("receipt_finalized", { pushed: true, firstFailedAt: new Date() });
+
+    for (const [id, step] of [[randomUUID(), "flow"], [other, "flow"], [flow, "push to mapping"], [pushed, "push to mapping"], [flow, "elsewhere"]]) {
+      const err = await retryStuckItem({ id, step }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ServiceError);
+      expect(err).toMatchObject({ status: 404 });
+    }
+    expect(ports.calls.pushes).toHaveLength(0);
   });
 });
 
