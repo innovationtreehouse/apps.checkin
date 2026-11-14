@@ -90,7 +90,7 @@ describe('POST /api/settings/membership/extract-variant', () => {
         });
         expect(fetchMock).toHaveBeenCalledTimes(1);
         const [url, init] = fetchMock.mock.calls[0];
-        expect(url).toBe(`https://${STORE}/admin/api/2026-01/products.json?handle=annual-membership&fields=id,title,variants`);
+        expect(url).toBe(`https://${STORE}/admin/api/2026-01/products.json?handle=annual-membership&fields=id,title,status,variants`);
         expect(init.headers['X-Shopify-Access-Token']).toBe('shpat_test');
     });
 
@@ -168,6 +168,18 @@ describe('POST /api/settings/membership/extract-variant', () => {
         const res = await POST(req({ productUrl: GOOD_URL }));
         expect(res.status).toBe(404);
         expect((await res.json()).error).toMatch(/no product with the handle "annual-membership"/);
+    });
+
+    it.each(['draft', 'archived'])('400 naming the status when the product is %s in Shopify', async (status) => {
+        fetchMock.mockResolvedValue(products({ id: 1, title: 'Annual Membership', status, variants: [variant(111, 'Default Title', '150.00')] }));
+        const res = await POST(req({ productUrl: GOOD_URL }));
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toBe(`The product "Annual Membership" is ${status} in Shopify — make it active there before choosing its variant.`);
+    });
+
+    it('accepts an active product', async () => {
+        fetchMock.mockResolvedValue(products({ id: 1, status: 'active', variants: [variant(111, 'Default Title', '150.00')] }));
+        expect((await POST(req({ productUrl: GOOD_URL }))).status).toBe(200);
     });
 
     it('400 when the product has zero variants', async () => {

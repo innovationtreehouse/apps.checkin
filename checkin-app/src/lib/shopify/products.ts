@@ -21,10 +21,11 @@ export interface StorefrontVariant {
     priceCents: number | null;
 }
 
-/** A product as the Admin REST products.json returns it with `fields=id,title,variants`. */
+/** A product as the Admin REST products.json returns it with `fields=id,title,status,variants`. */
 interface AdminProduct {
     id?: number | string;
     title?: string;
+    status?: string;
     variants?: Array<{ id?: number | string; title?: string; price?: unknown }>;
 }
 
@@ -39,7 +40,7 @@ class ShopifyStatusError extends Error {
 /** The Admin API product carrying `handle`; null when there is none. Throws on a failed lookup. */
 async function getProductByHandle(storeDomain: string, accessToken: string, handle: string): Promise<AdminProduct | null> {
     const res = await shopifyFetch(
-        `https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/products.json?handle=${encodeURIComponent(handle)}&fields=id,title,variants`,
+        `https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/products.json?handle=${encodeURIComponent(handle)}&fields=id,title,status,variants`,
         { method: "GET", headers: { "X-Shopify-Access-Token": accessToken } },
         "Shopify find product by handle",
     );
@@ -95,6 +96,10 @@ export async function lookupProductVariantsByUrl(productUrl: string): Promise<{ 
         throw new ProductUrlError("Could not read the product from Shopify — try again in a minute.", 502);
     }
     if (!product) throw new ProductUrlError(`Shopify has no product with the handle "${handle}" — check the link.`, 404);
+    // A draft or archived product cannot be bought, so its cart link would fail at checkout.
+    if (product.status === "draft" || product.status === "archived") {
+        throw new ProductUrlError(`The product "${product.title || handle}" is ${product.status} in Shopify — make it active there before choosing its variant.`, 400);
+    }
 
     const variants = (product.variants ?? [])
         .filter((v) => v?.id !== undefined && v?.id !== null)
