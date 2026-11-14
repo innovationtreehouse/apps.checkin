@@ -122,6 +122,11 @@ export async function seedApproval(
   return row.id;
 }
 
+/** A PENDING account hold on a line. */
+export async function seedHold(expenseId: string, lineItemId: number, reason = "NO_MATCH"): Promise<void> {
+  await db.expenseHold.create({ data: { orgId: ORG, expenseId, lineItemId, reason, matchedRows: "[]" } });
+}
+
 export async function seedAccountMapping(opts: {
   orgId?: string;
   category?: string;

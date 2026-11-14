@@ -1,6 +1,6 @@
-// Account-mapping holds (NO_MATCH / MULTIPLE_MATCHES / NO_PART_NUMBER / NON_INVENTORY): FINANCE sets a line's
-// account by hand and resubmits. The same resubmit retries a failed QuickBooks post, and books an
-// UNBOOKED one (finance's "book it").
+// Account-mapping holds (NO_MATCH / MULTIPLE_MATCHES / NO_PART_NUMBER / NON_INVENTORY): FINANCE sets a held
+// line's account by hand, or fixes a rule, and resubmits. The same resubmit retries a failed QuickBooks post,
+// and books an UNBOOKED one (finance's "book it").
 import { db } from "../db";
 import type { ExpensePrincipal } from "../contract";
 import { getOrgId } from "../runtime";
@@ -15,6 +15,8 @@ import { ServiceError } from "@checkin/component-kit";
 
 /** Once the entry is (or is being) booked, a line's account is corrected in QuickBooks, not here. */
 const IN_QUICKBOOKS = new Set([POSTING, "CREATED", "MATCHED"]);
+/** Past mapping and waiting on finance: a line's account may be fixed here without a hold. */
+const WAITING_ON_FINANCE = new Set(["POST_FAILED", "NEEDS_FINANCE", "UNBOOKED", "AMBIGUOUS"]);
 
 export async function setHeldLineAccount(
   principal: ExpensePrincipal,
@@ -33,6 +35,10 @@ export async function setHeldLineAccount(
     await lockExpense(tx, expenseId);
     const { qbMatchState } = await tx.expense.findUniqueOrThrow({ where: { id: expenseId }, select: { qbMatchState: true } });
     if (IN_QUICKBOOKS.has(qbMatchState)) throw new ServiceError(409, "already posted to QuickBooks; correct it there");
+    // An account set by hand wins over every rule, so it goes only on a held line or an expense finance must fix.
+    if (!WAITING_ON_FINANCE.has(qbMatchState) && !(await tx.expenseHold.findFirst({ where: { expenseId, lineItemId, status: "PENDING" }, select: { id: true } }))) {
+      throw new ServiceError(409, "This line isn't held for an account; fix the account rule instead");
+    }
     const { resolvedQbAccount } = await tx.expenseLineItem.findUniqueOrThrow({ where: { id: lineItemId }, select: { resolvedQbAccount: true } });
     // The poster reads resolvedQbAccount, and nothing refreshes it on every path after the processing commit.
     await tx.expenseLineItem.update({

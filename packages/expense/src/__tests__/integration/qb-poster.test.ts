@@ -9,7 +9,7 @@ import { describeDb } from "../helpers/db";
 import { inertOutbound, type Outbound } from "../../contract";
 import type { Expense } from "../../db/schema";
 import { db } from "../../db";
-import { TEST_BUCKETS, bindPorts, catalogResolving, directory, principal, seedApproval, seedExpense, seedLineItem, signAllLines, ORG } from "../helpers/seed";
+import { TEST_BUCKETS, bindPorts, catalogResolving, directory, principal, seedApproval, seedExpense, seedHold, seedLineItem, signAllLines, ORG } from "../helpers/seed";
 import { updateExpenseSettings } from "../../services/settingsService";
 import { checkAndProcessExpense, retryQbPost } from "../../lib/expense-qb-processor";
 import { expenseReasons } from "../../services/reasonService";
@@ -1032,6 +1032,7 @@ describeDb("QB-2 posting — a line's account after posting", () => {
 
   it("the regular drain posts an account set after the processing commit", async () => {
     const { id, lines } = await outboxed("2026-09-10");
+    await seedHold(id, lines[0]);
 
     await setHeldLineAccount(finance, id, lines[0], "62");
 
@@ -1093,12 +1094,29 @@ describeDb("QB-2 posting — a line's account after posting", () => {
   it("leaves a line that never resolved unresolved, so processing still decides its account", async () => {
     const { id, lines } = await outboxed("2026-09-10");
     await db.expenseLineItem.update({ where: { id: lines[0] }, data: { resolvedQbAccount: null } });
+    await seedHold(id, lines[0]);
 
     await setHeldLineAccount(finance, id, lines[0], "62");
 
     expect(await db.expenseLineItem.findUniqueOrThrow({ where: { id: lines[0] } })).toMatchObject({ manualQbAccount: "62", resolvedQbAccount: null });
     expect(await postExpenseToQb(ORG, id)).toBe("unpostable");
     expect(qbo.posts).toHaveLength(0);
+  });
+
+  it("refuses a resolved line with no hold on an expense not waiting on finance", async () => {
+    const { id, lines } = await outboxed("2026-09-10");
+
+    await expect(setHeldLineAccount(finance, id, lines[0], "62")).rejects.toMatchObject({ status: 409, message: expect.stringContaining("isn't held") });
+
+    expect(await db.expenseLineItem.findUniqueOrThrow({ where: { id: lines[0] } })).toMatchObject({ manualQbAccount: null, resolvedQbAccount: "60" });
+    expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "hold_account_set" } })).toBe(0);
+  });
+
+  it("refuses a line whose hold is already resolved", async () => {
+    const { id, lines } = await outboxed("2026-09-10");
+    await db.expenseHold.create({ data: { orgId: ORG, expenseId: id, lineItemId: lines[0], reason: "NO_MATCH", matchedRows: "[]", status: "RESOLVED" } });
+
+    await expect(setHeldLineAccount(finance, id, lines[0], "62")).rejects.toMatchObject({ status: 409, message: expect.stringContaining("isn't held") });
   });
 
   it("does not touch the line's account on a refused write", async () => {
