@@ -144,8 +144,10 @@ What is recorded:
   as 1 (`route.ts:197`).
 - A request the route refuses with 400 is not recorded. That includes a
   `protocolVersion` that fails validation (`route.ts:147`).
-- A version newer than the server's, refused with 426 (`route.ts:190`), *is*
-  recorded. It shows a kiosk running ahead of the server.
+- A version newer than the server's *is* recorded. It shows a kiosk running
+  ahead of the server. Only a replay or dead letter carrying it is refused
+  with 426 (`route.ts:190`); a live scan carrying it is accepted and
+  processed as usual.
 
 §3 places the write so that these hold.
 
@@ -165,11 +167,12 @@ The route's `finally` (`route.ts:574-582`) runs on every exit, including the
 early 400 returns, so the write is guarded by a value set only once a request
 has passed validation:
 
-- `let seenVersion: number | null = null` is declared at the top of the
-  handler's `try`.
+- `let seenVersion: number | null = null` is declared before the `try`,
+  next to `startTime` (`route.ts:68`). That way the `finally` can read it.
 - It is set directly after the 400 return for an invalid body
   (`route.ts:153-155`), and before the 426 check at `:190`. A request refused
-  with 400 never sets it. A 426 does set it.
+  with 400 never sets it. A replay refused with 426 does set it, and so does
+  a live scan with a newer version.
 - It is set to the validated `protocolVersion`, or to 1 when that field is
   absent. A queued replay whose `protocolVersion` itself is invalid goes on to
   park rather than return 400, so it is excluded explicitly.
@@ -179,13 +182,21 @@ The `finally` then writes, next to the response-time metric, only when both
 a rejected promise is logged and never thrown.
 
 ```ts
+// In the finally, after the response-time metric.
+const keyFingerprint = auth.keyFingerprint;
 const protocolVersion = seenVersion;  // already normalized: absent → 1
-prisma.kioskProtocolSeen.upsert({
-  where: { keyFingerprint },
-  create: { keyFingerprint, protocolVersion, lastSeenAt: now },
-  update: { protocolVersion, lastSeenAt: now },
-})
+if (keyFingerprint && protocolVersion !== null) {
+  const now = new Date();
+  prisma.kioskProtocolSeen.upsert({
+    where: { keyFingerprint },
+    create: { keyFingerprint, protocolVersion, lastSeenAt: now },
+    update: { protocolVersion, lastSeenAt: now },
+  }).catch((err: unknown) => logger.error("Failed to record kiosk protocol version:", err));
+}
 ```
+
+`auth` is already narrowed to the kiosk arm: the handler returns 403 for
+anything else before the `try` (`route.ts:66`).
 
 The `where` names only the primary key and there are no nested writes, so
 Prisma issues a native `INSERT … ON CONFLICT` on Postgres. Two scans at the
@@ -277,7 +288,7 @@ one to merge.
    - the fingerprint;
    - an absent version recorded as 1;
    - a 400 not recorded;
-   - a 426 recorded;
+   - a newer version recorded, from a refused replay and from an accepted live scan;
    - a scan that still succeeds when the upsert rejects.
 
    No boundary file changes.
