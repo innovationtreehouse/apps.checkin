@@ -16,6 +16,7 @@ import { formatCents } from '@checkin/money';
 import { landsNextYear } from '@/lib/programYear';
 import { scholarshipRequestKindLabel } from '@/lib/scholarshipRequestKind';
 
+import { useUrlChoice } from '@checkin/component-ui';
 import { PageLoader } from "@/components/ui/PageLoader";
 type HouseholdLead = { id: number; name: string | null; email: string | null };
 
@@ -62,6 +63,8 @@ const PAST_IDENTITY_COLUMNS: DataTableColumn<PastProgramDecision>[] = [
   { header: 'Program', render: (row) => <Text fw={500}>{row.programName}</Text> },
 ];
 
+const VIEWS = ['pending', 'past'] as const;
+
 export default function PendingParticipantsPage() {
   const { formatDateTime } = useOrgTime();
   const { user: me, ready, loading: authLoading } = useRequireRole(PAYMENT_PLAN_ROLES);
@@ -73,7 +76,7 @@ export default function PendingParticipantsPage() {
   const [requests, setRequests] = useState<PaymentPlanRequest[]>([]);
   const [cutoff, setCutoff] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<'pending' | 'past'>('pending');
+  const [view, setView] = useUrlChoice('view', VIEWS, 'pending');
   const [message, setMessage] = useState("");
   const [confirmApproveOpened, { open: openConfirmApprove, close: closeConfirmApprove }] = useDisclosure(false);
   const [pendingApproval, setPendingApproval] = useState<{ programId: number; participantId: number } | null>(null);
@@ -286,7 +289,7 @@ export default function PendingParticipantsPage() {
 
       <SegmentedControl
         value={view}
-        onChange={(v) => setView(v === 'past' ? 'past' : 'pending')}
+        onChange={setView}
         data={[{ label: 'Pending', value: 'pending' }, { label: 'Past', value: 'past' }]}
         style={{ alignSelf: 'flex-start' }}
       />
