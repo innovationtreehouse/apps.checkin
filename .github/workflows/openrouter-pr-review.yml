@@ -24,6 +24,9 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
+    env:
+      # Routing, judging and the review step's lane pick all use this one decision model.
+      DECISION_MODEL: baseten/mammoth-1:free
     # One review plus at most one rerun, each under the action's 22-minute budget.
     timeout-minutes: 50
     steps:
@@ -62,7 +65,6 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           GH_TOKEN: ${{ github.token }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          DECISION_MODEL: baseten/mammoth-1:free
           DECISION_STATE_MAX: "48000"
           # "true" sends a PR's first review (no earlier bot review) to the lowest tier unless the
           # fixed ladder says high; "false" lets the decision model pick. The judge can still order a rerun.
@@ -70,12 +72,15 @@ jobs:
       - id: review
         if: steps.route.outputs.model != ''
         continue-on-error: true
-        uses: innovationtreehouse/openrouter-pr-review-action@1c2b06d89491a197ea0ebb9b619e07dddd6b2123 # fork: upstream 26f990a + Gemini 4 fixes (fork #1, #2) + re-review compaction (fork #3, #4) + opt-in approve (fork #5, off)
+        uses: innovationtreehouse/openrouter-pr-review-action@379257323534a6ea01a394f27d834f95ae3141b9 # fork main: pick mode (#10) + error scrub (#11) + pick hardening (#12)
         with:
           # AGENTS.md: the AI review never submits an approval. Keep off unless that rule changes.
           approve: "off"
           pr_number: ${{ github.event.pull_request.number }}
           models: ${{ steps.route.outputs.model }}
+          # Several lanes: the decision model picks the better review to post, not a merge.
+          judge_mode: pick
+          decision_model: ${{ env.DECISION_MODEL }}
           max_tool_turns: ${{ steps.route.outputs.max_tool_turns }}
           max_diff_kb: ${{ steps.route.outputs.max_diff_kb }}
           effort: ${{ steps.route.outputs.effort }}
@@ -100,7 +105,6 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           GH_TOKEN: ${{ github.token }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          DECISION_MODEL: baseten/mammoth-1:free
           DECISION_STATE_MAX: "48000"
           TIER: ${{ steps.route.outputs.tier }}
           PROFILES: ${{ steps.route.outputs.profiles }}
@@ -109,7 +113,7 @@ jobs:
       - id: rerun
         if: always() && steps.judge.outputs.rerun_tier != '' && steps.judge.outputs.rerun_tier != 'none'
         continue-on-error: true
-        uses: innovationtreehouse/openrouter-pr-review-action@1c2b06d89491a197ea0ebb9b619e07dddd6b2123 # fork: upstream 26f990a + Gemini 4 fixes (fork #1, #2) + re-review compaction (fork #3, #4) + opt-in approve (fork #5, off)
+        uses: innovationtreehouse/openrouter-pr-review-action@379257323534a6ea01a394f27d834f95ae3141b9 # fork main: pick mode (#10) + error scrub (#11) + pick hardening (#12)
         with:
           # AGENTS.md: the AI review never submits an approval. Keep off unless that rule changes.
           approve: "off"
