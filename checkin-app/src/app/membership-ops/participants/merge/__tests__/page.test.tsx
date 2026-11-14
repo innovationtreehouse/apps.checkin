@@ -2,7 +2,7 @@
 jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories run hoisted, before imports exist
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
 
 import { act, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl, router } from "@/test-helpers/rtl";
@@ -11,7 +11,7 @@ import { pinTimezone } from "@/test-helpers/tz";
 import { jsonBody } from "@/test-helpers/jsonBody";
 import MergeParticipants from "../page";
 
-beforeEach(() => { resetRtl(); (notifications.show as jest.Mock).mockClear(); });
+beforeEach(() => { resetRtl(); (notifications.show as jest.Mock).mockClear(); (notifications.hide as jest.Mock).mockClear(); });
 
 const participantA = {
   id: 1, name: "Alice Adams", email: "alice@example.com", phone: null, googleId: "g1",
@@ -78,6 +78,52 @@ describe("membership-ops/participants/merge page", () => {
     expect(await screen.findByText("Sam One", { exact: false })).toBeInTheDocument();
     expect(screen.getByText("Sam Two", { exact: false })).toBeInTheDocument();
     expect(screen.getByText("Sam Three", { exact: false })).toBeInTheDocument();
+  });
+
+  it("raises an error chip that waits to be dismissed when the search fails, and retries", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    let searches = 0;
+    const answers = mockFetchJson({});
+    answers.mockImplementation(async () => {
+      searches += 1;
+      const ok = searches > 1;
+      const body = ok ? { people: [participantA] } : { error: "Search is unavailable." };
+      return { ok, status: ok ? 200 : 500, json: async () => body, text: async () => JSON.stringify(body) } as Response;
+    });
+    renderWithProviders(<MergeParticipants />);
+
+    fireEvent.change(screen.getAllByPlaceholderText("Search by name, email, or ID...")[0], { target: { value: "Alice" } });
+
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "merge-search-Participant 1", color: "red", autoClose: false }),
+    ));
+    expect(screen.queryByText("Alice Adams", { exact: false })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry search" }));
+
+    expect(await screen.findByText("Alice Adams", { exact: false })).toBeInTheDocument();
+    await waitFor(() => expect(notifications.hide).toHaveBeenCalledWith("merge-search-Participant 1"));
+    expect(screen.queryByRole("button", { name: "Retry search" })).not.toBeInTheDocument();
+  });
+
+  it("names the colliding attestation ids from the analysis", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({
+      "/api/membership-ops/participants/merge/analyze": {
+        participants: [participantA, participantB],
+        collisions: [
+          { type: "bgAttestationSubject", message: "One reviewer attested both records.", attestationIds: [31, 32] },
+          { type: "openVisit", message: "Both have an open building visit." },
+        ],
+      },
+      "/api/people/search?q=Alice": { people: [participantA] },
+      "/api/people/search?q=Bob": { people: [participantB] },
+    });
+    renderWithProviders(<MergeParticipants />);
+    await selectBoth();
+
+    expect(await screen.findByText(/One reviewer attested both records\. Attestation IDs: 31, 32\./)).toBeInTheDocument();
+    expect(screen.getByText("Both have an open building visit.")).toBeInTheDocument();
   });
 
   describe("background-check notice in the preview", () => {
