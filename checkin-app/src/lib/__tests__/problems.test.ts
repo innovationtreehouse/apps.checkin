@@ -1,25 +1,26 @@
 /**
  * @jest-environment node
  */
+import { ServiceError } from "@checkin/component-kit";
 import { getCronJobStatuses } from "@/lib/cronRuns";
 import type { TemplateCtx } from "@/lib/email-templates/registry";
 import { sendTemplated } from "@/lib/email-templates/send";
 import prisma from "@/lib/prisma";
-import { getProblems, sendProblemsDigest } from "../problems";
+import { getProblems, retryProblem, sendProblemsDigest } from "../problems";
 
 jest.mock("@/lib/cronRuns", () => ({ getCronJobStatuses: jest.fn() }));
 jest.mock("@/lib/email-templates/send", () => ({ sendTemplated: jest.fn() }));
-jest.mock("@checkin/receipt", () => ({ stuckItems: jest.fn(), problemNotices: jest.fn() }));
-jest.mock("@checkin/expense", () => ({ stuckItems: jest.fn() }));
-jest.mock("@checkin/bulk-donation", () => ({ stuckItems: jest.fn() }));
-jest.mock("@checkin/workflow-mapping", () => ({ stuckItems: jest.fn() }));
-jest.mock("@checkin/local-inventory", () => ({ stuckItems: jest.fn() }));
+jest.mock("@checkin/receipt", () => ({ stuckItems: jest.fn(), problemNotices: jest.fn(), retryStuckItem: jest.fn() }));
+jest.mock("@checkin/expense", () => ({ stuckItems: jest.fn(), retryStuckItem: jest.fn() }));
+jest.mock("@checkin/bulk-donation", () => ({ stuckItems: jest.fn(), retryStuckItem: jest.fn() }));
+jest.mock("@checkin/workflow-mapping", () => ({ stuckItems: jest.fn(), retryStuckItem: jest.fn() }));
+jest.mock("@checkin/local-inventory", () => ({ stuckItems: jest.fn(), retryStuckItem: jest.fn() }));
 
-const receipt = jest.requireMock<{ stuckItems: jest.Mock; problemNotices: jest.Mock }>("@checkin/receipt");
-const expense = jest.requireMock<{ stuckItems: jest.Mock }>("@checkin/expense");
-const gifts = jest.requireMock<{ stuckItems: jest.Mock }>("@checkin/bulk-donation");
-const mapping = jest.requireMock<{ stuckItems: jest.Mock }>("@checkin/workflow-mapping");
-const inventory = jest.requireMock<{ stuckItems: jest.Mock }>("@checkin/local-inventory");
+const receipt = jest.requireMock<{ stuckItems: jest.Mock; problemNotices: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/receipt");
+const expense = jest.requireMock<{ stuckItems: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/expense");
+const gifts = jest.requireMock<{ stuckItems: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/bulk-donation");
+const mapping = jest.requireMock<{ stuckItems: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/workflow-mapping");
+const inventory = jest.requireMock<{ stuckItems: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/local-inventory");
 
 const NOW = new Date("2026-11-08T08:00:00Z");
 const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3600_000);
@@ -41,6 +42,31 @@ beforeEach(() => {
 
 afterAll(() => {
     for (const name of ENV) delete process.env[name];
+});
+
+describe("retryProblem", () => {
+    it("runs the step through the library the item is listed under", async () => {
+        await retryProblem({ library: "gifts", step: "QuickBooks posting", id: "receipt 4" });
+
+        expect(gifts.retryStuckItem).toHaveBeenCalledWith({ id: "receipt 4", step: "QuickBooks posting" });
+        expect(expense.retryStuckItem).not.toHaveBeenCalled();
+    });
+
+    it("passes the library's refusal through", async () => {
+        receipt.retryStuckItem.mockRejectedValue(new ServiceError(409, "failed again"));
+
+        await expect(retryProblem({ library: "receipt", step: "flow", id: "r1" })).rejects.toMatchObject({ status: 409 });
+    });
+
+    it.each([
+        ["a library not on the list", "inventory"],
+        ["a library with no database", "expense"],
+    ])("answers 404 for %s", async (_what, library) => {
+        delete process.env.EXPENSE_DATABASE_URL;
+
+        await expect(retryProblem({ library, step: "intake", id: "e1" })).rejects.toMatchObject({ status: 404 });
+        expect(expense.retryStuckItem).not.toHaveBeenCalled();
+    });
 });
 
 describe("getProblems", () => {
