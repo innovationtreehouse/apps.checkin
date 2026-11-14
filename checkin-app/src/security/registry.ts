@@ -728,8 +728,9 @@ defineRoute({
     endpoint: 'GET /api/facility/visits',
     authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
     envelope: 'visits',
-    // Bag: { Visit } with person (Person).
-    returns: ['Visit', 'Person'],
+    // Bag: { Visit } with person (Person) and facilityClose (FacilityClose,
+    // whose closedBy is a Person) naming who closed and when.
+    returns: ['Visit', 'Person', 'FacilityClose'],
     orderedView: [
         ['isSysadmin',    ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
         ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
