@@ -36,7 +36,15 @@ test('migration nulls blank and space-only emails and keeps a real one', async (
         await prisma.$executeRaw`UPDATE "Person" SET email = ${blanks[i]} WHERE id = ${id}`;
     }
 
-    await prisma.$executeRawUnsafe(readFileSync(MIGRATION, 'utf8'));
+    // Run the file's statements in one transaction, dropping its own BEGIN/COMMIT.
+    const statements = readFileSync(MIGRATION, 'utf8')
+        .replace(/^--.*$/gm, '')
+        .split(';')
+        .map((s) => s.trim())
+        .filter((s) => s && s !== 'BEGIN' && s !== 'COMMIT');
+    await prisma.$transaction(async (tx) => {
+        for (const stmt of statements) await tx.$executeRawUnsafe(stmt);
+    });
 
     const rows = await prisma.person.findMany({ where: { householdId: hh.id }, select: { id: true, email: true } });
     const email = new Map(rows.map((r) => [r.id, r.email]));
