@@ -51,21 +51,21 @@ decision, the clearance and the rejection. This flag did not. Three problems fol
 **Families.** /membership shows one "Background checks" panel. An adult sees their
 own check and can mark it started. A household lead also sees the household's
 other adults, each showing only "needs marking" or "nothing to do", with a "Mark
-check started" button on the first. A mark made by mistake can be dismissed until a
-reviewer has decided on the review. The
-agreement step no longer carries a consent checkbox. Once the agreement is signed
+check started" button on the first. Families cannot dismiss a mark; a mark made by
+mistake is dismissed by a reviewer or the Board. The agreement step no longer carries a consent checkbox. Once the agreement is signed
 and a lead's check is started (or a lead is already cleared), the application moves
 on to payment as it does today.
 
 **Reviewers.** Every check review opened from now on names its person. The reviewer
 confirms the report is that person's. If it is not, the reviewer asks the Board for
 the existing wrong-person reset. Reviews that already name nobody (opened before
-this change, or returned by a reset) work exactly as they do now.
+this change, or returned by a reset) work exactly as they do now. A reviewer may
+dismiss a review opened by mistake, before anyone has decided on it.
 
 **Board.** The applications page loses "Confirm BG consent". It gains "Mark a
 lead's check started", which picks a lead. The Board's existing per-person submit
-is the way to mark anyone else. Neither path has an own-household guard. The Board
-can dismiss a review opened by mistake, subject to CS-4.
+is the way to mark anyone else. Neither path has an own-household guard. Board
+members may dismiss a review opened by mistake, as reviewers may (CS-4).
 
 **What deliberately does not change:**
 
@@ -75,7 +75,7 @@ can dismiss a review opened by mistake, subject to CS-4.
 - The payment-in-parallel flow.
 - The compliance view, which still reads the old audit rows.
 
-**Cost:** one boundary PR (a new registered route, three verbs), one app PR, and one small
+**Cost:** one boundary PR (two new registered routes), one app PR, and one small
 follow-up PR once the old in-flight applications have drained. No migration.
 
 ## Owner rulings this design builds on (2026-11-13)
@@ -103,7 +103,10 @@ follow-up PR once the old in-flight applications have drained. No migration.
   marking" or "nothing to do", never their clearance, review or decisions.
 - **CS-3** `[Decision — owner]` A family may mark any adult in their household, at
   any time; the Board may mark anyone. There must be a way to dismiss a review
-  opened by mistake. Who may dismiss is open question **CS-4**.
+  opened by mistake.
+- **CS-4** `[Decision — owner]` Only the Board and background-check reviewers may
+  dismiss a check review opened by mistake. They can see the outside check tool, so
+  they know who has actually filled out its forms. Families and leads cannot dismiss.
 
 These close the open question in PR2779-F02 (the #2779 rule was never ruled on) by
 replacing that rule's text. They also close the remainder of PR2779-F03 (a second
@@ -187,8 +190,10 @@ self-report path (`selfRecordBgConsent`, `selfAttestPersonBg`,
 
 ### Dismissing a review opened by mistake
 
-One service function, `dismissCheckStarted(subjectPersonId, actorId, reason)`, for
-a mark made on the wrong person or for a check that was never started.
+One service function, `dismissCheckStarted(reviewId, actorId, reason)`, for a mark
+made on the wrong person or for a check that was never started. Only a Board member
+or a background-check reviewer may call it (CS-4). They check the outside tool to see
+whether the person has filled out its forms.
 
 **When it is allowed.** Only on the person's open check review, at
 PENDING_BG_REVIEW with the flag set, and only while **no reviewer has ever recorded
@@ -202,7 +207,10 @@ else. Before any decision, nobody has judged anything, so there is nothing for a
 dismissal to hide.
 
 A written reason is required. The work runs under the review's row lock, the same
-lock `attest` takes, so a dismissal and a first decision cannot both land.
+lock `attest` takes, so a dismissal and a first decision cannot both land. The
+existing reviewer bar applies, as it does to every act on a review: nobody dismisses
+a review about someone in their own household, or one their household requested
+(`throwIfOwnReview`).
 
 **What it does.** It undoes the mark, and only the mark:
 
@@ -212,8 +220,7 @@ lock `attest` takes, so a dismissal and a first decision cannot both land.
 - **The review existed before the mark**, opened by activation or the yearly sweep
   because the person owes a check: only the flag is cleared. The review leaves the
   reviewers' queue and the owed check stays open, as it was before the mark.
-- **A legacy review naming nobody** with no decision on it is closed. Its household
-  stands for the subject when deciding who may dismiss.
+- **A legacy review naming nobody** with no decision on it is closed.
 
 One audit row is written with the actor, the reason and
 `{ checkStarted: false, action: "dismissed: opened by mistake" }`. The mark's own
@@ -231,10 +238,6 @@ runs for the household. An application that already moved on to payment because 
 the dismissed mark stays where it is: payment runs in parallel with the check, and
 activation still needs a lead's clearance, which a dismissed mark never gave. The
 person may be marked again at any time.
-
-**Who may dismiss** is open question **CS-4**. The service takes the answer as one
-`mayDismiss(actor, subject)` check, so whichever option is chosen is a single
-function.
 
 ### How a family's first check now starts
 
@@ -303,20 +306,20 @@ reset, keep today's behaviour:
     hold no clearance still valid at the next membership-year boundary.
   - `NOTHING_TO_DO`: anything else.
 
-  Rows also carry `mayDismiss`: true when a dismissal is allowed (above) and the
-  caller may dismiss (CS-4). The caller's own row may also carry the detail the
-  own-check panel shows today.
+  The caller's own row may also carry the detail the own-check panel shows today.
 - `POST /api/membership/check-started`, with body `{ personId }`, calls
   `markCheckStarted` for any adult the caller may mark, whatever the row's state
   (CS-3). It returns the refreshed rows.
-- `DELETE /api/membership/check-started`, with body `{ personId, reason }`, calls
-  `dismissCheckStarted`. It returns the refreshed rows. The Board and sysadmins use
-  the same verb, from the Board applications page and the reviewer queue, for
-  whomever CS-4 lets them dismiss.
+Both verbs land in the registry first, in their own boundary PR based on `main` (see the
+migration file). `state` is a synthetic field; its tier is set in that PR.
 
-All three verbs land in the registry first, in their own boundary PR based on `main` (see the
-migration file). `state` and `mayDismiss` are synthetic fields; their tier is set in
-that PR.
+**Dismissal route.** `POST /api/membership/reviews/dismiss`, with body
+`{ processId, reason }`, calls `dismissCheckStarted`. It is authorised to
+`anyRole: ['isBackgroundCheckReviewer', 'isBoardMember']`, the same grant as the
+existing `POST /api/membership/reviews/undo`. A sysadmin who is neither cannot
+dismiss. It is reached from a "Dismiss: opened by mistake" button on the reviewer
+queue, and on the Board applications page for Board members. It is registered in
+the same boundary PR.
 
 **Who sees whom (CS-2).** For another adult, a lead sees only "needs marking" or
 "nothing to do". "Started", "already cleared" and "rejected" all show as "nothing to
@@ -333,9 +336,7 @@ whenever the GET returns a row. Each `NEEDS_MARKING` row has:
   caller's own row: "I've started my check …").
 - A "Mark check started" button.
 
-A row with `mayDismiss` also has "Opened by mistake? Dismiss", which asks for a
-reason. A lead can be offered this for another adult even when the row reads
-"nothing to do". The button shows only the action, never the review's state.
+The panel has no dismiss button (CS-4).
 
 There is no new page and no nav entry.
 
@@ -351,7 +352,7 @@ link. Everywhere the app recorded the fact, the wording becomes "check started".
 | /membership errors | "Could not record your consent", "Only a household lead can confirm background-check consent" | "Could not mark the check started", "Only a household lead can mark another person's check started" |
 | Board applications page | "Background-check consent", "✓ Received", "Confirm BG consent", "You can't confirm your own household's contract or consent" | "Background check started", "✓ Started", "Mark a lead's check started"; the own-household note keeps "contract" only. |
 | Dev mock page | "Consent" button | Unchanged (it stands in for the outside tool). |
-| /membership panel, Board applications page, reviewer queue | — | New: "Opened by mistake? Dismiss" and "Dismissed: the check is no longer marked started." |
+| Reviewer queue, Board applications page | — | New: "Dismiss: opened by mistake" (asks for a reason) and "Dismissed: the check is no longer marked started." |
 
 ### Rule text
 
@@ -401,11 +402,9 @@ in can record their own check …":
 >   blocks nothing, and a check the person already owed stays owed. Once a reviewer
 >   has decided, only the review's own paths remain.  [Decision — owner]
 >
-> - [Who may dismiss: not yet decided.]  [Unsettled — owner question CS-4]
-
-The last line is a placeholder, not rule text. It is not extracted as it stands.
-Once the owner answers CS-4, it is reworded as a constraint naming who may dismiss,
-tagged `[Decision — owner]`, and only then copied.
+> - Only a board member or a background-check reviewer may dismiss a check
+>   review, under the same household bar as any other act on a review. A person,
+>   a household lead and a sysadmin who is neither may not.  [Decision — owner]
 >
 > - The audit names the person who marked it, and the person who dismissed it, so
 >   a family's act stays distinguishable from the Board's.  [Decision]
@@ -442,7 +441,9 @@ These are named for the build PR. None run for this doc.
   - A dismissal racing a first decision: exactly one lands.
   - Standing, settle and the application status: no dispute, no block, no
     clearance, no status moved back.
-  - Who may dismiss, per the CS-4 answer.
+  - Only a Board member or reviewer may dismiss. A family member, a lead and a
+    sysadmin who is neither are refused. The household bar refuses an
+    own-household review.
 - Advance gate:
   - Passes for a lead started and for an unnamed requested review.
   - Does not pass for a non-lead adult started.
@@ -451,27 +452,7 @@ These are named for the build PR. None run for this doc.
 - Settle opens no unnamed review for an application without the legacy flag.
 - The F03 renewal scenario: the second lead marks their own check while the
   agreement is unsigned, and their review enters the queue.
-- Route contract tests for the three new verbs: field exposure per role. A lead
+- Route contract tests for the three new endpoints (the dismissal route refuses every role but reviewer and Board): field exposure per role. A lead
   sees no clearance date or review state for another adult; `state` has only the
   two values.
 - The Board applications page derives "started" from the rows it already has.
-
-## Open questions for the owner
-
-Stable IDs. CS-1 to CS-3 are answered above.
-
-- **CS-4: who may dismiss a check review opened by mistake?** Dismissal is allowed
-  only before any reviewer decision, whoever does it.
-  - **(a) Whoever may mark it** — the person, a household lead of their household,
-    the Board and sysadmins. *Recommended.* It mirrors D4, and a mark carries no
-    weight before a decision (D5). The family that made the mistake fixes it
-    without asking the Board. Every dismissal is audited with a reason, and the
-    person can be marked again at once.
-  - **(b) The Board and sysadmins only.** Nothing is removed from the queue
-    without the Board, at the cost of a Board request for every slip.
-  - **(c) Whoever made the mark, plus the Board and sysadmins.** Narrower than (a):
-    the other lead cannot undo their partner's mark.
-  - **(d) Any of the above plus background-check reviewers.** *Not recommended.* A
-    reviewer who doubts a report must decide or ask for the wrong-person reset.
-    Letting the people who decide also dismiss is the one way dismissal could
-    become a quiet rejection, even before a decision is recorded.
