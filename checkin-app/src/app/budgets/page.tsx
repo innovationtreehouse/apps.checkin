@@ -180,16 +180,15 @@ export default function BudgetsPage() {
               />
               <Select
                 label="QuickBooks Class"
-                description="Expenses in this bucket post to QuickBooks only once it is set"
-                placeholder={classPlaceholder("None yet")}
-                clearable
+                description="Every bucket books to a Class"
+                placeholder={classPlaceholder("Pick a Class")}
                 searchable
                 data={classChoices(null, [newClassId])}
                 value={newClassId}
                 onChange={setNewClassId}
                 w={280}
               />
-              <Button onClick={create} disabled={creating || !newName.trim()} loading={creating}>Create</Button>
+              <Button onClick={create} disabled={creating || !newName.trim() || !newClassId} loading={creating}>Create</Button>
             </Group>
           </Card>
         )}
@@ -260,7 +259,6 @@ export default function BudgetsPage() {
           <Select
             label="QuickBooks Class"
             placeholder={classPlaceholder("None")}
-            clearable
             searchable
             data={editing ? classChoices(editing.id, [editing.quickBooksClassId, editClassId]) : []}
             value={editClassId}
