@@ -66,5 +66,6 @@ defineRoute({ endpoint: 'POST /api/catalog/provisional-items/[id]/approve', auth
 defineRoute({ endpoint: 'POST /api/catalog/provisional-items/[id]/reject', authorize: 'inventory-manager', envelope: null, returns: ['ProvisionalItem'], orderedView: CATALOG_MANAGER_VIEW });
 defineRoute({ endpoint: 'POST /api/catalog/provisional-items/[id]/map-to-existing', authorize: 'inventory-manager', envelope: null, returns: ['ProvisionalItem'], orderedView: CATALOG_MANAGER_VIEW });
 defineRoute({ endpoint: 'PUT /api/catalog/reference-conflicts/[id]/resolve', authorize: 'inventory-manager', envelope: null, returns: ['ReferenceConflict'], orderedView: CATALOG_MANAGER_VIEW });
+defineRoute({ endpoint: 'POST /api/catalog/conversion-challenges', authorize: 'inventory-manager', envelope: null, returns: ['ConversionChallenge'], orderedView: CATALOG_MANAGER_VIEW });
 defineRoute({ endpoint: 'POST /api/catalog/conversion-challenges/[id]/accept', authorize: 'inventory-manager', envelope: null, returns: ['ConversionChallenge'], orderedView: CATALOG_MANAGER_VIEW });
 defineRoute({ endpoint: 'POST /api/catalog/conversion-challenges/[id]/reject', authorize: 'inventory-manager', envelope: null, returns: ['ConversionChallenge'], orderedView: CATALOG_MANAGER_VIEW });
