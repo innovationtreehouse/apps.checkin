@@ -115,6 +115,7 @@ export default function BooksMapPage() {
                   value={r.quickBooksAccountId}
                   placeholder="Not set"
                   searchable
+                  clearable
                   disabled={!isFinance}
                   onChange={(v) => void save(`/api/books-map/accounts/${r.role}`, { quickBooksAccountId: v }, "Account not saved")}
                 />

@@ -364,7 +364,8 @@ Things the app takes as true because they are handled outside it.
   [Decision]
 
 - A bucket is created with its class. Finance may change a bucket's class but
-  not clear it, and no two buckets share a class.
+  not clear it, and no two buckets share a class. A bucket that has no class
+  still saves without one, and its lines wait until finance picks one.
   [Decision — owner]
 
 - Finance may restore an archived bucket. It comes back with its class, owner
