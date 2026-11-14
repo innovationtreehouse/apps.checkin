@@ -9,7 +9,7 @@ import { lookupItems, getItem, listCategories, listSubcategories } from "./catal
 import { matchingRules, type CatalogInfo } from "./account-rules";
 import { StaleStateError, advanceWorkflow, advanceWorkflowInTx, unlessRaceLost, type Actor } from "./workflow-engine";
 import { writeAudit } from "./audit";
-import { lockExpense, unsignedLines } from "./signoff-facts";
+import { lockExpense, storedTaxWaits, unsignedLines } from "./signoff-facts";
 import { reimburseeUnknown } from "./signoff";
 import { postExpenseToQb, type PostOutcome } from "./expense-qb-poster";
 import { getExpenseRuntime } from "../runtime";
@@ -250,7 +250,7 @@ async function commitQbProcessing(
   return db.$transaction(async (tx) => {
     await lockExpense(tx, expenseId);
     const current = await tx.expense.findUniqueOrThrow({ where: { id: expenseId } });
-    if (reimburseeUnknown(current) || (await unsignedLines(tx, current)).size > 0) return false;
+    if (reimburseeUnknown(current) || (await unsignedLines(tx, current)).size > 0 || (await storedTaxWaits(tx, expenseId))) return false;
     await saveCatalogSnapshots(snapshots, tx);
 
     if (resolvedLineItemIds.length > 0) {
@@ -316,6 +316,9 @@ export async function checkAndProcessExpense(orgId: string, expenseId: string): 
     expense = await db.expense.findFirst({ where: { id: expenseId } });
     if (!expense) return;
   }
+
+  // Tax waiting on finance holds the expense open; approving the tax drains it.
+  if (await storedTaxWaits(db, expenseId)) return;
 
   // Historical backfill: already booked in QuickBooks. Skip the QB post entirely and land terminal.
   // Everything upstream (owner approval auto-resolved, capital review + depreciation) has already run.

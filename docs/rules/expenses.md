@@ -421,6 +421,11 @@ Things the app takes as true because they are handled outside it.
   finance never approved the new amount.
   [Decision]
 
+- While an expense's tax waits on finance, the expense does not close and does
+  not reach the books. Once finance approves the tax at its current amount, the
+  expense goes on as usual.
+  [Decision — owner]
+
 ### Capital register
 
 - The capital register holds one row per physical asset: a line of three units

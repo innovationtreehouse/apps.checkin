@@ -54,8 +54,9 @@ as `Cash`.
 
 ## From signed-off expense to outbox
 
-`checkAndProcessExpense` does nothing while the reimbursee is unknown or a line has
-an unfilled sign-off seat. Past that check, each line must resolve to exactly one
+`checkAndProcessExpense` does nothing while the reimbursee is unknown, a line has
+an unfilled sign-off seat, or the expense's tax waits on finance
+(`taxWaitsOnFinance`). Approving the tax drains the expense. Past that check, each line must resolve to exactly one
 account:
 
 1. An account finance set by hand on a held line wins.
@@ -69,7 +70,7 @@ A line that resolves to no account or to several raises an `ExpenseHold`
 (`NO_MATCH`, `MULTIPLE_MATCHES`, `NO_PART_NUMBER`, `NON_INVENTORY`) and the expense
 moves to `qb_on_hold`.
 
-With no holds, one transaction re-reads the sign-offs under the expense lock,
+With no holds, one transaction re-reads the sign-offs and the tax wait under the expense lock,
 writes each line's tax, shipping and discount share and its `resolvedQbAccount`,
 creates the `ExpenseEvent` row, and moves the expense from `qb_pending` to
 `qb_complete`. The outbox row carries no data: it says "this expense may post", and
@@ -197,12 +198,12 @@ expense whose vendor name starts `TEST-` posts; production never posts an
 `postExpenseToQb` holds no lock while it talks to QuickBooks. It has three steps:
 
 1. **Claim.** Under the row lock it re-reads the outbox row, the reimbursee, the
-   sign-off seats and the line approvals, builds the entry, and sets `POSTING`. A
+   sign-off seats, the tax wait and the line approvals, builds the entry, and sets `POSTING`. A
    post that may create stamps `qbCreateAttemptedAt` the first time, and the stamp
    never moves. A hold makes the post wait; on a closed expense it also raises
    `QB_POST_HELD`, since the app takes no further sign-off on it. A closed expense
-   is held only for a missing submitter or Treasurer seat, an unapproved line or an
-   unknown reimbursee. Its Board seat and Board approval were settled at the outbox
+   is held only for a missing submitter or Treasurer seat, an unapproved line, tax
+   waiting on finance or an unknown reimbursee. Its Board seat and Board approval were settled at the outbox
    commit, so later changes to the reimbursee's membership or the Board-review total
    do not hold it.
 2. **Call.** If `qbCreateAttemptedAt` was already set, it first reads what QuickBooks

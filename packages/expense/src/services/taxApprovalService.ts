@@ -8,17 +8,19 @@ import { taxWaitsOnFinance } from "../lib/reasons";
 import { CLOSED_STATES } from "../lib/signoff";
 import { isConflicted, lockExpense } from "../lib/signoff-facts";
 import { requireFinance } from "./approvalService";
+import { drainExpense } from "../lib/financial-flow";
 import { ServiceError } from "@checkin/component-kit";
 
 /**
  * Approves the expense's tax as it stands; the approval covers that amount only. The note is
  * optional. Refused when the tax does not wait on finance, and for a caller conflicted on the expense.
+ * An expense the tax held at the QuickBooks step then goes on to close and post.
  */
 export async function approveTax(principal: ExpensePrincipal, expenseId: string, note: string | null): Promise<void> {
   requireFinance(principal);
   const actor = actorOf(principal);
   const orgId = await getOrgId();
-  await db.$transaction(async (tx) => {
+  const state = await db.$transaction(async (tx) => {
     await lockExpense(tx, expenseId);
     const expense = await tx.expense.findFirst({
       where: { id: expenseId, orgId },
@@ -38,5 +40,7 @@ export async function approveTax(principal: ExpensePrincipal, expenseId: string,
     const approval = { taxCents: expense.taxCents, approvedByUserId: actor.userId, note, approvedAt: new Date() };
     await tx.expenseTaxApproval.upsert({ where: { expenseId }, create: { expenseId, ...approval }, update: approval });
     await writeAudit(tx, actor, { expenseId, action: "tax_approved", fieldChanged: "taxCents", valueAfter: String(expense.taxCents), notes: note });
+    return expense.state;
   });
+  if (state === "qb_pending" || state === "qb_on_hold") await drainExpense(orgId, expenseId);
 }
