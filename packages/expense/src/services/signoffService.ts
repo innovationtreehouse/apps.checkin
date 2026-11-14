@@ -351,34 +351,36 @@ export interface SignaturesWaiting {
 /**
  * The lines whose main act for this caller is a Treasurer or Board signature, from the line-actions
  * function: a line is listed only once the steps before its signature are done, and a Board
- * stand-in only where no one else can act. Reads at most
- * SIGNOFF_BADGE_EXPENSE_CAP open expenses with an approved line (newest first), as the sign-off
- * badges do; an expense with nothing for the caller is left out.
+ * stand-in only where no one else can act. Lists at most SIGNOFF_BADGE_EXPENSE_CAP open expenses
+ * (newest first), as the sign-off badges do; an expense with nothing for the caller is left out.
+ * Candidates have an approved line missing a Treasurer or Board seat; whether a line takes the
+ * Board seat needs the facts, so candidates are read a page at a time until the cap is met.
  */
 export async function signaturesWaiting(principal: ExpensePrincipal): Promise<SignaturesWaiting[]> {
   if (!principal.isFinance && !principal.isBoard) return [];
   const me = actorOf(principal).userId;
-  const expenses = await db.expense.findMany({
-    where: {
-      orgId: await getOrgId(),
-      backfill: false,
-      state: { notIn: [...CLOSED_STATES] },
-      NOT: { needsReimbursement: true, reimburseePersonId: null },
-      approvals: { some: { status: "approved" } },
-    },
-    orderBy: { submittedAt: "desc" },
-    take: SIGNOFF_BADGE_EXPENSE_CAP,
-  });
-  const linesOf = await callerLinesFor(principal, expenses, true);
+  const unsigned = (seat: Seat) => ({ lineItem: { signoffs: { none: { seat } } } });
+  const where: Prisma.ExpenseWhereInput = {
+    orgId: await getOrgId(),
+    backfill: false,
+    state: { notIn: [...CLOSED_STATES] },
+    NOT: { needsReimbursement: true, reimburseePersonId: null },
+    approvals: { some: { status: "approved", OR: [unsigned("TREASURER"), unsigned("BOARD")] } },
+  };
   const out: SignaturesWaiting[] = [];
-  for (const expense of expenses) {
-    const row: SignaturesWaiting = { expense, toSign: [], board: [] };
-    for (const line of linesOf.get(expense.id)!) {
-      const main = line.actions.find((a) => a.primary);
-      const tab = main ? signatureTab(line.facts, main, me) : null;
-      if (tab) row[tab].push(line.lineItemId);
+  for (let skip = 0; out.length < SIGNOFF_BADGE_EXPENSE_CAP; skip += SIGNOFF_BADGE_EXPENSE_CAP) {
+    const expenses = await db.expense.findMany({ where, orderBy: [{ submittedAt: "desc" }, { id: "asc" }], skip, take: SIGNOFF_BADGE_EXPENSE_CAP });
+    const linesOf = await callerLinesFor(principal, expenses, true);
+    for (const expense of expenses) {
+      const row: SignaturesWaiting = { expense, toSign: [], board: [] };
+      for (const line of linesOf.get(expense.id)!) {
+        const main = line.actions.find((a) => a.primary);
+        const tab = main ? signatureTab(line.facts, main, me) : null;
+        if (tab) row[tab].push(line.lineItemId);
+      }
+      if (row.toSign.length + row.board.length > 0 && out.length < SIGNOFF_BADGE_EXPENSE_CAP) out.push(row);
     }
-    if (row.toSign.length + row.board.length > 0) out.push(row);
+    if (expenses.length < SIGNOFF_BADGE_EXPENSE_CAP) break;
   }
   return out;
 }
