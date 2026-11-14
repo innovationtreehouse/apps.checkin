@@ -476,7 +476,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
                   </Button>
                 )}
                 {isAdult && !r.isInKind && (
-                  <Button size="xs" variant="light" onClick={() => void act("/reimbursement", "PUT", { needsReimbursement: !r.needsReimbursement }, "Updated", "Couldn't change who paid")}>
+                  <Button size="xs" variant="light" disabled={saving} onClick={() => void afterSave(() => act("/reimbursement", "PUT", { needsReimbursement: !r.needsReimbursement }, "Updated", "Couldn't change who paid"))}>
                     {r.needsReimbursement ? "I didn't pay for this" : "I paid for this myself"}
                   </Button>
                 )}
@@ -550,7 +550,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
         </Stack>
       </Group>
 
-      {editing && <ReceiptEditor receipt={r} draft={draft} onChange={setDraft} taxNote={own} />}
+      {editing && <ReceiptEditor receipt={r} draft={draft} onChange={setDraft} taxNote={own} disabled={saving} />}
 
       <Modal opened={confirmingRead} onClose={() => setConfirmingRead(false)} title="Read it again">
         <Stack>

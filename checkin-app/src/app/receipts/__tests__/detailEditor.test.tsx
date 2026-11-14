@@ -17,7 +17,7 @@ jest.mock("next/navigation", () => ({
   useSearchParams: () => mockSearch,
   useRouter: () => ({ push: mockPush, replace: jest.fn() }),
 }));
-jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 1 } } }) }));
+jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 1, ageBand: "adult" } } }) }));
 jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
 jest.mock("@checkin/receipt/components/ReceiptFile", () => ({ __esModule: true, default: () => null }));
 
@@ -299,6 +299,29 @@ describe("reviewing an OCR-read receipt", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(shown()).toContainEqual({ message: "Saved", color: "green" }));
     expect(resubmitted()).toBe(false);
+  });
+
+  it("locks the fields while a save runs, so typing can't be overwritten when it lands", async () => {
+    mockReceipt = { ...receipt, state: "submitter_review", validationNotes: null };
+    let land: (value: unknown) => void = () => {};
+    mockApi.mockImplementationOnce(() => new Promise((resolve) => { land = resolve; }));
+    wrap();
+    type("Retailer", "Acme Hardware");
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(screen.getByLabelText("Line 1 description")).toBeDisabled());
+    expect(screen.getByLabelText("Retailer")).toBeDisabled();
+    land({});
+    await waitFor(() => expect(screen.getByLabelText("Retailer")).toBeEnabled());
+  });
+
+  it("saves unsaved line edits before changing who paid", async () => {
+    mockReceipt = { ...receipt, state: "submitter_review", validationNotes: null };
+    wrap();
+    type("Line 1 description", "Wood screws");
+    fireEvent.click(screen.getByRole("button", { name: "I paid for this myself" }));
+    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/reimbursement", "PUT", { needsReimbursement: true }, "Updated", "Couldn't change who paid"));
+    expect(mockApi).toHaveBeenCalledWith("/r1/line-items/11", { method: "PATCH", body: JSON.stringify({ description: "Wood screws" }) });
+    expect(mockApi.mock.invocationCallOrder[0]).toBeLessThan(mockSend.mock.invocationCallOrder[0]);
   });
 });
 
