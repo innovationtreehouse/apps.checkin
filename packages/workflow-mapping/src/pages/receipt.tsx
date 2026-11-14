@@ -12,7 +12,7 @@ import {
 import { USAGE_BEHAVIORS } from "@checkin/receipt-types";
 import { LINE_STATUS_COLOR, LINE_STATUS_LABEL, api, stateColor, stateLabel, errorMessage, notifyNavCounts, useCanManage, useLoad } from "../components/api";
 import { formatCents } from "@checkin/money";
-import { type LineFormKind, lineFormBody } from "../lib/line-form";
+import { type LineFormFields, type LineFormKind, lineFormBody, lineFormStart } from "../lib/line-form";
 import { lineLockReason } from "../lib/line-lock";
 
 interface Receipt {
@@ -320,6 +320,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
                         <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="lg">
                           <LineDetails item={li} currency={parsed.currency} />
                           <LineForm
+                            start={lineFormStart(ls)}
                             busy={busy}
                             onCancel={() => setOpenLineId(null)}
                             onNonInventory={ls.recognitionStatus === "non_inventory" ? undefined : async () => {
@@ -372,7 +373,8 @@ function LineDetails({ item, currency }: { item: LineItem | undefined; currency:
   );
 }
 
-function LineForm({ busy, onSubmit, onCancel, onNonInventory }: {
+function LineForm({ start, busy, onSubmit, onCancel, onNonInventory }: {
+  start: LineFormFields;
   busy: boolean;
   onSubmit: (form: LineFormKind, body: NonNullable<ReturnType<typeof lineFormBody>>) => void;
   onCancel: () => void;
@@ -383,12 +385,12 @@ function LineForm({ busy, onSubmit, onCancel, onNonInventory }: {
   const [search, setSearch] = useState("");
   const found = useCatalogSearch(search);
   const results = [...(chosen ? [chosen] : []), ...found.items.filter((item) => item.gtin13 !== chosen?.gtin13)];
-  const gtin13 = chosen?.gtin13 ?? null;
-  const [name, setName] = useState("");
-  const [categoryId, setCategoryId] = useState<string | null>(null);
-  const [subcategoryId, setSubcategoryId] = useState<string | null>(null);
-  const [usage, setUsage] = useState<string | null>(null);
-  const [factor, setFactor] = useState<number | string>(1);
+  const [gtin13, setGtin13] = useState(start.gtin13);
+  const [name, setName] = useState(start.name);
+  const [categoryId, setCategoryId] = useState(start.categoryId);
+  const [subcategoryId, setSubcategoryId] = useState(start.subcategoryId);
+  const [usage, setUsage] = useState(start.usage);
+  const [factor, setFactor] = useState<number | string>(start.conversionFactor);
   const conversionFactor = Number(factor) || 1;
   const categories = useLoad<CategoryOption[]>("/api/catalog/categories");
   const subcategories = useLoad<SubcategoryOption[]>("/api/catalog/subcategories");
@@ -410,6 +412,7 @@ function LineForm({ busy, onSubmit, onCancel, onNonInventory }: {
             error={found.error && `Couldn't search the catalog: ${found.error}`}
             miw={320}
           />
+          {gtin13 && !chosen && <Text size="xs" c="dimmed">Keeps {formatGtinDisplay(gtin13)} unless you choose another item</Text>}
           {catalogSearchTerm(search) === null && <Text size="xs" c="dimmed">Type at least {MIN_CATALOG_SEARCH_LENGTH} characters</Text>}
           {found.answered && !found.error && results.length === 0 && <Text size="xs" c="dimmed">No matching catalog items</Text>}
           {results.length > 0 && (
@@ -417,7 +420,7 @@ function LineForm({ busy, onSubmit, onCancel, onNonInventory }: {
               <Radio.Group
                 aria-label="Catalog items"
                 value={gtin13}
-                onChange={(v) => setChosen(results.find((item) => item.gtin13 === v) ?? null)}
+                onChange={(v) => { setChosen(results.find((item) => item.gtin13 === v) ?? null); setGtin13(v); }}
               >
                 <Stack gap={6} py={4}>
                   {results.map((item) => <Radio key={item.gtin13} size="xs" value={item.gtin13} label={catalogItemLabel(item)} />)}
