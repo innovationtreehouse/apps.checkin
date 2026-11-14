@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import crypto from "crypto";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
-import { config, DEV_MOCK_MEMBERSHIP_VARIANT_ID } from "@/lib/config";
+import { config } from "@/lib/config";
+import { liveYearVariantId } from "@/lib/membership/payment";
 import { logger } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
 import { checkoutVariantId } from "@/lib/programs/variants";
@@ -72,14 +73,10 @@ async function fireMembership(processId: number, refundedInShopify: boolean): Pr
         return apiError("Process not found or not awaiting payment", 404);
     }
 
-    // A real paid order carries the membership variant id in its line_items; the
-    // inbound handler matches it against BoardSettings to confirm the order is for
-    // the membership product. The mock must echo a configured variant id
-    // or the webhook lands as a no-membership-item anomaly, not an activation.
-    const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-    // Mock stands in for the manual BoardSettings variant a local seed never sets;
-    // the inbound handler echoes the same fallback so the order matches (config).
-    const variantId = settings?.orgMembershipVariantId ?? DEV_MOCK_MEMBERSHIP_VARIANT_ID;
+    // Echo the variant the family's checkout would sell, so the inbound handler finds
+    // the membership line. The mock is active here, so this is never null.
+    const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
+    const variantId = await liveYearVariantId(settings?.orgMembershipYearBoundary, new Date());
 
     // Shape mirrors the subset the inbound handler reads: note_attributes (where
     // Shopify maps cart attributes) + line_items + an order id. Stable id so two
