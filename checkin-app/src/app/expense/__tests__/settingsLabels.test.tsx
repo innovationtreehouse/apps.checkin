@@ -1,8 +1,9 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import SettingsPage from "@checkin/expense/pages/settings";
 
 const mockRoles = { isFinance: false, isBoard: true };
+const mockSend = jest.fn();
 
 jest.mock("@checkin/expense/components/api", () => ({
   useRoles: () => mockRoles,
@@ -11,11 +12,13 @@ jest.mock("@checkin/expense/components/api", () => ({
       boardReviewTotalCents: 200_000,
       capitalTotalThresholdCents: 0,
       capitalLineItemThresholdCents: 0,
+      everydayTotalLimitCents: 50_000,
+      everydayItemLimitCents: 25_000,
     },
     error: null,
     reload: () => {},
   }),
-  send: jest.fn(),
+  send: (...args: unknown[]) => mockSend(...args),
 }));
 
 beforeAll(() => {
@@ -46,12 +49,14 @@ describe("Capital review labels on the expense settings page", () => {
 describe("What FINANCE may change on the expense settings page", () => {
   afterEach(() => Object.assign(mockRoles, { isFinance: false, isBoard: true }));
 
-  it("shows FINANCE the capital thresholds read-only, saying the Board sets them", () => {
+  it("shows FINANCE the capital thresholds and Everyday limits read-only, saying the Board sets them", () => {
     Object.assign(mockRoles, { isFinance: true, isBoard: false });
     render(<MantineProvider><SettingsPage /></MantineProvider>);
     expect(screen.getByLabelText("Capital review: receipt total over")).toHaveAttribute("readonly");
     expect(screen.getByLabelText("Capital review: unit price over")).toHaveAttribute("readonly");
-    expect(screen.getAllByText("The Board sets this.")).toHaveLength(2);
+    expect(screen.getByLabelText("Everyday card charge: total under")).toHaveAttribute("readonly");
+    expect(screen.getByLabelText("Everyday card charge: no single item over")).toHaveAttribute("readonly");
+    expect(screen.getAllByText("The Board sets this.")).toHaveLength(4);
   });
 
   it("leaves FINANCE the Board review threshold to lower, and a Save button for it", () => {
@@ -66,5 +71,22 @@ describe("What FINANCE may change on the expense settings page", () => {
     render(<MantineProvider><SettingsPage /></MantineProvider>);
     expect(screen.getByLabelText("Capital review: receipt total over")).not.toHaveAttribute("readonly");
     expect(screen.queryByText("The Board sets this.")).not.toBeInTheDocument();
+  });
+
+  it("lets the Board edit both Everyday limits and saves them in cents", () => {
+    render(<MantineProvider><SettingsPage /></MantineProvider>);
+    const total = screen.getByLabelText("Everyday card charge: total under");
+    const item = screen.getByLabelText("Everyday card charge: no single item over");
+    expect(total).toHaveValue("$500");
+    expect(item).toHaveValue("$250");
+    fireEvent.change(total, { target: { value: "$400" } });
+    fireEvent.change(item, { target: { value: "$300" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(mockSend).toHaveBeenCalledWith(
+      "/org-settings",
+      "PUT",
+      { everydayTotalLimitCents: 40_000, everydayItemLimitCents: 30_000 },
+      "Settings saved",
+    );
   });
 });
