@@ -105,7 +105,9 @@ before starting the next.
    - Delete `BG_CHECK_STARTED.md`.
    - Trim this file to the legacy clause and step 3.
 
-   The answer to CS-4 is needed before this PR starts.
+   The answer to CS-4 is needed before this PR starts. The design's dismissal
+   line tagged `[Unsettled — owner question CS-4]` is rewritten from that answer
+   before the rule text is applied; it is never extracted unsettled.
 3. **App: drop the legacy clause** once the exit condition holds:
    - Delete `legacyHouseholdCheckStarted` and its three callers.
    - Delete `openRequestedReview`.

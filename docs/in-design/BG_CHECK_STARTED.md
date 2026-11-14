@@ -401,7 +401,11 @@ in can record their own check …":
 >   blocks nothing, and a check the person already owed stays owed. Once a reviewer
 >   has decided, only the review's own paths remain.  [Decision — owner]
 >
-> - [Who may dismiss: the CS-4 answer, worded as a constraint.]  [Decision — owner]
+> - [Who may dismiss: not yet decided.]  [Unsettled — owner question CS-4]
+
+The last line is a placeholder, not rule text. It is not extracted as it stands.
+Once the owner answers CS-4, it is reworded as a constraint naming who may dismiss,
+tagged `[Decision — owner]`, and only then copied.
 >
 > - The audit names the person who marked it, and the person who dismissed it, so
 >   a family's act stays distinguishable from the Board's.  [Decision]
