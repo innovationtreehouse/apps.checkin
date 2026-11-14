@@ -43,6 +43,7 @@ const ORACLES = [
     'expense-reimbursee-vendor-routes.test.ts',
     'expense-strip.test.ts',
     'expense-test-data-route.test.ts',
+    'facility-visits-route.test.ts',
     'file-route.test.ts',
     'hardship-tier-strip.test.ts',
     'finance-view-marks.test.ts',
