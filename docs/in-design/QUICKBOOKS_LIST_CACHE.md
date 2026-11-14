@@ -32,10 +32,9 @@ straight away after changing something in QuickBooks.
 - **Posting:** no change. The daily run still reads QuickBooks live.
 - **Sysadmins and the Board:** System Status gets one new row showing when the
   lists were last refreshed. It turns red after two days without a refresh.
-  A second new row flags a stored pick whose account is missing from the copy
-  or of the wrong type: every pick except books map roles, which the existing
-  roles row checks, and gift-of-goods lines, which posting holds for finance
-  (QL-7, §4).
+  A second new row flags any stored pick outside the books map whose account is
+  missing from the copy or of the wrong type (QL-7, QL-8, §4). The existing
+  roles row keeps checking books map roles.
 - **Not changing:** finance still picks every mapping one at a time, vendors
   are still searched live, and nothing is booked from the copy.
 - **Cost:** one table, one step at the start of the daily `qbo-posting` run, two
@@ -67,10 +66,10 @@ IDs stay stable so later threads can cite them.
   it reads the copy. The `docs/rules/revenue.md` rule that a stored account
   that later reads as another type is flagged on System Status keeps its
   wording.  [Decision — owner]
-
-  Gift-of-goods lines are outside QL-7's list. A wrong type on one is caught at
-  posting, which holds the gift in the in-kind queue, not on System Status
-  (§4).
+- **QL-8.** The picks row also checks the accounts finance set on gift-of-goods
+  lines, on gifts not yet booked. With QL-7, every stored pick outside the books
+  map is checked on System Status, so the `docs/rules/revenue.md` rule holds for
+  every pick.  [Decision — owner]
 
 ## Rules this design establishes
 
@@ -107,9 +106,8 @@ IDs stay stable so later threads can cite them.
 - `docs/rules/revenue.md`: a stored account that later reads as another type is
   flagged on System Status and never rewritten. The roles row checks books map
   roles against QuickBooks live (QL-6). The picks row checks the expense account
-  list and rules, held expense lines, the donation account map and income items
-  against the copy (QL-7, §4). Gift-of-goods lines are caught at posting
-  instead.
+  list and rules, held expense lines, the donation account map, income items and
+  gift-of-goods lines against the copy (QL-7, QL-8, §4).
 - `docs/rules/revenue.md`: while Classes can't be read, a payout with a sale
   assigned to a bucket waits. That check happens at posting, so it stays live.
 - `docs/conventions.md`, "A shared helper has one home" and "One process, one
@@ -305,16 +303,16 @@ branch (`docs/conventions.md`, "A simple machine with a known risk").
   |---|---|
   | Books map roles | System Status's account-types row (`misTypedRoleAccounts`, `checkin-app/src/lib/finance/booksMap.ts:118`), which reads QuickBooks live |
   | Expense payment account | Posting (`resolvePosting`, `checkin-app/src/lib/expense/configure.ts:228`), which refuses to post and alerts finance |
-  | Gift-of-goods lines | Posting (`unusable`, `packages/bulk-donation/src/lib/in-kind-accounts.ts:17`), which holds the gift for finance |
+  | Gift-of-goods lines | Posting (`unusable`, `packages/bulk-donation/src/lib/in-kind-accounts.ts:17`), which holds the gift for finance; and System Status's picks row (below) |
   | Expense account list and rules, held expense lines, donation account map, income items | System Status's picks row (below), which reads the copy |
 
 - **Cleanup:** finance re-picks the account. The type is checked again on that
   save.
 
-**The picks row** (QL-7). System Status gets a second row, "QuickBooks picks:
-account types". It checks the five kinds of pick below against the copy, using
-the same type lists the saves use. It leaves out books map roles, which the
-roles row checks, and gift-of-goods lines, which posting holds for finance:
+**The picks row** (QL-7, QL-8). System Status gets a second row, "QuickBooks
+picks: account types". It checks every stored pick outside the books map
+against the copy, using the same type lists the saves use. Books map roles stay
+on the roles row:
 
 | Stored pick | Where it is stored | Types it must have |
 |---|---|---|
@@ -323,6 +321,7 @@ roles row checks, and gift-of-goods lines, which posting holds for finance:
 | Held expense lines | `ExpenseLineItem.manualQbAccount`, on lines not yet booked | `bookableTypes(line.isCapital)` |
 | Donation account map | `AccountMap.donationAccountId`, `matchAccountId` | `LINE_ACCOUNT_TYPES.givingGift` |
 | Income items | `IncomeItemCategory.quickBooksAccountId` | `LINE_ACCOUNT_TYPES.storeSale` |
+| Gift-of-goods lines | `InKindDonationLine.quickBooksAccountId` and `ManualInKindDonationLine.quickBooksAccountId`, on gifts not yet booked | `LINE_ACCOUNT_TYPES.donatedCapital` for a line the capital port lists as an asset line (`getInKindCapital().assetLineIds`, as `packages/bulk-donation/src/lib/in-kind-resolve.ts:246` does), else `LINE_ACCOUNT_TYPES.donatedGoods` |
 
 - Each library owns its tables, so each one exports a read,
   `misTypedQuickBooksPicks(accounts)`. It takes the copy's accounts and returns
@@ -330,7 +329,7 @@ roles row checks, and gift-of-goods lines, which posting holds for finance:
   accept, built with `accountTypeRefusal`, the way `misTypedRoleAccounts` does
   for roles. The host's health check calls the three reads with the copy and
   joins their lines into the row.
-- The row is green with "Every pick it checks is of a type it accepts." It is red
+- The row is green with "Every stored pick is of a type it accepts." It is red
   with the lines otherwise, and each line names the screen where finance
   re-picks. Like the roles row, it never rewrites a stored value.
 - It reads the copy, never QuickBooks, so the row works during an outage. It
@@ -388,7 +387,9 @@ These are not boundary changes:
   beside a `quickbooks-list-stale` refusal. No flow test is needed, because no
   flow-test server reaches QuickBooks.
 - The picks row: each library's read flags a missing pick and a pick of the wrong type,
-  and passes one of an accepted type. A held line already booked is skipped. The
+  and passes one of an accepted type. A held line already booked, and a
+  gift-of-goods line on a gift already booked, are skipped. A capital
+  gift-of-goods line is checked against the Fixed Asset type. The
   host row is green, red with lines, and "Not checked" for an empty copy, and
   makes no QuickBooks call.
 
