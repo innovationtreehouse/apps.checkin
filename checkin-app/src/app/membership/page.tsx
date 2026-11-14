@@ -15,7 +15,7 @@ import OwnBackgroundCheckPanel from "./OwnBackgroundCheckPanel";
 
 export default function MembershipPage() {
   const {
-    session, sessionStatus, state, loading, loadError, saving, setSaving, message, warnings, fieldErrors, clearErr, form,
+    session, sessionStatus, state, loading, loadError, saving, setSaving, message, warnings, fieldErrors, clearErr, form, saveLocked,
     load, startApplication, save, submit, startSigning, renew, payment, bg,
   } = useMembershipPage();
   const confirmNav = useConfirmNav();
@@ -164,7 +164,7 @@ export default function MembershipPage() {
                 </Text>
               </Card>
             ) : isIntake ? (
-              <IntakePanel form={form} fieldErrors={fieldErrors} clearErr={clearErr} message={message} saving={saving} onSave={save} onSubmit={submit} />
+              <IntakePanel form={form} fieldErrors={fieldErrors} clearErr={clearErr} message={message} saving={saving} locked={saveLocked} onSave={save} onSubmit={submit} />
             ) : inStatus === "PENDING_EXTERNAL_ACTION" ? (
               <ExternalActionPanel external={state.external} isRenewal={isRenewal} saving={saving} onSign={startSigning} onRefresh={load} bg={bg} />
             ) : inStatus === "PENDING_PAYMENT" ? (
