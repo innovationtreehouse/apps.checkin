@@ -1,4 +1,4 @@
-import { NextResponse, type NextRequest } from "next/server";
+import type { NextRequest } from "next/server";
 import { isServiceError } from "@checkin/component-kit";
 import { personActor } from "@/lib/auditActor";
 import prisma from "@/lib/prisma";
@@ -23,7 +23,7 @@ function parseItem(body: unknown): Item | null {
  * Retries one stuck item once and answers whether its step ran, with the library's status when it
  * refused (404, 409, 503). The library's message never leaves: it can carry personal data.
  */
-export async function POST(req: NextRequest): Promise<NextResponse> {
+export async function POST(req: NextRequest): Promise<Response> {
     let status = 200;
     const res = await handler(ENDPOINT, async ({ req, auth }) => {
         if (auth.type !== "session") throw unauthorized();
@@ -52,6 +52,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         }
         return { ProblemRetryResult: [{ step: item.step, id: item.id, ok: failure === null }] };
     })(req);
-    // handler() answers 200 for any bag; a refused retry keeps its stripped body under the library's status.
-    return status === 200 ? res : new NextResponse(res.body, { status, headers: res.headers });
+    // DRIFT-GUARD ALLOWLIST: handler() admits and strips every call, and answers 200 for any bag;
+    // a refused retry keeps its stripped body under the library's status.
+    return status === 200 ? res : new Response(res.body, { status, headers: res.headers });
 }
