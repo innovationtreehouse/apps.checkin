@@ -24,8 +24,8 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
-    # One review plus at most one rerun, each under the action's 22-minute budget.
-    timeout-minutes: 50
+    # One review plus at most one rerun, each under the action's 22-minute budget, then 8 for answers.
+    timeout-minutes: 58
     steps:
       - uses: actions/checkout@v5
         with:
@@ -153,6 +153,20 @@ jobs:
           AI_REVIEW_CFG: ${{ steps.cfg.outputs.dir }}/.github/ai-review
           GH_TOKEN: ${{ github.token }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      # Answers human questions left for the reviewer, in their thread. Not triggered by comments, so
+      # bot replies cannot loop; questions asked after a review are answered on the next push or label.
+      - if: always() && steps.route.outputs.model != ''
+        continue-on-error: true
+        timeout-minutes: 8
+        run: python3 ${{ steps.cfg.outputs.dir }}/.github/scripts/ai-review-route.py answer
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          # The rerun's stronger model when the judge ordered one.
+          ANSWER_MODEL: ${{ steps.judge.outputs.model || steps.route.outputs.model }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
       # The steps above never fail the check, so a review that posted nothing (e.g. the runner
       # lost api.github.com) would show green. Fail here instead so it is visible and re-runnable.
       # Route failure (a deliberate skip exits 0) counts; when the judge orders a rerun, only the
