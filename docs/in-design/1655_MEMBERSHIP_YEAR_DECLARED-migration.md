@@ -239,8 +239,9 @@ and the coming year together and counts a year once when they are the same.
     variant.
   - `checkin-app/src/app/dev/shopify/page.tsx`: "has a variant" reads the live
     year's row.
-  - `checkin-app/src/lib/nav/todoCounts.ts`: the single-variant term becomes "the
-    live year has no row".
+  - `checkin-app/src/lib/nav/todoCounts.ts`: the single-variant term and the
+    coming-year term become one count of the live year and the coming year with no
+    row, a year counted once when they are the same.
 - **Tests:** integration (`membershipPaymentAPI`, `api/dev/shopify/orders-paid`),
   then the flow suite (`npm run test:flow:standalone`, heavy), since every
   membership flow pays through the mock checkout.
