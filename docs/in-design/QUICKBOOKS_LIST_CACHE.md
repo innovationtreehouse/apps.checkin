@@ -184,9 +184,20 @@ whole, consistent copy.
 
 **Daily.** The refresh becomes the first step of the existing daily
 `qbo-posting` run (`checkin-app/src/app/api/cron/qbo-posting/route.ts`), isolated
-like every other step. If it fails, the run records the failure as `lists` and
-the posting lanes still run. The infra repo already schedules this run, so
-nothing changes there.
+like every other step in its own `try`, so a failure never stops the posting
+lanes after it. The step runs as a lane of its own, `quickbooks lists-refresh`:
+
+- On success it calls `laneReached("quickbooks lists-refresh")`, so an open
+  incident on the lane can close.
+- On failure it calls `stepCrashed(JOB, "lists", err, ["quickbooks lists-refresh"])`
+  and adds `lists` to the run's failure summary.
+- `CAUSES` in `checkin-app/src/lib/finishRun.ts` gets the entry
+  `"quickbooks lists-refresh": "quickbooks"`. Without it, the failure would be
+  filed under its lane name instead of grouped with the other QuickBooks lanes.
+  With it, an outage that fails the refresh and the posting lanes counts as one
+  QuickBooks cause, not two.
+
+The infra repo already schedules this run, so nothing changes there.
 
 **Update now.** One shared button, `QuickBooksListsRefresh`, lives in
 `@checkin/component-ui`, because every library page already takes its client
@@ -224,18 +235,38 @@ Saves never read QuickBooks (QL-2), so these cases need no special branch:
 **The refusal.** The save answers 400 with the code `quickbooks-list-stale`, and
 the message names what is missing: "QuickBooks' list in the app doesn't have
 that account" (or "lists it as <type>"), followed by "If you changed it in
-QuickBooks, press Update now, then save again." Library services send it as
-`ServiceError(400, …, "quickbooks-list-stale")`. Host routes send it as
-`ApiResponseError(400, …, "quickbooks-list-stale")`. Both already turn the code
-into `{ error, code }`. The client kit's fetch helper doesn't yet show
-`code` to pages, so PR 3 adds that. A page that gets this code puts
-`QuickBooksListsRefresh` beside the refusal message.
+QuickBooks, press Update now, then save again."
 
-The type check itself (`accountTypeRefusal`,
-`packages/quickbooks/src/accountTypes.ts:52`) keeps its logic. Only its
-"no account" wording changes, to name the app's copy rather than QuickBooks.
-Every refusal it returns carries the code, because a missing entry and a wrong
-type can both come from an out-of-date copy.
+No refusal carries this code today. `accountTypeRefusal`
+(`packages/quickbooks/src/accountTypes.ts:52`) returns only a message, and every
+site that throws it passes no code. PR 2 changes this:
+
+- `@checkin/quickbooks` exports the code as a constant, `QUICKBOOKS_LIST_STALE`,
+  next to `accountTypeRefusal`. The function keeps returning `string | null`,
+  and its logic is unchanged. Only its "no account" wording changes, to name
+  the app's copy rather than QuickBooks.
+- Every site that throws an `accountTypeRefusal` passes the constant as the
+  error's code, because a missing entry and a wrong type can both come from an
+  out-of-date copy:
+
+  | Throw site | Throws |
+  |---|---|
+  | `checkin-app/src/lib/finance/booksMap.ts:51` | `badRequest(refusal)` → `ApiResponseError(400, refusal, QUICKBOOKS_LIST_STALE)` |
+  | `packages/expense/src/lib/account-types.ts:19` | `ServiceError(400, refusal)` → adds the code |
+  | `packages/bulk-donation/src/routes/rules.ts:38` | `httpError(400, refusal)` → adds the code |
+  | `packages/bulk-donation/src/lib/in-kind-resolve.ts:249` | `ServiceError(400, refusal)` → adds the code |
+  | `packages/income/src/routes.ts:127` | `httpError(400, refusal)` → adds the code |
+
+- Income's Class check in `setCategory`
+  (`packages/income/src/services/itemCategoryService.ts:83`) throws its
+  inactive-Class refusal, a 422, with the same code. Its 503 for an unreachable
+  QuickBooks goes away, since that check now reads the copy.
+
+`ServiceError`, `httpError` and `ApiResponseError` each already take a code, and
+the host renders it as `{ error, code }`. The client kit's fetch helper
+(`packages/component-ui/src/http.ts`) doesn't show `code` to pages yet, so PR 3
+adds that. A page that gets this code puts `QuickBooksListsRefresh` beside the
+refusal message.
 
 **An old copy** (QL-3) is still used. A new System Status row, "QuickBooks
 lists", is green with "Refreshed <time>". It turns red after two days without a
@@ -288,7 +319,9 @@ Every PR is based on `main`; none is stacked.
 2. **The copy:** the table and its migration, `refreshQuickBooksLists`, the
    daily step in `qbo-posting`, and the switch of `listQuickBooksAccounts`,
    `listQuickBooksClasses` and income's Class check on save over to the copy,
-   with the `quickbooks-list-stale` refusal. It carries the `docs/rules` edits
+   with the `quickbooks-list-stale` refusal: the `QUICKBOOKS_LIST_STALE` constant,
+   the code at the five throw sites and in income's Class check (§4), and the
+   `quickbooks lists-refresh` lane in `finishRun.ts` (§3). It carries the `docs/rules` edits
    above and deletes this doc. It doesn't depend on PR 1, so the two can run in
    parallel. Until PR 3 lands, the refusal's text names "Update now" but no page
    shows the button yet. The daily run is the only refresh in that gap, so merge
