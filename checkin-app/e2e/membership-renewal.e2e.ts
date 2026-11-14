@@ -10,7 +10,7 @@ import { api, loginAs } from "../flow-tests/helpers";
 import { applicationAtPayment, asViewer, REVIEWER, review, settledFamily, signAgreement } from "./support/families";
 import { persona } from "./support/kiosk";
 import { inDays } from "./support/programs";
-import { BOARD, send } from "./support/seedState";
+import { BOARD, recheckWindow, send, type Undo } from "./support/seedState";
 
 /** The fresh seed's red prompt on /settings/membership until the Board sets the re-check interval. */
 const SETTINGS_ALERTS = /Background-check interval is not set|not yet within renewal window/;
@@ -65,14 +65,17 @@ async function openRenewals(page: Page): Promise<void> {
 }
 
 test.describe("membership renewal in the browser", () => {
+  let restoreWindow: Undo;
   test.beforeAll(async () => {
     const { json } = await api<{ settings: { BoardSettings: { orgMembershipYearBoundary: string | null } } }>(await loginAs(BOARD), "/api/settings/membership");
     originalBoundary = json.settings.BoardSettings.orgMembershipYearBoundary;
+    restoreWindow = await recheckWindow();
   });
 
   test.afterAll(async () => {
-    // Renewals the tests opened stay open on every active household; only the boundary goes back.
+    // Renewals the tests opened stay open on every active household; only the settings go back.
     await setBoundary(originalBoundary);
+    await restoreWindow();
   });
 
   test("R1: renewals can't be opened outside the renewal window", async ({ browser }) => {
@@ -114,17 +117,13 @@ test.describe("membership renewal in the browser", () => {
       await page.getByRole("button", { name: "Renew now" }).click();
 
       await expect(heading(page, "Sign & start your background check")).toBeVisible();
+      // The lead's check is still valid at the boundary, so signing alone opens payment.
       await signAgreement(page);
-      const [averity] = await Promise.all([page.waitForEvent("popup"), page.getByRole("link", { name: "Consent on Averity →" }).click()]);
-      await averity.close();
-      await page.getByLabel("I submitted my consent on Averity").check();
       await expect(heading(page, "Membership fee")).toBeVisible();
     });
 
     const renewal = await processOf(email);
     expect(renewal).not.toBe(initial);
-    await review(BOARD, renewal, email);
-    await review(REVIEWER, renewal, email);
     expect((await send(await loginAs(email), "POST", "/api/dev/shopify/orders-paid", { processId: renewal })).status).toBe(200);
 
     await asViewer(browser, email, async (page) => {
