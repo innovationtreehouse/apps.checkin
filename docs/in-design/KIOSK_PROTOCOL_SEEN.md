@@ -138,15 +138,22 @@ The tier is `internal`, the same as `SystemMetricLog`. It is a new model, so
 the regenerated classifications change only by addition, which the boundary
 isolation check exempts.
 
-The recorded version is the one the server acted on. An absent
-`protocolVersion` is read as 1 (`route.ts:197`), so it is recorded as 1. A
-value that fails validation (`route.ts:147`) is not recorded. A version newer
-than the server's, refused with 426 (`route.ts:190`), *is* recorded: it shows
-a kiosk running ahead of the server.
+What is recorded:
+
+- An absent `protocolVersion` is recorded as 1, because the server reads it
+  as 1 (`route.ts:197`).
+- A request the route refuses with 400 is not recorded. That includes a
+  `protocolVersion` that fails validation (`route.ts:147`).
+- A version newer than the server's, refused with 426 (`route.ts:190`), *is*
+  recorded. It shows a kiosk running ahead of the server.
+
+§3 places the write so that these hold.
 
 **Migration: expand-only** (`docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`
 rule 1). It is one `CREATE TABLE` with a single-column primary key and no
-foreign keys, so rule 8's foreign-key index rule does not apply. Old tasks
+foreign keys, so rule 8's foreign-key index rule does not apply. The file
+opens with `BEGIN;` and ends with `COMMIT;`, as rule 5 requires of every new
+migration; no `-- no-transaction:` escape applies. Old tasks
 draining during the rolling deploy never read or write the table. The app's
 DML role gets privileges on the new table through the default privileges in
 rule 9. The PR confirms that the AWS cluster bootstrap grants the same.
@@ -154,11 +161,25 @@ Nothing is contracted later.
 
 ### 3. Write cost (KP-WRITE)
 
-The upsert runs in the scan route's `finally`, next to the response-time
-metric (`route.ts:574-582`). It is fire-and-forget: a rejected promise is
-logged and never thrown.
+The route's `finally` (`route.ts:574-582`) runs on every exit, including the
+early 400 returns, so the write is guarded by a value set only once a request
+has passed validation:
+
+- `let seenVersion: number | null = null` is declared at the top of the
+  handler's `try`.
+- It is set directly after the 400 return for an invalid body
+  (`route.ts:153-155`), and before the 426 check at `:190`. A request refused
+  with 400 never sets it. A 426 does set it.
+- It is set to the validated `protocolVersion`, or to 1 when that field is
+  absent. A queued replay whose `protocolVersion` itself is invalid goes on to
+  park rather than return 400, so it is excluded explicitly.
+
+The `finally` then writes, next to the response-time metric, only when both
+`seenVersion` and `auth.keyFingerprint` are set. The write is fire-and-forget:
+a rejected promise is logged and never thrown.
 
 ```ts
+const protocolVersion = seenVersion;  // already normalized: absent → 1
 prisma.kioskProtocolSeen.upsert({
   where: { keyFingerprint },
   create: { keyFingerprint, protocolVersion, lastSeenAt: now },
@@ -185,7 +206,17 @@ protocol version and when it was last seen. A key no longer in
 
 It is served by the existing `GET /api/system-status/kiosk-heartbeat`
 (`checkin-app/src/app/api/system-status/kiosk-heartbeat/route.ts`), which adds
-a `KioskProtocolSeen` array to its envelope.
+a `KioskProtocolSeen` array to its bag.
+
+**The response shape changes.** The handler unwraps a bag with one key under
+the envelope and keeps a bag with several keys as an object
+(`checkin-app/src/security/handler.ts:162-164`). Today the bag holds only
+`SystemMetricLog`, so the response is `{ heartbeat: [rows] }`. With two keys
+it becomes `{ heartbeat: { SystemMetricLog: [rows], KioskProtocolSeen: [rows] } }`.
+`KioskHeartbeatBox` reads `data.heartbeat` as an array
+(`SystemHealthPanels.tsx:558-559`), and it is the route's only consumer. So
+PR 3 changes the route and the box together, and the box reads both arrays
+by name. The two cannot ship apart.
 
 Boundary entry, changed in its own registry PR before the route PR:
 
@@ -239,16 +270,24 @@ All are based on `main` and none is stacked. Each one waits for the previous
 one to merge.
 
 1. **Record the version.** Code PR. The `KioskProtocolSeen` model and its
-   migration; the regenerated classifications (additions only); the matching
-   key and fingerprint through `verify-kiosk.ts`, `auth.ts` and
-   `types/auth.ts`; the upsert in the scan route; tests for the fingerprint,
-   the upsert, and a scan that still succeeds when the upsert rejects. No
-   boundary file changes.
+   migration, wrapped in `BEGIN;`/`COMMIT;`; the regenerated classifications
+   (additions only); the matching key and fingerprint through
+   `verify-kiosk.ts`, `auth.ts` and `types/auth.ts`; the guarded upsert in
+   the scan route. Tests cover:
+   - the fingerprint;
+   - an absent version recorded as 1;
+   - a 400 not recorded;
+   - a 426 recorded;
+   - a scan that still succeeds when the upsert rejects.
+
+   No boundary file changes.
 2. **Registry entry.** Boundary PR. The `returns` change in
    `checkin-app/src/security/registry.ts` (§4) and its security test, and
    nothing else.
-3. **Show it.** Route and UI PR. The heartbeat route reads the table and
-   returns the rows. `KioskHeartbeatBox` renders them.
+3. **Show it.** Route and UI PR, one PR because the response shape changes
+   (§4). The heartbeat route reads the table and returns both arrays.
+   `KioskHeartbeatBox` reads them by name and renders the kiosk rows. Its
+   tests move to the new shape.
 
 The registry PR comes before the route PR but cannot come before PR 1.
 `returns` is typed against the models in the generated classifications
