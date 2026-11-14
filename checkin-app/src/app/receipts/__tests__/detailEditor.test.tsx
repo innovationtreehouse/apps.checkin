@@ -301,7 +301,7 @@ describe("reviewing an OCR-read receipt", () => {
     expect(resubmitted()).toBe(false);
   });
 
-  it("locks the fields while a save runs, so typing can't be overwritten when it lands", async () => {
+  it("locks the fields and the draft's other actions while a save runs, so nothing is overwritten when it lands", async () => {
     mockReceipt = { ...receipt, state: "submitter_review", validationNotes: null };
     let land: (value: unknown) => void = () => {};
     mockApi.mockImplementationOnce(() => new Promise((resolve) => { land = resolve; }));
@@ -310,6 +310,8 @@ describe("reviewing an OCR-read receipt", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(screen.getByLabelText("Line 1 description")).toBeDisabled());
     expect(screen.getByLabelText("Retailer")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Undo changes" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Discard" })).toBeDisabled();
     land({});
     await waitFor(() => expect(screen.getByLabelText("Retailer")).toBeEnabled());
   });

@@ -460,7 +460,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
             <Group gap="xs">
               <Button size="xs" disabled={!dirty && !savedAddsUp && !savedTyped} loading={saving} onClick={() => void (totalsOff ? saveTotalsOff() : unread ? afterSave(() => resubmit(dirty)) : save())}>Save changes</Button>
               {dirty && (
-                <Button size="xs" variant="subtle" onClick={() => setDraft(EMPTY_DRAFT)}>Undo changes</Button>
+                <Button size="xs" variant="subtle" disabled={saving} onClick={() => setDraft(EMPTY_DRAFT)}>Undo changes</Button>
               )}
             </Group>
           )}
@@ -486,11 +486,11 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
               <Text size="sm" c="dimmed">{OCR_OFF_NOTE}</Text>
             )}
             {(own || isFinance) && r.state === "ocr_failed" && !ocrOff && (
-              <Button size="xs" variant="light" onClick={() => (dirty || hasTypedDetails(r) ? setConfirmingRead(true) : void readAgain())}>Read it again</Button>
+              <Button size="xs" variant="light" disabled={saving} onClick={() => (dirty || hasTypedDetails(r) ? setConfirmingRead(true) : void readAgain())}>Read it again</Button>
             )}
             {(isFinance || isBoard) && allowanceUsedUp && <AllowanceReset personId={r.uploadedByUserId} />}
             {own && !TERMINAL.has(r.state) && (
-              <Button size="xs" variant="subtle" color="red" onClick={() => void act("/discard", "POST", {}, "Discarded", "Couldn't discard this receipt", true)}>Discard</Button>
+              <Button size="xs" variant="subtle" color="red" disabled={saving} onClick={() => void act("/discard", "POST", {}, "Discarded", "Couldn't discard this receipt", true)}>Discard</Button>
             )}
           </Group>
 
@@ -520,7 +520,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
                 {!TERMINAL.has(r.state) && !r.pushedAt && !own && (
                   <Group align="end" gap="xs">
                     <Textarea label="Reason to reject" autosize value={rejectReason} onChange={(e) => setRejectReason(e.currentTarget.value)} style={{ flex: 1 }} />
-                    <Button size="xs" color="red" variant="light" disabled={!rejectReason.trim()} onClick={() => void act("/reject", "POST", { reason: rejectReason.trim() }, "Rejected", "Couldn't reject this receipt", true)}>Reject</Button>
+                    <Button size="xs" color="red" variant="light" disabled={saving || !rejectReason.trim()} onClick={() => void act("/reject", "POST", { reason: rejectReason.trim() }, "Rejected", "Couldn't reject this receipt", true)}>Reject</Button>
                   </Group>
                 )}
                 {r.state === "financial_review" && own && <Text size="sm" c="dimmed">Someone else in finance decides on your own receipt.</Text>}
