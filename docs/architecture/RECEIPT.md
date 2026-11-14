@@ -216,7 +216,8 @@ After input, a receipt that fails a step is stuck in it: `flow_error`, or finali
 `pushedAt` null. `firstFailedAt` keeps when the step first failed, and `lastError` the latest
 failure's error; a step that succeeds clears both. `stuckItems()` lists stuck receipts for
 the Problems list, timed by `firstFailedAt`, with no error text. `retryStuckItem({ id, step })`
-runs the step once ("flow" or "push to mapping"), and nothing retries by itself. Finance sees
+runs the step once ("flow" or "push to mapping"), and nothing retries by itself. It answers 404
+for a receipt not stuck in that step and 409 when the receipt is still stuck afterwards. Finance sees
 `lastError` on the receipt's own page.
 
 A failed reading leaves nothing stuck: the receipt waits in `ocr_failed` for its submitter. So

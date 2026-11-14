@@ -285,6 +285,56 @@ describe("ProblemsBox", () => {
     expect(screen.getByText("5")).toBeInTheDocument();
   });
 
+  const stuck = [
+    { library: "expense", id: "e1", step: "QuickBooks posting", href: null, failedAt: "2026-11-01T12:00:00.000Z" },
+    { library: "gifts", id: "receipt 4", step: "QuickBooks posting", href: null, failedAt: "2026-11-02T12:00:00.000Z" },
+    { library: "receipt", id: "r9", step: "flow", href: null, failedAt: "2026-11-03T12:00:00.000Z" },
+  ];
+  const retryBodies = (fetchFn: jest.Mock) =>
+    fetchFn.mock.calls
+      .filter(([url]) => String(url).includes("/problems/retry"))
+      .map(([, init]) => JSON.parse(String((init as RequestInit).body)));
+
+  it("Retry runs one item's step, then refreshes the list", async () => {
+    const fetchFn = mockFetchJson({
+      "/api/system-status/config-health": { problems: { items: stuck, unread: [], notices: [] }, cronJobs: [] },
+      "/api/system-status/problems/retry": { results: [{ step: "flow", id: "r9", ok: true }] },
+    });
+    renderWithProviders(<ProblemsBox />);
+
+    fireEvent.click((await screen.findAllByRole("button", { name: "Retry" }))[2]);
+
+    expect(await screen.findByText("1 of 1 retried; 0 still stuck.")).toBeInTheDocument();
+    expect(retryBodies(fetchFn)).toEqual([{ library: "receipt", step: "flow", id: "r9" }]);
+    expect(fetchFn.mock.calls.filter(([url]) => String(url).includes("config-health"))).toHaveLength(2);
+  });
+
+  it("Retry all retries every item one at a time in list order, goes on past a failure, then refreshes", async () => {
+    const answers = [true, false, true];
+    let inFlight = 0;
+    let most = 0;
+    const fetchFn = mockFetchJson({
+      "/api/system-status/config-health": { problems: { items: stuck, unread: [], notices: [] }, cronJobs: [] },
+      "/api/system-status/problems/retry": () => ({ results: [{ ok: answers.shift() }] }),
+    });
+    const inner = fetchFn.getMockImplementation()!;
+    fetchFn.mockImplementation(async (input, init) => {
+      inFlight += 1;
+      most = Math.max(most, inFlight);
+      await Promise.resolve();
+      inFlight -= 1;
+      return inner(input, init);
+    });
+    renderWithProviders(<ProblemsBox />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Retry all" }));
+
+    expect(await screen.findByText("2 of 3 retried; 1 still stuck.")).toBeInTheDocument();
+    expect(retryBodies(fetchFn)).toEqual(stuck.map(({ library, step, id }) => ({ library, step, id })));
+    expect(most).toBe(1);
+    expect(fetchFn.mock.calls.filter(([url]) => String(url).includes("config-health"))).toHaveLength(2);
+  });
+
   it("says so when nothing is stuck", async () => {
     mockFetchJson({ "/api/system-status/config-health": { problems: { items: [], unread: [], notices: [] }, cronJobs: [] } });
     renderWithProviders(<ProblemsBox />);
