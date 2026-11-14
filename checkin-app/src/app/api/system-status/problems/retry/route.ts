@@ -3,10 +3,12 @@ import { isServiceError } from "@checkin/component-kit";
 import { personActor } from "@/lib/auditActor";
 import prisma from "@/lib/prisma";
 import { retryProblem } from "@/lib/problems";
-import { badRequest, handler, unauthorized } from "@/security/handler";
+import { mayRetry } from "@/lib/problemsRetryRoles";
+import { badRequest, forbidden, handler, unauthorized } from "@/security/handler";
 
-// Registry-governed (POST /api/system-status/problems/retry): sysadmin or Board, envelope
-// 'results'. Body `{ library, step, id }`, one item per press; Retry all presses once per item.
+// Registry-governed (POST /api/system-status/problems/retry): sysadmin or Board, envelope 'results';
+// a step that posts to QuickBooks is the Board's alone (mayRetry). Body `{ library, step, id }`, one
+// item per press; Retry all presses once per item.
 const ENDPOINT = "POST /api/system-status/problems/retry";
 
 type Item = { library: string; step: string; id: string };
@@ -27,6 +29,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         if (auth.type !== "session") throw unauthorized();
         const item = parseItem(await req.json().catch(() => null));
         if (!item) throw badRequest("Expected { library, step, id }");
+        if (!mayRetry(auth.user, item)) throw forbidden();
 
         let failure: unknown = null;
         try {
@@ -43,8 +46,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
                 newData: { ...item, ok: failure === null },
             },
         });
-        if (failure !== null && !isServiceError(failure)) throw failure;
-        if (isServiceError(failure)) status = failure.status;
+        if (failure !== null) {
+            if (!isServiceError(failure)) throw failure;
+            status = failure.status;
+        }
         return { ProblemRetryResult: [{ step: item.step, id: item.id, ok: failure === null }] };
     })(req);
     // handler() answers 200 for any bag; a refused retry keeps its stripped body under the library's status.

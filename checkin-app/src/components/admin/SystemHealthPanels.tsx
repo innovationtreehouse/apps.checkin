@@ -1,9 +1,11 @@
 "use client";
 
 import { useCallback, useState, useEffect } from "react";
+import { useSession } from "next-auth/react";
 import { Anchor, Badge, Button, Card, Center, Code, Group, List, Loader, Stack, Text, Title } from "@mantine/core";
 import { LoadError } from "@checkin/component-ui";
 import { useLoad } from "@/lib/api";
+import { mayRetry } from "@/lib/problemsRetryRoles";
 
 type DailyStat = {
   date: string;
@@ -219,6 +221,7 @@ export function ProblemsBox() {
   const [data, setData] = useState<{ items: StuckItem[]; unread: string[]; notices: string[]; staleJobs: CronJob[]; failingJobs: CronJob[] } | null>(null);
   const [failed, setFailed] = useState(false);
 
+  const viewer = useSession().data?.user;
   const [retrying, setRetrying] = useState<{ done: number; total: number } | null>(null);
   const [retried, setRetried] = useState<string | null>(null);
 
@@ -242,7 +245,7 @@ export function ProblemsBox() {
     load();
   }, [load]);
 
-  // One item at a time, in list order; a failed item stays listed after the refresh.
+  // One item at a time, in list order; a refused or failed item (a 403 too) stays listed after the refresh.
   const retry = async (items: StuckItem[]) => {
     let ok = 0;
     for (const [n, i] of items.entries()) {
@@ -306,9 +309,11 @@ export function ProblemsBox() {
                 <Badge variant="light">{i.library}</Badge>
                 <span>{i.step}</span>
                 {i.href ? <Anchor href={i.href}><Code>{i.id}</Code></Anchor> : <Code>{i.id}</Code>}
-                <Button size="compact-xs" variant="subtle" disabled={retrying !== null} onClick={() => retry([i])}>
-                  Retry
-                </Button>
+                {mayRetry(viewer, i) && (
+                  <Button size="compact-xs" variant="subtle" disabled={retrying !== null} onClick={() => retry([i])}>
+                    Retry
+                  </Button>
+                )}
               </Group>
               <Text size="xs" c="dimmed" title={i.failedAt}>Failed {timeAgo(i.failedAt)}</Text>
             </List.Item>
