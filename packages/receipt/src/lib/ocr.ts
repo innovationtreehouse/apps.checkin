@@ -112,6 +112,12 @@ export function buildContent(file: Buffer, mimeType: string): ContentBlock[] {
   throw new Error(`Unsupported MIME type: ${mimeType}`);
 }
 
+/** The turn, as a line for the model, when the image was saved sideways or upside down. */
+export function rotationNote(mimeType: string, rotation = 0): ContentBlock[] {
+  if (!rotation || !IMAGE_TYPES.includes(mimeType)) return [];
+  return [{ type: "text", text: `This image is stored turned: rotate it ${rotation} degrees clockwise to read it upright.` }];
+}
+
 /** A reading without its retailer, date or total still lands, for its submitter to fill in; one without lines does not. */
 function complete(data: OcrData): boolean {
   return data.lineItems.length > 0;
@@ -143,7 +149,7 @@ export function createAnthropicOcr(apiKey: string | undefined): OcrProvider {
   const client = new Anthropic({ apiKey, timeout: 120_000, maxRetries: 2 });
 
   return {
-    async extract(file, mimeType): Promise<OcrResult> {
+    async extract(file, mimeType, rotation): Promise<OcrResult> {
       try {
         const response = await client.beta.messages.create({
           model: MODEL,
@@ -151,7 +157,7 @@ export function createAnthropicOcr(apiKey: string | undefined): OcrProvider {
           betas: [FALLBACK_BETA],
           fallbacks: "default",
           output_config: { effort: "medium", format: { type: "json_schema", schema: EXTRACT_SCHEMA } },
-          messages: [{ role: "user", content: [...buildContent(file, mimeType), { type: "text", text: INSTRUCTION }] }],
+          messages: [{ role: "user", content: [...buildContent(file, mimeType), ...rotationNote(mimeType, rotation), { type: "text", text: INSTRUCTION }] }],
         });
         if (response.stop_reason === "refusal") return { success: false, kind: "data", error: "the reader refused it" };
 
