@@ -50,7 +50,7 @@ const FULL = ['everyones:pii', 'everyones:personal', 'everyones:internal', 'publ
 // ReceiptView binds `their_own` on uploadedByUserId: the submitter's own receipt.
 const VIEW: readonly OrderedViewEntry[] = [
     ['isBoardMember', FULL],
-    ['authenticated', ['everyones:internal']],
+    ['authenticated', ['everyones:internal', 'public']],
 ];
 const RECEIPTS = 'GET /api/__test__/fv/receipts/[id]';
 const UNMARKED = 'GET /api/__test__/fv/ignored-files';

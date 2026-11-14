@@ -36,7 +36,8 @@ model ReceiptOrgSettings {
 }
 
 model Receipt {
-  /// @sensitivity:internal
+  // A random UUID: it names a receipt and reveals nothing about it.
+  /// @sensitivity:public
   id                 String   @id
   /// @sensitivity:internal
   orgId              String   @map("org_id")
