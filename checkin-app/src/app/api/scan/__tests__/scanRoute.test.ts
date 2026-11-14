@@ -8,7 +8,7 @@ import { logger } from '@/lib/logger';
 import { processCheckin, processCheckout } from '@/lib/attendance/scan';
 import { processCloseRequest, executePendingCloses } from '@/lib/attendance/close';
 import { notifyScanOutcome } from '@/lib/attendance/scanNotify';
-import { KIOSK_DEBOUNCE_PROTOCOL_VERSION } from '@/lib/scanProtocol';
+import { KIOSK_DEBOUNCE_PROTOCOL_VERSION, SCAN_PROTOCOL_VERSION } from '@/lib/scanProtocol';
 
 jest.mock('@/lib/auth', () => ({
     authenticateRequest: jest.fn(),
@@ -40,6 +40,9 @@ jest.mock('@/lib/prisma', () => {
         },
         systemMetricLog: {
             create: jest.fn().mockResolvedValue({}),
+        },
+        kioskProtocolSeen: {
+            upsert: jest.fn().mockResolvedValue({}),
         },
         presenceEvent: {
             create: jest.fn().mockResolvedValue({ id: 1 }),
@@ -968,6 +971,84 @@ describe('POST /api/scan', () => {
             const res = await replay(new Date(Date.now() + 30_000));
             expect(res.status).toBe(200);
             expect(processCheckin).toHaveBeenCalled();
+        });
+    });
+
+    describe('records the kiosk key\'s protocol version', () => {
+        const keyFingerprint = '0123456789abcdef';
+        const scanReq = (fields: Record<string, unknown>) => new Request('http://localhost/api/scan', {
+            method: 'POST',
+            body: JSON.stringify({ participantId: 1, ...fields }),
+        }) as unknown as import('next/server').NextRequest;
+        // The upsert is fire-and-forget from the finally; let its promise settle.
+        const settle = () => new Promise(resolve => setImmediate(resolve));
+
+        beforeEach(() => {
+            (authenticateRequest as jest.Mock).mockResolvedValue({ type: 'kiosk', keyFingerprint });
+            (prisma.person.findUnique as jest.Mock).mockResolvedValue({ id: 1 });
+            (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
+            (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
+            (prisma.visit.aggregate as jest.Mock).mockResolvedValue({ _max: { arrivedAt: null, departedAt: null } });
+            (prisma.visit.findFirst as jest.Mock).mockResolvedValue(null);
+            (processCheckin as jest.Mock).mockResolvedValue(checkedIn);
+            (prisma.kioskProtocolSeen.upsert as jest.Mock).mockResolvedValue({});
+        });
+
+        const upserted = () => (prisma.kioskProtocolSeen.upsert as jest.Mock).mock.calls.map(([arg]) => arg);
+
+        it('upserts the version and last-seen time under the key fingerprint', async () => {
+            const res = await POST(scanReq({ protocolVersion: 6 }));
+            expect(res.status).toBe(200);
+            expect(upserted()).toEqual([{
+                where: { keyFingerprint },
+                create: { keyFingerprint, protocolVersion: 6, lastSeenAt: expect.any(Date) },
+                update: { protocolVersion: 6, lastSeenAt: expect.any(Date) },
+            }]);
+        });
+
+        it('records an absent version as 1', async () => {
+            await POST(scanReq({}));
+            expect(upserted()[0].update.protocolVersion).toBe(1);
+        });
+
+        it('records nothing for a request refused with 400', async () => {
+            const res = await POST(scanReq({ protocolVersion: 0 }));
+            expect(res.status).toBe(400);
+            expect(prisma.kioskProtocolSeen.upsert).not.toHaveBeenCalled();
+        });
+
+        it('records nothing for a replay whose own version is invalid', async () => {
+            await POST(scanReq({ replay: true, clientEventId: 'evt-pv', scannedAt: new Date().toISOString(), protocolVersion: '2' }));
+            expect(prisma.kioskProtocolSeen.upsert).not.toHaveBeenCalled();
+        });
+
+        it('records a newer version from a replay refused with 426', async () => {
+            const newer = SCAN_PROTOCOL_VERSION + 1;
+            const res = await POST(scanReq({ replay: true, clientEventId: 'evt-new', scannedAt: new Date().toISOString(), protocolVersion: newer }));
+            expect(res.status).toBe(426);
+            expect(upserted()[0].update.protocolVersion).toBe(newer);
+        });
+
+        it('records a newer version from an accepted live scan', async () => {
+            const newer = SCAN_PROTOCOL_VERSION + 1;
+            const res = await POST(scanReq({ protocolVersion: newer }));
+            expect(res.status).toBe(200);
+            expect(upserted()[0].update.protocolVersion).toBe(newer);
+        });
+
+        it('records nothing for a kiosk with no key fingerprint', async () => {
+            (authenticateRequest as jest.Mock).mockResolvedValue({ type: 'kiosk' });
+            await POST(scanReq({ protocolVersion: 6 }));
+            expect(prisma.kioskProtocolSeen.upsert).not.toHaveBeenCalled();
+        });
+
+        it('still answers the scan when the write fails, and logs the failure', async () => {
+            (prisma.kioskProtocolSeen.upsert as jest.Mock).mockRejectedValue(new Error('db down'));
+            const res = await POST(scanReq({ protocolVersion: 6 }));
+            expect(res.status).toBe(200);
+            expect(processCheckin).toHaveBeenCalled();
+            await settle();
+            expect(logger.error).toHaveBeenCalledWith('Failed to record kiosk protocol version:', expect.any(Error));
         });
     });
 });
