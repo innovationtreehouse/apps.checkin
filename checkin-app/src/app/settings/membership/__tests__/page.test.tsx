@@ -108,6 +108,23 @@ describe("MembershipSettingsPage", () => {
     expect(await screen.findByLabelText("Membership product variant ID")).toHaveValue("123456");
   });
 
+  it("saves a typed URL and a typed variant ID together on a local mock instance", async () => {
+    setDevMocks({ shopify: true, bgConsent: false });
+    setSession({ id: 1, isSysadmin: true });
+    const fetchMock = mockFetchJson({ "/api/settings/membership": body() });
+    renderWithProviders(<MembershipSettingsPage />);
+    await screen.findByDisplayValue("150.00");
+
+    fireEvent.change(screen.getByLabelText("Membership product variant ID"), { target: { value: "424242" } });
+    fireEvent.change(screen.getByLabelText("Membership product URL"), { target: { value: "https://shop.example.org/products/mock" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/settings/membership", expect.objectContaining({ method: "PUT" })));
+    const [, putOpts] = fetchMock.mock.calls.find(([, opts]) => opts?.method === "PUT")!;
+    expect(JSON.parse(putOpts!.body as string)).toEqual(
+      expect.objectContaining({ orgMembershipVariantId: "424242", orgMembershipProductUrl: "https://shop.example.org/products/mock" }),
+    );
+  });
+
   it("extracts a single-variant product, shows it for confirmation, and saves the variant with its URL", async () => {
     setShopifyStoreDomain(STORE);
     setSession({ id: 1, isSysadmin: true });

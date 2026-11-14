@@ -104,7 +104,7 @@ describe('POST /api/settings/membership/extract-variant', () => {
     it('lists every variant of a multi-variant product, falling back to the handle for a missing title', async () => {
         fetchMock.mockResolvedValue(products({
             id: 1,
-            variants: [variant(111, 'Member', '150.00'), variant(222, 'Non-Member', '250.00'), { id: 333, title: 'Odd', price: null }],
+            variants: [variant(111, 'Member', '150.00'), variant(222, 'Non-Member', '250.00'), { id: 333, title: 'Odd', price: null }, { id: 444, title: 'Numeric', price: 99.5 }],
         }));
         const res = await POST(req({ productUrl: GOOD_URL }));
         expect(res.status).toBe(200);
@@ -114,6 +114,7 @@ describe('POST /api/settings/membership/extract-variant', () => {
                 { id: '111', title: 'Member', priceCents: 15000 },
                 { id: '222', title: 'Non-Member', priceCents: 25000 },
                 { id: '333', title: 'Odd', priceCents: null },
+                { id: '444', title: 'Numeric', priceCents: 9950 },
             ],
         });
     });
@@ -170,6 +171,14 @@ describe('POST /api/settings/membership/extract-variant', () => {
         expect(res.status).toBe(502);
         expect((await res.json()).error).toMatch(/Could not read the product from Shopify/);
         expect(logIntegrationError).toHaveBeenCalledWith('shopify', expect.any(Error), expect.objectContaining({ handle: 'annual-membership' }));
+    });
+
+    it('429 with a "try again in a minute" message when Shopify rate-limits the lookup', async () => {
+        fetchMock.mockResolvedValue(jsonResponse(429, {}));
+        const res = await POST(req({ productUrl: GOOD_URL }));
+        expect(res.status).toBe(429);
+        expect((await res.json()).error).toMatch(/rate-limiting.*try again in a minute/);
+        expect(logIntegrationError).toHaveBeenCalled();
     });
 
     it('502 when the Admin API call itself fails (network error or timeout)', async () => {

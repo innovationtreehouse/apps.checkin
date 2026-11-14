@@ -17,7 +17,7 @@ export class ProductUrlError extends Error {
 export interface StorefrontVariant {
     id: string;
     title: string;
-    /** null when Shopify's price is missing or not a decimal string. */
+    /** null when Shopify's price is missing or not a decimal amount. */
     priceCents: number | null;
 }
 
@@ -28,6 +28,14 @@ interface AdminProduct {
     variants?: Array<{ id?: number | string; title?: string; price?: unknown }>;
 }
 
+/** A non-OK Admin API answer, keeping its status for the caller. */
+class ShopifyStatusError extends Error {
+    constructor(public readonly status: number) {
+        super(`Shopify product lookup responded with status: ${status}`);
+        this.name = "ShopifyStatusError";
+    }
+}
+
 /** The Admin API product carrying `handle`; null when there is none. Throws on a failed lookup. */
 async function getProductByHandle(storeDomain: string, accessToken: string, handle: string): Promise<AdminProduct | null> {
     const res = await shopifyFetch(
@@ -35,13 +43,14 @@ async function getProductByHandle(storeDomain: string, accessToken: string, hand
         { method: "GET", headers: { "X-Shopify-Access-Token": accessToken } },
         "Shopify find product by handle",
     );
-    if (!res.ok) throw new Error(`Shopify product lookup responded with status: ${res.status}`);
+    if (!res.ok) throw new ShopifyStatusError(res.status);
     const body: { products?: AdminProduct[] } = await res.json();
     return body.products?.[0] ?? null;
 }
 
 /**
- * Resolve the variants of a membership product from its storefront URL.
+ * Resolve the variants of a membership product from a pasted storefront URL,
+ * read through the Shopify Admin API.
  * Backs the "Extract variant from URL" action in membership settings: for a
  * single-variant product the Shopify admin UI hides the lone "Default Title"
  * variant entirely, so the product ID is the only number an admin can see —
@@ -76,6 +85,9 @@ export async function lookupProductVariantsByUrl(productUrl: string): Promise<{ 
         product = await getProductByHandle(storeDomain, accessToken, handle);
     } catch (err) {
         await logIntegrationError("shopify", err, { operation: "lookupProductVariantsByUrl", handle });
+        if (err instanceof ShopifyStatusError && err.status === 429) {
+            throw new ProductUrlError("Shopify is rate-limiting requests right now — try again in a minute.", 429);
+        }
         throw new ProductUrlError("Could not read the product from Shopify — try again in a minute.", 502);
     }
     if (!product) throw new ProductUrlError(`Shopify has no product with the handle "${handle}" — check the link.`, 404);
@@ -85,7 +97,7 @@ export async function lookupProductVariantsByUrl(productUrl: string): Promise<{ 
         .map((v) => ({
             id: String(v.id),
             title: v.title || "Default Title",
-            priceCents: typeof v.price === "string" ? dollarsToCentsOrNull(v.price) : null,
+            priceCents: typeof v.price === "string" || typeof v.price === "number" ? dollarsToCentsOrNull(String(v.price)) : null,
         }));
     return { productTitle: product.title || handle, variants };
 }

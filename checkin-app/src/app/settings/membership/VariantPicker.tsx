@@ -79,7 +79,11 @@ export function VariantPicker({ name, urlLabel, idLabel, extractLabel, value, on
           placeholder="https://your-store.myshopify.com/products/membership"
           w={420}
           value={urlInput}
-          onChange={(e) => setUrlInput(e.currentTarget.value)}
+          onChange={(e) => {
+            setUrlInput(e.currentTarget.value);
+            // With a typed ID there is no extraction to attach the URL, so it is kept as typed.
+            if (editableId) onChange({ variantId: value.variantId, productUrl: e.currentTarget.value });
+          }}
         />
         <Button variant="light" aria-label={extractLabel} loading={extracting} disabled={extracting || !urlInput.trim()} onClick={extract}>
           Extract variant from URL
@@ -108,7 +112,7 @@ export function VariantPicker({ name, urlLabel, idLabel, extractLabel, value, on
           w={260}
           error={error}
           value={value.variantId}
-          onChange={(e) => onChange({ variantId: e.currentTarget.value, productUrl: urlInput.trim() })}
+          onChange={(e) => onChange({ variantId: e.currentTarget.value, productUrl: value.productUrl })}
         />
       ) : (
         <Stack gap={2}>
