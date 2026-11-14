@@ -1,6 +1,6 @@
 "use client";
 import { formatCents } from "@checkin/money";
-import { Button, Checkbox, Divider, Group, Paper, Stack, Table, Text, TextInput } from "@mantine/core";
+import { Button, Checkbox, Divider, Fieldset, Group, Paper, Stack, Table, Text, TextInput } from "@mantine/core";
 import { MAX_LINE_ITEMS } from "../lib/schemas";
 import {
   canAddLine,
@@ -23,6 +23,8 @@ interface Props {
   onChange: (draft: Draft) => void;
   /** Show that a tax or date change sends the receipt to finance review. */
   taxNote: boolean;
+  /** Locks every field while a save runs, so nothing typed meanwhile is overwritten. */
+  disabled: boolean;
 }
 
 const shown = (cents: number | null) => (cents === null ? "—" : formatCents(cents));
@@ -35,7 +37,7 @@ function balanceText({ math, differenceCents, disagreements }: Balance): string 
 }
 
 /** Every field of a receipt and its lines, editable, with the sum its total must equal. */
-export default function ReceiptEditor({ receipt, draft, onChange, taxNote }: Props) {
+export default function ReceiptEditor({ receipt, draft, onChange, taxNote, disabled }: Props) {
   const header = draftHeader(receipt, draft);
   const kept = receipt.lineItems.filter((l) => !draft.removed.includes(l.id));
   const keptLines = kept.map((l) => {
@@ -104,55 +106,57 @@ export default function ReceiptEditor({ receipt, draft, onChange, taxNote }: Pro
 
   return (
     <Paper withBorder p="sm">
-      <Stack gap="sm">
-        <Text fw={500} size="sm">Correct the receipt</Text>
-        <Group grow wrap="wrap">
-          <TextInput label="Retailer" miw={200} value={header.retailer} onChange={(e) => setHeader("retailer", e.currentTarget.value)} />
-          <TextInput label="Date" type="date" miw={160} value={header.receiptDate} onChange={(e) => setHeader("receiptDate", e.currentTarget.value)} />
-        </Group>
+      <Fieldset variant="unstyled" disabled={disabled}>
+        <Stack gap="sm">
+          <Text fw={500} size="sm">Correct the receipt</Text>
+          <Group grow wrap="wrap">
+            <TextInput label="Retailer" miw={200} value={header.retailer} onChange={(e) => setHeader("retailer", e.currentTarget.value)} />
+            <TextInput label="Date" type="date" miw={160} value={header.receiptDate} onChange={(e) => setHeader("receiptDate", e.currentTarget.value)} />
+          </Group>
 
-        <Table.ScrollContainer minWidth={820}>
-          <Table>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>Description</Table.Th>
-                <Table.Th w={110}>Part #</Table.Th>
-                <Table.Th w={130}>Manufacturer</Table.Th>
-                <Table.Th w={80}>Qty</Table.Th>
-                <Table.Th w={120}>Unit price</Table.Th>
-                <Table.Th w={120}>Total</Table.Th>
-                <Table.Th w={100}>Backordered</Table.Th>
-                <Table.Th w={80} />
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {keptLines.map(({ id, line, typed }, i) => row(`line-${id}`, line, typed, balance.lineTotalsCents[i], (p) => setLine(id, p), () => removeLine(id), `Line ${i + 1}`))}
-              {draft.added.map((a, i) =>
-                row(`added-${a.key}`, a, totalTyped(a.total), balance.lineTotalsCents[keptLines.length + i], (p) => setAdded(a.key, p), () => removeAdded(a.key), `Line ${keptLines.length + i + 1}`),
-              )}
-            </Table.Tbody>
-          </Table>
-        </Table.ScrollContainer>
-        {canAddLine(receipt, draft) ? (
-          <Button size="xs" variant="subtle" w="fit-content" onClick={addLine}>+ Add line</Button>
-        ) : (
-          <Text size="xs" c="dimmed">A receipt holds at most {MAX_LINE_ITEMS} lines; save any removals to make room.</Text>
-        )}
+          <Table.ScrollContainer minWidth={820}>
+            <Table>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Description</Table.Th>
+                  <Table.Th w={110}>Part #</Table.Th>
+                  <Table.Th w={130}>Manufacturer</Table.Th>
+                  <Table.Th w={80}>Qty</Table.Th>
+                  <Table.Th w={120}>Unit price</Table.Th>
+                  <Table.Th w={120}>Total</Table.Th>
+                  <Table.Th w={100}>Backordered</Table.Th>
+                  <Table.Th w={80} />
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {keptLines.map(({ id, line, typed }, i) => row(`line-${id}`, line, typed, balance.lineTotalsCents[i], (p) => setLine(id, p), () => removeLine(id), `Line ${i + 1}`))}
+                {draft.added.map((a, i) =>
+                  row(`added-${a.key}`, a, totalTyped(a.total), balance.lineTotalsCents[keptLines.length + i], (p) => setAdded(a.key, p), () => removeAdded(a.key), `Line ${keptLines.length + i + 1}`),
+                )}
+              </Table.Tbody>
+            </Table>
+          </Table.ScrollContainer>
+          {canAddLine(receipt, draft) ? (
+            <Button size="xs" variant="subtle" w="fit-content" onClick={addLine}>+ Add line</Button>
+          ) : (
+            <Text size="xs" c="dimmed">A receipt holds at most {MAX_LINE_ITEMS} lines; save any removals to make room.</Text>
+          )}
 
-        <Divider />
-        <Stack gap={6} align="flex-end">
-          <Text size="sm">Lines subtotal: <Text span ff="monospace">{shown(balance.subtotalCents)}</Text></Text>
-          {amount("+ Shipping", "shipping")}
-          {amount("+ Tax", "tax")}
-          {amount("− Discount", "discount")}
-          <Text size="sm" fw={600}>Calculated: <Text span ff="monospace">{shown(balance.calculatedCents)}</Text></Text>
-          {amount("Receipt total", "receiptTotal")}
-          <Text size="sm" fw={600} c={balance.math?.balanced ? "green" : "red"}>
-            {balanceText(balance)}
-          </Text>
-          {taxNote && <Text size="xs" c="dimmed">Changing the tax or date sends this receipt to finance review.</Text>}
+          <Divider />
+          <Stack gap={6} align="flex-end">
+            <Text size="sm">Lines subtotal: <Text span ff="monospace">{shown(balance.subtotalCents)}</Text></Text>
+            {amount("+ Shipping", "shipping")}
+            {amount("+ Tax", "tax")}
+            {amount("− Discount", "discount")}
+            <Text size="sm" fw={600}>Calculated: <Text span ff="monospace">{shown(balance.calculatedCents)}</Text></Text>
+            {amount("Receipt total", "receiptTotal")}
+            <Text size="sm" fw={600} c={balance.math?.balanced ? "green" : "red"}>
+              {balanceText(balance)}
+            </Text>
+            {taxNote && <Text size="xs" c="dimmed">Changing the tax or date sends this receipt to finance review.</Text>}
+          </Stack>
         </Stack>
-      </Stack>
+      </Fieldset>
     </Paper>
   );
 }
