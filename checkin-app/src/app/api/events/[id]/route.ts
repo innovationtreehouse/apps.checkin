@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
-import { handler, notFound, forbidden, badRequest } from "@/security/handler";
+import { handler, notFound, badRequest } from "@/security/handler";
 import { apiError } from "@/lib/api-response";
 import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { LIVE_VISIT } from "@/lib/visit/filters";
@@ -92,15 +92,15 @@ export const GET = handler<{ id: string }>('GET /api/events/[id]', async ({ auth
 
     if (!event) throw notFound('Event not found');
 
-    // Roster is staff-only (see header). Non-staff callers never receive it —
-    // matches the original inline gate (403 for an existing event they don't staff).
+    // Roster is staff-only (see header). A non-staff caller gets the same 404 as
+    // for a missing event, so the answer never reveals which event ids exist.
     const isStaff = auth.type === 'session' && (
         auth.user.isSysadmin ||
         auth.user.isBoardMember ||
         event.program?.leadMentorId === auth.user.id ||
         (event.program?.volunteers?.some(v => v.personId === auth.user.id && v.isCore) ?? false)
     );
-    if (!isStaff) throw forbidden('Forbidden: Not authorized to view this event');
+    if (!isStaff) throw notFound('Event not found');
 
     if (!event.program) return { Event: event };
     const viewerIsLeader = auth.type === 'session' && !auth.user.isSysadmin && !auth.user.isBoardMember;
@@ -120,7 +120,10 @@ export const PATCH = withAuth({}, async (req: Request, auth, { params }: { param
 
     try {
         const ctx = await loadEventEditContext(eventId, auth.user);
-        if (!ctx) return apiError("Event not found", 404);
+        // Non-staff get the missing-event 404 before any action or role check.
+        if (!ctx || !(ctx.isSysAdminOrBoard || ctx.isLeadMentor || ctx.isCoreVolunteer)) {
+            return apiError("Event not found", 404);
+        }
 
         let result: EventEditResult<object>;
         if (body.action === 'confirmAttendance') {
