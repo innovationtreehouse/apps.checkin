@@ -133,8 +133,8 @@ describe('GET /api/events/[id] — roster visit times reach program staff', () =
 
     it('does not extend the grant to another program’s session', async () => {
         // The lead is admin/board nowhere, so the foreign event's roster is
-        // refused outright — the times are unreachable, not merely stripped.
+        // refused outright as not found — the times are unreachable, not merely stripped.
         as(leadId);
-        expect((await get(otherEventId)).status).toBe(403);
+        expect((await get(otherEventId)).status).toBe(404);
     });
 });
