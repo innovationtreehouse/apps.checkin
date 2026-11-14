@@ -636,7 +636,8 @@ The PRs, in this order. Each deploys safely on its own.
 5. **Archive action.** The two route files on `handler()` and the screen, based
    on `main`.
 6. **Archived households refuse changes (HA-9).** The write paths keyed by a
-   household or person id that row security does not reach.
+   household or person id that row security does not reach, and the archive's
+   serialization with them. See [Refusing changes (HA-9)](#refusing-changes-ha-9).
 
 ### Route for archival
 
@@ -651,6 +652,62 @@ row, an archived row is invisible without the opt-in, and setting `archivedAt`
 produces a row the `SELECT` policy would otherwise reject.
 
 No new page. The action sits on the existing household detail view.
+
+### Refusing changes (HA-9)
+
+Row security already refuses a write that reads the Household row: Prisma's update
+of an archived row matches nothing. The gap is the writes keyed by a household or
+person id that never touch Household: a new Person row, a role, an enrollment, a
+volunteer or lead place, a visit, an emergency contact, an application.
+
+**One guard.** `lockLiveHouseholds(tx, householdIds)` in
+`lib/household/archiveGuard.ts` runs `SELECT "archivedAt" FROM "Household" WHERE id = …
+FOR UPDATE` for each household in id order and throws `ArchivedHouseholdError`
+(409, a plain message) when the row is archived. Under row security an archived
+row is invisible, so no row also means archived; a connection row security does
+not bind sees `archivedAt`. `lockLiveHouseholdsOf(tx, personIds)` does the same
+for the households those people are in, and refuses if one of them moved while it
+waited. The module imports no database client, because `lib/roles.ts` is imported
+by client components.
+
+**Where it sits.** At the shared write points where one exists, so later callers
+inherit it: `addHouseholdLead` / `removeHouseholdLead` (their Household lock is
+now this guard), `setRoleFlag` (grants only), `ensureHouseholdMembership`, the
+emergency-contact service, and the trusted-adult lead check. Per route where there
+is none: the household and member self-service edits and settings, the Board's
+person edit, add-participant and household move, the application start and save,
+the board grant's application open, program enrollment, volunteer place and core
+flag, program leader on create and edit, bucket owner and treasurer, manual visit,
+and person merge.
+
+**The race.** The archive takes the same Household row lock, after the
+application and membership locks it already held, and only then runs its
+refusal checks. A guarded write calls the guard in its own transaction before it
+writes. Whichever transaction locks the row second waits for the first to commit:
+
+- the write first: the archive's checks, run after the wait, see the new role,
+  enrollment or volunteer place and refuse;
+- the archive first: the guard, after the wait, sees the archived row and refuses.
+
+Applications serialize on the membership row rather than Household, because every
+writer that opens one locks it, and the archive read its open applications before
+taking that lock. So once it holds the membership row the archive counts the open
+applications again, and refuses when one appeared while it waited.
+
+**Why `FOR UPDATE`, not `FOR SHARE`.** The lead paths already take `FOR UPDATE` on
+the same row in the same transactions. Two writers each holding `FOR SHARE` and
+each upgrading to `FOR UPDATE` would deadlock; one exclusive lock does not. Writes to
+one household are rare and human-paced, so serializing them costs nothing.
+
+**Lock order.** Application rows, then the membership row, then the Household row,
+then Person rows. The guard is always taken after any membership lock in its
+transaction, and nothing takes a membership lock after it.
+
+**Not covered here.** A member's own profile fields (phone, notification settings),
+the first-sign-in household question, the Board's decisions on a trusted-adult
+review, and background-check reviews of an archived member's per-person check.
+These change a person rather than the household's composition or anyone's
+authority.
 
 ## Interaction with #1456 (TOMBSTONE_REMOVAL)
 

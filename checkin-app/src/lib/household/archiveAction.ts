@@ -1,5 +1,5 @@
 import { withArchivedHouseholds } from "@/lib/household/archived";
-import { closeForRestore, lockOpenApplications } from "@/lib/membership/archive";
+import { closeForRestore, countOpenApplications, lockOpenApplications } from "@/lib/membership/archive";
 import { personActor } from "@/lib/auditActor";
 import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { ServiceError } from "@checkin/component-kit";
@@ -10,7 +10,7 @@ const refuse = (message: string) => new ServiceError(409, message);
 
 const UNFINISHED = { phase: { not: "FINISHED" as const } };
 
-/** Why the household cannot be archived, or null. Runs under the membership and application locks. */
+/** Why the household cannot be archived, or null. Runs under the application, membership and household locks. */
 async function archiveRefusal(tx: TxClient, householdId: number, membership: { status: string } | null): Promise<string | null> {
     if (membership?.status === "DENIED") return "A denied household cannot be archived.";
     if (membership?.status === "ACTIVE") return "This household has a current Treehouse membership. Revoke it before archiving the household.";
@@ -52,8 +52,15 @@ export async function archiveHousehold(householdId: number, actorId: number) {
             ? await tx.$queryRaw<{ status: string }[]>`SELECT status FROM "OrgMembership" WHERE id = ${found.id} FOR UPDATE`
             : [null];
 
+        // The Household row last: every guarded write takes it, after any membership lock.
+        await tx.$queryRaw`SELECT id FROM "Household" WHERE id = ${householdId} FOR UPDATE`;
+
         const refusal = await archiveRefusal(tx, householdId, membership ?? null);
         if (refusal) throw refuse(refusal);
+        // Every writer of an application holds the membership row, so none can open while this one is held.
+        if (found && (await countOpenApplications(tx, found.id)) !== openApplications.length) {
+            throw refuse("This household started an application while you were looking at it. Reload and try again.");
+        }
 
         // Refuses while an open application holds a payment with no recorded refund.
         await closeForRestore(tx, openApplications, actor, "archive");

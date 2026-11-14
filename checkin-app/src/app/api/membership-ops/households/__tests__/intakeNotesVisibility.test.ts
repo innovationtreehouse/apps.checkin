@@ -16,6 +16,14 @@ import { PATCH as householdPATCH } from "@/app/api/membership-ops/households/[id
 import { PUT as participantPUT } from "@/app/api/membership-ops/participants/[id]/route";
 import { POST as reassignPOST } from "@/app/api/membership-ops/participants/[id]/household/route";
 import { canSeeIntakeNotes, withoutIntakeNoteKeys } from "@/lib/household/intakeNotes";
+import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
+
+// The archived-household guard has its own tests; here every household is live.
+jest.mock("@/lib/household/archiveGuard", () => ({
+    ...jest.requireActual("@/lib/household/archiveGuard"),
+    lockLiveHouseholds: jest.fn(),
+    lockLiveHouseholdsOf: jest.fn(),
+}));
 
 jest.mock("next-auth/next", () => ({ getServerSession: jest.fn() }));
 jest.mock("@/lib/auth-options", () => ({ authOptions: {} }));
@@ -167,6 +175,36 @@ describe("other admin routes returning a Household row: sysadmin-only caller get
         const { participant } = await res.json();
         expect(participant.household.id).toBe(10);
         expect(participant.household.intakeNotes).toBeNull();
+    });
+});
+
+describe("an archived household refuses the change", () => {
+    beforeEach(() => (lockLiveHouseholds as jest.Mock).mockRejectedValueOnce(new ArchivedHouseholdError()));
+
+    it("PATCH /api/household/settings", async () => {
+        signIn({});
+        db.person.findUnique.mockResolvedValue({ householdId: 10, isHouseholdLead: true, isSysadmin: false });
+        const res = await settingsPATCH(request("http://localhost/api/household/settings", "PATCH", { notes: NOTE }));
+        expect(res.status).toBe(409);
+        expect(db.household.update).not.toHaveBeenCalled();
+    });
+
+    it("PUT /api/membership-ops/participants/[id]", async () => {
+        signIn(SYSADMIN_ONLY);
+        db.person.findUnique.mockResolvedValue({ name: "Old", nickname: null, email: null, phone: null, dateOfBirth: null, isDeclaredAdult: true, lastBackgroundCheck: null, householdId: 10, isHouseholdLead: true });
+        const res = await participantPUT(request("http://localhost/api/membership-ops/participants/5", "PUT", { name: "New" }), { params: Promise.resolve({ id: "5" }) });
+        expect(res.status).toBe(409);
+        expect(db.tx.person.update).not.toHaveBeenCalled();
+    });
+
+    it("POST /api/membership-ops/participants/[id]/household, into or out of it", async () => {
+        signIn(SYSADMIN_ONLY);
+        db.person.findUnique.mockResolvedValue({ id: 5, name: "Mover", householdId: 20 });
+        db.household.findUnique.mockResolvedValue(HOUSEHOLD);
+        const res = await reassignPOST(request("http://localhost/api/membership-ops/participants/5/household", "POST", { householdId: 10 }), { params: Promise.resolve({ id: "5" }) });
+        expect(res.status).toBe(409);
+        expect(lockLiveHouseholds).toHaveBeenCalledWith(expect.anything(), [20, 10]);
+        expect(db.tx.person.updateMany).not.toHaveBeenCalled();
     });
 });
 
