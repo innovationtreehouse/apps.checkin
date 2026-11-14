@@ -105,7 +105,7 @@ export const PUT = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
         data.orgMembershipVariantId = variantId || null;
     }
     // Reference only — the checkout link is built from the variant ID, never this
-    // URL, and /extract-variant re-validates it hard before any server-side fetch.
+    // URL; /extract-variant uses only its /products/<handle> part.
     if (body.orgMembershipProductUrl !== undefined) {
         data.orgMembershipProductUrl = body.orgMembershipProductUrl?.trim() || null;
     }
