@@ -249,6 +249,10 @@ describeDb("mail intake catch-up", () => {
   const hold = (until: Date) => db.receiptMailLease.create({ data: { orgId: TEST_ORG_ID, until } });
   const runEnds = () => vi.waitFor(async () => expect((await mailRunState()).running).toBe(false), { timeout: 10_000 });
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("reads past the cron's cap, records its counts and audits who started it", async () => {
     configure({ ocr: okOcr(), mailbox: mail.reader, people: { submitterByEmail: async () => ({ ...ALICE, raisedMailLimit: true }) } });
     expect(MAIL_CATCH_UP_CAP).toBeGreaterThan(MAIL_CAP);
@@ -260,6 +264,30 @@ describeDb("mail intake catch-up", () => {
     expect(state).toMatchObject({ status: "idle", lastRun: { status: "ok", messages: MAIL_CAP + 1, receipts: MAIL_CAP + 1, held: 0, waiting: 0, more: false } });
     expect(state.lastRunAt).toBeInstanceOf(Date);
     expect(await db.receiptAuditLog.findFirst({ where: { action: "mail_catch_up_started" } })).toMatchObject({ receiptId: null, userId: FINANCE.id });
+  });
+
+  it("writes the catch-up audit row before the run reads mail", async () => {
+    send("m1");
+    const audit = vi.spyOn(getPrisma().receiptAuditLog, "create");
+    const listing = vi.spyOn(mail.reader, "listRecent");
+    actAs(FINANCE);
+    expect(await mailQueueService.catchUp()).toMatchObject({ status: "started" });
+    await runEnds();
+    expect(audit.mock.calls[0][0]).toMatchObject({ data: { action: "mail_catch_up_started" } });
+    expect(listing).toHaveBeenCalledOnce();
+    expect(audit.mock.invocationCallOrder[0]).toBeLessThan(listing.mock.invocationCallOrder[0]);
+  });
+
+  it("starts no run and frees the lease when the catch-up audit write fails", async () => {
+    send("m1");
+    vi.spyOn(getPrisma().receiptAuditLog, "create").mockRejectedValueOnce(new Error("audit write failed"));
+    const listing = vi.spyOn(mail.reader, "listRecent");
+    actAs(FINANCE);
+    await expect(mailQueueService.catchUp()).rejects.toThrow("audit write failed");
+    expect(listing).not.toHaveBeenCalled();
+    expect(await mailRunState()).toMatchObject({ running: false, lastRunAt: null });
+    expect(await db.receiptMailItem.count()).toBe(0);
+    expect(await readMailbox()).toMatchObject({ status: "ok" });
   });
 
   it("says another run would read more when the cap stopped it", async () => {

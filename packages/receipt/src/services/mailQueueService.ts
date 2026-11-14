@@ -234,18 +234,21 @@ export const mailQueueService = {
 
   /**
    * Starts one mail intake pass with the catch-up cap and budget, after the request answers;
-   * `busy` while the cron or another catch-up holds the lease. A start is audited with who asked.
+   * `busy` while the cron or another catch-up holds the lease. A start is audited with who asked
+   * before the pass begins; if the audit write fails, no pass starts.
    */
   async catchUp() {
     const actor = await requireActor();
-    const run = await startMailRun({ cap: MAIL_CATCH_UP_CAP, budgetMs: MAIL_CATCH_UP_BUDGET_MS });
+    const run = await startMailRun({
+      cap: MAIL_CATCH_UP_CAP,
+      budgetMs: MAIL_CATCH_UP_BUDGET_MS,
+      beforeRun: () =>
+        db.receiptAuditLog.create({
+          data: { receiptId: null, userId: actor.id, username: actor.name, action: "mail_catch_up_started", fieldChanged: "mail_intake", valueAfter: `cap ${MAIL_CATCH_UP_CAP}` },
+        }),
+    });
     if (run.status === "unbound") throw new ServiceError(409, "No receipt mailbox is set up.");
-    if (run.status === "started") {
-      run.done.catch((err: unknown) => console.error("[receipt] mail catch-up run failed:", err));
-      await db.receiptAuditLog.create({
-        data: { receiptId: null, userId: actor.id, username: actor.name, action: "mail_catch_up_started", fieldChanged: "mail_intake", valueAfter: `cap ${MAIL_CATCH_UP_CAP}` },
-      });
-    }
+    if (run.status === "started") run.done.catch((err: unknown) => console.error("[receipt] mail catch-up run failed:", err));
     const { lastRunAt, lastRun } = await mailRunState();
     return { status: run.status, lastRunAt, lastRun };
   },
