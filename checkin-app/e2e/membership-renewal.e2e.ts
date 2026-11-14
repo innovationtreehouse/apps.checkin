@@ -160,4 +160,38 @@ test.describe("membership renewal in the browser", () => {
       await expect(heading(page, "You're a member")).toBeVisible();
     });
   });
+
+  test("R4: a family whose lead has no valid check renews through consent and two reviews", async ({ browser }) => {
+    // The seed's Renewal Family is active and its lead has no check on file.
+    const email = "renewal.lead@example.com";
+    await openWindow();
+    expect((await send(await loginAs(BOARD), "POST", "/api/settings/membership/bulk-open-renewals")).status).toBe(200);
+
+    await asViewer(browser, email, async (page) => {
+      await home(page);
+      await expect(page.getByText("Membership renewal due")).toBeVisible();
+      await page.getByRole("link", { name: "Renew now" }).click();
+      await expect(heading(page, "Time to renew")).toBeVisible();
+      await page.getByRole("button", { name: "Renew now" }).click();
+
+      await expect(heading(page, "Sign & start your background check")).toBeVisible();
+      await signAgreement(page);
+      const [averity] = await Promise.all([page.waitForEvent("popup"), page.getByRole("link", { name: "Consent on Averity →" }).click()]);
+      await averity.close();
+      await page.getByLabel("I submitted my consent on Averity").check();
+      await expect(heading(page, "Membership fee")).toBeVisible();
+    });
+
+    const renewal = await processOf(email);
+    await review(BOARD, renewal, email);
+    await review(REVIEWER, renewal, email);
+    expect((await send(await loginAs(email), "POST", "/api/dev/shopify/orders-paid", { processId: renewal })).status).toBe(200);
+
+    await asViewer(browser, email, async (page) => {
+      await membership(page);
+      await expect(heading(page, "You're a member")).toBeVisible();
+      await home(page);
+      await expect(page.getByText("Membership renewal due")).toHaveCount(0);
+    });
+  });
 });
