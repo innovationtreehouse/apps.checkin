@@ -12,6 +12,7 @@ import { formatPhone } from "@/lib/phone";
 import { formatDateOnly } from "@/lib/time";
 import { searchId } from "@/lib/searchId";
 import { useLoad } from "@/lib/api";
+import { clearError, showError } from "@checkin/component-ui";
 
 interface ParticipantMergeView {
   id: number;
@@ -28,6 +29,12 @@ interface ParticipantMergeView {
 
 interface BgNotice {
   date: string;
+}
+
+interface Collision {
+  type: string;
+  message: string;
+  attestationIds?: number[];
 }
 
 // Per-field conflict radios — mirrors the server's CONFLICT_FIELDS (route.ts).
@@ -83,13 +90,23 @@ function isSearchable(query: string) {
 
 // Results for a picker that is still searching. They clear once a person is picked
 // or the query gets too short, and otherwise stay up until the current query's answer lands.
-function usePeopleSearch(query: string, picked: boolean) {
+// A failed search raises a chip that stays until dismissed or a later search answers.
+function usePeopleSearch(label: string, query: string, picked: boolean) {
   const active = !picked && isSearchable(query);
-  const { data } = useLoad<{ people?: ParticipantMergeView[] }>(
+  const { data, error, loading, reload } = useLoad<{ people?: ParticipantMergeView[] }>(
     active ? `/api/people/search?q=${encodeURIComponent(query)}` : null,
-    { keepPrevious: true },
+    { keepPrevious: true, retry: false },
   );
-  return data?.people ?? [];
+  const key = `merge-search-${label}`;
+  const answered = !!data && !error && !loading;
+  // Bumped once a retry answers, so a retry that fails again raises the chip again.
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    if (error) showError(error, { key, title: `Couldn't search for ${label}` });
+    else if (answered) clearError(key);
+  }, [error, answered, key, label, attempt]);
+  const retry = () => reload().then(() => setAttempt((n) => n + 1));
+  return { results: error ? [] : data?.people ?? [], failed: !!error, retry };
 }
 
 export default function MergeParticipants() {
@@ -101,8 +118,8 @@ export default function MergeParticipants() {
   const [pA, setPA] = useState<ParticipantMergeView | null>(null);
   const [pB, setPB] = useState<ParticipantMergeView | null>(null);
 
-  const resultsA = usePeopleSearch(searchA, !!pA);
-  const resultsB = usePeopleSearch(searchB, !!pB);
+  const searchResultsA = usePeopleSearch("Participant 1", searchA, !!pA);
+  const searchResultsB = usePeopleSearch("Participant 2", searchB, !!pB);
 
   const [analyzedA, setAnalyzedA] = useState<ParticipantMergeView | null>(null);
   const [analyzedB, setAnalyzedB] = useState<ParticipantMergeView | null>(null);
@@ -139,6 +156,8 @@ export default function MergeParticipants() {
   // The background-check date the survivor would adopt, per direction like the block above.
   const [bgNotices, setBgNotices] = useState<{ aAsKeeper: BgNotice | null; bAsKeeper: BgNotice | null } | null>(null);
   const bgNotice = (keeperIsA ? bgNotices?.aAsKeeper : bgNotices?.bAsKeeper) ?? null;
+
+  const [collisions, setCollisions] = useState<Collision[]>([]);
 
   const conflicts: ConflictField[] = keepParticipant && mergeParticipant
     ? CONFLICT_FIELDS.filter((f) => {
@@ -177,6 +196,7 @@ export default function MergeParticipants() {
     setPreviewMode(false);
     setMembershipBlock(null);
     setBgNotices(null);
+    setCollisions([]);
     setLoading(!!(a && b));
   };
 
@@ -195,6 +215,7 @@ export default function MergeParticipants() {
           setAnalyzedB(d.participants[1]);
           setMembershipBlock(d.membershipBlock ?? null);
           setBgNotices(d.bgNotice ?? null);
+          setCollisions(d.collisions ?? []);
 
           // Recommend keeping the one with more activity or better data
           const score = (p: ParticipantMergeView) => {
@@ -263,7 +284,7 @@ export default function MergeParticipants() {
     }
   };
 
-  const renderSearch = (label: string, value: string, setValue: (v: string) => void, results: ParticipantMergeView[], selected: ParticipantMergeView | null, setSelected: (p: ParticipantMergeView | null) => void) => (
+  const renderSearch = (label: string, value: string, setValue: (v: string) => void, search: ReturnType<typeof usePeopleSearch>, selected: ParticipantMergeView | null, setSelected: (p: ParticipantMergeView | null) => void) => (
     <Box style={{ flex: 1, position: "relative" }}>
       {selected ? (
         <Card withBorder radius="md" padding="md" bg="var(--mantine-color-blue-light)">
@@ -283,9 +304,12 @@ export default function MergeParticipants() {
             onChange={(e) => setValue(e.currentTarget.value)}
             placeholder="Search by name, email, or ID..."
           />
-          {results.length > 0 && (
+          {search.failed && (
+            <Button size="xs" variant="light" color="red" mt="xs" onClick={search.retry}>Retry search</Button>
+          )}
+          {search.results.length > 0 && (
             <Paper withBorder shadow="md" radius="sm" pos="absolute" left={0} right={0} style={{ zIndex: 10, maxHeight: 320, overflowY: "auto" }}>
-              {results.map((r) => (
+              {search.results.map((r) => (
                 <Box key={r.id} p="sm" style={{ cursor: "pointer", borderBottom: "1px solid var(--mantine-color-default-border)" }} onClick={() => setSelected(r)}>
                   <Text>{r.name || "Unnamed"} <Text component="span" size="xs" c="dimmed">(ID: {r.id})</Text></Text>
                   <Text size="xs" c="dimmed">{r.email}</Text>
@@ -390,8 +414,8 @@ export default function MergeParticipants() {
               otherwise clips the search results dropdown below to a sliver — see renderSearch. */}
           <Card withBorder radius="md" padding="lg" style={{ overflow: "visible" }}>
             <Group align="flex-start" gap="xl" grow>
-              {renderSearch("Participant 1", searchA, setSearchA, resultsA, pA, (p) => pick(p, pB))}
-              {renderSearch("Participant 2", searchB, setSearchB, resultsB, pB, (p) => pick(pA, p))}
+              {renderSearch("Participant 1", searchA, setSearchA, searchResultsA, pA, (p) => pick(p, pB))}
+              {renderSearch("Participant 2", searchB, setSearchB, searchResultsB, pB, (p) => pick(pA, p))}
             </Group>
           </Card>
 
@@ -409,6 +433,19 @@ export default function MergeParticipants() {
                 <Alert color="red" variant="light" fw={700} title="Household membership blocks this merge">
                   {membershipBlockReason}
                   {swapClearsMembershipBlock && " Swapping which record is kept clears this."}
+                </Alert>
+              )}
+
+              {collisions.length > 0 && (
+                <Alert color="red" variant="light" title="These records collide">
+                  <List size="sm">
+                    {collisions.map((c, i) => (
+                      <List.Item key={i}>
+                        {c.message}
+                        {c.attestationIds && c.attestationIds.length > 0 && ` Attestation IDs: ${c.attestationIds.join(", ")}.`}
+                      </List.Item>
+                    ))}
+                  </List>
                 </Alert>
               )}
 

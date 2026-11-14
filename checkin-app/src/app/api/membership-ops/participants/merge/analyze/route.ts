@@ -105,10 +105,11 @@ export const GET = withAuth(
             const b = subject(pB);
 
             // Collision detection — direction-independent (collisions block either way).
-            const collisions: Array<{ type: string; message: string }> = [];
+            // A background-check collision names its attestation ids so a sysadmin can find the rows.
+            const collisions: Array<{ type: string; message: string; attestationIds?: number[] }> = [];
             const now = new Date();
 
-            const [sharedPrograms, sharedTools, sharedFutureEvents, sharedBgProcessCount, subjectAttestations, aOpen, bOpen] = await Promise.all([
+            const [sharedPrograms, sharedTools, sharedFutureEvents, attestations, aOpen, bOpen] = await Promise.all([
                 prisma.program.findMany({
                     where: {
                         AND: [
@@ -137,21 +138,10 @@ export const GET = withAuth(
                     },
                     select: { name: true },
                 }),
-                prisma.orgMembershipProcess.count({
-                    where: {
-                        AND: [
-                            { attestations: { some: { reviewerId: aId } } },
-                            { attestations: { some: { reviewerId: bId } } },
-                        ],
-                    },
-                }),
-                // Subject side of @@unique([processId, reviewerId, subjectPersonId]):
-                // a repoint collides only when ONE reviewer attested both records under
-                // the same process, so the pairs are intersected below rather than
-                // counted per process.
                 prisma.backgroundCheckAttestation.findMany({
-                    where: { subjectPersonId: { in: [aId, bId] } },
-                    select: { processId: true, reviewerId: true, subjectPersonId: true },
+                    where: { OR: [{ reviewerId: { in: [aId, bId] } }, { subjectPersonId: { in: [aId, bId] } }] },
+                    select: { id: true, processId: true, reviewerId: true, subjectPersonId: true },
+                    orderBy: { id: 'asc' },
                 }),
                 prisma.visit.findFirst({ where: { personId: aId, departedAt: null, deletedAt: null }, select: { id: true } }),
                 prisma.visit.findFirst({ where: { personId: bId, departedAt: null, deletedAt: null }, select: { id: true } }),
@@ -163,23 +153,42 @@ export const GET = withAuth(
             for (const t of sharedTools) {
                 collisions.push({ type: 'toolStatus', message: `Both hold a ${t.name} certification. Remove one first.` });
             }
-            if (sharedBgProcessCount > 0) {
-                collisions.push({ type: 'bgAttestation', message: `Both attested the same background check (${sharedBgProcessCount} shared review${sharedBgProcessCount > 1 ? 's' : ''}). Investigate before merging.` });
+            // Reviewer side: both records attested under the same process.
+            const aReviewedProcesses = new Set(attestations.filter(x => x.reviewerId === aId).map(x => x.processId));
+            const sharedProcesses = new Set(attestations.filter(x => x.reviewerId === bId && aReviewedProcesses.has(x.processId)).map(x => x.processId));
+            if (sharedProcesses.size > 0) {
+                const n = sharedProcesses.size;
+                collisions.push({
+                    type: 'bgAttestation',
+                    message: `Both attested the same background check (${n} shared review${n > 1 ? 's' : ''}). Investigate before merging.`,
+                    attestationIds: attestations.filter(x => (x.reviewerId === aId || x.reviewerId === bId) && sharedProcesses.has(x.processId)).map(x => x.id),
+                });
             }
             // Cross-role: one record reviewed an attestation naming the other as
             // subject. Only one row exists, so no unique fires — the repoint would
             // quietly turn it into a self-review that still counts toward clearance.
-            const crossRoleCount = subjectAttestations.filter(x =>
+            const crossRole = attestations.filter(x =>
                 (x.subjectPersonId === aId && x.reviewerId === bId) || (x.subjectPersonId === bId && x.reviewerId === aId)
-            ).length;
-            if (crossRoleCount > 0) {
-                collisions.push({ type: 'bgAttestationCrossRole', message: `One record reviewed a background check naming the other as its subject (${crossRoleCount} attestation${crossRoleCount > 1 ? 's' : ''}). Merging would make the survivor the reviewer of their own background check — investigate before merging.` });
+            );
+            if (crossRole.length > 0) {
+                const n = crossRole.length;
+                collisions.push({
+                    type: 'bgAttestationCrossRole',
+                    message: `One record reviewed a background check naming the other as its subject (${n} attestation${n > 1 ? 's' : ''}). Merging would make the survivor the reviewer of their own background check — investigate before merging.`,
+                    attestationIds: crossRole.map(x => x.id),
+                });
             }
-            const aSubjectKeys = new Set(subjectAttestations.filter(x => x.subjectPersonId === aId).map(bgSubjectKey));
-            const sharedSubjectCount = subjectAttestations
-                .filter(x => x.subjectPersonId === bId && aSubjectKeys.has(bgSubjectKey(x))).length;
-            if (sharedSubjectCount > 0) {
-                collisions.push({ type: 'bgAttestationSubject', message: `One reviewer attested both records as the subject of the same background check (${sharedSubjectCount} shared attestation${sharedSubjectCount > 1 ? 's' : ''}). Investigate before merging.` });
+            // Subject side of @@unique([processId, reviewerId, subjectPersonId]): a repoint
+            // collides only when ONE reviewer attested both records under the same process.
+            const aSubjectKeys = new Set(attestations.filter(x => x.subjectPersonId === aId).map(bgSubjectKey));
+            const sharedSubjectKeys = new Set(attestations.filter(x => x.subjectPersonId === bId && aSubjectKeys.has(bgSubjectKey(x))).map(bgSubjectKey));
+            if (sharedSubjectKeys.size > 0) {
+                const n = sharedSubjectKeys.size;
+                collisions.push({
+                    type: 'bgAttestationSubject',
+                    message: `One reviewer attested both records as the subject of the same background check (${n} shared attestation${n > 1 ? 's' : ''}). Investigate before merging.`,
+                    attestationIds: attestations.filter(x => (x.subjectPersonId === aId || x.subjectPersonId === bId) && sharedSubjectKeys.has(bgSubjectKey(x))).map(x => x.id),
+                });
             }
             for (const e of sharedFutureEvents) {
                 collisions.push({ type: 'rsvp', message: `Both RSVP'd to ${e.name}. Remove one RSVP first.` });
