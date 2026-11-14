@@ -123,8 +123,7 @@ describe('Protected-route role rejection', () => {
         await wipe();
         plainHh = (await prisma.household.create({ data: { name: `Plain HH ${TAG}` } })).id;
         plainId = (await prisma.person.create({ data: { name: `Plain ${TAG}`, householdId: plainHh } })).id;
-        // A real event so events/[id] GET reaches its in-handler staff gate
-        // (a missing event short-circuits to 404 before the 403).
+        // A real event so events/[id] GET reaches its in-handler staff gate.
         const prog = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Prog ${TAG}` } });
         programId = prog.id;
         eventId = (await prisma.event.create({
@@ -342,16 +341,17 @@ describe('Protected-route role rejection', () => {
     // enrolled / RSVP'd / attended) is staff-only: a participant's name/id and
     // the existence of their enrollment/RSVP/Visit row are tier 'public', so
     // per-field stripping can't hide the "who attends" association. The handler fn
-    // gates admission inline (event -> program lead/core-vol/admin) and 403s
-    // everyone else, so a non-staff caller never receives the roster.
+    // gates admission inline (event -> program lead/core-vol/admin) and answers
+    // everyone else 404, as for a missing event, so a non-staff caller never
+    // receives the roster or learns that the event exists.
     describe('events/[id]', () => {
         it('GET 401 when unauthenticated', async () => {
             anon();
             expect((await EVENT_GET(nreq(`http://localhost/api/events/${eventId}`), idCtx(eventId))).status).toBe(401);
         });
-        it('GET 403 for a plain user who is not event staff (roster gate)', async () => {
+        it('GET 404 for a plain user who is not event staff (roster gate)', async () => {
             as(plainId, { householdId: plainHh });
-            expect((await EVENT_GET(nreq(`http://localhost/api/events/${eventId}`), idCtx(eventId))).status).toBe(403);
+            expect((await EVENT_GET(nreq(`http://localhost/api/events/${eventId}`), idCtx(eventId))).status).toBe(404);
         });
         it('PATCH 401 when unauthenticated', async () => {
             anon();
@@ -360,22 +360,22 @@ describe('Protected-route role rejection', () => {
         });
         // IDOR boundary: the gate is the inline
         // `event.program.leadMentorId === caller` check. A lead of a DIFFERENT
-        // program must be 403'd AND must not mutate the event — a 403 that still
-        // wrote would be the real bug. Re-read to pin it.
-        it('PATCH 403 for a lead of a DIFFERENT program (confirmAttendance) — and the event is untouched', async () => {
+        // program must be 404'd AND must not mutate the event — a refusal that
+        // still wrote would be the real bug. Re-read to pin it.
+        it('PATCH 404 for a lead of a DIFFERENT program (confirmAttendance) — and the event is untouched', async () => {
             as(foreignLeadId);
             const before = await prisma.event.findUnique({ where: { id: ownedEventId }, select: { attendanceConfirmedAt: true, attendanceConfirmedById: true } });
             expect(before?.attendanceConfirmedAt).toBeNull();
             const res = await EVENT_PATCH(nreq(`http://localhost/api/events/${ownedEventId}`, 'PATCH', { action: 'confirmAttendance' }), idCtx(ownedEventId));
-            expect(res.status).toBe(403);
+            expect(res.status).toBe(404);
             const after = await prisma.event.findUnique({ where: { id: ownedEventId }, select: { attendanceConfirmedAt: true, attendanceConfirmedById: true } });
             expect(after?.attendanceConfirmedAt).toBeNull();
             expect(after?.attendanceConfirmedById).toBeNull();
         });
-        it('PATCH 403 for a lead of a DIFFERENT program (cancel) — and the event survives', async () => {
+        it('PATCH 404 for a lead of a DIFFERENT program (cancel) — and the event survives', async () => {
             as(foreignLeadId);
             const res = await EVENT_PATCH(nreq(`http://localhost/api/events/${ownedEventId}`, 'PATCH', { action: 'cancel' }), idCtx(ownedEventId));
-            expect(res.status).toBe(403);
+            expect(res.status).toBe(404);
             expect(await prisma.event.findUnique({ where: { id: ownedEventId } })).not.toBeNull();
         });
     });
