@@ -7,6 +7,7 @@ import { settleHouseholdBg } from "@/lib/membership/settleHouseholdBg";
 import { logBackendError } from "@/lib/logger";
 import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
 import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
+import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
 import { KIND_TO_FLAG, setRoleFlag, lockBoardRoles, RoleMatrixError, trustStatus } from "@/lib/roles";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
@@ -259,7 +260,8 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
 
 /**
  * Lock order: BOARD roles, then the application rows this merge writes, then both
- * households' membership rows, then both Person rows in id order. BOARD first is the order a role
+ * households' membership rows, then both Household rows (an archived one refuses the
+ * merge), then both Person rows in id order. BOARD first is the order a role
  * change takes. Application before membership is the order payment, clearance
  * and reset take, so a merge never holds a household row while it waits on an
  * application. The membership rows serialize a deny with the merge even when
@@ -271,6 +273,12 @@ async function lockMergeRows(tx: TxClient, keepId: number, mergeId: number, hous
         WHERE "subjectPersonId" IN (${keepId}, ${mergeId}) OR "zohoSignerPersonId" = ${mergeId} OR "noteAckById" = ${mergeId}
         ORDER BY id FOR UPDATE`;
     await lockAndFindDeniedHousehold(tx, householdIds);
+    try {
+        await lockLiveHouseholds(tx, householdIds);
+    } catch (e) {
+        if (e instanceof ArchivedHouseholdError) throw new MergeRefusedError({ status: 409, error: e.message });
+        throw e;
+    }
     await lockBothSubjects(tx, keepId, mergeId);
 }
 

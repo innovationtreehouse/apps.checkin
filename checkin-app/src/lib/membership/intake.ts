@@ -21,6 +21,7 @@ import { isYouth } from "@/lib/time";
 import { mintPersonId } from "@/lib/person/mintId";
 import { nameWrite } from "@/lib/person/name";
 import type { TxClient } from "@/lib/db-client";
+import { lockLiveHouseholds } from "@/lib/household/archiveGuard";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { isDesignatedEmail, designatedEmailRefusalForBoard } from "@/lib/membership/volunteerDesignation";
 import { findSelfGrantRefusal, recordSelfGrantRefusal, type GrantSubject, type SelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
@@ -197,6 +198,7 @@ export async function startIntake(userId: number) {
             const [locked] = await tx.$queryRaw<{ status: string }[]>`SELECT status FROM "OrgMembership" WHERE id = ${membership.id} FOR UPDATE`;
             if (locked?.status === "DENIED") return { refuse: "denied" };
             if (locked?.status === "ACTIVE") return { refuse: "already_member" };
+            await lockLiveHouseholds(tx, [householdId]);
 
             const open = await tx.orgMembershipProcess.findMany({
                 where: { orgMembershipId: membership.id, ...householdApplicationOpenOrBlockedWhere },
@@ -358,6 +360,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
             // Lead promotion locks OrgMembership then Household, the order every
             // writer takes them in; the household update below would invert it.
             await lockAndFindDeniedHousehold(tx, [householdId]);
+            await lockLiveHouseholds(tx, [householdId]);
 
             if (input.household) {
                 // Address + the optional "anything else we should know?" note share one

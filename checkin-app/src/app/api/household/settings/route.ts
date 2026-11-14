@@ -5,6 +5,7 @@ import { withAuth } from "@/lib/auth";
 import { upsertPrimaryContact, EmergencyContactError } from "@/lib/emergencyContacts/service";
 import { normalizeAddressInput, pickAddress, assertValidAddress, AddressValidationError } from "@/lib/address";
 import { apiError } from "@/lib/api-response";
+import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
 
 export const PATCH = withAuth(
     {},
@@ -41,6 +42,7 @@ export const PATCH = withAuth(
                 return apiError("Only household leads can edit household settings", 403);
             }
 
+            await lockLiveHouseholds(prisma, [user.householdId]);
             const updatedHousehold = await prisma.household.update({
                 where: { id: user.householdId },
                 data: householdData,
@@ -70,6 +72,7 @@ export const PATCH = withAuth(
             return NextResponse.json({ household }, { status: 200 });
 
         } catch (error: unknown) {
+            if (error instanceof ArchivedHouseholdError) return apiError(error.message, error.status);
             if (error instanceof EmergencyContactError || error instanceof AddressValidationError) {
                 return apiError(error.message, 400);
             }

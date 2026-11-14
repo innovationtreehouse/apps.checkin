@@ -5,6 +5,7 @@ import { withAuth } from "@/lib/auth";
 import { updateContact, deleteContact, present, EmergencyContactError } from "@/lib/emergencyContacts/service";
 import { leadHousehold } from "@/lib/household/leads";
 import { apiError } from "@/lib/api-response";
+import { ArchivedHouseholdError } from "@/lib/household/archiveGuard";
 
 export const PATCH = withAuth({}, async (req, auth, { params }: { params: Promise<{ contactId: string }> }) => {
     if (auth.type !== "session") return apiError("Unauthorized", 401);
@@ -30,6 +31,7 @@ export const PATCH = withAuth({}, async (req, auth, { params }: { params: Promis
         // createdAt/updatedAt + conflict bookkeeping don't belong on the wire).
         return NextResponse.json({ contact: present(contact) });
     } catch (error) {
+        if (error instanceof ArchivedHouseholdError) return apiError(error.message, error.status);
         if (error instanceof EmergencyContactError) {
             return apiError(error.message, error.code === "not_found" ? 404 : 400);
         }
@@ -74,6 +76,7 @@ export const DELETE = withAuth({}, async (_req, auth, { params }: { params: Prom
         });
         return NextResponse.json({ success: true });
     } catch (error) {
+        if (error instanceof ArchivedHouseholdError) return apiError(error.message, error.status);
         if (error instanceof EmergencyContactError) {
             return apiError(error.message, error.code === "not_found" ? 404 : 400);
         }

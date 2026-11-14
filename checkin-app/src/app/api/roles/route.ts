@@ -18,6 +18,8 @@ import { personActor } from "@/lib/auditActor";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { isYouth } from "@/lib/time";
 import { IN_LIVE_HOUSEHOLD } from "@/lib/household/archived";
+import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
+import { ServiceError } from "@checkin/component-kit";
 
 const PERSON_SELECT = {
     id: true,
@@ -136,6 +138,7 @@ export const PATCH = withAuth(
                     if (after !== target.canAccessStaging) {
                         // setRoleFlag runs this for role flags; staging is a plain column.
                         await assertNotOwnHousehold(tx, actor.id, targetUserId);
+                        if (after) await lockLiveHouseholdsOf(tx, [targetUserId]);
                         await tx.person.update({ where: { id: targetUserId }, data: { canAccessStaging: after } });
                         stagingOld.canAccessStaging = target.canAccessStaging;
                         stagingNew.canAccessStaging = after;
@@ -188,6 +191,9 @@ export const PATCH = withAuth(
             }
             if (error instanceof DeniedHouseholdBoardError) {
                 return apiError("This person's household has been denied membership. Restore the household's membership before granting the board role.", 409);
+            }
+            if (error instanceof ServiceError) {
+                return apiError(error.message, error.status);
             }
             logger.error("Error updating role:", error);
             return apiError("Internal server error", 500);

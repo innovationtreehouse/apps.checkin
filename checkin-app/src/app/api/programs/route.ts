@@ -15,6 +15,9 @@ import { validateProgramAgeBounds, isLeaderAgeEligible } from "@/lib/programAge"
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { resolveProgramYear } from "@/lib/programs/update";
 import { enrollmentClosedBy } from "@/lib/programs/saleState";
+import { isLiveHousehold } from "@/lib/household/archived";
+import { ARCHIVED_HOUSEHOLD_REFUSAL, lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
+import { ServiceError } from "@checkin/component-kit";
 
 
 // Public catalog projection: every Program column whose `/// @sensitivity:` tier
@@ -212,6 +215,10 @@ export const POST = withAuth({ roles: ['isBoardMember'] }, async (req, auth) => 
         if (mentorId === auth.user.id || await hasHouseholdConflict(prisma, auth.user.id, mentor.householdId)) {
             return apiError("Forbidden: You cannot make yourself or a member of your household a program lead", 403);
         }
+        // Checked before any store product exists; the create re-checks under the household lock.
+        if (!(await isLiveHousehold(mentor.householdId))) {
+            return apiError(ARCHIVED_HOUSEHOLD_REFUSAL, 409);
+        }
 
         if (!startAt) {
             return apiError("Start date is required", 400);
@@ -261,28 +268,31 @@ export const POST = withAuth({ roles: ['isBoardMember'] }, async (req, auth) => 
             if (shopifyData) claimantData = await createClaimantProduct(name, basePriceCents);
         }
 
-        const newProgram = await prisma.program.create({
-            data: {
-                name,
-                leadMentorId: mentorId,
-                startAt: startDate,
-                endAt: endDate,
-                appliesToYear: year.appliesToYear,
-                orgMemberOnly: orgMemberOnly || false,
-                // publiclyVisible only has meaning for a members-only program; a
-                // public one is already visible. Clamp so the nonsense state
-                // (not members-only, yet flagged publiclyVisible) can't be stored.
-                publiclyVisible: (orgMemberOnly || false) && (publiclyVisible || false),
-                minAge: minAge ?? null,
-                maxAge: maxAge ?? null,
-                orgMemberPriceCents: mPrice,
-                nonOrgMemberPriceCents: nmPrice,
-                maxParticipants: maxPart,
-                shopifyProductId: shopifyData?.shopifyProductId || null,
-                shopifyVariantId: shopifyData?.shopifyVariantId || null,
-                claimantShopifyProductId: claimantData?.claimantShopifyProductId || null,
-                claimantShopifyVariantId: claimantData?.claimantShopifyVariantId || null,
-            }
+        const newProgram = await prisma.$transaction(async (tx) => {
+            await lockLiveHouseholdsOf(tx, [mentorId]);
+            return tx.program.create({
+                data: {
+                    name,
+                    leadMentorId: mentorId,
+                    startAt: startDate,
+                    endAt: endDate,
+                    appliesToYear: year.appliesToYear,
+                    orgMemberOnly: orgMemberOnly || false,
+                    // publiclyVisible only has meaning for a members-only program; a
+                    // public one is already visible. Clamp so the nonsense state
+                    // (not members-only, yet flagged publiclyVisible) can't be stored.
+                    publiclyVisible: (orgMemberOnly || false) && (publiclyVisible || false),
+                    minAge: minAge ?? null,
+                    maxAge: maxAge ?? null,
+                    orgMemberPriceCents: mPrice,
+                    nonOrgMemberPriceCents: nmPrice,
+                    maxParticipants: maxPart,
+                    shopifyProductId: shopifyData?.shopifyProductId || null,
+                    shopifyVariantId: shopifyData?.shopifyVariantId || null,
+                    claimantShopifyProductId: claimantData?.claimantShopifyProductId || null,
+                    claimantShopifyVariantId: claimantData?.claimantShopifyVariantId || null,
+                }
+            });
         });
 
         await prisma.auditLog.create({
@@ -317,6 +327,7 @@ export const POST = withAuth({ roles: ['isBoardMember'] }, async (req, auth) => 
         if (claimantData?.claimantShopifyProductId) {
             logger.error("[Shopify] Orphaned claimant product after program DB write failed, manual cleanup needed:", claimantData.claimantShopifyProductId);
         }
+        if (error instanceof ServiceError) return apiError(error.message, error.status);
         await logBackendError(error, "POST /api/programs");
         return apiError("Failed to create program", 500);
     }

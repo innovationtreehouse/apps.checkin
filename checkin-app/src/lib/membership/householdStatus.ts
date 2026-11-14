@@ -22,6 +22,7 @@
 import type { Prisma, OrgMembershipStatus } from "@/generated/prisma/client";
 import { withTx, type DbClient, type TxClient } from "@/lib/db-client";
 import type { AuditActor } from "@/lib/auditActor";
+import { lockLiveHouseholds } from "@/lib/household/archiveGuard";
 import { fromStatusWhere, isLegalTransition, type Transition, type Expect, type Equal } from "@/lib/lifecycle";
 
 export type HouseholdStatus = "NONE" | "ACTIVE" | "REVOKED" | "DENIED";
@@ -57,8 +58,14 @@ export function fromWhere(from: HouseholdStatus | readonly HouseholdStatus[]): W
     return fromStatusWhere<Where>(typeof from === "string" ? [from] : from);
 }
 
-/** ∅→NONE: the household's membership row, created at NONE if missing. Never changes an existing row. */
+/**
+ * ∅→NONE: the household's membership row, created at NONE if missing. Never changes an
+ * existing row. Refuses an archived household, locking the membership row before the
+ * household row, the order archiving takes them in.
+ */
 export async function ensureHouseholdMembership(db: DbClient, householdId: number): Promise<{ id: number; status: HouseholdStatus }> {
+    await db.$queryRaw`SELECT id FROM "OrgMembership" WHERE "householdId" = ${householdId} FOR UPDATE`;
+    await lockLiveHouseholds(db, [householdId]);
     // ON CONFLICT DO NOTHING waits out a concurrent insert without raising: a unique
     // violation would abort a caller's transaction, leaving it unable to read the winner.
     await db.orgMembership.createMany({ data: { householdId }, skipDuplicates: true });

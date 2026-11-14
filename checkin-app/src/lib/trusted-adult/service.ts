@@ -1,5 +1,7 @@
 import prisma from "@/lib/prisma";
 import { ServiceError } from "@checkin/component-kit";
+import { isLiveHousehold } from "@/lib/household/archived";
+import { ARCHIVED_HOUSEHOLD_REFUSAL } from "@/lib/household/archiveGuard";
 import { TRUSTED_ADULT_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { personActor, systemActor, type AuditActor } from "@/lib/auditActor";
 import { emailBoardMembers, emailHouseholdLeads } from "@/lib/emailRecipients";
@@ -669,13 +671,14 @@ export async function runExpirySweep(now: Date) {
     return { warned, expired };
 }
 
-/** Actor must be a lead of the given household. */
+/** Actor must be a lead of the given household, and the household not archived. */
 export async function assertHouseholdLead(householdId: number, actorId: number) {
     const lead = await prisma.person.findFirst({
         where: { id: actorId, householdId, isHouseholdLead: true },
         select: { id: true },
     });
     if (!lead) throw new TrustedAdultError("forbidden", "You must be a lead of this household.");
+    if (!(await isLiveHousehold(householdId))) throw new TrustedAdultError("wrong_phase", ARCHIVED_HOUSEHOLD_REFUSAL);
 }
 
 /** Email every board member that a trusted-adult review is waiting. */

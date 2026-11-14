@@ -5,6 +5,8 @@ import { parseVisitTime, departureAfterArrival, withinMaxDuration } from "@/lib/
 import { findAssociatedEventAt } from "@/lib/attendanceTransitions";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { findVisitOverlaps, openOverlapRefusal, overlapFlag } from "@/lib/visit/overlap";
+import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
+import { ServiceError } from "@checkin/component-kit";
 
 // Staff insert-for-others at an arbitrary past time: the path for a
 // genuine unenrolled walk-in, which the event-roster mark (program-scoped, event
@@ -51,6 +53,7 @@ export const POST = handler('POST /api/facility/visits/insert', async ({ req, au
     // insert can't race the kiosk or the facility-close sweep.
     const result = await prisma.$transaction(async (tx: Prisma.TransactionClient): Promise<{ openSince: Date } | { visit: Visit }> => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(${subjectId})`;
+        await lockLiveHouseholdsOf(tx, [subjectId]);
         const overlaps = await findVisitOverlaps(tx, subjectId, { arrivedAt: ar.value, departedAt: dr.value });
         if (overlaps.openSince) return { openSince: overlaps.openSince };
         const visit = await tx.visit.create({
@@ -77,6 +80,9 @@ export const POST = handler('POST /api/facility/visits/insert', async ({ req, au
             },
         });
         return { visit };
+    }).catch((e: unknown) => {
+        if (e instanceof ServiceError) throw new ApiResponseError(e.status, e.message);
+        throw e;
     });
     if ('openSince' in result) throw new ApiResponseError(409, await openOverlapRefusal(result.openSince));
     // A closed keyholder visit can cover someone's arrival and clear their
