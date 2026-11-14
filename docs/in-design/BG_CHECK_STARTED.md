@@ -180,19 +180,23 @@ One service function, `markCheckStarted(subjectPersonId, actorId)`:
      PENDING_BG_REVIEW or BLOCKED, the same set `openPersonBg` reads before it
      declines to open a second. A PENDING_BG_REVIEW review may have been opened by
      activation or the yearly sweep.
-   - **A BLOCKED review is left as it is.** The mark writes nothing and creates
-     nothing. The review already carries the flag and a rejection, and only the
-     review's own paths move it. The call returns the person's current state, so
-     the panel shows "nothing to do".
+   - **A BLOCKED review is left as it is.** The mark stops here and returns the
+     person's current state, so the panel shows "nothing to do". It creates
+     nothing, and none of the steps after this one runs: no `requestedForHouseholdId`
+     fill, no stamp, no audit row, no notification and no settle. The review
+     already carries the flag and a rejection, and only the review's own paths move
+     it.
    - **Create** one only when the person has no open review, with
      `subjectPersonId` set and `requestedForHouseholdId` set to the person's
      household.
 
    This step does not go through the yearly sweep's "is a check needed" verdict. A
    check someone has actually started is reviewed even when the re-check policy is
-   unset, as household consent allowed until now. When a reused review has no
-   `requestedForHouseholdId`, the mark fills it in, so a later wrong-person reset
+   unset, as household consent allowed until now. When a reused PENDING_BG_REVIEW
+   review has no `requestedForHouseholdId`, the mark fills it in, so a later wrong-person reset
    leaves a review the household still owns.
+Steps 4 to 6 run only for a reused PENDING_BG_REVIEW review or a newly created one.
+
 4. **Stamp `bgConsentAt`** once, with a conditional write, and write one audit row
    with the actor. The audit row reads `{ checkStarted: true }`; the compliance view
    still matches the old `{ bgConsentAt: true }` rows.
@@ -591,7 +595,8 @@ These are named for the build PR. None run for this doc.
   - A known minor is refused. A person of unknown age, a cleared person and a
     person whose household has no application under way are all accepted.
   - Reuse versus create: a PENDING_BG_REVIEW review is reused. A BLOCKED review
-    is left untouched, with no second review and no audit row. A review is
+    is left untouched: no second review, no field fill, no stamp, no audit row,
+    no notification and no settle. A review is
     created only when none is open.
   - `requestedForHouseholdId` is filled.
   - Concurrent marks open one review and write one audit row.
