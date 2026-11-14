@@ -488,6 +488,14 @@ describeDb("getGift", () => {
     expect(failureReason).not.toHaveBeenCalled();
   });
 
+  it("carries a stuck gift's first failure and last error, and none for a gift that never failed", async () => {
+    const { id } = await manualGift();
+    expect(await inKindAcceptService.getGift(orgId, "manual", id)).toMatchObject({ qbFirstFailedAt: null, qbLastError: null });
+    const failedAt = new Date("2026-11-01T00:00:00.000Z");
+    await db.inKindPosting.create({ data: { orgId, source: "manual", giftId: id, matchState: "NEEDS_FINANCE", qbFirstFailedAt: failedAt, qbLastError: "socket hang up" } });
+    expect(await inKindAcceptService.getGift(orgId, "manual", id)).toMatchObject({ qbFirstFailedAt: failedAt, qbLastError: "socket hang up" });
+  });
+
   it("404s a gift in another org or of the other source", async () => {
     const id = await receiptGift();
     await expect(inKindAcceptService.getGift("other-org", "receipt", id)).rejects.toMatchObject({ status: 404 });
