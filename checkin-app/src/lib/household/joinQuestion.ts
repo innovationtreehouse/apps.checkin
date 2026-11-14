@@ -7,6 +7,7 @@ import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
 import { personActor } from "@/lib/auditActor";
 import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
 import { isYouth } from "@/lib/time";
+import { lockLiveHouseholds } from "@/lib/household/archiveGuard";
 
 export type JoinRefusal = "not_pending" | "youth" | "denied";
 
@@ -72,6 +73,8 @@ export async function answerHouseholdQuestion(personId: number, join: boolean): 
         if (await lockAndFindDeniedHousehold(tx, [person.householdId]) !== null) {
             throw new JoinQuestionError("denied");
         }
+        // Joining is refused on an archived household; answering no still moves the account out.
+        if (join) await lockLiveHouseholds(tx, [person.householdId]);
 
         // Conditional on the question still being open: a second answer that read it open
         // before the first committed lands on no row.

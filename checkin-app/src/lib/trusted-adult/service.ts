@@ -1,7 +1,7 @@
 import prisma from "@/lib/prisma";
 import { ServiceError } from "@checkin/component-kit";
 import { isLiveHousehold } from "@/lib/household/archived";
-import { ARCHIVED_HOUSEHOLD_REFUSAL } from "@/lib/household/archiveGuard";
+import { ARCHIVED_HOUSEHOLD_REFUSAL, ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
 import { TRUSTED_ADULT_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { personActor, systemActor, type AuditActor } from "@/lib/auditActor";
 import { emailBoardMembers, emailHouseholdLeads } from "@/lib/emailRecipients";
@@ -19,6 +19,16 @@ import type { TxClient } from "@/lib/db-client";
  */
 function lockTrustedAdult(tx: TxClient, taId: number) {
     return tx.$queryRaw`SELECT id FROM "TrustedAdult" WHERE id = ${taId} FOR UPDATE`;
+}
+
+/** Locks the household a review opens on, so an archive cannot land beside the new review. */
+async function lockLiveHousehold(tx: TxClient, householdId: number) {
+    try {
+        await lockLiveHouseholds(tx, [householdId]);
+    } catch (e) {
+        if (e instanceof ArchivedHouseholdError) throw new TrustedAdultError("wrong_phase", ARCHIVED_HOUSEHOLD_REFUSAL);
+        throw e;
+    }
 }
 
 /**
@@ -102,6 +112,7 @@ export async function createTrustedAdult(input: CreateInput) {
     if (!household) throw new TrustedAdultError("not_found", "Household not found.");
 
     const ta = await prisma.$transaction(async (tx) => {
+        await lockLiveHousehold(tx, input.householdId);
         const created = await tx.trustedAdult.create({
             data: {
                 householdId: input.householdId,
@@ -139,6 +150,7 @@ export async function renewTrustedAdult(id: number, actorId: number) {
     // Lock the parent, re-read the latest review under the lock, then create. Without
     // the lock two concurrent renews both see a terminal latest and both open a review.
     const review = await prisma.$transaction(async (tx) => {
+        await lockLiveHousehold(tx, ta.householdId);
         await lockTrustedAdult(tx, ta.id);
         const latest = await tx.trustedAdultReview.findFirst({ where: { trustedAdultId: ta.id }, orderBy: { id: "desc" } });
         if (latest && (latest.status === "PENDING_BOARD_REVIEW" || latest.status === "PENDING_SUBJECT_ACTION")) {
@@ -188,6 +200,7 @@ export async function resubmitWithChanges(id: number, actorId: number, input: Re
     await assertHouseholdLead(ta.householdId, actorId);
 
     const review = await prisma.$transaction(async (tx) => {
+        await lockLiveHousehold(tx, ta.householdId);
         await lockTrustedAdult(tx, ta.id);
         const latest = await tx.trustedAdultReview.findFirst({ where: { trustedAdultId: ta.id }, orderBy: { id: "desc" } });
         if (latest && (latest.status === "PENDING_BOARD_REVIEW" || latest.status === "PENDING_SUBJECT_ACTION")) {

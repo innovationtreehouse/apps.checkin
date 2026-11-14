@@ -156,6 +156,14 @@ Things the app takes as true because they are handled outside it.
   application just added, or the change is refused because the household is now
   archived.  [Decision]
 
+- A household with an open trusted-adult review cannot be archived until the
+  review is decided or withdrawn.  [Decision — owner ruling HA-9]
+
+- On an archived household, a member may still edit their own profile, and the
+  Board may still record a background-check result for a member. At first sign-in,
+  joining an archived household is refused; declining it still moves the account
+  to a new household of its own.  [Decision — owner ruling HA-9]
+
 ### Identity and age
 
 - Every household member has a date of birth or an over-25 declaration, never

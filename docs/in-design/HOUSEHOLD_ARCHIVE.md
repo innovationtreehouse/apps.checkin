@@ -647,7 +647,7 @@ Two registered routes on `handler()`, with no body:
 entries admit the Board only, so a sysadmin who is not on the Board gets 403, and
 return the household with its public fields (id, name, `archivedAt`). The archive
 refuses on any of the conditions in HA-7, HA-8 and HA-10 (Decisions #4, #7 and
-#9). Both writes run through `withArchivedHouseholds`: Prisma's update reads the
+#9), and while a trusted-adult review is open (Decision #10). Both writes run through `withArchivedHouseholds`: Prisma's update reads the
 row, an archived row is invisible without the opt-in, and setting `archivedAt`
 produces a row the `SELECT` policy would otherwise reject.
 
@@ -673,12 +673,14 @@ by client components.
 **Where it sits.** At the shared write points where one exists, so later callers
 inherit it: `addHouseholdLead` / `removeHouseholdLead` (their Household lock is
 now this guard), `setRoleFlag` (grants only), `ensureHouseholdMembership`, the
-emergency-contact service, and the trusted-adult lead check. Per route where there
-is none: the household and member self-service edits and settings, the Board's
-person edit, add-participant and household move, the application start and save,
-the board grant's application open, program enrollment, volunteer place and core
-flag, program leader on create and edit, bucket owner and treasurer, manual visit,
-and person merge.
+emergency-contact service, the trusted-adult lead check, and the opening of a
+trusted-adult review (create, renew, resubmit). Per route where there is none:
+the household and member self-service edits and settings, the Board's person
+edit, add-participant and household move, the application start and save, the
+board grant's application open, program enrollment, volunteer place and core
+flag, program leader on create and edit, bucket owner and treasurer, the Board's
+manual visit, a member's own manual visit, a lead's attendance mark, a yes to the
+first-sign-in household question, and person merge.
 
 **The race.** The archive takes the same Household row lock, after the
 application and membership locks it already held, and only then runs its
@@ -703,11 +705,18 @@ one household are rare and human-paced, so serializing them costs nothing.
 then Person rows. The guard is always taken after any membership lock in its
 transaction, and nothing takes a membership lock after it.
 
-**Not covered here.** A member's own profile fields (phone, notification settings),
-the first-sign-in household question, the Board's decisions on a trusted-adult
-review, and background-check reviews of an archived member's per-person check.
-These change a person rather than the household's composition or anyone's
-authority.
+**Left open on purpose (owner rulings).**
+
+- A member's own profile fields (phone, notification settings) stay editable.
+- At the first-sign-in household question, a yes is refused on an archived
+  household. A no still moves the account to a new household of its own, so the
+  person is never stuck at the question.
+- The Board's decide and override on a trusted-adult review are not guarded.
+  Instead the archive refuses while the household has a review that is still
+  open (`PENDING_BOARD_REVIEW` or `PENDING_SUBJECT_ACTION`), and opening a review
+  takes the household guard, so no open review can sit on an archived household.
+- The Board records a background-check result for a member of an archived
+  household: the result belongs to the person.
 
 ## Interaction with #1456 (TOMBSTONE_REMOVAL)
 
@@ -790,6 +799,10 @@ IDs are kept so earlier references still resolve. All are settled.
    role. That covers the app roles (sysadmin, Board, keyholder, background-check
    reviewer, operations, inventory manager, finance) and a volunteer or lead
    place on a program not yet finished. The Board removes them first.
+
+10. **Trusted-adult reviews.** Decided: archiving is refused while the household
+    has an open trusted-adult review. The Board decides it, or the family
+    withdraws it, first.
 
 ## Test plan
 

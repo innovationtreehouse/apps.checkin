@@ -91,6 +91,8 @@ afterAll(async () => {
     const personIds = people.map((p) => p.id);
     await prisma.auditLog.deleteMany({ where: { OR: [{ actorId: { in: personIds } }, { affectedEntityId: { in: [...personIds, ...householdIds] } }] } });
     await prisma.visit.deleteMany({ where: { personId: { in: personIds } } });
+    await prisma.trustedAdultReview.deleteMany({ where: { householdId: { in: householdIds } } });
+    await prisma.trustedAdult.deleteMany({ where: { householdId: { in: householdIds } } });
     await prisma.orgMembershipProcess.deleteMany({ where: { orgMembership: { householdId: { in: householdIds } } } });
     await prisma.programParticipant.deleteMany({ where: { personId: { in: personIds } } });
     await prisma.programVolunteer.deleteMany({ where: { personId: { in: personIds } } });
@@ -133,6 +135,25 @@ describe('a role grant racing an archive', () => {
         await expect(prisma.$transaction((tx) => setRoleFlag(tx, personId, 'isKeyholder', true, boardActor())))
             .rejects.toBeInstanceOf(ArchivedHouseholdError);
         expect(await prisma.personRole.count({ where: { personId } })).toBe(0);
+    });
+});
+
+describe('a pending trusted-adult review', () => {
+    it('refuses the archive until it is settled', async () => {
+        const { householdId, personId } = await household();
+        const ta = await prisma.trustedAdult.create({
+            data: {
+                householdId, trustedAdultName: `Grandma ${TAG}`, trustedAdultPhone: '555-0100', familyContext: 'May pick up the kids',
+                disclosedById: personId, reviews: { create: { householdId, kind: 'INITIAL', status: 'PENDING_BOARD_REVIEW' } },
+            },
+            include: { reviews: true },
+        });
+        await expect(archiveHousehold(householdId, boardId)).rejects.toMatchObject({ status: 409, message: expect.stringContaining('trusted-adult review') });
+        expect(await prisma.household.findUnique({ where: { id: householdId } })).not.toBeNull();
+
+        await prisma.trustedAdultReview.update({ where: { id: ta.reviews[0].id }, data: { status: 'REVOKED' } });
+        await archiveHousehold(householdId, boardId);
+        expect(await prisma.household.findUnique({ where: { id: householdId } })).toBeNull();
     });
 });
 
