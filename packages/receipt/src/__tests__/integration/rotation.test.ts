@@ -2,7 +2,7 @@ import { beforeEach, expect, it } from "vitest";
 import { db } from "../../db";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
-import { ALICE, BOB, FINANCE, actAs, clearAll, configure, manualDetails, recordingPorts, textFile } from "../helpers/setup";
+import { ALICE, BOB, FINANCE, actAs, clearAll, configure, failingOcr, manualDetails, okOcr, recordingPorts, textFile } from "../helpers/setup";
 
 beforeEach(async () => {
   await clearAll();
@@ -40,6 +40,18 @@ describeDb("receipt image rotation", () => {
     const after = await stored(r.id);
     expect(after.details).toEqual(before.details);
     expect({ ...after, rotation: 0 }).toEqual(before);
+  });
+
+  it("reads the receipt again turned as it was saved", async () => {
+    const ports = recordingPorts();
+    configure({ receiptSink: ports.receiptSink, donorSink: ports.donorSink, ocr: failingOcr("data") });
+    const r = await receiptService.upload(textFile(), "text/plain", {});
+    await receiptService.setRotation(r.id, { rotation: 270 }, "submitter");
+    const turns: (number | undefined)[] = [];
+    const ocr = okOcr();
+    configure({ receiptSink: ports.receiptSink, donorSink: ports.donorSink, ocr: { extract: (f, m, rotation) => (turns.push(rotation), ocr.extract(f, m)) } });
+    await receiptService.retryOcr(r.id, "submitter");
+    expect(turns).toEqual([270]);
   });
 
   it("refuses a submitter rotating someone else's receipt", async () => {

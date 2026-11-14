@@ -184,7 +184,8 @@ export const OCR_FILE_REFUSED = "the reading service refused the file";
 
 /** Reads a stored receipt file. Never throws: every failure is `{ success: false }`. */
 export interface OcrProvider {
-  extract(file: Buffer, mimeType: string): Promise<OcrResult>;
+  /** `rotation` is the clockwise turn, in degrees, that shows the receipt's image upright. */
+  extract(file: Buffer, mimeType: string, rotation?: number): Promise<OcrResult>;
 }
 
 // ── Mail intake (phase G) ────────────────────────────────────────────────────

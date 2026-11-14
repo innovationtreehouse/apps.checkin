@@ -343,6 +343,9 @@ export const INLINE_FLOOR_BYTES = 5 * 1024;
 /** A money amount: a number with two decimal places. A body without one is trivial. */
 const MONEY_AMOUNT = /\d\.\d{2}(?!\d)/;
 
+/** An HTML body's visible text: its style blocks and tags (with their style attributes) hold CSS numbers, never amounts. */
+const visibleText = (html: string) => html.replace(/<style\b[\s\S]*?<\/style\s*>/gi, " ").replace(/<[^>]*>/g, " ");
+
 /**
  * A message's candidate files, read in this order: each attachment of an accepted type, each inline
  * part of an accepted non-text type at or over the floor, then the body, stored as text, unless it
@@ -376,7 +379,8 @@ export function mailFiles(msg: MailMessage, reader: MailboxReader): { files: Mai
   const body = bodyPart("text/plain") ?? bodyPart("text/html");
   const files = [...attachments, ...sized].map((p) => file(p));
   if (body) {
-    if (MONEY_AMOUNT.test(Buffer.from(body.body?.data ?? "", "base64url").toString())) files.push({ ...file(body, "text/plain"), body: true });
+    const text = Buffer.from(body.body?.data ?? "", "base64url").toString();
+    if (MONEY_AMOUNT.test(typeOf(body) === "text/html" ? visibleText(text) : text)) files.push({ ...file(body, "text/plain"), body: true });
     else ignored++;
   }
   return { files, ignored, refused };
