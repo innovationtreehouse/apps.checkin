@@ -27,7 +27,13 @@ export const GET = handler('GET /api/finance-ops/payment-plans', async ({ req })
             // PENDING_HOLD_FAILED. Consume the definition's `where` so the split
             // can't drift from the state table.
             where: { ...(holdsQueue ? STATES.PENDING_HOLD_FAILED.where : STATES.PENDING_HELD.where) },
-            include: {
+            // Every column is chosen: the queue pages read only these, and a
+            // participant column added later stays out until someone selects it.
+            select: {
+                programId: true,
+                personId: true,
+                pendingSince: true,
+                scholarshipRequestKind: true,
                 // Nests household→orgMembership so the board can see CURRENT
                 // membership while a request is still pending —
                 // wasOrgMemberAtApproval is null until approved, so it can't
