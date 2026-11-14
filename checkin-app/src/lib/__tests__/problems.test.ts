@@ -137,6 +137,35 @@ describe("sendProblemsDigest", () => {
         expect(ctx.items).toContain("qbo-posting");
     });
 
+    it("sends a job whose latest run reported failures, without its error text", async () => {
+        jest.mocked(getCronJobStatuses).mockResolvedValue([
+            { job: "reconcile-shopify", lastSuccessAt: hoursAgo(2), stale: false, lastError: "1 item(s) failed", lastErrorAt: hoursAgo(2) },
+        ]);
+
+        await sendProblemsDigest(NOW);
+
+        expect(jest.mocked(sendTemplated).mock.calls.map((c) => c[1])).toEqual(["alerts@example.org"]);
+        expect(digestCtx().items).toMatch(/^Scheduled job reconcile-shopify: last run reported failures, /);
+        expect(digestCtx().items).not.toContain("item(s) failed");
+    });
+
+    it("sends nothing for a job once a later run is clean", async () => {
+        jest.mocked(getCronJobStatuses).mockResolvedValue([{ job: "reconcile-shopify", lastSuccessAt: hoursAgo(1), stale: false }]);
+        await sendProblemsDigest(NOW);
+        expect(sendTemplated).not.toHaveBeenCalled();
+    });
+
+    it("lists a job that is late and failing once, as late", async () => {
+        jest.mocked(getCronJobStatuses).mockResolvedValue([
+            { job: "nightly", lastSuccessAt: hoursAgo(72), stale: true, lastError: "boom", lastErrorAt: hoursAgo(1) },
+        ]);
+
+        await sendProblemsDigest(NOW);
+
+        expect(digestCtx().count).toBe("1");
+        expect(digestCtx().items).toMatch(/^Scheduled job nightly: last ran /);
+    });
+
     it("an unset address sends nothing, with no fallback", async () => {
         findSettings.mockResolvedValue({ alertEmailAddress: " ", boardEmailAddress: null });
         expense.stuckItems.mockResolvedValue([{ id: "e1", step: "intake", href: null, failedAt: hoursAgo(20 * 24) }]);

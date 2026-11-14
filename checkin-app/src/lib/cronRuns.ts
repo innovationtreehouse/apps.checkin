@@ -24,7 +24,7 @@ export const CRON_STALE_AFTER_MS = 48 * 60 * 60 * 1000;
  *     than as stopped. A failure the job has since recovered from is history, not
  *     a status: the next clean run clears it.
  */
-export type CronJobStatus = { job: string; lastSuccessAt: Date; stale: boolean; lastError?: string };
+export type CronJobStatus = { job: string; lastSuccessAt: Date; stale: boolean; lastError?: string; lastErrorAt?: Date };
 
 /** Route slug for the run ledger: the last path segment of /api/cron/<job>. */
 export function cronJobName(url: string): string {
@@ -101,7 +101,7 @@ async function lastRunByJob() {
     const rows = await prisma.cronRunLog.findMany({
         orderBy: [{ job: "asc" }, { finishedAt: "desc" }],
         distinct: ["job"],
-        select: { job: true, success: true, error: true },
+        select: { job: true, success: true, error: true, finishedAt: true },
     });
     return new Map(rows.map((r) => [r.job, r]));
 }
@@ -127,7 +127,7 @@ export async function getCronJobStatuses(now: Date = new Date()): Promise<CronJo
                 job,
                 lastSuccessAt,
                 stale: now.getTime() - lastSuccessAt.getTime() > CRON_STALE_AFTER_MS,
-                ...(unclean ? { lastError: latest.error ?? "unknown error" } : {}),
+                ...(unclean ? { lastError: latest.error ?? "unknown error", lastErrorAt: latest.finishedAt } : {}),
             };
         })
         .sort((a, b) => a.lastSuccessAt.getTime() - b.lastSuccessAt.getTime());

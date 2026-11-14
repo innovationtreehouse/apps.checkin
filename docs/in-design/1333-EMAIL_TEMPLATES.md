@@ -158,9 +158,9 @@ diff is behavior-neutral on wording. The old inline builders and hardcoded subje
   `sampleCtx` (client-side, reusing the shared substitute fn so preview can't drift from send)
   → save (token-validated) → optional **send-to-self** (reuse the outreach test-send pattern).
 
-## Key list (62)
+## Key list (58)
 
-60 keys are in the registry. The 2 `outreach.*` keys join it in step 5, because outreach has
+56 keys are in the registry. The 2 `outreach.*` keys join it in step 5, because outreach has
 no default copy in code today (the Board writes it, and it is empty until they do).
 `link` tokens are noted; everything else is `text`. Tokens are named after the words they
 stand for in today's copy, so a key without a link today has no `actionLink`.
@@ -223,22 +223,18 @@ stand for in today's copy, so a key without a link today has no `actionLink`.
 | `ops.incidentReminder` | an incident is still open when its reminder falls due | the alert address setting (nothing sent if unset) | same as `ops.incidentOpened` |
 | `ops.incidentEscalated` | an incident has been open for 2 weeks | the Board address setting (nothing sent if unset) | same as `ops.incidentOpened` |
 | `ops.incidentRecovered` | a run covers every lane of an open incident without failing it | the alert address setting (nothing sent if unset) | same as `ops.incidentOpened` |
-| `ops.problemsDigest` | daily, while an item has been stuck over a day, a job has not run on time, a library's stuck items could not be read, or a library has a notice of its own (`sendProblemsDigest`) | the alert address setting (nothing sent if unset); also the Board address setting once a stuck item or late job has waited over 14 days | count, items, `actionLink` ("Open System Status") |
+| `ops.problemsDigest` | daily, while an item has been stuck over a day, a job has not run on time or its latest run reported failures, a library's stuck items could not be read, or a library has a notice of its own (`sendProblemsDigest`) | the alert address setting (nothing sent if unset); also the Board address setting once a stuck item or late job has waited over 14 days | count, items, `actionLink` ("Open System Status") |
 
 > The incident emails carry codes, counts and dates only, with no amounts, donor or vendor
 > names, or memo text. The digest carries ids, steps and dates only, with no error text,
 > amounts, or donor or vendor names.
 
-### finance — 13
+### finance — 9
 | key | trigger | recipient | tokens |
 |-----|---------|-----------|--------|
 | `finance.receiptMailCeiling` | receipt mail intake hits its hold ceiling | the alert address setting (nothing sent if unset) | unresolved, refused, `actionLink` ("Open the incoming receipt queue") |
 | `finance.incomePostCap` | income run stops at its per-run cap | the alert address setting (nothing sent if unset) | created, limit, remaining, `actionLink` ("Open income reconciliation") |
 | `finance.receiptMailAgeing` | receipt mail run leaves messages unread past the window | the alert address setting (nothing sent if unset) | messages, since, `actionLink` ("Open the incoming receipt queue") |
-| `finance.receiptMailboxUnreadable` | receipt mail run cannot list the mailbox: Gmail refused access | the alert address setting (nothing sent if unset) | `actionLink` ("Open the incoming receipt queue") |
-| `finance.receiptMailboxUnanswered` | receipt mail run cannot list the mailbox: Gmail did not answer | the alert address setting (nothing sent if unset) | `actionLink` ("Open the incoming receipt queue") |
-| `finance.receiptMailboxNotFound` | receipt mail run cannot list the mailbox: no such mailbox | the alert address setting (nothing sent if unset) | `actionLink` ("Open the incoming receipt queue") |
-| `finance.receiptMailboxFailed` | receipt mail run cannot list the mailbox: unexpected failure | the alert address setting (nothing sent if unset) | `actionLink` ("Open the incoming receipt queue") |
 | `finance.incomeBucketUnusable` | a budget-owner bucket can't take sales | the alert address setting (nothing sent if unset) | bucketName, issue, itemCount, `actionLink` ("Open income items") |
 | `finance.incomeSweepIncomplete` | income orphan sweep reads a full page | the alert address setting (nothing sent if unset) | since, `actionLink` ("Open income reconciliation") |
 | `finance.expensePaymentAccount` | books-map payment account can't post | the alert address setting (nothing sent if unset) | accountId, accountKind, `actionLink` ("Open the books map") |
