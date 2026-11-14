@@ -7,6 +7,7 @@
 
 import prisma from '@/lib/prisma';
 import { manualEditAttendance, type EventEditContext } from '@/lib/programs/events';
+import { ArchivedHouseholdError } from '@/lib/household/archiveGuard';
 
 interface EnrollmentRow {
     status: string;
@@ -29,6 +30,11 @@ jest.mock('@/lib/prisma', () => ({
 }));
 
 jest.mock('@/lib/getFullAttendance', () => ({ invalidateAttendanceCache: jest.fn() }));
+// The archived-household guard has its own tests; here every household is live.
+jest.mock('@/lib/household/archiveGuard', () => ({
+    ...jest.requireActual('@/lib/household/archiveGuard'),
+    lockLiveHouseholdsOf: jest.fn(),
+}));
 
 const SESSION_START = new Date('2026-06-10T18:00:00Z');
 const ctx = {
@@ -101,4 +107,10 @@ it('records the arrival and departure source of a detached badged visit', async 
             },
         })],
     });
+});
+
+it('refuses a correction for someone in an archived household', async () => {
+    enrollment = { status: 'ACTIVE', endedAt: null };
+    (prisma.$transaction as jest.Mock).mockRejectedValueOnce(new ArchivedHouseholdError());
+    expect(await correct()).toMatchObject({ ok: false, refusal: 'conflict', message: expect.stringContaining('archived') });
 });

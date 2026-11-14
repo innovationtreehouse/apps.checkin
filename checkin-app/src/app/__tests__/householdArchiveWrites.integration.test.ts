@@ -187,6 +187,16 @@ describe('writes to an archived household answer 409', () => {
         expect(await prisma.visit.count({ where: { personId } })).toBe(0);
     });
 
+    it('POST /api/attendance/manual: a member recording their own visit', async () => {
+        const { POST } = await import('@/app/api/attendance/manual/route');
+        const { personId } = await archivedHousehold();
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: personId } });
+        const departedAt = new Date(Date.now() - 3600000);
+        const arrivedAt = new Date(departedAt.getTime() - 3600000);
+        await expectArchivedRefusal(await POST(request('/api/attendance/manual', 'POST', { arrivedAt: arrivedAt.toISOString(), departedAt: departedAt.toISOString() })));
+        expect(await prisma.visit.count({ where: { personId } })).toBe(0);
+    });
+
     it('POST /api/membership-ops/households: a denial', async () => {
         const { POST } = await import('@/app/api/membership-ops/households/route');
         const { householdId } = await archivedHousehold();
