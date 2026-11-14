@@ -10,12 +10,13 @@ import { blankPerson, type MembershipForm, type PersonFields } from "./membershi
 type ChildField = Exclude<keyof PersonFields, "over25">;
 
 /** The INTAKE step: household, guardians, children and notes, with save and submit. */
-export default function IntakePanel({ form, fieldErrors, clearErr, message, saving, onSave, onSubmit }: {
+export default function IntakePanel({ form, fieldErrors, clearErr, message, saving, locked, onSave, onSubmit }: {
   form: MembershipForm;
   fieldErrors: Record<string, string>;
   clearErr: (key: string) => void;
   message: { text: string; tone: AlertTone } | undefined;
   saving: boolean;
+  locked: boolean;
   onSave: () => void;
   onSubmit: () => void;
 }) {
@@ -111,8 +112,8 @@ export default function IntakePanel({ form, fieldErrors, clearErr, message, savi
         )}
 
         <Group gap="md" wrap="wrap">
-          <Button variant="default" disabled={saving} loading={saving} onClick={onSave}>Save progress</Button>
-          <Button disabled={saving} loading={saving} onClick={onSubmit}>Submit &amp; continue</Button>
+          <Button variant="default" disabled={saving || locked} loading={saving} onClick={onSave}>Save progress</Button>
+          <Button disabled={saving || locked} loading={saving} onClick={onSubmit}>Submit &amp; continue</Button>
         </Group>
       </Stack>
     </Card>
