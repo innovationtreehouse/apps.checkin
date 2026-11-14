@@ -176,10 +176,17 @@ One service function, `markCheckStarted(subjectPersonId, actorId)`:
    out, and not a person whose household has no application under way.
 3. **Open or reuse the person's review** under the Person row lock that
    `openPersonBg` already takes, so two marks never open two reviews:
-   - **Reuse** the person's open review (PENDING_BG_REVIEW) if there is one. It may
-     have been opened by activation or the yearly sweep.
-   - **Otherwise create** one, with `subjectPersonId` set and
-     `requestedForHouseholdId` set to the person's household.
+   - **Reuse** the person's open review if there is one. "Open" is `personBgOpen`:
+     PENDING_BG_REVIEW or BLOCKED, the same set `openPersonBg` reads before it
+     declines to open a second. A PENDING_BG_REVIEW review may have been opened by
+     activation or the yearly sweep.
+   - **A BLOCKED review is left as it is.** The mark writes nothing and creates
+     nothing. The review already carries the flag and a rejection, and only the
+     review's own paths move it. The call returns the person's current state, so
+     the panel shows "nothing to do".
+   - **Create** one only when the person has no open review, with
+     `subjectPersonId` set and `requestedForHouseholdId` set to the person's
+     household.
 
    This step does not go through the yearly sweep's "is a check needed" verdict. A
    check someone has actually started is reviewed even when the re-check policy is
@@ -583,7 +590,9 @@ These are named for the build PR. None run for this doc.
     household refused.
   - A known minor is refused. A person of unknown age, a cleared person and a
     person whose household has no application under way are all accepted.
-  - Reuse versus create.
+  - Reuse versus create: a PENDING_BG_REVIEW review is reused. A BLOCKED review
+    is left untouched, with no second review and no audit row. A review is
+    created only when none is open.
   - `requestedForHouseholdId` is filled.
   - Concurrent marks open one review and write one audit row.
   - Reviewers are notified once.
