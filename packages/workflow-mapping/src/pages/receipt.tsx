@@ -429,11 +429,12 @@ function LineForm({ start, busy, onSubmit, onCancel, onNonInventory }: {
             </ScrollArea.Autosize>
           )}
           <Group>
-            <Button size="xs" variant="light" onClick={() => { setName(search.trim()); setForm("propose"); }}>Propose new item</Button>
+            <Button size="xs" variant="light" onClick={() => { setName(search.trim() || name); setForm("propose"); }}>Propose new item</Button>
           </Group>
         </>
       ) : (
         <>
+          {start.name && <Text size="xs" c="dimmed">Choose the category, subcategory and usage again</Text>}
           <TextInput size="xs" placeholder="Proposed name" value={name} onChange={(e) => setName(e.currentTarget.value)} />
           <Select
             size="xs"

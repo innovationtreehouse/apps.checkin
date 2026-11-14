@@ -42,13 +42,13 @@ describe("lineFormBody", () => {
 
 describe("lineFormStart", () => {
   it("saving a decided line unchanged keeps its part and conversion factor", () => {
-    const start = lineFormStart({ assignedGtin13: "0022222222220", conversionFactor: 12 });
+    const start = lineFormStart({ assignedGtin13: "0022222222220", proposedName: null, conversionFactor: 12 });
     expect(lineFormBody("associate", start)).toEqual({ gtin13: "0022222222220", conversionFactor: 12 });
   });
 
-  it("keeps the factor when a decided line is re-proposed", () => {
-    const start = lineFormStart({ assignedGtin13: null, conversionFactor: 4 });
-    expect(lineFormBody("propose", { ...start, name: "Towels", categoryId: "3", subcategoryId: "12", usage: "Durable" }))
-      .toMatchObject({ conversionFactor: 4 });
+  it("keeps the name and factor when a proposed line is re-proposed", () => {
+    const start = lineFormStart({ assignedGtin13: null, proposedName: "Towels", conversionFactor: 4 });
+    expect(lineFormBody("propose", { ...start, categoryId: "3", subcategoryId: "12", usage: "Durable" }))
+      .toMatchObject({ proposedName: "Towels", conversionFactor: 4 });
   });
 });
