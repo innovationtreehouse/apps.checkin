@@ -62,7 +62,7 @@ WHERE kind IN ('INITIAL','RENEWAL') AND "bgConsentAt" IS NOT NULL
                  'PENDING_BG_CLEARANCE','BLOCKED','PENDING_RENEWAL','RENEWAL_PENDING_BG');
 ```
 
-The status list must match `openProcess` in `lib/membership/lifecycle.ts` at the
+The status list must match `openProcess` in `checkin-app/src/lib/membership/lifecycle.ts` at the
 time it is run. Re-read it there; do not trust this copy.
 
 Applications clear, finish or are closed in the normal course of things. A few
@@ -83,7 +83,7 @@ before starting the next.
 
    It ships no route file. The route-coverage lint treats a registry entry with no
    route file as the sanctioned register-first state: it warns and does not block.
-   Only security tests (`src/security/__tests__/`) may accompany it.
+   Only security tests (`checkin-app/src/security/__tests__/`) may accompany it.
 2. **App: build it.** Everything in the design file:
    - `markCheckStarted`, `dismissCheckStarted` and `householdCheckStarted`, plus
      the legacy clause.
@@ -93,7 +93,7 @@ before starting the next.
    - The dev mock.
    - Removal of the `mark-bg-consent` action.
    - Deletion of `POST /api/membership/bg-consent` and its line in
-     `scripts/legacy-authz-routes.txt`.
+     `checkin-app/scripts/legacy-authz-routes.txt`.
    - The wording changes and the schema comment on `bgConsentAt`.
 
    In the same PR, per `DOCUMENTATION_STANDARD.md` §3.7 and §4:
