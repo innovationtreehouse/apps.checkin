@@ -47,7 +47,7 @@ export async function POST(req: NextRequest): Promise<Response> {
             },
         });
         if (failure !== null) {
-            if (!isServiceError(failure)) throw failure;
+            if (!isServiceError(failure)) throw new Error(`${item.library} retry of ${item.step} threw`);
             status = failure.status;
         }
         return { ProblemRetryResult: [{ step: item.step, id: item.id, ok: failure === null }] };

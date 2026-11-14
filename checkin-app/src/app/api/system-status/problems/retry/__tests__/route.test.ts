@@ -156,6 +156,7 @@ describe('POST /api/system-status/problems/retry', () => {
         expect(res.status).toBe(500);
         expect(await res.text()).not.toMatch(/Pat/);
         expect(logged).toHaveBeenCalled();
+        expect(JSON.stringify(logged.mock.calls, (_k, v: unknown) => (v instanceof Error ? v.message : v))).not.toMatch(/Pat/);
         expect(auditCreate.mock.calls[0][0].data.newData).toMatchObject({ ok: false });
     });
 
