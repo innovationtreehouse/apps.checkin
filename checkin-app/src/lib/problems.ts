@@ -1,6 +1,6 @@
 import type { StuckItem } from "@checkin/component-kit";
 import { config } from "@/lib/config";
-import { getCronJobStatuses } from "@/lib/cronRuns";
+import { getCronJobStatuses, type CronJobStatus } from "@/lib/cronRuns";
 import { sendTemplated } from "@/lib/email-templates/send";
 import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
@@ -59,9 +59,12 @@ const BOARD_AFTER_MS = 14 * DAY_MS;
 
 const address = (value: string | null | undefined): string | null => value?.trim() || null;
 
+/** A job whose latest run reported failures; a late job is listed as late instead. */
+export const failingJob = (j: CronJobStatus): boolean => Boolean(j.lastError) && !j.stale;
+
 /**
- * The daily email: while anything has been stuck more than a day, a job has not run on time, or a
- * library has a line of its own, the alert address gets the list; the Board address gets a copy once anything has been stuck more than
+ * The daily email: while anything has been stuck more than a day, a job has not run on time or its
+ * latest run reported failures, or a library has a line of its own, the alert address gets the list; the Board address gets a copy once anything has been stuck more than
  * two weeks. Ids, steps and dates only. An unset address sends nothing. Never throws.
  *
  * ponytail: it sends on every nightly run, so a same-night rerun of the nightly job sends it twice.
@@ -76,12 +79,14 @@ export async function sendProblemsDigest(now = new Date()): Promise<void> {
         const age = (at: Date) => now.getTime() - at.getTime();
         const stuck = items.filter((i) => age(i.failedAt) > DAY_MS);
         const stale = jobs.filter((j) => j.stale);
-        if (stuck.length === 0 && stale.length === 0 && unread.length === 0 && notices.length === 0) return;
+        const failing = jobs.filter(failingJob);
+        if (stuck.length === 0 && stale.length === 0 && failing.length === 0 && unread.length === 0 && notices.length === 0) return;
 
         const when = (at: Date) => formatDateTime(at, { timeZone: APP_TIMEZONE, dateStyle: "medium", timeStyle: "short" });
         const lines = [
             ...stuck.map((i) => `${i.library}, ${i.step}: ${i.id}, stuck since ${when(i.failedAt)}`),
             ...stale.map((j) => `Scheduled job ${j.job}: last ran ${when(j.lastSuccessAt)}`),
+            ...failing.map((j) => `Scheduled job ${j.job}: last run reported failures, ${when(j.lastErrorAt ?? j.lastSuccessAt)}`),
             ...unread.map((library) => `${library}: its stuck items could not be read`),
             ...notices,
         ];
