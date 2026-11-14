@@ -75,9 +75,13 @@ export async function lookupProductVariantsByUrl(productUrl: string): Promise<{ 
     if (!handle) throw new ProductUrlError("The URL must be a product page: https://<store>/products/<product-handle>.", 400);
 
     const storeDomain = config.shopifyStoreDomain();
-    const accessToken = storeDomain ? await getAccessToken() : null;
-    if (!storeDomain || !accessToken) {
+    if (!storeDomain || !config.shopifyClientId() || !config.shopifyClientSecret()) {
         throw new ProductUrlError("Shopify is not configured on this instance, so the product cannot be looked up.", 400);
+    }
+    const accessToken = await getAccessToken();
+    if (!accessToken) {
+        await logIntegrationError("shopify", new Error("No Shopify access token could be obtained"), { operation: "lookupProductVariantsByUrl", handle });
+        throw new ProductUrlError("Could not sign in to Shopify — check the Shopify app credentials, then try again.", 502);
     }
 
     let product: AdminProduct | null;

@@ -45,18 +45,19 @@ const variant = (id: number, title: string, price: string) => ({ id, title, pric
 const products = (...list: unknown[]) => jsonResponse(200, { products: list });
 
 describe('POST /api/settings/membership/extract-variant', () => {
-    const prevDomain = process.env.SHOPIFY_STORE_DOMAIN;
+    const prevEnv = { ...process.env };
 
     beforeEach(() => {
         jest.clearAllMocks();
         process.env.SHOPIFY_STORE_DOMAIN = STORE;
+        process.env.SHOPIFY_CLIENT_ID = 'test-client';
+        process.env.SHOPIFY_CLIENT_SECRET = 'test-secret';
         (getAccessToken as jest.Mock).mockResolvedValue('shpat_test');
         asBoard();
     });
 
     afterAll(() => {
-        if (prevDomain === undefined) delete process.env.SHOPIFY_STORE_DOMAIN;
-        else process.env.SHOPIFY_STORE_DOMAIN = prevDomain;
+        process.env = prevEnv;
     });
 
     it('401 when unauthenticated, and never calls Shopify', async () => {
@@ -142,10 +143,21 @@ describe('POST /api/settings/membership/extract-variant', () => {
         expect(fetchMock).not.toHaveBeenCalled();
     });
 
-    it('400 without calling Shopify when no access token can be obtained', async () => {
-        (getAccessToken as jest.Mock).mockResolvedValue(null);
+    it('400 without calling Shopify when the Shopify app credentials are not configured', async () => {
+        delete process.env.SHOPIFY_CLIENT_SECRET;
         const res = await POST(req({ productUrl: GOOD_URL }));
         expect(res.status).toBe(400);
+        expect((await res.json()).error).toMatch(/not configured/);
+        expect(getAccessToken).not.toHaveBeenCalled();
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('502, logged, without calling Shopify when the token exchange fails on a configured store', async () => {
+        (getAccessToken as jest.Mock).mockResolvedValue(null);
+        const res = await POST(req({ productUrl: GOOD_URL }));
+        expect(res.status).toBe(502);
+        expect((await res.json()).error).toMatch(/Could not sign in to Shopify/);
+        expect(logIntegrationError).toHaveBeenCalledWith('shopify', expect.any(Error), expect.objectContaining({ handle: 'annual-membership' }));
         expect(fetchMock).not.toHaveBeenCalled();
     });
 
