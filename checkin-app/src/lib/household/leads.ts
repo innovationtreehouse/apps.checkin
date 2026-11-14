@@ -2,6 +2,7 @@ import { type DbClient, type TxClient, withTx } from "@/lib/db-client";
 import prisma from "@/lib/prisma";
 import { isYouth } from "@/lib/time";
 import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
+import { lockLiveHouseholds } from "@/lib/household/archiveGuard";
 
 /**
  * Shared household-lead ownership check. Loads the person and
@@ -113,10 +114,10 @@ async function addHouseholdLeadTx(
     // household serializes with the promotion.
     const denied = await lockAndFindDeniedHousehold(tx, [householdId]) !== null;
 
-    // FOR UPDATE serializes lead additions for this household. Postgres' default
+    // The row lock serializes lead additions for this household. Postgres' default
     // Read Committed isolation does NOT prevent two transactions from both
     // counting N and both flagging — the explicit lock is what does.
-    await tx.$queryRaw`SELECT id FROM "Household" WHERE id = ${householdId} FOR UPDATE`;
+    await lockLiveHouseholds(tx, [householdId]);
 
     const person = await tx.person.findUnique({
         where: { id: participantId },
@@ -191,7 +192,7 @@ async function removeHouseholdLeadTx(
     householdId: number,
     participantId: number,
 ): Promise<RemoveLeadResult> {
-    await tx.$queryRaw`SELECT id FROM "Household" WHERE id = ${householdId} FOR UPDATE`;
+    await lockLiveHouseholds(tx, [householdId]);
 
     const person = await tx.person.findUnique({
         where: { id: participantId },

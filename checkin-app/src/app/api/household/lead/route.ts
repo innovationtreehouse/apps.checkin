@@ -6,6 +6,7 @@ import { addHouseholdLead, removeHouseholdLead, HouseholdLeadLimitError, Househo
 import { apiError } from "@/lib/api-response";
 import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
 import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
+import { ArchivedHouseholdError } from "@/lib/household/archiveGuard";
 
 export const POST = withAuth(
     {},
@@ -71,6 +72,7 @@ export const POST = withAuth(
             return NextResponse.json({ lead: newLead, message: "Member promoted to lead successfully." }, { status: 200 });
 
         } catch (error: unknown) {
+            if (error instanceof ArchivedHouseholdError) return apiError(error.message, error.status);
             if (error instanceof HouseholdLeadLimitError) {
                 return apiError(error.message, 400);
             }
@@ -152,6 +154,7 @@ export const DELETE = withAuth(
             return NextResponse.json({ message: "Lead removed successfully." }, { status: 200 });
 
         } catch (error: unknown) {
+            if (error instanceof ArchivedHouseholdError) return apiError(error.message, error.status);
             logger.error("Household Lead DELETE Error:", error);
             return apiError("Internal Server Error", 500);
         }

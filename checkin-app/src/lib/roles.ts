@@ -2,6 +2,7 @@ import type { PersonRoleKind } from "@/generated/prisma/client";
 import { type DbClient, type TxClient, withTx } from "@/lib/db-client";
 import { personActor, systemActor, type SystemActorName } from "@/lib/auditActor";
 import { resolveActorHouseholdId, sharesHousehold } from "@/lib/conflictOfInterest";
+import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
 
 /**
  * The ONE hand-written map: session/JWT authority flag -> PersonRole table kind.
@@ -217,6 +218,8 @@ export async function setRoleFlag(
         if (before === on) return { changed: false, before, after: before };
 
         if (!("system" in actor)) await assertNotOwnHousehold(tx, actor.id, personId);
+        // Nobody in an archived household gains a role. Removing one is always allowed.
+        if (on) await lockLiveHouseholdsOf(tx, [personId]);
 
         if (!("system" in actor)) {
             if (!actor.isBoardMember) {

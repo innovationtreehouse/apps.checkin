@@ -138,6 +138,21 @@ Things the app takes as true because they are handled outside it.
   household starts with no org membership: a membership stays with the household
   it belongs to.  [Decision]
 
+### Archived households
+
+- An archived household refuses every change until the Board unarchives it. Nobody
+  is added to it, moved into or out of it, edited, or made or unmade its lead; its
+  address, settings and emergency contacts stay as they are; it starts no
+  application and takes no board grant or denial. None of its members gains a role,
+  staging access, a bucket owner or treasurer place, a program lead or volunteer
+  place, an enrollment or a manual visit, and none is merged. Removing a role from
+  one of them is allowed.  [Decision — owner ruling HA-9]
+
+- An archive and a change to the same household never both land: whichever comes
+  second sees the first, so the archive is refused for the role, enrollment or
+  application just added, or the change is refused because the household is now
+  archived.  [Decision]
+
 ### Identity and age
 
 - Every household member has a date of birth or an over-25 declaration, never

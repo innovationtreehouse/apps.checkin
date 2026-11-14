@@ -10,6 +10,7 @@
  * as a mocked-prisma unit test.
  */
 import { getIntakeState, startIntake, saveIntake, submitIntake, IntakeError } from '@/lib/membership/intake';
+import { ArchivedHouseholdError, lockLiveHouseholds } from '@/lib/household/archiveGuard';
 import { Prisma } from '@/generated/prisma/client';
 import { findSelfGrantRefusal, recordSelfGrantRefusal } from '@/lib/membership/selfGrantGuard';
 import { invalidateAttendanceCache } from '@/lib/getFullAttendance';
@@ -26,6 +27,13 @@ const mockHousehold = { update: jest.fn() };
 const tx = { $queryRaw: txQueryRaw, person: mockPerson, household: mockHousehold, orgMembershipProcess: txMembershipProcess, auditLog: txAuditLog };
 /** The id txQueryRaw hands back for mintPersonId. */
 const MINTED_ID = 2503;
+
+// The archived-household guard has its own tests; here every household is live.
+jest.mock("@/lib/household/archiveGuard", () => ({
+    ...jest.requireActual("@/lib/household/archiveGuard"),
+    lockLiveHouseholds: jest.fn(),
+    lockLiveHouseholdsOf: jest.fn(),
+}));
 
 jest.mock('@/lib/logger', () => ({ logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() }, logBackendError: jest.fn() }));
 jest.mock('@/lib/person/mailAliases', () => ({ removeAliasesForSignInEmail: jest.fn() }));
@@ -175,6 +183,15 @@ describe('startIntake race guard', () => {
         underLock('REVOKED', [{ id: 60, kind: 'RENEWAL', status: 'PENDING_PAYMENT' }]);
 
         await expect(startIntake(1)).rejects.toMatchObject({ code: 'renewal_open' });
+        expect(txMembershipProcess.create).not.toHaveBeenCalled();
+    });
+
+    it('archived: an archived household starts no application', async () => {
+        underLock('NONE', []);
+        (lockLiveHouseholds as jest.Mock).mockRejectedValueOnce(new ArchivedHouseholdError());
+
+        await expect(startIntake(1)).rejects.toBeInstanceOf(ArchivedHouseholdError);
+        expect(lockLiveHouseholds).toHaveBeenCalledWith(expect.anything(), [7]);
         expect(txMembershipProcess.create).not.toHaveBeenCalled();
     });
 
@@ -368,6 +385,13 @@ describe('saveIntake', () => {
         prisma.person.findUnique.mockResolvedValue(baseUser);
         getExternalStatus.mockResolvedValue(null);
         prisma.volunteerDesignation.findMany.mockResolvedValue([{ email: 'volunteer@gmail.com' }]);
+    });
+
+    it('saves nothing for an archived household', async () => {
+        (lockLiveHouseholds as jest.Mock).mockRejectedValueOnce(new ArchivedHouseholdError());
+        await expect(saveIntake(1, { household: { line1: '1 Main St' } })).rejects.toBeInstanceOf(ArchivedHouseholdError);
+        expect(lockLiveHouseholds).toHaveBeenCalledWith(expect.anything(), [7]);
+        expect(mockPerson.update).not.toHaveBeenCalled();
     });
 
     describe('age fields', () => {

@@ -6,6 +6,7 @@ import { upsertPrimaryContact, EmergencyContactError } from "@/lib/emergencyCont
 import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import { apiError } from "@/lib/api-response";
 import { isYouth } from "@/lib/time";
+import { ArchivedHouseholdError } from "@/lib/household/archiveGuard";
 
 export const POST = withAuth(
     {},
@@ -51,6 +52,7 @@ export const POST = withAuth(
 
             return NextResponse.json({ success: true });
         } catch (error) {
+            if (error instanceof ArchivedHouseholdError) return apiError(error.message, error.status);
             if (error instanceof EmergencyContactError) {
                 return apiError(error.message, 400);
             }

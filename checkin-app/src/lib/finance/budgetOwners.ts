@@ -8,6 +8,8 @@ import { logger } from "@/lib/logger";
 import { config } from "@/lib/config";
 import { quickBooks } from "@/lib/components/ports";
 import { IN_LIVE_HOUSEHOLD } from "@/lib/household/archived";
+import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
+import { ServiceError } from "@checkin/component-kit";
 
 // Budget-owner buckets and their approvers. FINANCE manages buckets;
 // the BOARD sets each bucket's owner and treasurers.
@@ -201,6 +203,16 @@ async function assertMayName(actorId: number, budgetOwnerId: number, personId: n
     }
 }
 
+/** Nobody in an archived household is named an approver. */
+async function lockLiveOrRefuse(tx: Prisma.TransactionClient, personId: number) {
+    try {
+        await lockLiveHouseholdsOf(tx, [personId]);
+    } catch (e) {
+        if (e instanceof ServiceError) throw new ApiResponseError(e.status, e.message);
+        throw e;
+    }
+}
+
 /**
  * Sets or clears a bucket's owner. Nobody names, or removes, themself or anyone
  * in their own household, board members included.
@@ -214,6 +226,7 @@ export async function setBucketOwner(actorId: number, budgetOwnerId: number, per
     if (before.ownerId !== personId) {
         await prisma.$transaction(async (tx) => {
             await lockProgramBucket(tx, budgetOwnerId);
+            if (personId !== null) await lockLiveOrRefuse(tx, personId);
             await tx.budgetOwner.update({ where: { id: budgetOwnerId }, data: { ownerId: personId } });
             await tx.auditLog.create({
                 data: {
@@ -241,6 +254,7 @@ export async function setBucketTreasurer(actorId: number, budgetOwnerId: number,
         await lockProgramBucket(tx, budgetOwnerId);
         const isTreasurer = (await tx.budgetOwnerTreasurer.findUnique({ where: key, select: { personId: true } })) !== null;
         if (isTreasurer === on) return;
+        if (on) await lockLiveOrRefuse(tx, personId);
         if (on) await tx.budgetOwnerTreasurer.create({ data: { budgetOwnerId, personId } });
         else await tx.budgetOwnerTreasurer.delete({ where: key });
         await tx.auditLog.create({

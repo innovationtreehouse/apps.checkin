@@ -3,6 +3,7 @@ import type { EmergencyContact } from "@/generated/prisma/client";
 import { identityKeys, sameIdentity, identityMatchReason, cleanEmail, normalizePhone } from "./identity";
 import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import type { DbClient } from "@/lib/db-client";
+import { lockLiveHouseholds } from "@/lib/household/archiveGuard";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { openProcess } from "@/lib/membership/lifecycle";
 
@@ -124,6 +125,7 @@ export async function assertExternal(db: Db, householdId: number, input: Contact
 }
 
 export async function createContact(db: Db, householdId: number, input: ContactInput): Promise<EmergencyContact> {
+    await lockLiveHouseholds(db, [householdId]);
     requireComplete(input);
     await assertExternal(db, householdId, input);
     const c = cleaned(input);
@@ -145,6 +147,7 @@ export async function createContact(db: Db, householdId: number, input: ContactI
 }
 
 export async function updateContact(db: Db, householdId: number, contactId: number, input: ContactInput): Promise<EmergencyContact> {
+    await lockLiveHouseholds(db, [householdId]);
     requireComplete(input);
     const existing = await db.emergencyContact.findFirst({ where: { id: contactId, householdId } });
     if (!existing) throw new EmergencyContactError("not_found", "Emergency contact not found.");
@@ -170,6 +173,7 @@ export async function updateContact(db: Db, householdId: number, contactId: numb
 }
 
 export async function deleteContact(db: Db, householdId: number, contactId: number): Promise<void> {
+    await lockLiveHouseholds(db, [householdId]);
     const existing = await db.emergencyContact.findFirst({ where: { id: contactId, householdId } });
     if (!existing) throw new EmergencyContactError("not_found", "Emergency contact not found.");
     await db.emergencyContact.delete({ where: { id: contactId } });
@@ -195,6 +199,7 @@ export async function upsertPrimaryContact(
     householdId: number,
     fields: { name?: string | null; phone?: string | null; email?: string | null },
 ): Promise<EmergencyContact | null> {
+    await lockLiveHouseholds(db, [householdId]);
     const primary = await db.emergencyContact.findFirst({
         where: { householdId },
         orderBy: [{ priority: "asc" }, { id: "asc" }],

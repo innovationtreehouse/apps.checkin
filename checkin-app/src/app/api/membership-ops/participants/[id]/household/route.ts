@@ -9,6 +9,7 @@ import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
 import { withIntakeNotesFor } from "@/lib/household/intakeNotes";
 import { lockBoardRoles } from "@/lib/roles";
 import { lockAndFindDeniedHousehold, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
+import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
 
 /** The person's row was deleted, by a merge or otherwise, between the pre-check and the write. */
 class PersonGoneError extends Error {}
@@ -90,6 +91,8 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
             await lockBoardRoles(tx);
             const denied = await lockAndFindDeniedHousehold(tx, requestedHouseholdId === null ? [participant.householdId] : [participant.householdId, requestedHouseholdId]);
             if (denied !== null) throw new DeniedHouseholdMoveError(denied, participantId);
+            // Nobody moves into or out of an archived household.
+            await lockLiveHouseholds(tx, requestedHouseholdId === null ? [participant.householdId] : [participant.householdId, requestedHouseholdId]);
 
             // New household starts as a visitor (no membership) — membership is
             // earned via the application process or set on the households page.
@@ -147,6 +150,9 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
         }
         if (error instanceof StaleSourceHouseholdError) {
             return apiError("This person was moved to another household while you were working. Reload and try again.", 409);
+        }
+        if (error instanceof ArchivedHouseholdError) {
+            return apiError(error.message, error.status);
         }
         if (error instanceof DeniedHouseholdMoveError) {
             await raiseDeniedHouseholdActivity({ householdId: error.householdId, personId: error.personId, what: "household reassign refused" });

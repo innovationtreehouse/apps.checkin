@@ -19,6 +19,7 @@ import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { searchId } from "@/lib/searchId";
 import { withIntakeNotesFor } from "@/lib/household/intakeNotes";
 import { withArchivedHouseholds } from "@/lib/household/archived";
+import { ArchivedHouseholdError } from "@/lib/household/archiveGuard";
 
 export const dynamic = 'force-dynamic';
 
@@ -345,6 +346,7 @@ export const POST = withAuth(
 
             return NextResponse.json({ success: true, message: "No change needed" });
         } catch (error) {
+            if (error instanceof ArchivedHouseholdError) return apiError(error.message, error.status);
             logger.error("Failed to update household membership:", error);
             return apiError("Failed to update membership", 500);
         }

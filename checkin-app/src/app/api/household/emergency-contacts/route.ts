@@ -6,6 +6,7 @@ import { createContact, listContacts, present, EmergencyContactError } from "@/l
 import { isValidEmail } from "@/lib/emergencyContacts/identity";
 import { leadHousehold } from "@/lib/household/leads";
 import { apiError } from "@/lib/api-response";
+import { ArchivedHouseholdError } from "@/lib/household/archiveGuard";
 
 export const GET = withAuth({}, async (_req, auth) => {
     if (auth.type !== "session") return apiError("Unauthorized", 401);
@@ -39,6 +40,7 @@ export const POST = withAuth({}, async (req, auth) => {
         return NextResponse.json({ contact: present(contact) }, { status: 201 });
     } catch (error) {
         if (error instanceof EmergencyContactError) return apiError(error.message, 400);
+        if (error instanceof ArchivedHouseholdError) return apiError(error.message, error.status);
         logger.error("Emergency contact POST error:", error);
         return apiError("Internal Server Error", 500);
     }

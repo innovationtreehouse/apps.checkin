@@ -4,6 +4,7 @@ import type { Prisma, OrgMembershipProcess } from "@/generated/prisma/client";
 import { certifyPaymentPlan, PaymentError } from "@/lib/membership/payment";
 import { IN_FLIGHT_INITIAL, IN_FLIGHT_RENEWAL, settledThisCycleWhere } from "@/lib/membership/lifecycle";
 import type { DbClient } from "@/lib/db-client";
+import { lockLiveHouseholds } from "@/lib/household/archiveGuard";
 import { ensureHouseholdMembership, raiseDeniedHouseholdActivity, type HouseholdStatus } from "@/lib/membership/householdStatus";
 import { householdApplicationOpenOrBlockedWhere, createRenewalProcess, liveMembershipYear } from "@/lib/membership/renewal";
 
@@ -125,6 +126,7 @@ async function openInitial(
             const [locked] = await tx.$queryRaw<{ status: HouseholdStatus }[]>`SELECT status FROM "OrgMembership" WHERE id = ${orgMembershipId} FOR UPDATE`;
             if (locked?.status === "DENIED") return "denied" as const;
             if (locked?.status === "ACTIVE") return "active" as const;
+            await lockLiveHouseholds(tx, [householdId]);
             const open = await tx.orgMembershipProcess.findMany({
                 where: { orgMembershipId, ...householdApplicationOpenOrBlockedWhere },
                 orderBy: { id: "desc" },
