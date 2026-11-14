@@ -40,8 +40,9 @@ decision, the clearance and the rejection. This flag did not. Three problems fol
   anyone.
 - The app and the rules say "check started", never "consent", for this fact.
   "Consent" is kept only for the act in the outside tool.
-- A check review opened by mistake can be dismissed before any reviewer has
-  decided on it. Dismissal is not a decision and never stands in for a rejection.
+- A check review opened by mistake can be dismissed while it carries no live
+  decision: none was ever made, or a Board reset cleared the approvals. Dismissal is
+  not a decision and never stands in for a rejection.
 - Membership is unchanged. The application still finishes only once a lead holds a
   valid clearance. Starting a check only puts a review in the queue.
 - No data is dropped and no schema changes.
@@ -60,7 +61,7 @@ on to payment as it does today.
 confirms the report is that person's. If it is not, the reviewer asks the Board for
 the existing wrong-person reset. Reviews that already name nobody (opened before
 this change, or returned by a reset) work exactly as they do now. A reviewer may
-dismiss a review opened by mistake, before anyone has decided on it.
+dismiss a review opened by mistake while it carries no live decision.
 
 **Board.** The applications page loses "Confirm BG consent". It gains "Mark a
 lead's check started", which picks a lead. The Board's existing per-person submit
@@ -107,6 +108,9 @@ follow-up PR once the old in-flight applications have drained. No migration.
 - **CS-4** `[Decision — owner]` Only the Board and background-check reviewers may
   dismiss a check review opened by mistake. They can see the outside check tool, so
   they know who has actually filled out its forms. Families and leads cannot dismiss.
+  Dismissal is also allowed after a Board reset has cleared a review's decisions:
+  for example, two people with similar names both had reviews opened, one never did
+  the check, and the Board reset the reviews.
 
 These close the open question in PR2779-F02 (the #2779 rule was never ruled on) by
 replacing that rule's text. They also close the remainder of PR2779-F03 (a second
@@ -195,16 +199,41 @@ made on the wrong person or for a check that was never started. Only a Board mem
 or a background-check reviewer may call it (CS-4). They check the outside tool to see
 whether the person has filled out its forms.
 
-**When it is allowed.** Only on the person's open check review, at
-PENDING_BG_REVIEW with the flag set, and only while **no reviewer has ever recorded
-a decision on it**. A decision since undone, or one discarded by a Board reset,
-still counts: the review's attestation audit rows are read, not only its current
-attestations. A BLOCKED review, a review carrying or ever carrying a rejection, and
-a cleared review are all refused. Dismissal therefore can never stand in for a
-rejection: once a reviewer has looked and decided, the review goes through the
-existing paths (approval, rejection, wrong-person reset, Board reset) and nothing
-else. Before any decision, nobody has judged anything, so there is nothing for a
-dismissal to hide.
+**When it is allowed.** Only on an open check review at PENDING_BG_REVIEW with the
+flag set, and only while it carries **no live decision and no rejection**. In code
+terms, all three of these must hold:
+
+- it has no attestation;
+- `reviewHoldsRejection` is false (it is not sent back, and no person cleared off it
+  left a rejection);
+- its status is PENDING_BG_REVIEW.
+
+Allowed:
+
+- **No decision was ever made.**
+- **A Board reset discarded the approvals** on a review that was never rejected
+  ("Discard approvals — start the review over"). The review is back at
+  PENDING_BG_REVIEW with no attestation.
+- **A Board wrong-person reset returned the review to no person**, when it held no
+  rejection. That is the similar-names case: the reviews are reset and the one
+  opened for the person who never did the check is dismissed.
+- **A reviewer undid their own approval** and no other attestation remains. An
+  undone approval is no longer a live decision, the same as one the Board
+  discarded.
+
+Refused:
+
+- **Any live attestation**, approval or rejection.
+- **A BLOCKED review**, which carries a live rejection.
+- **A cleared review**, which is no longer open.
+- **A Board reset of a BLOCKED review**, and **a rejector's change to approve.**
+  Both leave the review sent back: its person stays disputed until two new
+  approvals. Dismissing it would end the dispute, which would undo a rejection.
+- **A wrong-person reset of a rejected review.** The rejection stays held for the
+  person cleared off it, and closing the review would discard it.
+
+So dismissal never stands in for a rejection. Once a rejection exists, the review
+goes through the existing paths and nothing else.
 
 A written reason is required. The work runs under the review's row lock, the same
 lock `attest` takes, so a dismissal and a first decision cannot both land. The
@@ -396,11 +425,12 @@ in can record their own check …":
 > - A household lead sees, for each other adult in the household, only whether a
 >   check still needs marking — never their clearance, review or decisions.  [Decision — owner; *Policy: Membership Policy, Art. VI §VI.2*]
 >
-> - A check review opened by mistake may be dismissed, with a written reason, only
->   while no reviewer has ever recorded a decision on it. Dismissal undoes the mark
->   and nothing else: it is not a decision, it approves, rejects, disputes and
->   blocks nothing, and a check the person already owed stays owed. Once a reviewer
->   has decided, only the review's own paths remain.  [Decision — owner]
+> - A check review opened by mistake may be dismissed, with a written reason, while
+>   it carries no live decision: none was ever made, the approvals were undone, or
+>   a Board reset cleared them. A review that carries or was ever sent back for a
+>   rejection is never dismissed, nor is a blocked or cleared one. Dismissal undoes
+>   the mark and nothing else: it is not a decision, it approves, rejects, disputes
+>   and blocks nothing, and a check the person already owed stays owed.  [Decision — owner]
 >
 > - Only a board member or a background-check reviewer may dismiss a check
 >   review, under the same household bar as any other act on a review. A person,
@@ -433,8 +463,11 @@ These are named for the build PR. None run for this doc.
   - Concurrent marks open one review and write one audit row.
   - Reviewers are notified once.
 - `dismissCheckStarted`, unit and integration:
-  - Refused once any decision was recorded, including an undone approval and one
-    discarded by a Board reset. Refused on a BLOCKED or cleared review.
+  - Allowed with no decision ever, after a Board reset of approvals, after a
+    wrong-person reset of a review never rejected, and after an undone approval.
+  - Refused with any live attestation, on a BLOCKED or cleared review, on a review
+    sent back (a Board reset of a BLOCKED review, or a rejector's change to
+    approve), and on an unnamed review holding a rejection.
   - A review the mark created is archived. A review that existed before the mark
     keeps its obligation and only loses the flag.
   - The reason is required. One audit row is written.
