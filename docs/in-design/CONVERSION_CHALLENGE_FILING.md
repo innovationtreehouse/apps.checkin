@@ -55,16 +55,20 @@ From `docs/rules/inventory.md`:
 
 - A conversion factor is a whole number everywhere. A challenge proposing a
   fraction must be refused.
-- A changed factor applies only to goods received after the change.
+- A changed factor applies only to goods received after the change. Stock
+  already counted is never recalculated.
 - Only inventory managers write to the catalog.
 - The review queues, conversion challenges included, are read and worked by
   inventory managers only.
 - Every org-scoped catalog row carries its org's id and a snapshot of its name.
   A challenge is org-scoped.
 
-This design adds one rule: "Accepting a conversion challenge changes the
-catalog reference only; receipt lines already mapped keep the factor they were
-mapped with. `[Decision — owner — deliberate limit]`"
+This design adds one rule. The forward-only rule covers stock that has
+already been counted. It does not cover a receipt line that has been mapped
+but not yet applied, whose goods are not counted yet. The new rule settles
+that case: "Accepting a conversion challenge changes the catalog reference
+only; a receipt line already mapped keeps the factor it was mapped with, even
+before its receipt is applied. `[Decision — owner — deliberate limit]`"
 
 ## What a conversion challenge is
 
@@ -153,9 +157,12 @@ so a later caller is held to the same rules.
 
 - The challenge waits in the Conversion Challenges queue, oldest first. The
   nav badge already counts pending challenges.
-- The reviewer sees the reference (part number, retailer, manufacturer, item
-  name), the org, the current and proposed factors, and the reason. The
-  existing page already shows all of these, so it needs no change.
+- The reviewer sees the org, the item name and Part ID, the manufacturer, the
+  part number (or the description when there is none), the current and
+  proposed factors, and the reason. The existing page doesn't show the
+  retailer, and a factor belongs to one retailer's name for the part. The
+  build adds a Retailer column. No other change is needed: the list route
+  already returns the retailer.
 - If the challenge is accepted, the reference's factor and version change.
   Receipts matched from then on use the new factor; goods already in stock
   are not recounted, and lines already mapped keep their old factor. If it
@@ -174,14 +181,15 @@ so a later caller is held to the same rules.
    stacked on PR 1's branch:
    - library: a `create` factory in `routes/conversionChallenges.ts` with its
      zod schema; the three validation checks in the service; the Challenge
-     button and form in `ItemReferencesModal`.
+     button and form in `ItemReferencesModal`; a Retailer column in
+     `ConversionChallengesClient`.
    - host: the POST export in the existing route stub, and its line in
      `checkin-app/scripts/migrated-routes.txt` if new catalog routes are
      still listed there.
    - tests: the three validation checks and a self-accept (Vitest, package
      tier); route admission and the form (Jest).
-   - docs: the deliberate-limit rule above into `docs/rules/inventory.md`,
-     and this file deleted.
+   - docs: the merge-time extract step from the documentation standard,
+     covering the rule this design adds.
 
 ## Alternatives considered
 
@@ -192,3 +200,9 @@ so a later caller is held to the same rules.
   fed, not replaced.
 - **Retire the queue.** This deletes a working review flow and its tests, and
   leaves a wrong factor with no way to fix it inside the app.
+
+## Provenance
+
+This design answers finding PR2161-F01 of a PR-review audit: the challenge
+service has no caller. The audit itself is kept outside this repository, and
+no issue tracks the finding. The code was read at `main` `1290c3bf2`.
