@@ -4,7 +4,7 @@
  */
 import { beforeEach, expect, it } from "vitest";
 import { describeDb } from "../helpers/db";
-import { bindPorts, catalogResolving, principal, seedExpense, seedLineItem, ORG } from "../helpers/seed";
+import { bindPorts, catalogResolving, principal, seedExpense, seedHold, seedLineItem, ORG } from "../helpers/seed";
 import { db } from "../../db";
 import { expenses, finance } from "../../routes";
 import { resubmitHeldExpense, setHeldLineAccount } from "../../services/holdService";
@@ -47,6 +47,7 @@ describeDb("FINANCE writes are audited", () => {
   it("setting a held line's account records hold_account_set with before and after", async () => {
     const id = await seedExpense({ state: "qb_on_hold" });
     const li = await seedLineItem(id, { manualQbAccount: "4000" });
+    await seedHold(id, li);
 
     await setHeldLineAccount(FINANCE, id, li, "5000");
 

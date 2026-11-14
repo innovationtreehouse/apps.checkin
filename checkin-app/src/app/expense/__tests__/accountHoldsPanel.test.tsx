@@ -134,16 +134,16 @@ describe("Account holds panel", () => {
     expect(screen.queryByText(/qbAccount/)).not.toBeInTheDocument();
   });
 
-  it("disables Resubmit, saying why, while a held line has no account", () => {
+  it("enables Resubmit while a held line has no account, saying how many", () => {
     renderWith(
       [{ id: 1, description: "Cable", manualQbAccount: "4000" }, { id: 2, description: "Tape" }],
       [{ lineItemId: 1, reason: "NO_MATCH" }, { lineItemId: 2, reason: "NO_PART_NUMBER" }],
     );
-    expect(resubmit()).toBeDisabled();
+    expect(resubmit()).toBeEnabled();
     expect(screen.getByText("1 held line has no account yet")).toBeInTheDocument();
   });
 
-  it("enables Resubmit once every held line has an account", () => {
+  it("says nothing about missing accounts once every held line has one", () => {
     renderWith(
       [{ id: 1, description: "Cable", manualQbAccount: "4000" }, { id: 2, description: "Tape", manualQbAccount: "4100" }],
       [{ lineItemId: 1, reason: "NO_MATCH" }, { lineItemId: 2, reason: "NO_PART_NUMBER" }],

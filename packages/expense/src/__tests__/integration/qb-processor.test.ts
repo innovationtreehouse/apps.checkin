@@ -9,7 +9,7 @@
 import { it, expect, vi, beforeEach } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
-import { seedExpense, seedLineItem, seedAccountMapping, signAllLines, bindPorts, principal, ORG } from "../helpers/seed";
+import { seedExpense, seedHold, seedLineItem, seedAccountMapping, signAllLines, bindPorts, principal, ORG } from "../helpers/seed";
 
 const inv = vi.hoisted(() => ({
   listCategories: vi.fn(),
@@ -165,6 +165,7 @@ describeDb("checkAndProcessExpense — finance's account set during processing",
     const id = await seedExpense({ state: "qb_pending", receiptTotalCents: 200 });
     const manual = await seedLineItem(id, { manualQbAccount: "6100", totalPriceCents: 100 });
     const part = await seedLineItem(id, { partNumber: "PN-1", totalPriceCents: 100 });
+    await seedHold(id, manual);
     catalogResolvesAll({ [part]: "0000000000017" });
     await seedAccountMapping({ qbAccount: "4000" });
     await signAllLines(id);
@@ -179,6 +180,28 @@ describeDb("checkAndProcessExpense — finance's account set during processing",
     expect(await stateOf(id)).toBe("qb_complete");
     expect((await db.expenseLineItem.findUniqueOrThrow({ where: { id: manual } })).resolvedQbAccount).toBe("6200");
     expect((await db.expenseLineItem.findUniqueOrThrow({ where: { id: part } })).resolvedQbAccount).toBe("4000");
+  });
+});
+
+describeDb("checkAndProcessExpense — finance's account on a line that isn't held", () => {
+  it("refuses an account on a line still being mapped, and processing books the rule's account", async () => {
+    const finance = principal(500, { isFinance: true });
+    const id = await seedExpense({ state: "qb_pending" });
+    const li = await seedLineItem(id, { partNumber: "PN-1", totalPriceCents: 100 });
+    catalogResolvesAll({ [li]: "0000000000017" });
+    await seedAccountMapping({ qbAccount: "4000" });
+    await signAllLines(id);
+    const lookup = inv.lookupItems.getMockImplementation()!;
+    let refusal: unknown;
+    inv.lookupItems.mockImplementationOnce(async (...args: unknown[]) => {
+      refusal = await setHeldLineAccount(finance, id, li, "6200").catch((e: unknown) => e);
+      return lookup(...args);
+    });
+
+    await checkAndProcessExpense(ORG, id);
+
+    expect(refusal).toMatchObject({ status: 409, message: expect.stringContaining("isn't held") });
+    expect(await db.expenseLineItem.findUniqueOrThrow({ where: { id: li } })).toMatchObject({ manualQbAccount: null, resolvedQbAccount: "4000" });
   });
 });
 
@@ -239,6 +262,34 @@ describeDb("checkAndProcessExpense — finance's account on every hold reason", 
 
     expect(await stateOf(id)).toBe("qb_complete");
     expect((await db.expenseLineItem.findUniqueOrThrow({ where: { id: li } })).resolvedQbAccount).toBe("6100");
+  });
+  it("books a held line by a rule finance adds, resubmitted with no account set by hand", async () => {
+    const id = await seedExpense({ state: "qb_pending" });
+    const li = await seedLineItem(id, { partNumber: "PN-1", totalPriceCents: 100 });
+    catalogResolvesAll({ [li]: "0000000000017" });
+    await signAllLines(id);
+    await checkAndProcessExpense(ORG, id);
+    expect(await holdsFor(id)).toMatchObject([{ reason: "NO_MATCH", status: "PENDING", lineItemId: li }]);
+    await seedAccountMapping({ qbAccount: "4000" });
+
+    await resubmitHeldExpense(finance, id);
+
+    expect(await stateOf(id)).toBe("qb_complete");
+    expect((await holdsFor(id)).map((h) => h.status)).toEqual(["RESOLVED"]);
+    expect(await db.expenseLineItem.findUniqueOrThrow({ where: { id: li } })).toMatchObject({ manualQbAccount: null, resolvedQbAccount: "4000" });
+  });
+
+  it("holds the line again when a resubmit finds no rule and no account set by hand", async () => {
+    const id = await seedExpense({ state: "qb_pending" });
+    const li = await seedLineItem(id, { partNumber: "PN-1", totalPriceCents: 100 });
+    catalogResolvesAll({ [li]: "0000000000017" });
+    await signAllLines(id);
+    await checkAndProcessExpense(ORG, id);
+
+    await resubmitHeldExpense(finance, id);
+
+    expect(await stateOf(id)).toBe("qb_on_hold");
+    expect(await holdsFor(id)).toContainEqual(expect.objectContaining({ reason: "NO_MATCH", status: "PENDING", lineItemId: li }));
   });
 });
 
