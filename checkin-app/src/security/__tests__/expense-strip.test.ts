@@ -212,12 +212,18 @@ describe('expense stripper', () => {
             filled: ['SUBMITTER'],
             missing: ['TREASURER'],
             blocked: [],
-            actions: [{ act: 'sign', primary: true }],
+            actions: [{ act: 'sign', seat: 'TREASURER', primary: true, noteRequired: false }],
             awaiting: ['Awaiting approval'],
             mayRecordBoardAuthorization: false,
         };
         expect(strip('ExpenseLineSignoffStatus', { ...status, signerUserId: 9, signerUsername: 'jordan' }, INTERNAL_ONLY)).toEqual(status);
-        expect(strip('ExpenseLineSignoffStatus', status, ['public'])).toEqual({});
+        expect(strip('ExpenseLineSignoffStatus', status, ['public'])).toEqual({ actions: [{}] });
+    });
+
+    it('an act on a line passes only its classified fields', () => {
+        const act = { act: 'approve', primary: true, noteRequired: false };
+        const status = { lineItemId: 3, actions: [{ ...act, ownerUserId: 9, ownerName: 'jordan' }] };
+        expect(strip('ExpenseLineSignoffStatus', status, INTERNAL_ONLY)).toEqual({ lineItemId: 3, actions: [act] });
     });
 
     it('a public-only view sees nothing, settings included', () => {
