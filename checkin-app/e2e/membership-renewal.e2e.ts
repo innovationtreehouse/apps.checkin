@@ -162,8 +162,14 @@ test.describe("membership renewal in the browser", () => {
   });
 
   test("R4: a family whose lead has no valid check renews through consent and two reviews", async ({ browser }) => {
-    // The seed's Renewal Family is active and its lead has no check on file.
+    // The seed's Renewal Family is active and its lead has no check on file, phone or emergency contact.
     const email = "renewal.lead@example.com";
+    const onboarded = await send(await loginAs(email), "POST", "/api/profile/onboarding", {
+      phone: "555-123-4567",
+      emergencyContactName: "Pat Outside",
+      emergencyContactPhone: "555-987-6543",
+    });
+    expect(onboarded.status).toBe(200);
     await openWindow();
     expect((await send(await loginAs(BOARD), "POST", "/api/settings/membership/bulk-open-renewals")).status).toBe(200);
 
