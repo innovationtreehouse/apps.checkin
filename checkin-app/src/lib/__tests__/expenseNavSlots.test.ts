@@ -55,6 +55,11 @@ describe("Finance section", () => {
     expect(Object.values(badges).filter(Boolean)).toHaveLength(1);
     expect(FINANCE.links.map((t) => t.badge?.(released) ?? null).filter(Boolean)).toEqual([]);
   });
+
+  it("says only \"more than\" once the pill passes its ceiling, since the expense side stops counting there", () => {
+    const c = counts([...LIBRARY_KEYS], { expense: { financeQueue: 100 }, receipt: { awaitingFinance: 2 } });
+    expect(FINANCE.links[0].badge?.(c)).toEqual({ count: 102, color: "treehouseGreen", label: "More than 99 items wait on you in Finance review" });
+  });
 });
 
 describe("Programs I Lead library tabs", () => {

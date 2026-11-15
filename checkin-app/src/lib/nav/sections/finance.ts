@@ -10,7 +10,7 @@ import type { RoleFlag } from "@/lib/roles";
 import type { NavLink, NavSection, SectionLink } from "@/lib/nav/types";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
 import { FINANCE_OR_BOARD, anyRole, firstVisibleHref } from "@/lib/nav/gates";
-import { libraryCount, type NavBadge } from "@/components/navBadges";
+import { BADGE_CEILING, libraryCount, type NavBadge } from "@/components/navBadges";
 
 export const FINANCE_ROLES = FINANCE_OR_BOARD;
 
@@ -19,11 +19,14 @@ export const FINANCE_REVIEW_PATH = "/finance/review";
 /**
  * The one green pill: every finance queue item this viewer can act on, the receipts waiting on
  * FINANCE plus the expense tabs' actionable units. A Board member's count is the Board signatures
- * they may give.
+ * they may give. The expense side stops counting past BADGE_CEILING, so the label says only
+ * "more than" there.
  */
 function financeReview(c: TodoCounts | null): NavBadge | null {
   const n = libraryCount(c, "receipt", "awaitingFinance") + libraryCount(c, "expense", FINANCE_QUEUE_COUNT_KEY);
-  return n > 0 ? { count: n, color: "treehouseGreen", label: `${n} ${n === 1 ? "item waits" : "items wait"} on you in Finance review` } : null;
+  if (n === 0) return null;
+  const many = n > BADGE_CEILING ? `More than ${BADGE_CEILING} items wait` : `${n} ${n === 1 ? "item waits" : "items wait"}`;
+  return { count: n, color: "treehouseGreen", label: `${many} on you in Finance review` };
 }
 
 /** The flow status page's route admits FINANCE, BOARD or INVENTORY_MANAGER; the manager sees receiving only. */

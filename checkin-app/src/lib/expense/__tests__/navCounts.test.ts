@@ -6,7 +6,7 @@ const mockQueueCount = jest.fn();
 
 jest.mock("@checkin/expense", () => ({
   getExpenseRuntime: () => ({ signoff: { bucketsApprovedBy: (id: number) => mockBuckets(id) } }),
-  financeQueueActionable: () => mockQueueCount(),
+  financeQueueActionable: (_p: unknown, ceiling: number) => mockQueueCount(ceiling),
   expenseActionCounts: (p: unknown) => mockActionCounts(p),
 }));
 
@@ -38,6 +38,7 @@ describe("expenseLibraryCounts", () => {
       "actionable:qb_pending": 1,
     });
     expect(mockActionCounts).toHaveBeenCalledWith({ id: 1, name: null, isFinance: true, isBoard: false });
+    expect(mockQueueCount).toHaveBeenCalledWith(99);
   });
 
   it("passes the Board role through, so the service can leave out FINANCE-only steps", async () => {
