@@ -7,7 +7,7 @@
  * plus the detail screen's line items and review reasons and "My receipts"'
  * paid status (`reimbursement`: `{ paidOn }` or null), and on a stuck receipt its
  * first failure's time (`lastPushFailedAt`) and, on the single-receipt read, its
- * step's last error (`lastError`, also sent as `lastPushFailure`), a flow or
+ * step's last error (`lastError`), a flow or
  * push error. It is the receipt's `lastError` column, so it keeps that column's
  * `personal` tier. A finalized receipt also carries its
  * purchase's outcome downstream (`purchaseOutcome`): receiving's progress, the
@@ -27,7 +27,7 @@
  *
  * ReceiptQueueCounts — how many of the org's receipts each review queue holds:
  * a count per state, finalized receipts not yet delivered, and those whose push
- * failed (`failedPushes`, also sent as `pushGivenUp`). `actionableByState` is the per-state count a finance
+ * failed (`failedPushes`). `actionableByState` is the per-state count a finance
  * viewer can act on, filled for finance viewers only. Counts only, `internal`.
  *
  * ReceiptImportResult — one row of a bulk-import response. ReceiptPushResult —
@@ -141,7 +141,6 @@ export const classifications = {
     complete: "internal",
     reimbursement: "internal",
     lastPushFailedAt: "internal",
-    lastPushFailure: "personal",
     lastError: "personal",
     purchaseOutcome: "personal",
     rejectionUnacknowledged: "internal",
@@ -212,7 +211,6 @@ export const classifications = {
   ReceiptQueueCounts: {
     byState: "internal",
     notPushed: "internal",
-    pushGivenUp: "internal",
     failedPushes: "internal",
     actionableByState: "internal",
   },
