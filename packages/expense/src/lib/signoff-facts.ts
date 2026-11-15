@@ -39,6 +39,23 @@ export async function isConflicted(expense: { submitterId: number; reimburseePer
   return parties.includes(personId) || (await getExpenseRuntime().signoff.householdOf(parties)).includes(personId);
 }
 
+/** The ids of the expenses the person is conflicted on, as isConflicted decides, in one liveIds and one householdsOf read. */
+export async function conflictedExpenses(expenses: { id: string; submitterId: number; reimburseePersonId: number | null }[], personId: number): Promise<Set<string>> {
+  if (expenses.length === 0) return new Set();
+  const live = await liveIds(expenses.flatMap(partiesOf));
+  const partiesByExpense = expenses.map((e) => {
+    const stored = partiesOf(e);
+    const parties = stored.flatMap((id) => live.get(id) ?? []);
+    return { id: e.id, parties, unresolved: parties.length < stored.length };
+  });
+  const households = await getExpenseRuntime().signoff.householdsOf([...new Set(partiesByExpense.flatMap((e) => (e.unresolved ? [] : e.parties)))]);
+  return new Set(
+    partiesByExpense
+      .filter((e) => e.unresolved || e.parties.includes(personId) || e.parties.some((id) => households.get(id)?.includes(personId)))
+      .map((e) => e.id),
+  );
+}
+
 /**
  * The expense's frozen Everyday amount check. An expense frozen at intake keeps its result; one
  * with none freezes now against the current limits, and a concurrent freeze's result wins. A

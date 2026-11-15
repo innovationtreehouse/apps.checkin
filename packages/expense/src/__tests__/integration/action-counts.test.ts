@@ -224,6 +224,28 @@ describeDb("expense action counts", () => {
       expect(reads).toEqual({ finance: 2, board: 2 });
     });
 
+    it("checks many unknown-reimbursee expenses for conflicts in one live-people read and one household read", async () => {
+      // 3 in submitter 4's household; submitter 20 names nobody live, so everyone is conflicted on it.
+      const dir = directory({ finance: [3, 8], board: [5], households: [[1, 8, 9], [4, 3]], unknownPeople: [20] });
+      const reads = { liveIds: 0, householdsOf: 0, householdOf: 0 };
+      bindPorts({
+        signoff: {
+          ...dir,
+          liveIds: (ids) => (reads.liveIds++, dir.liveIds(ids)),
+          householdsOf: (ids) => (reads.householdsOf++, dir.householdsOf(ids)),
+          householdOf: (ids) => (reads.householdOf++, dir.householdOf(ids)),
+        },
+      });
+      for (const submitterId of [1, 1, 1, 4, 4, 20]) {
+        await seedLine("qb_pending", { ownerId: 100, status: "approved" }, { submitterId, needsReimbursement: true });
+      }
+
+      expect(await qbPendingActionCount(FINANCE)).toBe(3);
+      expect(reads).toEqual({ liveIds: 1, householdsOf: 1, householdOf: 0 });
+      expect(await qbPendingActionCount(CONFLICTED_FINANCE)).toBe(2);
+      expect(reads).toEqual({ liveIds: 2, householdsOf: 2, householdOf: 0 });
+    });
+
     it("gives an approver who holds no role no QB pending count", async () => {
       const { id, li } = await seedLine("qb_pending", { ownerId: 100, status: "approved" });
       await sign(id, li, { SUBMITTER: 1 });

@@ -120,7 +120,7 @@ export default function AccountHoldsPanel({ expenseId, holds, lines, currency, i
           <Group gap="xs">
             {withoutAccount > 0 && (
               <Text size="xs" c="dimmed">
-                {withoutAccount === 1 ? "1 held line has no account yet" : `${withoutAccount} held lines have no account yet`}
+                {withoutAccount === 1 ? "1 held line has no account yet" : `${withoutAccount} held lines have no account yet`}. Resubmit checks the account rules again and holds a line that still matches none.
               </Text>
             )}
             <Button

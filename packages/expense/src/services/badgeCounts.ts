@@ -9,7 +9,7 @@ import type { Expense, Prisma } from "../generated/prisma/client";
 import { EXPENSE_ACTION_VIEWS, type ExpenseActionView } from "../nav";
 import { logError } from "../lib/logger";
 import { approvableByCallerWhere, approvesAsStandIn, boardAuthorizationRefusal, reimburseeUnknown } from "../lib/signoff";
-import { isConflicted, signoffFactsForExpenses, type ExpenseSignoffFacts } from "../lib/signoff-facts";
+import { conflictedExpenses, signoffFactsForExpenses, type ExpenseSignoffFacts } from "../lib/signoff-facts";
 import { callerLinesFor } from "./signoffService";
 
 /** The most expenses a sign-off badge or list reports for one caller. */
@@ -122,7 +122,7 @@ export async function expenseActionCounts(principal: ExpensePrincipal, awaiting 
  * QB pending expenses the caller can move toward QuickBooks, across at most
  * SIGNOFF_BADGE_EXPENSE_CAP of them (newest first): set an unknown reimbursee (FINANCE) or record
  * the Board authorization. The query reads stored ids, so a merged-away submitter's expense stays a
- * candidate here and canMoveQbPending refuses it. The expenses' sign-off facts are read together. Treasurer and Board signatures are the finance queue's To sign and
+ * candidate here and canMoveQbPending refuses it. The expenses' sign-off facts, and the unknown-reimbursee expenses' conflict checks, are each read together. Treasurer and Board signatures are the finance queue's To sign and
  * Board counts; a line's approval, the program approver's sign-off, is the owner-approval count's.
  */
 export async function qbPendingActionCount(principal: ExpensePrincipal): Promise<number> {
@@ -132,13 +132,16 @@ export async function qbPendingActionCount(principal: ExpensePrincipal): Promise
     orderBy: { submittedAt: "desc" },
     take: SIGNOFF_BADGE_EXPENSE_CAP,
   });
-  const facts = await signoffFactsForExpenses(db, expenses.filter((e) => !reimburseeUnknown(e)), { readOnly: true });
-  const movable = await Promise.all(expenses.map((expense) => canMoveQbPending(principal, me, expense, facts)));
-  return movable.filter(Boolean).length;
+  const unknown = expenses.filter(reimburseeUnknown);
+  const [facts, conflicted] = await Promise.all([
+    signoffFactsForExpenses(db, expenses.filter((e) => !reimburseeUnknown(e)), { readOnly: true }),
+    principal.isFinance ? conflictedExpenses(unknown, me) : new Set<string>(),
+  ]);
+  return expenses.filter((expense) => canMoveQbPending(principal, me, expense, facts, conflicted)).length;
 }
 
-async function canMoveQbPending(principal: ExpensePrincipal, me: number, expense: Expense, facts: Map<string, ExpenseSignoffFacts>): Promise<boolean> {
-  if (reimburseeUnknown(expense)) return principal.isFinance && !(await isConflicted(expense, me));
+function canMoveQbPending(principal: ExpensePrincipal, me: number, expense: Expense, facts: Map<string, ExpenseSignoffFacts>, conflicted: Set<string>): boolean {
+  if (reimburseeUnknown(expense)) return principal.isFinance && !conflicted.has(expense.id);
   const { byLine, boardApprovalNeeded } = facts.get(expense.id)!;
   const lines = [...byLine.values()];
   const takesAuthorization = expense.boardAuthorization === null && (boardApprovalNeeded || lines.some((f) => f.boardSeat));
