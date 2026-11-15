@@ -143,6 +143,31 @@ Things the app takes as true because they are handled outside it.
 
 ### Archived households
 
+- Only the Board archives or unarchives a household. A sysadmin who is not on the
+  Board may not, and neither may a household lead.  [Decision — owner]
+
+- Nothing archives a household automatically: archiving is always a Board
+  member's act.  [Decision — deliberate limit]
+
+- A household cannot be archived while any of these holds:
+  - the household is denied;
+  - it has an ACTIVE membership, lapsed or not, so a lapsed household still
+    ACTIVE waits until the Board revokes it;
+  - a member is enrolled in a program not yet finished;
+  - a member holds any role, or volunteers on or leads a program not yet finished;
+  - it has an open trusted-adult review, until the review is decided or withdrawn;
+  - it has an open application holding a payment with no recorded refund.
+
+  The Board ends or settles each one first.  [Decision — owner]
+
+- An archived household and its members drop out of every active list, picker,
+  search, count, worklist and roster, enrollment included. History, reports, the
+  audit log and the Board's household page reached by id still show them.  [Decision — owner]
+
+- Unarchiving returns the household as it was, since archiving deletes none of its
+  records or its members'. Only the applications the archive closed stay
+  closed.  [Decision — *Principle: decisions are reversible*]
+
 - An archived household refuses every change until the Board unarchives it. Nobody
   is added to it, moved into or out of it, edited, or made or unmade its lead; its
   address, settings and emergency contacts stay as they are; it starts no
@@ -155,9 +180,6 @@ Things the app takes as true because they are handled outside it.
   second sees the first, so the archive is refused for the role, enrollment or
   application just added, or the change is refused because the household is now
   archived.  [Decision]
-
-- A household with an open trusted-adult review cannot be archived until the
-  review is decided or withdrawn.  [Decision — owner ruling HA-9]
 
 - On an archived household, a member may still edit their own profile, and the
   Board may still record a background-check result for a member. At first sign-in,

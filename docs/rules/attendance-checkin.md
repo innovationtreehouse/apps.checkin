@@ -278,6 +278,9 @@ person in front of it.
   only what it renders: the roster, the certification grid and every
   warning.  [Decision]
 
+- A badge belonging to a member of an archived household scans exactly as a badge
+  that matches nobody. The kiosk gives no archived-specific message.  [Decision — owner]
+
 ### Kiosk resilience
 
 The badge kiosk and its offline scan path. Infrastructure failure — WiFi loss for

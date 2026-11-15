@@ -317,6 +317,10 @@ Procedure below is built on them.
   open application. The word "archive" is reserved for archiving a household.  [Decision —
   *Principle: decisions are reversible*]
 
+- Archiving a household closes its open initial and renewal applications, blocked
+  ones included, in the same step, as a restore does. Per-person applications stay
+  open. Unarchiving the household reopens none of them.  [Decision — owner]
+
 - A refund made in the online store is recorded by the board ("Record refund"),
   with a reason, by someone outside the household, on a paid application at any
   step that never became a membership. It stays offered until it is recorded,
