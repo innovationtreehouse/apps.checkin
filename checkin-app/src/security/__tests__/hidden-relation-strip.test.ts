@@ -99,6 +99,19 @@ describe('stripper — a relation count beside its rows', () => {
         });
     });
 
+    it('drops the count beside an empty list, as when every row is hidden', () => {
+        const hidden = { reimburseePersonId: 9, lineItems: [{ ...line, reimburseePersonId: 7 }], _count: { lineItems: 1 } };
+        const empty = { reimburseePersonId: 9, lineItems: [], _count: { lineItems: 0 } };
+        const expected = { reimburseePersonId: 9, lineItems: [] };
+        expect(stripValue('ReceiptConfirmationView', hidden, own, { ...ctx(), selfId: 9 })).toEqual(expected);
+        expect(stripValue('ReceiptConfirmationView', empty, own, { ...ctx(), selfId: 9 })).toEqual(expected);
+    });
+
+    it('keeps the count beside an empty list when the target shows a field without a scope', () => {
+        const program = { id: 4, participants: [], _count: { participants: 0 } };
+        expect(stripValue('Program', program, ['public'] as Token[], ctx())).toEqual(program);
+    });
+
     it('keeps a count sent without the rows', () => {
         const receipt = { reimburseePersonId: 9, _count: { lineItems: 2 } };
         expect(stripValue('ReceiptConfirmationView', receipt, own, { ...ctx(), selfId: 9 })).toEqual(receipt);
