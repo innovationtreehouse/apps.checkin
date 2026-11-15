@@ -18,6 +18,7 @@ export default function EnrollmentPicker({ ageGated, ageRange, hasPrice, isClose
   const {
     showIntake, setShowIntake, handleIntakeSaved, loadingHousehold, householdError, householdErrorWhat, reloadHousehold, householdMembers, enrollBlock, needsSetup,
     selectedParticipantIds, setSelectedParticipantIds, enrolling, handleEnroll, repeatPayments, setRepeatPayments,
+    refusedPause, setRefusedPause, continueToCheckout,
     planKind, setPlanKind, confirmPlanOpened, openConfirmPlan, closeConfirmPlan, handleRequestPaymentPlan,
   } = controls;
 
@@ -120,6 +121,23 @@ export default function EnrollmentPicker({ ageGated, ageRange, hasPrice, isClose
             <Button color="yellow" disabled={enrolling} onClick={() => { setRepeatPayments([]); handleEnroll(true); }}>
               Pay again anyway
             </Button>
+          </Group>
+        </Modal>
+
+        <Modal opened={refusedPause !== null} onClose={() => setRefusedPause(null)} title={refusedPause?.plan ? "Not everyone could be enrolled" : "Couldn't enroll"} centered>
+          <Stack gap="xs">
+            {refusedPause?.refusals.map((r, i) => (
+              <Text key={i} size="sm">{r.name}: {r.reason}</Text>
+            ))}
+            {refusedPause?.plan && (
+              <Text size="sm">Continue to checkout for {refusedPause.accepted.join(', ')}?</Text>
+            )}
+          </Stack>
+          <Group justify="flex-end" mt="md">
+            <Button variant="default" onClick={() => setRefusedPause(null)}>Close</Button>
+            {refusedPause?.plan && (
+              <Button disabled={enrolling} onClick={continueToCheckout}>Continue to checkout</Button>
+            )}
           </Group>
         </Modal>
 
