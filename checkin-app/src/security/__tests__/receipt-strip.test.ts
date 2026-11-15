@@ -205,7 +205,7 @@ describe('ReceiptIgnoredFileView', () => {
 describe('ReceiptDuplicateGroup', () => {
     const group = () => ({
         members: [
-            { id: 'r-1', state: 'rejected', label: 'Rejected as a copy of Acme, uploaded 2 Oct', copyOfId: 'r-2', uploaderName: 'Pat Doe' },
+            { id: 'r-1', state: 'rejected', label: 'Rejected as a copy of receipt r-2', copyOfId: 'r-2', uploaderName: 'Pat Doe' },
             { id: 'r-2', state: 'duplicate_flagged', label: 'Possible duplicate', copyOfId: null, uploaderName: 'Sam Roe' },
         ],
         dismissed: ['r-3'],

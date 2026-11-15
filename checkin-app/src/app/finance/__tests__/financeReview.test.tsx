@@ -156,11 +156,11 @@ describe("the receipt tabs", () => {
   it("links the kept receipt on a row rejected as a copy", () => {
     mockSearch = new URLSearchParams("queue=rejected");
     mockReceiptLoads["?state=rejected"] = {
-      data: [{ id: "r1", uploadedAt: "2026-10-01T00:00:00Z", uploadedByUserId: 1, retailer: "Acme", receiptDate: null, receiptTotalCents: 1000, state: "rejected", needsReimbursement: false, isInKind: false, copyOfId: "r9", copyOfLabel: "Acme, uploaded 3 Oct" }],
+      data: [{ id: "r1", uploadedAt: "2026-10-01T00:00:00Z", uploadedByUserId: 1, retailer: "Acme", receiptDate: null, receiptTotalCents: 1000, state: "rejected", needsReimbursement: false, isInKind: false, copyOfId: "r9", copyOfLabel: "receipt r9" }],
       error: null,
     };
     wrap();
-    expect(screen.getByRole("link", { name: "Acme, uploaded 3 Oct" })).toHaveAttribute("href", "/receipts/r9?queue=rejected");
+    expect(screen.getByRole("link", { name: "receipt r9" })).toHaveAttribute("href", "/receipts/r9?queue=rejected");
     expect(screen.getByText(/Rejected as a copy of/)).toBeInTheDocument();
   });
 

@@ -201,7 +201,6 @@ export default function DuplicateCompare({ receipt, group, loaded, loadErrors, o
   });
   const finalized = live.find((m) => m.state === "receipt_finalized");
   const finalizedReceipt = finalized && loaded.get(finalized.id);
-  const uploads = [receipt, ...others.flatMap((m) => loaded.get(m.id) ?? [])].map((r) => new Date(r.uploadedAt));
   const columns = Math.min(others.length + 1, 3);
 
   return (
@@ -233,7 +232,7 @@ export default function DuplicateCompare({ receipt, group, loaded, loadErrors, o
                 size="xs"
                 color="red"
                 variant="light"
-                onClick={() => onRejectAsCopy(`Copy of ${describeKept({ retailer: finalizedReceipt.retailer, uploadedAt: new Date(finalizedReceipt.uploadedAt) }, uploads)}`)}
+                onClick={() => onRejectAsCopy(`Copy of ${describeKept(finalizedReceipt.id)}`)}
               >
                 Reject as a copy
               </Button>

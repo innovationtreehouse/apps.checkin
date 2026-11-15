@@ -70,7 +70,7 @@ const FLAGGED = {
   receiptTotalCents: 1000,
   state: "duplicate_flagged",
   copyOfId: "r-orig",
-  copyOfLabel: "Acme, uploaded 1 Oct",
+  copyOfLabel: "receipt r-orig",
   lineItems: [{ id: 1, receiptId: "r-dup", description: "Arduino", quantity: 1, unitPriceCents: 1000, totalPriceCents: 1000 }],
   financialReviewReasons: [],
 };

@@ -294,10 +294,9 @@ describeDb("deciding a duplicate group", () => {
     actAs(FINANCE);
     await receiptService.keepThisOne(b.id, [a.id, b.id]);
     const row = await db.receiptAuditLog.findFirst({ where: { receiptId: a.id, action: "reject_financial" } });
-    // Both were uploaded today, so the kept receipt is told apart by its upload time.
-    expect(row?.valueAfter).toMatch(/^Copy of Home Depot, uploaded \d{1,2} \w{3}, \d{2}:\d{2}$/);
+    expect(row?.valueAfter).toBe(`Copy of receipt ${b.id}`);
     const member = (await receiptService.duplicateGroup(b.id)).members.find((m) => m.id === a.id);
-    expect(member).toMatchObject({ label: `Rejected as a copy of ${row?.valueAfter?.slice("Copy of ".length)}`, copyOfId: b.id });
+    expect(member).toMatchObject({ label: `Rejected as a copy of receipt ${b.id}`, copyOfId: b.id });
   });
 });
 
