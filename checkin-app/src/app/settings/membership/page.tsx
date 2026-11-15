@@ -13,7 +13,7 @@ import { notifyNavRefresh } from "@/lib/nav-refresh";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { useSession } from "next-auth/react";
 import { LibraryReleaseCard } from "@/components/admin/LibraryReleaseCard";
-import { membershipYearLabel, variantSlotYears } from "@/lib/programYear";
+import { liveMembershipYear, membershipYearLabel, variantSlotYears } from "@/lib/programYear";
 import { VariantPicker } from "./VariantPicker";
 
 interface Settings {
@@ -100,6 +100,7 @@ export default function MembershipSettingsPage() {
   // Confirm-checkbox gate only matters when a boundary already exists — changing
   // it shifts every household's cycle. First-time set has nothing to shift.
   const boundaryWasSet = !!initial?.boundary;
+  const liveYear = liveMembershipYear(initial?.boundary ? new Date(initial.boundary) : null, new Date());
 
   const saveSettings = async () => {
     setFieldErrors({});
@@ -288,8 +289,11 @@ export default function MembershipSettingsPage() {
                 onChange={(next) => { setVariantId(next.variantId); setProductUrl(next.productUrl); setFieldErrors((f) => ({ ...f, variantId: undefined })); }}
                 editableId={typedVariantIds}
                 canClear
-                error={fieldErrors.variantId ?? (variantId.trim() === "" ? "Required for checkout — not configured." : undefined)}
+                error={fieldErrors.variantId}
               />
+              <Text size="sm" c="dimmed">
+                Checkout sells the year slots below. This variant only matches orders paid through checkout links issued before them.
+              </Text>
               <TextInput
                 label="Volunteer discount code"
                 description="Create this discount in Shopify, then paste the code here. It is appended to the checkout link for volunteer households only."
@@ -316,7 +320,7 @@ export default function MembershipSettingsPage() {
                       onChange={(next) => updateSlot(slot.year, next)}
                       editableId={typedVariantIds}
                       canClear={!savedSlots[i]?.variantId}
-                      error={slotErrors[slot.year]}
+                      error={slotErrors[slot.year] ?? (slot.year === liveYear && slot.variantId.trim() === "" ? "Required for checkout — not configured." : undefined)}
                     />
                   </Stack>
                 );

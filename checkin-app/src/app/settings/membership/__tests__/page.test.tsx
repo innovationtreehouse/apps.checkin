@@ -209,7 +209,6 @@ describe("MembershipSettingsPage", () => {
     await screen.findByDisplayValue("150.00");
 
     fireEvent.click(screen.getByRole("button", { name: "Clear Membership product variant ID" }));
-    expect(screen.getByText("Required for checkout — not configured.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/settings/membership", expect.objectContaining({ method: "PUT" })));
     const [, putOpts] = fetchMock.mock.calls.find(([, opts]) => opts?.method === "PUT")!;
@@ -414,8 +413,8 @@ describe("MembershipSettingsPage", () => {
 
   describe("membership year variant slots", () => {
     // 1 November 2026 with a 1 September boundary: 2026 is in progress, 2027 is coming.
-    const open = async (rows: Row[] = [], overrides = {}) => {
-      jest.useFakeTimers({ advanceTimers: true, now: new Date("2026-11-01T12:00:00.000Z") });
+    const open = async (rows: Row[] = [], overrides = {}, now = "2026-11-01T12:00:00.000Z") => {
+      jest.useFakeTimers({ advanceTimers: true, now: new Date(now) });
       setSession({ id: 1, isSysadmin: true });
       const fetchMock = mockFetchJson({
         "/api/settings/membership/extract-variant": oneVariant("555"),
@@ -438,6 +437,21 @@ describe("MembershipSettingsPage", () => {
       await open([{ membershipYear: 2027, shopifyVariantId: "222", productUrl: null }]);
       expect(screen.getByLabelText("2026-2027 variant ID")).toHaveValue("");
       expect(screen.queryByText("needs variant")).not.toBeInTheDocument();
+    });
+
+    it("off season, marks the empty year in progress required for checkout, and never the single variant", async () => {
+      await open([{ membershipYear: 2027, shopifyVariantId: "222", productUrl: null }], { orgMembershipVariantId: null });
+      expect(screen.getAllByText("Required for checkout — not configured.")).toHaveLength(1);
+    });
+
+    it("off season, an empty coming year is not required for checkout", async () => {
+      await open([{ membershipYear: 2026, shopifyVariantId: "111", productUrl: null }]);
+      expect(screen.queryByText("Required for checkout — not configured.")).not.toBeInTheDocument();
+    });
+
+    it("inside the renewal window, marks the empty coming year required for checkout", async () => {
+      await open([{ membershipYear: 2026, shopifyVariantId: "111", productUrl: null }], {}, "2027-07-15T12:00:00.000Z");
+      expect(screen.getAllByText("Required for checkout — not configured.")).toHaveLength(1);
     });
 
     it("shows no slots with no boundary set", async () => {
