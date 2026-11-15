@@ -37,3 +37,8 @@ export function lineFormBody(form: LineFormKind, f: LineFormFields): AssociateBo
     conversionFactor: f.conversionFactor,
   };
 }
+
+/** Whether saving would send the same body as the line's starting fields, so nothing would change. */
+export function lineFormUnchanged(form: LineFormKind, start: LineFormFields, f: LineFormFields): boolean {
+  return JSON.stringify(lineFormBody(form, f)) === JSON.stringify(lineFormBody(form, start));
+}
