@@ -22,6 +22,10 @@ function parentsOf(p: Participant) {
   return (p.person.household?.householdMembers ?? []).filter(m => m.id !== p.personId);
 }
 
+function ageLabel(age: Participant['age']) {
+  return age == null ? 'age unknown' : String(age);
+}
+
 // Contact fields are absent for a viewer the stripper denied them to, so a
 // parent can legitimately render as a bare name.
 function formatParent(m: ReturnType<typeof parentsOf>[number]) {
@@ -257,7 +261,7 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
               return (
               <Card key={p.personId} withBorder radius="sm" padding="sm">
                 <Group justify="space-between">
-                  <Text fw={700} c="blue">{p.person.name || 'Unnamed'}</Text>
+                  <Text fw={700} c="blue">{p.person.name || 'Unnamed'}{p.age !== undefined && <Text component="span" c="dimmed" size="sm"> ({ageLabel(p.age)})</Text>}</Text>
                   {isPriced && !isBoardMember ? (
                     <Button size="compact-xs" variant="subtle" color="red" disabled title="Only the Board removes a paid place">Remove</Button>
                   ) : (
@@ -296,7 +300,7 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
             {pendingParticipants.map(p => (
               <Card key={p.personId} withBorder radius="sm" padding="sm">
                 <Group justify="space-between">
-                  <Text fw={700} c="yellow">{p.person.name || 'Unnamed'}</Text>
+                  <Text fw={700} c="yellow">{p.person.name || 'Unnamed'}{p.age !== undefined && <Text component="span" c="dimmed" size="sm"> ({ageLabel(p.age)})</Text>}</Text>
                   <Button size="compact-xs" variant="subtle" color="red" onClick={() => handleRemoveParticipant(p)}>Remove</Button>
                 </Group>
                 <SimpleGrid cols={{ base: 1, sm: 2 }} mt="xs" spacing="xs">
