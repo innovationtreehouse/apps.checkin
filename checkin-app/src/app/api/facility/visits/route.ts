@@ -28,10 +28,15 @@ export const GET = handler('GET /api/facility/visits', async ({ req }) => {
             ? { deletedAt: null, departedVia: { in: ["FACILITY_CLOSE", "AUTO_CLOSE"] }, facilityCloseId: { not: null } }
             : { deletedAt: null },
         orderBy: closedOut ? [{ facilityCloseId: "desc" }, { arrivedAt: "desc" }] : { arrivedAt: "desc" },
-        include: {
-            person: {
-                select: { email: true, name: true, isSysadmin: true, isKeyholder: true },
-            },
+        select: {
+            id: true,
+            personId: true,
+            arrivedAt: true,
+            departedAt: true,
+            arrivedVia: true,
+            departedVia: true,
+            facilityCloseId: true,
+            person: { select: { email: true, name: true } },
             ...(closedOut ? { facilityClose: { select: { closedBy: { select: { name: true } } } } } : {}),
         },
     });
