@@ -16,7 +16,8 @@ import { formatCents } from '@checkin/money';
 import { landsNextYear } from '@/lib/programYear';
 import { scholarshipRequestKindLabel } from '@/lib/scholarshipRequestKind';
 
-import { useUrlChoice } from '@checkin/component-ui';
+import { errorMessage, HttpError, showError, showSuccess, useUrlChoice } from '@checkin/component-ui';
+import { api } from '@/lib/api';
 import { PageLoader } from "@/components/ui/PageLoader";
 type HouseholdLead = { id: number; name: string | null; email: string | null };
 
@@ -82,6 +83,9 @@ export default function PendingParticipantsPage() {
   const [pendingApproval, setPendingApproval] = useState<{ programId: number; participantId: number } | null>(null);
   const [confirmRefuseOpened, { open: openConfirmRefuse, close: closeConfirmRefuse }] = useDisclosure(false);
   const [pendingRefusal, setPendingRefusal] = useState<{ programId: number; participantId: number } | null>(null);
+  // The row whose write is in flight; its buttons stay disabled so a second click can't send again.
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const rowKey = (programId: number, participantId: number) => `${programId}-${participantId}`;
 
   const fetchRequests = useCallback(() => fetch('/api/finance-ops/payment-plans')
     .then(async (res) => {
@@ -111,28 +115,17 @@ export default function PendingParticipantsPage() {
   };
 
   const doApprove = async (programId: number, participantId: number) => {
+    setBusyKey(rowKey(programId, participantId));
     try {
-      const res = await fetch('/api/finance-ops/payment-plans', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ programId, participantId })
-      });
-
-      if (res.ok) {
-        setRequests(prev => prev.filter(r => !(r.programId === programId && r.personId === participantId)));
-        notifyNavRefresh();
-        notifications.show({ message: 'Scholarship / payment plan approved.' });
-      } else {
-        const data = await res.json();
-        if (data.error === "No pending payment-plan request") {
-          notifications.show({ color: 'red', message: data.error, autoClose: false });
-          fetchRequests();
-        } else {
-          notifications.show({ color: 'red', message: data.error || "Failed to approve.", autoClose: false });
-        }
-      }
-    } catch {
-      notifications.show({ color: 'red', message: "Network error processing approval.", autoClose: false });
+      await api('/api/finance-ops/payment-plans', { method: 'POST', body: JSON.stringify({ programId, participantId }) });
+      setRequests(prev => prev.filter(r => !(r.programId === programId && r.personId === participantId)));
+      notifyNavRefresh();
+      showSuccess('Scholarship / payment plan approved.');
+    } catch (e) {
+      showError(errorMessage(e));
+      if (e instanceof HttpError && e.status === 409) fetchRequests();
+    } finally {
+      setBusyKey(null);
     }
   };
 
@@ -150,28 +143,17 @@ export default function PendingParticipantsPage() {
   };
 
   const doRefuse = async (programId: number, participantId: number) => {
+    setBusyKey(rowKey(programId, participantId));
     try {
-      const res = await fetch('/api/finance-ops/payment-plans/refuse', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ programId, participantId })
-      });
-
-      if (res.ok) {
-        setRequests(prev => prev.filter(r => !(r.programId === programId && r.personId === participantId)));
-        notifyNavRefresh();
-        notifications.show({ message: 'Scholarship / payment plan refused.' });
-      } else {
-        const data = await res.json();
-        if (data.error === "No pending payment-plan request") {
-          notifications.show({ color: 'red', message: data.error, autoClose: false });
-          fetchRequests();
-        } else {
-          notifications.show({ color: 'red', message: data.error || "Failed to refuse.", autoClose: false });
-        }
-      }
-    } catch {
-      notifications.show({ color: 'red', message: "Network error processing refusal.", autoClose: false });
+      await api('/api/finance-ops/payment-plans/refuse', { method: 'POST', body: JSON.stringify({ programId, participantId }) });
+      setRequests(prev => prev.filter(r => !(r.programId === programId && r.personId === participantId)));
+      notifyNavRefresh();
+      showSuccess('Scholarship / payment plan refused.');
+    } catch (e) {
+      showError(errorMessage(e));
+      if (e instanceof HttpError && e.status === 409) fetchRequests();
+    } finally {
+      setBusyKey(null);
     }
   };
 
@@ -258,7 +240,7 @@ export default function PendingParticipantsPage() {
         <Group justify="flex-end" gap="xs" wrap="nowrap">
           <Button
             size="xs" fz={15} color="red" variant="light"
-            disabled={ownHousehold(req)}
+            disabled={ownHousehold(req) || busyKey === rowKey(req.programId, req.personId)}
             title={ownHousehold(req) ? "You can't refuse your own household's plan — someone outside your household must." : undefined}
             onClick={() => handleRefuse(req.programId, req.personId)}
           >
@@ -266,7 +248,7 @@ export default function PendingParticipantsPage() {
           </Button>
           <Button
             size="xs" fz={15} variant="light"
-            disabled={ownHousehold(req)}
+            disabled={ownHousehold(req) || busyKey === rowKey(req.programId, req.personId)}
             title={ownHousehold(req) ? "You can't approve your own household's plan — someone outside your household must." : undefined}
             onClick={() => handleApprove(req.programId, req.personId)}
           >

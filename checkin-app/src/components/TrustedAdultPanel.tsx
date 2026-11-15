@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useCallback } from "react";
 import {
-    Alert,
     Badge,
     Button,
     Card,
@@ -15,7 +14,9 @@ import {
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { modals } from "@mantine/modals";
-import { IconAlertTriangle, IconPlus } from "@tabler/icons-react";
+import { IconPlus } from "@tabler/icons-react";
+import { errorMessage, showError, showSuccess } from "@checkin/component-ui";
+import { api } from "@/lib/api";
 import { normalizePhone, isValidEmail } from "@/lib/emergencyContacts/identity";
 import { TrustedAdultContact } from "@/components/TrustedAdultContact";
 import { isAuthorizedApproval } from "@/lib/trusted-adult/filters";
@@ -60,7 +61,6 @@ export default function TrustedAdultPanel() {
     const [loading, setLoading] = useState(true);
     const [opened, { open, close }] = useDisclosure(false);
     const [submitting, setSubmitting] = useState(false);
-    const [error, setError] = useState<string | null>(null);
     const [attempted, setAttempted] = useState(false);
 
     const [trustedAdultName, setTrustedAdultName] = useState("");
@@ -85,7 +85,6 @@ export default function TrustedAdultPanel() {
         setTrustedAdultEmail("");
         setFamilyContext("");
         setAttempted(false);
-        setError(null);
         open();
     }, [open]);
 
@@ -98,7 +97,6 @@ export default function TrustedAdultPanel() {
         setTrustedAdultEmail(ta.trustedAdultEmail ?? "");
         setFamilyContext(ta.familyContext ?? "");
         setAttempted(false);
-        setError(null);
         open();
     }, [open]);
 
@@ -119,19 +117,13 @@ export default function TrustedAdultPanel() {
 
     async function submit() {
         setSubmitting(true);
-        setError(null);
         try {
             const url = resubmitId ? `/api/trusted-adults/${resubmitId}/resubmit` : "/api/trusted-adults";
-            const res = await fetch(url, {
+            await api(url, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ trustedAdultName, trustedAdultPhone, trustedAdultEmail, familyContext }),
             });
-            if (!res.ok) {
-                const body = await res.json().catch(() => ({}));
-                setError(body.error ?? "Could not submit.");
-                return;
-            }
+            showSuccess("Sent to the board for review.");
             close();
             setResubmitId(null);
             setTrustedAdultName("");
@@ -140,20 +132,23 @@ export default function TrustedAdultPanel() {
             setFamilyContext("");
             setAttempted(false);
             load();
+        } catch (e) {
+            showError(errorMessage(e));
         } finally {
             setSubmitting(false);
         }
     }
 
-    async function act(id: number, action: "renew" | "withdraw" | "hide", payload?: Record<string, unknown>) {
-        const res = await fetch(`/api/trusted-adults/${id}/${action}`, {
-            method: "POST",
-            ...(payload ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) } : {}),
-        });
-        if (res.ok) load();
-        else {
-            const body = await res.json().catch(() => ({}));
-            setError(body.error ?? "Action failed.");
+    async function act(id: number, action: "renew" | "withdraw" | "hide", done: string, payload?: Record<string, unknown>) {
+        try {
+            await api(`/api/trusted-adults/${id}/${action}`, {
+                method: "POST",
+                ...(payload ? { body: JSON.stringify(payload) } : {}),
+            });
+            showSuccess(done);
+            load();
+        } catch (e) {
+            showError(errorMessage(e));
         }
     }
 
@@ -170,7 +165,7 @@ export default function TrustedAdultPanel() {
             ),
             labels: { confirm: "Delete", cancel: "Cancel" },
             confirmProps: { color: "red" },
-            onConfirm: () => act(ta.id, "hide"),
+            onConfirm: () => act(ta.id, "hide", "Trusted adult deleted."),
         });
     }
 
@@ -202,12 +197,6 @@ export default function TrustedAdultPanel() {
                     Add a trusted adult
                 </Button>
             </Group>
-
-            {error && (
-                <Alert color="red" icon={<IconAlertTriangle size={16} />} withCloseButton onClose={() => setError(null)}>
-                    {error}
-                </Alert>
-            )}
 
             {loading && <Text c="dimmed" size="sm">Loading…</Text>}
             {!loading && items.length === 0 && (
@@ -274,7 +263,7 @@ export default function TrustedAdultPanel() {
                             <Group gap="xs" style={{ flexShrink: 0 }}>
                                 {canResubmit && (
                                     <>
-                                        <Button size="xs" fz={15} variant="light" onClick={() => act(ta.id, "renew")}>
+                                        <Button size="xs" fz={15} variant="light" onClick={() => act(ta.id, "renew", "Sent to the board for review.")}>
                                             Resubmit (same info)
                                         </Button>
                                         <Button size="xs" fz={15} variant="light" color="blue" onClick={() => startResubmit(ta)}>
@@ -283,11 +272,11 @@ export default function TrustedAdultPanel() {
                                     </>
                                 )}
                                 {changePending ? (
-                                    <Button size="xs" fz={15} variant="subtle" color="red" onClick={() => act(ta.id, "withdraw", { scope: "change" })}>
+                                    <Button size="xs" fz={15} variant="subtle" color="red" onClick={() => act(ta.id, "withdraw", "Change request cancelled.", { scope: "change" })}>
                                         Cancel change request
                                     </Button>
                                 ) : (liveApproval || latestPending) ? (
-                                    <Button size="xs" fz={15} variant="subtle" color="red" onClick={() => act(ta.id, "withdraw")}>
+                                    <Button size="xs" fz={15} variant="subtle" color="red" onClick={() => act(ta.id, "withdraw", "Trusted adult withdrawn.")}>
                                         Withdraw
                                     </Button>
                                 ) : null}
@@ -344,7 +333,6 @@ export default function TrustedAdultPanel() {
                         error={contextError}
                         required
                     />
-                    {error && <Text c="red" size="sm">{error}</Text>}
                     <Group justify="flex-end">
                         <Button variant="default" onClick={closeModal}>Cancel</Button>
                         <Button

@@ -7,9 +7,8 @@ import { IconChevronDown, IconChevronUp, IconDeviceLaptop, IconLock, IconRobot, 
 import { useRequireRole } from '@/hooks/useRequireRole';
 import { FACILITY_RECORD_ROLES } from '@/lib/nav/sections/facilityOps';
 import { type AlertTone } from '@/components/admin/AlertBanner';
-import { LoadError } from '@checkin/component-ui';
-import { useLoad } from '@/lib/api';
-import { notifications } from '@mantine/notifications';
+import { errorMessage, LoadError, showError, showSuccess } from '@checkin/component-ui';
+import { api, useLoad } from '@/lib/api';
 import { toDatetimeLocal, fromDatetimeLocal } from '@/lib/time';
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { MAX_VISIT_MS } from '@/lib/visitTimes';
@@ -95,9 +94,7 @@ export default function AdminVisitsPage() {
 
   const [editingVisitId, setEditingVisitId] = useState<number | null>(null);
   const [editForm, setEditForm] = useState({ arrivedAt: "", departedAt: "" });
-  // Save error shown inline in the edited row's Actions cell — the row stays in
-  // edit mode on failure, and the page-top banner lands off-screen on long tables
-  // and reads as "nothing happened". Success uses the standard corner toast.
+  // A time the form itself rejects shows in the edited row; the row stays in edit mode.
   const [rowNotice, setRowNotice] = useState<{ id: number; text: string; tone: AlertTone } | null>(null);
 
   // Insert-for-others: the walk-in path neither the kiosk (live only) nor the
@@ -162,27 +159,21 @@ export default function AdminVisitsPage() {
     if (Date.parse(addForm.departedAt) - Date.parse(addForm.arrivedAt) > MAX_VISIT_MS) {
       return setAddError('A visit cannot be longer than 24 hours.');
     }
+    setAddError('');
     setAdding(true);
     try {
-      const res = await fetch('/api/facility/visits/insert', {
+      await api('/api/facility/visits/insert', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           personId: Number(addForm.personId),
           arrivedAt: fromDatetimeLocal(addForm.arrivedAt),
           departedAt: fromDatetimeLocal(addForm.departedAt),
         }),
       });
-      if (res.ok) {
-        notifications.show({ message: 'Visit added.' });
-        closeAdd();
-        reload();
-      } else {
-        const data = await res.json().catch(() => ({}));
-        setAddError(data.error || 'Failed to add visit.');
-      }
-    } catch {
-      notifications.show({ color: 'red', message: 'Network error adding visit.', autoClose: false });
+      showSuccess('Visit added.');
+      closeAdd();
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setAdding(false);
     }
@@ -219,26 +210,20 @@ export default function AdminVisitsPage() {
       setRowNotice({ id, text: "A visit cannot be longer than 24 hours.", tone: "error" });
       return;
     }
+    setRowNotice(null);
     try {
-      const res = await fetch(`/api/facility/visits`, {
+      await api(`/api/facility/visits`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           visitId: id,
           arrivedAt: editForm.arrivedAt ? fromDatetimeLocal(editForm.arrivedAt) : undefined,
           departedAt: editForm.departedAt ? fromDatetimeLocal(editForm.departedAt) : undefined
         })
       });
-      if (res.ok) {
-        notifications.show({ message: "Visit updated successfully." });
-        setEditingVisitId(null);
-        reload();
-      } else {
-        const data = await res.json().catch(() => ({}));
-        setRowNotice({ id, text: data.error || "Failed to update visit.", tone: "error" });
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error saving visit.", autoClose: false });
+      showSuccess("Visit updated successfully.");
+      setEditingVisitId(null);
+    } catch (e) {
+      showError(errorMessage(e));
     }
   };
 
@@ -253,20 +238,10 @@ export default function AdminVisitsPage() {
     closeConfirmDelete();
     setPendingDeleteVisit(null);
     try {
-      const res = await fetch(`/api/facility/visits`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ visitId: id })
-      });
-      if (res.ok) {
-        notifications.show({ message: "Visit deleted." });
-        reload();
-      } else {
-        const data = await res.json().catch(() => ({}));
-        notifications.show({ color: "red", message: data.error || "Failed to delete visit.", autoClose: false });
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error deleting visit.", autoClose: false });
+      await api(`/api/facility/visits`, { method: 'DELETE', body: JSON.stringify({ visitId: id }) });
+      showSuccess("Visit deleted.");
+    } catch (e) {
+      showError(errorMessage(e));
     }
   };
 
