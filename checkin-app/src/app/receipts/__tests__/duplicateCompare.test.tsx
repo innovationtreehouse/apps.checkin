@@ -177,7 +177,7 @@ describe("the N-way compare", () => {
     expect(screen.getByText("A finalized copy exists: keep it and reject this one as a copy?")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Keep this one" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Reject as a copy" }));
-    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/reject", "POST", { reason: "Copy of Acme, uploaded 30 Sept" }, "Rejected", "Couldn't reject this receipt"));
+    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/reject", "POST", { reason: "Copy of receipt r0" }, "Rejected", "Couldn't reject this receipt"));
   });
 
   it("rejects one match with a reason and stays to redraw", async () => {
@@ -239,14 +239,14 @@ describe("the N-way compare", () => {
 describe("member labels", () => {
   it("links the kept receipt on a member rejected as a copy, in red", async () => {
     mockLoads["/r1/duplicate-group"] = group([
-      { ...r0, state: "rejected", label: "Rejected as a copy of Acme, uploaded 3 Oct", copyOfId: "r2" },
+      { ...r0, state: "rejected", label: "Rejected as a copy of receipt r2", copyOfId: "r2" },
       r1,
       r2,
     ]);
     await wrap();
-    const link = screen.getByRole("link", { name: "Acme, uploaded 3 Oct" });
+    const link = screen.getByRole("link", { name: "receipt r2" });
     expect(link).toHaveAttribute("href", "/receipts/r2?queue=duplicate_flagged");
-    expect(link.parentElement).toHaveTextContent("Rejected as a copy of Acme, uploaded 3 Oct");
+    expect(link.parentElement).toHaveTextContent("Rejected as a copy of receipt r2");
   });
 
   it("shows a finalized member whose expense finance rejected, with the reason", async () => {
@@ -329,10 +329,10 @@ describe("the badge and the submitter's message", () => {
 
 describe("a decided receipt", () => {
   it("links the receipt kept in place of one rejected as a copy", async () => {
-    mockLoads["/r1"] = { ...flagged, state: "rejected", copyOfId: "r0", copyOfLabel: "Acme, uploaded 3 Oct" };
+    mockLoads["/r1"] = { ...flagged, state: "rejected", copyOfId: "r0", copyOfLabel: "receipt r0" };
     await wrap();
     expect(screen.getByText(/Rejected as a copy of/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Acme, uploaded 3 Oct" })).toHaveAttribute("href", "/receipts/r0?queue=duplicate_flagged");
+    expect(screen.getByRole("link", { name: "receipt r0" })).toHaveAttribute("href", "/receipts/r0?queue=duplicate_flagged");
   });
 
   it("badges a receipt discarded while flagged as discarded as a duplicate", async () => {

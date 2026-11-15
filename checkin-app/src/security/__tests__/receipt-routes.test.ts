@@ -474,7 +474,7 @@ describe('the submitter view', () => {
     });
 
     it("gives the uploader the kept receipt's id but not its label on every receipt route, and keeps the notice of their own copy", () => {
-        const copy = { ...row, copyOfId: 'r-kept', copyOfLabel: 'Acme, uploaded 3 Oct', duplicateNotice: { matchId: 'r-mine', uploadedAt: '2026-10-03T00:00:00.000Z' } };
+        const copy = { ...row, copyOfId: 'r-kept', copyOfLabel: 'receipt r-kept', duplicateNotice: { matchId: 'r-mine', uploadedAt: '2026-10-03T00:00:00.000Z' } };
         for (const endpoint of jsonRoutes) {
             const submitter = new Map(getRoute(endpoint)!.orderedView).get('authenticated');
             if (!submitter || !getRoute(endpoint)!.returns?.includes('ReceiptView')) continue;

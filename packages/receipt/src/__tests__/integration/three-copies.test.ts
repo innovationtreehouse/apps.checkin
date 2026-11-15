@@ -118,7 +118,7 @@ describeDb("three copies of one purchase", () => {
     const c = await upload(file);
     expect(c.state).toBe("duplicate_flagged");
     expect(await groupOf(c.id)).toEqual([a.id, b.id, c.id]);
-    expect((await memberOf(c.id, a.id))?.label).toMatch(/^Rejected as a copy of /);
+    expect((await memberOf(c.id, a.id))?.label).toBe(`Rejected as a copy of receipt ${b.id}`);
 
     actAs(FINANCE);
     await receiptService.notThisOne(c.id, a.id);
@@ -307,7 +307,7 @@ describeDb("what finance reads about a group", () => {
     actAs(FINANCE);
     await receiptService.keepThisOne(b.id, [a.id, b.id]);
     const row = (await receiptService.list({})).find((r) => r.id === a.id);
-    expect(row).toMatchObject({ copyOfId: b.id, copyOfLabel: expect.stringMatching(/, uploaded /) });
+    expect(row).toMatchObject({ copyOfId: b.id, copyOfLabel: `receipt ${b.id}` });
   });
 
   it("labels a finalized member whose expense finance rejected, and names each uploader", async () => {

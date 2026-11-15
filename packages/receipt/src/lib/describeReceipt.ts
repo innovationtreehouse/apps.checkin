@@ -7,8 +7,6 @@ export const EXPENSE_REJECTED = "Finalized · expense rejected by finance";
 
 export const day = (at: Date) => at.toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
 
-const time = (at: Date) => at.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" });
-
 type Described = { retailer: string | null; receiptDate: string | null; receiptTotalCents: number | null };
 
 /** A receipt's vendor and receipt date, as "Home Depot, 3 Oct". */
@@ -23,12 +21,5 @@ export function describeReceipt(r: Described): string {
   return [describeShort(r), total].filter(Boolean).join(", ");
 }
 
-/**
- * The receipt kept in place of a copy, told apart from its copies, which share its vendor, date
- * and total: "Home Depot, uploaded 3 Oct", with the time when another of `alongside` was
- * uploaded the same day.
- */
-export function describeKept(kept: { retailer: string | null; uploadedAt: Date }, alongside: Date[]): string {
-  const sameDay = alongside.some((at) => at.getTime() !== kept.uploadedAt.getTime() && day(at) === day(kept.uploadedAt));
-  return `${kept.retailer?.trim() || "Receipt"}, uploaded ${day(kept.uploadedAt)}${sameDay ? `, ${time(kept.uploadedAt)}` : ""}`;
-}
+/** The receipt kept in place of a copy, by its id alone: the kept receipt may be another person's. */
+export const describeKept = (keptId: string): string => `receipt ${keptId}`;

@@ -17,7 +17,7 @@ import {
 } from "../contract";
 import { sendDonorSync } from "../lib/donor-sync";
 import { EXPENSE_REJECTED, REJECTED_AS_COPY } from "../lib/describeReceipt";
-import { describeKept, describeReceipts, duplicateGroup as computeGroup, keptReceipts, liveGroup, type DuplicateGroup, type DuplicateMember } from "../lib/duplicateGroup";
+import { describeKept, describeReceipts, duplicateGroup as computeGroup, liveGroup, type DuplicateGroup, type DuplicateMember } from "../lib/duplicateGroup";
 import { checkReceiptFile } from "../lib/file-type";
 import { insertReceipt, toLineRows, type NewLine } from "../lib/insert";
 import { liveIds } from "../lib/livePeople";
@@ -1173,9 +1173,7 @@ export const receiptService = {
       if (members.some((m) => m.id !== kept.id && m.state === "receipt_finalized")) {
         throw new ServiceError(409, "A finalized copy exists: reject this receipt as a copy of it instead");
       }
-      const ids = members.map((m) => m.id);
-      const uploads = [...(await keptReceipts(tx, ids)).values()].map((r) => r.uploadedAt);
-      const note = `Copy of ${describeKept({ retailer: kept.retailer, uploadedAt: kept.uploadedAt }, uploads)}`;
+      const note = `Copy of ${describeKept(kept.id)}`;
       const open = members.filter((m) => m.id !== kept.id && !ENDED.has(m.state)).map((m) => m.id);
       for (const copy of await receiptRepo.list({ orgId: kept.orgId, id: { in: open } })) {
         await decidePair(tx, kept.orgId, kept.id, copy.id, "copy_of", actor, copy.id);
