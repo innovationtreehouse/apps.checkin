@@ -154,10 +154,11 @@ export function useMembershipPage() {
     sessionStatus === "authenticated" ? "/api/membership" : null,
   );
   const loading = state === null && !loadError;
-  // A background re-read keeps unsaved input. Input unchanged since an unread save is
-  // already on the server, so that read hydrates the form and unlocks it.
+  // Input unchanged since an unread save is already on the server, so it is not unsaved.
+  const unsaved = form.isDirty && unreadSave !== JSON.stringify(buildIntakePayload(form.values));
+  // A background re-read keeps unsaved input; otherwise it hydrates the form and unlocks it.
   useSeedForm(loaded, false, (s) => {
-    if (form.isDirty && unreadSave !== JSON.stringify(buildIntakePayload(form.values))) applyState(s);
+    if (unsaved) applyState(s);
     else hydrate(s);
   });
 
@@ -269,6 +270,7 @@ export function useMembershipPage() {
   };
 
   const save = async () => {
+    if (saveLocked) return;
     setSaving(true);
     flash("");
     try {
@@ -298,6 +300,7 @@ export function useMembershipPage() {
   };
 
   const submit = async () => {
+    if (saveLocked) return;
     // Highlight missing required fields up front — instant feedback, no round-trip.
     const errs = validateIntake(form.values);
     setFieldErrors(errs);
@@ -456,7 +459,7 @@ export function useMembershipPage() {
     }
   };
 
-  useUnsavedGuard(form.isDirty);
+  useUnsavedGuard(unsaved);
 
   return {
     session, sessionStatus, state, loading, loadError, saving, setSaving, message, fieldErrors, clearErr, form, saveLocked,
