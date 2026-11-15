@@ -44,7 +44,7 @@ export const PATCH = withAuth(
             }
 
             const body = await req.json();
-            const { name, nickname, phone, dob, over25, notificationSettings, emailSuppressed } = body;
+            const { name, nickname, phone, dob, over25, notificationSettings } = body;
 
             if (phone !== undefined && phone !== "" && !isValidPhone(phone)) {
                 return apiError(PHONE_ERROR, 400);
@@ -71,7 +71,6 @@ export const PATCH = withAuth(
                         ? normalizeAdultDob(dob || null, !!over25)
                         : {}),
                     notificationSettings: notificationSettings !== undefined ? notificationSettings : undefined,
-                    emailSuppressed: emailSuppressed !== undefined ? !!emailSuppressed : undefined,
                 },
                 select: {
                     name: true,
@@ -80,7 +79,6 @@ export const PATCH = withAuth(
                     phone: true,
                     dateOfBirth: true,
                     notificationSettings: true,
-                    emailSuppressed: true,
                 }
             });
             invalidateAttendanceCache();

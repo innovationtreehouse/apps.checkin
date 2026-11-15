@@ -427,17 +427,4 @@ describe("AdminParticipantsIndex", () => {
             expect(screen.getByText("Add Contact")).toBeInTheDocument();
         }, 15000);
     });
-
-    it("shows an Unsubscribed pill for a suppressed row, and not for others", async () => {
-        mockFetchJson({
-            "/api/people/search": { people: [{ ...alice, emailSuppressed: true }, { ...dave, emailSuppressed: false }] },
-        });
-        renderWithProviders(<AdminParticipantsIndex />);
-
-        const aliceRow = (await screen.findByText("Alice A")).closest("tr")!;
-        expect(within(aliceRow).getByText("Unsubscribed")).toBeInTheDocument();
-
-        const daveRow = screen.getByText("Dave D").closest("tr")!;
-        expect(within(daveRow).queryByText("Unsubscribed")).not.toBeInTheDocument();
-    });
 });
