@@ -162,6 +162,25 @@ describe("AdminEditHouseholdModal", () => {
     expect(screen.getByRole("button", { name: "Save Changes — As Admin" })).toBeEnabled();
   });
 
+  it("holds the form until this opening's own read answers, even with an older read cached", async () => {
+    mockFetchJson({ "/api/membership-ops/households?id=55": { household } });
+    const earlier = renderWithProviders(<AdminEditHouseholdModal householdId={55} opened={true} onClose={jest.fn()} />);
+    await screen.findByDisplayValue("Smith Family");
+    earlier.unmount();
+
+    let resolveFetch!: (v: unknown) => void;
+    global.fetch = jest.fn(() => new Promise((resolve) => { resolveFetch = resolve; })) as unknown as typeof fetch;
+    renderWithProviders(<AdminEditHouseholdModal householdId={55} opened={true} onClose={jest.fn()} />);
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalled());
+    expect(screen.queryByLabelText("Household Name")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save Changes — As Admin" })).not.toBeInTheDocument();
+
+    const renamed = { household: { ...household, name: "Smith Renamed" } };
+    resolveFetch({ ok: true, status: 200, json: async () => renamed, text: async () => JSON.stringify(renamed) });
+    expect(await screen.findByDisplayValue("Smith Renamed")).toBeInTheDocument();
+  });
+
   it("shows a server error message, then a network-error message, when saving fails", async () => {
     mockFetchJson({ "/api/membership-ops/households?id=55": { household } });
     renderWithProviders(<AdminEditHouseholdModal householdId={55} opened={true} onClose={jest.fn()} />);
