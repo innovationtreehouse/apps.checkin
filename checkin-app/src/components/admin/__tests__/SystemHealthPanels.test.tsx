@@ -148,7 +148,10 @@ describe("KioskHeartbeatBox", () => {
   it("renders last-seen age from the heartbeat envelope", async () => {
     mockFetchJson({
       "/api/system-status/kiosk-heartbeat": {
-        heartbeat: [{ metric: "kiosk_last_seen", timestamp: new Date().toISOString(), value: 90 }],
+        heartbeat: {
+          SystemMetricLog: [{ metric: "kiosk_last_seen", timestamp: new Date().toISOString(), value: 90 }],
+          KioskProtocolSeen: [],
+        },
       },
     });
     renderWithProviders(<KioskHeartbeatBox />);
@@ -158,7 +161,10 @@ describe("KioskHeartbeatBox", () => {
   const renderHeartbeat = (rows: { metric: string; value: number }[]) => {
     mockFetchJson({
       "/api/system-status/kiosk-heartbeat": {
-        heartbeat: rows.map((r) => ({ ...r, timestamp: new Date().toISOString() })),
+        heartbeat: {
+          SystemMetricLog: rows.map((r) => ({ ...r, timestamp: new Date().toISOString() })),
+          KioskProtocolSeen: [],
+        },
       },
     });
     renderWithProviders(<KioskHeartbeatBox />);
@@ -184,6 +190,27 @@ describe("KioskHeartbeatBox", () => {
     expect(screen.getByText(/Kiosk last seen 5s ago/)).toBeInTheDocument();
   });
 
+  it("shows each stored key's protocol version, marking a key no longer configured", async () => {
+    const at = new Date(Date.now() - 3 * 3600_000).toISOString();
+    mockFetchJson({
+      "/api/system-status/kiosk-heartbeat": {
+        heartbeat: {
+          SystemMetricLog: [{ metric: "kiosk_key:aaaaaaaaaaaaaaaa", timestamp: new Date().toISOString(), value: 1 }],
+          KioskProtocolSeen: [
+            { keyFingerprint: "aaaaaaaaaaaaaaaa", protocolVersion: 6, lastSeenAt: at },
+            { keyFingerprint: "bbbbbbbbbbbbbbbb", protocolVersion: 4, lastSeenAt: at },
+          ],
+        },
+      },
+    });
+    renderWithProviders(<KioskHeartbeatBox />);
+    const current = (await screen.findByText("aaaaaaaaaaaaaaaa")).closest("p");
+    const removed = screen.getByText("bbbbbbbbbbbbbbbb").closest("p");
+    expect(current).toHaveTextContent("protocol v6, last seen 3 hours ago");
+    expect(current).not.toHaveTextContent("key removed");
+    expect(removed).toHaveTextContent("protocol v4, last seen 3 hours ago (key removed)");
+  });
+
   it("shows a failed read at once, without retrying", async () => {
     const fetchFn = mockFetchJson({ "/api/system-status/kiosk-heartbeat": () => { throw new Error("down"); } });
     renderWithProviders(<KioskHeartbeatBox />);
@@ -197,7 +224,7 @@ describe("KioskHeartbeatBox", () => {
     mockFetchJson({
       "/api/system-status/kiosk-heartbeat": () => {
         if (down) throw new Error("down");
-        return { heartbeat: [{ metric: "kiosk_clock_skew", value: 0, timestamp: new Date().toISOString() }] };
+        return { heartbeat: { SystemMetricLog: [{ metric: "kiosk_clock_skew", value: 0, timestamp: new Date().toISOString() }], KioskProtocolSeen: [] } };
       },
     });
     renderWithProviders(<KioskHeartbeatBox />);

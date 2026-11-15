@@ -603,6 +603,10 @@ export function SystemVersionBox() {
 }
 
 type HeartbeatRow = { metric: string; timestamp: string; value: number };
+type ProtocolSeenRow = { keyFingerprint: string; protocolVersion: number; lastSeenAt: string };
+type Heartbeat = { SystemMetricLog?: HeartbeatRow[]; KioskProtocolSeen?: ProtocolSeenRow[] };
+
+const KEY_METRIC = "kiosk_key:";
 
 const CLOCK_WARN_SECONDS = 30;
 
@@ -616,8 +620,12 @@ function clockLine(skewSeconds: number | undefined): string {
 
 export function KioskHeartbeatBox() {
   // No retry: this box reports health, and retries would hide a down server.
-  const { data, error, reload } = useLoad<{ heartbeat?: HeartbeatRow[] }>("/api/system-status/kiosk-heartbeat", { retry: false });
-  const rows = data ? (Array.isArray(data.heartbeat) ? data.heartbeat : []) : null;
+  const { data, error, reload } = useLoad<{ heartbeat?: Heartbeat }>("/api/system-status/kiosk-heartbeat", { retry: false });
+  const rows = data ? data.heartbeat?.SystemMetricLog ?? [] : null;
+  const protocolSeen = data?.heartbeat?.KioskProtocolSeen ?? [];
+  const configuredKeys = new Set(
+    (rows ?? []).filter((r) => r.metric.startsWith(KEY_METRIC)).map((r) => r.metric.slice(KEY_METRIC.length)),
+  );
 
   const lastSeen = rows?.find((r) => r.metric === "kiosk_last_seen");
   const skew = rows?.find((r) => r.metric === "kiosk_clock_skew")?.value;
@@ -639,6 +647,13 @@ export function KioskHeartbeatBox() {
       {rows && !error && (
         <Text size="sm" c={clockOff ? "red" : "dimmed"} fw={clockOff ? 700 : undefined}>{clockLine(skew)}</Text>
       )}
+      {!error && protocolSeen.map((k) => (
+        <Text key={k.keyFingerprint} size="sm" c="dimmed">
+          Key <Code>{k.keyFingerprint}</Code>: protocol v{k.protocolVersion}, last seen{" "}
+          <span title={k.lastSeenAt}>{timeAgo(k.lastSeenAt)}</span>
+          {!configuredKeys.has(k.keyFingerprint) && " (key removed)"}
+        </Text>
+      ))}
     </Card>
   );
 }
