@@ -62,7 +62,7 @@ export const POST = withAuth({ roles: ROLES }, async (req) => {
 
         const person = await prisma.person.findUnique({
             where: { id: item.personId },
-            select: { name: true, household: { select: { orgMembership: { select: { status: true } } } } },
+            select: { name: true, emailSuppressed: true, household: { select: { orgMembership: { select: { status: true } } } } },
         });
         // Outreach is member-only at send too: the snapshot may predate a denial, an archive,
         // a revocation, or this rule.
@@ -75,8 +75,14 @@ export const POST = withAuth({ roles: ROLES }, async (req) => {
             await prisma.bulkSendItem.update({ where: { id: item.id }, data: { status: "skipped_not_member" } });
             continue;
         }
+        // A join item queued before outreach became renewal-only still honours the
+        // invitation opt-out it was queued under.
+        if (item.variant === "join" && person.emailSuppressed) {
+            await prisma.bulkSendItem.update({ where: { id: item.id }, data: { status: "skipped_unsubscribed" } });
+            continue;
+        }
         const { subject, html } = renderOutreachEmail(template.subject, template.body, {
-            name: person?.name ?? "",
+            name: person.name,
             boundary,
         });
 

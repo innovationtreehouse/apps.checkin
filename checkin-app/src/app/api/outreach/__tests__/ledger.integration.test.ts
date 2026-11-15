@@ -375,6 +375,25 @@ describe('outreach ledger (send / process-batch / status)', () => {
         expect(sentTo).not.toContain(`legacyjoin-${TAG}@example.com`);
     });
 
+    it('drain skips a legacy join item for a lead who opted out of invitations, even in an ACTIVE household', async () => {
+        const hh = await makeMemberLead('LegacySuppressed', `legacysuppressed-${TAG}@example.com`);
+        const person = await prisma.person.findFirstOrThrow({ where: { householdId: hh.id } });
+        await prisma.person.update({ where: { id: person.id }, data: { emailSuppressed: true } });
+        const bulkSend = await prisma.bulkSend.create({
+            data: {
+                emailType: 'opening', audience: 'a', senderId: boardId,
+                items: { create: { personId: person.id, email: `legacysuppressed-${TAG}@example.com`, variant: 'join', status: 'queued' } },
+            },
+            include: { items: true },
+        });
+        asBoard(boardId);
+
+        await PROCESS_BATCH(req('POST', { bulkSendId: bulkSend.id }));
+
+        expect((await prisma.bulkSendItem.findUniqueOrThrow({ where: { id: bulkSend.items[0].id } })).status).toBe('skipped_unsubscribed');
+        expect((sendEmail as jest.Mock).mock.calls.some(([to]) => to === `legacysuppressed-${TAG}@example.com`)).toBe(false);
+    });
+
     it('test-send renders the renew copy once and sends it to the caller', async () => {
         asBoard(boardId, `tester-${TAG}@example.com`);
         const res = await TEST_SEND(req('POST', {
