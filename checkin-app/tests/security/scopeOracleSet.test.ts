@@ -29,6 +29,7 @@ const ORACLES = [
     'budget-owner-strip.test.ts',
     'caller-context-no-id.integration.test.ts',
     'catalog-review-queue-admission.test.ts',
+    'check-started-strip.test.ts',
     'classification-sources.test.ts',
     'cron-secret-authorize.test.ts',
     'donation-routes.test.ts',

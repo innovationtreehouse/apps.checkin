@@ -417,6 +417,42 @@ defineRoute({
     orderedView: [],
 });
 
+// A reviewer or Board member dismisses a check review opened by mistake: it
+// undoes a "check started" mark and decides nothing about anyone. Same
+// admission band as undo; a sysadmin who is neither cannot dismiss. No bag.
+defineRoute({
+    endpoint: 'POST /api/membership/reviews/dismiss',
+    authorize: { anyRole: ['isBackgroundCheckReviewer', 'isBoardMember'] },
+    envelope: null,
+    orderedView: [],
+});
+
+// The family path for marking a background check started: GET lists the rows
+// the caller may mark, POST marks one and returns the refreshed rows. Any
+// signed-in person is admitted; the handler narrows the subject to the caller
+// and, for a household lead, the other adults of the household they lead. The
+// row's `state` reaches only those two scopes, so a non-lead sibling or anyone
+// else keeps personId and name alone.
+const CHECK_STARTED_VIEW: readonly OrderedViewEntry[] = [
+    ['authenticated', ['their_own:internal', 'led_households:internal', 'public']],
+];
+
+defineRoute({
+    endpoint: 'GET /api/membership/check-started',
+    authorize: 'authenticated',
+    envelope: 'rows',
+    returns: ['CheckStartedRow'],
+    orderedView: CHECK_STARTED_VIEW,
+});
+
+defineRoute({
+    endpoint: 'POST /api/membership/check-started',
+    authorize: 'authenticated',
+    envelope: 'rows',
+    returns: ['CheckStartedRow'],
+    orderedView: CHECK_STARTED_VIEW,
+});
+
 // The caller's own Key Volunteer Agreement: its status, the embedded sign URL
 // (the first click creates the Zoho request) and the return-from-signing status
 // pull. Each resolves the caller's own open agreement, so the grant is
