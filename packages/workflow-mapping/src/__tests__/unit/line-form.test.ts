@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { lineFormBody, lineFormStart, type LineFormFields } from "../../lib/line-form";
+import { lineFormBody, lineFormStart, lineFormUnchanged, type LineFormFields } from "../../lib/line-form";
 import { AssociateBodySchema, ProposeBodySchema } from "../../services/lineItemService";
 
 const complete: LineFormFields = {
@@ -50,5 +50,28 @@ describe("lineFormStart", () => {
     const start = lineFormStart({ assignedGtin13: null, proposedName: "Towels", conversionFactor: 4 });
     expect(lineFormBody("propose", { ...start, categoryId: "3", subcategoryId: "12", usage: "Durable" }))
       .toMatchObject({ proposedName: "Towels", conversionFactor: 4 });
+  });
+});
+
+describe("lineFormUnchanged", () => {
+  const start = lineFormStart({ assignedGtin13: "0022222222220", proposedName: null, conversionFactor: 12 });
+
+  it("is unchanged while a decided line keeps its part and factor", () => {
+    expect(lineFormUnchanged("associate", start, { ...start })).toBe(true);
+  });
+
+  it("ignores fields the associate body doesn't carry", () => {
+    expect(lineFormUnchanged("associate", start, { ...start, name: "Towels" })).toBe(true);
+  });
+
+  it.each<[string, Partial<LineFormFields>]>([
+    ["another part", { gtin13: "0033333333330" }],
+    ["another factor", { conversionFactor: 6 }],
+  ])("is changed with %s", (_, edit) => {
+    expect(lineFormUnchanged("associate", start, { ...start, ...edit })).toBe(false);
+  });
+
+  it("is changed once a proposal is complete", () => {
+    expect(lineFormUnchanged("propose", start, { ...complete })).toBe(false);
   });
 });

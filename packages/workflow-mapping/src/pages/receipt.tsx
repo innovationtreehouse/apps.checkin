@@ -12,7 +12,7 @@ import {
 import { USAGE_BEHAVIORS } from "@checkin/receipt-types";
 import { LINE_STATUS_COLOR, LINE_STATUS_LABEL, api, stateColor, stateLabel, errorMessage, notifyNavCounts, useCanManage, useLoad } from "../components/api";
 import { formatCents } from "@checkin/money";
-import { type LineFormFields, type LineFormKind, lineFormBody, lineFormStart } from "../lib/line-form";
+import { type LineFormFields, type LineFormKind, lineFormBody, lineFormStart, lineFormUnchanged } from "../lib/line-form";
 import { lineLockReason } from "../lib/line-lock";
 
 interface Receipt {
@@ -398,7 +398,8 @@ function LineForm({ start, busy, onSubmit, onCancel, onNonInventory }: {
   const subcategoryOptions = (subcategories.data ?? [])
     .filter((s) => String(s.categoryId) === categoryId)
     .map((s) => ({ value: String(s.id), label: `${String(s.number).padStart(2, "0")} — ${s.name}` }));
-  const body = lineFormBody(form, { gtin13, name, categoryId, subcategoryId, usage, conversionFactor });
+  const fields = { gtin13, name, categoryId, subcategoryId, usage, conversionFactor };
+  const body = lineFormUnchanged(form, start, fields) ? null : lineFormBody(form, fields);
 
   return (
     <Stack gap={4}>
