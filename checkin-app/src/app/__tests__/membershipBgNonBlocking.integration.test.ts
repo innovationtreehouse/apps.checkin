@@ -594,6 +594,6 @@ describe('background check is non-blocking', () => {
 
     it('markContractSigned on a non-existent process and markCheckStarted on a non-existent person throw not_found', async () => {
         await expect(markContractSigned(999999999)).rejects.toMatchObject({ code: 'not_found' });
-        await expect(markCheckStarted(999999999, revA)).rejects.toMatchObject({ code: 'not_found' });
+        await expect(markCheckStarted(999999999, board)).rejects.toMatchObject({ code: 'not_found' });
     });
 });

@@ -24,6 +24,8 @@ export interface CheckStartedRow {
     state: CheckStartedState;
 }
 
+const notAllowed = () => new ExternalError("not_lead", "Only a household lead can mark another person's check started.");
+
 type AgeFacts = { dateOfBirth: Date | null; isDeclaredAdult: boolean };
 
 /** Under 18 by a recorded date of birth. A person of unknown age is not a known minor. */
@@ -49,11 +51,12 @@ export async function markCheckStarted(subjectPersonId: number, actorId: number)
         prisma.person.findUnique({ where: { id: actorId }, select: { id: true, householdId: true, isHouseholdLead: true, isSysadmin: true, isBoardMember: true } }),
         prisma.person.findUnique({ where: { id: subjectPersonId }, select: { id: true, householdId: true, dateOfBirth: true, isDeclaredAdult: true } }),
     ]);
-    if (!actor || !subject) throw new ExternalError("not_found", "Person not found.");
+    if (!actor) throw new ExternalError("not_found", "Person not found.");
+    const privileged = actor.isSysadmin || actor.isBoardMember;
+    // Only the Board and sysadmins learn whether an id exists; anyone else is told only that they may not mark it.
+    if (!subject) throw privileged ? new ExternalError("not_found", "Person not found.") : notAllowed();
     const leadsSubjectHousehold = actor.isHouseholdLead && actor.householdId !== null && actor.householdId === subject.householdId;
-    if (actor.id !== subject.id && !leadsSubjectHousehold && !actor.isSysadmin && !actor.isBoardMember) {
-        throw new ExternalError("not_lead", "Only a household lead can mark another person's check started.");
-    }
+    if (actor.id !== subject.id && !leadsSubjectHousehold && !privileged) throw notAllowed();
     const now = new Date();
     if (isKnownMinor(subject, now)) throw new ExternalError("wrong_phase", "A person under 18 is never background-checked.");
 

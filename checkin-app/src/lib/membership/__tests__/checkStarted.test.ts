@@ -100,9 +100,14 @@ describe('markCheckStarted — who may mark whom', () => {
         await expect(markCheckStarted(2, 2)).resolves.toEqual({ processId: 70 });
     });
 
-    it('an unknown person is not_found', async () => {
-        person.findUnique.mockResolvedValue(null);
-        await expect(markCheckStarted(2, 1)).rejects.toMatchObject({ code: 'not_found' });
+    it('an unknown subject is not_lead to a family caller, so the id stays unconfirmed', async () => {
+        person.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) => (where.id === 1 ? actor({ isHouseholdLead: true }) : null));
+        await expect(markCheckStarted(999, 1)).rejects.toMatchObject({ code: 'not_lead' });
+    });
+
+    it('an unknown subject is not_found to the Board', async () => {
+        person.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) => (where.id === 1 ? actor({ isBoardMember: true }) : null));
+        await expect(markCheckStarted(999, 1)).rejects.toMatchObject({ code: 'not_found' });
     });
 });
 
