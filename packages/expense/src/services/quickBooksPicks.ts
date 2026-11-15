@@ -2,7 +2,8 @@ import { accountTypeRefusal, type QboAccountSummary } from "@checkin/quickbooks"
 import { db } from "../db";
 import { getOrgId } from "../runtime";
 import { LISTED_TYPES, bookableTypes } from "../lib/account-types";
-import { IN_QUICKBOOKS } from "./holdService";
+import { CLOSED_STATES } from "../lib/signoff";
+import { IN_QUICKBOOKS, WAITING_ON_FINANCE } from "./holdService";
 
 const withPlace = (place: string, refusal: string | null) => refusal && `${place}: ${refusal}`;
 
@@ -19,9 +20,13 @@ export async function misTypedQuickBooksPicks(accounts: readonly QboAccountSumma
       select: { category: true, subcategory: true, partNumber: true, isCapital: true, qbAccount: true },
       orderBy: { id: "asc" },
     }),
-    // A line's account is corrected in QuickBooks once its expense is booked, so only lines not yet booked are checked.
+    // Only lines finance may still re-pick, by setHeldLineAccount's gate, on an expense that can still book.
     db.expenseLineItem.findMany({
-      where: { manualQbAccount: { not: null }, expense: { orgId, qbMatchState: { notIn: [...IN_QUICKBOOKS] } } },
+      where: {
+        manualQbAccount: { not: null },
+        expense: { orgId, state: { notIn: [...CLOSED_STATES] }, qbMatchState: { notIn: [...IN_QUICKBOOKS] } },
+        OR: [{ expense: { qbMatchState: { in: [...WAITING_ON_FINANCE] } } }, { holds: { some: { status: "PENDING" } } }],
+      },
       select: { expenseId: true, lineNumber: true, isCapital: true, manualQbAccount: true },
       orderBy: [{ expenseId: "asc" }, { lineNumber: "asc" }],
     }),
