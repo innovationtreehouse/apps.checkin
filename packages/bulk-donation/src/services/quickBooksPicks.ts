@@ -48,15 +48,18 @@ export async function misTypedQuickBooksPicks(accounts: readonly QboAccountSumma
       gifts.set(key, gift);
     }
   }
-  for (const { source, giftId, lines } of gifts.values()) {
-    const assets = await getInKindCapital().assetLineIds(orgId, { giftSource: source, giftId });
+  const capital = getInKindCapital();
+  const withAssets = await Promise.all(
+    [...gifts.values()].map(async (gift) => ({ ...gift, assets: await capital.assetLineIds(orgId, { giftSource: gift.source, giftId: gift.giftId }) })),
+  );
+  for (const { source, giftId, lines, assets } of withAssets) {
     for (const line of lines) {
       if (!line.quickBooksAccountId) continue;
-      const capital = assets.includes(line.id);
+      const isAsset = assets.includes(line.id);
       out.push(
         withPlace(
           `Gifts of goods, ${source} gift ${giftId}, line ${line.id}`,
-          refusal(line.quickBooksAccountId, capital ? LINE_ACCOUNT_TYPES.donatedCapital : LINE_ACCOUNT_TYPES.donatedGoods, capital ? "Donated equipment" : "A donated item"),
+          refusal(line.quickBooksAccountId, isAsset ? LINE_ACCOUNT_TYPES.donatedCapital : LINE_ACCOUNT_TYPES.donatedGoods, isAsset ? "Donated equipment" : "A donated item"),
         ),
       );
     }
