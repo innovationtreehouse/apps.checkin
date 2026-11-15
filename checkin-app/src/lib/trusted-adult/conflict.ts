@@ -42,14 +42,7 @@ function adultInActorHousehold(
     );
 }
 
-/**
- * Conflict-of-interest rule for trusted-adult reviews. A board member may not decide
- * a review for their own household, one where they are the trusted adult, or one
- * whose trusted adult is in their household (their spouse, say), whichever family
- * asked. Pure, so the server (decideReview, overrideReview) and the board review
- * page gate off the same rule. Ids are person ids.
- */
-export function isTrustedAdultConflict(args: {
+export interface TrustedAdultConflictArgs {
     actorParticipantId: number | null | undefined;
     actorHouseholdId: number | null | undefined;
     actorHouseholdContacts: readonly HouseholdContact[];
@@ -57,14 +50,35 @@ export function isTrustedAdultConflict(args: {
     adult: TrustedAdultIdentity;
     /** A pending change's proposed contact, which approval would make the adult's own. */
     proposed?: HouseholdContact | null;
-}): boolean {
+}
+
+/** Which leg of the rule bars the actor. */
+export type TrustedAdultConflictReason =
+    | "own_household"
+    | "is_trusted_adult"
+    | "adult_in_household"
+    | "household_contact_match";
+
+/**
+ * Conflict-of-interest rule for trusted-adult reviews. A board member may not decide
+ * a review for their own household, one where they are the trusted adult, or one
+ * whose trusted adult is in their household (their spouse, say), whichever family
+ * asked. Pure, so the server (decideReview, overrideReview) and the board review
+ * page gate off the same rule. Ids are person ids. Null when nothing bars the actor.
+ */
+export function trustedAdultConflictReason(args: TrustedAdultConflictArgs): TrustedAdultConflictReason | null {
     const { actorParticipantId, actorHouseholdId, actorHouseholdContacts, taHouseholdId, adult, proposed } = args;
-    return (
-        sharesHousehold(actorHouseholdId, taHouseholdId) ||
-        (actorParticipantId != null && actorParticipantId === adult.personId) ||
+    if (sharesHousehold(actorHouseholdId, taHouseholdId)) return "own_household";
+    if (actorParticipantId != null && actorParticipantId === adult.personId) return "is_trusted_adult";
+    const inHousehold =
         adultInActorHousehold(actorHouseholdId, actorHouseholdContacts, adult) ||
-        (proposed != null && adultInActorHousehold(actorHouseholdId, actorHouseholdContacts, { ...adult, ...proposed }))
-    );
+        (proposed != null && adultInActorHousehold(actorHouseholdId, actorHouseholdContacts, { ...adult, ...proposed }));
+    if (!inHousehold) return null;
+    return adult.personId != null ? "adult_in_household" : "household_contact_match";
+}
+
+export function isTrustedAdultConflict(args: TrustedAdultConflictArgs): boolean {
+    return trustedAdultConflictReason(args) !== null;
 }
 
 /** True when only a name identifies the adult, so the household check cannot run. */

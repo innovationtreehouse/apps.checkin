@@ -298,6 +298,16 @@ describe("safety/trusted-adults page", () => {
     expect(screen.getByRole("button", { name: "Deny" })).toBeEnabled();
   });
 
+  it("warns on every card when the viewer's household fails to load", async () => {
+    const withEmail = [{ ...trustedAdults[0], trustedAdultEmail: "friend@example.com" }];
+    setSession({ id: 1, isBoardMember: true, householdId: 1 });
+    mockFetchJson({ "/api/safety/trusted-adults": { trustedAdults: withEmail } });
+    renderWithProviders(<AdminTrustedAdultsPage />);
+    await screen.findByText("Guardian House");
+
+    expect(await screen.findByText(/your household didn't load/)).toBeInTheDocument();
+  });
+
   it("on a declined change over a live approval, offers Revoke approval and no Force deny", async () => {
     const declined = [
       {

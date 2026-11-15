@@ -41,7 +41,7 @@ const refusalAudit = {
         affectedEntityId: REVIEW,
         action: "EDIT",
         tableName: "SelfGrantRefusal",
-        newData: { reason: "own_household", table: "TrustedAdultReview" },
+        newData: { reason: "household_contact_match", table: "TrustedAdultReview" },
     },
 };
 

@@ -105,6 +105,7 @@ export default function AdminTrustedAdultsPage() {
     // The viewer's own household contacts, for the conflict rule's email/phone match.
     const own = useLoad<{ household: { householdMembers: HouseholdContact[] } | null }>(ready ? "/api/household" : null);
     const ownContacts = own.data?.household?.householdMembers ?? [];
+    const ownContactsFailed = own.error != null;
     const [busyId, setBusyId] = useState<number | null>(null);
     const [shared, setShared] = useState<Record<number, string>>({});
     // When a prior board note exists, force the board to pick "reuse" or "write new"
@@ -249,7 +250,13 @@ export default function AdminTrustedAdultsPage() {
                     adult,
                     proposed: latest ? { email: latest.proposedEmail, phone: latest.proposedPhone } : null,
                 });
-                const unconfirmed = !isSelf && cannotConfirmNoConflict(adult);
+                const unconfirmed = isSelf
+                    ? null
+                    : cannotConfirmNoConflict(adult)
+                        ? "this adult has only a name on file, so the app can't tell whether they are in your household."
+                        : ownContactsFailed
+                            ? "your household didn't load, so the app can't check this adult against it. Reload to try again."
+                            : null;
                 // A live approval exists underneath this pending review (mirrors
                 // /operational: an unexpired approval = still authorized). Then denying is
                 // ambiguous — reject just this submission, or the adult outright — so the
@@ -267,7 +274,7 @@ export default function AdminTrustedAdultsPage() {
                         <TrustedAdultContact phone={ta.trustedAdultPhone} email={ta.trustedAdultEmail} />
                         {unconfirmed && (
                             <Text size="sm" c="orange" mt={4}>
-                                Can&apos;t confirm no conflict: this adult has only a name on file, so the app can&apos;t tell whether they are in your household.
+                                Can&apos;t confirm no conflict: {unconfirmed}
                             </Text>
                         )}
                         <Text size="sm" mt={6}><b>Family context (board only):</b> {ta.familyContext}</Text>

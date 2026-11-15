@@ -6,7 +6,7 @@ import { TRUSTED_ADULT_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { personActor, systemActor, type AuditActor } from "@/lib/auditActor";
 import { emailBoardMembers, emailHouseholdLeads } from "@/lib/emailRecipients";
 import type { TemplateCtx, TemplateKey } from "@/lib/email-templates/registry";
-import { isTrustedAdultConflict } from "@/lib/trusted-adult/conflict";
+import { trustedAdultConflictReason } from "@/lib/trusted-adult/conflict";
 import { recordSelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
 import { authorizedReview, expiringApprovals } from "@/lib/trusted-adult/filters";
 import { config } from "@/lib/config";
@@ -263,7 +263,7 @@ async function refuseConflictedActor(actorId: number, reviewId: number, review: 
         select: { householdId: true, household: { select: { householdMembers: { select: { email: true, phone: true } } } } },
     });
     const ta = review.trustedAdult;
-    const conflict = isTrustedAdultConflict({
+    const reason = trustedAdultConflictReason({
         actorParticipantId: actorId,
         actorHouseholdId: me?.householdId,
         actorHouseholdContacts: me?.household?.householdMembers ?? [],
@@ -276,11 +276,11 @@ async function refuseConflictedActor(actorId: number, reviewId: number, review: 
         },
         proposed: { email: review.proposedEmail, phone: review.proposedPhone },
     });
-    if (!conflict) return;
+    if (reason === null) return;
     await recordSelfGrantRefusal(prisma, {
         actorId,
         affectedEntityId: reviewId,
-        newData: { reason: "own_household", table: "TrustedAdultReview" },
+        newData: { reason, table: "TrustedAdultReview" },
     });
     throw new TrustedAdultError("forbidden", message);
 }

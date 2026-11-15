@@ -1,4 +1,4 @@
-import { cannotConfirmNoConflict, isTrustedAdultConflict, type TrustedAdultIdentity } from "@/lib/trusted-adult/conflict";
+import { cannotConfirmNoConflict, isTrustedAdultConflict, trustedAdultConflictReason, type TrustedAdultIdentity } from "@/lib/trusted-adult/conflict";
 
 const ACTOR = 1;
 const ACTOR_HOUSEHOLD = 10;
@@ -56,5 +56,14 @@ describe("isTrustedAdultConflict", () => {
         expect(cannotConfirmNoConflict(nameOnly)).toBe(true);
         expect(cannotConfirmNoConflict({ ...nameOnly, email: "friend@example.com" })).toBe(false);
         expect(cannotConfirmNoConflict({ ...nameOnly, personId: 2 })).toBe(false);
+    });
+
+    it("names the leg that bars the actor", () => {
+        const args = { actorParticipantId: ACTOR, actorHouseholdId: ACTOR_HOUSEHOLD, actorHouseholdContacts: [spouse], taHouseholdId: OTHER_FAMILY };
+        expect(trustedAdultConflictReason({ ...args, taHouseholdId: ACTOR_HOUSEHOLD, adult: nameOnly })).toBe("own_household");
+        expect(trustedAdultConflictReason({ ...args, adult: { ...nameOnly, personId: ACTOR, personHouseholdId: ACTOR_HOUSEHOLD } })).toBe("is_trusted_adult");
+        expect(trustedAdultConflictReason({ ...args, adult: { ...nameOnly, personId: 2, personHouseholdId: ACTOR_HOUSEHOLD } })).toBe("adult_in_household");
+        expect(trustedAdultConflictReason({ ...args, adult: { ...nameOnly, phone: spouse.phone } })).toBe("household_contact_match");
+        expect(trustedAdultConflictReason({ ...args, adult: nameOnly })).toBeNull();
     });
 });
