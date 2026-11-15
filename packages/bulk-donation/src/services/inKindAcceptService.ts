@@ -10,7 +10,7 @@ import type { AuditContext } from "../workflows/disbursement.actor";
 import { QB_MATCH_STATE } from "../lib/qb-match";
 import { MAX_IN_KIND_LINES, MAX_IN_KIND_LINE_VALUE_CENTS, MAX_IN_KIND_TOTAL_CENTS } from "./manualInKindService";
 import { CapitalReviewLineSchema, type CapitalReviewLine } from "../contract";
-import { ServiceError, kindOf, toHttpError } from "@checkin/component-kit";
+import { ServiceError, kindOf, toHttpError, type FailureKind } from "@checkin/component-kit";
 import { formatGtinDisplay } from "@checkin/gtin";
 import { allocateCents } from "@checkin/money";
 
@@ -482,7 +482,7 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
       if (sides.length > 0 || posting?.matchState === QB_MATCH_STATE.POSTING || posting?.qbCreateAttemptedAt) {
         throw new ServiceError(409, "This gift has started booking; its bucket can no longer change");
       }
-      // The current bucket is kept as is, held or not; resubmitting it only resends to capital review.
+      // The current bucket is kept as is, held or not.
       const to = gift.budgetOwnerId !== null && input.bucketId === gift.budgetOwnerId ? gift.budgetOwnerId : await assignableBucket(input.bucketId);
       const unchanged = to === gift.budgetOwnerId;
       if (!unchanged) {
@@ -490,7 +490,7 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
         await recordEvent(tx, { orgId, ...entity(gift), eventType: "IN_KIND_BUCKET_CHANGED", ...audit, payload: { from: gift.budgetOwnerId, to } });
       }
       const result = unchanged ? gift : { ...gift, budgetOwnerId: to, bucketAssignedAt: now };
-      return { view: decisionView(result), send: gift.capitalSubmittedAt === null ? capitalReviewLines(gift, to) : null };
+      return { view: decisionView(result), send: null };
     }
 
     const outcome = OUTCOME[input.outcome];
@@ -541,38 +541,60 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
 
 /**
  * Sends an accepted gift's lines once its decision has committed: the expense library has its own
- * database, so the send cannot share the accept's transaction. Until a send succeeds the gift waits
- * on capital review, and accepting it again resends; the callee keys each line, so a resend does nothing.
- * A send the callee refuses would be refused again, so finance sees why instead of being told to resend.
- * A bug, such as a 401 or 403 from the callee, is our wiring, never the accepting person's permission: a 500 that says so.
+ * database, so the send cannot share the accept's transaction. It never throws, so the accept's
+ * answer stands. A failed send leaves the gift stuck, with its first failure time and last error,
+ * until a person retries it from the Problems list; the callee keys each line, so a resend is safe.
+ * Returns the failure's kind, or null when the send succeeded.
  */
-async function sendToCapitalReview(orgId: string, source: InKindSource, id: number, lines: CapitalReviewLine[]): Promise<void> {
-  const fault = (err: unknown) => {
-    console.error(`[bulk-donation] in-kind ${source} gift ${id} accepted; its capital review send hit a fault in our wiring`, err);
-    const answer = new ServiceError(500, "The gift is accepted, but sending its lines to capital review hit a fault in our software; tell whoever runs the system");
-    answer.cause = err;
-    return answer;
-  };
-  // We built these lines, so lines our own schema rejects are our bug, not the callee's refusal.
-  const parsed = CapitalReviewLineSchema.array().safeParse(lines);
-  if (!parsed.success) throw fault(parsed.error);
+async function sendToCapitalReview(orgId: string, source: InKindSource, id: number, lines: CapitalReviewLine[]): Promise<FailureKind | null> {
   try {
-    await getInKindCapital().submit(orgId, parsed.data);
+    await getInKindCapital().submit(orgId, CapitalReviewLineSchema.array().parse(lines));
+    await writeCapitalSend(source, id, { capitalSubmittedAt: new Date(), capitalFirstFailedAt: null, capitalLastError: null });
+    return null;
   } catch (err) {
     const kind = kindOf(err);
-    const answered = toHttpError(err);
-    if (kind === "data") {
-      throw new ServiceError(answered?.status ?? 422, `The gift is accepted, but capital review refused its lines: ${answered?.message ?? (err instanceof Error ? err.message : String(err))}`, answered?.code);
-    }
-    if (kind === "bug") throw fault(err);
-    console.error(`[bulk-donation] in-kind ${source} gift ${id} accepted; its capital review send failed`, err);
-    const failed = new ServiceError(502, "The gift is accepted, but its lines did not reach capital review; accept it again to resend them");
-    failed.cause = err;
-    throw failed;
+    console.error(`[bulk-donation] in-kind ${source} gift ${id}'s capital review send failed (${kind})`);
+    await recordCapitalSendFailure(source, id, err);
+    return kind;
   }
-  const data = { capitalSubmittedAt: new Date() };
-  if (source === "receipt") await db.inKindDonation.update({ where: { id }, data });
-  else await db.manualInKindDonation.update({ where: { id }, data });
+}
+
+async function writeCapitalSend(source: InKindSource, id: number, data: { capitalSubmittedAt?: Date; capitalFirstFailedAt?: Date | null; capitalLastError?: string | null }, onlyFirst = false) {
+  const where = onlyFirst ? { id, capitalFirstFailedAt: null } : { id };
+  if (source === "receipt") await db.inKindDonation.updateMany({ where, data });
+  else await db.manualInKindDonation.updateMany({ where, data });
+}
+
+/** Keeps the first failure time across later failures. A failure to record it is only logged. */
+async function recordCapitalSendFailure(source: InKindSource, id: number, err: unknown): Promise<void> {
+  const answered = toHttpError(err);
+  const capitalLastError = answered?.message ?? (err instanceof Error ? err.message : String(err));
+  try {
+    await writeCapitalSend(source, id, { capitalFirstFailedAt: new Date() }, true);
+    await writeCapitalSend(source, id, { capitalLastError });
+  } catch (recordErr) {
+    console.error(`[bulk-donation] in-kind ${source} gift ${id}'s capital review failure was not recorded (${kindOf(recordErr)})`);
+  }
+}
+
+/** A stuck accepted gift whose capital review send failed: its first failure time. */
+const STUCK_CAPITAL_WHERE = { decisionOutcome: "ACCEPTED", capitalSubmittedAt: null, capitalFirstFailedAt: { not: null } } as const;
+
+async function stuckCapitalSends(orgId: string): Promise<{ source: InKindSource; id: number; failedAt: Date }[]> {
+  const select = { id: true, capitalFirstFailedAt: true } as const;
+  const where = { orgId, ...STUCK_CAPITAL_WHERE };
+  const [receipts, manuals] = await Promise.all([db.inKindDonation.findMany({ where, select }), db.manualInKindDonation.findMany({ where, select })]);
+  const tag = (source: InKindSource) => (r: { id: number; capitalFirstFailedAt: Date | null }) => (r.capitalFirstFailedAt ? [{ source, id: r.id, failedAt: r.capitalFirstFailedAt }] : []);
+  return [...receipts.flatMap(tag("receipt")), ...manuals.flatMap(tag("manual"))];
+}
+
+/** Resends a stuck gift's lines once, from its current bucket. "not_stuck" when it has no failed send. */
+async function resendCapitalReview(orgId: string, source: InKindSource, id: number): Promise<"sent" | "not_stuck" | FailureKind> {
+  const where = { orgId, id, ...STUCK_CAPITAL_WHERE };
+  const stuck = source === "receipt" ? await db.inKindDonation.count({ where }) : await db.manualInKindDonation.count({ where });
+  const gift = stuck ? await loadGift(db, orgId, source, id) : null;
+  if (!gift || gift.budgetOwnerId === null) return "not_stuck";
+  return (await sendToCapitalReview(orgId, source, id, capitalReviewLines(gift, gift.budgetOwnerId))) ?? "sent";
 }
 
 /**
@@ -773,6 +795,8 @@ async function lockReadyGift(tx: DbOrTx, orgId: string, source: InKindSource, id
 }
 
 export const inKindAcceptService = { listQueue, queueItem, decide, listByBucket, getGift };
+
+export const inKindCapitalSend = { stuckCapitalSends, resendCapitalReview };
 
 /** What the in-kind drain reads; not part of any route. */
 export const inKindReadiness = { readReadiness, giftsToBook, lockReadyGift };
