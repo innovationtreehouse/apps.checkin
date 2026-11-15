@@ -6,7 +6,7 @@ import { withTx } from "@/lib/db-client";
 import { nextBoundary, programYearsTouched } from "@/lib/programYear";
 import { orgCalendarDay } from "@/lib/time";
 import { normalizePhone } from "@/lib/phone";
-import { householdHasValidContact } from "@/lib/emergencyContacts/service";
+import { householdHasValidContact } from "@/lib/emergencyContacts/valid";
 
 /**
  * Dev seed + macro helpers (docs/ops/dev-instance.md, "Macros") — the ONE source of truth for creating
