@@ -216,6 +216,25 @@ describe("ProgramDetailsPage", () => {
     );
   });
 
+  it("shows a save's price-sync warning and sale-reopened notice until dismissed, instead of plain Saved", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const warning = "Program saved, but the Shopify price is out of date — admins have been emailed. Set the price by hand in Shopify on both the public and reserved-seat products.";
+    const notice = "Sale reopened. The public store product stays hidden: re-list it in Shopify by hand if it should sell again.";
+    routedFetch([
+      { url: "/api/programs/1", method: "GET", result: { ok: true, body: programData } },
+      { url: "/api/programs/1", method: "PATCH", result: { ok: true, body: { success: true, warning, notice } } },
+    ]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith({ color: "yellow", message: warning, autoClose: false }),
+    );
+    expect(notifications.show).toHaveBeenCalledWith({ color: "yellow", message: notice, autoClose: false });
+    expect(notifications.show).not.toHaveBeenCalledWith(expect.objectContaining({ message: "Saved." }));
+  });
+
   it("shows the server error message when saving general settings fails", async () => {
     setSession({ id: 1, isSysadmin: true });
     routedFetch([
