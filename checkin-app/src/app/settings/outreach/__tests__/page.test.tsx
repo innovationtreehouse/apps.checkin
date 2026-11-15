@@ -170,3 +170,38 @@ describe("OutreachSettingsPage", () => {
     expect(await screen.findByRole("button", { name: /Retry 2 failed/ })).toBeInTheDocument();
   });
 });
+
+describe("failed loads", () => {
+  it("shows the templates error with Retry, and no form or Save, until the templates load", async () => {
+    router({ "/api/outreach/status": { body: EMPTY_STATUS } });
+    renderWithProviders(<OutreachSettingsPage />);
+
+    expect(await screen.findByText("Couldn't load the outreach templates")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Subject")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save templates" })).not.toBeInTheDocument();
+
+    router({
+      "/api/settings/outreach": { body: { settings: SETTINGS, nextDeadline: "2026-08-01" } },
+      "/api/outreach/status": { body: EMPTY_STATUS },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByDisplayValue("Time to {{actionWord}}")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save templates" })).toBeInTheDocument();
+  });
+
+  it("offers no new send while the send status is unknown, and Retry recovers", async () => {
+    router({ "/api/settings/outreach": { body: { settings: SETTINGS, nextDeadline: "2026-08-01" } } });
+    renderWithProviders(<OutreachSettingsPage />);
+
+    expect(await screen.findByText("Couldn't load the send status")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send Opening-of-renewals campaign" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send Reminder campaign" })).not.toBeInTheDocument();
+
+    router({
+      "/api/settings/outreach": { body: { settings: SETTINGS, nextDeadline: "2026-08-01" } },
+      "/api/outreach/status": { body: EMPTY_STATUS },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByRole("button", { name: "Send Opening-of-renewals campaign" })).toBeInTheDocument();
+  });
+});
