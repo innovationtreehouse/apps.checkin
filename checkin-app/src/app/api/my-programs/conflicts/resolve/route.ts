@@ -13,8 +13,8 @@ import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
  * 'Visit', actorId, oldData snapshot).
  *
  * Authorization is re-checked server-side (never trust the client): the caller
- * must lead the program that owns the event for the visit being deleted, or be a
- * global admin (isSysadmin/isBoardMember/isKeyholder).
+ * must lead the program that owns the event for the visit being deleted, or be the
+ * Board or a sysadmin, who edit or delete any visit.
  * And the visit must actually be part of an overlap, so we can't be tricked into
  * deleting a participant's legitimate sole visit.
  *
@@ -44,9 +44,9 @@ export const POST = withAuth({}, async (req, auth) => {
     return apiError("Visit not found", 404);
   }
 
-  const isGlobalAdmin = !!(user.isSysadmin || user.isBoardMember || user.isKeyholder);
+  const isBoardOrSysadmin = !!(user.isSysadmin || user.isBoardMember);
   const leadsOwningProgram = visit.event?.program?.leadMentorId === user.id;
-  if (!isGlobalAdmin && !leadsOwningProgram) {
+  if (!isBoardOrSysadmin && !leadsOwningProgram) {
     return apiError("Forbidden: not authorized to resolve this visit", 403);
   }
 
