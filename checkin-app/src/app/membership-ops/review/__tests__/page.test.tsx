@@ -169,6 +169,26 @@ describe("membership-ops/review page", () => {
     expect(await screen.findByText("Nothing awaiting your review right now.")).toBeInTheDocument();
   });
 
+  it("offers the volunteer tick on a marked review of one of the household's leads", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({ "/api/membership/reviews": { queue: [{ ...named, id: 300, _count: { attestations: 0 } }] } });
+    renderPage();
+
+    expect(await screen.findByText("Pat Smith")).toBeInTheDocument();
+    expect(screen.getByText("This is a volunteer only family (no students)")).toBeInTheDocument();
+  });
+
+  it("hides the volunteer tick on a review of an adult who is not one of the household's leads", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const adultChild = { id: 301, subjectPerson: { id: 3, name: "Kit Smith", householdId: 7, household: { name: "The Smiths" } }, requestedForHousehold: smiths, _count: { attestations: 0 } };
+    mockFetchJson({ "/api/membership/reviews": { queue: [adultChild] } });
+    renderPage();
+
+    expect(await screen.findByText("Kit Smith")).toBeInTheDocument();
+    expect(screen.getByText("We're volunteer only — no students.")).toBeInTheDocument();
+    expect(screen.queryByText("This is a volunteer only family (no students)")).not.toBeInTheDocument();
+  });
+
   it("hides the volunteer tick on a review no household asked for", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson({

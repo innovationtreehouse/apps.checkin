@@ -485,14 +485,14 @@ export default function MembershipReviewPage() {
                 </Stack>
               )}
 
-              {/* The intake note and the volunteer-only mark belong to the household that asked for the check. */}
+              {/* The intake note belongs to the household that asked for the check; the volunteer-only mark is offered only on a review of one of its leads. */}
               {requested && notes && (
                 <Alert color="yellow" variant="light" mt="md" title="From the applicant — “Anything else we should know?”">
                   <Text style={{ whiteSpace: "pre-wrap" }}>{notes}</Text>
                 </Alert>
               )}
 
-              {requested && (
+              {requested && (!subject || leads.some((p) => p.id === subject.id)) && (
                 <Checkbox
                   my="md"
                   checked={!!volunteer[item.id]}

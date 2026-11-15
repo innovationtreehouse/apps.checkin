@@ -427,6 +427,10 @@ Procedure below is built on them.
   the review, at once, as its own audited change; the review never stores it. A
   reviewer can set it and cannot remove it; removing it is a Board edit.  [Decision — deliberate limit]
 
+- The tick is offered, and written, only on a review of one of that household's
+  leads. A review of any other adult in it, an adult child's or a non-lead's own,
+  carries no tick.  [Decision — owner]
+
 - A volunteer designation matches on canonical email, so address variants cannot
   change what a family owes.  [Decision]
 

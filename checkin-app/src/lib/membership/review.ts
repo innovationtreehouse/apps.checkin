@@ -290,7 +290,7 @@ export async function attest(reviewerId: number, processId: number, input: Attes
         if (process.attestations.some((a) => sharesHousehold(reviewer.householdId, a.reviewer.householdId))) throw new ReviewError("same_household_reviewer", "Another reviewer from your household has already reviewed this background check.");
 
         if (naming) await nameSubject(tx, reviewerId, processId, subjectPersonId);
-        if (input.isMarkedVolunteerFamily) await markVolunteerFamily(tx, reviewerId, process.requestedForHouseholdId, processId);
+        if (input.isMarkedVolunteerFamily) await markVolunteerFamily(tx, reviewerId, process.requestedForHouseholdId, processId, subjectPersonId);
         const households = await reviewHouseholds(tx, target);
 
         await tx.backgroundCheckAttestation.create({
@@ -395,11 +395,15 @@ async function nameSubject(tx: TxClient, reviewerId: number, processId: number, 
 
 /**
  * Ruling D: a reviewer's Volunteer Family tick is written on the review's requested
- * household at once, as its own audited change. It only ever sets the status;
- * removing it is a Board edit.
+ * household at once, as its own audited change, and only on a review of one of that
+ * household's leads. It only ever sets the status; removing it is a Board edit.
  */
-async function markVolunteerFamily(tx: TxClient, reviewerId: number, householdId: number | null, processId: number) {
+async function markVolunteerFamily(tx: TxClient, reviewerId: number, householdId: number | null, processId: number, subjectPersonId: number) {
     if (householdId === null) throw new ReviewError("invalid_input", "This background check was not requested by a household, so it cannot mark a Volunteer Family.");
+    const subject = await tx.person.findUnique({ where: { id: subjectPersonId }, select: { householdId: true, isHouseholdLead: true } });
+    if (subject?.householdId !== householdId || !subject.isHouseholdLead) {
+        throw new ReviewError("invalid_input", "Only a review of one of the household's leads can mark a Volunteer Family.");
+    }
     const membership = await tx.orgMembership.findUnique({ where: { householdId }, select: { id: true, isVolunteerFamily: true } });
     if (!membership) throw new ReviewError("invalid_input", "The household this check was requested for has no membership to mark.");
     if (membership.isVolunteerFamily) return;
@@ -448,7 +452,7 @@ async function switchRejectionToApprove(
     if (await lockAndFindDeniedHousehold(tx, households) !== null) {
         throw new ReviewError("wrong_phase", "This household has been denied membership, so its background-check review cannot be reopened.");
     }
-    if (input.isMarkedVolunteerFamily) await markVolunteerFamily(tx, reviewerId, process.requestedForHouseholdId, processId);
+    if (input.isMarkedVolunteerFamily) await markVolunteerFamily(tx, reviewerId, process.requestedForHouseholdId, processId, subjectPersonId);
     const reviewStatus = blockedResetStatus(process, false);
 
     const attestations = await tx.backgroundCheckAttestation.findMany({ where: { processId }, orderBy: { id: "asc" } });

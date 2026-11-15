@@ -157,6 +157,25 @@ describe('a second lead on a renewal', () => {
     });
 });
 
+describe("the reviewer's Volunteer Family tick", () => {
+    const isVolunteer = async (householdId: number) => (await prisma.orgMembership.findUniqueOrThrow({ where: { householdId } })).isVolunteerFamily;
+
+    it("is written onto the household from a review of one of its leads", async () => {
+        const f = await family();
+        const reviewId = (await markCheckStarted(f.leadId, f.leadId)).processId!;
+        await attest(revA, reviewId, { result: 'APPROVE', isMarkedVolunteerFamily: true });
+        expect(await isVolunteer(f.householdId)).toBe(true);
+    });
+
+    it("is refused on a review of another adult in the household, writing nothing", async () => {
+        const f = await family();
+        const reviewId = (await markCheckStarted(f.adultId, f.leadId)).processId!;
+        await expect(attest(revA, reviewId, { result: 'APPROVE', isMarkedVolunteerFamily: true })).rejects.toMatchObject({ code: 'invalid_input' });
+        expect(await isVolunteer(f.householdId)).toBe(false);
+        expect(await prisma.backgroundCheckAttestation.count({ where: { processId: reviewId } })).toBe(0);
+    });
+});
+
 describe('dismissCheckStarted', () => {
     async function markedReview() {
         const f = await family();
