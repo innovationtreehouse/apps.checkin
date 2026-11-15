@@ -226,7 +226,7 @@ export async function pickUpMissedSignature(process: Pick<OrgMembershipProcess, 
  * Associate a Zoho signing request id with a process so its webhook can match.
  * Clears zohoActionId: re-pointing the envelope would otherwise leave the old
  * action id paired with the new request, an unsignable mismatch that
- * getOrCreateContractSigningUrl's null-claim repair can't fix (both ids non-null).
+ * claimAndCreateRequest's null-claim repair can't fix (both ids non-null).
  * Nulling the action id restores the claimable envelope-without-action state its
  * claim already handles — the same recovery clearDeadSigningRequest relies on.
  */
