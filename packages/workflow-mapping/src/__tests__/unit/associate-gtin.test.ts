@@ -128,6 +128,7 @@ describe("associateGtin GTIN check", () => {
       expect.anything(),
       expect.objectContaining({ recognitionStatus: "recognized", assignedGtin13: ACTIVE }),
       expect.objectContaining({ eventType: "line_associated" }),
+      expect.any(Function),
     );
   });
 });
