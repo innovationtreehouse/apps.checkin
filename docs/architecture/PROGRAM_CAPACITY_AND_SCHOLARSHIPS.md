@@ -240,7 +240,7 @@ to `null`.
 
 **User decision: an applicant receives exactly one automatic email — the request
 acknowledgement.** `src/lib/scholarshipEmails.ts` resolves recipients / fans out; callers
-build their own subject/html and pass them in. Sends fire *after* the state transition
+pass a template key and its token values. Sends fire *after* the state transition
 commits, fire-and-forget (a failed send never fails the request), and only when the
 request actually transitioned (no duplicate mail on a no-op re-POST). Recipient
 resolution itself lives in `src/lib/emailRecipients.ts` (`resolveHouseholdRecipients`) — a
@@ -248,13 +248,13 @@ household-generic helper, not scholarship-specific — with `scholarshipEmails.t
 re-exporting it as `resolveScholarshipRecipients` for its existing call sites. The
 pending-participants cron (rows below) calls `resolveHouseholdRecipients` directly.
 
-The ACK's subject and body (per variant: membership dues / program, the latter
-supporting a `{{programName}}` token) are settings-configurable —
-`BoardSettings.scholarshipAck{Subject,MembershipBody,ProgramBody}`, set on the same
-Settings → Email page as `scholarshipNotifyEmail`, NULL/blank falling back to the
-default copy in `scholarshipEmails.ts` (`resolveAckCopy`/`renderAckBody`, plain text,
-HTML-escaped). The contract above is unchanged: still the applicant's only automatic
-email, just with configurable copy; the Shopify-seat-hold-failure body stays hard-coded.
+The ACK is three email templates: `scholarship.ackMembership`,
+`scholarship.ackProgram` (with a `{{programName}}` token) and
+`scholarship.ackProgramHoldFailed`, sent when the Shopify seat hold fails. The Board
+edits their wording on Settings → Email Templates, and also on Settings → Email beside
+`scholarshipNotifyEmail` (one subject for all three, the membership and program bodies); a template with no saved wording sends its
+registry default (`email-templates/registry.ts`). The contract above is unchanged:
+still the applicant's only automatic email.
 
 **1. Who is emailed when:**
 

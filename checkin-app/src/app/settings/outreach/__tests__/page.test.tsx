@@ -10,9 +10,9 @@ import { renderWithProviders, setSession, resetRtl } from "@/test-helpers/rtl";
 import OutreachSettingsPage from "../page";
 
 const SETTINGS = {
-  outreachOpeningSubject: "Time to {{actionWord}}",
-  outreachOpeningBody: "Hi {{name}}, please {{actionWord}} by {{deadline}} at {{actionLink}}.",
-  outreachReminderSubject: "Reminder: {{actionWord}}",
+  outreachOpeningSubject: "Time to renew",
+  outreachOpeningBody: "Hi {{name}}, please renew by {{deadline}} at {{actionLink}}.",
+  outreachReminderSubject: "Reminder: renew",
   outreachReminderBody: "Hi {{name}}, a reminder.",
 };
 const EMPTY_STATUS = { inFlight: null, lastCompleted: null };
@@ -47,7 +47,7 @@ describe("OutreachSettingsPage", () => {
     });
     renderWithProviders(<OutreachSettingsPage />);
 
-    await screen.findByDisplayValue("Time to {{actionWord}}");
+    await screen.findByDisplayValue("Time to renew");
     expect(screen.getAllByDisplayValue(/Hi \{\{name\}\}/)).toHaveLength(2);
 
     // The body renders in a scriptless sandboxed iframe (XSS hardening), so assert against its srcDoc.
@@ -60,12 +60,39 @@ describe("OutreachSettingsPage", () => {
       "/api/outreach/status": { body: EMPTY_STATUS },
     });
     renderWithProviders(<OutreachSettingsPage />);
-    await screen.findByDisplayValue("Time to {{actionWord}}");
+    await screen.findByDisplayValue("Time to renew");
 
     const subjectInputs = screen.getAllByLabelText("Subject");
-    fireEvent.change(subjectInputs[0], { target: { value: "Brand new subject {{actionWord}}" } });
+    fireEvent.change(subjectInputs[0], { target: { value: "Brand new subject for {{name}}" } });
 
-    expect(await screen.findByText("Brand new subject renew")).toBeInTheDocument();
+    expect(await screen.findByText("Brand new subject for Jordan Rivera")).toBeInTheDocument();
+  });
+
+  it("previews the default wording for a campaign with no saved copy", async () => {
+    router({
+      "/api/settings/outreach": { body: { settings: { ...SETTINGS, outreachReminderSubject: null, outreachReminderBody: null }, nextDeadline: "2026-08-01" } },
+      "/api/outreach/status": { body: EMPTY_STATUS },
+    });
+    renderWithProviders(<OutreachSettingsPage />);
+    await screen.findByDisplayValue("Time to renew");
+
+    expect(await screen.findByText("Reminder: renew by 2026-08-01")).toBeInTheDocument();
+    expect(screen.getByTitle("Reminder: preview").getAttribute("srcdoc")).toMatch(/closes on 2026-08-01/);
+  });
+
+  it("operations can send a campaign but not change the wording", async () => {
+    setSession({ id: 1, isOperations: true });
+    router({
+      "/api/settings/outreach": { body: { settings: SETTINGS, nextDeadline: "2026-08-01" } },
+      "/api/outreach/status": { body: EMPTY_STATUS },
+    });
+    renderWithProviders(<OutreachSettingsPage />);
+    await screen.findByDisplayValue("Time to renew");
+
+    expect(screen.getAllByLabelText("Subject")[0]).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save templates" })).toBeDisabled();
+    for (const button of screen.getAllByRole("button", { name: /Send test to me/ })) expect(button).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send Opening-of-renewals campaign" })).toBeEnabled();
   });
 
   it("sends a test email for a template", async () => {
@@ -75,11 +102,13 @@ describe("OutreachSettingsPage", () => {
       "/api/outreach/test-send": { body: { success: true } },
     });
     renderWithProviders(<OutreachSettingsPage />);
-    await screen.findByDisplayValue("Time to {{actionWord}}");
+    await screen.findByDisplayValue("Time to renew");
 
     fireEvent.click(screen.getAllByRole("button", { name: /Send test to me/ })[0]);
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/outreach/test-send", expect.objectContaining({ method: "POST" })));
+    const [, init] = fetchMock.mock.calls.find(([url]) => url === "/api/outreach/test-send")!;
+    expect(JSON.parse(String(init?.body))).toEqual(expect.objectContaining({ emailType: "opening", subject: "Time to renew" }));
   });
 
   it("rejects saving an unknown token with a visible error", async () => {
@@ -88,7 +117,7 @@ describe("OutreachSettingsPage", () => {
       "/api/outreach/status": { body: EMPTY_STATUS },
     });
     renderWithProviders(<OutreachSettingsPage />);
-    await screen.findByDisplayValue("Time to {{actionWord}}");
+    await screen.findByDisplayValue("Time to renew");
 
     const subjectInputs = screen.getAllByLabelText("Subject");
     fireEvent.change(subjectInputs[0], { target: { value: "{{bogus}}" } });
@@ -109,7 +138,7 @@ describe("OutreachSettingsPage", () => {
       "/api/outreach/process-batch": { body: { bulkSendId: 1, processed: 10, remaining: 0 } },
     });
     renderWithProviders(<OutreachSettingsPage />);
-    await screen.findByDisplayValue("Time to {{actionWord}}");
+    await screen.findByDisplayValue("Time to renew");
 
     fireEvent.click(screen.getByRole("button", { name: "Send Opening-of-renewals campaign" }));
 
@@ -129,7 +158,7 @@ describe("OutreachSettingsPage", () => {
       "/api/outreach/send": { body: { bulkSend: { id: 2 }, counts: { queued: 0, leadsWithoutEmail: 0, total: 0 } } },
     });
     renderWithProviders(<OutreachSettingsPage />);
-    await screen.findByDisplayValue("Time to {{actionWord}}");
+    await screen.findByDisplayValue("Time to renew");
 
     expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Send Reminder campaign" }));
@@ -185,7 +214,7 @@ describe("failed loads", () => {
       "/api/outreach/status": { body: EMPTY_STATUS },
     });
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-    expect(await screen.findByDisplayValue("Time to {{actionWord}}")).toBeInTheDocument();
+    expect(await screen.findByDisplayValue("Time to renew")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save templates" })).toBeInTheDocument();
   });
 
@@ -211,7 +240,7 @@ describe("failed loads", () => {
       "/api/outreach/status": { body: EMPTY_STATUS },
     });
     const earlier = renderWithProviders(<OutreachSettingsPage />);
-    await screen.findByDisplayValue("Time to {{actionWord}}");
+    await screen.findByDisplayValue("Time to renew");
     earlier.unmount();
 
     const answer = router({
@@ -226,7 +255,7 @@ describe("failed loads", () => {
     renderWithProviders(<OutreachSettingsPage />);
 
     await waitFor(() => expect(global.fetch).toHaveBeenCalled());
-    expect(screen.queryByDisplayValue("Time to {{actionWord}}")).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("Time to renew")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save templates" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Send Opening-of-renewals campaign" })).not.toBeInTheDocument();
 

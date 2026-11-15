@@ -9,9 +9,11 @@ import { errorMessage, HttpError, invalidateLoads, LoadError, showError, showSuc
 import { api, useLoad } from "@/lib/api";
 import { useFreshRead } from "@/hooks/useFreshRead";
 import { useRequireRole } from "@/hooks/useRequireRole";
-import { SETTINGS_ROLES } from "@/lib/nav/sections/settings";
+import { SETTINGS_ADMIN_ROLES, SETTINGS_ROLES } from "@/lib/nav/sections/settings";
+import { hasAnyRole } from "@/lib/nav/gates";
 import { useUnsavedGuard, shallowEqual } from "@/components/UnsavedChangesProvider";
-import { substituteTokens } from "@/lib/outreach/tokens";
+import { REGISTRY } from "@/lib/email-templates/registry";
+import { renderTemplate, withDefaults } from "@/lib/email-templates/tokens";
 
 type TemplateKey = "opening" | "reminder";
 
@@ -49,7 +51,8 @@ const AUDIENCE_LABEL: Record<TemplateKey, string> = {
 };
 
 export default function OutreachSettingsPage() {
-  const { ready, loading: authLoading } = useRequireRole(SETTINGS_ROLES);
+  const { ready, loading: authLoading, user } = useRequireRole(SETTINGS_ROLES);
+  const canEdit = hasAnyRole(user, SETTINGS_ADMIN_ROLES);
 
   const [opening, setOpening] = useState({ subject: "", body: "" });
   const [reminder, setReminder] = useState({ subject: "", body: "" });
@@ -105,7 +108,7 @@ export default function OutreachSettingsPage() {
     const t = key === "opening" ? opening : reminder;
     setTestSending(key);
     try {
-      await api("/api/outreach/test-send", { method: "POST", body: JSON.stringify({ subject: t.subject, body: t.body }) });
+      await api("/api/outreach/test-send", { method: "POST", body: JSON.stringify({ emailType: key, subject: t.subject, body: t.body }) });
       showSuccess("Test email sent to your address.");
     } catch (e) {
       showError(errorMessage(e));
@@ -133,24 +136,27 @@ export default function OutreachSettingsPage() {
           )}
 
           <TemplateCard
-            title={TEMPLATE_LABEL.opening}
+            emailType="opening"
             value={opening}
             onChange={setOpening}
             deadline={nextDeadline}
             testSending={testSending === "opening"}
+            canEdit={canEdit}
             onSendTest={() => sendTest("opening")}
           />
           <TemplateCard
-            title={TEMPLATE_LABEL.reminder}
+            emailType="reminder"
             value={reminder}
             onChange={setReminder}
             deadline={nextDeadline}
             testSending={testSending === "reminder"}
+            canEdit={canEdit}
             onSendTest={() => sendTest("reminder")}
           />
 
           <Group>
-            <Button disabled={saving} loading={saving} onClick={saveSettings}>Save templates</Button>
+            <Button disabled={saving || !canEdit} loading={saving} onClick={saveSettings}>Save templates</Button>
+            {!canEdit && <Text size="sm" c="dimmed">Only the Board and sysadmins change the wording.</Text>}
           </Group>
 
           <SendPanel deadlineSet={nextDeadline !== null} />
@@ -161,55 +167,61 @@ export default function OutreachSettingsPage() {
 }
 
 function TemplateCard({
-  title, value, onChange, deadline, testSending, onSendTest,
+  emailType, value, onChange, deadline, testSending, onSendTest, canEdit,
 }: {
-  title: string;
+  canEdit: boolean;
+  emailType: TemplateKey;
   value: { subject: string; body: string };
   onChange: (v: { subject: string; body: string }) => void;
   deadline: string | null;
   testSending: boolean;
   onSendTest: () => void;
 }) {
-  const tokens = { name: SAMPLE_NAME, deadline: deadline ?? "(boundary not set)", actionWord: "renew", actionLink: "/membership" };
+  const title = TEMPLATE_LABEL[emailType];
+  const spec = REGISTRY[`outreach.${emailType}`];
+  const sent = withDefaults(spec, value);
+  const tokens = { name: SAMPLE_NAME, deadline: deadline ?? "(boundary not set)", actionLink: "/membership" };
+  const preview = renderTemplate(sent.subject, sent.body, tokens, spec.allowedTokens);
 
   return (
     <Card withBorder radius="md" padding="lg">
       <Title order={3} mb="xs">{title}</Title>
       <Text c="dimmed" size="sm" mb="md">
-        Tokens: <code>{"{{name}}"}</code> <code>{"{{deadline}}"}</code> <code>{"{{actionWord}}"}</code> <code>{"{{actionLink}}"}</code>.
-        {" "}<code>{"{{actionWord}}"}</code> is always &quot;renew&quot;; the action link points at <code>/membership</code>.
+        Tokens: <code>{"{{name}}"}</code> <code>{"{{deadline}}"}</code> <code>{"{{actionLink}}"}</code>.
+        {" "}The action link points at <code>/membership</code>. A blank line starts a new paragraph; a blank field sends the default wording.
       </Text>
 
       <Stack gap="sm">
         <TextInput
           label="Subject"
+          placeholder={spec.defaultSubject}
           value={value.subject}
+          disabled={!canEdit}
           onChange={(e) => onChange({ ...value, subject: e.currentTarget.value })}
         />
         <Textarea
-          label="Body (HTML)"
+          label="Body"
+          placeholder={spec.defaultBody}
           minRows={6}
           autosize
           value={value.body}
+          disabled={!canEdit}
           onChange={(e) => onChange({ ...value, body: e.currentTarget.value })}
         />
       </Stack>
 
       <Card mt="md" withBorder padding="sm" radius="sm">
-        <Text fw={600} size="sm" mb={4}>{substituteTokens(value.subject, tokens)}</Text>
-        {/* Template body is operator-authored HTML (PUT is open to isOperations). Render it in a
-            scriptless sandboxed iframe so an <img onerror> can't run in a board/sysadmin session
-            that opens this same-origin admin page — sandbox="" blocks scripts while still showing
-            the markup a mail client would. */}
+        <Text fw={600} size="sm" mb={4}>{preview.subject}</Text>
+        {/* The body is escaped by renderTemplate; the scriptless sandbox keeps the preview inert regardless. */}
         <iframe
           title={`${title}: preview`}
           sandbox=""
-          srcDoc={`<style>body{margin:0;font:13px system-ui,sans-serif}</style>${substituteTokens(value.body, tokens)}`}
-          style={{ border: 0, width: "100%", height: 160 }}
+          srcDoc={preview.html}
+          style={{ border: 0, width: "100%", height: 280 }}
         />
       </Card>
 
-      <Button mt="md" variant="light" loading={testSending} onClick={onSendTest}>
+      <Button mt="md" variant="light" disabled={!canEdit} loading={testSending} onClick={onSendTest}>
         Send test to me
       </Button>
     </Card>

@@ -32,12 +32,13 @@ export async function sendTemplated(key: TemplateKey, to: string, ctx: Record<st
 }
 
 /**
- * Send unsaved copy for `key` to `to`, filled from the key's sample values and
- * marked `[Test]`. A blank field sends its registry default, as a saved row would.
+ * Send unsaved copy for `key` to `to`, filled from `ctx` (the key's sample values
+ * by default) and marked `[Test]`. A blank field sends its registry default, as a
+ * saved row would.
  */
-export async function sendTemplateTest(key: TemplateKey, to: string, draft: { subject: string; body: string }): Promise<boolean> {
+export async function sendTemplateTest(key: TemplateKey, to: string, draft: { subject: string; body: string }, ctx?: Record<string, string>): Promise<boolean> {
     const spec: TemplateSpec = REGISTRY[key];
     const copy = withDefaults(spec, draft);
-    const { subject, html } = renderTemplate(copy.subject, copy.body, spec.sampleCtx, spec.allowedTokens);
+    const { subject, html } = renderTemplate(copy.subject, copy.body, ctx ?? spec.sampleCtx, spec.allowedTokens);
     return sendEmail(to, `[Test] ${subject}`, html);
 }

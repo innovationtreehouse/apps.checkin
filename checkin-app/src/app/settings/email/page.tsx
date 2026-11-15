@@ -10,7 +10,10 @@ import { api, useLoad } from "@/lib/api";
 import { SETTINGS_ADMIN_ROLES } from "@/lib/nav/sections/settings";
 import { isValidEmailHeader, parseEmailHeaderList } from "@/lib/emailHeader";
 import { isValidEmail } from "@/lib/emergencyContacts/identity";
-import { DEFAULT_ACK_SUBJECT, DEFAULT_ACK_MEMBERSHIP_BODY, DEFAULT_ACK_PROGRAM_BODY } from "@/lib/scholarshipAckCopy";
+import { REGISTRY } from "@/lib/email-templates/registry";
+
+const ACK_MEMBERSHIP = REGISTRY["scholarship.ackMembership"];
+const ACK_PROGRAM = REGISTRY["scholarship.ackProgram"];
 
 interface Settings {
   emailFromAddress: string | null;
@@ -245,8 +248,8 @@ export default function EmailSettingsPage() {
             />
             <TextInput
               label="Scholarship ACK subject"
-              description={'Subject line for the applicant\'s request-received email. "{{programName}}" is replaced with the program\'s name. Blank = default shown below.'}
-              placeholder={DEFAULT_ACK_SUBJECT}
+              description={'Subject line for the applicant\'s request-received email. Blank = default shown below.'}
+              placeholder={ACK_MEMBERSHIP.defaultSubject}
               w={440}
               value={ackSubject}
               onChange={(e) => setAckSubject(e.currentTarget.value)}
@@ -255,7 +258,7 @@ export default function EmailSettingsPage() {
             <Textarea
               label="Scholarship ACK body — membership fee request"
               description="Plain text (blank lines separate paragraphs) — not HTML. Blank = default shown below."
-              placeholder={DEFAULT_ACK_MEMBERSHIP_BODY}
+              placeholder={ACK_MEMBERSHIP.defaultBody}
               minRows={3}
               autosize
               value={ackMembershipBody}
@@ -265,7 +268,7 @@ export default function EmailSettingsPage() {
             <Textarea
               label="Scholarship ACK body — program request"
               description={'Plain text (blank lines separate paragraphs) — not HTML. "{{programName}}" is replaced with the program\'s name. Blank = default shown below.'}
-              placeholder={DEFAULT_ACK_PROGRAM_BODY}
+              placeholder={ACK_PROGRAM.defaultBody}
               minRows={3}
               autosize
               value={ackProgramBody}

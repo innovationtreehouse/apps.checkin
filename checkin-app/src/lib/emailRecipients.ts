@@ -1,5 +1,5 @@
 import prisma from "@/lib/prisma";
-import { sendEmail, runPaced } from "@/lib/email";
+import { runPaced } from "@/lib/email";
 import { sendTemplated } from "@/lib/email-templates/send";
 import type { TemplateCtx, TemplateKey } from "@/lib/email-templates/registry";
 import { logBackendError, logger } from "@/lib/logger";
@@ -99,16 +99,6 @@ export async function emailSysadminsAndBoard<K extends TemplateKey>(key: K, ctx:
     });
     const sent = await fanOutEmails(people.map((p) => p.email).filter((e): e is string => !!e), key, ctx);
     return sent.some(Boolean);
-}
-
-/** The scholarship review notice's board fallback, which builds its own HTML. */
-export async function emailBoardMembersHtml(subject: string, html: string, errorLabel: string): Promise<void> {
-    try {
-        const emails = await boardMemberEmails();
-        await runPaced(emails.map((email) => () => sendEmail(email, subject, html)));
-    } catch (e) {
-        logger.error(errorLabel, e);
-    }
 }
 
 /**

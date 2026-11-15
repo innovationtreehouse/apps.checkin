@@ -2,8 +2,8 @@
  * @jest-environment node
  */
 /**
- * Integration tests for GET/PUT /api/settings/outreach — the four template columns,
- * role gating (board/sysadmin/operations, NOT settings/email's narrower board/sysadmin),
+ * Integration tests for GET/PUT /api/settings/outreach — the outreach copy,
+ * role gating (operations may read; only board/sysadmin may write, as on the Email Templates tab),
  * and validate-on-save unknown-token rejection.
  */
 import { GET, PUT } from '@/app/api/settings/outreach/route';
@@ -32,6 +32,7 @@ describe('GET/PUT /api/settings/outreach', () => {
 
     afterAll(async () => {
         await restoreBoardSettings();
+        await prisma.emailTemplate.deleteMany({ where: { key: { in: ['outreach.opening', 'outreach.reminder'] } } });
         await prisma.$disconnect();
     });
 
@@ -41,21 +42,26 @@ describe('GET/PUT /api/settings/outreach', () => {
         expect((await PUT(req('PUT', { outreachOpeningSubject: 'x' }))).status).toBe(403);
     });
 
-    it('operations may read and write (unlike settings/email)', async () => {
+    it('operations may read but not write', async () => {
         asRole(1, 'isOperations');
         expect((await GET(req('GET'))).status).toBe(200);
+        expect((await PUT(req('PUT', { outreachOpeningSubject: 'Renew by {{deadline}}' }))).status).toBe(403);
+        expect(await prisma.emailTemplate.findUnique({ where: { key: 'outreach.opening' } })).toBeNull();
+    });
+
+    it('a sysadmin may write', async () => {
+        asRole(1, 'isSysadmin');
         const res = await PUT(req('PUT', { outreachOpeningSubject: 'Renew by {{deadline}}' }));
         expect(res.status).toBe(200);
-        const data = await res.json();
-        expect(data.settings.outreachOpeningSubject).toBe('Renew by {{deadline}}');
+        expect((await res.json()).settings.outreachOpeningSubject).toBe('Renew by {{deadline}}');
     });
 
     it('saves all four fields and round-trips them on GET', async () => {
         asRole(2, 'isBoardMember');
         const body = {
-            outreachOpeningSubject: 'Time to {{actionWord}}',
+            outreachOpeningSubject: 'Time to renew',
             outreachOpeningBody: 'Hi {{name}}, {{actionLink}}',
-            outreachReminderSubject: 'Reminder: {{actionWord}} by {{deadline}}',
+            outreachReminderSubject: 'Reminder: renew by {{deadline}}',
             outreachReminderBody: 'Hi {{name}}, a friendly reminder.',
         };
         const putRes = await PUT(req('PUT', body));
@@ -64,6 +70,26 @@ describe('GET/PUT /api/settings/outreach', () => {
         const getRes = await GET(req('GET'));
         const data = await getRes.json();
         expect(data.settings).toEqual(expect.objectContaining(body));
+
+        const opening = await prisma.emailTemplate.findUniqueOrThrow({ where: { key: 'outreach.opening' } });
+        expect(opening).toEqual(expect.objectContaining({ subject: 'Time to renew', body: 'Hi {{name}}, {{actionLink}}', updatedBy: 2 }));
+        const columns = await prisma.boardSettings.findUniqueOrThrow({ where: { id: 1 }, select: { outreachReminderSubject: true } });
+        expect(columns.outreachReminderSubject).toBe('Reminder: renew by {{deadline}}');
+    });
+
+    it('rejects the retired {{actionWord}} token', async () => {
+        asRole(2, 'isBoardMember');
+        const res = await PUT(req('PUT', { outreachOpeningSubject: 'Time to {{actionWord}}' }));
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toMatch(/actionWord/);
+    });
+
+    it('blank copy removes the row, so the campaign sends its default', async () => {
+        asRole(2, 'isBoardMember');
+        await PUT(req('PUT', { outreachReminderSubject: 'x', outreachReminderBody: 'y' }));
+        const res = await PUT(req('PUT', { outreachReminderSubject: '', outreachReminderBody: '' }));
+        expect((await res.json()).settings).toEqual(expect.objectContaining({ outreachReminderSubject: null, outreachReminderBody: null }));
+        expect(await prisma.emailTemplate.findUnique({ where: { key: 'outreach.reminder' } })).toBeNull();
     });
 
     it('rejects the WHOLE update with a 400 when any field carries an unknown token', async () => {

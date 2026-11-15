@@ -90,6 +90,7 @@ describe('outreach ledger (send / process-batch / status)', () => {
     afterAll(async () => {
         await wipeLedger();
         await wipeHouseholds();
+        await prisma.emailTemplate.deleteMany({ where: { key: { in: ['outreach.opening', 'outreach.reminder'] } } });
         await restoreBoardSettings();
         await prisma.$disconnect();
     });
@@ -354,7 +355,8 @@ describe('outreach ledger (send / process-batch / status)', () => {
     it('drain sends the renewal email for a legacy join item to an ACTIVE household lead', async () => {
         const hh = await makeMemberLead('LegacyJoinMember', `legacyjoinmember-${TAG}@example.com`);
         const person = await prisma.person.findFirstOrThrow({ where: { householdId: hh.id } });
-        await prisma.boardSettings.update({ where: { id: 1 }, data: { outreachOpeningSubject: 'Time to {{actionWord}}', outreachOpeningBody: 'Hi {{name}}' } });
+        const copy = { subject: 'Time to renew', body: 'Hi {{name}}' };
+        await prisma.emailTemplate.upsert({ where: { key: 'outreach.opening' }, create: { key: 'outreach.opening', ...copy }, update: copy });
         const bulkSend = await prisma.bulkSend.create({
             data: {
                 emailType: 'opening', audience: 'a', senderId: boardId,
@@ -375,13 +377,39 @@ describe('outreach ledger (send / process-batch / status)', () => {
         asBoard(boardId, `tester-${TAG}@example.com`);
         const res = await TEST_SEND(req('POST', {
             subject: 'Renew by {{deadline}}',
-            body: 'Hi {{name}}, please {{actionWord}} at {{actionLink}}.',
+            body: 'Hi {{name}}, please renew at {{actionLink}}.',
         }));
         expect(res.status).toBe(200);
         expect(sendEmail).toHaveBeenCalledTimes(1);
         const [to, subject, html] = (sendEmail as jest.Mock).mock.calls[0];
         expect(to).toBe(`tester-${TAG}@example.com`);
         expect(subject).toMatch(/^\[Test\] Renew by /);
-        expect(html).toContain('please renew');
+        expect(html).toContain('please renew at <a href="');
+    });
+
+    it('test-send rejects the retired {{actionWord}} token', async () => {
+        asBoard(boardId, `tester-${TAG}@example.com`);
+        const res = await TEST_SEND(req('POST', { emailType: 'reminder', subject: 'Time to {{actionWord}}', body: 'b' }));
+        expect(res.status).toBe(400);
+        expect(sendEmail).not.toHaveBeenCalled();
+    });
+
+    it('drain sends the default reminder wording when the Board has saved none', async () => {
+        await prisma.emailTemplate.deleteMany({ where: { key: 'outreach.reminder' } });
+        const hh = await makeMemberLead('DefaultReminder', `defaultreminder-${TAG}@example.com`);
+        const person = await prisma.person.findFirstOrThrow({ where: { householdId: hh.id } });
+        const bulkSend = await prisma.bulkSend.create({
+            data: {
+                emailType: 'reminder', audience: 'reminder', senderId: boardId,
+                items: { create: { personId: person.id, email: `defaultreminder-${TAG}@example.com`, variant: 'renew', status: 'queued' } },
+            },
+        });
+        asBoard(boardId);
+
+        await PROCESS_BATCH(req('POST', { bulkSendId: bulkSend.id }));
+
+        const call = (sendEmail as jest.Mock).mock.calls.find(([to]) => to === `defaultreminder-${TAG}@example.com`);
+        expect(call?.[1]).toMatch(/^Reminder: renew by \d{4}-\d{2}-\d{2}$/);
+        expect(call?.[2]).toContain('Hi DefaultReminder,');
     });
 });
