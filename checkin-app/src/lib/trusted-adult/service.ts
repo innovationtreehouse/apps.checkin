@@ -8,7 +8,7 @@ import { emailBoardMembers, emailHouseholdLeads } from "@/lib/emailRecipients";
 import type { TemplateCtx, TemplateKey } from "@/lib/email-templates/registry";
 import { trustedAdultConflictReason } from "@/lib/trusted-adult/conflict";
 import { recordSelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
-import { authorizedReview, expiringApprovals } from "@/lib/trusted-adult/filters";
+import { authorizedReview, expiringApprovals, isAuthorizedApproval } from "@/lib/trusted-adult/filters";
 import { config } from "@/lib/config";
 import { validateContact } from "@/lib/trusted-adult/contact";
 import type { TxClient } from "@/lib/db-client";
@@ -562,10 +562,14 @@ export async function overrideReview(
             if (review.status === "REVOKED") {
                 throw new TrustedAdultError("wrong_phase", "This trusted adult was withdrawn or revoked — the household has to resubmit them.");
             }
+            const now = new Date();
+            // A lapsed approval counts as expired before the sweep flips it.
+            if (review.status === "EXPIRED" || (review.status === "APPROVED" && !isAuthorizedApproval(review, now))) {
+                throw new TrustedAdultError("wrong_phase", "This approval has expired — the family renews it, and the renewal comes to the Board as a new review.");
+            }
             if (await adultHouseholdDenied(tx, head.trustedAdult)) {
                 throw new TrustedAdultError("wrong_phase", "This household has been denied membership — restore it before approving.");
             }
-            const now = new Date();
             const approved = await tx.trustedAdultReview.update({
                 where: { id: reviewId },
                 data: {
