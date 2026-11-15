@@ -89,7 +89,7 @@ describe("MembershipSettingsPage", () => {
     );
   });
 
-  it.each(["12abc", "", "-1"])("refuses a fee of %j with a field error and saves nothing", async (typed) => {
+  it.each(["12abc", "", "-1", "1,200", "0x10", "1e3", "+5"])("refuses a fee of %j with a field error and saves nothing", async (typed) => {
     setSession({ id: 1, isSysadmin: true });
     const fetchMock = mockFetchJson({ "/api/settings/membership": body() });
     renderWithProviders(<MembershipSettingsPage />);

@@ -58,6 +58,10 @@ const currentBoundaryLabel = (iso: string) => {
   return new Date(b).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric", timeZone: "UTC" });
 };
 
+// Plain digits with an optional decimal point; Number() would also take "0x10" and "1e3".
+const PLAIN_DOLLARS = /^\s*\d*(\.\d*)?\s*$/;
+const typedDollarsToCents = (typed: string) => (PLAIN_DOLLARS.test(typed) ? dollarsToCentsOrNull(typed) : null);
+
 export default function MembershipSettingsPage() {
   const [standardFee, setStandardFee] = useState("0");
   const [volunteerFee, setVolunteerFee] = useState("0");
@@ -109,9 +113,9 @@ export default function MembershipSettingsPage() {
   const saveSettings = async () => {
     setFieldErrors({});
     const fe: { standardFee?: string; volunteerFee?: string; variantId?: string; scholarshipGraceDays?: string } = {};
-    const standardCents = dollarsToCentsOrNull(standardFee);
+    const standardCents = typedDollarsToCents(standardFee);
     if (standardCents === null || standardCents < 0) fe.standardFee = "Enter a dollar amount of 0 or more.";
-    const volunteerCents = dollarsToCentsOrNull(volunteerFee);
+    const volunteerCents = typedDollarsToCents(volunteerFee);
     if (volunteerCents === null || volunteerCents < 0) fe.volunteerFee = "Enter a dollar amount of 0 or more.";
     if (variantId.trim() !== "" && !/^\d+$/.test(variantId.trim())) fe.variantId = "Must be a numeric Shopify variant ID.";
     if (scholarshipGraceDays.trim() !== "") {
