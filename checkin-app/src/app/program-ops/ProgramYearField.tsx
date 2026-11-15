@@ -1,24 +1,26 @@
 "use client";
 
-import { useEffect, useState } from 'react';
 import { Alert, Select, Text } from '@mantine/core';
+import { LoadError } from '@checkin/component-ui';
+import { useLoad } from '@/lib/api';
 import { membershipYearLabel, programYearsTouched } from '@/lib/programYear';
 
+type BoundarySettings = { orgMembershipYearBoundary?: string | null };
+// A task on the previous release returns the settings row directly.
+type MembershipSettingsAnswer = { settings?: BoundarySettings & { BoardSettings?: BoundarySettings } };
+
+export type YearBoundary = { boundary: Date | null; error: string | null; reload: () => Promise<void> };
+
 /** The Board's membership-year boundary, for a viewer who may read board settings. */
-export function useMembershipYearBoundary(enabled: boolean): Date | null {
-  const [boundary, setBoundary] = useState<Date | null>(null);
-  useEffect(() => {
-    if (!enabled) return;
-    fetch('/api/settings/membership')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        // A task on the previous release returns the settings row directly.
-        const b = (data?.settings?.BoardSettings ?? data?.settings)?.orgMembershipYearBoundary;
-        if (b) setBoundary(new Date(b));
-      })
-      .catch(() => {});
-  }, [enabled]);
-  return boundary;
+export function useMembershipYearBoundary(enabled: boolean): YearBoundary {
+  const { data, error, reload } = useLoad<MembershipSettingsAnswer>(enabled ? '/api/settings/membership' : null);
+  const b = (data?.settings?.BoardSettings ?? data?.settings)?.orgMembershipYearBoundary;
+  return { boundary: b ? new Date(b) : null, error, reload };
+}
+
+/** A failed boundary read, shown where the year field would be, since crossing dates can't be told without it. */
+export function YearBoundaryError({ load }: { load: YearBoundary }) {
+  return load.error ? <LoadError what="the membership year boundary" message={load.error} onRetry={load.reload} /> : null;
 }
 
 /** The membership years the form's dates touch; empty while the dates or the boundary are unknown. */

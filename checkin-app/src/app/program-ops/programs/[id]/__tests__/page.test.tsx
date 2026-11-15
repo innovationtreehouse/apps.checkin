@@ -2,7 +2,7 @@
 jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories run hoisted, before imports exist
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
 
 import { act, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { notifications } from "@mantine/notifications";
@@ -226,7 +226,9 @@ describe("ProgramDetailsPage", () => {
     await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
 
     fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
-    expect(await screen.findByText("Invalid dates.")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Invalid dates.", autoClose: false })),
+    );
   });
 
   it("shows a network error message when saving general settings throws", async () => {
@@ -241,7 +243,7 @@ describe("ProgramDetailsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
     await waitFor(() =>
       expect(notifications.show).toHaveBeenCalledWith(
-        expect.objectContaining({ color: "red", message: "Network error.", autoClose: false }),
+        expect.objectContaining({ color: "red", message: "Couldn't reach the server. Check your connection and try again.", autoClose: false }),
       ),
     );
   });
@@ -415,7 +417,9 @@ describe("ProgramDetailsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
     const failModal = await screen.findByRole("dialog", { name: "Add Participant Manually" });
     fireEvent.click(within(failModal).getByRole("button", { name: "Add Participant" }));
-    expect(await screen.findByText("Program is full.")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Program is full.", autoClose: false })),
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
     const retryModal = await screen.findByRole("dialog", { name: "Add Participant Manually" });
@@ -426,6 +430,31 @@ describe("ProgramDetailsPage", () => {
         expect.objectContaining({ method: "POST", body: JSON.stringify({ participantId: 777, override: true }) }),
       ),
     );
+  });
+
+  it("says so when an enrolment never reaches the server, and keeps the pick", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    routedFetch([
+      { url: "/api/programs/1/eligible-participants", method: "GET", result: { ok: true, body: { members: [{ id: 777, name: "Gerry Grownup", ageWarning: null }] } } },
+      { url: "/api/programs/1/participants", method: "POST", result: { throws: true } },
+      { url: "/api/programs/1", method: "GET", result: { ok: true, body: programData } },
+    ]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
+
+    fireEvent.change((await screen.findAllByPlaceholderText("Start typing to search..."))[1], { target: { value: "G" } });
+    fireEvent.click(await screen.findByText("Gerry Grownup"));
+    fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Add Participant Manually" })).getByRole("button", { name: "Add Participant" }));
+
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ color: "red", message: "Couldn't reach the server. Check your connection and try again.", autoClose: false }),
+      ),
+    );
+    expect(screen.getByRole("button", { name: "Enroll" })).toBeEnabled();
+    expect(screen.getByDisplayValue("Gerry Grownup")).toBeInTheDocument();
   });
 
   it("renders the parents above the emergency contacts, skipping a participant who leads their own household", async () => {
@@ -653,7 +682,7 @@ describe("ProgramDetailsPage", () => {
 
     await waitFor(() =>
       expect(notifications.show).toHaveBeenCalledWith(
-        expect.objectContaining({ color: "red", message: "Network error — please try again." }),
+        expect.objectContaining({ color: "red", message: "Couldn't reach the server. Check your connection and try again." }),
       ),
     );
   });
@@ -673,10 +702,10 @@ describe("ProgramDetailsPage", () => {
     const modal = await screen.findByRole("dialog", { name: "Remove Volunteer" });
     fireEvent.click(within(modal).getByRole("button", { name: "Remove" }));
 
-    // No `error` in the body -> the status-code fallback.
+    // No `error` in the body -> the kit's status-code fallback.
     await waitFor(() =>
       expect(notifications.show).toHaveBeenCalledWith(
-        expect.objectContaining({ color: "red", message: "Request failed (500)." }),
+        expect.objectContaining({ color: "red", message: "HTTP 500" }),
       ),
     );
   });
@@ -856,7 +885,7 @@ describe("a load that lands while the Board is editing", () => {
     fireEvent.change((await screen.findAllByPlaceholderText("Start typing to search..."))[0], { target: { value: "Wendy" } });
     fireEvent.click(await screen.findByText("Wendy West"));
     fireEvent.click(screen.getAllByRole("button", { name: "Add" })[0]);
-    await waitFor(() => expect(reads).toBe(2));
+    await waitFor(() => expect(reads).toBe(3));
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 
     fireEvent.click(screen.getByRole("tab", { name: "General" }));
@@ -875,18 +904,18 @@ describe("a load that lands while the Board is editing", () => {
       if (init?.method === "PATCH") return answer({});
       if (!String(input).endsWith("/api/programs/1")) return answer({}, 404);
       reads += 1;
+      // The write's own invalidation starts read 2; the page's awaited reload starts read 3.
       if (reads === 2) return new Promise<Response>((resolve) => { finishOlder = () => resolve(answer(programData)); });
-      return answer(reads === 3 ? notCore : programData);
+      return answer(notCore);
     }) as unknown as typeof fetch;
     renderPage();
     await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
     fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
 
     fireEvent.click(await screen.findByLabelText("Core Volunteer"));
-    await waitFor(() => expect(reads).toBe(2));
+    await waitFor(() => expect(reads).toBe(3));
     await waitFor(() => expect(screen.getByLabelText("Core Volunteer")).toBeEnabled());
-    fireEvent.click(screen.getByLabelText("Core Volunteer"));
-    await waitFor(() => expect(screen.getByLabelText("Core Volunteer")).not.toBeChecked());
+    expect(screen.getByLabelText("Core Volunteer")).not.toBeChecked();
 
     await act(async () => { finishOlder(); await new Promise((resolve) => setTimeout(resolve, 0)); });
     expect(screen.getByLabelText("Core Volunteer")).not.toBeChecked();

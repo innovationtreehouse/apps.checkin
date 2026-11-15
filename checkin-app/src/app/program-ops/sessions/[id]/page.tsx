@@ -5,11 +5,9 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useRequireRole } from '@/hooks/useRequireRole';
 import { Alert, Badge, Button, Card, Checkbox, Container, Group, Modal, Select, SimpleGrid, Stack, Table, Text, TextInput, Title } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { notifications } from '@mantine/notifications';
-import { AlertBanner } from '@/components/admin/AlertBanner';
-import { LoadError } from '@checkin/component-ui';
+import { errorMessage, HttpError, LoadError, showError, showSuccess } from '@checkin/component-ui';
 import { useSeedForm } from '@/hooks/useSeedForm';
-import { useLoad } from '@/lib/api';
+import { api, useLoad } from '@/lib/api';
 import { toDatetimeLocal, fromDatetimeLocal } from '@/lib/time';
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { MAX_VISIT_MS } from '@/lib/visitTimes';
@@ -69,13 +67,8 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
   const fromProgramsILead = searchParams.get('from') === 'programs-i-lead';
 
   const { data: eventData, error: loadError, reload } = useLoad<EventData>(ready ? `/api/events/${id}` : null);
-  const [message, setMessage] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
-  // Action-confirmation notices rendered next to their triggering button, not
-  // the far-off page-top banner (which reads as "nothing happened" on long pages).
-  const [attendanceNotice, setAttendanceNotice] = useState<{ ok: boolean; msg: string } | null>(null);
-  const [timeNotice, setTimeNotice] = useState<{ ok: boolean; msg: string } | null>(null);
-  const [manualNotice, setManualNotice] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [manualInputError, setManualInputError] = useState("");
 
   // Edit states
   const [editMode, setEditMode] = useState(false);
@@ -97,28 +90,17 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
 
   const handleConfirmAttendance = async () => {
     setActionLoading(true);
-    setAttendanceNotice(null);
     try {
-      const res = await fetch(`/api/events/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'confirmAttendance' })
-      });
-      if (res.ok) {
-        // From the lead's inbox, the work is done → return to Programs I Lead (the
-        // item drops off there). Board/program-ops flow stays on the page.
-        if (fromProgramsILead) {
-          router.push('/programs-i-lead');
-          return;
-        }
-        notifications.show({ message: "Attendance confirmed successfully!" });
-        reload();
-      } else {
-        const data = await res.json().catch(() => ({}));
-        setAttendanceNotice({ ok: false, msg: data.error || "Failed to confirm attendance." });
+      await api(`/api/events/${id}`, { method: 'PATCH', body: JSON.stringify({ action: 'confirmAttendance' }) });
+      // From the lead's inbox the work is done, so return to Programs I Lead, where the item drops off.
+      if (fromProgramsILead) {
+        router.push('/programs-i-lead');
+        return;
       }
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
+      showSuccess("Attendance confirmed successfully!");
+      await reload();
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setActionLoading(false);
     }
@@ -126,32 +108,20 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
 
   const handleEditTime = async () => {
     setActionLoading(true);
-    setTimeNotice(null);
     try {
-      const startIso = fromDatetimeLocal(newStart);
-      const endIso = fromDatetimeLocal(newEnd);
-
-      const res = await fetch(`/api/events/${id}`, {
+      await api(`/api/events/${id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'editTime', startAt: startIso, endAt: endIso, applyToFuture })
+        body: JSON.stringify({ action: 'editTime', startAt: fromDatetimeLocal(newStart), endAt: fromDatetimeLocal(newEnd), applyToFuture })
       });
-      if (res.ok) {
-        notifications.show({ message: "Event time updated successfully!" });
+      showSuccess("Event time updated successfully!");
+      setEditMode(false);
+      await reload();
+    } catch (e) {
+      showError(errorMessage(e));
+      if (e instanceof HttpError && e.message === "Cannot edit a past event") {
         setEditMode(false);
-        reload();
-      } else {
-        const data = await res.json().catch(() => ({}));
-        if (data.error === "Cannot edit a past event") {
-          notifications.show({ color: "red", message: data.error, autoClose: false });
-          setEditMode(false);
-          reload();
-        } else {
-          setTimeNotice({ ok: false, msg: data.error || "Failed to edit event." });
-        }
+        await reload();
       }
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
     } finally {
       setActionLoading(false);
     }
@@ -161,25 +131,24 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
     if (!editingAttendance) return;
     // Instant feedback only — server remains the trust boundary.
     if (manualStatus === 'Present' && !manualDeparted) {
-      setManualNotice({ ok: false, msg: "Departure time is required for Present status" });
+      setManualInputError("Departure time is required for Present status");
       return;
     }
     if (manualStatus === 'Present' && manualArrived && manualDeparted &&
         Date.parse(manualDeparted) <= Date.parse(manualArrived)) {
-      setManualNotice({ ok: false, msg: "Departure time must be after arrival time" });
+      setManualInputError("Departure time must be after arrival time");
       return;
     }
     if (manualStatus === 'Present' && manualArrived && manualDeparted &&
         Date.parse(manualDeparted) - Date.parse(manualArrived) > MAX_VISIT_MS) {
-      setManualNotice({ ok: false, msg: "A visit cannot be longer than 24 hours." });
+      setManualInputError("A visit cannot be longer than 24 hours.");
       return;
     }
     setActionLoading(true);
-    setManualNotice(null);
+    setManualInputError("");
     try {
-      const res = await fetch(`/api/events/${id}`, {
+      await api(`/api/events/${id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'manualEditAttendance',
           participantId: editingAttendance.personId,
@@ -188,17 +157,11 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
           departedAt: manualStatus === 'Present' && manualDeparted ? fromDatetimeLocal(manualDeparted) : null
         })
       });
-      if (res.ok) {
-        // Success closes the modal; the refreshed roster row shows the change.
-        setEditingAttendance(null);
-        reload();
-      } else {
-        // Keep the modal open so the error is visible next to Save.
-        const data = await res.json().catch(() => ({}));
-        setManualNotice({ ok: false, msg: data.error || "Failed to update attendance." });
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
+      // Success closes the modal; the refreshed roster row shows the change.
+      setEditingAttendance(null);
+      await reload();
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setActionLoading(false);
     }
@@ -208,19 +171,10 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
     closeConfirmCancel();
     setActionLoading(true);
     try {
-      const res = await fetch(`/api/events/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'cancel', applyToFuture })
-      });
-      if (res.ok) {
-        router.push(eventData?.program?.id ? `/program-ops/programs/${eventData.program.id}` : '/program-ops/programs');
-      } else {
-        const data = await res.json().catch(() => ({}));
-        setMessage(data.error || "Failed to cancel event.");
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
+      await api(`/api/events/${id}`, { method: 'PATCH', body: JSON.stringify({ action: 'cancel', applyToFuture }) });
+      router.push(eventData?.program?.id ? `/program-ops/programs/${eventData.program.id}` : '/program-ops/programs');
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setActionLoading(false);
     }
@@ -306,7 +260,7 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
                       {statusEl}
                       {canManageAttendance && (
                         <Button size="compact-xs" variant="light" onClick={() => {
-                          setManualNotice(null);
+                          setManualInputError("");
                           setEditingAttendance(member);
                           if (visit) {
                             setManualStatus("Present");
@@ -414,7 +368,6 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
           </Button>
         </Group>
 
-        <AlertBanner message={message} tone="error" mb="lg" />
         {loadError && <LoadError what="the event" message={loadError} onRetry={reload} />}
 
         {/* PAST EVENT: ATTENDANCE CONFIRMATION */}
@@ -437,11 +390,6 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
                 <Button onClick={handleConfirmAttendance} disabled={actionLoading} loading={actionLoading}>Confirm Attendance</Button>
               )}
             </Group>
-            {attendanceNotice && (
-              <Alert color={attendanceNotice.ok ? 'treehouseGreen' : 'red'} variant="light" mt="md" withCloseButton onClose={() => setAttendanceNotice(null)}>
-                {attendanceNotice.msg}
-              </Alert>
-            )}
             {renderRosterGrid()}
           </Card>
         )}
@@ -453,12 +401,6 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
         {!isPastEvent && canManageEventInfo && (
           <Card withBorder radius="md" padding="lg" mb="lg">
             <Title order={4} mb="lg">Manage Event</Title>
-
-            {timeNotice && (
-              <Alert color={timeNotice.ok ? 'treehouseGreen' : 'red'} variant="light" mb="lg" withCloseButton onClose={() => setTimeNotice(null)}>
-                {timeNotice.msg}
-              </Alert>
-            )}
 
             {!editMode ? (
               <Group>
@@ -510,7 +452,7 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
 
       <Modal
         opened={!!editingAttendance}
-        onClose={() => !actionLoading && (setEditingAttendance(null), setManualNotice(null))}
+        onClose={() => !actionLoading && (setEditingAttendance(null), setManualInputError(""))}
         title={<Text span fw={700} fz="lg">Manual Edit: {editingAttendance?.person.name}</Text>}
         centered
       >
@@ -535,9 +477,9 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
               <TextInput type="datetime-local" label="Departed Time" value={manualDeparted} onChange={(e) => setManualDeparted(e.currentTarget.value)} />
             </>
           )}
-          {manualNotice && (
-            <Alert color={manualNotice.ok ? 'treehouseGreen' : 'red'} variant="light" withCloseButton onClose={() => setManualNotice(null)}>
-              {manualNotice.msg}
+          {manualInputError && (
+            <Alert color="red" variant="light" withCloseButton onClose={() => setManualInputError("")}>
+              {manualInputError}
             </Alert>
           )}
           <Group justify="flex-end">
