@@ -827,11 +827,9 @@ model BoardSettings {
   releasedLibraries          String[]  @default([])
   /// @sensitivity:internal
   updatedAt                  DateTime  @updatedAt
-  /// QuickBooks company (realm) id prod may reach, set by the Board on Settings → QuickBooks.
-  /// NULL = QuickBooks is off in prod. Off prod it is refused as a target, which keeps a
-  /// prod-data copy off the real company (packages/quickbooks/src/guard.ts).
-  /// @sensitivity:internal
-  qboProductionRealmId       String?
+  /// Unused column awaiting its drop. Hidden from the client so no code reads or
+  /// writes it before the column goes. @sensitivity:internal
+  qboProductionRealmId       String?   @ignore
 }
 
 /// Board-edited override of one email's copy (docs/in-design/1333-EMAIL_TEMPLATES.md).
