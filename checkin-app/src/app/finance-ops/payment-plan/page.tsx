@@ -16,7 +16,8 @@ import { formatCents } from '@checkin/money';
 import { landsNextYear } from '@/lib/programYear';
 import { scholarshipRequestKindLabel } from '@/lib/scholarshipRequestKind';
 
-import { useUrlChoice } from '@checkin/component-ui';
+import { errorMessage, HttpError, showError, showSuccess, useUrlChoice } from '@checkin/component-ui';
+import { api } from '@/lib/api';
 import { PageLoader } from "@/components/ui/PageLoader";
 type HouseholdLead = { id: number; name: string | null; email: string | null };
 
@@ -112,27 +113,13 @@ export default function PendingParticipantsPage() {
 
   const doApprove = async (programId: number, participantId: number) => {
     try {
-      const res = await fetch('/api/finance-ops/payment-plans', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ programId, participantId })
-      });
-
-      if (res.ok) {
-        setRequests(prev => prev.filter(r => !(r.programId === programId && r.personId === participantId)));
-        notifyNavRefresh();
-        notifications.show({ message: 'Scholarship / payment plan approved.' });
-      } else {
-        const data = await res.json();
-        if (data.error === "No pending payment-plan request") {
-          notifications.show({ color: 'red', message: data.error, autoClose: false });
-          fetchRequests();
-        } else {
-          notifications.show({ color: 'red', message: data.error || "Failed to approve.", autoClose: false });
-        }
-      }
-    } catch {
-      notifications.show({ color: 'red', message: "Network error processing approval.", autoClose: false });
+      await api('/api/finance-ops/payment-plans', { method: 'POST', body: JSON.stringify({ programId, participantId }) });
+      setRequests(prev => prev.filter(r => !(r.programId === programId && r.personId === participantId)));
+      notifyNavRefresh();
+      showSuccess('Scholarship / payment plan approved.');
+    } catch (e) {
+      showError(errorMessage(e));
+      if (e instanceof HttpError && e.status === 409) fetchRequests();
     }
   };
 
@@ -151,27 +138,13 @@ export default function PendingParticipantsPage() {
 
   const doRefuse = async (programId: number, participantId: number) => {
     try {
-      const res = await fetch('/api/finance-ops/payment-plans/refuse', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ programId, participantId })
-      });
-
-      if (res.ok) {
-        setRequests(prev => prev.filter(r => !(r.programId === programId && r.personId === participantId)));
-        notifyNavRefresh();
-        notifications.show({ message: 'Scholarship / payment plan refused.' });
-      } else {
-        const data = await res.json();
-        if (data.error === "No pending payment-plan request") {
-          notifications.show({ color: 'red', message: data.error, autoClose: false });
-          fetchRequests();
-        } else {
-          notifications.show({ color: 'red', message: data.error || "Failed to refuse.", autoClose: false });
-        }
-      }
-    } catch {
-      notifications.show({ color: 'red', message: "Network error processing refusal.", autoClose: false });
+      await api('/api/finance-ops/payment-plans/refuse', { method: 'POST', body: JSON.stringify({ programId, participantId }) });
+      setRequests(prev => prev.filter(r => !(r.programId === programId && r.personId === participantId)));
+      notifyNavRefresh();
+      showSuccess('Scholarship / payment plan refused.');
+    } catch (e) {
+      showError(errorMessage(e));
+      if (e instanceof HttpError && e.status === 409) fetchRequests();
     }
   };
 

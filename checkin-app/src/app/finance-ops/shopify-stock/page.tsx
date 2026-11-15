@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Button, Group, Modal, Stack, Text } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
+import { errorMessage, HttpError, showError, showSuccess } from '@checkin/component-ui';
+import { api } from '@/lib/api';
 import { AlertBanner } from '@/components/admin/AlertBanner';
 import { DataTable, type DataTableColumn } from '@/components/admin/DataTable';
 import { useRequireRole } from '@/hooks/useRequireRole';
@@ -57,25 +59,17 @@ export default function UnconfirmedShopifyStockPage() {
     const { row, choice } = target;
     setTarget(null);
     try {
-      const res = await fetch(`/api/finance-ops/shopify-stock/${row.programId}`, {
+      await api(`/api/finance-ops/shopify-stock/${row.programId}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ choice, expected: row.unconfirmed, since: row.unconfirmedSince }),
       });
-      if (res.ok) {
-        fetchRows();
-        notifications.show({
-          message: choice === 'landed'
-            ? `${row.programName}: cleared — Shopify already has the change.`
-            : `${row.programName}: the change is owed again and will be pushed to Shopify.`,
-        });
-      } else {
-        const data = await res.json().catch(() => ({}));
-        notifications.show({ color: 'red', message: data.error || "Action failed.", autoClose: false });
-        fetchRows();
-      }
-    } catch {
-      notifications.show({ color: 'red', message: "Network error.", autoClose: false });
+      fetchRows();
+      showSuccess(choice === 'landed'
+        ? `${row.programName}: cleared — Shopify already has the change.`
+        : `${row.programName}: the change is owed again and will be pushed to Shopify.`);
+    } catch (e) {
+      showError(errorMessage(e));
+      if (e instanceof HttpError) fetchRows();
     }
   };
 

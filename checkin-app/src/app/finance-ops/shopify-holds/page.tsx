@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { Alert, Button, Group, Modal, Stack, Text } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
+import { errorMessage, HttpError, showError, showSuccess } from '@checkin/component-ui';
+import { api } from '@/lib/api';
 import { AlertBanner } from '@/components/admin/AlertBanner';
 import { DataTable, type DataTableColumn } from '@/components/admin/DataTable';
 import { useRequireRole } from '@/hooks/useRequireRole';
@@ -79,22 +81,13 @@ export default function ShopifyHoldsPage() {
     const { programId, participantId } = target;
     setTarget(null);
     try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ programId, participantId }),
-      });
-      if (res.ok) {
-        drop(programId, participantId);
-        notifyNavRefresh();
-        notifications.show({ message: successMsg });
-      } else {
-        const data = await res.json();
-        notifications.show({ color: 'red', message: data.error || "Action failed.", autoClose: false });
-        fetchRows();
-      }
-    } catch {
-      notifications.show({ color: 'red', message: "Network error.", autoClose: false });
+      await api(url, { method: 'POST', body: JSON.stringify({ programId, participantId }) });
+      drop(programId, participantId);
+      notifyNavRefresh();
+      showSuccess(successMsg);
+    } catch (e) {
+      showError(errorMessage(e));
+      if (e instanceof HttpError) fetchRows();
     }
   };
 

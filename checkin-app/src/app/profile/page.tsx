@@ -7,6 +7,8 @@ import { Anchor, Button, Card, Checkbox, Stack, Text, TextInput, Title } from '@
 import { PageContainer } from '@/components/ui/PageContainer';
 import { AlertBanner, type AlertTone } from '@/components/admin/AlertBanner';
 import { notifications } from '@mantine/notifications';
+import { errorMessage, showError, showSuccess } from '@checkin/component-ui';
+import { api } from '@/lib/api';
 import { isYouth } from '@/lib/time';
 import { signInEmailHelp } from '@/lib/person/signInEmail';
 
@@ -67,12 +69,10 @@ export default function ProfilePage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
-    setMessage(null);
 
     try {
-      const res = await fetch('/api/profile', {
+      await api('/api/profile', {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: form.name,
           nickname: form.nickname,
@@ -81,15 +81,9 @@ export default function ProfilePage() {
           over25: form.over25
         })
       });
-
-      if (res.ok) {
-        notifications.show({ message: "Profile updated successfully!" });
-      } else {
-        const data = await res.json().catch(() => ({}));
-        setMessage({ text: data.error || "Failed to update profile.", tone: "error" });
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error saving profile.", autoClose: false });
+      showSuccess("Profile updated successfully!");
+    } catch (err) {
+      showError(errorMessage(err));
     } finally {
       setSaving(false);
     }

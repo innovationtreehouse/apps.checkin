@@ -2,7 +2,7 @@
 jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories run hoisted, before imports exist
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
 
 import { screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { notifications } from "@mantine/notifications";
@@ -32,7 +32,7 @@ function mockSync(gets: GetReply[]) {
         const url = typeof input === "string" ? input : input.toString();
         const method = init?.method ?? "GET";
         const reply = (status: number, body: unknown) =>
-            ({ ok: status < 400, status, json: async () => body }) as Response;
+            ({ ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) }) as Response;
 
         if (url.includes("/api/finance-ops/s-read/sync")) {
             if (method === "POST") return reply(200, { success: true });
@@ -179,23 +179,16 @@ describe("finance-ops/payments — sync status", () => {
             await syncAndPoll(21); // past the 20-attempt cap
 
             expect(lastMessage()).toMatch(/still running/i);
-            // Nothing went wrong — the sync started and is proceeding, we just stopped
-            // watching. Plain success shape: no color override, so it inherits the
-            // theme's treehouseGreen (Mantine's Notification falls back to
-            // --mantine-primary-color-filled when no color is passed).
-            expect(lastShown().color).toBeUndefined();
+            // Nothing went wrong — the sync is proceeding, the page just stopped watching.
+            expect(lastShown().color).toBe("green");
             expect(lastShown().autoClose).not.toBe(false);
         } finally {
             jest.useRealTimers();
         }
     });
 
-    it("only ever speaks the app's red/theme-primary notification vocabulary", async () => {
-        // The app has no warning tier: every notifications.show() in checkin-app is red
-        // (error, explicit) or the theme's treehouseGreen (success — implicit, no color
-        // override). This page briefly invented `yellow` for the two ambiguous
-        // outcomes, which read as a new severity that nothing else
-        // uses — and the two disagreed with each other on whether they persisted.
+    it("only ever speaks the kit's red/green notification vocabulary", async () => {
+        // The kit has no warning tier: a message is showError (red) or showSuccess (green).
         jest.useFakeTimers();
         try {
             mockSync([{ status: 500, body: {} }]);
@@ -204,7 +197,7 @@ describe("finance-ops/payments — sync status", () => {
 
             const colors = shown.mock.calls.map(([c]) => c.color);
             expect(colors.length).toBeGreaterThan(0);
-            expect(colors.every((c) => c === "red" || c === undefined)).toBe(true);
+            expect(colors.every((c) => c === "red" || c === "green")).toBe(true);
         } finally {
             jest.useRealTimers();
         }

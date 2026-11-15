@@ -14,7 +14,8 @@ import { notifyNavRefresh } from '@/lib/nav-refresh';
 import { sharesHousehold } from '@/lib/conflictOfInterest';
 import { scholarshipRequestKindLabel } from '@/lib/scholarshipRequestKind';
 
-import { useUrlChoice } from '@checkin/component-ui';
+import { errorMessage, HttpError, showError, showSuccess, useUrlChoice } from '@checkin/component-ui';
+import { api } from '@/lib/api';
 import { PageLoader } from "@/components/ui/PageLoader";
 
 type HouseholdLead = { id: number; name: string | null; email: string | null };
@@ -88,26 +89,13 @@ export default function MembershipPaymentPlansPage() {
 
   const doApprove = async (processId: number, reason: string) => {
     try {
-      const res = await fetch('/api/finance-ops/membership-payment-plans', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ processId, reason })
-      });
-
-      if (res.ok) {
-        setRequests(prev => prev.filter(r => r.id !== processId));
-        notifyNavRefresh();
-      } else {
-        const data = await res.json();
-        if (data.error === "No pending payment-plan request") {
-          notifications.show({ color: 'red', message: data.error, autoClose: false });
-          fetchRequests();
-        } else {
-          notifications.show({ color: 'red', message: data.error || "Failed to approve.", autoClose: false });
-        }
-      }
-    } catch {
-      notifications.show({ color: 'red', message: "Network error processing approval.", autoClose: false });
+      await api('/api/finance-ops/membership-payment-plans', { method: 'POST', body: JSON.stringify({ processId, reason }) });
+      setRequests(prev => prev.filter(r => r.id !== processId));
+      notifyNavRefresh();
+      showSuccess('Scholarship / payment plan approved.');
+    } catch (e) {
+      showError(errorMessage(e));
+      if (e instanceof HttpError && e.status === 409) fetchRequests();
     }
   };
 
@@ -128,27 +116,13 @@ export default function MembershipPaymentPlansPage() {
   const doDeny = async (processId: number) => {
     setDenying(true);
     try {
-      const res = await fetch('/api/finance-ops/membership-payment-plans/refuse', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ processId })
-      });
-
-      if (res.ok) {
-        setRequests(prev => prev.filter(r => r.id !== processId));
-        notifyNavRefresh();
-        notifications.show({ message: 'Scholarship / payment plan denied.' });
-      } else {
-        const data = await res.json();
-        if (res.status === 409) {
-          notifications.show({ color: 'red', message: data.error, autoClose: false });
-          fetchRequests();
-        } else {
-          notifications.show({ color: 'red', message: data.error || "Failed to deny.", autoClose: false });
-        }
-      }
-    } catch {
-      notifications.show({ color: 'red', message: "Network error processing denial.", autoClose: false });
+      await api('/api/finance-ops/membership-payment-plans/refuse', { method: 'POST', body: JSON.stringify({ processId }) });
+      setRequests(prev => prev.filter(r => r.id !== processId));
+      notifyNavRefresh();
+      showSuccess('Scholarship / payment plan denied.');
+    } catch (e) {
+      showError(errorMessage(e));
+      if (e instanceof HttpError && e.status === 409) fetchRequests();
     } finally {
       setDenying(false);
     }

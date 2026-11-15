@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { Badge, Button, Group, Modal, Stack, Text, Textarea } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
+import { errorMessage, HttpError, showError, showSuccess } from '@checkin/component-ui';
+import { api } from '@/lib/api';
 import { AlertBanner } from '@/components/admin/AlertBanner';
 import { DataTable, type DataTableColumn } from '@/components/admin/DataTable';
 import { useRequireRole } from '@/hooks/useRequireRole';
@@ -132,22 +134,13 @@ export default function PaymentProblemsPage() {
 
   const patch = async (id: number, action: 'acknowledge' | 'resolve', noteText?: string) => {
     try {
-      const res = await fetch(`/api/finance-ops/payments/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, note: noteText }),
-      });
-      if (res.ok) {
-        await fetchRows();
-        notifyNavRefresh();
-        notifications.show({ message: action === 'resolve' ? 'Payment problem resolved.' : 'Payment problem acknowledged.' });
-      } else {
-        const data = await res.json();
-        notifications.show({ color: 'red', message: data.error || "Failed to update.", autoClose: false });
-        if (res.status === 409) fetchRows();
-      }
-    } catch {
-      notifications.show({ color: 'red', message: "Network error updating the payment problem.", autoClose: false });
+      await api(`/api/finance-ops/payments/${id}`, { method: 'PATCH', body: JSON.stringify({ action, note: noteText }) });
+      await fetchRows();
+      notifyNavRefresh();
+      showSuccess(action === 'resolve' ? 'Payment problem resolved.' : 'Payment problem acknowledged.');
+    } catch (e) {
+      showError(errorMessage(e));
+      if (e instanceof HttpError && e.status === 409) fetchRows();
     }
   };
 
@@ -163,13 +156,8 @@ export default function PaymentProblemsPage() {
   const triggerSync = async () => {
     setSyncing(true);
     try {
-      const res = await fetch('/api/finance-ops/s-read/sync', { method: 'POST' });
-      if (!res.ok) {
-        const data = await res.json();
-        notifications.show({ color: 'red', message: data.error || "Failed to start the Shopify sync.", autoClose: false });
-        return;
-      }
-      notifications.show({ message: 'Shopify sync started…' });
+      await api('/api/finance-ops/s-read/sync', { method: 'POST' });
+      showSuccess('Shopify sync started…');
 
       for (let i = 0; i < POLL_MAX_ATTEMPTS; i++) {
         await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
@@ -180,14 +168,7 @@ export default function PaymentProblemsPage() {
         // watch it. Reporting "still running" here would be inventing a status, and it
         // would hide the actual fault behind a plausible sentence.
         if (!res.ok) {
-          // red + autoClose:false — the house shape for "something is actually wrong,
-          // don't let this scroll past". This message stands in for a broken mirror, so
-          // it must survive long enough to be read and acted on.
-          notifications.show({
-            color: 'red',
-            message: "Shopify sync started, but its status can't be read in this environment. Run diagnostics on the System Status page to see why.",
-            autoClose: false,
-          });
+          showError("Shopify sync started, but its status can't be read in this environment. Run diagnostics on the System Status page to see why.");
           return;
         }
 
@@ -198,27 +179,16 @@ export default function PaymentProblemsPage() {
         const { status } = res.run;
         await fetchRows();
         if (status === 'COMPLETED') {
-          notifications.show({ message: 'Shopify sync finished. Live payment amounts are up to date.' });
+          showSuccess('Shopify sync finished. Live payment amounts are up to date.');
         } else {
-          notifications.show({
-            color: 'red',
-            message: `Shopify sync ${status.toLowerCase()}. Live payment amounts may still be stale.`,
-            autoClose: false,
-          });
+          showError(`Shopify sync ${status.toLowerCase()}. Live payment amounts may still be stale.`);
         }
         return;
       }
-      // Budget exhausted with the run still RUNNING — the only path that has actually
-      // seen it running, and so the only one entitled to say so. Nothing has gone
-      // wrong: the sync started and is proceeding, we just stopped watching. So it
-      // takes the plain success shape (green, auto-closing) like "started…" above —
-      // the sentence carries the "check back later", not a colour the app never uses
-      // for anything else.
-      notifications.show({
-        message: 'Shopify sync is still running. Reload the page in a few minutes to see the result.',
-      });
-    } catch {
-      notifications.show({ color: 'red', message: "Network error starting the Shopify sync.", autoClose: false });
+      // The run is still going and nothing has failed, so this is a success message.
+      showSuccess('Shopify sync is still running. Reload the page in a few minutes to see the result.');
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setSyncing(false);
     }
