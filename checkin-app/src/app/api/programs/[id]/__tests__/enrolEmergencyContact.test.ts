@@ -8,6 +8,7 @@ import type { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { NO_EMERGENCY_CONTACT_TO_ENROL } from "@/lib/emergencyContacts/service";
 import { changeProgramStockWith } from "@/lib/shopify/stock";
+import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { POST as enrol } from "../participants/route";
 import { POST as requestPlan } from "../request-payment-plan/route";
 import { POST as discountCode } from "../discount-code/route";
@@ -151,6 +152,24 @@ describe("POST /api/programs/[id]/request-payment-plan", () => {
         const res = await requestPlan(post({ participantId: CHILD, kind: "SCHOLARSHIP" }), params);
         expect(res.status).toBe(200);
         expect(db.programParticipant.updateMany).toHaveBeenCalled();
+    });
+
+    it("lets staff outside the household request one with no emergency contact", async () => {
+        mockSession.user = BOARD;
+        db.emergencyContact.count.mockResolvedValue(0);
+        const res = await requestPlan(post({ participantId: CHILD, kind: "SCHOLARSHIP" }), params);
+        expect(res.status).toBe(200);
+        expect(db.programParticipant.updateMany).toHaveBeenCalled();
+        expect(db.emergencyContact.count).not.toHaveBeenCalled();
+    });
+
+    it("refuses staff acting for their own household with no emergency contact", async () => {
+        mockSession.user = BOARD;
+        (hasHouseholdConflict as jest.Mock).mockResolvedValueOnce(true);
+        db.emergencyContact.count.mockResolvedValue(0);
+        const res = await requestPlan(post({ participantId: CHILD, kind: "SCHOLARSHIP" }), params);
+        expect(res.status).toBe(400);
+        expect(db.programParticipant.updateMany).not.toHaveBeenCalled();
     });
 });
 

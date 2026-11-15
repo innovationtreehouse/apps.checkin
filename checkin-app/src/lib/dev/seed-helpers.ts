@@ -6,6 +6,7 @@ import { withTx } from "@/lib/db-client";
 import { nextBoundary, programYearsTouched } from "@/lib/programYear";
 import { orgCalendarDay } from "@/lib/time";
 import { normalizePhone } from "@/lib/phone";
+import { householdHasValidContact } from "@/lib/emergencyContacts/service";
 
 /**
  * Dev seed + macro helpers (docs/ops/dev-instance.md, "Macros") — the ONE source of truth for creating
@@ -41,7 +42,7 @@ async function seedRole(prisma: Db, personId: number, flag: RoleFlag): Promise<v
 
 // A family enrols only with a valid emergency contact on file.
 async function seedEmergencyContact(prisma: Db, householdId: number): Promise<void> {
-    if (await prisma.emergencyContact.count({ where: { householdId } })) return;
+    if (await householdHasValidContact(prisma, householdId)) return;
     const phone = "555-555-0090";
     await prisma.emergencyContact.create({ data: { householdId, name: "Sam Outside", phone, phoneDigits: normalizePhone(phone) } });
 }
