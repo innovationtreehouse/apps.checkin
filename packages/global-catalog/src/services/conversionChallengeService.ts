@@ -28,10 +28,17 @@ export async function lockChallengeSubmission(tx: Prisma.TransactionClient, item
 }
 
 export async function submitChallenge(params: SubmitChallengeParams): Promise<ConversionChallenge> {
-  if (params.proposedFactor <= 0) throw new ServiceError(400, "proposedFactor must be greater than 0");
+  if (!Number.isInteger(params.proposedFactor) || params.proposedFactor < 1) {
+    throw new ServiceError(400, "proposedFactor must be a whole number of at least 1");
+  }
+  const reason = params.reason.trim();
+  if (!reason) throw new ServiceError(400, "reason is required");
 
   const ref = await itemRefRepo.findById(params.itemReferenceId);
   if (!ref) throw new ServiceError(404, "Item reference not found");
+  if (params.proposedFactor === ref.conversionFactor) {
+    throw new ServiceError(400, "proposedFactor must differ from the current factor");
+  }
 
   return db.$transaction(async (tx) => {
     await lockChallengeSubmission(tx, params.itemReferenceId, params.orgId);
@@ -47,7 +54,7 @@ export async function submitChallenge(params: SubmitChallengeParams): Promise<Co
       orgName: params.orgName,
       currentFactor: ref.conversionFactor,
       proposedFactor: params.proposedFactor,
-      reason: params.reason.trim(),
+      reason,
       status: "pending",
     });
   });

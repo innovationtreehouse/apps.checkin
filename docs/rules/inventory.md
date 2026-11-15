@@ -69,6 +69,15 @@ How the pieces are built is described in
 - A changed conversion factor applies only to goods received after the change.
   Stock already counted is never recalculated. `[Decision]`
 
+- An existing reference's conversion factor changes only through an accepted
+  conversion challenge, which records who changed it, from what, to what, and
+  why. A challenge proposes a whole number different from the reference's
+  current factor, with a reason; one that doesn't is refused. `[Decision — owner]`
+
+- Accepting a conversion challenge changes the catalog reference only. A
+  receipt line already mapped keeps the factor it was mapped with, even before
+  its receipt is applied. `[Decision — owner — deliberate limit]`
+
 ### Proposals, provisional items, conflicts
 
 - An item-reference proposal stays pending until a manager reviews it. A later
@@ -218,6 +227,9 @@ How the pieces are built is described in
 
 - Board membership is enough to view receipt and inventory data, and to edit it
   wherever the app allows an edit. `[Decision — owner]`
+
+- Inventory managers file conversion challenges, and the manager who filed one
+  may accept it. `[Decision — owner]`
 
 - One inventory-manager role covers all catalog writes. Splitting it into
   separate catalog-manager and org-manager roles is planned.
