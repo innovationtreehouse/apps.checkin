@@ -905,6 +905,16 @@ defineRoute({
     orderedView: [],
 });
 
+// Daily household background-check catch-up (opens a check review where one is
+// due, settles applications waiting on their check). It writes membership state,
+// so it answers only to its own secret. Admission gate only: counts, no rows.
+defineRoute({
+    endpoint: 'GET /api/cron/bg-settle',
+    authorize: { cronSecret: 'bg-settle' },
+    envelope: null,
+    orderedView: [],
+});
+
 // Kiosk readings. SystemMetricLog rows are synthesized from in-memory task
 // state (`kiosk_last_seen`, `kiosk_clock_skew`), so they vanish when the task
 // restarts. KioskProtocolSeen rows are stored: one per kiosk key fingerprint,
