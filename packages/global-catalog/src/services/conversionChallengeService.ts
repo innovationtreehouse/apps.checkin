@@ -34,13 +34,14 @@ export async function submitChallenge(params: SubmitChallengeParams): Promise<Co
   const reason = params.reason.trim();
   if (!reason) throw new ServiceError(400, "reason is required");
 
-  const ref = await itemRefRepo.findById(params.itemReferenceId);
-  if (!ref) throw new ServiceError(404, "Item reference not found");
-  if (params.proposedFactor === ref.conversionFactor) {
-    throw new ServiceError(400, "proposedFactor must differ from the current factor");
-  }
-
   return db.$transaction(async (tx) => {
+    const ref = await createItemReferenceRepository(tx).findByIdForUpdate(params.itemReferenceId);
+    if (!ref) throw new ServiceError(404, "Item reference not found");
+    if (ref.archivedAt) throw new ServiceError(409, "This reference is archived");
+    if (params.proposedFactor === ref.conversionFactor) {
+      throw new ServiceError(400, "proposedFactor must differ from the current factor");
+    }
+
     await lockChallengeSubmission(tx, params.itemReferenceId, params.orgId);
     const repo = createConversionChallengeRepository(tx);
 

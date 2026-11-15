@@ -87,6 +87,15 @@ describeDb("submitChallenge", () => {
     expect(ch.reason).toBe("spaces");
   });
 
+  it("refuses an archived reference with 409", async () => {
+    await resetDb();
+    const { refId } = await seedRef();
+    await prisma.itemReference.update({ where: { id: refId }, data: { archivedAt: new Date() } });
+    await expect(submitChallenge({ ...BASE_SUBMIT, itemReferenceId: refId }))
+      .rejects.toMatchObject({ status: 409 });
+    expect(await prisma.conversionChallenge.count()).toBe(0);
+  });
+
   it.each([
     ["a fractional factor", { proposedFactor: 2.5 }],
     ["a blank reason", { reason: "   " }],
