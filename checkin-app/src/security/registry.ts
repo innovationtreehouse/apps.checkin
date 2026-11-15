@@ -207,8 +207,9 @@ defineRoute({
 // personal-tier data (dob, incl. youth) for everyone enrolled in / RSVP'd to
 // the program. This route is FAIL-CLOSED,
 // staff-only: the handler fn (events/[id]/route.ts) does an inline event->program
-// lead/core-vol/admin gate and throws 403 for everyone else, so non-staff never
-// receive the roster at all. That gate is NOT here in `authorize` because the
+// lead/core-vol/admin gate and answers 404 to everyone else, the same answer as a
+// missing event, so non-staff never receive the roster nor learn the event
+// exists. That gate is NOT here in `authorize` because the
 // roster's identities (name/id, and the existence of each enrollment/RSVP/Visit
 // row) are tier 'public', so per-field stripping cannot hide the "who attends"
 // association — only admission can; and the event->program check can't be
@@ -560,7 +561,7 @@ defineRoute({
         ['isFinance',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
         ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
     ],
-    financeView: { records: [{ key: 'ProgramPaymentPlanDecision', id: ['programId', 'personId'], model: 'ProgramParticipant' }], query: ['page'] },
+    financeView: { records: [{ key: 'ProgramPaymentPlanDecision', id: ['programId', 'personId'], model: 'ProgramParticipant' }], query: ['page', 'archived'] },
 });
 
 // The "who is 18 as of the member-year start" roster (Membership Audit). Ships
@@ -635,7 +636,7 @@ defineRoute({
         ['isFinance',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
         ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
     ],
-    financeView: { records: [{ key: 'MembershipPaymentPlanDecision', id: 'processId', model: 'OrgMembershipProcess' }], query: ['page'] },
+    financeView: { records: [{ key: 'MembershipPaymentPlanDecision', id: 'processId', model: 'OrgMembershipProcess' }], query: ['page', 'archived'] },
 });
 
 // Board's unconfirmed Shopify stock screen: programs whose stock write could not
