@@ -80,6 +80,13 @@ describe("runDevDataCheck", () => {
         expect(db.$transaction).not.toHaveBeenCalled();
     });
 
+    it("refuses prod's compose database, which the host check alone accepts", async () => {
+        process.env.CHECKIN_ENV = "prod";
+        const { db } = fakeDb("checkmein");
+        await expect(runDevDataCheck(db, "postgresql://u:p@db:5432/checkmein")).rejects.toThrow(/dev or local/);
+        expect(db.$transaction).not.toHaveBeenCalled();
+    });
+
     it.each([
         ["dev", "checkmein"],
         ["dev", "checkin_prod"],

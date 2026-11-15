@@ -79,7 +79,8 @@ const bare = (quoted: string) => quoted.replace(/^"|"$/g, "");
 /** A refusal to read a database that is not the expected dev or local one. */
 export class DevDataCheckRefused extends Error {}
 
-// Hosts a local database may live on: the laptop itself, or the `db` service in deploy/docker-compose*.yml.
+// Hosts a local database may live on: the laptop itself, or a compose `db` service. The prod compose
+// stack also serves `db:5432/checkmein` and `db:5432/receipt`, so there only `CHECKIN_ENV` refuses the read.
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "db"]);
 
 function isLocalHost(databaseUrl: string | undefined): boolean {
