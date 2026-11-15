@@ -12,8 +12,8 @@ export interface QueueCounts {
   actionableByState?: Record<string, number>;
   /** Finalized receipts not yet delivered to receiving. */
   notPushed: number;
-  /** Of those, the ones catch-up has stopped retrying. */
-  pushGivenUp: number;
+  /** Of those, the ones whose delivery has failed. */
+  failedPushes: number;
 }
 
 export const QUEUE_COUNTS_PATH = "/queue-counts";
@@ -35,8 +35,8 @@ export interface QueueBadge {
 }
 
 /**
- * The badge on `queue`'s tab. FINANCE acts on its queues and on undelivered receipts catch-up
- * gave up on, so those show green with the actionable count; every other non-empty queue
+ * The badge on `queue`'s tab. FINANCE acts on its queues and on undelivered receipts whose
+ * delivery failed, so those show green with the actionable count; every other non-empty queue
  * shows its total in gray. All has no badge.
  */
 export function queueBadge(queue: string, counts: QueueCounts | null, isFinance: boolean): QueueBadge | null {
@@ -45,7 +45,7 @@ export function queueBadge(queue: string, counts: QueueCounts | null, isFinance:
   const actionable = !isFinance
     ? 0
     : queue === NOT_PUSHED
-      ? counts.pushGivenUp
+      ? counts.failedPushes
       : FINANCE_ACTION_STATES.includes(queue)
         ? (counts.actionableByState?.[queue] ?? 0)
         : 0;

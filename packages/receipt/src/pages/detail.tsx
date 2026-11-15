@@ -511,7 +511,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
                 <Text fw={500} size="sm">Finance</Text>
                 {r.lastPushFailedAt && (
                   <Text size="sm" c="red">
-                    Stuck since {new Date(r.lastPushFailedAt).toLocaleString()}: {r.lastPushFailure ?? "no error recorded"}
+                    Stuck since {new Date(r.lastPushFailedAt).toLocaleString()}: {r.lastError ?? "no error recorded"}
                   </Text>
                 )}
                 {r.state === "financial_review" && !own && (

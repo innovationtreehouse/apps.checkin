@@ -68,9 +68,9 @@ async function firstFailures(ids: string[]): Promise<Map<string, { lastPushFaile
 }
 
 /** A stuck receipt's first failure time and latest error, for finance on the receipt's own page. */
-async function failureOf(id: string): Promise<{ lastPushFailedAt: Date; lastPushFailure: string | null } | undefined> {
+async function failureOf(id: string): Promise<{ lastPushFailedAt: Date; lastError: string | null } | undefined> {
   const row = await db.receipt.findUnique({ where: { id }, select: { firstFailedAt: true, lastError: true } });
-  return row?.firstFailedAt ? { lastPushFailedAt: row.firstFailedAt, lastPushFailure: row.lastError } : undefined;
+  return row?.firstFailedAt ? { lastPushFailedAt: row.firstFailedAt, lastError: row.lastError } : undefined;
 }
 
 /** The receipt as a submitter sees it: donor names are pii, read by finance only. */
@@ -1499,7 +1499,7 @@ export const receiptService = {
    */
   async queueCounts(
     financeViewerId: number | null,
-  ): Promise<{ byState: Record<string, number>; actionableByState?: Record<string, number>; notPushed: number; pushGivenUp: number }> {
+  ): Promise<{ byState: Record<string, number>; actionableByState?: Record<string, number>; notPushed: number; failedPushes: number }> {
     await requireActor();
     const orgId = await getOrgId();
     const [groups, undelivered, finance] = await Promise.all([
@@ -1513,7 +1513,7 @@ export const receiptService = {
       byState,
       ...(finance ? { actionableByState: finance.byState } : {}),
       notPushed: undelivered.length,
-      pushGivenUp: undelivered.filter((r) => r.firstFailedAt).length,
+      failedPushes: undelivered.filter((r) => r.firstFailedAt).length,
     };
   },
 
