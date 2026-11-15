@@ -10,6 +10,7 @@ import { z } from "zod";
 import { activeCatalogItemSchema, createdIdSchema, gtin13Schema, refCheckResultSchema } from "../contract";
 import { tryAutoProceedApply } from "../lib/auto-proceed";
 import { ports, requireActor } from "../runtime";
+import type { ReceivedReceiptLineStatusRow } from "../db/schema";
 import { loadEditableLine, updateEditableLine } from "./receiptLookup";
 
 export const AssociateBodySchema = z.object({
@@ -60,6 +61,7 @@ export const lineItemService = {
    * CI3: optimistic association. The line is recognized with the manager's GTIN at once; a
    * reference proposal and any conflict reports go to the catalog without gating the receipt.
    * The GTIN must name an approved, non-archived catalog item: 400 if malformed, 404 if none.
+   * A line already recognized with the same GTIN and factor is left as it is: no write, event or proposal.
    */
   async associateGtin(receiptId: number, lineId: number, body: AssociateBody): Promise<void> {
     const actor = await requireActor();
@@ -70,6 +72,9 @@ export const lineItemService = {
     const conversionFactor = body.conversionFactor ?? 1;
     const edit = await loadEditableLine(receiptId, lineId);
     const { received, lineItem, receipt } = edit;
+    const alreadyAssociated = (line: ReceivedReceiptLineStatusRow) =>
+      line.recognitionStatus === "recognized" && line.assignedGtin13 === gtin13 && line.conversionFactor === conversionFactor;
+    if (alreadyAssociated(edit.lineStatus)) return;
     const { catalogReader, catalogSubmissions } = ports();
 
     const item = await viaCatalog(async () => activeCatalogItemSchema.parse(await catalogReader.getActiveItem(gtin13)));
@@ -153,7 +158,7 @@ export const lineItemService = {
     }
 
     // Manual association: the human-entered factor is authoritative; version 1.
-    await updateEditableLine(edit, {
+    const written = await updateEditableLine(edit, {
       recognitionStatus: "recognized",
       assignedGtin13: gtin13,
       provisionalItemGtin13: null,
@@ -168,9 +173,9 @@ export const lineItemService = {
       receivedReceiptId: receiptId,
       lineStatusId: lineId,
       details: JSON.stringify({ gtin13 }),
-    });
+    }, alreadyAssociated);
 
-    await tryAutoProceedApply(receiptId, received, actor);
+    if (written) await tryAutoProceedApply(receiptId, received, actor);
   },
 
   async proposeProvisionalItem(
