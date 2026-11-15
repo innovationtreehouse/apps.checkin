@@ -95,9 +95,8 @@
  * On ReceiptView, `duplicateNotice` names the viewer's own other copy of the
  * receipt and never another person's, so its uploader reads it (`internal`).
  * `copyOfId` names the receipt kept in place of one rejected as a copy and is
- * `public`, as Receipt.id is, so the uploader reads it. `copyOfLabel` describes
- * that receipt, which may be another person's, by its retailer and upload time,
- * so it is `pii`.
+ * `public`, as Receipt.id is, so the uploader reads it. `copyOfLabel` names
+ * that receipt, which may be another person's, as "receipt <id>"; it is `pii`.
  *
  * Hand-authored, not generated: these describe API responses, not tables. This
  * is a security-boundary artifact — changes ship in a boundary PR.
