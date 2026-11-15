@@ -10,7 +10,7 @@ const BASE = "/api/income";
 
 export const { api, useLoad } = createClient(BASE);
 
-export { errorMessage, notifyNavCounts, type Loaded } from "@checkin/component-ui";
+export { errorMessage, notifyNavCounts, refusalMessage, type Loaded } from "@checkin/component-ui";
 
 /** Whether the viewer may act (resolve, run, map, exclude). Mirrors the routes' FINANCE gate. */
 export function useIsFinance(): boolean {

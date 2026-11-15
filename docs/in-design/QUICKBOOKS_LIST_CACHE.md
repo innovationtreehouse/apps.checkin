@@ -129,9 +129,9 @@ These readers run when finance saves, and they move to the copy:
 | `listQuickBooksAccounts` `checkin-app/src/lib/finance/booksMap.ts:98` | The account picker (`GET /api/books-map/quickbooks-accounts`), and the single source for every account check below | `qb.accounts()` |
 | `setBooksMapAccount` `checkin-app/src/lib/finance/booksMap.ts:55` | Saving a role on the Books map | `listQuickBooksAccounts` |
 | `refuseWrongType` `packages/expense/src/lib/account-types.ts:17` | Expense account list create and update (`routes/finance.ts:165`, `:180`; the PR3070-F03 path goes through `refuseListType` at `:85`), account rules (`:95`, `:119`), a held line's account (`services/holdService.ts:31`) | port `quickBooksAccounts` (`checkin-app/src/lib/components/ports.ts:50`) → `listQuickBooksAccounts` |
-| `refuseWrongTypes` `packages/bulk-donation/src/routes/rules.ts:36` | Donation account map create and update | same port |
+| `refuseWrongTypes` `packages/bulk-donation/src/routes/rules.ts:34` | Donation account map create and update | same port |
 | `packages/bulk-donation/src/lib/in-kind-resolve.ts:248` | The account finance sets on a gift-of-goods line | same port |
-| `setItemCategory` `packages/income/src/routes.ts:125` | An income item's account | same port |
+| `setItemCategory` `packages/income/src/routes.ts:121` | An income item's account | same port |
 | `listQuickBooksClasses` `checkin-app/src/lib/finance/budgetOwners.ts:44` | The Class picker for buckets (`GET /api/budget-owners/quickbooks-classes`) | `qb.classes()` |
 | `setCategory` `packages/income/src/services/itemCategoryService.ts:78` | Assigning an income item to a bucket: checks that the bucket's Class is active | `classSource.activeClassIds` (`checkin-app/src/lib/income/configure.ts:140`) |
 

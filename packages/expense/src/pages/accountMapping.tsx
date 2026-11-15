@@ -4,7 +4,7 @@ import { useState } from "react";
 import { ActionIcon, Badge, Button, Group, Select, Table, Text, Title, Tooltip } from "@mantine/core";
 import { IconTrash } from "@tabler/icons-react";
 import { paged, send, useLoad, useRoles } from "../components/api";
-import { CatalogPicker, LoadError, Pager, useUrlPage } from "@checkin/component-ui";
+import { CatalogPicker, LoadError, Pager, QuickBooksListsRefresh, useUrlPage } from "@checkin/component-ui";
 import { LINE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
 
 interface Mapping {
@@ -157,6 +157,7 @@ export default function AccountMappingPage() {
             w={200}
           />
           <Button onClick={() => void add()} disabled={!form.qbAccount}>Add rule</Button>
+          <QuickBooksListsRefresh />
         </Group>
       )}
       <Pager page={page} onChange={setPage} rows={mappings.data} />

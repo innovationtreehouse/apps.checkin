@@ -6,7 +6,7 @@ import { act, api, useLoad, when } from "../components/api";
 import { formatGtinDisplay } from "@checkin/gtin";
 import { formatCents } from "@checkin/money";
 import { LINE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
-import { LoadError } from "@checkin/component-ui";
+import { LoadError, QuickBooksListsRefresh } from "@checkin/component-ui";
 import { IN_KIND_STATE as STATE, type InKindSource, type WaitingOn } from "../components/inKindState";
 
 interface QueueLine {
@@ -224,6 +224,7 @@ function QbPanel({ item, onDone }: { item: QueueItem; onDone: () => void }) {
         {isHeld(item) && (
           <>
             {live.error && <LoadError what="QuickBooks' account list" message={live.error} onRetry={live.reload} />}
+            <QuickBooksListsRefresh />
             {item.lines.map((l) => (
               <Group key={l.id} align="end">
                 <Text size="sm" w={240}>

@@ -2,10 +2,10 @@ import { invalidateLoads } from "./loadCache";
 
 /**
  * A response that was not a usable answer. Its message is the route's `error` text, a gateway's, or `FAILURE_TEXT`.
- * `fields` names the inputs the route refused, so a form can highlight them.
+ * `fields` names the inputs the route refused, so a form can highlight them; `code` is the route's error code, if it sent one.
  */
 export class HttpError extends Error {
-  constructor(message: string, readonly status: number, readonly fields: readonly string[] = []) {
+  constructor(message: string, readonly status: number, readonly fields: readonly string[] = [], readonly code: string | null = null) {
     super(message);
     this.name = "HttpError";
   }
@@ -63,11 +63,16 @@ export async function request<T>(url: string, { invalidate = true, ...options }:
   }
   if (res.ok && !isJson) throw new HttpError(FAILURE_TEXT, res.status);
   if (!res.ok) {
-    const { error: message, fields } = (data ?? {}) as { error?: unknown; fields?: unknown };
+    const { error: message, fields, code } = (data ?? {}) as { error?: unknown; fields?: unknown; code?: unknown };
     if (typeof message !== "string" || !message.trim()) {
       throw new HttpError(gatewayMessage(res, isJson, method === "GET" || method === "HEAD") ?? FAILURE_TEXT, res.status);
     }
-    throw new HttpError(message, res.status, Array.isArray(fields) ? fields.filter((f): f is string => typeof f === "string") : []);
+    throw new HttpError(
+      message,
+      res.status,
+      Array.isArray(fields) ? fields.filter((f): f is string => typeof f === "string") : [],
+      typeof code === "string" ? code : null,
+    );
   }
   return data as T;
 }
