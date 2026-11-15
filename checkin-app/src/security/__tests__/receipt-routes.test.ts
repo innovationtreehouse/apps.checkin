@@ -358,7 +358,7 @@ describe('the confirmation that signs a reimbursement', () => {
 
     it('returns nothing to anyone else, the uploader included', () => {
         const own = views(CONFIRMATION_ROUTES[0]).get('authenticated')!;
-        expect(stripValue('ReceiptConfirmationView', row, own, { selfId: 7 } as CallerContext)).toEqual({ lineItems: [{}] });
+        expect(stripValue('ReceiptConfirmationView', row, own, { selfId: 7 } as CallerContext)).toEqual({ lineItems: [] });
     });
 
     it('returns a Board member the receipt they confirm on the reimbursee\'s behalf', () => {
@@ -459,7 +459,7 @@ describe('the submitter view', () => {
 
     it("returns only the public id of another person's receipt", () => {
         const out = stripValue('ReceiptView', row, own, { selfId: 8 } as CallerContext);
-        expect(out).toEqual({ id: 'r-1', lineItems: [{}] });
+        expect(out).toEqual({ id: 'r-1', lineItems: [] });
     });
 
     it("returns the uploader the duplicate flag's time on every receipt route", () => {

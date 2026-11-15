@@ -46,6 +46,24 @@ describe('stripper — a relation the view cannot see', () => {
     });
 });
 
+describe('stripper — related rows outside the caller\'s scope', () => {
+    const line = { id: 1, reimburseePersonId: 9, lineNumber: 1, description: 'Arduino' };
+    const own = ['their_own:internal'] as Token[];
+
+    it('drops the rows the caller sees no field of and keeps the rest', () => {
+        const receipt = { lineItems: [line, { ...line, id: 2, reimburseePersonId: 7 }] };
+        expect(stripValue('ReceiptConfirmationView', receipt, own, { ...ctx(), selfId: 9 })).toEqual({
+            lineItems: [line],
+        });
+    });
+
+    it('sends an empty list when the caller sees no related row', () => {
+        expect(stripValue('ReceiptConfirmationView', { lineItems: [line] }, own, { ...ctx(), selfId: 7 })).toEqual({
+            lineItems: [],
+        });
+    });
+});
+
 describe('outbound — a relation the surface cannot send', () => {
     const sent = (surface: string) =>
         outboundCall(surface, { Visit: visit }, async stripped => stripped);
