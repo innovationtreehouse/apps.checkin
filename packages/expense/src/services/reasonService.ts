@@ -18,10 +18,10 @@ export const OPEN_REVIEWS_WHERE: Prisma.ExpenseFlagWhereInput = { checkedOffAt: 
 
 /**
  * Bookkeeping on a purchase already signed off, which any finance holder does, conflicted or not
- * (docs/rules/expenses.md, Receipts): capital designation, depreciation, a hold's account, and
- * resubmitting a held or failed post.
+ * (docs/rules/expenses.md, Receipts): capital designation and its unset thresholds, depreciation,
+ * a hold's account, and resubmitting a held or failed post.
  */
-const BOOKKEEPING = new Set<ReasonCode>(["CAPITAL_REVIEW", "DEPRECIATION_CYCLE", "ACCOUNT_HOLD", "QB_POST_FAILED"]);
+const BOOKKEEPING = new Set<ReasonCode>(["CAPITAL_REVIEW", "CAPITAL_THRESHOLDS_UNSET", "DEPRECIATION_CYCLE", "ACCOUNT_HOLD", "QB_POST_FAILED"]);
 
 /** Reasons a conflicted FINANCE holder answers by choosing the line's bucket. */
 const BUCKET_CHOICE = new Set<ReasonCode>(["BUCKET_TO_ASSIGN", "BUCKET_UNKNOWN", "OWNER_EXCEPTION"]);

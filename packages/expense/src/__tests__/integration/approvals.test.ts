@@ -5,10 +5,10 @@
  * households may and may not do on their lines, and Approve All.
  */
 import { backendPid, waitersBehind } from "@checkin/pg-test-harness";
-import { it, expect } from "vitest";
+import { beforeEach, it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
-import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, ORG, seedSubmitterSeat } from "../helpers/seed";
+import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, seedOrgSettings, ORG, seedSubmitterSeat } from "../helpers/seed";
 import { setReimbursee, signLine, signoffStatus } from "../../services/signoffService";
 import { approveLine, approveLines, assignOwner, financeAssign, raiseException, rejectException, resolveUnknown } from "../../services/approvalService";
 
@@ -24,6 +24,9 @@ async function lineInApproval(ownerId: number | null = 100, status = "pending") 
 }
 const approval = (id: number) => db.lineItemOwnerApproval.findFirst({ where: { id } });
 const state = async (id: string) => (await db.expense.findFirst({ where: { id } }))!.state;
+
+// These suites are not about capital review; with it off, no expense stops at that step.
+beforeEach(() => seedOrgSettings({ capitalReviewEnabled: false }));
 
 describeDb("approveLine", () => {
   it("an approver of the line's bucket approves; attribution comes from the principal", async () => {

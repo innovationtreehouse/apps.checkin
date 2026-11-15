@@ -1,8 +1,8 @@
 /** Decisions on the expense record: reasons, the closing acts, required notes and Approve tax. */
-import { it, expect } from "vitest";
+import { beforeEach, it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
-import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem } from "../helpers/seed";
+import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, seedOrgSettings } from "../helpers/seed";
 import { checkOffFlag, raiseFlag, raiseStray } from "../../services/flagService";
 import { approveTax } from "../../services/taxApprovalService";
 import { expenseReasons } from "../../services/reasonService";
@@ -15,6 +15,9 @@ const BOARD = principal(5, { isBoard: true });
 const bind = () => bindPorts({ signoff: directory({ orgLevel: [100], finance: [3, 4, 8], board: [5], households: [[1, 8]] }) });
 
 const openFlag = (expenseId: string, kind: string) => db.expenseFlag.findFirst({ where: { expenseId, kind } });
+
+// These suites are not about capital review; with it off, no expense stops at that step.
+beforeEach(() => seedOrgSettings({ capitalReviewEnabled: false }));
 
 describeDb("reviews need a note", () => {
   it("refuses a blank note on each review kind and closes it with one", async () => {

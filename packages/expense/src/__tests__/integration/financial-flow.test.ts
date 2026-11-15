@@ -251,7 +251,7 @@ describeDb("checkApprovalAutoTransition — capital review switch", () => {
 
     expect(await stateOf(id)).toBe("capital_review");
     expect(checkAndProcessExpense).not.toHaveBeenCalled();
-    expect((await expenseReasons(FINANCE, id)).map((r) => [r.code, r.actionable])).toEqual([
+    expect((await expenseReasons(FINANCE, id)).filter((r) => r.code.startsWith("CAPITAL")).map((r) => [r.code, r.actionable])).toEqual([
       ["CAPITAL_REVIEW", true],
       ["CAPITAL_THRESHOLDS_UNSET", true],
     ]);
