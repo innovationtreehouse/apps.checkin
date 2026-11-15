@@ -51,6 +51,21 @@ const SOURCES: { library: string; env: string; read: () => Promise<StuckItem[]>;
     },
 ];
 
+/** A count line on the Problems list, with the page that shows its detail where there is one. */
+export interface Notice {
+    text: string;
+    href: string | null;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const BOARD_AFTER_MS = 14 * DAY_MS;
+
+/** Email sends logged as failed (lib/email.ts) in the day before `now`, as a count only. */
+async function emailFailureNotices(now: Date): Promise<Notice[]> {
+    const failed = await prisma.integrationErrorLog.count({ where: { source: "email", timestamp: { gt: new Date(now.getTime() - DAY_MS), lte: now } } });
+    return failed > 0 ? [{ text: `Emails failed to send: ${failed} in the last day`, href: "/system-status/links" }] : [];
+}
+
 /**
  * Runs one listed item's step once, through the library the Problems list names it by. A library
  * that is not listed or has no database answers 404; the library's own retry answers the rest.
@@ -62,19 +77,23 @@ export async function retryProblem({ library, step, id }: { library: string; ste
 }
 
 /**
- * Every stuck item across the receipt flow, oldest first, and the libraries' own lines
- * (`notices`, counts only). A library whose read fails is named in `unread`.
+ * Every stuck item across the receipt flow, oldest first, and the count lines (`notices`): the
+ * libraries' own and failed email sends. A source whose read fails is named in `unread`.
  */
-export async function getProblems(): Promise<{ items: Problem[]; unread: string[]; notices: string[] }> {
+export async function getProblems(now = new Date()): Promise<{ items: Problem[]; unread: string[]; notices: Notice[] }> {
     const wired = SOURCES.filter((s) => process.env[s.env]);
-    const results = await Promise.allSettled(
-        wired.map(async (s) => ({ items: await s.read(), notices: s.notices ? await s.notices() : [] })),
-    );
+    const results = await Promise.allSettled([
+        ...wired.map(async (s) => ({
+            items: await s.read(),
+            notices: s.notices ? (await s.notices()).map((text) => ({ text, href: null })) : [],
+        })),
+        emailFailureNotices(now).then((notices) => ({ items: [], notices })),
+    ]);
     const items: Problem[] = [];
     const unread: string[] = [];
-    const notices: string[] = [];
+    const notices: Notice[] = [];
     results.forEach((result, i) => {
-        const { library } = wired[i];
+        const library = wired[i]?.library ?? "email";
         if (result.status === "fulfilled") {
             items.push(...result.value.items.map((item) => ({ ...item, library })));
             notices.push(...result.value.notices);
@@ -86,9 +105,6 @@ export async function getProblems(): Promise<{ items: Problem[]; unread: string[
     items.sort((a, b) => a.failedAt.getTime() - b.failedAt.getTime());
     return { items, unread, notices };
 }
-
-const DAY_MS = 24 * 60 * 60 * 1000;
-const BOARD_AFTER_MS = 14 * DAY_MS;
 
 const address = (value: string | null | undefined): string | null => value?.trim() || null;
 
@@ -105,7 +121,7 @@ export const failingJob = (j: CronJobStatus): boolean => Boolean(j.lastError) &&
 export async function sendProblemsDigest(now = new Date()): Promise<void> {
     try {
         const [{ items, unread, notices }, jobs, settings] = await Promise.all([
-            getProblems(),
+            getProblems(now),
             getCronJobStatuses(),
             prisma.boardSettings.findUnique({ where: { id: 1 }, select: { alertEmailAddress: true, boardEmailAddress: true } }),
         ]);
@@ -121,7 +137,7 @@ export async function sendProblemsDigest(now = new Date()): Promise<void> {
             ...stale.map((j) => `Scheduled job ${j.job}: last ran ${when(j.lastSuccessAt)}`),
             ...failing.map((j) => `Scheduled job ${j.job}: last run reported failures, ${when(j.lastErrorAt ?? j.lastSuccessAt)}`),
             ...unread.map((library) => `${library}: its stuck items could not be read`),
-            ...notices,
+            ...notices.map((n) => n.text),
         ];
         const ctx = { count: String(lines.length), items: lines.join("\n"), actionLink: `${config.baseUrl()}/system-status/health` };
 

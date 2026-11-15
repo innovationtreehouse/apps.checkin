@@ -25,6 +25,7 @@ const inventory = jest.requireMock<{ stuckItems: jest.Mock; retryStuckItem: jest
 const NOW = new Date("2026-11-08T08:00:00Z");
 const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3600_000);
 const findSettings = jest.fn();
+const countEmailFailures = jest.fn();
 const digestCtx = () => jest.mocked(sendTemplated).mock.calls[0][2] as TemplateCtx<"ops.problemsDigest">;
 const ENV = ["RECEIPT_DATABASE_URL", "EXPENSE_DATABASE_URL", "BULK_DONATION_DATABASE_URL", "WORKFLOW_MAPPING_DATABASE_URL", "LOCAL_INVENTORY_DATABASE_URL"];
 
@@ -35,6 +36,8 @@ beforeEach(() => {
     for (const lib of [receipt, expense, gifts, mapping, inventory]) lib.stuckItems.mockResolvedValue([]);
     receipt.problemNotices.mockResolvedValue([]);
     prisma.boardSettings.findUnique = findSettings;
+    prisma.integrationErrorLog.count = countEmailFailures;
+    countEmailFailures.mockResolvedValue(0);
     findSettings.mockResolvedValue({ alertEmailAddress: "alerts@example.org", boardEmailAddress: "board@example.org" });
     jest.mocked(getCronJobStatuses).mockResolvedValue([{ job: "nightly", lastSuccessAt: hoursAgo(1), stale: false }]);
     jest.mocked(sendTemplated).mockResolvedValue(true);
@@ -84,7 +87,27 @@ describe("getProblems", () => {
 
     it("carries a library's own lines, such as repeated reading failures", async () => {
         receipt.problemNotices.mockResolvedValue(["Receipt reading failed 3 times in the last day"]);
-        expect((await getProblems()).notices).toEqual(["Receipt reading failed 3 times in the last day"]);
+        expect((await getProblems()).notices).toEqual([{ text: "Receipt reading failed 3 times in the last day", href: null }]);
+    });
+
+    it("has no email line while no email failed to send in the last day", async () => {
+        expect((await getProblems(NOW)).notices).toEqual([]);
+    });
+
+    it("counts email sends that failed in the last day, linking to Link Status", async () => {
+        countEmailFailures.mockResolvedValue(1);
+
+        const { notices } = await getProblems(NOW);
+
+        expect(countEmailFailures).toHaveBeenCalledWith({ where: { source: "email", timestamp: { gt: hoursAgo(24), lte: NOW } } });
+        expect(notices).toEqual([{ text: "Emails failed to send: 1 in the last day", href: "/system-status/links" }]);
+        expect(JSON.stringify(notices)).not.toMatch(/@|subject/i);
+    });
+
+    it("names email as unread when its failures cannot be counted", async () => {
+        jest.spyOn(console, "error").mockImplementation(() => undefined);
+        countEmailFailures.mockRejectedValue(new Error("db down"));
+        expect(await getProblems(NOW)).toMatchObject({ unread: ["email"], notices: [] });
     });
 
     it("names a library whose lines cannot be read", async () => {
@@ -144,6 +167,16 @@ describe("sendProblemsDigest", () => {
 
         expect(jest.mocked(sendTemplated).mock.calls.map((c) => c[1])).toEqual(["alerts@example.org"]);
         expect(digestCtx().items).toBe("Receipt reading failed 3 times in the last day");
+        expect(jest.mocked(sendTemplated).mock.calls).toHaveLength(1);
+    });
+
+    it("emails the alert address a failed email send on its own, as a count with no recipient or subject", async () => {
+        countEmailFailures.mockResolvedValue(1);
+
+        await sendProblemsDigest(NOW);
+
+        expect(jest.mocked(sendTemplated).mock.calls.map((c) => c[1])).toEqual(["alerts@example.org"]);
+        expect(digestCtx().items).toBe("Emails failed to send: 1 in the last day");
     });
 
     it("copies the Board once anything has been stuck more than two weeks", async () => {

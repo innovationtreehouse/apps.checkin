@@ -269,7 +269,10 @@ describe("ProblemsBox", () => {
             { library: "workflow mapping", id: "7", step: "catalog event", href: null, failedAt: "2026-11-02T12:00:00.000Z" },
           ],
           unread: ["gifts"],
-          notices: ["Receipt reading failed 3 times in the last day"],
+          notices: [
+            { text: "Receipt reading failed 3 times in the last day", href: null },
+            { text: "Emails failed to send: 2 in the last day", href: "/system-status/links" },
+          ],
         },
         cronJobs: [
           { job: "nightly", lastSuccessAt: "2026-11-07T12:00:00.000Z", stale: false },
@@ -284,8 +287,9 @@ describe("ProblemsBox", () => {
     expect(screen.getByText("qbo-posting")).toBeInTheDocument();
     expect(screen.queryByText("nightly")).not.toBeInTheDocument();
     expect(screen.getByText(/Could not read gifts/)).toBeInTheDocument();
-    expect(screen.getByText("Receipt reading failed 3 times in the last day")).toBeInTheDocument();
-    expect(screen.getByText("5")).toBeInTheDocument();
+    expect(screen.getByText("Receipt reading failed 3 times in the last day").closest("a")).toBeNull();
+    expect(screen.getByText("Emails failed to send: 2 in the last day").closest("a")).toHaveAttribute("href", "/system-status/links");
+    expect(screen.getByText("6")).toBeInTheDocument();
   });
 
   it("lists a job whose latest run reported failures, without its error text, and a late one only once", async () => {
