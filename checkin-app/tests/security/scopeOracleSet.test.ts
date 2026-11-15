@@ -82,6 +82,7 @@ const ORACLES = [
     'shopify-read-strip.test.ts',
     'stripper-scalar.test.ts',
     'toolstatus-self-scope.test.ts',
+    'trusted-adult-queue-strip.test.ts',
     'unconfirmed-stock-strip.test.ts',
     'visit-household-lead-scope.test.ts',
     'visit-program-scope.test.ts',
