@@ -22,7 +22,7 @@ const BATCH_SIZE = 40; // within the spec's ~25-50/round
  * another in-flight process-batch call for the same item) is simply skipped.
  *
  * ponytail: the claim writes a transient "sending" status — not one of the four the design
- * doc names (queued/sent/failed/skipped_unsubscribed/skipped_denied) — as the atomic marker, since Prisma's
+ * doc names (queued/sent/failed/skipped_unsubscribed/skipped_denied/skipped_not_member) — as the atomic marker, since Prisma's
  * updateMany can't return which rows it touched. A crash in the narrow window between claim
  * and finalize could strand a single item in "sending" (not resumable by count-of-queued or
  * retry-failed); add a stale-"sending" reaper if that's ever observed in practice.
@@ -64,9 +64,15 @@ export const POST = withAuth({ roles: ROLES }, async (req) => {
             where: { id: item.personId },
             select: { name: true, household: { select: { orgMembership: { select: { status: true } } } } },
         });
-        // A household denied or archived after the snapshot was frozen gets nothing either.
-        if (person && (!person.household || person.household.orgMembership?.status === "DENIED")) {
+        // Outreach is member-only at send too: the snapshot may predate a denial, an archive,
+        // a revocation, or this rule.
+        const membershipStatus = person?.household?.orgMembership?.status;
+        if (!person?.household || membershipStatus === "DENIED") {
             await prisma.bulkSendItem.update({ where: { id: item.id }, data: { status: "skipped_denied" } });
+            continue;
+        }
+        if (membershipStatus !== "ACTIVE") {
+            await prisma.bulkSendItem.update({ where: { id: item.id }, data: { status: "skipped_not_member" } });
             continue;
         }
         const { subject, html } = renderOutreachEmail(template.subject, template.body, {

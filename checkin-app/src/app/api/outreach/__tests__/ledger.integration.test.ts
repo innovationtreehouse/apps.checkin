@@ -345,6 +345,36 @@ describe('outreach ledger (send / process-batch / status)', () => {
         expect((sendEmail as jest.Mock).mock.calls.some(([to]) => to === `latedeny-${TAG}@example.com`)).toBe(false);
     });
 
+    it('drain skips a household that stops being a member after the snapshot, and a legacy join item to a non-member', async () => {
+        const revoked = await makeMemberLead('LateRevoke', `laterevoke-${TAG}@example.com`);
+        const revokedPerson = await prisma.person.findFirstOrThrow({ where: { householdId: revoked.id } });
+        asBoard(boardId);
+
+        const created = await (await SEND(req('POST', { emailType: 'opening' }))).json();
+        const bulkSendId = created.bulkSend.id;
+        const item = await prisma.bulkSendItem.findFirstOrThrow({ where: { bulkSendId, personId: revokedPerson.id } });
+        await prisma.orgMembership.update({ where: { householdId: revoked.id }, data: { status: 'REVOKED' } });
+
+        // A join item left by a send queued before this rule, for a household with no membership.
+        const legacyHh = await prisma.household.create({ data: { name: `LegacyJoin ${TAG}` } });
+        const legacyPerson = await prisma.person.create({ data: { name: 'Legacy', email: `legacyjoin-${TAG}@example.com`, householdId: legacyHh.id, isHouseholdLead: true } });
+        const legacyItem = await prisma.bulkSendItem.create({
+            data: { bulkSendId, personId: legacyPerson.id, email: `legacyjoin-${TAG}@example.com`, variant: 'join', status: 'queued' },
+        });
+
+        let remaining = created.counts.queued + 1;
+        let guard = 0;
+        while (remaining > 0 && guard++ < 5) {
+            remaining = (await (await PROCESS_BATCH(req('POST', { bulkSendId }))).json()).remaining;
+        }
+
+        expect((await prisma.bulkSendItem.findUniqueOrThrow({ where: { id: item.id } })).status).toBe('skipped_not_member');
+        expect((await prisma.bulkSendItem.findUniqueOrThrow({ where: { id: legacyItem.id } })).status).toBe('skipped_not_member');
+        const sentTo = (sendEmail as jest.Mock).mock.calls.map(([to]) => to);
+        expect(sentTo).not.toContain(`laterevoke-${TAG}@example.com`);
+        expect(sentTo).not.toContain(`legacyjoin-${TAG}@example.com`);
+    });
+
     it('test-send renders the renew copy once and sends it to the caller', async () => {
         asBoard(boardId, `tester-${TAG}@example.com`);
         const res = await TEST_SEND(req('POST', {
