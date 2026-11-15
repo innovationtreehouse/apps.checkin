@@ -139,25 +139,24 @@ Things the app takes as true because they are handled outside it.
   on someone noticing.  [Decision — deliberate limit]
 
 - A refund, chargeback or cancellation seen at the store must be reflected in
-  membership and enrollment. The app raises it for the board to handle, and apart
-  from the refund case below it undoes nothing by itself.
+  membership and enrollment. The app raises it for the board to handle and
+  undoes nothing by itself.
   [Decision — *Principle: people decide about people*]
 
 - A resolved payment exception reopens only on new evidence, such as a further
   refund or a new dispute, never because the same condition is seen again.
   [Decision]
 
-- When the store's refund notice says a program refund put seats back on sale,
-  the app removes the enrollment of each person the refund identifies: everyone
-  on the order when it returns every seat the order bought, or the person named
-  on a fully refunded order line. Returned seats the app can't tie to a person
-  are taken off sale, and the board decides who leaves. Any other refund,
-  including one of reserved seats or one the daily reconciliation found rather
-  than the refund notice, is only raised for the board. Every refund is raised
-  for the board to settle the money.  [Decision]
+- A refund, chargeback or cancellation removes nobody from a program. The
+  refunded person keeps the place until the board removes it, even when that
+  keeps a full program full. Every refund is raised for the board to settle the
+  money.  [Decision — Board ruling B13; *Principle: people decide about people*]
 
-- A refund removes only the people it refunds. A sibling on the same order
-  stays enrolled.  [Decision]
+- When the store's refund notice says a program refund put seats back on sale,
+  every returned seat someone still holds is taken off sale again, so the store
+  never offers it twice. Any other refund, including one of reserved seats or
+  one the daily reconciliation found rather than the refund notice, is only
+  raised for the board.  [Decision]
 
 - A refund, chargeback or cancellation on a withdrawn person's order is raised
   against their withdrawn enrollment, which stays. A refund that puts back a seat

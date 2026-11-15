@@ -3,7 +3,7 @@
  */
 /**
  * POST /api/webhooks/shopify/reversals passes the refund's restocked lines
- * (restock_type other than no_restock) to raiseReversalByOrderId. The removal
+ * (restock_type other than no_restock) to raiseReversalByOrderId. The settlement
  * itself is covered by reconcile.integration.test.ts.
  */
 import crypto from 'crypto';

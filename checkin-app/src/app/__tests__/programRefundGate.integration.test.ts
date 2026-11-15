@@ -171,7 +171,7 @@ describe('a refunded order never activates a program place', () => {
         expect(mockAdjust).toHaveBeenCalledWith({ id: programId, shopifyVariantId: VARIANT }, -2, 'refund-before-activation', { deferred: true });
     });
 
-    it("a refund that removes a paid place deletes the child's RSVPs for sessions that have not started", async () => {
+    it("a restocked refund keeps the paid place and its RSVPs, and takes the seat back off sale", async () => {
         const oid = orderId('H');
         const child = (await prisma.person.create({ data: { name: `Child ${TAG}`, email: `child-${nextPerson++}-${TAG}@example.com`, householdId } })).id;
         await prisma.programParticipant.create({ data: { programId, personId: child, status: 'ACTIVE', shopifyOrderId: oid } });
@@ -182,8 +182,9 @@ describe('a refunded order never activates a program place', () => {
 
         await raiseReversalByOrderId(oid, 'REFUND', [{ variantId: VARIANT, quantity: 1, lineQuantity: 1 }], `refund-${oid}`);
 
-        expect(await prisma.programParticipant.count({ where: { programId, personId: child } })).toBe(0);
-        expect(await prisma.rSVP.count({ where: { eventId: event.id, personId: child } })).toBe(0);
+        expect(await statusOf(child)).toBe('ACTIVE');
+        expect(await prisma.rSVP.count({ where: { eventId: event.id, personId: child } })).toBe(1);
+        expect(mockAdjust).toHaveBeenCalledWith({ id: programId, shopifyVariantId: VARIANT }, -1, 'refund-restocked', { deferred: true });
     });
 
     it('a reversal only the reconciler saw is written to the ledger, so a late orders/paid stays refused after the flag is resolved', async () => {
