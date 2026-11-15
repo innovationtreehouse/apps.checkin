@@ -86,6 +86,37 @@ describe("ProfilePage", () => {
         expect(JSON.parse(patchOpts!.body as string)).toMatchObject({ over25: true, dob: null });
     });
 
+    it("shows the load failure with a retry and no form to save when the load fails", async () => {
+        setSession({ id: 1 });
+        mockFetchJson({});
+        renderWithProviders(<ProfilePage />);
+
+        expect(await screen.findByText("Couldn't load your profile")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: /Retry/i })).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Save Profile" })).not.toBeInTheDocument();
+        expect(screen.queryByLabelText(/Full Name/)).not.toBeInTheDocument();
+    });
+
+    it("keeps what the person typed when the save's refetch brings other values", async () => {
+        setSession({ id: 1 });
+        let profileLoads = 0;
+        const fetchMock = mockFetchJson({
+            "/api/profile": () => {
+                profileLoads += 1;
+                return { profile: { name: profileLoads === 1 ? "Jamie Adult" : "Changed Elsewhere", email: "jamie@example.com", phone: "555-1111", dateOfBirth: "1990-01-01" } };
+            },
+        });
+        renderWithProviders(<ProfilePage />);
+
+        const nameInput = await screen.findByLabelText(/Full Name/);
+        fireEvent.change(nameInput, { target: { value: "Typed While Saving" } });
+        fireEvent.click(screen.getByRole("button", { name: "Save Profile" }));
+
+        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Profile updated successfully!" })));
+        await waitFor(() => expect(fetchMock.mock.calls.filter(([url, init]) => String(url).includes("/api/profile") && !init?.method).length).toBeGreaterThan(1));
+        expect(screen.getByLabelText(/Full Name/)).toHaveValue("Typed While Saving");
+    });
+
     it("locks the form as read-only for a youth", async () => {
         setSession({ id: 2 });
         mockFetchJson({

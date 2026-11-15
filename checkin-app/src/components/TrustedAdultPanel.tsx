@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useState, useCallback } from "react";
 import {
     Badge,
     Button,
@@ -15,8 +15,8 @@ import {
 import { useDisclosure } from "@mantine/hooks";
 import { modals } from "@mantine/modals";
 import { IconPlus } from "@tabler/icons-react";
-import { errorMessage, showError, showSuccess } from "@checkin/component-ui";
-import { api } from "@/lib/api";
+import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
+import { api, useLoad } from "@/lib/api";
 import { normalizePhone, isValidEmail } from "@/lib/emergencyContacts/identity";
 import { TrustedAdultContact } from "@/components/TrustedAdultContact";
 import { isAuthorizedApproval } from "@/lib/trusted-adult/filters";
@@ -56,9 +56,9 @@ interface TrustedAdult {
 const EXPIRING_SOON_DAYS = 30;
 
 export default function TrustedAdultPanel() {
-    const [items, setItems] = useState<TrustedAdult[]>([]);
+    const { data, error, reload } = useLoad<{ trustedAdults: TrustedAdult[] }>("/api/trusted-adults/mine");
+    const items = (!error && data?.trustedAdults) || [];
     const [now] = useState(() => Date.now());
-    const [loading, setLoading] = useState(true);
     const [opened, { open, close }] = useDisclosure(false);
     const [submitting, setSubmitting] = useState(false);
     const [attempted, setAttempted] = useState(false);
@@ -100,21 +100,6 @@ export default function TrustedAdultPanel() {
         open();
     }, [open]);
 
-    const fetchItems = useCallback(() => {
-        fetch("/api/trusted-adults/mine")
-            .then((r) => r.json())
-            .then((d) => setItems(d.trustedAdults ?? []))
-            .catch((err) => console.error("Failed to load your trusted adults:", err))
-            .finally(() => setLoading(false));
-    }, []);
-
-    const load = () => {
-        setLoading(true);
-        fetchItems();
-    };
-
-    useEffect(fetchItems, [fetchItems]);
-
     async function submit() {
         setSubmitting(true);
         try {
@@ -131,7 +116,7 @@ export default function TrustedAdultPanel() {
             setTrustedAdultEmail("");
             setFamilyContext("");
             setAttempted(false);
-            load();
+            reload();
         } catch (e) {
             showError(errorMessage(e));
         } finally {
@@ -146,7 +131,7 @@ export default function TrustedAdultPanel() {
                 ...(payload ? { body: JSON.stringify(payload) } : {}),
             });
             showSuccess(done);
-            load();
+            reload();
         } catch (e) {
             showError(errorMessage(e));
         }
@@ -198,8 +183,9 @@ export default function TrustedAdultPanel() {
                 </Button>
             </Group>
 
-            {loading && <Text c="dimmed" size="sm">Loading…</Text>}
-            {!loading && items.length === 0 && (
+            {error && <LoadError what="your trusted adults" message={error} onRetry={reload} />}
+            {!data && !error && <Text c="dimmed" size="sm">Loading…</Text>}
+            {data && !error && items.length === 0 && (
                 <Text c="dimmed" size="sm">No trusted adults added yet.</Text>
             )}
 
