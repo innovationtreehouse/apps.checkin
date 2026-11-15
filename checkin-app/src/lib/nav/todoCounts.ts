@@ -18,6 +18,7 @@ import { expiringApprovals } from "@/lib/trusted-adult/filters";
 import { buildingLink } from "@/lib/kioskSeen";
 import { collectLibraryCounts, type LibraryCounts } from "@/lib/navLibraryCounts";
 import { variantSlotYears } from "@/lib/programYear";
+import { liveMembershipYear } from "@/lib/membership/renewal";
 import { IN_LIVE_HOUSEHOLD } from "@/lib/household/archived";
 
 /**
@@ -81,8 +82,8 @@ export type TodoCounts = {
     // Red pill on the Membership Ops nav item + the Manage Memberships (households) tab.
     // `brokenHouseholds` = households with no lead at all (red — blocking board action).
     // `settingsMisconfig` = how many required membership settings are still unset: the
-    // membership variant ID, the volunteer discount code, the re-check interval, the
-    // boundary, and the coming year's variant. Red pill on the Settings nav + Membership
+    // volunteer discount code, the re-check interval, the boundary, and the variant rows
+    // for the live year and the coming year (one row when they are the same year). Red pill on the Settings nav + Membership
     // Settings tab.
     // `programsMisconfig` = how many programs have a price but no matching Shopify variant
     // (paid enrollment silently can't check out). Red pill on the Program Ops Programs tab.
@@ -443,14 +444,19 @@ async function leadCounts(userId: number): Promise<TodoCounts["lead"]> {
     };
 }
 
-/** True when the coming membership year has no variant row. With no boundary there is no coming year to ask about. */
-export async function comingYearVariantUnset(boundary: Date | null | undefined, now: Date): Promise<boolean> {
-    if (!boundary) return false;
-    const row = await prisma.membershipYearVariant.findUnique({
-        where: { membershipYear: variantSlotYears(boundary, now)[1] },
+/**
+ * How many of the live year and the coming year have no variant row, counting a year
+ * once when they are the same. With no boundary there is no year to ask about.
+ */
+export async function variantYearsUnset(boundary: Date | null | undefined, now: Date): Promise<number> {
+    const live = liveMembershipYear(boundary, now);
+    if (!boundary || live === null) return 0;
+    const years = [...new Set([live, variantSlotYears(boundary, now)[1]])];
+    const rows = await prisma.membershipYearVariant.findMany({
+        where: { membershipYear: { in: years } },
         select: { membershipYear: true },
     });
-    return row === null;
+    return years.length - rows.length;
 }
 
 /** Board surface: the board's own queue plus infra health. Callers gate on sysadmin or board. */
@@ -511,7 +517,7 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
         // a null orgMembershipYearBoundary means the renewal cycle has no anchor date.
         prisma.boardSettings.findUnique({
             where: { id: 1 },
-            select: { orgMembershipVariantId: true, volunteerFamilyDiscountCode: true, bgRecheckMonths: true, orgMembershipYearBoundary: true, alertEmailAddress: true },
+            select: { volunteerFamilyDiscountCode: true, bgRecheckMonths: true, orgMembershipYearBoundary: true, alertEmailAddress: true },
         }),
         // Cron sweeps that stopped running, plus ones running but failing rows. The
         // schedule lives in a separate infra repo, so this is the app's only way to
@@ -523,8 +529,7 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
         })),
     ]);
     const settingsMisconfig =
-        ((await comingYearVariantUnset(boardSettings?.orgMembershipYearBoundary, new Date())) ? 1 : 0) +
-        (boardSettings?.orgMembershipVariantId ? 0 : 1) +
+        (await variantYearsUnset(boardSettings?.orgMembershipYearBoundary, new Date())) +
         (boardSettings?.volunteerFamilyDiscountCode ? 0 : 1) +
         (isRecheckPolicySet(boardSettings?.bgRecheckMonths) ? 0 : 1) +
         (boardSettings?.orgMembershipYearBoundary ? 0 : 1);
