@@ -6,7 +6,7 @@ import { visibleLinks } from "@/lib/nav/gates";
 import { MEMBERSHIP_OPS, MEMBERSHIP_OPS_ROLES, isMembershipOpsAdmin, canReviewMembership } from "@/lib/nav/sections/membershipOps";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { useTodoCounts } from "@/hooks/useTodoCounts";
-import { tabBadgeFor, reviewBadges } from "@/components/navBadges";
+import { badgeText, tabBadgeFor, reviewBadges } from "@/components/navBadges";
 import { CountBadge, badgeIntentFor } from "@/components/ui/CountBadge";
 import { SectionTabs } from "@/components/ui/SectionTabs";
 import { PageContainer } from "@/components/ui/PageContainer";
@@ -49,7 +49,7 @@ export default function MembershipOpsLayout({ children }: { children: React.Reac
         <Group gap={4} wrap="nowrap">
           {badges.map((b) => (
             <CountBadge key={b.color} intent={b.color === "gray" ? "info" : "action"} aria-label={b.label}>
-              {b.count}
+              {badgeText(b.count)}
             </CountBadge>
           ))}
         </Group>
@@ -62,7 +62,7 @@ export default function MembershipOpsLayout({ children }: { children: React.Reac
     if (badge && intent) {
       return (
         <CountBadge intent={intent} aria-label={badge.label}>
-          {badge.count}
+          {badgeText(badge.count)}
         </CountBadge>
       );
     }
