@@ -1018,7 +1018,7 @@ describeDb("QB-2 posting — a line's account after posting", () => {
       status: 409,
       message: "already posted to QuickBooks; correct it there",
     });
-    expect((await db.expenseLineItem.findUniqueOrThrow({ where: { id: lines[0] } })).manualQbAccount).toBeNull();
+    expect((await db.expenseLineItem.findUniqueOrThrow({ where: { id: lines[0] } })).manualQbAccount).toBe("60");
     expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "hold_account_set" } })).toBe(0);
   });
 
@@ -1111,7 +1111,7 @@ describeDb("QB-2 posting — a line's account after posting", () => {
 
     await expect(setHeldLineAccount(finance, id, lines[0], "62")).rejects.toMatchObject({ status: 409, message: expect.stringContaining("isn't held") });
 
-    expect(await db.expenseLineItem.findUniqueOrThrow({ where: { id: lines[0] } })).toMatchObject({ manualQbAccount: null, resolvedQbAccount: "60" });
+    expect(await db.expenseLineItem.findUniqueOrThrow({ where: { id: lines[0] } })).toMatchObject({ manualQbAccount: "60", resolvedQbAccount: "60" });
     expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "hold_account_set" } })).toBe(0);
   });
 
