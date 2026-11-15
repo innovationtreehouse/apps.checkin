@@ -225,6 +225,9 @@ const TOTALLED = [
   "donationAmountCents", "matchAmountCents", "causeSupportFeeCents", "merchantFeeCents", "checkFeeCents",
 ] as const satisfies readonly (keyof BenevityRow)[];
 
+/** The fees a gift row carries, each netted out of its deposit. */
+const FEES = ["causeSupportFeeCents", "merchantFeeCents", "checkFeeCents"] as const satisfies readonly (keyof BenevityRow)[];
+
 /**
  * Amount columns a Benevity file always carries, zero or not. A file without one
  * would import every gift at $0 there, so it is refused. The Donations Report has no
@@ -279,6 +282,7 @@ export function parseBenevityCsv(buffer: Buffer): BenevityRow[] {
   const issues: string[] = [];
   const totals: Located[] = [];
   const nets: Located[] = [];
+  const negativeFees: string[] = [];
 
   for (const { record, info } of records.slice(headerAt + 1)) {
     const mapped = {} as RawRow;
@@ -315,8 +319,15 @@ export function parseBenevityCsv(buffer: Buffer): BenevityRow[] {
       continue;
     }
     rows.push(parsed.data);
+    for (const field of FEES) {
+      if (parsed.data[field] < 0) {
+        negativeFees.push(`line ${info.lines} (${mapped.transactionId}), "${labelOf(field)}": the fee is negative ("${mapped[field].trim()}") and the file has no "Net Total Payment" line to check it against`);
+      }
+    }
   }
 
+  // A negative fee raises the deposit; only a Net Total Payment line can confirm it.
+  if (nets.length === 0) issues.push(...negativeFees);
   if (issues.length === 0) {
     for (const footer of totals) issues.push(...checkTotals(footer, rows, bindings));
     for (const footer of nets) issues.push(...checkNet(footer, rows));

@@ -410,6 +410,11 @@ employer matches, paid in batches) and gifts of goods (in-kind).
   it has no date or nets to zero or less, goes to finance once by email to settle
   by hand. [Decision]
 
+- A giving-platform file that states what the platform paid, in a "Net Total
+  Payment" line, is refused at upload when its gifts, less their fees, don't come
+  to that amount. A file without that line is refused when any fee is negative,
+  because nothing in it can confirm the higher deposit.  [Decision — owner]
+
 - A gift of goods is handled as a donation, not as spending, even when it comes
   with a receipt. In the books it is both a donation received and an expense of
   the same value, from one record, in one bucket.  [Decision]
