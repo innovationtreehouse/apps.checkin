@@ -5,6 +5,7 @@ import { personActor } from "@/lib/auditActor";
 import { zohoSign } from "@/lib/membership/contract/zohoProvider";
 import { signingMockActive } from "@/lib/membership/contract/signingTarget";
 import { kvaDocumentInPlace, KVA_FILENAME, loadKvaPdf } from "@/lib/membership/contract/agreementDocument";
+import { KVA_SIGN_FIELDS } from "@/lib/membership/contract/signFields";
 import { ExternalError, pullSignatureStatus, signingUrlForProcess, type SigningDocument } from "@/lib/membership/external";
 import { archiveOpenKvas, createKva, currentKvaVersion, findOpenKva } from "@/lib/membership/keyVolunteerProcess";
 
@@ -17,6 +18,7 @@ import { archiveOpenKvas, createKva, currentKvaVersion, findOpenKva } from "@/li
 const KVA_DOCUMENT: SigningDocument = {
     load: () => loadKvaPdf(),
     filename: KVA_FILENAME,
+    fieldSpecs: KVA_SIGN_FIELDS,
     title: "Key Volunteer Agreement",
     unavailableMessage: "The Key Volunteer Agreement isn't ready yet. Please check back soon.",
     returnTo: { signed: "/membership?kva=signed", declined: "/membership?kva=declined", later: "/membership" },

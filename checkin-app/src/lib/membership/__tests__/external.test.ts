@@ -12,6 +12,7 @@
  */
 import { backgroundCheckProvider } from '@/lib/membership/background-check/manual-adapter';
 import { setZohoEnvelope, markBgConsent, findProcessByEnvelope, getOrCreateContractSigningUrl, selfRecordBgConsent, getOwnBackgroundCheck, advanceExternalIfComplete, markContractSigned, resetSigning, ExternalError } from '@/lib/membership/external';
+import { SIGN_FIELDS } from '@/lib/membership/contract/signFields';
 
 jest.mock('@/lib/prisma', () => ({
     __esModule: true,
@@ -497,6 +498,7 @@ describe('getOrCreateContractSigningUrl', () => {
         expect(stampWatermark).not.toHaveBeenCalled();
         expect(zohoSign.createRequest).toHaveBeenCalledTimes(1);
         expect(zohoSign.submitRequest).toHaveBeenCalledTimes(1);
+        expect(zohoSign.submitRequest).toHaveBeenCalledWith(expect.objectContaining({ fieldSpecs: SIGN_FIELDS }));
         // Claimed for the caller BEFORE Zoho is called, then the ids stored under that claim.
         expect(prisma.orgMembershipProcess.updateMany).toHaveBeenNthCalledWith(1, {
             where: {

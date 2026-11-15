@@ -8,6 +8,7 @@ import { backgroundCheckProvider } from "@/lib/membership/background-check/manua
 import { notifyReviewers, applyVolunteerFamilyStatus } from "@/lib/membership/review";
 import { zohoSign } from "@/lib/membership/contract/zohoProvider";
 import { signingMockActive } from "@/lib/membership/contract/signingTarget";
+import { SIGN_FIELDS, type SignFieldSpec } from "@/lib/membership/contract/signFields";
 import { loadAgreementPdf, stampWatermark, AGREEMENT_FILENAME, AgreementUnavailableError, type LoadedAgreement } from "@/lib/membership/contract/agreementDocument";
 import { latestPendingExternal } from "@/lib/membership/phases";
 import { findOpenPersonAgreement } from "@/lib/membership/personAgreementTriggers";
@@ -497,11 +498,14 @@ export interface SigningDocument {
     unavailableMessage: string;
     /** App paths Zoho navigates the signer to when they finish, decline, or leave. */
     returnTo: { signed: string; declined: string; later: string };
+    /** Where the signer's fields sit on the PDF's last page. */
+    fieldSpecs: readonly SignFieldSpec[];
 }
 
 const MEMBERSHIP_AGREEMENT: SigningDocument = {
     load: () => loadAgreementPdf(),
     filename: AGREEMENT_FILENAME,
+    fieldSpecs: SIGN_FIELDS,
     title: "Membership Agreement",
     unavailableMessage: "The membership agreement isn't ready yet. Please check back soon.",
     // signed=1 lets the membership page confirm + refresh.
@@ -721,6 +725,7 @@ export async function signingUrlForProcess(
                 lastPageNo: agreement.lastPageNo,
                 pageWidth: agreement.pageWidth,
                 pageHeight: agreement.pageHeight,
+                fieldSpecs: document.fieldSpecs,
                 prefill: { PrintedName: recipientName },
             });
         } catch (e) {
