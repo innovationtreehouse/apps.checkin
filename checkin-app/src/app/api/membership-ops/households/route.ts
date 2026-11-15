@@ -50,7 +50,7 @@ export const GET = withAuth(
                 // The Board looks up an archived household by id, to read or unarchive it.
                 const household = await withArchivedHouseholds((tx) => tx.household.findUnique({
                     where: { id: parseInt(id) },
-                    // The detail page and the Edit Info modal read these; the intake note is not one of them.
+                    // The detail page and the Edit Info modal read these.
                     select: {
                         id: true, name: true, archivedAt: true,
                         line1: true, line2: true, city: true, state: true, postalCode: true,

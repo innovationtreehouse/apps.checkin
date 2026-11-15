@@ -41,7 +41,7 @@ export const GET = handler('GET /api/finance-ops/payment-plans', async ({ req })
                 // householdMembers (leads) carry the family contact email.
                 // Selects stay narrow: finance holds everyones:pii here for the
                 // contact emails, so any other Person/Household column selected
-                // (intake note, date of birth, allergies) would reach them too.
+                // (date of birth, allergies) would reach them too.
                 person: {
                     select: {
                         id: true,

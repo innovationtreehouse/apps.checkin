@@ -4,7 +4,7 @@
 /**
  * Boundary coverage for the reviewer queue (GET /api/membership/reviews). Every item
  * is a check review: its person, and for a review a household asked for, that
- * household's name, intake note and leads. All of it reaches a reviewer; a field
+ * household's name and leads. All of it reaches a reviewer; a field
  * the route never selects is still stripped if it slips in.
  */
 import { stripValue } from '@/security/stripper';
@@ -46,7 +46,6 @@ describe('reviewer queue strip', () => {
             subjectPerson: null,
             requestedForHousehold: {
                 name: 'Rivera household',
-                intakeNotes: 'Volunteer only, no students.',
                 householdMembers: [{ id: 3, name: 'Ana Rivera', email: 'ana@example.com' }],
             },
             _count: { attestations: 0 },
@@ -58,7 +57,7 @@ describe('reviewer queue strip', () => {
         const row = {
             id: 10,
             subjectPerson: { id: 3, name: 'Ana Rivera', householdId: 4, household: { name: 'Rivera household' } },
-            requestedForHousehold: { name: 'Rivera household', intakeNotes: null, householdMembers: [{ id: 3, name: 'Ana Rivera', email: 'ana@example.com' }] },
+            requestedForHousehold: { name: 'Rivera household', householdMembers: [{ id: 3, name: 'Ana Rivera', email: 'ana@example.com' }] },
             _count: { attestations: 1 },
         };
         expect(strip(row)).toEqual(row);

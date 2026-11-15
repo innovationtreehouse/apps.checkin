@@ -20,12 +20,12 @@ Status: **ALL 7 chips folded (V1–V7).** Every step tagged vs live code at base
 ### A1. Prospective family → active member (onboarding)  [bucket M/SA]  — validated V1
 0a. ❌ Pre-membership: prospect logs in, subscribes to newsletter, gets program notifications; open house on public calendar (`CM14`)
 0b. ❌ Preview the membership agreement as view-only PDF without triggering Zoho Sign (`M20`)
-1. ✅ Intake application incl "anything else" note (captured + surfaced to reviewers)
+1. ✅ Intake application
 2. ✅ Board pre-designation of volunteer household — but drives **dues only**, NOT skip-review→payment (that's a separate `bgFresh` path)
 3. ✅ Contract sent + signed (Zoho, embedded)
 4. ✅ BG sent + check started (marked on the person: self, a household lead, or the Board; no Averity API)
 5. ✅ BG review (2-of-N, anti-collusion gates, board override w/ COI gate)
-6. ✅ Reviewer volunteer bit; intake note shown to reviewers (does NOT gate payment — review runs in parallel)
+6. ✅ Reviewer volunteer bit (does NOT gate payment — review runs in parallel)
 7. ✅ Payment via Shopify (member vs volunteer price + discount code)
 8. ✅ Webhook validates payment→activation (HMAC + variant-id check; H2 no-item → stays PENDING + board alert). NOTE: volunteer discount-code entitlement still NOT validated (`CO2`/#278)
 9. 🟡 Post-activation fan-out: welcome/congrats ✅ · **mailing-list `CM1` ❌ + badge-print `AT11` ❌ NOT wired to activation**

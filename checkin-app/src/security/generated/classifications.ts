@@ -63,7 +63,6 @@ export const classifications = {
         city: 'internal',
         state: 'internal',
         postalCode: 'internal',
-        intakeNotes: 'pii',
         archivedAt: 'public',
     },
     EmergencyContact: {
@@ -116,9 +115,6 @@ export const classifications = {
         renewalReminderSentAt: 'internal',
         isPaymentPlanRequested: 'hardship',
         scholarshipRequestKind: 'hardship',
-        intakeNoteSnapshot: 'pii',
-        noteAckById: 'internal',
-        noteAckAt: 'internal',
     },
     MembershipYearVariant: {
         membershipYear: 'public',
@@ -601,7 +597,6 @@ export const relations = {
         bgAttestations: { model: 'BackgroundCheckAttestation', isList: true },
         bgAttestationsAsSubject: { model: 'BackgroundCheckAttestation', isList: true },
         personBgProcesses: { model: 'OrgMembershipProcess', isList: true },
-        intakeNoteAcks: { model: 'OrgMembershipProcess', isList: true },
         zohoSigningRequests: { model: 'OrgMembershipProcess', isList: true },
         corporationLeads: { model: 'CorporationLead', isList: true },
         corporationMembers: { model: 'CorporationMember', isList: true },
@@ -657,7 +652,6 @@ export const relations = {
         subjectPerson: { model: 'Person', isList: false },
         requestedForHousehold: { model: 'Household', isList: false },
         zohoSigner: { model: 'Person', isList: false },
-        noteAckBy: { model: 'Person', isList: false },
         attestations: { model: 'BackgroundCheckAttestation', isList: true },
     },
     MembershipYearVariant: {

@@ -6,7 +6,6 @@ import { apiError } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { addHouseholdLead, HouseholdLeadLimitError, HouseholdLeadYouthError } from "@/lib/household/leads";
 import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
-import { withIntakeNotesFor } from "@/lib/household/intakeNotes";
 import { lockBoardRoles } from "@/lib/roles";
 import { lockAndFindDeniedHousehold, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
@@ -142,7 +141,7 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
 
         return NextResponse.json({
             success: true,
-            participant: { ...updatedParticipant, household: updatedParticipant.household && withIntakeNotesFor(updatedParticipant.household, auth.user) },
+            participant: updatedParticipant,
         });
     } catch (error) {
         if (error instanceof PersonGoneError) {

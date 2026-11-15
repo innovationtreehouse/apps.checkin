@@ -195,9 +195,8 @@ export const GET = withAuth(
             // members (see the explicit householdMembers select above). Household
             // orgMembership.status (and isMember, derived from it) IS shown to ops:
             // it is @sensitivity:public standing, not finance detail. The household
-            // select leaves out its home address (line1/line2/city/state/postalCode)
-            // and free-text intakeNotes (hardship/medical/family disclosures), so
-            // they reach nobody through this route — no consumer reads them off it.
+            // select leaves out its home address (line1/line2/city/state/postalCode),
+            // so it reaches nobody through this route — no consumer reads it off it.
             // Board/sysadmin keep the full shape.
             // See membership-ops/layout.tsx's Participants-only nav gate for ops.
             const opsOnly = auth.type === 'session' && auth.user.isOperations

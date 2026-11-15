@@ -295,7 +295,7 @@ describe("membership page", () => {
 
   describe("the read after a save that returned no state", () => {
     const intake = { process: { id: 1, kind: "INITIAL", status: "INTAKE" } };
-    const household = { name: null, notes: null, emergencyContactName: "From server", emergencyContactPhone: null, emergencyContactEmail: null };
+    const household = { name: null, emergencyContactName: "From server", emergencyContactPhone: null, emergencyContactEmail: null };
     const secondaryParent = { id: 7, name: "Sam Second", email: null, dob: null, over25: true, allergies: null };
     const saved = state({ ...intake, prefill: { ...emptyPrefill, household, secondaryParent } });
 
@@ -422,7 +422,7 @@ describe("membership page", () => {
         ...intake,
         prefill: {
           ...emptyPrefill,
-          household: { name: null, notes: null, emergencyContactName: "From server", emergencyContactPhone: "512-555-1234", emergencyContactEmail: null, line1: "1 Treehouse Ln", line2: null, city: "Austin", state: "TX", postalCode: "78701" },
+          household: { name: null, emergencyContactName: "From server", emergencyContactPhone: "512-555-1234", emergencyContactEmail: null, line1: "1 Treehouse Ln", line2: null, city: "Austin", state: "TX", postalCode: "78701" },
           primaryParent: { id: 1, name: "Pat Parent", email: "pat@example.com", dob: "1980-01-01", allergies: null },
         },
       });

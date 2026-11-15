@@ -275,7 +275,7 @@ describe('isLegalTransition covers the declared edges', () => {
     });
 
     test('rejects undeclared edges', () => {
-        // The external advance always opens payment — an intake note does not hold it.
+        // The external advance always opens payment.
         expect(isLegalTransition('PENDING_EXTERNAL_ACTION', 'PENDING_BG_REVIEW')).toBe(false);
         expect(isLegalTransition('INTAKE', 'ACTIVE')).toBe(false);
         expect(isLegalTransition('ACTIVE', 'PENDING_PAYMENT')).toBe(false);

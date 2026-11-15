@@ -4,7 +4,7 @@
 /**
  * Household archive and unarchive: the Board only is admitted, and the
  * returned household keeps id, name and archivedAt while dropping the
- * address and the intake note.
+ * address.
  */
 import '@/security/registry';
 import { getRoute } from '@/security/core';
@@ -89,11 +89,10 @@ describe('archived household strip', () => {
         city: 'Springfield',
         state: 'IL',
         postalCode: '62701',
-        intakeNotes: 'moving away',
         archivedAt: '2026-11-08T12:00:00.000Z',
     };
 
-    it('keeps id, name and archivedAt and drops the address and intake note', () => {
+    it('keeps id, name and archivedAt and drops the address', () => {
         const tokens = spec(ENDPOINTS[0]).orderedView[0][1];
         expect(stripValue('Household', row, tokens, ctx())).toEqual({
             id: 7,

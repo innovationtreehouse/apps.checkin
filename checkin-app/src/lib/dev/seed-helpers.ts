@@ -98,9 +98,8 @@ export async function seedBaseline(prisma: Db): Promise<void> {
         });
     }
 
-    // A third non-member household. Family and Family2 are each already claimed by
-    // a membership flow test as their applicant; this one keeps the intake-notes
-    // flow test's applicant disjoint on the shared serial DB.
+    // A third non-member household, disjoint from Family and Family2, which
+    // membership flow tests each claim as their applicant.
     let household3 = await prisma.household.findFirst({ where: { name: "Family3" } });
     if (!household3) {
         household3 = await prisma.household.create({

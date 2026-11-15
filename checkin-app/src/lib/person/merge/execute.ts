@@ -182,7 +182,6 @@ function emptyTallies() {
         personBgArchived: 0,
         rawBadgeLogs: 0,
         presenceEvents: 0,
-        noteAcks: 0,
         zohoSigners: 0,
         attendanceConfirmations: 0,
         facilityCloses: 0,
@@ -272,7 +271,7 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
 async function lockMergeRows(tx: TxClient, keepId: number, mergeId: number, householdIds: number[]): Promise<void> {
     await lockBoardRoles(tx);
     await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess"
-        WHERE "subjectPersonId" IN (${keepId}, ${mergeId}) OR "zohoSignerPersonId" = ${mergeId} OR "noteAckById" = ${mergeId}
+        WHERE "subjectPersonId" IN (${keepId}, ${mergeId}) OR "zohoSignerPersonId" = ${mergeId}
         ORDER BY id FOR UPDATE`;
     await lockAndFindDeniedHousehold(tx, householdIds);
     try {
@@ -465,7 +464,6 @@ async function moveRemainingRelations(tx: TxClient, keepId: number, mergeId: num
 
     // "Which staff member did this" facts, all SET NULL — left behind they
     // read as nobody once the row is deleted.
-    moved.noteAcks = (await tx.orgMembershipProcess.updateMany({ where: { noteAckById: mergeId }, data: { noteAckById: keepId } })).count;
     moved.zohoSigners = (await tx.orgMembershipProcess.updateMany({ where: { zohoSignerPersonId: mergeId }, data: { zohoSignerPersonId: keepId } })).count;
     moved.attendanceConfirmations = (await tx.event.updateMany({ where: { attendanceConfirmedById: mergeId }, data: { attendanceConfirmedById: keepId } })).count;
     moved.facilityCloses = (await tx.facilityClose.updateMany({ where: { closedById: mergeId }, data: { closedById: keepId } })).count;

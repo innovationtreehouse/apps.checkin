@@ -3,7 +3,7 @@
  */
 /**
  * GET /api/admin/broken-households selects only the household and member columns
- * the Broken Households tab shows: no address, intake note or membership row.
+ * the Broken Households tab shows: no address or membership row.
  */
 import { getServerSession } from 'next-auth/next';
 import prisma from '@/lib/prisma';
