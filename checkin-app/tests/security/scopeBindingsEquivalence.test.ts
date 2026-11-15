@@ -283,6 +283,10 @@ function eq(a: Set<string>, b: Set<string>): boolean {
  * CheckStartedRow.their_own / led_households: the oracle has no case for the
  * check-started rows. Bound like Visit: their_own on personId === selfId, and
  * led_households on personId ∈ ctx.ledHouseholdMemberIds.
+ *
+ * ProgramRosterAge.their_own / their_program_participants: the oracle has no case
+ * for roster ages. Bound like Person on personId: their_own on personId === selfId,
+ * and their_program_participants on personId ∈ ctx.participantIdsInScopePrograms.
  */
 function expectedFromSnapshot(
     model: string,
@@ -343,6 +347,10 @@ function expectedFromSnapshot(
         if (row.personId === callerCtx.selfId) expected.add('their_own');
         if (callerCtx.ledHouseholdMemberIds.has(row.personId)) expected.add('led_households');
     }
+    if (model === 'ProgramRosterAge' && row && typeof row === 'object' && typeof row.personId === 'number') {
+        if (row.personId === callerCtx.selfId) expected.add('their_own');
+        if (callerCtx.participantIdsInScopePrograms.has(row.personId)) expected.add('their_program_participants');
+    }
     return expected;
 }
 
@@ -369,6 +377,6 @@ describe('scopesHeld ≡ frozen switch + intentional deltas (personas × models 
     it('covers every bound model', () => {
         // Guard against the row set silently not exercising a model.
         expect(MODELS).toEqual(expect.arrayContaining(Object.keys(SCOPE_BINDINGS)));
-        expect(Object.keys(SCOPE_BINDINGS).length).toBe(26);
+        expect(Object.keys(SCOPE_BINDINGS).length).toBe(27);
     });
 });
