@@ -35,6 +35,7 @@ import {
 import type { CallerContext } from '@/security/access-resolvers';
 import { authenticateRequest } from '@/lib/auth';
 import { pageViewDisposition, recordFinanceViewCall, type FinanceViewCall } from '@/lib/finance/financeViewLog';
+import { PAST_QUERY_KEYS } from '@/lib/finance/paymentPlanHistoryPage';
 
 jest.mock('@/lib/auth', () => ({ authenticateRequest: jest.fn() }));
 jest.mock('@/lib/finance/financeViewLog', () => ({
@@ -545,7 +546,7 @@ describe('payment-plan Past routes log the archived filter', () => {
     it.each([
         'GET /api/finance-ops/payment-plans/past',
         'GET /api/finance-ops/membership-payment-plans/past',
-    ])('%s records page and archived', endpoint => {
-        expect(getRoute(endpoint)?.financeView?.query).toEqual(['page', 'archived']);
+    ])('%s records the query keys the route reads', endpoint => {
+        expect(getRoute(endpoint)?.financeView?.query).toEqual(Object.values(PAST_QUERY_KEYS));
     });
 });
