@@ -65,6 +65,7 @@ const ORACLES = [
     'receipt-allowance-reset-routes.test.ts',
     'receipt-flow-status-routes.test.ts',
     'receipt-ocr-switch-routes.test.ts',
+    'receipt-public-fields.test.ts',
     'receipt-routes.test.ts',
     'receipt-strip.test.ts',
     'reference-conflict-strip.test.ts',
