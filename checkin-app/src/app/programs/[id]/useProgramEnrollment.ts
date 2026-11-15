@@ -47,7 +47,7 @@ export type ProgramDetail = {
 };
 
 type HouseholdMember = { id: number; name: string | null; dateOfBirth: string | null; isDeclaredAdult?: boolean };
-type HouseholdAnswer = { household: { householdMembers?: HouseholdMember[]; orgMembership?: { status: string } | null } | null };
+type HouseholdAnswer = { household: { householdMembers?: HouseholdMember[] } | null };
 type IntakeAnswer = { prefill?: { household?: { emergencyContactName?: string | null; emergencyContactPhone?: string | null } | null } };
 
 /** A write's refusal as an outcome, so one member's refusal doesn't stop the rest. Anything else still throws. */
@@ -122,7 +122,9 @@ export function useProgramEnrollment(id: string) {
   const household = householdLoad.data?.household;
   const householdMembers: HouseholdMember[] = !householdLoad.data ? []
     : household?.householdMembers ?? (session ? [{ id: session.user.id, name: "Myself", dateOfBirth: null }] : []);
-  const loadingHousehold = (!householdLoad.data && !householdLoad.error) || (!intakeLoad.data && !intakeLoad.error);
+  // After an intake save the picker waits for the re-read, so it never shows the household as it was.
+  const [refreshingHousehold, setRefreshingHousehold] = useState(false);
+  const loadingHousehold = refreshingHousehold || (!householdLoad.data && !householdLoad.error) || (!intakeLoad.data && !intakeLoad.error);
   // The enroll routes don't check the emergency contact, so a probe that can't answer blocks enrolment.
   const householdError = householdLoad.error ?? intakeLoad.error;
   const householdErrorWhat = householdLoad.error ? "your household" : "your emergency contact";
@@ -145,16 +147,21 @@ export function useProgramEnrollment(id: string) {
     setShowEnrollmentSelection(true);
   };
 
-  // Back from the first-time intake panel: its save re-reads the household, so
-  // the new member and emergency contact show in the normal member-select.
+  // Back from the first-time intake panel: re-read the household so the new
+  // member and emergency contact show in the normal member-select.
   const handleIntakeSaved = async () => {
     setShowIntake(false);
     setSelectedParticipantIds([]);
-    // Intake just set a DOB or the over-25 flag. Re-stamp the session so the
-    // ageBand claim reflects it NOW — the jwt callback refreshes on its own
-    // schedule, and this is the one flow where waiting would leave a member who
-    // just proved their age still blocked from enrolling.
-    await updateSession();
+    setRefreshingHousehold(true);
+    try {
+      // Intake just set a DOB or the over-25 flag. Re-stamp the session so the
+      // ageBand claim reflects it NOW — the jwt callback refreshes on its own
+      // schedule, and this is the one flow where waiting would leave a member who
+      // just proved their age still blocked from enrolling.
+      await Promise.all([updateSession(), reloadHousehold()]);
+    } finally {
+      setRefreshingHousehold(false);
+    }
   };
 
   const handleRequestPaymentPlan = async () => {
@@ -245,12 +252,11 @@ export function useProgramEnrollment(id: string) {
       // Variant is always required — local synthesizes dev-mock-variant ids, so a null
       // one is a real config gap in every env.
       let mockPay = false;
-      // Pricing goes by the server-computed duration-aware flag when present (a
-      // member not covered through this program's end must pay full price); the
-      // household's membership is the fallback for an older cached response missing it.
+      // Pricing goes by the server-computed duration-aware flag: a member not covered
+      // through this program's end pays full price, and an absent flag gets no discount.
       let pricingEligible = false;
       if (isPayingOnShopify && program) {
-        pricingEligible = program.viewerMemberPricingEligible ?? household?.orgMembership?.status === "ACTIVE";
+        pricingEligible = program.viewerMemberPricingEligible === true;
         // Every app checkout follows a claim, so it sells the claimant variant when
         // the program has one; the discount code (below) does the member pricing.
         variantId = checkoutVariantId(program);
