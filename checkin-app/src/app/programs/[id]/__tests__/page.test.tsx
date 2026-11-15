@@ -1107,7 +1107,7 @@ describe("ProgramEnrollmentPage", () => {
         renderPage();
         await screen.findByText("Robotics Club");
         fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
-        expect(await screen.findByText("Couldn't load your household")).toBeInTheDocument();
+        expect(await screen.findByText("Couldn't load your emergency contact")).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Complete Enrollment" })).not.toBeInTheDocument();
         expect(screen.queryByLabelText("Kid One")).not.toBeInTheDocument();
     });

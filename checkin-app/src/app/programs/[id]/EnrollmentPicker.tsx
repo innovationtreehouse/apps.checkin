@@ -16,7 +16,7 @@ export default function EnrollmentPicker({ ageGated, ageRange, hasPrice, isClose
   controls: EnrollmentPickerControls;
 }) {
   const {
-    showIntake, setShowIntake, handleIntakeSaved, loadingHousehold, householdError, reloadHousehold, householdMembers, enrollBlock, needsSetup,
+    showIntake, setShowIntake, handleIntakeSaved, loadingHousehold, householdError, householdErrorWhat, reloadHousehold, householdMembers, enrollBlock, needsSetup,
     selectedParticipantIds, setSelectedParticipantIds, enrolling, handleEnroll, repeatPayments, setRepeatPayments,
     planKind, setPlanKind, confirmPlanOpened, openConfirmPlan, closeConfirmPlan, handleRequestPaymentPlan,
   } = controls;
@@ -33,7 +33,7 @@ export default function EnrollmentPicker({ ageGated, ageRange, hasPrice, isClose
       <Title order={4} mb="lg">Which of your household wants to enroll?</Title>
 
       {householdError ? (
-        <LoadError what="your household" message={householdError} onRetry={reloadHousehold} />
+        <LoadError what={householdErrorWhat} message={householdError} onRetry={reloadHousehold} />
       ) : loadingHousehold ? (
         <Center py="md"><Loader size="sm" /></Center>
       ) : (

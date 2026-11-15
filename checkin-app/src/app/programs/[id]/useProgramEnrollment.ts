@@ -125,6 +125,7 @@ export function useProgramEnrollment(id: string) {
   const loadingHousehold = (!householdLoad.data && !householdLoad.error) || (!intakeLoad.data && !intakeLoad.error);
   // The enroll routes don't check the emergency contact, so a probe that can't answer blocks enrolment.
   const householdError = householdLoad.error ?? intakeLoad.error;
+  const householdErrorWhat = householdLoad.error ? "your household" : "your emergency contact";
   const reloadHousehold = () => Promise.all([householdLoad.reload(), intakeLoad.reload()]);
   const prefillHousehold = intakeLoad.data?.prefill?.household;
   const hasValidEmergencyContact = !!(prefillHousehold?.emergencyContactName?.trim() && prefillHousehold?.emergencyContactPhone?.trim());
@@ -366,7 +367,7 @@ export function useProgramEnrollment(id: string) {
   return {
     session, status, program, programLoad, successMessage, startEnrollmentProcess, showEnrollmentSelection,
     picker: {
-      showIntake, setShowIntake, handleIntakeSaved, loadingHousehold, householdError, reloadHousehold, householdMembers, enrollBlock, needsSetup,
+      showIntake, setShowIntake, handleIntakeSaved, loadingHousehold, householdError, householdErrorWhat, reloadHousehold, householdMembers, enrollBlock, needsSetup,
       selectedParticipantIds, setSelectedParticipantIds, enrolling, handleEnroll, repeatPayments, setRepeatPayments,
       planKind, setPlanKind, confirmPlanOpened, openConfirmPlan, closeConfirmPlan, handleRequestPaymentPlan,
     },
