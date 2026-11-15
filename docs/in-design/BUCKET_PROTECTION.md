@@ -46,6 +46,21 @@ holding as the backstop.
 - **Cost:** one read per library, one check in the host, one email template, one
   System Status row. No schema change, no new route, no infra change.
 
+## Decisions
+
+The coordinator settled these on 2026-11-15. The BP IDs stay stable so later
+threads can cite them.
+
+- **BP-1.** A saved pick the copy shows as inactive or no longer holds is shown
+  as a warning beside the picker, never as a choice in it. A warning is not a
+  choice, so it keeps the rule that an inactive entry never appears in a
+  picklist.
+- **BP-2.** Bucket pickers (expense lines, gifts, items, part maps) keep listing
+  a live bucket whose Class is inactive. The alert asks finance to fix the one
+  Class rather than every assignment, and posting holds the lines meanwhile.
+- **BP-3.** A line assigned in the moment between an archive's check and its
+  commit may reach the just-archived bucket. This is an accepted limit (§3).
+
 ## Rules this design establishes
 
 1. Finance archives a bucket only when nothing unfinished points at it: an open

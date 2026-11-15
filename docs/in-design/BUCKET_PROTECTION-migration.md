@@ -13,6 +13,7 @@ is "extract the rules, delete both files".
 - Already merged and built on: a bucket's Class can be changed but not cleared;
   the copy of QuickBooks' lists with its daily refresh, Update now and the
   `quickbooks-list-stale` refusal; the picks row on System Status.
+- BP-1 and BP-2 are settled (design, "Decisions").
 - Nothing in this design is built yet.
 
 ## Before PR 3 ships
@@ -62,16 +63,6 @@ create and update. Whichever merges second rebases.
 
 No PR needs a new browser spec. The flow-test server has no QuickBooks, so PR 3
 proves itself in unit tests against a seeded copy.
-
-## Open questions for the coordinator
-
-- **BP-1.** A saved inactive pick: this design shows it as a warning beside the
-  picker, not as a choice. Is a warning line "appearing in a picklist" in the
-  owner's sense? Default: no, the warning stays.
-- **BP-2.** Bucket pickers (expense lines, gifts, items, part maps) still list a
-  live bucket whose Class is inactive, because the alert asks finance to fix
-  the one Class rather than every assignment. Should they mark or hide such a
-  bucket too? Default: no change in this work.
 
 ## Where the rules land
 
