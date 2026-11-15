@@ -65,11 +65,13 @@ describe("finance-ops/shopify-holds page", () => {
   });
 
   it("shows a failed load in place of the table, not an empty list", async () => {
-    global.fetch = jest.fn(async () => new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 })) as unknown as typeof fetch;
+    const fetchMock = jest.fn(async () => new Response(JSON.stringify({ error: "Server down" }), { status: 500 }));
+    global.fetch = fetchMock as unknown as typeof fetch;
     renderWithProviders(<ShopifyHoldsPage />);
 
-    expect(await screen.findByText(/Forbidden/)).toBeInTheDocument();
+    expect(await screen.findByText(/Server down/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /retry|try again/i })).toBeInTheDocument();
     expect(screen.queryByText("No failed seat holds to reconcile.")).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

@@ -57,10 +57,10 @@ export default function MembershipPaymentPlansPage() {
   // The request whose write is in flight; its buttons stay disabled so a second click can't send again.
   const [busyId, setBusyId] = useState<number | null>(null);
 
-  // Each read logs a finance view, so it re-reads only on mount and after this page's own write.
+  // Each read logs a finance view, so it reads once on mount and once after this page's own write, with no retry.
   const { data: requests, error: loadError, reload } = useLoad<MembershipPaymentPlanRequest[]>(
     ready ? '/api/finance-ops/membership-payment-plans' : null,
-    { reconnect: false, skipWriteReload: true },
+    { retry: false, reconnect: false, skipWriteReload: true },
   );
 
   const handleApprove = (processId: number) => {

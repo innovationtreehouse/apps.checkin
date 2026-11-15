@@ -81,10 +81,10 @@ export default function PendingParticipantsPage() {
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const rowKey = (programId: number, participantId: number) => `${programId}-${participantId}`;
 
-  // Each read logs a finance view, so it re-reads only on mount and after this page's own write.
+  // Each read logs a finance view, so it reads once on mount and once after this page's own write, with no retry.
   const { data, error: loadError, reload } = useLoad<{ ProgramParticipant?: PaymentPlanRequest[]; BoardSettings?: { orgMembershipYearBoundary?: string | null } | null }>(
     ready ? '/api/finance-ops/payment-plans' : null,
-    { reconnect: false, skipWriteReload: true },
+    { retry: false, reconnect: false, skipWriteReload: true },
   );
   const cutoff = data?.BoardSettings?.orgMembershipYearBoundary ?? null;
 
