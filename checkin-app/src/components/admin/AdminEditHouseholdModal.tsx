@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Alert, Button, Divider, Group, Loader, Modal, SimpleGrid, Stack, Switch, Text, TextInput } from "@mantine/core";
 import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
 import { api, useLoad } from "@/lib/api";
@@ -85,9 +85,22 @@ export function AdminEditHouseholdModal({
   const [promotingLead, setPromotingLead] = useState<number | null>(null);
   const [fieldErrors, setFieldErrors] = useState<{ memberSince?: string }>({});
 
+  const loadKey = opened && householdId != null ? householdId : null;
   const { data, error: loadError, reload } = useLoad<{ household: AdminHousehold | null }>(
-    opened && householdId != null ? `/api/membership-ops/households?id=${householdId}` : null,
+    loadKey != null ? `/api/membership-ops/households?id=${loadKey}` : null,
   );
+  // Save sends the whole form, and the cache may hold another screen's older read, so the form waits for this opening's own read.
+  const [freshFor, setFreshFor] = useState<number | null>(null);
+  useEffect(() => {
+    if (loadKey == null) return;
+    let cancelled = false;
+    reload().then(() => { if (!cancelled) setFreshFor(loadKey); });
+    return () => {
+      cancelled = true;
+      setFreshFor(null);
+    };
+  }, [loadKey, reload]);
+  const retry = () => reload().then(() => setFreshFor(loadKey));
   const household = data?.household ?? null;
   const displayName = household ? household.name || `Household #${household.id}` : "";
   const members = household?.householdMembers ?? [];
@@ -198,8 +211,8 @@ export function AdminEditHouseholdModal({
         title={<Text fw={600} size="lg">Edit Household Info{displayName ? ` — ${displayName}` : ""}</Text>}
       >
         {loadError ? (
-          <LoadError what="this household" message={loadError} onRetry={reload} />
-        ) : data === null ? (
+          <LoadError what="this household" message={loadError} onRetry={retry} />
+        ) : data === null || freshFor !== loadKey ? (
           <Group justify="center" py="xl">
             <Loader />
           </Group>
