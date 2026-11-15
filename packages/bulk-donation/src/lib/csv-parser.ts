@@ -1,6 +1,6 @@
 import { CsvError, parse } from "csv-parse/sync";
 import { z } from "zod";
-import { dollarsToCents, formatCents, sumCents } from "@checkin/money";
+import { dollarsToCents, dollarsToCentsOrNull, formatCents, sumCents } from "@checkin/money";
 
 /**
  * Benevity CSV row after parsing. Monetary fields are INTEGER CENTS.
@@ -49,24 +49,24 @@ export class CsvValidationError extends Error {
 /** "1,500.00" as Benevity's Donations Report writes it; only well-formed thousands groups. */
 const THOUSANDS = /^-?\d{1,3}(?:,\d{3})+(?:\.\d+)?$/;
 
-/** Empty -> 0 cents; otherwise must be a finite number, else throw via refine. */
+/** Empty -> 0 cents; otherwise must be plain decimal text, else throw via refine. */
 const moneyCents = z
   .string()
   .transform((s) => s.trim())
   .transform((s) => (THOUSANDS.test(s) ? s.replace(/,/g, "") : s))
   .superRefine((s, ctx) => {
-    if (s !== "" && !Number.isFinite(Number(s))) {
+    if (s !== "" && dollarsToCentsOrNull(s) === null) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: `not a number: "${s}"` });
     }
   })
   .transform((s) => (s === "" ? 0 : dollarsToCents(s)));
 
-/** Empty -> null; otherwise must be a finite number. */
+/** Empty -> null; otherwise must be plain decimal text. */
 const rateNullable = z
   .string()
   .transform((s) => s.trim())
   .superRefine((s, ctx) => {
-    if (s !== "" && !Number.isFinite(Number(s))) {
+    if (s !== "" && dollarsToCentsOrNull(s) === null) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: `not a number: "${s}"` });
     }
   })
