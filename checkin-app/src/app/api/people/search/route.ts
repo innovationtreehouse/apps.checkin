@@ -153,9 +153,19 @@ export const GET = withAuth(
                 // ponytail: unbounded — every live person, so pages listing with no `q` (badges,
                 // visits, participants) see everyone. Paginate if the directory reaches thousands.
                 orderBy: { id: 'desc' },
-                include: {
+                select: {
+                    id: true,
+                    name: true,
+                    nickname: true,
+                    email: true,
+                    phone: true,
+                    dateOfBirth: true,
+                    isDeclaredAdult: true,
+                    lastBackgroundCheck: true,
                     household: {
-                        include: {
+                        select: {
+                            id: true,
+                            name: true,
                             // Explicit select, not `true` — a plain include returns full
                             // Person rows one level down (lastBackgroundCheck, googleId,
                             // emailVerified, emailUndeliverableAt, ...), leaking every
@@ -167,7 +177,7 @@ export const GET = withAuth(
                             // participant-merge page (isLeadWithOthers guard + [Lead] marker).
                             // isHouseholdLead is @sensitivity:public, so ops sees it too.
                             householdMembers: { select: { id: true, name: true, email: true, isHouseholdLead: true } },
-                            orgMembership: true,
+                            orgMembership: { select: { status: true } },
                         }
                     },
                     // isOperations has no column — every flag derives through this one
@@ -183,14 +193,12 @@ export const GET = withAuth(
             // denied background-check compliance dates (lastBackgroundCheck),
             // date of birth, and every non-contact field on a household's OTHER
             // members (see the explicit householdMembers select above). Household
-            // orgMembership (and isMember, derived from it) IS shown to ops: every
-            // field on that row — memberSince/status/isVolunteerFamily — is
-            // @sensitivity:public, so it is standing, not finance detail. The
-            // household itself is an explicit projection, not a row spread, so the
-            // Household's own home address (line1/line2/city/state/postalCode) and
-            // free-text intakeNotes (hardship/medical/family disclosures) reach
-            // nobody through this route — no consumer reads them off it. Board/
-            // sysadmin keep the full shape.
+            // orgMembership.status (and isMember, derived from it) IS shown to ops:
+            // it is @sensitivity:public standing, not finance detail. The household
+            // select leaves out its home address (line1/line2/city/state/postalCode)
+            // and free-text intakeNotes (hardship/medical/family disclosures), so
+            // they reach nobody through this route — no consumer reads them off it.
+            // Board/sysadmin keep the full shape.
             // See membership-ops/layout.tsx's Participants-only nav gate for ops.
             const opsOnly = auth.type === 'session' && auth.user.isOperations
                 && !auth.user.isSysadmin && !auth.user.isBoardMember;
