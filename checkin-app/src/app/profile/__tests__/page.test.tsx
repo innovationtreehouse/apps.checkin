@@ -86,6 +86,17 @@ describe("ProfilePage", () => {
         expect(JSON.parse(patchOpts!.body as string)).toMatchObject({ over25: true, dob: null });
     });
 
+    it("shows the load failure with a retry and no form to save when the load fails", async () => {
+        setSession({ id: 1 });
+        mockFetchJson({});
+        renderWithProviders(<ProfilePage />);
+
+        expect(await screen.findByText("Couldn't load your profile")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: /Retry/i })).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Save Profile" })).not.toBeInTheDocument();
+        expect(screen.queryByLabelText(/Full Name/)).not.toBeInTheDocument();
+    });
+
     it("locks the form as read-only for a youth", async () => {
         setSession({ id: 2 });
         mockFetchJson({

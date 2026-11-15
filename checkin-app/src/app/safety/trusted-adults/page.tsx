@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import {
     Badge,
     Button,
@@ -16,8 +16,8 @@ import {
     Title,
     Tooltip,
 } from "@mantine/core";
-import { errorMessage, HttpError, showError, showSuccess } from "@checkin/component-ui";
-import { api } from "@/lib/api";
+import { errorMessage, HttpError, LoadError, showError, showSuccess } from "@checkin/component-ui";
+import { api, useLoad } from "@/lib/api";
 import { TrustedAdultContact } from "@/components/TrustedAdultContact";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { isAuthorizedApproval } from "@/lib/trusted-adult/filters";
@@ -100,8 +100,8 @@ const daysBetween = (aIso: string, bIso: string) =>
 
 export default function AdminTrustedAdultsPage() {
     const { ready, loading: authLoading, user } = useRequireRole(TRUSTED_ADULTS_ROLES);
-    const [items, setItems] = useState<TrustedAdult[]>([]);
-    const [loading, setLoading] = useState(true);
+    const { data, error, reload } = useLoad<{ trustedAdults: TrustedAdult[] }>(ready ? "/api/safety/trusted-adults" : null);
+    const items = data?.trustedAdults ?? [];
     const [busyId, setBusyId] = useState<number | null>(null);
     const [shared, setShared] = useState<Record<number, string>>({});
     // When a prior board note exists, force the board to pick "reuse" or "write new"
@@ -116,27 +116,6 @@ export default function AdminTrustedAdultsPage() {
         setPrompt(cfg);
     };
 
-    const loadList = useCallback(() => fetch("/api/safety/trusted-adults")
-        .then(async (res) => {
-            if (res.ok) {
-                const data = await res.json();
-                setItems(data.trustedAdults || []);
-            }
-        })
-        .finally(() => {
-            setLoading(false);
-        }),
-    []);
-
-    const load = () => {
-        setLoading(true);
-        return loadList();
-    };
-
-    useEffect(() => {
-        if (ready) loadList();
-    }, [ready, loadList]);
-
     // A failure shows away from its card, so it is titled with the household it concerns.
     const failed = async (reviewId: number, e: unknown) => {
         const ta = items.find((t) => t.reviews[0]?.id === reviewId);
@@ -145,7 +124,7 @@ export default function AdminTrustedAdultsPage() {
             title: ta?.household?.name || `Household ${ta?.household?.id ?? ""}`.trim(),
         });
         // A 409 means the review moved on under the board; re-read so the card shows where it is now.
-        if (e instanceof HttpError && e.status === 409) await load();
+        if (e instanceof HttpError && e.status === 409) await reload();
     };
 
     const decide = async (reviewId: number, decision: string, extra?: Record<string, unknown>) => {
@@ -156,7 +135,7 @@ export default function AdminTrustedAdultsPage() {
                 body: JSON.stringify({ reviewId, decision, ...extra }),
             });
             showSuccess(`Recorded: ${label(body.status)}.`);
-            await load();
+            await reload();
             notifyNavRefresh();
         } catch (e) {
             await failed(reviewId, e);
@@ -173,7 +152,7 @@ export default function AdminTrustedAdultsPage() {
                 body: JSON.stringify({ reviewId, action, ...extra }),
             });
             // The re-read card shows the new status, so an override shows no success message.
-            await load();
+            await reload();
             notifyNavRefresh();
         } catch (e) {
             await failed(reviewId, e);
@@ -182,7 +161,7 @@ export default function AdminTrustedAdultsPage() {
         }
     };
 
-    if (authLoading || loading) {
+    if (authLoading || (ready && !data && !error)) {
         return (
             <Center h={200}>
                 <Loader />
@@ -221,7 +200,8 @@ export default function AdminTrustedAdultsPage() {
                 </Text>
             </div>
 
-            {items.length === 0 && <Text c="dimmed">Nothing in the queue.</Text>}
+            {error && <LoadError what="the trusted-adult queue" message={error} onRetry={reload} />}
+            {data && items.length === 0 && <Text c="dimmed">Nothing in the queue.</Text>}
 
             {items.map((ta) => {
                 const latest = ta.reviews[0];

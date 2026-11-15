@@ -152,6 +152,15 @@ describe("TrustedAdultPanel", () => {
     expect(screen.getByRole("button", { name: /Submit for board review/i })).toBeInTheDocument();
   });
 
+  it("shows the load failure with a retry, not an empty list, when the load fails", async () => {
+    mockFetchJson({});
+    renderWithProviders(<TrustedAdultPanel />);
+
+    expect(await screen.findByText("Couldn't load your trusted adults")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Retry/i })).toBeInTheDocument();
+    expect(screen.queryByText("No trusted adults added yet.")).not.toBeInTheDocument();
+  });
+
   it("offers Delete (not Withdraw) once an entry is withdrawn", async () => {
     mockFetchJson({ "/api/trusted-adults/mine": { trustedAdults: [trustedAdult({ status: "REVOKED" })] } });
     renderWithProviders(<TrustedAdultPanel />);
