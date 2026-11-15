@@ -198,6 +198,10 @@ describe('ReceiptQueueCounts', () => {
         const counts = { byState: { financial_review: 2 }, notPushed: 3, failedPushes: 1, actionableByState: { financial_review: 2 } };
         expect(stripValue('ReceiptQueueCounts', counts, INTERNAL_ONLY, ctx())).toEqual(counts);
     });
+
+    it('classifies exactly the fields queueCounts sends', () => {
+        expect(Object.keys(receiptSynthetic.classifications.ReceiptQueueCounts).sort()).toEqual(['actionableByState', 'byState', 'failedPushes', 'notPushed']);
+    });
 });
 
 describe('ReceiptIgnoredFileView', () => {
