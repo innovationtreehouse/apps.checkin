@@ -7,6 +7,7 @@ import { notifyScanOutcome } from "@/lib/attendance/scanNotify";
 import { appendPresenceEvent, parkReasonToClass, PresenceClass } from "@/lib/presence/events";
 import { applyPresenceIntent, flagForReview } from "@/lib/presence/project";
 import { withKiosk } from "@/lib/kioskAuth";
+import { recordKioskProtocolSeen } from "@/lib/kioskProtocolSeen";
 import { CLOSE_REQUEST_PROTOCOL_VERSION, KIOSK_DEBOUNCE_PROTOCOL_VERSION, SCAN_PROTOCOL_VERSION, TRUSTED_REPLAY_PROTOCOL_VERSION } from "@/lib/scanProtocol";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { uniqueViolationFields } from "@/lib/prismaUniqueViolation";
@@ -590,12 +591,7 @@ export const POST = withKiosk(
         const keyFingerprint = auth.keyFingerprint;
         const protocolVersion = seenVersion;
         if (keyFingerprint && protocolVersion !== null) {
-            const now = new Date();
-            prisma.kioskProtocolSeen.upsert({
-                where: { keyFingerprint },
-                create: { keyFingerprint, protocolVersion, lastSeenAt: now },
-                update: { protocolVersion, lastSeenAt: now },
-            }).catch((err: unknown) => logger.error("Failed to record kiosk protocol version:", err));
+            recordKioskProtocolSeen(keyFingerprint, protocolVersion).catch((err: unknown) => logger.error("Failed to record kiosk protocol version:", err));
         }
     }
 });
