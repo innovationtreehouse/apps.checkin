@@ -8,10 +8,8 @@ import { AdminPageHeader } from '@/components/admin/AdminPageHeader';
 import { EntityPicker } from '@/components/admin/EntityPicker';
 import { isYouth } from '@/lib/time';
 import { Button, Card, Container, Paper, Stack, Text, TextInput } from '@mantine/core';
-import { AlertBanner } from '@/components/admin/AlertBanner';
-import { notifications } from '@mantine/notifications';
-import { LoadError } from '@checkin/component-ui';
-import { useLoad } from '@/lib/api';
+import { errorMessage, HttpError, LoadError, showError, showSuccess } from '@checkin/component-ui';
+import { api, useLoad } from '@/lib/api';
 
 import { PageLoader } from "@/components/ui/PageLoader";
 type HouseholdOption = {
@@ -46,7 +44,6 @@ function NewParticipantForm() {
   const isYouthSelected = isYouth(dob);
 
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState("");
   const [fieldErrors, setFieldErrors] = useState<{ email?: string }>({});
 
   const { data: linked, error: linkedError, reload: reloadLinked } = useLoad<{ household?: { id: number; name: string | null } }>(
@@ -71,13 +68,11 @@ function NewParticipantForm() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
-    setMessage("");
     setFieldErrors({});
 
     try {
-      const res = await fetch('/api/membership-ops/participants', {
+      const data = await api<{ participant: { email: string | null } }>('/api/membership-ops/participants', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name,
           email: email || null,
@@ -88,24 +83,17 @@ function NewParticipantForm() {
         })
       });
 
-      const data = await res.json().catch(() => ({}));
-
-      if (res.ok) {
-        notifications.show({ message: `Participant ${name || data.participant.email || 'created'} successfully!` });
-        setName("");
-        setEmail("");
-        setParentEmail("");
-        setParentName("");
-        setDob("");
-        setHouseholdId("");
-        setHouseholdSearch("");
-      } else if (data.fields?.includes("email")) {
-        setFieldErrors({ email: "This email is already registered." });
-      } else {
-        setMessage(data.error || "Failed to create participant");
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error", autoClose: false });
+      showSuccess(`Participant ${name || data.participant.email || 'created'} successfully!`);
+      setName("");
+      setEmail("");
+      setParentEmail("");
+      setParentName("");
+      setDob("");
+      setHouseholdId("");
+      setHouseholdSearch("");
+    } catch (err) {
+      if (err instanceof HttpError && err.fields.includes("email")) setFieldErrors({ email: "This email is already registered." });
+      else showError(errorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -130,7 +118,6 @@ function NewParticipantForm() {
           this profile.
         </Text>
 
-        <AlertBanner message={message} tone="error" mb="md" />
 
         <form onSubmit={handleSubmit}>
           <Stack>

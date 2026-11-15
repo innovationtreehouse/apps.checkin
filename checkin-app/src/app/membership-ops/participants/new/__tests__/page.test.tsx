@@ -2,7 +2,7 @@
 jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories run hoisted, before imports exist
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
 
 import { screen, fireEvent, waitFor } from "@testing-library/react";
 import { renderWithProviders, mockFetchJson, setSession, setSearchParams, resetRtl, router } from "@/test-helpers/rtl";
@@ -259,13 +259,30 @@ describe("membership-ops/participants/new page", () => {
     fireEvent.change(screen.getByPlaceholderText("e.g. Jane Doe"), { target: { value: "Jane Doe" } });
     fireEvent.change(screen.getByPlaceholderText("jane.doe@example.com"), { target: { value: "jane@example.com" } });
 
-    global.fetch = jest.fn(async () => ({ ok: false, status: 400, json: async () => ({ error: "Email taken." }) })) as unknown as typeof fetch;
+    const refusal = (body: unknown) => jest.fn(async () => ({ ok: false, status: 409, json: async () => body, text: async () => JSON.stringify(body) })) as unknown as typeof fetch;
+    global.fetch = refusal({ error: "Household not found." });
     fireEvent.click(screen.getByRole("button", { name: "Create Participant" }));
-    expect(await screen.findByText("Email taken.")).toBeInTheDocument();
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(
+      expect.objectContaining({ color: "red", message: "Household not found.", autoClose: false })));
+    expect(screen.queryByText("Household not found.")).not.toBeInTheDocument();
 
     global.fetch = jest.fn(() => Promise.reject(new Error("net"))) as unknown as typeof fetch;
     fireEvent.click(screen.getByRole("button", { name: "Create Participant" }));
     await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(
-      expect.objectContaining({ color: "red", message: "Network error", autoClose: false })));
+      expect.objectContaining({ color: "red", message: "Couldn't reach the server. Check your connection and try again.", autoClose: false })));
+  });
+
+  it("highlights the email input when the route names it", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    renderWithProviders(<NewParticipantPage />);
+    await screen.findByText("Register New User");
+    fireEvent.change(screen.getByPlaceholderText("e.g. Jane Doe"), { target: { value: "Jane Doe" } });
+    fireEvent.change(screen.getByPlaceholderText("jane.doe@example.com"), { target: { value: "jane@example.com" } });
+
+    const body = { error: "A participant with this email already exists", fields: ["email"] };
+    global.fetch = jest.fn(async () => ({ ok: false, status: 409, json: async () => body, text: async () => JSON.stringify(body) })) as unknown as typeof fetch;
+    fireEvent.click(screen.getByRole("button", { name: "Create Participant" }));
+    expect(await screen.findByText("This email is already registered.")).toBeInTheDocument();
+    expect(notifications.show).not.toHaveBeenCalledWith(expect.objectContaining({ color: "red" }));
   });
 });

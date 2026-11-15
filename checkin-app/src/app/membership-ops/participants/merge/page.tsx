@@ -3,7 +3,6 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Alert, Box, Button, Card, Group, List, Paper, Radio, SimpleGrid, Stack, Text, TextInput, Title } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
 import { AlertBanner } from "@/components/admin/AlertBanner";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { MEMBERSHIP_OPS_ADMIN_ROLES } from "@/lib/nav/sections/membershipOps";
@@ -11,8 +10,8 @@ import { PageLoader } from "@/components/ui/PageLoader";
 import { formatPhone } from "@/lib/phone";
 import { formatDateOnly } from "@/lib/time";
 import { searchId } from "@/lib/searchId";
-import { useLoad } from "@/lib/api";
-import { clearError, showError } from "@checkin/component-ui";
+import { api, useLoad } from "@/lib/api";
+import { clearError, errorMessage, HttpError, showError } from "@checkin/component-ui";
 
 interface ParticipantMergeView {
   id: number;
@@ -256,9 +255,8 @@ export default function MergeParticipants() {
     setMerging(true);
     setError(null);
     try {
-      const res = await fetch("/api/membership-ops/participants/merge", {
+      await api("/api/membership-ops/participants/merge", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           keepId: keepParticipant?.id,
           mergeId: mergeParticipant?.id,
@@ -266,19 +264,11 @@ export default function MergeParticipants() {
           ...(emailChangeReason.trim() && { emailChangeReason }),
         })
       });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        setSuccess(true);
-      } else if (typeof data.error === "string" && data.error.includes("lead of a household with other members")) {
-        notifications.show({ color: "red", message: data.error, autoClose: false });
-        // No page-level reload here; clear the stale analyzed selection so the
-        // user re-picks (and re-analyzes) against current household state.
-        pick(null, null);
-      } else {
-        setError(data.error || "Failed to merge");
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error", autoClose: false });
+      setSuccess(true);
+    } catch (e) {
+      showError(errorMessage(e));
+      // Clear the stale analyzed selection so the user re-picks against current household state.
+      if (e instanceof HttpError && e.message.includes("lead of a household with other members")) pick(null, null);
     } finally {
       setMerging(false);
     }

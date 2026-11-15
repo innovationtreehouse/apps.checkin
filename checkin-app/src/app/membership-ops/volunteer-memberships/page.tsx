@@ -3,13 +3,12 @@
 import { useState, useMemo } from "react";
 import { Badge, Button, Card, Chip, Group, Stack, Switch, Text, TextInput, Title } from "@mantine/core";
 import { AlertBanner } from "@/components/admin/AlertBanner";
-import { LoadError } from "@checkin/component-ui";
-import { useLoad } from "@/lib/api";
+import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
+import { api, useLoad } from "@/lib/api";
 import { DataTable, type DataTableColumn } from "@/components/admin/DataTable";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { MEMBERSHIP_OPS_ADMIN_ROLES } from "@/lib/nav/sections/membershipOps";
 import { PageLoader } from "@/components/ui/PageLoader";
-import { notifications } from "@mantine/notifications";
 import { isValidEmail } from "@/lib/emergencyContacts/identity";
 import { formatDateOnly } from "@/lib/time";
 import { useOrgTime } from "@/components/TimezoneProvider";
@@ -24,6 +23,9 @@ const STATUS_CHIPS: { value: VolunteerRowStatus; label: string; color: string }[
   { value: "REVOKED", label: "Revoked", color: "red" },
   { value: "INACTIVE", label: "No live application", color: "gray" },
 ];
+
+// The add stays on fetch because its refusal carries `matches`, which the kit's HttpError drops.
+const NETWORK_ERROR = "Couldn't reach the server. Check your connection and try again.";
 
 const chipFor = (status: VolunteerRowStatus) => STATUS_CHIPS.find((c) => c.value === status);
 
@@ -46,7 +48,7 @@ export default function VolunteerMembershipsPage() {
   const { data, error: loadError, reload } = useLoad<{ rows?: VolunteerRow[] }>(ready ? "/api/membership-ops/volunteer-memberships" : null);
   const rows = useMemo(() => data?.rows ?? [], [data]);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<{ text: string; tone: "warning" | "error" } | undefined>();
+  const [warning, setWarning] = useState<string | undefined>();
   const [emailError, setEmailError] = useState<string | undefined>(undefined);
   const [search, setSearch] = useState("");
   const [statuses, setStatuses] = useState<string[]>([]);
@@ -56,8 +58,6 @@ export default function VolunteerMembershipsPage() {
   // Everyone on file with the last address the Board entered, signed in or not.
   const [holders, setHolders] = useState<{ email: string; matches: AddressHolder[] } | null>(null);
 
-  const flash = (text: string, tone: "warning" | "error" = "error") =>
-    setMessage(text ? { text, tone } : undefined);
 
   const visibleRows = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -85,7 +85,7 @@ export default function VolunteerMembershipsPage() {
     if (!newEmail.trim()) return;
     if (!isValidEmail(newEmail)) { setEmailError("A valid email is required."); return; }
     setSaving(true);
-    flash("");
+    setWarning(undefined);
     try {
       const res = await fetch("/api/settings/membership/volunteer-designations", {
         method: "POST",
@@ -99,27 +99,21 @@ export default function VolunteerMembershipsPage() {
       } else if (res.ok) {
         setNewEmail("");
         setMatch(null);
-        if (data.warning) { flash(data.warning, "warning"); }
-        else { notifications.show({ message: confirmHouseholdId === undefined ? "Designation added." : "Household set as a volunteer household." }); }
+        if (data.warning) { setWarning(data.warning); }
+        else { showSuccess(confirmHouseholdId === undefined ? "Designation added." : "Household set as a volunteer household."); }
         await reload();
-      } else { setMatch(null); flash(data.error || "Could not add."); }
-    } catch { notifications.show({ color: "red", message: "Network error.", autoClose: false }); }
+      } else { setMatch(null); showError(typeof data.error === "string" ? data.error : errorMessage(data)); }
+    } catch { showError(NETWORK_ERROR); }
     finally { setSaving(false); }
   };
 
   const removeDesignation = async (id: number) => {
     setSaving(true);
-    flash("");
+    setWarning(undefined);
     try {
-      const res = await fetch(`/api/settings/membership/volunteer-designations?id=${id}`, { method: "DELETE" });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        flash(data.error || "Could not remove that designation.");
-        return;
-      }
-      notifications.show({ message: "Designation removed." });
-      await reload();
-    } catch { notifications.show({ color: "red", message: "Network error.", autoClose: false }); }
+      await api(`/api/settings/membership/volunteer-designations?id=${id}`, { method: "DELETE" });
+      showSuccess("Designation removed.");
+    } catch (e) { showError(errorMessage(e)); }
     finally { setSaving(false); }
   };
 
@@ -186,7 +180,7 @@ export default function VolunteerMembershipsPage() {
 
   return (
     <Stack>
-      <AlertBanner message={message?.text} tone={message?.tone} />
+      <AlertBanner message={warning} tone="warning" />
 
       <Card withBorder radius="md" padding="lg">
         <Title order={3} mb="xs">Volunteer Families</Title>
