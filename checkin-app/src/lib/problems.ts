@@ -98,7 +98,7 @@ export async function getProblems(now = new Date()): Promise<{ items: Problem[];
             items.push(...result.value.items.map((item) => ({ ...item, library })));
             notices.push(...result.value.notices);
         } else {
-            logger.error(`[problems] could not read ${library}'s stuck items:`, result.reason);
+            logger.error(library === "email" ? "[problems] could not count failed email sends:" : `[problems] could not read ${library}'s stuck items:`, result.reason);
             unread.push(library);
         }
     });
@@ -136,7 +136,7 @@ export async function sendProblemsDigest(now = new Date()): Promise<void> {
             ...stuck.map((i) => `${i.library}, ${i.step}: ${i.id}, stuck since ${when(i.failedAt)}`),
             ...stale.map((j) => `Scheduled job ${j.job}: last ran ${when(j.lastSuccessAt)}`),
             ...failing.map((j) => `Scheduled job ${j.job}: last run reported failures, ${when(j.lastErrorAt ?? j.lastSuccessAt)}`),
-            ...unread.map((library) => `${library}: its stuck items could not be read`),
+            ...unread.map((library) => (library === "email" ? "Failed email sends could not be counted." : `${library}: its stuck items could not be read`)),
             ...notices.map((n) => n.text),
         ];
         const ctx = { count: String(lines.length), items: lines.join("\n"), actionLink: `${config.baseUrl()}/system-status/health` };

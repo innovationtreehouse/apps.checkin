@@ -298,7 +298,7 @@ export function ProblemsBox() {
         <List spacing="sm" listStyleType="none">
           {data.unread.map((library) => (
             <List.Item key={`unread-${library}`}>
-              <Text c="yellow">Could not read {library}&apos;s stuck items.</Text>
+              <Text c="yellow">{library === "email" ? "Failed email sends could not be counted." : <>Could not read {library}&apos;s stuck items.</>}</Text>
             </List.Item>
           ))}
           {data.notices.map((notice) => (
