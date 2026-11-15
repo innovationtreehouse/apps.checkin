@@ -113,8 +113,9 @@ export const GET = handler('GET /api/facility/corrections', async ({ req }) => {
 
     // Actor + subject names, batched — AuditLog has no @relation to Person.
     // An older audit row can name a person since merged away; a merge deletes
-    // the Person row, so that person comes from the merge archive, carrying
-    // their survivor's id as `mergedIntoId` so the UI can mark the row.
+    // the Person row, so that person's name comes from the merge archive and
+    // their survivor carries the archive row in `mergedArchive`, a classified
+    // relation the stripper keeps, so the UI can mark them as merged.
     // SYSTEM_ACTOR is a sentinel, not a person id — looking it up would find
     // nobody and the row would render as one person editing another's record.
     const personIds = new Set<number>();
@@ -122,16 +123,22 @@ export const GET = handler('GET /api/facility/corrections', async ({ req }) => {
         if (r.actorId !== SYSTEM_ACTOR) personIds.add(r.actorId);
         if (r.secondaryAffectedEntity != null) personIds.add(r.secondaryAffectedEntity);
     }
-    const people: { id: number; name: string | null; mergedIntoId?: number }[] = personIds.size
-        ? await prisma.person.findMany({
+    type PersonEntry = { id: number; name?: string | null; mergedArchive?: { fromId: number; toId: number }[] };
+    const people = new Map<number, PersonEntry>();
+    if (personIds.size) {
+        for (const p of await prisma.person.findMany({
             where: { id: { in: [...personIds] } },
             select: { id: true, name: true },
-        })
-        : [];
-    const found = new Set(people.map((p) => p.id));
-    people.push(...await archivedPeople(prisma, [...personIds].filter((id) => !found.has(id))));
+        })) people.set(p.id, p);
+    }
+    for (const a of await archivedPeople(prisma, [...personIds].filter((id) => !people.has(id)))) {
+        people.set(a.id, { ...people.get(a.id), id: a.id, name: a.name });
+        const survivor = people.get(a.mergedIntoId) ?? { id: a.mergedIntoId };
+        survivor.mergedArchive = [...(survivor.mergedArchive ?? []), { fromId: a.id, toId: a.mergedIntoId }];
+        people.set(survivor.id, survivor);
+    }
 
     // Always all three keys, even empty — handler.ts unwraps a single-key bag
     // to a bare value, which would turn an empty result into a bare `[]`.
-    return { AuditLog: auditLog, Person: people, Visit: visitPairs };
+    return { AuditLog: auditLog, Person: [...people.values()], Visit: visitPairs };
 });
