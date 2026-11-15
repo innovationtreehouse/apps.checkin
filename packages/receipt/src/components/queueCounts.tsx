@@ -19,13 +19,13 @@ export interface QueueCounts {
 export const QUEUE_COUNTS_PATH = "/queue-counts";
 
 /** The review queues' counts, reloaded whenever a receipt write tells the nav to refetch. */
-export function useQueueCounts(): { counts: QueueCounts | null; error: string | null } {
-  const { data, error, reload } = useLoad<QueueCounts>(QUEUE_COUNTS_PATH);
+export function useQueueCounts(): { counts: QueueCounts | null; error: string | null; status: number | null } {
+  const { data, error, status, reload } = useLoad<QueueCounts>(QUEUE_COUNTS_PATH);
   useEffect(() => {
     window.addEventListener("nav-counts-mutated", reload);
     return () => window.removeEventListener("nav-counts-mutated", reload);
   }, [reload]);
-  return { counts: data, error };
+  return { counts: data, error, status };
 }
 
 export interface QueueBadge {

@@ -1,4 +1,5 @@
 "use client";
+import { FAILURE_TEXT } from "@checkin/component-ui";
 import { formatCents } from "@checkin/money";
 import { useEffect } from "react";
 import Link from "next/link";
@@ -17,25 +18,25 @@ import {
 export { FINANCE_QUEUE_TABS, financeQueueTab, type FinanceQueueCounts, type FinanceQueueTabKey } from "../financeQueue";
 
 /** Why a load failed, naming the request; a server failure's cause is in the server log under that route. */
-export function loadFailure(path: string, error: string): string {
-  return /^(Internal Server Error|HTTP 5\d\d)$/.test(error)
+export function loadFailure(path: string, error: string, status: number | null): string {
+  return error === "Internal Server Error" || (error === FAILURE_TEXT && status !== null && status >= 500)
     ? `GET ${path} failed on the server (HTTP 500); the server log names the cause under that route.`
     : `GET ${path} answered: ${error}`;
 }
 
 /** A failed load as a red chip that stays up until dismissed. */
-export function useLoadFailedChip(id: string, what: string, path: string, error: string | null): void {
+export function useLoadFailedChip(id: string, what: string, path: string, error: string | null, status: number | null): void {
   useEffect(() => {
-    if (error) notifications.show({ id, title: `Couldn't load ${what}`, message: loadFailure(path, error), color: "red", autoClose: false });
-  }, [id, what, path, error]);
+    if (error) notifications.show({ id, title: `Couldn't load ${what}`, message: loadFailure(path, error, status), color: "red", autoClose: false });
+  }, [id, what, path, error, status]);
 }
 
 const COUNTS_PATH = "/finance-queue/counts";
 
 /** The expense tabs' counts, reloaded whenever a write tells the nav to refetch. A failed load shows as a chip. */
 export function useFinanceQueueCounts(): { counts: FinanceQueueCounts | null; error: string | null } {
-  const { data, error, reload } = useLoad<FinanceQueueCounts>(COUNTS_PATH);
-  useLoadFailedChip("finance-queue-counts", "the expense tab counts", `/api/expense${COUNTS_PATH}`, error);
+  const { data, error, status, reload } = useLoad<FinanceQueueCounts>(COUNTS_PATH);
+  useLoadFailedChip("finance-queue-counts", "the expense tab counts", `/api/expense${COUNTS_PATH}`, error, status);
   useEffect(() => {
     window.addEventListener("nav-counts-mutated", reload);
     return () => window.removeEventListener("nav-counts-mutated", reload);
@@ -74,7 +75,7 @@ export function FinanceQueueList({ tab, counts, reason, returnHref, onReason }: 
   const path = `/finance-queue?tab=${queue}`;
   const rows = useLoad<FinanceQueueRow[]>(path);
   const label = FINANCE_QUEUE_TABS.find((t) => t.key === tab)!.label;
-  useLoadFailedChip(`finance-queue-${queue}`, `the ${label} tab`, `/api/expense${path}`, rows.error);
+  useLoadFailedChip(`finance-queue-${queue}`, `the ${label} tab`, `/api/expense${path}`, rows.error, rows.status);
   useEffect(() => {
     window.addEventListener("nav-counts-mutated", rows.reload);
     return () => window.removeEventListener("nav-counts-mutated", rows.reload);

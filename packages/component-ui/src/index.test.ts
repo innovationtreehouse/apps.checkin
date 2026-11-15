@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { HttpError, createClient, errorMessage, lastPage, paged } from "./index";
+import { FAILURE_TEXT, HttpError, createClient, errorMessage, lastPage, paged } from "./index";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -25,13 +25,23 @@ describe("createClient api", () => {
     expect(fetchMock.mock.calls[0][1]?.headers).toBeUndefined();
   });
 
-  it("throws the route's error, or the status for a non-JSON body", async () => {
+  it("throws the route's error", async () => {
     stub(403, JSON.stringify({ error: "Forbidden" }));
     await expect(api("/x")).rejects.toThrow("Forbidden");
-    stub(500, "<html>");
-    await expect(api("/x")).rejects.toThrow("HTTP 500");
-    stub(200, "<html>");
-    await expect(api("/x")).rejects.toThrow("Unexpected non-JSON response (HTTP 200)");
+  });
+
+  it.each([
+    ["a non-JSON failure", 500, "<html>"],
+    ["a JSON failure with no error text", 500, JSON.stringify({ message: "boom" })],
+    ["a JSON failure whose error is not text", 422, JSON.stringify({ error: { code: 1 } })],
+    ["an empty failure", 404, ""],
+    ["a non-JSON success", 200, "<html>"],
+  ])("throws the fixed text with the status for %s", async (_case, status, body) => {
+    stub(status, body);
+    const thrown = await api("/x").catch((e: unknown) => e);
+    expect(thrown).toBeInstanceOf(HttpError);
+    expect(thrown).toMatchObject({ message: "Something went wrong. Try again.", status });
+    expect(errorMessage(thrown)).toBe(FAILURE_TEXT);
   });
 
   it("carries the field names a route refused, and none when it sends no usable list", async () => {

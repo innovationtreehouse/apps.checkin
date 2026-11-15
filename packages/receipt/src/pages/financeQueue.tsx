@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import Link from "next/link";
 import { notifications } from "@mantine/notifications";
 import { Anchor, Badge, Table, Text } from "@mantine/core";
+import { FAILURE_TEXT } from "@checkin/component-ui";
 import { formatCents } from "@checkin/money";
 import { useLoad, type ReceiptListRow } from "../components/api";
 import ReceiptTable from "../components/ReceiptTable";
@@ -14,10 +15,10 @@ export { NOT_PUSHED, OTHER_QUEUES, QUEUES, isOtherQueue, isReceiptQueue, reviewH
 export { QueueCount, queueBadge, useQueueCounts, type QueueBadge, type QueueCounts } from "../components/queueCounts";
 
 /** A chip that stays while the queue at `path` can't be read, naming the route and the cause. */
-function useLoadErrorChip(error: string | null, path: string, id: string, route: string) {
+function useLoadErrorChip(error: string | null, status: number | null, path: string, id: string, route: string) {
   useEffect(() => {
     if (!error) return;
-    const server = /^(Internal Server Error|HTTP 5\d\d)$/.test(error);
+    const server = error === "Internal Server Error" || (error === FAILURE_TEXT && status !== null && status >= 500);
     notifications.show({
       id,
       title: "Couldn't load these receipts",
@@ -25,7 +26,7 @@ function useLoadErrorChip(error: string | null, path: string, id: string, route:
       color: "red",
       autoClose: false,
     });
-  }, [error, path, id, route]);
+  }, [error, status, path, id, route]);
 }
 
 interface DuplicateQueueRow {
@@ -47,7 +48,7 @@ function waited(since: string | null): string {
 /** The Duplicates tab: one row per group of matching receipts, opening its oldest held member. */
 function DuplicateQueueList() {
   const list = useLoad<DuplicateQueueRow[]>(DUPLICATE_QUEUE_PATH);
-  useLoadErrorChip(list.error, DUPLICATE_QUEUE_PATH, "receipt-queue-duplicate_flagged", `/api/receipts${DUPLICATE_QUEUE_PATH}`);
+  useLoadErrorChip(list.error, list.status, DUPLICATE_QUEUE_PATH, "receipt-queue-duplicate_flagged", `/api/receipts${DUPLICATE_QUEUE_PATH}`);
   if (!list.data) return null;
   if (list.data.length === 0) return <Text c="dimmed">No receipts.</Text>;
   return (
@@ -87,7 +88,7 @@ function DuplicateQueueList() {
 function PlainQueueList({ queue }: { queue: string }) {
   const path = queueListPath(queue);
   const list = useLoad<ReceiptListRow[]>(path);
-  useLoadErrorChip(list.error, path, `receipt-queue-${queue || "all"}`, `/api/receipts${path}`);
+  useLoadErrorChip(list.error, list.status, path, `receipt-queue-${queue || "all"}`, `/api/receipts${path}`);
   return list.data ? <ReceiptTable rows={list.data} delivery={queue === NOT_PUSHED} detailHref={(id) => reviewDetailHref(id, queue)} /> : null;
 }
 
