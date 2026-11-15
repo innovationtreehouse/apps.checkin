@@ -384,7 +384,7 @@ defineRoute({
     ],
 });
 
-// Board archives or unarchives a household (docs/in-design/HOUSEHOLD_ARCHIVE.md).
+// Board archives or unarchives a household.
 // Board only, NOT sysadmin: archival is a membership decision. The bag is
 // { Household }, the updated row; the view keeps id, name and archivedAt and
 // drops the address and intake note, which the action's caller does not need.
