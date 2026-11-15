@@ -806,14 +806,14 @@ async function waitingGroups(orgId: string): Promise<WaitingGroup[]> {
   return groups.sort((a, b) => (a.heldAt?.getTime() ?? 0) - (b.heldAt?.getTime() ?? 0));
 }
 
-/** The viewer's own other copy of an open receipt they uploaded, earliest first; never another person's. */
-async function ownCopyNotice(row: ReceiptRow, actor: ReceiptPrincipal): Promise<{ matchId: string; uploadedAt: Date } | null> {
+/** The viewer's own other copy of an open receipt they uploaded, earliest first, with its uploader; never another person's. */
+async function ownCopyNotice(row: ReceiptRow, actor: ReceiptPrincipal): Promise<{ matchId: string; uploadedAt: Date; uploadedByUserId: number } | null> {
   if (ENDED.has(row.state)) return null;
   const others = ((await computeGroup(row.orgId, row.id))?.members ?? []).filter((m) => m.id !== row.id && m.state !== "discarded").map((m) => m.id);
   if (others.length === 0) return null;
   const mine = await receiptRepo.list({ orgId: row.orgId, id: { in: others }, uploadedByUserId: { in: await ports().personIds.storedIdsOf(actor.id) } });
   const [first] = mine.sort((a, b) => a.uploadedAt.getTime() - b.uploadedAt.getTime());
-  return first ? { matchId: first.id, uploadedAt: first.uploadedAt } : null;
+  return first ? { matchId: first.id, uploadedAt: first.uploadedAt, uploadedByUserId: first.uploadedByUserId } : null;
 }
 
 /** The kept receipt of each row rejected as a copy, as the group labels it. */
