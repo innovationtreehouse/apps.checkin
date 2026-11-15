@@ -198,6 +198,10 @@ Things the app takes as true because they are handled outside it.
   hold failed, or it joined while the program was free) returns nothing, so a
   return can never sell a seat beyond capacity.  [Decision — *Principle: fail closed*]
 
+- A family whose selection is partly refused is told who and why before checkout,
+  and chooses whether to pay for the rest. If everyone is refused, nothing goes
+  to checkout.  [Decision]
+
 - One order pays for one household. A checkout naming someone from another
   household is refused before it reaches the store, and a paid order that names
   more than one household activates nobody and goes to the board.  [Decision]

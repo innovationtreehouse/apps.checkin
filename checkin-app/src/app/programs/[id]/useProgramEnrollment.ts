@@ -48,6 +48,9 @@ export type ProgramDetail = {
 
 type HouseholdMember = { id: number; name: string | null; dateOfBirth: string | null; isDeclaredAdult?: boolean };
 type HouseholdAnswer = { household: { householdMembers?: HouseholdMember[] } | null };
+type CheckoutPlan = { enrolledIds: number[]; variantId: string; storeDomain: string | undefined; mockPay: boolean; pricingEligible: boolean };
+/** Who was refused and why, and the checkout for the rest (null when nobody was accepted). */
+export type RefusedPause = { refusals: { name: string; reason: string }[]; accepted: string[]; plan: CheckoutPlan | null };
 type IntakeAnswer = { prefill?: { household?: { emergencyContactName?: string | null; emergencyContactPhone?: string | null } | null } };
 
 /** A write's refusal as an outcome, so one member's refusal doesn't stop the rest. Anything else still throws. */
@@ -77,6 +80,7 @@ export function useProgramEnrollment(id: string) {
   const [planKind, setPlanKind] = useState<string | null>(null);
   const [confirmPlanOpened, { open: openConfirmPlan, close: closeConfirmPlan }] = useDisclosure(false);
   const [repeatPayments, setRepeatPayments] = useState<RepeatPayment[]>([]);
+  const [refusedPause, setRefusedPause] = useState<RefusedPause | null>(null);
 
   const [showEnrollmentSelection, setShowEnrollmentSelection] = useState(false);
   const [selectedParticipantIds, setSelectedParticipantIds] = useState<number[]>([]);
@@ -122,6 +126,7 @@ export function useProgramEnrollment(id: string) {
   const household = householdLoad.data?.household;
   const householdMembers: HouseholdMember[] = !householdLoad.data ? []
     : household?.householdMembers ?? (session ? [{ id: session.user.id, name: "Myself", dateOfBirth: null }] : []);
+  const memberName = (personId: number) => householdMembers.find((m) => m.id === personId)?.name || 'One member';
   // After an intake save the picker waits for the re-read, so it never shows the household as it was.
   const [refreshingHousehold, setRefreshingHousehold] = useState(false);
   const loadingHousehold = refreshingHousehold || (!householdLoad.data && !householdLoad.error) || (!intakeLoad.data && !intakeLoad.error);
@@ -224,6 +229,56 @@ export function useProgramEnrollment(id: string) {
     }
   };
 
+  /** Checks out exactly these children: mock payment on a local instance, else the Shopify redirect. True when leaving the page. */
+  const goToCheckout = async ({ enrolledIds, variantId, storeDomain, mockPay, pricingEligible }: CheckoutPlan): Promise<boolean> => {
+    // Every checkout starts at the server: it refuses a checkout naming
+    // someone outside the household (400) or from a non-lead (403), and mints the member discount code for
+    // single-pool programs when the household's membership fee covers the program. A
+    // mint failure is non-fatal: an undiscounted link is always a safe fallback,
+    // per lib/shopify/discounts.ts's mintMemberDiscountCode contract. The checkout
+    // signature is not optional: without it the order activates nobody.
+    let discountCode: string | null = null;
+    let signature: string | null = null;
+    try {
+      const data = await api<{ code?: string | null; signature?: string | null }>(`/api/programs/${id}/discount-code`, {
+        method: 'POST',
+        body: JSON.stringify({ participantIds: enrolledIds }),
+        invalidate: false,
+      });
+      discountCode = pricingEligible ? data.code ?? null : null;
+      signature = data.signature ?? null;
+    } catch (e) {
+      if (e instanceof HttpError && (e.status === 400 || e.status === 403)) {
+        showError(e.message);
+        return false;
+      }
+      // Any other failure leaves no signature: refused below.
+    }
+    if (mockPay) {
+      // Local mock: fire the Debug section's orders/paid webhook to activate the
+      // PENDING enrollments, exactly as the dev Shopify tool's button does — no redirect.
+      try {
+        await api('/api/dev/shopify/orders-paid', {
+          method: 'POST',
+          body: JSON.stringify({ programId: Number(id), participantIds: enrolledIds }),
+          invalidate: false,
+        });
+        showSuccess("Payment mocked (local) — enrollment activated.");
+      } catch {
+        showError("Enrolled, but the mock payment failed — fire it from the Debug → Shopify tool.");
+      }
+      return false;
+    }
+    if (!signature) {
+      showError("We couldn't start the checkout. Please try again.");
+      return false;
+    }
+    setSuccessMessage("Redirecting to Shopify for secure payment...");
+    // qty=N single variant + comma-joined account ids — see buildShopifyCheckoutUrl.
+    window.location.href = buildShopifyCheckoutUrl(storeDomain, variantId, enrolledIds, id, signature, discountCode);
+    return true; // spinner stays; page unloads on redirect
+  };
+
   const handleEnroll = async (confirmedRepeat = false) => {
     if (!session) {
       router.push('/');
@@ -301,64 +356,26 @@ export function useProgramEnrollment(id: string) {
         outcomes.push({ participantId, ok: res.status === 200, status: res.status, error: res.error });
       }
 
-      const { enrolledIds, errors } = aggregateEnrollOutcomes(outcomes);
+      const { enrolledIds, refused } = aggregateEnrollOutcomes(outcomes);
+      const named = refused.map((r) => ({ name: memberName(r.participantId), reason: r.error }));
 
-      if (enrolledIds.length > 0) {
-        notifyNavRefresh();
-        // Every checkout starts at the server: it refuses a checkout naming
-        // someone outside the household (400) or from a non-lead (403), and mints the member discount code for
-        // single-pool programs when the household's membership fee covers the program. A
-        // mint failure is non-fatal: an undiscounted link is always a safe fallback,
-        // per lib/shopify/discounts.ts's mintMemberDiscountCode contract. The checkout
-        // signature is not optional: without it the order activates nobody.
-        let discountCode: string | null = null;
-        let signature: string | null = null;
-        if (isPayingOnShopify) {
-          try {
-            const data = await api<{ code?: string | null; signature?: string | null }>(`/api/programs/${id}/discount-code`, {
-              method: 'POST',
-              body: JSON.stringify({ participantIds: enrolledIds }),
-              invalidate: false,
-            });
-            discountCode = pricingEligible ? data.code ?? null : null;
-            signature = data.signature ?? null;
-          } catch (e) {
-            if (e instanceof HttpError && (e.status === 400 || e.status === 403)) {
-              showError(e.message);
-              return;
-            }
-            // Any other failure leaves no signature: refused below.
-          }
+      if (enrolledIds.length > 0) notifyNavRefresh();
+
+      if (isPayingOnShopify && variantId) {
+        const plan: CheckoutPlan = { enrolledIds, variantId, storeDomain, mockPay, pricingEligible };
+        // A refusal pauses before checkout so the family sees who was left out; the accepted claims stay held.
+        if (refused.length > 0) {
+          setRefusedPause({ refusals: named, accepted: enrolledIds.map(memberName), plan: enrolledIds.length > 0 ? plan : null });
+          return;
         }
-        if (isPayingOnShopify && program && variantId && mockPay) {
-          // Local mock: fire the Debug section's orders/paid webhook to activate the
-          // PENDING enrollments, exactly as the dev Shopify tool's button does — no redirect.
-          try {
-            await api('/api/dev/shopify/orders-paid', {
-              method: 'POST',
-              body: JSON.stringify({ programId: program.id, participantIds: enrolledIds }),
-              invalidate: false,
-            });
-            showSuccess("Payment mocked (local) — enrollment activated.");
-          } catch {
-            showError("Enrolled, but the mock payment failed — fire it from the Debug → Shopify tool.");
-          }
-        } else if (isPayingOnShopify && program && variantId && storeDomain) {
-          if (!signature) {
-            showError("We couldn't start the checkout. Please try again.");
-            return;
-          }
-          setSuccessMessage("Redirecting to Shopify for secure payment...");
-          navigating = true;
-          // qty=N single variant + comma-joined account ids — see buildShopifyCheckoutUrl.
-          window.location.href = buildShopifyCheckoutUrl(storeDomain, variantId, enrolledIds, id, signature, discountCode);
-          return; // spinner stays; page unloads on redirect
-        } else {
-          showSuccess(enrolledIds.length > 1 ? `Successfully enrolled ${enrolledIds.length} members!` : "Successfully enrolled!");
-        }
+        navigating = await goToCheckout(plan);
+        return;
       }
 
-      errors.forEach((e) => showError(e));
+      if (enrolledIds.length > 0) {
+        showSuccess(enrolledIds.length > 1 ? `Successfully enrolled ${enrolledIds.length} members!` : "Successfully enrolled!");
+      }
+      named.forEach((r) => showError(`${r.name}: ${r.reason}`));
     } catch (e) {
       showError(errorMessage(e));
     } finally {
@@ -370,11 +387,32 @@ export function useProgramEnrollment(id: string) {
     }
   };
 
+  const continueToCheckout = async () => {
+    const plan = refusedPause?.plan;
+    setRefusedPause(null);
+    if (!plan || writing.current) return;
+    writing.current = true;
+    setEnrolling(true);
+    let navigating = false;
+    try {
+      navigating = await goToCheckout(plan);
+    } catch (e) {
+      showError(errorMessage(e));
+    } finally {
+      if (!navigating) {
+        invalidateLoads();
+        writing.current = false;
+        setEnrolling(false);
+      }
+    }
+  };
+
   return {
     session, status, program, programLoad, successMessage, startEnrollmentProcess, showEnrollmentSelection,
     picker: {
       showIntake, setShowIntake, handleIntakeSaved, loadingHousehold, householdError, householdErrorWhat, reloadHousehold, householdMembers, enrollBlock, needsSetup,
       selectedParticipantIds, setSelectedParticipantIds, enrolling, handleEnroll, repeatPayments, setRepeatPayments,
+      refusedPause, setRefusedPause, continueToCheckout,
       planKind, setPlanKind, confirmPlanOpened, openConfirmPlan, closeConfirmPlan, handleRequestPaymentPlan,
     },
   };
