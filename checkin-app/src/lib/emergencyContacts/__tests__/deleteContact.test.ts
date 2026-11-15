@@ -51,6 +51,7 @@ describe("deleteContact guard", () => {
         const { db, tx } = fakeDb([{ ...valid(1), name: "" }]);
         await deleteContact(db, 7, 1);
         expect(tx.emergencyContact.delete).toHaveBeenCalled();
+        expect(invalidateAttendanceCache).toHaveBeenCalledTimes(1);
     });
 
     it("throws not_found for a contact outside the household", async () => {
