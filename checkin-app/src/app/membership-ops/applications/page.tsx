@@ -3,12 +3,10 @@
 import { useState, Suspense } from "react";
 import { Alert, Button, Card, Center, Group, Loader, Modal, Stack, Switch, Text, Textarea } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
-import { AlertBanner } from "@/components/admin/AlertBanner";
-import { notifications } from "@mantine/notifications";
-import { LoadError } from "@checkin/component-ui";
+import { errorMessage, HttpError, LoadError, showError, showSuccess } from "@checkin/component-ui";
 import { modals } from "@mantine/modals";
 import { useSession } from "next-auth/react";
-import { useLoad } from "@/lib/api";
+import { api, useLoad } from "@/lib/api";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
 import { sharesHousehold } from "@/lib/conflictOfInterest";
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -102,8 +100,6 @@ function ApplicationsBoard() {
   const ownHousehold = (r: ProcessRow) =>
     [r.orgMembership?.householdId, r.subjectPerson?.householdId, r.requestedForHouseholdId].some((h) => sharesHousehold(me?.householdId, h ?? null));
   const [busyId, setBusyId] = useState<number | null>(null);
-  const [message, setMessage] = useState("");
-  const [messageId, setMessageId] = useState<number | null>(null);
   const { active, toggle, clear } = useStatusFilter();
   const [certifyOpened, { open: openCertify, close: closeCertify }] = useDisclosure(false);
   const [pendingCertify, setPendingCertify] = useState<number | null>(null);
@@ -118,89 +114,31 @@ function ApplicationsBoard() {
   );
   const rows = data?.processes ?? [];
 
-  const act = async (processId: number, action: string, extra?: Record<string, unknown>) => {
+  // The row stays busy until the list re-reads, so a second click can't act on a stale row. A 409 means the
+  // row changed under the board, so it re-reads too.
+  const post = async (processId: number, path: string, body: Record<string, unknown>, done: string) => {
     setBusyId(processId);
-    setMessageId(processId);
-    setMessage("");
     try {
-      const res = await fetch("/api/membership-ops/applications/external", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processId, action, ...extra }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        notifications.show({ message: "Updated." });
-        reload();
-        notifyNavRefresh();
-      } else {
-        setMessage(data.error || "Action failed.");
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
+      await api(`/api/membership-ops/applications/${path}`, { method: "POST", body: JSON.stringify({ processId, ...body }), invalidate: false });
+      showSuccess(done);
+      notifyNavRefresh();
+      await reload();
+    } catch (e) {
+      // The title names the application, since the message sits away from its row.
+      const row = rows.find((r) => r.id === processId);
+      showError(errorMessage(e), { key: `application-${processId}`, title: row ? processLabel(row) : `Application #${processId}` });
+      if (e instanceof HttpError && e.status === 409) await reload();
     } finally {
       setBusyId(null);
     }
   };
 
+  const act = (processId: number, action: string) => post(processId, "external", { action }, "Updated.");
   const resetReview = (processId: number, reason: string, wrongPerson: boolean) =>
-    overrideReview(processId, { action: "reset", reason, wrongPerson }, "Sent back for re-review.", "Reset failed.");
+    post(processId, "review-override", { action: "reset", reason, wrongPerson }, "Sent back for re-review.");
   const releaseApplication = (processId: number, reason: string) =>
-    overrideReview(processId, { action: "release", reason }, "Released — the application moves on.", "Release failed.");
-
-  const overrideReview = async (processId: number, body: Record<string, unknown>, done: string, failed: string) => {
-    setBusyId(processId);
-    setMessageId(processId);
-    setMessage("");
-    try {
-      const res = await fetch("/api/membership-ops/applications/review-override", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processId, ...body }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        notifications.show({ message: done });
-        // A repeated reset passes the server's check once the review is open, so the row stays busy until it re-reads.
-        await reload();
-        notifyNavRefresh();
-      } else if (data.code === "wrong_phase") {
-        notifications.show({ color: "red", message: data.error || "This application is no longer blocked.", autoClose: false });
-        reload();
-      } else {
-        setMessage(data.error || failed);
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const archive = async (processId: number) => {
-    setBusyId(processId);
-    setMessageId(processId);
-    setMessage("");
-    try {
-      const res = await fetch("/api/membership-ops/applications/archive", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processId }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        notifications.show({ message: "Application closed." });
-        reload();
-        notifyNavRefresh();
-      } else {
-        setMessage(data.error || "Couldn't close the application.");
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    } finally {
-      setBusyId(null);
-    }
-  };
+    post(processId, "review-override", { action: "release", reason }, "Released — the application moves on.");
+  const archive = (processId: number) => post(processId, "archive", {}, "Application closed.");
 
   // An awaiting review only ever holds APPROVE attestations (any REJECT blocks it).
   const approvals = (r: ProcessRow) => r.attestations.filter((a) => a.result === "APPROVE").length;
@@ -231,7 +169,7 @@ function ApplicationsBoard() {
       closeOnConfirm: false,
       onConfirm: () => {
         if (!reason.trim()) {
-          notifications.show({ color: "red", message: "A reason is required to start a review over.", autoClose: false });
+          showError("A reason is required to start a review over.");
           return;
         }
         modals.close(modalId);
@@ -263,7 +201,7 @@ function ApplicationsBoard() {
       closeOnConfirm: false,
       onConfirm: () => {
         if (!reason.trim()) {
-          notifications.show({ color: "red", message: "A reason is required to release a household.", autoClose: false });
+          showError("A reason is required to release a household.");
           return;
         }
         modals.close(modalId);
@@ -292,83 +230,9 @@ function ApplicationsBoard() {
 
   // Board reopen of a closed application — the server restores the step it was
   // closed from, or refuses with the reason.
-  const unarchive = async (processId: number) => {
-    setBusyId(processId);
-    setMessageId(processId);
-    setMessage("");
-    try {
-      const res = await fetch("/api/membership-ops/applications/unarchive", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processId }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        notifications.show({ message: "Application reopened." });
-        reload();
-        notifyNavRefresh();
-      } else {
-        notifications.show({ color: "red", message: data.error || "Couldn't reopen the application.", autoClose: false });
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const certify = async (processId: number, reason: string) => {
-    setBusyId(processId);
-    setMessageId(processId);
-    setMessage("");
-    try {
-      const res = await fetch("/api/membership-ops/applications/certify-payment", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processId, reason }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        notifications.show({ message: "Certified — membership activated." });
-        reload();
-        notifyNavRefresh();
-      } else if (data.code === "wrong_phase") {
-        notifications.show({ color: "red", message: data.error || "This application is no longer awaiting payment.", autoClose: false });
-        reload();
-      } else {
-        setMessage(data.error || "Certification failed.");
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const recordRefund = async (processId: number, reason: string) => {
-    setBusyId(processId);
-    setMessageId(processId);
-    setMessage("");
-    try {
-      const res = await fetch("/api/membership-ops/applications/refund", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processId, reason }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        notifications.show({ message: "Refund recorded." });
-        reload();
-        notifyNavRefresh();
-      } else {
-        setMessage(data.error || "Couldn't record the refund.");
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    } finally {
-      setBusyId(null);
-    }
-  };
+  const unarchive = (processId: number) => post(processId, "unarchive", {}, "Application reopened.");
+  const certify = (processId: number, reason: string) => post(processId, "certify-payment", { reason }, "Certified — membership activated.");
+  const recordRefund = (processId: number, reason: string) => post(processId, "refund", { reason }, "Refund recorded.");
 
   const handleRefund = (processId: number) => {
     setPendingRefund(processId);
@@ -609,10 +473,6 @@ function ApplicationsBoard() {
                         : "After refunding in Shopify. The application goes back to awaiting payment; the background check is unchanged."}
                   </Text>
                 </Group>
-              )}
-
-              {messageId === r.id && (
-                <AlertBanner message={message} tone="error" mt="md" />
               )}
 
               <Group justify="flex-end" mt="md">

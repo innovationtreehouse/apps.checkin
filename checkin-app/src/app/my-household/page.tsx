@@ -2,10 +2,10 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { LoadError } from '@checkin/component-ui';
+import { errorMessage, LoadError, showError, showSuccess } from '@checkin/component-ui';
 import { useRequireRole } from '@/hooks/useRequireRole';
 import { useSeedForm } from '@/hooks/useSeedForm';
-import { useLoad } from '@/lib/api';
+import { api, useLoad } from '@/lib/api';
 import { Alert, Badge, Button, Card, Checkbox, Group, Paper, SimpleGrid, Stack, Text, Textarea, TextInput, Title, Tooltip } from '@mantine/core';
 import { AlertBanner, type AlertTone } from '@/components/admin/AlertBanner';
 import { PageContainer } from '@/components/ui/PageContainer';
@@ -13,7 +13,6 @@ import EmergencyContactNotice from '@/components/ui/EmergencyContactNotice';
 import { calculateAge, formatDateOnly, isYouth } from '@/lib/time';
 import { isMembershipLapsed } from '@/lib/membership/lapsed';
 import TrustedAdultPanel from '@/components/TrustedAdultPanel';
-import { notifications } from '@mantine/notifications';
 import TodoCard from '@/components/TodoCard';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
 import { isOrgAccount } from '@/lib/orgAccount';
@@ -63,6 +62,8 @@ type HouseholdData = {
 } & Partial<StructuredAddress> | null;
 type HouseholdAnswer = { household: HouseholdData; boardReplyTo?: string | null; validUntil?: string | null };
 
+type MemberAnswer = { message?: string; warning?: { message: string } | null; leadRejection?: string } | null;
+
 const blankContactForm = { id: null as number | null, name: "", phone: "", email: "", relationship: "" };
 
 export default function HouseholdPage() {
@@ -78,12 +79,7 @@ export default function HouseholdPage() {
   const { data: renewalAnswer, error: renewalError, reload: reloadRenewal } = useLoad<{ renewalDue?: boolean }>(ready ? '/api/membership/renewal-status' : null);
   const renewalDue = !!renewalAnswer?.renewalDue;
   const [message, setMessage] = useState<{ text: string; tone: AlertTone } | null>(null);
-  // Explicit tone per outcome so a real error can never render green (was
-  // decided by `message.includes('success')`).
-  // Successes toast in the corner (no layout shift); errors/warnings stay in
-  // the page banner where they can't be missed.
-  const ok = (text: string) => notifications.show({ message: text });
-  const err = (text: string) => setMessage({ text, tone: "error" });
+  // A warning a save leaves to read stays in the page banner.
   const warn = (text: string) => setMessage({ text, tone: "warning" });
   const [addingHouseholdMember, setAddingHouseholdMember] = useState(false);
   const [savingHouseholdMember, setSavingHouseholdMember] = useState(false);
@@ -111,9 +107,6 @@ export default function HouseholdPage() {
   const [contactForm, setContactForm] = useState(blankContactForm);
   const [showContactForm, setShowContactForm] = useState(false);
   const [savingContact, setSavingContact] = useState(false);
-  // Server/collision errors for the emergency-contact card render inline next to
-  // the form, not in the page-top banner which is far off-screen from this section.
-  const [contactError, setContactError] = useState("");
   // Per-field client validation (red ring + subtext), checked on Add/Save click
   // so phone/email/name errors never flash while the user is still typing.
   const [contactErrors, setContactErrors] = useState<{ name?: string; phone?: string; email?: string }>({});
@@ -148,23 +141,13 @@ export default function HouseholdPage() {
     if (Object.keys(errors).length > 0) return;
     setSavingSettings(true);
     try {
-      const householdRes = await fetch('/api/household/settings', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...address, notes: notes || null })
-      });
-
-      if (householdRes.ok) {
-        ok("Settings updated successfully!");
-        setInitialAddress(address);
-        setInitialNotes(notes);
-        fetchHousehold();
-        notifyNavRefresh();
-      } else {
-        err("Failed to update some settings.");
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error saving settings.", autoClose: false });
+      await api('/api/household/settings', { method: 'PATCH', body: JSON.stringify({ ...address, notes: notes || null }) });
+      showSuccess("Settings updated successfully!");
+      setInitialAddress(address);
+      setInitialNotes(notes);
+      notifyNavRefresh();
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setSavingSettings(false);
     }
@@ -179,51 +162,35 @@ export default function HouseholdPage() {
     setContactErrors(errs);
     if (Object.keys(errs).length > 0) return;
     setSavingContact(true);
-    setContactError("");
     try {
       const editing = contactForm.id !== null;
       const url = editing ? `/api/household/emergency-contacts/${contactForm.id}` : '/api/household/emergency-contacts';
-      const res = await fetch(url, {
+      await api(url, {
         method: editing ? 'PATCH' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: contactForm.name, phone: contactForm.phone, email: contactForm.email, relationship: contactForm.relationship }),
       });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        notifications.show({ message: editing ? "Emergency contact updated." : "Emergency contact added." });
-        setContactForm(blankContactForm);
-        setShowContactForm(false);
-        fetchContacts();
-        notifyNavRefresh();
-      } else {
-        setContactError(data.error || "Failed to save emergency contact.");
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error saving emergency contact.", autoClose: false });
+      showSuccess(editing ? "Emergency contact updated." : "Emergency contact added.");
+      setContactForm(blankContactForm);
+      setShowContactForm(false);
+      notifyNavRefresh();
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setSavingContact(false);
     }
   };
 
   const handleDeleteContact = async (id: number) => {
-    setContactError("");
     try {
-      const res = await fetch(`/api/household/emergency-contacts/${id}`, { method: 'DELETE' });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        notifications.show({ message: "Emergency contact removed." });
-        fetchContacts();
-        notifyNavRefresh();
-      } else {
-        setContactError(data.error || "Failed to remove emergency contact.");
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error removing emergency contact.", autoClose: false });
+      await api(`/api/household/emergency-contacts/${id}`, { method: 'DELETE' });
+      showSuccess("Emergency contact removed.");
+      notifyNavRefresh();
+    } catch (e) {
+      showError(errorMessage(e));
     }
   };
 
   const startAddContact = () => {
-    setContactError("");
     setContactErrors({});
     setContactForm(blankContactForm);
     setShowContactForm(true);
@@ -233,12 +200,10 @@ export default function HouseholdPage() {
   const applyContactWarning = (warning?: { message: string } | null) => {
     if (!warning) return false;
     warn(`⚠️ ${warning.message}`);
-    fetchContacts();
     startAddContact();
     return true;
   };
   const startEditContact = (c: EmergencyContact) => {
-    setContactError("");
     setContactErrors({});
     setContactForm({ id: c.id, name: c.name, phone: c.phone, email: c.email || "", relationship: c.relationship || "" });
     setShowContactForm(true);
@@ -253,23 +218,16 @@ export default function HouseholdPage() {
     if (Object.keys(errs).length > 0) return;
     setSavingHouseholdMember(true);
     try {
-      const res = await fetch('/api/household', {
+      const data = await api<MemberAnswer>('/api/household', {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ memberName: householdMemberForm.name, memberEmail: householdMemberForm.email, memberDob: householdMemberForm.over25 ? "" : householdMemberForm.dob, memberPhone: householdMemberForm.phone, memberOver25: householdMemberForm.over25, memberAllergies: householdMemberForm.allergies })
       });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        setHouseholdMemberForm({ name: "", email: "", dob: "", phone: "", over25: false, allergies: "" });
-        setHouseholdMemberErrors({});
-        setAddingHouseholdMember(false);
-        fetchHousehold();
-        if (!applyContactWarning(data.warning)) ok(data.message || "Household member added successfully!");
-      } else {
-        err(data.error || "Failed to add household member.");
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error adding household member.", autoClose: false });
+      setHouseholdMemberForm({ name: "", email: "", dob: "", phone: "", over25: false, allergies: "" });
+      setHouseholdMemberErrors({});
+      setAddingHouseholdMember(false);
+      if (!applyContactWarning(data?.warning)) showSuccess(data?.message || "Household member added successfully!");
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setSavingHouseholdMember(false);
     }
@@ -282,46 +240,33 @@ export default function HouseholdPage() {
     setEditErrors(errs);
     if (Object.keys(errs).length > 0) return;
     try {
-      const res = await fetch('/api/household/member', {
+      const data = await api<MemberAnswer>('/api/household/member', {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ participantId, name: editForm.name, nickname: editForm.nickname, email: emailLocked ? undefined : editForm.email, dob: editForm.over25 ? "" : editForm.dob, phone: editForm.phone, isLead: editForm.isLead, over25: editForm.over25, allergies: editForm.allergies })
       });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        setEditErrors({});
-        setEditingHouseholdMemberId(null);
-        fetchHousehold();
-        notifyNavRefresh();
-        // A member edit can both collide with an emergency contact (warning,
-        // which also opens the add-contact flow) and be declined the lead
-        // promotion (leadRejection). Surface the contact warning first since
-        // it's the more urgent, then the lead caveat, else a plain success.
-        if (!applyContactWarning(data.warning)) {
-          if (data.leadRejection) warn(`Household member updated, but not added as a lead — ${data.leadRejection}`);
-          else ok(data.message || "Household member updated successfully!");
-        }
-      } else {
-        err(data.error || "Failed to update household member.");
+      setEditErrors({});
+      setEditingHouseholdMemberId(null);
+      notifyNavRefresh();
+      // A member edit can both collide with an emergency contact (warning,
+      // which also opens the add-contact flow) and be declined the lead
+      // promotion (leadRejection). Surface the contact warning first since
+      // it's the more urgent, then the lead caveat, else a plain success.
+      if (!applyContactWarning(data?.warning)) {
+        if (data?.leadRejection) warn(`Household member updated, but not added as a lead — ${data.leadRejection}`);
+        else showSuccess(data?.message || "Household member updated successfully!");
       }
-    } catch {
-      notifications.show({ color: "red", message: "Network error updating household member.", autoClose: false });
+    } catch (e) {
+      showError(errorMessage(e));
     }
   };
 
   const handleMakeLead = async (participantId: number) => {
     setMessage(null);
     try {
-      const res = await fetch('/api/household/lead', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ participantId }) });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        ok("Household member promoted to lead successfully!");
-        fetchHousehold();
-      } else {
-        err(data.error || "Failed to promote household member.");
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error promoting household member.", autoClose: false });
+      await api('/api/household/lead', { method: 'POST', body: JSON.stringify({ participantId }) });
+      showSuccess("Household member promoted to lead successfully!");
+    } catch (e) {
+      showError(errorMessage(e));
     }
   };
 
@@ -535,9 +480,6 @@ export default function HouseholdPage() {
                 </Text>
                 <EmergencyContactNotice mb="sm" />
 
-                {contactError && (
-                  <Alert color="red" variant="light" mb="sm" withCloseButton onClose={() => setContactError("")}>{contactError}</Alert>
-                )}
 
                 {contactsError && <LoadError what="emergency contacts" message={contactsError} onRetry={fetchContacts} />}
 
@@ -596,7 +538,7 @@ export default function HouseholdPage() {
                       </SimpleGrid>
                       <Group gap="xs">
                         <Button type="submit" size="xs" fz={15} loading={savingContact}>{contactForm.id !== null ? "Save Contact" : "Add Contact"}</Button>
-                        <Button type="button" size="xs" fz={15} variant="default" onClick={() => { setShowContactForm(false); setContactForm(blankContactForm); setContactError(""); setContactErrors({}); }}>Cancel</Button>
+                        <Button type="button" size="xs" fz={15} variant="default" onClick={() => { setShowContactForm(false); setContactForm(blankContactForm); setContactErrors({}); }}>Cancel</Button>
                       </Group>
                     </Stack>
                   </form>

@@ -391,20 +391,21 @@ describe("membership-ops/participants/merge page", () => {
     fireEvent.click(screen.getByRole("button", { name: "Proceed to Preview" }));
     await screen.findByText("Preview & Confirm Merge");
 
-    global.fetch = jest.fn(async () => ({ ok: false, status: 400, json: async () => ({ error: "Cannot merge." }) })) as unknown as typeof fetch;
+    global.fetch = jest.fn(async () => ({ ok: false, status: 400, json: async () => ({ error: "Cannot merge." }), text: async () => JSON.stringify({ error: "Cannot merge." }) })) as unknown as typeof fetch;
     fireEvent.click(screen.getByRole("button", { name: "Confirm Merge & Delete" }));
-    expect(await screen.findByText("Cannot merge.")).toBeInTheDocument();
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Cannot merge.", autoClose: false })));
+    expect(screen.queryByText("Cannot merge.")).not.toBeInTheDocument();
 
     // Network failure surfaces as a persistent toast, and never leaks the raw JS error text.
     global.fetch = jest.fn(() => Promise.reject(new Error("Connection lost"))) as unknown as typeof fetch;
     fireEvent.click(screen.getByRole("button", { name: "Confirm Merge & Delete" }));
     await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(
-      expect.objectContaining({ color: "red", message: "Network error", autoClose: false })));
+      expect.objectContaining({ color: "red", message: "Couldn't reach the server. Check your connection and try again.", autoClose: false })));
     expect(screen.queryByText("Connection lost")).not.toBeInTheDocument();
 
     global.fetch = jest.fn(() => Promise.reject("not an Error")) as unknown as typeof fetch;
     fireEvent.click(screen.getByRole("button", { name: "Confirm Merge & Delete" }));
-    await waitFor(() => expect(notifications.show).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledTimes(3));
   });
 
   it("resets back to the search screen after Merge More", async () => {

@@ -14,7 +14,7 @@ jest.mock("next/navigation", () => ({
     useSearchParams: () => new URLSearchParams(search),
 }));
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
 import { MantineProvider } from "@mantine/core";
 import { ModalsProvider } from "@mantine/modals";
 import { EnvProvider } from "@/components/EnvProvider";
@@ -224,6 +224,58 @@ describe("AdminMembershipPage", () => {
         // Board ruling B5/B25: the board resets a blocked review but never clears it.
         expect(screen.queryByRole("button", { name: /Override/ })).not.toBeInTheDocument();
         expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+    });
+
+    it("shows a refused row action in the lower right, and re-reads the board on a 409", async () => {
+        setSession({ id: 99, householdId: 99, isBoardMember: true });
+        const answer = (status: number, body: unknown) => ({ ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) }) as Response;
+        const fetchMock = jest.fn(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url.includes("/external")) return answer(400, { error: "The contract is already signed." });
+            if (url.includes("/certify-payment")) return answer(409, { error: "This application is no longer awaiting payment.", code: "wrong_phase" });
+            return answer(200, { processes: rows });
+        });
+        global.fetch = fetchMock as unknown as typeof fetch;
+        const boardReads = () => fetchMock.mock.calls.filter(([url]) => String(url) === "/api/membership-ops/applications").length;
+        renderPage();
+        await screen.findByText("Awaiting Family");
+
+        fireEvent.click(screen.getByRole("button", { name: "Confirm contract signed" }));
+        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", title: "Awaiting Family", message: "The contract is already signed.", autoClose: false })));
+        expect(screen.queryByText("The contract is already signed.")).not.toBeInTheDocument();
+
+        const readsBefore = boardReads();
+        fireEvent.click(screen.getByRole("button", { name: /Certify payment plan/ }));
+        fireEvent.change(await screen.findByLabelText(/^Reason/), { target: { value: "Paid by check" } });
+        fireEvent.click(screen.getByRole("button", { name: "Certify" }));
+        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "This application is no longer awaiting payment." })));
+        await waitFor(() => expect(boardReads()).toBe(readsBefore + 1));
+    });
+
+    it("keeps the certify button disabled while the certify is in flight", async () => {
+        setSession({ id: 99, householdId: 99, isBoardMember: true });
+        let release: (res: Response) => void = () => {};
+        const answer = (body: unknown) => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }) as Response;
+        const fetchMock = jest.fn((input: RequestInfo | URL) =>
+            String(input).includes("/certify-payment")
+                ? new Promise<Response>((resolve) => { release = resolve; })
+                : Promise.resolve(answer({ processes: rows })));
+        global.fetch = fetchMock as unknown as typeof fetch;
+        const certifies = () => fetchMock.mock.calls.filter(([url]) => String(url).includes("/certify-payment")).length;
+        renderPage();
+        await screen.findByText("Payment Family");
+
+        fireEvent.click(screen.getByRole("button", { name: /Certify payment plan/ }));
+        fireEvent.change(await screen.findByLabelText(/^Reason/), { target: { value: "Paid by check" } });
+        fireEvent.click(screen.getByRole("button", { name: "Certify" }));
+        await waitFor(() => expect(certifies()).toBe(1));
+        const rowButton = screen.getByRole("button", { name: /Certify payment plan/ });
+        expect(rowButton).toBeDisabled();
+        fireEvent.click(rowButton);
+        expect(certifies()).toBe(1);
+
+        release(answer({ ok: true }));
+        await waitFor(() => expect(screen.getByRole("button", { name: /Certify payment plan/ })).toBeEnabled());
     });
 
     it("shows a household application waiting on its check review", async () => {
