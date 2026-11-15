@@ -2,7 +2,6 @@ import { accountTypeRefusal, type QboAccountSummary } from "@checkin/quickbooks"
 import { db } from "../db";
 import { getOrgId } from "../runtime";
 import { LISTED_TYPES, bookableTypes } from "../lib/account-types";
-import { CLOSED_STATES } from "../lib/signoff";
 import { IN_QUICKBOOKS, WAITING_ON_FINANCE } from "./holdService";
 
 const withPlace = (place: string, refusal: string | null) => refusal && `${place}: ${refusal}`;
@@ -20,11 +19,12 @@ export async function misTypedQuickBooksPicks(accounts: readonly QboAccountSumma
       select: { category: true, subcategory: true, partNumber: true, isCapital: true, qbAccount: true },
       orderBy: { id: "asc" },
     }),
-    // Only lines finance may still re-pick, by setHeldLineAccount's gate, on an expense that can still book.
+    // Only lines finance may still re-pick, by setHeldLineAccount's gate, on an expense that still books:
+    // a closed expense still posts, but a backfill or a rejected one never does.
     db.expenseLineItem.findMany({
       where: {
         manualQbAccount: { not: null },
-        expense: { orgId, state: { notIn: [...CLOSED_STATES] }, qbMatchState: { notIn: [...IN_QUICKBOOKS] } },
+        expense: { orgId, backfill: false, state: { not: "rejected" }, qbMatchState: { notIn: [...IN_QUICKBOOKS] } },
         OR: [{ expense: { qbMatchState: { in: [...WAITING_ON_FINANCE] } } }, { holds: { some: { status: "PENDING" } } }],
       },
       select: { expenseId: true, lineNumber: true, isCapital: true, manualQbAccount: true },

@@ -51,13 +51,13 @@ describe("expense misTypedQuickBooksPicks", () => {
     ]);
   });
 
-  it("reads only lines finance may still re-pick: held, or on an expense waiting on finance, never booked, skipped or closed", async () => {
+  it("reads only lines finance may still re-pick: held, or on an expense waiting on finance, never booked, backfill or rejected", async () => {
     await misTypedQuickBooksPicks(ACCOUNTS);
     expect(db.expenseLineItem.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
           manualQbAccount: { not: null },
-          expense: { orgId: ORG, state: { notIn: ["qb_complete", "qb_skipped", "rejected"] }, qbMatchState: { notIn: ["POSTING", "CREATED", "MATCHED"] } },
+          expense: { orgId: ORG, backfill: false, state: { not: "rejected" }, qbMatchState: { notIn: ["POSTING", "CREATED", "MATCHED"] } },
           OR: [{ expense: { qbMatchState: { in: ["POST_FAILED", "NEEDS_FINANCE", "UNBOOKED", "AMBIGUOUS"] } } }, { holds: { some: { status: "PENDING" } } }],
         },
       }),
