@@ -27,8 +27,9 @@ jest.mock('@/lib/verify-kiosk', () => ({
 // jest.fn (default false, per beforeEach below) so the "ops-stg" describe below
 // can flip it per-test — every OTHER case in this file runs with the gate off.
 jest.mock('@/lib/config', () => ({
-    config: { isLocal: () => false, isProd: () => false, isStaging: jest.fn(() => false) },
+    config: { isLocal: () => false, isProd: () => false, isStaging: jest.fn(() => false), isDeployedDev: () => false },
     isStagingAccessAllowed: jest.requireActual('@/lib/config').isStagingAccessAllowed,
+    isVerifiedOrgAccount: jest.requireActual('@/lib/config').isVerifiedOrgAccount,
 }));
 
 const mockSession = getServerSession as jest.Mock;

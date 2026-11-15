@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import prisma from "@/lib/prisma";
-import { config } from "@/lib/config";
+import { config, isVerifiedOrgAccount } from "@/lib/config";
 import { authOptions, createParticipantWithHousehold } from "@/lib/auth-options";
 import { apiError } from "@/lib/api-response";
 
@@ -24,8 +24,9 @@ const PERSONA_LIMIT = 50;
  *
  * Available on the dev instance and local laptops only. Middleware exempts /api, so on the
  * cloud dev instance we additionally require a session here — otherwise an anonymous visitor
- * could enumerate the persona list, violating the "not world-readable" rule. On local no
- * session is required (the logged-out picker is the initial login path).
+ * could enumerate the persona list, violating the "not world-readable" rule. On the deployed
+ * dev instance that session must be a verified org account. On local no session is required
+ * (the logged-out picker is the initial login path).
  */
 export async function GET(request: Request) {
     // isDevInstance() fails safe to prod; mirrors the shared dev fence (guard.ts).
@@ -37,12 +38,12 @@ export async function GET(request: Request) {
         // getServerSession in app/api/**. It is part of the dev persona-switch
         // mechanism, not a normal authenticated read: on local it must serve
         // anonymous callers (the logged-out picker is the initial login path),
-        // and on cloud-dev it gates on ANY session — including a denied one, so
+        // and on cloud-dev it gates on any org session — including a denied one, so
         // a denied dev session can still switch to a non-denied persona. Neither
         // withAuth (401s anonymous) nor getOptionalSessionUser (denied → 404,
         // breaking persona-switch) fits; this route stays on getServerSession.
         const session = await getServerSession(authOptions);
-        if (!session?.user) {
+        if (!session?.user || (config.isDeployedDev() && !isVerifiedOrgAccount(session.user))) {
             return apiError("Not available", 404);
         }
     }
