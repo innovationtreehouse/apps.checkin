@@ -57,7 +57,7 @@ const EXPIRING_SOON_DAYS = 30;
 
 export default function TrustedAdultPanel() {
     const { data, error, reload } = useLoad<{ trustedAdults: TrustedAdult[] }>("/api/trusted-adults/mine");
-    const items = data?.trustedAdults ?? [];
+    const items = (!error && data?.trustedAdults) || [];
     const [now] = useState(() => Date.now());
     const [opened, { open, close }] = useDisclosure(false);
     const [submitting, setSubmitting] = useState(false);
@@ -185,7 +185,7 @@ export default function TrustedAdultPanel() {
 
             {error && <LoadError what="your trusted adults" message={error} onRetry={reload} />}
             {!data && !error && <Text c="dimmed" size="sm">Loading…</Text>}
-            {data && items.length === 0 && (
+            {data && !error && items.length === 0 && (
                 <Text c="dimmed" size="sm">No trusted adults added yet.</Text>
             )}
 

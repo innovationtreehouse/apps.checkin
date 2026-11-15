@@ -101,7 +101,7 @@ const daysBetween = (aIso: string, bIso: string) =>
 export default function AdminTrustedAdultsPage() {
     const { ready, loading: authLoading, user } = useRequireRole(TRUSTED_ADULTS_ROLES);
     const { data, error, reload } = useLoad<{ trustedAdults: TrustedAdult[] }>(ready ? "/api/safety/trusted-adults" : null);
-    const items = data?.trustedAdults ?? [];
+    const items = (!error && data?.trustedAdults) || [];
     const [busyId, setBusyId] = useState<number | null>(null);
     const [shared, setShared] = useState<Record<number, string>>({});
     // When a prior board note exists, force the board to pick "reuse" or "write new"
@@ -201,7 +201,7 @@ export default function AdminTrustedAdultsPage() {
             </div>
 
             {error && <LoadError what="the trusted-adult queue" message={error} onRetry={reload} />}
-            {data && items.length === 0 && <Text c="dimmed">Nothing in the queue.</Text>}
+            {data && !error && items.length === 0 && <Text c="dimmed">Nothing in the queue.</Text>}
 
             {items.map((ta) => {
                 const latest = ta.reviews[0];

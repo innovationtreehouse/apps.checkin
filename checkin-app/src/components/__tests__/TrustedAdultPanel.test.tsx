@@ -161,6 +161,24 @@ describe("TrustedAdultPanel", () => {
     expect(screen.queryByText("No trusted adults added yet.")).not.toBeInTheDocument();
   });
 
+  it("replaces the list with the load failure when a reload after a write fails", async () => {
+    let listLoads = 0;
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") return new Response("{}", { status: 200 });
+      listLoads += 1;
+      return listLoads === 1
+        ? new Response(JSON.stringify({ trustedAdults: [trustedAdult()] }), { status: 200 })
+        : new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
+    }) as unknown as typeof fetch;
+    renderWithProviders(<TrustedAdultPanel />);
+
+    const card = (await screen.findByText("Jane Doe")).closest(".mantine-Card-root") as HTMLElement;
+    fireEvent.click(within(card).getByRole("button", { name: /Withdraw/i }));
+
+    expect(await screen.findByText("Couldn't load your trusted adults")).toBeInTheDocument();
+    expect(screen.queryByText("Jane Doe")).not.toBeInTheDocument();
+  });
+
   it("offers Delete (not Withdraw) once an entry is withdrawn", async () => {
     mockFetchJson({ "/api/trusted-adults/mine": { trustedAdults: [trustedAdult({ status: "REVOKED" })] } });
     renderWithProviders(<TrustedAdultPanel />);

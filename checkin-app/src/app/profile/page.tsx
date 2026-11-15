@@ -71,7 +71,6 @@ export default function ProfilePage() {
           over25: form.over25
         })
       });
-      setDirty(false);
       showSuccess("Profile updated successfully!");
     } catch (err) {
       showError(errorMessage(err));

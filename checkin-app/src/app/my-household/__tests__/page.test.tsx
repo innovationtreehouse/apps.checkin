@@ -4,7 +4,7 @@ jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
 
-import { act, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { notifications } from "@mantine/notifications";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl, router } from "@/test-helpers/rtl";
 import { pinTimezone } from "@/test-helpers/tz";
@@ -674,6 +674,10 @@ describe("HouseholdPage", () => {
 });
 
 describe("HouseholdPage failed load", () => {
+  // The trusted-adult panel on this page has its own load and Retry, so each Retry is found inside its own failure.
+  const retryIn = (title: string) =>
+    within(screen.getByText(title).closest(".mantine-Alert-root") as HTMLElement).getByRole("button", { name: "Retry" });
+
   it("shows an error with a retry when the household fails to load", async () => {
     setSession({ id: 10 });
     mockFetchJson({ "/api/membership/renewal-status": { renewalDue: false } });
@@ -682,7 +686,7 @@ describe("HouseholdPage failed load", () => {
     expect(await screen.findByText("Couldn't load your household")).toBeInTheDocument();
 
     mockRoutes({ "/api/membership/renewal-status": { renewalDue: false } });
-    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    fireEvent.click(retryIn("Couldn't load your household"));
     expect(await screen.findByText("Smith Household")).toBeInTheDocument();
   });
 
@@ -700,7 +704,7 @@ describe("HouseholdPage failed load", () => {
     expect(await screen.findByText("Couldn't load emergency contacts")).toBeInTheDocument();
 
     mockRoutes({ "/api/membership/renewal-status": { renewalDue: false } });
-    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    fireEvent.click(retryIn("Couldn't load emergency contacts"));
     expect(await screen.findByText(/No emergency contact on file/)).toBeInTheDocument();
   });
 
@@ -738,7 +742,7 @@ describe("HouseholdPage failed load", () => {
     expect(await screen.findByText("Couldn't load your renewal status")).toBeInTheDocument();
 
     mockRoutes({ "/api/membership/renewal-status": { renewalDue: true } });
-    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    fireEvent.click(retryIn("Couldn't load your renewal status"));
     expect(await screen.findByText("Renew your membership now!")).toBeInTheDocument();
   });
 });
