@@ -149,6 +149,19 @@ describe("createAnthropicOcr — results", () => {
     expect(await ocr.extract(TXT, "text/plain")).toEqual({ success: false, kind: "data", error: "no line items were found" });
   });
 
+  it("names a field it could not use apart from a reading with no lines", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    createMock.mockResolvedValue(jsonResponse({ ...VALID_INPUT, currency: "US$" }));
+    expect(await ocr.extract(TXT, "text/plain")).toEqual({
+      success: false,
+      kind: "data",
+      error: "the reader's answer had a field we could not use",
+    });
+    expect(logged).toHaveBeenCalledWith("[receipt] OCR answer failed the schema:", { fields: ["currency"] });
+    expect(JSON.stringify(logged.mock.calls)).not.toContain("US$");
+    logged.mockRestore();
+  });
+
   it("keeps a reading without its retailer, date or total, for the submitter to fill in", async () => {
     const noTotal: Record<string, unknown> = { ...VALID_INPUT };
     delete noTotal.receiptTotal;
