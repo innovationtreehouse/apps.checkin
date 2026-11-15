@@ -5,6 +5,7 @@ import QRCode from "qrcode";
 import { pdf } from "@react-pdf/renderer";
 import { Badge, Button, Checkbox, Group, Select, Stack, Text, TextInput } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import { errorMessage, FAILURE_TEXT, HttpError, LoadError } from "@checkin/component-ui";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { FACILITY_AGGREGATE_ROLES } from "@/lib/nav/sections/facilityOps";
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -48,6 +49,8 @@ export default function PrintBadgesPage() {
   const [filterByYear, setFilterByYear] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [searchAttempt, setSearchAttempt] = useState(0);
   const [availableYears, setAvailableYears] = useState<string[]>([]);
   const [selectedYear, setSelectedYear] = useState<string | null>(null);
   // What the admin has typed into a Nickname box, keyed by person. Held apart from
@@ -66,17 +69,20 @@ export default function PrintBadgesPage() {
     if (searchTerm) url.searchParams.set('q', searchTerm);
     fetch(url.toString())
       .then(async (res) => {
-        const data = await res.json();
-        if (current && data.people) setParticipants(data.people);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new HttpError(typeof data.error === 'string' && data.error.trim() ? data.error : FAILURE_TEXT, res.status);
+        if (!current) return;
+        setParticipants(data.people ?? []);
+        setSearchError(null);
       })
-      .catch((e) => {
-        if (current) console.error("Failed to search people for badges:", e);
+      .catch((e: unknown) => {
+        if (current) setSearchError(errorMessage(e));
       })
       .finally(() => {
         if (current) setLoading(false);
       });
     return () => { current = false; };
-  }, [ready, searchTerm]);
+  }, [ready, searchTerm, searchAttempt]);
 
   // Load available membership years on mount.
   useEffect(() => {
@@ -427,16 +433,27 @@ export default function PrintBadgesPage() {
         </Button>
       </Group>
 
-      <DataTable
-        columns={columns}
-        rows={visible}
-        getRowKey={(p) => p.id}
-        loading={loading}
-        emptyMessage={hidden > 0
-          ? `No active people match — ${hidden} hidden by the filter.`
-          : "No participants found."}
-        rowProps={(p) => ({ bg: selectedIds.has(p.id) ? 'var(--mantine-color-blue-light)' : undefined })}
-      />
+      {searchError ? (
+        <LoadError
+          what="participants"
+          message={searchError}
+          onRetry={() => {
+            setLoading(true);
+            setSearchAttempt(n => n + 1);
+          }}
+        />
+      ) : (
+        <DataTable
+          columns={columns}
+          rows={visible}
+          getRowKey={(p) => p.id}
+          loading={loading}
+          emptyMessage={hidden > 0
+            ? `No active people match — ${hidden} hidden by the filter.`
+            : "No participants found."}
+          rowProps={(p) => ({ bg: selectedIds.has(p.id) ? 'var(--mantine-color-blue-light)' : undefined })}
+        />
+      )}
     </Stack>
   );
 }
