@@ -44,7 +44,7 @@ export const GET = handler<{ id: string }>('GET /api/events/[id]', async ({ auth
             program: {
                 select: {
                     leadMentorId: true,
-                    volunteers: { where: { isCore: true }, select: { personId: true, isCore: true } }
+                    volunteers: { where: { isCore: true }, select: { personId: true } }
                 }
             }
         }
@@ -53,7 +53,7 @@ export const GET = handler<{ id: string }>('GET /api/events/[id]', async ({ auth
         auth.user.isSysadmin ||
         auth.user.isBoardMember ||
         gate.program?.leadMentorId === auth.user.id ||
-        (gate.program?.volunteers.some(v => v.personId === auth.user.id && v.isCore) ?? false)
+        (gate.program?.volunteers.some(v => v.personId === auth.user.id) ?? false)
     );
     if (!isStaff) throw notFound('Event not found');
 
@@ -112,6 +112,7 @@ export const GET = handler<{ id: string }>('GET /api/events/[id]', async ({ auth
         }
     });
 
+    // The event can be deleted between the staff check and this read.
     if (!event) throw notFound('Event not found');
 
     if (!event.program) return { Event: event };
