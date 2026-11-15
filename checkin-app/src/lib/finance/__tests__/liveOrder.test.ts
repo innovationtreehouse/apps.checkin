@@ -65,6 +65,18 @@ describe("recordUnreportedReversal", () => {
         await expect(recordUnreportedReversal("123")).rejects.toThrow();
     });
 
+    it.each(["12.34", "1.005"])("records a refunded amount of %s on an order still marked paid", async (amount) => {
+        answer({ data: { order: order({ totalRefundedSet: { shopMoney: { amount } } }) } });
+        await recordUnreportedReversal("123");
+        expect(recordReversal).toHaveBeenCalledWith("123", "REFUND");
+    });
+
+    it.each(["12abc", ""])("throws on a refunded amount of %j rather than reading it as a number", async (amount) => {
+        answer({ data: { order: order({ totalRefundedSet: { shopMoney: { amount } } }) } });
+        await expect(recordUnreportedReversal("123")).rejects.toThrow(/Invalid monetary value/);
+        expect(recordReversal).not.toHaveBeenCalled();
+    });
+
     it("judges on the ledger alone when Shopify returns no order, or the store is not configured", async () => {
         answer({ data: { order: null } });
         await expect(recordUnreportedReversal("123")).resolves.toBeUndefined();

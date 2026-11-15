@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { Alert, Button, NumberInput, Paper, Stack, Switch, Text, Title } from "@mantine/core";
-import { formatCents } from "@checkin/money";
+import { dollarsToCents, formatCents } from "@checkin/money";
 import { send, useLoad, useRoles } from "../components/api";
 import { LoadError } from "@checkin/component-ui";
 import { financeCeilingCents } from "../lib/threshold-rules";
@@ -48,7 +48,7 @@ export default function SettingsPage() {
     return edits[key] ?? (saved == null ? "" : saved / 100);
   };
   const reach = (key: Key, min: number): Reach =>
-    isBoard || !settings.data ? { readOnly: false } : reachOf(key, settings.data[key], Math.round(min * 100));
+    isBoard || !settings.data ? { readOnly: false } : reachOf(key, settings.data[key], dollarsToCents(min));
 
   async function save() {
     const patch = Object.fromEntries([
@@ -56,7 +56,7 @@ export default function SettingsPage() {
       ...FIELDS.flatMap((f) => {
         if (CAPITAL_KEYS.has(f.key) && !reviewOn) return [];
         const v = edits[f.key];
-        return typeof v === "number" ? [[f.key, Math.round(v * 100)]] : [];
+        return typeof v === "number" ? [[f.key, dollarsToCents(v)]] : [];
       }),
       ...QB_FIELDS.flatMap((f) => {
         const v = edits[f.key];

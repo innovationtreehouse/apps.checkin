@@ -5,7 +5,7 @@ import { notifications } from "@mantine/notifications";
 import { ActionIcon, Badge, Button, Group, NumberInput, Paper, Select, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { act, api, errorMessage, isRefusal, loadError, paged, useLoad, when } from "../components/api";
 import { formatGtinDisplay } from "@checkin/gtin";
-import { formatCents } from "@checkin/money";
+import { dollarsToCents, formatCents } from "@checkin/money";
 import { DONOR_COMPANY_MAX, DONOR_NAME_MAX } from "@checkin/receipt-types";
 import { LoadError, Pager } from "@checkin/component-ui";
 
@@ -104,7 +104,7 @@ export default function ManualInKindPage() {
           gtin13: l.gtin13,
           quantity: l.quantity,
           description: l.description.trim() || null,
-          suggestedValueCents: l.suggestedDollars === null ? null : Math.round(l.suggestedDollars * 100),
+          suggestedValueCents: l.suggestedDollars === null ? null : dollarsToCents(l.suggestedDollars),
         })),
       });
       const res = await api<{ inventoryLoaded: boolean }>("/in-kind/manual", { method: "POST", body });
