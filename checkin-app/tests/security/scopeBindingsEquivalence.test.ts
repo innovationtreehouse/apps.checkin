@@ -279,6 +279,10 @@ function eq(a: Set<string>, b: Set<string>): boolean {
  * KeyVolunteerSelfStatus / KeyVolunteerSigning.their_own: the oracle has no case for
  * Key Volunteer Agreement models. Each is bound `their_own` on personId === selfId,
  * so on such a row the resolver adds their_own.
+ *
+ * CheckStartedRow.their_own / led_households: the oracle has no case for the
+ * check-started rows. Bound like Visit: their_own on personId === selfId, and
+ * led_households on personId ∈ ctx.ledHouseholdMemberIds.
  */
 function expectedFromSnapshot(
     model: string,
@@ -335,6 +339,10 @@ function expectedFromSnapshot(
     ) {
         expected.add('their_own');
     }
+    if (model === 'CheckStartedRow' && row && typeof row === 'object' && typeof row.personId === 'number') {
+        if (row.personId === callerCtx.selfId) expected.add('their_own');
+        if (callerCtx.ledHouseholdMemberIds.has(row.personId)) expected.add('led_households');
+    }
     return expected;
 }
 
@@ -361,6 +369,6 @@ describe('scopesHeld ≡ frozen switch + intentional deltas (personas × models 
     it('covers every bound model', () => {
         // Guard against the row set silently not exercising a model.
         expect(MODELS).toEqual(expect.arrayContaining(Object.keys(SCOPE_BINDINGS)));
-        expect(Object.keys(SCOPE_BINDINGS).length).toBe(25);
+        expect(Object.keys(SCOPE_BINDINGS).length).toBe(26);
     });
 });

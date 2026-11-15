@@ -118,6 +118,12 @@ export const SCOPE_BINDINGS = {
     // The caller's own Key Volunteer Agreement status and sign URL.
     KeyVolunteerSelfStatus: { their_own: { field: 'personId', eqCtx: 'selfId' } },
     KeyVolunteerSigning: { their_own: { field: 'personId', eqCtx: 'selfId' } },
+    // The family path's marking rows: the caller's own, and for a household lead
+    // each other adult in the household they lead.
+    CheckStartedRow: {
+        their_own: { field: 'personId', eqCtx: 'selfId' },
+        led_households: { field: 'personId', inCtx: 'ledHouseholdMemberIds' },
+    },
     ToolStatus: { their_own: { field: 'personId', eqCtx: 'selfId' } },
     Account: { their_own: { field: 'userId', eqCtx: 'selfId' } },
     Session: { their_own: { field: 'userId', eqCtx: 'selfId' } },
