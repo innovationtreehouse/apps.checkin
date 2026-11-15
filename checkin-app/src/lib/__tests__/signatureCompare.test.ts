@@ -9,7 +9,6 @@ import crypto from 'crypto';
 import { logger } from '@/lib/logger';
 import { requireCronSecret } from '@/lib/cronAuth';
 import { verifyZohoToken } from '@/lib/membership/contract/zoho';
-import { sign, verify } from '@/lib/outreach/unsubscribeToken';
 import { constantTimeEqual, verifyShopifyHmac } from '../signatureCompare';
 
 jest.mock('@/lib/logger', () => ({
@@ -144,16 +143,5 @@ describe('verifyZohoToken', () => {
     it('refuses everything when the secret is empty', () => {
         process.env.ZOHO_WEBHOOK_SECRET = '';
         expect(verifyZohoToken('')).toBe(false);
-    });
-});
-
-describe('unsubscribe verify', () => {
-    it('accepts, and refuses wrong, different-length and empty values', () => {
-        const good = sign(7);
-        expect(verify(7, good)).toBe(true);
-        expect(verify(8, good)).toBe(false);
-        expect(verify(7, `${good}A`)).toBe(false);
-        expect(verify(7, '')).toBe(false);
-        expect(verify(7, null)).toBe(false);
     });
 });

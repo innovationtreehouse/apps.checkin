@@ -73,11 +73,11 @@ describe('GET/PUT /api/settings/outreach', () => {
 
         const res = await PUT(req('PUT', {
             outreachOpeningSubject: 'Fine',
-            outreachOpeningBody: 'Uses an unsupported {{unsubscribeUrl}} token',
+            outreachOpeningBody: 'Uses an unsupported {{optOutUrl}} token',
         }));
         expect(res.status).toBe(400);
         const data = await res.json();
-        expect(data.error).toMatch(/unsubscribeUrl/);
+        expect(data.error).toMatch(/optOutUrl/);
 
         const after = await (await GET(req('GET'))).json();
         expect(after.settings).toEqual(before.settings); // whole update rejected, nothing persisted

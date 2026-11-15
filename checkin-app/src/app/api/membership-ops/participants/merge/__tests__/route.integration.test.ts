@@ -454,7 +454,7 @@ describe("Merge Participants API", () => {
         // sides — nothing is deleted, so this row is the only record of what
         // authority the merged-away record held.
         const PRE_IMAGE_KEYS = [
-            "dateOfBirth", "email", "emailSuppressed", "emailVerified", "googleId",
+            "dateOfBirth", "email", "emailVerified", "googleId",
             "householdId", "id", "image", "isHouseholdLead", "lastBackgroundCheck",
             "lastWaiverSign", "name", "phone",
             "isSysadmin", "isBoardMember", "isKeyholder", "isBackgroundCheckReviewer",
@@ -1140,33 +1140,6 @@ describe("Merge Participants API", () => {
             expect(kept?.email).toBe("keep@example.com");
             expect(kept?.name).toBe("Keep User");
         });
-    });
-
-    // emailSuppressed is an opt-out tied to a specific address.
-    // The login identity resolves as one unit, so suppression must ride with
-    // whichever side's address wins — not stay stuck on the keeper's own.
-    it("carries emailSuppressed with the identity when 'merge' wins", async () => {
-        await prisma.person.update({ where: { id: pKeepId }, data: { emailSuppressed: false } });
-        await prisma.person.update({ where: { id: pMergeId }, data: { emailSuppressed: true } });
-
-        const res = await POST(mergeReq(pKeepId, pMergeId, { name: "keep", identity: "merge" }));
-        expect(res.status).toBe(200);
-        const kept = await prisma.person.findUnique({ where: { id: pKeepId } });
-        expect(kept?.email).toBe("merge@example.com");
-        expect(kept?.emailSuppressed).toBe(true); // opt-out rode in with address B
-    });
-
-    it("backfills emailSuppressed with the identity when the keeper had no identity of its own", async () => {
-        await prisma.person.update({ where: { id: pKeepId }, data: { email: null, emailSuppressed: false } });
-        await prisma.person.update({ where: { id: pMergeId }, data: { emailSuppressed: true } });
-
-        // name is the base-fixture conflict; the merge-side identity is backfilled
-        // (keeper empty), so no `identity` radio is needed.
-        const res = await POST(mergeReq(pKeepId, pMergeId, { name: "keep" }));
-        expect(res.status).toBe(200);
-        const kept = await prisma.person.findUnique({ where: { id: pKeepId } });
-        expect(kept?.email).toBe("merge@example.com");
-        expect(kept?.emailSuppressed).toBe(true);
     });
 
     // The login identity (email+googleId+emailVerified) resolves as ONE

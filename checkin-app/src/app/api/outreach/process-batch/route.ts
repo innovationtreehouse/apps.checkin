@@ -22,7 +22,7 @@ const BATCH_SIZE = 40; // within the spec's ~25-50/round
  * another in-flight process-batch call for the same item) is simply skipped.
  *
  * ponytail: the claim writes a transient "sending" status — not one of the four the design
- * doc names (queued/sent/failed/skipped_unsubscribed/skipped_denied/skipped_not_member) — as the atomic marker, since Prisma's
+ * doc names (queued/sent/failed/skipped_denied/skipped_not_member) — as the atomic marker, since Prisma's
  * updateMany can't return which rows it touched. A crash in the narrow window between claim
  * and finalize could strand a single item in "sending" (not resumable by count-of-queued or
  * retry-failed); add a stale-"sending" reaper if that's ever observed in practice.
@@ -62,7 +62,7 @@ export const POST = withAuth({ roles: ROLES }, async (req) => {
 
         const person = await prisma.person.findUnique({
             where: { id: item.personId },
-            select: { name: true, emailSuppressed: true, household: { select: { orgMembership: { select: { status: true } } } } },
+            select: { name: true, household: { select: { orgMembership: { select: { status: true } } } } },
         });
         // Outreach is member-only at send too: the snapshot may predate a denial, an archive,
         // a revocation, or this rule.
@@ -73,12 +73,6 @@ export const POST = withAuth({ roles: ROLES }, async (req) => {
         }
         if (membershipStatus !== "ACTIVE") {
             await prisma.bulkSendItem.update({ where: { id: item.id }, data: { status: "skipped_not_member" } });
-            continue;
-        }
-        // A join item queued before outreach became renewal-only still honours the
-        // invitation opt-out it was queued under.
-        if (item.variant === "join" && person.emailSuppressed) {
-            await prisma.bulkSendItem.update({ where: { id: item.id }, data: { status: "skipped_unsubscribed" } });
             continue;
         }
         const { subject, html } = renderOutreachEmail(template.subject, template.body, {

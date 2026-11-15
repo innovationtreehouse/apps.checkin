@@ -144,12 +144,8 @@ model Person {
   /// @sensitivity:personal
   notificationSettings Json?
 
-  /// Self- or board-set suppression of outreach (join-invitation) email to this
-  /// person. Set via the unsubscribe link (join-variant only) or the member's own
-  /// communication-page toggle. Renew-variant outreach ignores this — see
-  /// lib/outreach/recipients.ts. 'personal' (not 'internal'): the member reads/writes
-  /// their own via their_own:personal; board/ops see it on the directory pill via
-  /// everyones:personal. @sensitivity:personal
+  /// Unused: nothing reads or writes it. Kept until the column drop.
+  /// @sensitivity:personal
   emailSuppressed Boolean @default(false)
 
   /// @sensitivity:public
@@ -2116,7 +2112,7 @@ model BulkSendItem {
   /// "renew"; older rows may hold "join" from before outreach was renewal-only.
   /// @sensitivity:internal
   variant    String
-  /// "queued" | "sending" | "sent" | "failed" | "skipped_unsubscribed" | "skipped_denied" | "skipped_not_member"
+  /// "queued" | "sending" | "sent" | "failed" | "skipped_denied" | "skipped_not_member"
   /// @sensitivity:internal
   status     String
   /// @sensitivity:internal

@@ -109,10 +109,10 @@ Things the app takes as true because they are handled outside it.
 - A rejection email goes only to a person with a linked sign-in and an email
   address who has not turned off "Email me about my receipts and
   reimbursements" or all email. Anyone else's copy is dropped, not held: it is
-  not sent if they later sign in or turn email back on. Unsubscribing from
-  invitations does not stop it. A skipped uploader still sees the rejection and
-  the reason in My receipts. A send that fails gets three tries in all, the
-  later ones in the daily sweep, and is then given up.
+  not sent if they later sign in or turn email back on. A skipped uploader
+  still sees the rejection and the reason in My receipts. A send that fails
+  gets three tries in all, the later ones in the daily sweep, and is then
+  given up.
   [Decision]
 
 - Once a receipt is finalized, its uploader sees in the receipt pages what
