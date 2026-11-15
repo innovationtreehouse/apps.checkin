@@ -577,20 +577,33 @@ async function recordCapitalSendFailure(source: InKindSource, id: number, err: u
   }
 }
 
-/** A stuck accepted gift whose capital review send failed: its first failure time. */
-const STUCK_CAPITAL_WHERE = { decisionOutcome: "ACCEPTED", capitalSubmittedAt: null, capitalFirstFailedAt: { not: null } } as const;
+/** How long an accepted gift may wait unsent with no failure recorded before it counts as stuck. */
+const UNSENT_GRACE_MS = 60 * 60 * 1000;
+
+/**
+ * An accepted gift whose lines have not reached capital review is stuck once its send failed, or,
+ * when the process stopped before a failure could be recorded, an hour after its decision.
+ */
+const stuckCapitalWhere = () => ({
+  decisionOutcome: "ACCEPTED",
+  capitalSubmittedAt: null,
+  OR: [{ capitalFirstFailedAt: { not: null } }, { decidedAt: { lt: new Date(Date.now() - UNSENT_GRACE_MS) } }],
+});
 
 async function stuckCapitalSends(orgId: string): Promise<{ source: InKindSource; id: number; failedAt: Date }[]> {
-  const select = { id: true, capitalFirstFailedAt: true } as const;
-  const where = { orgId, ...STUCK_CAPITAL_WHERE };
+  const select = { id: true, capitalFirstFailedAt: true, decidedAt: true } as const;
+  const where = { orgId, ...stuckCapitalWhere() };
   const [receipts, manuals] = await Promise.all([db.inKindDonation.findMany({ where, select }), db.manualInKindDonation.findMany({ where, select })]);
-  const tag = (source: InKindSource) => (r: { id: number; capitalFirstFailedAt: Date | null }) => (r.capitalFirstFailedAt ? [{ source, id: r.id, failedAt: r.capitalFirstFailedAt }] : []);
+  const tag = (source: InKindSource) => (r: { id: number; capitalFirstFailedAt: Date | null; decidedAt: Date | null }) => {
+    const failedAt = r.capitalFirstFailedAt ?? r.decidedAt;
+    return failedAt ? [{ source, id: r.id, failedAt }] : [];
+  };
   return [...receipts.flatMap(tag("receipt")), ...manuals.flatMap(tag("manual"))];
 }
 
-/** Resends a stuck gift's lines once, from its current bucket. "not_stuck" when it has no failed send. */
+/** Resends a stuck gift's lines once, from its current bucket. "not_stuck" when it is not stuck on the send. */
 async function resendCapitalReview(orgId: string, source: InKindSource, id: number): Promise<"sent" | "not_stuck" | FailureKind> {
-  const where = { orgId, id, ...STUCK_CAPITAL_WHERE };
+  const where = { orgId, id, ...stuckCapitalWhere() };
   const stuck = source === "receipt" ? await db.inKindDonation.count({ where }) : await db.manualInKindDonation.count({ where });
   const gift = stuck ? await loadGift(db, orgId, source, id) : null;
   if (!gift || gift.budgetOwnerId === null) return "not_stuck";

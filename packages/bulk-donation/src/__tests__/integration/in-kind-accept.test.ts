@@ -600,6 +600,22 @@ describeDb("capital review", () => {
     expect(await db.inKindDonation.findUniqueOrThrow({ where: { id } })).toMatchObject({ capitalSubmittedAt: null });
   });
 
+  it("an accepted gift left unsent with no failure recorded is stuck an hour after its decision", async () => {
+    const id = await receiptGift();
+    const sent = captureCapital();
+    await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
+    const recent = new Date(Date.now() - 30 * 60 * 1000);
+    await db.inKindDonation.update({ where: { id }, data: { capitalSubmittedAt: null, decidedAt: recent } });
+    expect(await stuckItems()).toEqual([]);
+
+    const decidedAt = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    await db.inKindDonation.update({ where: { id }, data: { decidedAt } });
+    expect(await stuckItems()).toEqual([{ id: `receipt ${id}`, step: "capital review send", href: `/donations/in-kind/receipt/${id}`, failedAt: decidedAt }]);
+    await retryStuckItem({ id: `receipt ${id}`, step: "capital review send" });
+    expect(sent).toHaveLength(2);
+    expect(await stuckItems()).toEqual([]);
+  });
+
   it("a failed send is stuck on the Problems list until a retry sends it, which clears it", async () => {
     const id = await receiptGift();
     const item = { id: `receipt ${id}`, step: "capital review send" };
