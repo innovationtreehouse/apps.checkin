@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { Button, Group, Modal, Select, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { act, api, paged, useCanWrite, useLoad } from "../components/api";
-import { LoadError, Pager, useUrlPage } from "@checkin/component-ui";
+import { LoadError, Pager, QuickBooksListsRefresh, useUrlPage } from "@checkin/component-ui";
 import { LINE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
 
 interface RuleRow {
@@ -134,6 +134,7 @@ export default function AccountMapPage() {
                 data={choices(accounts.data, editing.form[k])} value={editing.form[k]}
                 onChange={(v) => setEditing({ ...editing, form: { ...editing.form, [k]: v } })} />
             ))}
+            <QuickBooksListsRefresh />
             <Button onClick={save}>Save</Button>
           </Stack>
         )}

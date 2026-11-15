@@ -7,10 +7,10 @@ Everything here stops being true once the last PR merges. The last step is
 
 ## Where it stands
 
-- Designed, not built. The owner has settled every question, QL-1 to QL-8.
-- Today, no account-type refusal carries a code. `accountTypeRefusal` returns
-  only a message, and none of its throw sites pass a code. The client kit's
-  fetch helper doesn't hand `code` to pages.
+- The owner has settled every question, QL-1 to QL-8.
+- PRs 1, 2 and 3 are built: the registry entries, the copy with its
+  `quickbooks-list-stale` refusal, and Update now with the "QuickBooks lists"
+  System Status row. PR 4, the picks row, is left.
 - Today, nothing re-checks these picks once they are saved: the expense
   account list and rules, held expense lines, the donation account map and
   income items. The picks row closes that gap.

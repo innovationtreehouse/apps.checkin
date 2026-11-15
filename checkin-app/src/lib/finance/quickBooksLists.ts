@@ -52,3 +52,9 @@ export async function savedQuickBooksAccounts(): Promise<SavedAccount[]> {
 export async function savedQuickBooksClasses(): Promise<SavedClass[]> {
     return (await savedEntries("class")).flatMap((e) => (isString(e.id) && isString(e.name) ? [{ id: e.id, name: e.name, active: e.active !== false }] : []));
 }
+
+/** When each saved list was last refreshed and how many entries it holds; empty before the first refresh. */
+export async function quickBooksListsStatus() {
+    const rows = await prisma.quickBooksList.findMany({ select: { list: true, entries: true, refreshedAt: true }, orderBy: { list: "asc" } });
+    return rows.map((r) => ({ list: r.list, refreshedAt: r.refreshedAt, entries: Array.isArray(r.entries) ? r.entries.length : 0 }));
+}

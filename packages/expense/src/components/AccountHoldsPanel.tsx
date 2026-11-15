@@ -4,6 +4,7 @@ import { Badge, Button, Group, Paper, Select, Table, Text } from "@mantine/core"
 import { formatCents } from "@checkin/money";
 import { formatGtinDisplay } from "@checkin/gtin";
 import { LINE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
+import { QuickBooksListsRefresh } from "@checkin/component-ui";
 import { send, useLoad } from "./api";
 import NonInventoryBadge from "./NonInventoryBadge";
 
@@ -118,6 +119,7 @@ export default function AccountHoldsPanel({ expenseId, holds, lines, currency, i
         <Text fw={600}>Account holds</Text>
         {isFinance && (
           <Group gap="xs">
+            <QuickBooksListsRefresh />
             {withoutAccount > 0 && (
               <Text size="xs" c="dimmed">
                 {withoutAccount === 1

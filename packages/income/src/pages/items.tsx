@@ -2,8 +2,8 @@
 import { useState } from "react";
 import { Button, Code, Group, Select, Table, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { api, errorMessage, notifyNavCounts, useIsFinance, useLoad } from "../components/api";
-import { LoadError } from "@checkin/component-ui";
+import { api, notifyNavCounts, refusalMessage, useIsFinance, useLoad } from "../components/api";
+import { LoadError, QuickBooksListsRefresh } from "@checkin/component-ui";
 import { LINE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
 
 interface ItemRow {
@@ -68,7 +68,7 @@ export default function ItemsPage() {
       items.reload();
       notifyNavCounts();
     } catch (err) {
-      notifications.show({ message: errorMessage(err), color: "red", autoClose: false });
+      notifications.show({ message: refusalMessage(err), color: "red", autoClose: false });
     } finally {
       setBusy(null);
     }
@@ -86,6 +86,7 @@ export default function ItemsPage() {
       <Text size="sm" c="dimmed" mb="md">
         Assign each item to a bucket or to general income, then pick the QuickBooks account its sales book to. A payout with a sale of an item missing either, or of an item whose bucket has a problem, waits until finance fixes it.
       </Text>
+      {isFinance && <Group mb="sm"><QuickBooksListsRefresh /></Group>}
       {items.error && <LoadError what="items" message={items.error} onRetry={items.reload} />}
       {buckets.error && <Text size="sm" c="red" mb="sm">Couldn&apos;t load buckets: {buckets.error}</Text>}
       {accounts.error && <LoadError what="QuickBooks accounts" message={accounts.error} onRetry={accounts.reload} />}

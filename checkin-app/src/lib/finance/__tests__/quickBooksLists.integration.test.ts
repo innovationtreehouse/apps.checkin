@@ -3,10 +3,10 @@
  */
 /**
  * Integration tier for the copy of QuickBooks' lists: a refresh replaces both rows together,
- * and a failed read leaves both rows as they were.
+ * a failed read leaves both rows as they were, and the status read counts each list's entries.
  */
 import prisma from "@/lib/prisma";
-import { refreshQuickBooksLists, savedQuickBooksAccounts, savedQuickBooksClasses } from "@/lib/finance/quickBooksLists";
+import { quickBooksListsStatus, refreshQuickBooksLists, savedQuickBooksAccounts, savedQuickBooksClasses } from "@/lib/finance/quickBooksLists";
 import { getQuickBooks } from "@/lib/quickbooks/client";
 
 jest.mock("@/lib/quickbooks/client", () => ({ getQuickBooks: jest.fn() }));
@@ -50,5 +50,18 @@ describe("refreshQuickBooksLists (integration)", () => {
         await expect(refreshQuickBooksLists()).rejects.toThrow("QuickBooks query failed");
 
         await expect(prisma.quickBooksList.findMany({ orderBy: { list: "asc" } })).resolves.toEqual(before);
+    });
+
+    test("the status read gives each list's refresh time and entry count, and nothing before the first refresh", async () => {
+        await expect(quickBooksListsStatus()).resolves.toEqual([]);
+        client(
+            async () => [{ Id: "1", FullyQualifiedName: "Checking", AccountType: "Bank" }, { Id: "2", FullyQualifiedName: "Savings", AccountType: "Bank" }],
+            async () => [{ Id: "9", FullyQualifiedName: "Facility" }],
+        );
+        const refreshed = await refreshQuickBooksLists();
+        await expect(quickBooksListsStatus()).resolves.toEqual([
+            { list: "account", refreshedAt: refreshed?.refreshedAt, entries: 2 },
+            { list: "class", refreshedAt: refreshed?.refreshedAt, entries: 1 },
+        ]);
     });
 });
