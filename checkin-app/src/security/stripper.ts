@@ -11,12 +11,13 @@
  * For each scalar field, visibility is decided by `fieldVisible(tier, tokens,
  * scopes)` where `scopes = scopesHeld(modelName, row, callerCtx)` — the
  * per-row predicate; a field a file route serves is never emitted. Relations
- * are recursed into; each `_count` key is gated to relations the view can see
- * (see relationVisible).
+ * are recursed into, and dropped when no row of the target could show the view
+ * a field; each `_count` key is gated to relations the view can see (see
+ * relationVisible).
  *
  * IMPORTANT: This file is CODEOWNERS-gated.
  */
-import { classifications, relations, fieldVisible, isFileOnlyField, type Scope, type Tier, type Token } from './core';
+import { classifications, relations, fieldVisible, isFileOnlyField, modelVisible, type Scope, type Tier, type Token } from './core';
 import { scopesHeld, type CallerContext } from './access-resolvers';
 
 export function stripBag(
@@ -90,6 +91,8 @@ export function stripValue(
 
     for (const [relName, relInfo] of Object.entries(rels)) {
         if (!(relName in obj)) continue;
+        // A relation whose target shows this view no field would leave only its row count.
+        if (!modelVisible(tokens, relInfo.model)) continue;
         result[relName] = stripValue(relInfo.model, obj[relName], tokens, callerCtx);
     }
     return result;

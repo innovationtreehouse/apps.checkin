@@ -689,6 +689,11 @@ function anyScopeSees(tokens: readonly Token[], model: string, field: string): b
     return tier !== undefined && fieldVisible(tier, tokens, ALL_SCOPES);
 }
 
+/** True when some row of `model` can show the holder of `tokens` at least one JSON field. */
+export function modelVisible(tokens: readonly Token[], model: string): boolean {
+    return Object.keys(tierMap[model] ?? {}).some(field => !isFileOnlyField(model, field) && anyScopeSees(tokens, model, field));
+}
+
 /**
  * True when some role holding `tokens` can be sent a marked field on `model` or its nested
  * rows in a JSON response. A field a file route serves never leaves as JSON, so it is skipped.

@@ -69,6 +69,8 @@ function stripForOutbound(
     }
     for (const [relName, relInfo] of Object.entries(rels)) {
         if (!(relName in obj)) continue;
+        // A relation whose target has no field in these tiers would leave only its row count.
+        if (!targetHasAllowedField(relInfo.model, allowedTiers)) continue;
         result[relName] = stripForOutbound(relInfo.model, obj[relName], allowedTiers);
     }
     // ponytail: no `_count` handling — it is intentionally not copied, so counts
@@ -76,4 +78,11 @@ function stripForOutbound(
     // gate each key like the stripper does: pass only relations with a visible
     // field, here meaning the target model has a field in `allowedTiers`.
     return result;
+}
+
+function targetHasAllowedField(modelName: string, allowedTiers: ReadonlySet<string>): boolean {
+    const tiers = classifications[modelName as keyof typeof classifications] as
+        | Record<string, string>
+        | undefined;
+    return Object.values(tiers ?? {}).some(tier => tier !== 'secret' && allowedTiers.has(tier));
 }
