@@ -220,6 +220,7 @@ describe("ProgramDetailsPage", () => {
     setSession({ id: 1, isSysadmin: true });
     const warning = "Program saved, but the Shopify price is out of date — admins have been emailed. Set the price by hand in Shopify on both the public and reserved-seat products.";
     const notice = "Sale reopened. The public store product stays hidden: re-list it in Shopify by hand if it should sell again.";
+    jest.mocked(notifications.show).mockClear();
     routedFetch([
       { url: "/api/programs/1", method: "GET", result: { ok: true, body: programData } },
       { url: "/api/programs/1", method: "PATCH", result: { ok: true, body: { success: true, warning, notice } } },

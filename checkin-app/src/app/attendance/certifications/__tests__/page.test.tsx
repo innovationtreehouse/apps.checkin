@@ -123,7 +123,11 @@ describe("KioskCertificationsDisplay", () => {
             }
         }
 
-        afterEach(() => act(() => notifications.clean()));
+        beforeEach(() => jest.spyOn(console, "error").mockImplementation(() => {}));
+        afterEach(() => {
+            act(() => notifications.clean());
+            jest.mocked(console.error).mockRestore();
+        });
 
         it("on the kiosk, keeps the grid, says it is not up to date, and raises nothing that waits", async () => {
             setSearchParams("mode=kiosk");
@@ -145,11 +149,16 @@ describe("KioskCertificationsDisplay", () => {
     });
 
     it("says the server can't be reached when the first load never gets an answer", async () => {
+        const logged = jest.spyOn(console, "error").mockImplementation(() => {});
         global.fetch = jest.fn(async () => { throw new TypeError("fetch failed"); }) as unknown as typeof fetch;
         setSearchParams("mode=kiosk");
-        renderWithProviders(<KioskCertificationsDisplay />);
-        expect(await screen.findByText("Couldn't reach the server. Check your connection and try again.")).toBeInTheDocument();
-        expect(screen.queryByText(/No active people found/)).not.toBeInTheDocument();
+        try {
+            renderWithProviders(<KioskCertificationsDisplay />);
+            expect(await screen.findByText("Couldn't reach the server. Check your connection and try again.")).toBeInTheDocument();
+            expect(screen.queryByText(/No active people found/)).not.toBeInTheDocument();
+        } finally {
+            logged.mockRestore();
+        }
     });
 
     it("shows an error message when the fetch fails", async () => {
