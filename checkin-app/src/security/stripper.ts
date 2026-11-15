@@ -120,14 +120,14 @@ function isEmptyRow(value: unknown): boolean {
 }
 
 /**
- * Whether every related row selects a field the caller sees without holding any
- * scope, so hideEmptyRows can hide none of them. It reads the select's shape,
- * not row data, so a count beside the rows is kept or dropped the same way for
- * every caller of the view.
+ * Whether hideEmptyRows can hide none of the related rows: the target shows the
+ * view a field that needs no scope, and every row selects one. It reads the
+ * view and the select's shape, so an empty list keeps or drops its count the
+ * same way as a list whose rows were all hidden.
  */
 function rowsAlwaysShow(model: string, value: unknown, tokens: readonly Token[]): boolean {
     const tiers = classifications[model as keyof typeof classifications] as Record<string, Tier> | undefined;
-    if (!tiers) return false;
+    if (!tiers || !relationVisible(model, tokens, NO_SCOPES)) return false;
     const rows = Array.isArray(value) ? value : [value];
     return rows.every(row =>
         row === null ||
