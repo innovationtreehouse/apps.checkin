@@ -137,6 +137,13 @@ it:
 | Refresher alarms and schedule | Weekly keepalive invoke; alarms on `QBO_INVALID_GRANT` and on any other principal reading the secret |
 | Posting schedule | The daily rule that calls `/api/cron/qbo-posting` with `QBO_POSTING_CRON_SECRET` |
 
+Production has neither the posting secret nor its schedule until you create them,
+and steps 5 to 7 wait on the daily run they start. Create `QBO_POSTING_CRON_SECRET`
+in production Secrets Manager and wire it to the app task the same way dev has it.
+Then add the daily EventBridge schedule for `/api/cron/qbo-posting` to the infra
+repository's cron schedules, sending the same secret. The route answers only to
+that secret, so a schedule with any other secret fails every run.
+
 The app reads these at boot, so they take effect when a new task rolls out. Leave
 `INCOME_MIRROR_NEWEST_WINS` unset until step 7.
 

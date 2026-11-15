@@ -70,6 +70,23 @@ function isStagingEnv(): boolean {
     }
 }
 
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/**
+ * True on the deployed cloud dev instance: CHECKIN_ENV=dev on any host but loopback
+ * (config.baseUrl(), sourced from NEXTAUTH_URL). Unit tests also run as `dev`, on
+ * localhost, so the loopback exemption keeps the dev API gate off there. An
+ * unparsable URL counts as deployed, so the gate fails closed.
+ */
+function isDeployedDevEnv(): boolean {
+    if (readCheckinEnv() !== 'dev') return false;
+    try {
+        return !LOOPBACK_HOSTS.has(new URL(config.baseUrl()).hostname);
+    } catch {
+        return true;
+    }
+}
+
 /**
  * ops-stg trust-boundary predicate (see docs on the staging access gate).
  * ops-stg runs a scrubbed copy of PRODUCTION data behind PROD's Google OAuth
@@ -92,9 +109,14 @@ export type StagingGateClaims = {
     canAccessStaging?: boolean;
 };
 
+/** A Google account in the org Workspace with a verified email: the dev and staging gates' shared test. */
+export function isVerifiedOrgAccount(claims: { hd?: string | null; emailVerified?: boolean }): boolean {
+    return claims.hd === ORG_DOMAIN && claims.emailVerified === true;
+}
+
 export function isStagingAccessAllowed(claims: StagingGateClaims | null | undefined): boolean {
     if (!claims) return false;
-    return (claims.hd === ORG_DOMAIN && claims.emailVerified === true) || claims.canAccessStaging === true;
+    return isVerifiedOrgAccount(claims) || claims.canAccessStaging === true;
 }
 
 /** True only when all three Zoho OAuth secrets are present. */
@@ -352,6 +374,8 @@ export const config = {
     // True on ops-stg (CHECKIN_ENV=stg; see isStagingEnv) — gates the access
     // gate's staging branch (middleware/authenticateRequest/resolveAccess).
     isStaging: (): boolean => isStagingEnv(),
+    // True on the deployed cloud dev instance; gates the dev API org gate (isAcceptedSession).
+    isDeployedDev: (): boolean => isDeployedDevEnv(),
     baseUrl: (): string => {
         if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
         return process.env.NEXTAUTH_URL || 'http://localhost:4000';

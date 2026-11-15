@@ -75,7 +75,19 @@ describeDb("donated capital", () => {
     expect((await listDonatedCapital(FINANCE)).map((r) => r.giftLineId)).toEqual([1]);
   });
 
-  it("stores nothing for an org with no thresholds row", async () => {
+  it("keeps a line at the threshold", async () => {
+    await thresholds(100_000);
+    await submitDonatedLines(ORG, [line(1, 100_000), line(2, 99_999)]);
+    expect((await listDonatedCapital(FINANCE)).map((r) => r.giftLineId)).toEqual([1]);
+  });
+
+  it("keeps every line for review while capital review is on and the thresholds are unset", async () => {
+    await submitDonatedLines(ORG, [line(1, 250_000), line(2, 1)]);
+    expect((await listDonatedCapital(FINANCE)).map((r) => r.giftLineId)).toEqual([1, 2]);
+  });
+
+  it("stores nothing while capital review is off", async () => {
+    await db.expenseOrgSettings.create({ data: { orgId: ORG, capitalReviewEnabled: false, capitalTotalThresholdCents: 0, capitalLineItemThresholdCents: 0 } });
     await submitDonatedLines(ORG, [line(1, 250_000)]);
     expect(await db.donatedCapitalLine.count()).toBe(0);
   });

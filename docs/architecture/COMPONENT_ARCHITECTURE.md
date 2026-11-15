@@ -78,7 +78,7 @@ A component that owns data gets its own dedicated database (its own
 
 A component's schema is annotated with `@sensitivity:` and carries its own
 `generator security` block, which emits a classifications map that is merged
-into checkin's via a spread in `src/security/core.ts`. Routes go through
+into checkin's in `src/security/classificationSources.ts`. Routes go through
 checkin's registry/handler/stripper like any other.
 
 - **Cross-package coupling.** The component's `generator security` `provider`
@@ -95,7 +95,7 @@ checkin's registry/handler/stripper like any other.
 - **Synthetic public-scalar classification.** `handler()`'s stripper drops
   non-model bag keys, so a bare scalar (a count, a total, a nav badge) cannot
   ride a response. The sanctioned way across is a small hand-authored `public`
-  classification for the scalar's shape, merged in `core.ts`, behind its own
+  classification for the scalar's shape, merged in `classificationSources.ts`, behind its own
   registered endpoint (the catalog's `CatalogItemCount { total: public }` is the
   reference example). Prefer this over envelope workarounds.
 - **Boundary-isolation process applies.** Registry/generator changes ship in

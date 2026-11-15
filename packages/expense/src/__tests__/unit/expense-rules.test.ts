@@ -7,14 +7,30 @@
  */
 import { describe, it, expect } from "vitest";
 import { createActor } from "xstate";
-import { classifyCapital, isTerminalApproval, anyRejected } from "../../lib/expense-rules";
+import { capitalThresholdsUnset, classifyCapital, isTerminalApproval, anyRejected } from "../../lib/expense-rules";
+import { DEFAULT_EXPENSE_SETTINGS } from "../../services/settingsService";
 import { expenseMachine } from "../../workflows/expense.machine";
 
-const zeroThresholds = { capitalTotalThresholdCents: 0, capitalLineItemThresholdCents: 0 };
+const on = { capitalReviewEnabled: true, capitalTotalThresholdCents: 500_000, capitalLineItemThresholdCents: 250_000 };
 
 describe("classifyCapital", () => {
-  it("with both thresholds at 0, any positive total is capital and reaches capital_review", () => {
-    const hasCapital = classifyCapital(1, [{ unitPriceCents: 0 }], zeroThresholds);
+  it("is capital at or over a threshold, and not below it", () => {
+    expect(classifyCapital(500_000, [], on)).toBe(true);
+    expect(classifyCapital(0, [{ unitPriceCents: 250_000 }], on)).toBe(true);
+    expect(classifyCapital(499_999, [{ unitPriceCents: 249_999 }], on)).toBe(false);
+  });
+
+  it("sends nothing to capital review while review is off", () => {
+    expect(classifyCapital(1_000_000, [{ unitPriceCents: 1_000_000 }], { ...on, capitalReviewEnabled: false })).toBe(false);
+  });
+
+  it.each([
+    { capitalTotalThresholdCents: null },
+    { capitalLineItemThresholdCents: null },
+  ])("holds every expense at capital_review while review is on and a threshold is unset (%o)", (unset) => {
+    const settings = { ...on, ...unset };
+    expect(capitalThresholdsUnset(settings)).toBe(true);
+    const hasCapital = classifyCapital(1, [{ unitPriceCents: 1 }], settings);
     expect(hasCapital).toBe(true);
 
     const actor = createActor(expenseMachine).start();
@@ -24,19 +40,14 @@ describe("classifyCapital", () => {
     actor.stop();
   });
 
-  it("with both thresholds at 0, a zero total with no priced line is not capital", () => {
-    expect(classifyCapital(0, [{ unitPriceCents: 0 }], zeroThresholds)).toBe(false);
+  it("is not unset while review is off or both thresholds are set", () => {
+    expect(capitalThresholdsUnset(on)).toBe(false);
+    expect(capitalThresholdsUnset({ ...on, capitalReviewEnabled: false, capitalTotalThresholdCents: null })).toBe(false);
   });
 
-  it("is capital only above a threshold, never at it", () => {
-    const org = { capitalTotalThresholdCents: 500_000, capitalLineItemThresholdCents: 250_000 };
-    expect(classifyCapital(500_000, [{ unitPriceCents: 250_000 }], org)).toBe(false);
-    expect(classifyCapital(500_001, [], org)).toBe(true);
-    expect(classifyCapital(0, [{ unitPriceCents: 250_001 }], org)).toBe(true);
-  });
-
-  it("is not capital without org settings", () => {
-    expect(classifyCapital(1_000_000, [{ unitPriceCents: 1_000_000 }], null)).toBe(false);
+  it("an org with no settings row has review on with thresholds unset", () => {
+    expect(capitalThresholdsUnset(DEFAULT_EXPENSE_SETTINGS)).toBe(true);
+    expect(classifyCapital(0, [], DEFAULT_EXPENSE_SETTINGS)).toBe(true);
   });
 });
 

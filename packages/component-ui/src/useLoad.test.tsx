@@ -446,6 +446,73 @@ describe("a write re-reads cached loads", () => {
   });
 });
 
+describe("loads that opt out of re-reads", () => {
+  // SWR bound its reconnect callback to the real setTimeout when its cache was created.
+  const realSetTimeout = globalThis.setTimeout;
+  const reconnectAfterDedupe = async () => {
+    await advance(6000);
+    window.dispatchEvent(new Event("online"));
+    await act(() => new Promise<void>((resolve) => { realSetTimeout(resolve, 0); }));
+    await advance();
+  };
+
+  it("re-reads on reconnect by default", async () => {
+    const fetchMock = stubFetch(() => json([1]));
+    renderHook(() => useLoad<number[]>("/x"));
+    await advance();
+    await reconnectAfterDedupe();
+    expect(gets(fetchMock)).toBe(2);
+  });
+
+  it("reconnect: false does not re-read on reconnect", async () => {
+    const fetchMock = stubFetch(() => json([1]));
+    renderHook(() => useLoad<number[]>("/x", { reconnect: false }));
+    await advance();
+    await reconnectAfterDedupe();
+    expect(gets(fetchMock)).toBe(1);
+  });
+
+  it("invalidate: false is not re-read after another write, but is by its own reload", async () => {
+    const fetchMock = stubFetch(() => json([1]));
+    const { result } = renderHook(() => useLoad<number[]>("/x", { invalidate: false }));
+    await advance();
+    await api("/y", { method: "POST" });
+    await advance();
+    expect(gets(fetchMock)).toBe(1);
+    await act(() => result.current.reload());
+    expect(gets(fetchMock)).toBe(2);
+  });
+
+  it("a held key is re-read after a write again once its page unmounts", async () => {
+    const fetchMock = stubFetch(() => json([1]));
+    renderHook(() => useLoad<number[]>("/x", { invalidate: false })).unmount();
+    await advance();
+    await api("/y", { method: "POST" });
+    renderHook(() => useLoad<number[]>("/x", { invalidate: false }));
+    await advance();
+    expect(gets(fetchMock)).toBe(2);
+  });
+
+  it("a hold is per URL, so a default mount of the same URL also skips the write's re-read", async () => {
+    const fetchMock = stubFetch(() => json([1]));
+    renderHook(() => [useLoad<number[]>("/x", { invalidate: false }), useLoad<number[]>("/x")]);
+    await advance();
+    await api("/y", { method: "POST" });
+    await advance();
+    expect(gets(fetchMock)).toBe(1);
+  });
+
+  it("another load still re-reads after a write while one key is held", async () => {
+    const fetchMock = stubFetch(() => json([1]));
+    renderHook(() => [useLoad<number[]>("/held", { invalidate: false }), useLoad<number[]>("/free")]);
+    await advance();
+    await api("/y", { method: "POST" });
+    await advance();
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/things/held")).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/things/free")).toHaveLength(2);
+  });
+});
+
 describe("the promise from reload", () => {
   it("settles only after the fresh answer has arrived", async () => {
     let finish: (answer: Response) => void = () => {};

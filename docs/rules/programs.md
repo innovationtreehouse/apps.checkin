@@ -440,7 +440,9 @@ Things the app takes as true because they are handled outside it.
   free.  [Decision — *Principle: least privilege*]
 
 - The people running a program reach a family through its household leads and
-  emergency contacts. A participant's own phone number is not given to them.  [Decision — *Principle: least privilege*]
+  emergency contacts. An adult participant's own phone number is shown on the
+  roster too; a youth's, or that of someone whose age is unknown, is not. Adult
+  means 18 or over on the program's start date, or declared over 25.  [Decision — owner]
 
 - A participant's own email is hidden from the program's leader and core
   volunteers while the participant is under 13 on the day they look; from 13 it

@@ -1,6 +1,6 @@
 "use client";
 
-import { centsToDecimalString } from "@checkin/money";
+import { centsToDecimalString, dollarsToCentsOrNull } from "@checkin/money";
 import { useState } from "react";
 import { Alert, Badge, Button, Card, Center, Checkbox, Group, Loader, Modal, Radio, Stack, Text, TextInput, Title } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
@@ -109,8 +109,10 @@ export default function MembershipSettingsPage() {
   const saveSettings = async () => {
     setFieldErrors({});
     const fe: { standardFee?: string; volunteerFee?: string; variantId?: string; scholarshipGraceDays?: string } = {};
-    const nd = parseFloat(standardFee); if (standardFee.trim() === "" || isNaN(nd) || nd < 0) fe.standardFee = "Enter a dollar amount of 0 or more.";
-    const vd = parseFloat(volunteerFee); if (volunteerFee.trim() === "" || isNaN(vd) || vd < 0) fe.volunteerFee = "Enter a dollar amount of 0 or more.";
+    const standardCents = dollarsToCentsOrNull(standardFee);
+    if (standardCents === null || standardCents < 0) fe.standardFee = "Enter a dollar amount of 0 or more.";
+    const volunteerCents = dollarsToCentsOrNull(volunteerFee);
+    if (volunteerCents === null || volunteerCents < 0) fe.volunteerFee = "Enter a dollar amount of 0 or more.";
     if (variantId.trim() !== "" && !/^\d+$/.test(variantId.trim())) fe.variantId = "Must be a numeric Shopify variant ID.";
     if (scholarshipGraceDays.trim() !== "") {
       const g = parseInt(scholarshipGraceDays.trim(), 10);
@@ -133,8 +135,8 @@ export default function MembershipSettingsPage() {
         method: "PUT",
         body: JSON.stringify({
           perYearVariantClient: true,
-          standardMembershipFeeCents: Math.round(parseFloat(standardFee || "0") * 100),
-          volunteerMembershipFeeCents: Math.round(parseFloat(volunteerFee || "0") * 100),
+          standardMembershipFeeCents: standardCents,
+          volunteerMembershipFeeCents: volunteerCents,
           orgMembershipVariantId: variantId.trim() || null,
           orgMembershipProductUrl: productUrl.trim() || null,
           ...(changedSlots.length ? {

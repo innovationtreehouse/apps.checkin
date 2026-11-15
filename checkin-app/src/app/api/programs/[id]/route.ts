@@ -6,7 +6,7 @@ import { handler, notFound, forbidden, badRequest } from "@/security/handler";
 import { isActiveOrgMember, isMembershipFeeSettled, isMembershipFeeSettledThrough, programCoverageDate } from "@/lib/orgMembership";
 import { apiError } from "@/lib/api-response";
 import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
-import { emailWithheldParticipants, rosterHousehold, rosterPerson, withholdEmail } from "@/lib/person/leaderEmail";
+import { adultPhoneOnly, emailWithheldParticipants, rosterHousehold, rosterPerson, withholdEmail } from "@/lib/person/leaderEmail";
 import { householdPaymentViewer } from "@/lib/programs/paymentVisibility";
 import { authorizeProgramEdit, updateProgram, type ProgramRefusal } from "@/lib/programs/update";
 import { enrollmentClosedBy } from "@/lib/programs/saleState";
@@ -133,7 +133,9 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
                             id: true,
                             name: true,
                             email: true,
+                            phone: true,
                             dateOfBirth: true,
+                            isDeclaredAdult: true,
                             householdId: true,
                             household: {
                                 select: {
@@ -193,7 +195,7 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
     }));
     const roster = program.participants.map(p => ({
         ...p,
-        person: { ...rosterPerson(p.person, viewerIsLeader), household: rosterHousehold(p.person.household, emailWithheldFrom) },
+        person: { ...rosterPerson(adultPhoneOnly(p.person, program.startAt), viewerIsLeader), household: rosterHousehold(p.person.household, emailWithheldFrom) },
     }));
 
     // A members-only program is hidden unless its leader opted it into the public

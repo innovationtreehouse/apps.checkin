@@ -6,7 +6,8 @@ import { TRUSTED_ADULT_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { personActor, systemActor, type AuditActor } from "@/lib/auditActor";
 import { emailBoardMembers, emailHouseholdLeads } from "@/lib/emailRecipients";
 import type { TemplateCtx, TemplateKey } from "@/lib/email-templates/registry";
-import { isTrustedAdultConflict } from "@/lib/trusted-adult/conflict";
+import { trustedAdultConflictReason } from "@/lib/trusted-adult/conflict";
+import { recordSelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
 import { authorizedReview, expiringApprovals } from "@/lib/trusted-adult/filters";
 import { config } from "@/lib/config";
 import { validateContact } from "@/lib/trusted-adult/contact";
@@ -234,6 +235,56 @@ async function adultHouseholdDenied(tx: TxClient, ta: { householdId: number; tru
     return (await tx.orgMembership.count({ where: { householdId: { in: householdIds }, status: "DENIED" } })) > 0;
 }
 
+const CONFLICT_TA_SELECT = {
+    householdId: true,
+    trustedAdultPersonId: true,
+    trustedAdultName: true,
+    trustedAdultEmail: true,
+    trustedAdultPhone: true,
+    trustedAdultPerson: { select: { householdId: true } },
+} as const;
+
+interface ConflictReview {
+    proposedEmail: string | null;
+    proposedPhone: string | null;
+    trustedAdult: {
+        householdId: number;
+        trustedAdultPersonId: number | null;
+        trustedAdultEmail: string | null;
+        trustedAdultPhone: string | null;
+        trustedAdultPerson: { householdId: number } | null;
+    };
+}
+
+/** Refuses, with a SelfGrantRefusal audit row, an actor the trusted-adult conflict rule bars from this review. */
+async function refuseConflictedActor(actorId: number, reviewId: number, review: ConflictReview, message: string) {
+    const me = await prisma.person.findUnique({
+        where: { id: actorId },
+        select: { householdId: true, household: { select: { householdMembers: { select: { email: true, phone: true } } } } },
+    });
+    const ta = review.trustedAdult;
+    const reason = trustedAdultConflictReason({
+        actorParticipantId: actorId,
+        actorHouseholdId: me?.householdId,
+        actorHouseholdContacts: me?.household?.householdMembers ?? [],
+        taHouseholdId: ta.householdId,
+        adult: {
+            personId: ta.trustedAdultPersonId,
+            personHouseholdId: ta.trustedAdultPerson?.householdId,
+            email: ta.trustedAdultEmail,
+            phone: ta.trustedAdultPhone,
+        },
+        proposed: { email: review.proposedEmail, phone: review.proposedPhone },
+    });
+    if (reason === null) return;
+    await recordSelfGrantRefusal(prisma, {
+        actorId,
+        affectedEntityId: reviewId,
+        newData: { reason, table: "TrustedAdultReview" },
+    });
+    throw new TrustedAdultError("forbidden", message);
+}
+
 /**
  * Promote a MODIFIED review's proposed facts onto the parent TrustedAdult. Called
  * inside the approval transaction only — the live approved facts stay put until the
@@ -362,27 +413,12 @@ export async function decideReview(reviewId: number, boardMemberId: number, inpu
 
     const head = await prisma.trustedAdultReview.findUnique({
         where: { id: reviewId },
-        select: {
-            trustedAdultId: true,
-            trustedAdult: { select: { householdId: true, trustedAdultPersonId: true, trustedAdultName: true } },
-        },
+        select: { trustedAdultId: true, proposedEmail: true, proposedPhone: true, trustedAdult: { select: CONFLICT_TA_SELECT } },
     });
     if (!head) throw new TrustedAdultError("not_found", "Review not found.");
 
-    // Conflict of interest: a board member may not decide a trusted-adult review for
-    // their own household, nor one where they are the counterparty. The UI disables the
-    // buttons off the same rule; this is the real enforcement — a direct POST bypasses the UI.
-    const me = await prisma.person.findUnique({ where: { id: boardMemberId }, select: { householdId: true } });
-    if (
-        isTrustedAdultConflict({
-            actorParticipantId: boardMemberId,
-            actorHouseholdId: me?.householdId,
-            taHouseholdId: head.trustedAdult.householdId,
-            taTrustedAdultPersonId: head.trustedAdult.trustedAdultPersonId,
-        })
-    ) {
-        throw new TrustedAdultError("forbidden", "You can't decide your own household's trusted-adult review — another board member must.");
-    }
+    // The UI disables the buttons off the same rule; this is the enforcement a direct POST meets.
+    await refuseConflictedActor(boardMemberId, reviewId, head, "You can't decide a trusted-adult review tied to your own household — another board member must.");
 
     // Lock the parent TA, then re-read the review under the lock and check its phase.
     // Without this two board members both read PENDING_BOARD_REVIEW, both update, and
@@ -503,21 +539,11 @@ export async function overrideReview(
 ) {
     const head = await prisma.trustedAdultReview.findUnique({
         where: { id: reviewId },
-        include: { trustedAdult: { select: { householdId: true, trustedAdultPersonId: true, trustedAdultName: true } } },
+        include: { trustedAdult: { select: CONFLICT_TA_SELECT } },
     });
     if (!head) throw new TrustedAdultError("not_found", "Review not found.");
 
-    const me = await prisma.person.findUnique({ where: { id: actorId }, select: { householdId: true } });
-    if (
-        isTrustedAdultConflict({
-            actorParticipantId: actorId,
-            actorHouseholdId: me?.householdId,
-            taHouseholdId: head.trustedAdult.householdId,
-            taTrustedAdultPersonId: head.trustedAdult.trustedAdultPersonId,
-        })
-    ) {
-        throw new TrustedAdultError("forbidden", "You can't override your own household's trusted-adult review — someone outside your household must.");
-    }
+    await refuseConflictedActor(actorId, reviewId, head, "You can't override a trusted-adult review tied to your own household — someone outside your household must.");
     if (action === "approve" && !sharedNote?.trim()) {
         throw new TrustedAdultError("bad_input", "A shared note is required to force-approve.");
     }

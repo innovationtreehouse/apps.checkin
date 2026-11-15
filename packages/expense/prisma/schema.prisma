@@ -21,10 +21,14 @@ datasource db {
 model ExpenseOrgSettings {
   /// @sensitivity:internal
   orgId                        String @id @map("org_id")
+  // Off sends no expense or donated line to capital review; on with a threshold unset holds each at review.
   /// @sensitivity:internal
-  capitalTotalThresholdCents   Int    @default(0) @map("capital_total_threshold_cents")
+  capitalReviewEnabled         Boolean @default(true) @map("capital_review_enabled")
+  // Receipt total, and unit price, at or over which an expense goes to capital review. Null is unset.
   /// @sensitivity:internal
-  capitalLineItemThresholdCents Int   @default(0) @map("capital_line_item_threshold_cents")
+  capitalTotalThresholdCents   Int?   @map("capital_total_threshold_cents")
+  /// @sensitivity:internal
+  capitalLineItemThresholdCents Int?  @map("capital_line_item_threshold_cents")
   // Receipt total at or over which THRESHOLD_CROSSED goes to the board and the expense is held
   // until the Board's approval is recorded. A single line's total never counts.
   /// @sensitivity:internal

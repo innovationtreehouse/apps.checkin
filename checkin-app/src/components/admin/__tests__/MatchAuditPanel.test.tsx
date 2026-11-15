@@ -120,12 +120,12 @@ describe("MatchAuditPanel", () => {
     global.fetch = jest.fn(async () => ({
       ok: false,
       status: 503,
-      json: async () => ({}),
-      text: async () => "",
+      json: async () => ({ error: "The Shopify mirror is not wired in this environment" }),
+      text: async () => JSON.stringify({ error: "The Shopify mirror is not wired in this environment" }),
     })) as unknown as typeof fetch;
     renderWithProviders(<MatchAuditPanel />);
     fireEvent.click(screen.getByRole("button", { name: /Run match audit/ }));
-    expect(await screen.findByText(/not wired in this environment/)).toBeInTheDocument();
+    expect(await screen.findByText("The Shopify mirror is not wired in this environment.")).toBeInTheDocument();
   });
 
   it("shows the generic failure message on any other error", async () => {
@@ -189,7 +189,7 @@ describe("MatchAuditPanel", () => {
       if (url.includes(TRACK_URL)) {
         return { ok: false, status: 409, json: async () => ({ error: "stale" }), text: async () => "" } as Response;
       }
-      return { ok: true, status: 200, json: async () => auditResult, text: async () => "" } as Response;
+      return { ok: true, status: 200, json: async () => auditResult, text: async () => JSON.stringify(auditResult) } as Response;
     }) as unknown as typeof fetch;
 
     renderWithProviders(<MatchAuditPanel />);

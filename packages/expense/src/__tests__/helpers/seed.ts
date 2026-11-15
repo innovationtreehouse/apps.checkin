@@ -21,14 +21,16 @@ export const passthroughOutbound: Outbound = (_surface, bag, send) => send(bag);
 
 export async function seedOrgSettings(opts?: {
   orgId?: string;
-  capitalTotalThresholdCents?: number;
-  capitalLineItemThresholdCents?: number;
+  capitalReviewEnabled?: boolean;
+  capitalTotalThresholdCents?: number | null;
+  capitalLineItemThresholdCents?: number | null;
 }): Promise<void> {
   await db.expenseOrgSettings.create({
     data: {
       orgId: opts?.orgId ?? ORG,
-      capitalTotalThresholdCents: opts?.capitalTotalThresholdCents ?? 5000,
-      capitalLineItemThresholdCents: opts?.capitalLineItemThresholdCents ?? 2500,
+      capitalReviewEnabled: opts?.capitalReviewEnabled ?? true,
+      capitalTotalThresholdCents: opts?.capitalTotalThresholdCents === undefined ? 5000 : opts.capitalTotalThresholdCents,
+      capitalLineItemThresholdCents: opts?.capitalLineItemThresholdCents === undefined ? 2500 : opts.capitalLineItemThresholdCents,
     },
   });
 }

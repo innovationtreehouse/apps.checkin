@@ -94,7 +94,7 @@ const inKind: InKindDirectory = {
   bucketsApprovedBy: signoff.bucketsApprovedBy,
   async largeValueCents() {
     const { getExpenseSettings } = await import("@checkin/expense");
-    return (await getExpenseSettings((await getOrg()).id)).capitalLineItemThresholdCents;
+    return (await getExpenseSettings((await getOrg()).id)).capitalLineItemThresholdCents ?? 0;
   },
 };
 

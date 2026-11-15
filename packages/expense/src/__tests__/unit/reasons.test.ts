@@ -6,6 +6,7 @@ import { backToQueue } from "../../lib/backToQueue";
 
 const facts = (over: Partial<Omit<ReasonFacts, "expense">> & { expense?: Partial<ReasonFacts["expense"]> } = {}): ReasonFacts => ({
   receiptReview: null,
+  capitalThresholdsUnset: false,
   approvedTaxCents: null,
   approvals: [{ status: "approved", ownerId: 7 }],
   heldLines: 0,
@@ -38,6 +39,7 @@ describe("deriveReasons", () => {
     expect(codes(facts({ approvals: [{ status: "unknown", ownerId: null }] }))).toEqual(["BUCKET_UNKNOWN"]);
     expect(codes(facts({ approvals: [{ status: "exception_raised", ownerId: 7 }] }))).toEqual(["OWNER_EXCEPTION"]);
     expect(codes(facts({ expense: { state: "capital_review" } }))).toEqual(["CAPITAL_REVIEW"]);
+    expect(codes(facts({ expense: { state: "capital_review" }, capitalThresholdsUnset: true }))).toEqual(["CAPITAL_REVIEW", "CAPITAL_THRESHOLDS_UNSET"]);
     expect(codes(facts({ expense: { state: "set_depreciation_cycle" } }))).toEqual(["DEPRECIATION_CYCLE"]);
     expect(codes(facts({ expense: { needsReimbursement: true } }))).toEqual(["REIMBURSEE_TO_NAME"]);
     expect(deriveReasons(facts({ heldLines: 2 }))).toEqual([{ code: "ACCOUNT_HOLD", tab: "holds", amountCents: null, count: 2, detail: null }]);

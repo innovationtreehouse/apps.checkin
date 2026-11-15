@@ -37,6 +37,7 @@ export const GET = handler('GET /api/facility/visits', async ({ req }) => {
             departedVia: true,
             facilityCloseId: true,
             person: { select: { email: true, name: true } },
+            event: { select: { name: true } },
             ...(closedOut ? { facilityClose: { select: { closedBy: { select: { name: true } } } } } : {}),
         },
     });
