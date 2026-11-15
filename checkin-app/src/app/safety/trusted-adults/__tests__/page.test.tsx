@@ -270,6 +270,34 @@ describe("safety/trusted-adults page", () => {
     expect(screen.getByRole("button", { name: "Request info" })).toBeDisabled();
   });
 
+  it("disables actions when another family's trusted adult shares an email with the viewer's household", async () => {
+    const spouseOfViewer = [{ ...trustedAdults[0], trustedAdultEmail: "spouse@example.com" }];
+    setSession({ id: 1, isBoardMember: true, householdId: 1 });
+    mockFetchJson({
+      "/api/safety/trusted-adults": { trustedAdults: spouseOfViewer },
+      "/api/household": { household: { householdMembers: [{ email: "Spouse@Example.com", phone: null }] } },
+    });
+    renderWithProviders(<AdminTrustedAdultsPage />);
+    await screen.findByText("Guardian House");
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled());
+    expect(screen.getByRole("button", { name: "Deny" })).toBeDisabled();
+    expect(screen.queryByText(/Can't confirm no conflict/)).not.toBeInTheDocument();
+  });
+
+  it("warns, without blocking, when only a name identifies the trusted adult", async () => {
+    setSession({ id: 1, isBoardMember: true, householdId: 1 });
+    mockFetchJson({
+      "/api/safety/trusted-adults": { trustedAdults },
+      "/api/household": { household: { householdMembers: [{ email: "me@example.com", phone: null }] } },
+    });
+    renderWithProviders(<AdminTrustedAdultsPage />);
+    await screen.findByText("Guardian House");
+
+    expect(screen.getByText(/Can't confirm no conflict/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Deny" })).toBeEnabled();
+  });
+
   it("on a declined change over a live approval, offers Revoke approval and no Force deny", async () => {
     const declined = [
       {

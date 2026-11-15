@@ -22,7 +22,7 @@ import { TrustedAdultContact } from "@/components/TrustedAdultContact";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { isAuthorizedApproval } from "@/lib/trusted-adult/filters";
 import { TRUSTED_ADULTS_ROLES } from "@/lib/nav/sections/safety";
-import { isTrustedAdultConflict } from "@/lib/trusted-adult/conflict";
+import { cannotConfirmNoConflict, isTrustedAdultConflict, type HouseholdContact, type TrustedAdultIdentity } from "@/lib/trusted-adult/conflict";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
 
 interface Review {
@@ -59,7 +59,7 @@ interface TrustedAdult {
     origin: string;
     createdAt: string;
     household: HouseholdRef | null;
-    trustedAdultPerson: PersonRef | null;
+    trustedAdultPerson: (PersonRef & { householdId: number }) | null;
     reviews: Review[];
 }
 
@@ -102,6 +102,9 @@ export default function AdminTrustedAdultsPage() {
     const { ready, loading: authLoading, user } = useRequireRole(TRUSTED_ADULTS_ROLES);
     const { data, error, reload } = useLoad<{ trustedAdults: TrustedAdult[] }>(ready ? "/api/safety/trusted-adults" : null);
     const items = (!error && data?.trustedAdults) || [];
+    // The viewer's own household contacts, for the conflict rule's email/phone match.
+    const own = useLoad<{ household: { householdMembers: HouseholdContact[] } | null }>(ready ? "/api/household" : null);
+    const ownContacts = own.data?.household?.householdMembers ?? [];
     const [busyId, setBusyId] = useState<number | null>(null);
     const [shared, setShared] = useState<Record<number, string>>({});
     // When a prior board note exists, force the board to pick "reuse" or "write new"
@@ -231,14 +234,22 @@ export default function AdminTrustedAdultsPage() {
                     prior?.decision === "APPROVE" && prior.reviewBy && latest
                         ? daysBetween(latest.createdAt, prior.reviewBy)
                         : null;
-                // Conflict of interest: can't review your own household's trusted adult, nor
-                // one where you are the counterparty. Backend enforces the same rule.
+                // Conflict of interest, the same rule the server enforces.
+                const adult: TrustedAdultIdentity = {
+                    personId: ta.trustedAdultPerson?.id,
+                    personHouseholdId: ta.trustedAdultPerson?.householdId,
+                    email: ta.trustedAdultEmail,
+                    phone: ta.trustedAdultPhone,
+                };
                 const isSelf = isTrustedAdultConflict({
                     actorParticipantId: user?.id,
                     actorHouseholdId: user?.householdId,
+                    actorHouseholdContacts: ownContacts,
                     taHouseholdId: ta.household?.id,
-                    taTrustedAdultPersonId: ta.trustedAdultPerson?.id,
+                    adult,
+                    proposed: latest ? { email: latest.proposedEmail, phone: latest.proposedPhone } : null,
                 });
+                const unconfirmed = !isSelf && cannotConfirmNoConflict(adult);
                 // A live approval exists underneath this pending review (mirrors
                 // /operational: an unexpired approval = still authorized). Then denying is
                 // ambiguous — reject just this submission, or the adult outright — so the
@@ -254,6 +265,11 @@ export default function AdminTrustedAdultsPage() {
                             {changeBadge && <Badge variant="filled" color={changeBadge.color}>{changeBadge.text}</Badge>}
                         </Group>
                         <TrustedAdultContact phone={ta.trustedAdultPhone} email={ta.trustedAdultEmail} />
+                        {unconfirmed && (
+                            <Text size="sm" c="orange" mt={4}>
+                                Can&apos;t confirm no conflict: this adult has only a name on file, so the app can&apos;t tell whether they are in your household.
+                            </Text>
+                        )}
                         <Text size="sm" mt={6}><b>Family context (board only):</b> {ta.familyContext}</Text>
                         {latest?.kind === "MODIFIED" && (
                             <Card withBorder radius="sm" padding="xs" mt={6} bg="var(--mantine-color-blue-light)">
@@ -318,7 +334,7 @@ export default function AdminTrustedAdultsPage() {
                                     onChange={(e) => { const value = e.currentTarget.value; setShared((s) => ({ ...s, [latest.id]: value })); }}
                                 />
                                 <Tooltip
-                                    label="You can't review your own household's trusted adult — another board member must decide."
+                                    label="You can't review a trusted adult tied to your own household — another board member must decide."
                                     multiline w={260}
                                     disabled={!isSelf}
                                 >

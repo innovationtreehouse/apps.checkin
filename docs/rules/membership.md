@@ -351,6 +351,14 @@ Procedure below is built on them.
   from one their household requested. The Board's reset and release carry the
   same bar.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
+- A board member is barred from a trusted-adult review their household
+  requested, one where they are the trusted adult, and one whose trusted adult is
+  in their household, whichever family asked. The adult counts as in the
+  household when their linked person is, or, with no linked person, when their
+  email or phone matches someone in it. A name alone never counts: a review
+  whose adult has only a name is not blocked, and the board page warns that no
+  conflict can be confirmed.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+
 ### Activation
 
 - Nothing advances toward payment until the agreement is signed and the
