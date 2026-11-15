@@ -12,14 +12,18 @@
  * scopes)` where `scopes = scopesHeld(modelName, row, callerCtx)` — the
  * per-row predicate; a field a file route serves is never emitted. Relations
  * are recursed into, and dropped when no row of the target could show the view
- * a field; a related row that shows no field reads as absent (see
- * hideEmptyRows); each `_count` key is gated to relations the view can see (see
- * relationVisible).
+ * a field. A row that shows no field reads as absent, in a top-level list and
+ * in a relation (see hideEmptyRows). Each `_count` key is gated to relations
+ * the view can see (see relationVisible), and dropped when the response also
+ * carries that relation's rows and one could be hidden (see rowsAlwaysShow), so
+ * the count never reveals how many were.
  *
  * IMPORTANT: This file is CODEOWNERS-gated.
  */
 import { classifications, relations, fieldVisible, isFileOnlyField, modelVisible, type Scope, type Tier, type Token } from './core';
 import { scopesHeld, type CallerContext } from './access-resolvers';
+
+const NO_SCOPES: ReadonlySet<Scope> = new Set();
 
 export function stripBag(
     bag: Record<string, unknown>,
@@ -32,7 +36,8 @@ export function stripBag(
             console.warn(`[security] bag key '${modelName}' is not a known model — dropping`);
             continue;
         }
-        stripped[modelName] = stripValue(modelName, value, tokens, callerCtx);
+        const rows = stripValue(modelName, value, tokens, callerCtx);
+        stripped[modelName] = Array.isArray(rows) ? hideEmptyRows(rows) : rows;
     }
     return stripped;
 }
@@ -85,7 +90,9 @@ export function stripValue(
         const gated: Record<string, unknown> = {};
         for (const [relName, count] of Object.entries(counts)) {
             const rel = rels[relName];
-            if (rel && relationVisible(rel.model, tokens, scopes)) gated[relName] = count;
+            if (!rel || !relationVisible(rel.model, tokens, scopes)) continue;
+            if (relName in obj && !rowsAlwaysShow(rel.model, obj[relName], tokens)) continue;
+            gated[relName] = count;
         }
         if (Object.keys(gated).length > 0) result._count = gated;
     }
@@ -100,7 +107,7 @@ export function stripValue(
 }
 
 /**
- * A related row the caller sees no field of reads as no row: dropped from a
+ * A row the caller sees no field of reads as no row: dropped from a
  * list, `null` for a single relation, so its existence and count stay hidden.
  */
 function hideEmptyRows(value: unknown): unknown {
@@ -110,6 +117,25 @@ function hideEmptyRows(value: unknown): unknown {
 
 function isEmptyRow(value: unknown): boolean {
     return typeof value === 'object' && value !== null && Object.keys(value).length === 0;
+}
+
+/**
+ * Whether every related row selects a field the caller sees without holding any
+ * scope, so hideEmptyRows can hide none of them. It reads the select's shape,
+ * not row data, so a count beside the rows is kept or dropped the same way for
+ * every caller of the view.
+ */
+function rowsAlwaysShow(model: string, value: unknown, tokens: readonly Token[]): boolean {
+    const tiers = classifications[model as keyof typeof classifications] as Record<string, Tier> | undefined;
+    if (!tiers) return false;
+    const rows = Array.isArray(value) ? value : [value];
+    return rows.every(row =>
+        row === null ||
+        (typeof row === 'object' &&
+            Object.keys(row).some(
+                field => field in tiers && !isFileOnlyField(model, field) && fieldVisible(tiers[field], tokens, NO_SCOPES),
+            )),
+    );
 }
 
 /**
