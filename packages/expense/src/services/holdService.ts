@@ -90,5 +90,5 @@ export async function resubmitHeldExpense(principal: ExpensePrincipal, expenseId
     return;
   }
   await writeAudit(db, actorOf(principal), { expenseId, action: "hold_resubmitted" });
-  await checkAndProcessExpense(orgId, expenseId);
+  await checkAndProcessExpense(orgId, expenseId, actorOf(principal));
 }

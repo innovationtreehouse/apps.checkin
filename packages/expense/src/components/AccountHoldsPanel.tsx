@@ -123,8 +123,8 @@ export default function AccountHoldsPanel({ expenseId, holds, lines, currency, i
             {withoutAccount > 0 && (
               <Text size="xs" c="dimmed">
                 {withoutAccount === 1
-                  ? "1 held line has no account yet. Resubmit checks the account rules again and holds it if it still matches none."
-                  : `${withoutAccount} held lines have no account yet. Resubmit checks the account rules again and holds each one that still matches none.`}
+                  ? "1 held line has no account yet. Resubmit re-reads the catalog, checks the account rules again, and holds it if it still matches none."
+                  : `${withoutAccount} held lines have no account yet. Resubmit re-reads the catalog, checks the account rules again, and holds each one that still matches none.`}
               </Text>
             )}
             <Button

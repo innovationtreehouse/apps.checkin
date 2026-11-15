@@ -99,13 +99,39 @@ function snapshotOf(li: ExpenseLineItem): CatalogInfo | null {
   return gtin13 && category && subcategory ? { gtin13, category, subcategory } : null;
 }
 
-/** Fixes the catalog inputs of signed lines; a line that already has a snapshot keeps it. */
-export async function saveCatalogSnapshots(info: Map<number, CatalogInfo>, client: Db = db): Promise<void> {
+/** Fixes the catalog inputs of signed lines; a line that already has a snapshot keeps it unless `replace`. */
+export async function saveCatalogSnapshots(info: Map<number, CatalogInfo>, client: Db = db, replace = false): Promise<void> {
   for (const [id, { gtin13, category, subcategory }] of info) {
     await client.expenseLineItem.updateMany({
-      where: { id, signedGtin13: null },
+      where: replace ? { id } : { id, signedGtin13: null },
       data: { signedGtin13: gtin13, signedCategory: category, signedSubcategory: subcategory },
     });
+  }
+}
+
+const describeAccount = (category: string | null, subcategory: string | null, account: string | null) =>
+  `${category && subcategory ? `${category}/${subcategory}` : "no category"} → ${account ?? "no account"}`;
+
+/**
+ * After a person's Retry or Resubmit re-read the live catalog: refreshes each line's snapshot to that read
+ * and audits, as that person, every catalog line whose category or account moved from its previous attempt.
+ */
+async function recordLiveRead(
+  client: Db,
+  actor: Actor,
+  expenseId: string,
+  lineItems: ExpenseLineItem[],
+  { resolved, conflicts, snapshots }: { resolved: ResolvedItem[]; conflicts: ConflictItem[]; snapshots: Map<number, CatalogInfo> },
+): Promise<void> {
+  await saveCatalogSnapshots(snapshots, client, true);
+  const accountByLine = new Map(resolved.map((r) => [r.id, r.account]));
+  for (const li of lineItems) {
+    if (li.manualQbAccount || !resolvesThroughCatalog(li)) continue;
+    const read = snapshots.get(li.id) ?? conflicts.find((c) => c.lineItem.id === li.id) ?? { category: null, subcategory: null };
+    const before = describeAccount(li.signedCategory, li.signedSubcategory, li.resolvedQbAccount);
+    const after = describeAccount(read.category, read.subcategory, accountByLine.get(li.id) ?? null);
+    if (before === after) continue;
+    await writeAudit(client, actor, { expenseId, action: "qb_account_reresolved", lineItemId: li.id, fieldChanged: "qbAccount", valueBefore: before, valueAfter: after });
   }
 }
 
@@ -114,19 +140,22 @@ export async function saveCatalogSnapshots(info: Map<number, CatalogInfo>, clien
 /**
  * Callers run this only once every line is signed off. `snapshots` holds the live catalog inputs of
  * lines without one; the caller saves them, so later catalog edits cannot move those accounts.
+ * `liveCatalog` ignores the snapshots and reads every line live, for a person's Retry or Resubmit.
  */
 async function resolveAccountsForExpense(
   lineItems: ExpenseLineItem[],
   rules: AccountMapping[],
   vendorName: string,
+  liveCatalog = false,
 ): Promise<{ resolved: ResolvedItem[]; conflicts: ConflictItem[]; snapshots: Map<number, CatalogInfo> }> {
-  const live = await lookupCatalogInfo(lineItems.filter((li) => !snapshotOf(li)), vendorName);
+  const snapshotFor = (li: ExpenseLineItem) => (liveCatalog ? null : snapshotOf(li));
+  const live = await lookupCatalogInfo(lineItems.filter((li) => !snapshotFor(li)), vendorName);
   const snapshots = new Map(live.info);
 
   const gtin13ByItemId = live.gtin13ByItemId;
   const itemInfoByItemId = live.info;
   for (const li of lineItems) {
-    const snapshot = snapshotOf(li);
+    const snapshot = snapshotFor(li);
     if (!snapshot) continue;
     gtin13ByItemId.set(li.id, snapshot.gtin13);
     itemInfoByItemId.set(li.id, snapshot);
@@ -243,7 +272,9 @@ async function commitQbProcessing(
   taxAlloc: Map<number, number>,
   shippingAlloc: Map<number, number>,
   discountAlloc: Map<number, number>,
+  conflicts: ConflictItem[],
   snapshots: Map<number, CatalogInfo>,
+  resubmittedBy: Actor | undefined,
 ): Promise<boolean> {
   const resolvedLineItemIds = resolved.map((r) => r.id);
 
@@ -251,7 +282,8 @@ async function commitQbProcessing(
     await lockExpense(tx, expenseId);
     const current = await tx.expense.findUniqueOrThrow({ where: { id: expenseId } });
     if (reimburseeUnknown(current) || (await unsignedLines(tx, current)).size > 0) return false;
-    await saveCatalogSnapshots(snapshots, tx);
+    if (resubmittedBy) await recordLiveRead(tx, resubmittedBy, expenseId, lineItems, { resolved, conflicts, snapshots });
+    else await saveCatalogSnapshots(snapshots, tx);
 
     if (resolvedLineItemIds.length > 0) {
       await tx.expenseHold.updateMany({
@@ -299,7 +331,8 @@ async function commitQbProcessing(
 
 // ── Orchestrator ──────────────────────────────────────────────────────────────
 
-export async function checkAndProcessExpense(orgId: string, expenseId: string): Promise<void> {
+/** `resubmittedBy` is the person who pressed Resubmit; their run reads the live catalog instead of the sign-off snapshot. */
+export async function checkAndProcessExpense(orgId: string, expenseId: string, resubmittedBy?: Actor): Promise<void> {
   let expense = await db.expense.findFirst({ where: { id: expenseId } });
   if (!expense) return;
 
@@ -343,7 +376,7 @@ export async function checkAndProcessExpense(orgId: string, expenseId: string): 
   if (reimburseeUnknown(expense) || (await unsignedLines(db, expense)).size > 0) return;
 
   try {
-    await processExpenseForQb(orgId, expenseId, expense);
+    await processExpenseForQb(orgId, expenseId, expense, resubmittedBy);
   } catch (err) {
     // A concurrent drain moved the expense first and carries it on; this is not a QB failure.
     if (err instanceof StaleStateError) return;
@@ -368,17 +401,19 @@ export async function checkAndProcessExpense(orgId: string, expenseId: string): 
   }
 }
 
-async function processExpenseForQb(orgId: string, expenseId: string, expense: Expense): Promise<void> {
+async function processExpenseForQb(orgId: string, expenseId: string, expense: Expense, resubmittedBy: Actor | undefined): Promise<void> {
   const lineItems = await db.expenseLineItem.findMany({ where: { expenseId } });
 
   if (lineItems.length === 0) return;
 
   const rules = await db.accountMapping.findMany({ where: { orgId } });
 
-  const { resolved, conflicts, snapshots } = await resolveAccountsForExpense(lineItems, rules, expense.vendorName ?? "");
+  const resolution = await resolveAccountsForExpense(lineItems, rules, expense.vendorName ?? "", !!resubmittedBy);
+  const { resolved, conflicts, snapshots } = resolution;
 
   if (conflicts.length > 0) {
-    await saveCatalogSnapshots(snapshots);
+    if (resubmittedBy) await recordLiveRead(db, resubmittedBy, expenseId, lineItems, resolution);
+    else await saveCatalogSnapshots(snapshots);
     await persistConflicts(orgId, expenseId, conflicts);
 
     if (expense.state === "qb_pending") {
@@ -413,7 +448,7 @@ async function processExpenseForQb(orgId: string, expenseId: string, expense: Ex
       orgId, expenseId,
       lineItems, resolved,
       taxAlloc, shippingAlloc, discountAlloc,
-      snapshots,
+      conflicts, snapshots, resubmittedBy,
     );
     if (!committed) return;
     await sendOutcomeNotices([expenseId]);
@@ -469,7 +504,8 @@ function refuseMissingCatalog(err: unknown): never {
 
 /**
  * Re-arms an expense whose post failed: re-resolves each line's account from the current account
- * mappings (so a fixed mapping takes effect) and records who asked, all under the row lock so an
+ * mappings and the live catalog (so a fixed mapping or catalog entry takes effect), audits each
+ * account that moves, and records who asked, all under the row lock so an
  * in-flight post never reads half-rewritten accounts; then posts once. A post that books leaves
  * NEEDS_FINANCE, which clears the QB_POST_FAILED reason (read from that state) and the failure,
  * and checks off any open QB_POST_HELD flag; one that fails keeps its first failure time.
@@ -484,9 +520,10 @@ export async function retryQbPost(orgId: string, expenseId: string, actor: Actor
     if (!expense || !["POST_FAILED", "NEEDS_FINANCE"].includes(expense.qbMatchState)) return false;
     const lineItems = await tx.expenseLineItem.findMany({ where: { expenseId } });
     const rules = await tx.accountMapping.findMany({ where: { orgId } });
-    const { resolved, conflicts, snapshots } = await resolveAccountsForExpense(lineItems, rules, expense.vendorName ?? "").catch(refuseMissingCatalog);
-    await saveCatalogSnapshots(snapshots, tx);
+    const resolution = await resolveAccountsForExpense(lineItems, rules, expense.vendorName ?? "", true).catch(refuseMissingCatalog);
+    const { resolved, conflicts } = resolution;
     if (conflicts.length > 0) return false;
+    await recordLiveRead(tx, actor, expenseId, lineItems, resolution);
 
     for (const r of resolved) {
       await tx.expenseLineItem.update({ where: { id: r.id }, data: { resolvedQbAccount: r.account } });
