@@ -78,9 +78,9 @@ export default function FinanceReview() {
   const receipts = useQueueCounts();
   useEffect(() => {
     if (receipts.error) {
-      notifications.show({ id: "receipt-queue-counts", title: "Couldn't load the receipt tab counts", message: loadFailure("/api/receipts/queue-counts", receipts.error), color: "red", autoClose: false });
+      notifications.show({ id: "receipt-queue-counts", title: "Couldn't load the receipt tab counts", message: loadFailure("/api/receipts/queue-counts", receipts.error, receipts.status), color: "red", autoClose: false });
     }
-  }, [receipts.error]);
+  }, [receipts.error, receipts.status]);
   const expenses = useFinanceQueueCounts();
 
   const receiptTab = (q: { value: string; label: string }): Tab => {

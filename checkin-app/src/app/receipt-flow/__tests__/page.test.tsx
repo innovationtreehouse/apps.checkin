@@ -62,7 +62,7 @@ describe("receipt flow status page", () => {
     renderWithProviders(<ReceiptFlowStatusPage />);
 
     expect(await screen.findByText("Couldn't load the counts")).toBeInTheDocument();
-    expect(screen.getByText("HTTP 404")).toBeInTheDocument();
+    expect(screen.getByText("Something went wrong. Try again.")).toBeInTheDocument();
     expect(screen.queryByRole("table")).toBeNull();
   });
 
