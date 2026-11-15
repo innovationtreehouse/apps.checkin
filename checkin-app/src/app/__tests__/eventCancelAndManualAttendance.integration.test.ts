@@ -11,8 +11,9 @@
  *
  * A manual "Absent" must not delete a live check-in: an Absent
  * edit against an OPEN visit (departedAt = null) is rejected with 400 so the row
- * proving the participant is physically on-site survives. Only CLOSED visits are
- * removed on an Absent correction. See the manualEditAttendance block below.
+ * proving the participant is physically on-site survives. An Absent correction
+ * unlinks a closed badged visit and removes any other closed one. See the
+ * manualEditAttendance block below.
  */
 import { PATCH } from '@/app/api/events/[id]/route';
 import prisma from '@/lib/prisma';
@@ -214,6 +215,56 @@ describe('PATCH /api/events/[id] — cancel, manual attendance, past-event guard
                 .toEqual({ score: 60, flagged: true });
         });
 
+        it('keeps a badged visit on Absent, unlinked from the event and still counted toward facility hours', async () => {
+            const event = await makeEvent('manual-absent-scanned', -2 * HOUR);
+            const visit = await prisma.visit.create({
+                data: {
+                    personId: participantId,
+                    arrivedAt: new Date(Date.now() - 90 * MIN),
+                    departedAt: new Date(Date.now() - 60 * MIN),
+                    arrivedVia: 'SCANNER',
+                    departedVia: 'SCANNER',
+                    associatedEventId: event.id,
+                },
+            });
+
+            const res = await patch(event.id, { action: 'manualEditAttendance', participantId, status: 'Absent' });
+            expect(res.status).toBe(200);
+
+            const kept = await prisma.visit.findUniqueOrThrow({ where: { id: visit.id } });
+            expect(kept).toMatchObject({ associatedEventId: null, deletedAt: null, arrivedAt: visit.arrivedAt, departedAt: visit.departedAt });
+            // The facility trends count exactly the completed, undeleted visits.
+            expect(await prisma.visit.count({
+                where: { id: visit.id, departedAt: { not: null }, deletedAt: null },
+            })).toBe(1);
+
+            const audit = await prisma.auditLog.findFirst({
+                where: { tableName: 'Visit', affectedEntityId: visit.id },
+            });
+            expect(audit).toMatchObject({ action: 'EDIT', actorId: adminId, oldData: { arrivedAt: visit.arrivedAt.toISOString(), departedAt: visit.departedAt!.toISOString(), associatedEventId: event.id } });
+        });
+
+        it('still tombstones a typed visit on Absent', async () => {
+            const event = await makeEvent('manual-absent-typed', -2 * HOUR);
+            const visit = await prisma.visit.create({
+                data: {
+                    personId: participantId,
+                    arrivedAt: new Date(Date.now() - 90 * MIN),
+                    departedAt: new Date(Date.now() - 60 * MIN),
+                    arrivedVia: 'TYPED',
+                    departedVia: 'TYPED',
+                    associatedEventId: event.id,
+                },
+            });
+
+            const res = await patch(event.id, { action: 'manualEditAttendance', participantId, status: 'Absent' });
+            expect(res.status).toBe(200);
+
+            const gone = await prisma.visit.findUniqueOrThrow({ where: { id: visit.id } });
+            expect(gone.deletedAt).not.toBeNull();
+            expect(gone.associatedEventId).toBe(event.id);
+        });
+
         it('rejects and deletes nothing when an open visit coexists with a closed one', async () => {
             const event = await makeEvent('manual-absent-mix', -2 * HOUR);
             await prisma.visit.create({
@@ -280,6 +331,24 @@ describe('PATCH /api/events/[id] — cancel, manual attendance, past-event guard
             expect(visits).toHaveLength(1);
             expect(visits[0].associatedEventId).toBe(event.id);
             expect(visits[0].departedAt!.getTime()).toBe(kiosk.departedAt!.getTime());
+        });
+
+        it('relinks a badged visit an Absent mark detached, writing no second visit', async () => {
+            const event = await makeEvent('absent-then-present', -1 * HOUR);
+            const kiosk = await prisma.visit.create({
+                data: { personId: participantId, arrivedAt: ago(70), departedAt: ago(10), arrivedVia: 'SCANNER', departedVia: 'SCANNER', associatedEventId: event.id },
+            });
+
+            const absent = await patch(event.id, { action: 'manualEditAttendance', participantId, status: 'Absent' });
+            expect(absent.status).toBe(200);
+            expect((await prisma.visit.findUniqueOrThrow({ where: { id: kiosk.id } })).associatedEventId).toBeNull();
+
+            const res = await mark(event.id, ago(60), ago(5));
+            expect(res.status).toBe(200);
+
+            const visits = await prisma.visit.findMany({ where: { personId: participantId } });
+            expect(visits).toHaveLength(1);
+            expect(visits[0]).toMatchObject({ id: kiosk.id, associatedEventId: event.id, deletedAt: null, arrivedAt: kiosk.arrivedAt, departedAt: kiosk.departedAt });
         });
 
         it('creates a closed visit when no kiosk visit covers the session', async () => {
