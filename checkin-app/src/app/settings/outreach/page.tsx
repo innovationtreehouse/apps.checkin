@@ -1,12 +1,12 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import {
   Alert, Button, Card, Center, Group, Loader, Modal, Progress, Stack, Text, Textarea, TextInput, Title,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
-import { errorMessage, HttpError, invalidateLoads, showError, showSuccess } from "@checkin/component-ui";
-import { api } from "@/lib/api";
+import { errorMessage, HttpError, invalidateLoads, LoadError, showError, showSuccess } from "@checkin/component-ui";
+import { api, useLoad } from "@/lib/api";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { SETTINGS_ROLES } from "@/lib/nav/sections/settings";
 import { useUnsavedGuard, shallowEqual } from "@/components/UnsavedChangesProvider";
@@ -50,36 +50,26 @@ const AUDIENCE_LABEL: Record<TemplateKey, string> = {
 export default function OutreachSettingsPage() {
   const { ready, loading: authLoading } = useRequireRole(SETTINGS_ROLES);
 
-  const [loading, setLoading] = useState(true);
   const [opening, setOpening] = useState({ subject: "", body: "" });
   const [reminder, setReminder] = useState({ subject: "", body: "" });
   const [initial, setInitial] = useState<{ opening: { subject: string; body: string }; reminder: { subject: string; body: string } } | null>(null);
-  const [nextDeadline, setNextDeadline] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [testSending, setTestSending] = useState<TemplateKey | null>(null);
 
-  const load = useCallback(() => fetch("/api/settings/outreach")
-    .then(async (res) => {
-      if (res.ok) {
-        const data = (await res.json()) as { settings: Settings; nextDeadline: string | null };
-        const snap = {
-          opening: { subject: data.settings.outreachOpeningSubject ?? "", body: data.settings.outreachOpeningBody ?? "" },
-          reminder: { subject: data.settings.outreachReminderSubject ?? "", body: data.settings.outreachReminderBody ?? "" },
-        };
-        setOpening(snap.opening);
-        setReminder(snap.reminder);
-        setInitial(snap);
-        setNextDeadline(data.nextDeadline);
-      }
-    })
-    .finally(() => {
-      setLoading(false);
-    }),
-  []);
-
-  useEffect(() => {
-    if (ready) load();
-  }, [ready, load]);
+  const { data, error: loadError, reload } = useLoad<{ settings: Settings; nextDeadline: string | null }>(ready ? "/api/settings/outreach" : null);
+  const nextDeadline = data?.nextDeadline ?? null;
+  // Each fresh read of the settings resets the form to it.
+  const [formFor, setFormFor] = useState<typeof data>(null);
+  if (data && data !== formFor) {
+    setFormFor(data);
+    const snap = {
+      opening: { subject: data.settings.outreachOpeningSubject ?? "", body: data.settings.outreachOpeningBody ?? "" },
+      reminder: { subject: data.settings.outreachReminderSubject ?? "", body: data.settings.outreachReminderBody ?? "" },
+    };
+    setOpening(snap.opening);
+    setReminder(snap.reminder);
+    setInitial(snap);
+  }
 
   const isDirty = !!initial && !shallowEqual(
     { os: initial.opening.subject, ob: initial.opening.body, rs: initial.reminder.subject, rb: initial.reminder.body },
@@ -100,8 +90,7 @@ export default function OutreachSettingsPage() {
         }),
       });
       showSuccess("Outreach templates saved.");
-      setLoading(true);
-      await load();
+      await reload();
     } catch (e) {
       showError(errorMessage(e));
     } finally {
@@ -127,7 +116,9 @@ export default function OutreachSettingsPage() {
 
   return (
     <Stack>
-      {loading ? (
+      {loadError ? (
+        <LoadError what="the outreach templates" message={loadError} onRetry={reload} />
+      ) : data === null ? (
         <Center py="xl"><Loader /></Center>
       ) : (
         <>
@@ -223,28 +214,13 @@ function TemplateCard({
 }
 
 function SendPanel({ deadlineSet }: { deadlineSet: boolean }) {
-  const [panelLoading, setPanelLoading] = useState(true);
-  const [inFlight, setInFlight] = useState<BulkSendSummary | null>(null);
-  const [lastCompleted, setLastCompleted] = useState<BulkSendSummary | null>(null);
+  const { data: status, error: statusError, reload: refreshStatus } = useLoad<{ inFlight: BulkSendSummary | null; lastCompleted: BulkSendSummary | null }>("/api/outreach/status");
+  const inFlight = status?.inFlight ?? null;
+  const lastCompleted = status?.lastCompleted ?? null;
   const [draining, setDraining] = useState(false);
   const [confirm, setConfirm] = useState<{ emailType: TemplateKey; bulkSendId: number; counts: { queued: number; leadsWithoutEmail: number } } | null>(null);
   const [confirmOpened, { open: openConfirm, close: closeConfirm }] = useDisclosure(false);
   const [starting, setStarting] = useState<TemplateKey | null>(null);
-
-  const refreshStatus = useCallback(async () => {
-    try {
-      const res = await fetch("/api/outreach/status");
-      if (res.ok) {
-        const data = (await res.json()) as { inFlight: BulkSendSummary | null; lastCompleted: BulkSendSummary | null };
-        setInFlight(data.inFlight);
-        setLastCompleted(data.lastCompleted);
-      }
-    } finally {
-      setPanelLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { refreshStatus(); }, [refreshStatus]);
 
   const drain = async (bulkSendId: number) => {
     setDraining(true);
@@ -317,7 +293,9 @@ function SendPanel({ deadlineSet }: { deadlineSet: boolean }) {
         Sending is manual — nothing here runs on a schedule.
       </Text>
 
-      {panelLoading ? (
+      {statusError ? (
+        <LoadError what="the send status" message={`${statusError} No new send can start until it loads.`} onRetry={refreshStatus} />
+      ) : status === null ? (
         <Center py="md"><Loader size="sm" /></Center>
       ) : inFlight ? (
         <Stack>

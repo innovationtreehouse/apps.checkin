@@ -1,10 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { Alert, Button, Divider, Group, Loader, Modal, SimpleGrid, Stack, Switch, Text, TextInput } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
-import { errorMessage, showError, showSuccess } from "@checkin/component-ui";
-import { api } from "@/lib/api";
+import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
+import { api, useLoad } from "@/lib/api";
 import { modals } from "@mantine/modals";
 import { pickAddress, type StructuredAddress } from "@/lib/address";
 import { isValidPhone, PHONE_ERROR } from "@/lib/phone";
@@ -42,6 +41,19 @@ type FormState = {
 
 const EMPTY: FormState = { name: "", line1: "", line2: "", city: "", state: "", postalCode: "", emergencyContactName: "", emergencyContactPhone: "", memberSince: "", isVolunteerFamily: false };
 
+function toForm(h: AdminHousehold): FormState {
+  const a = pickAddress(h);
+  return {
+    name: h.name || "",
+    line1: a.line1 ?? "", line2: a.line2 ?? "", city: a.city ?? "", state: a.state ?? "", postalCode: a.postalCode ?? "",
+    emergencyContactName: h.emergencyContactName || "",
+    emergencyContactPhone: h.emergencyContactPhone || "",
+    // date-only slice of the membership's join date (ISO → YYYY-MM-DD)
+    memberSince: h.orgMembership?.memberSince ? h.orgMembership.memberSince.slice(0, 10) : "",
+    isVolunteerFamily: !!h.orgMembership?.isVolunteerFamily,
+  };
+}
+
 /** Deep-compares flat string form state. Exported for unit test. */
 export function isFormDirty(a: FormState, b: FormState): boolean {
   return JSON.stringify(a) !== JSON.stringify(b);
@@ -66,65 +78,31 @@ export function AdminEditHouseholdModal({
   onClose: () => void;
   onSaved?: (household: AdminHousehold) => void;
 }) {
-  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<FormState>(EMPTY);
   const [initial, setInitial] = useState<FormState>(EMPTY);
-  const [displayName, setDisplayName] = useState("");
-  const [members, setMembers] = useState<NonNullable<AdminHousehold["householdMembers"]>>([]);
-  const [leadIds, setLeadIds] = useState<number[]>([]);
   const [removingLead, setRemovingLead] = useState<number | null>(null);
   const [promotingLead, setPromotingLead] = useState<number | null>(null);
   const [fieldErrors, setFieldErrors] = useState<{ memberSince?: string }>({});
-  const [hasMembership, setHasMembership] = useState(false);
 
-  const loadHousehold = useCallback((signal?: { cancelled: boolean }) => {
-    if (householdId == null) return Promise.resolve();
-    return fetch(`/api/membership-ops/households?id=${householdId}`).then(async (res) => {
-      const data = await res.json();
-      const h: AdminHousehold | null = data.household;
-      if (signal?.cancelled) return;
-      if (h) {
-        const a = pickAddress(h);
-        const loaded: FormState = {
-          name: h.name || "",
-          line1: a.line1 ?? "", line2: a.line2 ?? "", city: a.city ?? "", state: a.state ?? "", postalCode: a.postalCode ?? "",
-          emergencyContactName: h.emergencyContactName || "",
-          emergencyContactPhone: h.emergencyContactPhone || "",
-          // date-only slice of the membership's join date (ISO → YYYY-MM-DD)
-          memberSince: h.orgMembership?.memberSince ? h.orgMembership.memberSince.slice(0, 10) : "",
-          isVolunteerFamily: !!h.orgMembership?.isVolunteerFamily,
-        };
-        setForm(loaded);
-        setInitial(loaded);
-        setHasMembership(!!h.orgMembership);
-        setDisplayName(h.name || `Household #${h.id}`);
-        setMembers(h.householdMembers ?? []);
-        setLeadIds((h.householdLeads ?? []).map((l) => l.personId));
-      }
-    }).catch(() => {
-      notifications.show({ color: "red", message: "Failed to load household.", autoClose: false });
-    });
-  }, [householdId]);
+  const { data, error: loadError, reload } = useLoad<{ household: AdminHousehold | null }>(
+    opened && householdId != null ? `/api/membership-ops/households?id=${householdId}` : null,
+  );
+  const household = data?.household ?? null;
+  const displayName = household ? household.name || `Household #${household.id}` : "";
+  const members = household?.householdMembers ?? [];
+  const leadIds = (household?.householdLeads ?? []).map((l) => l.personId);
+  const hasMembership = !!household?.orgMembership;
 
-  // Show the loader from the render that opens the modal (or switches household).
-  const loadKey = opened && householdId != null ? householdId : null;
-  const [loadingFor, setLoadingFor] = useState<number | null>(null);
-  if (loadingFor !== loadKey) {
-    setLoadingFor(loadKey);
-    if (loadKey != null) setLoading(true);
+  // Each opening and each fresh read of the household resets the form to it.
+  const [formFor, setFormFor] = useState<AdminHousehold | null>(null);
+  if (!opened && formFor) setFormFor(null);
+  if (opened && household && household !== formFor) {
+    setFormFor(household);
+    const loaded = toForm(household);
+    setForm(loaded);
+    setInitial(loaded);
   }
-
-  useEffect(() => {
-    if (!opened || householdId == null) return;
-    const signal = { cancelled: false };
-    loadHousehold(signal).finally(() => {
-      if (!signal.cancelled) setLoading(false);
-    });
-    return () => {
-      signal.cancelled = true;
-    };
-  }, [opened, householdId, loadHousehold]);
 
   const handleRemoveLead = async (participantId: number) => {
     if (leadIds.length <= 1) return; // last-lead guard also enforced server-side
@@ -132,7 +110,7 @@ export function AdminEditHouseholdModal({
     try {
       await api(`/api/household/lead`, { method: "DELETE", body: JSON.stringify({ participantId }) });
       showSuccess("Lead removed.");
-      await loadHousehold();
+      await reload();
     } catch (e) {
       showError(errorMessage(e));
     } finally {
@@ -146,7 +124,7 @@ export function AdminEditHouseholdModal({
     try {
       await api(`/api/household/lead`, { method: "POST", body: JSON.stringify({ participantId }) });
       showSuccess("Lead added.");
-      await loadHousehold();
+      await reload();
     } catch (e) {
       showError(errorMessage(e));
     } finally {
@@ -219,10 +197,14 @@ export function AdminEditHouseholdModal({
         size="lg"
         title={<Text fw={600} size="lg">Edit Household Info{displayName ? ` — ${displayName}` : ""}</Text>}
       >
-        {loading ? (
+        {loadError ? (
+          <LoadError what="this household" message={loadError} onRetry={reload} />
+        ) : data === null ? (
           <Group justify="center" py="xl">
             <Loader />
           </Group>
+        ) : !household ? (
+          <Text size="sm" c="dimmed">This household no longer exists.</Text>
         ) : (
           <Stack>
             <Text size="sm" c="dimmed">
