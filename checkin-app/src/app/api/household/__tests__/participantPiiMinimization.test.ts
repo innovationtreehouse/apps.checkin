@@ -13,7 +13,7 @@ import type { NextRequest } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { getKioskPublicKeys, verifyKioskSignature } from "@/lib/verify-kiosk";
 import prisma from "@/lib/prisma";
-import { HOUSEHOLD_PEER_WITH_SIGN_IN_SELECT } from "@/lib/household/participantProjection";
+import { HOUSEHOLD_PEER_WITH_EMAIL_LOCK_SELECT } from "@/lib/household/participantProjection";
 import { GET as householdGET } from "@/app/api/household/route";
 import { GET as attendanceGET } from "@/app/api/attendance/route";
 
@@ -76,7 +76,12 @@ describe("Participant PII minimization (M1, M2)", () => {
             waiverSignedBy: 1,
             notificationSettings: null,
             householdId: 10,
-            _count: { accounts: 1 },
+            canAccessStaging: false,
+            _count: { accounts: 1, roles: 0, programsLed: 0, programVolunteers: 0, bgAttestationsAsSubject: 0, personBgProcesses: 0, toolStatuses: 0 },
+            budgetOwnersOwned: [],
+            budgetOwnerTreasurerships: [],
+            instancesLed: [],
+            household: { orgMembership: { isVolunteerFamily: false } },
         } as Record<string, unknown>;
 
         (prisma.person.findUnique as jest.Mock).mockImplementation((args) => {
@@ -118,10 +123,11 @@ describe("Participant PII minimization (M1, M2)", () => {
         expect(peer.waiverSignedBy).toBeUndefined();
         expect(peer.notificationSettings).toBeUndefined();
 
-        // A linked sign-in reaches the client as a boolean only.
-        expect(peer.hasSignIn).toBe(true);
-        expect(peer._count).toBeUndefined();
-        expect(peer.accounts).toBeUndefined();
+        // The email lock reaches the client as a boolean only.
+        expect(peer.emailLocked).toBe(true);
+        for (const input of ["_count", "accounts", "budgetOwnersOwned", "budgetOwnerTreasurerships", "instancesLed", "household", "canAccessStaging"]) {
+            expect(peer[input]).toBeUndefined();
+        }
 
         // Pin the actual query shape, not just this test's mock.
         const callArgs = (prisma.person.findUnique as jest.Mock).mock.calls[0][0];
@@ -131,7 +137,7 @@ describe("Participant PII minimization (M1, M2)", () => {
             ["city", "householdMembers", "id", "intakeNotes", "line1", "line2", "name", "orgMembership", "postalCode", "state"],
         );
         expect(callArgs.select.household.select.orgMembership).toEqual({ select: { status: true, memberSince: true, isVolunteerFamily: true } });
-        expect(callArgs.select.household.select.householdMembers).toEqual({ select: HOUSEHOLD_PEER_WITH_SIGN_IN_SELECT });
+        expect(callArgs.select.household.select.householdMembers).toEqual({ select: HOUSEHOLD_PEER_WITH_EMAIL_LOCK_SELECT });
     });
 
     // Household.intakeNotes is the family's free-text note TO the board (tier

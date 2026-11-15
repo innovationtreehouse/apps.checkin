@@ -61,6 +61,9 @@ function coLead(dateOfBirth: Date | null) {
         canAccessStaging: false,
         household: { orgMembership: { isVolunteerFamily: false } },
         _count: { accounts: 0, roles: 0, programsLed: 0, programVolunteers: 0, bgAttestationsAsSubject: 0, personBgProcesses: 0, toolStatuses: 0 },
+        budgetOwnersOwned: [],
+        budgetOwnerTreasurerships: [],
+        instancesLed: [],
     };
 }
 

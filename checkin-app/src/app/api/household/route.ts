@@ -7,8 +7,9 @@ import { reconcileAndWarn } from "@/lib/emergencyContacts/service";
 import { isValidEmail } from "@/lib/emergencyContacts/identity";
 import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import { isOrgAccount } from "@/lib/orgAccount";
-import { HOUSEHOLD_PEER_SELECT, HOUSEHOLD_PEER_WITH_SIGN_IN_SELECT } from "@/lib/household/participantProjection";
+import { HOUSEHOLD_PEER_SELECT, HOUSEHOLD_PEER_WITH_EMAIL_LOCK_SELECT } from "@/lib/household/participantProjection";
 import { householdLeadship } from "@/lib/household/leads";
+import { isEmailLocked } from "@/lib/person/emailLock";
 import { EMAIL_IN_USE_REFUSAL } from "@/lib/household/emailInUse";
 import { normalizeAdultDob } from "@/lib/person/adultDob";
 import { mintPersonId } from "@/lib/person/mintId";
@@ -42,7 +43,7 @@ export const GET = withAuth(
                             state: true,
                             postalCode: true,
                             intakeNotes: true,
-                            householdMembers: { select: HOUSEHOLD_PEER_WITH_SIGN_IN_SELECT },
+                            householdMembers: { select: HOUSEHOLD_PEER_WITH_EMAIL_LOCK_SELECT },
                             orgMembership: { select: { status: true, memberSince: true, isVolunteerFamily: true } },
                         }
                     }
@@ -63,12 +64,14 @@ export const GET = withAuth(
             const household = user.household && {
                 ...user.household,
                 ...(canSeeNotes ? {} : { intakeNotes: null }),
-                // A linked sign-in locks the member's email on the household card;
-                // only the boolean leaves, never Account data.
-                householdMembers: user.household.householdMembers.map(({ _count, ...m }) => ({
-                    ...m,
-                    hasSignIn: _count.accounts > 0,
-                })),
+                // Only the lock's boolean leaves; its inputs are internal-tier.
+                householdMembers: user.household.householdMembers.map((m) => {
+                    const {
+                        _count, budgetOwnersOwned, budgetOwnerTreasurerships, instancesLed,
+                        household: _household, lastBackgroundCheck, canAccessStaging, ...peer
+                    } = m;
+                    return { ...peer, emailLocked: isEmailLocked(m) };
+                }),
             };
             // Where the locked-email help text points members to change it.
             const { replyTo } = await getEmailSenderIdentity();
