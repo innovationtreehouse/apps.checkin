@@ -122,11 +122,12 @@ export function useProgramEnrollment(id: string) {
   const household = householdLoad.data?.household;
   const householdMembers: HouseholdMember[] = !householdLoad.data ? []
     : household?.householdMembers ?? (session ? [{ id: session.user.id, name: "Myself", dateOfBirth: null }] : []);
-  // The emergency-contact probe fails open: a household with an enrollable member is never blocked by it.
-  const loadingHousehold = (!householdLoad.data && !householdLoad.error) || intakeLoad.loading;
+  const loadingHousehold = (!householdLoad.data && !householdLoad.error) || (!intakeLoad.data && !intakeLoad.error);
+  // The enroll routes don't check the emergency contact, so a probe that can't answer blocks enrolment.
+  const householdError = householdLoad.error ?? intakeLoad.error;
+  const reloadHousehold = () => Promise.all([householdLoad.reload(), intakeLoad.reload()]);
   const prefillHousehold = intakeLoad.data?.prefill?.household;
-  const hasValidEmergencyContact = !intakeLoad.data || !("prefill" in intakeLoad.data)
-    || !!(prefillHousehold?.emergencyContactName?.trim() && prefillHousehold?.emergencyContactPhone?.trim());
+  const hasValidEmergencyContact = !!(prefillHousehold?.emergencyContactName?.trim() && prefillHousehold?.emergencyContactPhone?.trim());
   const hasEnrollable = householdMembers.some((m) => { const r = enrollBlock(m).reason; return r === null || r === 'pending'; });
   // A freshly-signed-in user with no enrollable participant or no emergency contact is offered setup instead of a dead end.
   const needsSetup = !!householdLoad.data && (!hasEnrollable || !hasValidEmergencyContact);
@@ -365,8 +366,7 @@ export function useProgramEnrollment(id: string) {
   return {
     session, status, program, programLoad, successMessage, startEnrollmentProcess, showEnrollmentSelection,
     picker: {
-      showIntake, setShowIntake, handleIntakeSaved, loadingHousehold, householdError: householdLoad.error,
-      reloadHousehold: householdLoad.reload, householdMembers, enrollBlock, needsSetup,
+      showIntake, setShowIntake, handleIntakeSaved, loadingHousehold, householdError, reloadHousehold, householdMembers, enrollBlock, needsSetup,
       selectedParticipantIds, setSelectedParticipantIds, enrolling, handleEnroll, repeatPayments, setRepeatPayments,
       planKind, setPlanKind, confirmPlanOpened, openConfirmPlan, closeConfirmPlan, handleRequestPaymentPlan,
     },

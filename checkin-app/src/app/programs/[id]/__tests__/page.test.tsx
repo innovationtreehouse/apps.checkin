@@ -61,6 +61,9 @@ async function requestPlan(kind: RegExp = /^Payment plan$/) {
     fireEvent.click(screen.getByRole("button", { name: /^Send request$/ }));
 }
 
+// The intake state the emergency-contact probe reads: a valid contact on file.
+const intakeWithContact = { prefill: { household: { emergencyContactName: "Aunt May", emergencyContactPhone: "5125550000" } } };
+
 const household = {
     household: {
         householdMembers: [
@@ -96,7 +99,7 @@ describe("ProgramEnrollmentPage", () => {
         setSession({ id: 100, ageBand: 'adult' });
         mockFetchJson({
             "/api/programs/10/participants": { ok: true },
-            "/api/household": household,
+            "/api/household/intake": intakeWithContact, "/api/household": household,
             "/api/programs/10": baseProgram(),
         });
         renderPage();
@@ -123,7 +126,7 @@ describe("ProgramEnrollmentPage", () => {
     it("shows a youth the lead-required CTA and no payment surface", async () => {
         setSession({ id: 101, ageBand: 'youth' });
         mockFetchJson({
-            "/api/household": household,
+            "/api/household/intake": intakeWithContact, "/api/household": household,
             "/api/programs/10": baseProgram({
                 participants: [{ personId: 101, status: "PENDING", person: { name: "Kid One", householdId: 7 } }],
                 orgMemberPriceCents: 5000, minAge: null, maxAge: null,
@@ -148,7 +151,7 @@ describe("ProgramEnrollmentPage", () => {
         // householdId is what links the pending row to the viewer in myEnrolled.
         setSession({ id: 100, ageBand: 'adult', householdId: 7 });
         mockFetchJson({
-            "/api/household": household,
+            "/api/household/intake": intakeWithContact, "/api/household": household,
             "/api/programs/10": baseProgram({
                 participants: [{ personId: 101, status: "PENDING", person: { name: "Kid One", householdId: 7 } }],
                 orgMemberPriceCents: 5000, minAge: null, maxAge: null,
@@ -164,7 +167,7 @@ describe("ProgramEnrollmentPage", () => {
     it("routes a viewer of unverifiable age into intake rather than blocking on a lead", async () => {
         setSession({ id: 300, ageBand: 'unknown' });
         mockFetchJson({
-            "/api/household": { household: { householdMembers: [{ id: 300, name: "New Adult", dateOfBirth: null }] } },
+            "/api/household/intake": intakeWithContact, "/api/household": { household: { householdMembers: [{ id: 300, name: "New Adult", dateOfBirth: null }] } },
             "/api/programs/10": baseProgram({ participants: [], minAge: null, maxAge: null }),
         });
         renderPage();
@@ -243,7 +246,7 @@ describe("ProgramEnrollmentPage", () => {
     it("labels the entry button 'Continue enrollment' when a household member is payment-pending", async () => {
         setSession({ id: 101 });
         mockFetchJson({
-            "/api/household": household,
+            "/api/household/intake": intakeWithContact, "/api/household": household,
             // person.householdId is what links the participant to the viewer's
             // household in myEnrolled (the real API includes it).
             "/api/programs/10": baseProgram({
@@ -263,7 +266,7 @@ describe("ProgramEnrollmentPage", () => {
     it("shows a household row without status as enrolled, with no pay affordance", async () => {
         setSession({ id: 101, ageBand: 'adult', householdId: 7 });
         mockFetchJson({
-            "/api/household": household,
+            "/api/household/intake": intakeWithContact, "/api/household": household,
             "/api/programs/10": baseProgram({
                 participants: [{ personId: 101, person: { name: "Kid One", householdId: 7 } }],
             }),
@@ -279,7 +282,7 @@ describe("ProgramEnrollmentPage", () => {
     it("keeps the plain 'Enroll' label when household enrollments are all paid", async () => {
         setSession({ id: 101 });
         mockFetchJson({
-            "/api/household": household,
+            "/api/household/intake": intakeWithContact, "/api/household": household,
             "/api/programs/10": baseProgram({
                 participants: [{ personId: 101, status: "ACTIVE", person: { name: "Kid One", householdId: 7 } }],
             }),
@@ -292,7 +295,7 @@ describe("ProgramEnrollmentPage", () => {
     it("over-25 adult with only an already-enrolled child sees a no-eligible message, not a DOB error", async () => {
         setSession({ id: 200 });
         mockFetchJson({
-            "/api/household": {
+            "/api/household/intake": intakeWithContact, "/api/household": {
                 household: {
                     householdMembers: [
                         { id: 200, name: "Parent Adult", dateOfBirth: null, isDeclaredAdult: true },
@@ -326,7 +329,7 @@ describe("ProgramEnrollmentPage", () => {
         setSession({ id: 101 });
         const fetchMock = mockFetchJson({
             "/api/programs/10/participants": { ok: true },
-            "/api/household": household,
+            "/api/household/intake": intakeWithContact, "/api/household": household,
             "/api/programs/10": baseProgram({ orgMemberPriceCents: 5000, nonOrgMemberPriceCents: 7000, minAge: null, maxAge: null }),
         });
         renderPage();
@@ -377,7 +380,7 @@ describe("ProgramEnrollmentPage", () => {
 
     it("navigates back and to the manage screen for authorized managers", async () => {
         setSession({ id: 101 });
-        mockFetchJson({ "/api/programs/10": baseProgram({ leadMentorId: 101 }), "/api/household": household });
+        mockFetchJson({ "/api/programs/10": baseProgram({ leadMentorId: 101 }), "/api/household/intake": intakeWithContact, "/api/household": household });
         renderPage();
 
         await screen.findByText("Robotics Club");
@@ -392,7 +395,7 @@ describe("ProgramEnrollmentPage", () => {
     it("requests a payment plan for a priced program", async () => {
         setSession({ id: 101 });
         const fetchMock = mockFetchJson({
-            "/api/household": household,
+            "/api/household/intake": intakeWithContact, "/api/household": household,
             "/api/programs/10": baseProgram({ orgMemberPriceCents: 5000, minAge: null, maxAge: null }),
             "/api/programs/10/participants": { ok: true },
             "/api/programs/10/request-payment-plan": { ok: true },
@@ -417,13 +420,14 @@ describe("ProgramEnrollmentPage", () => {
     it("reports an error when starting enrollment for the payment plan fails", async () => {
         setSession({ id: 101 });
         mockFetchJson({
-            "/api/household": household,
+            "/api/household/intake": intakeWithContact, "/api/household": household,
             "/api/programs/10": baseProgram({ orgMemberPriceCents: 5000, minAge: null, maxAge: null }),
             "/api/programs/10/participants": () => ({ error: "Already pending." }),
         });
         global.fetch = jest.fn(async (input: RequestInfo | URL) => {
             const url = typeof input === "string" ? input : input.toString();
             if (url.includes("/api/programs/10/participants")) return res({ error: "Already pending." }, 400);
+            if (url.includes("/api/household/intake")) return res(intakeWithContact);
             if (url.includes("/api/household")) return res(household, 200);
             if (url.includes("/api/programs/10")) return res(baseProgram({ orgMemberPriceCents: 5000, minAge: null, maxAge: null }), 200);
             return res({}, 404);
@@ -444,6 +448,7 @@ describe("ProgramEnrollmentPage", () => {
             const url = typeof input === "string" ? input : input.toString();
             if (url.includes("/api/programs/10/request-payment-plan")) return res({}, 500);
             if (url.includes("/api/programs/10/participants")) return res({}, 200);
+            if (url.includes("/api/household/intake")) return res(intakeWithContact);
             if (url.includes("/api/household")) return res(household, 200);
             if (url.includes("/api/programs/10")) return res(baseProgram({ orgMemberPriceCents: 5000, minAge: null, maxAge: null }), 200);
             return res({}, 404);
@@ -465,6 +470,7 @@ describe("ProgramEnrollmentPage", () => {
                 const url = typeof input === "string" ? input : input.toString();
                 if (url.includes("/api/programs/10/request-payment-plan")) return res(plan.body, plan.status);
                 if (url.includes("/api/programs/10/participants")) return res({ error: "Participant is already enrolled in this program." }, 409);
+                if (url.includes("/api/household/intake")) return res(intakeWithContact);
                 if (url.includes("/api/household")) return res(household, 200);
                 if (url.includes("/api/programs/10")) return res(baseProgram({ orgMemberPriceCents: 5000, minAge: null, maxAge: null }), 200);
                 return res({}, 404);
@@ -506,7 +512,7 @@ describe("ProgramEnrollmentPage", () => {
 
     it("shows a network-error message when requesting a payment plan throws", async () => {
         setSession({ id: 101 });
-        mockFetchJson({ "/api/household": household, "/api/programs/10": baseProgram({ orgMemberPriceCents: 5000, minAge: null, maxAge: null }) });
+        mockFetchJson({ "/api/household/intake": intakeWithContact, "/api/household": household, "/api/programs/10": baseProgram({ orgMemberPriceCents: 5000, minAge: null, maxAge: null }) });
         renderPage();
         await screen.findByText("Robotics Club");
         fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
@@ -521,7 +527,7 @@ describe("ProgramEnrollmentPage", () => {
     it("enrolls multiple selected household members and reports the plural success message", async () => {
         setSession({ id: 101 });
         mockFetchJson({
-            "/api/household": household,
+            "/api/household/intake": intakeWithContact, "/api/household": household,
             "/api/programs/10": baseProgram({ minAge: null, maxAge: null }),
             "/api/programs/10/participants": { ok: true },
         });
@@ -545,6 +551,7 @@ describe("ProgramEnrollmentPage", () => {
             if (url.includes("/api/programs/10/participants")) {
                 return { ok: false, status: 409, text: async () => "" } as Response;
             }
+            if (url.includes("/api/household/intake")) return res(intakeWithContact);
             if (url.includes("/api/household")) return res(household, 200);
             if (url.includes("/api/programs/10")) return res(baseProgram({ minAge: null, maxAge: null }), 200);
             return res({}, 404);
@@ -569,6 +576,7 @@ describe("ProgramEnrollmentPage", () => {
         const bodies: string[] = [];
         global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = typeof input === "string" ? input : input.toString();
+            if (url.includes("/api/household/intake")) return res(intakeWithContact);
             if (url.includes("/api/household")) return res(household, 200);
             if (url.includes("/api/programs/10/participants")) {
                 bodies.push(String(init?.body ?? ""));
@@ -592,7 +600,7 @@ describe("ProgramEnrollmentPage", () => {
 
     it("shows a network-error message when enrollment throws", async () => {
         setSession({ id: 101 });
-        mockFetchJson({ "/api/household": household, "/api/programs/10": baseProgram({ minAge: null, maxAge: null }) });
+        mockFetchJson({ "/api/household/intake": intakeWithContact, "/api/household": household, "/api/programs/10": baseProgram({ minAge: null, maxAge: null }) });
         renderPage();
         await screen.findByText("Robotics Club");
         fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
@@ -610,7 +618,7 @@ describe("ProgramEnrollmentPage", () => {
         const memberHousehold = { household: { ...household.household, orgMembership: { status: "ACTIVE" } } };
         mockFetchJson({
             "/api/programs/10/discount-code": { code: null, signature: "sig" },
-            "/api/household": memberHousehold,
+            "/api/household/intake": intakeWithContact, "/api/household": memberHousehold,
             "/api/programs/10": baseProgram({ orgMemberPriceCents: 5000, minAge: null, maxAge: null, shopifyVariantId: "gid://variant" }),
             "/api/programs/10/participants": { ok: true },
         });
@@ -632,7 +640,7 @@ describe("ProgramEnrollmentPage", () => {
         const memberHousehold = { household: { ...household.household, orgMembership: { status: "ACTIVE" } } };
         const fetchMock = mockFetchJson({
             "/api/programs/10/discount-code": { code: "PRG10-MOCKED", signature: "sig" },
-            "/api/household": memberHousehold,
+            "/api/household/intake": intakeWithContact, "/api/household": memberHousehold,
             "/api/programs/10": baseProgram({
                 orgMemberPriceCents: 4000, nonOrgMemberPriceCents: 5000, minAge: null, maxAge: null,
                 shopifyVariantId: "gid://single-pool",
@@ -663,7 +671,7 @@ describe("ProgramEnrollmentPage", () => {
         setShopifyStoreDomain("shop.example.com");
         const memberHousehold = { household: { ...household.household, orgMembership: { status: "ACTIVE" } } };
         const routes = mockFetchJson({
-            "/api/household": memberHousehold,
+            "/api/household/intake": intakeWithContact, "/api/household": memberHousehold,
             "/api/programs/10": baseProgram({
                 orgMemberPriceCents: 4000, nonOrgMemberPriceCents: 5000, minAge: null, maxAge: null,
                 shopifyVariantId: "gid://single-pool",
@@ -696,7 +704,7 @@ describe("ProgramEnrollmentPage", () => {
         setShopifyStoreDomain("shop.example.com");
         mockFetchJson({
             "/api/programs/10/discount-code": { code: null },
-            "/api/household": household,
+            "/api/household/intake": intakeWithContact, "/api/household": household,
             "/api/programs/10": baseProgram({ nonOrgMemberPriceCents: 5000, minAge: null, maxAge: null, shopifyVariantId: "gid://variant" }),
             "/api/programs/10/participants": { ok: true },
         });
@@ -725,7 +733,7 @@ describe("ProgramEnrollmentPage", () => {
         } };
         const fetchMock = mockFetchJson({
             "/api/programs/10/discount-code": { code: "PRG10-FRESH", signature: "sig" },
-            "/api/household": memberHousehold,
+            "/api/household/intake": intakeWithContact, "/api/household": memberHousehold,
             "/api/programs/10": baseProgram({
                 participants: [{ personId: 100, status: "PENDING" }],
                 orgMemberPriceCents: 4000, nonOrgMemberPriceCents: 5000, minAge: null, maxAge: null,
@@ -769,7 +777,7 @@ describe("ProgramEnrollmentPage", () => {
         setShopifyStoreDomain("shop.example.com");
         mockFetchJson({
             "/api/programs/10/discount-code": { code: null, signature: "sig" },
-            "/api/household": household,
+            "/api/household/intake": intakeWithContact, "/api/household": household,
             "/api/programs/10": baseProgram({
                 participants: [{ personId: 102, status: "ACTIVE", person: { name: "Too Young", householdId: 7 } }],
                 nonOrgMemberPriceCents: 5000, minAge: null, maxAge: null, shopifyVariantId: "gid://variant",
@@ -799,6 +807,7 @@ describe("ProgramEnrollmentPage", () => {
             const json = (body: unknown, status = 200) => res(body, status);
             if (url.includes("/api/programs/10/participants") && init?.method === "POST") return json({ error: "Participant is already enrolled in this program." }, 409);
             if (url.includes("/discount-code")) return json({ code: null, signature: "sig" });
+            if (url.includes("/api/household/intake")) return json(intakeWithContact);
             if (url.includes("/api/household")) return json(household);
             if (url.endsWith("/api/programs/10")) {
                 programReads += 1;
@@ -837,6 +846,7 @@ describe("ProgramEnrollmentPage", () => {
             const json = (body: unknown, status = 200) => res(body, status);
             if (url.includes("/api/programs/10/participants")) return json({ ok: true });
             if (url.includes("/discount-code")) return json({ code: null, signature: "sig" });
+            if (url.includes("/api/household/intake")) return json(intakeWithContact);
             if (url.includes("/api/household")) return json(household);
             if (url.endsWith("/api/programs/10")) {
                 programReads += 1;
@@ -869,7 +879,7 @@ describe("ProgramEnrollmentPage", () => {
         const memberHousehold = { household: { ...household.household, orgMembership: { status: "ACTIVE" } } };
         const fetchMock = mockFetchJson({
             "/api/programs/10/discount-code": { code: null, signature: "sig" },
-            "/api/household": memberHousehold,
+            "/api/household/intake": intakeWithContact, "/api/household": memberHousehold,
             "/api/programs/10": baseProgram({
                 orgMemberPriceCents: 4000, nonOrgMemberPriceCents: 5000, minAge: null, maxAge: null,
                 shopifyVariantId: "gid://single-pool",
@@ -896,7 +906,7 @@ describe("ProgramEnrollmentPage", () => {
     it("shows the renew notice when the viewer is a member but not eligible for member pricing on this program", async () => {
         setSession({ id: 101 });
         mockFetchJson({
-            "/api/household": household,
+            "/api/household/intake": intakeWithContact, "/api/household": household,
             "/api/programs/10": baseProgram({ viewerIsMember: true, viewerMemberPricingEligible: false }),
         });
         renderPage();
@@ -906,7 +916,7 @@ describe("ProgramEnrollmentPage", () => {
     it("does not show the renew notice when the member is pricing-eligible or the fields are absent", async () => {
         setSession({ id: 101 });
         mockFetchJson({
-            "/api/household": household,
+            "/api/household/intake": intakeWithContact, "/api/household": household,
             "/api/programs/10": baseProgram({ viewerIsMember: true, viewerMemberPricingEligible: true }),
         });
         renderPage();
@@ -1084,9 +1094,27 @@ describe("ProgramEnrollmentPage", () => {
         expect(screen.queryByRole("button", { name: "Complete Enrollment" })).not.toBeInTheDocument();
     });
 
+    // The enroll routes don't check the emergency contact, so the probe is the gate.
+    it("blocks enrolment when the emergency-contact probe can't answer", async () => {
+        setSession({ id: 101 });
+        global.fetch = jest.fn(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url.includes("/api/household/intake")) return res({ error: "User not found." }, 400);
+            if (url.includes("/api/household")) return res(household);
+            if (url.includes("/api/programs/10")) return res(baseProgram({ minAge: null, maxAge: null }));
+            return res({}, 404);
+        });
+        renderPage();
+        await screen.findByText("Robotics Club");
+        fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
+        expect(await screen.findByText("Couldn't load your household")).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Complete Enrollment" })).not.toBeInTheDocument();
+        expect(screen.queryByLabelText("Kid One")).not.toBeInTheDocument();
+    });
+
     it("falls back to a solo household entry when the caller has no household", async () => {
         setSession({ id: 777 });
-        mockFetchJson({ "/api/household": { household: null }, "/api/programs/10": baseProgram({ minAge: null, maxAge: null }) });
+        mockFetchJson({ "/api/household/intake": intakeWithContact, "/api/household": { household: null }, "/api/programs/10": baseProgram({ minAge: null, maxAge: null }) });
         renderPage();
         await screen.findByText("Robotics Club");
         fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
@@ -1095,7 +1123,7 @@ describe("ProgramEnrollmentPage", () => {
 
     it("offers household setup when the solo fallback can't clear an age-gated program", async () => {
         setSession({ id: 777 });
-        mockFetchJson({ "/api/household": { household: null }, "/api/programs/10": baseProgram({ participants: [] }) });
+        mockFetchJson({ "/api/household/intake": intakeWithContact, "/api/household": { household: null }, "/api/programs/10": baseProgram({ participants: [] }) });
         renderPage();
         await screen.findByText("Robotics Club");
         fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
@@ -1107,25 +1135,6 @@ describe("ProgramEnrollmentPage", () => {
         expect(screen.getByLabelText("Myself")).toBeDisabled();
         expect(screen.queryByText("Check the box next to each person you want to enroll.")).not.toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Complete Enrollment" })).not.toBeInTheDocument();
-    });
-
-    it("shows a failed intake prefill with a retry instead of a blank form", async () => {
-        setSession({ id: 300, ageBand: 'unknown' });
-        global.fetch = jest.fn(async (input: RequestInfo | URL) => {
-            const url = String(input);
-            if (url.includes("/api/household/intake")) return res({ error: "Only a household lead can do this." }, 403);
-            if (url.includes("/api/household")) return res({ household: { householdMembers: [{ id: 300, name: "New Adult", dateOfBirth: null }] } });
-            if (url.includes("/api/programs/10")) return res(baseProgram({ participants: [], minAge: null, maxAge: null }));
-            return res({}, 404);
-        });
-        renderPage();
-        await screen.findByText("Robotics Club");
-        fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
-        fireEvent.click(await screen.findByRole("button", { name: "Finish setting up your household to enroll" }));
-
-        expect(await screen.findByText("Couldn't load your household details")).toBeInTheDocument();
-        expect(screen.getByText("Only a household lead can do this.")).toBeInTheDocument();
-        expect(screen.queryByRole("button", { name: "Save & continue to enroll" })).not.toBeInTheDocument();
     });
 
     it("highlights the emergency contact the intake save refused and keeps the form filled in", async () => {
@@ -1167,7 +1176,7 @@ describe("ProgramEnrollmentPage", () => {
         const held = new Promise<void>((resolve) => { release = resolve; });
         const routes = mockFetchJson({
             "/api/programs/10/discount-code": { code: null },
-            "/api/household": household,
+            "/api/household/intake": intakeWithContact, "/api/household": household,
             "/api/programs/10": baseProgram({ nonOrgMemberPriceCents: 5000, minAge: null, maxAge: null, shopifyVariantId: "gid://variant" }),
         });
         const claims = jest.fn();
@@ -1196,7 +1205,7 @@ describe("ProgramEnrollmentPage", () => {
 
     it("pre-checks nobody, so the enroll button starts disabled", async () => {
         setSession({ id: 999 });
-        mockFetchJson({ "/api/household": household, "/api/programs/10": baseProgram({ minAge: null, maxAge: null }) });
+        mockFetchJson({ "/api/household/intake": intakeWithContact, "/api/household": household, "/api/programs/10": baseProgram({ minAge: null, maxAge: null }) });
         renderPage();
         await screen.findByText("Robotics Club");
         fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
@@ -1208,7 +1217,7 @@ describe("ProgramEnrollmentPage", () => {
 
     it("priced program: the scholarship request button starts disabled until someone is selected", async () => {
         setSession({ id: 999 });
-        mockFetchJson({ "/api/household": household, "/api/programs/10": baseProgram({ orgMemberPriceCents: 5000, minAge: null, maxAge: null }) });
+        mockFetchJson({ "/api/household/intake": intakeWithContact, "/api/household": household, "/api/programs/10": baseProgram({ orgMemberPriceCents: 5000, minAge: null, maxAge: null }) });
         renderPage();
         await screen.findByText("Robotics Club");
         fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
@@ -1227,7 +1236,7 @@ describe("ProgramEnrollmentPage", () => {
     it("does not pre-check the signed-in adult on a program with no upper age limit", async () => {
         setSession({ id: 100, ageBand: 'adult' });
         mockFetchJson({
-            "/api/household": household,
+            "/api/household/intake": intakeWithContact, "/api/household": household,
             "/api/programs/10": baseProgram({ participants: [], minAge: 9, maxAge: null }),
         });
         renderPage();
