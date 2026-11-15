@@ -18,8 +18,8 @@ export type TokenSpecs = Record<string, TokenSpec>;
 
 const TOKEN_RE = /\{\{\s*(\w+)\s*\}\}/g;
 
-/** A link token becomes an anchor only for a web or site-relative URL, never a `javascript:` or `data:` one. */
-const SAFE_HREF_RE = /^(https?:\/\/|\/)/i;
+/** A link token becomes an anchor only for a web URL or a single-slash site path, never `javascript:`, `data:`, `//host` or `/\host`. */
+const SAFE_HREF_RE = /^(https?:\/\/|\/(?![/\\]))/i;
 
 /** Every `{{token}}` name in `text` that `tokens` does not allow. */
 export function findUnknownTokens(text: string, tokens: TokenSpecs): string[] {
