@@ -4,6 +4,7 @@ import { getCronJobStatuses, type CronJobStatus } from "@/lib/cronRuns";
 import { sendTemplated } from "@/lib/email-templates/send";
 import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
+import { unreadLine } from "@/lib/problemsLines";
 import { APP_TIMEZONE, formatDateTime } from "@/lib/time";
 
 /** One stuck item on the Problems list, named by the library that holds it. */
@@ -50,6 +51,9 @@ const SOURCES: { library: string; env: string; read: () => Promise<StuckItem[]>;
         retry: async (item) => (await import("@checkin/local-inventory")).retryStuckItem(item),
     },
 ];
+
+/** The database env var of each library the Problems list reads. */
+export const LIBRARY_DB_VARS = SOURCES.map((s) => s.env);
 
 /** A count line on the Problems list, with the page that shows its detail where there is one. */
 export interface Notice {
@@ -136,7 +140,7 @@ export async function sendProblemsDigest(now = new Date()): Promise<void> {
             ...stuck.map((i) => `${i.library}, ${i.step}: ${i.id}, stuck since ${when(i.failedAt)}`),
             ...stale.map((j) => `Scheduled job ${j.job}: last ran ${when(j.lastSuccessAt)}`),
             ...failing.map((j) => `Scheduled job ${j.job}: last run reported failures, ${when(j.lastErrorAt ?? j.lastSuccessAt)}`),
-            ...unread.map((library) => (library === "email" ? "Failed email sends could not be counted." : `${library}: its stuck items could not be read`)),
+            ...unread.map(unreadLine),
             ...notices.map((n) => n.text),
         ];
         const ctx = { count: String(lines.length), items: lines.join("\n"), actionLink: `${config.baseUrl()}/system-status/health` };

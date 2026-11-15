@@ -5,6 +5,7 @@ import { useSession } from "next-auth/react";
 import { Anchor, Badge, Button, Card, Center, Code, Group, List, Loader, Stack, Text, Title } from "@mantine/core";
 import { LoadError } from "@checkin/component-ui";
 import { useLoad } from "@/lib/api";
+import { unreadLine } from "@/lib/problemsLines";
 import { mayRetry } from "@/lib/problemsRetryRoles";
 
 type DailyStat = {
@@ -247,7 +248,7 @@ export function ProblemsBox() {
     load();
   }, [load]);
 
-  // One item at a time, in list order; a refused or failed item stays listed after the refresh.
+  // One item at a time, in list order; a failed item stays listed after the refresh, and so does a 403 one, which stale session roles can still cause.
   const retry = async (items: StuckItem[]) => {
     let ok = 0;
     for (const [n, i] of items.entries()) {
@@ -298,7 +299,7 @@ export function ProblemsBox() {
         <List spacing="sm" listStyleType="none">
           {data.unread.map((library) => (
             <List.Item key={`unread-${library}`}>
-              <Text c="yellow">{library === "email" ? "Failed email sends could not be counted." : <>Could not read {library}&apos;s stuck items.</>}</Text>
+              <Text c="yellow">{unreadLine(library)}</Text>
             </List.Item>
           ))}
           {data.notices.map((notice) => (

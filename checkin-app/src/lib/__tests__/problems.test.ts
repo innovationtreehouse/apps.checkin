@@ -6,7 +6,7 @@ import { getCronJobStatuses } from "@/lib/cronRuns";
 import type { TemplateCtx } from "@/lib/email-templates/registry";
 import { sendTemplated } from "@/lib/email-templates/send";
 import prisma from "@/lib/prisma";
-import { getProblems, retryProblem, sendProblemsDigest } from "../problems";
+import { getProblems, LIBRARY_DB_VARS, retryProblem, sendProblemsDigest } from "../problems";
 
 jest.mock("@/lib/cronRuns", () => ({ getCronJobStatuses: jest.fn() }));
 jest.mock("@/lib/email-templates/send", () => ({ sendTemplated: jest.fn() }));
@@ -27,12 +27,11 @@ const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3600_000);
 const findSettings = jest.fn();
 const countEmailFailures = jest.fn();
 const digestCtx = () => jest.mocked(sendTemplated).mock.calls[0][2] as TemplateCtx<"ops.problemsDigest">;
-const ENV = ["RECEIPT_DATABASE_URL", "EXPENSE_DATABASE_URL", "BULK_DONATION_DATABASE_URL", "WORKFLOW_MAPPING_DATABASE_URL", "LOCAL_INVENTORY_DATABASE_URL"];
 
 beforeEach(() => {
     jest.restoreAllMocks();
     jest.clearAllMocks();
-    for (const name of ENV) process.env[name] = "postgres://test";
+    for (const name of LIBRARY_DB_VARS) process.env[name] = "postgres://test";
     for (const lib of [receipt, expense, gifts, mapping, inventory]) lib.stuckItems.mockResolvedValue([]);
     receipt.problemNotices.mockResolvedValue([]);
     prisma.boardSettings.findUnique = findSettings;
@@ -44,7 +43,7 @@ beforeEach(() => {
 });
 
 afterAll(() => {
-    for (const name of ENV) delete process.env[name];
+    for (const name of LIBRARY_DB_VARS) delete process.env[name];
 });
 
 describe("retryProblem", () => {
@@ -177,6 +176,17 @@ describe("sendProblemsDigest", () => {
 
         expect(jest.mocked(sendTemplated).mock.calls.map((c) => c[1])).toEqual(["alerts@example.org"]);
         expect(digestCtx().items).toBe("Emails failed to send: 1 in the last day");
+    });
+
+    it("emails the alert address the sources that could not be read, without the error text", async () => {
+        jest.spyOn(console, "error").mockImplementation(() => undefined);
+        countEmailFailures.mockRejectedValue(new Error("db down"));
+        gifts.stuckItems.mockRejectedValue(new Error("db down"));
+
+        await sendProblemsDigest(NOW);
+
+        expect(jest.mocked(sendTemplated).mock.calls.map((c) => c[1])).toEqual(["alerts@example.org"]);
+        expect(digestCtx().items).toBe("Could not read gifts's stuck items.\nFailed email sends could not be counted.");
     });
 
     it("copies the Board once anything has been stuck more than two weeks", async () => {
