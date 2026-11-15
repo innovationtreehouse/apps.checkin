@@ -10,6 +10,8 @@ import { CLOSED_STATES, blockedSeats, boardAuthorizationRefusal, reimburseeUnkno
 import { boardApprovalNeeded, isConflicted, filledSeatsByLine, signoffFactsByLine } from "../lib/signoff-facts";
 import { POSTABLE_QB_STATES, lastPostError } from "../lib/expense-qb-poster";
 import { reimburseeVendorId } from "./reimburseeVendorService";
+import { readExpenseSettings } from "./settingsService";
+import { capitalThresholdsUnset } from "../lib/expense-rules";
 
 /** Open flag rows that are reviews: the kept kinds. */
 export const OPEN_REVIEWS_WHERE: Prisma.ExpenseFlagWhereInput = { checkedOffAt: null, kind: { in: [...REVIEW_KINDS] } };
@@ -73,6 +75,7 @@ export async function expenseReasons(principal: ExpensePrincipal, expenseId: str
   const derived = deriveReasons({
     expense,
     receiptReview: expense.receiptReview,
+    capitalThresholdsUnset: expense.state === "capital_review" && capitalThresholdsUnset(await readExpenseSettings(db, expense.orgId)),
     approvedTaxCents: expense.taxApproval?.taxCents ?? null,
     approvals: expense.approvals,
     heldLines: new Set(expense.holds.map((h) => h.lineItemId)).size,

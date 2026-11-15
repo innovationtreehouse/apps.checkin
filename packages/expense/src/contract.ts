@@ -368,8 +368,10 @@ export interface OutcomeMail {
 
 /** The org's money thresholds, in cents. Read and updated through services/settingsService. */
 export interface ExpenseSettings {
-  capitalTotalThresholdCents: number;
-  capitalLineItemThresholdCents: number;
+  capitalReviewEnabled: boolean;
+  /** Null while unset. */
+  capitalTotalThresholdCents: number | null;
+  capitalLineItemThresholdCents: number | null;
   boardReviewTotalCents: number;
   everydayTotalLimitCents: number;
   everydayItemLimitCents: number;

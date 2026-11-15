@@ -31,6 +31,7 @@ export const FINANCE_QUEUE_REASONS: Record<FinanceQueueReasonCode, string> = {
   BUCKET_UNKNOWN: "Bucket unknown",
   OWNER_EXCEPTION: "Exception raised by a budget owner",
   CAPITAL_REVIEW: "Capital review",
+  CAPITAL_THRESHOLDS_UNSET: "Capital thresholds not set",
   DEPRECIATION_CYCLE: "Depreciation cycle",
   REIMBURSEE_TO_NAME: "Reimbursee to name",
   TAX_NOT_REVIEWED: "Tax not reviewed",
