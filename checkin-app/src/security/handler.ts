@@ -82,7 +82,7 @@ export interface HandlerContext<P = Record<string, string>> {
 export type ModelBag = Record<string, unknown>;
 /**
  * The response payload is the stripped bag's only value when it has one key,
- * else the whole bag keyed by model name; the route's envelope then wraps it.
+ * else the whole bag keyed by model name; a non-null envelope then wraps it.
  */
 export type HandlerFn<P = Record<string, string>> = (
     ctx: HandlerContext<P>,
