@@ -69,6 +69,10 @@ function FinanceViewsPanel() {
       <Text size="sm" c="dimmed">
         Who viewed finance records, newest first. Visible to the Board only.
       </Text>
+      <Text size="xs" c="dimmed">
+        Newer rows name records as Model:id (Expense:e_123); search that form to find them. Record kind
+        covers older rows only.
+      </Text>
       <Group gap="sm" align="end">
         <Select
           label="Person"
@@ -91,7 +95,7 @@ function FinanceViewsPanel() {
         />
         <TextInput
           label="Record id"
-          placeholder="id"
+          placeholder="id or Model:id"
           value={record}
           onChange={(e) => {
             setRecord(e.currentTarget.value);
