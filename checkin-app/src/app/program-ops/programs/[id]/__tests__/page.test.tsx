@@ -702,10 +702,10 @@ describe("ProgramDetailsPage", () => {
     const modal = await screen.findByRole("dialog", { name: "Remove Volunteer" });
     fireEvent.click(within(modal).getByRole("button", { name: "Remove" }));
 
-    // No `error` in the body -> the kit's status-code fallback.
+    // No `error` in the body -> the kit's fixed text.
     await waitFor(() =>
       expect(notifications.show).toHaveBeenCalledWith(
-        expect.objectContaining({ color: "red", message: "HTTP 500" }),
+        expect.objectContaining({ color: "red", message: "Something went wrong. Try again." }),
       ),
     );
   });

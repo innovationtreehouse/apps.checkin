@@ -130,13 +130,13 @@ describe("budgets page write errors", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("names the status when the reply carries no JSON error", async () => {
+  it("gives the fixed text when the reply carries no JSON error", async () => {
     mockServer(async () => htmlResponse(500));
     await createBucket();
 
     await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
       color: "red",
-      message: "HTTP 500",
+      message: "Something went wrong. Try again.",
     })));
   });
 
