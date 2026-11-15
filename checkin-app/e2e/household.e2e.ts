@@ -9,7 +9,7 @@ import { persona } from "./support/kiosk";
 import { send } from "./support/seedState";
 
 const KEYHOLDER = "keyholder1@example.com";
-const BOARD_ONLY_EMAIL = "can only be changed by the board";
+const CONTACT_BOARD = "To change this email, contact the Board";
 
 const uniqueEmail = (label: string) => `${label}+${Date.now()}@example.com`;
 
@@ -124,21 +124,13 @@ test.describe("household lead in the browser", () => {
 
   test("H5: a trusted person's email is locked", async ({ browser }) => {
     const { name } = await persona(KEYHOLDER);
-    const changed = uniqueEmail("keyholder1.other");
 
     await asViewer(browser, KEYHOLDER, async (page) => {
       await myHousehold(page);
       const own = memberCard(page, name);
       await own.getByRole("button", { name: "Edit" }).click();
-      await page.getByLabel("Email").fill(changed);
-      // The seeded keyholder has no date of birth, which the form requires before it will send.
-      await page.getByLabel("Individual is over 25").check();
-      await page.getByRole("button", { name: "Save", exact: true }).click();
-      await expect(page.getByText(BOARD_ONLY_EMAIL)).toBeVisible();
-
-      await myHousehold(page);
-      await expect(own).toContainText(KEYHOLDER);
-      await expect(own).not.toContainText(changed);
-    }, new RegExp(`${BOARD_ONLY_EMAIL}|400 /api/household/member`));
+      await expect(page.getByLabel("Email")).toBeDisabled();
+      await expect(page.getByText(CONTACT_BOARD)).toBeVisible();
+    });
   });
 });
