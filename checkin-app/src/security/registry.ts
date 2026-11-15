@@ -1030,6 +1030,42 @@ defineRoute({
     ],
 });
 
+// Email Templates tab: the Board's saved subject/body overrides. The list
+// returns every saved row; a key with no row sends its registry default.
+// Subject, body and the saver's Person id are internal; no person record leaves.
+defineRoute({
+    endpoint: 'GET /api/settings/templates',
+    authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
+    envelope: 'templates',
+    returns: ['EmailTemplate'],
+    orderedView: [
+        ['isSysadmin',    ['everyones:internal', 'public']],
+        ['isBoardMember', ['everyones:internal', 'public']],
+    ],
+});
+
+// Save one key's subject/body after token validation; `[key]` is a registry key.
+// Returns the saved row, or null once a blank save removes it.
+defineRoute({
+    endpoint: 'PUT /api/settings/templates/[key]',
+    authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
+    envelope: 'template',
+    returns: ['EmailTemplate'],
+    orderedView: [
+        ['isSysadmin',    ['everyones:internal', 'public']],
+        ['isBoardMember', ['everyones:internal', 'public']],
+    ],
+});
+
+// Send the editor's unsaved subject/body, filled from the key's sample values,
+// to the caller's own address. Admission gate only: the response carries no rows.
+defineRoute({
+    endpoint: 'POST /api/settings/templates/[key]/test-send',
+    authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
+    envelope: null,
+    orderedView: [],
+});
+
 // ─── Outbound surfaces ─────────────────────────────────────────────────────
 // A surface's tiers are enforced only for a caller that goes through
 // outboundCall(), and an entry's comment says when that is so. Every other
