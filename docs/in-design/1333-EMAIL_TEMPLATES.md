@@ -369,7 +369,7 @@ not a zero-visual-change one. Uniform branding is a stated goal of this work.
    render wrappers + both preview consumers to read from `EmailTemplate`. **Leave the old
    `BoardSettings` columns in place and still populated** this release. Add the two
    `outreach.*` registry entries here; their default wording is a Board decision.
-6. Grep-to-zero enforcement test (`sendEmail(` only in `email.ts` + renderer).
+6. Grep-to-zero enforcement test (`sendEmail(` only in `email.ts` + renderer). **Done**: `src/lib/email-templates/__tests__/sendDoor.test.ts`.
 7. Admin tab: `settings/templates` page + API route (list/get/save + validate + send-to-self),
    add the templates link to `SETTINGS.links`.
 8. **Follow-up release (contract): drop the moved `BoardSettings` columns + old
