@@ -1,6 +1,6 @@
 /**
- * QuickBooks rows for the System Status page: the connection, the books closing date, the
- * books map's account types, the age of the app's copy of QuickBooks' lists, and whether each posting lane is bound. Reads live (token, closing date) only when the page
+ * QuickBooks rows for the System Status page: the connection, the books closing date, the account
+ * types of the books map and of every other stored pick, the age of the app's copy of QuickBooks' lists, and whether each posting lane is bound. Reads live (token, closing date) only when the page
  * asks, cached briefly, each under a short timeout, so a QuickBooks outage cannot hang it.
  * Never names a realm id, token or secret. Not counted in the nav badge, which stays a
  * presence check with no network read.
@@ -9,6 +9,7 @@ import type { QboAccount } from "@checkin/quickbooks";
 import { kindOf } from "@checkin/component-kit";
 import { message, withTimeout, type ConfigCheck } from "@/lib/configHealth";
 import { tryBuildQuickBooks } from "@/lib/quickbooks/client";
+import { quickBooksPicksCheck } from "@/lib/quickbooks/picksHealth";
 
 const CACHE_MS = 60_000;
 
@@ -173,6 +174,6 @@ async function laneChecks(): Promise<ConfigCheck[]> {
 }
 
 async function computeQuickBooksHealth(): Promise<ConfigCheck[]> {
-    const [connection, lists, lanes] = await Promise.all([connectionChecks(), listsCheck(), laneChecks()]);
-    return [...connection, lists, ...lanes];
+    const [connection, lists, picks, lanes] = await Promise.all([connectionChecks(), listsCheck(), quickBooksPicksCheck(), laneChecks()]);
+    return [...connection, lists, picks, ...lanes];
 }

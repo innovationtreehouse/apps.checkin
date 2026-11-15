@@ -10,10 +10,10 @@ Everything here stops being true once the last PR merges. The last step is
 - The owner has settled every question, QL-1 to QL-8.
 - PRs 1, 2 and 3 are built: the registry entries, the copy with its
   `quickbooks-list-stale` refusal, and Update now with the "QuickBooks lists"
-  System Status row. PR 4, the picks row, is left.
-- Today, nothing re-checks these picks once they are saved: the expense
-  account list and rules, held expense lines, the donation account map and
-  income items. The picks row closes that gap.
+  System Status row.
+- The picks row (PR 4) re-checks every stored pick outside the books map
+  against the copy: the expense account list and rules, held expense lines,
+  the donation account map, income items and gift-of-goods lines.
 - A planned interim fix runs the account-type check only when the account
   changes. It is consistent with the design and can land before any PR here.
   It also lets edits that don't touch the account skip the copy.

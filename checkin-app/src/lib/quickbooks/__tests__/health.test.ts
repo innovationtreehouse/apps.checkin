@@ -15,6 +15,7 @@ const expensePostingMissing = jest.fn();
 jest.mock("@/lib/expense/configure", () => ({ expensePostingMissing }));
 const misTypedRoleAccounts = jest.fn();
 jest.mock("@/lib/finance/booksMap", () => ({ misTypedRoleAccounts }));
+jest.mock("@/lib/quickbooks/picksHealth", () => ({ quickBooksPicksCheck: async () => ({ id: "quickbooks-pick-types", label: "QuickBooks picks: account types", ok: true, detail: "" }) }));
 const getOrg = jest.fn();
 jest.mock("@/lib/components/host", () => ({ getOrg }));
 const quickBooksListsStatus = jest.fn();
