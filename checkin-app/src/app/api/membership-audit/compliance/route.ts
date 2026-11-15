@@ -231,11 +231,10 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
         }))
         .filter((s) => s.household !== null && s.stamped.length > 1 && s.process.attestations.every((a) => a.subjectPersonId === null));
 
-    // markBgConsent writes exactly one audit row per process with newData.bgConsentAt =
-    // true, and its actor is whoever recorded the consent: the applicant themselves on
-    // the primary path, a board member on the backstop. A lead who attested their own
-    // consent is the best evidence available of who actually went to Averity — labelled
-    // for the board, never pre-selected and never auto-cleared.
+    // A household application carries at most one audit row with newData.bgConsentAt =
+    // true, and its actor is whoever marked the household's check started: a lead, or a
+    // board member. A lead who marked it is the best evidence available of who actually
+    // went to Averity — labelled for the board, never pre-selected and never auto-cleared.
     const consentActorByProcess = new Map<number, number>();
     if (suspect.length) {
         const logs = await prisma.auditLog.findMany({

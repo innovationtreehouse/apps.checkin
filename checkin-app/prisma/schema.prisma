@@ -584,6 +584,9 @@ model OrgMembershipProcess {
   /// opened at. Null on every other kind.
   /// @sensitivity:internal
   agreementVersion      Int?
+  /// When the check was marked started outside, which puts this review in the
+  /// reviewers' queue. Written only on PERSON_BG; older INITIAL/RENEWAL rows keep
+  /// the value they hold. Not consent, which is given in the outside tool.
   /// @sensitivity:internal
   bgConsentAt           DateTime?
   /// When the background-check requirement was satisfied for this cycle — either

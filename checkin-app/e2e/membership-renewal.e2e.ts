@@ -2,8 +2,8 @@
  * Membership renewal in the browser: the Board's renewal window, a member family renewing, and a
  * family already paid for the coming year left alone (docs/rules/membership.md, Renewal). Time
  * moves by the Board's membership-year boundary, put back in afterAll. Every test mints its own
- * family, so a rerun on the same stack starts clean. The dev mocks stand in for signing, consent
- * and payment.
+ * family, so a rerun on the same stack starts clean. The dev mocks stand in for signing, the
+ * background-check tool and payment.
  */
 import { expect, test, type Page } from "@playwright/test";
 import { api, loginAs } from "../flow-tests/helpers";
@@ -161,7 +161,7 @@ test.describe("membership renewal in the browser", () => {
     });
   });
 
-  test("R4: a family whose lead has no valid check renews through consent and two reviews", async ({ browser }) => {
+  test("R4: a family whose lead has no valid check renews by marking it started and two reviews", async ({ browser }) => {
     // The seed's Renewal Family is active and its lead has no check on file, phone or emergency contact.
     const email = "renewal.lead@example.com";
     const onboarded = await send(await loginAs(email), "POST", "/api/profile/onboarding", {
@@ -182,9 +182,11 @@ test.describe("membership renewal in the browser", () => {
 
       await expect(heading(page, "Sign & start your background check")).toBeVisible();
       await signAgreement(page);
-      const [averity] = await Promise.all([page.waitForEvent("popup"), page.getByRole("link", { name: "Consent on Averity →" }).click()]);
+      const checks = page.locator(".mantine-Card-root").filter({ has: page.getByRole("heading", { name: "Background checks" }) });
+      const [averity] = await Promise.all([page.waitForEvent("popup"), checks.getByRole("link", { name: "Open the background-check tool →" }).click()]);
       await averity.close();
-      await page.getByLabel("I submitted my consent on Averity").check();
+      await checks.getByLabel("I've started my check in the background-check tool").check();
+      await checks.getByRole("button", { name: "Mark check started" }).click();
       await expect(heading(page, "Membership fee")).toBeVisible();
     });
 

@@ -8,7 +8,8 @@
 
 import { runRenewalSweep, beginRenewal, nextBoundary } from '@/lib/membership/renewal';
 import { attest } from '@/lib/membership/review';
-import { markBgConsent, markContractSigned } from '@/lib/membership/external';
+import { markContractSigned } from '@/lib/membership/external';
+import { markCheckStarted } from '@/lib/membership/checkStarted';
 import prisma from '@/lib/prisma';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 
@@ -165,19 +166,19 @@ describe('Membership renewal', () => {
         expect((await prisma.orgMembershipProcess.findUnique({ where: { id: proc.id } }))?.status).toBe('PENDING_PAYMENT');
     });
 
-    it('beginRenewal with an expired background check requires signature + consent; payment opens; review clears in parallel', async () => {
+    it('beginRenewal with an expired background check requires signature + a lead\'s check started; payment opens; review clears in parallel', async () => {
         await setBoundary(new Date(Date.UTC(2000, 7, 1)));
         const m = await makeActiveMembership('Stale', null); // no background check on record
         const proc = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.orgMembershipId, kind: 'RENEWAL', status: 'PENDING_RENEWAL' } });
         const out = await beginRenewal(proc.id, m.leadId);
         // Same external step as a new applicant — the member must sign a fresh
-        // agreement AND consent on Averity; nothing sits in the review queue yet.
+        // agreement AND start their check; nothing sits in the review queue yet.
         expect(out.status).toBe('PENDING_EXTERNAL_ACTION');
         expect(out.bgClearedAt).toBeNull();
         await expect(attest(rev1, proc.id, { result: 'APPROVE', subjectPersonIds: [m.leadId] })).rejects.toMatchObject({ code: 'wrong_phase' });
 
-        // Consent alone is not enough — the renewal re-signs the agreement too.
-        await markBgConsent(proc.id, rev1);
+        // A started check alone is not enough — the renewal re-signs the agreement too.
+        await markCheckStarted(m.leadId, m.leadId);
         expect((await prisma.orgMembershipProcess.findUnique({ where: { id: proc.id } }))?.status).toBe('PENDING_EXTERNAL_ACTION');
 
         // Signature lands → payment opens; the 2-of-N review runs in parallel:
@@ -185,7 +186,7 @@ describe('Membership renewal', () => {
         await markContractSigned(proc.id);
         expect((await prisma.orgMembershipProcess.findUnique({ where: { id: proc.id } }))?.status).toBe('PENDING_PAYMENT');
 
-        // The consent opened a check review for the household; the review clears the lead and the renewal.
+        // The mark opened the lead's check review; the review clears the lead and the renewal.
         const review = await prisma.orgMembershipProcess.findFirstOrThrow({ where: { kind: 'PERSON_BG', requestedForHouseholdId: m.householdId } });
         await attest(rev1, review.id, { result: 'APPROVE', subjectPersonIds: [m.leadId] });
         const final = await attest(rev2, review.id, { result: 'APPROVE' });

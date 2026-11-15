@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, Suspense } from "react";
-import { Alert, Button, Card, Center, Group, Loader, Modal, Stack, Switch, Text, Textarea } from "@mantine/core";
+import { Alert, Button, Card, Center, Group, Loader, Modal, Select, Stack, Switch, Text, Textarea } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { errorMessage, HttpError, LoadError, showError, showSuccess } from "@checkin/component-ui";
 import { modals } from "@mantine/modals";
@@ -74,9 +74,24 @@ const statusLabel = (status: string) => (status === "ARCHIVED" ? "CLOSED" : stat
 const awaitingBg = (r: ProcessRow) =>
   awaitingBgReview.has({ kind: r.kind as ProcessKind, status: r.status as ProcessStatus, bgConsentAt: !!r.bgConsentAt, bgClearedAt: !!r.bgClearedAt });
 
-// A household application past consent whose check has not cleared waits on its people's check reviews.
-const waitingOnCheckReview = (r: ProcessRow) =>
-  r.kind !== "PERSON_BG" && !!r.orgMembership && !!r.bgConsentAt && !r.bgClearedAt && r.status !== "BLOCKED";
+const leadsOf = (r: ProcessRow) => (r.orgMembership?.household?.householdMembers ?? []).filter((p) => p.isHouseholdLead);
+
+// A household's check is started when an open review has a lead's check started, or a
+// review it asked for waits to be named, or the application carries the legacy flag.
+// Mirrors householdCheckStarted on the server, from rows this page already has.
+const householdCheckStarted = (r: ProcessRow, rows: readonly ProcessRow[]) => {
+  const householdId = r.orgMembership?.householdId;
+  if (householdId === undefined) return false;
+  if (r.bgConsentAt) return true;
+  const leadIds = new Set(leadsOf(r).map((p) => p.id));
+  return rows.some((p) =>
+    p.kind === "PERSON_BG" && (p.status === "PENDING_BG_REVIEW" || p.status === "BLOCKED") &&
+    ((!!p.bgConsentAt && !!p.subjectPerson && leadIds.has(p.subjectPerson.id)) || (!p.subjectPerson && p.requestedForHouseholdId === householdId)));
+};
+
+// A household application with its check started and not cleared waits on its people's check reviews.
+const waitingOnCheckReview = (r: ProcessRow, rows: readonly ProcessRow[]) =>
+  r.kind !== "PERSON_BG" && !!r.orgMembership && !r.bgClearedAt && r.status !== "BLOCKED" && householdCheckStarted(r, rows);
 
 // Mirror archiveApplication's and recordRefund's gates; the server re-checks.
 const closable = (r: ProcessRow) => !r.paidAt && (CLOSABLE_STATUSES as readonly string[]).includes(r.status);
@@ -119,7 +134,7 @@ function ApplicationsBoard() {
   const post = async (processId: number, path: string, body: Record<string, unknown>, done: string) => {
     setBusyId(processId);
     try {
-      await api(`/api/membership-ops/applications/${path}`, { method: "POST", body: JSON.stringify({ processId, ...body }), invalidate: false });
+      await api(path.startsWith("/") ? path : `/api/membership-ops/applications/${path}`, { method: "POST", body: JSON.stringify({ processId, ...body }), invalidate: false });
       showSuccess(done);
       notifyNavRefresh();
       await reload();
@@ -139,6 +154,66 @@ function ApplicationsBoard() {
   const releaseApplication = (processId: number, reason: string) =>
     post(processId, "review-override", { action: "release", reason }, "Released — the application moves on.");
   const archive = (processId: number) => post(processId, "archive", {}, "Application closed.");
+  const markLeadCheckStarted = (processId: number, personId: number) =>
+    post(processId, "/api/membership-audit/person-bg", { personId }, "Check marked started.");
+  const dismissReview = (processId: number, reason: string) =>
+    post(processId, "/api/membership/reviews/dismiss", { reason }, "Dismissed: the check is no longer marked started.");
+
+  const confirmMarkLead = (r: ProcessRow) => {
+    const leads = leadsOf(r);
+    let personId: number | null = leads.length === 1 ? leads[0].id : null;
+    const modalId = modals.openConfirmModal({
+      title: "Mark a lead's check started",
+      children: (
+        <Stack gap="xs">
+          <Text size="sm">Pick the lead whose check was started in the background-check tool. Their review goes to the reviewers.</Text>
+          <Select
+            label="Lead"
+            required
+            data={leads.map((p) => ({ value: String(p.id), label: p.name || p.email || `Person #${p.id}` }))}
+            defaultValue={personId === null ? null : String(personId)}
+            onChange={(v) => { personId = v ? Number(v) : null; }}
+          />
+        </Stack>
+      ),
+      labels: { confirm: "Mark check started", cancel: "Cancel" },
+      closeOnConfirm: false,
+      onConfirm: () => {
+        if (personId === null) {
+          showError("Pick a lead.");
+          return;
+        }
+        modals.close(modalId);
+        markLeadCheckStarted(r.id, personId);
+      },
+    });
+  };
+
+  const confirmDismiss = (r: ProcessRow) => {
+    let reason = "";
+    const modalId = modals.openConfirmModal({
+      title: "Dismiss: opened by mistake",
+      children: (
+        <Stack gap="xs">
+          <Text size="sm">
+            This undoes the &quot;check started&quot; mark on <strong>{processLabel(r)}</strong>. It decides nothing:
+            no approval, no rejection. Check the background-check tool first.
+          </Text>
+          <Textarea label="Reason" required autosize minRows={2} onChange={(e) => { reason = e.currentTarget.value; }} />
+        </Stack>
+      ),
+      labels: { confirm: "Dismiss", cancel: "Cancel" },
+      closeOnConfirm: false,
+      onConfirm: () => {
+        if (!reason.trim()) {
+          showError("A reason is required to dismiss a check review.");
+          return;
+        }
+        modals.close(modalId);
+        dismissReview(r.id, reason.trim());
+      },
+    });
+  };
 
   // An awaiting review only ever holds APPROVE attestations (any REJECT blocks it).
   const approvals = (r: ProcessRow) => r.attestations.filter((a) => a.result === "APPROVE").length;
@@ -282,7 +357,7 @@ function ApplicationsBoard() {
     <Stack>
       <Text c="dimmed">
         In-flight applications. Use the manual controls below to confirm the contract was signed
-        or that background-check consent was received. (The contract is also confirmed
+        or to mark a lead&apos;s background check started. (The contract is also confirmed
         automatically once the Zoho webhook is configured.)
       </Text>
 
@@ -366,17 +441,17 @@ function ApplicationsBoard() {
                     )}
                   </div>
                   <div>
-                    <Text size="xs" c="dimmed" mb={4}>Background-check consent</Text>
-                    {r.bgConsentAt ? (
-                      <Text c="green" fw={600}>✓ Received</Text>
+                    <Text size="xs" c="dimmed" mb={4}>Background check started</Text>
+                    {householdCheckStarted(r, rows) ? (
+                      <Text c="green" fw={600}>✓ Started</Text>
                     ) : (
-                      <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => act(r.id, "mark-bg-consent")}>
-                        Confirm BG consent
+                      <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || leadsOf(r).length === 0} onClick={() => confirmMarkLead(r)}>
+                        Mark a lead&apos;s check started
                       </Button>
                     )}
                   </div>
-                  {ownHousehold(r) && (
-                    <Text size="xs" c="dimmed">You can&apos;t confirm your own household&apos;s contract or consent — someone outside your household must.</Text>
+                  {ownHousehold(r) && !r.contractSignedAt && (
+                    <Text size="xs" c="dimmed">You can&apos;t confirm your own household&apos;s contract — someone outside your household must.</Text>
                   )}
                 </Group>
               )}
@@ -394,10 +469,15 @@ function ApplicationsBoard() {
                       Discard approvals — start the review over
                     </Button>
                   )}
+                  {me?.isBoardMember && r.attestations.length === 0 && (
+                    <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => confirmDismiss(r)}>
+                      Dismiss: opened by mistake
+                    </Button>
+                  )}
                 </Group>
               )}
 
-              {waitingOnCheckReview(r) && (
+              {waitingOnCheckReview(r, rows) && (
                 <Text size="sm" c="dimmed" mt="md">
                   Background check (in parallel) — waiting on the household&apos;s check review.
                 </Text>

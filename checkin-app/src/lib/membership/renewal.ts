@@ -239,8 +239,8 @@ export async function beginRenewal(processId: number, actorId: number) {
         }
     }
 
-    // The gate can already be met on arrival (bgClearedAt stamped by settle, or a board
-    // pre-mark of contractSignedAt/bgConsentAt), so re-run the advance; it is a
+    // The gate can already be met on arrival (bgClearedAt stamped by settle, a board
+    // pre-mark of contractSignedAt, or a lead's check already started), so re-run the advance; it is a
     // no-op when the external actions aren't done. Lazy: external.ts pulls in the
     // agreement PDF and S3 client, and renewal.ts is imported across the app.
     const { advanceExternalIfComplete } = await import("@/lib/membership/external");

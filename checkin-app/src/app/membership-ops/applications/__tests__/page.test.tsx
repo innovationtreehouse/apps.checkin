@@ -196,6 +196,7 @@ describe("AdminMembershipPage", () => {
             "/api/membership-ops/applications/external": { ok: true },
             "/api/membership-ops/applications/certify-payment": { ok: true },
             "/api/membership-ops/applications/review-override": { ok: true },
+            "/api/membership-audit/person-bg": { process: { id: 9 } },
         });
         renderPage();
         await screen.findByText("Awaiting Family");
@@ -203,8 +204,11 @@ describe("AdminMembershipPage", () => {
         fireEvent.click(screen.getByRole("button", { name: "Confirm contract signed" }));
         await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Updated." })));
 
-        fireEvent.click(screen.getByRole("button", { name: "Confirm BG consent" }));
-        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Updated." })));
+        expect(screen.queryByRole("button", { name: "Confirm BG consent" })).not.toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "Mark a lead's check started" }));
+        const markDialog = await screen.findByRole("dialog", { name: "Mark a lead's check started" });
+        fireEvent.click(within(markDialog).getByRole("button", { name: "Mark check started" }));
+        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Check marked started." })));
 
         fireEvent.click(screen.getByRole("button", { name: /Certify payment plan/ }));
         // Mantine's `required` prop appends a visible " *" to the label text.
@@ -276,6 +280,64 @@ describe("AdminMembershipPage", () => {
 
         release(answer({ ok: true }));
         await waitFor(() => expect(screen.getByRole("button", { name: /Certify payment plan/ })).toBeEnabled());
+    });
+
+    const startedReview = (personId: number) => ({
+        ...reviewRow, id: 7, attestations: [], requestedForHouseholdId: 1, subjectPerson: { id: personId, name: `Person ${personId}`, householdId: 1 },
+    });
+
+    it("derives a household's check started from a lead's open review", async () => {
+        setSession({ id: 99, householdId: 99, isBoardMember: true });
+        mockFetchJson({ "/api/membership-ops/applications": { processes: [rows[0], startedReview(1)] } });
+        renderPage();
+        await screen.findByText("Awaiting Family");
+        expect(screen.getByText("✓ Started")).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Mark a lead's check started" })).not.toBeInTheDocument();
+    });
+
+    it("does not count another adult's started check for the household", async () => {
+        setSession({ id: 99, householdId: 99, isBoardMember: true });
+        mockFetchJson({ "/api/membership-ops/applications": { processes: [rows[0], startedReview(50)] } });
+        renderPage();
+        await screen.findByText("Awaiting Family");
+        expect(screen.getByRole("button", { name: "Mark a lead's check started" })).toBeInTheDocument();
+        expect(screen.queryByText("✓ Started")).not.toBeInTheDocument();
+    });
+
+    it("lets a Board member dismiss a check review with no decisions, with a reason", async () => {
+        setSession({ id: 99, householdId: 99, isBoardMember: true });
+        const fresh = { ...reviewRow, id: 8, attestations: [] };
+        const fetchMock = mockFetchJson({
+            "/api/membership-ops/applications": { processes: [fresh, reviewRow] },
+            "/api/membership/reviews/dismiss": {},
+        });
+        renderPage();
+        await screen.findAllByText("Robin Payment");
+
+        // Only the review with no decision on it offers the dismissal.
+        expect(screen.getAllByRole("button", { name: "Dismiss: opened by mistake" })).toHaveLength(1);
+        fireEvent.click(screen.getByRole("button", { name: "Dismiss: opened by mistake" }));
+        const dialog = await screen.findByRole("dialog", { name: "Dismiss: opened by mistake" });
+        fireEvent.click(within(dialog).getByRole("button", { name: "Dismiss" }));
+        expect(fetchMock.mock.calls.some(([url]) => String(url).includes("reviews/dismiss"))).toBe(false);
+        fireEvent.change(within(dialog).getByRole("textbox", { name: /Reason/ }), { target: { value: "never took the check" } });
+        fireEvent.click(within(dialog).getByRole("button", { name: "Dismiss" }));
+
+        await waitFor(() =>
+            expect(fetchMock).toHaveBeenCalledWith(
+                "/api/membership/reviews/dismiss",
+                expect.objectContaining({ body: JSON.stringify({ processId: 8, reason: "never took the check" }) }),
+            ),
+        );
+        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Dismissed: the check is no longer marked started." })));
+    });
+
+    it("offers no dismissal to a sysadmin off the board", async () => {
+        setSession({ id: 99, householdId: 99, isSysadmin: true });
+        mockFetchJson({ "/api/membership-ops/applications": { processes: [{ ...reviewRow, attestations: [] }] } });
+        renderPage();
+        await screen.findByText("Robin Payment");
+        expect(screen.queryByRole("button", { name: "Dismiss: opened by mistake" })).not.toBeInTheDocument();
     });
 
     it("shows a household application waiting on its check review", async () => {

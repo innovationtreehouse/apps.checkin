@@ -112,18 +112,17 @@ describe("flow: annual membership renewal (CUJS A2)", () => {
         // A second confirm finds nothing awaiting confirmation.
         expect((await api(lead, "/api/membership/renew", { method: "POST" })).status).toBe(409);
 
-        // Board manual marks stand in for the Zoho signature and the Averity consent.
-        for (const action of ["mark-contract", "mark-bg-consent"]) {
-            const mark = await api(board, "/api/membership-ops/applications/external", {
-                method: "POST",
-                body: JSON.stringify({ processId, action }),
-            });
-            expect(mark.status).toBe(200);
-        }
+        // The Board's manual mark stands in for the Zoho signature; the lead marks their check started.
+        const mark = await api(board, "/api/membership-ops/applications/external", {
+            method: "POST",
+            body: JSON.stringify({ processId, action: "mark-contract" }),
+        });
+        expect(mark.status).toBe(200);
+        const started = await api(lead, "/api/membership/check-started", { method: "POST", body: JSON.stringify({ personId: lead.personaId }) });
+        expect(started.status).toBe(200);
         expect((await api<State>(lead, "/api/membership")).json.process?.status).toBe("PENDING_PAYMENT");
 
-        // The consent opened a check review for the household; two distinct reviewers
-        // approve it, the first naming the lead.
+        // The mark opened the lead's own check review; two distinct reviewers approve it.
         const queued = await queuedReviewFor(board, lead.personaId);
         expect(queued).toBeDefined();
         expect(queued!.subjectPerson).toBeNull();

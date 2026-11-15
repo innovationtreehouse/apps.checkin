@@ -23,7 +23,7 @@ Status: **ALL 7 chips folded (V1–V7).** Every step tagged vs live code at base
 1. ✅ Intake application incl "anything else" note (captured + surfaced to reviewers)
 2. ✅ Board pre-designation of volunteer household — but drives **dues only**, NOT skip-review→payment (that's a separate `bgFresh` path)
 3. ✅ Contract sent + signed (Zoho, embedded)
-4. ✅ BG sent + consent (self-attest honor + board backstop; no Averity API)
+4. ✅ BG sent + check started (marked on the person: self, a household lead, or the Board; no Averity API)
 5. ✅ BG review (2-of-N, anti-collusion gates, board override w/ COI gate)
 6. ✅ Reviewer volunteer bit; intake note shown to reviewers (does NOT gate payment — review runs in parallel)
 7. ✅ Payment via Shopify (member vs volunteer price + discount code)
@@ -231,7 +231,7 @@ _For each loop: does the whole thing close, and can staff SEE/FIX it? These over
   - ❌ prospect newsletter/program-notify path (`CM14`)
 
 ### B5. Safety / BG loop  [SA]  — validated V4
-- Happy chain **FULLY BUILT**: obligation-open (per-person PERSON_BG triggers, idempotent+locked) ✅ → consent (self-attest OR board-record, both paths) ✅ → **2-of-N distinct-reviewer review with anti-collusion** (not-own-household, no double-attest, no shared-household co-reviewer; system never sees the check) ✅ → REJECT→BLOCKED (never activates) ✅ → clearance (2nd APPROVE, per-adult, one check never satisfies another) ✅ → board override w/ COI gate ✅ → renewal re-check (`SA5`, 29mo, enforced at renewal) ✅
+- Happy chain **FULLY BUILT**: obligation-open (per-person PERSON_BG triggers, idempotent+locked) ✅ → check started (on the person: self, a household lead, or the Board) ✅ → **2-of-N distinct-reviewer review with anti-collusion** (not-own-household, no double-attest, no shared-household co-reviewer; system never sees the check) ✅ → REJECT→BLOCKED (never activates) ✅ → clearance (2nd APPROVE, per-adult, one check never satisfies another) ✅ → board override w/ COI gate ✅ → renewal re-check (`SA5`, 29mo, enforced at renewal) ✅
 - **Warn-only posture (by design):** an un-cleared PERSON_BG obligation NEVER blocks check-in/renewal — surfaced, not gated (SA1 remainder is board-gated enforcement)
 - Oversight/breakage:
   - ✅ **compliance dashboard** (board-only): `peopleNeedingBgCheck`, `peopleMissingDob`, household `STALE_BG`/`REVOKED`/`DENIED`/`STUCK_BG_CLEARANCE` — the "can staff SEE it" surface for warn-only

@@ -6,7 +6,7 @@ import { logBackendError } from "@/lib/logger";
 import { isOrderReversed } from "@/lib/finance/reconcile/exceptions";
 import { recordUnreportedReversalOnProcess } from "@/lib/finance/reconcile/liveOrder";
 import { notifyBoardPaidReject } from "@/lib/membership/boardAlerts";
-import { householdCheckStandings, householdQualifies, jsonField, liveBgThreshold, reviewHoldsRejection } from "@/lib/membership/checkStanding";
+import { householdCheckStandings, householdCheckStarted, householdQualifies, jsonField, legacyHouseholdCheckStarted, liveBgThreshold, reviewHoldsRejection } from "@/lib/membership/checkStanding";
 import { advanceExternalIfComplete } from "@/lib/membership/external";
 import { lockAndFindDeniedHousehold, setHouseholdStatus } from "@/lib/membership/householdStatus";
 import { SETTLE_BLOCKABLE_STATUSES, fromWhere, openProcess, personBgOpen, type ProcessStatus } from "@/lib/membership/lifecycle";
@@ -34,7 +34,8 @@ import { refuseSelfGrant, type GrantSubject } from "@/lib/membership/selfGrantGu
  *   check is stamped cleared and it converges on payment;
  * - a lead is cleared and only a review naming nobody holds the household → that
  *   review is closed as unneeded and the application clears;
- * - otherwise, consent is recorded, no lead is cleared or under review, nobody is
+ * - otherwise, the application carries the legacy household flag
+ *   (`legacyHouseholdCheckStarted`), no lead is cleared or under review, nobody is
  *   disputed and no review is open for the household → a check review with no person
  *   is opened for it (`openRequestedReview`).
  *
@@ -70,13 +71,12 @@ export async function settleHouseholdBg(householdId: number, opts: { reviewJustC
 }
 
 /**
- * Settles every household whose open application has consent and is waiting on its
- * check, so one with no check review open gets one. Each household is settled on its
- * own; a failure is logged and the rest carry on.
+ * Settles every household whose open application is waiting on its check. Each
+ * household is settled on its own; a failure is logged and the rest carry on.
  */
 export async function settleApplicationsAwaitingCheck(): Promise<{ households: number; opened: number; failed: number }> {
     const apps = await prisma.orgMembershipProcess.findMany({
-        where: { kind: { in: ["INITIAL", "RENEWAL"] }, bgConsentAt: { not: null }, bgClearedAt: null, ...openProcess.where },
+        where: { kind: { in: ["INITIAL", "RENEWAL"] }, bgClearedAt: null, ...openProcess.where },
         select: { orgMembership: { select: { householdId: true } } },
     });
     const households = [...new Set(apps.flatMap((a) => (a.orgMembership ? [a.orgMembership.householdId] : [])))];
@@ -137,7 +137,7 @@ async function settleInTx(tx: TxClient, processId: number, householdId: number, 
         const unrecorded = blockingNow.filter((id) => !recorded.includes(id));
         if (unrecorded.length) await record({ status }, { action: BLOCK_REASON, blockingReviewIds: unrecorded });
         if (unrecorded.length || await tx.orgMembershipProcess.count({ where: { id: { in: recorded }, status: "BLOCKED" } })) return { steps };
-        const to = resumeStatus(block.from, process);
+        const to = resumeStatus(block.from, process, await householdCheckStarted(tx, householdId, process));
         const { count } = await tx.orgMembershipProcess.updateMany({ where: { id: processId, ...fromWhere("BLOCKED") }, data: { status: to, bgClearedAt: null, stageEnteredAt: new Date() } });
         if (!count) return { steps };
         await record({ status }, { status: to, action: "check review no longer rejected", blockingReviewIds: recorded });
@@ -259,7 +259,7 @@ export async function releaseDepartedRejection(processId: number, actorId: numbe
         const fresh = await tx.orgMembershipProcess.findUnique({ where: { id: processId }, select: { kind: true, status: true, paidAt: true, bgConsentAt: true, contractSignedAt: true } });
         const now = fresh?.status === "BLOCKED" ? await departedRejections(tx, processId, householdId) : null;
         if (!fresh || !now) throw notReleasable();
-        const to = resumeStatus(now.from, fresh);
+        const to = resumeStatus(now.from, fresh, await householdCheckStarted(tx, householdId, fresh));
         const { count } = await tx.orgMembershipProcess.updateMany({ where: { id: processId, ...fromWhere("BLOCKED") }, data: { status: to, bgClearedAt: null, stageEnteredAt: new Date() } });
         if (!count) throw notReleasable();
         await tx.auditLog.create({
@@ -303,11 +303,11 @@ async function departedRejections(db: DbClient, processId: number, householdId: 
 /**
  * Where a lifted block returns the application: a step before review and payment as
  * it was; a review or payment step by `blockedResetStatus`, which sends it back to
- * the external step when consent or the agreement is missing.
+ * the external step when the check is not started or the agreement is missing.
  */
-function resumeStatus(from: Prisma.JsonValue | undefined, process: Parameters<typeof blockedResetStatus>[0]): OrgMembershipProcessStatus {
+function resumeStatus(from: Prisma.JsonValue | undefined, process: Parameters<typeof blockedResetStatus>[0], checkStarted: boolean): OrgMembershipProcessStatus {
     const step = RETURNS_AS_WAS.find((s) => s === from);
-    return step ?? blockedResetStatus(process);
+    return step ?? blockedResetStatus(process, checkStarted);
 }
 
 /**
@@ -337,13 +337,14 @@ async function closeUnneededRequestedReviews(tx: TxClient, householdId: number, 
 }
 
 /**
- * Opens a check review with no person for the household, when the application has
- * consent, is waiting on its check and no open review requested for the household
- * names nobody or someone still in it. Runs under the application's lock, so two
- * settles never open two. The first reviewer names the person.
+ * Opens a check review with no person for the household, when the application
+ * carries the legacy household flag, is waiting on its check and no open review
+ * requested for the household names nobody or someone still in it. Runs under the
+ * application's lock, so two settles never open two. The first reviewer names the
+ * person.
  */
 async function openRequestedReview(tx: TxClient, app: { id: number; status: OrgMembershipProcessStatus; bgConsentAt: Date | null }, householdId: number, trigger?: SettleTrigger): Promise<boolean> {
-    if (!app.bgConsentAt || app.status === "BLOCKED") return false;
+    if (!legacyHouseholdCheckStarted(app) || app.status === "BLOCKED") return false;
     const open = await tx.orgMembershipProcess.count({
         where: {
             kind: "PERSON_BG",

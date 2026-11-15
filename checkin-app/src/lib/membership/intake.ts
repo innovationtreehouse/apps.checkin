@@ -6,7 +6,8 @@ import { isPrismaError, uniqueViolationFields } from "@/lib/prismaUniqueViolatio
 import { EMAIL_IN_USE_REFUSAL } from "@/lib/household/emailInUse";
 import type { OrgMembershipProcess } from "@/generated/prisma/client";
 import { IN_FLIGHT_INITIAL_STATUSES } from "@/lib/membership/phases";
-import { getExternalStatus, advanceExternalIfComplete, getOwnBackgroundCheck } from "@/lib/membership/external";
+import { getExternalStatus, advanceExternalIfComplete } from "@/lib/membership/external";
+import { getOwnBackgroundCheck } from "@/lib/membership/checkStarted";
 import { householdApplicationOpenOrBlockedWhere } from "@/lib/membership/renewal";
 import { ensureHouseholdMembership, lockAndFindDeniedHousehold, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { fromWhere, openProcess } from "@/lib/membership/lifecycle";
@@ -134,7 +135,7 @@ export async function getIntakeState(userId: number) {
     // independent of the household's own application state — an adult child in a settled
     // member household still has one to sign.
     const ownAgreement = await findOpenPersonAgreement(userId);
-    const ownBackgroundCheck = await getOwnBackgroundCheck(user);
+    const ownBackgroundCheck = await getOwnBackgroundCheck(userId);
 
     return {
         hasHousehold: !!household,
@@ -591,10 +592,10 @@ export async function submitIntake(userId: number) {
         await logBackendError(error, "household background-check settle after intake", { householdId: household.id, processId: process.id });
     }
 
-    // The external actions (contract sign, BG consent) can already be satisfied the
-    // moment we land at PENDING_EXTERNAL_ACTION: settle stamps bgClearedAt above,
-    // and the board can pre-mark contractSignedAt/bgConsentAt on the INTAKE row via
-    // the ops API. advanceExternalIfComplete doesn't fire on those marks
+    // The external actions (contract sign, a lead's check started) can already be
+    // satisfied the moment we land at PENDING_EXTERNAL_ACTION: settle stamps
+    // bgClearedAt above, the board can pre-mark contractSignedAt on the INTAKE row
+    // via the ops API, and a lead's check may be marked started at any time. advanceExternalIfComplete doesn't fire on those marks
     // (status isn't PENDING_EXTERNAL_ACTION yet), so without this the process would
     // strand here with its gate already met. Re-run the advance now — it's a no-op
     // (status guard, contract/BG checks) when the actions aren't actually done.

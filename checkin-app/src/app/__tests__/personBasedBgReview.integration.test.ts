@@ -3,14 +3,15 @@
  */
 /**
  * Person-based background-check review against a real database
- * (docs/rules/membership.md, Application and review): a household's consent opens a
- * check review with no person; its first decision, approve or reject, names the
- * person; every outcome settles the households it touches; the household
- * application is never reviewed itself.
+ * (docs/rules/membership.md, Application and review): an application carrying the
+ * legacy household flag (docs/in-design/BG_CHECK_STARTED-migration.md) opens a check
+ * review with no person; its first decision, approve or reject, names the person;
+ * every outcome settles the households it touches; the household application is
+ * never reviewed itself.
  */
 import type { OrgMembershipProcessStatus } from '@/generated/prisma/client';
 import prisma from '@/lib/prisma';
-import { markBgConsent } from '@/lib/membership/external';
+import { advanceExternalIfComplete } from '@/lib/membership/external';
 import { attest, boardResetReview, eligibleReviewProcessIds, undoOwnApproval } from '@/lib/membership/review';
 import { activate } from '@/lib/membership/payment';
 import { archiveApplication, unarchiveApplication } from '@/lib/membership/archive';
@@ -69,9 +70,16 @@ const audits = (id: number) => prisma.auditLog.findMany({ where: { tableName: 'O
 const standingOf = async (householdId: number, personId: number) =>
     (await householdCheckStandings(prisma, householdId, null)).members.find((m) => m.personId === personId)?.standing;
 
-/** Consent on the family's application, returning the review it opened. */
+/** Stamps the legacy household flag on an application, then settles and advances it as the old write did. */
+async function legacyFlag(appId: number) {
+    const app = await prisma.orgMembershipProcess.update({ where: { id: appId }, data: { bgConsentAt: new Date() }, select: { orgMembership: { select: { householdId: true } } } });
+    await settleHouseholdBg(app.orgMembership!.householdId);
+    await advanceExternalIfComplete(appId);
+}
+
+/** The legacy household flag on the family's application, returning the review it opened. */
 async function consent(f: Awaited<ReturnType<typeof family>>) {
-    await markBgConsent(f.appId, f.leadId);
+    await legacyFlag(f.appId);
     const [review] = await requested(f.householdId);
     return review.id;
 }
@@ -115,11 +123,11 @@ beforeEach(() => {
     jest.mocked(notifyBoardCheckRejected).mockClear();
 });
 
-describe('consent opens a check review with no person', () => {
-    it('opens one review requested for the household, and a second consent reuses it', async () => {
+describe('the legacy household flag opens a check review with no person', () => {
+    it('opens one review requested for the household, and a second stamp reuses it', async () => {
         const f = await family();
         const reviewId = await consent(f);
-        await markBgConsent(f.appId, f.lead2Id);
+        await legacyFlag(f.appId);
         const reviews = await requested(f.householdId);
         expect(reviews).toHaveLength(1);
         expect(reviews[0]).toMatchObject({ id: reviewId, subjectPersonId: null, status: 'PENDING_BG_REVIEW', requestedForHouseholdId: f.householdId });
@@ -218,12 +226,12 @@ describe('the first decision names the person', () => {
     });
 });
 
-describe("a lead's own review and the household's consent", () => {
+describe("a lead's own review and the legacy household flag", () => {
     it("opens no unnamed review while the lead's own review is under way, and clears when that review does", async () => {
         const f = await family();
         const own = await ownReview(f.leadId);
         await attest(revC, own, { result: 'APPROVE' });
-        await markBgConsent(f.appId, f.leadId);
+        await legacyFlag(f.appId);
         expect(await requested(f.householdId)).toHaveLength(0);
         expect((await row(f.appId)).status).toBe('PENDING_PAYMENT');
 

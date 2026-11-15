@@ -8,8 +8,9 @@
  * This is the whole point of the field — a would-be volunteer-only household
  * types the note during intake, and the reviewer (who also sets the volunteer
  * bit) must actually see it. Drives the real journey over HTTP against a running
- * seeded dev server: applicant fills intake WITH the note, board records the two
- * external actions (whose consent opens a check review for the household), then
+ * seeded dev server: applicant fills intake WITH the note, the board records the
+ * contract and the lead marks their check started (opening their check review,
+ * requested for the household), then
  * GET /api/membership/reviews returns the note on that review.
  *
  * Assumes a freshly-seeded DB. Uses parent.family3 (household3), a non-member
@@ -50,9 +51,9 @@ describe("flow: intake notes surface to the BG-review queue", () => {
         const afterSubmit = await api<State>(applicant, "/api/membership");
         const processId = afterSubmit.json.process!.id;
 
-        // Board records contract + BG consent → a check review opens for the household.
+        // Board records the contract and the lead marks their check started → the lead's check review opens for the household.
         await api(reviewer, "/api/membership-ops/applications/external", { method: "POST", body: JSON.stringify({ processId, action: "mark-contract" }) });
-        await api(reviewer, "/api/membership-ops/applications/external", { method: "POST", body: JSON.stringify({ processId, action: "mark-bg-consent" }) });
+        await api(applicant, "/api/membership/check-started", { method: "POST", body: JSON.stringify({ personId: applicant.personaId }) });
 
         // The reviewer's queue must carry the applicant's note, unhidden.
         const row = await queuedReviewFor(reviewer, applicant.personaId);

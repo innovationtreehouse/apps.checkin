@@ -154,7 +154,7 @@ type AwaitingBgRow = { kind: ProcessKind; status: ProcessStatus; bgConsentAt: bo
 
 /**
  * A check review the reviewer queue lists: a PERSON_BG at PENDING_BG_REVIEW with
- * consent recorded and not yet cleared. A household application is never reviewed
+ * the check started and not yet cleared. A household application is never reviewed
  * itself; it waits on its people's check reviews (settleHouseholdBg).
  *
  * Hand-authored because `kind` is not a status or flag: `has` and `where` are kept
@@ -239,7 +239,7 @@ export const handledThisCycleWhere = (liveYear: number | null, windowStart: Date
  * desyncing silently from the TRANSITIONS table.
  *
  * Status only: the guard keeps its transition-specific clauses (`contractSignedAt`,
- * the BG-consent `OR`, `isPaymentPlanRequested`) literal — not statuses, don't drift,
+ * the check-started narrowing, `isPaymentPlanRequested`) literal — not statuses, don't drift,
  * and several guards check a strict subset of the from-state. The scalar shape matches
  * the guards' hand-written `status: "X"`, so the query is the same either way.
  */
@@ -399,13 +399,14 @@ export const TRANSITIONS: readonly Transition<TState, string, ProcessKind>[] = [
     { from: "∅", to: "INTAKE", event: "startIntake", actor: "applicant", guardSite: "intake.ts startIntake: OrgMembership FOR UPDATE (refuses DENIED/ACTIVE/BLOCKED/open renewal) + membership_one_inflight_initial + P2002", kind: "INITIAL" },
     { from: "∅", to: "PENDING_RENEWAL", event: "createRenewalProcess", actor: "board", guardSite: "renewal.ts createRenewalProcess: OrgMembership FOR UPDATE + membership_one_inflight_renewal + P2002", kind: "RENEWAL" },
     { from: "∅", to: "PENDING_BG_REVIEW", event: "personBgTriggers", actor: "system", guardSite: "personBgTriggers.ts openPersonBg: Person FOR UPDATE", kind: "PERSON_BG" },
-    { from: "∅", to: "PENDING_BG_REVIEW", event: "household consent (no subject)", actor: "applicant/board/system", guardSite: "settleHouseholdBg.ts openRequestedReview: application FOR UPDATE", kind: "PERSON_BG" },
+    { from: "∅", to: "PENDING_BG_REVIEW", event: "markCheckStarted", actor: "person/lead/board", guardSite: "checkStarted.ts markCheckStarted: Person FOR UPDATE", kind: "PERSON_BG" },
+    { from: "∅", to: "PENDING_BG_REVIEW", event: "legacy household flag (no subject)", actor: "system", guardSite: "settleHouseholdBg.ts openRequestedReview: application FOR UPDATE", kind: "PERSON_BG", legacy: true },
     { from: "∅", to: "PENDING_EXTERNAL_ACTION", event: "personAgreementTriggers", actor: "system/board", guardSite: "personAgreementTriggers.ts openPersonAgreement: Person FOR UPDATE + handled-this-cycle guard", kind: "PERSON_AGREEMENT" },
     // External step
     { from: "INTAKE", to: "PENDING_EXTERNAL_ACTION", event: "submitIntake", actor: "applicant", guardSite: "intake.ts submitIntake: updateMany CAS from INTAKE", kind: "INITIAL" },
     { from: "PENDING_RENEWAL", to: "PENDING_EXTERNAL_ACTION", event: "beginRenewal", actor: "member", guardSite: "renewal.ts beginRenewal: OrgMembership FOR UPDATE (refuses DENIED/BLOCKED) + updateMany CAS from PENDING_RENEWAL", kind: "RENEWAL" },
     // Advance
-    { from: "PENDING_EXTERNAL_ACTION", to: "PENDING_PAYMENT", event: "advanceExternalIfComplete", actor: "system", guardSite: "external.ts advanceExternalIfComplete: updateMany CAS (signed + consent or cleared)" },
+    { from: "PENDING_EXTERNAL_ACTION", to: "PENDING_PAYMENT", event: "advanceExternalIfComplete", actor: "system", guardSite: "external.ts advanceExternalIfComplete: updateMany CAS (signed + check started or cleared)" },
     // Signature completes a person-scoped agreement outright — no payment, no BG gate
     { from: "PENDING_EXTERNAL_ACTION", to: "ACTIVE", event: "markContractSigned", actor: "subject", guardSite: "external.ts markContractSigned: updateMany where contractSignedAt=null + fromWhere", kind: "PERSON_AGREEMENT" },
     // Payment convergence
@@ -420,6 +421,7 @@ export const TRANSITIONS: readonly Transition<TState, string, ProcessKind>[] = [
     { from: "BLOCKED", to: "PENDING_BG_REVIEW", event: "attest change to APPROVE", actor: "reviewer", guardSite: "review.ts attest → switchRejectionToApprove: process FOR UPDATE + COI", kind: "PERSON_BG" },
     // Naming a person whose own review is empty closes that review.
     { from: "PENDING_BG_REVIEW", to: "ARCHIVED", event: "attest names a person with an empty review", actor: "reviewer", guardSite: "review.ts nameSubject: process FOR UPDATE + holds no rejection", kind: "PERSON_BG" },
+    { from: "PENDING_BG_REVIEW", to: "ARCHIVED", event: "dismissCheckStarted", actor: "reviewer/board", guardSite: "review.ts dismissCheckStarted: process FOR UPDATE + no attestation + no held rejection + COI", kind: "PERSON_BG" },
     { from: "PENDING_BG_REVIEW", to: "ARCHIVED", event: "settleHouseholdBg closes an unneeded unnamed review", actor: "system", guardSite: "settleHouseholdBg.ts closeUnneededRequestedReviews: process FOR UPDATE + no held rejection", kind: "PERSON_BG" },
     // Household application: its people's check standing moves it (settleHouseholdBg).
     { from: "PENDING_BG_REVIEW", to: "PENDING_PAYMENT", event: "settleHouseholdBg", actor: "system", guardSite: "settleHouseholdBg.ts: process FOR UPDATE + denied lock (unpaid legacy row)", legacy: true },
@@ -433,7 +435,7 @@ export const TRANSITIONS: readonly Transition<TState, string, ProcessKind>[] = [
     // A household row blocked by a household attestation before cutover: Board reset only.
     { from: "BLOCKED", to: "PENDING_PAYMENT", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI (legacy household row, unpaid)", legacy: true },
     { from: "BLOCKED", to: "PENDING_BG_CLEARANCE", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI (legacy household row, paid)", legacy: true },
-    { from: "BLOCKED", to: "PENDING_EXTERNAL_ACTION", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI (legacy household row, no consent or unsigned)", legacy: true },
+    { from: "BLOCKED", to: "PENDING_EXTERNAL_ACTION", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI (legacy household row, check not started or unsigned)", legacy: true },
     // Refund recorded by the board: money undone, background check untouched. Every
     // other step only loses paidAt (flag-only, no status edge).
     ...ALL_STATUSES.flatMap((from): Transition<TState, string, ProcessKind>[] => {

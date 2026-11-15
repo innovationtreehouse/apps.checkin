@@ -207,6 +207,9 @@ DELETE /api/membership-ops/bg-attestations/[id]
 POST /api/membership-ops/households/[id]/archive
 POST /api/membership-ops/households/[id]/unarchive
 POST /api/membership/reviews/undo
+POST /api/membership/reviews/dismiss
+GET /api/membership/check-started
+POST /api/membership/check-started
 
 # Shopify mirror (s-read) — board payment queue and s-read routes via handler().
 GET /api/finance-ops/payments
