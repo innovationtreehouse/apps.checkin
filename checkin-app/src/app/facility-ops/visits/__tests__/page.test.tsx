@@ -26,10 +26,10 @@ describe("facility-ops/visits page", () => {
     expect(screen.getByRole("switch", { name: "Closed out by a close" })).toBeInTheDocument();
   });
 
-  it("the closed-out filter asks the server for it and shows which close", async () => {
+  it("the closed-out filter asks the server for it and labels a nightly sweep Nightly", async () => {
     setSession({ id: 1, isSysadmin: true });
     const fetchMock = mockFetchJson({
-      "/api/facility/visits?closedOut=true": { visits: [{ ...visits[0], departedVia: "AUTO_CLOSE", facilityCloseId: 7 }] },
+      "/api/facility/visits?closedOut=true": { visits: [{ ...visits[0], departedVia: "AUTO_CLOSE", facilityCloseId: 7, facilityClose: { closedBy: { name: "Kim Keyholder" } } }] },
       "/api/facility/visits": { visits },
     });
     renderWithProviders(<AdminVisitsPage />);
@@ -56,7 +56,7 @@ describe("facility-ops/visits page", () => {
     fireEvent.click(screen.getByRole("switch", { name: "Closed out by a close" }));
 
     expect(await screen.findByText("#8 · Kim Keyholder")).toBeInTheDocument();
-    expect(screen.getByText("#9 · Keyholder")).toBeInTheDocument();
+    expect(screen.getByText("#9 · Closer deleted")).toBeInTheDocument();
   });
 
   it("loads and renders visit rows", async () => {

@@ -362,7 +362,7 @@ export default function AdminVisitsPage() {
                       ) : <Text component="span" c="yellow">Active</Text>}
                     </Table.Td>
                     {closedOut && (
-                      <Table.Td>#{v.facilityCloseId} · {v.departedVia === 'AUTO_CLOSE' ? 'Nightly' : (v.facilityClose?.closedBy?.name ?? 'Keyholder')}</Table.Td>
+                      <Table.Td>#{v.facilityCloseId} · {v.departedVia === 'AUTO_CLOSE' ? 'Nightly' : (v.facilityClose?.closedBy?.name ?? 'Closer deleted')}</Table.Td>
                     )}
                     <Table.Td>
                       {v.departedAt ? (
