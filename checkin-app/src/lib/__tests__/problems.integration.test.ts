@@ -9,8 +9,31 @@ const HOUR = 60 * 60 * 1000;
 // A fixed past day, so email failures other suites log at the real time stay outside the window.
 const NOW = new Date('2001-01-10T12:00:00Z');
 const at = (hoursBefore: number) => new Date(NOW.getTime() - hoursBefore * HOUR);
+// The libraries getProblems reads when their database is set; unset here so only email lines show.
+const LIBRARY_DB_VARS = [
+    'RECEIPT_DATABASE_URL',
+    'WORKFLOW_MAPPING_DATABASE_URL',
+    'EXPENSE_DATABASE_URL',
+    'BULK_DONATION_DATABASE_URL',
+    'LOCAL_INVENTORY_DATABASE_URL',
+];
 
 describe('getProblems email failure line', () => {
+    const saved = new Map<string, string | undefined>();
+
+    beforeAll(() => {
+        for (const name of LIBRARY_DB_VARS) {
+            saved.set(name, process.env[name]);
+            delete process.env[name];
+        }
+    });
+
+    afterAll(() => {
+        for (const [name, value] of saved) {
+            if (value !== undefined) process.env[name] = value;
+        }
+    });
+
     afterEach(async () => {
         await prisma.integrationErrorLog.deleteMany({ where: { message: TAG } });
     });

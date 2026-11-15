@@ -45,7 +45,6 @@ describeDb("catch-up steps", () => {
     const [listed] = await receiptService.list({ state: "receipt_finalized", pushed: false });
     expect(listed).toMatchObject({ id: r.id, lastPushFailedAt: expect.any(Date) });
     expect(listed).not.toHaveProperty("lastError");
-    expect(listed).not.toHaveProperty("lastError");
     expect(await receiptService.get(r.id, "finance")).toMatchObject({ lastPushFailedAt: expect.any(Date), lastError: "unexpected" });
     actAs(ALICE);
     expect(await receiptService.get(r.id, "submitter")).not.toHaveProperty("lastError");
