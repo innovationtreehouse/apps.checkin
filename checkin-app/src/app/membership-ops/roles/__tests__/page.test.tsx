@@ -11,6 +11,7 @@ jest.mock("@mantine/modals", () => ({
 
 import { screen, fireEvent, waitFor } from "@testing-library/react";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl } from "@/test-helpers/rtl";
+import { settleAfter } from "@/test-helpers/settle";
 import RolesPage from "../page";
 
 beforeEach(() => resetRtl());
@@ -65,5 +66,22 @@ describe("RolesPage — holders-first roles editor", () => {
         await waitFor(() => expect(patchFetch).toHaveBeenCalled());
         // The new Keyholder holder now shows up in that role's section.
         await waitFor(() => expect(screen.getAllByText("Cara Candidate").length).toBeGreaterThan(0));
+    });
+});
+
+describe("failed load", () => {
+    it("shows an error with a retry, never 'No one holds this role.'", async () => {
+        setSession({ id: 99, isBoardMember: true });
+        mockFetchJson({});
+        renderWithProviders(<RolesPage />);
+
+        await settleAfter("/api/roles");
+        expect(screen.queryByText("No one holds this role.")).not.toBeInTheDocument();
+        expect(await screen.findByText("Couldn't load roles")).toBeInTheDocument();
+
+        mockFetchJson({ "/api/roles": { people } });
+        fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+        expect(await screen.findByText("Ann Admin")).toBeInTheDocument();
+        expect(screen.queryByText("Couldn't load roles")).not.toBeInTheDocument();
     });
 });

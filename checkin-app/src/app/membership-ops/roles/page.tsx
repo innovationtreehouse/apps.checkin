@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Card, Group, Stack, Text, UnstyledButton } from "@mantine/core";
+import { LoadError } from "@checkin/component-ui";
+import { useLoad } from "@/lib/api";
 import { EntityPicker } from "@/components/admin/EntityPicker";
 import { RoleBadge, roleLabel } from "@/components/ui/RoleBadge";
 import { RolesEditModal, type RolesEditTarget } from "@/components/roles/RolesEditModal";
@@ -20,36 +22,10 @@ type PersonRow = RolesEditTarget & { isYouth?: boolean };
  */
 export default function RolesPage() {
   const { user: me, loading, ready } = useRequireRole(MEMBERSHIP_OPS_ADMIN_ROLES);
-  const [people, setPeople] = useState<PersonRow[]>([]);
-  const [fetching, setFetching] = useState(true);
+  const { data, error: loadError, reload } = useLoad<{ people: PersonRow[] }>(ready ? "/api/roles" : null);
+  const people = data?.people ?? [];
   const [target, setTarget] = useState<PersonRow | null>(null);
   const { formatDate } = useOrgTime();
-
-  const fetchPeople = () => fetch('/api/roles')
-    .then(async (res) => {
-      const data = await res.json();
-      if (data.people) setPeople(data.people);
-    })
-    .catch((err) => {
-      console.error("Failed to load roles:", err);
-    })
-    .finally(() => {
-      setFetching(false);
-    });
-
-  useEffect(() => {
-    if (ready) fetchPeople();
-  }, [ready]);
-
-  // Refetches too: a role change can open or archive a Key Volunteer Agreement.
-  const handleSaved = (updated: RolesEditTarget) => {
-    setPeople((prev) => {
-      const exists = prev.some((p) => p.id === updated.id);
-      const merged = { ...updated } as PersonRow;
-      return exists ? prev.map((p) => (p.id === updated.id ? { ...p, ...merged } : p)) : [...prev, merged];
-    });
-    fetchPeople();
-  };
 
   const holderLabel = (p: PersonRow, flag: string) => {
     const name = p.name || p.email || `Person #${p.id}`;
@@ -86,7 +62,9 @@ export default function RolesPage() {
         />
       </Card>
 
-      {fetching && people.length === 0 ? (
+      {loadError ? (
+        <LoadError what="roles" message={loadError} onRetry={reload} />
+      ) : data === null ? (
         <Text c="dimmed">Loading...</Text>
       ) : (
         ROLE_FLAGS.map((flag) => {
@@ -120,7 +98,7 @@ export default function RolesPage() {
         me={me}
         noBoard={!people.some((p) => p.isBoardMember)}
         onClose={() => setTarget(null)}
-        onSaved={handleSaved}
+        onSaved={() => { void reload(); }}
       />
     </Stack>
   );
