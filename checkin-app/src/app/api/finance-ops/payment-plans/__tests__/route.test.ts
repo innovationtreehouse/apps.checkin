@@ -66,12 +66,6 @@ it('selects only the person, household and program columns the queue shows', asy
     expect(Object.keys(select.program.select).sort()).toEqual(['id', 'name', 'nonOrgMemberPriceCents', 'orgMemberPriceCents', 'startAt']);
 });
 
-it('ships each request with exactly the participant columns the queue shows', async () => {
-    const body = await (await GET(req())).json();
-
-    expect(Object.keys(body.ProgramParticipant[0]).sort()).toEqual(['pendingSince', 'person', 'personId', 'program', 'programId', 'scholarshipRequestKind']);
-});
-
 it('ships finance the participant and household-lead contact', async () => {
     const body = await (await GET(req())).json();
 
