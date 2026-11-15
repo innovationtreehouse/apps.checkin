@@ -14,7 +14,6 @@ export interface PersonPrefill {
 
 export interface HouseholdPrefill extends Partial<StructuredAddress> {
   name: string | null;
-  notes: string | null;
   emergencyContactName: string | null;
   emergencyContactPhone: string | null;
   emergencyContactEmail: string | null;
@@ -57,7 +56,6 @@ export interface FormValues {
   hasSecondary: boolean;
   secondary: PersonFields;
   children: PersonFields[];
-  notes: string;
 }
 
 // Stable key for the unsaved-changes dirty compare. Array (not object) so order
@@ -69,7 +67,6 @@ export const serializeMembershipForm = (v: FormValues) =>
     v.primary.name, v.primary.dob, v.primary.over25, v.primary.allergies,
     v.hasSecondary, v.secondary.id, v.secondary.name, v.secondary.email, v.secondary.dob, v.secondary.over25, v.secondary.allergies,
     v.children.map((c) => [c.id, c.name, c.email, c.dob, c.allergies]),
-    v.notes,
   ]);
 
 export function formFromPrefill(prefill: IntakePrefill): FormValues {
@@ -84,12 +81,11 @@ export function formFromPrefill(prefill: IntakePrefill): FormValues {
     hasSecondary: !!prefill.secondaryParent,
     secondary: personFromPrefill(prefill.secondaryParent),
     children: prefill.children.map(personFromPrefill),
-    notes: h?.notes ?? "",
   };
 }
 
 export const buildIntakePayload = (v: FormValues) => ({
-  household: { ...v.address, emergencyContactName: v.emName, emergencyContactPhone: v.emPhone, emergencyContactEmail: v.emEmail, notes: v.notes || null },
+  household: { ...v.address, emergencyContactName: v.emName, emergencyContactPhone: v.emPhone, emergencyContactEmail: v.emEmail },
   primaryParent: { name: v.primary.name, dob: v.primary.over25 ? null : (v.primary.dob || null), over25: v.primary.over25, allergies: v.primary.allergies || null },
   secondaryParent: v.hasSecondary
     ? { id: v.secondary.id, name: v.secondary.name, email: v.secondary.email || undefined, dob: v.secondary.over25 ? null : (v.secondary.dob || null), over25: v.secondary.over25, allergies: v.secondary.allergies || null }
@@ -141,7 +137,6 @@ export function useMembershipForm() {
   const [hasSecondary, setHasSecondary] = useState(false);
   const [secondary, setSecondary] = useState<PersonFields>(blankPerson);
   const [children, setChildren] = useState<PersonFields[]>([]);
-  const [notes, setNotes] = useState("");
   // Serialized form as last loaded/saved; isDirty compares it to current state.
   const [savedForm, setSavedForm] = useState<string | null>(null);
 
@@ -152,7 +147,6 @@ export function useMembershipForm() {
     setEmName(next.emName);
     setEmPhone(next.emPhone);
     setEmEmail(next.emEmail);
-    setNotes(next.notes);
     setPrimary(next.primary);
     if (next.hasSecondary) {
       setHasSecondary(true);
@@ -162,14 +156,14 @@ export function useMembershipForm() {
     setSavedForm(serializeMembershipForm(next));
   }, []);
 
-  const values: FormValues = { address, emName, emPhone, emEmail, primary, hasSecondary, secondary, children, notes };
+  const values: FormValues = { address, emName, emPhone, emEmail, primary, hasSecondary, secondary, children };
   // Dirty once the user edits past the loaded snapshot. Re-hydrate after a
   // save/submit re-snapshots, so this flips back to false then.
   const isDirty = savedForm !== null && serializeMembershipForm(values) !== savedForm;
 
   return {
     values, isDirty, reset,
-    setAddress, setEmName, setEmPhone, setEmEmail, setPrimary, setHasSecondary, setSecondary, setChildren, setNotes,
+    setAddress, setEmName, setEmPhone, setEmEmail, setPrimary, setHasSecondary, setSecondary, setChildren,
   };
 }
 

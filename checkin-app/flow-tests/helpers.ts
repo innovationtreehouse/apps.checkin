@@ -91,7 +91,7 @@ export async function differentPurchases<T = unknown>(finance: Session, receiptI
 export type QueuedReview = {
     id: number;
     subjectPerson: { id: number } | null;
-    requestedForHousehold: { intakeNotes?: string | null; householdMembers: { id: number }[] } | null;
+    requestedForHousehold: { householdMembers: { id: number }[] } | null;
 };
 
 /**

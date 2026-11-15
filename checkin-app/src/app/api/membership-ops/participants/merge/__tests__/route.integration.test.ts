@@ -990,7 +990,7 @@ describe("Merge Participants API", () => {
         // assertions below pass vacuously and pin nothing.
         await prisma.household.update({
             where: { id: householdId },
-            data: { intakeNotes: "family notes, not for the merge screen", line1: "1 Secret Ln" }
+            data: { line1: "1 Secret Ln" }
         });
         await prisma.person.update({
             where: { id: pKeepId },
@@ -1012,7 +1012,6 @@ describe("Merge Participants API", () => {
         expect(hit.allergies).toBeUndefined();
         expect(hit.notificationSettings).toBeUndefined();
         expect(hit.lastBackgroundCheck).toBeUndefined();
-        expect(hit.household.intakeNotes).toBeUndefined();
         expect(hit.household.line1).toBeUndefined();
         const member = hit.household.householdMembers.find((m: { id: number }) => m.id === pMergeId);
         expect(member.googleId).toBeUndefined();
@@ -1407,20 +1406,6 @@ describe("Merge Participants API", () => {
             expect(await prisma.rawBadgeLog.count({ where: { personId: pMergeId } })).toBe(0);
             expect((await prisma.rawBadgeLog.findFirst({ where: { personId: pKeepId } }))?.location).toBe("front-desk");
             expect(await movedTallies()).toMatchObject({ rawBadgeLogs: 1 });
-        });
-
-        // SET NULL: left behind, the audit fact becomes "nobody read the note".
-        it("moves the intake-note acknowledgement (OrgMembershipProcess.noteAckById)", async () => {
-            const process = await prisma.orgMembershipProcess.create({
-                data: { kind: "PERSON_BG", status: "PENDING_BG_REVIEW", noteAckById: pMergeId, noteAckAt: new Date() },
-            });
-            createdProcessIds.push(process.id);
-
-            const res = await POST(mergeReq(pKeepId, pMergeId));
-            expect(res.status).toBe(200);
-
-            expect((await prisma.orgMembershipProcess.findUnique({ where: { id: process.id } }))?.noteAckById).toBe(pKeepId);
-            expect(await movedTallies()).toMatchObject({ noteAcks: 1 });
         });
 
         // SET NULL: left behind, the agreement would name nobody as its signer.

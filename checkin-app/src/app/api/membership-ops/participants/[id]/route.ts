@@ -9,7 +9,6 @@ import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/selfGrantGuard";
 import { normalizeEmail } from "@/lib/prismaEmailNormalize";
 import { EMAIL_IN_USE_REFUSAL, isBadEmailChange, isEmailInUseError } from "@/lib/household/emailInUse";
-import { withIntakeNotesFor } from "@/lib/household/intakeNotes";
 import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
 import { personActor } from "@/lib/auditActor";
 import { isYouth } from "@/lib/time";
@@ -168,7 +167,7 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
             lastBackgroundCheck: updatedParticipant.lastBackgroundCheck,
             isBoardMember: updatedParticipant.isBoardMember,
             isKeyholder: updatedParticipant.isKeyholder,
-            household: updatedParticipant.household && withIntakeNotesFor(updatedParticipant.household, auth.user),
+            household: updatedParticipant.household,
         };
 
         return NextResponse.json({ participant: formatted });

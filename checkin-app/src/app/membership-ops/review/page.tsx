@@ -23,7 +23,7 @@ interface Person {
 interface QueueItem {
   id: number;
   subjectPerson: { id: number; name: string | null; householdId: number | null; household: { name: string | null } | null } | null;
-  requestedForHousehold: { name: string | null; intakeNotes: string | null; householdMembers: Person[] } | null;
+  requestedForHousehold: { name: string | null; householdMembers: Person[] } | null;
   _count: { attestations: number };
 }
 
@@ -448,7 +448,6 @@ export default function MembershipReviewPage() {
             const subject = item.subjectPerson;
             const requested = item.requestedForHousehold;
             const leads = requested?.householdMembers ?? [];
-            const notes = requested?.intakeNotes?.trim();
             return (
             <Card key={item.id} withBorder radius="md" padding="lg">
               <Text fw={700} fz="lg">{applicantLabel(item)}</Text>
@@ -485,13 +484,7 @@ export default function MembershipReviewPage() {
                 </Stack>
               )}
 
-              {/* The intake note belongs to the household that asked for the check; the volunteer-only mark is offered only on a review of one of its leads. */}
-              {requested && notes && (
-                <Alert color="yellow" variant="light" mt="md" title="From the applicant — “Anything else we should know?”">
-                  <Text style={{ whiteSpace: "pre-wrap" }}>{notes}</Text>
-                </Alert>
-              )}
-
+              {/* The volunteer-only mark is offered only on a review of one of the requesting household's leads. */}
               {requested && (!subject || leads.some((p) => p.id === subject.id)) && (
                 <Checkbox
                   my="md"

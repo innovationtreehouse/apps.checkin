@@ -6,7 +6,7 @@ import { errorMessage, LoadError, showError, showSuccess } from '@checkin/compon
 import { useRequireRole } from '@/hooks/useRequireRole';
 import { useSeedForm } from '@/hooks/useSeedForm';
 import { api, useLoad } from '@/lib/api';
-import { Alert, Badge, Button, Card, Checkbox, Group, Paper, SimpleGrid, Stack, Text, Textarea, TextInput, Title, Tooltip } from '@mantine/core';
+import { Alert, Badge, Button, Card, Checkbox, Group, Paper, SimpleGrid, Stack, Text, TextInput, Title, Tooltip } from '@mantine/core';
 import { AlertBanner, type AlertTone } from '@/components/admin/AlertBanner';
 import { PageContainer } from '@/components/ui/PageContainer';
 import EmergencyContactNotice from '@/components/ui/EmergencyContactNotice';
@@ -58,7 +58,6 @@ type HouseholdData = {
   name?: string;
   householdMembers?: HouseholdMember[];
   orgMembership?: { status?: string; memberSince?: string; isVolunteerFamily?: boolean } | null;
-  intakeNotes?: string | null;
 } & Partial<StructuredAddress> | null;
 type HouseholdAnswer = { household: HouseholdData; boardReplyTo?: string | null; validUntil?: string | null };
 
@@ -97,9 +96,6 @@ export default function HouseholdPage() {
   // Snapshot of the address as last loaded/saved; isDirty compares it to current
   // state to drive the unsaved-changes guard.
   const [initialAddress, setInitialAddress] = useState<StructuredAddress>(blankAddress);
-  // "Anything else we should know?" — saved alongside the address on this card.
-  const [notes, setNotes] = useState("");
-  const [initialNotes, setInitialNotes] = useState("");
   const [addressErrors, setAddressErrors] = useState<Partial<Record<AddressField, string>>>({});
   const [savingSettings, setSavingSettings] = useState(false);
   // Transient "Updated" confirmation shown in the Address card header for 5s.
@@ -115,7 +111,7 @@ export default function HouseholdPage() {
   // Address" button). The member add/edit forms, emergency-contact form, and the
   // receipts toggle all submit instantly — intentionally excluded so they never
   // raise a spurious unsaved-changes prompt.
-  const isDirty = !shallowEqual({ ...initialAddress }, { ...address }) || notes !== initialNotes;
+  const isDirty = !shallowEqual({ ...initialAddress }, { ...address });
   useUnsavedGuard(isDirty);
 
   useSeedForm(householdAnswer, isDirty, (answer) => {
@@ -123,8 +119,6 @@ export default function HouseholdPage() {
     const loaded = { line1: a.line1 ?? "", line2: a.line2 ?? "", city: a.city ?? "", state: a.state ?? "", postalCode: a.postalCode ?? "" };
     setAddress(loaded);
     setInitialAddress(loaded);
-    setNotes(answer.household?.intakeNotes ?? "");
-    setInitialNotes(answer.household?.intakeNotes ?? "");
   });
 
   const userId = (sessionUser as { id: number } | undefined)?.id;
@@ -141,10 +135,9 @@ export default function HouseholdPage() {
     if (Object.keys(errors).length > 0) return;
     setSavingSettings(true);
     try {
-      await api('/api/household/settings', { method: 'PATCH', body: JSON.stringify({ ...address, notes: notes || null }) });
+      await api('/api/household/settings', { method: 'PATCH', body: JSON.stringify(address) });
       showSuccess("Settings updated successfully!");
       setInitialAddress(address);
-      setInitialNotes(notes);
       notifyNavRefresh();
     } catch (e) {
       showError(errorMessage(e));
@@ -454,14 +447,6 @@ export default function HouseholdPage() {
                 <TextInput label="State" required maxLength={2} value={address.state ?? ""} error={addressErrors.state} onChange={(e) => { setAddress({ ...address, state: e.currentTarget.value }); setAddressErrors({ ...addressErrors, state: undefined }); }} placeholder="TX" />
                 <TextInput label="ZIP" required value={address.postalCode ?? ""} error={addressErrors.postalCode} onChange={(e) => { setAddress({ ...address, postalCode: e.currentTarget.value }); setAddressErrors({ ...addressErrors, postalCode: undefined }); }} placeholder="78701" />
               </SimpleGrid>
-              <Textarea
-                label="Anything else we should know?"
-                description="Optional — e.g. if your household is here to volunteer only, with no students enrolled."
-                autosize
-                minRows={2}
-                value={notes}
-                onChange={(e) => setNotes(e.currentTarget.value)}
-              />
             </Stack>
             <Button onClick={handleSaveSettings} disabled={savingSettings} loading={savingSettings} fullWidth mt="md">
               Save household details

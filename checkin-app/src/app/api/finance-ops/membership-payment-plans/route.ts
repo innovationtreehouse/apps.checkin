@@ -17,8 +17,7 @@ export const GET = handler('GET /api/finance-ops/membership-payment-plans', asyn
             ...fromWhere('PENDING_PAYMENT'),
         },
         // Selects stay narrow: finance holds everyones:pii here for the lead
-        // emails, so any other column selected (the intake note, its snapshot on
-        // the process) would reach them too.
+        // emails, so any other pii column selected would reach them too.
         select: {
             id: true,
             stageEnteredAt: true,

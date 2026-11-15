@@ -2,7 +2,7 @@
  * @jest-environment node
  *
  * The membership-audit household lists select only the household and lead columns
- * their pages show, so a household's address and intake note are never read.
+ * their pages show, so a household's address is never read.
  */
 import type { NextRequest } from "next/server";
 import { getServerSession } from "next-auth/next";

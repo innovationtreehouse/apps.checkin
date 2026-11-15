@@ -5,7 +5,6 @@ import { withAuth } from "@/lib/auth";
 import { upsertPrimaryContact, getPrimaryValidContact, EmergencyContactError } from "@/lib/emergencyContacts/service";
 import { normalizeAddressInput, pickAddress, type StructuredAddress } from "@/lib/address";
 import { apiError } from "@/lib/api-response";
-import { withIntakeNotesFor } from "@/lib/household/intakeNotes";
 import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/selfGrantGuard";
 import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
 
@@ -175,7 +174,7 @@ export const PATCH = withAuth<{ params: Promise<{ id: string }> }>(
             return written;
         });
 
-        return NextResponse.json({ household: withIntakeNotesFor(updated, auth.user) });
+        return NextResponse.json({ household: updated });
     } catch (error) {
         if (error instanceof ArchivedHouseholdError) return apiError(error.message, error.status);
         if (error instanceof EmergencyContactError) {

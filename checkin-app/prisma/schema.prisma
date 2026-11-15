@@ -205,7 +205,7 @@ model Person {
   bgAttestations      BackgroundCheckAttestation[] @relation("BgAttestations")
   bgAttestationsAsSubject BackgroundCheckAttestation[] @relation("BgAttestationSubject")
   personBgProcesses   OrgMembershipProcess[]       @relation("PersonBgSubject")
-  intakeNoteAcks      OrgMembershipProcess[]       @relation("IntakeNoteReads")
+  intakeNoteAcks      OrgMembershipProcess[]       @relation("IntakeNoteReads") @ignore
   zohoSigningRequests OrgMembershipProcess[]       @relation("ZohoSigner")
   corporationLeads    CorporationLead[]
   corporationMembers  CorporationMember[]
@@ -346,19 +346,9 @@ model Household {
   /// @sensitivity:internal
   postalCode String?
 
-  /// Freeform "Anything else we should know?" captured at intake. Where a
-  /// volunteer-only household types the note that tells a background-check
-  /// reviewer to mark them volunteer. Stays 'pii' (NOT internal like the other
-  /// narrative fields) because reviewers hold exactly everyones:pii on
-  /// GET /api/membership/reviews and must read it. GUARD: what keeps it away
-  /// from leads/keyholders is that Household binds NO scope but their_households
-  /// (scopeBindings.ts) — a household-scoped token like
-  /// their_program_households:pii resolves to nothing on a Household row, which
-  /// is why GET /api/programs/[id] can grant one for the parents' Person rows
-  /// without exposing this. Never bind Household to a program- or
-  /// keyholder-scoped scope, or the narrative leaks with it.
-  /// @sensitivity:pii
-  intakeNotes String?
+  /// Unused column awaiting its drop. Hidden from the client so no code reads or
+  /// writes it before the column goes. @sensitivity:pii
+  intakeNotes String? @ignore
 
   /// When the family left the organisation permanently; null means active.
   /// @sensitivity:public
@@ -625,20 +615,14 @@ model OrgMembershipProcess {
   /// @sensitivity:hardship
   /// @financeMark
   scholarshipRequestKind ScholarshipRequestKind?
-  /// The household's intake note as submitted with this application. A snapshot, not
-  /// a live read: the household may edit or clear Household.intakeNotes afterwards,
-  /// and the audit question is what the applicant actually said. Disclosure-equivalent
-  /// to the note itself, so it carries the note's tier; deleted with the process.
-  /// @sensitivity:pii
-  intakeNoteSnapshot    String?
-  /// Who read the snapshot, and when. Staff-action audit metadata like every other
-  /// actor/stamp pair on this model (manualPaymentById, bgClearedAt) — internal, not
-  /// public: who has read a family's note is not a fact the row publishes.
+  /// Unused columns awaiting their drop. Hidden from the client so no code reads or
+  /// writes them before the columns go. @sensitivity:pii
+  intakeNoteSnapshot    String?                 @ignore
   /// @sensitivity:internal
-  noteAckById           Int?
-  noteAckBy             Person?                 @relation("IntakeNoteReads", fields: [noteAckById], references: [id])
+  noteAckById           Int?                    @ignore
+  noteAckBy             Person?                 @relation("IntakeNoteReads", fields: [noteAckById], references: [id]) @ignore
   /// @sensitivity:internal
-  noteAckAt             DateTime?
+  noteAckAt             DateTime?               @ignore
 
   attestations BackgroundCheckAttestation[]
 

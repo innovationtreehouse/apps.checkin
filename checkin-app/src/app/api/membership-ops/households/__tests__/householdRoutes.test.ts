@@ -1,10 +1,8 @@
 /**
  * @jest-environment node
  *
- * The sysadmin role alone never shows a household's intake note
- * (docs/rules/membership.md); the Board, or a lead of that household, still sees it.
- * The households GET never reads the note; each admin route that returns a
- * Household row is pinned to the rule with a sysadmin-only caller.
+ * The households GET selects only the columns its pages read, and every
+ * household-editing route refuses an archived household.
  */
 
 import type { NextRequest } from "next/server";
@@ -15,7 +13,6 @@ import { PATCH as settingsPATCH } from "@/app/api/household/settings/route";
 import { PATCH as householdPATCH } from "@/app/api/membership-ops/households/[id]/route";
 import { PUT as participantPUT } from "@/app/api/membership-ops/participants/[id]/route";
 import { POST as reassignPOST } from "@/app/api/membership-ops/participants/[id]/household/route";
-import { canSeeIntakeNotes, withoutIntakeNoteKeys } from "@/lib/household/intakeNotes";
 import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
 
 // The archived-household guard has its own tests; here every household is live.
@@ -62,8 +59,7 @@ jest.mock("@/lib/prisma", () => {
     };
 });
 
-const NOTE = "we are volunteer only; dad lost his job";
-const HOUSEHOLD = { id: 10, name: "Test Household", intakeNotes: NOTE, line1: null, line2: null, city: null, state: null, postalCode: null };
+const HOUSEHOLD = { id: 10, name: "Test Household", line1: null, line2: null, city: null, state: null, postalCode: null };
 const SYSADMIN_ONLY = { isSysadmin: true };
 const mockSession = getServerSession as jest.Mock;
 const db = prisma as unknown as {
@@ -83,9 +79,9 @@ function request(url: string, method = "GET", body?: unknown) {
 beforeEach(() => jest.clearAllMocks());
 
 describe("GET /api/membership-ops/households", () => {
-    it("selects the detail columns the household page and Edit Info modal read, never the intake note", async () => {
+    it("selects the detail columns the household page and Edit Info modal read", async () => {
         signIn({ isBoardMember: true });
-        db.household.findUnique.mockResolvedValue({ ...HOUSEHOLD, intakeNotes: undefined, archivedAt: null, householdMembers: [], orgMembership: null, emergencyContacts: [] });
+        db.household.findUnique.mockResolvedValue({ ...HOUSEHOLD, archivedAt: null, householdMembers: [], orgMembership: null, emergencyContacts: [] });
         const res = await GET(request("http://localhost/api/membership-ops/households?id=10"));
         expect(res.status).toBe(200);
 
@@ -95,7 +91,6 @@ describe("GET /api/membership-ops/households", () => {
             ["archivedAt", "city", "emergencyContacts", "householdMembers", "id", "line1", "line2", "name", "orgMembership", "postalCode", "state"],
         );
         expect(args.select.orgMembership).toEqual({ select: { id: true, status: true, memberSince: true, isVolunteerFamily: true } });
-        expect((await res.json()).household).not.toHaveProperty("intakeNotes");
     });
 
     it("selects only the list columns the households page and pickers read", async () => {
@@ -114,26 +109,7 @@ describe("GET /api/membership-ops/households", () => {
     });
 });
 
-describe("PATCH /api/household/settings echo", () => {
-    const save = async (caller: { isHouseholdLead: boolean; isSysadmin: boolean }) => {
-        signIn({ isSysadmin: caller.isSysadmin });
-        db.person.findUnique.mockResolvedValue({ householdId: 10, ...caller });
-        db.household.update.mockResolvedValue(HOUSEHOLD);
-        const res = await settingsPATCH(request("http://localhost/api/household/settings", "PATCH", { notes: NOTE }));
-        expect(res.status).toBe(200);
-        return (await res.json()).household.intakeNotes;
-    };
-
-    it("nulls the note for a sysadmin who is not a lead", async () => {
-        expect(await save({ isHouseholdLead: false, isSysadmin: true })).toBeNull();
-    });
-
-    it("returns the note to a lead", async () => {
-        expect(await save({ isHouseholdLead: true, isSysadmin: false })).toBe(NOTE);
-    });
-});
-
-describe("other admin routes returning a Household row: sysadmin-only caller gets no note", () => {
+describe("admin routes returning a Household row", () => {
     it("PATCH /api/membership-ops/households/[id]", async () => {
         signIn(SYSADMIN_ONLY);
         db.household.findUnique.mockResolvedValue(HOUSEHOLD);
@@ -142,7 +118,6 @@ describe("other admin routes returning a Household row: sysadmin-only caller get
         expect(res.status).toBe(200);
         const { household } = await res.json();
         expect(household.name).toBe("Renamed");
-        expect(household.intakeNotes).toBeNull();
     });
 
     it("PATCH /api/membership-ops/households/[id] answers 409 when the household was archived mid-edit", async () => {
@@ -162,7 +137,6 @@ describe("other admin routes returning a Household row: sysadmin-only caller get
         expect(res.status).toBe(200);
         const { participant } = await res.json();
         expect(participant.household.id).toBe(10);
-        expect(participant.household.intakeNotes).toBeNull();
     });
 
     it("POST /api/membership-ops/participants/[id]/household", async () => {
@@ -175,7 +149,6 @@ describe("other admin routes returning a Household row: sysadmin-only caller get
         expect(res.status).toBe(200);
         const { participant } = await res.json();
         expect(participant.household.id).toBe(10);
-        expect(participant.household.intakeNotes).toBeNull();
     });
 });
 
@@ -185,7 +158,7 @@ describe("an archived household refuses the change", () => {
     it("PATCH /api/household/settings", async () => {
         signIn({});
         db.person.findUnique.mockResolvedValue({ householdId: 10, isHouseholdLead: true, isSysadmin: false });
-        const res = await settingsPATCH(request("http://localhost/api/household/settings", "PATCH", { notes: NOTE }));
+        const res = await settingsPATCH(request("http://localhost/api/household/settings", "PATCH", { emergencyContactName: "Pat Example" }));
         expect(res.status).toBe(409);
         expect(db.household.update).not.toHaveBeenCalled();
     });
@@ -206,25 +179,5 @@ describe("an archived household refuses the change", () => {
         expect(res.status).toBe(409);
         expect(lockLiveHouseholds).toHaveBeenCalledWith(expect.anything(), [20, 10]);
         expect(db.tx.person.updateMany).not.toHaveBeenCalled();
-    });
-});
-
-describe("withoutIntakeNoteKeys", () => {
-    it("removes intake-note keys at any depth and keeps everything else", () => {
-        expect(withoutIntakeNoteKeys({
-            household: { name: "H", intakeNotes: NOTE },
-            processes: [{ id: 1, intakeNoteSnapshot: NOTE }],
-            note: "kept",
-        })).toEqual({ household: { name: "H" }, processes: [{ id: 1 }], note: "kept" });
-        expect(withoutIntakeNoteKeys(null)).toBeNull();
-    });
-});
-
-describe("canSeeIntakeNotes", () => {
-    it("grants a lead of that household and the Board, never the sysadmin role alone", () => {
-        expect(canSeeIntakeNotes({ householdLead: true, householdId: 10 }, 10)).toBe(true);
-        expect(canSeeIntakeNotes({ householdLead: false, householdId: 10 }, 10)).toBe(false);
-        expect(canSeeIntakeNotes({ isBoardMember: true }, 10)).toBe(true);
-        expect(canSeeIntakeNotes({ isBoardMember: false, householdLead: false }, 10)).toBe(false);
     });
 });

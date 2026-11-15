@@ -4,8 +4,7 @@
 /**
  * GET /api/finance-ops/membership-payment-plans through the real handler():
  * finance holds everyones:pii on this route, so the query selects only the
- * columns the queue shows. The household's intake note and the process's
- * snapshot of it are never read.
+ * columns the queue shows.
  */
 import type { NextRequest } from 'next/server';
 import { getServerSession } from 'next-auth/next';

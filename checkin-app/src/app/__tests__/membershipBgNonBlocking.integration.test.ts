@@ -322,9 +322,8 @@ describe('background check is non-blocking', () => {
         expect(await isVolunteerOf(orgMembershipId)).toBe(true);
     });
 
-    it('an intake note does not gate payment — the advance opens payment, review runs in parallel', async () => {
-        const { processId, householdId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
-        await prisma.household.update({ where: { id: householdId }, data: { intakeNotes: 'please treat us as a volunteer household' } });
+    it('the advance opens payment while the review runs in parallel', async () => {
+        const { processId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
 
         await markContractSigned(processId);
         await markLeadCheckStarted(processId);
@@ -334,36 +333,34 @@ describe('background check is non-blocking', () => {
         expect(await statusOf(processId)).toBe('PENDING_BG_CLEARANCE'); // paid first, check still open
     });
 
-    it('fresh check + intake note → the note does not disqualify the auto-clear at submit', async () => {
+    it('a fresh check auto-clears at submit', async () => {
         await setBgPolicy();
         const { processId, householdId, leadId } = await makeApplicant('PENDING_EXTERNAL_ACTION', { lastBackgroundCheck: new Date() });
         await prisma.orgMembershipProcess.update({ where: { id: processId }, data: { status: 'INTAKE' } });
         await prisma.household.update({
             where: { id: householdId },
-            data: { line1: '123 Test St', city: 'Austin', state: 'TX', postalCode: '78701', intakeNotes: 'volunteer only, no students' },
+            data: { line1: '123 Test St', city: 'Austin', state: 'TX', postalCode: '78701' },
         });
         await prisma.emergencyContact.create({ data: { householdId, name: 'Out Of House', phone: '555-555-1212', phoneDigits: '5555551212', priority: 0 } });
 
         await submitIntake(leadId);
         const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
         expect(proc?.status).toBe('PENDING_EXTERNAL_ACTION');
-        expect(proc?.bgClearedAt).not.toBeNull(); // still-valid check clears; the note is irrelevant
+        expect(proc?.bgClearedAt).not.toBeNull(); // still-valid check clears
 
         await markContractSigned(processId);
         expect(await statusOf(processId)).toBe('PENDING_PAYMENT');
     });
 
-    it('fresh-check renewal with a household note opens payment on signature alone', async () => {
+    it('fresh-check renewal opens payment on signature alone', async () => {
         await setBgPolicy();
-        const { orgMembershipId, processId, leadId } = await makeFreshRenewal();
-        const m = await prisma.orgMembership.findUnique({ where: { id: orgMembershipId } });
-        await prisma.household.update({ where: { id: m!.householdId }, data: { intakeNotes: 'note for the reviewer' } });
+        const { processId, leadId } = await makeFreshRenewal();
 
         await beginRenewal(processId, leadId);
 
         const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
         expect(proc?.status).toBe('PENDING_EXTERNAL_ACTION');
-        expect(proc?.bgClearedAt).not.toBeNull(); // still-valid check clears; the note is irrelevant
+        expect(proc?.bgClearedAt).not.toBeNull(); // still-valid check clears
 
         await markContractSigned(processId);
         expect(await statusOf(processId)).toBe('PENDING_PAYMENT');

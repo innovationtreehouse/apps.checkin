@@ -103,8 +103,7 @@ async function applicationCheckStarted(process: { orgMembershipId: number | null
  * still-valid background check arrives here pre-cleared so only the signature
  * is pending. The background check does not gate payment: when it still needs
  * a human review (no still-valid prior background check), it runs in PARALLEL
- * while the applicant pays, and only the final ACTIVE flip waits on it. A
- * household intake note is shown to the reviewers but does not gate payment.
+ * while the applicant pays, and only the final ACTIVE flip waits on it.
  *
  * The conditional updateMany (status guard) is the atomic gate: two concurrent
  * callers (Zoho webhook + a check marked started) both reach here, but only the
