@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
-import { sendEmail } from "@/lib/email";
-import { renderOutreachEmail, resolveBoundary, loadTemplate, BoundaryNotSetError, type EmailType } from "@/lib/outreach/render";
+import { sendTemplated } from "@/lib/email-templates/send";
+import { outreachCtx, OUTREACH_KEY, resolveBoundary, BoundaryNotSetError, type EmailType } from "@/lib/outreach/render";
 import type { BusinessRole } from "@/types/auth";
 
 export const dynamic = "force-dynamic";
@@ -16,13 +16,13 @@ const BATCH_SIZE = 40; // within the spec's ~25-50/round
  * items. The browser calls this in a loop until `remaining` is 0 (see the send panel).
  *
  * No double-send: each candidate item is claimed with a guarded `updateMany where
- * id=<id> AND status='queued'` BEFORE it is sent — the claim must land before sendEmail,
+ * id=<id> AND status='queued'` BEFORE it is sent — the claim must land before the send,
  * not after, because the ledger can only prevent a double *write*, not a double *send*, if
  * the guard ran afterward. A losing claim (count 0, e.g. a retried/duplicate POST racing
  * another in-flight process-batch call for the same item) is simply skipped.
  *
- * ponytail: the claim writes a transient "sending" status — not one of the four the design
- * doc names (queued/sent/failed/skipped_denied/skipped_not_member) — as the atomic marker, since Prisma's
+ * ponytail: the claim writes a transient "sending" status, outside the ledger's
+ * queued/sent/failed/skipped_denied/skipped_not_member set, as the atomic marker, since Prisma's
  * updateMany can't return which rows it touched. A crash in the narrow window between claim
  * and finalize could strand a single item in "sending" (not resumable by count-of-queued or
  * retry-failed); add a stale-"sending" reaper if that's ever observed in practice.
@@ -47,7 +47,7 @@ export const POST = withAuth({ roles: ROLES }, async (req) => {
         if (e instanceof BoundaryNotSetError) return apiError(e.message, 400);
         throw e;
     }
-    const template = await loadTemplate(bulkSend.emailType as EmailType);
+    const key = OUTREACH_KEY[bulkSend.emailType as EmailType];
 
     const candidates = await prisma.bulkSendItem.findMany({
         where: { bulkSendId: bulkSend.id, status: "queued" },
@@ -75,12 +75,7 @@ export const POST = withAuth({ roles: ROLES }, async (req) => {
             await prisma.bulkSendItem.update({ where: { id: item.id }, data: { status: "skipped_not_member" } });
             continue;
         }
-        const { subject, html } = renderOutreachEmail(template.subject, template.body, {
-            name: person.name,
-            boundary,
-        });
-
-        const ok = await sendEmail(item.email, subject, html);
+        const ok = await sendTemplated(key, item.email, outreachCtx(person.name, boundary));
         await prisma.bulkSendItem.update({
             where: { id: item.id },
             data: ok ? { status: "sent", sentAt: new Date() } : { status: "failed", error: "sendEmail failed" },

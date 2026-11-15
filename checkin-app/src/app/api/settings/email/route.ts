@@ -5,6 +5,7 @@ import { apiError } from "@/lib/api-response";
 import { isValidEmailHeader, parseEmailHeaderList } from "@/lib/emailHeader";
 import { isValidEmail } from "@/lib/emergencyContacts/identity";
 import { handler } from "@/security/handler";
+import { readTemplateFields, unknownTokenError, writeTemplateFields, type FieldTargets } from "@/lib/email-templates/settingsFields";
 
 export const dynamic = "force-dynamic";
 
@@ -22,18 +23,31 @@ const SELECT = {
 
 const ACK_BODY_MAX_LEN = 5000;
 
+type AckField = "scholarshipAckSubject" | "scholarshipAckMembershipBody" | "scholarshipAckProgramBody";
+const ACK_TARGETS: FieldTargets<AckField> = {
+    scholarshipAckSubject: [{ key: "scholarship.ackMembership", part: "subject" }, { key: "scholarship.ackProgram", part: "subject" }],
+    scholarshipAckMembershipBody: [{ key: "scholarship.ackMembership", part: "body" }],
+    scholarshipAckProgramBody: [{ key: "scholarship.ackProgram", part: "body" }],
+};
+
+/** The sender settings, with the ACK copy read from its `EmailTemplate` rows. */
+async function readSettings() {
+    const settings = await prisma.boardSettings.upsert({ where: { id: 1 }, create: { id: 1 }, update: {}, select: SELECT });
+    return { ...settings, ...(await readTemplateFields(ACK_TARGETS)) };
+}
+
 /** GET /api/settings/email — outbound-email sender identity (BoardSettings singleton).
  *  Registry-governed: admission anyRole sysadmin/board; envelope 'settings'.
  *  The narrow SELECT stays as defense in depth. */
 export const GET = handler('GET /api/settings/email', async () => {
-    const settings = await prisma.boardSettings.upsert({ where: { id: 1 }, create: { id: 1 }, update: {}, select: SELECT });
-    return { BoardSettings: settings };
+    return { BoardSettings: await readSettings() };
 });
 
 /**
  * PUT /api/settings/email — set the Resend From override, Reply-To, the
  * Scholarship Review Team notify address, the alert and Board group addresses, the
- * finance contact address, and the scholarship ACK subject/bodies.
+ * finance contact address, and the scholarship ACK subject/bodies (saved to their
+ * `EmailTemplate` rows and their BoardSettings columns; the subject is both ACK rows').
  * Body may include emailFromAddress, emailReplyToAddress, scholarshipNotifyEmail,
  * alertEmailAddress, boardEmailAddress, financeContactEmail (string|null), scholarshipAckSubject, scholarshipAckMembershipBody, and
  * scholarshipAckProgramBody. emailFromAddress is a single address shape (bare or
@@ -41,8 +55,7 @@ export const GET = handler('GET /api/settings/email', async () => {
  * comma-separated list of one or more addresses, each in that same shape (e.g.
  * "info@x.org, ops@x.org") — replies can fan out to more than one inbox.
  * alertEmailAddress, boardEmailAddress and financeContactEmail are each one bare address. The ACK
- * subject/bodies are plain text (rendered via lib/scholarshipEmails.ts'
- * renderAckBody — HTML-escaped, not interpreted as markup) capped at
+ * subject/bodies are plain text (HTML-escaped when sent, not interpreted as markup) capped at
  * ACK_BODY_MAX_LEN chars. A malformed value rejects the whole update (400) so the
  * previous value survives. Blank/empty clears back to null (env default From; no
  * Reply-To; default ACK copy). The From must be on a Resend-verified domain to
@@ -109,12 +122,14 @@ export const PUT = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
         data.scholarshipAckProgramBody = v || null;
     }
 
-    const settings = await prisma.boardSettings.upsert({
-        where: { id: 1 },
-        create: { id: 1, ...data },
-        update: data,
-        select: SELECT,
-    });
+    const { scholarshipAckSubject, scholarshipAckMembershipBody, scholarshipAckProgramBody } = data;
+    const ack = { scholarshipAckSubject, scholarshipAckMembershipBody, scholarshipAckProgramBody };
+    const tokenError = unknownTokenError(ACK_TARGETS, ack);
+    if (tokenError) return apiError(tokenError, 400);
+
+    await prisma.boardSettings.upsert({ where: { id: 1 }, create: { id: 1, ...data }, update: data, select: SELECT });
+    await writeTemplateFields(ACK_TARGETS, ack, auth.user.id);
+    const settings = await readSettings();
 
     await prisma.auditLog.create({
         data: {

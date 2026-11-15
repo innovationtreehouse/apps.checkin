@@ -23,6 +23,7 @@ beforeEach(() => {
     audit = jest.fn().mockResolvedValue({});
     prisma.boardSettings.upsert = upsert;
     prisma.auditLog.create = audit;
+    prisma.emailTemplate.findMany = jest.fn().mockResolvedValue([]);
 });
 
 describe('PUT /api/settings/email — alert, Board and finance contact addresses', () => {

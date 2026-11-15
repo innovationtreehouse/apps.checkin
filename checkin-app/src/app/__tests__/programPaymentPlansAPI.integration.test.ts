@@ -26,7 +26,7 @@ jest.mock('@/lib/shopify/stock', () => {
     return { ...actual, changeProgramStockWith: jest.fn(actual.changeProgramStockWith) };
 });
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
-import { DEFAULT_ACK_SUBJECT, DEFAULT_ACK_PROGRAM_BODY, renderAckBody } from '@/lib/scholarshipEmails';
+import { REGISTRY } from '@/lib/email-templates/registry';
 import { WITH_EMERGENCY_CONTACT } from '@/test-helpers/emergencyContact';
 
 jest.mock('next-auth/next', () => ({
@@ -1203,23 +1203,18 @@ describe('Program payment-plan routes', () => {
         });
     });
 
-    describe('scholarship ACK settings (subject + program body)', () => {
+    describe('scholarship ACK templates (scholarship.ackProgram, scholarship.ackProgramHoldFailed)', () => {
         const params = (id: string | number) => ({ params: Promise.resolve({ id: String(id) }) });
         const PROGRAM_NAME = `PP Program ${TAG}`; // == the name programId was created with, in beforeAll
-        let restoreBoardSettings: () => Promise<void> = async () => {};
+        const KEYS = ['scholarship.ackProgram', 'scholarship.ackProgramHoldFailed'];
 
-        beforeAll(async () => {
-            restoreBoardSettings = await snapshotBoardSettings();
-            await prisma.boardSettings.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } });
-        });
-        afterAll(async () => {
-            await restoreBoardSettings();
+        afterEach(async () => {
+            await prisma.emailTemplate.deleteMany({ where: { key: { in: KEYS } } });
         });
 
-        it('a configured subject + body (with {{programName}}) are used for the program ACK', async () => {
-            await prisma.boardSettings.update({
-                where: { id: 1 },
-                data: { scholarshipAckSubject: 'Custom Program ACK Subject', scholarshipAckProgramBody: 'Thanks for applying to {{programName}}!' },
+        it("the Board's saved subject + body (with {{programName}}) are used for the program ACK", async () => {
+            await prisma.emailTemplate.create({
+                data: { key: 'scholarship.ackProgram', subject: 'Custom Program ACK Subject', body: 'Thanks for applying to {{programName}}!' },
             });
             await enroll(selfId, { requested: false });
             mockSession.mockResolvedValue({ user: { id: selfId } });
@@ -1229,32 +1224,27 @@ describe('Program payment-plan routes', () => {
 
             const ack = __getSentEmails().find((e) => e.subject === 'Custom Program ACK Subject');
             expect(ack).toBeTruthy();
-            expect(ack!.html).toBe(`<p>Thanks for applying to ${PROGRAM_NAME}!</p>`);
+            expect(ack!.html).toContain(`<p>Thanks for applying to ${PROGRAM_NAME}!</p>`);
         });
 
-        it('unset ACK settings fall back verbatim to the default subject + program body', async () => {
-            await prisma.boardSettings.update({
-                where: { id: 1 },
-                data: { scholarshipAckSubject: null, scholarshipAckProgramBody: null },
-            });
+        it('with no saved row the program ACK sends the default subject + body', async () => {
             await enroll(otherId, { requested: false });
             mockSession.mockResolvedValue({ user: { id: otherId } });
 
             const res = await RequestPost(requestReq({ participantId: otherId }), params(programId));
             expect(res.status).toBe(200);
 
-            const ack = __getSentEmails().find((e) => e.subject === DEFAULT_ACK_SUBJECT);
+            const ack = __getSentEmails().find((e) => e.subject === REGISTRY['scholarship.ackProgram'].defaultSubject);
             expect(ack).toBeTruthy();
-            expect(ack!.html).toBe(renderAckBody(DEFAULT_ACK_PROGRAM_BODY, { programName: PROGRAM_NAME }));
+            expect(ack!.html).toContain(`request for ${PROGRAM_NAME}. The Scholarship Review Team`);
         });
 
-        it('Shopify-failure branch: configured subject applies, but the body stays the hard-coded warning copy (ignores the configured program template)', async () => {
-            await prisma.boardSettings.update({
-                where: { id: 1 },
-                data: {
-                    scholarshipAckSubject: 'Custom Failure Subject',
-                    scholarshipAckProgramBody: 'This configured template must NOT appear in the failure-branch email.',
-                },
+        it('Shopify-failure branch: sends the hold-failed template, not the program ACK', async () => {
+            await prisma.emailTemplate.createMany({
+                data: [
+                    { key: 'scholarship.ackProgram', subject: 'Program ACK Subject', body: 'This program template must NOT appear in the failure-branch email.' },
+                    { key: 'scholarship.ackProgramHoldFailed', subject: 'Custom Failure Subject', body: 'Your request is recorded; a board member will finish the seat hold.' },
+                ],
             });
             const p = await prisma.program.create({
                 data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `PP Ack Rollback Shopify Program ${TAG}`, enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), shopifyVariantId: 'dev-mock-variant-ack-rollback-pp' },
@@ -1280,8 +1270,8 @@ describe('Program payment-plan routes', () => {
 
                 const ack = __getSentEmails().find((e) => e.subject === 'Custom Failure Subject');
                 expect(ack).toBeTruthy();
-                expect(ack!.html).toBe(`<p>${body.warning}</p>`); // escapeHtml no-ops here — the warning has no special chars
-                expect(ack!.html).not.toContain('This configured template must NOT appear');
+                expect(ack!.html).toContain('<p>Your request is recorded; a board member will finish the seat hold.</p>');
+                expect(__getSentEmails().some((e) => e.html.includes('must NOT appear'))).toBe(false);
             } finally {
                 await prisma.programParticipant.deleteMany({ where: { programId: p.id } });
                 await prisma.program.delete({ where: { id: p.id } });
