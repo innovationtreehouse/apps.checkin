@@ -56,6 +56,16 @@ delivers both "reachable by any org member" and "not world-readable".
 
 The gate is inert on `prod`, and inert on `local` — offline work needs no Google.
 
+The API applies the same rule to sessions on the deployed dev instance
+(`config.isDeployedDev()`: `CHECKIN_ENV=dev` and an `ops-dev.` host in
+`NEXTAUTH_URL`). A session that is not a verified org account counts as signed
+out (`isAcceptedSession`), so it gets 401 from session routes and only the
+anonymous view of public ones. Kiosk-signed requests are not sessions and pass,
+and NextAuth's own sign-in routes stay open. Unit tests run as `dev` on
+localhost, so the API gate is off there. If `NEXTAUTH_URL` on the dev instance
+were mis-set, the API gate would be off too; Google sign-in on dev fails
+without the real host, so that misconfiguration does not go unnoticed.
+
 Exempt from the matcher: `/api` (routes self-enforce, and a keyed kiosk must
 still reach `/api/scan`), `/signin` itself, framework internals, and any path
 with a file extension. Static assets must stay reachable — `next/image`

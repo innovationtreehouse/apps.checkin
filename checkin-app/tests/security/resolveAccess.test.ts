@@ -347,3 +347,60 @@ describe("resolveAccess — ops-stg access gate (checked ahead of every `authori
         expect((await resolveAccess('public', rctx({ type: 'unauthenticated' }))).allowed).toBe(true);
     });
 });
+
+describe('resolveAccess — dev instance org gate', () => {
+    const ORIGINAL_ENV = process.env.CHECKIN_ENV;
+    const ORIGINAL_URL = process.env.NEXTAUTH_URL;
+    beforeEach(() => {
+        process.env.CHECKIN_ENV = 'dev';
+        process.env.NEXTAUTH_URL = 'https://ops-dev.innovationtreehouse.org';
+    });
+    afterEach(() => {
+        if (ORIGINAL_ENV === undefined) delete process.env.CHECKIN_ENV;
+        else process.env.CHECKIN_ENV = ORIGINAL_ENV;
+        if (ORIGINAL_URL === undefined) delete process.env.NEXTAUTH_URL;
+        else process.env.NEXTAUTH_URL = ORIGINAL_URL;
+    });
+
+    const withClaims = (hd: string | null, emailVerified: boolean): AuthResult => {
+        const auth = session(3);
+        if (auth.type === 'session') Object.assign(auth.user, { hd, emailVerified });
+        return auth;
+    };
+
+    test("'authenticated' + non-org session → denied", async () => {
+        expect((await resolveAccess('authenticated', rctx(withClaims(null, true)))).allowed).toBe(false);
+    });
+
+    test("'authenticated' + org hd with emailVerified false → denied", async () => {
+        expect((await resolveAccess('authenticated', rctx(withClaims('innovationtreehouse.org', false)))).allowed).toBe(false);
+    });
+
+    test("'self' + non-org session on its own id → denied", async () => {
+        expect((await resolveAccess('self', rctx(withClaims('example.org', true), { id: '3' }))).allowed).toBe(false);
+    });
+
+    test("'public' + non-org session → admitted as an anonymous caller is", async () => {
+        expect((await resolveAccess('public', rctx(withClaims(null, true)))).allowed).toBe(true);
+        const ctx = rctx(withClaims(null, true));
+        expect(callerHoldsRole('unauthenticated', ctx.auth, {}, ctx.callerContext)).toBe(true);
+    });
+
+    test("'authenticated' + verified org session (or a persona minted with its claims) → allowed", async () => {
+        expect((await resolveAccess('authenticated', rctx(withClaims('innovationtreehouse.org', true)))).allowed).toBe(true);
+    });
+
+    test("'kiosk' + kiosk → allowed", async () => {
+        expect((await resolveAccess('kiosk', rctx({ type: 'kiosk' }))).allowed).toBe(true);
+    });
+
+    test("is off on dev at localhost, as under plain jest: the same non-org session passes 'authenticated'", async () => {
+        process.env.NEXTAUTH_URL = 'http://localhost:4000';
+        expect((await resolveAccess('authenticated', rctx(withClaims(null, true)))).allowed).toBe(true);
+    });
+
+    test("is inert on local: the same non-org session passes 'authenticated'", async () => {
+        process.env.CHECKIN_ENV = 'local';
+        expect((await resolveAccess('authenticated', rctx(withClaims(null, true)))).allowed).toBe(true);
+    });
+});
