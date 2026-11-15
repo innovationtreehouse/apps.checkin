@@ -66,7 +66,7 @@ describeDb("stuckItems", () => {
     const [before] = await stuckItems();
 
     await new Promise((r) => setTimeout(r, 5));
-    await expect(retryStuckItem({ id: before.id, step: before.step })).rejects.toMatchObject({ status: 409, message: "Retried, and it failed again; the item's page shows why" });
+    await expect(retryStuckItem({ id: before.id, step: before.step }, { userId: 500 })).rejects.toMatchObject({ status: 409, message: "Retried, and it failed again; the item's page shows why" });
     await receiveCompletedReceipt(receipt);
 
     expect(await stuckItems()).toEqual([before]);
@@ -74,9 +74,9 @@ describeDb("stuckItems", () => {
 
   it("a retry of an item that is not stuck, or of an unknown step, answers 404", async () => {
     const id = await seedExpense();
-    await expect(retryStuckItem({ id, step: "QuickBooks posting" })).rejects.toMatchObject({ status: 404 });
-    await expect(retryStuckItem({ id: "r9", step: "intake" })).rejects.toMatchObject({ status: 404 });
-    await expect(retryStuckItem({ id: "1", step: "catalog event" })).rejects.toMatchObject({ status: 404 });
-    await expect(retryStuckItem({ id, step: "nonsense" })).rejects.toMatchObject({ status: 404 });
+    await expect(retryStuckItem({ id, step: "QuickBooks posting" }, { userId: 500 })).rejects.toMatchObject({ status: 404 });
+    await expect(retryStuckItem({ id: "r9", step: "intake" }, { userId: 500 })).rejects.toMatchObject({ status: 404 });
+    await expect(retryStuckItem({ id: "1", step: "catalog event" }, { userId: 500 })).rejects.toMatchObject({ status: 404 });
+    await expect(retryStuckItem({ id, step: "nonsense" }, { userId: 500 })).rejects.toMatchObject({ status: 404 });
   });
 });

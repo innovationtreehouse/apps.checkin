@@ -12,7 +12,8 @@ export interface Problem extends StuckItem {
     library: string;
 }
 
-type Retry = (item: { id: string; step: string }) => Promise<void>;
+/** `by` is the person who pressed Retry. */
+type Retry = (item: { id: string; step: string }, by: { userId: number }) => Promise<void>;
 
 /**
  * Each receipt-flow library's "stuck items" and "retry" ports, and its own Problems lines where it
@@ -36,7 +37,7 @@ const SOURCES: { library: string; env: string; read: () => Promise<StuckItem[]>;
         library: "expense",
         env: "EXPENSE_DATABASE_URL",
         read: async () => (await import("@checkin/expense")).stuckItems(),
-        retry: async (item) => (await import("@checkin/expense")).retryStuckItem(item),
+        retry: async (item, by) => (await import("@checkin/expense")).retryStuckItem(item, by),
     },
     {
         library: "gifts",
@@ -74,10 +75,10 @@ async function emailFailureNotices(now: Date): Promise<Notice[]> {
  * Runs one listed item's step once, through the library the Problems list names it by. A library
  * that is not listed or has no database answers 404; the library's own retry answers the rest.
  */
-export async function retryProblem({ library, step, id }: { library: string; step: string; id: string }): Promise<void> {
+export async function retryProblem({ library, step, id }: { library: string; step: string; id: string }, by: { userId: number }): Promise<void> {
     const source = SOURCES.find((s) => s.library === library && process.env[s.env]);
     if (!source) throw new ServiceError(404, "No such library on the Problems list");
-    await source.retry({ id, step });
+    await source.retry({ id, step }, by);
 }
 
 /**

@@ -47,8 +47,16 @@ afterAll(() => {
 });
 
 describe("retryProblem", () => {
+    const BY = { userId: 5 };
+
+    it("hands the expense library the person who pressed Retry", async () => {
+        await retryProblem({ library: "expense", step: "QuickBooks posting", id: "e1" }, BY);
+
+        expect(expense.retryStuckItem).toHaveBeenCalledWith({ id: "e1", step: "QuickBooks posting" }, BY);
+    });
+
     it("runs the step through the library the item is listed under", async () => {
-        await retryProblem({ library: "gifts", step: "QuickBooks posting", id: "receipt 4" });
+        await retryProblem({ library: "gifts", step: "QuickBooks posting", id: "receipt 4" }, BY);
 
         expect(gifts.retryStuckItem).toHaveBeenCalledWith({ id: "receipt 4", step: "QuickBooks posting" });
         expect(expense.retryStuckItem).not.toHaveBeenCalled();
@@ -57,7 +65,7 @@ describe("retryProblem", () => {
     it("passes the library's refusal through", async () => {
         receipt.retryStuckItem.mockRejectedValue(new ServiceError(409, "failed again"));
 
-        await expect(retryProblem({ library: "receipt", step: "flow", id: "r1" })).rejects.toMatchObject({ status: 409 });
+        await expect(retryProblem({ library: "receipt", step: "flow", id: "r1" }, BY)).rejects.toMatchObject({ status: 409 });
     });
 
     it.each([
@@ -66,7 +74,7 @@ describe("retryProblem", () => {
     ])("answers 404 for %s", async (_what, library) => {
         delete process.env.EXPENSE_DATABASE_URL;
 
-        await expect(retryProblem({ library, step: "intake", id: "e1" })).rejects.toMatchObject({ status: 404 });
+        await expect(retryProblem({ library, step: "intake", id: "e1" }, BY)).rejects.toMatchObject({ status: 404 });
         expect(expense.retryStuckItem).not.toHaveBeenCalled();
     });
 });

@@ -13,6 +13,7 @@ import { clearFrom } from "../../lib/signoff-facts";
 import { checkAndProcessExpense, retryQbPost } from "../../lib/expense-qb-processor";
 import { postExpenseToQb } from "../../lib/expense-qb-poster";
 import { resubmitHeldExpense } from "../../services/holdService";
+import { retryStuckItem } from "../../stuckItems";
 import { QuickBooksClient } from "@checkin/quickbooks";
 
 vi.mock("../../lib/expense-qb-poster", async (importOriginal) => ({
@@ -160,6 +161,20 @@ describeDb("a Retry or Resubmit before QuickBooks reads the live catalog", () =>
     expect(await reresolved(id)).toMatchObject([
       { userId: 3, lineItemId: li, valueBefore: "Hardware/Cables → 4000", valueAfter: "Tools/Drills → 5000" },
     ]);
+  });
+
+  it("a Problems-list Retry of a failed post reads the live catalog and audits as the person who pressed it", async () => {
+    const { id, li } = await seedLine();
+    catalogFiles(li, "Hardware");
+    await signLine(FINANCE, li, "TREASURER");
+    expect(await postedAccount(id)).toBe("4000");
+    await db.expense.update({ where: { id }, data: { qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: new Date() } });
+
+    catalogFiles(li, "Tools");
+    await retryStuckItem({ id, step: "QuickBooks posting" }, { userId: 5 });
+
+    expect((await db.expenseLineItem.findUniqueOrThrow({ where: { id: li } })).resolvedQbAccount).toBe("5000");
+    expect(await reresolved(id)).toMatchObject([{ userId: 5, lineItemId: li, valueBefore: "Hardware/Cables → 4000", valueAfter: "Tools/Drills → 5000" }]);
   });
 
   it("a retry whose catalog read is unchanged writes no audit row", async () => {

@@ -33,7 +33,7 @@ export async function POST(req: NextRequest): Promise<Response> {
 
         let failure: unknown = null;
         try {
-            await retryProblem(item);
+            await retryProblem(item, { userId: auth.user.id });
         } catch (err) {
             failure = err ?? new Error("retry rejected");
         }
