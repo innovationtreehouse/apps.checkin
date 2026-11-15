@@ -1,5 +1,6 @@
 import { deleteContact, EmergencyContactError } from "@/lib/emergencyContacts/service";
 import type { DbClient } from "@/lib/db-client";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
 jest.mock("@/lib/getFullAttendance", () => ({ invalidateAttendanceCache: jest.fn() }));
 
@@ -29,17 +30,21 @@ function fakeDb(rows: Row[]) {
 const valid = (id: number): Row => ({ id, name: `C${id}`, phone: "555-555-2000", conflictParticipantId: null });
 
 describe("deleteContact guard", () => {
+    beforeEach(() => jest.mocked(invalidateAttendanceCache).mockClear());
+
     it("locks the household, then reads, then deletes, in one transaction", async () => {
         const { db, tx, calls } = fakeDb([valid(1), valid(2)]);
         await deleteContact(db, 7, 1);
         expect(calls).toEqual(["lock", "read", "delete"]);
         expect(tx.emergencyContact.delete).toHaveBeenCalledWith({ where: { id: 1 } });
+        expect(invalidateAttendanceCache).toHaveBeenCalledTimes(1);
     });
 
     it("refuses to delete the last valid contact", async () => {
         const { db, tx } = fakeDb([valid(1), { ...valid(2), conflictParticipantId: 9 }, { ...valid(3), phone: " " }]);
         await expect(deleteContact(db, 7, 1)).rejects.toMatchObject({ code: "last_valid" });
         expect(tx.emergencyContact.delete).not.toHaveBeenCalled();
+        expect(invalidateAttendanceCache).not.toHaveBeenCalled();
     });
 
     it("deletes an invalid contact even when it leaves no valid one", async () => {
