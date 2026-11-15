@@ -354,6 +354,29 @@ describe("ProblemsBox", () => {
     expect(screen.getByText("r9").closest("li")).toContainElement(screen.getByRole("button", { name: "Retry" }));
   });
 
+  it("Retry all sends a sysadmin's retryable items only", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const fetchFn = mockFetchJson({
+      "/api/system-status/config-health": { problems: { items: [stuck[0], stuck[2]], unread: [], notices: [] }, cronJobs: [] },
+      "/api/system-status/problems/retry": { results: [{ ok: true }] },
+    });
+    renderWithProviders(<ProblemsBox />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Retry all" }));
+
+    expect(await screen.findByText("1 of 1 retried; 0 still stuck.")).toBeInTheDocument();
+    expect(retryBodies(fetchFn)).toEqual([{ library: "receipt", step: "flow", id: "r9" }]);
+  });
+
+  it("hides Retry all from a viewer with nothing they may retry", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({ "/api/system-status/config-health": { problems: { items: [stuck[0], stuck[1]], unread: [], notices: [] }, cronJobs: [] } });
+    renderWithProviders(<ProblemsBox />);
+
+    expect(await screen.findByText("e1")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Retry/ })).not.toBeInTheDocument();
+  });
+
   it("Retry all retries every item one at a time in list order, goes on past a refusal and a failure, then refreshes", async () => {
     setSession({ id: 1, isBoardMember: true });
     // The second answers as a refused (403) press does: no results.
