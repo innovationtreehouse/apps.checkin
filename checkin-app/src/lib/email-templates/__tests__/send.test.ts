@@ -124,7 +124,7 @@ describe("sendTemplated", () => {
         expect(send.mock.calls[0][2]).toContain('<a href="/programs/1">here</a>');
     });
 
-    it.each(["javascript:alert(1)", "data:text/html,<b>x</b>"])("renders a %s link token as text, not a link", async (actionLink) => {
+    it.each(["javascript:alert(1)", "data:text/html,<b>x</b>", "//evil.test/x", "/\\evil.test/x"])("renders a %s link token as text, not a link", async (actionLink) => {
         await sendTemplated("program.assignment", "a@example.org", { programName: "Robotics", actionLink });
 
         expect(send.mock.calls[0][2]).not.toContain("<a href");
