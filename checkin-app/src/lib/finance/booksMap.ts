@@ -38,7 +38,7 @@ function readQuickBooksId(value: unknown, field: string): string | null {
     return id || null;
 }
 
-/** Sets or clears one bucket's Class, audited on the bucket. */
+/** Sets one bucket's Class, audited on the bucket. */
 export async function setBooksMapClass(actorId: number, budgetOwnerId: number, body: Record<string, unknown>) {
     if (body.quickBooksClassId === undefined) throw badRequest("quickBooksClassId is required");
     const bucket = await updateBudgetOwner(actorId, budgetOwnerId, { quickBooksClassId: body.quickBooksClassId });
