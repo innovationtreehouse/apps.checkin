@@ -311,6 +311,19 @@ describeDb("QB-3 drift", () => {
     expect(await checkQbDrift()).toMatchObject({ resolved: 0 });
   });
 
+  it("reopens a system-closed flag when the same drift returns", async () => {
+    const { id, entry } = await created("2026-09-10");
+    entry.TotalAmt = 12;
+    await checkQbDrift();
+    entry.TotalAmt = 10;
+    await checkQbDrift();
+    entry.TotalAmt = 12;
+
+    expect(await checkQbDrift()).toMatchObject({ drifted: 1, resolved: 0 });
+    expect(await driftFlag(id)).toMatchObject({ detail: "amount", checkedOffAt: null, notes: null });
+    expect(JSON.parse((await driftFlag(id))?.observed ?? "null")).toEqual({ amount: 1200 });
+  });
+
   it("leaves a drift flag finance checked off untouched when the entry matches again", async () => {
     const { id, entry } = await created("2026-09-10");
     entry.TotalAmt = 12;

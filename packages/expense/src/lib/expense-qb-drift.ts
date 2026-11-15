@@ -104,7 +104,8 @@ async function readEntry(posting: ExpensePosting, entity: string | null, qbTxnId
 
 /**
  * Closes an expense's open QB_DRIFT once its entry matches again, as checked off by the system.
- * The close matches the `observed` read, so a concurrent check-off or a new drift wins.
+ * The close matches the `observed` read, so a concurrent check-off or a new drift wins, and clears
+ * it, so the same drift returning reopens the flag.
  */
 async function closeResolvedDrift(expenseId: string, now: Date): Promise<boolean> {
   const open = await db.expenseFlag.findFirst({ where: { expenseId, kind: "QB_DRIFT", checkedOffAt: null } });
@@ -113,7 +114,7 @@ async function closeResolvedDrift(expenseId: string, now: Date): Promise<boolean
   return db.$transaction(async (tx) => {
     const { count } = await tx.expenseFlag.updateMany({
       where: { id: open.id, checkedOffAt: null, observed: open.observed },
-      data: { checkedOffAt: now, checkedOffByUserId: SYSTEM_ACTOR.userId, checkedOffByUsername: SYSTEM_ACTOR.username, notes },
+      data: { checkedOffAt: now, checkedOffByUserId: SYSTEM_ACTOR.userId, checkedOffByUsername: SYSTEM_ACTOR.username, notes, observed: null },
     });
     if (count > 0) await writeAudit(tx, SYSTEM_ACTOR, { expenseId, action: "flag_checked_off", valueAfter: "QB_DRIFT", notes });
     return count > 0;
