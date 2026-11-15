@@ -129,8 +129,9 @@ export function membershipYearCycleForLabel(
 }
 
 /**
- * Open renewal processes for every ACTIVE membership, inside the lead window only,
- * unless the household was already handled this cycle. Backs the board's
+ * Open renewal processes for every ACTIVE membership, inside the lead window only
+ * and only while the coming year has a product to pay through, unless the
+ * household was already handled this cycle. Backs the board's
  * "Open renewals" button, the only way renewals start. Returns a summary.
  */
 export async function runRenewalSweep(now: Date) {
@@ -142,6 +143,13 @@ export async function runRenewalSweep(now: Date) {
     const { boundary, windowStart, inSeason } = renewalWindow(settings.orgMembershipYearBoundary, now);
     if (!inSeason) {
         return { opened: 0, skipped: 0, reason: "not yet within renewal window" };
+    }
+
+    // In season the live year is the coming year. Lazy: payment.ts imports this module.
+    const comingYear = membershipYearCycle(settings.orgMembershipYearBoundary, now).cycleStart.getUTCFullYear();
+    const { liveYearVariantId } = await import("@/lib/membership/payment");
+    if (!(await liveYearVariantId(settings.orgMembershipYearBoundary, now))) {
+        return { opened: 0, skipped: 0, reason: `no membership product set for ${membershipYearLabel(comingYear)}` };
     }
 
     const memberships = await prisma.orgMembership.findMany({
@@ -158,7 +166,7 @@ export async function runRenewalSweep(now: Date) {
                 where: {
                     OR: [
                         { kind: "RENEWAL", status: { in: [...IN_FLIGHT_RENEWAL] } },
-                        handledThisCycleWhere(liveMembershipYear(settings.orgMembershipYearBoundary, now), windowStart),
+                        handledThisCycleWhere(comingYear, windowStart),
                     ],
                 },
                 select: { id: true },

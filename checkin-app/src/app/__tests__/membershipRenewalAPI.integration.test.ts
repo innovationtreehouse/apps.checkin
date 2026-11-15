@@ -22,6 +22,9 @@ describe('Membership renewal', () => {
     // The sweep is global; track where we started so afterAll can remove every
     // process this test opened (including renewals on other suites' memberships).
     let preMaxProcessId = 0;
+    // The sweeps below run inside the 2026-2027 window, which opens only with a product for 2026.
+    const SWEEP_YEAR = 2026;
+    let prevSweepYearRow: { membershipYear: number; shopifyVariantId: string; productUrl: string | null } | null = null;
 
     async function makeActiveMembership(label: string, parentBg: Date | null, leadEmail?: string) {
         const hh = await prisma.household.create({ data: { name: `${label} ${TAG}` } });
@@ -61,6 +64,12 @@ describe('Membership renewal', () => {
         const maxRow = await prisma.orgMembershipProcess.findFirst({ orderBy: { id: 'desc' }, select: { id: true } });
         preMaxProcessId = maxRow?.id ?? 0;
         restoreBoardSettings = await snapshotBoardSettings();
+        prevSweepYearRow = await prisma.membershipYearVariant.findUnique({ where: { membershipYear: SWEEP_YEAR } });
+        await prisma.membershipYearVariant.upsert({
+            where: { membershipYear: SWEEP_YEAR },
+            create: { membershipYear: SWEEP_YEAR, shopifyVariantId: '990000000002655' },
+            update: { shopifyVariantId: '990000000002655' },
+        });
         await wipe();
         const r1 = await prisma.person.create({ data: { email: `rev1-${TAG}@example.com`, name: 'Rev1', isBackgroundCheckReviewer: true, household: { create: { name: `Rev1 HH ${TAG}` } } } });
         rev1 = r1.id;
@@ -72,6 +81,8 @@ describe('Membership renewal', () => {
         await prisma.backgroundCheckAttestation.deleteMany({ where: { processId: { gt: preMaxProcessId } } });
         await prisma.orgMembershipProcess.deleteMany({ where: { id: { gt: preMaxProcessId } } });
         await wipe();
+        await prisma.membershipYearVariant.deleteMany({ where: { membershipYear: SWEEP_YEAR } });
+        if (prevSweepYearRow) await prisma.membershipYearVariant.create({ data: prevSweepYearRow });
         await restoreBoardSettings();
         await prisma.$disconnect();
     });
