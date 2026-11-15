@@ -2,7 +2,7 @@
 import { screen, waitFor, fireEvent } from "@testing-library/react";
 jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
 import { notifications } from "@mantine/notifications";
 import { signIn } from "next-auth/react";
 import { renderWithProviders, mockFetchJson, setSession, setShopifyStoreDomain, router, resetRtl } from "@/test-helpers/rtl";
@@ -26,6 +26,21 @@ function paramsFor(id: string): Promise<{ id: string }> {
 }
 
 const params = paramsFor("10");
+
+/** A failed action waits in the lower right until dismissed. */
+function errorShown(message: string | RegExp) {
+    return waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
+        color: "red", autoClose: false, message: typeof message === "string" ? message : expect.stringMatching(message),
+    })));
+}
+
+function errorNotShown(message: RegExp) {
+    expect(notifications.show).not.toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringMatching(message) }));
+}
+
+function res(body: unknown, status = 200): Response {
+    return { ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) } as Response;
+}
 
 function renderPage() {
     return renderWithProviders(<ProgramEnrollmentPage params={params} />);
@@ -180,7 +195,7 @@ describe("ProgramEnrollmentPage", () => {
                 children: [] as unknown[],
             },
         };
-        const json = (b: unknown) => ({ ok: true, status: 200, json: async () => b } as Response);
+        const json = (b: unknown) => res(b, 200);
         global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = typeof input === "string" ? input : input.toString();
             // Order matters: /api/household/intake also contains "/api/household".
@@ -196,7 +211,7 @@ describe("ProgramEnrollmentPage", () => {
             if (url.includes("/api/household")) return json({ household: { householdMembers: childAdded ? [adult, child] : [adult] } });
             if (url.includes("/api/programs/10/participants")) return json({});
             if (url.includes("/api/programs/10")) return json(baseProgram({ participants: [] }));
-            return { ok: false, status: 404, json: async () => ({}) } as Response;
+            return res({}, 404);
         });
         renderPage();
 
@@ -408,10 +423,10 @@ describe("ProgramEnrollmentPage", () => {
         });
         global.fetch = jest.fn(async (input: RequestInfo | URL) => {
             const url = typeof input === "string" ? input : input.toString();
-            if (url.includes("/api/programs/10/participants")) return { ok: false, status: 400, json: async () => ({ error: "Already pending." }) } as Response;
-            if (url.includes("/api/household")) return { ok: true, status: 200, json: async () => household } as Response;
-            if (url.includes("/api/programs/10")) return { ok: true, status: 200, json: async () => baseProgram({ orgMemberPriceCents: 5000, minAge: null, maxAge: null }) } as Response;
-            return { ok: false, status: 404, json: async () => ({}) } as Response;
+            if (url.includes("/api/programs/10/participants")) return res({ error: "Already pending." }, 400);
+            if (url.includes("/api/household")) return res(household, 200);
+            if (url.includes("/api/programs/10")) return res(baseProgram({ orgMemberPriceCents: 5000, minAge: null, maxAge: null }), 200);
+            return res({}, 404);
         });
         renderPage();
         await screen.findByText("Robotics Club");
@@ -420,18 +435,18 @@ describe("ProgramEnrollmentPage", () => {
 
         await toggleMember("Kid One");
         await requestPlan();
-        expect(await screen.findByText("Already pending.")).toBeInTheDocument();
+        await errorShown("Already pending.");
     });
 
     it("reports a finance-committee alert failure after a successful enrollment start", async () => {
         setSession({ id: 101 });
         global.fetch = jest.fn(async (input: RequestInfo | URL) => {
             const url = typeof input === "string" ? input : input.toString();
-            if (url.includes("/api/programs/10/request-payment-plan")) return { ok: false, status: 500, json: async () => ({}) } as Response;
-            if (url.includes("/api/programs/10/participants")) return { ok: true, status: 200, json: async () => ({}) } as Response;
-            if (url.includes("/api/household")) return { ok: true, status: 200, json: async () => household } as Response;
-            if (url.includes("/api/programs/10")) return { ok: true, status: 200, json: async () => baseProgram({ orgMemberPriceCents: 5000, minAge: null, maxAge: null }) } as Response;
-            return { ok: false, status: 404, json: async () => ({}) } as Response;
+            if (url.includes("/api/programs/10/request-payment-plan")) return res({}, 500);
+            if (url.includes("/api/programs/10/participants")) return res({}, 200);
+            if (url.includes("/api/household")) return res(household, 200);
+            if (url.includes("/api/programs/10")) return res(baseProgram({ orgMemberPriceCents: 5000, minAge: null, maxAge: null }), 200);
+            return res({}, 404);
         });
         renderPage();
         await screen.findByText("Robotics Club");
@@ -440,7 +455,7 @@ describe("ProgramEnrollmentPage", () => {
 
         await toggleMember("Kid One");
         await requestPlan();
-        expect(await screen.findByText(/failed to alert the Scholarship Review Team/)).toBeInTheDocument();
+        await errorShown(/failed to alert the Scholarship Review Team/);
     });
 
     describe("payment plan for a child who already has an enrollment row", () => {
@@ -448,11 +463,11 @@ describe("ProgramEnrollmentPage", () => {
             setSession({ id: 101 });
             const fetchMock = jest.fn(async (input: RequestInfo | URL) => {
                 const url = typeof input === "string" ? input : input.toString();
-                if (url.includes("/api/programs/10/request-payment-plan")) return { ok: plan.status < 400, status: plan.status, json: async () => plan.body } as Response;
-                if (url.includes("/api/programs/10/participants")) return { ok: false, status: 409, json: async () => ({ error: "Participant is already enrolled in this program." }) } as Response;
-                if (url.includes("/api/household")) return { ok: true, status: 200, json: async () => household } as Response;
-                if (url.includes("/api/programs/10")) return { ok: true, status: 200, json: async () => baseProgram({ orgMemberPriceCents: 5000, minAge: null, maxAge: null }) } as Response;
-                return { ok: false, status: 404, json: async () => ({}) } as Response;
+                if (url.includes("/api/programs/10/request-payment-plan")) return res(plan.body, plan.status);
+                if (url.includes("/api/programs/10/participants")) return res({ error: "Participant is already enrolled in this program." }, 409);
+                if (url.includes("/api/household")) return res(household, 200);
+                if (url.includes("/api/programs/10")) return res(baseProgram({ orgMemberPriceCents: 5000, minAge: null, maxAge: null }), 200);
+                return res({}, 404);
             });
             global.fetch = fetchMock;
             renderPage();
@@ -477,15 +492,15 @@ describe("ProgramEnrollmentPage", () => {
 
         it("names the child and shows the plan route's refusal for a child not awaiting payment", async () => {
             await requestPlanAfterConflict({ status: 409, body: { error: "This enrollment is not awaiting payment" } });
-            expect(await screen.findByText("Kid One: This enrollment is not awaiting payment")).toBeInTheDocument();
-            expect(screen.queryByText(/Enrolled as pending/)).not.toBeInTheDocument();
+            await errorShown("Kid One: This enrollment is not awaiting payment");
+            errorNotShown(/Enrolled as pending/);
             expect(notifications.show).not.toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringMatching(/Requested!/) }));
         });
 
         it("does not claim a new enrollment when the plan route fails", async () => {
             await requestPlanAfterConflict({ status: 500, body: { error: "Failed to request payment plan" } });
-            expect(await screen.findByText(/Kid One: We couldn't send your request to the Scholarship Review Team/)).toBeInTheDocument();
-            expect(screen.queryByText(/Enrolled as pending/)).not.toBeInTheDocument();
+            await errorShown(/Kid One: We couldn't send your request to the Scholarship Review Team/);
+            errorNotShown(/Enrolled as pending/);
         });
     });
 
@@ -500,9 +515,7 @@ describe("ProgramEnrollmentPage", () => {
         await toggleMember("Kid One");
         global.fetch = jest.fn().mockRejectedValue(new Error("down"));
         await requestPlan();
-        await waitFor(() =>
-            expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Network error requesting payment plan.", autoClose: false })),
-        );
+        await errorShown("Couldn't reach the server. Check your connection and try again.");
     });
 
     it("enrolls multiple selected household members and reports the plural success message", async () => {
@@ -525,16 +538,16 @@ describe("ProgramEnrollmentPage", () => {
         );
     });
 
-    it("treats a 409 already-enrolled response as a successful outcome without parsing a body", async () => {
+    it("treats a 409 already-enrolled response as a successful outcome, even with no body", async () => {
         setSession({ id: 101 });
         global.fetch = jest.fn(async (input: RequestInfo | URL) => {
             const url = typeof input === "string" ? input : input.toString();
             if (url.includes("/api/programs/10/participants")) {
-                return { ok: false, status: 409, json: async () => { throw new Error("should not be parsed"); } } as unknown as Response;
+                return { ok: false, status: 409, text: async () => "" } as Response;
             }
-            if (url.includes("/api/household")) return { ok: true, status: 200, json: async () => household } as Response;
-            if (url.includes("/api/programs/10")) return { ok: true, status: 200, json: async () => baseProgram({ minAge: null, maxAge: null }) } as Response;
-            return { ok: false, status: 404, json: async () => ({}) } as Response;
+            if (url.includes("/api/household")) return res(household, 200);
+            if (url.includes("/api/programs/10")) return res(baseProgram({ minAge: null, maxAge: null }), 200);
+            return res({}, 404);
         });
         renderPage();
         await screen.findByText("Robotics Club");
@@ -556,13 +569,13 @@ describe("ProgramEnrollmentPage", () => {
         const bodies: string[] = [];
         global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = typeof input === "string" ? input : input.toString();
-            if (url.includes("/api/household")) return { ok: true, status: 200, json: async () => household } as Response;
+            if (url.includes("/api/household")) return res(household, 200);
             if (url.includes("/api/programs/10/participants")) {
                 bodies.push(String(init?.body ?? ""));
-                return { ok: false, status: 400, json: async () => ({ error: "Too young for this program.", requiresOverride: true }) } as Response;
+                return res({ error: "Too young for this program.", requiresOverride: true }, 400);
             }
-            if (url.includes("/api/programs/10")) return { ok: true, status: 200, json: async () => baseProgram({ minAge: null, maxAge: null, leadMentorId: 5 }) } as Response;
-            return { ok: false, status: 404, json: async () => ({}) } as Response;
+            if (url.includes("/api/programs/10")) return res(baseProgram({ minAge: null, maxAge: null, leadMentorId: 5 }), 200);
+            return res({}, 404);
         });
         renderPage();
         await screen.findByText("Robotics Club");
@@ -571,7 +584,7 @@ describe("ProgramEnrollmentPage", () => {
         await toggleMember("Kid One");
         fireEvent.click(screen.getByRole("button", { name: "Complete Enrollment" }));
 
-        expect(await screen.findByText("Too young for this program.")).toBeInTheDocument();
+        await errorShown("Too young for this program.");
         expect(screen.queryByText("Warning: Enrollment rules not met.")).not.toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Force Enroll (Override)" })).not.toBeInTheDocument();
         expect(bodies.every(b => !JSON.parse(b).override)).toBe(true);
@@ -588,9 +601,7 @@ describe("ProgramEnrollmentPage", () => {
         await toggleMember("Kid One");
         global.fetch = jest.fn().mockRejectedValue(new Error("down"));
         fireEvent.click(screen.getByRole("button", { name: "Complete Enrollment" }));
-        await waitFor(() =>
-            expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Network error during enrollment.", autoClose: false })),
-        );
+        await errorShown("Couldn't reach the server. Check your connection and try again.");
     });
 
     it("redirects to Shopify checkout for a priced enrollment with a configured variant", async () => {
@@ -661,7 +672,7 @@ describe("ProgramEnrollmentPage", () => {
         });
         const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
             String(input).includes("/discount-code")
-                ? ({ ok: false, status, json: async () => ({ error: refusal }) } as Response)
+                ? res({ error: refusal }, status)
                 : routes(input, init),
         );
         global.fetch = fetchMock as unknown as typeof fetch;
@@ -672,7 +683,7 @@ describe("ProgramEnrollmentPage", () => {
         await toggleMember("Kid One");
         fireEvent.click(screen.getByRole("button", { name: "Pay on Shopify" }));
 
-        expect(await screen.findByText(refusal)).toBeInTheDocument();
+        await errorShown(refusal);
         expect(screen.queryByText("Redirecting to Shopify for secure payment...")).not.toBeInTheDocument();
         const discountCall = fetchMock.mock.calls.find(([input]) => String(input).includes("/discount-code"));
         expect(JSON.parse(String(discountCall?.[1]?.body)).participantIds).toHaveLength(1);
@@ -695,7 +706,7 @@ describe("ProgramEnrollmentPage", () => {
         await toggleMember("Kid One");
         fireEvent.click(screen.getByRole("button", { name: "Pay on Shopify" }));
 
-        expect(await screen.findByText("We couldn't start the checkout. Please try again.")).toBeInTheDocument();
+        await errorShown("We couldn't start the checkout. Please try again.");
         expect(screen.queryByText("Redirecting to Shopify for secure payment...")).not.toBeInTheDocument();
     });
 
@@ -727,7 +738,7 @@ describe("ProgramEnrollmentPage", () => {
         fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = String(input);
             if (url.includes("/api/programs/10/participants") && init?.method === "POST") {
-                return { ok: false, status: 409, json: async () => ({ error: "Participant is already enrolled in this program." }) } as Response;
+                return res({ error: "Participant is already enrolled in this program." }, 409);
             }
             return baseImpl(input, init);
         });
@@ -785,7 +796,7 @@ describe("ProgramEnrollmentPage", () => {
         let programReads = 0;
         global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = String(input);
-            const json = (body: unknown, status = 200) => ({ ok: status < 400, status, json: async () => body }) as Response;
+            const json = (body: unknown, status = 200) => res(body, status);
             if (url.includes("/api/programs/10/participants") && init?.method === "POST") return json({ error: "Participant is already enrolled in this program." }, 409);
             if (url.includes("/discount-code")) return json({ code: null, signature: "sig" });
             if (url.includes("/api/household")) return json(household);
@@ -814,7 +825,7 @@ describe("ProgramEnrollmentPage", () => {
     // The repeat-payment check is advisory: a failed roster re-read is logged and
     // checks the loaded roster, and checkout still proceeds.
     it.each([
-        { outcome: "returns 500", failedRead: () => Promise.resolve({ ok: false, status: 500, json: async () => ({}) } as Response) },
+        { outcome: "returns 500", failedRead: () => Promise.resolve(res({}, 500)) },
         { outcome: "throws", failedRead: () => Promise.reject(new Error("down")) },
     ])("logs and continues to checkout when the roster re-read $outcome", async ({ failedRead }) => {
         setSession({ id: 100, ageBand: 'adult' });
@@ -823,7 +834,7 @@ describe("ProgramEnrollmentPage", () => {
         let programReads = 0;
         global.fetch = jest.fn(async (input: RequestInfo | URL) => {
             const url = String(input);
-            const json = (body: unknown, status = 200) => ({ ok: status < 400, status, json: async () => body }) as Response;
+            const json = (body: unknown, status = 200) => res(body, status);
             if (url.includes("/api/programs/10/participants")) return json({ ok: true });
             if (url.includes("/discount-code")) return json({ code: null, signature: "sig" });
             if (url.includes("/api/household")) return json(household);
@@ -911,26 +922,22 @@ describe("ProgramEnrollmentPage", () => {
         expect(screen.queryByText(/renew your membership first/)).not.toBeInTheDocument();
     });
 
-    it("shows different closed-enrollment reasons depending on the server's cause and the phase", async () => {
+    it.each<[string, Record<string, unknown>]>([
+        ["Full", { enrollmentClosedBy: "FULL", phase: "RUNNING" }],
+        ["Sales ended", { enrollmentClosedBy: "SALE_ENDED", phase: "UPCOMING" }],
+        ["Running", { enrollmentClosedBy: "CLOSED", phase: "RUNNING" }],
+        ["Ended", { enrollmentClosedBy: "CLOSED", phase: "FINISHED" }],
+        ["", { enrollmentClosedBy: "CLOSED", phase: "SOMETHING_ELSE" }],
+        ["Upcoming", { enrollmentClosedBy: "CLOSED", phase: "UPCOMING" }],
+    ])("shows the closed-enrollment reason '%s' from the server's cause and the phase", async (expected, overrides) => {
         setSession({ id: 101 });
-        const cases: [string, Record<string, unknown>][] = [
-            ["Full", { enrollmentClosedBy: "FULL", phase: "RUNNING" }],
-            ["Sales ended", { enrollmentClosedBy: "SALE_ENDED", phase: "UPCOMING" }],
-            ["Running", { enrollmentClosedBy: "CLOSED", phase: "RUNNING" }],
-            ["Ended", { enrollmentClosedBy: "CLOSED", phase: "FINISHED" }],
-            ["", { enrollmentClosedBy: "CLOSED", phase: "SOMETHING_ELSE" }],
-            ["Upcoming", { enrollmentClosedBy: "CLOSED", phase: "UPCOMING" }],
-        ];
-        for (const [expected, overrides] of cases) {
-            mockFetchJson({ "/api/programs/10": baseProgram({ enrollmentStatus: "CLOSED", ...overrides }) });
-            const { unmount } = renderPage();
-            await screen.findByText("Robotics Club");
-            if (expected) {
-                expect(screen.getByRole("button", { name: new RegExp(`Enrollment Closed \\(${expected}\\)`) })).toBeInTheDocument();
-            } else {
-                expect(screen.getByRole("button", { name: "Enrollment Closed" })).toBeInTheDocument();
-            }
-            unmount();
+        mockFetchJson({ "/api/programs/10": baseProgram({ enrollmentStatus: "CLOSED", ...overrides }) });
+        renderPage();
+        await screen.findByText("Robotics Club");
+        if (expected) {
+            expect(screen.getByRole("button", { name: new RegExp(`Enrollment Closed \\(${expected}\\)`) })).toBeInTheDocument();
+        } else {
+            expect(screen.getByRole("button", { name: "Enrollment Closed" })).toBeInTheDocument();
         }
     });
 
@@ -1066,22 +1073,20 @@ describe("ProgramEnrollmentPage", () => {
         expect(screen.getByText("Free")).toBeInTheDocument();
     });
 
-    it("falls back to a solo household entry when /api/household fails to load", async () => {
+    it("shows a failed household load in the picker with a retry, never an empty household", async () => {
         setSession({ id: 777 });
         mockFetchJson({ "/api/programs/10": baseProgram({ minAge: null, maxAge: null }) });
         renderPage();
         await screen.findByText("Robotics Club");
         fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
-        expect(await screen.findByLabelText("Myself")).toBeInTheDocument();
+        expect(await screen.findByText("Couldn't load your household")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Complete Enrollment" })).not.toBeInTheDocument();
     });
 
-    it("falls back to a solo household entry when /api/household throws", async () => {
+    it("falls back to a solo household entry when the caller has no household", async () => {
         setSession({ id: 777 });
-        global.fetch = jest.fn(async (input: RequestInfo | URL) => {
-            const url = typeof input === "string" ? input : input.toString();
-            if (url.includes("/api/programs/10")) return { ok: true, status: 200, json: async () => baseProgram({ minAge: null, maxAge: null }) } as Response;
-            return Promise.reject(new Error("down"));
-        });
+        mockFetchJson({ "/api/household": { household: null }, "/api/programs/10": baseProgram({ minAge: null, maxAge: null }) });
         renderPage();
         await screen.findByText("Robotics Club");
         fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
@@ -1090,11 +1095,7 @@ describe("ProgramEnrollmentPage", () => {
 
     it("offers household setup when the solo fallback can't clear an age-gated program", async () => {
         setSession({ id: 777 });
-        global.fetch = jest.fn(async (input: RequestInfo | URL) => {
-            const url = typeof input === "string" ? input : input.toString();
-            if (url.includes("/api/programs/10")) return { ok: true, status: 200, json: async () => baseProgram({ participants: [] }) } as Response;
-            return Promise.reject(new Error("down"));
-        });
+        mockFetchJson({ "/api/household": { household: null }, "/api/programs/10": baseProgram({ participants: [] }) });
         renderPage();
         await screen.findByText("Robotics Club");
         fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
@@ -1106,6 +1107,91 @@ describe("ProgramEnrollmentPage", () => {
         expect(screen.getByLabelText("Myself")).toBeDisabled();
         expect(screen.queryByText("Check the box next to each person you want to enroll.")).not.toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Complete Enrollment" })).not.toBeInTheDocument();
+    });
+
+    it("shows a failed intake prefill with a retry instead of a blank form", async () => {
+        setSession({ id: 300, ageBand: 'unknown' });
+        global.fetch = jest.fn(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url.includes("/api/household/intake")) return res({ error: "Only a household lead can do this." }, 403);
+            if (url.includes("/api/household")) return res({ household: { householdMembers: [{ id: 300, name: "New Adult", dateOfBirth: null }] } });
+            if (url.includes("/api/programs/10")) return res(baseProgram({ participants: [], minAge: null, maxAge: null }));
+            return res({}, 404);
+        });
+        renderPage();
+        await screen.findByText("Robotics Club");
+        fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
+        fireEvent.click(await screen.findByRole("button", { name: "Finish setting up your household to enroll" }));
+
+        expect(await screen.findByText("Couldn't load your household details")).toBeInTheDocument();
+        expect(screen.getByText("Only a household lead can do this.")).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Save & continue to enroll" })).not.toBeInTheDocument();
+    });
+
+    it("highlights the emergency contact the intake save refused and keeps the form filled in", async () => {
+        setSession({ id: 300, ageBand: 'unknown' });
+        const intakeState = { prefill: {
+            household: { emergencyContactName: null, emergencyContactPhone: null, emergencyContactEmail: null },
+            primaryParent: { id: 300, name: "New Adult", email: null, dob: null, over25: false, allergies: null },
+            secondaryParent: null, children: [],
+        } };
+        global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = String(input);
+            if (url.includes("/api/household/intake")) {
+                return init?.method === "POST"
+                    ? res({ error: "That emergency contact is in your household.", fields: ["emergencyContact"] }, 400)
+                    : res(intakeState);
+            }
+            if (url.includes("/api/household")) return res({ household: { householdMembers: [{ id: 300, name: "New Adult", dateOfBirth: null }] } });
+            if (url.includes("/api/programs/10")) return res(baseProgram({ participants: [], minAge: null, maxAge: null }));
+            return res({}, 404);
+        });
+        renderPage();
+        await screen.findByText("Robotics Club");
+        fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
+        fireEvent.click(await screen.findByRole("button", { name: "Finish setting up your household to enroll" }));
+        await screen.findByText("Finish setting up your household");
+        fireEvent.change(screen.getByLabelText(/Emergency contact name/), { target: { value: "Pat Peer" } });
+        fireEvent.change(screen.getByLabelText(/Emergency contact phone/), { target: { value: "5125550000" } });
+        fireEvent.click(screen.getByRole("button", { name: "Save & continue to enroll" }));
+
+        await errorShown("That emergency contact is in your household.");
+        expect(screen.getAllByText("Add an emergency contact who isn't in your household.").length).toBeGreaterThan(0);
+        expect(screen.getByLabelText(/Emergency contact name/)).toHaveValue("Pat Peer");
+    });
+
+    it("sends one claim per child when Pay on Shopify is clicked twice", async () => {
+        setSession({ id: 101 });
+        setShopifyStoreDomain("shop.example.com");
+        let release: () => void = () => {};
+        const held = new Promise<void>((resolve) => { release = resolve; });
+        const routes = mockFetchJson({
+            "/api/programs/10/discount-code": { code: null },
+            "/api/household": household,
+            "/api/programs/10": baseProgram({ nonOrgMemberPriceCents: 5000, minAge: null, maxAge: null, shopifyVariantId: "gid://variant" }),
+        });
+        const claims = jest.fn();
+        global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            if (String(input).includes("/participants")) {
+                claims();
+                await held;
+                return res({ ok: true });
+            }
+            return routes(input, init);
+        }) as unknown as typeof fetch;
+        renderPage();
+        await screen.findByText("Robotics Club");
+        fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
+        await toggleMember("Kid One");
+        const pay = screen.getByRole("button", { name: "Pay on Shopify" });
+        fireEvent.click(pay);
+        fireEvent.click(pay);
+        await waitFor(() => expect(claims).toHaveBeenCalledTimes(1));
+        expect(pay).toBeDisabled();
+
+        release();
+        await errorShown("We couldn't start the checkout. Please try again.");
+        expect(claims).toHaveBeenCalledTimes(1);
     });
 
     it("pre-checks nobody, so the enroll button starts disabled", async () => {
@@ -1156,22 +1242,16 @@ describe("ProgramEnrollmentPage", () => {
         expect(screen.getByRole("button", { name: "Complete Enrollment" })).toBeDisabled();
     });
 
-    it("shows a generic failure message for non-404 program load errors", async () => {
-        global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 500, json: async () => ({}) } as Response);
+    it("shows a failed program load in place of the page, with a retry", async () => {
+        global.fetch = jest.fn().mockResolvedValue(res({ error: "You can't see this program." }, 403));
         renderPage();
-        expect(await screen.findByText("Failed to load program details.")).toBeInTheDocument();
-    });
-
-    it("shows a network-error message when the program fetch throws", async () => {
-        global.fetch = jest.fn().mockRejectedValue(new Error("down"));
-        renderPage();
-        await waitFor(() =>
-            expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Network error.", autoClose: false })),
-        );
+        expect(await screen.findByText("Couldn't load this program")).toBeInTheDocument();
+        expect(screen.getByText("You can't see this program.")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
     });
 
     it("falls back to a bare Not Found card when the program response has no message", async () => {
-        global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200, json: async () => null } as Response);
+        global.fetch = jest.fn().mockResolvedValue(res(null, 200));
         renderPage();
         expect(await screen.findByText("Not Found")).toBeInTheDocument();
     });
