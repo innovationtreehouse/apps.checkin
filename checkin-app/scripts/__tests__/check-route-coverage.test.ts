@@ -281,7 +281,9 @@ describe("listEgressScanFiles", () => {
     it("skips tests, fixtures and generated code in any extension", () => {
         put("packages/a/src/x.test.mjs");
         put("packages/a/src/y.spec.js");
+        put("packages/a/src/z.test.ts");
         put("y-function/test/setup.ts");
+        put("packages/a/tests/t.ts");
         put("y-function/src/__fixtures__/f.js");
         put("packages/a/src/generated/g.cjs");
         put("packages/a/node_modules/m/index.js");
