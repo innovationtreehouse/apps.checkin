@@ -11,7 +11,7 @@ function fakeDb(rows: Row[]) {
     const tx = {
         $queryRaw: jest.fn(async () => {
             calls.push("lock");
-            return [];
+            return [{ archivedAt: null }];
         }),
         emergencyContact: {
             findMany: jest.fn(async () => {

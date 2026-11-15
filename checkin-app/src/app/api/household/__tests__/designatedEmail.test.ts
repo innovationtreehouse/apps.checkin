@@ -11,6 +11,14 @@ import { getServerSession } from "next-auth/next";
 import prisma from "@/lib/prisma";
 import { PATCH as householdPATCH } from "@/app/api/household/route";
 import { PATCH as memberPATCH } from "@/app/api/household/member/route";
+import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
+
+// The archived-household guard has its own tests; here every household is live.
+jest.mock("@/lib/household/archiveGuard", () => ({
+    ...jest.requireActual("@/lib/household/archiveGuard"),
+    lockLiveHouseholds: jest.fn(),
+    lockLiveHouseholdsOf: jest.fn(),
+}));
 
 jest.mock("next-auth/next", () => ({ getServerSession: jest.fn() }));
 jest.mock("@/lib/auth-options", () => ({ authOptions: {} }));
@@ -108,5 +116,23 @@ describe("PATCH /api/household — adding a member with a designated address", (
         const res = await call(householdPATCH, "/api/household", { ...member, memberEmail: "new@example.com" });
         expect(res.status).toBe(200);
         expect(tx.person.create).toHaveBeenCalled();
+    });
+});
+
+describe("an archived household", () => {
+    beforeEach(() => (lockLiveHouseholds as jest.Mock).mockRejectedValueOnce(new ArchivedHouseholdError()));
+
+    it("adds no member", async () => {
+        const res = await call(householdPATCH, "/api/household", { memberName: "New Person", memberOver25: true });
+        expect(res.status).toBe(409);
+        expect((await res.json()).error).toContain("archived");
+        expect(tx.person.create).not.toHaveBeenCalled();
+    });
+
+    it("edits no member", async () => {
+        findPerson.mockResolvedValue({ id: KID, householdId: 10, email: "kid@example.com", household: { orgMembership: null }, _count: { accounts: 0 }, ...NOT_TRUSTED });
+        const res = await call(memberPATCH, "/api/household/member", { participantId: KID, phone: "5555550123" });
+        expect(res.status).toBe(409);
+        expect(tx.person.update).not.toHaveBeenCalled();
     });
 });

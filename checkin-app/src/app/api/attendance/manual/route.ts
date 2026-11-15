@@ -10,6 +10,8 @@ import { withinMaxDuration } from "@/lib/visitTimes";
 import { visitSubject } from "@/lib/visit/scope";
 import { appendPresenceEvent, PresenceClass } from "@/lib/presence/events";
 import { findVisitOverlaps, openOverlapRefusal, overlapFlag } from "@/lib/visit/overlap";
+import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
+import { ServiceError } from "@checkin/component-kit";
 
 // Self-service manual visit entry. INTENTIONAL by design: a member records a
 // closed visit for THEMSELVES, or — as a household lead — for a member of their own
@@ -86,6 +88,7 @@ export const POST = withAuth({}, async (req, auth) => {
         // the SUBJECT.
         const result = await prisma.$transaction(async (tx: Prisma.TransactionClient): Promise<{ openSince: Date } | { visit: Visit }> => {
             await tx.$executeRaw`SELECT pg_advisory_xact_lock(${Number(subjectId)})`;
+            await lockLiveHouseholdsOf(tx, [subjectId]);
 
             const overlaps = await findVisitOverlaps(tx, subjectId, { arrivedAt: arrivalTime, departedAt: departureTime });
             if (overlaps.openSince) return { openSince: overlaps.openSince };
@@ -141,6 +144,7 @@ export const POST = withAuth({}, async (req, auth) => {
 
         return NextResponse.json({ message: "Manual visit recorded successfully.", visit }, { status: 201 });
     } catch (error: unknown) {
+        if (error instanceof ServiceError) return apiError(error.message, error.status);
         await logBackendError(error, "POST /api/attendance/manual");
         return apiError("Internal Server Error", 500);
     }

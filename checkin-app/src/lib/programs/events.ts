@@ -8,6 +8,8 @@ import { intervalsOverlap } from "@/lib/attendanceConflicts";
 import { findVisitOverlaps, openOverlapRefusal, overlapFlag } from "@/lib/visit/overlap";
 import { OPEN_VISIT_REFUSAL } from "@/lib/visitTimes";
 import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
+import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
+import { ServiceError } from "@checkin/component-kit";
 
 export interface EventEditor {
     id: number;
@@ -24,7 +26,7 @@ export interface EventEditContext {
     isCoreVolunteer: boolean;
 }
 
-export type EventRefusal = "invalid" | "forbidden";
+export type EventRefusal = "invalid" | "forbidden" | "conflict";
 
 export type EventEditResult<T> =
     | { ok: true; value: T }
@@ -232,6 +234,7 @@ export async function manualEditAttendance(
     // surface as a refusal, or null on success.
     const failure = await prisma.$transaction(async (tx): Promise<string | { openSince: Date } | null> => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(${targetId})`;
+        await lockLiveHouseholdsOf(tx, [targetId]);
 
         if (status === 'Absent') {
             // An open visit (departedAt = null) means they physically scanned in
@@ -409,7 +412,11 @@ export async function manualEditAttendance(
             });
         }
         return null;
-    }, { maxWait: 5000, timeout: 15000 });
+    }, { maxWait: 5000, timeout: 15000 }).catch((e: unknown) => {
+        if (e instanceof ServiceError) return e;
+        throw e;
+    });
+    if (failure instanceof ServiceError) return refuse("conflict", failure.message);
     invalidateAttendanceCache();
 
     if (failure) return refuse("invalid", typeof failure === "string" ? failure : await openOverlapRefusal(failure.openSince));

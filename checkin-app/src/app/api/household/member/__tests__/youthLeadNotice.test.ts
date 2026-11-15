@@ -16,6 +16,11 @@ jest.mock("@/lib/auth-options", () => ({ authOptions: {} }));
 jest.mock("@/lib/logger", () => ({ logger: { error: jest.fn() }, logBackendError: jest.fn() }));
 jest.mock("@/lib/emailRecipients", () => ({ emailBoardMembers: jest.fn().mockResolvedValue(1) }));
 jest.mock("@/lib/getFullAttendance", () => ({ invalidateAttendanceCache: jest.fn() }));
+// The archived-household guard has its own tests; here every household is live.
+jest.mock("@/lib/household/archiveGuard", () => ({
+    ...jest.requireActual("@/lib/household/archiveGuard"),
+    lockLiveHouseholds: jest.fn(),
+}));
 jest.mock("@/lib/emergencyContacts/service", () => ({ reconcileAndWarn: jest.fn().mockResolvedValue(null) }));
 jest.mock("@/lib/household/leads", () => ({
     ...jest.requireActual("@/lib/household/leads"),

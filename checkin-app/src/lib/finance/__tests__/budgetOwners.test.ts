@@ -27,6 +27,12 @@ const tx = {
 };
 const savedList = jest.fn();
 jest.mock('@/lib/quickbooks/client', () => ({ getQuickBooks: jest.fn() }));
+// The archived-household guard has its own tests; here every household is live.
+jest.mock('@/lib/household/archiveGuard', () => ({
+    ...jest.requireActual('@/lib/household/archiveGuard'),
+    lockLiveHouseholds: jest.fn(),
+    lockLiveHouseholdsOf: jest.fn(),
+}));
 jest.mock('@checkin/expense', () => ({ holdBucketLines: jest.fn() }));
 jest.mock('@/lib/prisma', () => ({
     __esModule: true,

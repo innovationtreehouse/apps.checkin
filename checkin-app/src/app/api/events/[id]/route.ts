@@ -160,4 +160,5 @@ export const PATCH = withAuth({}, async (req: Request, auth, { params }: { param
 const REFUSAL_STATUS: Record<EventRefusal, number> = {
     invalid: 400,
     forbidden: 403,
+    conflict: 409,
 };

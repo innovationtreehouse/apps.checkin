@@ -3,6 +3,7 @@ import type { EmergencyContact } from "@/generated/prisma/client";
 import { identityKeys, sameIdentity, identityMatchReason, cleanEmail, normalizePhone } from "./identity";
 import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import { type DbClient, withTx } from "@/lib/db-client";
+import { lockLiveHouseholds } from "@/lib/household/archiveGuard";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { openProcess } from "@/lib/membership/lifecycle";
 
@@ -123,50 +124,59 @@ export async function assertExternal(db: Db, householdId: number, input: Contact
     }
 }
 
-export async function createContact(db: Db, householdId: number, input: ContactInput): Promise<EmergencyContact> {
-    requireComplete(input);
-    await assertExternal(db, householdId, input);
-    const c = cleaned(input);
-    const created = await db.emergencyContact.create({
-        data: {
-            householdId,
-            name: c.name,
-            phone: c.phone,
-            email: c.email,
-            relationship: c.relationship,
-            priority: input.priority ?? 0,
-            phoneDigits: c.phoneDigits,
-            emailNorm: c.emailNorm,
-        },
+export async function createContact(client: Db, householdId: number, input: ContactInput): Promise<EmergencyContact> {
+    const result = await withTx(client, async (db) => {
+        await lockLiveHouseholds(db, [householdId]);
+        requireComplete(input);
+        await assertExternal(db, householdId, input);
+        const c = cleaned(input);
+        const created = await db.emergencyContact.create({
+            data: {
+                householdId,
+                name: c.name,
+                phone: c.phone,
+                email: c.email,
+                relationship: c.relationship,
+                priority: input.priority ?? 0,
+                phoneDigits: c.phoneDigits,
+                emailNorm: c.emailNorm,
+            },
+        });
+        return created;
     });
-    // The privileged attendance roster carries present households' contacts.
+    // The privileged attendance roster carries contacts.
     invalidateAttendanceCache();
-    return created;
+    return result;
 }
 
-export async function updateContact(db: Db, householdId: number, contactId: number, input: ContactInput): Promise<EmergencyContact> {
-    requireComplete(input);
-    const existing = await db.emergencyContact.findFirst({ where: { id: contactId, householdId } });
-    if (!existing) throw new EmergencyContactError("not_found", "Emergency contact not found.");
-    await assertExternal(db, householdId, input);
-    const c = cleaned(input);
-    // Editing re-confirms the contact: clear any stale conflict flag.
-    const updated = await db.emergencyContact.update({
-        where: { id: contactId },
-        data: {
-            name: c.name,
-            phone: c.phone,
-            email: c.email,
-            relationship: c.relationship,
-            ...(input.priority !== undefined && { priority: input.priority }),
-            phoneDigits: c.phoneDigits,
-            emailNorm: c.emailNorm,
-            conflictParticipantId: null,
-            conflictedAt: null,
-        },
+export async function updateContact(client: Db, householdId: number, contactId: number, input: ContactInput): Promise<EmergencyContact> {
+    const result = await withTx(client, async (db) => {
+        await lockLiveHouseholds(db, [householdId]);
+        requireComplete(input);
+        const existing = await db.emergencyContact.findFirst({ where: { id: contactId, householdId } });
+        if (!existing) throw new EmergencyContactError("not_found", "Emergency contact not found.");
+        await assertExternal(db, householdId, input);
+        const c = cleaned(input);
+        // Editing re-confirms the contact: clear any stale conflict flag.
+        const updated = await db.emergencyContact.update({
+            where: { id: contactId },
+            data: {
+                name: c.name,
+                phone: c.phone,
+                email: c.email,
+                relationship: c.relationship,
+                ...(input.priority !== undefined && { priority: input.priority }),
+                phoneDigits: c.phoneDigits,
+                emailNorm: c.emailNorm,
+                conflictParticipantId: null,
+                conflictedAt: null,
+            },
+        });
+        return updated;
     });
+    // The privileged attendance roster carries contacts.
     invalidateAttendanceCache();
-    return updated;
+    return result;
 }
 
 function isValid(c: { name: string; phone: string; conflictParticipantId: number | null }): boolean {
@@ -180,8 +190,8 @@ function isValid(c: { name: string; phone: string; conflictParticipantId: number
 export async function deleteContact(db: Db, householdId: number, contactId: number): Promise<void> {
     await withTx(db, async (tx) => {
         // Read Committed lets two deletes each count the other's contact as the
-        // survivor; the Household row lock serializes them.
-        await tx.$queryRaw`SELECT id FROM "Household" WHERE id = ${householdId} FOR UPDATE`;
+        // survivor; the Household row lock serializes them, and refuses an archived household.
+        await lockLiveHouseholds(tx, [householdId]);
         const contacts = await tx.emergencyContact.findMany({ where: { householdId } });
         const target = contacts.find((c) => c.id === contactId);
         if (!target) throw new EmergencyContactError("not_found", "Emergency contact not found.");
@@ -211,54 +221,59 @@ export async function deleteContact(db: Db, householdId: number, contactId: numb
  * what guarantees a complete, valid contact before a household advances.
  */
 export async function upsertPrimaryContact(
-    db: Db,
+    client: Db,
     householdId: number,
     fields: { name?: string | null; phone?: string | null; email?: string | null },
 ): Promise<EmergencyContact | null> {
-    const primary = await db.emergencyContact.findFirst({
-        where: { householdId },
-        orderBy: [{ priority: "asc" }, { id: "asc" }],
+    const result = await withTx(client, async (db) => {
+        await lockLiveHouseholds(db, [householdId]);
+        const primary = await db.emergencyContact.findFirst({
+            where: { householdId },
+            orderBy: [{ priority: "asc" }, { id: "asc" }],
+        });
+
+        // A field the caller never sent is not an instruction to clear it: absent
+        // keys fall back to what is stored, so a form that collects a subset of the
+        // contact can't blank the rest.
+        const sent = (v: string | null | undefined) => (v == null ? undefined : v.trim());
+        const name = sent(fields.name) ?? primary?.name.trim() ?? "";
+        const phone = sent(fields.phone) ?? primary?.phone.trim() ?? "";
+        const email = (sent(fields.email) ?? primary?.email ?? "") || null;
+        if (!name && !phone && !email) return null;
+
+        if (phone && !isValidPhone(phone)) {
+            throw new EmergencyContactError("incomplete", PHONE_ERROR);
+        }
+
+        const complete = !!name && !!phone;
+        // Blanking a field is not a delete path: refuse a save that would strip the
+        // name or phone off a contact that has both.
+        if (!complete && primary?.name.trim() && primary.phone.trim()) {
+            throw new EmergencyContactError(
+                "incomplete",
+                "An emergency contact needs both a name and a phone number. To take this contact off the household, remove it instead of clearing it.",
+            );
+        }
+
+        if (complete) await assertExternal(db, householdId, { name, phone, email });
+
+        const data = {
+            name,
+            phone: formatPhone(phone),
+            email,
+            phoneDigits: normalizePhone(phone),
+            emailNorm: cleanEmail(email),
+            ...(complete && { conflictParticipantId: null, conflictedAt: null }),
+        };
+
+        const saved = primary
+            ? await db.emergencyContact.update({ where: { id: primary.id }, data })
+            : await db.emergencyContact.create({ data: { householdId, priority: 0, ...data } });
+        return saved;
     });
-
-    // A field the caller never sent is not an instruction to clear it: absent
-    // keys fall back to what is stored, so a form that collects a subset of the
-    // contact can't blank the rest.
-    const sent = (v: string | null | undefined) => (v == null ? undefined : v.trim());
-    const name = sent(fields.name) ?? primary?.name.trim() ?? "";
-    const phone = sent(fields.phone) ?? primary?.phone.trim() ?? "";
-    const email = (sent(fields.email) ?? primary?.email ?? "") || null;
-    if (!name && !phone && !email) return null;
-
-    if (phone && !isValidPhone(phone)) {
-        throw new EmergencyContactError("incomplete", PHONE_ERROR);
-    }
-
-    const complete = !!name && !!phone;
-    // Blanking a field is not a delete path: refuse a save that would strip the
-    // name or phone off a contact that has both.
-    if (!complete && primary?.name.trim() && primary.phone.trim()) {
-        throw new EmergencyContactError(
-            "incomplete",
-            "An emergency contact needs both a name and a phone number. To take this contact off the household, remove it instead of clearing it.",
-        );
-    }
-
-    if (complete) await assertExternal(db, householdId, { name, phone, email });
-
-    const data = {
-        name,
-        phone: formatPhone(phone),
-        email,
-        phoneDigits: normalizePhone(phone),
-        emailNorm: cleanEmail(email),
-        ...(complete && { conflictParticipantId: null, conflictedAt: null }),
-    };
-
-    const saved = primary
-        ? await db.emergencyContact.update({ where: { id: primary.id }, data })
-        : await db.emergencyContact.create({ data: { householdId, priority: 0, ...data } });
+    // The privileged attendance roster carries contacts.
     invalidateAttendanceCache();
-    return saved;
+    return result;
 }
 
 export function listContacts(db: Db, householdId: number): Promise<EmergencyContact[]> {

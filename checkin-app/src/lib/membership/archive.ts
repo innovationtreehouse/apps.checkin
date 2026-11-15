@@ -90,6 +90,11 @@ export async function lockOpenApplications(tx: TxClient, orgMembershipId: number
     });
 }
 
+/** How many applications {@link lockOpenApplications} would return now, read without locking. */
+export function countOpenApplications(tx: TxClient, orgMembershipId: number) {
+    return tx.orgMembershipProcess.count({ where: { orgMembershipId, kind: { in: [...HOUSEHOLD_KINDS] }, ...openProcess.where } });
+}
+
 /**
  * Closes the open applications of a household the board is restoring from DENIED or
  * archiving, so nothing decided before carries across. Refuses, rolling back the
