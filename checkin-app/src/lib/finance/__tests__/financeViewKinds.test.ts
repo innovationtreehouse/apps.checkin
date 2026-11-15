@@ -1,4 +1,5 @@
 import {
+  financeViewEndpoint,
   financeViewKindOf,
   financeViewRecordHref,
   financeViewSentence,
@@ -15,6 +16,8 @@ function row(overrides: Partial<FinanceViewRow>): FinanceViewRow {
     params: {},
     recordIds: ["r_1"],
     rowCount: 1,
+    recordCount: null,
+    calls: null,
     ...overrides,
   };
 }
@@ -82,5 +85,42 @@ describe("financeViewSentence", () => {
 
   it("falls back to the person id when no name resolved", () => {
     expect(financeViewSentence(row({}), undefined)).toMatch(/^Person #12 \(Finance\) viewed 1 receipt on the receipts list/);
+  });
+
+  it("reads a page-view row from its first call and its record count", () => {
+    const r = pageViewRow();
+    expect(financeViewSentence(r, "Pat Lee")).toBe(`Pat Lee (Finance) viewed 2 receipts on the receipts list, ${when}`);
+  });
+
+  it("says finance records and no place for a row with no endpoint and no calls", () => {
+    const r = row({ endpoint: null, params: null, rowCount: null, recordCount: 1, recordIds: ["Expense:e_1"] });
+    expect(financeViewSentence(r, "Pat Lee")).toBe(`Pat Lee (Finance) viewed 1 finance record, ${when}`);
+  });
+});
+
+function pageViewRow(): FinanceViewRow {
+  return row({
+    endpoint: null,
+    params: null,
+    rowCount: null,
+    recordCount: 2,
+    recordIds: ["Receipt:r_1", "Receipt:r_2"],
+    calls: [{ endpoint: "GET /api/receipts", path: "/api/receipts", query: {}, role: "isFinance" }],
+  });
+}
+
+describe("financeViewEndpoint", () => {
+  it("is the row's endpoint, else its first call's", () => {
+    expect(financeViewEndpoint(row({}))).toBe("GET /api/receipts");
+    expect(financeViewEndpoint(pageViewRow())).toBe("GET /api/receipts");
+  });
+
+  it("is null when neither holds one", () => {
+    expect(financeViewEndpoint(row({ endpoint: null, calls: null }))).toBeNull();
+    expect(financeViewEndpoint(row({ endpoint: null, calls: [{ path: "/api/receipts" }] }))).toBeNull();
+  });
+
+  it("links no record of a page-view row", () => {
+    expect(financeViewRecordHref(pageViewRow(), "Receipt:r_1")).toBeNull();
   });
 });

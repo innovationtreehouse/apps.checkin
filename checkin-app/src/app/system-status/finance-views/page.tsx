@@ -10,6 +10,7 @@ import { FINANCE_VIEWS_ROLES } from "@/lib/nav/sections/systemStatus";
 import {
   FINANCE_VIEWS_PAGE_SIZE,
   FINANCE_VIEW_KINDS,
+  financeViewEndpoint,
   financeViewRecordHref,
   financeViewSentence,
   type FinanceViewRow,
@@ -124,7 +125,7 @@ function FinanceViewsPanel() {
                       <Text size="sm">{financeViewSentence(row, names.get(row.actorId))}</Text>
                       {row.recordIds.length > 0 && <RecordIds row={row} />}
                       <Text size="xs" c="dimmed">
-                        {row.endpoint}
+                        {financeViewEndpoint(row)}
                       </Text>
                     </Table.Td>
                   </Table.Tr>
