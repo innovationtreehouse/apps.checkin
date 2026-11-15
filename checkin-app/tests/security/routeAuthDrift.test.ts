@@ -473,7 +473,7 @@ const EDGE_INCLUDE_ALLOWLIST: Record<string, string> = {
     'cron/post-event': 'cron-gated — withCron (shared CRON_SECRET); response is the run summary counts (processedEvents/emailsSent), no rows or person ids',
     'cron/reconcile-shopify': 'cron-gated — withCron (shared CRON_SECRET); response is per-sweep summary counts/status, no rows or person ids',
     'cron/scholarship-grace-expiry': 'cron-gated — withCron, no user-facing response',
-    'events/[id]': 'admission-gated — handler GET throws forbidden() unless staff (sysadmin/board/leadMentor/coreVol)',
+    'events/[id]': 'admission-gated — handler GET throws notFound() unless staff (sysadmin/board/leadMentor/coreVol)',
     'events/mine': 'query-shaped — self + own household only (activityMembers → where participantId in memberIds)',
     'facility/trends': 'admin-role-gated — sysadmin/board',
     'facility/visits': 'admin-role-gated — sysadmin/board',

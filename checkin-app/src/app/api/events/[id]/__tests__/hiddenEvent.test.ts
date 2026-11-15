@@ -83,3 +83,37 @@ it.each(["confirmAttendance", "cancel", "manualEditAttendance", "noSuchAction"])
         expect(existing).toEqual(missing);
     },
 );
+
+it("GET never reads the roster for a non-staff caller", async () => {
+    db.event.findUnique.mockResolvedValue(event);
+    expect((await get()).status).toBe(404);
+    expect(db.event.findUnique).toHaveBeenCalledTimes(1);
+    const { select } = db.event.findUnique.mock.calls[0][0];
+    expect(select).not.toHaveProperty("visits");
+    expect(select).not.toHaveProperty("rsvps");
+    expect(select.program.select).not.toHaveProperty("participants");
+});
+
+const CORE_VOL_ID = 40;
+const staffed = {
+    ...event,
+    program: {
+        ...event.program,
+        volunteers: [{ programId: 100, personId: CORE_VOL_ID, isCore: true, person: { id: CORE_VOL_ID, name: "Core", email: "core@example.com" } }],
+    },
+};
+const user = (id: number, roles: { isSysadmin?: boolean; isBoardMember?: boolean } = {}) =>
+    ({ user: { id, householdId: 9, isSysadmin: false, isBoardMember: false, isKeyholder: false, ...roles } });
+
+it.each([
+    ["lead mentor", user(10)],
+    ["core volunteer", user(CORE_VOL_ID)],
+    ["sysadmin", user(77, { isSysadmin: true })],
+    ["board member", user(78, { isBoardMember: true })],
+])("GET reads the roster for a %s", async (_role, session) => {
+    mockSession.mockResolvedValue(session);
+    db.event.findUnique.mockResolvedValue(staffed);
+    expect((await get()).status).toBe(200);
+    expect(db.event.findUnique).toHaveBeenCalledTimes(2);
+    expect(db.event.findUnique.mock.calls[1][0].select.program.select).toHaveProperty("participants");
+});
