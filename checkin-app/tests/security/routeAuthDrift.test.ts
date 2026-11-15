@@ -72,6 +72,10 @@ const ALLOWLIST = new Set<string>([
     // withKiosk, and it's genuinely public so getOptionalSessionUser doesn't apply
     // either. Bad/missing/tampered tokens get a neutral page, no info leak.
     'unsubscribe/route.ts',
+    // Enters through handler() on every call; POST only re-sends the stripped
+    // body under the library's refusal status (404/409/503), which handler()
+    // cannot set. Justified in-file at POST ("DRIFT-GUARD ALLOWLIST").
+    'system-status/problems/retry/route.ts',
 ]);
 
 const HTTP_METHODS = 'GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS';
