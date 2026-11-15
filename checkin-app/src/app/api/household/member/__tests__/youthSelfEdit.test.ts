@@ -60,6 +60,9 @@ function person(id: number, dateOfBirth: Date | null, isDeclaredAdult = false) {
         canAccessStaging: false,
         household: { orgMembership: { isVolunteerFamily: false } },
         _count: { accounts: 1, roles: 0, programsLed: 0, programVolunteers: 0, bgAttestationsAsSubject: 0, personBgProcesses: 0, toolStatuses: 0 },
+        budgetOwnersOwned: [],
+        budgetOwnerTreasurerships: [],
+        instancesLed: [],
     };
 }
 
