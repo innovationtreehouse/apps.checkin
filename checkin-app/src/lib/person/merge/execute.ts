@@ -218,7 +218,7 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
     const keepId = keep.id;
     const mergeId = merge.id;
 
-    const personMergeId = await prisma.$transaction(async (tx) => {
+    const { personMergeId, lockedKeeper } = await prisma.$transaction(async (tx) => {
         await lockMergeRows(tx, keepId, mergeId, [keep.householdId, merge.householdId]);
         const live = await recheckSubjects(tx, plan, actor);
         await clearMergedIdentity(tx, mergeId);
@@ -242,7 +242,7 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
         const archiveId = await archiveMerge(tx, keepId, live.merge);
         await deleteMergedPerson(tx, mergeId);
         await auditMerge(tx, plan, live, actor, moved);
-        return archiveId;
+        return { personMergeId: archiveId, lockedKeeper: live.keep };
     });
 
     // The keeper may now carry a newer check date or another person's review, and the
@@ -255,7 +255,7 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
             await logBackendError(error, "household background-check settle after merge", { householdId, keepId, mergeId });
         }
     }
-    await notifyBoardOfYouthLeads([keep]);
+    await notifyBoardOfYouthLeads([lockedKeeper]);
 
     invalidateAttendanceCache();
 }
