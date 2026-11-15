@@ -75,3 +75,17 @@ describe('GET /api/people/search — search by id', () => {
         expect(where.household).toEqual({ archivedAt: null });
     });
 });
+
+describe('GET /api/people/search — query shape', () => {
+    it('selects only the person, household and membership columns the directory and pickers read', async () => {
+        await GET(req('q=ali'));
+        const args = findManyMock.mock.calls[0][0];
+        expect(args).not.toHaveProperty('include');
+        const { select } = args;
+        expect(Object.keys(select).sort()).toEqual([
+            'dateOfBirth', 'email', 'household', 'id', 'isDeclaredAdult', 'lastBackgroundCheck', 'name', 'nickname', 'phone', 'roles',
+        ]);
+        expect(Object.keys(select.household.select).sort()).toEqual(['householdMembers', 'id', 'name', 'orgMembership']);
+        expect(select.household.select.orgMembership).toEqual({ select: { status: true } });
+    });
+});

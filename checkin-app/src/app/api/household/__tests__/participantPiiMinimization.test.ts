@@ -80,7 +80,7 @@ describe("Participant PII minimization (M1, M2)", () => {
         } as Record<string, unknown>;
 
         (prisma.person.findUnique as jest.Mock).mockImplementation((args) => {
-            const peerSelect = args.include.household.include.householdMembers.select as Record<string, boolean>;
+            const peerSelect = args.select.household.select.householdMembers.select as Record<string, boolean>;
             const projected = Object.fromEntries(
                 Object.keys(peerSelect).filter((k) => peerSelect[k]).map((k) => [k, rawPeer[k]])
             );
@@ -125,7 +125,13 @@ describe("Participant PII minimization (M1, M2)", () => {
 
         // Pin the actual query shape, not just this test's mock.
         const callArgs = (prisma.person.findUnique as jest.Mock).mock.calls[0][0];
-        expect(callArgs.include.household.include.householdMembers).toEqual({ select: HOUSEHOLD_PEER_WITH_SIGN_IN_SELECT });
+        expect(callArgs).not.toHaveProperty("include");
+        expect(Object.keys(callArgs.select).sort()).toEqual(["household", "isHouseholdLead"]);
+        expect(Object.keys(callArgs.select.household.select).sort()).toEqual(
+            ["city", "householdMembers", "id", "intakeNotes", "line1", "line2", "name", "orgMembership", "postalCode", "state"],
+        );
+        expect(callArgs.select.household.select.orgMembership).toEqual({ select: { status: true, memberSince: true, isVolunteerFamily: true } });
+        expect(callArgs.select.household.select.householdMembers).toEqual({ select: HOUSEHOLD_PEER_WITH_SIGN_IN_SELECT });
     });
 
     // Household.intakeNotes is the family's free-text note TO the board (tier

@@ -30,11 +30,20 @@ export const GET = withAuth(
 
             const user = await prisma.person.findUnique({
                 where: { id: userId },
-                include: {
+                select: {
+                    isHouseholdLead: true,
                     household: {
-                        include: {
+                        select: {
+                            id: true,
+                            name: true,
+                            line1: true,
+                            line2: true,
+                            city: true,
+                            state: true,
+                            postalCode: true,
+                            intakeNotes: true,
                             householdMembers: { select: HOUSEHOLD_PEER_WITH_SIGN_IN_SELECT },
-                            orgMembership: true,
+                            orgMembership: { select: { status: true, memberSince: true, isVolunteerFamily: true } },
                         }
                     }
                 }
