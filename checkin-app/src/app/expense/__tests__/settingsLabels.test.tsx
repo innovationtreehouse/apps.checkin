@@ -99,12 +99,23 @@ describe("The capital review switch on the expense settings page", () => {
     Object.assign(mockRoles, { isFinance: false, isBoard: true });
   });
 
-  it("disables both capital thresholds while capital review is off, and leaves them out of the save", () => {
+  it("disables both capital thresholds while capital review is off", () => {
     Object.assign(mockData, { capitalReviewEnabled: false, capitalTotalThresholdCents: 500_000, capitalLineItemThresholdCents: 250_000 });
     render(<MantineProvider><SettingsPage /></MantineProvider>);
     expect(screen.getByRole("switch")).not.toBeChecked();
     expect(screen.getByLabelText("Capital review: receipt total at or over")).toBeDisabled();
     expect(screen.getByLabelText("Capital review: unit price at or over")).toBeDisabled();
+  });
+
+  it("saves the switch change without the capital thresholds edited before turning review off", () => {
+    mockSend.mockClear();
+    Object.assign(mockData, { capitalReviewEnabled: true, capitalTotalThresholdCents: 500_000, capitalLineItemThresholdCents: 250_000 });
+    render(<MantineProvider><SettingsPage /></MantineProvider>);
+    fireEvent.change(screen.getByLabelText("Capital review: receipt total at or over"), { target: { value: "$6000" } });
+    fireEvent.change(screen.getByLabelText("Capital review: unit price at or over"), { target: { value: "$3000" } });
+    fireEvent.click(screen.getByRole("switch"));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(mockSend).toHaveBeenCalledWith("/org-settings", "PUT", { capitalReviewEnabled: false }, "Settings saved");
   });
 
   it("warns that every expense waits at capital review while review is on and a threshold is unset", () => {
