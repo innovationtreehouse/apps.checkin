@@ -21,6 +21,9 @@ const TOKEN_RE = /\{\{\s*(\w+)\s*\}\}/g;
 /** A link token becomes an anchor only for a web URL or a single-slash site path, never `javascript:`, `data:`, `//host` or `/\host`. */
 const SAFE_HREF_RE = /^(https?:\/\/|\/(?![/\\]))/i;
 
+/** URL parsers strip tabs and newlines, so `/\t/host` would resolve to another host; any control character makes the value text. */
+const hasControlChar = (value: string) => Array.from(value).some(c => c <= "\u001F" || c === "\u007F");
+
 /** Every `{{token}}` name in `text` that `tokens` does not allow. */
 export function findUnknownTokens(text: string, tokens: TokenSpecs): string[] {
     const found = new Set<string>();
@@ -56,7 +59,7 @@ export function substituteTokens(
         }
         const value = Object.hasOwn(ctx, m[1]) ? ctx[m[1]] : "";
         if (!escape) out += value;
-        else if (spec.kind === "link" && SAFE_HREF_RE.test(value)) out += `<a href="${escapeHtml(value)}">${escapeHtml(spec.label ?? value)}</a>`;
+        else if (spec.kind === "link" && !hasControlChar(value) && SAFE_HREF_RE.test(value)) out += `<a href="${escapeHtml(value)}">${escapeHtml(spec.label ?? value)}</a>`;
         else out += escapeHtml(value);
     }
     out += escape ? escapeHtml(template.slice(last)) : template.slice(last);
