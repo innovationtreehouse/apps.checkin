@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Alert, Button, Divider, Group, Loader, Modal, SimpleGrid, Stack, Switch, Text, TextInput } from "@mantine/core";
 import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
 import { api, useLoad } from "@/lib/api";
+import { useFreshRead } from "@/hooks/useFreshRead";
 import { modals } from "@mantine/modals";
 import { pickAddress, type StructuredAddress } from "@/lib/address";
 import { isValidPhone, PHONE_ERROR } from "@/lib/phone";
@@ -89,18 +90,7 @@ export function AdminEditHouseholdModal({
   const { data, error: loadError, reload } = useLoad<{ household: AdminHousehold | null }>(
     loadKey != null ? `/api/membership-ops/households?id=${loadKey}` : null,
   );
-  // Save sends the whole form, and the cache may hold another screen's older read, so the form waits for this opening's own read.
-  const [freshFor, setFreshFor] = useState<number | null>(null);
-  useEffect(() => {
-    if (loadKey == null) return;
-    let cancelled = false;
-    reload().then(() => { if (!cancelled) setFreshFor(loadKey); });
-    return () => {
-      cancelled = true;
-      setFreshFor(null);
-    };
-  }, [loadKey, reload]);
-  const retry = () => reload().then(() => setFreshFor(loadKey));
+  const { fresh, retry } = useFreshRead(loadKey, reload);
   const household = data?.household ?? null;
   const displayName = household ? household.name || `Household #${household.id}` : "";
   const members = household?.householdMembers ?? [];
@@ -212,7 +202,7 @@ export function AdminEditHouseholdModal({
       >
         {loadError ? (
           <LoadError what="this household" message={loadError} onRetry={retry} />
-        ) : data === null || freshFor !== loadKey ? (
+        ) : data === null || !fresh ? (
           <Group justify="center" py="xl">
             <Loader />
           </Group>

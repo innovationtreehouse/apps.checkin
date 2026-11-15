@@ -7,6 +7,7 @@ import {
 import { useDisclosure } from "@mantine/hooks";
 import { errorMessage, HttpError, invalidateLoads, LoadError, showError, showSuccess } from "@checkin/component-ui";
 import { api, useLoad } from "@/lib/api";
+import { useFreshRead } from "@/hooks/useFreshRead";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { SETTINGS_ROLES } from "@/lib/nav/sections/settings";
 import { useUnsavedGuard, shallowEqual } from "@/components/UnsavedChangesProvider";
@@ -41,6 +42,7 @@ interface BulkSendSummary {
 }
 
 const SAMPLE_NAME = "Jordan Rivera";
+const STATUS_PATH = "/api/outreach/status";
 const TEMPLATE_LABEL: Record<TemplateKey, string> = { opening: "Opening of renewals", reminder: "Reminder" };
 const AUDIENCE_LABEL: Record<TemplateKey, string> = {
   opening: "every member household's leads",
@@ -56,7 +58,9 @@ export default function OutreachSettingsPage() {
   const [saving, setSaving] = useState(false);
   const [testSending, setTestSending] = useState<TemplateKey | null>(null);
 
-  const { data, error: loadError, reload } = useLoad<{ settings: Settings; nextDeadline: string | null }>(ready ? "/api/settings/outreach" : null);
+  const templatesPath = ready ? "/api/settings/outreach" : null;
+  const { data, error: loadError, reload } = useLoad<{ settings: Settings; nextDeadline: string | null }>(templatesPath);
+  const { fresh, retry } = useFreshRead(templatesPath, reload);
   const nextDeadline = data?.nextDeadline ?? null;
   // Each fresh read of the settings resets the form to it.
   const [formFor, setFormFor] = useState<typeof data>(null);
@@ -117,8 +121,8 @@ export default function OutreachSettingsPage() {
   return (
     <Stack>
       {loadError ? (
-        <LoadError what="the outreach templates" message={loadError} onRetry={reload} />
-      ) : data === null ? (
+        <LoadError what="the outreach templates" message={loadError} onRetry={retry} />
+      ) : data === null || !fresh ? (
         <Center py="xl"><Loader /></Center>
       ) : (
         <>
@@ -214,7 +218,8 @@ function TemplateCard({
 }
 
 function SendPanel({ deadlineSet }: { deadlineSet: boolean }) {
-  const { data: status, error: statusError, reload: refreshStatus } = useLoad<{ inFlight: BulkSendSummary | null; lastCompleted: BulkSendSummary | null }>("/api/outreach/status");
+  const { data: status, error: statusError, reload: refreshStatus } = useLoad<{ inFlight: BulkSendSummary | null; lastCompleted: BulkSendSummary | null }>(STATUS_PATH);
+  const { fresh: statusFresh, retry: retryStatus } = useFreshRead(STATUS_PATH, refreshStatus);
   const inFlight = status?.inFlight ?? null;
   const lastCompleted = status?.lastCompleted ?? null;
   const [draining, setDraining] = useState(false);
@@ -294,8 +299,8 @@ function SendPanel({ deadlineSet }: { deadlineSet: boolean }) {
       </Text>
 
       {statusError ? (
-        <LoadError what="the send status" message={`${statusError} No new send can start until it loads.`} onRetry={refreshStatus} />
-      ) : status === null ? (
+        <LoadError what="the send status" message={`${statusError} No new send can start until it loads.`} onRetry={retryStatus} />
+      ) : status === null || !statusFresh ? (
         <Center py="md"><Loader size="sm" /></Center>
       ) : inFlight ? (
         <Stack>
