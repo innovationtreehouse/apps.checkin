@@ -9,11 +9,14 @@
 #      advance is excluded.
 #   2. FALSE NEGATIVE — an unreachable base SHA must FAIL loud, not degrade to
 #      an empty changed-set "No changes" pass.
+# And checks the registry-first marker gate (.github/scripts/registry-first-marker.sh)
+# accepts a route.ts diff that only adds marker lines, and nothing else.
 #
 # No framework. Builds a synthetic git repo in a temp dir and asserts. Run:
 #   bash checkin-app/scripts/security-boundary-isolation-diff.selfcheck.sh
 set -euo pipefail
 
+REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 cd "$WORK"
@@ -88,6 +91,41 @@ if fixed_changed "0000000000000000000000000000000000000000" "$PR" >/dev/null 2>&
 else
   ok "unreachable base SHA fails loud (non-zero) as required"
 fi
+
+echo "5) registry-first marker gate (.github/scripts/registry-first-marker.sh)"
+# shellcheck source=/dev/null
+source "$REPO_ROOT/.github/scripts/registry-first-marker.sh"
+ROUTE=checkin-app/src/app/api/x/route.ts
+git checkout -q -b marker "$M0"
+mkdir -p "$(dirname "$ROUTE")"
+printf 'export const GET = h;\n' > "$ROUTE"
+git add -A && git commit -qm "route base"
+RBASE=$(git rev-parse HEAD)
+gate() { # $1=expect(yes|no) $2=label; working tree holds the head content
+  git add -A && git commit -qm "$2" --allow-empty
+  local got=no
+  is_marker_only_route_change "$RBASE" "$(git rev-parse HEAD)" "$ROUTE" && got=yes
+  [ "$got" = "$1" ] && ok "$2 -> companion=$1" || bad "$2 -> expected companion=$1, got $got"
+  git reset -q --hard "$RBASE"
+}
+printf 'export const GET = h;\n// registry-first: POST\n' > "$ROUTE";              gate yes "one marker added"
+printf '// registry-first: PUT\nexport const GET = h;\n// registry-first: POST\n' > "$ROUTE"; gate yes "two markers added"
+printf 'export const GET = h;\n// registry-first: POST\nexport const POST = h;\n' > "$ROUTE"; gate no "marker plus code"
+printf 'export const GET = k;\n// registry-first: POST\n' > "$ROUTE";              gate no "marker plus a changed line"
+printf '// registry-first: POST\n' > "$ROUTE";                                   gate no "marker plus a deleted line"
+printf 'export const GET = h;\n// registry-first: FETCH\n' > "$ROUTE";             gate no "unknown verb"
+printf 'export const GET = h;\nconst a = 1; // registry-first: POST\n' > "$ROUTE"; gate no "marker after code"
+printf 'export const GET = h;\n\0// registry-first: POST\n' > "$ROUTE";           gate no "binary change"
+gate no "no change"
+NEW=checkin-app/src/app/api/y/route.ts
+mkdir -p "$(dirname "$NEW")"; printf '// registry-first: POST\n' > "$NEW"
+git add -A && git commit -qm "new route file"
+if is_marker_only_route_change "$RBASE" "$(git rev-parse HEAD)" "$NEW"; then
+  bad "new route.ts holding only a marker -> expected companion=no"
+else
+  ok "new route.ts holding only a marker -> companion=no"
+fi
+git checkout -q main
 
 echo
 echo "pass=$pass fail=$fail"
