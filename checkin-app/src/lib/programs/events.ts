@@ -261,7 +261,11 @@ export async function manualEditAttendance(
                         tableName: "Visit",
                         affectedEntityId: v.id,
                         secondaryAffectedEntity: targetId,
-                        oldData: { arrivedAt: v.arrivedAt, departedAt: v.departedAt, associatedEventId: eventId },
+                        oldData: {
+                            arrivedAt: v.arrivedAt, departedAt: v.departedAt,
+                            arrivedVia: v.arrivedVia, departedVia: v.departedVia,
+                            associatedEventId: eventId
+                        },
                         newData: { associatedEventId: null, type: "lead_attendance_correction", status: "Absent" },
                     }))
                 });
