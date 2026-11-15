@@ -121,6 +121,7 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
                             email: true,
                             phone: true,
                             dateOfBirth: true,
+                            isDeclaredAdult: true,
                             householdId: true,
                             household: {
                                 select: {

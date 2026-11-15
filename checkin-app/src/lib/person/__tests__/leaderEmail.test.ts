@@ -70,7 +70,7 @@ describe("emailWithheldParticipants", () => {
 
 describe("adultPhoneOnly", () => {
     const START = new Date("2027-01-10T00:00:00Z");
-    const withPhone = (dateOfBirth: Date | null) => ({ ...person(dateOfBirth), phone: "5125551234" });
+    const withPhone = (dateOfBirth: Date | null, isDeclaredAdult = false) => ({ ...person(dateOfBirth), phone: "5125551234", isDeclaredAdult });
     it("keeps the phone of a participant who is 18 on the program's start", () => {
         expect(adultPhoneOnly(withPhone(new Date("2009-01-10T00:00:00Z")), START).phone).toBe("5125551234");
     });
@@ -81,5 +81,10 @@ describe("adultPhoneOnly", () => {
     });
     it("drops the phone of a participant with no date of birth", () => {
         expect(adultPhoneOnly(withPhone(null), START).phone).toBeNull();
+    });
+    it("keeps the phone of a declared adult with no date of birth, and never ships the declaration", () => {
+        const shipped = adultPhoneOnly(withPhone(null, true), START);
+        expect(shipped.phone).toBe("5125551234");
+        expect(shipped).not.toHaveProperty("isDeclaredAdult");
     });
 });
