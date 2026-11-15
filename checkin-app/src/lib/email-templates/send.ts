@@ -1,8 +1,7 @@
 import { sendEmail } from "@/lib/email";
 import prisma from "@/lib/prisma";
-import { baseEmailLayout, escapeHtml } from "./base";
 import { REGISTRY, type TemplateCtx, type TemplateKey, type TemplateSpec } from "./registry";
-import { renderBodyHtml, substituteTokens } from "./tokens";
+import { renderTemplate, withDefaults } from "./tokens";
 
 /**
  * The Board's saved copy for `key`, or null when there is none. A DB error also
@@ -27,11 +26,18 @@ async function findOverride(key: TemplateKey) {
 export async function sendTemplated<K extends TemplateKey>(key: K, to: string, ctx: TemplateCtx<K>, headers?: Record<string, string>, appendix?: string): Promise<boolean>;
 export async function sendTemplated(key: TemplateKey, to: string, ctx: Record<string, string>, headers?: Record<string, string>, appendix?: string): Promise<boolean> {
     const spec: TemplateSpec = REGISTRY[key];
-    const row = await findOverride(key);
-    const subject = row?.subject.trim() ? row.subject : spec.defaultSubject;
-    const body = row?.body.trim() ? row.body : spec.defaultBody;
-    const renderedSubject = substituteTokens(subject, ctx, spec.allowedTokens, { escape: false });
-    const substituted = substituteTokens(body, ctx, spec.allowedTokens, { escape: true });
-    const html = baseEmailLayout(renderBodyHtml(appendix ? `${substituted}\n\n${escapeHtml(appendix)}` : substituted));
-    return headers ? sendEmail(to, renderedSubject, html, headers) : sendEmail(to, renderedSubject, html);
+    const copy = withDefaults(spec, await findOverride(key));
+    const { subject, html } = renderTemplate(copy.subject, copy.body, ctx, spec.allowedTokens, appendix);
+    return headers ? sendEmail(to, subject, html, headers) : sendEmail(to, subject, html);
+}
+
+/**
+ * Send unsaved copy for `key` to `to`, filled from the key's sample values and
+ * marked `[Test]`. A blank field sends its registry default, as a saved row would.
+ */
+export async function sendTemplateTest(key: TemplateKey, to: string, draft: { subject: string; body: string }): Promise<boolean> {
+    const spec: TemplateSpec = REGISTRY[key];
+    const copy = withDefaults(spec, draft);
+    const { subject, html } = renderTemplate(copy.subject, copy.body, spec.sampleCtx, spec.allowedTokens);
+    return sendEmail(to, `[Test] ${subject}`, html);
 }

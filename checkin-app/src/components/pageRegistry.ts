@@ -234,6 +234,7 @@ export const PAGES: PageEntry[] = [
   { href: '/settings/membership', label: 'Membership Settings', section: 'Settings', visible: SETTING('/settings/membership') },
   { href: '/settings/localization', label: 'Localization', section: 'Settings', visible: SETTING('/settings/localization') },
   { href: '/settings/email', label: 'Email Settings', section: 'Settings', keywords: 'sender from reply-to identity', visible: SETTING('/settings/email') },
+  { href: '/settings/templates', label: 'Email Templates', section: 'Settings', keywords: 'email wording subject body copy message template preview', visible: SETTING('/settings/templates') },
   { href: '/settings/outreach', label: 'Outreach', section: 'Settings', keywords: 'renewal join campaign email template bulk send reminder opening', visible: SETTING('/settings/outreach') },
   { href: '/settings/shopify-webhook', label: 'Shopify Webhook', section: 'Settings', keywords: 'orders paid delivery test notification signature secret payment', visible: SETTING('/settings/shopify-webhook') },
   { href: '/settings/finance', label: 'Expenses', section: 'Settings', keywords: 'expense threshold capital board review note in lieu', visible: SETTING('/settings/finance') },

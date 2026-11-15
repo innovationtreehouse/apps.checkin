@@ -30,6 +30,7 @@ export const SETTINGS: NavSection = {
     { name: "Membership Settings", href: "/settings/membership", visible: admin },
     { name: "Localization", href: "/settings/localization", visible: anyRole(LOCALIZATION_ROLES) },
     { name: "Email Settings", href: "/settings/email", visible: admin },
+    { name: "Email Templates", href: "/settings/templates", visible: admin },
     { name: "Outreach", href: "/settings/outreach", visible: anyRole(SETTINGS_ROLES) },
     { name: "Shopify Webhook", href: "/settings/shopify-webhook", visible: admin },
     { ...EXPENSE_TABS.settings, library: "expense", visible: anyRole(FINANCE_SETTINGS_ROLES) },
