@@ -331,7 +331,7 @@ describe("safety/trusted-adults page", () => {
     const decided = [
       {
         ...trustedAdults[0],
-        reviews: [{ ...trustedAdults[0].reviews[0], status: "APPROVED" }],
+        reviews: [{ ...trustedAdults[0].reviews[0], status: "APPROVED", reviewBy: new Date(Date.now() + 86400000).toISOString() }],
       },
     ];
     setSession({ id: 1, isBoardMember: true, householdId: 1 });
@@ -389,6 +389,32 @@ describe("safety/trusted-adults page", () => {
 
     expect(screen.queryByText("Override:")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["an expired review", "EXPIRED", null],
+    ["an approval past its review date", "APPROVED", new Date(Date.now() - 86400000).toISOString()],
+  ])("hides Force approve on %s, keeping Force deny and Revoke", async (_label, status, reviewBy) => {
+    const expired = [{ ...trustedAdults[0], reviews: [{ ...trustedAdults[0].reviews[0], status, reviewBy }] }];
+    setSession({ id: 1, isBoardMember: true, householdId: 1 });
+    mockFetchJson({ "/api/safety/trusted-adults": { trustedAdults: expired } });
+    renderWithProviders(<AdminTrustedAdultsPage />);
+    await screen.findByText("Guardian House");
+
+    expect(screen.getByText("Override:")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Force approve" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Force deny" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Revoke" })).toBeInTheDocument();
+  });
+
+  it("keeps Force approve on a denied review", async () => {
+    const denied = [{ ...trustedAdults[0], reviews: [{ ...trustedAdults[0].reviews[0], status: "DENIED" }] }];
+    setSession({ id: 1, isBoardMember: true, householdId: 1 });
+    mockFetchJson({ "/api/safety/trusted-adults": { trustedAdults: denied } });
+    renderWithProviders(<AdminTrustedAdultsPage />);
+    await screen.findByText("Guardian House");
+
+    expect(screen.getByRole("button", { name: "Force approve" })).toBeInTheDocument();
   });
 
   it("shows an override failure message", async () => {

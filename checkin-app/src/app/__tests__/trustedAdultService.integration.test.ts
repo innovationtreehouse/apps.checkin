@@ -486,6 +486,28 @@ describe('Trusted Adults service', () => {
         expect(normalizeAuditData(audit?.newData)).toMatchObject({ status: 'REVOKED', override: 'revoke' });
     });
 
+    it.each([
+        ['EXPIRED', 'EXPIRED' as const],
+        ['APPROVED past its review date', 'APPROVED' as const],
+    ])('force-approve refuses an %s review, with no write and no audit; the family renews', async (_label, status) => {
+        const ta = await discloseOne();
+        const reviewId = ta.reviews[0].id;
+        await decideReview(reviewId, boardId, { decision: 'APPROVE', sharedNote: SHARED });
+        const lapsedOn = new Date(Date.now() - 86_400_000);
+        await prisma.trustedAdultReview.update({ where: { id: reviewId }, data: { status, reviewBy: lapsedOn } });
+        const auditBefore = await prisma.auditLog.count({ where: { tableName: 'TrustedAdult', affectedEntityId: ta.id } });
+
+        await expect(overrideReview(reviewId, boardId, 'approve', SHARED)).rejects.toMatchObject({
+            code: 'wrong_phase',
+            message: expect.stringContaining('renews'),
+        });
+
+        const after = await prisma.trustedAdultReview.findUniqueOrThrow({ where: { id: reviewId } });
+        expect(after.status).toBe(status);
+        expect(after.reviewBy).toEqual(lapsedOn);
+        expect(await prisma.auditLog.count({ where: { tableName: 'TrustedAdult', affectedEntityId: ta.id } })).toBe(auditBefore);
+    });
+
     // Conflict of interest on the OVERRIDE path — mirrors decideReview's rule, and no
     // role is exempt. A board member who leads the disclosing household must not override
     // its own review (they'd force-approve their own trusted adult); nor may a sysadmin.
