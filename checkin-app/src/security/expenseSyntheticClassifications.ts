@@ -40,17 +40,24 @@ export const classifications = {
     archivedAt: "internal",
   },
   // Per line: seats filled, missing and blocked (seat names only, no signer),
-  // the acts the caller may take there and the open steps waiting on others.
-  // `actions`, `awaiting` and `mayRecordBoardAuthorization` describe the caller
-  // only and name no one else.
+  // the acts the caller may take there (`actions`, ExpenseLineActionView) and
+  // the open steps waiting on others. `actions`, `awaiting` and
+  // `mayRecordBoardAuthorization` describe the caller only and name no one else.
   ExpenseLineSignoffStatus: {
     lineItemId: "internal",
     filled: "internal",
     missing: "internal",
     blocked: "internal",
-    actions: "internal",
     awaiting: "internal",
     mayRecordBoardAuthorization: "internal",
+  },
+  // One act the caller may take on a line: the act, the seat a `sign` fills,
+  // whether it is the line's main button and whether it needs a note.
+  ExpenseLineActionView: {
+    act: "internal",
+    seat: "internal",
+    primary: "internal",
+    noteRequired: "internal",
   },
   // POST /api/capital-assets/seed outcome.
   ExpenseCapitalSeedResult: {
@@ -105,6 +112,7 @@ export const classifications = {
   // column it comes from, because it can name a person.
   FinanceQueueRow: {
     expenseId: "internal",
+    receiptId: "internal",
     vendorName: "internal",
     date: "internal",
     amountCents: "internal",
@@ -140,7 +148,18 @@ export const classifications = {
 } as const;
 
 export const relations = {
+  ExpenseLineSignoffStatus: {
+    actions: { model: "ExpenseLineActionView", isList: true },
+  },
   ExpenseCapitalSeedResult: {
     results: { model: "ExpenseCapitalSeedRow", isList: true },
   },
+} as const;
+
+// Finance marks: the fields whose presence in a response makes it a logged finance view.
+export const marks = {
+  ExpenseQbCandidateView: ["totalCents"],
+  DonatedCapitalLineView: ["costCents"],
+  FinanceQueueRow: ["vendorName", "amountCents"],
+  ExpenseQueueReason: ["amountCents"],
 } as const;

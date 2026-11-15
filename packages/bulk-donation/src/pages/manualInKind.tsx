@@ -138,7 +138,7 @@ export default function ManualInKindPage() {
             </Group>
             <Select
               label="Add a catalog item"
-              placeholder="Search by name or GTIN"
+              placeholder="Search by name or Part ID"
               searchable
               searchValue={search}
               onSearchChange={setSearch}

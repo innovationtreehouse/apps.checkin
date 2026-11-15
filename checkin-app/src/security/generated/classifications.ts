@@ -21,7 +21,6 @@ export const classifications = {
         emailSuppressed: 'personal',
         householdId: 'public',
         isHouseholdLead: 'public',
-        mergedIntoId: 'internal',
         allergies: 'personal',
         isSysadmin: 'internal',
         isBoardMember: 'public',
@@ -452,6 +451,11 @@ export const classifications = {
         metric: 'internal',
         value: 'internal',
     },
+    KioskProtocolSeen: {
+        keyFingerprint: 'internal',
+        protocolVersion: 'internal',
+        lastSeenAt: 'internal',
+    },
     IntegrationErrorLog: {
         id: 'internal',
         source: 'internal',
@@ -581,6 +585,11 @@ export const classifications = {
         role: 'internal',
         quickBooksAccountId: 'internal',
     },
+    QuickBooksList: {
+        list: 'internal',
+        entries: 'internal',
+        refreshedAt: 'internal',
+    },
 } as const;
 
 export const relations = {
@@ -588,8 +597,6 @@ export const relations = {
         accounts: { model: 'Account', isList: true },
         sessions: { model: 'Session', isList: true },
         household: { model: 'Household', isList: false },
-        mergedInto: { model: 'Person', isList: false },
-        mergedFrom: { model: 'Person', isList: true },
         mergedArchive: { model: 'PersonMerge', isList: true },
         toolStatuses: { model: 'ToolStatus', isList: true },
         bgAttestations: { model: 'BackgroundCheckAttestation', isList: true },
@@ -753,6 +760,8 @@ export const relations = {
     },
     SystemMetricLog: {
     },
+    KioskProtocolSeen: {
+    },
     IntegrationErrorLog: {
     },
     CronRunLog: {
@@ -792,6 +801,13 @@ export const relations = {
     },
     BooksMapRoleAccount: {
     },
+    QuickBooksList: {
+    },
+} as const;
+
+export const marks = {
+    OrgMembershipProcess: ['isPaymentPlanRequested', 'scholarshipRequestKind'],
+    ProgramParticipant: ['isPaymentPlanRequested', 'scholarshipRequestKind', 'inventoryHeldAt', 'paymentPlanDeniedAt', 'seatTakenWithoutSaleAt'],
 } as const;
 
 export type Models = keyof typeof classifications;

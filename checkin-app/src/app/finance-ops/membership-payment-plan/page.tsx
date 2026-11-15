@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, useEffect, useCallback } from 'react';
-import { Button, Group, Modal, Stack, Text, Textarea } from '@mantine/core';
+import { Button, Group, Modal, SegmentedControl, Stack, Text, Textarea } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import { AlertBanner } from '@/components/admin/AlertBanner';
 import { DataTable, type DataTableColumn } from '@/components/admin/DataTable';
+import { PastPaymentPlanDecisions, type PaymentPlanDecisionRow } from '@/components/admin/PastPaymentPlanDecisions';
 import { useRequireRole } from '@/hooks/useRequireRole';
 import { PAYMENT_PLAN_ROLES } from '@/lib/nav/sections/revenueOps';
 import { useOrgTime } from '@/components/TimezoneProvider';
@@ -13,6 +14,8 @@ import { notifyNavRefresh } from '@/lib/nav-refresh';
 import { sharesHousehold } from '@/lib/conflictOfInterest';
 import { scholarshipRequestKindLabel } from '@/lib/scholarshipRequestKind';
 
+import { errorMessage, HttpError, showError, showSuccess, useUrlChoice } from '@checkin/component-ui';
+import { api } from '@/lib/api';
 import { PageLoader } from "@/components/ui/PageLoader";
 
 type HouseholdLead = { id: number; name: string | null; email: string | null };
@@ -31,6 +34,14 @@ type MembershipPaymentPlanRequest = {
   };
 };
 
+type PastMembershipDecision = PaymentPlanDecisionRow & { householdName: string | null };
+
+const PAST_IDENTITY_COLUMNS: DataTableColumn<PastMembershipDecision>[] = [
+  { header: 'Household', render: (row) => <Text fw={500}>{row.householdName}</Text> },
+];
+
+const VIEWS = ['pending', 'past'] as const;
+
 export default function MembershipPaymentPlansPage() {
   const { formatDateTime } = useOrgTime();
   const { user: me, ready, loading: authLoading } = useRequireRole(PAYMENT_PLAN_ROLES);
@@ -40,6 +51,7 @@ export default function MembershipPaymentPlansPage() {
 
   const [requests, setRequests] = useState<MembershipPaymentPlanRequest[]>([]);
   const [loading, setLoading] = useState(true);
+  const [view, setView] = useUrlChoice('view', VIEWS, 'pending');
   const [message, setMessage] = useState("");
   const [confirmApproveOpened, { open: openConfirmApprove, close: closeConfirmApprove }] = useDisclosure(false);
   const [pendingApproval, setPendingApproval] = useState<number | null>(null);
@@ -47,6 +59,8 @@ export default function MembershipPaymentPlansPage() {
   const [confirmDenyOpened, { open: openConfirmDeny, close: closeConfirmDeny }] = useDisclosure(false);
   const [pendingDenial, setPendingDenial] = useState<number | null>(null);
   const [denying, setDenying] = useState(false);
+  // The request whose write is in flight; its buttons stay disabled so a second click can't send again.
+  const [busyId, setBusyId] = useState<number | null>(null);
 
   const fetchRequests = useCallback(() => fetch('/api/finance-ops/membership-payment-plans')
     .then(async (res) => {
@@ -76,27 +90,17 @@ export default function MembershipPaymentPlansPage() {
   };
 
   const doApprove = async (processId: number, reason: string) => {
+    setBusyId(processId);
     try {
-      const res = await fetch('/api/finance-ops/membership-payment-plans', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ processId, reason })
-      });
-
-      if (res.ok) {
-        setRequests(prev => prev.filter(r => r.id !== processId));
-        notifyNavRefresh();
-      } else {
-        const data = await res.json();
-        if (data.error === "No pending payment-plan request") {
-          notifications.show({ color: 'red', message: data.error, autoClose: false });
-          fetchRequests();
-        } else {
-          notifications.show({ color: 'red', message: data.error || "Failed to approve.", autoClose: false });
-        }
-      }
-    } catch {
-      notifications.show({ color: 'red', message: "Network error processing approval.", autoClose: false });
+      await api('/api/finance-ops/membership-payment-plans', { method: 'POST', body: JSON.stringify({ processId, reason }) });
+      setRequests(prev => prev.filter(r => r.id !== processId));
+      notifyNavRefresh();
+      showSuccess('Scholarship / payment plan approved.');
+    } catch (e) {
+      showError(errorMessage(e));
+      if (e instanceof HttpError && e.status === 409) fetchRequests();
+    } finally {
+      setBusyId(null);
     }
   };
 
@@ -116,30 +120,18 @@ export default function MembershipPaymentPlansPage() {
 
   const doDeny = async (processId: number) => {
     setDenying(true);
+    setBusyId(processId);
     try {
-      const res = await fetch('/api/finance-ops/membership-payment-plans/refuse', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ processId })
-      });
-
-      if (res.ok) {
-        setRequests(prev => prev.filter(r => r.id !== processId));
-        notifyNavRefresh();
-        notifications.show({ message: 'Scholarship / payment plan denied.' });
-      } else {
-        const data = await res.json();
-        if (res.status === 409) {
-          notifications.show({ color: 'red', message: data.error, autoClose: false });
-          fetchRequests();
-        } else {
-          notifications.show({ color: 'red', message: data.error || "Failed to deny.", autoClose: false });
-        }
-      }
-    } catch {
-      notifications.show({ color: 'red', message: "Network error processing denial.", autoClose: false });
+      await api('/api/finance-ops/membership-payment-plans/refuse', { method: 'POST', body: JSON.stringify({ processId }) });
+      setRequests(prev => prev.filter(r => r.id !== processId));
+      notifyNavRefresh();
+      showSuccess('Scholarship / payment plan denied.');
+    } catch (e) {
+      showError(errorMessage(e));
+      if (e instanceof HttpError && e.status === 409) fetchRequests();
     } finally {
       setDenying(false);
+      setBusyId(null);
     }
   };
 
@@ -201,10 +193,10 @@ export default function MembershipPaymentPlansPage() {
       align: 'right' as const,
       render: (req: MembershipPaymentPlanRequest) => (
         <Group justify="flex-end" gap="xs" wrap="nowrap">
-          <Button size="xs" fz={15} color="red" variant="light" disabled={ownHousehold(req)} title={ownHousehold(req) ? "You can't deny your own household's plan — someone outside your household must." : undefined} onClick={() => handleDeny(req.id)}>
+          <Button size="xs" fz={15} color="red" variant="light" disabled={ownHousehold(req) || busyId === req.id} title={ownHousehold(req) ? "You can't deny your own household's plan — someone outside your household must." : undefined} onClick={() => handleDeny(req.id)}>
             Deny
           </Button>
-          <Button size="xs" fz={15} variant="light" disabled={ownHousehold(req)} title={ownHousehold(req) ? "You can't approve your own household's plan — someone outside your household must." : undefined} onClick={() => handleApprove(req.id)}>
+          <Button size="xs" fz={15} variant="light" disabled={ownHousehold(req) || busyId === req.id} title={ownHousehold(req) ? "You can't approve your own household's plan — someone outside your household must." : undefined} onClick={() => handleApprove(req.id)}>
             Approve &amp; Activate
           </Button>
         </Group>
@@ -222,12 +214,23 @@ export default function MembershipPaymentPlansPage() {
 
       <AlertBanner message={message} tone="error" />
 
-      <DataTable
-        columns={columns}
-        rows={requests}
-        getRowKey={(req) => `${req.id}`}
-        emptyMessage="No pending membership scholarship or payment plan requests."
+      <SegmentedControl
+        value={view}
+        onChange={setView}
+        data={[{ label: 'Pending', value: 'pending' }, { label: 'Past', value: 'past' }]}
+        style={{ alignSelf: 'flex-start' }}
       />
+
+      {view === 'past' ? (
+        <PastPaymentPlanDecisions<PastMembershipDecision> endpoint="/api/finance-ops/membership-payment-plans/past" identityColumns={PAST_IDENTITY_COLUMNS} />
+      ) : (
+        <DataTable
+          columns={columns}
+          rows={requests}
+          getRowKey={(req) => `${req.id}`}
+          emptyMessage="No pending membership scholarship or payment plan requests."
+        />
+      )}
 
       <Modal
         opened={confirmApproveOpened}

@@ -25,7 +25,14 @@ const tx = {
     auditLog: { create: jest.fn() },
     $queryRaw: jest.fn(),
 };
+const savedList = jest.fn();
 jest.mock('@/lib/quickbooks/client', () => ({ getQuickBooks: jest.fn() }));
+// The archived-household guard has its own tests; here every household is live.
+jest.mock('@/lib/household/archiveGuard', () => ({
+    ...jest.requireActual('@/lib/household/archiveGuard'),
+    lockLiveHouseholds: jest.fn(),
+    lockLiveHouseholdsOf: jest.fn(),
+}));
 jest.mock('@checkin/expense', () => ({ holdBucketLines: jest.fn() }));
 jest.mock('@/lib/prisma', () => ({
     __esModule: true,
@@ -44,6 +51,7 @@ jest.mock('@/lib/prisma', () => ({
                 return Promise.resolve(b);
             },
         },
+        quickBooksList: { findUnique: (args: unknown) => savedList(args) },
         $transaction: (fn: (t: typeof tx) => Promise<unknown>) => fn(tx),
     },
 }));
@@ -260,6 +268,28 @@ describe('updateBudgetOwner: org-level and restore', () => {
         });
     });
 
+    test.each([['an active', null], ['an archived', new Date('2026-10-01')]])('refuses clearing the Class of %s bucket, writing nothing', async (_name, archivedAt) => {
+        tx.budgetOwner.findUnique.mockResolvedValue(stored({ archivedAt }));
+        await expect(updateBudgetOwner(1, 7, { quickBooksClassId: null })).rejects.toMatchObject({
+            status: 400,
+            message: "A bucket's QuickBooks Class can be changed but not cleared.",
+        });
+        nothingWritten();
+        expect(tx.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    test('changes a bucket to another Class', async () => {
+        tx.budgetOwner.findUnique.mockResolvedValue(stored());
+        await updateBudgetOwner(1, 7, { quickBooksClassId: '13' });
+        expect(tx.budgetOwner.update).toHaveBeenCalledWith(expect.objectContaining({ data: { quickBooksClassId: '13' } }));
+    });
+
+    test('saves a bucket that has no Class without one', async () => {
+        tx.budgetOwner.findUnique.mockResolvedValue(stored({ quickBooksClassId: null }));
+        await updateBudgetOwner(1, 7, { name: 'Shop floor', quickBooksClassId: null });
+        expect(tx.budgetOwner.update).toHaveBeenCalledWith(expect.objectContaining({ data: { name: 'Shop floor', quickBooksClassId: null } }));
+    });
+
     test('archives only through the archive route', async () => {
         await expect(updateBudgetOwner(1, 7, { archived: true })).rejects.toMatchObject({ status: 400 });
         nothingWritten();
@@ -269,12 +299,41 @@ describe('updateBudgetOwner: org-level and restore', () => {
 describe('createBudgetOwner', () => {
     test('records whether the bucket is org-level', async () => {
         tx.budgetOwner.create.mockResolvedValue({ id: 11 });
-        await createBudgetOwner(1, { name: 'Facility', isOrgLevel: true });
-        expect(tx.budgetOwner.create).toHaveBeenCalledWith(expect.objectContaining({ data: { name: 'Facility', isOrgLevel: true, quickBooksClassId: null } }));
+        await createBudgetOwner(1, { name: 'Facility', isOrgLevel: true, quickBooksClassId: '12' });
+        expect(tx.budgetOwner.create).toHaveBeenCalledWith(expect.objectContaining({ data: { name: 'Facility', isOrgLevel: true, quickBooksClassId: '12' } }));
     });
 
     test('refuses a non-boolean isOrgLevel', async () => {
-        await expect(createBudgetOwner(1, { name: 'Facility', isOrgLevel: 'yes' })).rejects.toMatchObject({ status: 400 });
+        await expect(createBudgetOwner(1, { name: 'Facility', isOrgLevel: 'yes', quickBooksClassId: '12' })).rejects.toMatchObject({ status: 400 });
+    });
+
+    test.each([['no', {}], ['a null', { quickBooksClassId: null }], ['a blank', { quickBooksClassId: ' ' }]])(
+        'refuses a bucket with %s QuickBooks Class, writing nothing',
+        async (_name, body) => {
+            await expect(createBudgetOwner(1, { name: 'Shop', ...body })).rejects.toMatchObject({
+                status: 400,
+                message: 'A bucket needs a QuickBooks Class.',
+            });
+            expect(tx.budgetOwner.create).not.toHaveBeenCalled();
+            expect(tx.auditLog.create).not.toHaveBeenCalled();
+        },
+    );
+
+    test('creates a bucket with its QuickBooks Class and audits it', async () => {
+        tx.budgetOwner.create.mockResolvedValue({ id: 11 });
+        await createBudgetOwner(1, { name: 'Shop', quickBooksClassId: '12' });
+        expect(tx.budgetOwner.create).toHaveBeenCalledWith(expect.objectContaining({ data: { name: 'Shop', isOrgLevel: false, quickBooksClassId: '12' } }));
+        expect(tx.auditLog.create).toHaveBeenCalledWith({
+            data: expect.objectContaining({ action: 'CREATE', newData: { name: 'Shop', isOrgLevel: false, quickBooksClassId: '12' } }),
+        });
+    });
+
+    test('answers 409 when another bucket holds the Class', async () => {
+        tx.budgetOwner.create.mockRejectedValue({ code: 'P2002', meta: { target: ['quickBooksClassId'] } });
+        await expect(createBudgetOwner(1, { name: 'Shop', quickBooksClassId: '12' })).rejects.toMatchObject({
+            status: 409,
+            message: 'That QuickBooks Class is already mapped to another bucket.',
+        });
     });
 });
 
@@ -287,54 +346,27 @@ describe('QuickBooks Class id', () => {
 });
 
 describe('listQuickBooksClasses', () => {
-    test('lists every Class by full name, sorted, with inactive ones flagged', async () => {
-        const classes = jest.fn().mockResolvedValue([
-            { Id: '9', Name: 'Robotics', FullyQualifiedName: 'Programs:Robotics' }, // no Active field: active
-            { Id: '3', Name: 'Facility', FullyQualifiedName: 'Facility', Active: true },
-            { Id: '4', Name: 'Old', FullyQualifiedName: 'Old', Active: false },
-        ]);
-        jest.mocked(getQuickBooks).mockResolvedValue({ classes } as unknown as Awaited<ReturnType<typeof getQuickBooks>>);
-        await expect(listQuickBooksClasses()).resolves.toEqual([
-            { id: '3', name: 'Facility', active: true },
-            { id: '4', name: 'Old', active: false },
-            { id: '9', name: 'Programs:Robotics', active: true },
-        ]);
+    const saved = process.env.CHECKIN_ENV;
+    afterEach(() => { process.env.CHECKIN_ENV = saved; });
+
+    test('local lists the stand-in Classes without asking QuickBooks or the copy', async () => {
+        process.env.CHECKIN_ENV = 'local';
+        await expect(listQuickBooksClasses()).resolves.toEqual(LOCAL_QUICKBOOKS_CLASSES);
+        expect(getQuickBooks).not.toHaveBeenCalled();
+        expect(savedList).not.toHaveBeenCalled();
     });
 
-    test('answers 503 while QuickBooks is off', async () => {
-        jest.mocked(getQuickBooks).mockResolvedValue(null);
-        await expect(listQuickBooksClasses()).rejects.toMatchObject({ status: 503 });
+    test.each(['prod', 'dev', '', 'stg'])('%p lists the copy\'s Classes and never asks QuickBooks', async (env) => {
+        process.env.CHECKIN_ENV = env;
+        savedList.mockResolvedValue({ entries: [{ id: '3', name: 'Facility', active: true }, { id: '4', name: 'Old', active: false }] });
+        await expect(listQuickBooksClasses()).resolves.toEqual([{ id: '3', name: 'Facility', active: true }, { id: '4', name: 'Old', active: false }]);
+        expect(savedList).toHaveBeenCalledWith(expect.objectContaining({ where: { list: 'class' } }));
+        expect(getQuickBooks).not.toHaveBeenCalled();
     });
 
-    test('answers 503, not 500, when QuickBooks fails the request', async () => {
-        const classes = jest.fn().mockRejectedValue(new Error('QuickBooks query failed: codes 3200'));
-        jest.mocked(getQuickBooks).mockResolvedValue({ classes } as unknown as Awaited<ReturnType<typeof getQuickBooks>>);
-        jest.spyOn(console, 'error').mockImplementation(() => {});
-        await expect(listQuickBooksClasses()).rejects.toMatchObject({ status: 503, message: 'QuickBooks did not return its Classes. Try again shortly.' });
-    });
-
-    describe('by CHECKIN_ENV', () => {
-        const saved = process.env.CHECKIN_ENV;
-        afterEach(() => { process.env.CHECKIN_ENV = saved; });
-
-        test('local lists the stand-in Classes without asking QuickBooks', async () => {
-            process.env.CHECKIN_ENV = 'local';
-            jest.mocked(getQuickBooks).mockClear();
-            await expect(listQuickBooksClasses()).resolves.toEqual(LOCAL_QUICKBOOKS_CLASSES);
-            expect(getQuickBooks).not.toHaveBeenCalled();
-        });
-
-        test.each(['prod', 'dev', '', 'stg'])('%p asks QuickBooks and never lists the stand-ins', async (env) => {
-            process.env.CHECKIN_ENV = env;
-            jest.mocked(getQuickBooks).mockResolvedValue(null);
-            await expect(listQuickBooksClasses()).rejects.toMatchObject({ status: 503, message: 'QuickBooks is not connected.' });
-            expect(getQuickBooks).toHaveBeenCalled();
-        });
-    });
-
-    test('an empty company lists no Classes', async () => {
-        const classes = jest.fn().mockResolvedValue([]);
-        jest.mocked(getQuickBooks).mockResolvedValue({ classes } as unknown as Awaited<ReturnType<typeof getQuickBooks>>);
+    test('an empty copy lists no Classes', async () => {
+        process.env.CHECKIN_ENV = 'prod';
+        savedList.mockResolvedValue(null);
         await expect(listQuickBooksClasses()).resolves.toEqual([]);
     });
 });

@@ -49,6 +49,7 @@ type ComplianceAnswer = {
   households?: Household[];
   peopleNeedingBgCheck?: PersonRow[];
   peopleMissingDob?: PersonRow[];
+  peopleWithDisputedCheck?: PersonRow[];
   blanketStamped?: BlanketStampedRow[];
   mergeInheritedBgChecks?: MergeInheritedRow[];
   peopleAwaitingAgreement?: PersonRow[];
@@ -157,6 +158,7 @@ export default function CompliancePage() {
   const households = data.households ?? [];
   const peopleNeedingBgCheck = data.peopleNeedingBgCheck ?? [];
   const peopleMissingDob = data.peopleMissingDob ?? [];
+  const peopleWithDisputedCheck = data.peopleWithDisputedCheck ?? [];
   const blanketStamped = data.blanketStamped ?? [];
   const mergeInherited = data.mergeInheritedBgChecks ?? [];
   const peopleAwaitingAgreement = data.peopleAwaitingAgreement ?? [];
@@ -172,7 +174,7 @@ export default function CompliancePage() {
         </Text>
       </Card>
 
-      {households.length === 0 && peopleNeedingBgCheck.length === 0 && peopleMissingDob.length === 0
+      {households.length === 0 && peopleNeedingBgCheck.length === 0 && peopleMissingDob.length === 0 && peopleWithDisputedCheck.length === 0
         && blanketStamped.length === 0 && mergeInherited.length === 0
         && peopleAwaitingAgreement.length === 0 && peopleNeedingAgreement.length === 0 && (
         <Card withBorder radius="md" padding="xl" ta="center">
@@ -317,6 +319,13 @@ export default function CompliancePage() {
           ))}
         </Stack>
       )}
+
+      <PersonSection
+        title="Background check disputed"
+        description="People whose own background check was rejected, or whose rejection the Board reset or the reviewer changed and two new approvals have not yet cleared. Any household application they are in is held until it settles."
+        color="red"
+        people={peopleWithDisputedCheck}
+      />
 
       <PersonSection
         title="Missing date of birth"

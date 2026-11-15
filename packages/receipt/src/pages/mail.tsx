@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { Alert, Button, Group, Modal, Paper, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import MailCatchUp from "../components/MailCatchUp";
 import ReceiptFile from "../components/ReceiptFile";
 import { BASE, send, useLoad } from "../components/api";
 import { releaseAll, releaseOne } from "../components/releaseAll";
@@ -150,7 +151,8 @@ function IgnoredFiles({ entries, onDone }: { entries: IgnoredFile[]; onDone: () 
  * /receipts/mail — mailed receipts awaiting finance. Deferred items, from known senders over their
  * daily upload limit, can be released as their sender, one by one, by sender, or all at once.
  * Held items, from unknown senders, are assigned or discarded one by one. Discarding can also add
- * the file to the ignore list, listed below the queue. FINANCE only.
+ * the file to the ignore list, listed below the queue. "Catch up now" reads the mailbox without
+ * waiting for the daily run. FINANCE only.
  */
 export default function ReceiptMailQueuePage() {
   const items = useLoad<MailItem[]>("/mail-items");
@@ -167,6 +169,7 @@ export default function ReceiptMailQueuePage() {
   return (
     <>
       <Title order={3} mb="md">Incoming receipt queue</Title>
+      <MailCatchUp onDone={items.reload} />
       {items.error && <Alert color="red" mb="md">{items.error}</Alert>}
       {ignored.error && <Alert color="red" mb="md">{ignored.error}</Alert>}
       {items.data?.length === 0 && <Text c="dimmed">No held mail.</Text>}

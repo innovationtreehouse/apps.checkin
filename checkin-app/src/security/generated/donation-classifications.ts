@@ -268,6 +268,18 @@ export const relations = {
     },
 } as const;
 
+export const marks = {
+    UploadedFile: ['fileBlob'],
+    Transaction: ['companyName', 'donationAmountCents', 'matchAmountCents', 'causeSupportFeeCents', 'merchantFeeCents', 'checkFeeCents', 'donorFirstName', 'donorLastName', 'donorComment'],
+    TransactionCommentRule: ['comment'],
+    DisbursementEvent: ['payload'],
+    InKindDonation: ['receiptTotalCents', 'donorFirstName', 'donorLastName', 'donorCompanyName', 'uploadedByUserId'],
+    ManualInKindDonation: ['donorFirstName', 'donorLastName', 'donorCompanyName'],
+    ManualInKindDonationLine: ['valueCents', 'suggestedValueCents'],
+    InKindDonationLine: ['valueCents'],
+    InKindPosting: ['bookedTotalCents'],
+} as const;
+
 export type Models = keyof typeof classifications;
 export type FieldsOf<M extends Models> = keyof (typeof classifications)[M];
 export type TierOf<M extends Models, F extends FieldsOf<M>> = (typeof classifications)[M][F];

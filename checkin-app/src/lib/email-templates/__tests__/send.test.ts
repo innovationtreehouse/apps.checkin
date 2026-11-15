@@ -1,7 +1,8 @@
 import { sendEmail } from "@/lib/email";
 import prisma from "@/lib/prisma";
 import { baseEmailLayout } from "../base";
-import { sendTemplated } from "../send";
+import { sendTemplated, sendTemplateTest } from "../send";
+import { REGISTRY } from "../registry";
 import { renderBodyHtml } from "../tokens";
 
 jest.mock("@/lib/prisma", () => ({
@@ -118,6 +119,19 @@ describe("sendTemplated", () => {
         expect(send.mock.calls[0][2]).toContain('You can manage it <a href="https://x.test/p?a=1&amp;b=2">here</a>.');
     });
 
+    it("renders a site-relative link token as a link", async () => {
+        await sendTemplated("program.assignment", "a@example.org", { programName: "Robotics", actionLink: "/programs/1" });
+
+        expect(send.mock.calls[0][2]).toContain('<a href="/programs/1">here</a>');
+    });
+
+    it.each(["javascript:alert(1)", "data:text/html,<b>x</b>", "//evil.test/x", "/\\evil.test/x", "/\t/evil.test/x", "/\n/evil.test/x"])("renders a %s link token as text, not a link", async (actionLink) => {
+        await sendTemplated("program.assignment", "a@example.org", { programName: "Robotics", actionLink });
+
+        expect(send.mock.calls[0][2]).not.toContain("<a href");
+        expect(send.mock.calls[0][2]).toContain(actionLink.replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>"));
+    });
+
     it("returns false when sendEmail fails, so callers can retry", async () => {
         send.mockResolvedValue(false);
 
@@ -133,5 +147,20 @@ describe("sendTemplated", () => {
         expect(send.mock.calls[0][1]).toBe("Confirmed: Enrollment in Arts & Crafts");
         expect(consoleError).toHaveBeenCalled();
         consoleError.mockRestore();
+    });
+});
+
+describe("sendTemplateTest", () => {
+    it("sends the draft filled from the sample values, marked [Test], without reading the saved row", async () => {
+        await sendTemplateTest("enrollment.confirm", "me@example.org", { subject: "Hi {{name}}", body: "In {{programName}}." });
+        const { name, programName } = REGISTRY["enrollment.confirm"].sampleCtx;
+        expect(send).toHaveBeenCalledWith("me@example.org", `[Test] Hi ${name}`, baseEmailLayout(`<p>In ${programName}.</p>`));
+        expect(findUnique).not.toHaveBeenCalled();
+    });
+
+    it("sends the default for a blank field", async () => {
+        await sendTemplateTest("enrollment.confirm", "me@example.org", { subject: " ", body: "" });
+        expect(send.mock.calls[0][1]).toBe("[Test] Confirmed: Enrollment in Robotics Club");
+        expect(send.mock.calls[0][2]).toContain("successfully enrolled in Robotics Club");
     });
 });

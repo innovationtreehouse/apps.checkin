@@ -40,10 +40,10 @@ const header = (name: string) => screen.getByRole("columnheader", { name });
 describe("Org inventory table sort", () => {
   beforeEach(() => { loaded.length = 0; });
 
-  it("lists by part number ascending until a header is clicked", () => {
+  it("lists by Part ID ascending until a header is clicked", () => {
     render(<MantineProvider><OrgItemsPage /></MantineProvider>);
     expect(lastOrder()).toEqual(["gtin13", "asc", "1"]);
-    expect(header("Part No.")).toHaveAttribute("aria-sort", "ascending");
+    expect(header("Part ID")).toHaveAttribute("aria-sort", "ascending");
   });
 
   it("sorts by a clicked column, and reverses on a second click", () => {
@@ -51,7 +51,7 @@ describe("Org inventory table sort", () => {
     fireEvent.click(header("Location"));
     expect(lastOrder()).toEqual(["location", "asc", "1"]);
     expect(header("Location")).toHaveAttribute("aria-sort", "ascending");
-    expect(header("Part No.")).toHaveAttribute("aria-sort", "none");
+    expect(header("Part ID")).toHaveAttribute("aria-sort", "none");
 
     fireEvent.click(header("Location"));
     expect(lastOrder()).toEqual(["location", "desc", "1"]);

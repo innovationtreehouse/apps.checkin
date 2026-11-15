@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Alert, Badge, Box, Button, Card, Group, Modal, Paper, Stack, Switch, Table, Text, Textarea, TextInput, UnstyledButton } from "@mantine/core";
+import { Alert, Box, Button, Card, Group, Modal, Paper, Stack, Switch, Table, Text, Textarea, TextInput, UnstyledButton } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { IconChevronDown, IconChevronUp, IconSelector } from "@tabler/icons-react";
 import { EntityPicker } from "@/components/admin/EntityPicker";
@@ -36,7 +36,6 @@ type PersonRow = {
   isInventoryManager?: boolean;
   isFinance?: boolean;
   isKeyVolunteer?: boolean;
-  emailSuppressed?: boolean;
 };
 
 export default function AdminParticipantsIndex() {
@@ -310,12 +309,7 @@ export default function AdminParticipantsIndex() {
                     <Table.Tr key={p.id}>
                       <Table.Td c="dimmed">{p.id}</Table.Td>
                       <Table.Td fw={600}>{p.name}</Table.Td>
-                      <Table.Td>
-                        <Group gap={6} wrap="nowrap">
-                          {p.email || <Text span c="dimmed">No email</Text>}
-                          {p.emailSuppressed && <Badge size="xs" color="gray" variant="light">Unsubscribed</Badge>}
-                        </Group>
-                      </Table.Td>
+                      <Table.Td>{p.email || <Text span c="dimmed">No email</Text>}</Table.Td>
                       <Table.Td>{p.household?.name || <Text span c="dimmed">No household</Text>}</Table.Td>
                       <Table.Td>
                         <Group gap={4} wrap="wrap">

@@ -58,7 +58,7 @@ function TabButton({ tab, selected, onSelect }: { tab: Tab; selected: boolean; o
       color={selected ? undefined : "gray"}
       style={{ opacity: tab.actionable > 0 || selected ? 1 : 0.6 }}
       onClick={() => onSelect(tab.queue)}
-      rightSection={<QueueCount badge={tab.badge} />}
+      rightSection={<QueueCount badge={tab.badge} selected={selected} />}
     >
       {tab.label}
     </Button>
@@ -78,9 +78,9 @@ export default function FinanceReview() {
   const receipts = useQueueCounts();
   useEffect(() => {
     if (receipts.error) {
-      notifications.show({ id: "receipt-queue-counts", title: "Couldn't load the receipt tab counts", message: loadFailure("/api/receipts/queue-counts", receipts.error), color: "red", autoClose: false });
+      notifications.show({ id: "receipt-queue-counts", title: "Couldn't load the receipt tab counts", message: loadFailure("/api/receipts/queue-counts", receipts.error, receipts.status), color: "red", autoClose: false });
     }
-  }, [receipts.error]);
+  }, [receipts.error, receipts.status]);
   const expenses = useFinanceQueueCounts();
 
   const receiptTab = (q: { value: string; label: string }): Tab => {

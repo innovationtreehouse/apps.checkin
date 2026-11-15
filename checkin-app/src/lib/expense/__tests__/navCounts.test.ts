@@ -6,9 +6,7 @@ const mockQueueCount = jest.fn();
 
 jest.mock("@checkin/expense", () => ({
   getExpenseRuntime: () => ({ signoff: { bucketsApprovedBy: (id: number) => mockBuckets(id) } }),
-  financeQueueActionable: () => mockQueueCount(),
-  approvalPoll: () => async () => [],
-  signoffsAwaitingCount: async () => 4,
+  financeQueueActionable: (_p: unknown, ceiling: number) => mockQueueCount(ceiling),
   expenseActionCounts: (p: unknown) => mockActionCounts(p),
 }));
 
@@ -31,7 +29,6 @@ describe("expenseLibraryCounts", () => {
   it("reports the finance queue count and each view's action count to FINANCE", async () => {
     expect(await expenseLibraryCounts({ id: 1, isFinance: true })).toEqual({
       financeQueue: 5,
-      awaitingMySignoff: 0,
       approver: 0,
       "actionable:assign_ownership": 1,
       "actionable:owner_approval": 2,
@@ -41,6 +38,7 @@ describe("expenseLibraryCounts", () => {
       "actionable:qb_pending": 1,
     });
     expect(mockActionCounts).toHaveBeenCalledWith({ id: 1, name: null, isFinance: true, isBoard: false });
+    expect(mockQueueCount).toHaveBeenCalledWith(99);
   });
 
   it("passes the Board role through, so the service can leave out FINANCE-only steps", async () => {
@@ -50,7 +48,7 @@ describe("expenseLibraryCounts", () => {
 
   it("counts a bucket approver who holds no role, without a finance queue count", async () => {
     mockBuckets.mockResolvedValue([100]);
-    expect(await expenseLibraryCounts({ id: 3 })).toMatchObject({ approver: 1, awaitingMySignoff: 4, "actionable:owner_approval": 2 });
+    expect(await expenseLibraryCounts({ id: 3 })).toMatchObject({ approver: 1, "actionable:owner_approval": 2 });
   });
 
   it("asks nothing more of a viewer who approves no bucket and holds no role", async () => {
@@ -62,10 +60,10 @@ describe("expenseLibraryCounts", () => {
     beforeEach(() => jest.spyOn(console, "error").mockImplementation(() => {}));
     afterEach(() => jest.restoreAllMocks());
 
-    it("keeps the finance queue and sign-off pills when the action counts fail", async () => {
+    it("keeps the finance queue and approver counts when the action counts fail", async () => {
       mockBuckets.mockResolvedValue([100]);
       mockActionCounts.mockRejectedValue(new Error("db down"));
-      expect(await expenseLibraryCounts({ id: 1, isFinance: true })).toEqual({ financeQueue: 5, awaitingMySignoff: 4, approver: 1 });
+      expect(await expenseLibraryCounts({ id: 1, isFinance: true })).toEqual({ financeQueue: 5, approver: 1 });
     });
 
     it("keeps the action pills when the finance queue count fails", async () => {

@@ -1,7 +1,7 @@
 "use client";
 import { Fragment, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { Alert, Anchor, Badge, Button, Group, NumberInput, Paper, Radio, ScrollArea, Select, SimpleGrid, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { formatGtinDisplay } from "@checkin/gtin";
@@ -12,7 +12,7 @@ import {
 import { USAGE_BEHAVIORS } from "@checkin/receipt-types";
 import { LINE_STATUS_COLOR, LINE_STATUS_LABEL, api, stateColor, stateLabel, errorMessage, notifyNavCounts, useCanManage, useLoad } from "../components/api";
 import { formatCents } from "@checkin/money";
-import { type LineFormKind, lineFormBody } from "../lib/line-form";
+import { type LineFormFields, type LineFormKind, lineFormBody, lineFormStart, lineFormUnchanged } from "../lib/line-form";
 import { lineLockReason } from "../lib/line-lock";
 
 interface Receipt {
@@ -55,6 +55,7 @@ interface LineStatus {
   recognitionStatus: string;
   assignedGtin13: string | null;
   provisionalItemGtin13: string | null;
+  proposedName: string | null;
   conversionFactor: number;
 }
 interface Detail {
@@ -113,13 +114,23 @@ function usePartNames(gtins: string[]): CatalogNames {
  */
 export default function ReceiptPage({ backHref = "/inventory/receiving" }: { backHref?: string }) {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const canManage = useCanManage();
   const detail = useLoad<Detail>(`/receipts/${id}`);
   const partLookup = usePartNames((detail.data?.ReceivedReceiptLineStatus ?? []).flatMap((ls) => ls.assignedGtin13 ?? ls.provisionalItemGtin13 ?? []));
   const [busy, setBusy] = useState(false);
   const [openLineId, setOpenLineId] = useState<number | null>(null);
 
-  async function act(path: string, body?: unknown, message = "Saved"): Promise<boolean> {
+  /** Returns to the page the receipt was opened from once the receipt is resolved. */
+  function leaveIfResolved(state: string): boolean {
+    if (state !== "resolved") return false;
+    notifications.show({ message: "Receipt resolved", color: "green" });
+    router.push(backHref);
+    return true;
+  }
+
+  /** Posts an action. A line decision (`lineDecision`) can complete and apply the receipt, so it re-reads the state after. */
+  async function act(path: string, body?: unknown, message = "Saved", lineDecision = false): Promise<boolean> {
     setBusy(true);
     try {
       const res = await api<{ state?: string; validationNotes?: string } | null>(path, {
@@ -129,7 +140,11 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
       if (res?.validationNotes) {
         const title = res.state === "applying" ? "Apply didn't finish" : "Apply failed";
         notifications.show({ title, message: res.validationNotes, color: "red", autoClose: false });
-      } else notifications.show({ message, color: "green" });
+        return true;
+      }
+      // An unreadable state leaves the page as it is; the reload below reports the failure.
+      const after = lineDecision ? await api<Detail>(`/receipts/${id}`).catch(() => null) : null;
+      if (!(after && leaveIfResolved(after.ReceivedReceipt.state))) notifications.show({ message, color: "green" });
       return true;
     } catch (err) {
       notifications.show({ title: "Couldn't save", message: errorMessage(err), color: "red", autoClose: false });
@@ -159,6 +174,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
     try {
       await api(`${base}/run-matching`, { method: "POST" });
       const after = await api<Detail>(base);
+      if (leaveIfResolved(after.ReceivedReceipt.state)) return;
       if (after.ReceivedReceipt.matchingPendingSince) {
         notifications.show({ message: "Catalog still unavailable. Try again later, or map the lines by hand.", color: "gray" });
       } else {
@@ -259,8 +275,8 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
             const lineBase = `${base}/lines/${ls.id}`;
             const isOpen = editable && openLineId === ls.id;
             const mappedGtin = ls.assignedGtin13 ?? ls.provisionalItemGtin13;
-            // A provisional part has no row until the receipt applies, and then takes the line's description as its name.
-            const mappedName = (mappedGtin && partLookup.names.get(mappedGtin)) ?? (ls.assignedGtin13 ? undefined : li?.description) ?? (mappedGtin && partLabels.get(mappedGtin));
+            // A provisional part has no row until the receipt applies, and then takes the proposed name, else the line's description.
+            const mappedName = (mappedGtin && partLookup.names.get(mappedGtin)) ?? (ls.assignedGtin13 ? undefined : ls.proposedName ?? li?.description) ?? (mappedGtin && partLabels.get(mappedGtin));
             return (
               <Fragment key={ls.id}>
                 <Table.Tr bg={isOpen ? "var(--mantine-color-blue-light)" : undefined}>
@@ -284,10 +300,12 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
                     <Table.Td>
                       {isOpen ? (
                         <Button size="xs" variant="subtle" onClick={() => setOpenLineId(null)}>Close</Button>
+                      ) : ls.recognitionStatus !== "unrecognized" ? (
+                        <Button size="xs" variant="subtle" color="gray" onClick={() => setOpenLineId(ls.id)}>Change</Button>
                       ) : (
                         <Group gap={4} wrap="nowrap">
                           <Button size="xs" variant="light" onClick={() => setOpenLineId(ls.id)}>Associate</Button>
-                          <Button size="xs" variant="subtle" loading={busy} onClick={() => act(`${lineBase}/non-inventory`, undefined, "Marked not inventory")}>
+                          <Button size="xs" variant="subtle" loading={busy} onClick={() => act(`${lineBase}/non-inventory`, undefined, "Marked not inventory", true)}>
                             Not inventory
                           </Button>
                         </Group>
@@ -302,10 +320,14 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
                         <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="lg">
                           <LineDetails item={li} currency={parsed.currency} />
                           <LineForm
+                            start={lineFormStart(ls)}
                             busy={busy}
                             onCancel={() => setOpenLineId(null)}
+                            onNonInventory={ls.recognitionStatus === "non_inventory" ? undefined : async () => {
+                              if (await act(`${lineBase}/non-inventory`, undefined, "Marked not inventory")) setOpenLineId(null);
+                            }}
                             onSubmit={async (form, body) => {
-                              if (await act(`${lineBase}/${form}`, body)) setOpenLineId(null);
+                              if (await act(`${lineBase}/${form}`, body, "Saved", true)) setOpenLineId(null);
                             }}
                           />
                         </SimpleGrid>
@@ -351,22 +373,24 @@ function LineDetails({ item, currency }: { item: LineItem | undefined; currency:
   );
 }
 
-function LineForm({ busy, onSubmit, onCancel }: {
+function LineForm({ start, busy, onSubmit, onCancel, onNonInventory }: {
+  start: LineFormFields;
   busy: boolean;
   onSubmit: (form: LineFormKind, body: NonNullable<ReturnType<typeof lineFormBody>>) => void;
   onCancel: () => void;
+  onNonInventory?: () => void;
 }) {
   const [form, setForm] = useState<LineFormKind>("associate");
   const [chosen, setChosen] = useState<CatalogItem | null>(null);
   const [search, setSearch] = useState("");
   const found = useCatalogSearch(search);
   const results = [...(chosen ? [chosen] : []), ...found.items.filter((item) => item.gtin13 !== chosen?.gtin13)];
-  const gtin13 = chosen?.gtin13 ?? null;
-  const [name, setName] = useState("");
-  const [categoryId, setCategoryId] = useState<string | null>(null);
-  const [subcategoryId, setSubcategoryId] = useState<string | null>(null);
-  const [usage, setUsage] = useState<string | null>(null);
-  const [factor, setFactor] = useState<number | string>(1);
+  const [gtin13, setGtin13] = useState(start.gtin13);
+  const [name, setName] = useState(start.name);
+  const [categoryId, setCategoryId] = useState(start.categoryId);
+  const [subcategoryId, setSubcategoryId] = useState(start.subcategoryId);
+  const [usage, setUsage] = useState(start.usage);
+  const [factor, setFactor] = useState<number | string>(start.conversionFactor);
   const conversionFactor = Number(factor) || 1;
   const categories = useLoad<CategoryOption[]>("/api/catalog/categories");
   const subcategories = useLoad<SubcategoryOption[]>("/api/catalog/subcategories");
@@ -374,7 +398,8 @@ function LineForm({ busy, onSubmit, onCancel }: {
   const subcategoryOptions = (subcategories.data ?? [])
     .filter((s) => String(s.categoryId) === categoryId)
     .map((s) => ({ value: String(s.id), label: `${String(s.number).padStart(2, "0")} — ${s.name}` }));
-  const body = lineFormBody(form, { gtin13, name, categoryId, subcategoryId, usage, conversionFactor });
+  const fields = { gtin13, name, categoryId, subcategoryId, usage, conversionFactor };
+  const body = lineFormUnchanged(form, start, fields) ? null : lineFormBody(form, fields);
 
   return (
     <Stack gap={4}>
@@ -382,12 +407,13 @@ function LineForm({ busy, onSubmit, onCancel }: {
         <>
           <TextInput
             size="xs"
-            placeholder="Search the catalog by name, GTIN or category"
+            placeholder="Search the catalog by name, Part ID or category"
             value={search}
             onChange={(e) => setSearch(e.currentTarget.value)}
             error={found.error && `Couldn't search the catalog: ${found.error}`}
             miw={320}
           />
+          {gtin13 && !chosen && <Text size="xs" c="dimmed">Keeps {formatGtinDisplay(gtin13)} unless you choose another item</Text>}
           {catalogSearchTerm(search) === null && <Text size="xs" c="dimmed">Type at least {MIN_CATALOG_SEARCH_LENGTH} characters</Text>}
           {found.answered && !found.error && results.length === 0 && <Text size="xs" c="dimmed">No matching catalog items</Text>}
           {results.length > 0 && (
@@ -395,7 +421,7 @@ function LineForm({ busy, onSubmit, onCancel }: {
               <Radio.Group
                 aria-label="Catalog items"
                 value={gtin13}
-                onChange={(v) => setChosen(results.find((item) => item.gtin13 === v) ?? null)}
+                onChange={(v) => { setChosen(results.find((item) => item.gtin13 === v) ?? null); setGtin13(v); }}
               >
                 <Stack gap={6} py={4}>
                   {results.map((item) => <Radio key={item.gtin13} size="xs" value={item.gtin13} label={catalogItemLabel(item)} />)}
@@ -404,11 +430,12 @@ function LineForm({ busy, onSubmit, onCancel }: {
             </ScrollArea.Autosize>
           )}
           <Group>
-            <Button size="xs" variant="light" onClick={() => { setName(search.trim()); setForm("propose"); }}>Propose new item</Button>
+            <Button size="xs" variant="light" onClick={() => { setName(search.trim() || name); setForm("propose"); }}>Propose new item</Button>
           </Group>
         </>
       ) : (
         <>
+          {start.name && <Text size="xs" c="dimmed">Choose the category, subcategory and usage again</Text>}
           <TextInput size="xs" placeholder="Proposed name" value={name} onChange={(e) => setName(e.currentTarget.value)} />
           <Select
             size="xs"
@@ -445,6 +472,9 @@ function LineForm({ busy, onSubmit, onCancel }: {
           Save
         </Button>
         <Button size="xs" variant="subtle" onClick={form === "propose" ? () => setForm("associate") : onCancel}>Cancel</Button>
+        {onNonInventory && (
+          <Button size="xs" variant="subtle" color="gray" loading={busy} onClick={onNonInventory}>Not inventory</Button>
+        )}
       </Group>
     </Stack>
   );

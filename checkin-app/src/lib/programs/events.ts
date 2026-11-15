@@ -8,6 +8,8 @@ import { intervalsOverlap } from "@/lib/attendanceConflicts";
 import { findVisitOverlaps, openOverlapRefusal, overlapFlag } from "@/lib/visit/overlap";
 import { OPEN_VISIT_REFUSAL } from "@/lib/visitTimes";
 import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
+import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
+import { ServiceError } from "@checkin/component-kit";
 
 export interface EventEditor {
     id: number;
@@ -24,7 +26,7 @@ export interface EventEditContext {
     isCoreVolunteer: boolean;
 }
 
-export type EventRefusal = "invalid" | "forbidden";
+export type EventRefusal = "invalid" | "forbidden" | "conflict";
 
 export type EventEditResult<T> =
     | { ok: true; value: T }
@@ -232,6 +234,7 @@ export async function manualEditAttendance(
     // surface as a refusal, or null on success.
     const failure = await prisma.$transaction(async (tx): Promise<string | { openSince: Date } | null> => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(${targetId})`;
+        await lockLiveHouseholdsOf(tx, [targetId]);
 
         if (status === 'Absent') {
             // An open visit (departedAt = null) means they physically scanned in
@@ -243,14 +246,38 @@ export async function manualEditAttendance(
             if (openVisit) {
                 return OPEN_VISIT_REFUSAL;
             }
-            // Only closed visits remain; safe to clear on an Absent
-            // correction — as a TOMBSTONE, never a row removal.
-            // A lead's Absent mark must be as reversible and reviewable as
-            // the member's own delete, and an already-tombstoned row is
-            // left alone: it is the record of an earlier deletion.
-            const doomed = await tx.visit.findMany({
+            const closed = await tx.visit.findMany({
                 where: { personId: targetId, associatedEventId: eventId, ...LIVE_VISIT }
             });
+            // A badged visit proves the person was in the building, so Absent
+            // only detaches it from this session; it still counts toward facility hours.
+            const scanned = closed.filter(v => v.arrivedVia === "SCANNER");
+            if (scanned.length > 0) {
+                await tx.visit.updateMany({
+                    where: { id: { in: scanned.map(v => v.id) }, ...LIVE_VISIT },
+                    data: { associatedEventId: null }
+                });
+                await tx.auditLog.createMany({
+                    data: scanned.map(v => ({
+                        actorId: userId,
+                        action: "EDIT",
+                        tableName: "Visit",
+                        affectedEntityId: v.id,
+                        secondaryAffectedEntity: targetId,
+                        oldData: {
+                            arrivedAt: v.arrivedAt, departedAt: v.departedAt,
+                            arrivedVia: v.arrivedVia, departedVia: v.departedVia,
+                            associatedEventId: eventId
+                        },
+                        newData: { associatedEventId: null, type: "lead_attendance_correction", status: "Absent" },
+                    }))
+                });
+            }
+            // Any other visit is cleared as a TOMBSTONE, never a row removal,
+            // so a lead's Absent mark is as reversible and reviewable as the
+            // member's own delete. An already-tombstoned row is left alone: it
+            // is the record of an earlier deletion.
+            const doomed = closed.filter(v => v.arrivedVia !== "SCANNER");
             if (doomed.length > 0) {
                 await tx.visit.updateMany({
                     where: { id: { in: doomed.map(v => v.id) }, ...LIVE_VISIT },
@@ -385,7 +412,11 @@ export async function manualEditAttendance(
             });
         }
         return null;
-    }, { maxWait: 5000, timeout: 15000 });
+    }, { maxWait: 5000, timeout: 15000 }).catch((e: unknown) => {
+        if (e instanceof ServiceError) return e;
+        throw e;
+    });
+    if (failure instanceof ServiceError) return refuse("conflict", failure.message);
     invalidateAttendanceCache();
 
     if (failure) return refuse("invalid", typeof failure === "string" ? failure : await openOverlapRefusal(failure.openSince));

@@ -3,7 +3,8 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { MantineProvider } from "@mantine/core";
 import ReceiptPage from "@checkin/workflow-mapping/pages/receipt";
 
-jest.mock("next/navigation", () => ({ useParams: () => ({ id: "7" }) }));
+const mockPush = jest.fn();
+jest.mock("next/navigation", () => ({ useParams: () => ({ id: "7" }), useRouter: () => ({ push: mockPush }) }));
 const mockShow = jest.fn();
 const mockApi = jest.fn();
 
@@ -57,7 +58,7 @@ beforeEach(() => {
 
 const wrap = () => render(<MantineProvider><ReceiptPage /></MantineProvider>);
 
-const BANNER = "Item names couldn't be loaded from the catalog. Showing part numbers.";
+const BANNER = "Item names couldn't be loaded from the catalog. Showing Part IDs.";
 
 /** The Mapping cell of the line whose row matches `name`. */
 const mappingCell = (name: RegExp) => within(screen.getByRole("row", { name })).getAllByRole("cell")[6];
@@ -66,7 +67,7 @@ const mappingCell = (name: RegExp) => within(screen.getByRole("row", { name })).
 const field = (label: string) => screen.getByText(label, { selector: "p" }).nextElementSibling?.textContent;
 
 describe("the receiving page's Mapping column", () => {
-  const mapped = (fields: { assignedGtin13?: string; provisionalItemGtin13?: string }) => {
+  const mapped = (fields: { assignedGtin13?: string; provisionalItemGtin13?: string; proposedName?: string }) => {
     detail = {
       ...baseDetail,
       ReceivedReceiptLineStatus: [{ ...baseDetail.ReceivedReceiptLineStatus[0], assignedGtin13: null, provisionalItemGtin13: null, ...fields, conversionFactor: 2 }] as typeof baseDetail.ReceivedReceiptLineStatus,
@@ -91,6 +92,14 @@ describe("the receiving page's Mapping column", () => {
     await act(async () => {});
     expect(mappingCell(/Wood glue/)).toHaveTextContent("P000123 · Wood glue ×2");
     expect(screen.queryByText(BANNER)).not.toBeInTheDocument();
+  });
+
+  it("shows a proposed provisional part by its proposed name before it has a provisional row", async () => {
+    serve({}, {});
+    mapped({ provisionalItemGtin13: "0200002701237", proposedName: "Titebond II glue" });
+    wrap();
+    await act(async () => {});
+    expect(mappingCell(/Wood glue/)).toHaveTextContent("P000123 · Titebond II glue ×2");
   });
 
   it("shows a provisional part by its provisional name", async () => {
@@ -195,6 +204,49 @@ describe("the receiving page for one receipt", () => {
     expect(screen.queryByText("non inventory")).not.toBeInTheDocument();
   });
 
+  describe("a line's actions", () => {
+    const actions = (name: RegExp) => within(screen.getByRole("row", { name })).queryAllByRole("button").map((b) => b.textContent);
+
+    it("offers Associate and Not inventory on an undecided line", () => {
+      wrap();
+      expect(actions(/Wood glue/)).toEqual(["Associate", "Not inventory"]);
+    });
+
+    it.each(["recognized", "provisional", "non_inventory"])("offers only Change on a %s line", (recognitionStatus) => {
+      detail = {
+        ...baseDetail,
+        ReceivedReceiptLineStatus: [{ ...baseDetail.ReceivedReceiptLineStatus[0], recognitionStatus }, baseDetail.ReceivedReceiptLineStatus[1]],
+      };
+      wrap();
+      expect(actions(/Wood glue/)).toEqual(["Change"]);
+    });
+
+    it("opens the line's mapping form from Change", () => {
+      wrap();
+      fireEvent.click(within(screen.getByRole("row", { name: /Gift card/ })).getByRole("button", { name: "Change" }));
+      const panel = screen.getByRole("region", { name: "Line 2 details" });
+      expect(within(panel).getByRole("button", { name: "Save" })).toBeInTheDocument();
+    });
+
+    it("marks a linked line not inventory from its open form", async () => {
+      detail = {
+        ...baseDetail,
+        ReceivedReceiptLineStatus: [{ ...baseDetail.ReceivedReceiptLineStatus[0], recognitionStatus: "recognized" }, baseDetail.ReceivedReceiptLineStatus[1]],
+      };
+      mockApi.mockResolvedValue(null);
+      wrap();
+      fireEvent.click(within(screen.getByRole("row", { name: /Wood glue/ })).getByRole("button", { name: "Change" }));
+      fireEvent.click(within(screen.getByRole("region", { name: "Line 1 details" })).getByRole("button", { name: "Not inventory" }));
+      await waitFor(() => expect(mockApi).toHaveBeenCalledWith("/receipts/7/lines/11/non-inventory", expect.anything()));
+    });
+
+    it("offers no Not inventory in the form of a line already not inventory", () => {
+      wrap();
+      fireEvent.click(within(screen.getByRole("row", { name: /Gift card/ })).getByRole("button", { name: "Change" }));
+      expect(within(screen.getByRole("region", { name: "Line 2 details" })).queryByRole("button", { name: "Not inventory" })).not.toBeInTheDocument();
+    });
+  });
+
   it("shows an opened line's details beside its mapping form", () => {
     wrap();
     const row = screen.getByRole("row", { name: /Wood glue/ });
@@ -213,7 +265,7 @@ describe("the receiving page for one receipt", () => {
 
   describe("proposing from the associate search", () => {
     const hub = { gtin13: "0022222222220", name: "Power Hub", category: { name: "Electronics" }, subcategory: { name: "Control" } };
-    const SEARCH = "Search the catalog by name, GTIN or category";
+    const SEARCH = "Search the catalog by name, Part ID or category";
 
     const realFetch = global.fetch;
     afterEach(() => { global.fetch = realFetch; });
@@ -307,6 +359,59 @@ describe("the receiving page for one receipt", () => {
 
     expect(screen.queryByRole("region", { name: "Line 1 details" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "← Back" })).toHaveAttribute("href", "/inventory/receiving?queue=mapping");
+  });
+
+  describe("a line decision that completes the receipt", () => {
+    const QUEUE = "/inventory/receiving?queue=mapping";
+    /** Answers the decision's POST, and the re-read of the receipt with it in `state`. */
+    function afterDecision(state: string) {
+      mockApi.mockImplementation(async (path: string) =>
+        path === "/receipts/7" ? { ...baseDetail, ReceivedReceipt: { ...receipt, state } } : {});
+    }
+    const decide = () => {
+      render(<MantineProvider><ReceiptPage backHref={QUEUE} /></MantineProvider>);
+      fireEvent.click(within(screen.getByRole("row", { name: /Wood glue/ })).getByRole("button", { name: "Not inventory" }));
+    };
+
+    it("returns to the queue it came from once the receipt is resolved", async () => {
+      afterDecision("resolved");
+      decide();
+      await waitFor(() => expect(mockPush).toHaveBeenCalledWith(QUEUE));
+      expect(mockShow).toHaveBeenCalledWith({ message: "Receipt resolved", color: "green" });
+      expect(mockApi).toHaveBeenCalledWith("/receipts/7/lines/11/non-inventory", { method: "POST" });
+    });
+
+    it("stays on the receipt when the save leaves it needing mapping", async () => {
+      afterDecision("pending_review");
+      decide();
+      await waitFor(() => expect(mockShow).toHaveBeenCalledWith({ message: "Marked not inventory", color: "green" }));
+      expect(mockPush).not.toHaveBeenCalled();
+    });
+
+    it("stays on the receipt when the apply failed", async () => {
+      afterDecision("apply_failed");
+      decide();
+      await waitFor(() => expect(mockApi).toHaveBeenCalledWith("/receipts/7"));
+      await act(async () => {});
+      expect(mockPush).not.toHaveBeenCalled();
+      expect(mockShow).not.toHaveBeenCalledWith({ message: "Receipt resolved", color: "green" });
+    });
+
+    it("stays on the receipt when the decision itself reports an apply failure", async () => {
+      mockApi.mockResolvedValue({ state: "apply_failed", validationNotes: "Expense: QuickBooks timed out" });
+      decide();
+      await waitFor(() => expect(mockShow).toHaveBeenCalledWith(expect.objectContaining({ title: "Apply failed", color: "red" })));
+      expect(mockPush).not.toHaveBeenCalled();
+    });
+
+    it("returns to the queue when Run matching now resolves the receipt", async () => {
+      detail = { ...baseDetail, ReceivedReceipt: { ...receipt, matchingPendingSince: "2026-10-02T15:30:00Z" } };
+      afterDecision("resolved");
+      render(<MantineProvider><ReceiptPage backHref={QUEUE} /></MantineProvider>);
+      fireEvent.click(screen.getByRole("button", { name: "Run matching now" }));
+      await waitFor(() => expect(mockPush).toHaveBeenCalledWith(QUEUE));
+      expect(mockShow).toHaveBeenCalledWith({ message: "Receipt resolved", color: "green" });
+    });
   });
 
   it("keeps an apply failure open as a red notification naming the leg and the reason", async () => {

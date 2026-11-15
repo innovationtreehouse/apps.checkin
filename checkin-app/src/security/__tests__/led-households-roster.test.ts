@@ -29,6 +29,7 @@ const LED_ONLY: CtxNeeds = {
     programEvents: false,
     activeVisitors: false,
     ledHouseholdMembers: true,
+    householdMembers: false,
 };
 
 // The view the registry grants both /api/attendance/manual/[id] verbs.

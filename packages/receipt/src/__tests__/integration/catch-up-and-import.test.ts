@@ -44,11 +44,10 @@ describeDb("catch-up steps", () => {
 
     const [listed] = await receiptService.list({ state: "receipt_finalized", pushed: false });
     expect(listed).toMatchObject({ id: r.id, lastPushFailedAt: expect.any(Date) });
-    expect(listed).not.toHaveProperty("lastPushFailure");
     expect(listed).not.toHaveProperty("lastError");
-    expect(await receiptService.get(r.id, "finance")).toMatchObject({ lastPushFailedAt: expect.any(Date), lastPushFailure: "unexpected" });
+    expect(await receiptService.get(r.id, "finance")).toMatchObject({ lastPushFailedAt: expect.any(Date), lastError: "unexpected" });
     actAs(ALICE);
-    expect(await receiptService.get(r.id, "submitter")).not.toHaveProperty("lastPushFailure");
+    expect(await receiptService.get(r.id, "submitter")).not.toHaveProperty("lastError");
   });
 
   it("a manual push delivers a failed receipt and takes it off the lists", async () => {
@@ -58,7 +57,7 @@ describeDb("catch-up steps", () => {
     actAs(FINANCE);
     expect(await receiptService.push(r.id)).toEqual({ pushed: true });
     expect(await receiptService.list({ state: "receipt_finalized", pushed: false })).toEqual([]);
-    expect((await receiptService.get(r.id, "finance"))).not.toHaveProperty("lastPushFailure");
+    expect((await receiptService.get(r.id, "finance"))).not.toHaveProperty("lastError");
   });
 
   it("counts each state, the undelivered receipts, and the ones whose push failed", async () => {
@@ -68,7 +67,7 @@ describeDb("catch-up steps", () => {
     await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Other Store" }) });
     await db.receipt.updateMany({ data: { pushedAt: null } });
     actAs(FINANCE);
-    expect(await receiptService.queueCounts(null)).toEqual({ byState: { receipt_finalized: 2 }, notPushed: 2, pushGivenUp: 1 });
+    expect(await receiptService.queueCounts(null)).toEqual({ byState: { receipt_finalized: 2 }, notPushed: 2, failedPushes: 1 });
   });
 
   it("puts a failed push in finance's list and pill at once, unless the viewer is conflicted", async () => {

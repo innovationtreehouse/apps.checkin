@@ -13,7 +13,7 @@ import type { NavSection, NavUser } from "@/lib/nav/types";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
 import { NOT_PUSHED, OTHER_QUEUES, QUEUES, queueListPath, reviewDetailHref } from "../../packages/receipt/src/components/reviewQueue";
 import { navPages as viewerPages, navSections } from "../test-support/navPages";
-import { api, loginAs, type Session } from "./helpers";
+import { api, loginAs, newClassId, type Session } from "./helpers";
 import { expenseViewsFor } from "@checkin/expense/nav";
 
 // The first persona pays the dev server's compile of every page and route it opens.
@@ -76,7 +76,9 @@ const expenseList = async (v: Viewer, href: string): Promise<string[]> => {
     const filter = `view=${view}${view === "all" ? "&active=1" : ""}`;
     urls.push(`${href}?view=${view}&page=1`, `/api/expense/expenses?${filter}&page=1&limit=${PAGE_SIZE}`, `/api/expense/expenses/count?${filter}`);
   }
-  const id = await firstId<{ id: string }>(v.session, `/api/expense/expenses?view=all&page=1&limit=1`);
+  const listed = await api<{ Expense: { id: string }[] }>(v.session, `/api/expense/expenses?view=all&page=1&limit=1`);
+  if (listed.status === 200 && !Array.isArray(listed.json.Expense)) throw new Error("the expense list did not answer { Expense: [...] }");
+  const id = listed.status === 200 ? (listed.json.Expense[0]?.id ?? null) : null;
   if (id !== null) {
     const base = `/api/expense/expenses/${encodeURIComponent(id)}`;
     urls.push(`${href}/${encodeURIComponent(id)}`, base, `${base}/line-item-approvals`, `${base}/signoffs`);
@@ -121,7 +123,13 @@ const PAGE_LOADS: Record<string, (v: Viewer, href: string) => string[] | Promise
   },
   "/expense/expenses": expenseList,
   "/programs-i-lead/expense-approvals": expenseList,
-  "/expense/account-mapping": () => [paged("/api/expense/account-mapping"), "/api/expense/qb-accounts", "/api/books-map/quickbooks-accounts"],
+  "/expense/account-mapping": () => [
+    paged("/api/expense/account-mapping"),
+    "/api/expense/qb-accounts",
+    "/api/books-map/quickbooks-accounts",
+    "/api/catalog/categories",
+    "/api/catalog/subcategories",
+  ],
   "/expense/qb-accounts": () => ["/api/expense/qb-accounts", "/api/books-map/quickbooks-accounts"],
   "/expense/ownership-map": () => [paged("/api/expense/ownership-map")],
   "/expense/settings": () => ["/api/expense/org-settings"],
@@ -231,7 +239,7 @@ beforeAll(async () => {
   releasedBefore = (await api<TodoCounts>(board, "/api/nav/todo-counts")).json.releasedLibraries ?? [];
   for (const library of LIBRARY_KEYS) expect([library, (await release(board, library, true)).status]).toEqual([library, 200]);
   // A bucket of this suite's own makes the approver its owner and the treasurer its treasurer.
-  const bucket = await send(finance, "POST", "/api/budget-owners", { name: `Page smoke ${Date.now()}` });
+  const bucket = await send(finance, "POST", "/api/budget-owners", { name: `Page smoke ${Date.now()}`, quickBooksClassId: newClassId() });
   expect(bucket.status).toBe(200);
   bucketId = (bucket.json as { id: number }).id;
   const approver = await loginAs(APPROVER);

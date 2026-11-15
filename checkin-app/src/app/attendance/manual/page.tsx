@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Alert, Button, Card, Select, Stack, Text, TextInput, Title } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
+import { Button, Card, Select, Stack, Text, TextInput, Title } from "@mantine/core";
+import { errorMessage, showError, showSuccess } from "@checkin/component-ui";
+import { api } from "@/lib/api";
 import { PageContainer } from "@/components/ui/PageContainer";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
@@ -16,7 +17,6 @@ export default function ManualAttendance() {
   const { ready, loading: authLoading, user } = useRequireRole([]);
   const [arrivedAt, setArrived] = useState("");
   const [departedAt, setDeparted] = useState("");
-  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<{ arrivedAt?: string; departedAt?: string }>({});
   // A household lead records for any member of their household — the only way a
@@ -57,7 +57,6 @@ export default function ManualAttendance() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError("");
     setFieldErrors({});
 
     const fe = validateTimes();
@@ -69,9 +68,8 @@ export default function ManualAttendance() {
     setLoading(true);
 
     try {
-      const res = await fetch("/api/attendance/manual", {
+      await api("/api/attendance/manual", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         // datetime-local gives a naive "YYYY-MM-DDTHH:mm" (no offset). Send a real
         // instant so the server doesn't reparse it in ITS timezone (UTC in prod).
         body: JSON.stringify({
@@ -81,19 +79,13 @@ export default function ManualAttendance() {
           ...(personId ? { personId: Number(personId) } : {}),
         }),
       });
-
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(data.error || "Failed to record manual visit.");
-      } else {
-        notifications.show({ message: "Visit recorded successfully." });
-        setArrived("");
-        setDeparted("");
-        // Building occupancy badges (attendance nav) count this new visit — refresh them.
-        notifyNavRefresh();
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error occurred.", autoClose: false });
+      showSuccess("Visit recorded successfully.");
+      setArrived("");
+      setDeparted("");
+      // Building occupancy badges (attendance nav) count this new visit — refresh them.
+      notifyNavRefresh();
+    } catch (err) {
+      showError(errorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -113,8 +105,6 @@ export default function ManualAttendance() {
           in the building now, badge at the kiosk instead.
           {members.length > 1 && " As a household lead you can also record a visit for another member of your household."}
         </Text>
-
-        {error && <Alert color="red" mb="md">{error}</Alert>}
 
         <form onSubmit={handleSubmit}>
           <Stack>

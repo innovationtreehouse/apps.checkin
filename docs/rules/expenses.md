@@ -104,15 +104,15 @@ Things the app takes as true because they are handled outside it.
   reimbursed when that is someone else, unless the next rule skips that person.
   Neither email names the other person, and neither carries finance's reason or
   the total.
-  [Decision — owner ruling 2026-10-31]
+  [Decision]
 
 - A rejection email goes only to a person with a linked sign-in and an email
   address who has not turned off "Email me about my receipts and
   reimbursements" or all email. Anyone else's copy is dropped, not held: it is
-  not sent if they later sign in or turn email back on. Unsubscribing from
-  invitations does not stop it. A skipped uploader still sees the rejection and
-  the reason in My receipts. A send that fails gets three tries in all, the
-  later ones in the daily sweep, and is then given up.
+  not sent if they later sign in or turn email back on. A skipped uploader
+  still sees the rejection and the reason in My receipts. A send that fails
+  gets three tries in all, the later ones in the daily sweep, and is then
+  given up.
   [Decision]
 
 - Once a receipt is finalized, its uploader sees in the receipt pages what
@@ -126,12 +126,12 @@ Things the app takes as true because they are handled outside it.
   get one email naming the retailer and date and linking to the receipt. A card
   charge's sign-off, a backfill, and an approver's exception send none. Neither
   email names the other person, and neither carries a line's note or the total.
-  [Decision — owner ruling 2026-10-31]
+  [Decision]
 
 - A person may turn the receipt and reimbursement emails off; turning off all
   email also stops them. They are on until turned off. Only a live person with
   a verified sign-in email is emailed.
-  [Decision — owner ruling 2026-10-31; *Principle: fail closed*]
+  [Decision — *Principle: fail closed*]
 
 - An outcome email carries only what its recipient's own receipt pages show.
   [Decision — *Principle: least privilege*]
@@ -172,7 +172,7 @@ Things the app takes as true because they are handled outside it.
   Board member without a conflict signs it, after the Treasurer. Settling an
   exception without making it final adds no Board signature, because the new
   bucket's approver may still raise an exception.
-  [Decision — owner ruling 2026-10-30]
+  [Decision]
 
 - A tax or date the submitter fills in where the field was blank goes to
   finance review the same as one they changed. Finance sees which it was:
@@ -225,12 +225,18 @@ Things the app takes as true because they are handled outside it.
   and mail sent to another address that reaches the mailbox, still do.
   [Decision — owner]
 
-- A receipt's lines, plus shipping and tax, less discount, must equal its
-  total. The check is exact unless a line's cost (quantity × unit price) is a
-  fraction of a cent. Then the total may differ by up to one cent for each
-  such line. The receipt editor applies the same check, so it shows a
-  receipt as balanced exactly when the check passes.
-  [Decision]
+- A receipt's printed figures are correct and are the record. A printed unit
+  price or line total may be rounded or truncated, and is not an error: 3 ×
+  $3.33 on a $10.00 receipt is 3 × $3.333…, and $4.99 may be $4.989. OCR
+  reads each line's printed total, and the system never changes it. A line
+  with no printed total is quantity × unit price, rounded to the cent. A
+  line's total may differ from quantity × unit price by less than a cent per
+  unit, and by less than a cent below one unit; a line outside that doesn't
+  add up, and is named. Line totals, plus shipping and tax, less discount,
+  must equal the receipt total exactly. A receipt that doesn't add up goes to
+  its submitter or finance to fix, and a person may type a line's total. The
+  receipt editor applies the same check.
+  [Decision — owner]
 
 - Mail to the receipt mailbox counts as from a person only when Google's own
   check shows the sender's domain signed it (DKIM) and passed DMARC, and the
@@ -252,6 +258,12 @@ Things the app takes as true because they are handled outside it.
   5 for everyone else.
   [Decision — owner]
 
+- Finance may make mail intake catch up now instead of waiting for the daily
+  run. One catch-up makes at most 50 new receipts, each a paid automatic
+  reading, and only one mail run, daily or catch-up, reads the mailbox at a
+  time. Who started each catch-up is recorded.
+  [Decision — owner, 2026-11-08]
+
 - Finance approves a receipt held for review without writing a note. A reason
   for rejecting one is required and has its own field.
   [Decision]
@@ -265,6 +277,40 @@ Things the app takes as true because they are handled outside it.
   from the same mailed message again makes no second receipt.
   [Decision — deliberate limit]
 
+- A receipt is checked for copies against every other receipt in the org that
+  could still be, or already was, paid: open, finalized and rejected. A
+  discarded receipt raises no duplicate flag, because only its uploader or mail
+  intake discards one. A match on a rejected receipt is shown as rejected, with
+  finance's reason, and so is a match whose expense finance rejected.
+  [Decision — owner]
+
+- Order and receipt numbers match ignoring case, spaces and a leading `#`, as
+  retailer names do. Totals match only to the exact cent.
+  [Decision — owner]
+
+- Finance decides a group of matching receipts once, and the decision is kept
+  for each pair of receipts, so nobody is asked about the same pair twice. A
+  copy that arrives later has no decision yet, so it is held against every
+  member it matches.
+  [Decision — owner]
+
+- Nobody decides a group of matching receipts in which they are conflicted on
+  any member.
+  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+
+- Saying two matching receipts are different purchases needs no note and no
+  second sign-off, even when one of them was rejected.
+  [Decision — deliberate limit]
+
+- When every other receipt in a group is the uploader's own, the uploader is
+  shown which one and may withdraw the new copy. An uploader is never shown
+  another person's receipt.
+  [Decision — owner]
+
+- Copies are caught at the receipt, and an expense is not checked again for
+  duplicates when it is sent to QuickBooks.
+  [Decision — deliberate limit]
+
 - An automatic reading of a receipt is kept whole or not at all. When a reading
   fails, is refused, has no lines, or has any value out of bounds, nothing from
   it is saved, and the receipt waits for a person to retry or discard it. A
@@ -275,25 +321,25 @@ Things the app takes as true because they are handled outside it.
 - Every reading counts against the person's daily reading allowance, whether
   it succeeds or fails. The app never reads the receipt again by itself,
   because each reading costs money: the submitter presses "Read it again".
-  [Decision — owner, 2026-11-08]
+  [Decision]
 
 - Finance or the Board may reset one person's daily reading allowance when that
   person has a good reason, so they need not wait for the next day. The reset
   gives a full allowance from that moment, needs a reason, and is recorded in
   the audit log.
-  [Decision — owner, 2026-11-08]
+  [Decision]
 
 - Three or more failed readings within a day put one line on the Problems
   list, "Receipt reading failed N times in the last day", with no error text or
   names, and that line sends the daily problems email to the alert address.
-  [Decision — owner, 2026-11-08]
+  [Decision]
 
 - Sysadmins, finance and the Board may turn automatic reading of receipts off
   and on, so reading can stop at once when a known problem needs a deploy.
   While it is off, no receipt is read and submitters are not offered "Read it
   again". The switch is apart from the other receipt settings, which stay
   finance's.
-  [Decision — owner, 2026-11-08]
+  [Decision]
 
 - A gift of goods (an in-kind receipt) names its donor, is never reimbursed, and
   needs no spending sign-off. It is a donation, not an expense record.
@@ -317,10 +363,15 @@ Things the app takes as true because they are handled outside it.
   system. Archiving keeps the row, because finance records point at it.
   [Decision]
 
+- A bucket is created with its class. Finance may change a bucket's class but
+  not clear it, and no two buckets share a class. A bucket that has no class
+  still saves without one, and its lines wait until finance picks one.
+  [Decision — owner]
+
 - Finance may restore an archived bucket. It comes back with its class, owner
   and treasurers. An archived bucket keeps its class, so no other bucket can
   hold that class when it returns. Each restore is recorded.
-  [Decision — owner ruling 2026-11-01]
+  [Decision]
 
 - A bucket's approvers are its owner and its treasurers, stored on the bucket
   and not derived from any program: a budget and a program need not match one
@@ -333,7 +384,7 @@ Things the app takes as true because they are handled outside it.
   while an open expense in it has a non-Everyday card-charge line with no Board
   authorization and no Board signature, so the change never removes a Board seat
   a line still owes.
-  [Decision — owner ruling 2026-11-01; *Policy: Financial Policy, Art. XII §XII.4*]
+  [Decision — *Policy: Financial Policy, Art. XII §XII.4*]
 
 - A change to whether a bucket is org-level undoes no signature, and the seats
   still unsigned follow the bucket as it now is. A bucket that becomes org-level
@@ -343,7 +394,7 @@ Things the app takes as true because they are handled outside it.
   approvers until the Board names them, and a Board member in their place gives
   the reason. Once it is a program bucket, its lines take no Board seat for being
   in it, on finance's change alone.
-  [Decision — owner ruling 2026-11-01]
+  [Decision]
 
 - A bucket's owner and treasurers are set by the board alone, because they come
   from the board-approved budget. Nobody sets, replaces or removes themself or
@@ -468,7 +519,7 @@ Things the app takes as true because they are handled outside it.
   not a signature at any step and is not refused for a conflict. It does not
   stop whoever moved it, or their household, from signing a step on the
   expense.
-  [Decision — owner ruling 2026-10-30]
+  [Decision]
 
 - Only a bucket approver, or a Board member without a conflict in their place,
   approves a line.
@@ -513,7 +564,7 @@ Things the app takes as true because they are handled outside it.
   it closes, using the facts of that moment. If the person reimbursed later
   loses their membership, or the Board-review total is later lowered, the expense
   still reaches the books and needs no new signature or approval.
-  [Decision — owner ruling 2026-10-31]
+  [Decision]
 
 - Someone who has already signed an expense and then joins the household of the
   submitter or the person reimbursed keeps their signature, and the expense
@@ -528,7 +579,7 @@ Things the app takes as true because they are handled outside it.
   being a different person. The expense still reaches the books, needing no new
   signature. A signature that has to be given again is judged anew against the
   surviving person.
-  [Short of policy — *Policy: Financial Policy, Art. IX §IX.3*; owner accepted 2026-11-01]
+  [Short of policy — *Policy: Financial Policy, Art. IX §IX.3*]
 
 - "The Treasurer" is, for now, anyone holding the finance role. The app has no
   record of who holds the Treasurer office.
@@ -636,8 +687,9 @@ the parts specific to expenses.
   shipping and discount. Nothing splits a line across accounts or categories. A
   line the mappings do not resolve to exactly one account waits for finance to
   set it. A line whose account couldn't be looked up because the catalog was
-  unavailable is not a mapping hold: the expense waits and is retried with each
-  posting run, using no try, and finance sees that it waits for the catalog.
+  unavailable is not a mapping hold: the expense goes to `qb_error`, stuck with
+  its first failure time and latest error until a person retries it from the
+  Problems list. No posting run retries it.
   [Decision — owner]
 
 - An account rule names its part by the part's GTIN-13, or `*` for any part. A
@@ -682,11 +734,11 @@ the parts specific to expenses.
   [Decision — owner]
 
 - An expense line's account comes from finance's own mapping rules and account
-  list, which finance keeps by hand. The accounts on that list, Classes, Vendors
-  and the books map's accounts finance picks from QuickBooks' live lists, one at
-  a time. The app
-  never imports the chart of accounts, the Class list or the vendor list in
-  bulk, and never matches vendor names on its own.
+  list, which finance keeps by hand. Finance picks the accounts on that list,
+  Classes and the books map's accounts one at a time. The app keeps a
+  read-only copy of QuickBooks' account and Class lists to offer and check
+  those picks, and never creates a mapping from it. It never copies the vendor
+  list, and never matches vendor names on its own.
   [Decision — deliberate limit]
 
 - Expense posting switches on the first time the daily catch-up runs with

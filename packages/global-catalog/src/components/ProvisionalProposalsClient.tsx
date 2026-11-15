@@ -172,7 +172,7 @@ export default function ProvisionalProposalsClient() {
       <Table striped highlightOnHover withTableBorder>
         <Table.Thead>
           <Table.Tr>
-            <Table.Th>Provisional PN</Table.Th><Table.Th>Organization</Table.Th><Table.Th>Proposed Name</Table.Th>
+            <Table.Th>Provisional Part ID</Table.Th><Table.Th>Organization</Table.Th><Table.Th>Proposed Name</Table.Th>
             <Table.Th>Category</Table.Th><Table.Th>Part</Table.Th><Table.Th>Retailer</Table.Th><Table.Th>Factor</Table.Th>
             <Table.Th>Proposed At</Table.Th><Table.Th>Status</Table.Th>{canManage && <Table.Th w={110}>Actions</Table.Th>}
           </Table.Tr>
@@ -188,7 +188,7 @@ export default function ProvisionalProposalsClient() {
         <Title order={3}>Provisional Items</Title>
         <Checkbox label="Only show pending" checked={onlyPending} onChange={(e) => setOnlyPending(e.currentTarget.checked)} />
       </Group>
-      <Text size="sm" c="dimmed" mb="md">Items proposed by orgs using provisional GTINs. Approve to create a real catalog entry, map to an existing item, or reject.</Text>
+      <Text size="sm" c="dimmed" mb="md">Items proposed by orgs using provisional Part IDs. Approve to create a real catalog entry, map to an existing item, or reject.</Text>
 
       {error ? <LoadError what="provisional proposals" message={error} onRetry={reloadAll} />
         : loading ? <Text c="dimmed">Loading…</Text> : proposals.length === 0 ? <Text c="dimmed">No provisional proposals.</Text> : (
@@ -201,7 +201,7 @@ export default function ProvisionalProposalsClient() {
       <Modal opened={approveOpen} onClose={closeApprove} title="Approve Provisional Item" size="lg" centered>
         {approveTarget && (
           <Stack gap="sm">
-            <Text size="sm" c="dimmed">Provisional GTIN: <Text span ff="monospace">{formatGtinDisplay(approveTarget.provisionalGtin13)}</Text> from <strong>{approveTarget.orgName}</strong></Text>
+            <Text size="sm" c="dimmed">Provisional Part ID: <Text span ff="monospace">{formatGtinDisplay(approveTarget.provisionalGtin13)}</Text> from <strong>{approveTarget.orgName}</strong></Text>
             <ProposedPart p={approveTarget} />
             <Divider />
             <TextInput label="Item Name" value={approveName} onChange={(e) => setApproveName(e.currentTarget.value)} required data-autofocus />

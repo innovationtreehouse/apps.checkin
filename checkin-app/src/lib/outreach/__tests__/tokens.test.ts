@@ -10,7 +10,7 @@ describe('findUnknownTokens', () => {
     });
 
     it('reports an unknown token name', () => {
-        expect(findUnknownTokens('Click {{unsubscribeUrl}} now')).toEqual(['unsubscribeUrl']);
+        expect(findUnknownTokens('Click {{optOutUrl}} now')).toEqual(['optOutUrl']);
     });
 
     it('dedupes a repeated unknown token', () => {

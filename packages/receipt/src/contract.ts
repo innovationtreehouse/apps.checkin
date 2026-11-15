@@ -154,6 +154,7 @@ export const OcrLineItemSchema = z.object({
   manufacturer: z.string().max(100).optional(),
   quantity: z.number().finite().positive().max(MAX_LINE_QUANTITY),
   unitPrice: ocrMoney,
+  totalPrice: ocrMoney.optional(),
   isDelayed: z.boolean(),
 });
 
@@ -183,7 +184,8 @@ export const OCR_FILE_REFUSED = "the reading service refused the file";
 
 /** Reads a stored receipt file. Never throws: every failure is `{ success: false }`. */
 export interface OcrProvider {
-  extract(file: Buffer, mimeType: string): Promise<OcrResult>;
+  /** `rotation` is the clockwise turn, in degrees, that shows the receipt's image upright. */
+  extract(file: Buffer, mimeType: string, rotation?: number): Promise<OcrResult>;
 }
 
 // ── Mail intake (phase G) ────────────────────────────────────────────────────
@@ -268,12 +270,6 @@ export interface MailAgingOutEvent {
   oldestReceivedAt: Date | null;
 }
 
-export interface MailListingFailedEvent {
-  orgId: string;
-  /** Why the listing failed, which decides the alert's wording. */
-  kind: FailureKind;
-}
-
 /** One acknowledgement of a mailed receipt, to one recipient. */
 /** Why a mailed file was not accepted; `no_receipt` stands for a whole message that held nothing to read. */
 export type MailRefusalReason = "too_large" | "wrong_type" | "empty" | "forwarded" | "ceiling" | "no_receipt";
@@ -340,7 +336,6 @@ export interface OutcomeMail {
 export interface ReceiptAlerts {
   mailHoldCeilingReached(event: MailHoldCeilingEvent): Promise<void>;
   mailAgingOut(event: MailAgingOutEvent): Promise<void>;
-  mailListingFailed(event: MailListingFailedEvent): Promise<void>;
 }
 
 /** Where receipt and held-mail files live. The host binds it; the library takes no storage dependency. */

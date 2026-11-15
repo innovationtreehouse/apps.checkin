@@ -9,6 +9,7 @@
 import { POST as ENROLL } from '@/app/api/programs/[id]/participants/route';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
+import { WITH_EMERGENCY_CONTACT } from '@/test-helpers/emergencyContact';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 jest.mock('@/lib/notifications', () => ({ sendNotification: jest.fn().mockResolvedValue(true) }));
@@ -35,7 +36,7 @@ describe('Enroll into a CLOSED program is rejected', () => {
 
     beforeAll(async () => {
         await cleanup();
-        const user = await prisma.person.create({ data: { email: `user-${TAG}@example.com`, name: 'Self Enroller', household: { create: { name: "Test HH" } } } });
+        const user = await prisma.person.create({ data: { email: `user-${TAG}@example.com`, name: 'Self Enroller', household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } } } });
         userId = user.id;
         const program = await prisma.program.create({
             data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Closed ${TAG}`, phase: 'RUNNING', enrollmentStatus: 'CLOSED', orgMemberPriceCents: null, nonOrgMemberPriceCents: null },

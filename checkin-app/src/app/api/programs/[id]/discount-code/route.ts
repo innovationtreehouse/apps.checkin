@@ -8,6 +8,7 @@ import { checkoutVariantId } from "@/lib/programs/variants";
 import { fromWhere } from "@/lib/programs/enrollmentState";
 import { householdLeadship } from "@/lib/household/leads";
 import { PROGRAM_ENDED_PAYMENT, signCheckout } from "@/lib/programs/checkoutSignature";
+import { householdMayEnrol, NO_EMERGENCY_CONTACT_TO_ENROL } from "@/lib/emergencyContacts/service";
 
 // Server-minted, single-use member discount code for a single-pool program's
 // checkout link (see mintMemberDiscountCode in lib/shopify/discounts.ts), bound to the
@@ -42,6 +43,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
 
     const caller = await householdLeadship(auth.user.id);
     if (!caller?.canManage) return apiError("Only a household lead can pay for the household.", 403);
+    if (!(await householdMayEnrol(prisma, caller.householdId))) return apiError(NO_EMERGENCY_CONTACT_TO_ENROL, 400);
     const enrollees = await prisma.person.findMany({ where: { id: { in: participantIds } }, select: { householdId: true } });
     if (enrollees.length !== participantIds.length || enrollees.some((e) => e.householdId !== caller.householdId)) {
         return apiError("Everyone in one checkout must be from your household. Pay for each household separately.", 400);

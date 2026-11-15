@@ -24,6 +24,7 @@ import { PATCH as updateVisit } from '@/app/api/facility/visits/route';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
 import { setMembershipYearBoundary } from '@/test-helpers/boardSettings';
+import { WITH_EMERGENCY_CONTACT } from '@/test-helpers/emergencyContact';
 // Mock NextAuth
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
@@ -56,7 +57,7 @@ describe('AuditLog Integration Tests', () => {
     async function makeParticipant(suffix: string) {
         const p = await prisma.person.create({
             // 'audit-test' substring also matches the beforeAll backstop sweep.
-            data: { email: `${TAG}-${suffix}-audit-test@example.com`, name: `${TAG} ${suffix}`, household: { create: { name: "Test HH" } } },
+            data: { email: `${TAG}-${suffix}-audit-test@example.com`, name: `${TAG} ${suffix}`, household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } } },
             select: { id: true, householdId: true },
         });
         createdParticipantIds.push(p.id);
@@ -80,17 +81,17 @@ describe('AuditLog Integration Tests', () => {
 
         // Setup mock database records
         const admin = await prisma.person.create({
-            data: { email: 'admin-audit-test@example.com', name: 'Admin Test', isSysadmin: true, isDeclaredAdult: true, household: { create: { name: "Test HH" } } }
+            data: { email: 'admin-audit-test@example.com', name: 'Admin Test', isSysadmin: true, isDeclaredAdult: true, household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } } }
         });
         testAdminId = admin.id;
 
         const participant = await prisma.person.create({
-            data: { email: 'participant-audit-test@example.com', name: 'Participant Test', household: { create: { name: "Test HH" } } }
+            data: { email: 'participant-audit-test@example.com', name: 'Participant Test', household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } } }
         });
         testParticipantId = participant.id;
 
         const lead = await prisma.person.create({
-            data: { email: 'lead-audit-test@example.com', name: 'Lead Test', isDeclaredAdult: true, household: { create: { name: "Test HH" } } }
+            data: { email: 'lead-audit-test@example.com', name: 'Lead Test', isDeclaredAdult: true, household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } } }
         });
         testLeadId = lead.id;
     });
@@ -315,7 +316,7 @@ describe('AuditLog Integration Tests', () => {
     it('should generate an AuditLog when an Admin reassigns a participant household', async () => {
         await prisma.auditLog.deleteMany({ where: { tableName: 'Person' } });
 
-        const newHousehold = await prisma.household.create({ data: { name: 'Audit Target Household' } });
+        const newHousehold = await prisma.household.create({ data: { name: 'Audit Target Household', ...WITH_EMERGENCY_CONTACT } });
 
         const req = new Request(`http://localhost:4000/api/membership-ops/participants/${testParticipantId}/household`, {
             method: 'POST',

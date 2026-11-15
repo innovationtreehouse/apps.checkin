@@ -3,12 +3,14 @@ import prisma from "@/lib/prisma";
 import { ServiceError } from "@checkin/component-kit";
 import { RENEWAL_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
-import { logger } from "@/lib/logger";
+import { logger, logBackendError } from "@/lib/logger";
 import { IN_FLIGHT_INITIAL, IN_FLIGHT_RENEWAL, handledThisCycleWhere, fromWhere } from "@/lib/membership/lifecycle";
 import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { personActor, systemActor } from "@/lib/auditActor";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
-import { membershipYearLabel, membershipYearOf } from "@/lib/programYear";
+import { membershipYearLabel, membershipYearOf, nextBoundary, monthsBefore, renewalWindow, membershipYearCycle, liveMembershipYear, RENEWAL_LEAD_MONTHS } from "@/lib/programYear";
+
+export { nextBoundary, monthsBefore, renewalWindow, membershipYearCycle, liveMembershipYear };
 
 /**
  * Annual renewal. A common membership-year boundary (BoardSettings) drives every
@@ -27,7 +29,6 @@ import { membershipYearLabel, membershipYearOf } from "@/lib/programYear";
  * nothing writes it anymore (a migration moved open rows to the request flow).
  */
 
-const RENEWAL_LEAD_MONTHS = 2;
 
 /**
  * A household application that stops another from starting: one in flight (one
@@ -49,22 +50,10 @@ export class RenewalError extends ServiceError {
     }
 }
 
-/** The next occurrence (>= now) of the boundary's month/day. */
-export function nextBoundary(boundary: Date, now: Date): Date {
-    const b = new Date(Date.UTC(now.getUTCFullYear(), boundary.getUTCMonth(), boundary.getUTCDate()));
-    if (b.getTime() < now.getTime()) b.setUTCFullYear(b.getUTCFullYear() + 1);
-    return b;
-}
-
-export function monthsBefore(date: Date, months: number): Date {
-    const d = new Date(date);
-    d.setUTCMonth(d.getUTCMonth() - months);
-    return d;
-}
 
 // Mirrors monthsBefore exactly — raw JS month arithmetic, UTC, no end-of-month
 // clamping (JS rolls over: Jan 31 + 1mo -> Mar 2/3). Consistency with
-// householdBgIsFresh's threshold math matters more than calendar prettiness, and
+// bgFreshThreshold's math matters more than calendar prettiness, and
 // the boundary is an admin-set day (e.g. Aug 1) in practice.
 function monthsAfter(date: Date, months: number): Date {
     const d = new Date(date);
@@ -90,52 +79,12 @@ export function bgValidUntilBoundary(
     // compares full timestamps with a strict `<`; lastBackgroundCheck carries a
     // time-of-day, so without truncation a raw expiry landing ON the boundary day
     // (e.g. Aug 1 14:32) would skip to NEXT year's boundary. Policy (matches
-    // householdBgIsFresh's `gte` threshold): a check expiring on the boundary day
+    // the check standing's `>=` threshold): a check expiring on the boundary day
     // still covers that boundary → return that same occurrence.
     const rawExpiryDay = new Date(Date.UTC(rawExpiry.getUTCFullYear(), rawExpiry.getUTCMonth(), rawExpiry.getUTCDate()));
     return nextBoundary(settings.orgMembershipYearBoundary, rawExpiryDay);
 }
 
-/**
- * From a configured boundary date, the next boundary occurrence and whether `now`
- * sits inside the renewal lead window before it. Pure; the single source of the
- * "are we in renewal season" calc.
- */
-export function renewalWindow(configuredBoundary: Date, now: Date): { boundary: Date; windowStart: Date; inSeason: boolean } {
-    const boundary = nextBoundary(configuredBoundary, now);
-    const windowStart = monthsBefore(boundary, RENEWAL_LEAD_MONTHS);
-    return { boundary, windowStart, inSeason: now.getTime() >= windowStart.getTime() };
-}
-
-/**
- * The membership year now in effect: its label, the boundary that opened it
- * (`cycleStart`), the boundary that closes it (`cycleEnd`), and the day its renewal
- * window opened (`settledSince`). The year flips
- * at windowStart — the coming year becomes "live" exactly when it becomes renewable
- * and stays live until the next window opens — so in season the live year is the
- * one about to begin, and off season it is the one that began at the last boundary.
- * Drives badge years and every money horizon; pure, from the configured boundary.
- */
-export function membershipYearCycle(
-    configuredBoundary: Date,
-    now: Date,
-): { label: string; settledSince: Date; cycleStart: Date; cycleEnd: Date } {
-    const { boundary, windowStart, inSeason } = renewalWindow(configuredBoundary, now);
-    // Off-season, `boundary` is already next year's, so the live cycle is the one that
-    // opened at the previous windowStart.
-    const endYear = boundary.getUTCFullYear() + (inSeason ? 1 : 0);
-    const settledSince = inSeason
-        ? windowStart
-        : new Date(Date.UTC(windowStart.getUTCFullYear() - 1, windowStart.getUTCMonth(), windowStart.getUTCDate()));
-    const cycleEnd = new Date(Date.UTC(endYear, boundary.getUTCMonth(), boundary.getUTCDate()));
-    const cycleStart = new Date(Date.UTC(endYear - 1, boundary.getUTCMonth(), boundary.getUTCDate()));
-    return { label: `${endYear - 1}-${endYear}`, settledSince, cycleStart, cycleEnd };
-}
-
-/** The live year at `now`, named by the year its opening boundary is in; null with no boundary set. */
-export function liveMembershipYear(configuredBoundary: Date | null | undefined, now: Date): number | null {
-    return configuredBoundary ? membershipYearCycle(configuredBoundary, now).cycleStart.getUTCFullYear() : null;
-}
 
 /**
  * The years a board grant may record at `now`, earliest first: the year in progress
@@ -180,8 +129,9 @@ export function membershipYearCycleForLabel(
 }
 
 /**
- * Open renewal processes for every ACTIVE membership, inside the lead window only,
- * unless the household was already handled this cycle. Backs the board's
+ * Open renewal processes for every ACTIVE membership, inside the lead window only
+ * and only while the coming year has a product to pay through, unless the
+ * household was already handled this cycle. Backs the board's
  * "Open renewals" button, the only way renewals start. Returns a summary.
  */
 export async function runRenewalSweep(now: Date) {
@@ -193,6 +143,13 @@ export async function runRenewalSweep(now: Date) {
     const { boundary, windowStart, inSeason } = renewalWindow(settings.orgMembershipYearBoundary, now);
     if (!inSeason) {
         return { opened: 0, skipped: 0, reason: "not yet within renewal window" };
+    }
+
+    // In season the live year is the coming year. Lazy: payment.ts imports this module.
+    const comingYear = membershipYearCycle(settings.orgMembershipYearBoundary, now).cycleStart.getUTCFullYear();
+    const { liveYearVariantId } = await import("@/lib/membership/payment");
+    if (!(await liveYearVariantId(settings.orgMembershipYearBoundary, now))) {
+        return { opened: 0, skipped: 0, reason: `no membership product set for ${membershipYearLabel(comingYear)}` };
     }
 
     const memberships = await prisma.orgMembership.findMany({
@@ -209,7 +166,7 @@ export async function runRenewalSweep(now: Date) {
                 where: {
                     OR: [
                         { kind: "RENEWAL", status: { in: [...IN_FLIGHT_RENEWAL] } },
-                        handledThisCycleWhere(liveMembershipYear(settings.orgMembershipYearBoundary, now), windowStart),
+                        handledThisCycleWhere(comingYear, windowStart),
                     ],
                 },
                 select: { id: true },
@@ -230,8 +187,9 @@ export async function runRenewalSweep(now: Date) {
 
 /**
  * Member begins renewal: PENDING_RENEWAL -> PENDING_EXTERNAL_ACTION, always — a
- * fresh membership agreement is signed every cycle. A still-valid background
- * check is pre-cleared so only the signature is left; otherwise the member also
+ * fresh membership agreement is signed every cycle. The household is then settled
+ * on its people's checks: one that qualifies is pre-cleared so only the signature
+ * is left, one with a disputed adult is blocked, and otherwise the member also
  * requests a new background check, same flow as INITIAL. Only acts from
  * PENDING_RENEWAL. Refused for a DENIED household (raised to the board) or one
  * with a BLOCKED application; the status read and the CAS share a lock on the
@@ -249,15 +207,8 @@ export async function beginRenewal(processId: number, actorId: number) {
         select: { householdId: true },
     });
     if (!membership) throw new RenewalError("not_found", "Membership not found.");
-    const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-    const boundary = settings?.orgMembershipYearBoundary ? nextBoundary(settings.orgMembershipYearBoundary, new Date()) : null;
 
-    // A still-valid background check ⇒ stamp bgClearedAt now: the external card
-    // shows "no new background check needed" and the signature alone opens
-    // payment. Reviewers are pinged by the advance, once consent is recorded.
-    const clearNow = await householdBgIsFresh(membership.householdId, boundary, settings?.bgRecheckMonths);
-
-    const refusal = await prisma.$transaction(async (tx) => {
+    const outcome = await prisma.$transaction(async (tx) => {
         const [locked] = await tx.$queryRaw<{ status: string }[]>`SELECT status FROM "OrgMembership" WHERE id = ${orgMembershipId} FOR UPDATE`;
         if (locked?.status === "DENIED") return "denied" as const;
         const blocked = await tx.orgMembershipProcess.findFirst({
@@ -270,25 +221,34 @@ export async function beginRenewal(processId: number, actorId: number) {
         // the audit row is written exactly once.
         const { count } = await tx.orgMembershipProcess.updateMany({
             where: { id: processId, ...fromWhere("PENDING_RENEWAL") },
-            data: { status: "PENDING_EXTERNAL_ACTION", stageEnteredAt: new Date(), ...(clearNow ? { bgClearedAt: new Date() } : {}) },
+            data: { status: "PENDING_EXTERNAL_ACTION", stageEnteredAt: new Date() },
         });
         if (count === 1) {
             await tx.auditLog.create({
-                data: { ...personActor(actorId), action: "EDIT", tableName: "OrgMembershipProcess", affectedEntityId: processId, oldData: { status: "PENDING_RENEWAL" }, newData: { status: "PENDING_EXTERNAL_ACTION", ...(clearNow ? { bgClearedAt: true } : {}) } },
+                data: { ...personActor(actorId), action: "EDIT", tableName: "OrgMembershipProcess", affectedEntityId: processId, oldData: { status: "PENDING_RENEWAL" }, newData: { status: "PENDING_EXTERNAL_ACTION" } },
             });
         }
-        return null;
+        return count === 1 ? ("moved" as const) : null;
     });
-    if (refusal === "denied") {
+    if (outcome === "denied") {
         await raiseDeniedHouseholdActivity({ householdId: membership.householdId, processId, personId: actorId, what: "beginRenewal refused" });
         throw new RenewalError("denied", "Your household can't renew. Please contact the board.");
     }
-    if (refusal === "blocked") {
+    if (outcome === "blocked") {
         throw new RenewalError("blocked", "Your household's application is with the board. Please contact the board.");
     }
+    // Lazy, like external.ts below: settle pulls in the review and payment modules.
+    if (outcome === "moved") {
+        const { settleHouseholdBg } = await import("@/lib/membership/settleHouseholdBg");
+        try {
+            await settleHouseholdBg(membership.householdId);
+        } catch (error) {
+            await logBackendError(error, "household background-check settle after renewal", { householdId: membership.householdId, processId });
+        }
+    }
 
-    // The gate can already be met on arrival (bgClearedAt stamped above, or a board
-    // pre-mark of contractSignedAt/bgConsentAt), so re-run the advance; it is a
+    // The gate can already be met on arrival (bgClearedAt stamped by settle, a board
+    // pre-mark of contractSignedAt, or a lead's check already started), so re-run the advance; it is a
     // no-op when the external actions aren't done. Lazy: external.ts pulls in the
     // agreement PDF and S3 client, and renewal.ts is imported across the app.
     const { advanceExternalIfComplete } = await import("@/lib/membership/external");
@@ -373,20 +333,4 @@ export async function beginRenewalForUser(userId: number) {
 export function bgFreshThreshold(boundary: Date | null, recheckMonths: number | null | undefined): Date | null {
     if (!isRecheckPolicySet(recheckMonths) || !boundary) return null;
     return monthsBefore(boundary, recheckMonths);
-}
-
-/**
- * True if EITHER guardian (household lead) has a background check still valid at the boundary,
- * i.e. lastBackgroundCheck >= boundary - recheckMonths. Unset policy — recheckMonths 0 or a
- * null boundary (no membership year configured) — means nothing counts as fresh; renewals
- * re-run review rather than measuring freshness against an invented boundary.
- */
-export async function householdBgIsFresh(householdId: number, boundary: Date | null, recheckMonths: number | null | undefined): Promise<boolean> {
-    const threshold = bgFreshThreshold(boundary, recheckMonths);
-    if (!threshold) return false;
-    const fresh = await prisma.person.findFirst({
-        where: { householdId, isHouseholdLead: true, lastBackgroundCheck: { gte: threshold } },
-        select: { id: true },
-    });
-    return fresh !== null;
 }

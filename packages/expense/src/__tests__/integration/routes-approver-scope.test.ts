@@ -56,12 +56,12 @@ describeDb("approver routes filter to the caller's buckets", () => {
     as(APPROVER);
     expect(await call(expenses.queue, "/queue?view=owner_approval")).toMatchObject({ Expense: [{ id: expenseId }] });
     as(OUTSIDER);
-    expect(await call(expenses.queue, "/queue?view=owner_approval")).toEqual({ Expense: [] });
+    expect(await call(expenses.queue, "/queue?view=owner_approval")).toEqual({ Expense: [], ExpenseWaitingOn: [] });
   });
 
   it("GET expenses: zero rows", async () => {
     as(OUTSIDER);
-    expect(await call(expenses.list, "/expenses")).toEqual({ Expense: [] });
+    expect(await call(expenses.list, "/expenses")).toEqual({ Expense: [], ExpenseWaitingOn: [] });
   });
 
   it("GET expenses/count: zero", async () => {
@@ -71,7 +71,7 @@ describeDb("approver routes filter to the caller's buckets", () => {
 
   it("GET queue: zero rows", async () => {
     as(OUTSIDER);
-    expect(await call(expenses.queue, "/queue?view=owner_approval")).toEqual({ Expense: [] });
+    expect(await call(expenses.queue, "/queue?view=owner_approval")).toEqual({ Expense: [], ExpenseWaitingOn: [] });
   });
 
   it("GET counts: every count zero", async () => {
@@ -191,7 +191,7 @@ describeDb("nav badge counts", () => {
     const finance = await financeQueueCounts(principal(3, { isFinance: true }));
     expect(finance.accountHolds).toMatchObject({ actionable: 1, total: 1, byReason: { ACCOUNT_HOLD: 1 } });
     expect(finance.quickbooks).toMatchObject({ actionable: 1, total: 1, byReason: { QB_DRIFT: 1 } });
-    expect(await financeQueueActionable(principal(APPROVER))).toBe(0);
+    expect(await financeQueueActionable(principal(APPROVER), 99)).toBe(0);
   });
 
   it("shows a Board-only viewer the holds without counting them as theirs", async () => {
@@ -199,6 +199,6 @@ describeDb("nav badge counts", () => {
     await db.expenseHold.create({ data: { orgId: ORG, expenseId, lineItemId, reason: "NO_MATCH", matchedRows: "[]" } });
     const board = await financeQueueCounts(principal(5, { isBoard: true }));
     expect(board.accountHolds).toMatchObject({ actionable: 0, total: 1 });
-    expect(await financeQueueActionable(principal(5, { isBoard: true }))).toBe(0);
+    expect(await financeQueueActionable(principal(5, { isBoard: true }), 99)).toBe(0);
   });
 });

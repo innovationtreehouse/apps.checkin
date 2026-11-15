@@ -1,120 +1,49 @@
 import prisma from "@/lib/prisma";
 import { liveMembershipYear } from "@/lib/membership/renewal";
-import { IN_FLIGHT_RENEWAL, IN_FLIGHT_INITIAL, settledThisCycleWhere } from "@/lib/membership/lifecycle";
-import { personRecordIsActiveOrgMember } from "@/lib/orgMembership";
-import type { OrgMembershipProcessStatus, Prisma } from "@/generated/prisma/client";
-import { IN_LIVE_HOUSEHOLD } from "@/lib/household/archived";
-
-export type Audience = "a" | "b" | "c";
-export type OutreachVariant = "join" | "renew";
-export type ItemStatus = "queued" | "skipped_unsubscribed";
+import { settledThisCycleWhere } from "@/lib/membership/lifecycle";
+import type { Prisma } from "@/generated/prisma/client";
+import type { EmailType } from "@/lib/outreach/render";
 
 export interface RecipientSnapshotItem {
     personId: number;
     email: string;
-    variant: OutreachVariant;
-    status: ItemStatus;
 }
 
 export interface RecipientSnapshot {
     items: RecipientSnapshotItem[];
-    /** isHouseholdLead && email == null, in the chosen audience's base
-     * population — informational only, these leads get no item. */
+    /** Leads in the email type's audience with no email — informational only, they get no item. */
     leadsWithoutEmail: number;
 }
 
-// A DENIED or archived household gets no outreach of any kind. The NOT alone
-// would pass an archived household: row security hides it, so the inner match fails.
-const NOT_DENIED: Prisma.PersonWhereInput = { ...IN_LIVE_HOUSEHOLD, NOT: { household: { orgMembership: { status: "DENIED" } } } };
+/**
+ * Renewal outreach goes only to leads of live households whose membership is ACTIVE,
+ * which also rules out a DENIED household. `archivedAt` is checked here because row
+ * security hides an archived household only from queries that reach Household.
+ */
+function audienceWhere(emailType: EmailType, liveYear: number | null): Prisma.PersonWhereInput {
+    const where: Prisma.PersonWhereInput = {
+        isHouseholdLead: true,
+        household: { archivedAt: null, orgMembership: { status: "ACTIVE" } },
+    };
+    if (emailType === "opening") return where;
+    // The reminder skips a household that has completed renewal for the year a renewal
+    // buys now. A paid renewal still waiting on its background check is not complete.
+    return {
+        ...where,
+        NOT: { household: { orgMembership: { processes: { some: { AND: [settledThisCycleWhere(liveYear), { status: "ACTIVE" }] } } } } },
+    };
+}
 
-const IN_FLIGHT_STATUSES = new Set<OrgMembershipProcessStatus>([...IN_FLIGHT_RENEWAL, ...IN_FLIGHT_INITIAL]);
-
-/** Compute the recipient snapshot for one audience preset (see spec §2.2). One query for the
- * candidate leads (with just enough of their household's membership to decide settled/
- * in-flight/variant in JS — no per-row N+1), one query for the without-email count. */
-export async function computeRecipientSnapshot(audience: Audience, now = new Date()): Promise<RecipientSnapshot> {
-    // "Settled" = bought the live membership year (settledThisCycleWhere, the same test
-    // membershipValidThrough and households-ops use), so a renewed household is left
-    // alone after the boundary too. No boundary ⇒ nobody is settled.
+/** The recipients of one campaign send: the audience its email type implies. */
+export async function computeRecipientSnapshot(emailType: EmailType, now = new Date()): Promise<RecipientSnapshot> {
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
-    const liveYear = liveMembershipYear(settings?.orgMembershipYearBoundary, now);
+    const where = audienceWhere(emailType, liveMembershipYear(settings?.orgMembershipYearBoundary, now));
 
     const [leadsWithoutEmail, leads] = await Promise.all([
-        prisma.person.count({ where: { isHouseholdLead: true, email: null, ...NOT_DENIED } }),
-        prisma.person.findMany({
-            where: { isHouseholdLead: true, email: { not: null }, ...NOT_DENIED },
-            select: {
-                id: true,
-                email: true,
-                emailSuppressed: true,
-                household: {
-                    select: {
-                        orgMembership: {
-                            select: {
-                                status: true,
-                                // Only the processes relevant to settled/in-flight decisions —
-                                // computed ONCE per snapshot, not re-queried per household.
-                                processes: {
-                                    where: {
-                                        OR: [
-                                            settledThisCycleWhere(liveYear),
-                                            { status: { in: [...IN_FLIGHT_STATUSES] } },
-                                        ],
-                                    },
-                                    select: { status: true },
-                                },
-                            },
-                        },
-                    },
-                },
-            },
-        }),
+        prisma.person.count({ where: { ...where, email: null } }),
+        prisma.person.findMany({ where: { ...where, email: { not: null } }, select: { id: true, email: true } }),
     ]);
 
-    const byEmail = new Map<string, { personId: number; email: string; variant: OutreachVariant; emailSuppressed: boolean }>();
-
-    for (const lead of leads) {
-        if (!lead.email) continue; // narrows for TS; the where already excludes this
-        const membership = lead.household.orgMembership;
-        const isMember = membership?.status === "ACTIVE";
-
-        if (audience !== "c") {
-            // Rows here are either settled-shape or in-flight; a paid-pending row is
-            // both, and reads as in-flight (a nudge mid-renewal is not wrong).
-            const settled = (membership?.processes ?? []).some((p) => p.status === "ACTIVE");
-            if (isMember && settled) continue; // excluded from both (a) and (b)
-
-            if (audience === "b") {
-                const inFlight = (membership?.processes ?? []).some((p) => IN_FLIGHT_STATUSES.has(p.status));
-                if (inFlight) continue;
-            }
-        }
-
-        const variant: OutreachVariant = personRecordIsActiveOrgMember({ household: { orgMembership: membership ?? null } })
-            ? "renew"
-            : "join";
-
-        const key = lead.email.toLowerCase();
-        const existing = byEmail.get(key);
-        // Dedup by lowercased email (mirrors resolveHouseholdRecipients, emailRecipients.ts:31-38).
-        // Person.email is @unique + auto-lowercased at write (prismaEmailNormalize.ts), so two
-        // DISTINCT Person rows can't actually collide here today — this is defense-in-depth
-        // matching that precedent, not a reachable case against the current schema. If any
-        // duplicate resolves to a member, the renew variant wins for the merged item.
-        if (!existing || (variant === "renew" && existing.variant !== "renew")) {
-            byEmail.set(key, { personId: lead.id, email: lead.email, variant, emailSuppressed: lead.emailSuppressed });
-        }
-    }
-
-    const items: RecipientSnapshotItem[] = [...byEmail.values()].map((r) => ({
-        personId: r.personId,
-        email: r.email,
-        variant: r.variant,
-        // Suppression is join-variant-only (binding decision, spec §2.4): renew recipients
-        // are never dropped, and a suppressed join recipient is recorded (not silently
-        // dropped) so the count/ledger stays honest.
-        status: r.variant === "join" && r.emailSuppressed ? "skipped_unsubscribed" : "queued",
-    }));
-
+    const items = leads.flatMap((lead) => (lead.email ? [{ personId: lead.id, email: lead.email }] : []));
     return { items, leadsWithoutEmail };
 }

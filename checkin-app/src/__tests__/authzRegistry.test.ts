@@ -106,7 +106,7 @@ const AUTHZ_TESTED = new Set<string>([
     'settings/membership/bulk-open-renewals',
     // POST deny-path (401 anon / 403 non-board) in its colocated unit test,
     // api/settings/membership/extract-variant/__tests__/route.test.ts (no DB —
-    // the route never touches Prisma, only the pinned Shopify fetch).
+    // the route never touches Prisma, only the Shopify Admin API).
     'settings/membership/extract-variant',
     'settings/membership/volunteer-designations',
     // GET deny-path (401 anon / 403 non-board) unit-tested through the real

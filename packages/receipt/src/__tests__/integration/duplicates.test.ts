@@ -13,6 +13,12 @@ beforeEach(async () => {
   configure({ receiptSink: recordingPorts().receiptSink });
 });
 
+/** The earliest live member a receipt is held against, from its group. */
+async function heldAgainst(id: string): Promise<string | null> {
+  const row = await receiptRepo.find(id, await getOrgId());
+  return row ? checkDuplicate(row) : null;
+}
+
 describeDb("duplicate detection", () => {
   it("flags a re-upload of the same file against the original", async () => {
     const file = textFile();
@@ -20,7 +26,7 @@ describeDb("duplicate detection", () => {
     const second = await receiptService.upload(file, "text/plain", { details: manualDetails({ retailer: "B" }) });
     expect(first.state).toBe("receipt_finalized");
     expect(second.state).toBe("duplicate_flagged");
-    expect(second.duplicateSuspectReceiptId).toBe(first.id);
+    expect(await heldAgainst(second.id)).toBe(first.id);
   });
 
   it("flags the composite (retailer, date, total) match", async () => {
@@ -33,7 +39,7 @@ describeDb("duplicate detection", () => {
     const first = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Amazon" }) });
     const second = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: " amazon  " }) });
     expect(second.state).toBe("duplicate_flagged");
-    expect(second.duplicateSuspectReceiptId).toBe(first.id);
+    expect(await heldAgainst(second.id)).toBe(first.id);
   });
 
   it.each(["orderNumber", "receiptNumber"])("matches %s under a retailer differing in case and spacing", async (field) => {
@@ -113,7 +119,7 @@ describeDb("duplicate detection", () => {
       const first = await receiptService.upload(a, "text/plain", { details: manualDetails(), ...firstKind });
       const second = await receiptService.upload(b, "text/plain", { details: manualDetails(), ...secondKind });
       expect(second.state).toBe("duplicate_flagged");
-      expect(second.duplicateSuspectReceiptId).toBe(first.id);
+      expect(await heldAgainst(second.id)).toBe(first.id);
       expect((await receiptService.duplicateGroup(second.id)).members.map((m) => m.id).sort()).toEqual([first.id, second.id].sort());
     });
   });
@@ -288,10 +294,9 @@ describeDb("deciding a duplicate group", () => {
     actAs(FINANCE);
     await receiptService.keepThisOne(b.id, [a.id, b.id]);
     const row = await db.receiptAuditLog.findFirst({ where: { receiptId: a.id, action: "reject_financial" } });
-    // Both were uploaded today, so the kept receipt is told apart by its upload time.
-    expect(row?.valueAfter).toMatch(/^Copy of Home Depot, uploaded \d{1,2} \w{3}, \d{2}:\d{2}$/);
+    expect(row?.valueAfter).toBe(`Copy of receipt ${b.id}`);
     const member = (await receiptService.duplicateGroup(b.id)).members.find((m) => m.id === a.id);
-    expect(member).toMatchObject({ label: `Rejected as a copy of ${row?.valueAfter?.slice("Copy of ".length)}`, copyOfId: b.id });
+    expect(member).toMatchObject({ label: `Rejected as a copy of receipt ${b.id}`, copyOfId: b.id });
   });
 });
 
@@ -311,7 +316,7 @@ describeDb("deciding on a suspected original", () => {
     const original = await receiptService.upload(file, "text/plain", { details });
     actAs(BOB);
     const flagged = await receiptService.upload(file, "text/plain", { details });
-    expect([original.state, flagged.state, flagged.duplicateSuspectReceiptId]).toEqual(["financial_review", "duplicate_flagged", original.id]);
+    expect([original.state, flagged.state, await heldAgainst(flagged.id)]).toEqual(["financial_review", "duplicate_flagged", original.id]);
     return { original, flagged };
   }
 

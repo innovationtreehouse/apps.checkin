@@ -69,9 +69,8 @@ const receiptView = () => ({
     validationNotes: 'rejected: wrong store',
     lineItems: [{ id: 1, receiptId: 'r-1', lineNumber: 1, description: 'Arduino', totalPriceCents: 6989 }],
     reimbursement: { paidOn: null },
-    pushGivenUp: true,
     lastPushFailedAt: '2026-10-20T00:00:00.000Z',
-    lastPushFailure: 'receiver timed out',
+    lastError: 'receiver timed out',
 });
 
 describe('receipt file bytes', () => {
@@ -120,13 +119,13 @@ describe('receipt donor and reimbursee names', () => {
         expect(out.lineItems).toEqual([{ id: 1, receiptId: 'r-1', lineNumber: 1, description: 'Arduino', totalPriceCents: 6989 }]);
         expect(out.reimbursement).toEqual({ paidOn: null });
         expect(out.lastPushFailedAt).toBe('2026-10-20T00:00:00.000Z');
-        for (const f of ['reimbursementFor', 'donorFirstName', 'donorLastName', 'donorCompanyName', 'validationNotes', 'lastPushFailure']) {
+        for (const f of ['reimbursementFor', 'donorFirstName', 'donorLastName', 'donorCompanyName', 'validationNotes', 'lastError']) {
             expect(out).not.toHaveProperty(f);
         }
     });
 
     it('the raw Receipt model strips the same names under an internal-only view', () => {
-        const row = omit(receiptView(), 'lineItems', 'reimbursement', 'pushGivenUp', 'lastPushFailedAt', 'lastPushFailure');
+        const row = omit(receiptView(), 'lineItems', 'reimbursement', 'lastPushFailedAt', 'lastError');
         const out = stripValue('Receipt', row, INTERNAL_ONLY, ctx()) as Record<string, unknown>;
         expect(out.uploadedByUserId).toBe(7);
         for (const f of ['reimbursementFor', 'donorFirstName', 'donorLastName', 'donorCompanyName']) {
@@ -140,8 +139,7 @@ describe('receipt donor and reimbursee names', () => {
         expect(out.donorFirstName).toBe('Pat');
         expect(out.donorCompanyName).toBe('Doe Hardware');
         expect(out.validationNotes).toBe('rejected: wrong store');
-        expect(out.lastPushFailure).toBe('receiver timed out');
-        expect(out).not.toHaveProperty('pushGivenUp');
+        expect(out.lastError).toBe('receiver timed out');
     });
 
     it('an internal-only view strips the audit actor name, values and the mail sender', () => {
@@ -180,12 +178,11 @@ describe('receipt audit change values', () => {
 describe('ReceiptView tiering', () => {
     it('matches the generated Receipt and ReceiptDetail tiers field for field', () => {
         // ReceiptRow omits these columns (repositories/receipt.ts listShape).
-        const receipt = omit(receiptGenerated.classifications.Receipt, 'fileBlob', 'fileKey', 'fileSize', 'donorSyncSeq', 'firstFailedAt', 'lastError');
+        const receipt = omit(receiptGenerated.classifications.Receipt, 'fileBlob', 'fileKey', 'fileSize', 'donorSyncSeq', 'firstFailedAt');
         // Who confirmed a receipt and the Board's reason stay off the view; the reimbursee's confirmation view covers confirming.
         // The rejection acknowledgement reaches the view as the `rejectionUnacknowledged` flag.
-        // The three old duplicate columns are still on ReceiptDetail, but no response carries them.
-        const detail = omit(receiptGenerated.classifications.ReceiptDetail, 'id', 'orgId', 'reviewedByUserId', 'reviewedOnBehalfReason', 'rejectionAcknowledgedAt', 'duplicateFlagClearedAt', 'duplicateSuspectReceiptId', 'duplicateSuspectIsRejected');
-        const view = omit(receiptSynthetic.classifications.ReceiptView, 'duplicateNotice', 'copyOfId', 'copyOfLabel', 'financialReviewReasons', 'complete', 'reimbursement', 'lastPushFailedAt', 'lastPushFailure', 'purchaseOutcome', 'rejectionUnacknowledged');
+        const detail = omit(receiptGenerated.classifications.ReceiptDetail, 'id', 'orgId', 'reviewedByUserId', 'reviewedOnBehalfReason', 'rejectionAcknowledgedAt');
+        const view = omit(receiptSynthetic.classifications.ReceiptView, 'duplicateNotice', 'copyOfId', 'copyOfLabel', 'financialReviewReasons', 'complete', 'reimbursement', 'lastPushFailedAt', 'purchaseOutcome', 'rejectionUnacknowledged');
         expect(view).toEqual({ ...receipt, ...detail });
     });
 
@@ -193,6 +190,13 @@ describe('ReceiptView tiering', () => {
         const { uploadedByUserId, ...line } = receiptSynthetic.classifications.ReceiptLineView;
         expect(uploadedByUserId).toBe('internal');
         expect(line).toEqual(receiptGenerated.classifications.ReceiptLineItem);
+    });
+});
+
+describe('ReceiptQueueCounts', () => {
+    it('an internal-only view keeps every count', () => {
+        const counts = { byState: { financial_review: 2 }, notPushed: 3, failedPushes: 1, actionableByState: { financial_review: 2 } };
+        expect(stripValue('ReceiptQueueCounts', counts, INTERNAL_ONLY, ctx())).toEqual(counts);
     });
 });
 
@@ -206,7 +210,7 @@ describe('ReceiptIgnoredFileView', () => {
 describe('ReceiptDuplicateGroup', () => {
     const group = () => ({
         members: [
-            { id: 'r-1', state: 'rejected', label: 'Rejected as a copy of Acme, uploaded 2 Oct', copyOfId: 'r-2', uploaderName: 'Pat Doe' },
+            { id: 'r-1', state: 'rejected', label: 'Rejected as a copy of receipt r-2', copyOfId: 'r-2', uploaderName: 'Pat Doe' },
             { id: 'r-2', state: 'duplicate_flagged', label: 'Possible duplicate', copyOfId: null, uploaderName: 'Sam Roe' },
         ],
         dismissed: ['r-3'],
@@ -216,9 +220,10 @@ describe('ReceiptDuplicateGroup', () => {
         expect(stripValue('ReceiptDuplicateGroup', group(), FINANCE_VIEW, ctx())).toEqual(group());
     });
 
-    it('an internal-only view strips the receipt ids, the kept receipt and the rejection reason', () => {
+    it('an internal-only view keeps the public receipt ids and strips the rejection reason and uploader', () => {
         expect(stripValue('ReceiptDuplicateGroup', group(), INTERNAL_ONLY, ctx())).toEqual({
-            members: [{ state: 'rejected' }, { state: 'duplicate_flagged' }],
+            members: [{ id: 'r-1', state: 'rejected', copyOfId: 'r-2' }, { id: 'r-2', state: 'duplicate_flagged', copyOfId: null }],
+            dismissed: ['r-3'],
         });
     });
 
@@ -235,8 +240,8 @@ describe('ReceiptDuplicateQueueRow', () => {
         expect(stripValue('ReceiptDuplicateQueueRow', row, FINANCE_VIEW, ctx())).toEqual(row);
     });
 
-    it('an internal-only view strips the receipt id and the rejected marker', () => {
-        const { id: _id, includesRejected: _rejected, ...rest } = row;
+    it('an internal-only view keeps the public receipt id and strips the rejected marker', () => {
+        const { includesRejected: _rejected, ...rest } = row;
         expect(stripValue('ReceiptDuplicateQueueRow', row, INTERNAL_ONLY, ctx())).toEqual(rest);
     });
 });

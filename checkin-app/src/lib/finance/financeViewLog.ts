@@ -72,7 +72,7 @@ export async function recordFinanceView(view: FinanceView, db: DbClient = prisma
 
 // ---------------------------------------------------------------------------
 // Page views: one row per page view, merged from the calls the browser tags
-// (docs/in-design/FINANCE_VIEW_RECORD_IDS.md §4, §5).
+// (src/lib/pageViewTagging.ts).
 // ---------------------------------------------------------------------------
 
 /** Calls merge into a page view only within this span of its first call. */

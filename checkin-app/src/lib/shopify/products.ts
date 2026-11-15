@@ -1,11 +1,12 @@
-// Shopify products: storefront variant lookup and program product creation.
+// Shopify products: variant lookup by product URL and program product creation.
 
-import { centsToDecimalString } from "@checkin/money";
+import { centsToDecimalString, dollarsToCentsOrNull } from "@checkin/money";
 import { config } from "@/lib/config";
+import { logIntegrationError } from "@/lib/logger";
 import { getAccessToken, reportShopifyFailure, shopifyFetch, SHOPIFY_API_VERSION } from "@/lib/shopify/client";
 import { outboundCall } from "@/security/outbound";
 
-/** Thrown by fetchStorefrontProductVariants; status maps straight onto the API response. */
+/** Thrown by lookupProductVariantsByUrl; status maps straight onto the API response. */
 export class ProductUrlError extends Error {
     constructor(message: string, public readonly status: number) {
         super(message);
@@ -16,36 +17,54 @@ export class ProductUrlError extends Error {
 export interface StorefrontVariant {
     id: string;
     title: string;
-    /** The public product JSON reports prices in cents; null when the shape is unexpected. */
+    /** null when Shopify's price is missing or not a decimal amount. */
     priceCents: number | null;
 }
 
+/** A product as the Admin REST products.json returns it with `fields=id,title,status,variants`. */
+interface AdminProduct {
+    id?: number | string;
+    title?: string;
+    status?: string;
+    variants?: Array<{ id?: number | string; title?: string; price?: unknown }>;
+}
+
+/** A non-OK Admin API answer, keeping its status for the caller. */
+class ShopifyStatusError extends Error {
+    constructor(public readonly status: number) {
+        super(`Shopify product lookup responded with status: ${status}`);
+        this.name = "ShopifyStatusError";
+    }
+}
+
+/** The Admin API product carrying `handle`; null when there is none. Throws on a failed lookup. */
+async function getProductByHandle(storeDomain: string, accessToken: string, handle: string): Promise<AdminProduct | null> {
+    const res = await shopifyFetch(
+        `https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/products.json?handle=${encodeURIComponent(handle)}&fields=id,title,status,variants`,
+        { method: "GET", headers: { "X-Shopify-Access-Token": accessToken } },
+        "Shopify find product by handle",
+    );
+    if (!res.ok) throw new ShopifyStatusError(res.status);
+    const body: { products?: AdminProduct[] } = await res.json();
+    return body.products?.[0] ?? null;
+}
+
 /**
- * Resolve the variants of a membership product from its storefront URL via
- * Shopify's public product JSON (`https://<store>/products/<handle>.js`).
+ * Resolve the variants of a membership product from a pasted storefront URL,
+ * read through the Shopify Admin API.
  * Backs the "Extract variant from URL" action in membership settings: for a
  * single-variant product the Shopify admin UI hides the lone "Default Title"
  * variant entirely, so the product ID is the only number an admin can see —
  * and pasting THAT into the variant-ID field 410s the cart permalink checkout
  * (lib/membership/payment.ts builds https://<store>/cart/<variantId>:1).
  *
- * SSRF pinning — this is a server-side fetch of an admin-supplied URL, so the
- * URL is pinned hard before any request goes out: https only, host must
- * EXACTLY equal the configured SHOPIFY_STORE_DOMAIN, path must match
- * /products/<handle> after normalization (query, hash, and trailing slash
- * stripped), and redirects are refused rather than followed. Everything else
- * is a 400 before fetch.
- *
- * Shopify bot-throttles the .js endpoint for non-browser callers (429s
- * observed from server IPs), so the request carries a browser User-Agent and
- * retries twice with a short backoff; a still-throttled request surfaces as
- * "try again in a minute", not a generic failure. The Admin API would be the
- * throttle-proof alternative if this keeps biting.
+ * Only the `<handle>` is taken from the pasted URL (https, /products/<handle>,
+ * query/hash/trailing slash ignored); the product is read by that handle from
+ * the Admin API on the configured SHOPIFY_STORE_DOMAIN. The pasted host never
+ * picks the request target, so any host is accepted — the store's custom
+ * domain as well as its myshopify.com domain.
  */
-export async function fetchStorefrontProductVariants(productUrl: string): Promise<StorefrontVariant[]> {
-    const storeDomain = config.shopifyStoreDomain();
-    if (!storeDomain) throw new ProductUrlError("SHOPIFY_STORE_DOMAIN is not configured on this instance, so the URL cannot be verified.", 400);
-
+export async function lookupProductVariantsByUrl(productUrl: string): Promise<{ productTitle: string; variants: StorefrontVariant[] }> {
     let parsed: URL;
     try {
         parsed = new URL(productUrl.trim());
@@ -53,58 +72,43 @@ export async function fetchStorefrontProductVariants(productUrl: string): Promis
         throw new ProductUrlError("That is not a valid URL.", 400);
     }
     if (parsed.protocol !== "https:") throw new ProductUrlError("The product URL must start with https://.", 400);
-    // URL lowercases the hostname and drops a default :443, so an exact host
-    // comparison also rejects any explicit non-default port.
-    if (parsed.host !== storeDomain.toLowerCase()) {
-        throw new ProductUrlError(`The product URL must be on the store domain ${storeDomain}.`, 400);
+    const handle = /^\/products\/([a-z0-9-]+)$/.exec(parsed.pathname.replace(/\/+$/, ""))?.[1];
+    if (!handle) throw new ProductUrlError("The URL must be a product page: https://<store>/products/<product-handle>.", 400);
+
+    const storeDomain = config.shopifyStoreDomain();
+    if (!storeDomain || !config.shopifyClientId() || !config.shopifyClientSecret()) {
+        throw new ProductUrlError("Shopify is not configured on this instance, so the product cannot be looked up.", 400);
     }
-    const productPath = parsed.pathname.replace(/\/+$/, "");
-    if (!/^\/products\/[a-z0-9-]+$/.test(productPath)) {
-        throw new ProductUrlError(`The URL must be a product page: https://${storeDomain}/products/<product-handle>.`, 400);
+    const accessToken = await getAccessToken();
+    if (!accessToken) {
+        await logIntegrationError("shopify", new Error("No Shopify access token could be obtained"), { operation: "lookupProductVariantsByUrl", handle });
+        throw new ProductUrlError("Could not sign in to Shopify — check the Shopify app credentials, then try again.", 502);
     }
 
-    let res: Response | undefined;
-    for (let attempt = 0; attempt < 3; attempt++) {
-        if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
-        try {
-            res = await fetch(`https://${storeDomain}${productPath}.js`, {
-                headers: {
-                    // Browser User-Agent: see the throttling note in the doc comment.
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-                    Accept: "application/json",
-                },
-                redirect: "error", // any redirect could leave the pinned host — refuse it
-                signal: AbortSignal.timeout(10_000),
-            });
-        } catch (err) {
-            if (err instanceof DOMException && (err.name === "TimeoutError" || err.name === "AbortError")) {
-                throw new ProductUrlError("Shopify did not answer within 10 seconds — try again.", 504);
-            }
-            // undici surfaces a refused redirect (and any network failure) as a TypeError.
-            throw new ProductUrlError("Could not fetch the product from Shopify — the request failed or was redirected.", 502);
-        }
-        if (res.status !== 429) break;
-    }
-    if (!res || res.status === 429) throw new ProductUrlError("Shopify throttled the request — try again in a minute.", 429);
-    if (res.status === 404) throw new ProductUrlError("Shopify has no product at that URL — check the link.", 404);
-    if (!res.ok) throw new ProductUrlError(`Shopify returned ${res.status} for the product URL — check the link and try again.`, 502);
-
-    let product: { variants?: Array<{ id?: number | string; title?: string; price?: unknown }> };
+    let product: AdminProduct | null;
     try {
-        product = await res.json();
-    } catch {
-        throw new ProductUrlError("Shopify's response was not product JSON — check that the URL is the product page.", 502);
+        product = await getProductByHandle(storeDomain, accessToken, handle);
+    } catch (err) {
+        await logIntegrationError("shopify", err, { operation: "lookupProductVariantsByUrl", handle });
+        if (err instanceof ShopifyStatusError && err.status === 429) {
+            throw new ProductUrlError("Shopify is rate-limiting requests right now — try again in a minute.", 429);
+        }
+        throw new ProductUrlError("Could not read the product from Shopify — try again in a minute.", 502);
     }
-    if (!Array.isArray(product?.variants)) {
-        throw new ProductUrlError("Shopify's response has no variant list — check that the URL is the product page.", 502);
+    if (!product) throw new ProductUrlError(`Shopify has no product with the handle "${handle}" — check the link.`, 404);
+    // A draft or archived product cannot be bought, so its cart link would fail at checkout.
+    if (product.status === "draft" || product.status === "archived") {
+        throw new ProductUrlError(`The product "${product.title || handle}" is ${product.status} in Shopify — make it active there before choosing its variant.`, 400);
     }
-    return product.variants
+
+    const variants = (product.variants ?? [])
         .filter((v) => v?.id !== undefined && v?.id !== null)
         .map((v) => ({
             id: String(v.id),
             title: v.title || "Default Title",
-            priceCents: typeof v.price === "number" ? v.price : null,
+            priceCents: typeof v.price === "string" || typeof v.price === "number" ? dollarsToCentsOrNull(String(v.price)) : null,
         }));
+    return { productTitle: product.title || handle, variants };
 }
 
 /** Stable Shopify handle for a program's product, so a retried sync finds what an earlier run created. */
@@ -122,13 +126,7 @@ async function findProductByHandle(
     accessToken: string,
     handle: string,
 ): Promise<{ productId: string; variantId: string } | null> {
-    const res = await shopifyFetch(
-        `https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/products.json?handle=${encodeURIComponent(handle)}&fields=id,variants`,
-        { method: 'GET', headers: { 'X-Shopify-Access-Token': accessToken } },
-        "Shopify find product by handle",
-    );
-    if (!res.ok) throw new Error(`Shopify product lookup responded with status: ${res.status}`);
-    const product = (await res.json()).products?.[0];
+    const product = await getProductByHandle(storeDomain, accessToken, handle);
     if (!product) return null;
     const variantId = product.variants?.[0]?.id;
     if (!product.id || !variantId) throw new Error(`Shopify product ${product.id ?? "?"} for handle ${handle} has no variant`);

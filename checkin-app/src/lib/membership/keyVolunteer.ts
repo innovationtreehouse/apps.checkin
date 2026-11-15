@@ -94,7 +94,7 @@ export async function recallSigningRequests(requestIds: readonly string[]): Prom
 /**
  * The Board's "new version (material change)": increments the version, archives
  * every open agreement at an older version, and opens one at the new version for
- * every live Key Volunteer. Removes no role. Recalls the archived agreements'
+ * every Key Volunteer. Removes no role. Recalls the archived agreements'
  * Zoho requests after the transaction commits.
  */
 export async function bumpKeyVolunteerAgreementVersion(actorId: number): Promise<{ agreementVersion: number; agreementsOpened: number }> {
@@ -119,7 +119,7 @@ export async function bumpKeyVolunteerAgreementVersion(actorId: number): Promise
         });
         const recalls = await archiveOpenKvas(tx, { agreementVersion: { lt: version } }, actor, `Key Volunteer Agreement version ${version}`);
         const holders = await tx.personRole.findMany({
-            where: { role: "KEY_VOLUNTEER", person: { mergedIntoId: null } },
+            where: { role: "KEY_VOLUNTEER" },
             select: { personId: true },
         });
         let opened = 0;

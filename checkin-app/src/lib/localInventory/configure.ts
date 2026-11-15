@@ -3,7 +3,7 @@
  * server boot from instrumentation.ts. It shares the host kit's principal and
  * lazy Org-registry accessor, so both libraries stamp the same org id and
  * person ids, and boot stays DB-free. The S5 replay read is bound to the catalog's events,
- * and the item read to the shared catalog reader.
+ * and the item reads to the shared catalog reader.
  */
 import { configureLocalInventory } from "@checkin/local-inventory";
 import { catalogReader } from "@/lib/catalog/reader";
@@ -14,6 +14,6 @@ export function configureLocalInventoryRuntime(): void {
     auth: { getPrincipal },
     org: getOrg,
     catalogEventSource: { eventsSince: catalogEventsSince },
-    catalog: { getActiveItem: catalogReader.getActiveItem },
+    catalog: { getActiveItem: catalogReader.getActiveItem, searchItems: catalogReader.searchItems },
   });
 }

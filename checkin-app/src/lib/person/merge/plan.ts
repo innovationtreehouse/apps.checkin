@@ -19,7 +19,7 @@ export const IDENTITY_CHOICE_KEY = 'identity';
 const VALID_CHOICE_KEYS: readonly string[] = [...CONFLICT_FIELDS, IDENTITY_CHOICE_KEY];
 
 /** The Person fields the keeper-update decisions read. */
-export type MergeFields = Pick<Person, "name" | "phone" | "dateOfBirth" | "image" | "email" | "googleId" | "emailVerified" | "emailSuppressed" | "lastBackgroundCheck" | "lastWaiverSign">;
+export type MergeFields = Pick<Person, "name" | "phone" | "dateOfBirth" | "image" | "email" | "googleId" | "emailVerified" | "lastBackgroundCheck" | "lastWaiverSign">;
 export type FieldChoices = Partial<Record<string, 'keep' | 'merge'>>;
 export type Collision = { type: string; message: string };
 export type MergeRefusal = { status: 400 | 403 | 404 | 409; error: string; collisions?: Collision[] };
@@ -87,7 +87,6 @@ export function personPreImage(p: Person) {
         googleId: p.googleId,
         email: p.email,
         emailVerified: p.emailVerified,
-        emailSuppressed: p.emailSuppressed,
         phone: p.phone,
         name: p.name,
         dateOfBirth: p.dateOfBirth,
@@ -174,11 +173,9 @@ export function resolveKeeperUpdate(keep: MergeFields, merge: MergeFields, choic
         data.email = merge.email;
         data.googleId = merge.googleId;
         data.emailVerified = merge.emailVerified;
-        // Suppression is tied to the address, so it rides in with it.
-        data.emailSuppressed = merge.emailSuppressed;
     }
     // Only-keeper-has-identity (or 'keep' choice, or neither side) -> no write:
-    // the keeper's address stands, and so does its own emailSuppressed.
+    // the keeper's address stands.
 
     // Compliance dates: always take the newer one. Same human — an older check
     // is never the right survivor. Never a radio.

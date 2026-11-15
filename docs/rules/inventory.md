@@ -40,10 +40,11 @@ How the pieces are built is described in
   item, across the whole catalog. A change must not create a second item for the
   same GTIN or move a GTIN to a different item. `[Decision]`
 
-- A GTIN shown to a person uses its short form: `P000123` for a provisional GTIN,
-  `03B0042` for one minted from the catalog's category and sequence, and the 13
-  digits for a manufacturer's GTIN. CSV exports, URLs and API values keep the raw
-  digits. `[Decision]`
+- A GTIN shown to a person is its **Part ID**, under that name on every screen:
+  `P000123` for a provisional GTIN, `03B0042` for one minted from the catalog's
+  category and sequence, and the 13 digits for a manufacturer's GTIN. A store's or
+  manufacturer's own number for a part is a part #, never a Part ID. CSV exports,
+  URLs and API values keep the raw digits. `[Decision — owner]`
 
 - A person picks a part from the catalog rather than typing its GTIN. A new org
   item or part-bucket mapping takes only a GTIN-13 with a valid check digit that
@@ -67,6 +68,15 @@ How the pieces are built is described in
 
 - A changed conversion factor applies only to goods received after the change.
   Stock already counted is never recalculated. `[Decision]`
+
+- An existing reference's conversion factor changes only through an accepted
+  conversion challenge, which records who changed it, from what, to what, and
+  why. A challenge proposes a whole number different from the reference's
+  current factor, with a reason; one that doesn't is refused. `[Decision — owner]`
+
+- Accepting a conversion challenge changes the catalog reference only. A
+  receipt line already mapped keeps the factor it was mapped with, even before
+  its receipt is applied. `[Decision — owner — deliberate limit]`
 
 ### Proposals, provisional items, conflicts
 
@@ -92,7 +102,7 @@ How the pieces are built is described in
   is left to decide and the conflict is closed as resolved. A resolved conflict
   records the item it was decided against; its audit entry keeps the item raised.
   This screen offers no way back to the original item; that is fixed by hand in
-  the global catalog. `[Decision — owner ruling 2026-10-31]`
+  the global catalog. `[Decision]`
 
 ### On-hand stock
 
@@ -166,9 +176,9 @@ How the pieces are built is described in
   was done by hand or isn't needed, and carries a note; a blank note is
   refused. A closed receipt can't be reopened. `[Decision — owner]`
 
-- The person who uploaded a receipt, or anyone in their household, may map its
-  lines in Part mapping (link, propose or mark not inventory) and send it to
-  apply. There is no conflict-of-interest check on mapping: it decides what the
+- Inventory managers map a receipt's lines in Part mapping (link, propose or
+  mark not inventory) and send it to apply. There is no conflict-of-interest
+  check on mapping: it decides what the
   goods are, not what is paid. Finance and the expense sign-off seats decide
   the money side, under the conflict rules in `expenses.md`.
   `[Decision — owner]`
@@ -199,6 +209,12 @@ How the pieces are built is described in
   at all, is a decision on the record.
   `[Decision — *Principle: least privilege*]`
 
+- The catalog audience reads finished catalog data: items, categories,
+  subcategories, references and the audit trail. The review queues are read
+  and worked by inventory managers only. Those queues are provisional items,
+  item-reference proposals, reference conflicts and conversion challenges.
+  `[Decision — owner]`
+
 - On-hand stock is read by the same audience as the catalog; only inventory
   managers change it. `[Decision — *Principle: least privilege*]`
 
@@ -211,6 +227,9 @@ How the pieces are built is described in
 
 - Board membership is enough to view receipt and inventory data, and to edit it
   wherever the app allows an edit. `[Decision — owner]`
+
+- Inventory managers file conversion challenges, and the manager who filed one
+  may accept it. `[Decision — owner]`
 
 - One inventory-manager role covers all catalog writes. Splitting it into
   separate catalog-manager and org-manager roles is planned.

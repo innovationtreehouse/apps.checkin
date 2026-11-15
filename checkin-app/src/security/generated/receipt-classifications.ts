@@ -11,7 +11,7 @@ export const classifications = {
         ocrEnabled: 'internal',
     },
     Receipt: {
-        id: 'internal',
+        id: 'public',
         orgId: 'internal',
         uploadedByUserId: 'internal',
         uploadedAt: 'internal',
@@ -33,6 +33,7 @@ export const classifications = {
         pushedAt: 'internal',
         firstFailedAt: 'internal',
         lastError: 'personal',
+        rotation: 'internal',
     },
     ReceiptDetail: {
         id: 'internal',
@@ -49,9 +50,6 @@ export const classifications = {
         state: 'internal',
         ocrStartedAt: 'internal',
         duplicateFlaggedAt: 'internal',
-        duplicateFlagClearedAt: 'internal',
-        duplicateSuspectReceiptId: 'pii',
-        duplicateSuspectIsRejected: 'pii',
         validationNotes: 'personal',
         approvedAt: 'internal',
         reviewedAt: 'internal',
@@ -148,6 +146,12 @@ export const classifications = {
         alertedAt: 'internal',
         createdAt: 'internal',
     },
+    ReceiptMailLease: {
+        orgId: 'internal',
+        until: 'internal',
+        lastRunAt: 'internal',
+        lastRun: 'internal',
+    },
     ReceiptOutcomeNotice: {
         id: 'internal',
         orgId: 'internal',
@@ -205,10 +209,21 @@ export const relations = {
     },
     ReceiptMailAtRisk: {
     },
+    ReceiptMailLease: {
+    },
     ReceiptOutcomeNotice: {
     },
     ReceiptIgnoredFile: {
     },
+} as const;
+
+export const marks = {
+    Receipt: ['uploadedByUserId', 'fileBlob', 'reimbursementFor', 'reimburseePersonId', 'donorFirstName', 'donorLastName', 'donorCompanyName'],
+    ReceiptDetail: ['retailer', 'shippingCents', 'taxCents', 'discountCents', 'receiptTotalCents'],
+    ReceiptFinanceReview: ['taxCents'],
+    ReceiptLineItem: ['unitPriceCents', 'totalPriceCents'],
+    ReceiptAuditLog: ['valueBefore', 'valueAfter'],
+    ReceiptMailItem: ['senderAddress', 'fileBlob'],
 } as const;
 
 export type Models = keyof typeof classifications;

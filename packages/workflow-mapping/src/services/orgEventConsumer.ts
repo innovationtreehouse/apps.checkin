@@ -38,6 +38,7 @@ async function remapProvisional(
       data: {
         recognitionStatus: "recognized",
         assignedGtin13: ev.realGtin13,
+        proposedName: null,
         conversionFactor: ev.conversionFactor,
         conversionVersion: ev.conversionVersion,
       },

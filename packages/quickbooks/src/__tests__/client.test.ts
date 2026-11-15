@@ -223,13 +223,13 @@ describe("QuickBooksClient", () => {
   });
 
   it.each([
-    ["accounts", "Account"],
-    ["classes", "Class"],
-    ["vendors", "Vendor"],
-  ] as const)("%s pages the %s list", async (method, entity) => {
+    ["accounts", "Account", ""],
+    ["classes", "Class", " WHERE Active IN (true, false)"],
+    ["vendors", "Vendor", ""],
+  ] as const)("%s pages the %s list", async (method, entity, filter) => {
     respond(entity, [{ Id: "1" }]);
     await expect(new QuickBooksClient(tokens, sandbox)[method]()).resolves.toEqual([{ Id: "1" }]);
-    expect(sql(0)).toBe(`SELECT * FROM ${entity} STARTPOSITION 1 MAXRESULTS 1000`);
+    expect(sql(0)).toBe(`SELECT * FROM ${entity}${filter} STARTPOSITION 1 MAXRESULTS 1000`);
   });
 });
 

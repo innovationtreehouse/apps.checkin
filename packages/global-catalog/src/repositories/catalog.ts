@@ -6,12 +6,14 @@ const ITEM_INCLUDE = {
   subcategory: { select: { name: true, number: true } },
 } as const;
 
-/** What a search box matches: name, GTIN, category, subcategory, or the GTIN a typed short ID stands for. */
+/** What a search box matches: name, GTIN, an active reference's part number, category, subcategory, or the GTIN a typed short ID stands for. */
 export function itemSearch(q: string): Prisma.ItemWhereInput[] {
   const gtin13 = parseGtinInput(q);
   return [
     { name: { contains: q, mode: "insensitive" } },
     { gtin13: { contains: q } },
+    // ponytail: unindexed EXISTS scan over item_references, fine at today's catalog size; add a trigram index on part_number if search slows.
+    { itemReferences: { some: { archivedAt: null, partNumber: { contains: q, mode: "insensitive" } } } },
     { category: { name: { contains: q, mode: "insensitive" } } },
     { subcategory: { name: { contains: q, mode: "insensitive" } } },
     ...(gtin13 ? [{ gtin13 }] : []),

@@ -114,7 +114,7 @@ describe('Key Volunteer Agreement service', () => {
             // Nobody loses the role.
             expect(await prisma.personRole.count({ where: { personId, role: 'KEY_VOLUNTEER' } })).toBe(1);
         }
-        const holders = await prisma.personRole.count({ where: { role: 'KEY_VOLUNTEER', person: { mergedIntoId: null } } });
+        const holders = await prisma.personRole.count({ where: { role: 'KEY_VOLUNTEER' } });
         expect(result.agreementsOpened).toBe(holders);
         expect(await prisma.auditLog.count({ where: { actorId: boardId, tableName: 'BoardSettings' } })).toBe(1);
     });

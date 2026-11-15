@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Button, Group, Modal, Stack, Text } from '@mantine/core';
 import { notifications } from '@mantine/notifications';
+import { errorMessage, HttpError, showError, showSuccess } from '@checkin/component-ui';
+import { api } from '@/lib/api';
 import { AlertBanner } from '@/components/admin/AlertBanner';
 import { DataTable, type DataTableColumn } from '@/components/admin/DataTable';
 import { useRequireRole } from '@/hooks/useRequireRole';
@@ -32,6 +34,8 @@ export default function UnconfirmedShopifyStockPage() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [target, setTarget] = useState<{ row: Row; choice: Choice } | null>(null);
+  // The program whose write is in flight; its buttons stay disabled so a second click can't send again.
+  const [busyId, setBusyId] = useState<number | null>(null);
 
   const fetchRows = useCallback(() => fetch('/api/finance-ops/shopify-stock')
     .then(async (res) => {
@@ -56,26 +60,21 @@ export default function UnconfirmedShopifyStockPage() {
     if (!target) return;
     const { row, choice } = target;
     setTarget(null);
+    setBusyId(row.programId);
     try {
-      const res = await fetch(`/api/finance-ops/shopify-stock/${row.programId}`, {
+      await api(`/api/finance-ops/shopify-stock/${row.programId}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ choice, expected: row.unconfirmed, since: row.unconfirmedSince }),
       });
-      if (res.ok) {
-        fetchRows();
-        notifications.show({
-          message: choice === 'landed'
-            ? `${row.programName}: cleared — Shopify already has the change.`
-            : `${row.programName}: the change is owed again and will be pushed to Shopify.`,
-        });
-      } else {
-        const data = await res.json().catch(() => ({}));
-        notifications.show({ color: 'red', message: data.error || "Action failed.", autoClose: false });
-        fetchRows();
-      }
-    } catch {
-      notifications.show({ color: 'red', message: "Network error.", autoClose: false });
+      await fetchRows();
+      showSuccess(choice === 'landed'
+        ? `${row.programName}: cleared — Shopify already has the change.`
+        : `${row.programName}: the change is owed again and will be pushed to Shopify.`);
+    } catch (e) {
+      showError(errorMessage(e));
+      if (e instanceof HttpError) await fetchRows();
+    } finally {
+      setBusyId(null);
     }
   };
 
@@ -97,10 +96,10 @@ export default function UnconfirmedShopifyStockPage() {
       align: 'right',
       render: (r) => (
         <Group justify="flex-end" gap="xs" wrap="nowrap">
-          <Button size="xs" fz={15} variant="default" onClick={() => setTarget({ row: r, choice: 'notLanded' })}>
+          <Button size="xs" fz={15} variant="default" disabled={busyId === r.programId} onClick={() => setTarget({ row: r, choice: 'notLanded' })}>
             Shopify doesn&apos;t have it
           </Button>
-          <Button size="xs" fz={15} color="blue" onClick={() => setTarget({ row: r, choice: 'landed' })}>
+          <Button size="xs" fz={15} color="blue" disabled={busyId === r.programId} onClick={() => setTarget({ row: r, choice: 'landed' })}>
             Shopify has it
           </Button>
         </Group>

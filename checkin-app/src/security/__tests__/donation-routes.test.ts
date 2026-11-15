@@ -70,7 +70,10 @@ async function callJson(endpoint: string) {
     return { status: res.status, impl, body: res.status === 200 ? await res.json() : undefined };
 }
 
-jest.mock('@/lib/finance/financeViewLog', () => ({ recordFinanceView: jest.fn().mockResolvedValue(undefined) }));
+jest.mock('@/lib/finance/financeViewLog', () => ({
+    ...jest.requireActual('@/lib/finance/financeViewLog'),
+    recordFinanceViewCall: jest.fn().mockResolvedValue(undefined),
+}));
 jest.mock('@/lib/finance/bucketApprovers', () => ({ bucketsApprovedBy: jest.fn() }));
 
 let approvedBuckets: number[];
@@ -410,6 +413,8 @@ describe('in-kind gift detail routes', () => {
         waitingOn: [],
         inventorySourceKey: 'donation:1',
         inventoryLoadedAt: '2026-10-01T12:00:00.000Z',
+        qbFirstFailedAt: '2026-10-03T00:00:00.000Z',
+        qbLastError: 'QuickBooks 500',
         lines: [{ id: 2, gtin13: '0000000000017', description: 'Bench vise', quantity: 3, valueCents: 900, suggestedValueCents: 800 }],
         events: [{ id: 5, eventType: 'IN_KIND_DECIDED', actorUsername: 'fin', occurredAt: '2026-10-02T00:00:00.000Z', payload: '{"outcome":"ACCEPTED"}' }],
     };

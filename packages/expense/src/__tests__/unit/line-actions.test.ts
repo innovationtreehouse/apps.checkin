@@ -1,6 +1,6 @@
 /** The caller's acts on an expense line and what it waits on otherwise, pure — no database. */
 import { describe, it, expect } from "vitest";
-import { lineActions, mayRecordBoardAuthorization, signatureTab, type LineActionsInput } from "../../lib/line-actions";
+import { approvalWaitsOnBoard, lineActions, mayRecordBoardAuthorization, signatureTab, type LineActionsInput } from "../../lib/line-actions";
 import { lineHolds } from "../../lib/signoff-facts";
 import type { FilledSeat, SignoffFacts } from "../../lib/signoff";
 
@@ -138,7 +138,7 @@ describe("acts per role", () => {
     const orgLevel = { approvers: [], orgLevel: true };
     expect(acts({ caller: 5, facts: orgLevel })).toEqual(["*approve"]);
     expect(approveOf({ caller: 5, facts: orgLevel })?.noteRequired).toBe(false);
-    expect(run({ caller: 3, facts: orgLevel }).awaiting).toContain("Awaiting a Board stand-in");
+    expect(run({ caller: 3, facts: orgLevel }).awaiting).toContain("Awaiting a Board member's approval");
   });
 
   it("the Board seat is offered only after the approval and the Treasurer", () => {
@@ -339,5 +339,32 @@ describe("signatureTab", () => {
     const card = { ...APPROVED, facts: { kind: "card_charge" as const, boardSeat: true } };
     expect(tabs({ caller: 5, ...card })).toEqual([]);
     expect(tabs({ caller: 5, ...card, filled: seats(["TREASURER", 3]) })).toEqual(["board"]);
+  });
+});
+
+describe("approvalWaitsOnBoard", () => {
+  const input = (c: { facts?: Partial<SignoffFacts>; filled?: FilledSeat[]; state?: string; approval?: { status: string; ownerId: number | null } }): LineActionsInput => {
+    const facts = { ...base, ...c.facts };
+    const filled = c.filled ?? CONFIRMED;
+    return {
+      caller: { id: 5, isFinance: false },
+      expense: { state: c.state ?? "owner_approval", backfill: false, reimburseeUnknown: false },
+      approval: c.approval ?? { status: "pending", ownerId: 7 },
+      facts,
+      filled,
+      holds: lineHolds(false, facts, filled),
+    };
+  };
+
+  it("holds for an org-level line and for one no bucket approver may approve", () => {
+    expect(approvalWaitsOnBoard(input({ facts: { approvers: [], orgLevel: true } }))).toBe(true);
+    expect(approvalWaitsOnBoard(input({ facts: { conflicted: [1, 2, 8] } }))).toBe(true);
+  });
+
+  it("does not hold while a bucket approver may approve, before the submitter confirms, or once the line is approved", () => {
+    expect(approvalWaitsOnBoard(input({}))).toBe(false);
+    expect(approvalWaitsOnBoard(input({ facts: { approvers: [], orgLevel: true }, filled: [] }))).toBe(false);
+    expect(approvalWaitsOnBoard(input({ facts: { approvers: [], orgLevel: true }, approval: { status: "approved", ownerId: 7 } }))).toBe(false);
+    expect(approvalWaitsOnBoard(input({ facts: { approvers: [], orgLevel: true }, state: "qb_pending" }))).toBe(false);
   });
 });

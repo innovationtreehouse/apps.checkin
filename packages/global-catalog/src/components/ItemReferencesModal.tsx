@@ -1,23 +1,72 @@
 "use client";
 import { useState } from "react";
 import {
-  ActionIcon, Anchor, Button, Divider, Group, Modal, Table, Text, TextInput, Tooltip,
+  ActionIcon, Anchor, Button, Divider, Group, Modal, NumberInput, Stack, Table, Text, Textarea, TextInput, Tooltip,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconArchive, IconCheck, IconEdit, IconPlus, IconX } from "@tabler/icons-react";
+import { IconArchive, IconCheck, IconEdit, IconPlus, IconScale, IconX } from "@tabler/icons-react";
 import { formatGtinDisplay } from "../lib/gtin";
 import { api, useLoad } from "./api";
 import { errorMessage, LoadError, showError } from "@checkin/component-ui";
-import type { ItemRow, ItemReferenceRow } from "./viewTypes";
+import { PART_NUMBER_HINT, partNumberLabel, type ItemRow, type ItemReferenceRow } from "./viewTypes";
 
 // conversionFactor is set by the reference matcher (S4), not the human UI — the
-// create/update routes ignore it — so it is shown read-only here.
+// create/update routes ignore it — so it is shown read-only here and changed only
+// through a conversion challenge.
 const EMPTY_REF = { partNumber: "", description: "", manufacturer: "", retailer: "", url: "" };
 
-function RefRow({ row: r, canEdit, onArchive, onEditingChange }: {
+const REASON_MAX = 500;
+
+function ChallengeModal({ row, onClose }: { row: ItemReferenceRow | null; onClose: () => void }) {
+  const [proposed, setProposed] = useState<number | string>("");
+  const [reason, setReason] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const factor = typeof proposed === "number" ? proposed : Number.NaN;
+  const valid = row !== null && Number.isInteger(factor) && factor >= 1 && factor !== row.conversionFactor
+    && reason.trim().length > 0 && reason.trim().length <= REASON_MAX;
+
+  function close() { setProposed(""); setReason(""); onClose(); }
+
+  async function handleSubmit() {
+    if (!row || !valid) return;
+    setSubmitting(true);
+    try {
+      await api(`/conversion-challenges`, {
+        method: "POST",
+        body: JSON.stringify({ itemReferenceId: row.id, proposedFactor: factor, reason: reason.trim() }),
+      });
+      notifications.show({ message: "Challenge filed for review", color: "green" });
+      close();
+    } catch (e) {
+      showError(errorMessage(e));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Modal opened={row !== null} onClose={close} title="Challenge conversion factor" centered>
+      {row && (
+        <Stack gap="sm">
+          <TextInput label="Current factor" value={String(row.conversionFactor)} readOnly />
+          <NumberInput label="Proposed factor" min={1} step={1} allowDecimal={false} allowNegative={false} value={proposed} onChange={setProposed} data-autofocus />
+          <Textarea label="Reason" maxLength={REASON_MAX} autosize minRows={2} value={reason} onChange={(e) => setReason(e.currentTarget.value)} />
+          <Group justify="flex-end">
+            <Button variant="default" onClick={close}>Cancel</Button>
+            <Button loading={submitting} disabled={!valid} onClick={handleSubmit}>File challenge</Button>
+          </Group>
+        </Stack>
+      )}
+    </Modal>
+  );
+}
+
+function RefRow({ row: r, canEdit, onArchive, onChallenge, onEditingChange }: {
   row: ItemReferenceRow;
   canEdit: boolean;
   onArchive: () => void;
+  onChallenge: () => void;
   onEditingChange: (editing: boolean) => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -58,7 +107,7 @@ function RefRow({ row: r, canEdit, onArchive, onEditingChange }: {
   if (editing) {
     return (
       <Table.Tr>
-        <Table.Td><TextInput size="xs" aria-label="Part number" value={form.partNumber} onChange={(e) => setForm({ ...form, partNumber: e.currentTarget.value })} /></Table.Td>
+        <Table.Td><TextInput size="xs" aria-label={partNumberLabel({ retailer: form.retailer || null, manufacturer: form.manufacturer || null })} value={form.partNumber} onChange={(e) => setForm({ ...form, partNumber: e.currentTarget.value })} /></Table.Td>
         <Table.Td><TextInput size="xs" aria-label="Description" value={form.description} onChange={(e) => setForm({ ...form, description: e.currentTarget.value })} /></Table.Td>
         <Table.Td><TextInput size="xs" aria-label="Manufacturer" value={form.manufacturer} onChange={(e) => setForm({ ...form, manufacturer: e.currentTarget.value })} /></Table.Td>
         <Table.Td><TextInput size="xs" aria-label="Retailer" value={form.retailer} onChange={(e) => setForm({ ...form, retailer: e.currentTarget.value })} /></Table.Td>
@@ -76,7 +125,9 @@ function RefRow({ row: r, canEdit, onArchive, onEditingChange }: {
 
   return (
     <Table.Tr>
-      <Table.Td>{r.partNumber ?? <Text c="dimmed" size="sm">—</Text>}</Table.Td>
+      <Table.Td>
+        {r.partNumber ? <><Text size="xs" c="dimmed">{partNumberLabel(r)}</Text>{r.partNumber}</> : <Text c="dimmed" size="sm">—</Text>}
+      </Table.Td>
       <Table.Td>{r.descriptionNormalized ?? <Text c="dimmed" size="sm">—</Text>}</Table.Td>
       <Table.Td>{r.manufacturer ?? <Text c="dimmed" size="sm">—</Text>}</Table.Td>
       <Table.Td>{r.retailer ?? <Text c="dimmed" size="sm">—</Text>}</Table.Td>
@@ -91,6 +142,9 @@ function RefRow({ row: r, canEdit, onArchive, onEditingChange }: {
           <Group gap={4}>
             <Tooltip label="Edit"><ActionIcon variant="subtle" size="sm" onClick={enterEdit}><IconEdit size={14} /></ActionIcon></Tooltip>
             <Tooltip label="Archive"><ActionIcon variant="subtle" color="orange" size="sm" onClick={onArchive}><IconArchive size={14} /></ActionIcon></Tooltip>
+            {!r.archivedAt && (
+              <Tooltip label="Challenge"><ActionIcon variant="subtle" color="blue" size="sm" aria-label="Challenge" onClick={onChallenge}><IconScale size={14} /></ActionIcon></Tooltip>
+            )}
           </Group>
         )}
       </Table.Td>
@@ -111,6 +165,7 @@ export default function ItemReferencesModal({ item, opened, onClose, canEdit }: 
   const [showAdd, setShowAdd] = useState(false);
   const [creating, setCreating] = useState(false);
   const [editingRows, setEditingRows] = useState<Set<number>>(new Set());
+  const [challenging, setChallenging] = useState<ItemReferenceRow | null>(null);
 
   const [wasOpened, setWasOpened] = useState(false);
   if (opened && !wasOpened) setWasOpened(true);
@@ -165,22 +220,22 @@ export default function ItemReferencesModal({ item, opened, onClose, canEdit }: 
         <Table withTableBorder withColumnBorders mb="md" style={{ tableLayout: "fixed" }}>
           <Table.Thead>
             <Table.Tr>
-              <Table.Th w="16%">Part Number</Table.Th>
+              <Table.Th w="16%"><Tooltip label={PART_NUMBER_HINT} multiline w={280}><span>Part #</span></Tooltip></Table.Th>
               <Table.Th w="18%">Description</Table.Th>
               <Table.Th w="16%">Manufacturer</Table.Th>
               <Table.Th w="16%">Retailer</Table.Th>
               <Table.Th>URL</Table.Th>
               <Table.Th w="10%">Conv. Factor</Table.Th>
-              <Table.Th w={canEdit ? 80 : 0} />
+              <Table.Th w={canEdit ? 100 : 0} />
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
             {refs.map((r) => (
-              <RefRow key={r.id} row={r} canEdit={canEdit} onArchive={() => handleArchive(r.id)} onEditingChange={(e) => handleEditingChange(r.id, e)} />
+              <RefRow key={r.id} row={r} canEdit={canEdit} onArchive={() => handleArchive(r.id)} onChallenge={() => setChallenging(r)} onEditingChange={(e) => handleEditingChange(r.id, e)} />
             ))}
             {showAdd && (
               <Table.Tr>
-                <Table.Td><TextInput size="xs" aria-label="Part number" placeholder="Part number" autoFocus value={addForm.partNumber} onChange={(e) => setAddForm({ ...addForm, partNumber: e.currentTarget.value })} /></Table.Td>
+                <Table.Td><Tooltip label={PART_NUMBER_HINT} multiline w={280}><TextInput size="xs" aria-label="Part #" placeholder="Part #" autoFocus value={addForm.partNumber} onChange={(e) => setAddForm({ ...addForm, partNumber: e.currentTarget.value })} /></Tooltip></Table.Td>
                 <Table.Td><TextInput size="xs" aria-label="Description" placeholder="Description" value={addForm.description} onChange={(e) => setAddForm({ ...addForm, description: e.currentTarget.value })} /></Table.Td>
                 <Table.Td><TextInput size="xs" aria-label="Manufacturer" placeholder="Manufacturer" value={addForm.manufacturer} onChange={(e) => setAddForm({ ...addForm, manufacturer: e.currentTarget.value })} /></Table.Td>
                 <Table.Td><TextInput size="xs" aria-label="Retailer" placeholder="Retailer" value={addForm.retailer} onChange={(e) => setAddForm({ ...addForm, retailer: e.currentTarget.value })} /></Table.Td>
@@ -204,6 +259,7 @@ export default function ItemReferencesModal({ item, opened, onClose, canEdit }: 
         ) : <span />}
         <Button variant="default" onClick={handleClose}>Close</Button>
       </Group>
+      <ChallengeModal row={challenging} onClose={() => setChallenging(null)} />
     </Modal>
   );
 }

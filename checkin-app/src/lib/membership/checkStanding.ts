@@ -7,13 +7,13 @@ import { bgFreshThreshold, nextBoundary } from "@/lib/membership/renewal";
 /**
  * A person's background-check standing, derived from their own check reviews
  * (PERSON_BG rows naming them) and their `lastBackgroundCheck`
- * (docs/in-design/person-based-bg-review.md §3.1).
+ * (docs/rules/membership.md, Application and review).
  *
  * - DISPUTED: a review is BLOCKED, or its rejection was Board-reset or changed to
  *   approve and it has not cleared since. It beats CLEARED: an old clearance never
  *   outweighs a new rejection.
  * - CLEARED: `lastBackgroundCheck` inside the window, nothing disputed.
- * - PENDING: a review naming them is open with consent, nothing disputed.
+ * - PENDING: a review naming them is open with the check started, nothing disputed.
  * - NONE: none of the above.
  */
 export type CheckStanding = "CLEARED" | "DISPUTED" | "PENDING" | "NONE";
@@ -30,20 +30,42 @@ export type CheckReviewFacts = {
 type AuditFacts = { oldData: Prisma.JsonValue | null; newData: Prisma.JsonValue | null };
 
 /**
- * Whether a review's audit rows, oldest first, send it back for its current person.
- * Only a rejection sent back counts: a Board reset of a BLOCKED review, or the
- * rejector's change to approve, which no later undo or reset takes back. A row
- * that clears the review's person (`newData.subjectPersonId: null`) is a plain
- * start-over and begins a fresh history for whoever is named next.
+ * A review's rejection history read from its audit rows, oldest first. Only a
+ * rejection sent back counts: a Board reset of a BLOCKED review, or the rejector's
+ * change to approve, which no later undo or reset takes back. A row that clears the
+ * review's person (`newData.subjectPersonId: null`) begins a fresh history for whoever
+ * is named next, but each person cleared off it keeps their earlier rejection: naming
+ * them again, however many resets later, brings it back.
+ *
+ * - `sentBack`: the review is sent back for its current person.
+ * - `heldRejection`: a person cleared off the review left a rejection on it that
+ *   naming them again would bring back.
  */
-export function sentBackForSubject(rows: readonly AuditFacts[]): boolean {
+export function rejectionHistory(rows: readonly AuditFacts[]): { sentBack: boolean; heldRejection: boolean } {
     let sentBack = false;
+    let current: Prisma.JsonValue | undefined;
+    const cleared = new Map<Prisma.JsonValue | undefined, boolean>();
     for (const { oldData, newData } of rows) {
         const action = jsonField(newData, "action");
-        if (jsonField(newData, "subjectPersonId") === null) sentBack = false;
-        else if (action === "rejector changed to approve" || (action === "board reset" && jsonField(oldData, "status") === "BLOCKED")) sentBack = true;
+        const sendsBack = action === "rejector changed to approve" || (action === "board reset" && jsonField(oldData, "status") === "BLOCKED");
+        const subject = jsonField(newData, "subjectPersonId");
+        if (subject === null) {
+            const person = jsonField(oldData, "subjectPersonId");
+            cleared.set(person, (cleared.get(person) ?? false) || sentBack || sendsBack);
+            sentBack = false;
+            current = undefined;
+        } else if (action === "subject named") {
+            sentBack = cleared.get(subject) ?? false;
+            current = subject;
+        } else if (sendsBack) sentBack = true;
     }
-    return sentBack;
+    const heldRejection = [...cleared].some(([person, held]) => held && person !== current);
+    return { sentBack, heldRejection };
+}
+
+/** Whether a review's audit rows send it back for its current person (see rejectionHistory). */
+export function sentBackForSubject(rows: readonly AuditFacts[]): boolean {
+    return rejectionHistory(rows).sentBack;
 }
 
 export function jsonField(json: Prisma.JsonValue | null, key: string): Prisma.JsonValue | undefined {
@@ -66,7 +88,7 @@ export function checkStanding(lastBackgroundCheck: Date | null, reviews: readonl
 }
 
 /**
- * The household qualifies on its background check (§3.1-3.2): at least one lead is
+ * The household qualifies on its background check: at least one lead is
  * CLEARED, nobody in it is DISPUTED, and no review requested for it is waiting for
  * its first reviewer to name a person. Every member is read, not only adults: a
  * minor is never checked, so never holds a review to dispute.
@@ -119,4 +141,55 @@ export async function householdCheckStandings(db: DbClient, householdId: number,
         where: { kind: "PERSON_BG", requestedForHouseholdId: householdId, subjectPersonId: null, ...personBgOpen.where },
     });
     return { members, awaitingNaming: unnamed > 0 };
+}
+
+/** Whether anyone in the household holds a DISPUTED check standing; the window does not matter for a dispute. */
+export async function householdHasDisputedCheck(db: DbClient, householdId: number): Promise<boolean> {
+    const { members } = await householdCheckStandings(db, householdId, null);
+    return members.some((m) => m.standing === "DISPUTED");
+}
+
+/**
+ * Whether a check review still carries a rejection: sent back for its current person,
+ * or left by a person a wrong-person reset cleared off it. Closing such a review would
+ * erase that rejection.
+ */
+export async function reviewHoldsRejection(db: DbClient, processId: number): Promise<boolean> {
+    const rows = await db.auditLog.findMany({
+        where: { tableName: "OrgMembershipProcess", affectedEntityId: processId },
+        orderBy: { id: "asc" },
+        select: { oldData: true, newData: true },
+    });
+    const { sentBack, heldRejection } = rejectionHistory(rows);
+    return sentBack || heldRejection;
+}
+
+/**
+ * Whether the household's background check is under way for the advance to payment
+ * and the resume after a block: a lead's own review has the check started, or a
+ * review the household asked for still waits to be named. A started check for any
+ * other adult does not count. `app` is the household's open application, read by
+ * the legacy clause.
+ */
+export async function householdCheckStarted(db: DbClient, householdId: number, app: { bgConsentAt: Date | null }): Promise<boolean> {
+    if (legacyHouseholdCheckStarted(app)) return true;
+    const started = await db.orgMembershipProcess.count({
+        where: {
+            kind: "PERSON_BG",
+            ...personBgOpen.where,
+            OR: [
+                { bgConsentAt: { not: null }, subjectPerson: { householdId, isHouseholdLead: true } },
+                { requestedForHouseholdId: householdId, subjectPersonId: null },
+            ],
+        },
+    });
+    return started > 0;
+}
+
+/**
+ * An open household application stamped with the check started before the flag
+ * moved to each person's own review (docs/in-design/BG_CHECK_STARTED-migration.md).
+ */
+export function legacyHouseholdCheckStarted(app: { bgConsentAt: Date | null }): boolean {
+    return !!app.bgConsentAt;
 }

@@ -17,6 +17,7 @@
 import { POST as enrollParticipant } from '@/app/api/programs/[id]/participants/route';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
+import { WITH_EMERGENCY_CONTACT } from '@/test-helpers/emergencyContact';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 jest.mock('@/lib/notifications', () => ({ sendNotification: jest.fn() }));
@@ -60,7 +61,7 @@ describe('Program Age Start-Date Basis (authenticated route)', () => {
         // The subject is 13 at enrollment time, so a household lead enrolls them —
         // only a known adult may self-enroll (docs/rules/programs.md). The
         // age-as-of-startAt rule under test is unaffected by who submits.
-        const household = await prisma.household.create({ data: { name: "Test HH" } });
+        const household = await prisma.household.create({ data: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } });
         const guardian = await prisma.person.create({
             data: {
                 email: 'guardian-age-startdate-test@example.com',

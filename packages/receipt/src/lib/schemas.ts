@@ -103,12 +103,15 @@ export const InKindInputSchema = z
   .strict()
   .superRefine(inKindRules);
 
+export const RotationInputSchema = z.object({ rotation: z.literal([0, 90, 180, 270]) }).strict();
+
 export const AddLineItemSchema = z.object({
   description: z.string().min(1).max(500),
   partNumber: z.string().max(100).nullable().optional(),
   manufacturer: z.string().max(100).nullable().optional(),
   quantity: quantity.optional(),
   unitPrice: nonNegative.optional(),
+  totalPrice: nonNegative.optional(),
   isDelayed: z.boolean().optional(),
 });
 
@@ -131,6 +134,7 @@ export const EditLineItemSchema = z
     manufacturer: z.string().max(100).nullable().optional(),
     quantity: quantity.optional(),
     unitPrice: nonNegative.optional(),
+    totalPrice: nonNegative.optional(),
     isDelayed: z.boolean().optional(),
   })
   .strict();

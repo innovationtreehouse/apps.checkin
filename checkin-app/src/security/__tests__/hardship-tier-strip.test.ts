@@ -54,6 +54,8 @@ const HARDSHIP_FIELDS = {
         'paymentPlanDeniedAt',
         'seatTakenWithoutSaleAt',
     ],
+    ProgramPaymentPlanDecision: ['outcome', 'decidedAt'],
+    MembershipPaymentPlanDecision: ['outcome', 'decidedAt'],
 } as const;
 
 // The Board and finance are the only staff audiences.
@@ -99,6 +101,8 @@ describe('hardship tier: which fields carry it', () => {
         expect(tiered).toEqual({
             OrgMembershipProcess: [...HARDSHIP_FIELDS.OrgMembershipProcess].sort(),
             ProgramParticipant: [...HARDSHIP_FIELDS.ProgramParticipant].sort(),
+            ProgramPaymentPlanDecision: [...HARDSHIP_FIELDS.ProgramPaymentPlanDecision].sort(),
+            MembershipPaymentPlanDecision: [...HARDSHIP_FIELDS.MembershipPaymentPlanDecision].sort(),
         });
     });
 
@@ -131,7 +135,12 @@ describe('hardship tier: no staff view but the Board and finance holds it', () =
         const granting = new Set(
             views.filter(([, , tokens]) => tokens.some((t) => t.endsWith(':hardship'))).map(([endpoint]) => endpoint),
         );
-        expect([...granting].sort()).toEqual([MEMBERSHIP_PAYMENT_PLANS, PAYMENT_PLANS]);
+        expect([...granting].sort()).toEqual([
+            MEMBERSHIP_PAYMENT_PLANS,
+            `${MEMBERSHIP_PAYMENT_PLANS}/past`,
+            PAYMENT_PLANS,
+            `${PAYMENT_PLANS}/past`,
+        ]);
     });
 });
 

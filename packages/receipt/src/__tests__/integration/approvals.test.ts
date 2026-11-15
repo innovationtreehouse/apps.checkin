@@ -200,8 +200,12 @@ describeDb("receipts awaiting a conflicted finance viewer", () => {
     await receiptService.countAwaitingFinance(HOUSEMATE.id);
     expect(householdLookups).toEqual([[HOUSEMATE.id]]);
 
-    // The review tabs match the pill for a FINANCE viewer, and stay org-wide for the Board.
-    expect((await receiptService.queueCounts(HOUSEMATE.id)).byState).toMatchObject({ financial_review: 2, duplicate_flagged: 0, flow_error: 0 });
-    expect((await receiptService.queueCounts(null)).byState).toMatchObject({ financial_review: 2, duplicate_flagged: 1 });
+    // The review tabs' totals stay org-wide; a FINANCE viewer's actionable counts match the pill.
+    const forHousemate = await receiptService.queueCounts(HOUSEMATE.id);
+    expect(forHousemate.byState).toMatchObject({ financial_review: 2, duplicate_flagged: 1 });
+    expect(forHousemate.actionableByState).toEqual({ financial_review: 2, duplicate_flagged: 0, flow_error: 0 });
+    const forBoard = await receiptService.queueCounts(null);
+    expect(forBoard.byState).toMatchObject({ financial_review: 2, duplicate_flagged: 1 });
+    expect(forBoard).not.toHaveProperty("actionableByState");
   });
 });

@@ -36,18 +36,18 @@ const EXPENSE_DETAIL = ['Expense', 'ExpenseLineItem', 'LineItemOwnerApproval', '
 
 // Approver surface: queue, counts, detail and per-line approval. Rows are
 // handler-filtered to the caller's buckets. Sign-off admits every seat holder.
-defineRoute({ endpoint: 'GET /api/expense/expenses', authorize: 'expense-approver', envelope: null, returns: ['Expense', 'ExpenseWaitingOn'], orderedView: APPROVER_VIEW, auditedRead: true });
+defineRoute({ endpoint: 'GET /api/expense/expenses', authorize: 'expense-approver', envelope: null, returns: ['Expense', 'ExpenseWaitingOn'], orderedView: APPROVER_VIEW });
 defineRoute({ endpoint: 'GET /api/expense/expenses/count', authorize: 'expense-approver', envelope: null, returns: ['ExpenseListCount'], orderedView: APPROVER_VIEW });
-defineRoute({ endpoint: 'GET /api/expense/expenses/[id]', authorize: 'expense-approver', envelope: null, returns: EXPENSE_DETAIL, orderedView: APPROVER_VIEW, auditedRead: true });
-defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/line-item-approvals', authorize: 'expense-approver', envelope: null, returns: ['LineItemOwnerApproval', 'ExpenseBucketView'], orderedView: APPROVER_VIEW, auditedRead: true });
+defineRoute({ endpoint: 'GET /api/expense/expenses/[id]', authorize: 'expense-approver', envelope: null, returns: EXPENSE_DETAIL, orderedView: APPROVER_VIEW, financeView: { records: [{ key: 'Expense', id: { param: 'id' }, model: 'Expense' }, { key: 'ExpenseQueueReason', id: { param: 'id' }, model: 'Expense' }] } });
+defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/line-item-approvals', authorize: 'expense-approver', envelope: null, returns: ['LineItemOwnerApproval', 'ExpenseBucketView'], orderedView: APPROVER_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/line-item-approvals/[approvalId]/approve', authorize: 'expense-approver', envelope: null, returns: ['LineItemOwnerApproval'], orderedView: APPROVER_VIEW });
 // Approve All: every line the caller approves on the expense, or none. The
 // library checks each line as for a single approval.
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/approve-lines', authorize: 'expense-approver', envelope: null, returns: ['LineItemOwnerApproval'], orderedView: APPROVER_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/line-item-approvals/[approvalId]/raise-exception', authorize: 'expense-approver', envelope: null, returns: ['LineItemOwnerApproval'], orderedView: APPROVER_VIEW });
-defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/signoffs', authorize: 'expense-approver', envelope: null, returns: ['ExpenseLineSignoffStatus'], orderedView: APPROVER_VIEW, auditedRead: true });
+defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/signoffs', authorize: 'expense-approver', envelope: null, returns: ['ExpenseLineSignoffStatus'], orderedView: APPROVER_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/line-items/[lineItemId]/signoffs', authorize: 'expense-signer', envelope: null, returns: ['ExpenseLineSignoffStatus'], orderedView: APPROVER_VIEW });
-defineRoute({ endpoint: 'GET /api/expense/queue', authorize: 'expense-approver', envelope: null, returns: ['Expense', 'ExpenseWaitingOn'], orderedView: APPROVER_VIEW, auditedRead: true });
+defineRoute({ endpoint: 'GET /api/expense/queue', authorize: 'expense-approver', envelope: null, returns: ['Expense', 'ExpenseWaitingOn'], orderedView: APPROVER_VIEW });
 defineRoute({ endpoint: 'GET /api/expense/counts', authorize: 'expense-approver', envelope: null, returns: ['ExpenseCounts'], orderedView: APPROVER_VIEW });
 
 // FINANCE or BOARD: reads, settings, and flag checkoff (a flag carries a FINANCE
@@ -58,17 +58,17 @@ defineRoute({ endpoint: 'GET /api/expense/qb-accounts', authorize: 'finance-or-b
 defineRoute({ endpoint: 'GET /api/expense/local-owners', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseBucketView'], orderedView: FINANCE_OR_BOARD_VIEW });
 // Each mapped part's catalog name rides as Item (gtin13 and name only); ExpenseCatalogNames says when the catalog couldn't be read.
 defineRoute({ endpoint: 'GET /api/expense/ownership-map', authorize: 'finance-or-board', envelope: null, returns: ['PartOwnerMap', 'Item', 'ExpenseBucketView', 'ExpenseCatalogNames'], orderedView: FINANCE_OR_BOARD_VIEW });
-defineRoute({ endpoint: 'GET /api/expense/provisional-items', authorize: 'finance-or-board', envelope: null, returns: ['ProvisionalItemMap', 'PartOwnerMap', 'ExpenseBucketView'], orderedView: FINANCE_OR_BOARD_VIEW, auditedRead: true });
-defineRoute({ endpoint: 'GET /api/expense/expense-events', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseEvent', 'Expense'], orderedView: FINANCE_OR_BOARD_VIEW, auditedRead: true });
+defineRoute({ endpoint: 'GET /api/expense/provisional-items', authorize: 'finance-or-board', envelope: null, returns: ['ProvisionalItemMap', 'PartOwnerMap', 'ExpenseBucketView'], orderedView: FINANCE_OR_BOARD_VIEW });
+defineRoute({ endpoint: 'GET /api/expense/expense-events', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseEvent', 'Expense'], orderedView: FINANCE_OR_BOARD_VIEW, financeView: { records: [{ key: 'ExpenseEvent', id: 'expenseId', model: 'Expense' }] } });
 defineRoute({ endpoint: 'GET /api/expense/expense-events/count', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseListCount'], orderedView: FINANCE_OR_BOARD_VIEW });
-defineRoute({ endpoint: 'GET /api/expense/received-expense-payloads', authorize: 'finance-or-board', envelope: null, returns: ['ReceivedExpensePayload'], orderedView: FINANCE_OR_BOARD_VIEW, auditedRead: true });
-defineRoute({ endpoint: 'GET /api/expense/qb-exclusions', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseQbMatchExclusion'], orderedView: FINANCE_OR_BOARD_VIEW, auditedRead: true });
+defineRoute({ endpoint: 'GET /api/expense/received-expense-payloads', authorize: 'finance-or-board', envelope: null, returns: ['ReceivedExpensePayload'], orderedView: FINANCE_OR_BOARD_VIEW, financeView: { records: [{ key: 'ReceivedExpensePayload', id: 'receiptId', model: 'Receipt' }] } });
+defineRoute({ endpoint: 'GET /api/expense/qb-exclusions', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseQbMatchExclusion'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'GET /api/expense/org-settings', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseOrgSettings'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'PUT /api/expense/org-settings', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseOrgSettings'], orderedView: FINANCE_OR_BOARD_VIEW });
 // Donated gift lines at or over the capital thresholds, in or past capital review.
-defineRoute({ endpoint: 'GET /api/expense/donated-capital', authorize: 'finance-or-board', envelope: null, returns: ['DonatedCapitalLineView'], orderedView: FINANCE_OR_BOARD_VIEW, auditedRead: true });
+defineRoute({ endpoint: 'GET /api/expense/donated-capital', authorize: 'finance-or-board', envelope: null, returns: ['DonatedCapitalLineView'], orderedView: FINANCE_OR_BOARD_VIEW, financeView: { records: [{ key: 'DonatedCapitalLineView', id: 'id', model: 'DonatedCapitalLine' }] } });
 // The finance queue's expense tabs: a tab's rows, and every tab's counts.
-defineRoute({ endpoint: 'GET /api/expense/finance-queue', authorize: 'finance-or-board', envelope: null, returns: ['FinanceQueueRow'], orderedView: FINANCE_OR_BOARD_VIEW, auditedRead: true });
+defineRoute({ endpoint: 'GET /api/expense/finance-queue', authorize: 'finance-or-board', envelope: null, returns: ['FinanceQueueRow'], orderedView: FINANCE_OR_BOARD_VIEW, financeView: { records: [{ key: 'FinanceQueueRow', id: 'expenseId', model: 'Expense' }, { key: 'FinanceQueueRow', id: 'receiptId', model: 'Receipt' }], query: ['tab'] } });
 defineRoute({ endpoint: 'GET /api/expense/finance-queue/counts', authorize: 'finance-or-board', envelope: null, returns: ['FinanceQueueCounts'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'POST /api/expense/flags/[id]/check-off', authorize: 'finance-or-board', envelope: null, returns: ['ExpenseFlag'], orderedView: FINANCE_OR_BOARD_VIEW });
 // Records what the Board authorized. The record clears the BOARD seat on a
@@ -94,7 +94,7 @@ defineRoute({ endpoint: 'PUT /api/expense/expenses/[id]/reimbursee', authorize: 
 // Live adults matching ?q=, for finance to name as reimbursee. It leaves out finance's own
 // household, and lists nobody when finance shares the submitter's household.
 defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/reimbursee/options', authorize: 'finance', envelope: null, returns: ['ExpenseReimburseeView'], orderedView: FINANCE_VIEW });
-defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/reimbursee-vendor', authorize: 'finance', envelope: null, returns: ['ExpenseReimburseeVendor', 'ExpenseReimburseeView'], orderedView: FINANCE_VIEW, auditedRead: true });
+defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/reimbursee-vendor', authorize: 'finance', envelope: null, returns: ['ExpenseReimburseeVendor', 'ExpenseReimburseeView'], orderedView: FINANCE_VIEW, financeView: { records: [{ key: 'ExpenseReimburseeVendor', id: { param: 'id' }, model: 'Expense' }] } });
 defineRoute({ endpoint: 'PUT /api/expense/expenses/[id]/reimbursee-vendor', authorize: 'finance', envelope: null, returns: ['ExpenseReimburseeVendor'], orderedView: FINANCE_VIEW });
 // QuickBooks Vendors matching ?q=, offered for the link.
 defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/reimbursee-vendor/options', authorize: 'finance', envelope: null, returns: ['ExpenseQbVendorOption'], orderedView: FINANCE_VIEW });
@@ -113,7 +113,7 @@ defineRoute({ endpoint: 'POST /api/expense/capital-assets/seed', authorize: 'fin
 // Finance's capital decision on a donated gift line. No donor field is returned.
 defineRoute({ endpoint: 'POST /api/expense/donated-capital/[id]/review', authorize: 'finance', envelope: null, returns: ['DonatedCapitalLineView'], orderedView: FINANCE_VIEW });
 // QuickBooks matching per expense: the expense's candidates, and pick one.
-defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/qb-candidates', authorize: 'finance', envelope: null, returns: ['ExpenseQbCandidateView'], orderedView: FINANCE_VIEW, auditedRead: true });
+defineRoute({ endpoint: 'GET /api/expense/expenses/[id]/qb-candidates', authorize: 'finance', envelope: null, returns: ['ExpenseQbCandidateView'], orderedView: FINANCE_VIEW, financeView: { records: [{ key: 'ExpenseQbCandidateView', id: 'id', model: 'QuickBooks.Transaction' }, { key: 'ExpenseQbCandidateView', id: { param: 'id' }, model: 'Expense' }] } });
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/qb-match', authorize: 'finance', envelope: null, returns: ['Expense'], orderedView: FINANCE_VIEW });
 // Finance books an expense the drain may not create, or skips it with a reason.
 defineRoute({ endpoint: 'POST /api/expense/expenses/[id]/qb-resolve', authorize: 'finance', envelope: null, returns: ['Expense'], orderedView: FINANCE_VIEW });

@@ -20,7 +20,7 @@ const receipt = (id: string, receiptNumber: string, state: string, uploadedByUse
   id, uploadedAt: "2026-10-02T00:00:00Z", uploadedByUserId, fileHash: `${id}-hash`, mimeType: "application/pdf",
   retailer: "Acme", receiptDate: "2026-10-01", receiptNumber, orderNumber: null, currency: "USD",
   receiptTotalCents: 1000, taxCents: 80, shippingCents: 0, discountCents: 0, state,
-  needsReimbursement: false, isInKind: false, duplicateSuspectReceiptId: null, financialReviewReasons: [], lineItems: [],
+  needsReimbursement: false, isInKind: false, financialReviewReasons: [], lineItems: [],
 });
 const group = (...ids: string[]) => ({ members: ids.map((id) => ({ id, state: "duplicate_flagged", label: id })), dismissed: [] });
 const ok = (body: unknown) => ({ ok: true, status: 200, text: async () => JSON.stringify(body) });

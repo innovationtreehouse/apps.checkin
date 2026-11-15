@@ -95,6 +95,10 @@ Things the app takes as true because they are handled outside it.
   items, in-kind income, the in-kind clearing account and the expense payment
   account.  [Decision — owner]
 
+- The app's copy of QuickBooks' account and Class lists refreshes once a day,
+  and finance or the Board may refresh it at any time. It is used at any age;
+  System Status flags it after two days without a refresh.  [Decision — owner]
+
 - Each online-store sale, giving-platform gift and gift of goods books to the
   account finance mapped for its item. A line with no mapping, or whose account
   can't be used, waits for finance; nothing books it to a fallback account. A
@@ -104,8 +108,11 @@ Things the app takes as true because they are handled outside it.
   line or role. The books map, the giving-platform account rules, expense's
   QuickBooks accounts and account rules, the account finance sets on a held
   expense line, the one finance sets on a gift-of-goods line and online-store
-  items' accounts refuse any other type on save, reading the type from
-  QuickBooks, and refuse the save while QuickBooks can't be read. A stored
+  items' accounts refuse any other type on save, reading the type from the
+  app's copy of QuickBooks' account list. A save whose account the copy
+  doesn't list, or lists under a type the save doesn't accept, is refused until
+  finance or the Board updates the copy; the save itself never reads
+  QuickBooks. A stored
   account that later reads as another type is flagged on System Status for
   finance to re-pick; the app never rewrites it. Online-store fees take only an
   Expense or Other Expense account.  [Decision — owner]
@@ -300,8 +307,9 @@ Income checks each online-store payout against the deposits in the books.
   sale. An item made by hand in the store can be decided on after its first sale.  [Decision — owner]
 
 - An item can be assigned to a bucket only if the bucket is live and its Class is
-  active in the books. While the books can't be reached to check, the assignment is
-  refused. Choosing general income needs no check.  [Decision — owner]
+  active in the books. The Class is checked against the app's copy of
+  QuickBooks' Class list; a Class the copy doesn't show as active is refused
+  until the copy is updated. Choosing general income needs no check.  [Decision — owner]
 
 - When a run finds an assigned bucket archived or without an active Class, it alerts
   finance once for that bucket and marks its items. A payout with a sale of those
@@ -346,11 +354,14 @@ employer matches, paid in batches) and gifts of goods (in-kind).
 
 - Only finance and the board can see who gave.  [Decision — *Principle: least privilege*]
 
-- Every view of finance records other than a person's own is recorded, each look
-  at a donor included: who looked, which records, through which screen, and when,
-  never what the records said.
-  A person looking at their own receipts is not recorded, and neither is a
-  count. Only the Board reads the record.  [Decision — owner]
+- Every view of finance records that shows money or a person tied to it is
+  recorded, other than a person's view of their own or their household's, each
+  look at a donor included: who looked, on which page, which records and which of
+  their sensitive fields, and when, never what the records said. A view that
+  shows neither, such as a list of QuickBooks transactions excluded from
+  matching, is not recorded. A person looking at their own receipts is not
+  recorded, and neither is a count. Only the Board reads the record.
+  [Decision — owner]
 
 - A view whose record cannot be written is refused, not served unrecorded.  [Decision — owner; *Principle: fail closed*]
 
@@ -421,7 +432,7 @@ employer matches, paid in batches) and gifts of goods (in-kind).
 
 - The person accepting a gift of goods, with a receipt or without one, confirms the
   goods themselves exist and arrived, not only the receipt, and that is recorded.
-  Refusing or returning a gift needs no such confirmation.  [Decision — owner, 2026-11-01]
+  Refusing or returning a gift needs no such confirmation.  [Decision]
 
 - A gift of goods with a receipt books at the receipt's values. One without a
   receipt is valued by whoever accepts it; what operations enter is a suggestion.
@@ -447,7 +458,7 @@ employer matches, paid in batches) and gifts of goods (in-kind).
 - A gift of goods that fails to book goes to finance at once and waits there,
   stuck, until finance books it or a person retries it from the Problems list.
   The app never retries it by itself, and it never holds back newer gifts.
-  [Decision — owner, 2026-11-08]
+  [Decision]
 
 - A gift of goods whose entry in the books is removed, voided or changed after it
   booked goes back to finance, which matches it again or skips it with a reason.
@@ -464,11 +475,11 @@ employer matches, paid in batches) and gifts of goods (in-kind).
 - The person who records a gift of goods must be outside the donor's household.
   A donor who shares a last name with anyone in the recorder's household counts
   as part of that household. This covers a gift recorded without a receipt and a
-  donor typed in on a receipt.  [Decision — owner, 2026-10-31; *Principle: fail closed*]
+  donor typed in on a receipt.  [Decision — *Principle: fail closed*]
 
 - Someone uploading a receipt may name themselves as the donor by choosing "I am
   the donor". The person who decides the gift is the independent check.
-  [Decision — owner, 2026-11-01]
+  [Decision]
 
 - A gift of goods recorded without a receipt must name its donor, and the goods
   go into inventory.  [Decision]

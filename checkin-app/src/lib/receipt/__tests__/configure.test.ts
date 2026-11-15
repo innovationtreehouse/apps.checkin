@@ -180,19 +180,6 @@ describe('receipt runtime: mail intake bindings', () => {
         await expect(boundConfig().alerts!.mailAgingOut({ orgId: 'org', messages: 4, oldestReceivedAt: null })).rejects.toThrow('not sent');
     });
 
-    it.each([
-        ['connection', 'finance.receiptMailboxUnreadable'],
-        ['system', 'finance.receiptMailboxUnanswered'],
-        ['settings', 'finance.receiptMailboxNotFound'],
-        ['data', 'finance.receiptMailboxFailed'],
-        ['bug', 'finance.receiptMailboxFailed'],
-    ] as const)('alerts finance with the cause when the mailbox cannot be listed (%s)', async (kind, template) => {
-        await boundConfig().alerts?.mailListingFailed({ orgId: 'org', kind });
-        const [key, values] = jest.mocked(emailAlert).mock.calls[0];
-        expect(key).toBe(template);
-        expect(values).toMatchObject({ actionLink: expect.stringContaining('/receipts/mail') });
-    });
-
     it('alerts finance when mail intake stops holding mail', async () => {
         await boundConfig().alerts?.mailHoldCeilingReached({ orgId: 'org', unresolved: 500, refused: 3 });
         const [key, values] = jest.mocked(emailAlert).mock.calls[0];

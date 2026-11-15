@@ -1,6 +1,9 @@
+type Rtl = typeof import("@/test-helpers/rtl");
+jest.mock("next-auth/react", () => jest.requireActual<Rtl>("@/test-helpers/rtl").authMock());
+
 import { act, screen, fireEvent } from "@testing-library/react";
 import { invalidateLoads } from "@checkin/component-ui";
-import { renderWithProviders, mockFetchJson, resetRtl } from "@/test-helpers/rtl";
+import { renderWithProviders, mockFetchJson, resetRtl, setSession } from "@/test-helpers/rtl";
 import { SystemVersionBox, BadgeScanChart, SReadDiagnosticsBox, CronRunsBox, KioskHeartbeatBox, OpenProblemsBox, ProblemsBox } from "../SystemHealthPanels";
 
 beforeEach(() => resetRtl());
@@ -145,7 +148,10 @@ describe("KioskHeartbeatBox", () => {
   it("renders last-seen age from the heartbeat envelope", async () => {
     mockFetchJson({
       "/api/system-status/kiosk-heartbeat": {
-        heartbeat: [{ metric: "kiosk_last_seen", timestamp: new Date().toISOString(), value: 90 }],
+        heartbeat: {
+          SystemMetricLog: [{ metric: "kiosk_last_seen", timestamp: new Date().toISOString(), value: 90 }],
+          KioskProtocolSeen: [],
+        },
       },
     });
     renderWithProviders(<KioskHeartbeatBox />);
@@ -155,7 +161,10 @@ describe("KioskHeartbeatBox", () => {
   const renderHeartbeat = (rows: { metric: string; value: number }[]) => {
     mockFetchJson({
       "/api/system-status/kiosk-heartbeat": {
-        heartbeat: rows.map((r) => ({ ...r, timestamp: new Date().toISOString() })),
+        heartbeat: {
+          SystemMetricLog: rows.map((r) => ({ ...r, timestamp: new Date().toISOString() })),
+          KioskProtocolSeen: [],
+        },
       },
     });
     renderWithProviders(<KioskHeartbeatBox />);
@@ -181,6 +190,40 @@ describe("KioskHeartbeatBox", () => {
     expect(screen.getByText(/Kiosk last seen 5s ago/)).toBeInTheDocument();
   });
 
+  it("shows each stored key's protocol version, marking a key no longer configured", async () => {
+    const at = new Date(Date.now() - 3 * 3600_000).toISOString();
+    mockFetchJson({
+      "/api/system-status/kiosk-heartbeat": {
+        heartbeat: {
+          SystemMetricLog: [{ metric: "kiosk_key:aaaaaaaaaaaaaaaa", timestamp: new Date().toISOString(), value: 1 }],
+          KioskProtocolSeen: [
+            { keyFingerprint: "aaaaaaaaaaaaaaaa", protocolVersion: 6, lastSeenAt: at },
+            { keyFingerprint: "bbbbbbbbbbbbbbbb", protocolVersion: 4, lastSeenAt: at },
+          ],
+        },
+      },
+    });
+    renderWithProviders(<KioskHeartbeatBox />);
+    const current = (await screen.findByText("aaaaaaaaaaaaaaaa")).closest("p");
+    const removed = screen.getByText("bbbbbbbbbbbbbbbb").closest("p");
+    expect(current).toHaveTextContent("protocol v6, last seen 3 hours ago");
+    expect(current).not.toHaveTextContent("key removed");
+    expect(removed).toHaveTextContent("protocol v4, last seen 3 hours ago (key removed)");
+  });
+
+  it("lists a configured key with no stored row as not seen since recording began", async () => {
+    mockFetchJson({
+      "/api/system-status/kiosk-heartbeat": {
+        heartbeat: {
+          SystemMetricLog: [{ metric: "kiosk_key:cccccccccccccccc", timestamp: new Date().toISOString(), value: 1 }],
+          KioskProtocolSeen: [],
+        },
+      },
+    });
+    renderWithProviders(<KioskHeartbeatBox />);
+    expect((await screen.findByText("cccccccccccccccc")).closest("p")).toHaveTextContent("not seen since recording began");
+  });
+
   it("shows a failed read at once, without retrying", async () => {
     const fetchFn = mockFetchJson({ "/api/system-status/kiosk-heartbeat": () => { throw new Error("down"); } });
     renderWithProviders(<KioskHeartbeatBox />);
@@ -194,7 +237,7 @@ describe("KioskHeartbeatBox", () => {
     mockFetchJson({
       "/api/system-status/kiosk-heartbeat": () => {
         if (down) throw new Error("down");
-        return { heartbeat: [{ metric: "kiosk_clock_skew", value: 0, timestamp: new Date().toISOString() }] };
+        return { heartbeat: { SystemMetricLog: [{ metric: "kiosk_clock_skew", value: 0, timestamp: new Date().toISOString() }], KioskProtocolSeen: [] } };
       },
     });
     renderWithProviders(<KioskHeartbeatBox />);
@@ -266,7 +309,10 @@ describe("ProblemsBox", () => {
             { library: "workflow mapping", id: "7", step: "catalog event", href: null, failedAt: "2026-11-02T12:00:00.000Z" },
           ],
           unread: ["gifts"],
-          notices: ["Receipt reading failed 3 times in the last day"],
+          notices: [
+            { text: "Receipt reading failed 3 times in the last day", href: null },
+            { text: "Emails failed to send: 2 in the last day", href: "/system-status/links" },
+          ],
         },
         cronJobs: [
           { job: "nightly", lastSuccessAt: "2026-11-07T12:00:00.000Z", stale: false },
@@ -281,8 +327,126 @@ describe("ProblemsBox", () => {
     expect(screen.getByText("qbo-posting")).toBeInTheDocument();
     expect(screen.queryByText("nightly")).not.toBeInTheDocument();
     expect(screen.getByText(/Could not read gifts/)).toBeInTheDocument();
-    expect(screen.getByText("Receipt reading failed 3 times in the last day")).toBeInTheDocument();
-    expect(screen.getByText("5")).toBeInTheDocument();
+    expect(screen.getByText("Receipt reading failed 3 times in the last day").closest("a")).toBeNull();
+    expect(screen.getByText("Emails failed to send: 2 in the last day").closest("a")).toHaveAttribute("href", "/system-status/links");
+    expect(screen.getByText("6")).toBeInTheDocument();
+  });
+
+  it("lists a job whose latest run reported failures, without its error text, and a late one only once", async () => {
+    const problems = { items: [], unread: [], notices: [] };
+    mockFetchJson({
+      "/api/system-status/config-health": {
+        problems,
+        cronJobs: [
+          { job: "reconcile-shopify", lastSuccessAt: "2026-11-07T12:00:00.000Z", stale: false, lastError: "1 item(s) failed", lastErrorAt: "2026-11-07T12:00:00.000Z" },
+          { job: "nightly", lastSuccessAt: "2026-11-03T12:00:00.000Z", stale: true, lastError: "boom", lastErrorAt: "2026-11-07T12:00:00.000Z" },
+        ],
+      },
+    });
+    renderWithProviders(<ProblemsBox />);
+
+    expect(await screen.findByText("reconcile-shopify")).toBeInTheDocument();
+    expect(screen.getByText(/^Last run reported failures/)).toBeInTheDocument();
+    expect(screen.getAllByText("nightly")).toHaveLength(1);
+    expect(screen.getByText(/^Has not run on time/)).toBeInTheDocument();
+    expect(screen.queryByText(/item\(s\) failed|boom/)).not.toBeInTheDocument();
+    expect(screen.getByText("2")).toBeInTheDocument();
+  });
+
+  it("drops the job once its latest run is clean", async () => {
+    mockFetchJson({
+      "/api/system-status/config-health": {
+        problems: { items: [], unread: [], notices: [] },
+        cronJobs: [{ job: "reconcile-shopify", lastSuccessAt: "2026-11-07T12:00:00.000Z", stale: false }],
+      },
+    });
+    renderWithProviders(<ProblemsBox />);
+    expect(await screen.findByText("Nothing is stuck.")).toBeInTheDocument();
+  });
+
+  const stuck = [
+    { library: "expense", id: "e1", step: "QuickBooks posting", href: null, failedAt: "2026-11-01T12:00:00.000Z" },
+    { library: "gifts", id: "receipt 4", step: "QuickBooks posting", href: null, failedAt: "2026-11-02T12:00:00.000Z" },
+    { library: "receipt", id: "r9", step: "flow", href: null, failedAt: "2026-11-03T12:00:00.000Z" },
+  ];
+  const retryBodies = (fetchFn: jest.Mock) =>
+    fetchFn.mock.calls
+      .filter(([url]) => String(url).includes("/problems/retry"))
+      .map(([, init]) => JSON.parse(String((init as RequestInit).body)));
+
+  it("Retry runs one item's step, then refreshes the list", async () => {
+    setSession({ id: 1, isBoardMember: true });
+    const fetchFn = mockFetchJson({
+      "/api/system-status/config-health": { problems: { items: stuck, unread: [], notices: [] }, cronJobs: [] },
+      "/api/system-status/problems/retry": { results: [{ step: "flow", id: "r9", ok: true }] },
+    });
+    renderWithProviders(<ProblemsBox />);
+
+    fireEvent.click((await screen.findAllByRole("button", { name: "Retry" }))[2]);
+
+    expect(await screen.findByText("1 of 1 retried; 0 still stuck.")).toBeInTheDocument();
+    expect(retryBodies(fetchFn)).toEqual([{ library: "receipt", step: "flow", id: "r9" }]);
+    expect(fetchFn.mock.calls.filter(([url]) => String(url).includes("config-health"))).toHaveLength(2);
+  });
+
+  it("hides Retry on a QuickBooks step from a sysadmin, who still retries the rest", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({ "/api/system-status/config-health": { problems: { items: stuck, unread: [], notices: [] }, cronJobs: [] } });
+    renderWithProviders(<ProblemsBox />);
+
+    expect(await screen.findAllByRole("button", { name: "Retry" })).toHaveLength(1);
+    expect(screen.getByText("r9").closest("li")).toContainElement(screen.getByRole("button", { name: "Retry" }));
+  });
+
+  it("Retry all sends a sysadmin's retryable items only", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const fetchFn = mockFetchJson({
+      "/api/system-status/config-health": { problems: { items: [stuck[0], stuck[2]], unread: [], notices: [] }, cronJobs: [] },
+      "/api/system-status/problems/retry": { results: [{ ok: true }] },
+    });
+    renderWithProviders(<ProblemsBox />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Retry all" }));
+
+    expect(await screen.findByText("1 of 1 retried; 0 still stuck.")).toBeInTheDocument();
+    expect(retryBodies(fetchFn)).toEqual([{ library: "receipt", step: "flow", id: "r9" }]);
+  });
+
+  it("hides Retry all from a viewer with nothing they may retry", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({ "/api/system-status/config-health": { problems: { items: [stuck[0], stuck[1]], unread: [], notices: [] }, cronJobs: [] } });
+    renderWithProviders(<ProblemsBox />);
+
+    expect(await screen.findByText("e1")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Retry/ })).not.toBeInTheDocument();
+  });
+
+  it("Retry all retries every item one at a time in list order, goes on past a refusal and a failure, then refreshes", async () => {
+    setSession({ id: 1, isBoardMember: true });
+    // The second answers as a refused (403) press does: no results.
+    const answers: unknown[] = [{ results: [{ ok: true }] }, { error: "Forbidden" }, { results: [{ ok: false }] }];
+    let inFlight = 0;
+    let most = 0;
+    const fetchFn = mockFetchJson({
+      "/api/system-status/config-health": { problems: { items: stuck, unread: [], notices: [] }, cronJobs: [] },
+      "/api/system-status/problems/retry": () => answers.shift(),
+    });
+    const inner = fetchFn.getMockImplementation()!;
+    fetchFn.mockImplementation(async (input, init) => {
+      inFlight += 1;
+      most = Math.max(most, inFlight);
+      await Promise.resolve();
+      inFlight -= 1;
+      return inner(input, init);
+    });
+    renderWithProviders(<ProblemsBox />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Retry all" }));
+
+    expect(await screen.findByText("1 of 3 retried; 2 still stuck.")).toBeInTheDocument();
+    expect(retryBodies(fetchFn)).toEqual(stuck.map(({ library, step, id }) => ({ library, step, id })));
+    expect(most).toBe(1);
+    expect(fetchFn.mock.calls.filter(([url]) => String(url).includes("config-health"))).toHaveLength(2);
   });
 
   it("says so when nothing is stuck", async () => {

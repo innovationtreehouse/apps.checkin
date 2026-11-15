@@ -2,10 +2,10 @@
  * @jest-environment node
  */
 /**
- * Concurrency test for attest(): two reviewers attesting the same
- * OrgMembershipProcess at the same time must serialize on the FOR UPDATE lock so
- * the process advances to payment exactly once (no double advance / double
- * background-date stamp). Guards the check-then-act window in lib/membership/review.ts.
+ * Concurrency test for attest(): two reviewers attesting the same check review at
+ * the same time must serialize on the FOR UPDATE lock so the review clears exactly
+ * once (no double clearance / double background-date stamp). Guards the
+ * check-then-act window in lib/membership/review.ts.
  */
 
 import { attest, ReviewError } from '@/lib/membership/review';
@@ -32,14 +32,12 @@ async function makeReviewer(label: string): Promise<number> {
     return r.id;
 }
 
-/** A fresh applicant household + membership + a process awaiting BG review. */
+/** A fresh applicant household and a check review of its lead, awaiting review. */
 async function makePendingProcess(): Promise<{ processId: number; leadId: number }> {
     const hh = await prisma.household.create({ data: { name: `Applicant ${TAG}` } });
-    // A lead to name as the check's subject — reviewers attest per adult.
     const lead = await prisma.person.create({ data: { name: `Applicant Lead ${TAG}`, householdId: hh.id, isHouseholdLead: true } });
-    const m = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE' } });
     const proc = await prisma.orgMembershipProcess.create({
-        data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_BG_REVIEW' },
+        data: { kind: 'PERSON_BG', subjectPersonId: lead.id, requestedForHouseholdId: hh.id, status: 'PENDING_BG_REVIEW', bgConsentAt: new Date() },
     });
     return { processId: proc.id, leadId: lead.id };
 }
@@ -51,8 +49,9 @@ async function wipe() {
     });
     const ids = hhs.map((h) => h.id);
     if (ids.length) {
-        await prisma.backgroundCheckAttestation.deleteMany({ where: { process: { orgMembership: { householdId: { in: ids } } } } });
-        await prisma.orgMembershipProcess.deleteMany({ where: { orgMembership: { householdId: { in: ids } } } });
+        const processes = { OR: [{ orgMembership: { householdId: { in: ids } } }, { requestedForHouseholdId: { in: ids } }] };
+        await prisma.backgroundCheckAttestation.deleteMany({ where: { process: processes } });
+        await prisma.orgMembershipProcess.deleteMany({ where: processes });
         await prisma.orgMembership.deleteMany({ where: { householdId: { in: ids } } });
         await prisma.person.deleteMany({ where: { householdId: { in: ids } } });
         await prisma.household.deleteMany({ where: { id: { in: ids } } });
@@ -75,15 +74,13 @@ describe('attest() concurrency', () => {
         await prisma.$disconnect();
     });
 
-    it('two concurrent APPROVEs advance the process exactly once', async () => {
+    it('two concurrent APPROVEs clear the review exactly once', async () => {
         const { processId, leadId } = await makePendingProcess();
 
         // One approval already on record; two more reviewers attest concurrently.
-        // The invariant: regardless of interleaving, the process advances to payment
-        // exactly once. Without the lock, both could read 1 prior APPROVE, both compute
-        // approvals === 2, and both call advanceToPayment (double background-date
-        // stamp). The FOR UPDATE lock serializes them so the loser re-reads
-        // PENDING_PAYMENT and bails with wrong_phase.
+        // Without the lock, both could read 1 prior APPROVE and both clear (double
+        // background-date stamp). The FOR UPDATE lock serializes them so the loser
+        // re-reads a cleared review and bails with wrong_phase.
         await attest(revA, processId, { result: 'APPROVE', subjectPersonIds: [leadId] });
 
         const [b, c] = await Promise.allSettled([
@@ -92,23 +89,22 @@ describe('attest() concurrency', () => {
         ]);
 
         const statuses = [b, c].map((r) => (r.status === 'fulfilled' ? (r.value as { status: string }).status : (r.reason as ReviewError).code));
-        // Exactly one wins the advance; the other sees PENDING_PAYMENT and bails.
-        expect(statuses.filter((s) => s === 'PENDING_PAYMENT')).toHaveLength(1);
+        expect(statuses.filter((s) => s === 'ACTIVE')).toHaveLength(1);
         expect(statuses.filter((s) => s === 'wrong_phase')).toHaveLength(1);
 
-        // The winner is whichever attest returned PENDING_PAYMENT — its id is what the advance audit must carry.
-        const winner = b.status === 'fulfilled' && (b.value as { status: string }).status === 'PENDING_PAYMENT' ? revB : revC;
+        // The winner is whichever attest returned ACTIVE — its id is what the clearance audit must carry.
+        const winner = b.status === 'fulfilled' && (b.value as { status: string }).status === 'ACTIVE' ? revB : revC;
 
         const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
-        expect(proc?.status).toBe('PENDING_PAYMENT');
+        expect(proc?.status).toBe('ACTIVE');
 
         // The loser created no attestation (it threw before the create): 2 total, not 3.
         const attestations = await prisma.backgroundCheckAttestation.count({ where: { processId } });
         expect(attestations).toBe(2);
 
-        // advanceToPayment ran exactly once → exactly one PENDING_PAYMENT audit row, stamped with the winner's id.
+        // The clearance ran exactly once → exactly one ACTIVE audit row, stamped with the winner's id.
         const audits = await prisma.auditLog.findMany({ where: { tableName: 'OrgMembershipProcess', affectedEntityId: processId }, select: { newData: true, actorId: true } });
-        const advances = audits.filter((a) => JSON.stringify(normalizeAuditData(a.newData)).includes('"status":"PENDING_PAYMENT"'));
+        const advances = audits.filter((a) => JSON.stringify(normalizeAuditData(a.newData)).includes('"status":"ACTIVE"'));
         expect(advances).toHaveLength(1);
         expect(advances[0].actorId).toBe(winner); // not revA (prior approver) nor the loser
     });

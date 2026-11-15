@@ -83,7 +83,6 @@ PUT /api/membership-ops/participants/[id]
 GET /api/membership-ops/participants/merge/analyze
 POST /api/membership-ops/participants/merge
 POST /api/membership-ops/participants
-POST /api/membership/bg-consent
 POST /api/membership/contract/sign
 POST /api/membership/contract/sync
 PATCH /api/membership/intake
@@ -150,8 +149,6 @@ POST /api/trusted-adults/[id]/renew
 POST /api/trusted-adults/[id]/resubmit
 POST /api/trusted-adults/[id]/withdraw
 POST /api/trusted-adults
-GET /api/unsubscribe
-POST /api/unsubscribe
 POST /api/webhooks/resend
 POST /api/webhooks/shopify/reversals
 POST /api/webhooks/shopify

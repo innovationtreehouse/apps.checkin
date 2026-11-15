@@ -36,8 +36,8 @@ type AuditRow = {
   newData: { type?: string; significance?: { score: number; flagged: boolean }; overlapsVisitIds?: number[] };
 };
 
-/** `mergedIntoId` is present only on a person the merge archive names: their survivor's id. */
-type PersonRef = { id: number; name: string | null; mergedIntoId?: number };
+/** `mergedArchive` sits on a merge survivor: one entry per person merged into them. */
+type PersonRef = { id: number; name?: string | null; mergedArchive?: { fromId: number; toId: number }[] };
 
 type Payload = { AuditLog: AuditRow[]; Person: PersonRef[]; Visit: VisitPick[][] };
 
@@ -78,16 +78,25 @@ function actorClass(row: AuditRow): "self" | "proxy" | "system" | "unknown" {
 
 // SYSTEM_ACTOR is a sentinel, so it resolves to no Person and must never fall
 // through to "Person #0". actorSystem names which automated path wrote the row.
-function actorName(row: AuditRow, people: Map<number, PersonRef>): string {
+function actorName(row: AuditRow, names: Map<number, string>): string {
   if (row.actorId === SYSTEM_ACTOR) return row.actorSystem ?? "System";
-  return nameFor(row.actorId, people);
+  return nameFor(row.actorId, names);
 }
 
-function nameFor(id: number | null, people: Map<number, PersonRef>): string {
+// A merged-away person is one some survivor's `mergedArchive` names.
+function displayNames(people: PersonRef[]): Map<number, string> {
+  const mergedAway = new Set(people.flatMap((p) => (p.mergedArchive ?? []).map((m) => m.fromId)));
+  const names = new Map<number, string>();
+  for (const p of people) {
+    const name = p.name ?? `Person #${p.id}`;
+    names.set(p.id, mergedAway.has(p.id) ? `${name} (merged)` : name);
+  }
+  return names;
+}
+
+function nameFor(id: number | null, names: Map<number, string>): string {
   if (id == null) return "—";
-  const p = people.get(id);
-  if (!p) return `Person #${id}`;
-  return p.mergedIntoId !== undefined ? `${p.name ?? `Person #${id}`} (merged)` : p.name ?? `Person #${id}`;
+  return names.get(id) ?? `Person #${id}`;
 }
 
 // A key ABSENT from the pick (vs. present-but-null) means the writer never
@@ -138,7 +147,7 @@ export default function CorrectionsPage() {
   const params = new URLSearchParams({ period, flagged: String(flaggedOnly) });
   const { data, error, reload } = useLoad<Payload>(ready ? `/api/facility/corrections?${params}` : null);
 
-  const people = useMemo(() => new Map((data?.Person ?? []).map((p) => [p.id, p])), [data]);
+  const names = useMemo(() => displayNames(data?.Person ?? []), [data]);
 
   if (authLoading) return <PageLoader />;
   if (!ready) return null;
@@ -228,11 +237,11 @@ export default function CorrectionsPage() {
                       <Table.Td>{kindLabel(r)}</Table.Td>
                       <Table.Td>
                         <Group gap={6} wrap="nowrap">
-                          <span>{actorName(r, people)}</span>
+                          <span>{actorName(r, names)}</span>
                           <ActorBadge cls={cls} />
                         </Group>
                       </Table.Td>
-                      <Table.Td>{nameFor(r.secondaryAffectedEntity, people)}</Table.Td>
+                      <Table.Td>{nameFor(r.secondaryAffectedEntity, names)}</Table.Td>
                       <Table.Td><VisitTimes v={before} /></Table.Td>
                       <Table.Td><VisitTimes v={after} /></Table.Td>
                       <Table.Td>

@@ -7,6 +7,8 @@ import { mintPersonId } from "@/lib/person/mintId";
 import { withTx } from "@/lib/db-client";
 import { nextBoundary, programYearsTouched } from "@/lib/programYear";
 import { orgCalendarDay } from "@/lib/time";
+import { normalizePhone } from "@/lib/phone";
+import { householdHasValidContact } from "@/lib/emergencyContacts/valid";
 
 /**
  * Dev seed + macro helpers (docs/ops/dev-instance.md, "Macros") — the ONE source of truth for creating
@@ -56,6 +58,13 @@ export async function seedSignedKeyVolunteer(prisma: Db, personId: number): Prom
         where: { id: open.id },
         data: { status: "ACTIVE", contractSignedAt: signedAt, stageEnteredAt: signedAt },
     });
+}
+
+// A family enrols only with a valid emergency contact on file.
+async function seedEmergencyContact(prisma: Db, householdId: number): Promise<void> {
+    if (await householdHasValidContact(prisma, householdId)) return;
+    const phone = "555-555-0090";
+    await prisma.emergencyContact.create({ data: { householdId, name: "Sam Outside", phone, phoneDigits: normalizePhone(phone) } });
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -211,6 +220,7 @@ export async function seedBaseline(prisma: Db): Promise<void> {
     });
     // A solo adult is their own household's lead, as sign-up makes every new adult.
     await addHouseholdLead(prisma, certifiedAdult.householdId, certifiedAdult.id);
+    await seedEmergencyContact(prisma, certifiedAdult.householdId);
 
     // No carte-blanche "may certify others" role exists. This persona is a plain
     // member who holds the MAY_CERTIFY_OTHERS certification on a single tool (granted
@@ -298,6 +308,7 @@ export async function seedBaseline(prisma: Db): Promise<void> {
     await addHouseholdLead(prisma, household3.id, parentFamily3.id);
 
     await addHouseholdLead(prisma, memberPricingLead.householdId, memberPricingLead.id);
+    await seedEmergencyContact(prisma, memberPricingLead.householdId);
     await prisma.orgMembership.upsert({
         where: { householdId: memberPricingLead.householdId },
         update: { status: "ACTIVE" },

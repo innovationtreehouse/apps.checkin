@@ -60,7 +60,7 @@ describe("bulk-donation wiring", () => {
 
     await expect(catalog!.search("drill")).resolves.toEqual([{ gtin13: "0011111111116", name: "Cordless Drill" }]);
     await expect(catalog!.getItem("0011111111116")).resolves.toMatchObject({ name: "Cordless Drill" });
-    expect(searchItems).toHaveBeenCalledWith("drill");
+    expect(searchItems).toHaveBeenCalledWith("drill", undefined);
   });
 
   it("binds X11 to local-inventory's donation apply, keyed by the donation id", async () => {

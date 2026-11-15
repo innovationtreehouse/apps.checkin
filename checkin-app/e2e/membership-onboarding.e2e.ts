@@ -1,13 +1,13 @@
 /**
  * A family joining, in the browser: the family, the reviewers and the Board each see their part
  * of an application (docs/rules/membership.md). Every test mints its own family, so a rerun on the
- * same stack starts clean. The dev mocks stand in for signing, consent and payment.
+ * same stack starts clean. The dev mocks stand in for signing, the background-check tool and payment.
  */
 import { expect, test, type Locator, type Page, type Request } from "@playwright/test";
 import { api, loginAs } from "../flow-tests/helpers";
 import { applicationAtIntake, applicationAtPayment, asViewer, newFamily, REVIEWER, review, settledFamily, signAgreement, submittedApplication } from "./support/families";
 import { persona } from "./support/kiosk";
-import { BOARD, send } from "./support/seedState";
+import { BOARD, recheckWindow, send, type Undo } from "./support/seedState";
 import { signIn } from "./support/session";
 
 const NEEDS_ATTENTION = "Your application needs attention.";
@@ -40,6 +40,10 @@ async function closedApplications(page: Page): Promise<void> {
 }
 
 test.describe("membership onboarding in the browser", () => {
+  let restoreWindow: Undo;
+  test.beforeAll(async () => { restoreWindow = await recheckWindow(); });
+  test.afterAll(async () => { await restoreWindow(); });
+
   test("M1: a new family becomes an active member", async ({ browser }) => {
     const email = await newFamily();
     const { name } = await persona(email);
@@ -62,17 +66,19 @@ test.describe("membership onboarding in the browser", () => {
       await expect(heading(page, "Sign & start your background check")).toBeVisible();
       await signAgreement(page);
 
-      const [averity] = await Promise.all([page.waitForEvent("popup"), page.getByRole("link", { name: "Consent on Averity →" }).click()]);
+      const ownCheck = page.locator(".mantine-Card-root").filter({ has: page.getByRole("heading", { name: "Background checks" }) })
+        .locator(".mantine-Stack-root > .mantine-Stack-root").filter({ has: page.getByText("You", { exact: true }) });
+      const [averity] = await Promise.all([page.waitForEvent("popup"), ownCheck.getByRole("link", { name: "Open the background-check tool →" }).click()]);
       await averity.close();
-      await page.getByLabel("I submitted my consent on Averity").check();
+      await ownCheck.getByLabel("I've started my check in the background-check tool").check();
+      await ownCheck.getByRole("button", { name: "Mark check started" }).click();
       await expect(heading(page, "Membership fee")).toBeVisible();
       await expect(page.getByText(STILL_REVIEWING)).toBeVisible();
     });
 
     await asViewer(browser, BOARD, async (page) => {
       await page.goto("/membership-ops/review");
-      const application = card(page, email);
-      await application.getByRole("radio", { name }).check();
+      const application = card(page, name);
       await application.getByRole("button", { name: "Attest — approve this person" }).click();
       await dialog(page).getByRole("button", { name: "Attest", exact: true }).click();
       await expect(page.getByText("Attestation recorded — thank you.")).toBeVisible();
@@ -101,7 +107,7 @@ test.describe("membership onboarding in the browser", () => {
     });
   });
 
-  test("M2: the Board records signing and consent for a family", async ({ browser }) => {
+  test("M2: the Board records signing and marks a lead's check started for a family", async ({ browser }) => {
     const email = await settledFamily();
     await submittedApplication(email);
     const { name } = await persona(email);
@@ -111,7 +117,8 @@ test.describe("membership onboarding in the browser", () => {
       const application = card(page, name);
       await application.getByRole("button", { name: "Confirm contract signed" }).click();
       await expect(application.getByText("✓ Signed")).toBeVisible();
-      await application.getByRole("button", { name: "Confirm BG consent" }).click();
+      await application.getByRole("button", { name: "Mark a lead's check started" }).click();
+      await dialog(page).getByRole("button", { name: "Mark check started" }).click();
       await expect(application.getByText("Awaiting payment.")).toBeVisible();
     }, BLOCKED_ALERT);
 
@@ -129,7 +136,7 @@ test.describe("membership onboarding in the browser", () => {
 
     await asViewer(browser, REVIEWER, async (page) => {
       await page.goto("/membership-ops/review");
-      const application = card(page, email);
+      const application = card(page, name);
       await application.getByLabel("Notes").fill("The report needs a second look.");
       await application.getByRole("button", { name: "Reject" }).click();
       await dialog(page).getByRole("button", { name: "Reject" }).click();
@@ -152,15 +159,14 @@ test.describe("membership onboarding in the browser", () => {
       await page.goto("/membership-ops/review");
       await page.getByText(rejectedList).click();
       await card(page, name).getByRole("button", { name: "Change to approve" }).click();
-      await dialog(page).getByRole("radio", { name }).check();
       await dialog(page).getByRole("button", { name: "Change to approve" }).click();
       await expect(page.getByText(/^Your answer is now an approval\./)).toBeVisible();
     });
 
     await asViewer(browser, BOARD, async (page) => {
       await page.goto("/membership-ops/review");
-      await expect(card(page, email)).toContainText("1/2 approvals so far.");
-      await expect(card(page, email)).toContainText(`This review is for ${name}`);
+      await expect(card(page, name)).toContainText("1/2 approvals so far.");
+      await expect(card(page, name)).toContainText(`Background check for ${name}`);
     });
 
     await asViewer(browser, email, async (page) => {
@@ -179,12 +185,15 @@ test.describe("membership onboarding in the browser", () => {
 
     await asViewer(browser, BOARD, async (page) => {
       await page.goto("/membership-ops/applications");
-      await card(page, name).getByRole("button", { name: "Reset for re-review" }).click();
+      // The reset goes to the person's check review; the family's application resumes from it.
+      await card(page, name).filter({ hasText: "Background check ·" }).getByRole("button", { name: "Reset for re-review" }).click();
+      await dialog(page).getByLabel("Reason").fill("The rejection was a misread.");
+      await dialog(page).getByRole("button", { name: "Start over" }).click();
       await expect(page.getByText("Sent back for re-review.")).toBeVisible();
 
       await page.goto("/membership-ops/review");
-      await expect(card(page, email)).toContainText("0/2 approvals so far.");
-      await expect(card(page, email).getByRole("radio", { name })).toBeVisible();
+      await expect(card(page, name)).toContainText("0/2 approvals so far.");
+      await expect(card(page, name)).toContainText(`Background check for ${name}`);
     });
 
     await review(BOARD, processId, email);

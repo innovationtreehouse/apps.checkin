@@ -61,6 +61,7 @@ describe('budget-owner synthetic views', () => {
             ['BooksMapClass', { budgetOwnerId: 2, budgetOwnerName: 'Robotics', quickBooksClassId: '5000000000000123' }],
             ['BooksMapAccount', { role: 'BANK_DEPOSITS', quickBooksAccountId: '35' }],
             ['QuickBooksAccountOption', { id: '35', name: 'Checking', accountType: 'Bank', active: true }],
+            ['QuickBooksListsStatus', { list: 'accounts', refreshedAt: '2026-11-14T06:00:00.000Z', entries: 42 }],
         ];
         for (const [model, row] of rows) {
             expect(strip(model, row, FINANCE_OR_BOARD_VIEW)).toEqual(row);
@@ -75,6 +76,18 @@ describe('budget-owner synthetic views', () => {
             const route = getRoute(endpoint);
             expect(route?.authorize).toBe('finance');
             expect(route?.orderedView.map(([role]) => role)).toEqual(['isFinance']);
+        }
+    });
+
+    it('finance or board reads and refreshes the saved QuickBooks lists', () => {
+        for (const endpoint of ['GET /api/books-map/quickbooks-lists', 'POST /api/books-map/quickbooks-lists/refresh']) {
+            const route = getRoute(endpoint);
+            expect(route?.authorize).toBe('finance-or-board');
+            expect(route?.returns).toEqual(['QuickBooksListsStatus']);
+            expect(route?.orderedView).toEqual([
+                ['isFinance', FINANCE_OR_BOARD_VIEW],
+                ['isBoardMember', FINANCE_OR_BOARD_VIEW],
+            ]);
         }
     });
 });

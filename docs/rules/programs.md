@@ -124,7 +124,7 @@ Things the app takes as true because they are handled outside it.
   check.  [Short of policy — *Policy: Sponsored Program Policy, Art. IV*]
 
 - Only the Board assigns or changes a program's leader, so only the Board creates a
-  program, which names its leader. Leaders already in place stay.  [Decision — Board ruling B1/B2, 2026-10-27; owner decision 2026-10-30]
+  program, which names its leader. Leaders already in place stay.  [Decision — Board ruling B1/B2]
 
 - Nobody sets themself or anyone in their own household as a program's leader.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
@@ -171,6 +171,10 @@ Things the app takes as true because they are handled outside it.
 - A household that cannot enroll — nobody eligible, or no valid emergency contact
   — is offered the way to fix it rather than a refusal.  [Decision]
 
+- The server refuses a family's enrolment while the household has no valid
+  emergency contact; staff adding a participant from the program roster are
+  exempt.  [Decision]
+
 - Registration signs someone in before intake begins, so whether an account
   exists is answered by signing in and never by a public reply.  [Decision — *Principle: no existence oracle*]
 
@@ -197,6 +201,10 @@ Things the app takes as true because they are handled outside it.
   back only when the app recorded taking it; a place that never took one (its
   hold failed, or it joined while the program was free) returns nothing, so a
   return can never sell a seat beyond capacity.  [Decision — *Principle: fail closed*]
+
+- A family whose selection is partly refused is told who and why before checkout,
+  and chooses whether to pay for the rest. If everyone is refused, nothing goes
+  to checkout.  [Decision]
 
 - One order pays for one household. A checkout naming someone from another
   household is refused before it reaches the store, and a paid order that names
@@ -338,7 +346,7 @@ Things the app takes as true because they are handled outside it.
   reserved-seat item until the program ends, whether enrollment was closed by the off-sale date's daily
   run or by the Board by hand. It may also still request a scholarship or payment
   plan after the off-sale date, and the request takes its seat as any request
-  does.  [Decision — Owner ruling, 2026-11-08]
+  does.  [Decision]
 
 - A program with no reserved-seat item keeps its public item on sale past the
   off-sale date, because hiding it would stop claimed families paying; the
@@ -361,7 +369,7 @@ Things the app takes as true because they are handled outside it.
   its families no reminder to pay, and the next daily run takes both store items
   off sale, retrying each day until the store confirms. The Board settles a
   claim still unpaid by hand. A payment that arrives anyway, from a checkout
-  opened before the end, still activates the claim it pays for.  [Decision — Owner ruling, 2026-11-08]
+  opened before the end, still activates the claim it pays for.  [Decision]
 
 - A scholarship or payment-plan request takes its seat when requested, not when
   approved.  [Decision]
@@ -390,7 +398,7 @@ Things the app takes as true because they are handled outside it.
   oversell risk.  [Decision — deliberate limit]
 
 - Denying a request whose seat hold failed returns the enrollment to unpaid. The
-  family goes back to paying normally, and the denial is kept in the audit log.  [Decision — Owner ruling, 2026-11-01]
+  family goes back to paying normally, and the denial is kept in the audit log.  [Decision]
 
 ### Access to program information
 
@@ -440,7 +448,7 @@ Things the app takes as true because they are handled outside it.
   birth on file is treated as under 13. The board and sysadmins see it at every
   age, and a family's household leads stay reachable either way. A participant
   who is also a household lead follows the same rule where the family's leads
-  are listed, and their phone number still reaches them.  [Decision — Board ruling B15, 2026-10-27; *Principle: fail closed*]
+  are listed, and their phone number still reaches them.  [Decision — Board ruling B15; *Principle: fail closed*]
 
 - The search a program leader uses to add volunteers and participants returns
   names only, and matches a name or an id, never an email. Contact details and

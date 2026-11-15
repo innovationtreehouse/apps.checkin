@@ -12,10 +12,9 @@ const ROLES: BusinessRole[] = ["isBoardMember", "isSysadmin", "isOperations"];
 const SAMPLE_NAME = "Jordan Rivera";
 
 /**
- * POST /api/outreach/test-send — renders BOTH variants of whatever template is currently in
- * the editor (unsaved-or-saved — the body carries the live text, not a saved-column read)
- * and sends both to the caller's own address. Sample data: name "Jordan Rivera", the real
- * next boundary, each variant's real actionWord/actionLink/unsubscribe-footer behavior.
+ * POST /api/outreach/test-send — renders whatever template is currently in the editor
+ * (the body carries the live text, not a saved-column read) and sends it to the caller's
+ * own address, with sample name "Jordan Rivera" and the real next boundary.
  */
 export const POST = withAuth({ roles: ROLES }, async (req, auth) => {
     if (auth.type !== "session") return apiError("Unauthorized", 401);
@@ -41,18 +40,8 @@ export const POST = withAuth({ roles: ROLES }, async (req, auth) => {
         throw e;
     }
 
-    for (const variant of ["join", "renew"] as const) {
-        const { subject, html } = renderOutreachEmail(subjectTemplate, bodyTemplate, {
-            name: SAMPLE_NAME,
-            variant,
-            boundary,
-            // No personId: a test render must not mint a working unsubscribe token for the tester
-            // (who would opt themselves out by clicking through to verify the link). Mirror the
-            // client preview's inert footer (settings/outreach/page.tsx) so test and preview match.
-        });
-        const testHtml = html + (variant === "join" ? '<p><a href="#">Unsubscribe from invitations</a></p>' : "");
-        await sendEmail(to, `[Test - ${variant}] ${subject}`, testHtml);
-    }
+    const { subject, html } = renderOutreachEmail(subjectTemplate, bodyTemplate, { name: SAMPLE_NAME, boundary });
+    await sendEmail(to, `[Test] ${subject}`, html);
 
     return NextResponse.json({ success: true });
 });

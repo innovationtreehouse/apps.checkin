@@ -1,4 +1,4 @@
-import { checkStanding, disputingReviews, householdQualifies, sentBackForSubject, type CheckReviewFacts, type CheckStanding } from '@/lib/membership/checkStanding';
+import { checkStanding, disputingReviews, householdQualifies, rejectionHistory, sentBackForSubject, type CheckReviewFacts, type CheckStanding } from '@/lib/membership/checkStanding';
 
 const THRESHOLD = new Date('2026-01-01T00:00:00Z');
 const FRESH = new Date('2026-06-01T00:00:00Z');
@@ -77,6 +77,35 @@ describe('sentBackForSubject', () => {
         expect(sentBackForSubject([reset('BLOCKED'), subjectCleared])).toBe(false);
         expect(sentBackForSubject([changedToApprove, undo, subjectCleared])).toBe(false);
         expect(sentBackForSubject([reset('BLOCKED'), subjectCleared, reset('BLOCKED')])).toBe(true);
+    });
+
+    const named = (personId: number) => ({ oldData: { subjectPersonId: null }, newData: { action: 'subject named', subjectPersonId: personId } });
+
+    it('keeps the earlier rejection when the person cleared off the review is named again', () => {
+        expect(sentBackForSubject([subjectCleared, named(5)])).toBe(true);
+        expect(sentBackForSubject([changedToApprove, undo, subjectCleared, named(5)])).toBe(true);
+    });
+
+    it('starts fresh when a different person is named after the subject is cleared', () => {
+        expect(sentBackForSubject([subjectCleared, named(6)])).toBe(false);
+    });
+
+    const clearedFrom = (personId: number) => ({ oldData: { status: 'PENDING_BG_REVIEW', subjectPersonId: personId }, newData: { status: 'PENDING_BG_REVIEW', action: 'board reset', subjectPersonId: null } });
+
+    it('keeps a rejection through more than one wrong-person reset', () => {
+        expect(sentBackForSubject([named(5), reset('BLOCKED'), subjectCleared, named(6), clearedFrom(6), named(5)])).toBe(true);
+    });
+
+    it('reports a rejection held for a person cleared off the review until they are named again', () => {
+        expect(rejectionHistory([named(5), reset('BLOCKED'), subjectCleared]).heldRejection).toBe(true);
+        expect(rejectionHistory([named(5), reset('BLOCKED'), subjectCleared, named(6)]).heldRejection).toBe(true);
+        expect(rejectionHistory([named(5), reset('BLOCKED'), subjectCleared, named(5)])).toEqual({ sentBack: true, heldRejection: false });
+        expect(rejectionHistory([named(5), clearedFrom(5)]).heldRejection).toBe(false);
+    });
+
+    it('keeps nothing for the same person when the cleared review had not been sent back', () => {
+        const clearedInProgress = { oldData: { status: 'PENDING_BG_REVIEW', subjectPersonId: 5 }, newData: { status: 'PENDING_BG_REVIEW', action: 'board reset', subjectPersonId: null } };
+        expect(sentBackForSubject([clearedInProgress, named(5)])).toBe(false);
     });
 });
 

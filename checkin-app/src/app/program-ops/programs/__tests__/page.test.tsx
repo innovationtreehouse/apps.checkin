@@ -5,6 +5,7 @@ jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 
 import { screen, fireEvent } from "@testing-library/react";
 import { renderWithProviders, mockFetchJson, resetRtl, router, setSession } from "@/test-helpers/rtl";
+import { settleAfter } from "@/test-helpers/settle";
 import AdminProgramsIndex from "../page";
 
 beforeEach(() => resetRtl());
@@ -78,5 +79,20 @@ describe("AdminProgramsIndex", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "+ New Program" }));
     expect(router.push).toHaveBeenCalledWith("/program-ops/new");
+  });
+});
+
+describe("failed load", () => {
+  it("shows an error with a retry, never the empty state", async () => {
+    mockFetchJson({});
+    renderWithProviders(<AdminProgramsIndex />);
+
+    await settleAfter("/api/programs");
+    expect(screen.queryByText("No programs found. Create your first one!")).not.toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load programs")).toBeInTheDocument();
+
+    mockFetchJson({ "/api/programs": programs });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("Robotics Club")).toBeInTheDocument();
   });
 });

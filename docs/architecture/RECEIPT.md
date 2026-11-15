@@ -156,10 +156,15 @@ set to a different mailbox. The access token comes from an Infra-owned refresher
 Lambda, which alone holds the refresh token; an answer naming another mailbox is
 refused.
 
-**Reading.** The window is the last 3 days, with no stored cursor, and the
+**Reading.** The window is the last 30 days, with no stored cursor, and the
 `ReceiptMailItem` ledger makes a re-read free through its unique
-`(gmailMessageId, attachmentHash)`. The query is `newer_than:3d -in:sent -in:drafts`,
-and Gmail's default search leaves out Spam and Trash.
+`(gmailMessageId, attachmentHash)`. The query is `newer_than:30d -in:sent -in:drafts`,
+and Gmail's default search leaves out Spam and Trash. A listed message the ledger
+shows finished is not fetched again: it has a ledger row, none of them deferred, and
+no `ReceiptMailAtRisk` row. A message is marked at risk before it is read and the
+mark is cleared once every file was read, held, ignored, discarded or refused, so
+mail left partly read, even by a run that died, is fetched again. Runs can stop for
+up to 30 days without losing mail.
 
 **Files in a message**, in reading order: each attachment of an accepted type, each
 inline part of an accepted non-text type at 5 KB or more, then the body stored as
@@ -191,11 +196,13 @@ shows a DMARC pass for that domain and a DKIM pass signed by exactly that domain
 
 Mail a run leaves unread is stored in `ReceiptMailAtRisk`, and finance gets one
 alert once such a message would leave the window before the next run. A failed
-listing alerts finance on every run and counts as a failure in the cron result.
+listing sends no alert of its own: it counts as a failure in the cron result, so
+the Problems list shows the job's latest run as failed and the daily problems email
+lists it.
 
 ## Daily steps
 
-There are no schedules of the library's own and nothing runs at boot. Three steps
+There are no schedules of the library's own and nothing runs at boot. Four steps
 run inside the host's existing daily `/api/cron/reconcile-shopify`, in this order,
 each in its own `try/catch` and each returning counts only. None retries a failed step:
 
@@ -203,7 +210,8 @@ each in its own `try/catch` and each returning counts only. None retries a faile
 |---|---|---|
 | `sweepInterruptedOcr` | `auto_upload` older than ten minutes to `ocr_failed` | 50 |
 | `sweepStuckUploaded` | `uploaded` idle for over an hour to `flow_error` | 50 |
-| `readMailbox` | the mailbox, last because it is the only slow step | as above |
+| `readMailbox` | the mailbox, the only slow step | as above |
+| `sweepOutcomeNotices` | sends the outcome emails still owed to a receipt's uploader and the person reimbursed; a notice is given up after three failed sends | 50 |
 
 ## Stuck receipts
 
@@ -211,7 +219,8 @@ After input, a receipt that fails a step is stuck in it: `flow_error`, or finali
 `pushedAt` null. `firstFailedAt` keeps when the step first failed, and `lastError` the latest
 failure's error; a step that succeeds clears both. `stuckItems()` lists stuck receipts for
 the Problems list, timed by `firstFailedAt`, with no error text. `retryStuckItem({ id, step })`
-runs the step once ("flow" or "push to mapping"), and nothing retries by itself. Finance sees
+runs the step once ("flow" or "push to mapping"), and nothing retries by itself. It answers 404
+for a receipt not stuck in that step and 409 when the receipt is still stuck afterwards. Finance sees
 `lastError` on the receipt's own page.
 
 A failed reading leaves nothing stuck: the receipt waits in `ocr_failed` for its submitter. So
@@ -296,7 +305,7 @@ that name.
 
 | Who does it | What |
 |---|---|
-| `fileHandler` | authentication, admission, the per-row tier check (404 when it fails), the finance-view record of `auditedRead`, and the delivery headers |
+| `fileHandler` | authentication, admission, the per-row tier check (404 when it fails), the finance-view record of a marked file served to anyone but its owner, and the delivery headers |
 | The library | the magic-byte check at intake, a `file_viewed` or `mail_file_viewed` audit row on each read, and loading the whole file into memory; nothing streams |
 
 Images go `inline` under `Content-Security-Policy: sandbox`, PDFs `inline` without

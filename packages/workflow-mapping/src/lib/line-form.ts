@@ -12,6 +12,18 @@ export interface LineFormFields {
   conversionFactor: number;
 }
 
+/** The form's starting fields for a line: its current catalog part, proposed name and conversion factor. */
+export function lineFormStart(line: { assignedGtin13: string | null; proposedName: string | null; conversionFactor: number }): LineFormFields {
+  return {
+    gtin13: line.assignedGtin13,
+    name: line.proposedName ?? "",
+    categoryId: null,
+    subcategoryId: null,
+    usage: null,
+    conversionFactor: line.conversionFactor,
+  };
+}
+
 /** The request body for the line's associate or propose route, or null while a required field is unset. */
 export function lineFormBody(form: LineFormKind, f: LineFormFields): AssociateBody | ProposeBody | null {
   if (form === "associate") return f.gtin13 ? { gtin13: f.gtin13, conversionFactor: f.conversionFactor } : null;
@@ -24,4 +36,9 @@ export function lineFormBody(form: LineFormKind, f: LineFormFields): AssociateBo
     proposedUsageBehavior: f.usage,
     conversionFactor: f.conversionFactor,
   };
+}
+
+/** Whether saving would send the same body as the line's starting fields, so nothing would change. */
+export function lineFormUnchanged(form: LineFormKind, start: LineFormFields, f: LineFormFields): boolean {
+  return JSON.stringify(lineFormBody(form, f)) === JSON.stringify(lineFormBody(form, start));
 }

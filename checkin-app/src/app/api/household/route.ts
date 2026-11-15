@@ -19,6 +19,7 @@ import { membershipValidThrough } from "@/lib/orgMembership";
 import { isDesignatedEmail, designatedEmailRefusalForBoard } from "@/lib/membership/volunteerDesignation";
 import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
 import { personActor } from "@/lib/auditActor";
+import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
 
 export const GET = withAuth(
     {},
@@ -128,6 +129,7 @@ export const PATCH = withAuth(
             const householdId = hh.householdId;
 
             const { member, warning } = await prisma.$transaction(async (tx) => {
+                await lockLiveHouseholds(tx, [householdId]);
                 if (memberEmail) await removeAliasesForSignInEmail(tx, memberEmail, personActor(userId), "household_add_member");
                 // Always create a fresh member — never reparent an existing account by
                 // email. Real account linking happens at Google sign-in via
@@ -173,6 +175,7 @@ export const PATCH = withAuth(
             if (isPrismaError(error, 'P2002')) {
                 return apiError(EMAIL_IN_USE_REFUSAL, 400);
             }
+            if (error instanceof ArchivedHouseholdError) return apiError(error.message, error.status);
             logger.error("Household PATCH Error:", error);
             return apiError("Internal Server Error", 500);
         }

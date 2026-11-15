@@ -11,6 +11,8 @@ import { scholarshipRequestKindLabel } from "@/lib/scholarshipRequestKind";
 import { resolveScholarshipRecipients, notifyReviewTeam, sendScholarshipAck, resolveAckCopy } from "@/lib/scholarshipEmails";
 import { config } from "@/lib/config";
 import { escapeHtml } from "@/lib/email-templates/base";
+import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
+import { householdMayEnrol, NO_EMERGENCY_CONTACT_TO_ENROL } from "@/lib/emergencyContacts/service";
 
 export const POST = withAuth({}, async (req, auth, { params }: { params: Promise<{ id: string }> }) => {
     if (auth.type !== 'session') return apiError("Unauthorized", 401);
@@ -96,6 +98,12 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
 
         if (participant.status !== 'PENDING') {
             return apiError("This enrollment is not awaiting payment", 409);
+        }
+
+        const householdId = participant.person?.householdId;
+        const isExternalAdmin = isSysAdminOrBoard && !isSelf && !(await hasHouseholdConflict(prisma, currentUserId, householdId));
+        if (!isExternalAdmin && !(await householdMayEnrol(prisma, householdId))) {
+            return apiError(NO_EMERGENCY_CONTACT_TO_ENROL, 400);
         }
 
         // Hold ledger: APPLICATION takes a seat out

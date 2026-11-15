@@ -64,6 +64,40 @@ describeDb("associate (CI3, optimistic)", () => {
     expect(audit).toMatchObject({ actorUserId: MANAGER.id, actorUsername: MANAGER.name });
   });
 
+  it("leaves a line already associated with the same GTIN and factor as it is: no write, event or proposal", async () => {
+    const { r, lines } = await pendingWithLines(2);
+    await db.receivedReceiptLineStatus.update({
+      where: { id: lines[0].id },
+      data: { recognitionStatus: "recognized", assignedGtin13: "0000000000017", conversionFactor: 4, conversionVersion: 3 },
+    });
+    const before = await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: lines[0].id } });
+    await lineItemService.associateGtin(r.id, lines[0].id, { gtin13: "0000000000017", conversionFactor: 4 });
+    expect(await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: lines[0].id } })).toEqual(before);
+    expect(await db.workflowAuditLog.count({ where: { eventType: "line_associated" } })).toBe(0);
+    expect(submitted.proposals).toHaveLength(0);
+  });
+
+  it("writes one association when two identical associates race", async () => {
+    const { r, lines } = await pendingWithLines(2);
+    const body = { gtin13: "0000000000017", conversionFactor: 4 };
+    await Promise.all([
+      lineItemService.associateGtin(r.id, lines[0].id, body),
+      lineItemService.associateGtin(r.id, lines[0].id, body),
+    ]);
+    expect(await db.workflowAuditLog.count({ where: { eventType: "line_associated" } })).toBe(1);
+  });
+
+  it("rewrites the line when the factor changes, resetting the conversion version", async () => {
+    const { r, lines } = await pendingWithLines(2);
+    await db.receivedReceiptLineStatus.update({
+      where: { id: lines[0].id },
+      data: { recognitionStatus: "recognized", assignedGtin13: "0000000000017", conversionFactor: 4, conversionVersion: 3 },
+    });
+    await lineItemService.associateGtin(r.id, lines[0].id, { gtin13: "0000000000017", conversionFactor: 6 });
+    expect(await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: lines[0].id } })).toMatchObject({ conversionFactor: 6, conversionVersion: 1 });
+    expect(await db.workflowAuditLog.count({ where: { eventType: "line_associated" } })).toBe(1);
+  });
+
   it("reports a conflict when an existing reference has a different GTIN", async () => {
     refCheck.mfr_part = { exists: true, gtin13: "0000000000024", id: 9, conversionFactor: 1, conversionVersion: 1 };
     const { r, lines } = await pendingWithLines(2);
@@ -83,7 +117,7 @@ describeDb("associate (CI3, optimistic)", () => {
   it.each([
     ["malformed", "12345", 400, /not a GTIN-13/],
     ["wrong check digit", "0000000000018", 400, /not a GTIN-13/],
-    ["unknown or archived", "0000000000031", 404, /No catalog item has GTIN 0000000000031/],
+    ["unknown or archived", "0000000000031", 404, /No catalog item has Part ID 0000000000031/],
   ])("%s GTIN: %i, nothing sent to the catalog, and the line unchanged", async (_case, gtin13, status, message) => {
     const { r, lines } = await pendingWithLines();
     await expect(lineItemService.associateGtin(r.id, lines[0].id, { gtin13 })).rejects.toMatchObject({ status, message: expect.stringMatching(message) });
@@ -116,6 +150,7 @@ describeDb("propose", () => {
     expect(await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: lines[0].id } })).toMatchObject({
       recognitionStatus: "provisional",
       provisionalItemGtin13: "2000000000015",
+      proposedName: "Widget",
     });
   });
 });
@@ -226,7 +261,7 @@ describeDb("a catalog remap after the manager's decision", () => {
     const { r, ls } = await proposedLine();
     await lineItemService.associateGtin(r.id, ls.id, { gtin13: "0000000000017" });
     await orgEventConsumer.onOrgEvents([approved]);
-    expect(await read(ls.id)).toMatchObject({ recognitionStatus: "recognized", assignedGtin13: "0000000000017", provisionalItemGtin13: null });
+    expect(await read(ls.id)).toMatchObject({ recognitionStatus: "recognized", assignedGtin13: "0000000000017", provisionalItemGtin13: null, proposedName: null });
     expect(await db.workflowAuditLog.count({ where: { eventType: "line_remapped" } })).toBe(0);
   });
 
@@ -234,7 +269,7 @@ describeDb("a catalog remap after the manager's decision", () => {
     const { r, ls } = await proposedLine();
     await lineItemService.markNonInventory(r.id, ls.id);
     await orgEventConsumer.onOrgEvents([approved]);
-    expect(await read(ls.id)).toMatchObject({ recognitionStatus: "non_inventory", assignedGtin13: null, provisionalItemGtin13: null });
+    expect(await read(ls.id)).toMatchObject({ recognitionStatus: "non_inventory", assignedGtin13: null, provisionalItemGtin13: null, proposedName: null });
     expect(await db.workflowAuditLog.count({ where: { eventType: "line_remapped" } })).toBe(0);
   });
 

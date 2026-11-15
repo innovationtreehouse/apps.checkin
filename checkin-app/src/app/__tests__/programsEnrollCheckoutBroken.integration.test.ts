@@ -10,6 +10,7 @@
 import { POST as ENROLL } from '@/app/api/programs/[id]/participants/route';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
+import { WITH_EMERGENCY_CONTACT } from '@/test-helpers/emergencyContact';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 jest.mock('@/lib/notifications', () => ({ sendNotification: jest.fn().mockResolvedValue(true) }));
@@ -39,11 +40,11 @@ describe('Enroll into a priced-but-unsellable program is rejected', () => {
     beforeAll(async () => {
         await cleanup();
         const user = await prisma.person.create({
-            data: { email: `user-${TAG}@example.com`, name: 'Self Enroller', isDeclaredAdult: true, household: { create: { name: `HH ${TAG}` } } },
+            data: { email: `user-${TAG}@example.com`, name: 'Self Enroller', isDeclaredAdult: true, household: { create: { name: `HH ${TAG}`, ...WITH_EMERGENCY_CONTACT } } },
         });
         userId = user.id;
         const admin = await prisma.person.create({
-            data: { email: `admin-${TAG}@example.com`, name: 'Board Admin', isDeclaredAdult: true, isBoardMember: true, household: { create: { name: `Admin HH ${TAG}` } } },
+            data: { email: `admin-${TAG}@example.com`, name: 'Board Admin', isDeclaredAdult: true, isBoardMember: true, household: { create: { name: `Admin HH ${TAG}`, ...WITH_EMERGENCY_CONTACT } } },
         });
         adminId = admin.id;
         const broken = await prisma.program.create({

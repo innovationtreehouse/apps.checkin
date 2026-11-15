@@ -20,7 +20,11 @@ jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: m
 jest.mock("@mantine/notifications", () => ({ notifications: { show: (...args: unknown[]) => mockShow(...args) } }));
 jest.mock("@checkin/receipt/components/ReceiptFile", () => ({
   __esModule: true,
-  default: ({ src, mimeType, title }: { src: string; mimeType: string; title: string }) => <figure aria-label={title} data-src={src} data-type={mimeType} />,
+  default: ({ src, mimeType, title = "Receipt", rotation, onRotate }: { src: string; mimeType: string; title?: string; rotation?: number; onRotate?: (by: number) => void }) => (
+    <figure aria-label={title} data-src={src} data-type={mimeType} data-rotation={rotation}>
+      {onRotate && <button type="button" aria-label={`Rotate ${title}`} onClick={() => onRotate(90)} />}
+    </figure>
+  ),
 }));
 jest.mock("@checkin/receipt/components/api", () => ({
   ...jest.requireActual("@checkin/receipt/components/api"),
@@ -37,7 +41,7 @@ const flagged = {
   id: "r1", uploadedAt: "2026-10-02T00:00:00Z", uploadedByUserId: 1, fileHash: "aaaaaaaaaaaaffff", mimeType: "application/pdf",
   retailer: "Acme", receiptDate: "2026-10-01", receiptNumber: "R-9", orderNumber: null, currency: "USD",
   receiptTotalCents: 1000, taxCents: 80, shippingCents: 0, discountCents: 0, state: "duplicate_flagged",
-  needsReimbursement: false, isInKind: false, duplicateSuspectReceiptId: null, financialReviewReasons: [],
+  needsReimbursement: false, isInKind: false, financialReviewReasons: [],
   lineItems: [{ id: 1, lineNumber: 1, description: "Arduino", partNumber: "A-1", quantity: 1, unitPriceCents: 920, totalPriceCents: 920, isDelayed: false }],
 };
 const earlier = {
@@ -92,6 +96,16 @@ function row(label: string): HTMLElement {
 }
 
 describe("the N-way compare", () => {
+  it("turns both copies of this receipt's image together", async () => {
+    await wrap();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Rotate This receipt's file" }));
+    });
+    expect(screen.getByRole("figure", { name: "This receipt's file" })).toHaveAttribute("data-rotation", "90");
+    expect(screen.getByRole("figure", { name: "Receipt" })).toHaveAttribute("data-rotation", "90");
+    expect(screen.getByRole("figure", { name: "File of match 2" })).toHaveAttribute("data-rotation", "0");
+  });
+
   it("shows every member side by side, the viewed receipt first and the rest in upload order", async () => {
     await wrap();
     expect(within(row("Receipt #")).getAllByRole("cell").map((c) => c.textContent)).toEqual(["Receipt #", "R-9", "R-8", "R-7"]);
@@ -163,7 +177,7 @@ describe("the N-way compare", () => {
     expect(screen.getByText("A finalized copy exists: keep it and reject this one as a copy?")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Keep this one" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Reject as a copy" }));
-    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/reject", "POST", { reason: "Copy of Acme, uploaded 30 Sept" }, "Rejected", "Couldn't reject this receipt"));
+    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/reject", "POST", { reason: "Copy of receipt r0" }, "Rejected", "Couldn't reject this receipt"));
   });
 
   it("rejects one match with a reason and stays to redraw", async () => {
@@ -225,14 +239,14 @@ describe("the N-way compare", () => {
 describe("member labels", () => {
   it("links the kept receipt on a member rejected as a copy, in red", async () => {
     mockLoads["/r1/duplicate-group"] = group([
-      { ...r0, state: "rejected", label: "Rejected as a copy of Acme, uploaded 3 Oct", copyOfId: "r2" },
+      { ...r0, state: "rejected", label: "Rejected as a copy of receipt r2", copyOfId: "r2" },
       r1,
       r2,
     ]);
     await wrap();
-    const link = screen.getByRole("link", { name: "Acme, uploaded 3 Oct" });
+    const link = screen.getByRole("link", { name: "receipt r2" });
     expect(link).toHaveAttribute("href", "/receipts/r2?queue=duplicate_flagged");
-    expect(link.parentElement).toHaveTextContent("Rejected as a copy of Acme, uploaded 3 Oct");
+    expect(link.parentElement).toHaveTextContent("Rejected as a copy of receipt r2");
   });
 
   it("shows a finalized member whose expense finance rejected, with the reason", async () => {
@@ -313,13 +327,12 @@ describe("the badge and the submitter's message", () => {
   });
 });
 
-describe("a receipt with an old flag", () => {
-  it("links the original once the flag is cleared", async () => {
-    mockLoads["/r1"] = { ...flagged, state: "submitter_review", duplicateSuspectReceiptId: "r0", duplicateFlagClearedAt: "2026-10-03T00:00:00Z" };
-    mockLoads["/r1/duplicate-group"] = group([{ ...r1, state: "submitter_review" }]);
+describe("a decided receipt", () => {
+  it("links the receipt kept in place of one rejected as a copy", async () => {
+    mockLoads["/r1"] = { ...flagged, state: "rejected", copyOfId: "r0", copyOfLabel: "receipt r0" };
     await wrap();
-    expect(screen.getByRole("link", { name: "another receipt" })).toHaveAttribute("href", "/receipts/r0?queue=duplicate_flagged");
-    expect(screen.getByText(/and cleared as not a duplicate/)).toBeInTheDocument();
+    expect(screen.getByText(/Rejected as a copy of/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "receipt r0" })).toHaveAttribute("href", "/receipts/r0?queue=duplicate_flagged");
   });
 
   it("badges a receipt discarded while flagged as discarded as a duplicate", async () => {

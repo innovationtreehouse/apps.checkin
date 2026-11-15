@@ -48,13 +48,15 @@ describe('GET /api/membership-audit/compliance', () => {
     let freshId: number;
     let revokedId: number;
     let stuckId: number;
+    let disputedHhId: number;
+    let disputedPersonId: number;
     let restoreBoardSettings: () => Promise<void> = async () => {};
 
     const cleanup = async () => {
         const hhs = await prisma.household.findMany({ where: { name: { contains: TAG } }, select: { id: true } });
         const hhIds = hhs.map(h => h.id);
         const ms = await prisma.orgMembership.findMany({ where: { householdId: { in: hhIds } }, select: { id: true } });
-        await prisma.orgMembershipProcess.deleteMany({ where: { orgMembershipId: { in: ms.map(m => m.id) } } });
+        await prisma.orgMembershipProcess.deleteMany({ where: { OR: [{ orgMembershipId: { in: ms.map(m => m.id) } }, { subjectPerson: { householdId: { in: hhIds } } }] } });
         await prisma.orgMembership.deleteMany({ where: { householdId: { in: hhIds } } });
         await prisma.person.deleteMany({ where: { OR: [{ email: { contains: TAG } }, { householdId: { in: hhIds } }] } });
         await prisma.household.deleteMany({ where: { id: { in: hhIds } } });
@@ -83,6 +85,14 @@ describe('GET /api/membership-audit/compliance', () => {
         // ACTIVE + lead check today → fresh, must NOT appear.
         freshId = await makeHousehold('fresh', new Date());
         await prisma.orgMembership.create({ data: { householdId: freshId, status: 'ACTIVE' } });
+
+        // ACTIVE, lead check today, but a second adult's check review is rejected → STALE_BG
+        // (the household no longer qualifies) and the adult is listed as disputed.
+        disputedHhId = await makeHousehold('disputed', new Date());
+        await prisma.orgMembership.create({ data: { householdId: disputedHhId, status: 'ACTIVE' } });
+        const spouse = await prisma.person.create({ data: { email: `spouse-${TAG}@example.com`, name: 'Disputed spouse', householdId: disputedHhId } });
+        disputedPersonId = spouse.id;
+        await prisma.orgMembershipProcess.create({ data: { kind: 'PERSON_BG', status: 'BLOCKED', subjectPersonId: spouse.id, bgConsentAt: new Date() } });
 
         // REVOKED membership.
         revokedId = await makeHousehold('revoked', new Date());
@@ -116,6 +126,15 @@ describe('GET /api/membership-audit/compliance', () => {
         expect(byId.get(revokedId)?.reasons).toContain('REVOKED');
         expect(byId.get(stuckId)?.reasons).toContain('STUCK_BG_CLEARANCE');
         expect(byId.has(freshId)).toBe(false);
+        expect(byId.get(disputedHhId)?.reasons).toContain('STALE_BG');
+    });
+
+    it('lists a person whose check is disputed under BG_DISPUTED, and nobody undisputed', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+
+        const { peopleWithDisputedCheck } = await (await get()).json();
+        const ours = peopleWithDisputedCheck.filter((p: { name: string }) => p.name.includes('Disputed spouse') || p.name.includes('lead'));
+        expect(ours).toEqual([expect.objectContaining({ personId: disputedPersonId, householdId: disputedHhId, reason: 'BG_DISPUTED' })]);
     });
 
     it('forbids a non-board user', async () => {

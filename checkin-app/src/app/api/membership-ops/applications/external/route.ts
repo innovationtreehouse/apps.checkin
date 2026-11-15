@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
-import { markContractSigned, markBgConsent, setZohoEnvelope, resetSigning, ExternalError } from "@/lib/membership/external";
+import { markContractSigned, setZohoEnvelope, resetSigning, ExternalError } from "@/lib/membership/external";
 import { applicantHousehold } from "@/lib/membership/review";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { apiError } from "@/lib/api-response";
@@ -15,11 +15,10 @@ export const dynamic = "force-dynamic";
  *
  * Body: { processId, action, envelopeId?, reason? }
  *   action 'mark-contract'    — manually record the contract as signed (fallback to the Zoho webhook)
- *   action 'mark-bg-consent'  — human-mark that Averity consent was submitted
  *   action 'set-envelope'     — associate a Zoho signing request id (needs envelopeId)
  *   action 'reset-signing'    — recall the open Zoho request so another lead can sign (needs reason)
  *
- * Completing the contract + background-check consent advances the application to
+ * A signed contract and a lead's check started advance the application to
  * PENDING_PAYMENT; the background check then reviews in parallel with payment.
  *
  * On a Key Volunteer Agreement, every action but 'reset-signing' is the Board's,
@@ -42,13 +41,11 @@ export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (
     }
 
     // Conflict of interest, guarding EVERY action here — mirrors certifyPaymentPlan
-    // and boardResetReview. Marking your own household's contract signed or its BG
-    // consent received advances the application to PENDING_PAYMENT with no Zoho
-    // envelope and no consent behind it. No role bypasses this.
+    // and boardResetReview. Marking your own household's contract signed advances the
+    // application with no Zoho envelope behind it. No role bypasses this.
     //
     // The guard belongs on the route, not in the service: markContractSigned is also
-    // the Zoho webhook's entry point (system actor), and markBgConsent is what
-    // selfRecordBgConsent calls, where the actor IS the applicant by design.
+    // the Zoho webhook's entry point (system actor).
     const process = await prisma.orgMembershipProcess.findUnique({
         where: { id: processId },
         select: { orgMembershipId: true, subjectPersonId: true, kind: true },
@@ -65,8 +62,6 @@ export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (
         switch (action) {
             case "mark-contract":
                 return NextResponse.json({ process: await markContractSigned(processId, actorId, true) });
-            case "mark-bg-consent":
-                return NextResponse.json({ process: await markBgConsent(processId, actorId) });
             case "set-envelope":
                 if (!envelopeId) return apiError("envelopeId is required", 400);
                 return NextResponse.json({ process: await setZohoEnvelope(processId, envelopeId, actorId) });

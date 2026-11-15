@@ -3,8 +3,9 @@
 import { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
-import { Alert, Badge, Button, Card, Checkbox, Divider, Group, SimpleGrid, Stack, Text, Title } from '@mantine/core';
-import { notifications } from '@mantine/notifications';
+import { Badge, Button, Card, Checkbox, Divider, Group, SimpleGrid, Stack, Text, Title } from '@mantine/core';
+import { LoadError } from '@checkin/component-ui';
+import { useLoad } from '@/lib/api';
 import { formatDateOnly } from '@/lib/time';
 import { PageContainer } from '@/components/ui/PageContainer';
 import type { EnrollmentClosedBy } from '@/lib/programs/saleState';
@@ -31,8 +32,12 @@ type ProgramSummary = {
 
 export default function PublicProgramsDirectory() {
   const { data: session } = useSession();
-  const [programs, setPrograms] = useState<ProgramSummary[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [activeOnly, setActiveOnly] = useState(true);
+  const isAuthorized = session && (session.user?.isSysadmin || session.user?.isBoardMember);
+  const { data, error, reload } = useLoad<ProgramSummary[]>(`/api/programs${(isAuthorized && !activeOnly) ? '' : '?active=true'}`);
+  const programs = data ?? [];
+  // Retries keep data and error both null, so they count as loading, never as an empty directory.
+  const loading = !data && !error;
   // A load that outlives a normal round trip is almost always the system waking
   // (the retry extension rides it out server-side, up to ~45s) — tell the user
   // something generic is happening rather than leaving a bare spinner. Same
@@ -43,32 +48,6 @@ export default function PublicProgramsDirectory() {
     const t = setTimeout(() => setSlowLoad(true), 4000);
     return () => { clearTimeout(t); setSlowLoad(false); };
   }, [loading]);
-  const [message, setMessage] = useState("");
-  const [activeOnly, setActiveOnly] = useState(true);
-
-  const isAuthorized = session && (session.user?.isSysadmin || session.user?.isBoardMember);
-
-  useEffect(() => {
-    const fetchPrograms = async () => {
-      setLoading(true);
-      try {
-        const query = (isAuthorized && !activeOnly) ? '' : '?active=true';
-        const res = await fetch(`/api/programs${query}`);
-        if (res.ok) {
-          const data = await res.json();
-          setPrograms(data);
-        } else {
-          setMessage("Failed to load program directory.");
-        }
-      } catch {
-        notifications.show({ color: "red", message: "Network error loading programs.", autoClose: false });
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchPrograms();
-  }, [activeOnly, isAuthorized]);
 
   if (loading) {
     return (
@@ -109,9 +88,9 @@ export default function PublicProgramsDirectory() {
         )}
       </Group>
 
-      {message && <Alert color="red">{message}</Alert>}
-
-      {programs.length === 0 ? (
+      {error ? (
+        <LoadError what="the program directory" message={error} onRetry={reload} />
+      ) : programs.length === 0 ? (
         <Card withBorder radius="md" padding="xl" ta="center">
           <Text c="dimmed">No active programs currently available. Check back soon!</Text>
         </Card>

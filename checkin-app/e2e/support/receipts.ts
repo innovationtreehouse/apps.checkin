@@ -1,4 +1,5 @@
-/** Receipt setup over HTTP, for specs whose subject is a later page than the upload. */
+/** Receipt setup over HTTP, for specs whose subject is a later page than the upload, and the step that resolves one in the browser. */
+import { expect, type Page } from "@playwright/test";
 import { api, BASE, differentPurchases, type Session } from "../../flow-tests/helpers";
 
 export interface UploadedReceipt { id: string; state: string }
@@ -74,4 +75,16 @@ export async function expenseFrom(manager: Session, retailer: string, lines: Man
     if (res.status !== 200) throw new Error(`non-inventory answered ${res.status}`);
   }
   return receiptId;
+}
+
+/**
+ * Runs the line decision that resolves the receipt on `page`, then reopens the receipt. The page
+ * returns to the queue once the receipt resolves, so the receipt's own state is read only after.
+ */
+export async function resolveAndReopen(page: Page, decide: () => Promise<void>): Promise<void> {
+  const receipt = page.url();
+  await decide();
+  await expect(page.getByText("Receipt resolved")).toBeVisible();
+  await page.waitForURL((url) => url.pathname === "/inventory/receiving");
+  await page.goto(receipt);
 }

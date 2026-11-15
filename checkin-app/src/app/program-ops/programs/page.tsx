@@ -1,11 +1,13 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { Anchor, Badge, Button, Checkbox, Group, Stack, Text, Tooltip } from "@mantine/core";
+import { LoadError } from "@checkin/component-ui";
 import { DataTable, type DataTableColumn } from "@/components/admin/DataTable";
+import { useLoad } from "@/lib/api";
 import { isProgramCheckoutBroken } from "@/lib/programCheckout";
 import { formatDateOnly } from "@/lib/time";
 
@@ -45,27 +47,12 @@ const dateRange = (p: Program) =>
   `${fmtDate(p.startAt)} – ${fmtDate(p.endAt)}`;
 
 export default function AdminProgramsIndex() {
-  const [programs, setPrograms] = useState<Program[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data, error: loadError, reload } = useLoad<Program[]>("/api/programs");
+  const programs = data ?? [];
   const [activeOnly, setActiveOnly] = useState(false);
   const [publicOnly, setPublicOnly] = useState(false);
   const router = useRouter();
   const { data: session } = useSession();
-
-  useEffect(() => {
-    fetch('/api/programs')
-      .then(res => res.json())
-      .then(data => {
-        if (Array.isArray(data)) {
-          setPrograms(data);
-        }
-        setLoading(false);
-      })
-      .catch(err => {
-        console.error("Failed to load programs:", err);
-        setLoading(false);
-      });
-  }, []);
 
   const visiblePrograms = programs.filter(
     (p) =>
@@ -167,13 +154,17 @@ export default function AdminProgramsIndex() {
         />
       </Group>
 
-      <DataTable
-        columns={columns}
-        rows={visiblePrograms}
-        getRowKey={(p) => p.id}
-        loading={loading}
-        emptyMessage="No programs found. Create your first one!"
-      />
+      {loadError ? (
+        <LoadError what="programs" message={loadError} onRetry={reload} />
+      ) : (
+        <DataTable
+          columns={columns}
+          rows={visiblePrograms}
+          getRowKey={(p) => p.id}
+          loading={data === null}
+          emptyMessage="No programs found. Create your first one!"
+        />
+      )}
     </Stack>
   );
 }

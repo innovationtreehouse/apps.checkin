@@ -18,14 +18,14 @@ describe("api()", () => {
     await expect(api("/items")).rejects.toThrow("Forbidden");
   });
 
-  it("falls back to the status for a non-JSON error body", async () => {
+  it("falls back to the fixed text for a non-JSON error body", async () => {
     stubFetch(500, "<html>Internal Server Error</html>");
-    await expect(api("/items")).rejects.toThrow("HTTP 500");
+    await expect(api("/items")).rejects.toMatchObject({ message: "Something went wrong. Try again.", status: 500 });
   });
 
   it("rejects a non-JSON success body instead of returning it", async () => {
     stubFetch(200, "<html>sign in</html>");
-    await expect(api("/items")).rejects.toThrow("HTTP 200");
+    await expect(api("/items")).rejects.toMatchObject({ message: "Something went wrong. Try again.", status: 200 });
   });
 });
 

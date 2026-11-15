@@ -66,7 +66,7 @@ export async function applicationAtIntake(email: string): Promise<number> {
   return json.process.id;
 }
 
-/** Submits the family's intake, which leaves it waiting on its agreement and consent; returns its id. */
+/** Submits the family's intake, which leaves it waiting on its agreement and a lead's check; returns its id. */
 export async function submittedApplication(email: string): Promise<number> {
   const processId = await applicationAtIntake(email);
   const submitted = await send(await loginAs(email), "POST", "/api/membership/intake/submit");
@@ -74,21 +74,33 @@ export async function submittedApplication(email: string): Promise<number> {
   return processId;
 }
 
-/** Has the Board record the agreement and consent, which opens payment; returns the application's id. */
+/** Has the Board record the agreement and mark the lead's check started, which opens payment; returns the application's id. */
 export async function applicationAtPayment(email: string): Promise<number> {
   const processId = await submittedApplication(email);
   const board = await loginAs(BOARD);
-  for (const action of ["mark-contract", "mark-bg-consent"]) {
-    const marked = await send(board, "POST", "/api/membership-ops/applications/external", { processId, action });
-    if (marked.status !== 200) throw new Error(`${action}: ${marked.status}`);
-  }
+  const signed = await send(board, "POST", "/api/membership-ops/applications/external", { processId, action: "mark-contract" });
+  if (signed.status !== 200) throw new Error(`mark-contract: ${signed.status}`);
+  const started = await send(board, "POST", "/api/membership-audit/person-bg", { personId: (await persona(email)).id });
+  if (started.status !== 200) throw new Error(`mark check started: ${started.status}`);
   return processId;
 }
 
-/** A reviewer's decision, naming the family's lead when it is an approval. */
+type BoardRow = { id: number; kind: string; requestedForHouseholdId: number | null; orgMembership: { householdId: number } | null };
+
+/** The open check review requested for the household of application `processId`. */
+export async function checkReviewOf(processId: number): Promise<number> {
+  const { json } = await api<{ processes: BoardRow[] }>(await loginAs(BOARD), "/api/membership-ops/applications");
+  const householdId = json.processes.find((p) => p.id === processId)?.orgMembership?.householdId;
+  const found = json.processes.find((p) => p.kind === "PERSON_BG" && householdId !== undefined && p.requestedForHouseholdId === householdId);
+  if (!found) throw new Error(`no open check review for application ${processId}`);
+  return found.id;
+}
+
+/** A reviewer's decision on the family's check review, naming the family's lead. */
 export async function review(reviewerEmail: string, processId: number, familyEmail: string, result: "APPROVE" | "REJECT" = "APPROVE"): Promise<void> {
-  const body = result === "APPROVE" ? { subjectPersonIds: [(await persona(familyEmail)).id] } : { note: "The report needs a second look." };
-  const reviewed = await send(await loginAs(reviewerEmail), "POST", "/api/membership/reviews", { processId, result, ...body });
+  const reviewId = await checkReviewOf(processId);
+  const body = { subjectPersonIds: [(await persona(familyEmail)).id], ...(result === "REJECT" ? { note: "The report needs a second look." } : {}) };
+  const reviewed = await send(await loginAs(reviewerEmail), "POST", "/api/membership/reviews", { processId: reviewId, result, ...body });
   if (reviewed.status !== 200) throw new Error(`review ${result}: ${reviewed.status}`);
 }
 
@@ -106,7 +118,8 @@ export async function asViewer(browser: Browser, email: string, steps: (page: Pa
 /**
  * Signs the agreement through the dev Zoho mock from the membership page. The mock page renders
  * its button on the server, and a click that lands before hydration does nothing, so the click
- * repeats until the completion request goes out, and that request must answer 200.
+ * repeats until the completion request goes out, and that request must answer 200. A signature
+ * that completes the external step moves the page straight on to payment.
  */
 export async function signAgreement(page: Page): Promise<void> {
   const isComplete = (url: string) => new URL(url).pathname === "/api/dev/zoho-sign/complete";
@@ -121,5 +134,5 @@ export async function signAgreement(page: Page): Promise<void> {
     await expect.poll(() => sent, { timeout: 2_000 }).toBe(true);
   }).toPass({ timeout: 30_000 });
   expect((await completed).status()).toBe(200);
-  await expect(page.getByText(/^Signed/)).toBeVisible();
+  await expect(page.getByText(/^Signed/).or(page.getByRole("heading", { name: "Membership fee" })).first()).toBeVisible();
 }

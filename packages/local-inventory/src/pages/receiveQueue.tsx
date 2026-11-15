@@ -77,7 +77,7 @@ export default function ReceiveQueuePage() {
               <Table.Tr>
                 <Table.Th>Retailer</Table.Th>
                 <Table.Th>Item</Table.Th>
-                <Table.Th>Part No.</Table.Th>
+                <Table.Th>Part ID</Table.Th>
                 <Table.Th>Quantity</Table.Th>
                 <Table.Th>Queued</Table.Th>
                 <Table.Th>Fulfilled</Table.Th>

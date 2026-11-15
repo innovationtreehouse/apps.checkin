@@ -356,6 +356,8 @@ describeDb("mailed receipt acknowledgements", () => {
     const [{ gmailMessageId }] = await db.receiptMailReply.findMany();
     const msg = messages.get(gmailMessageId)!;
     msg.payload.parts!.push({ mimeType: "application/msword", filename: "r.doc", body: { attachmentId: "b", size: 100 } });
+    // A file is read on a later pass only when an earlier one left its message at risk.
+    await db.receiptMailAtRisk.create({ data: { orgId: TEST_ORG_ID, gmailMessageId, receivedAt: new Date() } });
     await readMailbox();
     await readMailbox();
     expect(sent).toHaveLength(2);
@@ -437,6 +439,8 @@ describeDb("mailed receipt acknowledgements", () => {
         refusal: { file: "a.pdf", reason: "ceiling" },
       },
     });
+    // The pass that stored the refusal put a file off, so it left the message at risk.
+    await db.receiptMailAtRisk.create({ data: { orgId: TEST_ORG_ID, gmailMessageId: "m1", receivedAt: new Date() } });
     expect(await readMailbox()).toMatchObject({ skipped: 1 });
     expect(sent).toEqual([expect.objectContaining({ receiptId: null, refused: [{ file: "a.pdf", reason: "ceiling" }] })]);
   });

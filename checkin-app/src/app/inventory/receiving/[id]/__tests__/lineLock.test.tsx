@@ -2,7 +2,7 @@ import { screen } from "@testing-library/react";
 import { renderWithProviders } from "@/test-helpers/rtl";
 import ReceiptPage from "@checkin/workflow-mapping/pages/receipt";
 
-jest.mock("next/navigation", () => ({ useParams: () => ({ id: "7" }) }));
+jest.mock("next/navigation", () => ({ useParams: () => ({ id: "7" }), useRouter: () => ({ push: jest.fn() }) }));
 jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 1, isInventoryManager: true } } }) }));
 
 let mockLoads: Record<string, unknown> = {};
@@ -34,7 +34,7 @@ describe("receipt page line lock", () => {
   it("offers the line actions while the receipt waits for review", () => {
     load({ state: "pending_review" });
     renderWithProviders(<ReceiptPage />);
-    expect(screen.getByRole("button", { name: "Associate" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Change" })).toBeInTheDocument();
     expect(screen.queryByText("Lines locked")).not.toBeInTheDocument();
   });
 
@@ -43,7 +43,7 @@ describe("receipt page line lock", () => {
     (stamps) => {
       load({ state: "apply_failed", ...stamps });
       renderWithProviders(<ReceiptPage />);
-      for (const name of ["Associate", "Not inventory"]) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+      for (const name of ["Associate", "Not inventory", "Change"]) expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
       expect(screen.getByText("Lines locked")).toBeInTheDocument();
       expect(screen.getByText(/Retry sends the part that failed with the same lines\./)).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Retry apply" })).toBeInTheDocument();

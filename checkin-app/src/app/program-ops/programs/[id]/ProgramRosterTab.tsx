@@ -4,6 +4,8 @@ import { useCallback, useState } from 'react';
 import { Alert, Badge, Box, Button, Card, Checkbox, Flex, Group, Modal, SimpleGrid, Stack, Text, Textarea, Title } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
+import { errorMessage, HttpError, showError } from '@checkin/component-ui';
+import { api } from '@/lib/api';
 import { EntityPicker } from '@/components/admin/EntityPicker';
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { formatPhone } from '@/lib/phone';
@@ -11,13 +13,8 @@ import type { ProgramDetail, EligibleOption } from './page';
 
 type Participant = ProgramDetail['participants'][number];
 
-// Roster mutation routes answer with these advisory fields. A non-JSON body
-// (session-expiry HTML redirect, proxy error page) must not throw and skip the
-// roster refetch, so parse failures degrade to an empty object.
-type ApiFeedback = { notice?: string; warning?: string; error?: string };
-async function readJson(res: Response): Promise<ApiFeedback> {
-  try { return await res.json(); } catch { return {}; }
-}
+// Roster mutation routes answer with these advisory fields.
+type ApiFeedback = { notice?: string; warning?: string } | null;
 
 // The household's leads, minus the participant themselves when they lead their
 // own household — an adult enrolled in a program is not their own parent.
@@ -43,7 +40,6 @@ type ProgramRosterTabProps = {
 export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoardMember, fetchProgram }: ProgramRosterTabProps) {
   const { formatDateTime } = useOrgTime();
   const [saving, setSaving] = useState(false);
-  const [enrollError, setEnrollError] = useState("");
   const [newVolId, setNewVolId] = useState("");
   const [volLabel, setVolLabel] = useState("");
   const [newPartId, setNewPartId] = useState("");
@@ -64,19 +60,14 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
   // place; one paid before the price was zeroed is refused for others by the server.
   const isPriced = (program.orgMemberPriceCents ?? 0) > 0 || (program.nonOrgMemberPriceCents ?? 0) > 0;
 
-  // Roster mutations must never fail silently: a rejected remove (403 from a
-  // caller who isn't this program's lead, a 400, a 500) is otherwise
-  // indistinguishable from a successful one — the row just stays put.
-  const mutate = async (path: string, init: RequestInit): Promise<ApiFeedback | null> => {
+  // A rejected roster change must say so: otherwise the row just stays put, as if it worked.
+  const mutate = async (path: string, init: RequestInit): Promise<{ data: ApiFeedback } | null> => {
     try {
-      const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...init });
-      const data = await readJson(res);
-      if (res.ok) return data;
-      notifications.show({ color: 'red', message: data.error || `Request failed (${res.status}).`, autoClose: false });
-    } catch {
-      notifications.show({ color: 'red', message: 'Network error — please try again.', autoClose: false });
+      return { data: await api<ApiFeedback>(path, init) };
+    } catch (e) {
+      showError(errorMessage(e));
+      return null;
     }
-    return null;
   };
 
   // Volunteer + participant pickers both search this program's eligible members.
@@ -96,7 +87,7 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
         method: 'POST',
         body: JSON.stringify({ participantId: parseInt(newVolId) })
       });
-      if (ok) { setNewVolId(""); setVolLabel(""); fetchProgram(); }
+      if (ok) { setNewVolId(""); setVolLabel(""); await fetchProgram(); }
     } finally {
       setSaving(false);
     }
@@ -113,14 +104,14 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
     const participantId = pendingRemoveVolId;
     setPendingRemoveVolId(null);
     const ok = await mutate(`/api/programs/${programId}/volunteers`, { method: 'DELETE', body: JSON.stringify({ participantId }) });
-    if (ok) fetchProgram();
+    if (ok) await fetchProgram();
   };
 
   const handleToggleCore = async (participantId: number, isCore: boolean) => {
     setSaving(true);
     try {
       const ok = await mutate(`/api/programs/${programId}/volunteers`, { method: 'PATCH', body: JSON.stringify({ participantId, isCore }) });
-      if (ok) fetchProgram();
+      if (ok) await fetchProgram();
     } finally {
       setSaving(false);
     }
@@ -141,26 +132,20 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
   const doAddParticipant = async () => {
     closeConfirmAddPart();
     setSaving(true);
-    setEnrollError("");
     try {
-      const res = await fetch(`/api/programs/${programId}/participants`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+      const data = await api<ApiFeedback>(`/api/programs/${programId}/participants`, {
+        method: 'POST',
         body: JSON.stringify({ participantId: parseInt(newPartId), override: true })
       });
-      const data = await readJson(res);
-      if (res.ok) {
-        if (data.warning) notifications.show({ color: 'yellow', message: data.warning, autoClose: false });
-        setNewPartId(""); setPartLabel(""); fetchProgram();
-      }
-      else {
-        if (res.status === 409) {
-          // Race: benign double-submit / stale view — already enrolled.
-          notifications.show({ color: "red", message: data.error || "Participant is already enrolled in this program.", autoClose: false });
-          setNewPartId(""); setPartLabel("");
-          fetchProgram();
-        } else {
-          setEnrollError(data.error || "Failed to enroll participant.");
-        }
+      if (data?.warning) notifications.show({ color: 'yellow', message: data.warning, autoClose: false });
+      setNewPartId(""); setPartLabel("");
+      await fetchProgram();
+    } catch (e) {
+      showError(errorMessage(e));
+      // A 409 is a double submit or a stale view: the person is already enrolled.
+      if (e instanceof HttpError && e.status === 409) {
+        setNewPartId(""); setPartLabel("");
+        await fetchProgram();
       }
     } finally {
       setSaving(false);
@@ -182,11 +167,11 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
     const reason = removeReason.trim();
     setPendingRemovePart(null);
     const body = pendingRemoveNeedsReason ? { participantId, mode, reason } : { participantId, mode };
-    const data = await mutate(`/api/programs/${programId}/participants`, { method: 'DELETE', body: JSON.stringify(body) });
-    if (data) {
-      if (data.notice) notifications.show({ color: 'blue', message: data.notice, autoClose: false });
-      if (data.warning) notifications.show({ color: 'yellow', message: data.warning, autoClose: false });
-      fetchProgram();
+    const result = await mutate(`/api/programs/${programId}/participants`, { method: 'DELETE', body: JSON.stringify(body) });
+    if (result) {
+      if (result.data?.notice) notifications.show({ color: 'blue', message: result.data.notice, autoClose: false });
+      if (result.data?.warning) notifications.show({ color: 'yellow', message: result.data.warning, autoClose: false });
+      await fetchProgram();
     }
   };
 
@@ -264,7 +249,6 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
           </Flex>
         </form>
 
-        {enrollError && <Alert color="red" variant="light" mb="lg">{enrollError}</Alert>}
 
         {activeParticipants.length === 0 ? <Text c="dimmed">No active participants yet.</Text> : (
           <Stack gap="xs">

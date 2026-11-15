@@ -6,3 +6,4 @@ import { componentRoute } from "@/lib/components/route";
 import { routes } from "@checkin/global-catalog";
 
 export const GET = handler("GET /api/catalog/conversion-challenges", componentRoute(routes.conversionChallenges.list));
+export const POST = handler("POST /api/catalog/conversion-challenges", componentRoute(routes.conversionChallenges.create));

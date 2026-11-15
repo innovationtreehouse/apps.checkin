@@ -9,6 +9,7 @@ import { normalizeAdultDob } from "@/lib/person/adultDob";
 import { nameWrite, nicknameWrite, isNicknameWrite } from "@/lib/person/name";
 import { apiError } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
+import { notifyBoardOfYouthLeads } from "@/lib/membership/boardAlerts";
 
 export const GET = handler('GET /api/profile', async ({ auth }) => {
     if (auth.type !== 'session') throw unauthorized();
@@ -43,7 +44,7 @@ export const PATCH = withAuth(
             }
 
             const body = await req.json();
-            const { name, nickname, phone, dob, over25, notificationSettings, emailSuppressed } = body;
+            const { name, nickname, phone, dob, over25, notificationSettings } = body;
 
             if (phone !== undefined && phone !== "" && !isValidPhone(phone)) {
                 return apiError(PHONE_ERROR, 400);
@@ -70,7 +71,6 @@ export const PATCH = withAuth(
                         ? normalizeAdultDob(dob || null, !!over25)
                         : {}),
                     notificationSettings: notificationSettings !== undefined ? notificationSettings : undefined,
-                    emailSuppressed: emailSuppressed !== undefined ? !!emailSuppressed : undefined,
                 },
                 select: {
                     name: true,
@@ -79,7 +79,6 @@ export const PATCH = withAuth(
                     phone: true,
                     dateOfBirth: true,
                     notificationSettings: true,
-                    emailSuppressed: true,
                 }
             });
             invalidateAttendanceCache();
@@ -93,6 +92,7 @@ export const PATCH = withAuth(
                     newData: updatedProfile,
                 }
             });
+            if (dob !== undefined) await notifyBoardOfYouthLeads([{ id: userId, dateOfBirth: me?.dateOfBirth ?? null }]);
 
             return NextResponse.json({ profile: updatedProfile }, { status: 200 });
 

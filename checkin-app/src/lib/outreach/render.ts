@@ -2,11 +2,9 @@ import prisma from "@/lib/prisma";
 import { config } from "@/lib/config";
 import { nextBoundary } from "@/lib/membership/renewal";
 import { substituteTokens, findUnknownTokens } from "@/lib/outreach/tokens";
-import { sign } from "@/lib/outreach/unsubscribeToken";
 
 export { findUnknownTokens };
 
-export type OutreachVariant = "join" | "renew";
 export type EmailType = "opening" | "reminder";
 
 /** The board's current subject/body for one campaign template (BoardSettings singleton). */
@@ -47,20 +45,13 @@ export async function resolveBoundary(now: Date): Promise<Date> {
 
 export interface RenderContext {
     name: string;
-    variant: OutreachVariant;
     /** Resolved via {@link resolveBoundary} — computed ONCE per send, not per item. */
     boundary: Date;
-    /** Needed to build the join-variant unsubscribe footer link. Omit for a preview/test
-     * render that has no real recipient (falls back to no footer). */
-    personId?: number;
 }
 
 /**
- * Render one recipient's subject+html from the board's template. `{{actionLink}}` is
- * `/membership` for BOTH variants (see spec §2.3 pin justification) — only
- * `{{actionWord}}` differs. The join variant gets an unsubscribe footer appended AFTER
- * token substitution (so the footer link itself is never subject to token rewriting);
- * renew carries no footer (renewal emails don't offer to unsubscribe from invitations).
+ * Render one recipient's subject+html from the board's template. `{{actionWord}}` is
+ * always "renew": outreach goes only to member households.
  */
 export function renderOutreachEmail(
     subjectTemplate: string,
@@ -70,19 +61,8 @@ export function renderOutreachEmail(
     const tokenCtx = {
         name: ctx.name,
         deadline: ctx.boundary.toISOString().slice(0, 10),
-        actionWord: ctx.variant === "renew" ? "renew" : "join",
+        actionWord: "renew",
         actionLink: `${config.baseUrl()}/membership`,
     };
-    const subject = substituteTokens(subjectTemplate, tokenCtx);
-    let html = substituteTokens(bodyTemplate, tokenCtx);
-    if (ctx.variant === "join" && ctx.personId != null) {
-        html += unsubscribeFooter(ctx.personId);
-    }
-    return { subject, html };
-}
-
-function unsubscribeFooter(personId: number): string {
-    const sig = sign(personId);
-    const url = `${config.baseUrl()}/api/unsubscribe?p=${personId}&sig=${encodeURIComponent(sig)}`;
-    return `<p><a href="${url}">Unsubscribe from invitations</a></p>`;
+    return { subject: substituteTokens(subjectTemplate, tokenCtx), html: substituteTokens(bodyTemplate, tokenCtx) };
 }

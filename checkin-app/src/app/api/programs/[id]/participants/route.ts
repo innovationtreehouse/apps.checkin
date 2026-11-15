@@ -16,6 +16,9 @@ import { changeProgramStockWith } from "@/lib/shopify/stock";
 import { isSaleEnded } from "@/lib/programs/saleState";
 import { PROGRAM_ENDED_PAYMENT } from "@/lib/programs/checkoutSignature";
 import { apiError } from "@/lib/api-response";
+import { ServiceError } from "@checkin/component-kit";
+import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
+import { householdMayEnrol, NO_EMERGENCY_CONTACT_TO_ENROL } from "@/lib/emergencyContacts/service";
 
 export const POST = withAuth({}, async (req, auth, { params }: { params: Promise<{ id: string }> }) => {
     if (auth.type !== 'session') return apiError("Unauthorized", 401);
@@ -99,6 +102,11 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         // page is just a parent — they pay like anyone else, whether or not they
         // happen to be the household's lead.
         const isExternalAdmin = isSysAdminOrBoard && !isConflicted;
+
+        // Staff adding from the roster are exempt, so the front desk can fix the contact afterwards.
+        if (!isExternalAdmin && !(await householdMayEnrol(prisma, participantData?.householdId))) {
+            return apiError(NO_EMERGENCY_CONTACT_TO_ENROL, 400);
+        }
 
         if (isExternalAdmin && !override) {
              return NextResponse.json({ error: "This bypasses all payment. Are you sure?", requiresOverride: true }, { status: 400 });
@@ -194,6 +202,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         // a recorded -1 not yet pushed; it stays owed in the carry and the daily heal lands it.
         const takesSeatWithoutSale = isExternalAdmin && override && currentProgram.maxParticipants !== null;
         const { result: enrollment, landed: stockLanded } = await changeProgramStockWith(currentProgram, "comp", async (tx) => {
+            await lockLiveHouseholdsOf(tx, [participantId]);
             // Re-check capacity under a row lock right before insert, so
             // concurrent enrollers can't both pass a stale count and overfill.
             if (enforceLimits) {
@@ -278,6 +287,9 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
     } catch (error) {
         if (error instanceof ProgramCapacityError) {
             return NextResponse.json({ error: "Program has reached maximum capacity.", requiresOverride: true }, { status: 400 });
+        }
+        if (error instanceof ServiceError) {
+            return apiError(error.message, error.status);
         }
         // P2002 = unique violation on the @@id([programId, participantId]) PK.
         // Benign double-submit (UI double-click) re-enrolls the same participant;

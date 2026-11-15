@@ -6,6 +6,7 @@ import {
 import { formatGtinDisplay } from "@checkin/gtin";
 import { formatCents } from "@checkin/money";
 import { NOT_SENT, QB_OFF, STATE_COLORS, STATE_LABELS } from "../lib/expense-constants";
+import type { ExpenseWaitingOn } from "../lib/waiting-on";
 import { reviewKindOf, type ReviewKind } from "../lib/flags";
 import type { QueueReason, ReasonCode } from "../lib/reasons";
 import { REASON_PLACE, reasonText } from "../lib/reasonWords";
@@ -74,6 +75,8 @@ interface Expense {
   qbTxnEntity?: string | null;
   qbVendorId?: string | null;
   qbMatchBaseline?: string | null;
+  qbFirstFailedAt?: string | null;
+  qbLastError?: string | null;
   lineItems: Line[];
   approvals: Approval[];
   flags?: Flag[];
@@ -102,8 +105,10 @@ interface Bucket {
 }
 
 /** The detail response: the bag, or the expense alone when the reasons were stripped. */
-type Detail = Expense | { Expense: Expense; ExpenseQueueReason?: QueueReason[] };
+type Detail = Expense | { Expense: Expense; ExpenseQueueReason?: QueueReason[]; ExpenseWaitingOn?: ExpenseWaitingOn[] };
 const expenseOf = (d: Detail | null) => (d && "Expense" in d ? d.Expense : d);
+/** The state label the route derived; null when the response carried none. */
+const waitingOnOf = (d: Detail | null) => (d && "Expense" in d ? (d.ExpenseWaitingOn?.[0]?.label ?? null) : null);
 /** The open reasons; null when the response carried none, so nothing is known about them. */
 const reasonsOf = (d: Detail | null) => (d && "Expense" in d ? d.ExpenseQueueReason ?? null : null);
 
@@ -552,7 +557,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
       <Anchor href={listHref} size="sm">← Back</Anchor>
       <Group>
         <Title order={3}>{e.vendorName ?? e.id}</Title>
-        <Badge color={STATE_COLORS[e.state] ?? "gray"} variant="light">{STATE_LABELS[e.state] ?? e.state}</Badge>
+        <Badge color={STATE_COLORS[e.state] ?? "gray"} variant="light">{waitingOnOf(expense.data) ?? STATE_LABELS[e.state] ?? e.state}</Badge>
         {e.backfill && <Badge color="gray">Backfill</Badge>}
         {e.isTestData && <Badge color="grape">Test data</Badge>}
       </Group>
@@ -564,6 +569,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
         />
       )}
       <ReasonsAlert reasons={reasons} currency={e.currency} />
+      {(isFinance || isBoard) && e.qbFirstFailedAt && <Text size="sm" c="red">Last error: {e.qbLastError ?? "no error recorded"}</Text>}
       {e.qbMatchState && NOT_SENT[e.qbMatchState] && <Text size="sm" c="orange">{NOT_SENT[e.qbMatchState]}</Text>}
       {isFinance && (e.qbMatchState === "NEEDS_FINANCE" || open("QB_AWAITING_MATCH") || open("QB_VENDOR_MISSING") || open("QB_UNBOOKED")) && (
         <Paper withBorder p="sm">
@@ -643,7 +649,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
             <Table.Th ta="right">Qty</Table.Th>
             <Table.Th ta="right">Unit</Table.Th>
             <Table.Th ta="right">Total</Table.Th>
-            <Table.Th>Part No.</Table.Th>
+            <Table.Th>Part ID</Table.Th>
             <Table.Th>Bucket</Table.Th>
             <Table.Th>Approval</Table.Th>
             <Table.Th>Sign-off</Table.Th>

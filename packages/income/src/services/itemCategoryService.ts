@@ -2,6 +2,7 @@ import { db } from "../db";
 import { getIncomeConfig } from "../runtime";
 import { recordAudit } from "../lib/audit";
 import { ServiceError } from "@checkin/component-kit";
+import { QUICKBOOKS_LIST_STALE, UPDATE_NOW_HINT } from "@checkin/quickbooks";
 import { bucketIssue, openBucketIssues } from "../lib/buckets";
 import type { Actor } from "./reconciliationService";
 
@@ -60,27 +61,21 @@ export const itemCategoryService = {
   /**
    * Book an item to a bucket, or to general income (null), and, when `quickBooksAccountId` is
    * given, to that account (null clears it), from now on; deposits already created are never
-   * rebooked. A bucket must be live with an active QuickBooks Class, checked against QuickBooks
-   * now: while QuickBooks can't be reached the assignment is refused.
+   * rebooked. A bucket must be live with a Class the app's copy of QuickBooks' list shows as
+   * active.
    */
   async setCategory(orgId: string, variantId: string, budgetOwnerId: number | null, actor: Actor, quickBooksAccountId?: string | null) {
     if (budgetOwnerId !== null) {
-      const { owners, classes } = getIncomeConfig();
+      const { owners, savedClasses } = getIncomeConfig();
       if (!owners) throw new ServiceError(503, "Budget-owner buckets are not connected");
       const bucket = (await owners.list()).find((b) => b.id === budgetOwnerId);
       if (!bucket) throw new ServiceError(422, "Unknown budget-owner bucket");
       if (bucket.archivedAt || !bucket.quickBooksClassId) {
         throw new ServiceError(422, `Budget-owner bucket ${bucketIssue(bucket, new Set())}`);
       }
-      if (!classes) throw new ServiceError(503, "QuickBooks Classes are not connected, so no item can be assigned to a bucket");
-      let active: string[];
-      try {
-        active = await classes.activeClassIds();
-      } catch {
-        throw new ServiceError(503, "QuickBooks can't be reached to check the bucket's Class; try again later");
-      }
-      const issue = bucketIssue(bucket, new Set(active));
-      if (issue) throw new ServiceError(422, `Budget-owner bucket ${issue}`);
+      if (!savedClasses) throw new ServiceError(503, "QuickBooks Classes are not connected, so no item can be assigned to a bucket");
+      const issue = bucketIssue(bucket, new Set(await savedClasses.activeClassIds()));
+      if (issue) throw new ServiceError(422, `Budget-owner bucket ${issue} in QuickBooks' list in the app. ${UPDATE_NOW_HINT}`, QUICKBOOKS_LIST_STALE);
     }
 
     return db.$transaction(async (tx) => {

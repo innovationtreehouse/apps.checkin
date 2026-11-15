@@ -150,7 +150,7 @@ describe("what the server says", () => {
     [403, json({ error: "Forbidden" }, 403), "Forbidden"],
     [404, json({ error: "No such thing" }, 404), "No such thing"],
     [400, json({ error: "Bad input" }, 400), "Bad input"],
-    [200, new Response("<html>", { status: 200 }), "Unexpected non-JSON response (HTTP 200)"],
+    [200, new Response("<html>", { status: 200 }), "Something went wrong. Try again."],
   ])("HTTP %i does not retry and reports the answer", async (status, answer, message) => {
     const fetchMock = stubFetch(() => answer.clone());
     const { result } = renderHook(() => useLoad("/x"));
@@ -193,7 +193,7 @@ describe("what the server says", () => {
     expect(result.current.map((l) => [l.retrying, l.error])).toEqual([[true, null], [true, null]]);
     await advance(30000);
     expect(fetchMock).toHaveBeenCalledTimes(5);
-    expect(result.current.map((l) => l.error)).toEqual(["HTTP 500", "HTTP 500"]);
+    expect(result.current.map((l) => l.error)).toEqual(["Something went wrong. Try again.", "Something went wrong. Try again."]);
   });
 });
 

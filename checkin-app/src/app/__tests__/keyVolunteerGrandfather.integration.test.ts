@@ -8,16 +8,17 @@ import prisma from '@/lib/prisma';
 /**
  * The Key Volunteer grandfathering migration. Runs the migration's OWN statement
  * (extracted between its markers) and asserts:
- *   - a live holder of a gated role (Board, BG reviewer, Finance) gets KEY_VOLUNTEER and an agreement signed at
- *     version 1, with no Zoho request, each audited under the migration's name
- *   - a person already holding KEY_VOLUNTEER, a merge tombstone, and people
- *     holding only ungated roles (Keyholder, Operations) are left alone
+ *   - a holder of a gated role (Board, BG reviewer, Finance) gets KEY_VOLUNTEER and
+ *     an agreement signed at version 1, with no Zoho request, each audited under
+ *     the migration's name
+ *   - a person already holding KEY_VOLUNTEER, and people holding only ungated
+ *     roles (Keyholder, Operations), are left alone
  *   - a second run changes nothing
  */
 
 const MIGRATION_SQL = path.join(
     __dirname,
-    '../../../prisma/migrations/20261102120000_key_volunteer_grandfather/migration.sql',
+    '../../../prisma/migrations/20261115130000_key_volunteer_grandfather/migration.sql',
 );
 const ACTOR = 'migration:key-volunteer-grandfather';
 
@@ -37,7 +38,6 @@ describe('Key Volunteer grandfathering migration', () => {
     let householdId: number;
     let boardId: number;
     let alreadyKvId: number;
-    let tombstoneId: number;
     let opsOnlyId: number;
     let keyholderId: number;
     let financeId: number;
@@ -46,15 +46,14 @@ describe('Key Volunteer grandfathering migration', () => {
     beforeAll(async () => {
         const household = await prisma.household.create({ data: { name: `${TAG} household` } });
         householdId = household.id;
-        const person = (name: string, extra: { mergedIntoId?: number } = {}) =>
-            prisma.person.create({ data: { name, email: `${name}-${TAG}@example.com`, householdId, ...extra } });
+        const person = (name: string) =>
+            prisma.person.create({ data: { name, email: `${name}-${TAG}@example.com`, householdId } });
 
         boardId = (await person('board')).id;
         alreadyKvId = (await person('already-kv')).id;
         opsOnlyId = (await person('ops-only')).id;
         keyholderId = (await person('keyholder')).id;
         financeId = (await person('finance')).id;
-        tombstoneId = (await person('tombstone', { mergedIntoId: boardId })).id;
 
         await prisma.personRole.createMany({
             data: [
@@ -64,7 +63,6 @@ describe('Key Volunteer grandfathering migration', () => {
                 { personId: opsOnlyId, role: 'OPERATIONS' },
                 { personId: keyholderId, role: 'KEYHOLDER' },
                 { personId: financeId, role: 'FINANCE' },
-                { personId: tombstoneId, role: 'BG_REVIEWER' },
             ],
         });
 
@@ -83,15 +81,14 @@ describe('Key Volunteer grandfathering migration', () => {
         await prisma.orgMembershipProcess.deleteMany({ where: { id: { in: processIds } } });
         await prisma.personRole.deleteMany({ where: { personId: { in: rolePersonIds }, role: 'KEY_VOLUNTEER' } });
         await prisma.auditLog.deleteMany({ where: { id: { in: written.map((a) => a.id) } } });
-        const ours = [boardId, alreadyKvId, opsOnlyId, keyholderId, financeId, tombstoneId];
+        const ours = [boardId, alreadyKvId, opsOnlyId, keyholderId, financeId];
         await prisma.orgMembershipProcess.deleteMany({ where: { subjectPersonId: { in: ours } } });
         await prisma.personRole.deleteMany({ where: { personId: { in: ours } } });
-        await prisma.person.deleteMany({ where: { id: tombstoneId } });
         await prisma.person.deleteMany({ where: { id: { in: [boardId, alreadyKvId, opsOnlyId, keyholderId, financeId] } } });
         await prisma.household.deleteMany({ where: { id: householdId } });
     });
 
-    it('makes a live gated-role holder a Key Volunteer signed at version 1', async () => {
+    it('makes a gated-role holder a Key Volunteer signed at version 1', async () => {
         const role = await prisma.personRole.findUnique({ where: { personId_role: { personId: boardId, role: 'KEY_VOLUNTEER' } } });
         expect(role).not.toBeNull();
         expect(role?.grantedById).toBeNull();
@@ -115,11 +112,11 @@ describe('Key Volunteer grandfathering migration', () => {
         expect(audits.every((a) => a.actorId === 0)).toBe(true);
     });
 
-    it('leaves an existing Key Volunteer, a tombstone and ungated holders alone', async () => {
-        for (const personId of [alreadyKvId, tombstoneId, opsOnlyId, keyholderId]) {
+    it('leaves an existing Key Volunteer and ungated holders alone', async () => {
+        for (const personId of [alreadyKvId, opsOnlyId, keyholderId]) {
             expect(await prisma.orgMembershipProcess.count({ where: { subjectPersonId: personId } })).toBe(0);
         }
-        expect(await prisma.personRole.count({ where: { personId: { in: [tombstoneId, opsOnlyId, keyholderId] }, role: 'KEY_VOLUNTEER' } })).toBe(0);
+        expect(await prisma.personRole.count({ where: { personId: { in: [opsOnlyId, keyholderId] }, role: 'KEY_VOLUNTEER' } })).toBe(0);
     });
 
     it('grandfathers a Finance-only holder too', async () => {
