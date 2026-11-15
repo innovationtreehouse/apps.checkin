@@ -352,6 +352,30 @@ another copy of the class and the caller sees a 500.
 
 ---
 
+## Access is declared once, per route; code checks only what the declaration can't say
+
+- **The route's registry entry is the gate.** Its `authorize` names who may
+  call the route, and `handler()` (`checkin-app/src/security/handler.ts`)
+  enforces it before any library code runs: a caller it refuses gets a 401 or
+  403. The stripper then removes every field the caller's view does not grant.
+- **A library narrows rows and checks the rules that depend on the data.** A
+  library service asks its runtime for the signed-in principal, which is a 401
+  when there is none, and narrows the rows to what that actor may see, as
+  receipt's `Access` does. It checks a role only when the decision turns on the
+  data, which a registry entry cannot express. In bulk-donation, finance may
+  lower the QuickBooks create limit, but raising it takes the board
+  (`packages/bulk-donation/src/services/settingsService.ts`).
+- **New code does not repeat `authorize`.** A role check that only restates
+  the route's rule is a second copy of it, free to drift from the registry,
+  which is the one place to audit who may do what. Existing ones, such as
+  expense's `requireFinance()`, stay until the route's policy can carry them.
+
+The failure is drift. A role check copied into a library looks like extra
+safety; the day the registry entry changes, the two disagree, and whichever
+one is stricter decides what the route does.
+
+---
+
 ## A person is told what happened in one way
 
 This is the rule for new code, in the host and in every library. Existing pages
