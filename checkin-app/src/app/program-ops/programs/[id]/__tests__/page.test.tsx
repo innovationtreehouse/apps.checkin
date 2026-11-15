@@ -124,6 +124,24 @@ describe("ProgramDetailsPage", () => {
     expect(screen.getByText(/Charlie Kid/)).toBeInTheDocument();
   });
 
+  it("shows each participant's age, or that it is unknown", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const withAges = {
+      ...programData,
+      participants: [
+        { ...programData.participants[0], age: 12 },
+        { ...programData.participants[1], age: null },
+      ],
+    };
+    mockFetchJson({ "/api/programs/1": withAges });
+    renderPage();
+    await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
+
+    fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
+    expect(await screen.findByText("(12)")).toBeInTheDocument();
+    expect(screen.getByText("(age unknown)")).toBeInTheDocument();
+  });
+
   it("searches and adds a volunteer", async () => {
     setSession({ id: 1, isSysadmin: true });
     const fetchMock = mockFetchJson({

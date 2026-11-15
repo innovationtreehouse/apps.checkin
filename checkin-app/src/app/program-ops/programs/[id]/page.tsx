@@ -39,6 +39,8 @@ export type ProgramDetail = {
     personId: number;
     status: string;
     pendingSince: string | null;
+    // Age in whole years at the program's start; null when the date of birth is unknown.
+    age?: number | null;
     person: {
       name: string | null;
       email: string;
