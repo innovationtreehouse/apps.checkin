@@ -315,8 +315,10 @@ coming membership year" with (PR 4):
 **Insert** under Renewal, after the line on when renewals open (PR 9):
 
 ```markdown
-- Renewals do not open while the coming year has no membership product to pay
-  through.  [Decision — *Principle: an unconfigured setting does not act*]
+- The board's "open renewals" button opens nothing while the coming year has no
+  membership product to pay through. A board grant still opens one household's
+  renewal, because the board pays it by grant once it reaches payment.
+  [Decision — *Principle: an unconfigured setting does not act*]
 ```
 
 Nothing about the column, the variant table, the fill or the reader fragments goes
