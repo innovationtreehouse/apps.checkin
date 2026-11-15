@@ -1,5 +1,5 @@
 /** The finance queue's expense tabs: each reason is read from the record, and counts are this viewer's. */
-import { beforeEach, expect, it } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, ORG } from "../helpers/seed";
@@ -9,6 +9,11 @@ import { raiseFlag } from "../../services/flagService";
 import { expenseReasons } from "../../services/reasonService";
 import { writeAudit } from "../../lib/audit";
 import { SYSTEM_ACTOR } from "../../lib/system-actor";
+
+vi.mock("../../services/reasonService", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("../../services/reasonService")>();
+  return { ...mod, expenseReasons: vi.fn(mod.expenseReasons) };
+});
 
 const FINANCE = principal(3, { isFinance: true });
 const BOARD = principal(5, { isBoard: true });
@@ -288,7 +293,9 @@ describeDb("finance queue — the Finance review pill", () => {
   it("answers one more than the ceiling once the count passes it", async () => {
     for (let i = 0; i < 4; i++) await seedExpense({ state: "capital_review" });
     expect(await pageActionable(FINANCE)).toBe(4);
+    vi.mocked(expenseReasons).mockClear();
     expect(await financeQueueActionable(FINANCE, 2)).toBe(3);
+    expect(expenseReasons).toHaveBeenCalledTimes(3);
   });
 
   it("still counts an older waiting signature behind more than a page of newer Treasurer-signed expenses", async () => {
