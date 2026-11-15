@@ -369,8 +369,9 @@ export async function signaturesWaiting(principal: ExpensePrincipal): Promise<Si
     approvals: { some: { status: "approved", OR: [unsigned("TREASURER"), unsigned("BOARD")] } },
   };
   const out: SignaturesWaiting[] = [];
-  for (let skip = 0; out.length < SIGNOFF_BADGE_EXPENSE_CAP; skip += SIGNOFF_BADGE_EXPENSE_CAP) {
-    const expenses = await db.expense.findMany({ where, orderBy: [{ submittedAt: "desc" }, { id: "asc" }], skip, take: SIGNOFF_BADGE_EXPENSE_CAP });
+  let after: Prisma.ExpenseWhereInput = {};
+  while (out.length < SIGNOFF_BADGE_EXPENSE_CAP) {
+    const expenses = await db.expense.findMany({ where: { AND: [where, after] }, orderBy: [{ submittedAt: "desc" }, { id: "asc" }], take: SIGNOFF_BADGE_EXPENSE_CAP });
     const linesOf = await callerLinesFor(principal, expenses, true);
     for (const expense of expenses) {
       const row: SignaturesWaiting = { expense, toSign: [], board: [] };
@@ -382,6 +383,9 @@ export async function signaturesWaiting(principal: ExpensePrincipal): Promise<Si
       if (row.toSign.length + row.board.length > 0 && out.length < SIGNOFF_BADGE_EXPENSE_CAP) out.push(row);
     }
     if (expenses.length < SIGNOFF_BADGE_EXPENSE_CAP) break;
+    // Keyset paging: an expense submitted or closed between reads shifts no row into or out of the next page.
+    const last = expenses[expenses.length - 1];
+    after = { OR: [{ submittedAt: { lt: last.submittedAt } }, { submittedAt: last.submittedAt, id: { gt: last.id } }] };
   }
   return out;
 }
