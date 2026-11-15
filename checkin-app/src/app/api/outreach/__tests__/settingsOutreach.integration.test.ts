@@ -3,7 +3,7 @@
  */
 /**
  * Integration tests for GET/PUT /api/settings/outreach — the outreach copy,
- * role gating (board/sysadmin/operations, NOT settings/email's narrower board/sysadmin),
+ * role gating (operations may read; only board/sysadmin may write, as on the Email Templates tab),
  * and validate-on-save unknown-token rejection.
  */
 import { GET, PUT } from '@/app/api/settings/outreach/route';
@@ -42,13 +42,18 @@ describe('GET/PUT /api/settings/outreach', () => {
         expect((await PUT(req('PUT', { outreachOpeningSubject: 'x' }))).status).toBe(403);
     });
 
-    it('operations may read and write (unlike settings/email)', async () => {
+    it('operations may read but not write', async () => {
         asRole(1, 'isOperations');
         expect((await GET(req('GET'))).status).toBe(200);
+        expect((await PUT(req('PUT', { outreachOpeningSubject: 'Renew by {{deadline}}' }))).status).toBe(403);
+        expect(await prisma.emailTemplate.findUnique({ where: { key: 'outreach.opening' } })).toBeNull();
+    });
+
+    it('a sysadmin may write', async () => {
+        asRole(1, 'isSysadmin');
         const res = await PUT(req('PUT', { outreachOpeningSubject: 'Renew by {{deadline}}' }));
         expect(res.status).toBe(200);
-        const data = await res.json();
-        expect(data.settings.outreachOpeningSubject).toBe('Renew by {{deadline}}');
+        expect((await res.json()).settings.outreachOpeningSubject).toBe('Renew by {{deadline}}');
     });
 
     it('saves all four fields and round-trips them on GET', async () => {

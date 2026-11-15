@@ -1,7 +1,7 @@
 /**
  * Runs the committed copy migration against seeded BoardSettings: the Board's
  * outreach and scholarship-ACK wording lands in EmailTemplate rows, the columns
- * stay as they were, and a row that already exists is kept.
+ * stay as they were, outreach HTML is left out, and a row that already exists is kept.
  */
 import { readFileSync } from 'fs';
 import { join } from 'path';
@@ -9,7 +9,7 @@ import prisma from '@/lib/prisma';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 
 const MIGRATION = join(__dirname, '../../../prisma/migrations/20261115140000_email_template_outreach_scholarship_copy/migration.sql');
-const KEYS = ['outreach.opening', 'outreach.reminder', 'scholarship.ackMembership', 'scholarship.ackProgram'];
+const KEYS = ['outreach.opening', 'outreach.reminder', 'scholarship.ackMembership', 'scholarship.ackProgram', 'scholarship.ackProgramHoldFailed'];
 const COLUMNS = {
     outreachOpeningSubject: true, outreachOpeningBody: true, outreachReminderSubject: true, outreachReminderBody: true,
     scholarshipAckSubject: true, scholarshipAckMembershipBody: true, scholarshipAckProgramBody: true,
@@ -71,6 +71,7 @@ test('copies the wording into rows, turning {{actionWord}} into "renew", and lea
         'outreach.reminder': { subject: 'Reminder', body: '' },
         'scholarship.ackMembership': { subject: 'Got it: ', body: 'Membership  received.' },
         'scholarship.ackProgram': { subject: 'Got it: {{programName}}', body: 'Program {{programName}} received.' },
+        'scholarship.ackProgramHoldFailed': { subject: 'Got it: ', body: '' },
     });
     expect(await prisma.boardSettings.findUniqueOrThrow({ where: { id: 1 }, select: COLUMNS })).toEqual(columns);
 });
@@ -82,4 +83,17 @@ test('blank wording makes no row, and a row the Board already saved is kept', as
     await runMigration();
 
     expect(await rows()).toEqual({ 'scholarship.ackProgram': { subject: 'Saved', body: 'Saved on the templates tab' } });
+});
+
+test('outreach copy written as HTML makes no row; plain-text copy beside it still copies', async () => {
+    await setColumns({
+        outreachOpeningSubject: 'Renew now',
+        outreachOpeningBody: '<p>Hi {{name}}, <a href="{{actionLink}}">renew</a></p>',
+        outreachReminderSubject: 'Reminder for {{name}}',
+        outreachReminderBody: 'Closes {{deadline}}; 3 < 4 is fine.',
+    });
+
+    await runMigration();
+
+    expect(await rows()).toEqual({ 'outreach.reminder': { subject: 'Reminder for {{name}}', body: 'Closes {{deadline}}; 3 < 4 is fine.' } });
 });

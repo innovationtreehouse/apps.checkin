@@ -59,7 +59,6 @@ jest.mock("@/lib/scholarshipEmails", () => ({
     resolveScholarshipRecipients: jest.fn().mockResolvedValue([]),
     notifyReviewTeam: jest.fn(),
     sendScholarshipAck: jest.fn(),
-    resolveAckCopy: jest.fn(() => ({ subject: "s", body: "b" })),
 }));
 jest.mock("@/lib/logger", () => ({
     logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },

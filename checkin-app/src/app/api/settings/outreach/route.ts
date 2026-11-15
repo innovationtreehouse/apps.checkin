@@ -11,6 +11,8 @@ import type { BusinessRole } from "@/types/auth";
 export const dynamic = "force-dynamic";
 
 const ROLES: BusinessRole[] = ["isBoardMember", "isSysadmin", "isOperations"];
+/** The Email Templates tab's roles: only they change email wording. */
+const EDIT_ROLES: BusinessRole[] = ["isBoardMember", "isSysadmin"];
 
 const SELECT = {
     outreachOpeningSubject: true,
@@ -49,12 +51,12 @@ export const GET = withAuth({ roles: ROLES }, async () => {
 /**
  * PUT /api/settings/outreach — saves the outreach copy to its `EmailTemplate` rows and its
  * four BoardSettings columns. Deliberately separate from /api/settings/email (which drives
- * every outbound email's From/Reply-To — operations must never touch that): this route only
- * ever writes outreach copy and is open to isOperations. Validate-on-save: any `{{token}}`
+ * every outbound email's From/Reply-To): this route only ever writes outreach copy, and only
+ * the Board and sysadmins may, as on the Email Templates tab. Validate-on-save: any `{{token}}`
  * outside {name, deadline, actionLink} rejects the WHOLE update (400), same shape as
  * settings/email's header validation.
  */
-export const PUT = withAuth({ roles: ROLES }, async (req, auth) => {
+export const PUT = withAuth({ roles: EDIT_ROLES }, async (req, auth) => {
     if (auth.type !== "session") return apiError("Unauthorized", 401);
     let body: Partial<Record<Field, string | null>>;
     try {

@@ -240,7 +240,7 @@ to `null`.
 
 **User decision: an applicant receives exactly one automatic email — the request
 acknowledgement.** `src/lib/scholarshipEmails.ts` resolves recipients / fans out; callers
-build their own subject/html and pass them in. Sends fire *after* the state transition
+pass a template key and its token values. Sends fire *after* the state transition
 commits, fire-and-forget (a failed send never fails the request), and only when the
 request actually transitioned (no duplicate mail on a no-op re-POST). Recipient
 resolution itself lives in `src/lib/emailRecipients.ts` (`resolveHouseholdRecipients`) — a
@@ -251,8 +251,8 @@ pending-participants cron (rows below) calls `resolveHouseholdRecipients` direct
 The ACK is three email templates: `scholarship.ackMembership`,
 `scholarship.ackProgram` (with a `{{programName}}` token) and
 `scholarship.ackProgramHoldFailed`, sent when the Shopify seat hold fails. The Board
-edits their wording on Settings → Email Templates, and the first two also on Settings →
-Email beside `scholarshipNotifyEmail`; a template with no saved wording sends its
+edits their wording on Settings → Email Templates, and also on Settings → Email beside
+`scholarshipNotifyEmail` (one subject for all three, the membership and program bodies); a template with no saved wording sends its
 registry default (`email-templates/registry.ts`). The contract above is unchanged:
 still the applicant's only automatic email.
 

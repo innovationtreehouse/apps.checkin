@@ -25,7 +25,11 @@ const ACK_BODY_MAX_LEN = 5000;
 
 type AckField = "scholarshipAckSubject" | "scholarshipAckMembershipBody" | "scholarshipAckProgramBody";
 const ACK_TARGETS: FieldTargets<AckField> = {
-    scholarshipAckSubject: [{ key: "scholarship.ackMembership", part: "subject" }, { key: "scholarship.ackProgram", part: "subject" }],
+    scholarshipAckSubject: [
+        { key: "scholarship.ackMembership", part: "subject" },
+        { key: "scholarship.ackProgram", part: "subject" },
+        { key: "scholarship.ackProgramHoldFailed", part: "subject" },
+    ],
     scholarshipAckMembershipBody: [{ key: "scholarship.ackMembership", part: "body" }],
     scholarshipAckProgramBody: [{ key: "scholarship.ackProgram", part: "body" }],
 };
@@ -47,7 +51,7 @@ export const GET = handler('GET /api/settings/email', async () => {
  * PUT /api/settings/email — set the Resend From override, Reply-To, the
  * Scholarship Review Team notify address, the alert and Board group addresses, the
  * finance contact address, and the scholarship ACK subject/bodies (saved to their
- * `EmailTemplate` rows and their BoardSettings columns; the subject is both ACK rows').
+ * `EmailTemplate` rows and their BoardSettings columns; the subject is all three ACK rows').
  * Body may include emailFromAddress, emailReplyToAddress, scholarshipNotifyEmail,
  * alertEmailAddress, boardEmailAddress, financeContactEmail (string|null), scholarshipAckSubject, scholarshipAckMembershipBody, and
  * scholarshipAckProgramBody. emailFromAddress is a single address shape (bare or

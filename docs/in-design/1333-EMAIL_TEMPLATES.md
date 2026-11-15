@@ -305,9 +305,9 @@ stand for in today's copy, so a key without a link today has no `actionLink`.
 | `scholarship.ackProgramHoldFailed` | program request whose Shopify seat hold failed | family | — |
 
 > Fold detail: the step 5 migration copies `BoardSettings.scholarshipAck{Subject,Membership
-> Body,ProgramBody}` into the `scholarship.ackMembership` and `scholarship.ackProgram` rows
-> (the subject into both). `settings/email` reads and writes those rows, and still writes the
-> columns. `scholarship.ackProgramHoldFailed` keeps its default copy. The three `BoardSettings` columns
+> Body,ProgramBody}` into the three `scholarship.ack*` rows (the subject into all three; the
+> hold-failed body stays its default). `settings/email` reads and writes those rows, and still
+> writes the columns. The three `BoardSettings` columns
 > + their `settings/email` controls are **dropped in the follow-up contract release** (build
 > order step 8), not here — old pods still read them during the drain. The three
 > `scholarship.ack*` subjects are the same at the start; each key owns its own subject going
@@ -321,9 +321,11 @@ stand for in today's copy, so a key without a link today has no `actionLink`.
 
 > Fold detail: outreach goes only to member households, so it has no join variant, no
 > unsubscribe footer and no `{{actionWord}}`: the step 5 migration writes "renew" in its place
-> when it copies the Board's `BoardSettings` copy into the two rows. `{{deadline}}` is the next
+> when it copies the Board's `BoardSettings` copy into the two rows, and outreach copy written as
+> HTML makes no row, since a body is plain text. `{{deadline}}` is the next
 > membership-year boundary (`outreachCtx`), and each send goes through `sendTemplated`. The
-> `settings/outreach` editor reads and writes the two rows, and still writes the columns. The four `outreach*` `BoardSettings` columns + the `settings/outreach` page are removed in
+> `settings/outreach` editor reads and writes the two rows, and still writes the columns; as on the
+> templates tab, only the Board and sysadmins may change the wording there (Operations still sends). The four `outreach*` `BoardSettings` columns + the `settings/outreach` page are removed in
 > the follow-up contract release (step 8), not here. Its preview renders the plain-text body the
 > way the templates tab does; the body is no longer HTML.
 

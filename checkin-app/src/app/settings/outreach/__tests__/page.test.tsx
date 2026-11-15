@@ -80,6 +80,21 @@ describe("OutreachSettingsPage", () => {
     expect(screen.getByTitle("Reminder: preview").getAttribute("srcdoc")).toMatch(/closes on 2026-08-01/);
   });
 
+  it("operations can send a campaign but not change the wording", async () => {
+    setSession({ id: 1, isOperations: true });
+    router({
+      "/api/settings/outreach": { body: { settings: SETTINGS, nextDeadline: "2026-08-01" } },
+      "/api/outreach/status": { body: EMPTY_STATUS },
+    });
+    renderWithProviders(<OutreachSettingsPage />);
+    await screen.findByDisplayValue("Time to renew");
+
+    expect(screen.getAllByLabelText("Subject")[0]).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save templates" })).toBeDisabled();
+    for (const button of screen.getAllByRole("button", { name: /Send test to me/ })) expect(button).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send Opening-of-renewals campaign" })).toBeEnabled();
+  });
+
   it("sends a test email for a template", async () => {
     const fetchMock = router({
       "/api/settings/outreach": { body: { settings: SETTINGS, nextDeadline: "2026-08-01" } },

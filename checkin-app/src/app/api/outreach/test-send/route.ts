@@ -9,7 +9,7 @@ import type { BusinessRole } from "@/types/auth";
 
 export const dynamic = "force-dynamic";
 
-const ROLES: BusinessRole[] = ["isBoardMember", "isSysadmin", "isOperations"];
+const ROLES: BusinessRole[] = ["isBoardMember", "isSysadmin"];
 const SAMPLE_NAME = "Jordan Rivera";
 
 /**

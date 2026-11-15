@@ -23,7 +23,7 @@ function jsonReq(method: string, body?: unknown) {
 }
 
 const TAG = 'email-settings-test';
-const ACK_KEYS = ['scholarship.ackMembership', 'scholarship.ackProgram'];
+const ACK_KEYS = ['scholarship.ackMembership', 'scholarship.ackProgram', 'scholarship.ackProgramHoldFailed'];
 
 describe('Email sender-identity settings API', () => {
     let boardId: number, plainId: number;
@@ -159,6 +159,7 @@ describe('Email sender-identity settings API', () => {
         expect(rows.map(({ key, subject, body, updatedBy }) => ({ key, subject, body, updatedBy }))).toEqual([
             { key: 'scholarship.ackMembership', subject: 'Custom subject', body: 'Custom membership body.', updatedBy: boardId },
             { key: 'scholarship.ackProgram', subject: 'Custom subject', body: 'Custom program body for {{programName}}.', updatedBy: boardId },
+            { key: 'scholarship.ackProgramHoldFailed', subject: 'Custom subject', body: '', updatedBy: boardId },
         ]);
     });
 

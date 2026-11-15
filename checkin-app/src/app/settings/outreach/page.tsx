@@ -9,7 +9,8 @@ import { errorMessage, HttpError, invalidateLoads, LoadError, showError, showSuc
 import { api, useLoad } from "@/lib/api";
 import { useFreshRead } from "@/hooks/useFreshRead";
 import { useRequireRole } from "@/hooks/useRequireRole";
-import { SETTINGS_ROLES } from "@/lib/nav/sections/settings";
+import { SETTINGS_ADMIN_ROLES, SETTINGS_ROLES } from "@/lib/nav/sections/settings";
+import { hasAnyRole } from "@/lib/nav/gates";
 import { useUnsavedGuard, shallowEqual } from "@/components/UnsavedChangesProvider";
 import { REGISTRY } from "@/lib/email-templates/registry";
 import { renderTemplate, withDefaults } from "@/lib/email-templates/tokens";
@@ -50,7 +51,8 @@ const AUDIENCE_LABEL: Record<TemplateKey, string> = {
 };
 
 export default function OutreachSettingsPage() {
-  const { ready, loading: authLoading } = useRequireRole(SETTINGS_ROLES);
+  const { ready, loading: authLoading, user } = useRequireRole(SETTINGS_ROLES);
+  const canEdit = hasAnyRole(user, SETTINGS_ADMIN_ROLES);
 
   const [opening, setOpening] = useState({ subject: "", body: "" });
   const [reminder, setReminder] = useState({ subject: "", body: "" });
@@ -139,6 +141,7 @@ export default function OutreachSettingsPage() {
             onChange={setOpening}
             deadline={nextDeadline}
             testSending={testSending === "opening"}
+            canEdit={canEdit}
             onSendTest={() => sendTest("opening")}
           />
           <TemplateCard
@@ -147,11 +150,13 @@ export default function OutreachSettingsPage() {
             onChange={setReminder}
             deadline={nextDeadline}
             testSending={testSending === "reminder"}
+            canEdit={canEdit}
             onSendTest={() => sendTest("reminder")}
           />
 
           <Group>
-            <Button disabled={saving} loading={saving} onClick={saveSettings}>Save templates</Button>
+            <Button disabled={saving || !canEdit} loading={saving} onClick={saveSettings}>Save templates</Button>
+            {!canEdit && <Text size="sm" c="dimmed">Only the Board and sysadmins change the wording.</Text>}
           </Group>
 
           <SendPanel deadlineSet={nextDeadline !== null} />
@@ -162,8 +167,9 @@ export default function OutreachSettingsPage() {
 }
 
 function TemplateCard({
-  emailType, value, onChange, deadline, testSending, onSendTest,
+  emailType, value, onChange, deadline, testSending, onSendTest, canEdit,
 }: {
+  canEdit: boolean;
   emailType: TemplateKey;
   value: { subject: string; body: string };
   onChange: (v: { subject: string; body: string }) => void;
@@ -190,6 +196,7 @@ function TemplateCard({
           label="Subject"
           placeholder={spec.defaultSubject}
           value={value.subject}
+          disabled={!canEdit}
           onChange={(e) => onChange({ ...value, subject: e.currentTarget.value })}
         />
         <Textarea
@@ -198,6 +205,7 @@ function TemplateCard({
           minRows={6}
           autosize
           value={value.body}
+          disabled={!canEdit}
           onChange={(e) => onChange({ ...value, body: e.currentTarget.value })}
         />
       </Stack>
@@ -213,7 +221,7 @@ function TemplateCard({
         />
       </Card>
 
-      <Button mt="md" variant="light" loading={testSending} onClick={onSendTest}>
+      <Button mt="md" variant="light" disabled={!canEdit} loading={testSending} onClick={onSendTest}>
         Send test to me
       </Button>
     </Card>
