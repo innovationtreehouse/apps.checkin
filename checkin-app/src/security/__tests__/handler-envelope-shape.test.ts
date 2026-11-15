@@ -43,6 +43,10 @@ describe.each([
 ] as const)('envelope %s', (_label, endpoint, envelope: Envelope) => {
     const wrap = (payload: unknown) => (envelope === null ? payload : { [envelope]: payload });
 
+    it('sends an empty bag as an empty object', async () => {
+        expect(await body(endpoint, {})).toEqual(wrap({}));
+    });
+
     it('sends a one-key bag as that key\'s value', async () => {
         expect(await body(endpoint, { Tool: [TOOL] })).toEqual(wrap([TOOL]));
     });
