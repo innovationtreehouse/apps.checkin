@@ -21,13 +21,13 @@ export interface ExternalStatus {
   contractStarted: boolean;
   signerName?: string | null;
   contractSignedAt?: string | null;
-  bgConsented: boolean;
+  checkStarted: boolean;
   bgCleared: boolean;
   deepLinkUrl: string | null;
 }
 
 export interface OwnBackgroundCheck {
-  consented: boolean;
+  checkStarted: boolean;
   deepLinkUrl: string | null;
 }
 
@@ -46,7 +46,7 @@ export interface IntakeState {
   external: ExternalStatus | null;
   /** The caller's own unsigned individual agreement, independent of the household's. */
   personAgreement: { id: number; started: boolean } | null;
-  /** The caller's own background check awaiting their consent, outside any household application. */
+  /** The caller's own check and the background-check tool's link, for the Background checks panel. */
   ownBackgroundCheck?: OwnBackgroundCheck | null;
   prefill: IntakePrefill;
 }
@@ -110,11 +110,6 @@ export function useMembershipPage() {
   const [planRequested, setPlanRequested] = useState(false);
   const [planKind, setPlanKind] = useState<string | null>(null);
   const [confirmPlanOpened, { open: openConfirmPlan, close: closeConfirmPlan }] = useDisclosure(false);
-  // Self-report gate for the background-check task: the confirm checkbox
-  // unlocks only after the applicant has opened the Averity consent link this
-  // visit, so they can't confirm a form they never saw.
-  const [bgLinkOpened, setBgLinkOpened] = useState(false);
-  const [bgConsenting, setBgConsenting] = useState(false);
 
   // Drop the holdoff and its sessionStorage record — the "Show the payment
   // button again" escape hatch for an abandoned checkout.
@@ -438,27 +433,6 @@ export function useMembershipPage() {
     }
   };
 
-  // Applicant confirms they submitted consent on Averity. On success the reload
-  // flips the task to done (and may advance the whole card to payment); on
-  // failure the checkbox reverts so they can retry.
-  const recordBgConsent = async () => {
-    setBgConsenting(true);
-    try {
-      const res = await fetch("/api/membership/bg-consent", { method: "POST" });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        load();
-        notifyNavRefresh();
-      } else {
-        setBgConsenting(false);
-        flash(apiError(data, "Could not record your consent. Please try again."), true);
-      }
-    } catch {
-      setBgConsenting(false);
-      networkError();
-    }
-  };
-
   useUnsavedGuard(unsaved);
 
   return {
@@ -469,9 +443,7 @@ export function useMembershipPage() {
       payment, awaitingPayment, clearAwaitingPayment, handlePayClick, onMockPaid, onMockFailed,
       planRequested, planKind, setPlanKind, confirmPlanOpened, openConfirmPlan, closeConfirmPlan, requestPaymentPlan,
     },
-    bg: { linkOpened: bgLinkOpened, markLinkOpened: () => setBgLinkOpened(true), consenting: bgConsenting, recordConsent: recordBgConsent },
   };
 }
 
 export type PaymentControls = ReturnType<typeof useMembershipPage>["payment"];
-export type BgConsentControls = ReturnType<typeof useMembershipPage>["bg"];

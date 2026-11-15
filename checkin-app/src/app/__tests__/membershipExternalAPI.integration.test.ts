@@ -8,6 +8,7 @@
 
 import { POST as ZOHO_WEBHOOK } from '@/app/api/webhooks/zoho/route';
 import { POST as BOARD_EXTERNAL } from '@/app/api/membership-ops/applications/external/route';
+import { POST as BOARD_MARK_STARTED } from '@/app/api/membership-audit/person-bg/route';
 import { GET as ADMIN_LIST } from '@/app/api/membership-ops/applications/route';
 import { GET as MEMBERSHIP_GET } from '@/app/api/membership/route';
 import prisma from '@/lib/prisma';
@@ -33,6 +34,12 @@ function boardReq(body: unknown) {
         body: JSON.stringify(body),
     }) as unknown as Parameters<typeof BOARD_EXTERNAL>[0];
 }
+function markStartedReq(personId: number) {
+    return new Request('http://localhost:4000/api/membership-audit/person-bg', {
+        method: 'POST',
+        body: JSON.stringify({ personId }),
+    }) as unknown as Parameters<typeof BOARD_MARK_STARTED>[0];
+}
 function zohoReq(body: unknown, token: string | null, ip?: string) {
     return new Request('http://localhost:4000/api/webhooks/zoho', {
         method: 'POST',
@@ -52,15 +59,17 @@ describe('Membership EXTERNAL phase API', () => {
     let hhB: number;
     let procA: number;
     let procB: number;
+    let leadA: number;
     const prevSecret = process.env.ZOHO_WEBHOOK_SECRET;
 
     async function makeProcess(name: string, envelopeId: string) {
         const hh = await prisma.household.create({ data: { name } });
+        const lead = await prisma.person.create({ data: { name: `Lead ${name}`, householdId: hh.id, isHouseholdLead: true, isDeclaredAdult: true } });
         const m = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE' } });
         const p = await prisma.orgMembershipProcess.create({
             data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_EXTERNAL_ACTION', zohoEnvelopeId: envelopeId },
         });
-        return { householdId: hh.id, processId: p.id };
+        return { householdId: hh.id, processId: p.id, leadId: lead.id };
     }
 
     async function wipe() {
@@ -87,6 +96,7 @@ describe('Membership EXTERNAL phase API', () => {
         const a = await makeProcess(`A ${TAG}`, 'zoho-A');
         hhA = a.householdId;
         procA = a.processId;
+        leadA = a.leadId;
         const b = await makeProcess(`B ${TAG}`, 'zoho-B');
         hhB = b.householdId;
         procB = b.processId;
@@ -102,15 +112,14 @@ describe('Membership EXTERNAL phase API', () => {
     });
 
     it('rejects a board member acting on their OWN household application (COI), with no mutation', async () => {
-        // A board member inside the applicant household: marking the contract or the BG
-        // consent would advance it to PENDING_PAYMENT with no Zoho envelope, no
-        // signature and no consent behind it.
+        // A board member inside the applicant household: marking the contract would
+        // advance it with no Zoho envelope and no signature behind it.
         const insider = await prisma.person.create({
             data: { email: `insider-${TAG}@example.com`, name: 'Insider Board', isBoardMember: true, householdId: hhB },
         });
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: insider.id, isSysadmin: true, isBoardMember: true } });
 
-        for (const action of ['mark-contract', 'mark-bg-consent', 'set-envelope']) {
+        for (const action of ['mark-contract', 'set-envelope']) {
             const res = await BOARD_EXTERNAL(boardReq({ processId: procB, action, envelopeId: 'zoho-COI' }) as never);
             expect(res.status).toBe(403);
         }
@@ -138,13 +147,23 @@ describe('Membership EXTERNAL phase API', () => {
         expect(p?.status).toBe('PENDING_EXTERNAL_ACTION');
     });
 
-    it('marking BG consent after the contract advances to PENDING_PAYMENT', async () => {
+    it('the household mark-bg-consent action is gone', async () => {
         asBoard(boardId);
         const res = await BOARD_EXTERNAL(boardReq({ processId: procA, action: 'mark-bg-consent' }) as never);
+        expect(res.status).toBe(400);
+        expect((await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: procA } })).bgConsentAt).toBeNull();
+    });
+
+    it("marking a lead's check started after the contract advances to PENDING_PAYMENT, leaving the application's flag unset", async () => {
+        asBoard(boardId);
+        const res = await BOARD_MARK_STARTED(markStartedReq(leadA) as never);
         expect(res.status).toBe(200);
         const p = await prisma.orgMembershipProcess.findUnique({ where: { id: procA } });
-        expect(p?.bgConsentAt).not.toBeNull();
+        expect(p?.bgConsentAt).toBeNull();
         expect(p?.status).toBe('PENDING_PAYMENT');
+        const review = await prisma.orgMembershipProcess.findFirstOrThrow({ where: { kind: 'PERSON_BG', subjectPersonId: leadA } });
+        expect(review).toMatchObject({ status: 'PENDING_BG_REVIEW', requestedForHouseholdId: hhA });
+        expect(review.bgConsentAt).not.toBeNull();
     });
 
     it('rejects a Zoho webhook with a bad token', async () => {
@@ -276,8 +295,8 @@ describe('Membership EXTERNAL phase API', () => {
  * The background-check "fill-out external" step, applicant + board sides:
  *   1. GET /api/membership surfaces the manual-adapter consent deep link
  *      (external.deepLinkUrl) while the process awaits external action.
- *   2. Board 'mark-bg-consent' records consent and — the contract already being
- *      signed — advances the process EXTERNAL → PENDING_PAYMENT.
+ *   2. The Board marks the lead's check started and — the contract already being
+ *      signed — the process advances EXTERNAL → PENDING_PAYMENT.
  *
  * The background check uses the manual (deep-link) adapter, never Averity's API;
  * AVERITY_CONSENT_URL is set so the real (non-mock) provider hands back a URL.
@@ -312,10 +331,10 @@ describe('Membership EXTERNAL phase — background-check step', () => {
         boardId2 = board.id;
 
         // Applicant household with an in-flight process already past the contract:
-        // BG consent is the ONLY remaining external action, so marking it is what
-        // advances the process — isolating the step under test.
+        // the lead's check started is the ONLY remaining external action, so marking it
+        // is what advances the process — isolating the step under test.
         const hh = await prisma.household.create({ data: { name: `Applicant ${TAG2}` } });
-        const applicant = await prisma.person.create({ data: { email: `applicant-${TAG2}@example.com`, name: 'Applicant', householdId: hh.id } });
+        const applicant = await prisma.person.create({ data: { email: `applicant-${TAG2}@example.com`, name: 'Applicant', householdId: hh.id, isHouseholdLead: true, isDeclaredAdult: true } });
         applicantId = applicant.id;
         const m = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE' } });
         const p = await prisma.orgMembershipProcess.create({
@@ -344,25 +363,24 @@ describe('Membership EXTERNAL phase — background-check step', () => {
         // The applicant-facing deep link is what ships (manual adapter) — assert on
         // the real field name/shape from getExternalStatus, not a guessed one.
         expect(body.external?.deepLinkUrl).toBe(AVERITY_URL);
-        expect(body.external?.bgConsented).toBe(false);
+        expect(body.external?.checkStarted).toBe(false);
     });
 
-    it('board mark-bg-consent records consent and advances EXTERNAL → PENDING_PAYMENT', async () => {
+    it("the Board marking the lead's check started advances EXTERNAL → PENDING_PAYMENT", async () => {
         asBoard(boardId2);
-        const res = await BOARD_EXTERNAL(boardReq({ processId: procId, action: 'mark-bg-consent' }) as never);
+        const res = await BOARD_MARK_STARTED(markStartedReq(applicantId) as never);
         expect(res.status).toBe(200);
         const p = await prisma.orgMembershipProcess.findUnique({ where: { id: procId } });
-        expect(p?.bgConsentAt).not.toBeNull();
         expect(p?.status).toBe('PENDING_PAYMENT');
     });
 
-    it('the advance is reflected back to the applicant GET (bgConsented, PENDING_PAYMENT)', async () => {
+    it('the advance is reflected back to the applicant GET (checkStarted, PENDING_PAYMENT)', async () => {
         asUser(applicantId);
         const res = await MEMBERSHIP_GET(membershipGetReq() as never);
         expect(res.status).toBe(200);
         const body = await res.json();
         expect(body.process?.status).toBe('PENDING_PAYMENT');
-        expect(body.external?.bgConsented).toBe(true);
+        expect(body.external?.checkStarted).toBe(true);
         // Deep link still surfaced — the process is not yet ACTIVE.
         expect(body.external?.deepLinkUrl).toBe(AVERITY_URL);
     });

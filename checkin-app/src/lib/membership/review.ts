@@ -19,7 +19,7 @@ import { awaitingBgReview, fromWhere, personBgOpen } from "@/lib/membership/life
 import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
 import { raisePaymentException, recordPaymentException, type PaymentExceptionNotice } from "@/lib/finance/reconcile/exceptions";
 import { SIGN_IN_VERIFIED_PERSON } from "@/lib/person/filters";
-import { reviewHoldsRejection } from "@/lib/membership/checkStanding";
+import { householdCheckStarted, jsonField, reviewHoldsRejection } from "@/lib/membership/checkStanding";
 import { findSelfGrantRefusal, recordSelfGrantRefusal, refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE, type GrantSubject, type SelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
 
 // Loaded on use: settleHouseholdBg imports review.ts, and a static import closes that cycle at load.
@@ -290,7 +290,7 @@ export async function attest(reviewerId: number, processId: number, input: Attes
         if (process.attestations.some((a) => sharesHousehold(reviewer.householdId, a.reviewer.householdId))) throw new ReviewError("same_household_reviewer", "Another reviewer from your household has already reviewed this background check.");
 
         if (naming) await nameSubject(tx, reviewerId, processId, subjectPersonId);
-        if (input.isMarkedVolunteerFamily) await markVolunteerFamily(tx, reviewerId, process.requestedForHouseholdId, processId);
+        if (input.isMarkedVolunteerFamily) await markVolunteerFamily(tx, reviewerId, process.requestedForHouseholdId, processId, subjectPersonId);
         const households = await reviewHouseholds(tx, target);
 
         await tx.backgroundCheckAttestation.create({
@@ -395,11 +395,15 @@ async function nameSubject(tx: TxClient, reviewerId: number, processId: number, 
 
 /**
  * Ruling D: a reviewer's Volunteer Family tick is written on the review's requested
- * household at once, as its own audited change. It only ever sets the status;
- * removing it is a Board edit.
+ * household at once, as its own audited change, and only on a review of one of that
+ * household's leads. It only ever sets the status; removing it is a Board edit.
  */
-async function markVolunteerFamily(tx: TxClient, reviewerId: number, householdId: number | null, processId: number) {
+async function markVolunteerFamily(tx: TxClient, reviewerId: number, householdId: number | null, processId: number, subjectPersonId: number) {
     if (householdId === null) throw new ReviewError("invalid_input", "This background check was not requested by a household, so it cannot mark a Volunteer Family.");
+    const subject = await tx.person.findUnique({ where: { id: subjectPersonId }, select: { householdId: true, isHouseholdLead: true } });
+    if (subject?.householdId !== householdId || !subject.isHouseholdLead) {
+        throw new ReviewError("invalid_input", "Only a review of one of the household's leads can mark a Volunteer Family.");
+    }
     const membership = await tx.orgMembership.findUnique({ where: { householdId }, select: { id: true, isVolunteerFamily: true } });
     if (!membership) throw new ReviewError("invalid_input", "The household this check was requested for has no membership to mark.");
     if (membership.isVolunteerFamily) return;
@@ -448,8 +452,8 @@ async function switchRejectionToApprove(
     if (await lockAndFindDeniedHousehold(tx, households) !== null) {
         throw new ReviewError("wrong_phase", "This household has been denied membership, so its background-check review cannot be reopened.");
     }
-    if (input.isMarkedVolunteerFamily) await markVolunteerFamily(tx, reviewerId, process.requestedForHouseholdId, processId);
-    const reviewStatus = blockedResetStatus(process);
+    if (input.isMarkedVolunteerFamily) await markVolunteerFamily(tx, reviewerId, process.requestedForHouseholdId, processId, subjectPersonId);
+    const reviewStatus = blockedResetStatus(process, false);
 
     const attestations = await tx.backgroundCheckAttestation.findMany({ where: { processId }, orderBy: { id: "asc" } });
     await tx.backgroundCheckAttestation.deleteMany({ where: { processId } });
@@ -505,6 +509,55 @@ export async function undoOwnApproval(reviewerId: number, processId: number, rea
             },
         });
     });
+}
+
+/**
+ * A reviewer or Board member dismisses a check review opened by mistake: it undoes
+ * the "check started" mark and decides nothing. Allowed only on a review waiting
+ * with the check started, no attestation, and no rejection held (`reviewHoldsRejection`),
+ * under the same household bar as every act on a review. A review the mark created,
+ * or one naming nobody, is closed; one that existed before the mark only loses the
+ * flag, so the check its person owes stays open. Runs under attest()'s process lock.
+ */
+export async function dismissCheckStarted(processId: number, actorId: number, rawReason: string) {
+    const reason = rawReason.trim();
+    if (!reason) throw new ReviewError("invalid_input", "A reason is required.");
+    const actor = await loadReviewer(actorId);
+    if (!actor || !canReviewBackgroundChecks(actor)) throw new ReviewError("not_reviewer", "Only a background-check reviewer or board member can dismiss a check review.");
+
+    const households = await reviewTransaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
+        const process = await tx.orgMembershipProcess.findUnique({ where: { id: processId }, include: { _count: { select: { attestations: true } } } });
+        if (!process || process.kind !== "PERSON_BG") throw new ReviewError("not_found", "Check review not found.");
+        if (!awaitingBgReview.has({ kind: process.kind, status: process.status, bgConsentAt: !!process.bgConsentAt, bgClearedAt: !!process.bgClearedAt })) {
+            throw new ReviewError("wrong_phase", "Only a check review waiting with the check started can be dismissed.");
+        }
+        if (process._count.attestations > 0) throw new ReviewError("wrong_phase", "This check review has a decision on it, so it cannot be dismissed.");
+        if (await reviewHoldsRejection(tx, processId)) throw new ReviewError("wrong_phase", "This check review was sent back after a rejection, so it cannot be dismissed.");
+        await throwIfOwnReview(tx, actorId, process, { dismiss: "check started" });
+
+        const created = await tx.auditLog.findFirst({
+            where: { tableName: "OrgMembershipProcess", affectedEntityId: processId, action: "CREATE" },
+            select: { newData: true },
+        });
+        const closes = process.subjectPersonId === null || jsonField(created?.newData ?? null, "checkStarted") === true;
+        const { count } = await tx.orgMembershipProcess.updateMany({
+            where: { id: processId, ...awaitingBgReview.where },
+            data: closes
+                ? { status: "ARCHIVED", archivedFromStatus: "PENDING_BG_REVIEW", stageEnteredAt: new Date() }
+                : { bgConsentAt: null },
+        });
+        if (!count) throw movedOn();
+        await audit(
+            tx,
+            personActor(actorId),
+            processId,
+            { status: process.status, checkStarted: true },
+            { checkStarted: false, action: "dismissed: opened by mistake", reason, ...(closes ? { status: "ARCHIVED" } : {}) },
+        );
+        return reviewHouseholds(tx, process);
+    });
+    await settleAfterReview(households);
 }
 
 /**
@@ -706,7 +759,7 @@ export async function boardResetReview(processId: number, actorId: number, opts:
             throw new ReviewError("wrong_phase", "This background-check review is neither blocked nor still in progress.");
         }
         const clearsSubject = !!opts.wrongPerson && fresh.subjectPersonId !== null;
-        const reviewStatus = blocked ? blockedResetStatus(fresh) : fresh.status;
+        const reviewStatus = blocked ? blockedResetStatus(fresh, await applicationCheckStarted(tx, process.orgMembershipId, fresh)) : fresh.status;
         // The deleted attestations, a rejection and its note included, live on only in the audit row.
         const attestations = await tx.backgroundCheckAttestation.findMany({ where: { processId }, orderBy: { id: "asc" } });
         await tx.backgroundCheckAttestation.deleteMany({ where: { processId } });
@@ -731,20 +784,27 @@ export async function boardResetReview(processId: number, actorId: number, opts:
 
 type BlockedResetRow = {
     kind: string;
-    bgConsentAt: Date | null;
     paidAt: Date | null;
     contractSignedAt: Date | null;
 };
 
+/** `householdCheckStarted` for a household application's own household; false for a check review. */
+async function applicationCheckStarted(db: DbClient, orgMembershipId: number | null, app: { bgConsentAt: Date | null }): Promise<boolean> {
+    if (orgMembershipId === null) return false;
+    const membership = await db.orgMembership.findUnique({ where: { id: orgMembershipId }, select: { householdId: true } });
+    return !!membership && householdCheckStarted(db, membership.householdId, app);
+}
+
 /**
  * The step a BLOCKED review or application resumes at when its block is lifted. A
  * check review returns to waiting for review. A household application goes back to
- * the external step when consent or the agreement is missing, so it never reaches
- * payment unsigned; otherwise to PENDING_BG_CLEARANCE if paid, else PENDING_PAYMENT.
+ * the external step when its check is not started (`householdCheckStarted`) or the
+ * agreement is missing, so it never reaches payment unsigned; otherwise to
+ * PENDING_BG_CLEARANCE if paid, else PENDING_PAYMENT.
  */
-export function blockedResetStatus(process: BlockedResetRow): OrgMembershipProcessStatus {
+export function blockedResetStatus(process: BlockedResetRow, checkStarted: boolean): OrgMembershipProcessStatus {
     return process.kind === "PERSON_BG" ? "PENDING_BG_REVIEW"
-        : !process.bgConsentAt || !process.contractSignedAt ? "PENDING_EXTERNAL_ACTION"
+        : !checkStarted || !process.contractSignedAt ? "PENDING_EXTERNAL_ACTION"
         : process.paidAt ? "PENDING_BG_CLEARANCE"
         : "PENDING_PAYMENT";
 }

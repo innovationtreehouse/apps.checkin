@@ -9,6 +9,7 @@
  * renewal's createRenewalProcess / renewalConcurrency.integration.test.ts intent,
  * as a mocked-prisma unit test.
  */
+import { getOwnBackgroundCheck as getOwnBackgroundCheckFn } from '@/lib/membership/checkStarted';
 import { getIntakeState, startIntake, saveIntake, submitIntake, IntakeError } from '@/lib/membership/intake';
 import { Prisma } from '@/generated/prisma/client';
 import { findSelfGrantRefusal, recordSelfGrantRefusal } from '@/lib/membership/selfGrantGuard';
@@ -44,7 +45,8 @@ jest.mock('@/lib/prisma', () => ({
     },
 }));
 
-jest.mock('@/lib/membership/external', () => ({ getExternalStatus: jest.fn(), advanceExternalIfComplete: jest.fn(), getOwnBackgroundCheck: jest.fn() }));
+jest.mock('@/lib/membership/external', () => ({ getExternalStatus: jest.fn(), advanceExternalIfComplete: jest.fn() }));
+jest.mock('@/lib/membership/checkStarted', () => ({ getOwnBackgroundCheck: jest.fn() }));
 jest.mock('@/lib/emergencyContacts/service', () => ({
     upsertPrimaryContact: jest.fn(),
     reconcileHouseholdConflicts: jest.fn(),
@@ -79,7 +81,8 @@ const { settleHouseholdBg } = require('@/lib/membership/settleHouseholdBg');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { applyVolunteerFamilyStatus } = require('@/lib/membership/review');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { advanceExternalIfComplete, getOwnBackgroundCheck } = require('@/lib/membership/external');
+const { advanceExternalIfComplete } = require('@/lib/membership/external');
+const getOwnBackgroundCheck = jest.mocked(getOwnBackgroundCheckFn);
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { ensureHouseholdMembership, raiseDeniedHouseholdActivity } = require('@/lib/membership/householdStatus');
 
@@ -220,15 +223,15 @@ describe('getIntakeState', () => {
         expect(state.prefill.children).toEqual([]);
     });
 
-    it("returns the caller's own background check as the external service reads it", async () => {
+    it("returns the caller's own background check as the check-started service reads it", async () => {
         const caller = { id: 1, householdId: null, household: null, isHouseholdLead: false, isSysadmin: false };
         prisma.person.findUnique.mockResolvedValue(caller);
-        getOwnBackgroundCheck.mockResolvedValue({ consented: false, deepLinkUrl: 'https://averity.example/consent' });
+        getOwnBackgroundCheck.mockResolvedValue({ checkStarted: false, deepLinkUrl: 'https://averity.example/consent' });
 
         const state = await getIntakeState(1);
 
-        expect(getOwnBackgroundCheck).toHaveBeenCalledWith(caller);
-        expect(state.ownBackgroundCheck).toEqual({ consented: false, deepLinkUrl: 'https://averity.example/consent' });
+        expect(getOwnBackgroundCheck).toHaveBeenCalledWith(1);
+        expect(state.ownBackgroundCheck).toEqual({ checkStarted: false, deepLinkUrl: 'https://averity.example/consent' });
     });
 
     it('loads every household member, by id', async () => {
@@ -264,7 +267,7 @@ describe('getIntakeState', () => {
                 emergencyContacts: [{ name: 'Aunt', phone: '555-555-2000', email: 'a@x.com' }],
             },
         });
-        getExternalStatus.mockResolvedValue({ contractSigned: false, contractStarted: false, bgConsented: false, bgCleared: false, deepLinkUrl: null });
+        getExternalStatus.mockResolvedValue({ contractSigned: false, contractStarted: false, checkStarted: false, bgCleared: false, deepLinkUrl: null });
 
         const state = await getIntakeState(1);
 

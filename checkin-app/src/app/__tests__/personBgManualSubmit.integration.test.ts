@@ -47,7 +47,7 @@ function getReq() {
 async function makeHousehold(slug: string) {
     return prisma.household.create({ data: { name: `${TAG} ${slug}` } });
 }
-async function makePerson(slug: string, householdId: number, data: Partial<{ dateOfBirth: Date | null; lastBackgroundCheck: Date | null; isBackgroundCheckReviewer: boolean }> = {}) {
+async function makePerson(slug: string, householdId: number, data: Partial<{ dateOfBirth: Date | null; lastBackgroundCheck: Date | null; isBackgroundCheckReviewer: boolean; isBoardMember: boolean }> = {}) {
     return prisma.person.create({
         data: {
             email: `${slug}-${TAG}@example.com`,
@@ -56,6 +56,7 @@ async function makePerson(slug: string, householdId: number, data: Partial<{ dat
             dateOfBirth: data.dateOfBirth ?? null,
             lastBackgroundCheck: data.lastBackgroundCheck ?? null,
             isBackgroundCheckReviewer: data.isBackgroundCheckReviewer ?? false,
+            isBoardMember: data.isBoardMember ?? false,
         },
     });
 }
@@ -118,7 +119,7 @@ describe('manual PERSON_BG submit + queue gating + e2e', () => {
         const hhC = await makeHousehold('misc');
         rev1 = (await makePerson('rev1', hhA.id, { isBackgroundCheckReviewer: true })).id;
         rev2 = (await makePerson('rev2', hhB.id, { isBackgroundCheckReviewer: true })).id;
-        board = (await makePerson('board', hhC.id)).id;
+        board = (await makePerson('board', hhC.id, { isBoardMember: true })).id;
         nonReviewer = (await makePerson('nonreviewer', hhC.id)).id;
     });
 

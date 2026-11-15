@@ -198,10 +198,12 @@ Procedure below is built on them.
 - An application in background-check review is the reviewers' work, not the
   board's. Board queues count blocked applications only.  [Decision]
 
-- A check review is about one person. A review opened by a household's consent
-  names nobody; whoever decides first, approving or rejecting, names the one
-  household lead whose report they read. A later decision may repeat that person
-  and never names another.  [Decision]
+- A check review is about one person, named when the check is marked started;
+  the reviewer confirms the report is that person's and asks the Board for a
+  wrong-person reset when it is not. A review that names nobody — one returned by
+  that reset — is named by whoever decides first, approving or rejecting, as the
+  one household lead whose report they read. A later decision may repeat that
+  person and never names another.  [Decision]
 
 - Naming a person who already has a check review of their own is refused when
   that review has a decision on it, is blocked, or still carries a rejection; the
@@ -242,8 +244,7 @@ Procedure below is built on them.
 
 - Once a lead is cleared, a review the household asked for that still names
   nobody is closed and the application clears, unless that review still carries
-  a rejection. No review naming nobody is opened for a household while a lead is
-  cleared or under review, or while anyone in it is disputed.  [Decision]
+  a rejection.  [Decision]
 
 - A check review that still carries a rejection cannot be closed; it needs a
   decision from two new reviewers.  [Decision]
@@ -345,8 +346,9 @@ Procedure below is built on them.
 ### Activation
 
 - Nothing advances toward payment until the agreement is signed and the
-  background check is handled — either a still-valid prior clearance or fresh
-  consent on file.  [Decision — *Policy: Membership Policy, Art. III §III.1; Art. VI §VI.1*]
+  background check is handled — either a lead's still-valid clearance, or a
+  lead's check marked started, or a review the household asked for still waiting
+  to be named. A check started for any other adult does not advance it.  [Decision — *Policy: Membership Policy, Art. III §III.1; Art. VI §VI.1*]
 
 - From there payment and review run in parallel, and membership activates on
   whichever finishes last. Neither alone activates.  [Decision]
@@ -424,6 +426,10 @@ Procedure below is built on them.
 - A reviewer's Volunteer Family tick is written onto the household that requested
   the review, at once, as its own audited change; the review never stores it. A
   reviewer can set it and cannot remove it; removing it is a Board edit.  [Decision — deliberate limit]
+
+- The tick is offered, and written, only on a review of one of that household's
+  leads. A review of any other adult in it, an adult child's or a non-lead's own,
+  carries no tick.  [Decision — owner]
 
 - A volunteer designation matches on canonical email, so address variants cannot
   change what a family owes.  [Decision]
@@ -574,18 +580,37 @@ Procedure below is built on them.
 - A check covers the adult who took it. One person's clearance never satisfies
   another's.  [Decision]
 
-- A background check for an adult child needs neither a sign-in of their own nor
-  an email address in the app. The board or a household lead records that an
-  external check exists and submits it for review, and consent is implicit in the
-  subject having gone and taken it.  [Decision]
+- "Check started" records that a check was started in the outside tool and puts
+  that person's review in the reviewers' queue. It is not consent, which is given
+  in the outside tool, and it approves nothing: membership still needs a lead's
+  clearance by two reviewers.  [Decision]
 
-- An adult who does sign in can record their own check through the
-  applicant-facing consent attestation, so someone who has done their part can
-  say so and stop being chased. A household lead's attestation records consent
-  on the household's application while one awaits it, which opens a check review
-  for the household naming nobody; otherwise anyone's goes to their own open
-  check. The audit names the person who attested, so their own record
-  stays distinguishable from the board's.  [Decision]
+- It is recorded only on the person whose check it is; a household's application
+  never records it. A person may mark their own; a household lead may mark it for
+  any adult in their household, at any time; the Board and sysadmins may mark it
+  for anyone. A person known to be under 18 is never marked; one whose age is
+  unknown may be. Neither a sign-in nor an email address is needed by the person
+  marked.  [Decision — owner]
+
+- Marking a check started has no own-household bar: it decides nothing. The bar
+  sits on the approvals that clear it.  [Decision — deliberate limit]
+
+- A household lead sees, for each other adult in the household, only whether a
+  check still needs marking — never their clearance, review or decisions.  [Decision — owner; *Policy: Membership Policy, Art. VI §VI.2*]
+
+- A check review opened by mistake may be dismissed, with a written reason, while
+  it carries no live decision: none was ever made, the approvals were undone, or
+  a Board reset cleared them. A review that carries or was ever sent back for a
+  rejection is never dismissed, nor is a blocked or cleared one. Dismissal undoes
+  the mark and nothing else: it is not a decision, it approves, rejects, disputes
+  and blocks nothing, and a check the person already owed stays owed.  [Decision — owner]
+
+- Only a board member or a background-check reviewer may dismiss a check
+  review, under the same household bar as any other act on a review. A person,
+  a household lead and a sysadmin who is neither may not.  [Decision — owner]
+
+- The audit names the person who marked it, and the person who dismissed it, so
+  a family's act stays distinguishable from the Board's.  [Decision]
 
 ### Individual agreement for adult children
 

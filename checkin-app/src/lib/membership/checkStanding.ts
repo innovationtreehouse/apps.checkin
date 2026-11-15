@@ -13,7 +13,7 @@ import { bgFreshThreshold, nextBoundary } from "@/lib/membership/renewal";
  *   approve and it has not cleared since. It beats CLEARED: an old clearance never
  *   outweighs a new rejection.
  * - CLEARED: `lastBackgroundCheck` inside the window, nothing disputed.
- * - PENDING: a review naming them is open with consent, nothing disputed.
+ * - PENDING: a review naming them is open with the check started, nothing disputed.
  * - NONE: none of the above.
  */
 export type CheckStanding = "CLEARED" | "DISPUTED" | "PENDING" | "NONE";
@@ -162,4 +162,34 @@ export async function reviewHoldsRejection(db: DbClient, processId: number): Pro
     });
     const { sentBack, heldRejection } = rejectionHistory(rows);
     return sentBack || heldRejection;
+}
+
+/**
+ * Whether the household's background check is under way for the advance to payment
+ * and the resume after a block: a lead's own review has the check started, or a
+ * review the household asked for still waits to be named. A started check for any
+ * other adult does not count. `app` is the household's open application, read by
+ * the legacy clause.
+ */
+export async function householdCheckStarted(db: DbClient, householdId: number, app: { bgConsentAt: Date | null }): Promise<boolean> {
+    if (legacyHouseholdCheckStarted(app)) return true;
+    const started = await db.orgMembershipProcess.count({
+        where: {
+            kind: "PERSON_BG",
+            ...personBgOpen.where,
+            OR: [
+                { bgConsentAt: { not: null }, subjectPerson: { householdId, isHouseholdLead: true } },
+                { requestedForHouseholdId: householdId, subjectPersonId: null },
+            ],
+        },
+    });
+    return started > 0;
+}
+
+/**
+ * An open household application stamped with the check started before the flag
+ * moved to each person's own review (docs/in-design/BG_CHECK_STARTED-migration.md).
+ */
+export function legacyHouseholdCheckStarted(app: { bgConsentAt: Date | null }): boolean {
+    return !!app.bgConsentAt;
 }

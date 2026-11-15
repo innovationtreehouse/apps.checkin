@@ -204,6 +204,55 @@ export default function MembershipReviewPage() {
     });
   };
 
+  const dismissReview = async (processId: number, reason: string) => {
+    setBusyId(processId);
+    try {
+      const res = await fetch("/api/membership/reviews/dismiss", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ processId, reason }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        notifications.show({ message: "Dismissed: the check is no longer marked started." });
+        notifyNavRefresh();
+      } else {
+        notifications.show({ color: "red", message: data.error || "Could not dismiss this check review.", autoClose: false });
+      }
+      reload();
+    } catch {
+      notifications.show({ color: "red", message: "Network error.", autoClose: false });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const confirmDismiss = (item: QueueItem) => {
+    let reason = "";
+    const modalId = modals.openConfirmModal({
+      title: "Dismiss: opened by mistake",
+      children: (
+        <Stack gap="xs">
+          <Text size="sm">
+            This undoes the &quot;check started&quot; mark on <strong>{applicantLabel(item)}</strong>. It decides
+            nothing: no approval, no rejection. Check the background-check tool first.
+          </Text>
+          <Textarea label="Reason" required autosize minRows={2} onChange={(e) => { reason = e.currentTarget.value; }} />
+        </Stack>
+      ),
+      labels: { confirm: "Dismiss", cancel: "Cancel" },
+      closeOnConfirm: false,
+      onConfirm: () => {
+        if (!reason.trim()) {
+          notifications.show({ color: "red", message: "A reason is required to dismiss a check review.", autoClose: false });
+          return;
+        }
+        modals.close(modalId);
+        dismissReview(item.id, reason.trim());
+      },
+    });
+  };
+
   const submit = async (processId: number, result: "APPROVE" | "REJECT") => {
     if (result === "REJECT" && !reviewNotes[processId]?.trim()) return;
     setBusyId(processId);
@@ -436,14 +485,14 @@ export default function MembershipReviewPage() {
                 </Stack>
               )}
 
-              {/* The intake note and the volunteer-only mark belong to the household that asked for the check. */}
+              {/* The intake note belongs to the household that asked for the check; the volunteer-only mark is offered only on a review of one of its leads. */}
               {requested && notes && (
                 <Alert color="yellow" variant="light" mt="md" title="From the applicant — “Anything else we should know?”">
                   <Text style={{ whiteSpace: "pre-wrap" }}>{notes}</Text>
                 </Alert>
               )}
 
-              {requested && (
+              {requested && (!subject || leads.some((p) => p.id === subject.id)) && (
                 <Checkbox
                   my="md"
                   checked={!!volunteer[item.id]}
@@ -473,6 +522,11 @@ export default function MembershipReviewPage() {
                 <Button color="red" variant="light" disabled={busyId === item.id || !reviewNotes[item.id]?.trim() || chosenSubject(item) === null} onClick={() => confirmSubmit(item, "REJECT")}>
                   Reject
                 </Button>
+                {approvalsSoFar(item) === 0 && (
+                  <Button variant="subtle" disabled={busyId === item.id} onClick={() => confirmDismiss(item)}>
+                    Dismiss: opened by mistake
+                  </Button>
+                )}
               </Group>
 
               {message?.processId === item.id && (

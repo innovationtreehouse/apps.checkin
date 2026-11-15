@@ -5,8 +5,8 @@ import { useRouter } from "next/navigation";
 
 /**
  * Dev background-check consent mock UI (the page 404s off a dev instance). Stands in
- * for Averity's hosted consent page: "Consent (DEV)" records real consent via the dev
- * endpoint then lands back on /membership. Inline styles match the sibling dev tool
+ * for Averity's hosted consent page: "Consent (DEV)" marks the caller's own check
+ * started via the dev endpoint, then lands back on /membership. Inline styles match the sibling dev tool
  * (dev/zoho-sign).
  */
 export default function DevBgConsentClient() {
@@ -48,8 +48,8 @@ export default function DevBgConsentClient() {
             <h1 style={{ fontSize: "1.5rem", fontWeight: 600, margin: 0 }}>Background check (mock)</h1>
             <p style={{ opacity: 0.7, fontSize: "0.85rem", marginTop: "0.5rem" }}>
                 Averity is mocked on this instance (no consent URL). This stands in for the hosted
-                consent page — <strong>DEV, NOT A REAL BACKGROUND CHECK</strong>. Confirming records
-                your consent and sends the application to the board for sign-off.
+                consent page — <strong>DEV, NOT A REAL BACKGROUND CHECK</strong>. Confirming marks
+                your check started and puts it in the reviewers&apos; queue.
             </p>
 
             {error && <p style={{ color: "#b91c1c", marginTop: "1rem" }}>{error}</p>}
