@@ -56,6 +56,7 @@ const ORACLES = [
     'income-strip.test.ts',
     'inventory-strip.test.ts',
     'key-volunteer-strip.test.ts',
+    'kiosk-heartbeat-route.test.ts',
     'led-households-roster.test.ts',
     'mail-alias-routes.test.ts',
     'member-tier.test.ts',
