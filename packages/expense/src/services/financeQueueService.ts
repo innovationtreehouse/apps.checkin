@@ -121,12 +121,19 @@ function queueReason(r: QueueReason, currency: string): FinanceQueueReason {
  * item; an item is actionable only when the viewer may take its action, never on a record the
  * viewer is conflicted on. Line approvals only the Board can give come from boardApprovalsWaiting;
  * one the viewer is conflicted on is listed but not actionable, so they see another Board member
- * must act. Signatures come from signaturesWaiting.
+ * must act. Signatures come from signaturesWaiting. With `stopAbove`, reading stops once the
+ * actionable units pass it, so the list is complete only while they stay at or under it.
  */
-export async function financeQueueItems(principal: ExpensePrincipal): Promise<Item[]> {
+export async function financeQueueItems(principal: ExpensePrincipal, stopAbove = Infinity): Promise<Item[]> {
   if (!principal.isFinance && !principal.isBoard) return [];
   const orgId = await getOrgId();
   const items: Item[] = [];
+  let actionable = 0;
+  const push = (it: Item) => {
+    items.push(it);
+    if (it.actionable) actionable += it.units;
+  };
+  const full = () => actionable > stopAbove;
 
   const ids = await withContext("finding the expenses that may wait on finance", () => candidateIds(orgId));
   const rows = new Map((await db.expense.findMany({ where: { id: { in: ids } }, select: ROW_FIELDS })).map((e) => [e.id, e]));
@@ -140,16 +147,18 @@ export async function financeQueueItems(principal: ExpensePrincipal): Promise<It
     ]),
   );
   for (const id of ids) {
+    if (full()) return items;
     const expense = rows.get(id)!;
     for (const r of await withContext(`reading the queue reasons of expense ${id}`, () => expenseReasons(principal, id, { readOnly: true }))) {
       const since = r.code === "ACCOUNT_HOLD" ? holdsSince.get(id) : reviewsSince.get(`${id}:${r.code}`);
-      items.push({ tab: TAB_OF_QUEUE[r.tab], expense, reason: queueReason(r, expense.currency), waitingSince: since ?? expense.submittedAt, actionable: r.actionable, units: 1 });
+      push({ tab: TAB_OF_QUEUE[r.tab], expense, reason: queueReason(r, expense.currency), waitingSince: since ?? expense.submittedAt, actionable: r.actionable, units: 1 });
     }
   }
+  if (full()) return items;
 
   const payloads = await db.receivedExpensePayload.findMany({ where: { orgId, status: "failed" }, select: { receiptId: true, payloadJson: true, receivedAt: true, failureReason: true } });
   for (const p of payloads) {
-    items.push({
+    push({
       tab: "expenses",
       expense: null,
       intake: { receiptId: p.receiptId, ...payloadFacts(p.payloadJson), failureReason: p.failureReason },
@@ -159,20 +168,22 @@ export async function financeQueueItems(principal: ExpensePrincipal): Promise<It
       units: 1,
     });
   }
+  if (full()) return items;
 
   for (const { expense: e, give, conflicted } of await withContext("reading the approvals waiting on the Board", () => boardApprovalsWaiting(principal))) {
     const row = { id: e.id, vendorName: e.vendorName, receiptDate: e.receiptDate, submittedAt: e.submittedAt, receiptTotalCents: e.receiptTotalCents, currency: e.currency };
     const approve = (text: string, units: number, actionable: boolean) =>
-      items.push({ tab: "board", expense: row, reason: { code: "BOARD_LINE_APPROVAL", text }, waitingSince: e.submittedAt, actionable, units });
+      push({ tab: "board", expense: row, reason: { code: "BOARD_LINE_APPROVAL", text }, waitingSince: e.submittedAt, actionable, units });
     if (give.length > 0) approve(`${plural(give.length, "line", "lines")} to approve as Board`, give.length, true);
     if (conflicted.length > 0) approve(`${plural(conflicted.length, "line waits", "lines wait")} for another Board member's approval: you are conflicted`, conflicted.length, false);
   }
+  if (full()) return items;
 
   // Treasurer signatures for To sign, and Board signatures, from the line-actions function.
   for (const { expense: e, toSign, board } of await withContext("reading the signatures waiting on you", () => signaturesWaiting(principal))) {
     const row = { id: e.id, vendorName: e.vendorName, receiptDate: e.receiptDate, submittedAt: e.submittedAt, receiptTotalCents: e.receiptTotalCents, currency: e.currency };
     const sign = (tab: FinanceQueueTabKey, code: "TREASURER_SIGNATURE" | "BOARD_SIGNATURE", text: string, units: number) =>
-      items.push({ tab, expense: row, reason: { code, text }, waitingSince: e.submittedAt, actionable: true, units });
+      push({ tab, expense: row, reason: { code, text }, waitingSince: e.submittedAt, actionable: true, units });
     if (toSign.length > 0) sign("toSign", "TREASURER_SIGNATURE", `${plural(toSign.length, "line", "lines")} to sign as Treasurer`, toSign.length);
     if (board.length > 0) sign("board", "BOARD_SIGNATURE", `${plural(board.length, "Board signature", "Board signatures")} to give`, board.length);
   }
@@ -224,7 +235,11 @@ export async function financeQueueCounts(principal: ExpensePrincipal): Promise<F
   return countsOf(await financeQueueItems(principal));
 }
 
-/** The Finance review pill's expense side: every tab's actionable units. */
-export async function financeQueueActionable(principal: ExpensePrincipal): Promise<number> {
-  return Object.values(await financeQueueCounts(principal)).reduce((sum, c) => sum + c.actionable, 0);
+/**
+ * The Finance review pill's expense side: every tab's actionable units, exact up to `ceiling`.
+ * Past it the answer is `ceiling + 1`, and the queue is read no further once that is known.
+ */
+export async function financeQueueActionable(principal: ExpensePrincipal, ceiling: number): Promise<number> {
+  const items = await financeQueueItems(principal, ceiling);
+  return Math.min(items.reduce((sum, it) => sum + (it.actionable ? it.units : 0), 0), ceiling + 1);
 }

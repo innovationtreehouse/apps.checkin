@@ -7,6 +7,14 @@ import type { SectionLink, SubLink } from '@/lib/nav/types';
 
 export type NavBadge = { count: number; color: string; label: string };
 
+/** The most a pill shows exactly; above it, it shows "99+". */
+export const BADGE_CEILING = 99;
+
+/** A pill's text: the count, or "99+" above BADGE_CEILING. */
+export function badgeText(count: number): string {
+  return count > BADGE_CEILING ? `${BADGE_CEILING}+` : String(count);
+}
+
 /** One count a library's provider reported (0 when absent: not visible, failed, or unregistered). */
 export function libraryCount(counts: TodoCounts | null, lib: LibraryKey, key: string): number {
   return counts?.libraries?.[lib]?.[key] ?? 0;

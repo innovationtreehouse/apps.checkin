@@ -71,7 +71,7 @@ describeDb("finance queue — expenses tab", () => {
 
   it("gives a viewer with neither role nothing", async () => {
     await seedExpense({ state: "capital_review" });
-    expect(await financeQueueActionable(principal(2))).toBe(0);
+    expect(await financeQueueActionable(principal(2), 99)).toBe(0);
     expect(await financeQueueRows(principal(2), "expenses")).toEqual([]);
   });
 });
@@ -190,7 +190,7 @@ describeDb("finance queue — To sign and Board tabs", () => {
     bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5, 6], households: [[1, 3]] }) });
     const { id } = await pending();
     expect(await codes(BOARD, "board", id)).toEqual(["BOARD_SIGNATURE"]);
-    expect(await financeQueueActionable(BOARD)).toBe(1);
+    expect(await financeQueueActionable(BOARD, 99)).toBe(1);
   });
 });
 
@@ -228,7 +228,7 @@ describeDb("finance queue — line approvals only the Board can give", () => {
     const [row] = (await financeQueueRows(BOARD, "board")).filter((r) => r.expenseId === id);
     expect(row.reasons).toEqual([{ code: "BOARD_LINE_APPROVAL", text: "1 line to approve as Board" }]);
     expect((await financeQueueCounts(BOARD)).board).toMatchObject({ actionable: 1, total: 1, byReason: { BOARD_LINE_APPROVAL: 1 } });
-    expect(await financeQueueActionable(BOARD)).toBe(1);
+    expect(await financeQueueActionable(BOARD, 99)).toBe(1);
   });
 
   it("lists it in gray for a Board member in the submitter's household, so they see another Board member must act", async () => {
@@ -237,7 +237,7 @@ describeDb("finance queue — line approvals only the Board can give", () => {
     const [row] = (await financeQueueRows(conflicted, "board")).filter((r) => r.expenseId === id);
     expect(row.reasons).toEqual([{ code: "BOARD_LINE_APPROVAL", text: "1 line waits for another Board member's approval: you are conflicted" }]);
     expect((await financeQueueCounts(conflicted)).board).toMatchObject({ actionable: 0, total: 1, byReason: {} });
-    expect(await financeQueueActionable(conflicted)).toBe(0);
+    expect(await financeQueueActionable(conflicted, 99)).toBe(0);
   });
 
   it("leaves out a program line its bucket approver can approve, and lists nothing for FINANCE outside the Board", async () => {
@@ -262,5 +262,42 @@ describeDb("finance queue — line approvals only the Board can give", () => {
     expect((await expensesAwaitingMyApproval(BOARD)).map((e) => e.expenseId)).toEqual([ownBucket]);
     expect(await signoffsAwaitingCount(BOARD)).toBe(1);
     expect((await expenseActionCounts(BOARD)).owner_approval).toBe(1);
+  });
+});
+
+describeDb("finance queue — the Finance review pill", () => {
+  const pageActionable = async (p: typeof FINANCE) => Object.values(await financeQueueCounts(p)).reduce((sum, c) => sum + c.actionable, 0);
+
+  async function signable(submittedAt: Date) {
+    const id = await seedExpense({ state: "qb_pending", submittedAt });
+    const line = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
+    await seedApproval(id, line, { ownerId: 100, status: "approved", decidedByUserId: 2 });
+    return { id, line };
+  }
+
+  it("matches the page's actionable count at or under the ceiling", async () => {
+    await seedExpense({ state: "capital_review", needsReimbursement: true });
+    await seedExpense({ state: "capital_review" });
+    await signable(new Date("2026-03-01T00:00:00Z"));
+    const page = await pageActionable(FINANCE);
+    expect(page).toBeGreaterThan(2);
+    expect(await financeQueueActionable(FINANCE, page)).toBe(page);
+    expect(await financeQueueActionable(FINANCE, 99)).toBe(page);
+  });
+
+  it("answers one more than the ceiling once the count passes it", async () => {
+    for (let i = 0; i < 4; i++) await seedExpense({ state: "capital_review" });
+    expect(await pageActionable(FINANCE)).toBe(4);
+    expect(await financeQueueActionable(FINANCE, 2)).toBe(3);
+  });
+
+  it("still counts an older waiting signature behind more than a page of newer Treasurer-signed expenses", async () => {
+    await signable(new Date("2026-01-01T00:00:00Z"));
+    for (let day = 1; day <= 30; day++) {
+      const { id, line } = await signable(new Date(Date.UTC(2026, 1, day)));
+      await db.expenseLineSignoff.create({ data: { expenseId: id, lineItemId: line, seat: "TREASURER", signerUserId: 4 } });
+    }
+    expect((await financeQueueCounts(FINANCE)).toSign).toMatchObject({ actionable: 1 });
+    expect(await financeQueueActionable(FINANCE, 99)).toBe(await pageActionable(FINANCE));
   });
 });

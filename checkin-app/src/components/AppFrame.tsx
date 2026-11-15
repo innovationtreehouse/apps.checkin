@@ -51,7 +51,7 @@ import { useIsDevInstance } from '@/components/EnvProvider';
 import { BuildInfoFooter } from '@/components/BuildInfoFooter';
 import { useTodoCounts } from '@/hooks/useTodoCounts';
 import { useConfirmNav } from '@/components/UnsavedChangesProvider';
-import { sectionBadges } from '@/components/navBadges';
+import { badgeText, sectionBadges } from '@/components/navBadges';
 import { CountBadge, badgeIntentFor } from '@/components/ui/CountBadge';
 import type { NavSection } from '@/lib/nav/types';
 import { sectionShown, tabHrefs, visibleLinks } from '@/lib/nav/gates';
@@ -297,7 +297,7 @@ function AppFrameInner({ children }: { children: React.ReactNode }) {
                         const intent = badgeIntentFor(badge.color);
                         return intent ? (
                           <CountBadge key={i} intent={intent} aria-label={badge.label}>
-                            {badge.count}
+                            {badgeText(badge.count)}
                           </CountBadge>
                         ) : (
                           <Badge
@@ -308,7 +308,7 @@ function AppFrameInner({ children }: { children: React.ReactNode }) {
                             c="var(--mantine-color-black)"
                             aria-label={badge.label}
                           >
-                            {badge.count}
+                            {badgeText(badge.count)}
                           </Badge>
                         );
                       })}
