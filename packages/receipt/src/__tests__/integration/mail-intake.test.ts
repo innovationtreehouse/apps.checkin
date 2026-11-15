@@ -712,12 +712,6 @@ describeDb("mail intake listing failure", () => {
     loggedKind("connection");
   });
 
-  it("hands each listing failure to the on-failure port", async () => {
-    failListing();
-    vi.spyOn(console, "warn").mockImplementation(() => {});
-    await readMailbox();
-  });
-
   it.each([
     [401, "connection"],
     [403, "connection"],

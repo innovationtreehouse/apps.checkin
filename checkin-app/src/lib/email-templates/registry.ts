@@ -218,7 +218,7 @@ export const REGISTRY = {
             actionLink: SAMPLE_URL,
         },
         defaultSubject: "Receipt flow: {{count}} problem(s) waiting on a person",
-        defaultBody: "These have been waiting more than a day. System Status lists each one with its error.\n\n{{items}}\n\n{{actionLink}}",
+        defaultBody: "These have been waiting more than a day. System Status lists each one with a link to its page.\n\n{{items}}\n\n{{actionLink}}",
     },
 
     // ── finance ─────────────────────────────────────────────────────────────
