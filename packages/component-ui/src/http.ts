@@ -64,7 +64,7 @@ export async function request<T>(url: string, { invalidate = true, ...options }:
   if (res.ok && !isJson) throw new HttpError(FAILURE_TEXT, res.status);
   if (!res.ok) {
     const { error: message, fields } = (data ?? {}) as { error?: unknown; fields?: unknown };
-    if (typeof message !== "string") {
+    if (typeof message !== "string" || !message.trim()) {
       throw new HttpError(gatewayMessage(res, isJson, method === "GET" || method === "HEAD") ?? FAILURE_TEXT, res.status);
     }
     throw new HttpError(message, res.status, Array.isArray(fields) ? fields.filter((f): f is string => typeof f === "string") : []);

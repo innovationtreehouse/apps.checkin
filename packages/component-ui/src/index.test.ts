@@ -35,6 +35,7 @@ describe("createClient api", () => {
     ["a JSON failure with no error text", 500, JSON.stringify({ message: "boom" })],
     ["a JSON failure whose error is not text", 422, JSON.stringify({ error: { code: 1 } })],
     ["an empty failure", 404, ""],
+    ["a JSON failure whose error is blank", 400, JSON.stringify({ error: "  " })],
     ["a non-JSON success", 200, "<html>"],
   ])("throws the fixed text with the status for %s", async (_case, status, body) => {
     stub(status, body);
