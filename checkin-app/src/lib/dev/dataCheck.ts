@@ -76,13 +76,44 @@ export function classifyPeople(people: PersonRow[], householdIds: number[]) {
 
 const bare = (quoted: string) => quoted.replace(/^"|"$/g, "");
 
-/** The database each environment's check may read: dev's own, or a local or integration-test one. */
-export function isAllowedDatabase(env: string, name: string): boolean {
-    if (env === "dev") return name === "checkin_dev";
-    return name === "checkmein" || name.startsWith("checkin_test_");
+/** A refusal to read a database that is not the expected dev or local one. */
+export class DevDataCheckRefused extends Error {}
+
+// Hosts a local database may live on: the laptop itself, or the `db` service in deploy/docker-compose*.yml.
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]", "db"]);
+
+function isLocalHost(databaseUrl: string | undefined): boolean {
+    try {
+        return LOCAL_HOSTS.has(new URL(databaseUrl ?? "").hostname);
+    } catch {
+        return false;
+    }
 }
 
-export async function runDevDataCheck(db: DataCheckDb): Promise<DevDataReport> {
+/**
+ * The database each environment's check may read: dev's own (`<db>_dev`), or a local or
+ * integration-test one on a local host. `databaseUrl` is the URL the client connects with.
+ */
+export function isAllowedDatabase(
+    env: string,
+    name: string,
+    databaseUrl: string | undefined,
+    db: "checkin" | "receipt" = "checkin",
+): boolean {
+    if (env === "dev") return name === `${db}_dev`;
+    if (!isLocalHost(databaseUrl)) return false;
+    return db === "checkin" ? name === "checkmein" || name.startsWith("checkin_test_") : name === db;
+}
+
+export async function currentDatabase(tx: Pick<DataCheckTx, "$queryRawUnsafe">): Promise<string> {
+    const [{ name }] = (await tx.$queryRawUnsafe("SELECT current_database() AS name")) as { name: string }[];
+    return name;
+}
+
+export async function runDevDataCheck(
+    db: DataCheckDb,
+    databaseUrl: string | undefined = process.env.DATABASE_URL,
+): Promise<DevDataReport> {
     const env = config.checkinEnv();
     if (env !== "dev" && env !== "local") {
         throw new Error(`dev-data-check runs only when CHECKIN_ENV is dev or local (got ${env})`);
@@ -92,9 +123,8 @@ export async function runDevDataCheck(db: DataCheckDb): Promise<DevDataReport> {
         // The database refuses any write for the rest of this transaction.
         await tx.$executeRawUnsafe("SET TRANSACTION READ ONLY");
 
-        const [{ name }] = (await tx.$queryRawUnsafe("SELECT current_database() AS name")) as { name: string }[];
-        if (!isAllowedDatabase(env, name)) {
-            throw new Error(`dev-data-check refuses to read a database that is not the ${env} database`);
+        if (!isAllowedDatabase(env, await currentDatabase(tx), databaseUrl)) {
+            throw new DevDataCheckRefused(`dev-data-check refuses to read a database that is not the ${env} database`);
         }
 
         const people = (await tx.$queryRawUnsafe(
