@@ -277,6 +277,23 @@ describe("EventAdminPage", () => {
         expect(body).toMatchObject({ action: "manualEditAttendance", status: "Absent", arrivedAt: null, departedAt: null });
     });
 
+    it("manual edit: a Present mark with no departure flags the Departed Time field and does not save", async () => {
+        setSession({ id: 1, isSysadmin: true });
+        const fetchMock = mockFetchJson({ "/api/events/5": baseEvent() });
+        renderPage(params);
+        await screen.findByText("Robotics Session");
+
+        fireEvent.click(screen.getAllByRole("button", { name: "Manual Edit" })[1]);
+        await screen.findByText(/Manual Edit: Pat Participant/);
+        fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+        const departed = screen.getByLabelText("Departed Time");
+        expect(departed).toHaveAttribute("aria-invalid", "true");
+        expect(departed).toHaveFocus();
+        expect(screen.getByText("Departure time is required for Present status")).toBeInTheDocument();
+        expect(fetchMock).not.toHaveBeenCalledWith("/api/events/5", expect.objectContaining({ method: "PATCH" }));
+    });
+
     it("manual edit modal: Cancel button and the (X) close button both dismiss without saving", async () => {
         setSession({ id: 1, isSysadmin: true });
         const fetchMock = mockFetchJson({ "/api/events/5": baseEvent() });

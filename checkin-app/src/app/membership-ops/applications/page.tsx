@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, Suspense } from "react";
+import { useRef, useState, Suspense } from "react";
 import { Alert, Button, Card, Center, Group, Loader, Modal, Select, Stack, Switch, Text, Textarea } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { errorMessage, HttpError, LoadError, showError, showSuccess } from "@checkin/component-ui";
@@ -76,6 +76,43 @@ const awaitingBg = (r: ProcessRow) =>
   awaitingBgReview.has({ kind: r.kind as ProcessKind, status: r.status as ProcessStatus, bgConsentAt: !!r.bgConsentAt, bgClearedAt: !!r.bgClearedAt });
 
 const leadsOf = (r: ProcessRow) => (r.orgMembership?.household?.householdMembers ?? []).filter((p) => p.isHouseholdLead);
+
+// The body of the mark-check-started dialog: confirming with no lead picked flags the Lead field.
+function LeadPickConfirm({ leads, onCancel, onConfirm }: {
+  leads: Person[];
+  onCancel: () => void;
+  onConfirm: (personId: number) => void;
+}) {
+  const [personId, setPersonId] = useState<string | null>(leads.length === 1 ? String(leads[0].id) : null);
+  const [error, setError] = useState<string | null>(null);
+  const field = useRef<HTMLInputElement>(null);
+  const confirm = () => {
+    if (personId === null) {
+      setError("Pick a lead.");
+      field.current?.focus();
+      return;
+    }
+    onConfirm(Number(personId));
+  };
+  return (
+    <Stack gap="xs">
+      <Text size="sm">Pick the lead whose check was started in the background-check tool. Their review goes to the reviewers.</Text>
+      <Select
+        ref={field}
+        label="Lead"
+        required
+        data={leads.map((p) => ({ value: String(p.id), label: p.name || p.email || `Person #${p.id}` }))}
+        value={personId}
+        error={error}
+        onChange={(v) => { setPersonId(v); setError(null); }}
+      />
+      <Group justify="flex-end" mt="sm">
+        <Button variant="default" onClick={onCancel}>Cancel</Button>
+        <Button onClick={confirm}>Mark check started</Button>
+      </Group>
+    </Stack>
+  );
+}
 
 // A household's check is started when an open review has a lead's check started, or a
 // review it asked for waits to be named, or the application carries the legacy flag.
@@ -161,58 +198,44 @@ function ApplicationsBoard() {
     post(processId, "/api/membership/reviews/dismiss", { reason }, "Dismissed: the check is no longer marked started.");
 
   const confirmMarkLead = (r: ProcessRow) => {
-    const leads = leadsOf(r);
-    let personId: number | null = leads.length === 1 ? leads[0].id : null;
-    const modalId = modals.openConfirmModal({
+    const modalId = `mark-lead-${r.id}`;
+    modals.open({
+      modalId,
       title: "Mark a lead's check started",
       children: (
-        <Stack gap="xs">
-          <Text size="sm">Pick the lead whose check was started in the background-check tool. Their review goes to the reviewers.</Text>
-          <Select
-            label="Lead"
-            required
-            data={leads.map((p) => ({ value: String(p.id), label: p.name || p.email || `Person #${p.id}` }))}
-            defaultValue={personId === null ? null : String(personId)}
-            onChange={(v) => { personId = v ? Number(v) : null; }}
-          />
-        </Stack>
+        <LeadPickConfirm
+          leads={leadsOf(r)}
+          onCancel={() => modals.close(modalId)}
+          onConfirm={(personId) => {
+            modals.close(modalId);
+            markLeadCheckStarted(r.id, personId);
+          }}
+        />
       ),
-      labels: { confirm: "Mark check started", cancel: "Cancel" },
-      closeOnConfirm: false,
-      onConfirm: () => {
-        if (personId === null) {
-          showError("Pick a lead.");
-          return;
-        }
-        modals.close(modalId);
-        markLeadCheckStarted(r.id, personId);
-      },
     });
   };
 
   const confirmDismiss = (r: ProcessRow) => {
-    let reason = "";
-    const modalId = modals.openConfirmModal({
+    const modalId = `dismiss-${r.id}`;
+    modals.open({
+      modalId,
       title: "Dismiss: opened by mistake",
       children: (
-        <Stack gap="xs">
+        <ReasonConfirm
+          confirmLabel="Dismiss"
+          missingReason="A reason is required to dismiss a check review."
+          onCancel={() => modals.close(modalId)}
+          onConfirm={(reason) => {
+            modals.close(modalId);
+            dismissReview(r.id, reason);
+          }}
+        >
           <Text size="sm">
             This undoes the &quot;check started&quot; mark on <strong>{processLabel(r)}</strong>. It decides nothing:
             no approval, no rejection. Check the background-check tool first.
           </Text>
-          <Textarea label="Reason" required autosize minRows={2} onChange={(e) => { reason = e.currentTarget.value; }} />
-        </Stack>
+        </ReasonConfirm>
       ),
-      labels: { confirm: "Dismiss", cancel: "Cancel" },
-      closeOnConfirm: false,
-      onConfirm: () => {
-        if (!reason.trim()) {
-          showError("A reason is required to dismiss a check review.");
-          return;
-        }
-        modals.close(modalId);
-        dismissReview(r.id, reason.trim());
-      },
     });
   };
 
