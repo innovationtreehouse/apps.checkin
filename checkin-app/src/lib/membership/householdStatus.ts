@@ -63,13 +63,15 @@ export function fromWhere(from: HouseholdStatus | readonly HouseholdStatus[]): W
  * existing row. Refuses an archived household, locking the membership row before the
  * household row, the order archiving takes them in.
  */
-export async function ensureHouseholdMembership(db: DbClient, householdId: number): Promise<{ id: number; status: HouseholdStatus }> {
-    await db.$queryRaw`SELECT id FROM "OrgMembership" WHERE "householdId" = ${householdId} FOR UPDATE`;
-    await lockLiveHouseholds(db, [householdId]);
-    // ON CONFLICT DO NOTHING waits out a concurrent insert without raising: a unique
-    // violation would abort a caller's transaction, leaving it unable to read the winner.
-    await db.orgMembership.createMany({ data: { householdId }, skipDuplicates: true });
-    return db.orgMembership.findUniqueOrThrow({ where: { householdId }, select: { id: true, status: true } });
+export async function ensureHouseholdMembership(client: DbClient, householdId: number): Promise<{ id: number; status: HouseholdStatus }> {
+    return withTx(client, async (db) => {
+        await db.$queryRaw`SELECT id FROM "OrgMembership" WHERE "householdId" = ${householdId} FOR UPDATE`;
+        await lockLiveHouseholds(db, [householdId]);
+        // ON CONFLICT DO NOTHING waits out a concurrent insert without raising: a unique
+        // violation would abort a caller's transaction, leaving it unable to read the winner.
+        await db.orgMembership.createMany({ data: { householdId }, skipDuplicates: true });
+        return db.orgMembership.findUniqueOrThrow({ where: { householdId }, select: { id: true, status: true } });
+    });
 }
 
 /**

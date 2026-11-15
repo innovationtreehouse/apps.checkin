@@ -42,29 +42,33 @@ export const PATCH = withAuth(
                 return apiError("Only household leads can edit household settings", 403);
             }
 
-            await lockLiveHouseholds(prisma, [user.householdId]);
-            const updatedHousehold = await prisma.household.update({
-                where: { id: user.householdId },
-                data: householdData,
-            });
-
-            // Emergency contact is a separate entity; the settings form edits the
-            // household's primary contact. Rejects a contact who is a member.
-            if (emergencyContactName !== undefined || emergencyContactPhone !== undefined) {
-                await upsertPrimaryContact(prisma, user.householdId, {
-                    name: emergencyContactName,
-                    phone: emergencyContactPhone,
+            const householdId = user.householdId;
+            const updatedHousehold = await prisma.$transaction(async (tx) => {
+                await lockLiveHouseholds(tx, [householdId]);
+                const updated = await tx.household.update({
+                    where: { id: householdId },
+                    data: householdData,
                 });
-            }
 
-            await prisma.auditLog.create({
-                data: {
-                    actorId: userId,
-                    action: "EDIT",
-                    tableName: "Household",
-                    affectedEntityId: user.householdId,
-                    newData: { emergencyContactName, emergencyContactPhone, ...pickAddress(updatedHousehold) }
+                // Emergency contact is a separate entity; the settings form edits the
+                // household's primary contact. Rejects a contact who is a member.
+                if (emergencyContactName !== undefined || emergencyContactPhone !== undefined) {
+                    await upsertPrimaryContact(tx, householdId, {
+                        name: emergencyContactName,
+                        phone: emergencyContactPhone,
+                    });
                 }
+
+                await tx.auditLog.create({
+                    data: {
+                        actorId: userId,
+                        action: "EDIT",
+                        tableName: "Household",
+                        affectedEntityId: householdId,
+                        newData: { emergencyContactName, emergencyContactPhone, ...pickAddress(updated) }
+                    }
+                });
+                return updated;
             });
 
             // Only a lead reads the note back, matching GET /api/household.

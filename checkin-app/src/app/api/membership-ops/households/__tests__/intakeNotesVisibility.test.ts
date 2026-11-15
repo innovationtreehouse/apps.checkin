@@ -47,6 +47,7 @@ jest.mock("@/lib/prisma", () => {
         auditLog: { create: jest.fn() },
         account: { deleteMany: jest.fn() },
         $executeRaw: jest.fn(),
+        $queryRaw: jest.fn(),
     };
     return {
         __esModule: true,
@@ -151,6 +152,15 @@ describe("other admin routes returning a Household row: sysadmin-only caller get
         const { household } = await res.json();
         expect(household.name).toBe("Renamed");
         expect(household.intakeNotes).toBeNull();
+    });
+
+    it("PATCH /api/membership-ops/households/[id] answers 409 when the household was archived mid-edit", async () => {
+        signIn(SYSADMIN_ONLY);
+        db.household.findUnique.mockResolvedValue(HOUSEHOLD);
+        (lockLiveHouseholds as jest.Mock).mockRejectedValueOnce(new ArchivedHouseholdError());
+        const res = await householdPATCH(request("http://localhost/api/membership-ops/households/10", "PATCH", { name: "Renamed" }), { params: Promise.resolve({ id: "10" }) });
+        expect(res.status).toBe(409);
+        expect(db.household.update).not.toHaveBeenCalled();
     });
 
     it("PUT /api/membership-ops/participants/[id]", async () => {
