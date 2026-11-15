@@ -107,6 +107,14 @@ describe('stripper — a relation count beside its rows', () => {
         expect(stripValue('ReceiptConfirmationView', empty, own, { ...ctx(), selfId: 9 })).toEqual(expected);
     });
 
+    it('drops a non-zero count beside a where-filtered empty list', () => {
+        const filtered = { reimburseePersonId: 9, lineItems: [], _count: { lineItems: 3 } };
+        expect(stripValue('ReceiptConfirmationView', filtered, own, { ...ctx(), selfId: 9 })).toEqual({
+            reimburseePersonId: 9,
+            lineItems: [],
+        });
+    });
+
     it('keeps the count beside an empty list when the target shows a field without a scope', () => {
         const program = { id: 4, participants: [], _count: { participants: 0 } };
         expect(stripValue('Program', program, ['public'] as Token[], ctx())).toEqual(program);
