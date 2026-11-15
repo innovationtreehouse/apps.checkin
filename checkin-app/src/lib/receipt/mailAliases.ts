@@ -3,6 +3,7 @@
  * (docs/rules/people-households.md, Identity and age). Routes gate on finance-or-board. Audit rows carry no address.
  */
 import { mailQueueService } from "@checkin/receipt";
+import { ServiceError } from "@checkin/component-kit";
 import { z } from "zod";
 import { personActor } from "@/lib/auditActor";
 import prisma from "@/lib/prisma";
@@ -161,6 +162,61 @@ export async function approveMailAlias(actorId: number, id: number) {
     });
     return tx.personMailAlias.findUniqueOrThrow({ where: { id }, select: ALIAS_FIELDS });
   });
+}
+
+/** Holds the alias transaction open across the receipt insert, which may store the file in its bucket. */
+const REMEMBER_TIMEOUT_MS = 30_000;
+
+/**
+ * Finance assigning held mail with "remember": approves the item's sender address as the
+ * assignee's alias and runs `assign` inside this transaction, so the alias and the mail item that
+ * vouches for it land together. The receipt library has checked the item passed DMARC. A pending
+ * alias on that exact address of the same person is approved; any other refusal is the add's.
+ * It runs inside the receipt library's call, so it throws the kit's ServiceError, which the route
+ * translates by brand.
+ */
+export async function rememberMailAlias<T>(
+  { actorId, personId, address: raw, mailItemId }: { actorId: number; personId: number; address: string; mailItemId: number },
+  assign: () => Promise<T>,
+): Promise<T> {
+  const address = raw.trim().toLowerCase();
+  const person = await prisma.person.findUnique({ where: { id: personId }, select: { id: true, householdId: true, email: true } });
+  if (!person) throw new ServiceError(404, "Person not found");
+
+  const conflict = await findSelfGrantRefusal(prisma, actorId, { personId, householdId: person.householdId }, { table: "PersonMailAlias", attempted: { rememberMailItemId: mailItemId } });
+  if (conflict) {
+    await recordSelfGrantRefusal(prisma, conflict);
+    throw new ServiceError(403, SELF_GRANT_REFUSAL_MESSAGE);
+  }
+
+  const canonicalKey = canonicalizeEmail(address);
+  const outcome = await prisma.$transaction(
+    async (tx): Promise<{ refused: keyof typeof ADD_REFUSALS } | { assigned: T }> => {
+      await lockMailAliasKey(tx, canonicalKey);
+      const pending = await tx.personMailAlias.findFirst({ where: { personId, address, approvedAt: null }, select: { id: true } });
+      const refused = pending ? null : await addRefusal(tx, person, address, canonicalKey);
+      if (refused) {
+        await tx.auditLog.create({
+          data: { ...personActor(actorId), action: "EDIT", tableName: MAIL_ALIAS_REFUSAL_TABLE, affectedEntityId: personId, newData: { attempted: "remember", reason: refused } },
+        });
+        return { refused };
+      }
+      const id = pending?.id ?? (await tx.personMailAlias.create({ data: { personId, address, canonicalKey, addedById: actorId }, select: { id: true } })).id;
+      if (!pending) {
+        await tx.auditLog.create({
+          data: { ...personActor(actorId), action: "CREATE", tableName: "PersonMailAlias", affectedEntityId: id, secondaryAffectedEntity: personId, newData: { personId } },
+        });
+      }
+      await tx.personMailAlias.update({ where: { id }, data: { approvedAt: new Date(), approvedById: actorId } });
+      await tx.auditLog.create({
+        data: { ...personActor(actorId), action: "EDIT", tableName: "PersonMailAlias", affectedEntityId: id, secondaryAffectedEntity: personId, newData: { approved: true, mailItemId } },
+      });
+      return { assigned: await assign() };
+    },
+    { timeout: REMEMBER_TIMEOUT_MS },
+  );
+  if ("refused" in outcome) throw new ServiceError(409, ADD_REFUSALS[outcome.refused]);
+  return outcome.assigned;
 }
 
 export function aliasId(raw: string): number {

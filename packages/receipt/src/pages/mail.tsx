@@ -98,7 +98,19 @@ function MailItemCard({ item, onDone }: { item: MailItem; onDone: () => void }) 
         <Group align="end">
           <TextInput label="Assign to (sign-in email)" value={email} onChange={(e) => setEmail(e.currentTarget.value)} style={{ flex: 1 }} />
           <Button disabled={!email.trim()} onClick={() => act("assign", { email }, "Receipt created", "Couldn't assign this mail")}>Assign</Button>
+          {item.status === "held" && item.dmarcVerdict === "pass" && (
+            <Button
+              variant="light"
+              disabled={!email.trim()}
+              onClick={() => act("assign", { email, remember: true }, "Receipt created; this address is now theirs", "Couldn't assign this mail and remember the address")}
+            >
+              Assign and remember this address as theirs
+            </Button>
+          )}
         </Group>
+        {item.status === "held" && item.dmarcVerdict !== "pass" && (
+          <Text size="sm" c="dimmed">This address can&apos;t be remembered as the assignee&apos;s: its sender check did not pass.</Text>
+        )}
         <Group align="end">
           <TextInput label="Discard reason" value={reason} onChange={(e) => setReason(e.currentTarget.value)} style={{ flex: 1 }} />
           <Button color="red" variant="light" disabled={!reason.trim()} onClick={() => act("discard", { reason }, "Discarded", "Couldn't discard this mail")}>Discard</Button>

@@ -229,13 +229,18 @@ const outcomeMail: OutcomeMail = {
   },
 };
 
+async function rememberMailAlias<T>(input: { actorId: number; personId: number; address: string; mailItemId: number }, assign: () => Promise<T>): Promise<T> {
+  const aliases = await import("@/lib/receipt/mailAliases");
+  return aliases.rememberMailAlias(input, assign);
+}
+
 export function configureRuntime(): void {
   configureReceipt({
     auth: { getPrincipal },
     org: getOrg,
     households: { householdOf },
     personIds: { liveIds, storedIdsOf },
-    people: { submitterByEmail },
+    people: { submitterByEmail, rememberMailAlias },
     personNames: { namesOf: personNames },
     reimbursees: { search: searchReimbursees, byId: reimburseeById, hasAccount: reimburseeHasAccount, addNonMemberAdult: addNonMemberReimbursee },
     alerts,

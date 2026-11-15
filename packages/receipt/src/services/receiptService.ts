@@ -461,9 +461,14 @@ export async function intakeMailedReceipt(
   file: Buffer,
   mimeType: string,
   ledger: (tx: Prisma.TransactionClient, receiptId: string) => Promise<unknown>,
-  { uploadLimits = true, mailAllowance = true, heldFileKey = null }: { uploadLimits?: boolean; mailAllowance?: boolean; heldFileKey?: string | null } = {},
+  {
+    uploadLimits = true,
+    mailAllowance = true,
+    heldFileKey = null,
+    aroundInsert = (insert) => insert(),
+  }: { uploadLimits?: boolean; mailAllowance?: boolean; heldFileKey?: string | null; aroundInsert?: (insert: () => Promise<string>) => Promise<string> } = {},
 ): Promise<string> {
-  const id = await insertReceipt({
+  const id = await aroundInsert(async () => insertReceipt({
     orgId: await getOrgId(),
     actor,
     file,
@@ -480,7 +485,7 @@ export async function intakeMailedReceipt(
           : limits().mailUploadsPerPersonPerDay
         : undefined,
     afterInsert: ledger,
-  });
+  }));
   await deleteStoredFiles([heldFileKey]);
   if (!(await ocrIsOn())) {
     await failOcrSwitchedOff(id, actor);
