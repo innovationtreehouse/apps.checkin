@@ -107,6 +107,9 @@ Things the app takes as true because they are handled outside it.
 - A youth cannot be made a household lead. An unknown date of birth reads as
   adult here — a standing exception to *Principle: fail closed*.  [Decision — deliberate limit]
 
+- A save that gives a household lead a date of birth under 18 goes through, the
+  person stays its lead, and the Board is emailed.  [Decision — owner]
+
 - A household adds its own members through its leads. The board and sysadmin path
   into any household is a separate one and is unaffected.  [Decision — *Principle: self-scope and repair*]
 

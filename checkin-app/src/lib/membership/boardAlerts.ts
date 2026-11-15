@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import { emailBoardMembers } from "@/lib/emailRecipients";
 import { config } from "@/lib/config";
 import { logger } from "@/lib/logger";
+import { isYouth } from "@/lib/time";
 
 /**
  * Board-facing membership email alerts. Kept dependency-light (prisma plus the
@@ -47,6 +48,34 @@ export async function notifyBoardCheckRejected(reviewId: number): Promise<void> 
         reviewId: String(reviewId),
         actionLink: `${config.baseUrl()}/membership-ops/applications`,
     }, "Check-rejected board ping failed:");
+}
+
+/**
+ * Email board members about each household lead a save has just shown to be under 18.
+ * `before` is each saved person's date of birth before the save; only a lead who was
+ * not a youth then is named, so re-saving the same date sends nothing. Call after the
+ * save commits. Never throws.
+ */
+export async function notifyBoardOfYouthLeads(before: { id: number; dateOfBirth: Date | null }[]): Promise<void> {
+    const newlyYouth = before.filter((p) => !isYouth(p.dateOfBirth)).map((p) => p.id);
+    if (newlyYouth.length === 0) return;
+    let leads;
+    try {
+        leads = await prisma.person.findMany({
+            where: { id: { in: newlyYouth }, isHouseholdLead: true },
+            select: { name: true, dateOfBirth: true, household: { select: { id: true, name: true } } },
+        });
+    } catch (error) {
+        logger.error("Youth-lead board ping failed:", { ids: newlyYouth }, error);
+        return;
+    }
+    for (const lead of leads.filter((p) => isYouth(p.dateOfBirth))) {
+        await emailBoardMembers("board.youthHouseholdLead", {
+            personName: lead.name,
+            householdName: lead.household.name,
+            actionLink: `${config.baseUrl()}/membership-ops/households/${lead.household.id}`,
+        }, "Youth-lead board ping failed:");
+    }
 }
 
 /** One-line human description per payment-exception kind, for the board email. */
