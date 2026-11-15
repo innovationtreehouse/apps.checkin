@@ -605,6 +605,24 @@ describe("ProgramDetailsPage", () => {
     expect(screen.getByRole("button", { name: "Actions for Other Kid" })).toBeInTheDocument();
   });
 
+  it("shows a participant's phone only when the roster sends one", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({ "/api/programs/1": {
+      ...programData,
+      participants: [
+        { personId: 101, status: "ACTIVE", pendingSince: null, person: { name: "Adult Learner", email: "adult@example.com", phone: "5125551234" } },
+        { personId: 104, status: "ACTIVE", pendingSince: null, person: { name: "Youth Learner", email: "youth@example.com", phone: null } },
+      ],
+    } });
+    renderPage();
+    await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
+    await screen.findByText(/Youth Learner/);
+
+    expect(screen.getAllByText("Phone:")).toHaveLength(1);
+    expect(screen.getByText("Phone:").parentElement).toHaveTextContent("Phone: 512-555-1234");
+  });
+
   it("keeps Remove in the row menu, not on the row", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson({ "/api/programs/1": programData });

@@ -283,6 +283,7 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
                 </Group>
                 <SimpleGrid cols={{ base: 1, sm: 2 }} mt="xs" spacing="xs">
                   <Text size="sm" c="dimmed"><strong>Email:</strong> {p.person.email}</Text>
+                  {p.person.phone && <Text size="sm" c="dimmed"><strong>Phone:</strong> {formatPhone(p.person.phone)}</Text>}
                   {p.person.household && (
                     <>
                       <Text size="sm" c="dimmed" style={{ gridColumn: '1 / -1' }}>

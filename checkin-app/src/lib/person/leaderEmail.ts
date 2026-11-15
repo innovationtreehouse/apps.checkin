@@ -20,6 +20,11 @@ export function rosterPerson<P extends { email: string | null; dateOfBirth: Date
     return viewerIsLeader && !leaderMaySeeEmail(dateOfBirth) ? { ...person, email: null } : person;
 }
 
+/** A participant's own phone ships only for an adult at the program's start; an unknown date of birth is not adult. */
+export function adultPhoneOnly<P extends { phone: string | null; dateOfBirth: Date | null }>(person: P, programStart: Date): P {
+    return person.dateOfBirth && calculateAge(person.dateOfBirth, programStart) >= 18 ? person : { ...person, phone: null };
+}
+
 /** The enrolled participants whose email the viewer may not see, wherever the response lists them. */
 export function emailWithheldParticipants(
     participants: { personId: number; person: { dateOfBirth: Date | null } }[],
