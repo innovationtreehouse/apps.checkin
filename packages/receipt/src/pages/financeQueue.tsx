@@ -18,11 +18,12 @@ export { QueueCount, queueBadge, useQueueCounts, type QueueBadge, type QueueCoun
 function useLoadErrorChip(error: string | null, status: number | null, path: string, id: string, route: string) {
   useEffect(() => {
     if (!error) return;
-    const server = error === "Internal Server Error" || (error === FAILURE_TEXT && status !== null && status >= 500);
+    const wordless = error === FAILURE_TEXT && status !== null;
+    const server = error === "Internal Server Error" || (wordless && status >= 500);
     notifications.show({
       id,
       title: "Couldn't load these receipts",
-      message: server ? `GET ${route} failed on the server (HTTP 500); the server log names the cause under that route.` : `GET ${route} answered: ${error}`,
+      message: server ? `GET ${route} failed on the server (HTTP ${status}); the server log names the cause under that route.` : `GET ${route} answered: ${wordless ? `HTTP ${status}` : error}`,
       color: "red",
       autoClose: false,
     });

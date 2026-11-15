@@ -5,8 +5,8 @@ import FinanceReview from "@/components/finance/FinanceReview";
 let mockSearch = new URLSearchParams();
 const mockReplace = jest.fn();
 let mockIsFinance = true;
-let mockReceiptLoads: Record<string, { data: unknown; error: string | null }> = {};
-let mockExpenseLoads: Record<string, { data: unknown; error: string | null }> = {};
+let mockReceiptLoads: Record<string, { data: unknown; error: string | null; status?: number }> = {};
+let mockExpenseLoads: Record<string, { data: unknown; error: string | null; status?: number }> = {};
 const mockReloadCounts = jest.fn();
 const mockReceiptLoad = jest.fn((path: string | null) => ({ data: null, error: null, ...(path === null ? {} : mockReceiptLoads[path]), reload: path === "/queue-counts" ? mockReloadCounts : jest.fn() }));
 const mockExpenseLoad = jest.fn((path: string | null) => ({ data: null, error: null, ...(path === null ? {} : mockExpenseLoads[path]), reload: jest.fn() }));
@@ -234,7 +234,7 @@ describe("the receipt tabs", () => {
   });
 
   it("shows a failed receipt count load as a chip that stays up, naming the route, never inline", () => {
-    mockReceiptLoads["/queue-counts"] = { data: null, error: "Internal Server Error" };
+    mockReceiptLoads["/queue-counts"] = { data: null, error: "Internal Server Error", status: 500 };
     wrap();
     expect(mockShow).toHaveBeenCalledWith(expect.objectContaining({
       title: "Couldn't load the receipt tab counts",
@@ -328,7 +328,7 @@ describe("the expense tabs", () => {
 
 describe("load failures", () => {
   it("shows a failed expense count load as a chip that stays up, naming the route, never inline", () => {
-    mockExpenseLoads["/finance-queue/counts"] = { data: null, error: "Internal Server Error" };
+    mockExpenseLoads["/finance-queue/counts"] = { data: null, error: "Internal Server Error", status: 500 };
     wrap();
     expect(mockShow).toHaveBeenCalledWith(expect.objectContaining({
       title: "Couldn't load the expense tab counts",
@@ -341,7 +341,7 @@ describe("load failures", () => {
 
   it("shows a tab that fails to load as a chip naming the tab and its route, and keeps the Board tab for FINANCE", () => {
     mockSearch = new URLSearchParams("queue=board");
-    mockExpenseLoads["/finance-queue?tab=board"] = { data: null, error: "Internal Server Error" };
+    mockExpenseLoads["/finance-queue?tab=board"] = { data: null, error: "Internal Server Error", status: 500 };
     wrap();
     expect(tabButton(/^Board/)).toHaveAttribute("aria-pressed", "true");
     expect(mockShow).toHaveBeenCalledWith(expect.objectContaining({

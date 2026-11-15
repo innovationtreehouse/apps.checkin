@@ -19,9 +19,10 @@ export { FINANCE_QUEUE_TABS, financeQueueTab, type FinanceQueueCounts, type Fina
 
 /** Why a load failed, naming the request; a server failure's cause is in the server log under that route. */
 export function loadFailure(path: string, error: string, status: number | null): string {
-  return error === "Internal Server Error" || (error === FAILURE_TEXT && status !== null && status >= 500)
-    ? `GET ${path} failed on the server (HTTP 500); the server log names the cause under that route.`
-    : `GET ${path} answered: ${error}`;
+  const wordless = error === FAILURE_TEXT && status !== null;
+  return error === "Internal Server Error" || (wordless && status >= 500)
+    ? `GET ${path} failed on the server (HTTP ${status}); the server log names the cause under that route.`
+    : `GET ${path} answered: ${wordless ? `HTTP ${status}` : error}`;
 }
 
 /** A failed load as a red chip that stays up until dismissed. */
