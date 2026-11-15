@@ -321,6 +321,10 @@ Things the app takes as true because they are handled outside it.
   to the Board. A seat that refund put back on sale is taken back off sale until
   the Board decides.  [Decision — *Principle: people decide about people*]
 
+- A store refund on an enrolled person's order flags the enrollment for the
+  Board and never removes the person. A seat that refund put back on sale is
+  taken back off sale while the person holds it.  [Decision — Board ruling B13]
+
 - The public item keeps its counted stock for people buying straight from the
   store. A change to a program's full price goes to both store items. A member
   price does not, because members pay through their discount code. A full price
