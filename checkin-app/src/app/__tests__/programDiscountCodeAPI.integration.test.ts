@@ -15,6 +15,7 @@ import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { getServerSession } from 'next-auth/next';
 import * as shopify from '@/lib/shopify/discounts';
 import { verifyCheckout } from '@/lib/programs/checkoutSignature';
+import { WITH_EMERGENCY_CONTACT } from '@/test-helpers/emergencyContact';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 
@@ -95,7 +96,7 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
         const unsettled = await prisma.person.create({
             data: {
                 email: `unsettled-${TAG}@example.com`, name: 'Unsettled Member', isHouseholdLead: true,
-                household: { create: { name: `Unsettled HH ${TAG}`, orgMembership: { create: { status: 'ACTIVE' } } } },
+                household: { create: { name: `Unsettled HH ${TAG}`, orgMembership: { create: { status: 'ACTIVE' } }, ...WITH_EMERGENCY_CONTACT } },
             },
             select: { id: true, householdId: true },
         });
@@ -107,7 +108,7 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
         const settled = await prisma.person.create({
             data: {
                 email: `settled-${TAG}@example.com`, name: 'Settled Member', isHouseholdLead: true,
-                household: { create: { name: `Settled HH ${TAG}`, orgMembership: { create: { status: 'ACTIVE' } } } },
+                household: { create: { name: `Settled HH ${TAG}`, orgMembership: { create: { status: 'ACTIVE' } }, ...WITH_EMERGENCY_CONTACT } },
             },
             select: { id: true, householdId: true },
         });
@@ -129,7 +130,7 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
         youthPersonId = youth.id;
 
         const nonMember = await prisma.person.create({
-            data: { email: `nonmember-${TAG}@example.com`, name: 'Non Member', isHouseholdLead: true, household: { create: { name: `Non Member HH ${TAG}` } } },
+            data: { email: `nonmember-${TAG}@example.com`, name: 'Non Member', isHouseholdLead: true, household: { create: { name: `Non Member HH ${TAG}`, ...WITH_EMERGENCY_CONTACT } } },
             select: { id: true },
         });
         nonMemberPersonId = nonMember.id;

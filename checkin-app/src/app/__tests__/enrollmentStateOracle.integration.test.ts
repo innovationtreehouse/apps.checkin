@@ -30,6 +30,7 @@ jest.mock('@/lib/shopify/stock', () => {
     return { ...actual, changeProgramStockWith: jest.fn(actual.changeProgramStockWith) };
 });
 import { classify, validate, toRow, type EnrollmentStateName } from '@/lib/programs/enrollmentState';
+import { WITH_EMERGENCY_CONTACT } from '@/test-helpers/emergencyContact';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 jest.mock('@/lib/notifications', () => ({ sendNotification: jest.fn() }));
@@ -51,12 +52,12 @@ describe('enrollment state — validator oracle over real transitions', () => {
                 name: 'Oracle Self',
                 email: `self-${TAG}@example.com`,
                 dateOfBirth: new Date(Date.now() - (30 * 31556952000)),
-                household: { create: { name: 'HH' } },
+                household: { create: { name: 'HH', ...WITH_EMERGENCY_CONTACT } },
             },
         });
         selfId = self.id;
         const board = await prisma.person.create({
-            data: { name: 'Oracle Board', email: `board-${TAG}@example.com`, isBoardMember: true, household: { create: { name: 'HH' } } },
+            data: { name: 'Oracle Board', email: `board-${TAG}@example.com`, isBoardMember: true, household: { create: { name: 'HH', ...WITH_EMERGENCY_CONTACT } } },
         });
         boardId = board.id;
         // shopifyVariantId present so the apply-time hold logic engages (single pool).

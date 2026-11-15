@@ -18,6 +18,7 @@ import { PROGRAM_ENDED_PAYMENT } from "@/lib/programs/checkoutSignature";
 import { apiError } from "@/lib/api-response";
 import { ServiceError } from "@checkin/component-kit";
 import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
+import { householdMayEnrol, NO_EMERGENCY_CONTACT_TO_ENROL } from "@/lib/emergencyContacts/service";
 
 export const POST = withAuth({}, async (req, auth, { params }: { params: Promise<{ id: string }> }) => {
     if (auth.type !== 'session') return apiError("Unauthorized", 401);
@@ -101,6 +102,11 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         // page is just a parent — they pay like anyone else, whether or not they
         // happen to be the household's lead.
         const isExternalAdmin = isSysAdminOrBoard && !isConflicted;
+
+        // Staff adding from the roster are exempt, so the front desk can fix the contact afterwards.
+        if (!isExternalAdmin && !(await householdMayEnrol(prisma, participantData?.householdId))) {
+            return apiError(NO_EMERGENCY_CONTACT_TO_ENROL, 400);
+        }
 
         if (isExternalAdmin && !override) {
              return NextResponse.json({ error: "This bypasses all payment. Are you sure?", requiresOverride: true }, { status: 400 });

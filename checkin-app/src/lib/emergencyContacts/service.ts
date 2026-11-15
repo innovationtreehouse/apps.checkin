@@ -298,6 +298,13 @@ export async function householdHasValidContact(db: Db, householdId: number): Pro
     return count > 0;
 }
 
+export const NO_EMERGENCY_CONTACT_TO_ENROL = "Add an emergency contact, with a name and a phone number, before enrolling.";
+
+/** Whether a family may enrol: their household has a valid emergency contact. No household fails. */
+export async function householdMayEnrol(db: Db, householdId: number | null | undefined): Promise<boolean> {
+    return householdId != null && householdHasValidContact(db, householdId);
+}
+
 /**
  * Direction B: after a member is added/changed, re-evaluate every contact in the
  * household. Newly-colliding contacts are flagged invalid; contacts whose

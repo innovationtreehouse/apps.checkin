@@ -55,6 +55,7 @@ jest.mock('@/lib/prisma', () => {
     },
     emergencyContact: {
       findMany: jest.fn(),
+      count: jest.fn().mockResolvedValue(1),
     },
     program: {
       create: jest.fn(),

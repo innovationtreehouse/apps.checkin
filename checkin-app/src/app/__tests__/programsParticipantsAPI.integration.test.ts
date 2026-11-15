@@ -10,6 +10,7 @@ import { POST, DELETE } from '@/app/api/programs/[id]/participants/route';
 import prisma from '@/lib/prisma';
 import { deleteAndReleaseHold } from '@/lib/program/capacity';
 import { getServerSession } from 'next-auth/next';
+import { WITH_EMERGENCY_CONTACT } from '@/test-helpers/emergencyContact';
 // Mock NextAuth
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
@@ -77,7 +78,7 @@ describe('Program Participants API Integration Tests', () => {
                 name: 'Admin',
                 isSysadmin: true,
                 dateOfBirth: new Date(Date.now() - (35 * 31556952000)),
-                household: { create: { name: "Test HH" } },
+                household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } },
             }
         });
         adminId = admin.id;
@@ -89,7 +90,7 @@ describe('Program Participants API Integration Tests', () => {
                 email: 'lead-partic-api-test@example.com',
                 name: 'Lead',
                 dateOfBirth: new Date(Date.now() - (30 * 31556952000)),
-                household: { create: { name: "Test HH" } },
+                household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } },
             }
         });
         leadId = lead.id;
@@ -100,7 +101,7 @@ describe('Program Participants API Integration Tests', () => {
                 email: 'common-partic-api-test@example.com',
                 name: 'Common',
                 dateOfBirth: new Date(Date.now() - (25 * 31556952000)),
-                household: { create: { name: "Test HH" } }
+                household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } }
             }
         });
         commonId = commonUser.id;
@@ -111,14 +112,14 @@ describe('Program Participants API Integration Tests', () => {
                 email: 'other-partic-api-test@example.com',
                 name: 'Other Underage',
                 dateOfBirth: new Date(Date.now() - (10 * 31556952000)),
-                household: { create: { name: "Test HH" } }
+                household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } }
             }
         });
         otherId = otherUser.id;
 
         // Board member who leads a household containing a 25yo dependent. The
         // board flag lives on the session, not the DB row — see the mocks below.
-        const boardHousehold = await prisma.household.create({ data: { name: "Test HH" } });
+        const boardHousehold = await prisma.household.create({ data: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } });
         const board = await prisma.person.create({
             data: { email: 'board-partic-api-test@example.com', name: 'Board Parent', householdId: boardHousehold.id }
         });
@@ -168,7 +169,7 @@ describe('Program Participants API Integration Tests', () => {
                 email: 'board-remover-partic-api-test@example.com',
                 name: 'Board Remover',
                 isBoardMember: true,
-                household: { create: { name: "Test HH" } },
+                household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } },
             }
         });
         boardRemoverId = boardRemover.id;
@@ -211,7 +212,7 @@ describe('Program Participants API Integration Tests', () => {
         // Treehouse Member (household carries the ACTIVE OrgMembership) + the
         // members-only program they are the only eligible enroller for.
         const memberHousehold = await prisma.household.create({
-            data: { name: "Test HH", orgMembership: { create: { status: 'ACTIVE' } } }
+            data: { name: "Test HH", orgMembership: { create: { status: 'ACTIVE' } }, ...WITH_EMERGENCY_CONTACT }
         });
         memberHouseholdId = memberHousehold.id;
         const member = await prisma.person.create({
@@ -647,6 +648,7 @@ describe('Program Participants API Integration Tests', () => {
                      household: {
                          create: {
                              name: 'Test HH',
+                             ...WITH_EMERGENCY_CONTACT,
                              orgMembership: {
                                  create: {
                                      status: 'NONE',
@@ -718,7 +720,7 @@ describe('Program Participants API Integration Tests', () => {
 
         it('should block a self-enroller whose age is unverifiable, pointing them at age capture', async () => {
              const noAge = await prisma.person.create({
-                 data: { email: 'noage-partic-api-test@example.com', name: 'No Age', household: { create: { name: "Test HH" } } }
+                 data: { email: 'noage-partic-api-test@example.com', name: 'No Age', household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } } }
              });
              try {
                  (getServerSession as jest.Mock).mockResolvedValue({ user: { id: noAge.id } });

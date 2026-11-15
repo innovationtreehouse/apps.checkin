@@ -10,6 +10,7 @@
 import { POST as enrollParticipant } from '@/app/api/programs/[id]/participants/route';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
+import { WITH_EMERGENCY_CONTACT } from '@/test-helpers/emergencyContact';
 // Mock NextAuth
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
@@ -72,13 +73,13 @@ describe('Program Age Bounds Integration Tests', () => {
 
         // Setup mock database records
         const admin = await prisma.person.create({
-            data: { email: 'admin-age-test@example.com', name: 'Admin Age Test', isSysadmin: true, household: { create: { name: "Test HH" } } }
+            data: { email: 'admin-age-test@example.com', name: 'Admin Age Test', isSysadmin: true, household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } } }
         });
         testAdminId = admin.id;
 
         // Eligible-age youth live in a household with an adult lead: only a lead
         // may enroll a participant under 18 (docs/rules/programs.md).
-        const guardianHousehold = await prisma.household.create({ data: { name: "Test HH" } });
+        const guardianHousehold = await prisma.household.create({ data: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } });
         const guardian = await prisma.person.create({
             data: {
                 email: 'guardian-age-test@example.com',
@@ -96,17 +97,17 @@ describe('Program Age Bounds Integration Tests', () => {
         validUserId = pValid.id;
 
         const pUnder = await prisma.person.create({
-            data: { email: 'underage-test@example.com', name: 'Underage Test', dateOfBirth: dob12, household: { create: { name: "Test HH" } } }
+            data: { email: 'underage-test@example.com', name: 'Underage Test', dateOfBirth: dob12, household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } } }
         });
         underageUserId = pUnder.id;
 
         const pOver = await prisma.person.create({
-            data: { email: 'overage-test@example.com', name: 'Overage Test', dateOfBirth: dob20, household: { create: { name: "Test HH" } } }
+            data: { email: 'overage-test@example.com', name: 'Overage Test', dateOfBirth: dob20, household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } } }
         });
         overageUserId = pOver.id;
 
         const pNoDob = await prisma.person.create({
-            data: { email: 'no-dob-test@example.com', name: 'No DOB Test', household: { create: { name: "Test HH" } } }
+            data: { email: 'no-dob-test@example.com', name: 'No DOB Test', household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } } }
         });
         noDobUserId = pNoDob.id;
 
@@ -116,17 +117,17 @@ describe('Program Age Bounds Integration Tests', () => {
         exactlyMinUserId = pExactlyMin.id;
 
         const pExactlyMax = await prisma.person.create({
-            data: { email: 'exactly-max-age-test@example.com', name: 'Exactly Max Age Test', dateOfBirth: dobExactly18, household: { create: { name: "Test HH" } } }
+            data: { email: 'exactly-max-age-test@example.com', name: 'Exactly Max Age Test', dateOfBirth: dobExactly18, household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } } }
         });
         exactlyMaxUserId = pExactlyMax.id;
 
         const pTurns14Tomorrow = await prisma.person.create({
-            data: { email: 'turns-14-tomorrow-age-test@example.com', name: 'Turns 14 Tomorrow Test', dateOfBirth: dobTurns14Tomorrow, household: { create: { name: "Test HH" } } }
+            data: { email: 'turns-14-tomorrow-age-test@example.com', name: 'Turns 14 Tomorrow Test', dateOfBirth: dobTurns14Tomorrow, household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } } }
         });
         turns14TomorrowUserId = pTurns14Tomorrow.id;
 
         const pTurned19Yesterday = await prisma.person.create({
-            data: { email: 'turned-19-yesterday-age-test@example.com', name: 'Turned 19 Yesterday Test', dateOfBirth: dobTurned19Yesterday, household: { create: { name: "Test HH" } } }
+            data: { email: 'turned-19-yesterday-age-test@example.com', name: 'Turned 19 Yesterday Test', dateOfBirth: dobTurned19Yesterday, household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } } }
         });
         turned19YesterdayUserId = pTurned19Yesterday.id;
 
