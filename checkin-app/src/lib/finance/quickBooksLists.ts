@@ -6,8 +6,8 @@ import { quickBooks } from "@/lib/components/ports";
 // The app's read-only copy of QuickBooks' account and Class lists (docs/rules/revenue.md).
 // Pickers and save-time checks read only this copy; posting and System Status read QuickBooks live.
 
-export interface SavedAccount { id: string; name: string; accountType: string; active: boolean }
-export interface SavedClass { id: string; name: string; active: boolean }
+export type SavedAccount = { id: string; name: string; accountType: string; active: boolean };
+export type SavedClass = { id: string; name: string; active: boolean };
 
 type ListName = "account" | "class";
 
@@ -32,11 +32,11 @@ export async function refreshQuickBooksLists() {
     return { refreshedAt, accounts: account.length, classes: klass.length };
 }
 
-async function savedEntries(list: ListName): Promise<Record<string, unknown>[]> {
+async function savedEntries(list: ListName): Promise<Prisma.JsonObject[]> {
     const row = await prisma.quickBooksList.findUnique({ where: { list }, select: { entries: true } });
     const entries = row?.entries;
     if (!Array.isArray(entries)) return [];
-    return entries.filter((e): e is Record<string, unknown> => typeof e === "object" && e !== null && !Array.isArray(e));
+    return entries.filter((e): e is Prisma.JsonObject => typeof e === "object" && e !== null && !Array.isArray(e));
 }
 
 const isString = (v: unknown): v is string => typeof v === "string";
