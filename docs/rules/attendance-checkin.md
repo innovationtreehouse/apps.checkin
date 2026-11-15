@@ -415,6 +415,11 @@ hours at a time — is a normal operating mode here, not an incident.
 - Youth and two-deep math stay server-side, never computed on the kiosk. Resolving
   a parked scan runs the same fail-closed safety math the live path does.  [Decision — *Principle: fail closed*]
 
+- The server keeps, for each kiosk signing key, the scan protocol version it
+  last received and when. Recording it never delays, fails or changes a scan.
+  Sysadmins and Board members see it on System Status. It is the evidence for
+  retiring server code kept for older kiosk builds.  [Decision — owner]
+
 ### The visit record
 
 - A visit that is still open is changed only by the kiosk or the nightly
