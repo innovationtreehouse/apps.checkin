@@ -28,8 +28,8 @@ const seats = (n: number) => `${n > 0 ? '+' : ''}${n} seat${Math.abs(n) === 1 ? 
 export default function UnconfirmedShopifyStockPage() {
   const { formatDateTime } = useOrgTime();
   const { ready, loading: authLoading } = useRequireRole(FINANCE_TOOL_ROLES);
-  // Each read asks Shopify for every program's stock, so a failed read is not retried.
-  const { data: rows, error: loadError, reload } = useLoad<Row[]>(ready ? '/api/finance-ops/shopify-stock' : null, { retry: false });
+  // Each read asks Shopify for every program's stock, so a failed read is not retried and a reconnect does not re-read.
+  const { data: rows, error: loadError, reload } = useLoad<Row[]>(ready ? '/api/finance-ops/shopify-stock' : null, { retry: false, reconnect: false });
   const [target, setTarget] = useState<{ row: Row; choice: Choice } | null>(null);
   // The program whose write is in flight; its buttons stay disabled so a second click can't send again.
   const [busyId, setBusyId] = useState<number | null>(null);

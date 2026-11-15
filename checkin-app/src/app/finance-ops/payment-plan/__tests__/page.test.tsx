@@ -1,14 +1,17 @@
-// eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories run hoisted, before imports exist
-jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
-// eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories run hoisted, before imports exist
-jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
+type Rtl = typeof import("@/test-helpers/rtl");
+jest.mock("next/navigation", () => jest.requireActual<Rtl>("@/test-helpers/rtl").navMock());
+jest.mock("next-auth/react", () => jest.requireActual<Rtl>("@/test-helpers/rtl").authMock());
 jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
 
 import { screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl } from "@/test-helpers/rtl";
+import { readsOf, reconnectAfterDedupe, unrelatedWrite } from "@/test-helpers/loadReads";
 import PendingParticipantsPage from "../page";
 
+const LIST = "/api/finance-ops/payment-plans";
+
 beforeEach(() => resetRtl());
+afterEach(() => jest.useRealTimers());
 
 const requests = [
   {
@@ -39,10 +42,14 @@ describe("finance-ops/payment-plan page", () => {
     expect(screen.getByText(/M \$50.00 \/ NM \$75.00/)).toBeInTheDocument();
   });
 
-  it("approves a request and removes it from the list", async () => {
+  it("approves a request, then re-reads the list once and shows it without the row", async () => {
     setSession({ id: 1, isBoardMember: true });
+    let approved = false;
     const fetchMock = mockFetchJson({
-      "/api/finance-ops/payment-plans": () => ({ ProgramParticipant: requests, BoardSettings: null }),
+      [LIST]: () => {
+        if (fetchMock.mock.calls.at(-1)?.[1]?.method === "POST") approved = true;
+        return { ProgramParticipant: approved ? [] : requests, BoardSettings: null };
+      },
     });
     renderWithProviders(<PendingParticipantsPage />);
     await screen.findByText("Pat Participant");
@@ -62,12 +69,14 @@ describe("finance-ops/payment-plan page", () => {
       ),
     );
     expect(await screen.findByText("No pending scholarship or payment plan requests.")).toBeInTheDocument();
+    expect(readsOf(fetchMock, LIST)).toHaveLength(2);
   });
 
   it("keeps the row's buttons disabled while an approve is in flight, so it sends once", async () => {
     setSession({ id: 1, isBoardMember: true });
+    let approved = false;
     const list = mockFetchJson({
-      "/api/finance-ops/payment-plans": () => ({ ProgramParticipant: requests, BoardSettings: null }),
+      [LIST]: () => ({ ProgramParticipant: approved ? [] : requests, BoardSettings: null }),
     });
     let answer: (res: Response) => void = () => {};
     const fetchMock = jest.fn((input: RequestInfo | URL, init?: RequestInit) =>
@@ -87,8 +96,42 @@ describe("finance-ops/payment-plan page", () => {
     fireEvent.click(rowApprove);
     expect(screen.queryByRole("dialog", { name: "Approve Scholarship / Payment Plan" })).not.toBeInTheDocument();
 
+    approved = true;
     answer(new Response(JSON.stringify({ success: true }), { status: 200 }));
     expect(await screen.findByText("No pending scholarship or payment plan requests.")).toBeInTheDocument();
     expect(fetchMock.mock.calls.filter((c) => c[1]?.method === "POST")).toHaveLength(1);
+  });
+
+  it("reads the list once on mount and not again on reconnect", async () => {
+    jest.useFakeTimers();
+    setSession({ id: 1, isBoardMember: true });
+    const fetchMock = mockFetchJson({ [LIST]: { ProgramParticipant: requests, BoardSettings: null } });
+    renderWithProviders(<PendingParticipantsPage />);
+    await screen.findByText("Pat Participant");
+
+    await reconnectAfterDedupe();
+    expect(readsOf(fetchMock, LIST)).toHaveLength(1);
+  });
+
+  it("does not re-read after another page's write", async () => {
+    setSession({ id: 1, isBoardMember: true });
+    const fetchMock = mockFetchJson({ [LIST]: { ProgramParticipant: requests, BoardSettings: null }, "/api/unrelated": {} });
+    renderWithProviders(<PendingParticipantsPage />);
+    await screen.findByText("Pat Participant");
+
+    await unrelatedWrite();
+    expect(readsOf(fetchMock, LIST)).toHaveLength(1);
+  });
+
+  it("shows a failed load in place of the table, not an empty list", async () => {
+    setSession({ id: 1, isBoardMember: true });
+    const fetchMock = jest.fn(async () => new Response(JSON.stringify({ error: "Server down" }), { status: 500 }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    renderWithProviders(<PendingParticipantsPage />);
+
+    expect(await screen.findByText(/Server down/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /retry|try again/i })).toBeInTheDocument();
+    expect(screen.queryByText("No pending scholarship or payment plan requests.")).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

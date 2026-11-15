@@ -96,16 +96,16 @@ export function createClient(base: string) {
    * is for a pager or search box, whose rows each act on their own id; it never keeps an empty list.
    * `expireOn401: false` is for a read mounted on every page: routes also answer 401 to a session
    * next-auth reports as signed in, such as a denied household, so it must not move anyone.
-   * `reconnect: false` and `invalidate: false` are for a read that logs a view or wakes a sleeping
+   * `reconnect: false` and `skipWriteReload: true` are for a read that logs a view or wakes a sleeping
    * database: no re-read on reconnect, and none after another page's write; `reload()` still re-reads.
    */
   function useLoad<T>(
     path: string | null,
-    { retry = true, keepPrevious = false, expireOn401 = true, reconnect = true, invalidate = true }: { retry?: boolean; keepPrevious?: boolean; expireOn401?: boolean; reconnect?: boolean; invalidate?: boolean } = {},
+    { retry = true, keepPrevious = false, expireOn401 = true, reconnect = true, skipWriteReload = false }: { retry?: boolean; keepPrevious?: boolean; expireOn401?: boolean; reconnect?: boolean; skipWriteReload?: boolean } = {},
   ): Loaded<T> {
     const url = path === null ? null : resolve(path);
     useEffect(() => () => { if (url !== null) forgetFailures(url); }, [url]);
-    useEffect(() => (url !== null && !invalidate ? holdFromInvalidation(url) : undefined), [url, invalidate]);
+    useEffect(() => (url !== null && skipWriteReload ? holdFromInvalidation(url) : undefined), [url, skipWriteReload]);
     const swr = useSWR<T, LoadFailure>(
       url,
       (key: string) =>
