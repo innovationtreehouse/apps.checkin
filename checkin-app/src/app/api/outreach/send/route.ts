@@ -4,15 +4,14 @@ import prisma from "@/lib/prisma";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
-import { computeRecipientSnapshot, type Audience } from "@/lib/outreach/recipients";
-import { resolveBoundary, BoundaryNotSetError } from "@/lib/outreach/render";
+import { computeRecipientSnapshot } from "@/lib/outreach/recipients";
+import { resolveBoundary, BoundaryNotSetError, type EmailType } from "@/lib/outreach/render";
 import type { BusinessRole } from "@/types/auth";
 
 export const dynamic = "force-dynamic";
 
 const ROLES: BusinessRole[] = ["isBoardMember", "isSysadmin", "isOperations"];
-const EMAIL_TYPES = new Set(["opening", "reminder"]);
-const AUDIENCES = new Set(["a", "b", "c"]);
+const EMAIL_TYPES = new Set<string>(["opening", "reminder"] satisfies EmailType[]);
 
 /** One in-flight BulkSend at a time — the create-then-drain guard (see recipients.ts /
  * process-batch for the rest of the flow). Thrown inside the transaction below and mapped
@@ -20,8 +19,8 @@ const AUDIENCES = new Set(["a", "b", "c"]);
 class ConcurrentSendError extends Error {}
 
 /**
- * POST /api/outreach/send — create a campaign send. Computes the recipient snapshot (§2.2)
- * and writes it as BulkSendItem rows (queued / skipped_unsubscribed) under a brand-new
+ * POST /api/outreach/send — create a campaign send. Computes the recipient snapshot for the
+ * email type's audience and writes it as queued BulkSendItem rows under a brand-new
  * BulkSend. Returns the pre-send counts so the page can show a confirm dialog before the
  * browser starts draining via /api/outreach/process-batch. No email is sent here.
  *
@@ -33,16 +32,14 @@ class ConcurrentSendError extends Error {}
 export const POST = withAuth({ roles: ROLES }, async (req, auth) => {
     if (auth.type !== "session") return apiError("Unauthorized", 401);
 
-    let body: { emailType?: string; audience?: string };
+    let body: { emailType?: string };
     try {
         body = await req.json();
     } catch {
         return apiError("Invalid JSON", 400);
     }
     const emailType = body.emailType;
-    const audience = body.audience;
     if (!emailType || !EMAIL_TYPES.has(emailType)) return apiError('emailType must be "opening" or "reminder"', 400);
-    if (!audience || !AUDIENCES.has(audience)) return apiError('audience must be "a", "b", or "c"', 400);
 
     try {
         await resolveBoundary(new Date());
@@ -51,13 +48,7 @@ export const POST = withAuth({ roles: ROLES }, async (req, auth) => {
         throw e;
     }
 
-    const snapshot = await computeRecipientSnapshot(audience as Audience);
-    let queued = 0;
-    let skippedUnsubscribed = 0;
-    for (const item of snapshot.items) {
-        if (item.status === "queued") queued++;
-        else skippedUnsubscribed++;
-    }
+    const snapshot = await computeRecipientSnapshot(emailType as EmailType);
 
     try {
         const bulkSend = await prisma.$transaction(
@@ -67,11 +58,12 @@ export const POST = withAuth({ roles: ROLES }, async (req, auth) => {
                 return tx.bulkSend.create({
                     data: {
                         emailType,
-                        audience,
+                        // The column predates fixed audiences; it now records the email type's audience.
+                        audience: emailType,
                         senderId: auth.user.id,
                         // Nothing to drain — a send to zero recipients is trivially complete.
                         completedAt: snapshot.items.length === 0 ? new Date() : null,
-                        items: { createMany: { data: snapshot.items } },
+                        items: { createMany: { data: snapshot.items.map((item) => ({ ...item, variant: "renew", status: "queued" })) } },
                     },
                 });
             },
@@ -82,8 +74,7 @@ export const POST = withAuth({ roles: ROLES }, async (req, auth) => {
             {
                 bulkSend,
                 counts: {
-                    queued,
-                    skippedUnsubscribed,
+                    queued: snapshot.items.length,
                     leadsWithoutEmail: snapshot.leadsWithoutEmail,
                     total: snapshot.items.length,
                 },

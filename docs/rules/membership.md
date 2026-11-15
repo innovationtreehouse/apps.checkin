@@ -500,6 +500,12 @@ Procedure below is built on them.
   for that single household. No scheduled run opens them.  [Decision — *Board
   ruling B6*]
 
+- Renewal outreach is sent only to household leads of households whose
+  membership is active.  [Decision]
+
+- The opening message goes to every such lead; the reminder goes only to those
+  whose household has not completed renewal for the coming year.  [Decision]
+
 - Coverage is what was bought, not what the calendar says. A household settled
   for the membership year now in effect — by joining, renewing, or a granted
   year — is covered to the boundary that closes the year; one that did not
