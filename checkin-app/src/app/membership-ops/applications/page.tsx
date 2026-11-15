@@ -485,7 +485,7 @@ function ApplicationsBoard() {
                   <Text size="sm" c="dimmed">Awaiting payment.</Text>
                   {me?.isBoardMember && (
                     <Button size="xs" fz={15} disabled={busyId === r.id || ownHousehold(r)} onClick={() => handleCertify(r.id)}>
-                      Certify payment plan → {r.bgClearedAt ? "activate" : "(holds for background check)"}
+                      Activate without payment{r.bgClearedAt ? "" : " (holds for background check)"}
                     </Button>
                   )}
                   {me?.isBoardMember && ownHousehold(r) && (
@@ -571,12 +571,13 @@ function ApplicationsBoard() {
       <Modal
         opened={certifyOpened}
         onClose={closeCertify}
-        title={<Text span fw={700} fz="lg">Certify Payment Plan</Text>}
+        title={<Text span fw={700} fz="lg">Activate Without Payment</Text>}
         centered
       >
         <Text mb="sm">
-          Certify this payment plan? This activates the household&apos;s membership without a
-          Shopify payment (holding for background clearance if it isn&apos;t done yet).
+          Activate this household&apos;s membership without a Shopify payment? Use this when the
+          board has agreed payment outside Shopify. It holds for background clearance if that
+          isn&apos;t done yet.
         </Text>
         <Textarea
           value={certifyReason}
