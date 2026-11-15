@@ -42,6 +42,7 @@ export type ProgramDetail = {
     person: {
       name: string | null;
       email: string;
+      householdId: number;
       // householdMembers is the household's leads (the parents) only. Contact
       // fields are optional because the response stripper drops them for a
       // viewer without the grant.
@@ -515,6 +516,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
               program={program}
               isSysAdminOrBoard={!!isSysAdminOrBoard}
               isBoardMember={!!user?.isBoardMember}
+              viewerHouseholdId={sessionUser?.householdId ?? null}
               fetchProgram={reload}
             />
           </Tabs.Panel>
