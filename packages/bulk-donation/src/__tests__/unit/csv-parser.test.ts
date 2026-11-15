@@ -52,6 +52,11 @@ describe('parseBenevityCsv', () => {
     expect(result[0].companyName).toBe('Acme Corp');
   });
 
+  it('parses a flat export, which has no Net Total Payment footer, with its fees', () => {
+    const result = parseBenevityCsv(toCsv([makeRow(), makeRow({ 'Transaction ID': 'TXN-002', 'Merchant Fee': '-1.00' })]));
+    expect(result.map((r) => r.merchantFeeCents)).toEqual([100, -100]);
+  });
+
   it('parses numeric money fields as integer cents', () => {
     const result = parseBenevityCsv(toCsv([makeRow()]));
     expect(result[0].donationAmountCents).toBe(10000);
@@ -246,7 +251,7 @@ describe('Donations Report layout', () => {
     `Example Co,Example Nonprofit,${date},Pat,Example,Not shared by donor,Not shared by donor,Not shared by donor,` +
     `Not shared by donor,00000,,${comment},${txn},One Time,USD,,Donation,User Donation,${gross},${match},0.00,0.00,`;
   const TOTALS = 'Totals,,,,,,,,,,,,,,,,,,"1,700.00","3,200.00",0.00,0.00';
-  const report = (opts: { checkFee?: string; match?: string; checkFeeLabel?: string; extraGift?: string; totals?: string | null } = {}) => Buffer.from([
+  const report = (opts: { checkFee?: string; match?: string; checkFeeLabel?: string; extraGift?: string; totals?: string | null; net?: string } = {}) => Buffer.from([
     'Donations Report,',
     '"#-------------------------------------------",',
     'Charity Name,Example Nonprofit',
@@ -265,7 +270,7 @@ describe('Donations Report layout', () => {
     ...(opts.totals === null ? [] : [opts.totals ?? TOTALS]),
     'Total Donations (Gross),"4,900.00"',
     `${opts.checkFeeLabel ?? 'Check Fee'},${opts.checkFee ?? '0.00'}`,
-    'Net Total Payment,"4,900.00"',
+    `Net Total Payment,${opts.net ?? '"4,900.00"'}`,
     '',
   ].join('\r\n'));
 
@@ -344,6 +349,36 @@ describe('Donations Report layout', () => {
 
   it('reads the gifts unchecked when there is no Totals row', () => {
     expect(parseBenevityCsv(report({ totals: null })).map((r) => r.transactionId)).toEqual(['TXNAAAA001', 'TXNAAAA002']);
+  });
+
+  const feeGift = (cause: string, merchant: string) =>
+    gift('TXNAAAA003', '2026-03-30T10:00:00Z', '', '0.00', '0.00').replace(/,0\.00,0\.00,$/, `,${cause},${merchant},`);
+  const feeTotals = (cause: string, merchant: string) => `Totals,,,,,,,,,,,,,,,,,,"1,700.00","3,200.00",${cause},${merchant}`;
+
+  it('passes when Net Total Payment matches the gifts net of their fees', () => {
+    const csv = report({ extraGift: feeGift('25.00', '5.00'), totals: feeTotals('25.00', '5.00'), net: '"4,870.00"' });
+    expect(parseBenevityCsv(csv)).toHaveLength(3);
+  });
+
+  it('refuses a negative fee that raises the net above Net Total Payment, naming both figures', () => {
+    const csv = report({ extraGift: feeGift('0.00', '-200.00'), totals: feeTotals('0.00', '-200.00') });
+    expect(() => parseBenevityCsv(csv))
+      .toThrow('Could not import the CSV (1 problem):\nline 19: "Net Total Payment" is $4,900.00 but the gifts net to $5,100.00');
+  });
+
+  it('accepts a negative fee when Net Total Payment agrees with it', () => {
+    const csv = report({ extraGift: feeGift('0.00', '-200.00'), totals: feeTotals('0.00', '-200.00'), net: '"5,100.00"' });
+    expect(parseBenevityCsv(csv)).toHaveLength(3);
+  });
+
+  it('refuses the file when Net Total Payment disagrees with the gifts', () => {
+    expect(() => parseBenevityCsv(report({ net: '"4,800.00"' })))
+      .toThrow('line 18: "Net Total Payment" is $4,800.00 but the gifts net to $4,900.00');
+  });
+
+  it('refuses a Net Total Payment that is not a number', () => {
+    expect(() => parseBenevityCsv(report({ net: 'n/a' })))
+      .toThrow('line 18, "Net Total Payment": not a number: "n/a"');
   });
 
   it('lists every problem and counts them', () => {
