@@ -72,6 +72,7 @@ const receiptView = () => ({
     pushGivenUp: true,
     lastPushFailedAt: '2026-10-20T00:00:00.000Z',
     lastPushFailure: 'receiver timed out',
+    lastError: 'receiver timed out',
 });
 
 describe('receipt file bytes', () => {
@@ -120,13 +121,13 @@ describe('receipt donor and reimbursee names', () => {
         expect(out.lineItems).toEqual([{ id: 1, receiptId: 'r-1', lineNumber: 1, description: 'Arduino', totalPriceCents: 6989 }]);
         expect(out.reimbursement).toEqual({ paidOn: null });
         expect(out.lastPushFailedAt).toBe('2026-10-20T00:00:00.000Z');
-        for (const f of ['reimbursementFor', 'donorFirstName', 'donorLastName', 'donorCompanyName', 'validationNotes', 'lastPushFailure']) {
+        for (const f of ['reimbursementFor', 'donorFirstName', 'donorLastName', 'donorCompanyName', 'validationNotes', 'lastPushFailure', 'lastError']) {
             expect(out).not.toHaveProperty(f);
         }
     });
 
     it('the raw Receipt model strips the same names under an internal-only view', () => {
-        const row = omit(receiptView(), 'lineItems', 'reimbursement', 'pushGivenUp', 'lastPushFailedAt', 'lastPushFailure');
+        const row = omit(receiptView(), 'lineItems', 'reimbursement', 'pushGivenUp', 'lastPushFailedAt', 'lastPushFailure', 'lastError');
         const out = stripValue('Receipt', row, INTERNAL_ONLY, ctx()) as Record<string, unknown>;
         expect(out.uploadedByUserId).toBe(7);
         for (const f of ['reimbursementFor', 'donorFirstName', 'donorLastName', 'donorCompanyName']) {
@@ -141,6 +142,7 @@ describe('receipt donor and reimbursee names', () => {
         expect(out.donorCompanyName).toBe('Doe Hardware');
         expect(out.validationNotes).toBe('rejected: wrong store');
         expect(out.lastPushFailure).toBe('receiver timed out');
+        expect(out.lastError).toBe('receiver timed out');
         expect(out).not.toHaveProperty('pushGivenUp');
     });
 
@@ -180,7 +182,7 @@ describe('receipt audit change values', () => {
 describe('ReceiptView tiering', () => {
     it('matches the generated Receipt and ReceiptDetail tiers field for field', () => {
         // ReceiptRow omits these columns (repositories/receipt.ts listShape).
-        const receipt = omit(receiptGenerated.classifications.Receipt, 'fileBlob', 'fileKey', 'fileSize', 'donorSyncSeq', 'firstFailedAt', 'lastError');
+        const receipt = omit(receiptGenerated.classifications.Receipt, 'fileBlob', 'fileKey', 'fileSize', 'donorSyncSeq', 'firstFailedAt');
         // Who confirmed a receipt and the Board's reason stay off the view; the reimbursee's confirmation view covers confirming.
         // The rejection acknowledgement reaches the view as the `rejectionUnacknowledged` flag.
         const detail = omit(receiptGenerated.classifications.ReceiptDetail, 'id', 'orgId', 'reviewedByUserId', 'reviewedOnBehalfReason', 'rejectionAcknowledgedAt');
@@ -192,6 +194,13 @@ describe('ReceiptView tiering', () => {
         const { uploadedByUserId, ...line } = receiptSynthetic.classifications.ReceiptLineView;
         expect(uploadedByUserId).toBe('internal');
         expect(line).toEqual(receiptGenerated.classifications.ReceiptLineItem);
+    });
+});
+
+describe('ReceiptQueueCounts', () => {
+    it('an internal-only view keeps every count', () => {
+        const counts = { byState: { financial_review: 2 }, notPushed: 3, pushGivenUp: 1, failedPushes: 1, actionableByState: { financial_review: 2 } };
+        expect(stripValue('ReceiptQueueCounts', counts, INTERNAL_ONLY, ctx())).toEqual(counts);
     });
 });
 
