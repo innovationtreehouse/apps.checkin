@@ -22,6 +22,6 @@ describe("auditActor", () => {
 
     it("keeps every system actor name distinct and surface-prefixed", () => {
         expect(new Set(SYSTEM_ACTORS).size).toBe(SYSTEM_ACTORS.length);
-        for (const name of SYSTEM_ACTORS) expect(name).toMatch(/^(cron|system|webhook|kiosk):[a-z0-9-]+$/);
+        for (const name of SYSTEM_ACTORS) expect(name).toMatch(/^(cron|system|webhook|kiosk|migration):[a-z0-9-]+$/);
     });
 });

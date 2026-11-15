@@ -77,6 +77,9 @@ export function roleMergeBlock(
 ): { status: 403 | 409; error: string } | null {
     if (mergeRoles.length === 0) return null;
     if (!actor) return { status: 403, error: "Forbidden" };
+    if (mergeRoles.includes("KEY_VOLUNTEER") && !actor.isBoardMember) {
+        return { status: 403, error: "Cannot merge: the merged-away record holds the Key Volunteer role, and only board members can grant or remove it." };
+    }
     if (!mergeRoles.includes("BOARD")) return null;
     if (!actor.isBoardMember) {
         return { status: 403, error: "Cannot merge: the merged-away record holds the board role, and only board members can remove board membership." };

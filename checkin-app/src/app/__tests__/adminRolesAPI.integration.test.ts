@@ -19,6 +19,8 @@
 import { GET, PATCH } from '@/app/api/roles/route';
 import prisma from '@/lib/prisma';
 import { ROLE_FLAGS } from '@/lib/roles';
+import { seedSignedKeyVolunteer } from '@/lib/dev/seed-helpers';
+import { markContractSigned } from '@/lib/membership/external';
 import { getServerSession } from 'next-auth/next';
 
 /** Does this person hold OPERATIONS in the table? isOperations has no Person column. */
@@ -63,7 +65,9 @@ describe('Admin Roles API Integration Tests', () => {
             select: { id: true },
         });
         const ids = existingUsers.map((u) => u.id);
-        await prisma.auditLog.deleteMany({ where: { actorId: { in: ids } } });
+        const processIds = (await prisma.orgMembershipProcess.findMany({ where: { subjectPersonId: { in: ids } }, select: { id: true } })).map((p) => p.id);
+        await prisma.auditLog.deleteMany({ where: { OR: [{ actorId: { in: ids } }, { tableName: 'OrgMembershipProcess', affectedEntityId: { in: processIds } }] } });
+        await prisma.orgMembershipProcess.deleteMany({ where: { id: { in: processIds } } });
         await prisma.person.deleteMany({ where: { id: { in: ids } } });
     }
 
@@ -247,6 +251,7 @@ describe('Admin Roles API Integration Tests', () => {
         });
 
         it('board grants/revokes isKeyholder, isBackgroundCheckReviewer, isOperations -> 200', async () => {
+            await seedSignedKeyVolunteer(prisma, testTargetUserId);
             asSession({ id: boardActorId, isBoardMember: true });
 
             const grant = await PATCH(patchReq({
@@ -322,9 +327,11 @@ describe('Admin Roles API Integration Tests', () => {
                 data: { email: `sysadmin-target-${TAG}@example.com`, name: 'Sysadmin Target', household: { create: { name: "Test HH" } } },
             });
             plainTargetId = plain.id;
+            await seedSignedKeyVolunteer(prisma, plainTargetId);
         });
 
         afterAll(async () => {
+            await prisma.orgMembershipProcess.deleteMany({ where: { subjectPersonId: plainTargetId } });
             await prisma.auditLog.deleteMany({ where: { affectedEntityId: plainTargetId } });
             await prisma.person.deleteMany({ where: { id: plainTargetId } });
         });
@@ -371,6 +378,7 @@ describe('Admin Roles API Integration Tests', () => {
 
         afterAll(async () => {
             if (deniedPersonId === undefined) return;
+            await prisma.orgMembershipProcess.deleteMany({ where: { subjectPersonId: deniedPersonId } });
             await prisma.auditLog.deleteMany({ where: { affectedEntityId: deniedPersonId } });
             await prisma.orgMembership.deleteMany({ where: { householdId: deniedHouseholdId } });
             await prisma.person.deleteMany({ where: { id: deniedPersonId } });
@@ -399,6 +407,7 @@ describe('Admin Roles API Integration Tests', () => {
 
         it('allows the grant once the household is restored', async () => {
             await prisma.orgMembership.update({ where: { householdId: deniedHouseholdId }, data: { status: 'NONE' } });
+            await seedSignedKeyVolunteer(prisma, deniedPersonId);
             asSession({ id: testSysAdminId, isSysadmin: true });
             const res = await PATCH(patchReq({ targetUserId: deniedPersonId, isBoardMember: true }));
             expect(res.status).toBe(200);
@@ -407,6 +416,122 @@ describe('Admin Roles API Integration Tests', () => {
             // ambient board count.
             await prisma.personRole.deleteMany({ where: { personId: deniedPersonId, role: 'BOARD' } });
             await prisma.person.update({ where: { id: deniedPersonId }, data: { isBoardMember: false } });
+        });
+    });
+
+    describe('PATCH /api/roles — Key Volunteer rules', () => {
+        let kvBoardId: number;
+        let kvTargetId: number;
+
+        beforeAll(async () => {
+            const board = await prisma.person.create({
+                data: {
+                    email: `kv-board-${TAG}@example.com`, name: 'KV Board', isBoardMember: true,
+                    household: { create: { name: "Test HH" } },
+                    roles: { create: [{ role: 'BOARD' }] },
+                },
+            });
+            kvBoardId = board.id;
+            const target = await prisma.person.create({
+                data: { email: `kv-target-${TAG}@example.com`, name: 'KV Target', household: { create: { name: "Test HH" } } },
+            });
+            kvTargetId = target.id;
+        });
+
+        afterAll(async () => {
+            const processIds = (await prisma.orgMembershipProcess.findMany({ where: { subjectPersonId: kvTargetId }, select: { id: true } })).map((p) => p.id);
+            await prisma.auditLog.deleteMany({ where: { OR: [{ actorId: kvBoardId }, { affectedEntityId: { in: [kvTargetId, ...processIds] } }] } });
+            await prisma.orgMembershipProcess.deleteMany({ where: { id: { in: processIds } } });
+            await prisma.person.deleteMany({ where: { id: { in: [kvBoardId, kvTargetId] } } });
+        });
+
+        const openKva = () => prisma.orgMembershipProcess.findFirst({
+            where: { subjectPersonId: kvTargetId, kind: 'KEY_VOLUNTEER_AGREEMENT', status: 'PENDING_EXTERNAL_ACTION' },
+        });
+
+        it('refuses a gated role to someone who is not a signed Key Volunteer -> 409', async () => {
+            asSession({ id: kvBoardId, isBoardMember: true });
+            for (const flag of ['isBoardMember', 'isBackgroundCheckReviewer', 'isFinance']) {
+                const res = await PATCH(patchReq({ targetUserId: kvTargetId, [flag]: true }));
+                expect(res.status).toBe(409);
+                expect((await res.json()).error).toContain('Key Volunteer agreement');
+            }
+        });
+
+        it('grants Keyholder with no Key Volunteer role or agreement', async () => {
+            asSession({ id: kvBoardId, isBoardMember: true });
+            const res = await PATCH(patchReq({ targetUserId: kvTargetId, isKeyholder: true }));
+            expect(res.status).toBe(200);
+            expect((await res.json()).user).toMatchObject({ isKeyholder: true, isKeyVolunteer: false });
+            expect(await openKva()).toBeNull();
+
+            const revoke = await PATCH(patchReq({ targetUserId: kvTargetId, isKeyholder: false }));
+            expect(revoke.status).toBe(200);
+        });
+
+        it('a sysadmin-only actor cannot grant Key Volunteer while a board member exists -> 403', async () => {
+            asSession({ id: testSysAdminId, isSysadmin: true });
+            const res = await PATCH(patchReq({ targetUserId: kvTargetId, isKeyVolunteer: true }));
+            expect(res.status).toBe(403);
+        });
+
+        it('granting Key Volunteer with a gated role in one request is refused: the agreement is unsigned', async () => {
+            asSession({ id: kvBoardId, isBoardMember: true });
+            const res = await PATCH(patchReq({ targetUserId: kvTargetId, isKeyVolunteer: true, isBackgroundCheckReviewer: true }));
+            expect(res.status).toBe(409);
+            expect(await prisma.personRole.count({ where: { personId: kvTargetId } })).toBe(0);
+            expect(await openKva()).toBeNull();
+        });
+
+        it('granting Key Volunteer opens an agreement at the current version and no Zoho request', async () => {
+            asSession({ id: kvBoardId, isBoardMember: true });
+            const res = await PATCH(patchReq({ targetUserId: kvTargetId, isKeyVolunteer: true }));
+            expect(res.status).toBe(200);
+            expect((await res.json()).user.isKeyVolunteer).toBe(true);
+            const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
+            const open = await openKva();
+            expect(open).toMatchObject({ agreementVersion: settings?.keyVolunteerAgreementVersion ?? 1, zohoEnvelopeId: null, orgMembershipId: null });
+
+            const list = await (await GET(getReq())).json();
+            const row = list.people.find((p: { id: number }) => p.id === kvTargetId);
+            expect(row).toMatchObject({ isKeyVolunteer: true, kvaSignedCurrent: false, kvaOpenProcessId: open?.id });
+        });
+
+        it('once the agreement is signed, a gated role can be granted', async () => {
+            const open = await openKva();
+            await markContractSigned(open!.id, kvBoardId, true);
+            asSession({ id: kvBoardId, isBoardMember: true });
+            const res = await PATCH(patchReq({ targetUserId: kvTargetId, isBackgroundCheckReviewer: true }));
+            expect(res.status).toBe(200);
+            const list = await (await GET(getReq())).json();
+            expect(list.people.find((p: { id: number }) => p.id === kvTargetId)).toMatchObject({ isBackgroundCheckReviewer: true, kvaSignedCurrent: true, kvaOpenProcessId: null });
+        });
+
+        it('Key Volunteer cannot be removed before the gated role; both in one request is ordered', async () => {
+            asSession({ id: kvBoardId, isBoardMember: true });
+            const refused = await PATCH(patchReq({ targetUserId: kvTargetId, isKeyVolunteer: false }));
+            expect(refused.status).toBe(409);
+            expect((await refused.json()).error).toContain('first');
+
+            const both = await PATCH(patchReq({ targetUserId: kvTargetId, isKeyVolunteer: false, isBackgroundCheckReviewer: false }));
+            expect(both.status).toBe(200);
+            expect(await prisma.personRole.count({ where: { personId: kvTargetId } })).toBe(0);
+        });
+
+        it('removing Key Volunteer archives an open, unsigned agreement', async () => {
+            asSession({ id: kvBoardId, isBoardMember: true });
+            // Signed already, so the re-grant opens nothing; open one by hand at a newer version.
+            expect((await PATCH(patchReq({ targetUserId: kvTargetId, isKeyVolunteer: true }))).status).toBe(200);
+            expect(await openKva()).toBeNull();
+            const opened = await prisma.orgMembershipProcess.create({
+                data: { kind: 'KEY_VOLUNTEER_AGREEMENT', subjectPersonId: kvTargetId, status: 'PENDING_EXTERNAL_ACTION', agreementVersion: 99 },
+            });
+
+            const res = await PATCH(patchReq({ targetUserId: kvTargetId, isKeyVolunteer: false }));
+            expect(res.status).toBe(200);
+            const after = await prisma.orgMembershipProcess.findUnique({ where: { id: opened.id } });
+            expect(after).toMatchObject({ status: 'ARCHIVED', archivedFromStatus: 'PENDING_EXTERNAL_ACTION' });
+            expect(await prisma.auditLog.count({ where: { tableName: 'OrgMembershipProcess', affectedEntityId: opened.id, actorId: kvBoardId } })).toBe(1);
         });
     });
 
