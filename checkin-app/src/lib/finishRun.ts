@@ -19,15 +19,12 @@ const current = (shared[STORE] ??= new AsyncLocalStorage<Run>());
 
 /** Each library lane, as "<library> <lane>", and the cause its failures are grouped under. */
 const CAUSES: Record<string, string> = {
-    "receipt push": "mapping",
-    "receipt mail-listing": "gmail",
-    "receipt ocr": "ocr",
     "expense intake": "intake",
     "expense intake-replay": "intake",
     "expense posting": "quickbooks",
     "bulk-donation in-kind-posting": "quickbooks",
     "income deposit-build": "quickbooks",
-    "workflow-mapping matching": "mapping",
+    "quickbooks lists-refresh": "quickbooks",
 };
 
 export const newRun = (): Run => ({ reports: [], reached: new Set(), stopped: new Set() });

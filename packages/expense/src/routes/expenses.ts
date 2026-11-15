@@ -29,6 +29,7 @@ import { allExpensesAwaitingMyApproval } from "../services/badgeCounts";
 import { EXPENSE_LIST_VIEWS, expenseViewsFor, type ExpenseListView, type ExpenseViewer } from "../nav";
 import { OPEN_REVIEWS_WHERE, expenseReasons } from "../services/reasonService";
 import { approveTax } from "../services/taxApprovalService";
+import { waitingOnLabels } from "../services/waitingOnService";
 import { pageArgs, scopedApprovals, scopedExpenses, scopedLines, viewerScope, type ViewerScope } from "./_shared";
 
 const SUMMARY = {
@@ -115,7 +116,8 @@ async function visibleExpense(principal: ExpensePrincipal, id: string) {
 export const list: ExpenseRouteHandler = async ({ req, principal }) => {
   const sp = query(req);
   const where = await listWhere(principal, await parseView(principal, sp.get("view"), "all"), activeOnly(sp));
-  return { Expense: await withLiveParties(await db.expense.findMany({ where, select: SUMMARY, orderBy: { submittedAt: "desc" }, ...pageArgs(sp) })) };
+  const rows = await withLiveParties(await db.expense.findMany({ where, select: SUMMARY, orderBy: { submittedAt: "desc" }, ...pageArgs(sp) }));
+  return { Expense: rows, ExpenseWaitingOn: await waitingOnLabels(rows) };
 };
 
 export const count: ExpenseRouteHandler = async ({ req, principal }) => {
@@ -127,7 +129,8 @@ export const count: ExpenseRouteHandler = async ({ req, principal }) => {
 export const queue: ExpenseRouteHandler = async ({ req, principal }) => {
   const sp = query(req);
   const where = await listWhere(principal, await parseView(principal, sp.get("view")));
-  return { Expense: await withLiveParties(await db.expense.findMany({ where, select: SUMMARY, orderBy: [{ submittedAt: "asc" }, { id: "asc" }], ...pageArgs(sp) })) };
+  const rows = await withLiveParties(await db.expense.findMany({ where, select: SUMMARY, orderBy: [{ submittedAt: "asc" }, { id: "asc" }], ...pageArgs(sp) }));
+  return { Expense: rows, ExpenseWaitingOn: await waitingOnLabels(rows) };
 };
 
 export const counts: ExpenseRouteHandler = async ({ principal }) => {
@@ -158,7 +161,11 @@ export const detail: ExpenseRouteHandler = async ({ params, principal }) => {
         : {}),
     },
   });
-  return { Expense: await withLiveParty(stored), ExpenseQueueReason: scope.all ? await expenseReasons(principal, params.id) : [] };
+  return {
+    Expense: await withLiveParty(stored),
+    ExpenseQueueReason: scope.all ? await expenseReasons(principal, params.id) : [],
+    ExpenseWaitingOn: stored ? await waitingOnLabels([stored]) : [],
+  };
 };
 
 export const lineItemApprovals: ExpenseRouteHandler = async ({ params, principal }) => {

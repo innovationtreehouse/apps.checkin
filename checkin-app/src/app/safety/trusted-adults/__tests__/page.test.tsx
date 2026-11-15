@@ -2,7 +2,7 @@
 jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories run hoisted, before imports exist
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
 
 import { screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { notifications } from "@mantine/notifications";
@@ -194,18 +194,62 @@ describe("safety/trusted-adults page", () => {
     expect(screen.queryByText(/lapsed/)).not.toBeInTheDocument();
   }, 10000); // heavy: renders the full page three times (mount/unmount ×3)
 
-  it("shows the fallback failure message on a decision error, and dismisses the alert", async () => {
+  it("shows a refused decision in the lower right, titled with the household", async () => {
     setSession({ id: 1, isBoardMember: true, householdId: 1 });
     mockFetchJson({ "/api/safety/trusted-adults": { trustedAdults } });
-    const { container } = renderWithProviders(<AdminTrustedAdultsPage />);
+    renderWithProviders(<AdminTrustedAdultsPage />);
     await screen.findByText("Guardian House");
 
-    global.fetch = jest.fn(async () => ({ ok: false, status: 400, json: async () => ({}) })) as unknown as typeof fetch;
+    global.fetch = jest.fn(async () =>
+      new Response(JSON.stringify({ error: "Not allowed." }), { status: 403 }),
+    ) as unknown as typeof fetch;
     fireEvent.click(screen.getByRole("button", { name: "Deny" }));
-    expect(await screen.findByText("Decision failed.")).toBeInTheDocument();
 
-    fireEvent.click(container.querySelector(".mantine-CloseButton-root")!);
-    expect(screen.queryByText("Decision failed.")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "trusted-adult-review-9", color: "red", title: "Guardian House", message: "Not allowed.", autoClose: false }),
+      ),
+    );
+    expect(await enabledButton("Deny")).toBeInTheDocument();
+  });
+
+  it("shows fixed text when a decision never answers, instead of nothing", async () => {
+    setSession({ id: 1, isBoardMember: true, householdId: 1 });
+    mockFetchJson({ "/api/safety/trusted-adults": { trustedAdults } });
+    renderWithProviders(<AdminTrustedAdultsPage />);
+    await screen.findByText("Guardian House");
+
+    global.fetch = jest.fn(async () => { throw new TypeError("fetch failed: ECONNRESET"); }) as unknown as typeof fetch;
+    fireEvent.click(screen.getByRole("button", { name: "Deny" }));
+
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ color: "red", message: "Couldn't reach the server. Check your connection and try again.", autoClose: false }),
+      ),
+    );
+    expect(await enabledButton("Deny")).toBeInTheDocument();
+  });
+
+  it("re-reads the queue when a decision finds the review has moved on", async () => {
+    setSession({ id: 1, isBoardMember: true, householdId: 1 });
+    const list = mockFetchJson({ "/api/safety/trusted-adults": { trustedAdults } });
+    renderWithProviders(<AdminTrustedAdultsPage />);
+    await screen.findByText("Guardian House");
+
+    const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+      init?.method === "POST"
+        ? new Response(JSON.stringify({ error: "This review has already been settled — reload the page." }), { status: 409 })
+        : list(input, init),
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+    fireEvent.click(screen.getByRole("button", { name: "Deny" }));
+
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ color: "red", message: "This review has already been settled — reload the page." }),
+      ),
+    );
+    await waitFor(() => expect(fetchMock.mock.calls.filter((c) => !c[1]?.method)).toHaveLength(1));
   });
 
   it("renders a shared note, lead names, review-by date, and disables actions on a conflict of interest", async () => {
@@ -319,8 +363,14 @@ describe("safety/trusted-adults page", () => {
     renderWithProviders(<AdminTrustedAdultsPage />);
     await screen.findByText("Guardian House");
 
-    global.fetch = jest.fn(async () => ({ ok: false, status: 400, json: async () => ({ error: "Cannot revoke." }) })) as unknown as typeof fetch;
+    global.fetch = jest.fn(async () =>
+      new Response(JSON.stringify({ error: "Cannot revoke." }), { status: 400 }),
+    ) as unknown as typeof fetch;
     fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
-    expect(await screen.findByText("Cannot revoke.")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ color: "red", title: "Guardian House", message: "Cannot revoke.", autoClose: false }),
+      ),
+    );
   });
 });

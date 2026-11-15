@@ -201,13 +201,10 @@ describe("required notes (3.16)", () => {
     expect(mockSend).toHaveBeenCalledWith("/expenses/e1/line-item-approvals/10/approve", "POST", { reason: "Leader away all month" }, "Approve as Board (program approver) done");
   });
 
-  it("asks no note of an approval the server takes without one", async () => {
+  it("posts an approval the server takes without a reason at once, with no dialog", async () => {
     load([{ actions: [APPROVE] }]);
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Approve as Program approver" })); });
-    const confirm = await screen.findByRole("button", { name: "Confirm" });
-    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-    expect(confirm).toBeEnabled();
-    await act(async () => { fireEvent.click(confirm); });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(mockSend).toHaveBeenCalledWith("/expenses/e1/line-item-approvals/10/approve", "POST", { reason: null }, "Approve as Program approver done");
   });
 });

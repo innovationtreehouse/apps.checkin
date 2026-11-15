@@ -29,6 +29,11 @@
  * role (GET /api/books-map/quickbooks-accounts): its id, full name, account
  * type and whether it is active. Every field is `internal`.
  *
+ * QuickBooksListsStatus — the saved copy of one QuickBooks list, accounts or
+ * Classes (GET /api/books-map/quickbooks-lists and POST
+ * /api/books-map/quickbooks-lists/refresh): which list, when it was last
+ * refreshed and how many entries it holds. Every field is `internal`.
+ *
  * Hand-authored, not generated: this describes an API response, not a table.
  * This is a security-boundary artifact — changes ship in a boundary PR.
  */
@@ -63,6 +68,14 @@ export const classifications = {
     accountType: "internal",
     active: "internal",
   },
+  QuickBooksListsStatus: {
+    list: "internal",
+    refreshedAt: "internal",
+    entries: "internal", // a count, not the list
+  },
 } as const;
 
 export const relations = {} as const;
+
+// Finance marks: the fields whose presence in a response makes it a logged finance view.
+export const marks = {} as const;

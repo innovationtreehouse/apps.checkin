@@ -6,7 +6,8 @@
  *   1. Every src/app/api/<x>/route.ts file exports HTTP verbs registered in src/security/registry.ts
  *      (or a per-library module under src/security/registry/) — by defineRoute, or by
  *      defineFileRoute for a file route served through fileHandler().
- *   2. Every registry entry corresponds to an existing route file.
+ *   2. Every registry entry corresponds to an existing route file. A route file that names a
+ *      registered verb it does not serve yet carries a `// registry-first: <VERB>` marker line.
  *   3. Migrated routes (listed in scripts/migrated-routes.txt) must NOT call NextResponse.json / Response.json directly.
  *   4. Calls to third-party hosts (THIRD_PARTY_HOST_RE) live only in APP_THIRD_PARTY_FETCH_FILES.
  *   4b. In packages/* and *-function source (tests, fixtures and generated code excluded), any
@@ -37,6 +38,9 @@ import {
     APP_THIRD_PARTY_FETCH_FILES,
     NON_LOOPBACK_URL_RE,
     PACKAGE_EGRESS_FILES,
+    PACKAGE_SKIP_DIR_RE,
+    PACKAGE_SKIP_FILE_RE,
+    PACKAGE_SOURCE_FILE_RE,
     THIRD_PARTY_HOST_RE,
     THIRD_PARTY_SDK_RE,
 } from '../src/security/egressAllowlist';
@@ -57,9 +61,6 @@ const ALLOWED_THIRD_PARTY_FETCH_FILES = new Set<string>(
 
 // Package egress keys are relative to the monorepo root.
 const MONOREPO_ROOT = path.resolve(REPO_ROOT, '..');
-const PACKAGE_SKIP_DIR_RE = /^(node_modules|dist|generated|__tests__|__fixtures__|fixtures|test|tests)$/;
-const PACKAGE_SOURCE_FILE_RE = /\.(tsx?|[cm]?js)$/;
-const PACKAGE_SKIP_FILE_RE = /\.(test|spec)\.(tsx?|[cm]?js)$/;
 const VERB_EXPORT_RE = /export\s+(?:const|async\s+function|function)\s+(GET|POST|PUT|PATCH|DELETE)\b/g;
 /** `export { a as GET, POST }` — each specifier exports its `as` alias, else its own name. */
 const EXPORT_LIST_RE = /export\s*\{([^}]*)\}/g;
@@ -146,29 +147,58 @@ function report(severity: Finding['severity'], rule: string, file: string, messa
     findings.push({ severity, rule, file, line, message });
 }
 
+/** `// registry-first: POST` — a whole line naming a registered verb the file does not serve yet. */
+const REGISTRY_FIRST_MARKER_RE = /^[ \t]*\/\/[ \t]*registry-first:[ \t]*(GET|POST|PUT|PATCH|DELETE)[ \t]*$/gm;
+
+export function extractRegistryFirstMarkers(source: string): string[] {
+    return Array.from(new Set(Array.from(source.matchAll(REGISTRY_FIRST_MARKER_RE), m => m[1])));
+}
+
+/** A marker must name a registered verb the file does not export: the route PR
+ *  that adds the export removes the marker, and a marker with no entry is a typo. */
+export function findRegistryFirstMarkerErrors(
+    file: string, markers: string[], verbs: string[], endpointPath: string, registered: ReadonlySet<string>,
+): Finding[] {
+    return markers.flatMap(verb => {
+        const key = `${verb} ${endpointPath}`;
+        const message = verbs.includes(verb)
+            ? `${endpointPath} exports ${verb} and still carries its registry-first marker — remove the marker line`
+            : !registered.has(key)
+                ? `registry-first marker for ${key} has no registry entry — fix the verb, or remove the marker`
+                : null;
+        return message ? [{ severity: 'error' as const, rule: 'registry-first-marker', file, message }] : [];
+    });
+}
+
 /** Registry entries no route method serves, split by which half is missing.
- *  No route FILE is the sanctioned register-first state — inert, nothing serves
- *  the endpoint — so it warns. A file that exists but no longer exports the verb
- *  is live policy/code drift, so it blocks. */
+ *  No route FILE, or a file whose `registry-first` marker names the verb, is the
+ *  sanctioned register-first state — inert, nothing serves the endpoint — so it
+ *  warns. A file that exists but exports no such verb and has no marker is live
+ *  policy/code drift, so it blocks. */
 export function findOrphanRegistryEntries(
     registered: Iterable<string>,
     routeMethods: ReadonlySet<string>,
     routePaths: ReadonlySet<string>,
+    pendingMethods: ReadonlySet<string> = new Set(),
 ): Finding[] {
     return Array.from(registered)
         .filter(key => !routeMethods.has(key))
         .map(key => {
             const [method, routePath] = key.split(' ');
-            const stale = routePaths.has(routePath);
+            const stale = routePaths.has(routePath) && !pendingMethods.has(key);
             return {
                 severity: stale ? ('error' as const) : ('warn' as const),
                 rule: 'orphan-registry',
                 file: 'src/security/registry.ts',
                 message: stale
                     ? `registry entry ${key} is stale — ${routePath} has a route file, but it ` +
-                      `exports no ${method}. Drop the entry, or restore the export.`
-                    : `registry entry ${key} has no route file at ${routePath} — the ` +
-                      `register-first state while its route PR is pending.`,
+                      `exports no ${method}. Drop the entry, restore the export, or mark it ` +
+                      `pending with a \`// registry-first: ${method}\` line.`
+                    : pendingMethods.has(key)
+                        ? `registry entry ${key} is marked registry-first in ${routePath} — the ` +
+                          `register-first state while its route PR is pending.`
+                        : `registry entry ${key} has no route file at ${routePath} — the ` +
+                          `register-first state while its route PR is pending.`,
             };
         });
 }
@@ -389,11 +419,15 @@ function main() {
 
     const allRouteEndpoints = new Set<string>();
     const allRoutePaths = new Set<string>();
+    const pendingRouteEndpoints = new Set<string>();
     for (const file of routeFiles) {
         const endpointPath = fileToEndpointPath(file);
         allRoutePaths.add(endpointPath);
         const content = fs.readFileSync(file, 'utf-8');
         const verbs = extractExportedVerbs(content);
+        const markers = extractRegistryFirstMarkers(content);
+        for (const verb of markers) pendingRouteEndpoints.add(`${verb} ${endpointPath}`);
+        findings.push(...findRegistryFirstMarkerErrors(file, markers, verbs, endpointPath, registered));
 
         const migratedVerbs: string[] = [];
         for (const verb of verbs) {
@@ -445,7 +479,7 @@ function main() {
         }
     }
 
-    findings.push(...findOrphanRegistryEntries(registered, allRouteEndpoints, allRoutePaths));
+    findings.push(...findOrphanRegistryEntries(registered, allRouteEndpoints, allRoutePaths, pendingRouteEndpoints));
     findings.push(...findStaleDirectJsonEntries(directJsonAllowance));
 
     // Keep the ratchet honest: a baseline entry whose route no longer exists

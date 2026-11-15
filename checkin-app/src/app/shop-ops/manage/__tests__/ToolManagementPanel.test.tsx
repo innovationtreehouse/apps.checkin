@@ -3,7 +3,8 @@ jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 
-import { screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, screen, fireEvent, waitFor } from "@testing-library/react";
+import { notifications, notificationsStore } from "@mantine/notifications";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl } from "@/test-helpers/rtl";
 import { jsonBody } from "@/test-helpers/jsonBody";
 import { settleAfter } from "@/test-helpers/settle";
@@ -37,6 +38,9 @@ function pickOption(input: HTMLElement, label: string) {
 }
 
 beforeEach(() => resetRtl());
+afterEach(() => act(() => notifications.clean()));
+
+const shown = () => notificationsStore.getState().notifications;
 
 describe("ToolManagementPanel", () => {
   it("loads and renders the tool list", async () => {
@@ -88,7 +92,7 @@ describe("ToolManagementPanel", () => {
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith("/api/shop/tools/1", expect.objectContaining({ method: "PATCH" }));
     });
-    expect(await screen.findByText("Safety guide updated.")).toBeInTheDocument();
+    await waitFor(() => expect(shown()).toEqual([expect.objectContaining({ color: "green", message: "Safety guide updated." })]));
   });
 
   it("By Person tab: lists members and loads a member's certifications on expand", async () => {
@@ -169,7 +173,9 @@ describe("ToolManagementPanel", () => {
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith("/api/shop/certifications", expect.objectContaining({ method: "POST" })),
     );
-    expect(await screen.findByText(/Certification updated for Alice on Table Saw/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(shown()).toEqual([expect.objectContaining({ color: "green", message: "Certification updated for Alice on Table Saw." })]),
+    );
   });
 
   it("GrantForm: Cancel in the confirm modal closes it without submitting", async () => {
@@ -231,7 +237,11 @@ describe("ToolManagementPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Grant" }));
     fireEvent.click(await screen.findByRole("button", { name: "Confirm" }));
 
-    expect(await screen.findByText("Level exceeds your authorization.")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(shown()).toEqual([expect.objectContaining({ color: "red", message: "Level exceeds your authorization.", autoClose: false })]),
+    );
+    // The confirm modal stays open so the grant can be retried.
+    expect(screen.getByRole("button", { name: "Confirm" })).toBeInTheDocument();
   });
 
   it("ToolsTab: collapses an expanded tool on second click", async () => {
@@ -273,7 +283,7 @@ describe("ToolManagementPanel", () => {
     setSession({ id: 1, isSysadmin: true });
     const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input.toString();
-      if (init?.method === "PATCH") return { ok: false, status: 500, ...jsonBody(({})) } as Response;
+      if (init?.method === "PATCH") return { ok: false, status: 400, ...jsonBody(({ error: "Enter a valid URL." })) } as Response;
       if (url.includes("/api/shop/tools")) return { ok: true, ...jsonBody([TABLE_SAW]) } as Response;
       if (url.includes("/api/shop/org-members")) return { ok: true, ...jsonBody(({ orgMembers: MEMBERS })) } as Response;
       return { ok: false, status: 404, ...jsonBody(({})) } as Response;
@@ -284,7 +294,9 @@ describe("ToolManagementPanel", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Edit guide" }));
     fireEvent.click(await screen.findByRole("button", { name: "Save" }));
 
-    expect(await screen.findByText("Failed to update.")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(shown()).toEqual([expect.objectContaining({ color: "red", message: "Enter a valid URL.", autoClose: false })]),
+    );
   });
 
   it("ToolsTab: saving the guide while the tool is expanded refetches its certifications", async () => {
@@ -303,7 +315,8 @@ describe("ToolManagementPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Edit guide" }));
     fireEvent.click(await screen.findByRole("button", { name: "Save" }));
 
-    expect(await screen.findByText("Safety guide updated.")).toBeInTheDocument();
+    await waitFor(() => expect(shown()).toEqual([expect.objectContaining({ message: "Safety guide updated." })]));
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/shop/certifications?toolId=1")).length).toBe(2));
     const certCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/shop/certifications?toolId=1"));
     expect(certCalls.length).toBe(2);
   });

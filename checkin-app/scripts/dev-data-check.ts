@@ -1,6 +1,7 @@
 import { getPrisma as getReceiptPrisma } from "@checkin/receipt";
 import prisma from "../src/lib/prisma";
-import { runDevDataCheck } from "../src/lib/dev/dataCheck";
+import { config } from "../src/lib/config";
+import { currentDatabase, DevDataCheckRefused, isAllowedDatabase, runDevDataCheck } from "../src/lib/dev/dataCheck";
 
 /**
  * Reports how much non-seeded data dev holds (docs/in-design/DEV_RESET.md, "How it is proven gone").
@@ -11,15 +12,27 @@ import { runDevDataCheck } from "../src/lib/dev/dataCheck";
  */
 
 // Receipts are counted for information only; they are mostly anonymous and outside the check.
-// The error text stays out of the output: workflow logs are public, and a connection error names hosts.
+// A receipt database that is not dev's refuses the whole run; an unreachable one reads "unavailable".
 async function countReceipts(): Promise<number | "unavailable"> {
+    let receipts: ReturnType<typeof getReceiptPrisma>;
+    let name: string;
     try {
-        return await getReceiptPrisma().receipt.count();
+        receipts = getReceiptPrisma();
+        name = await currentDatabase(receipts);
+    } catch {
+        return "unavailable";
+    }
+    if (!isAllowedDatabase(config.checkinEnv(), name, process.env.RECEIPT_DATABASE_URL, "receipt")) {
+        throw new DevDataCheckRefused("dev-data-check refuses to read a receipt database that is not dev's");
+    }
+    try {
+        return await receipts.receipt.count();
     } catch {
         return "unavailable";
     }
 }
 
+// Error text stays out of the output: workflow logs are public, and a connection error names hosts.
 async function main(): Promise<void> {
     const report = await runDevDataCheck(prisma);
     const receipts = await countReceipts();
@@ -28,7 +41,9 @@ async function main(): Promise<void> {
 
 main()
     .then(() => process.exit(0))
-    .catch((e) => {
-        console.error(e instanceof Error ? e.message : e);
+    .catch((error: unknown) => {
+        console.error(
+            error instanceof DevDataCheckRefused ? "dev-data-check refused: not the dev database" : "dev-data-check failed",
+        );
         process.exit(1);
     });

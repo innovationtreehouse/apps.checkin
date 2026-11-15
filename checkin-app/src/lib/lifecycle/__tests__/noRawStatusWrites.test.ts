@@ -44,8 +44,7 @@ const ALLOWLIST: Entry[] = [
     { file: 'app/api/membership/request-payment-plan/route.ts', table: 'OrgMembershipProcess', count: 1, reason: 'data spread; slice 2 declares it' },
     { file: 'app/api/programs/[id]/participants/route.ts', table: 'ProgramParticipant', count: 1, reason: 'T1/T2 create at the entry status' },
     { file: 'lib/lifecycleDrift.ts', table: 'ProgramParticipant', count: 1, reason: 'repairs an off-diagram ACTIVE row, which no guard admits' },
-    { file: 'lib/membership/external.ts', table: 'OrgMembershipProcess', count: 1, reason: 'flag-only or unreadable write; slice 2 declares it' },
-    { file: 'lib/membership/mergeBgAdvance.ts', table: 'OrgMembershipProcess', count: 1, reason: 'flag-only or unreadable write; slice 2 declares it' },
+    { file: 'lib/membership/checkStarted.ts', table: 'OrgMembershipProcess', count: 1, reason: 'flag-only bgConsentAt stamp on a waiting check review' },
     { file: 'lib/membership/payment.ts', table: 'OrgMembershipProcess', count: 1, reason: 'flag-only or unreadable write; slice 2 declares it' },
     { file: 'lib/membership/settleHouseholdBg.ts', table: 'OrgMembershipProcess', count: 1, reason: 'flag-only bgClearedAt stamp on a waiting step' },
 ];

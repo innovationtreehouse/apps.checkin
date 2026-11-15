@@ -162,16 +162,12 @@ model Person {
   /// leads/household enforced at write, not in schema. @sensitivity:public
   isHouseholdLead Boolean @default(false)
 
-  /// Provenance: the surviving Person.id of a merged-away record. Null == a live
-  /// record. A merge sets it and then deletes the row, leaving a PersonMerge
-  /// archive; only older merged-away rows still carry it. Drives the double-merge
-  /// CAS guard and the live-person filter (lib/person/filters.ts). @sensitivity:internal
-  mergedIntoId Int?
-  // Label is "PersonTombstone" because "PersonMerge" would collide with the model
-  // of that name. Code-only: a named self-relation emits no SQL artifact — the
-  // constraint is Person_mergedIntoId_fkey either way.
-  mergedInto   Person?  @relation("PersonTombstone", fields: [mergedIntoId], references: [id])
-  mergedFrom   Person[] @relation("PersonTombstone")
+  /// Unused column awaiting its drop; null on every row. Hidden from the client so
+  /// no code reads or writes it before the column goes. @sensitivity:internal
+  mergedIntoId Int?     @ignore
+  // The constraint is Person_mergedIntoId_fkey; the relation name emits no SQL.
+  mergedInto   Person?  @relation("PersonTombstone", fields: [mergedIntoId], references: [id]) @ignore
+  mergedFrom   Person[] @relation("PersonTombstone") @ignore
 
   /// Archive rows naming this person as the merge survivor (see PersonMerge).
   mergedArchive PersonMerge[] @relation("PersonMergeArchive")
@@ -588,6 +584,9 @@ model OrgMembershipProcess {
   /// opened at. Null on every other kind.
   /// @sensitivity:internal
   agreementVersion      Int?
+  /// When the check was marked started outside, which puts this review in the
+  /// reviewers' queue. Written only on PERSON_BG; older INITIAL/RENEWAL rows keep
+  /// the value they hold. Not consent, which is given in the outside tool.
   /// @sensitivity:internal
   bgConsentAt           DateTime?
   /// When the background-check requirement was satisfied for this cycle — either
@@ -620,12 +619,15 @@ model OrgMembershipProcess {
   /// no benefit. lib/outreach is the only send surface for renewal mail.
   /// @sensitivity:internal
   renewalReminderSentAt DateTime?
-  /// @sensitivity:internal
+  /// A scholarship or payment-plan request is the Board's and finance's alone.
+  /// @sensitivity:hardship
+  /// @financeMark
   isPaymentPlanRequested Boolean @default(false)
   /// Which of the two asks isPaymentPlanRequested stands for. Null means the
   /// request predates this column, which is why it is nullable and never
   /// backfilled: what a family asked for is not a value to infer on their behalf.
-  /// @sensitivity:internal
+  /// @sensitivity:hardship
+  /// @financeMark
   scholarshipRequestKind ScholarshipRequestKind?
   /// The household's intake note as submitted with this application. A snapshot, not
   /// a live read: the household may edit or clear Household.intakeNotes afterwards,
@@ -1131,6 +1133,10 @@ model Program {
   claimantShopifyProductId  String?
   /// @sensitivity:public
   claimantShopifyVariantId  String?
+  /// Set once the sale sweep has taken the reserved-seat product off sale after
+  /// the program ended. Nothing clears it.
+  /// @sensitivity:internal
+  claimantProductHiddenAt   DateTime?
   /// Durable "Shopify stock needs a push" flag: set when a stock write could not
   /// be confirmed (lib/shopify/stock.ts adjustProgramInventory).
   /// @sensitivity:internal
@@ -1220,7 +1226,9 @@ model ProgramVolunteer {
   programId     Int
   /// @sensitivity:public
   personId Int
-  /// @sensitivity:internal
+  /// Program staff see who else is core on their own program. Personal, so a
+  /// lead or core-volunteer view needs no internal grant to carry it.
+  /// @sensitivity:personal
   isCore        Boolean @default(false)
 
   program Program     @relation(fields: [programId], references: [id])
@@ -1236,15 +1244,16 @@ model ProgramParticipant {
   personId             Int
   /// @sensitivity:public
   status               ProgramParticipantStatus @default(PENDING)
-  /// How a family pays is finance's and the Board's: a program lead sees whether a
-  /// place is paid, never how. Program lead and core-volunteer views hold
-  /// their_program_participants:personal, so this field must sit above it.
-  /// @sensitivity:internal
+  /// How a family pays is finance's and the Board's alone: program staff, sysadmins
+  /// and other staff roles see whether a place is paid, never how.
+  /// @sensitivity:hardship
+  /// @financeMark
   isPaymentPlanRequested Boolean                  @default(false)
   /// Which of the two asks isPaymentPlanRequested stands for. Null means the
   /// request predates this column; never backfilled, because what a family asked
   /// for is not a value to infer on their behalf. Same tier as the flag.
-  /// @sensitivity:internal
+  /// @sensitivity:hardship
+  /// @financeMark
   scholarshipRequestKind ScholarshipRequestKind?
   /// A workflow timestamp lead mentors need. It says only that a place is unpaid,
   /// not how the family will pay: a family paying by check is pending too.
@@ -1254,7 +1263,7 @@ model ProgramParticipant {
   /// scholarship/payment-plan request was APPROVED (status flipped to ACTIVE).
   /// Membership changes over time, so this can't be derived later from the live
   /// OrgMembership row — it must be stamped at approval. Null until approved.
-  /// @sensitivity:internal
+  /// @sensitivity:hardship
   wasOrgMemberAtApproval Boolean?
   /// Hold-ledger state: stamped when a
   /// scholarship application takes a seat out of Shopify's pool (-1). Cleared
@@ -1263,7 +1272,8 @@ model ProgramParticipant {
   /// grace-period expiry (cron) — or consumed by approval, which moves it to
   /// seatTakenWithoutSaleAt. NOT NULL is the transactional guard every release path checks
   /// before adjusting Shopify.
-  /// @sensitivity:internal
+  /// @sensitivity:hardship
+  /// @financeMark
   inventoryHeldAt      DateTime?
   /// Hold-ledger state: stamped when a board member denies a pending
   /// scholarship/payment-plan request (the seat stays held — see
@@ -1271,7 +1281,8 @@ model ProgramParticipant {
   /// re-application. Drives the grace-period expiry sweep alongside
   /// BoardSettings.scholarshipDenialGraceDays. A refusal says a request existed,
   /// so it carries the request's tier.
-  /// @sensitivity:internal
+  /// @sensitivity:hardship
+  /// @financeMark
   paymentPlanDeniedAt  DateTime?
   /// Shopify order id (numeric, from the orders/paid webhook) this enrollment was
   /// activated by. Stored so the reconciler can join a later refund/chargeback/cancel
@@ -1281,7 +1292,8 @@ model ProgramParticipant {
   /// Stamped when this place took its seat out of Shopify without a sale: a
   /// confirmed admin comp whose -1 succeeded, or approval of a request whose
   /// hold was really taken. Withdrawal returns the seat (+1) only when set.
-  /// @sensitivity:internal
+  /// @sensitivity:hardship
+  /// @financeMark
   seatTakenWithoutSaleAt DateTime?
   /// When the person withdrew: set with status WITHDRAWN, null otherwise.
   /// Same tier as pendingSince — a workflow timestamp lead mentors need.
@@ -1312,7 +1324,9 @@ model Event {
   /// @sensitivity:public
   description String?
 
-  /// @sensitivity:internal
+  /// The session page shows its staff whether attendance is confirmed. Personal,
+  /// so a lead or core-volunteer view needs no internal grant to carry it.
+  /// @sensitivity:personal
   attendanceConfirmedAt   DateTime?
   /// @sensitivity:internal
   attendanceConfirmedById Int?
@@ -1723,6 +1737,19 @@ model SystemMetricLog {
   value     Float
 }
 
+/// The scan protocol version each kiosk signing key last sent, and when.
+/// One row per key. Rows are never deleted.
+model KioskProtocolSeen {
+  /// First 16 hex of SHA-256 over the kiosk's Ed25519 public key.
+  /// @sensitivity:internal
+  keyFingerprint  String   @id
+  /// The version the server acted on: an absent protocolVersion is 1.
+  /// @sensitivity:internal
+  protocolVersion Int
+  /// @sensitivity:internal
+  lastSeenAt      DateTime
+}
+
 /// Persisted external-integration / link failures (Shopify, etc.) surfaced on the
 /// System Status > Link Status tab. Rolling log: rows auto-purge after 90 days.
 model IntegrationErrorLog {
@@ -1864,8 +1891,8 @@ model LifecycleDriftReport {
 /// Permanent record of a participant merge, written by
 /// membership-ops/participants/merge in the merge transaction.
 ///
-/// It outlives the tombstone `Person` row, so a merged-away record stays answerable
-/// without it. Two readers depend on that — the kiosk scan path, which must still
+/// The merge deletes the merged-away `Person` row, so this archive is what keeps a
+/// merged-away record answerable. Two readers depend on that — the kiosk scan path, which must still
 /// resolve a badge that encodes a merged-away id, and membership-audit/compliance,
 /// which reports whose background check a survivor inherited.
 ///
@@ -1874,9 +1901,9 @@ model PersonMerge {
   /// @sensitivity:internal
   id       Int      @id @default(autoincrement())
   /// The merged-away person's original id. Deliberately no FK: the point of the
-  /// row is to outlive that Person. @unique because the merge CAS lets a person
-  /// be merged away exactly once, which is what makes the scan-path lookup a
-  /// findUnique. @sensitivity:internal
+  /// row is to outlive that Person. @unique because a person is merged away
+  /// exactly once (the merge deletes their row), which is what makes the
+  /// scan-path lookup a findUnique. @sensitivity:internal
   fromId   Int      @unique
   /// @sensitivity:internal
   toId     Int
@@ -2055,7 +2082,7 @@ model BulkSend {
   /// "opening" | "reminder"
   /// @sensitivity:internal
   emailType   String
-  /// "a" | "b" | "c" — the audience preset chosen at send time.
+  /// The email type's audience ("opening" | "reminder"); older rows hold the retired "a" | "b" | "c" presets.
   /// @sensitivity:internal
   audience    String
   /// Person.id who fired the send.
@@ -2086,10 +2113,10 @@ model BulkSendItem {
   /// through a member-facing bag — same admin-ledger tier as the rest of this model.
   /// @sensitivity:internal
   email      String
-  /// "join" | "renew"
+  /// "renew"; older rows may hold "join" from before outreach was renewal-only.
   /// @sensitivity:internal
   variant    String
-  /// "queued" | "sent" | "failed" | "skipped_unsubscribed"
+  /// "queued" | "sending" | "sent" | "failed" | "skipped_unsubscribed" | "skipped_denied" | "skipped_not_member"
   /// @sensitivity:internal
   status     String
   /// @sensitivity:internal
@@ -2167,4 +2194,16 @@ model BooksMapRoleAccount {
   /// The QuickBooks Online id of the account (external id, not a checkin FK).
   /// @sensitivity:internal
   quickBooksAccountId String
+}
+
+/// The app's read-only copy of one QuickBooks list, replaced whole by each refresh.
+model QuickBooksList {
+  /// "account" or "class".
+  /// @sensitivity:internal
+  list        String   @id
+  /// The list as QuickBooks returned it, trimmed to { id, name, accountType?, active }.
+  /// @sensitivity:internal
+  entries     Json
+  /// @sensitivity:internal
+  refreshedAt DateTime
 }

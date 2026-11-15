@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
-import { handler, notFound, forbidden, badRequest } from "@/security/handler";
+import { handler, notFound, badRequest } from "@/security/handler";
 import { apiError } from "@/lib/api-response";
 import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { LIVE_VISIT } from "@/lib/visit/filters";
@@ -34,6 +34,28 @@ import {
 export const GET = handler<{ id: string }>('GET /api/events/[id]', async ({ auth, params }) => {
     const eventId = parseInt(params.id, 10);
     if (isNaN(eventId)) throw badRequest('Invalid event ID');
+
+    // Staff check reads only the program's lead and core volunteers, so a
+    // non-staff caller never triggers the roster query and gets the same 404 as
+    // for a missing event: the answer never reveals which event ids exist.
+    const gate = await prisma.event.findUnique({
+        where: { id: eventId },
+        select: {
+            program: {
+                select: {
+                    leadMentorId: true,
+                    volunteers: { where: { isCore: true }, select: { personId: true } }
+                }
+            }
+        }
+    });
+    const isStaff = !!gate && auth.type === 'session' && (
+        auth.user.isSysadmin ||
+        auth.user.isBoardMember ||
+        gate.program?.leadMentorId === auth.user.id ||
+        (gate.program?.volunteers.some(v => v.personId === auth.user.id) ?? false)
+    );
+    if (!isStaff) throw notFound('Event not found');
 
     // Explicit select, not include: whole rows would ship every pii/personal/
     // internal Person and ProgramParticipant column to this event's lead mentors
@@ -90,17 +112,8 @@ export const GET = handler<{ id: string }>('GET /api/events/[id]', async ({ auth
         }
     });
 
+    // The event can be deleted between the staff check and this read.
     if (!event) throw notFound('Event not found');
-
-    // Roster is staff-only (see header). Non-staff callers never receive it —
-    // matches the original inline gate (403 for an existing event they don't staff).
-    const isStaff = auth.type === 'session' && (
-        auth.user.isSysadmin ||
-        auth.user.isBoardMember ||
-        event.program?.leadMentorId === auth.user.id ||
-        (event.program?.volunteers?.some(v => v.personId === auth.user.id && v.isCore) ?? false)
-    );
-    if (!isStaff) throw forbidden('Forbidden: Not authorized to view this event');
 
     if (!event.program) return { Event: event };
     const viewerIsLeader = auth.type === 'session' && !auth.user.isSysadmin && !auth.user.isBoardMember;
@@ -120,7 +133,10 @@ export const PATCH = withAuth({}, async (req: Request, auth, { params }: { param
 
     try {
         const ctx = await loadEventEditContext(eventId, auth.user);
-        if (!ctx) return apiError("Event not found", 404);
+        // Non-staff get the missing-event 404 before any action or role check.
+        if (!ctx || !(ctx.isSysAdminOrBoard || ctx.isLeadMentor || ctx.isCoreVolunteer)) {
+            return apiError("Event not found", 404);
+        }
 
         let result: EventEditResult<object>;
         if (body.action === 'confirmAttendance') {
@@ -144,4 +160,5 @@ export const PATCH = withAuth({}, async (req: Request, auth, { params }: { param
 const REFUSAL_STATUS: Record<EventRefusal, number> = {
     invalid: 400,
     forbidden: 403,
+    conflict: 409,
 };

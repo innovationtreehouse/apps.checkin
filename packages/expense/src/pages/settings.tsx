@@ -10,6 +10,8 @@ const FIELDS = [
   { key: "boardReviewTotalCents", label: "Board review: receipt total at or over (flagged, and held until the Board's approval is recorded)", min: 0.01 },
   { key: "capitalTotalThresholdCents", label: "Capital review: receipt total over", min: 0 },
   { key: "capitalLineItemThresholdCents", label: "Capital review: unit price over", min: 0 },
+  { key: "everydayTotalLimitCents", label: "Everyday card charge: total under", min: 0.01 },
+  { key: "everydayItemLimitCents", label: "Everyday card charge: no single item over", min: 0.01 },
 ] as const;
 type Key = (typeof FIELDS)[number]["key"];
 

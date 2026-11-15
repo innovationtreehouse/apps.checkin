@@ -3,11 +3,14 @@ import type { AuthenticatedUser } from "@/types/auth";
 import type { DbClient, TxClient } from "@/lib/db-client";
 import { personBgOpen } from "@/lib/membership/lifecycle";
 import { disputingReviews, loadCheckReviews } from "@/lib/membership/checkStanding";
-import { advanceHouseholdBgAfterMerge, householdBgFresh } from "@/lib/membership/mergeBgAdvance";
+import { settleHouseholdBg } from "@/lib/membership/settleHouseholdBg";
+import { logBackendError } from "@/lib/logger";
 import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
 import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
+import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
 import { KIND_TO_FLAG, setRoleFlag, lockBoardRoles, RoleMatrixError, trustStatus } from "@/lib/roles";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
+import { notifyBoardOfYouthLeads } from "@/lib/membership/boardAlerts";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { anyMergedAway } from "@/lib/person/archivedPeople";
 import { bgSubjectKey, disputedCheckBlock, type CheckSide } from "./guard";
@@ -51,7 +54,6 @@ export type MergePlan = {
     keep: KeepSubject;
     merge: MergeSubject;
     choices: FieldChoices;
-    bgFreshBeforeMerge: boolean;
     emailChangeReason: string;
 };
 
@@ -135,12 +137,7 @@ export async function prepareMerge(
     const trustBlock = await trustedLoginRefusal(prisma, { keepId, mergeId, keeperUpdate: keeperUpdate.data, emailChangeReason: reason }, actor);
     if (trustBlock) return { refused: trustBlock };
 
-    // The post-commit carryover acts only on a household THIS merge made
-    // background-check fresh, so it needs the pre-merge answer: afterwards the
-    // keeper already carries the merged date and the two are indistinguishable.
-    const bgFreshBeforeMerge = await householdBgFresh(keep.householdId);
-
-    return { plan: { keep, merge, choices: parsed.choices, bgFreshBeforeMerge, emailChangeReason: reason } };
+    return { plan: { keep, merge, choices: parsed.choices, emailChangeReason: reason } };
 }
 
 /** A merge that would change a disputed person's check facts, as a refusal, or null. */
@@ -156,8 +153,8 @@ async function disputedCheckRefusal(db: DbClient, keep: KeepSubject, merge: Merg
 }
 
 /**
- * A BLOCKED household application names nobody, so it disputes every lead of its
- * household until check reviews name their person (person-based-bg-review.md §6).
+ * A household application BLOCKED by a household attestation names nobody, so it
+ * disputes every lead of its household.
  */
 async function blockedApplicationsByLead(db: DbClient, people: { id: number; householdId: number; isHouseholdLead: boolean }[]): Promise<Map<number, { id: number }[]>> {
     const leads = people.filter(p => p.isHouseholdLead);
@@ -209,7 +206,7 @@ function emptyTallies() {
 type Tallies = ReturnType<typeof emptyTallies>;
 
 /**
- * Run the merge transaction, then the post-commit membership carryover. The
+ * Run the merge transaction, then settle both households. The
  * transaction moves everything off the merged-away record, archives it as a
  * PersonMerge row and deletes its Person row. Throws AlreadyMergedError on a
  * lost race, MergeRefusedError when a refusal applies under the locks or a row
@@ -221,7 +218,7 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
     const keepId = keep.id;
     const mergeId = merge.id;
 
-    await prisma.$transaction(async (tx) => {
+    const personMergeId = await prisma.$transaction(async (tx) => {
         await lockMergeRows(tx, keepId, mergeId, [keep.householdId, merge.householdId]);
         const live = await recheckSubjects(tx, plan, actor);
         await clearMergedIdentity(tx, mergeId);
@@ -242,29 +239,31 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
         // household loses a member with the delete below; a household left with
         // nobody in it stays, as one whose last member was removed does.
 
-        await archiveMerge(tx, keepId, live.merge);
+        const archiveId = await archiveMerge(tx, keepId, live.merge);
         await deleteMergedPerson(tx, mergeId);
         await auditMerge(tx, plan, live, actor, moved);
+        return archiveId;
     });
 
-    // The keeper may have just inherited a still-valid background check, which
-    // can leave the household's parked application covered. Post-commit: the
-    // survivor's live leads are only final once the merged-away lead flag and
-    // the keeper's date have landed. Never throws.
-    //
-    // Session actors only: this advances membership state, and the conflict-of-
-    // interest guard — the thing that stops an actor clearing their own
-    // household — can only be applied to a session.
-    if (actor) {
-        await advanceHouseholdBgAfterMerge(keep.householdId, actor.id, mergeId, plan.bgFreshBeforeMerge);
+    // The keeper may now carry a newer check date or another person's review, and the
+    // merged-away record has left its household: settle both on their people's checks.
+    // Post-commit, so a failure is logged rather than reported as a failed merge.
+    for (const householdId of new Set([keep.householdId, merge.householdId])) {
+        try {
+            await settleHouseholdBg(householdId, { trigger: { kind: "merge", personMergeId } });
+        } catch (error) {
+            await logBackendError(error, "household background-check settle after merge", { householdId, keepId, mergeId });
+        }
     }
+    await notifyBoardOfYouthLeads([keep]);
 
     invalidateAttendanceCache();
 }
 
 /**
  * Lock order: BOARD roles, then the application rows this merge writes, then both
- * households' membership rows, then both Person rows in id order. BOARD first is the order a role
+ * households' membership rows, then both Household rows (an archived one refuses the
+ * merge), then both Person rows in id order. BOARD first is the order a role
  * change takes. Application before membership is the order payment, clearance
  * and reset take, so a merge never holds a household row while it waits on an
  * application. The membership rows serialize a deny with the merge even when
@@ -276,6 +275,12 @@ async function lockMergeRows(tx: TxClient, keepId: number, mergeId: number, hous
         WHERE "subjectPersonId" IN (${keepId}, ${mergeId}) OR "zohoSignerPersonId" = ${mergeId} OR "noteAckById" = ${mergeId}
         ORDER BY id FOR UPDATE`;
     await lockAndFindDeniedHousehold(tx, householdIds);
+    try {
+        await lockLiveHouseholds(tx, householdIds);
+    } catch (e) {
+        if (e instanceof ArchivedHouseholdError) throw new MergeRefusedError({ status: 409, error: e.message });
+        throw e;
+    }
     await lockBothSubjects(tx, keepId, mergeId);
 }
 
@@ -642,11 +647,13 @@ function refuseLeftRows(moved: Tallies): void {
  * merges of the same id; fromId @unique backs it, and a collision there means
  * another merge of this record won.
  */
-async function archiveMerge(tx: TxClient, keepId: number, merge: MergeSubject): Promise<void> {
+async function archiveMerge(tx: TxClient, keepId: number, merge: MergeSubject): Promise<number> {
     try {
-        await tx.personMerge.create({
+        const archive = await tx.personMerge.create({
             data: { fromId: merge.id, toId: keepId, snapshot: mergeSnapshot(merge) },
+            select: { id: true },
         });
+        return archive.id;
     } catch (error) {
         if (isPrismaError(error, "P2002")) throw new AlreadyMergedError();
         throw error;

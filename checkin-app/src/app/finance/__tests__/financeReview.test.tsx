@@ -1,12 +1,12 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MantineProvider } from "@mantine/core";
+import { DEFAULT_THEME, MantineProvider, createTheme } from "@mantine/core";
 import FinanceReview from "@/components/finance/FinanceReview";
 
 let mockSearch = new URLSearchParams();
 const mockReplace = jest.fn();
 let mockIsFinance = true;
-let mockReceiptLoads: Record<string, { data: unknown; error: string | null }> = {};
-let mockExpenseLoads: Record<string, { data: unknown; error: string | null }> = {};
+let mockReceiptLoads: Record<string, { data: unknown; error: string | null; status?: number }> = {};
+let mockExpenseLoads: Record<string, { data: unknown; error: string | null; status?: number }> = {};
 const mockReloadCounts = jest.fn();
 const mockReceiptLoad = jest.fn((path: string | null) => ({ data: null, error: null, ...(path === null ? {} : mockReceiptLoads[path]), reload: path === "/queue-counts" ? mockReloadCounts : jest.fn() }));
 const mockExpenseLoad = jest.fn((path: string | null) => ({ data: null, error: null, ...(path === null ? {} : mockExpenseLoads[path]), reload: jest.fn() }));
@@ -40,7 +40,7 @@ beforeAll(() => {
 
 const tab = (actionable = 0, total = actionable, byReason: Record<string, number> = {}) => ({ actionable, total, byReason });
 const EMPTY_EXPENSES = { expenses: tab(), toSign: tab(), accountHolds: tab(), quickbooks: tab(), board: tab() };
-const EMPTY_RECEIPTS = { byState: {}, notPushed: 0, pushGivenUp: 0 };
+const EMPTY_RECEIPTS = { byState: {}, notPushed: 0, failedPushes: 0 };
 let fetchSpy: jest.SpyInstance;
 
 const counts = (receipts: unknown, expenses: unknown) => {
@@ -64,7 +64,7 @@ const tabButton = (name: RegExp) => screen.getByRole("button", { name });
 
 describe("landing", () => {
   it("opens the first tab, in order, with work for the viewer", () => {
-    counts({ byState: { validation_failed: 2 }, notPushed: 0, pushGivenUp: 0 }, { ...EMPTY_EXPENSES, quickbooks: tab(2) });
+    counts({ byState: { validation_failed: 2 }, notPushed: 0, failedPushes: 0 }, { ...EMPTY_EXPENSES, quickbooks: tab(2) });
     wrap();
     expect(tabButton(/^QuickBooks/)).toHaveAttribute("aria-pressed", "true");
     expect(mockExpenseLoad).toHaveBeenCalledWith("/finance-queue?tab=qb");
@@ -78,7 +78,7 @@ describe("landing", () => {
 
   it("lands a Board member on the Board tab when it has their signatures", () => {
     mockIsFinance = false;
-    counts({ byState: { financial_review: 3 }, notPushed: 0, pushGivenUp: 0 }, { ...EMPTY_EXPENSES, board: tab(1, 2) });
+    counts({ byState: { financial_review: 3 }, notPushed: 0, failedPushes: 0 }, { ...EMPTY_EXPENSES, board: tab(1, 2) });
     wrap();
     expect(tabButton(/^Board/)).toHaveAttribute("aria-pressed", "true");
   });
@@ -156,33 +156,32 @@ describe("the receipt tabs", () => {
   it("links the kept receipt on a row rejected as a copy", () => {
     mockSearch = new URLSearchParams("queue=rejected");
     mockReceiptLoads["?state=rejected"] = {
-      data: [{ id: "r1", uploadedAt: "2026-10-01T00:00:00Z", uploadedByUserId: 1, retailer: "Acme", receiptDate: null, receiptTotalCents: 1000, state: "rejected", needsReimbursement: false, isInKind: false, copyOfId: "r9", copyOfLabel: "Acme, uploaded 3 Oct" }],
+      data: [{ id: "r1", uploadedAt: "2026-10-01T00:00:00Z", uploadedByUserId: 1, retailer: "Acme", receiptDate: null, receiptTotalCents: 1000, state: "rejected", needsReimbursement: false, isInKind: false, copyOfId: "r9", copyOfLabel: "receipt r9" }],
       error: null,
     };
     wrap();
-    expect(screen.getByRole("link", { name: "Acme, uploaded 3 Oct" })).toHaveAttribute("href", "/receipts/r9?queue=rejected");
+    expect(screen.getByRole("link", { name: "receipt r9" })).toHaveAttribute("href", "/receipts/r9?queue=rejected");
     expect(screen.getByText(/Rejected as a copy of/)).toBeInTheDocument();
   });
 
-  it("names a duplicate discard on the Discarded tab and links the receipt it duplicates, carrying the queue", () => {
+  it("names a duplicate discard on the Discarded tab", () => {
     mockSearch = new URLSearchParams("queue=discarded");
     const base = { uploadedAt: "2026-10-01T00:00:00Z", uploadedByUserId: 1, receiptDate: null, receiptTotalCents: 1000, state: "discarded", needsReimbursement: false, isInKind: false };
     mockReceiptLoads["?state=discarded"] = {
       data: [
-        { ...base, id: "r1", retailer: "Acme", duplicateFlaggedAt: "2026-10-02T00:00:00Z", duplicateSuspectReceiptId: "r0" },
+        { ...base, id: "r1", retailer: "Acme", duplicateFlaggedAt: "2026-10-02T00:00:00Z" },
         { ...base, id: "r2", retailer: "Bolt" },
       ],
       error: null,
     };
     wrap();
     const [acme, bolt] = ["Acme", "Bolt"].map((name) => screen.getByText(name).closest("tr") as HTMLElement);
-    expect(acme).toHaveTextContent("Discarded as a duplicate of another receipt");
-    expect(within(acme).getByRole("link", { name: "another receipt" })).toHaveAttribute("href", "/receipts/r0?queue=discarded");
+    expect(acme).toHaveTextContent("Discarded as a duplicate");
     expect(bolt).not.toHaveTextContent("as a duplicate");
   });
 
   it("counts FINANCE's own queues in green and the rest in gray, and only gray for the Board", () => {
-    const receipts = { byState: { financial_review: 3, validation_failed: 2 }, notPushed: 0, pushGivenUp: 0 };
+    const receipts = { byState: { financial_review: 3, validation_failed: 2 }, actionableByState: { financial_review: 3 }, notPushed: 0, failedPushes: 0 };
     counts(receipts, EMPTY_EXPENSES);
     const { unmount } = wrap();
     expect(tabButton(/^Finance review/)).toContainElement(screen.getByLabelText("3 to act on"));
@@ -192,6 +191,30 @@ describe("the receipt tabs", () => {
     wrap();
     expect(screen.getByLabelText("3 in this queue")).toBeInTheDocument();
     expect(screen.queryByLabelText(/to act on/)).not.toBeInTheDocument();
+  });
+
+  it("counts a FINANCE viewer's own receipts in gray, and lists them without saying the tab is empty", () => {
+    mockSearch = new URLSearchParams("queue=financial_review");
+    counts({ byState: { financial_review: 1 }, actionableByState: { financial_review: 0 }, notPushed: 0, failedPushes: 0 }, EMPTY_EXPENSES);
+    wrap();
+    expect(tabButton(/^Finance review/)).toContainElement(screen.getByLabelText("1 in this queue"));
+    expect(screen.queryByLabelText(/to act on/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Nothing left here/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Nothing waiting on you.")).not.toBeInTheDocument();
+  });
+
+  it("shows a selected tab's action pill in gray with green text, and an unselected one in green", () => {
+    mockSearch = new URLSearchParams("queue=financial_review");
+    counts({ byState: { financial_review: 3, flow_error: 1 }, actionableByState: { financial_review: 3, flow_error: 1 }, notPushed: 0, failedPushes: 0 }, EMPTY_EXPENSES);
+    // The brand color must exist in the theme for Mantine to resolve the pill's colors.
+    const theme = createTheme({ colors: { treehouseGreen: DEFAULT_THEME.colors.green } });
+    render(<MantineProvider theme={theme}><FinanceReview /></MantineProvider>);
+    const selected = within(tabButton(/^Finance review/)).getByLabelText("3 to act on").getAttribute("style");
+    const unselected = within(tabButton(/^Errors/)).getByLabelText("1 to act on").getAttribute("style");
+    expect(selected).toContain("--badge-bg: var(--mantine-color-gray-2)");
+    expect(selected).toContain("color: var(--mantine-color-treehouseGreen-9)");
+    expect(unselected).toContain("--badge-bg: var(--mantine-color-treehouseGreen-filled)");
+    expect(unselected).toContain("color: var(--mantine-color-black)");
   });
 
   it("reloads the counts when a write tells the nav to refetch", () => {
@@ -211,7 +234,7 @@ describe("the receipt tabs", () => {
   });
 
   it("shows a failed receipt count load as a chip that stays up, naming the route, never inline", () => {
-    mockReceiptLoads["/queue-counts"] = { data: null, error: "Internal Server Error" };
+    mockReceiptLoads["/queue-counts"] = { data: null, error: "Internal Server Error", status: 500 };
     wrap();
     expect(mockShow).toHaveBeenCalledWith(expect.objectContaining({
       title: "Couldn't load the receipt tab counts",
@@ -305,7 +328,7 @@ describe("the expense tabs", () => {
 
 describe("load failures", () => {
   it("shows a failed expense count load as a chip that stays up, naming the route, never inline", () => {
-    mockExpenseLoads["/finance-queue/counts"] = { data: null, error: "Internal Server Error" };
+    mockExpenseLoads["/finance-queue/counts"] = { data: null, error: "Internal Server Error", status: 500 };
     wrap();
     expect(mockShow).toHaveBeenCalledWith(expect.objectContaining({
       title: "Couldn't load the expense tab counts",
@@ -318,7 +341,7 @@ describe("load failures", () => {
 
   it("shows a tab that fails to load as a chip naming the tab and its route, and keeps the Board tab for FINANCE", () => {
     mockSearch = new URLSearchParams("queue=board");
-    mockExpenseLoads["/finance-queue?tab=board"] = { data: null, error: "Internal Server Error" };
+    mockExpenseLoads["/finance-queue?tab=board"] = { data: null, error: "Internal Server Error", status: 500 };
     wrap();
     expect(tabButton(/^Board/)).toHaveAttribute("aria-pressed", "true");
     expect(mockShow).toHaveBeenCalledWith(expect.objectContaining({

@@ -122,6 +122,11 @@ export async function seedApproval(
   return row.id;
 }
 
+/** A PENDING account hold on a line. */
+export async function seedHold(expenseId: string, lineItemId: number, reason = "NO_MATCH"): Promise<void> {
+  await db.expenseHold.create({ data: { orgId: ORG, expenseId, lineItemId, reason, matchedRows: "[]" } });
+}
+
 export async function seedAccountMapping(opts: {
   orgId?: string;
   category?: string;
@@ -218,6 +223,8 @@ export function directory(d: {
   merged?: Record<number, number>;
   /** Collects the names of non-members added; each gets the id 900 + its index. */
   added?: string[];
+  /** Collects who added each non-member, in the order of `added`. */
+  addedBy?: number[];
   /** Adults the name search finds, whatever the query. */
   adults?: Array<{ personId: number; name: string }>;
 }): SignoffDirectory {
@@ -238,8 +245,9 @@ export function directory(d: {
     isOrgMember: async (id) => !(d.nonMembers ?? []).includes(id),
     isAdult: async (id) => !(d.minors ?? []).includes(id),
     searchAdults: async (_query, limit) => (d.adults ?? []).slice(0, limit),
-    addNonMemberAdult: async (name) => {
+    addNonMemberAdult: async (name, actorId) => {
       if (!d.added) throw new Error("this directory adds nobody");
+      d.addedBy?.push(actorId);
       return 900 + d.added.push(name) - 1;
     },
   };

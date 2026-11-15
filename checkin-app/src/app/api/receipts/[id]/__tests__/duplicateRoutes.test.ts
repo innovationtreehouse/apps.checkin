@@ -11,7 +11,10 @@ import { DELETE as undoNotThisOne } from "../not-this-one/[otherId]/route";
 import { POST as differentPurchases } from "../different-purchases/route";
 import { POST as keepThisOne } from "../keep-this-one/route";
 
-jest.mock("@/lib/finance/financeViewLog", () => ({ recordFinanceView: jest.fn().mockResolvedValue(undefined) }));
+jest.mock("@/lib/finance/financeViewLog", () => ({
+  ...jest.requireActual("@/lib/finance/financeViewLog"),
+  recordFinanceViewCall: jest.fn().mockResolvedValue(undefined),
+}));
 jest.mock("@checkin/receipt/services/receiptService", () => ({
   receiptService: {
     get: jest.fn(),
@@ -67,6 +70,7 @@ const FLAGGED = {
   receiptTotalCents: 1000,
   state: "duplicate_flagged",
   copyOfId: "r-orig",
+  copyOfLabel: "receipt r-orig",
   lineItems: [{ id: 1, receiptId: "r-dup", description: "Arduino", quantity: 1, unitPriceCents: 1000, totalPriceCents: 1000 }],
   financialReviewReasons: [],
 };
@@ -93,14 +97,15 @@ describe("GET /api/receipts/[id] gives the compare what it reads", () => {
     });
   });
 
-  it("keeps the kept receipt's id off the uploader's own view", async () => {
+  it("gives the uploader the kept receipt's id but not its label", async () => {
     signIn({ id: 7, ageBand: "adult", isActiveOrgMember: true });
     service.get.mockResolvedValue(FLAGGED);
     const res = await get(req("/r-dup"), params());
     expect(res.status).toBe(200);
     expect(service.get).toHaveBeenCalledWith("r-dup", "submitter");
     const body = await res.json();
-    expect(body).not.toHaveProperty("copyOfId");
+    expect(body.copyOfId).toBe("r-orig");
+    expect(body).not.toHaveProperty("copyOfLabel");
     expect(body.state).toBe("duplicate_flagged");
   });
 });

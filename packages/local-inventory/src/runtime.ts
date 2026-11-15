@@ -15,7 +15,7 @@ import { createLocationService } from "./lib/services/locationService";
 import { createProvisionalItemService } from "./lib/services/provisionalItemService";
 import { createReceiptService, type ReceiptService } from "./lib/services/receiptService";
 import { createReceiveQueueService } from "./lib/services/receiveQueueService";
-import { inertCatalogEventSource, type CatalogEventSource, type InventoryAlerts, type InventoryPrincipal, type InventoryRuntimeConfig } from "./contract";
+import { inertCatalogEventSource, type CatalogEventSource, type InventoryPrincipal, type InventoryRuntimeConfig } from "./contract";
 
 export const localInventoryRuntime = defineRuntime<InventoryRuntimeConfig, InventoryPrincipal>("local-inventory");
 const requireRuntime = localInventoryRuntime.require;
@@ -41,9 +41,11 @@ export async function catalogHasActiveItem(gtin13: string): Promise<boolean> {
   return (await catalog.getActiveItem(gtin13)) != null;
 }
 
-/** The alerts the host bound, if any. */
-export function getInventoryAlerts(): InventoryAlerts | undefined {
-  return requireRuntime().alerts;
+/** GTINs of up to `take` active catalog items matching the query; throws when the host bound no catalog. */
+export async function catalogSearchGtins(query: string, take: number): Promise<string[]> {
+  const catalog = requireRuntime().catalog;
+  if (!catalog) throw new NotWiredError("local-inventory catalog");
+  return (await catalog.searchItems(query, take)).map((item) => item.gtin13);
 }
 
 function buildServices() {

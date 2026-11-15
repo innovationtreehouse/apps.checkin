@@ -62,6 +62,8 @@ export const classifications = {
         qbVendorId: 'internal',
         qbPostAttempts: 'internal',
         qbFailureKind: 'internal',
+        qbFirstFailedAt: 'internal',
+        qbLastError: 'personal',
         qbClaimedAt: 'internal',
         qbMatchBaseline: 'internal',
         qbCreateAttemptedAt: 'internal',
@@ -224,6 +226,7 @@ export const classifications = {
         failureReason: 'personal',
         receivedAt: 'internal',
         replayAttempts: 'internal',
+        firstFailedAt: 'internal',
     },
     ExpenseReceivedOrgEvent: {
         id: 'internal',
@@ -233,6 +236,7 @@ export const classifications = {
         receivedAt: 'internal',
         status: 'internal',
         failureReason: 'personal',
+        firstFailedAt: 'internal',
     },
     CapitalAsset: {
         id: 'internal',
@@ -393,6 +397,18 @@ export const relations = {
     ExpenseFlag: {
         expense: { model: 'Expense', isList: false },
     },
+} as const;
+
+export const marks = {
+    Expense: ['submitterId', 'vendorName', 'taxCents', 'shippingCents', 'discountCents', 'receiptTotalCents', 'reimbursementFor', 'reimburseePersonId'],
+    ExpenseReceiptReview: ['approvedTaxCents'],
+    ExpenseTaxApproval: ['taxCents'],
+    ExpenseLineItem: ['unitPriceCents', 'totalPriceCents', 'allocatedTaxCents', 'allocatedShippingCents', 'allocatedDiscountCents'],
+    ExpenseAuditLog: ['valueBefore', 'valueAfter'],
+    ReceivedExpensePayload: ['payloadJson'],
+    CapitalAsset: ['costCents'],
+    DonatedCapitalLine: ['costCents'],
+    ExpenseReimburseeVendor: ['reimburseePersonId'],
 } as const;
 
 export type Models = keyof typeof classifications;

@@ -1,9 +1,9 @@
 /**
  * @jest-environment node
  */
-// A program lead sees whether a place is paid, never how (docs/rules/programs.md,
-// Access to program information). View tokens come from the live registry, so
-// these pins track policy edits.
+// Program staff and sysadmins see whether a place is paid, never how
+// (docs/rules/programs.md, Access to program information). View tokens come from
+// the live registry, so these pins track policy edits.
 import { stripValue } from '@/security/stripper';
 import { type CallerContext } from '@/security/access-resolvers';
 import { getRoute, type Role, type Token } from '@/security/core';
@@ -101,12 +101,21 @@ describe('ProgramParticipant payment method: program staff see paid or not, neve
     });
 });
 
-describe('ProgramParticipant payment method: finance and the Board still see it', () => {
+describe('ProgramParticipant payment method: a sysadmin sees paid or not, never how', () => {
+    it.each([['refused', deniedRow], ['approved', approvedRow]])(
+        'a %s request reaches a sysadmin on the program page as nothing',
+        (_label, row) => {
+            const out = strip(PROGRAM_PAGE, 'isSysadmin', row, ctx());
+            for (const f of PAYMENT_METHOD_FIELDS) expect(out).not.toHaveProperty(f);
+            expect(out.status).toBe(row.status);
+        },
+    );
+});
+
+describe('ProgramParticipant payment method: finance and the Board see it on their queue', () => {
     it.each<[string, Role]>([
         [PAYMENT_PLANS, 'isFinance'],
         [PAYMENT_PLANS, 'isBoardMember'],
-        [PROGRAM_PAGE, 'isBoardMember'],
-        [PROGRAM_PAGE, 'isSysadmin'],
     ])('%s as %s', (endpoint, role) => {
         const denied = strip(endpoint, role, deniedRow, ctx());
         expect(denied.isPaymentPlanRequested).toBe(false);

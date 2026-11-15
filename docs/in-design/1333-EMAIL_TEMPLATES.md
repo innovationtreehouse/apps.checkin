@@ -150,7 +150,7 @@ diff is behavior-neutral on wording. The old inline builders and hardcoded subje
 
 ### 8. Admin UI — new Settings tab, board-gated
 
-- New top tab **"Email Templates"** in `SettingsTabs` (`src/components/admin/SettingsTabs.tsx`),
+- New top tab **"Email Templates"**: a `SETTINGS.links` entry (`src/lib/nav/sections/settings.ts`; the settings layout renders that list as its tabs),
   route `src/app/settings/templates/page.tsx`. The `settings` layout already admits
   board + sysadmin; the page self-gates `useRequireRole(["isSysadmin","isBoardMember"])`
   like its siblings.
@@ -158,20 +158,19 @@ diff is behavior-neutral on wording. The old inline builders and hardcoded subje
   `sampleCtx` (client-side, reusing the shared substitute fn so preview can't drift from send)
   → save (token-validated) → optional **send-to-self** (reuse the outreach test-send pattern).
 
-## Key list (49)
+## Key list (58)
 
-47 keys are in the registry. The 2 `outreach.*` keys join it in step 5, because outreach has
+56 keys are in the registry. The 2 `outreach.*` keys join it in step 5, because outreach has
 no default copy in code today (the Board writes it, and it is empty until they do).
 `link` tokens are noted; everything else is `text`. Tokens are named after the words they
 stand for in today's copy, so a key without a link today has no `actionLink`.
 
-### checkin and attendance — 4
+### checkin and attendance — 3
 | key | trigger | recipient | tokens |
 |-----|---------|-----------|--------|
 | `checkin.receipt` | `sendCheckinNotifications` participant (`checkinReceiptTemplate`) | participant | name, emoji, visitWord, action, date, time, via |
 | `checkin.householdMember` | `sendCheckinNotifications` household leads (`householdMemberTemplate`) | household lead | leadName, memberName, emoji, arrivalWord, action, date, time, via |
 | `attendance.selfCorrectionFlag` | significant visit edit/delete (`attendance/manual/[id]`) | board | scope, change, visitId, actorName, verb, whose, score, detail |
-| `attendance.keyholderHandover` | last keyholder names a successor (`keyholderGuard`) | named keyholder | leaverName, when, peopleInside |
 
 > Resolved (flag A): `sendNotification` CHECKIN/CHECKOUT is **dead** — test-only, no prod
 > caller. The live check-in mail is the first two rows above. No `checkin.notify`/`checkout.notify`
@@ -209,42 +208,64 @@ stand for in today's copy, so a key without a link today has no `actionLink`.
 | key | trigger | recipient | tokens |
 |-----|---------|-----------|--------|
 | `board.paidReject` | `notifyBoardPaidReject` | board | processId, `actionLink` ("Open applications") |
+| `board.checkRejected` | `notifyBoardCheckRejected`, a check-review rejection that blocks no paid application | board | personName, householdName, reviewId, `actionLink` ("Open applications") |
 | `board.paymentException` | `notifyBoardPaymentException` | board | kind, **blurb**, exceptionId, `actionLink` ("Open payment problems") |
 | `board.pendingDigest` | pending-participants digest | board | approachingCount, overdueCount, approachingList, overdueList |
 | `board.unpaidClaims` | program sale sweep | board | programName, names, `actionLink` ("Open the program") |
 | `board.programAgeMisfit` | program date/age edit (`programs/update.ts`) | board | programName, count, people, `actionLink` ("Open the program") |
-| `board.inventoryEventsStuck` | inventory catch-up finds stuck catalog events | board | problem |
-| `board.expenseEventsStuck` | expense catch-up finds stuck catalog events | board | problem |
-| `board.receiptMappingEventsStuck` | receipt mapping catch-up finds stuck catalog events | board | problem |
 
 > See sub-decision B (blurb) below.
 
-### finance — 11
+### ops — 5
 | key | trigger | recipient | tokens |
 |-----|---------|-----------|--------|
-| `finance.receiptMailCeiling` | receipt mail intake hits its hold ceiling | FINANCE, else board | unresolved, refused, `actionLink` ("Open the incoming receipt queue") |
-| `finance.incomePostCap` | income run stops at its per-run cap | FINANCE, else board | created, limit, remaining, `actionLink` ("Open income reconciliation") |
-| `finance.receiptMailAgeing` | receipt mail run leaves messages unread past the window | FINANCE, else board | messages, since, `actionLink` ("Open the incoming receipt queue") |
-| `finance.receiptMailboxUnreadable` | receipt mail run cannot list the mailbox: Gmail refused access | FINANCE, else board | `actionLink` ("Open the incoming receipt queue") |
-| `finance.receiptMailboxUnanswered` | receipt mail run cannot list the mailbox: Gmail did not answer | FINANCE, else board | `actionLink` ("Open the incoming receipt queue") |
-| `finance.receiptMailboxNotFound` | receipt mail run cannot list the mailbox: no such mailbox | FINANCE, else board | `actionLink` ("Open the incoming receipt queue") |
-| `finance.receiptMailboxFailed` | receipt mail run cannot list the mailbox: unexpected failure | FINANCE, else board | `actionLink` ("Open the incoming receipt queue") |
-| `finance.incomeBucketUnusable` | a budget-owner bucket can't take sales | FINANCE, else board | bucketName, issue, itemCount, `actionLink` ("Open income items") |
-| `finance.incomeSweepIncomplete` | income orphan sweep reads a full page | FINANCE, else board | since, `actionLink` ("Open income reconciliation") |
-| `finance.expensePaymentAccount` | books-map payment account can't post | FINANCE, else board | accountId, accountKind, `actionLink` ("Open the books map") |
-| `finance.expenseSweepIncomplete` | expense orphan sweep reads a full page | FINANCE, else board | since, `actionLink` ("Open expenses") |
-| `finance.donationDepositHandOver` | daily job cannot hand a finished giving-platform batch to income; once per batch | FINANCE, else board | batches, `actionLink` ("Open booking batches") |
-| `finance.inKindSweepIncomplete` | in-kind orphan sweep reads a full page | FINANCE, else board | since, `actionLink` ("Open the in-kind queue") |
-| `finance.inKindDrainStopped` | in-kind drain stops on its failure streak, a lost connection, or three gifts refused with one fault code | FINANCE, else board | failures, remaining, cause, `actionLink` ("Open the in-kind queue") |
+| `ops.incidentOpened` | a job run's failure opens an incident (`opsIncidents`): a connection, settings or bug failure on its first run; a system failure on the second run in a row; a stopped job (no successful run in 48 hours) at once | the alert address setting (nothing sent if unset) | kind, cause, lanes, status, summary, firstSeen, runsSeen, items, todo, `actionLink` ("Open System Status") |
+| `ops.incidentReminder` | an incident is still open when its reminder falls due | the alert address setting (nothing sent if unset) | same as `ops.incidentOpened` |
+| `ops.incidentEscalated` | an incident has been open for 2 weeks | the Board address setting (nothing sent if unset) | same as `ops.incidentOpened` |
+| `ops.incidentRecovered` | a run covers every lane of an open incident without failing it | the alert address setting (nothing sent if unset) | same as `ops.incidentOpened` |
+| `ops.problemsDigest` | daily, while an item has been stuck over a day, a job has not run on time or its latest run reported failures, a library's stuck items could not be read, or a library has a notice of its own (`sendProblemsDigest`) | the alert address setting (nothing sent if unset); also the Board address setting once a stuck item or late job has waited over 14 days | count, items, `actionLink` ("Open System Status") |
 
-### receipt — 2
+> The incident emails carry codes, counts and dates only, with no amounts, donor or vendor
+> names, or memo text. The digest carries ids, steps and dates only, with no error text,
+> amounts, or donor or vendor names.
+
+### finance — 9
+| key | trigger | recipient | tokens |
+|-----|---------|-----------|--------|
+| `finance.receiptMailCeiling` | receipt mail intake hits its hold ceiling | the alert address setting (nothing sent if unset) | unresolved, refused, `actionLink` ("Open the incoming receipt queue") |
+| `finance.incomePostCap` | income run stops at its per-run cap | the alert address setting (nothing sent if unset) | created, limit, remaining, `actionLink` ("Open income reconciliation") |
+| `finance.receiptMailAgeing` | receipt mail run leaves messages unread past the window | the alert address setting (nothing sent if unset) | messages, since, `actionLink` ("Open the incoming receipt queue") |
+| `finance.incomeBucketUnusable` | a budget-owner bucket can't take sales | the alert address setting (nothing sent if unset) | bucketName, issue, itemCount, `actionLink` ("Open income items") |
+| `finance.incomeSweepIncomplete` | income orphan sweep reads a full page | the alert address setting (nothing sent if unset) | since, `actionLink` ("Open income reconciliation") |
+| `finance.expensePaymentAccount` | books-map payment account can't post | the alert address setting (nothing sent if unset) | accountId, accountKind, `actionLink` ("Open the books map") |
+| `finance.expenseSweepIncomplete` | expense orphan sweep reads a full page | the alert address setting (nothing sent if unset) | since, `actionLink` ("Open expenses") |
+| `finance.donationDepositHandOver` | daily job cannot hand a finished giving-platform batch to income; once per batch | the alert address setting (nothing sent if unset) | batches, `actionLink` ("Open booking batches") |
+| `finance.inKindSweepIncomplete` | in-kind orphan sweep reads a full page | the alert address setting (nothing sent if unset) | since, `actionLink` ("Open the in-kind queue") |
+
+### receipt — 4
 | key | trigger | recipient | tokens |
 |-----|---------|-----------|--------|
 | `receipt.mailReplyCredited` | `sendMailReply`, the person a mailed receipt is credited to | credited person | creditedName, from, when, `actionLink` ("Review it in My receipts") |
 | `receipt.mailReplySender` | `sendMailReply`, a sender whose receipt is credited to someone else | sender | when, creditedName |
+| `receipt.mailRefused` | `sendMailReply`, a mail from which no receipt was accepted | sender | when |
+| `receipt.rejected` | a receipt is not accepted (`purchaseOutcomeMail`) | uploader; also the person reimbursed when that is someone else | name, receipt, retailer, date, `actionLink` ("Open the receipt") |
 
-> Both carry the `Auto-Submitted: auto-replied` header, which is why `sendTemplated` takes optional
-> headers.
+> The three `sendMailReply` notices carry the `Auto-Submitted: auto-replied` header, which is
+> why `sendTemplated` takes optional headers.
+
+### expense — 2
+| key | trigger | recipient | tokens |
+|-----|---------|-----------|--------|
+| `expense.lineRejected` | a line of a receipt is not approved (`purchaseOutcomeMail`) | uploader; also the person reimbursed when that is someone else | name, receipt, retailer, date, `actionLink` ("Open the receipt") |
+| `expense.reimbursementComplete` | a reimbursement is approved (`purchaseOutcomeMail`) | uploader; also the person reimbursed when that is someone else | name, receipt, retailer, date, `actionLink` ("Open the receipt") |
+
+> `receipt` is "your receipt" to the uploader and "a receipt for your reimbursement" to the
+> person reimbursed. These three outcome notices respect the recipient's opt-out.
+
+### lifecycle — 1
+| key | trigger | recipient | tokens |
+|-----|---------|-----------|--------|
+| `lifecycle.driftDigest` | lifecycle drift check finds rows off their state diagram (`lifecycleDrift`) | sysadmins and board | newCount, stillPresentCount, newList, stillPresentList, `actionLink` ("Open the Lifecycle panel") |
 
 ### shopify — 1
 | key | trigger | recipient | tokens |
@@ -295,15 +316,14 @@ stand for in today's copy, so a key without a link today has no `actionLink`.
 ### outreach — 2 (flag D: folded in from `BoardSettings`; joins the registry in step 5)
 | key | trigger | recipient | tokens |
 |-----|---------|-----------|--------|
-| `outreach.opening` | outreach batch opening (was `outreachOpening{Subject,Body}`) | prospects | name, deadline, actionWord, `actionLink` |
-| `outreach.reminder` | outreach reminder (was `outreachReminder{Subject,Body}`) | prospects | name, deadline, actionWord, `actionLink` |
+| `outreach.opening` | outreach batch opening (was `outreachOpening{Subject,Body}`) | member-household leads | name, deadline, actionWord, `actionLink` |
+| `outreach.reminder` | outreach reminder (was `outreachReminder{Subject,Body}`) | leads of member households not yet renewed | name, deadline, actionWord, `actionLink` |
 
-> Fold detail: outreach carries extra machinery the transactional flows don't — join/renew
-> **variants**, a conditional **unsubscribe footer** appended after substitution, and a
-> boundary-derived `{{deadline}}`. That render *wrapper* (`renderOutreachEmail`) stays; only the
-> **source of subject/body** moves from `BoardSettings` columns to the two `outreach.*` rows.
-> The unsubscribe footer and variant `actionWord` remain outreach-specific ctx, not editor-facing
-> copy. The four `outreach*` `BoardSettings` columns + the `settings/outreach` page are removed in
+> Fold detail: outreach goes only to member households, so it has no join variant and no
+> unsubscribe footer; `{{actionWord}}` always renders "renew" until this step settles the token
+> set. It still carries a boundary-derived `{{deadline}}`. That render *wrapper*
+> (`renderOutreachEmail`) stays; only the **source of subject/body** moves from `BoardSettings`
+> columns to the two `outreach.*` rows. The four `outreach*` `BoardSettings` columns + the `settings/outreach` page are removed in
 > the follow-up contract release (step 8), not here. Its sandboxed-iframe preview is superseded by
 > the plain-text preview (no HTML authoring → no iframe needed).
 
@@ -349,7 +369,7 @@ not a zero-visual-change one. Uniform branding is a stated goal of this work.
    `outreach.*` registry entries here; their default wording is a Board decision.
 6. Grep-to-zero enforcement test (`sendEmail(` only in `email.ts` + renderer).
 7. Admin tab: `settings/templates` page + API route (list/get/save + validate + send-to-self),
-   add `"templates"` to `SettingsTabs`.
+   add the templates link to `SETTINGS.links`.
 8. **Follow-up release (contract): drop the moved `BoardSettings` columns + old
    `settings/email`/`settings/outreach` controls** — only after step 5 has fully deployed and
    the drain window has passed. Per `DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`: during a rolling

@@ -9,8 +9,8 @@ import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
 import { drainExpense } from "../lib/financial-flow";
 import { boardApprovalNeeded, clearFrom, isConflicted, filledSeatsByLine, lineHolds, lockBucketLines, lockExpense, signoffFactsByLine, signoffFactsForExpenses, unsignedLines } from "../lib/signoff-facts";
-import { CLOSED_STATES, blockedSeats, boardAuthorizationRefusal, missingSeats, reimburseeUnknown, signoffRefusal, type FilledSeat, type Seat, type SignoffFacts } from "../lib/signoff";
-import { lineActions, mayRecordBoardAuthorization, signatureTab } from "../lib/line-actions";
+import { APPROVABLE_STATUSES, CLOSED_STATES, approvesAsStandIn, blockedSeats, boardAuthorizationRefusal, missingSeats, reimburseeUnknown, signoffRefusal, type FilledSeat, type Seat, type SignoffFacts } from "../lib/signoff";
+import { approvalWaitsOnBoard, lineActions, mayRecordBoardAuthorization, signatureTab, type LineActionsInput } from "../lib/line-actions";
 import { lookupCatalogInfo, saveCatalogSnapshots } from "../lib/expense-qb-processor";
 import { logError } from "../lib/logger";
 import { SIGNOFF_BADGE_EXPENSE_CAP } from "./badgeCounts";
@@ -214,7 +214,7 @@ export const setReimbursee: SetReimbursee = async (orgId, expenseId, choice, pri
   if ("newPerson" in choice && await isConflicted({ submitterId: expense.submitterId, reimburseePersonId: null }, actor.userId)) {
     throw new ServiceError(403, conflicted);
   }
-  const personId = "personId" in choice ? choice.personId : await dir.addNonMemberAdult(choice.newPerson.name.trim());
+  const personId = "personId" in choice ? choice.personId : await dir.addNonMemberAdult(choice.newPerson.name.trim(), actor.userId);
   if (!(await dir.personExists(personId))) throw new ServiceError(404, "Person not found");
   if (!(await dir.isAdult(personId))) throw new ServiceError(400, "Only an adult can be named as reimbursee");
   if (await isConflicted({ submitterId: expense.submitterId, reimburseePersonId: personId }, actor.userId)) {
@@ -307,10 +307,10 @@ export async function signoffStatus(expenseId: string) {
 export async function signoffStatusFor(principal: ExpensePrincipal, expenseId: string) {
   const expense = await db.expense.findFirst({ where: { id: expenseId, orgId: await getOrgId() } });
   if (!expense) throw new ServiceError(404, "Expense not found");
-  return (await callerLines(principal, expense)).map(({ facts: _facts, ...status }) => status);
+  return (await callerLines(principal, expense)).map(({ facts: _facts, waitsOnBoard: _waitsOnBoard, ...status }) => status);
 }
 
-/** Each line of the expense as the caller sees it: its seats, holds, the caller's acts, and its facts. */
+/** Each line of the expense as the caller sees it: its seats, holds, the caller's acts, its facts, and whether its approval waits on a Board member. */
 export async function callerLines(principal: ExpensePrincipal, expense: Expense, readOnly = false) {
   return (await callerLinesFor(principal, [expense], readOnly)).get(expense.id)!;
 }
@@ -332,8 +332,9 @@ export async function callerLinesFor(principal: ExpensePrincipal, expenses: Expe
       const lines = [...byLine].map(([lineItemId, f]) => {
         const seats = filled.get(lineItemId) ?? [];
         const holds = lineHolds(approvalNeeded, f, seats);
-        const { actions, awaiting } = lineActions({ caller, expense: held, approval: approvals.get(lineItemId) ?? null, facts: f, filled: seats, holds });
-        return { lineItemId, filled: seats, missing: holds, blocked: blockedSeats(f, seats), actions, awaiting, mayRecordBoardAuthorization: mayRecord, facts: f };
+        const input: LineActionsInput = { caller, expense: held, approval: approvals.get(lineItemId) ?? null, facts: f, filled: seats, holds };
+        const { actions, awaiting } = lineActions(input);
+        return { lineItemId, filled: seats, missing: holds, blocked: blockedSeats(f, seats), actions, awaiting, mayRecordBoardAuthorization: mayRecord, facts: f, waitsOnBoard: approvalWaitsOnBoard(input) };
       });
       return [expense.id, lines] as const;
     }),
@@ -350,34 +351,81 @@ export interface SignaturesWaiting {
 /**
  * The lines whose main act for this caller is a Treasurer or Board signature, from the line-actions
  * function: a line is listed only once the steps before its signature are done, and a Board
- * stand-in only where no one else can act. Reads at most
- * SIGNOFF_BADGE_EXPENSE_CAP open expenses with an approved line (newest first), as the sign-off
- * badges do; an expense with nothing for the caller is left out.
+ * stand-in only where no one else can act. Lists at most SIGNOFF_BADGE_EXPENSE_CAP open expenses
+ * (newest first), as the sign-off badges do; an expense with nothing for the caller is left out.
+ * Candidates have an approved line missing a Treasurer or Board seat; whether a line takes the
+ * Board seat needs the facts, so candidates are read a page at a time until the cap is met or
+ * none are left: a long run of candidates with nothing for the caller is read in full.
  */
 export async function signaturesWaiting(principal: ExpensePrincipal): Promise<SignaturesWaiting[]> {
   if (!principal.isFinance && !principal.isBoard) return [];
+  const me = actorOf(principal).userId;
+  const unsigned = (seat: Seat) => ({ lineItem: { signoffs: { none: { seat } } } });
+  const where: Prisma.ExpenseWhereInput = {
+    orgId: await getOrgId(),
+    backfill: false,
+    state: { notIn: [...CLOSED_STATES] },
+    NOT: { needsReimbursement: true, reimburseePersonId: null },
+    approvals: { some: { status: "approved", OR: [unsigned("TREASURER"), unsigned("BOARD")] } },
+  };
+  const out: SignaturesWaiting[] = [];
+  let after: Prisma.ExpenseWhereInput = {};
+  while (out.length < SIGNOFF_BADGE_EXPENSE_CAP) {
+    const expenses = await db.expense.findMany({ where: { AND: [where, after] }, orderBy: [{ submittedAt: "desc" }, { id: "asc" }], take: SIGNOFF_BADGE_EXPENSE_CAP });
+    const linesOf = await callerLinesFor(principal, expenses, true);
+    for (const expense of expenses) {
+      const row: SignaturesWaiting = { expense, toSign: [], board: [] };
+      for (const line of linesOf.get(expense.id)!) {
+        const main = line.actions.find((a) => a.primary);
+        const tab = main ? signatureTab(line.facts, main, me) : null;
+        if (tab) row[tab].push(line.lineItemId);
+      }
+      if (row.toSign.length + row.board.length > 0 && out.length < SIGNOFF_BADGE_EXPENSE_CAP) out.push(row);
+    }
+    if (expenses.length < SIGNOFF_BADGE_EXPENSE_CAP) break;
+    // Keyset paging: an expense submitted or closed between reads shifts no row into or out of the next page.
+    const last = expenses[expenses.length - 1];
+    after = { OR: [{ submittedAt: { lt: last.submittedAt } }, { submittedAt: last.submittedAt, id: { gt: last.id } }] };
+  }
+  return out;
+}
+
+/** One expense's lines whose approval waits on a Board member: the ones the caller may give, and the ones they are conflicted on. */
+export interface BoardApprovalsWaiting {
+  expense: Expense;
+  give: number[];
+  conflicted: number[];
+}
+
+/**
+ * For a Board member, the lines whose approval only a Board member can give: an org-level line, or
+ * one no bucket approver may approve. `give` holds the lines whose main act for the caller is that
+ * approval; `conflicted` the ones the caller may not decide because the expense is theirs or their
+ * household's, so another Board member must. Reads every open expense in the approval step, as the
+ * finance queue reads its other reasons.
+ */
+export async function boardApprovalsWaiting(principal: ExpensePrincipal): Promise<BoardApprovalsWaiting[]> {
+  if (!principal.isBoard) return [];
   const me = actorOf(principal).userId;
   const expenses = await db.expense.findMany({
     where: {
       orgId: await getOrgId(),
       backfill: false,
-      state: { notIn: [...CLOSED_STATES] },
+      state: "owner_approval",
       NOT: { needsReimbursement: true, reimburseePersonId: null },
-      approvals: { some: { status: "approved" } },
+      approvals: { some: { status: { in: [...APPROVABLE_STATUSES] } } },
     },
     orderBy: { submittedAt: "desc" },
-    take: SIGNOFF_BADGE_EXPENSE_CAP,
   });
   const linesOf = await callerLinesFor(principal, expenses, true);
-  const out: SignaturesWaiting[] = [];
+  const out: BoardApprovalsWaiting[] = [];
   for (const expense of expenses) {
-    const row: SignaturesWaiting = { expense, toSign: [], board: [] };
+    const row: BoardApprovalsWaiting = { expense, give: [], conflicted: [] };
     for (const line of linesOf.get(expense.id)!) {
-      const main = line.actions.find((a) => a.primary);
-      const tab = main ? signatureTab(line.facts, main, me) : null;
-      if (tab) row[tab].push(line.lineItemId);
+      if (line.actions.some((a) => a.act === "approve" && a.primary) && approvesAsStandIn(line.facts, me)) row.give.push(line.lineItemId);
+      else if (line.waitsOnBoard && line.facts.conflicted.includes(me)) row.conflicted.push(line.lineItemId);
     }
-    if (row.toSign.length + row.board.length > 0) out.push(row);
+    if (row.give.length + row.conflicted.length > 0) out.push(row);
   }
   return out;
 }

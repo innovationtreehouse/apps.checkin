@@ -4,18 +4,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CatalogReader, CatalogSubmissions } from "../../contract";
 import { configure } from "../helpers/setup";
 
-const { updateEditableLine } = vi.hoisted(() => ({ updateEditableLine: vi.fn() }));
+const { loadEditableLine, updateEditableLine } = vi.hoisted(() => ({ loadEditableLine: vi.fn(), updateEditableLine: vi.fn() }));
 
 vi.mock("../../db", () => ({ db: {} }));
 vi.mock("../../lib/audit", () => ({ insertAuditEvent: vi.fn() }));
 vi.mock("../../lib/auto-proceed", () => ({ tryAutoProceedApply: vi.fn() }));
 vi.mock("../../services/receiptLookup", () => ({
-  loadEditableLine: vi.fn(async () => ({
-    received: { id: 1, orgId: "org", receiptId: "r-1" },
-    lineStatus: { id: 2 },
-    receipt: { vendorName: "Hardware Co" },
-    lineItem: { receiptLineItemId: 1, description: "Hex bolt" },
-  })),
+  loadEditableLine,
   updateEditableLine,
 }));
 
@@ -42,8 +37,17 @@ const catalogSubmissions: CatalogSubmissions = {
   proposeProvisionalItem: async () => undefined,
 };
 
+const editableLine = (lineStatus: object = { id: 2 }) => ({
+  received: { id: 1, orgId: "org", receiptId: "r-1" },
+  lineStatus,
+  receipt: { vendorName: "Hardware Co" },
+  lineItem: { receiptLineItemId: 1, partNumber: "PN-1", description: "Hex bolt" },
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
+  loadEditableLine.mockResolvedValue(editableLine());
+  updateEditableLine.mockResolvedValue(true);
   // The catalog port answers null for an archived GTIN, as it does for an unknown one.
   getActiveItem.mockImplementation(async (gtin13) => (gtin13 === ACTIVE ? { gtin13, name: "Cordless Drill" } : null));
   configure({ catalogReader, catalogSubmissions });
@@ -66,7 +70,7 @@ describe("associateGtin GTIN check", () => {
   it("404 for a GTIN no catalog item has", async () => {
     await expect(lineItemService.associateGtin(1, 2, { gtin13: "0044444444440" })).rejects.toMatchObject({
       status: 404,
-      message: "No catalog item has GTIN 0044444444440",
+      message: "No catalog item has Part ID 0044444444440",
     });
     expect(updateEditableLine).not.toHaveBeenCalled();
   });
@@ -124,6 +128,43 @@ describe("associateGtin GTIN check", () => {
       expect.anything(),
       expect.objectContaining({ recognitionStatus: "recognized", assignedGtin13: ACTIVE }),
       expect.objectContaining({ eventType: "line_associated" }),
+      expect.any(Function),
     );
+  });
+});
+
+describe("associateGtin repeat", () => {
+  const associated = { id: 2, recognitionStatus: "recognized", assignedGtin13: ACTIVE, conversionFactor: 4, conversionVersion: 3 };
+  const proposeItemReference = vi.fn<CatalogSubmissions["proposeItemReference"]>(async () => ({ id: 1 }));
+
+  beforeEach(() => configure({ catalogReader, catalogSubmissions: { ...catalogSubmissions, proposeItemReference } }));
+
+  it("does nothing when the line already has the same GTIN and factor", async () => {
+    loadEditableLine.mockResolvedValue(editableLine(associated));
+    await lineItemService.associateGtin(1, 2, { gtin13: ACTIVE, conversionFactor: 4 });
+    expect(getActiveItem).not.toHaveBeenCalled();
+    expect(proposeItemReference).not.toHaveBeenCalled();
+    expect(updateEditableLine).not.toHaveBeenCalled();
+  });
+
+  it("writes the line, proposes and logs when the factor changes", async () => {
+    loadEditableLine.mockResolvedValue(editableLine(associated));
+    await lineItemService.associateGtin(1, 2, { gtin13: ACTIVE, conversionFactor: 6 });
+    expect(proposeItemReference).toHaveBeenCalledOnce();
+    expect(updateEditableLine).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ conversionFactor: 6, conversionVersion: 1 }),
+      expect.objectContaining({ eventType: "line_associated" }),
+      expect.any(Function),
+    );
+  });
+
+  it("re-checks the locked row, skipping the write only for the same GTIN and factor", async () => {
+    await lineItemService.associateGtin(1, 2, { gtin13: ACTIVE, conversionFactor: 4 });
+    const unchanged = updateEditableLine.mock.calls[0][3] as (row: typeof associated) => boolean;
+    expect(unchanged(associated)).toBe(true);
+    expect(unchanged({ ...associated, conversionFactor: 6 })).toBe(false);
+    expect(unchanged({ ...associated, assignedGtin13: "0000000000024" })).toBe(false);
+    expect(unchanged({ ...associated, recognitionStatus: "provisional" })).toBe(false);
   });
 });

@@ -97,9 +97,6 @@ export const inertAlerts: ReceiptAlerts = {
   mailAgingOut: async (event) => {
     console.warn("[receipt] mail is leaving the window unread; finance alerts are not bound:", event);
   },
-  mailListingFailed: async (event) => {
-    console.warn("[receipt] the mailbox could not be listed; finance alerts are not bound:", event);
-  },
 };
 
 export const inertOcr: OcrProvider = {
@@ -129,7 +126,7 @@ export function limits(): ReceiptLimits {
   return { ...DEFAULT_LIMITS, ...requireRuntime().limits };
 }
 
-export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "onFailure" | "limits" | "mailbox" | "replies" | "outcomeMail" | "fileStore" | "storeNewFilesInBucket">> {
+export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits" | "mailbox" | "replies" | "outcomeMail" | "fileStore" | "storeNewFilesInBucket">> {
   const r = requireRuntime();
   return {
     receiptSink: r.receiptSink ?? inertReceiptSink,

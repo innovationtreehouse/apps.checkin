@@ -3,8 +3,9 @@ import { queueBadge, type QueueCounts } from "../../components/queueCounts";
 
 const counts: QueueCounts = {
   byState: { financial_review: 3, duplicate_flagged: 0, validation_failed: 2, submitter_review: 4, flow_error: 1 },
+  actionableByState: { financial_review: 3, duplicate_flagged: 0, flow_error: 1 },
   notPushed: 5,
-  pushGivenUp: 2,
+  failedPushes: 2,
 };
 
 describe("queueBadge", () => {
@@ -25,8 +26,13 @@ describe("queueBadge", () => {
     expect(queueBadge(queue, counts, false)).toEqual(badge);
   });
 
+  it("shows a FINANCE queue's total in gray when none of it is the viewer's to act on", () => {
+    const own = { ...counts, actionableByState: { financial_review: 0, duplicate_flagged: 0, flow_error: 0 } };
+    expect(queueBadge("financial_review", own, true)).toEqual({ count: 3, intent: "info" });
+  });
+
   it("shows the undelivered total in gray once nothing has been given up on", () => {
-    expect(queueBadge("not_pushed", { ...counts, pushGivenUp: 0 }, true)).toEqual({ count: 5, intent: "info" });
+    expect(queueBadge("not_pushed", { ...counts, failedPushes: 0 }, true)).toEqual({ count: 5, intent: "info" });
   });
 
   it.each(["duplicate_flagged", "discarded"])("shows nothing for an empty or uncounted queue (%s)", (queue) => {

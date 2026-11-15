@@ -6,7 +6,7 @@ import { resetRtl } from "@/test-helpers/rtl";
 
 beforeEach(() => resetRtl());
 
-const BANNER = "Item names couldn't be loaded from the catalog. Showing part numbers.";
+const BANNER = "Item names couldn't be loaded from the catalog. Showing Part IDs.";
 let catalogDown = false;
 
 jest.mock("@checkin/expense/components/api", () => ({

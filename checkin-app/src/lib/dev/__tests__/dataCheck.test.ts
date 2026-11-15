@@ -1,8 +1,16 @@
-import { classifyPeople, runDevDataCheck, type DataCheckDb } from "@/lib/dev/dataCheck";
+import {
+    classifyPeople,
+    DevDataCheckRefused,
+    isAllowedDatabase,
+    runDevDataCheck,
+    type DataCheckDb,
+} from "@/lib/dev/dataCheck";
 
 const SEEDED = "parent.family@example.com";
 const ORG = "staff@innovationtreehouse.org";
 const OTHER = "someone@other.invalid";
+const LOCAL_URL = "postgresql://u:p@localhost:5432/checkmein";
+const REMOTE_URL = "postgresql://u:p@db.remote.invalid:5432/checkmein";
 
 describe("classifyPeople", () => {
     it("flags people and households that are neither seeded nor org accounts", () => {
@@ -32,7 +40,7 @@ describe("runDevDataCheck", () => {
         process.env.CHECKIN_ENV = original;
     });
 
-    function fakeDb() {
+    function fakeDb(database = "checkin_dev") {
         const statements: string[] = [];
         const tx = {
             $executeRawUnsafe: jest.fn(async (sql: string) => {
@@ -41,6 +49,7 @@ describe("runDevDataCheck", () => {
             }),
             $queryRawUnsafe: jest.fn(async (sql: string) => {
                 statements.push(sql);
+                if (sql.includes("current_database()")) return [{ name: database }];
                 if (sql.includes('FROM "Person"') && sql.includes("email")) {
                     return [
                         { id: 1, email: SEEDED, householdId: 10 },
@@ -71,10 +80,46 @@ describe("runDevDataCheck", () => {
         expect(db.$transaction).not.toHaveBeenCalled();
     });
 
+    it("refuses prod's compose database, which the host check alone accepts", async () => {
+        process.env.CHECKIN_ENV = "prod";
+        const { db } = fakeDb("checkmein");
+        await expect(runDevDataCheck(db, "postgresql://u:p@db:5432/checkmein")).rejects.toThrow(/dev or local/);
+        expect(db.$transaction).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ["dev", "checkmein"],
+        ["dev", "checkin_prod"],
+        ["local", "checkin_prod"],
+        ["local", "checkin_dev_copy"],
+    ])("refuses to read when CHECKIN_ENV is %p and the database is %p", async (env, database) => {
+        process.env.CHECKIN_ENV = env;
+        const { db, statements } = fakeDb(database);
+        await expect(runDevDataCheck(db, LOCAL_URL)).rejects.toThrow(DevDataCheckRefused);
+        expect(statements.some((s) => s.includes('"Person"'))).toBe(false);
+    });
+
+    it.each([
+        ["dev", "checkin_dev"],
+        ["local", "checkmein"],
+        ["local", "checkin_test_abc_1"],
+    ])("runs when CHECKIN_ENV is %p and the database is %p", async (env, database) => {
+        process.env.CHECKIN_ENV = env;
+        const { db } = fakeDb(database);
+        await expect(runDevDataCheck(db, LOCAL_URL)).resolves.toBeDefined();
+    });
+
+    it("refuses a local database named checkmein on a remote host", async () => {
+        process.env.CHECKIN_ENV = "local";
+        const { db, statements } = fakeDb("checkmein");
+        await expect(runDevDataCheck(db, REMOTE_URL)).rejects.toThrow(DevDataCheckRefused);
+        expect(statements.some((s) => s.includes('"Person"'))).toBe(false);
+    });
+
     it("reads inside a read-only transaction and reports counts with no personal data", async () => {
         process.env.CHECKIN_ENV = "dev";
         const { db, statements } = fakeDb();
-        const report = await runDevDataCheck(db);
+        const report = await runDevDataCheck(db, REMOTE_URL);
 
         expect(statements[0]).toBe("SET TRANSACTION READ ONLY");
         expect(statements.slice(1).every((s) => /^\s*SELECT/i.test(s))).toBe(true);
@@ -83,5 +128,27 @@ describe("runDevDataCheck", () => {
         expect(report.linkedRows).toEqual([{ table: "ProgramParticipant", column: "personId", rows: 2 }]);
         expect(report.linkedRecords).toEqual({ Program: 1 });
         expect(JSON.stringify(report)).not.toMatch(/@|other\.invalid|example\.com/);
+    });
+});
+
+describe("isAllowedDatabase", () => {
+    it.each([
+        ["postgresql://u:p@localhost:5432/x", true],
+        ["postgresql://u:p@127.0.0.1:5432/x", true],
+        ["postgresql://u:p@[::1]:5432/x", true],
+        ["postgresql://u:p@db:5432/x", true],
+        ["postgresql://u:p@db.remote.invalid:5432/x", false],
+        ["not a url", false],
+        [undefined, false],
+    ])("under local, accepts checkmein at %p: %p", (url, allowed) => {
+        expect(isAllowedDatabase("local", "checkmein", url)).toBe(allowed);
+    });
+
+    it("checks the receipt database by its own names", () => {
+        expect(isAllowedDatabase("dev", "receipt_dev", REMOTE_URL, "receipt")).toBe(true);
+        expect(isAllowedDatabase("dev", "receipt_prod", REMOTE_URL, "receipt")).toBe(false);
+        expect(isAllowedDatabase("dev", "checkin_dev", REMOTE_URL, "receipt")).toBe(false);
+        expect(isAllowedDatabase("local", "receipt", LOCAL_URL, "receipt")).toBe(true);
+        expect(isAllowedDatabase("local", "receipt", REMOTE_URL, "receipt")).toBe(false);
     });
 });

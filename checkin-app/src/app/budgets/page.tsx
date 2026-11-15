@@ -5,7 +5,7 @@ import {
   Badge, Button, Card, Center, Checkbox, Group, Loader, Modal, Select, Stack, Table, Text, TextInput, Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { errorMessage } from "@checkin/component-ui";
+import { errorMessage, QuickBooksListsRefresh } from "@checkin/component-ui";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { api } from "@/lib/api";
@@ -180,17 +180,17 @@ export default function BudgetsPage() {
               />
               <Select
                 label="QuickBooks Class"
-                description="Expenses in this bucket post to QuickBooks only once it is set"
-                placeholder={classPlaceholder("None yet")}
-                clearable
+                description="Every bucket books to a Class"
+                placeholder={classPlaceholder("Pick a Class")}
                 searchable
                 data={classChoices(null, [newClassId])}
                 value={newClassId}
                 onChange={setNewClassId}
                 w={280}
               />
-              <Button onClick={create} disabled={creating || !newName.trim()} loading={creating}>Create</Button>
+              <Button onClick={create} disabled={creating || !newName.trim() || !newClassId} loading={creating}>Create</Button>
             </Group>
+            <QuickBooksListsRefresh onRefreshed={() => void load()} />
           </Card>
         )}
 
@@ -260,12 +260,12 @@ export default function BudgetsPage() {
           <Select
             label="QuickBooks Class"
             placeholder={classPlaceholder("None")}
-            clearable
             searchable
             data={editing ? classChoices(editing.id, [editing.quickBooksClassId, editClassId]) : []}
             value={editClassId}
             onChange={setEditClassId}
           />
+          <QuickBooksListsRefresh onRefreshed={() => void load()} />
           <Checkbox
             label="Org-level"
             description="No approvers. The Board removes any owner and treasurers first, and a change back waits for Board signatures open expenses here still need."

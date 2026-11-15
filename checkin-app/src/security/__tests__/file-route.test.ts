@@ -279,7 +279,7 @@ describe('no JSON route returns a file-only field', () => {
     ];
     const EVERY_TOKEN = [
         'public', 'member',
-        ...SCOPES.flatMap(s => ['pii', 'personal', 'internal'].map(t => `${s}:${t}`)),
+        ...SCOPES.flatMap(s => ['pii', 'personal', 'internal', 'hardship'].map(t => `${s}:${t}`)),
     ] as Token[];
 
     // A context in which the caller holds every scope the bindings can derive

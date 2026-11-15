@@ -1,15 +1,16 @@
 import prisma from "@/lib/prisma";
-import type { Prisma } from "@/generated/prisma/client";
 import { handler, badRequest } from "@/security/handler";
 import { archivedPeople } from "@/lib/person/archivedPeople";
 import { parseDayAt } from "@/lib/time";
-import { FINANCE_VIEWS_PAGE_SIZE, financeViewKindWhere, isFinanceViewKind } from "@/lib/finance/financeViewKinds";
+import { FINANCE_VIEWS_PAGE_SIZE, isFinanceViewModel, parseFinanceViewCursor, recordSearchRefs } from "@/lib/finance/financeViewKinds";
+import { financeViewsPageQuery, type FinanceViewsFilter } from "@/lib/finance/financeViewsPage";
 
 /**
  * The Board's finance view log (B11): who viewed which finance records,
  * newest first, a page at a time. Backs the "Finance Views" tab on System
- * status. The bag carries no total, so the page over-fetches one row to
- * signal that another page follows.
+ * status. `before` (`<viewedAt epoch ms>_<id>`) starts a page after the row it
+ * names. The bag carries no total, so the page over-fetches one row to signal
+ * that an older page follows.
  */
 
 function parseDay(value: string | null, label: string, time: string): Date | undefined {
@@ -22,41 +23,47 @@ function parseDay(value: string | null, label: string, time: string): Date | und
 export const GET = handler('GET /api/system-status/finance-views', async ({ req }) => {
     const sp = new URL(req.url).searchParams;
 
-    const page = Math.max(1, parseInt(sp.get('page') ?? '1', 10) || 1);
-    const filters: Prisma.FinanceViewLogWhereInput[] = [];
+    const filter: FinanceViewsFilter = {};
 
     const person = sp.get('person');
     if (person) {
         const actorId = Number(person);
         if (!Number.isInteger(actorId) || actorId <= 0) throw badRequest('Invalid person.');
-        filters.push({ actorId });
+        filter.actorId = actorId;
     }
 
     const kind = sp.get('kind');
     if (kind) {
-        if (!isFinanceViewKind(kind)) throw badRequest('Invalid record kind.');
-        filters.push(financeViewKindWhere(kind));
+        if (!isFinanceViewModel(kind)) throw badRequest('Invalid record type.');
+        filter.model = kind;
     }
 
-    // `has` compiles to array containment, which the GIN index on recordIds serves.
     const record = sp.get('record')?.trim();
-    if (record) filters.push({ recordIds: { has: record } });
+    if (record) filter.records = recordSearchRefs(record);
 
     // from/to are yyyy-mm-dd, an inclusive day range in server time, as on the Audit Log tab.
-    const from = parseDay(sp.get('from'), 'from', '00:00:00.000');
-    const to = parseDay(sp.get('to'), 'to', '23:59:59.999');
-    if (from || to) filters.push({ viewedAt: { gte: from, lte: to } });
+    filter.from = parseDay(sp.get('from'), 'from', '00:00:00.000');
+    filter.to = parseDay(sp.get('to'), 'to', '23:59:59.999');
 
-    const [rows, actors] = await Promise.all([
-        prisma.financeViewLog.findMany({
-            where: { AND: filters },
-            orderBy: [{ viewedAt: 'desc' }, { id: 'desc' }],
-            skip: (page - 1) * FINANCE_VIEWS_PAGE_SIZE,
-            take: FINANCE_VIEWS_PAGE_SIZE + 1,
-        }),
+    const before = sp.get('before');
+    if (before) {
+        const cursor = parseFinanceViewCursor(before);
+        if (!cursor) throw badRequest('Invalid before marker.');
+        filter.before = cursor;
+    }
+
+    const [ids, actors] = await Promise.all([
+        prisma.$queryRaw<{ id: number }[]>(financeViewsPageQuery(filter, FINANCE_VIEWS_PAGE_SIZE + 1)),
         // Every viewer in the log, for the person filter as well as this page's names.
         prisma.financeViewLog.groupBy({ by: ['actorId'] }),
     ]);
+    const rows = ids.length
+        ? await prisma.financeViewLog.findMany({
+            where: { id: { in: ids.map((r) => r.id) } },
+            select: { id: true, viewedAt: true, actorId: true, role: true, endpoint: true, recordIds: true, pagePath: true, calls: true, records: true },
+            orderBy: [{ viewedAt: 'desc' }, { id: 'desc' }],
+        })
+        : [];
 
     // A viewer since merged away has no Person row; they are named from the merge archive.
     const actorIds = actors.map((a) => a.actorId);

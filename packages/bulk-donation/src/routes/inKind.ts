@@ -34,9 +34,9 @@ export function qbResolve(source: InKindSource): DonationRouteHandler {
   };
 }
 
-const SettleInputSchema = z.object({ kind: z.enum(["withdrawal", "replay"]) });
+const SettleInputSchema = z.object({ kind: z.enum(["replay"]) });
 
-/** Finance settles a receipt gift's withdrawal or replay conflict. */
+/** Finance settles a receipt gift's replay conflict. */
 export const settleReceipt: DonationRouteHandler = async ({ req, params }) => {
   const id = parseId(params.id);
   const { kind } = await parseBodyCapped(req, SettleInputSchema);

@@ -39,7 +39,8 @@
  * InKindGiftDetailView — one in-kind gift on its own page, from either source:
  * its receipt or donation date, value and lines, the donor (`pii`), who
  * recorded it, its join, anomaly and decision timestamps, the bucket, its queue
- * state and what it waits on, each booking side's state, and, for a gift
+ * state and what it waits on, each booking side's state, when its QuickBooks
+ * post first failed and the last error (both null until it fails), and, for a gift
  * without a receipt, its inventory source key, when its goods loaded, and why
  * the last load failed. All but the three donor fields are `internal`.
  *
@@ -164,6 +165,8 @@ export const classifications = {
     waitingOn: "internal",
     revenueBooking: "internal",
     expenseBooking: "internal",
+    qbFirstFailedAt: "internal",
+    qbLastError: "internal",
     inventorySourceKey: "internal",
     inventoryLoadedAt: "internal",
     inventoryLoadFailureReason: "internal",
@@ -201,4 +204,15 @@ export const relations = {
     lines: { model: "InKindGiftDetailLineView", isList: true },
     events: { model: "InKindGiftEventView", isList: true },
   },
+} as const;
+
+// Finance marks: the fields whose presence in a response makes it a logged finance view.
+export const marks = {
+  InKindQueueItemView: ["uploadedByUserId", "receiptTotalCents", "totalValueCents"],
+  InKindQueueLineView: ["valueCents", "suggestedValueCents"],
+  InKindDecisionView: ["totalValueCents"],
+  InKindBucketGiftView: ["totalValueCents"],
+  InKindBucketGiftLineView: ["valueCents"],
+  InKindGiftDetailView: ["receiptTotalCents", "totalValueCents", "donorFirstName", "donorLastName", "donorCompanyName"],
+  InKindGiftDetailLineView: ["valueCents", "suggestedValueCents"],
 } as const;

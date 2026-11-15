@@ -27,7 +27,7 @@ describe("lineAccounts", () => {
   it("holds a line with no GTIN-13 and no hand-set account, and one no rule resolves, naming each", () => {
     const ruled = new Map([[2, { reason: "No account rule covers this part" }]]);
     const note = lineAccounts([line(1, { gtin13: null }), line(2)], new Set(), ruled, QB, NO_ROLES);
-    expect(note).toMatch(/Line 1: it has no GTIN-13/);
+    expect(note).toMatch(/Line 1: it has no Part ID/);
     expect(note).toMatch(/Line 2: No account rule covers this part/);
     expect(note).toMatch(/set an account/i);
   });

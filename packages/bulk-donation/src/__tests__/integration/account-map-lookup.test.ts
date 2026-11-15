@@ -37,7 +37,6 @@ describeDb('exact match', () => {
       donationType: 'standard',
       donationAccount: '4000',
       matchAccount: '4001',
-      feesAccount: '6000',
     });
 
     const result = await determineAccounts(orgId, {

@@ -77,7 +77,7 @@ export interface ExpenseNavLink {
 }
 
 export const EXPENSE_TABS = {
-  settings: { name: "Finance", href: "/settings/finance", icon: "⚙️" },
+  settings: { name: "Expenses", href: "/settings/finance", icon: "⚙️" },
   approvals: { name: "Expense approvals", href: "/programs-i-lead/expense-approvals", icon: "✍️" },
 } as const satisfies Record<string, ExpenseNavLink>;
 

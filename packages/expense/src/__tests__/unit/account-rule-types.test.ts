@@ -42,7 +42,7 @@ describe("account rule save", () => {
   it("refuses a Fixed Asset account on a rule that doesn't say it's capital", async () => {
     await expect(createAccountMapping({ req: rule("8009", null), params: {}, principal: finance })).rejects.toMatchObject({
       status: 400,
-      message: "A rule's account takes an Expense, Other Expense, or Cost of Goods Sold account; Equipment is Fixed Asset",
+      code: "quickbooks-list-stale", message: "A rule's account takes an Expense, Other Expense, or Cost of Goods Sold account; QuickBooks' list in the app shows Equipment as Fixed Asset. If you changed it in QuickBooks, press Update now, then save again.",
     });
     expect(db.$transaction).not.toHaveBeenCalled();
   });
@@ -50,8 +50,21 @@ describe("account rule save", () => {
   it("refuses an expense account on a capital rule, on change too", async () => {
     await expect(updateAccountMapping({ req: rule("8006", true), params: { id: "1" }, principal: finance })).rejects.toMatchObject({
       status: 400,
-      message: "A capital rule's account takes a Fixed Asset account; Shop supplies is Expense",
+      code: "quickbooks-list-stale", message: "A capital rule's account takes a Fixed Asset account; QuickBooks' list in the app shows Shop supplies as Expense. If you changed it in QuickBooks, press Update now, then save again.",
     });
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("saves a rule whose account and capital mark are unchanged without reading QuickBooks", async () => {
+    vi.mocked(db.accountMapping.findFirst).mockResolvedValueOnce({ id: 1, partNumber: "*", qbAccount: "8006", isCapital: true } as never);
+    configureExpense({ org: async () => ({ id: ORG, name: "Org One" }) });
+    await updateAccountMapping({ req: rule("8006", true), params: { id: "1" }, principal: finance });
+    expect(db.$transaction).toHaveBeenCalled();
+  });
+
+  it("checks the account when only the capital mark changes", async () => {
+    vi.mocked(db.accountMapping.findFirst).mockResolvedValueOnce({ id: 1, partNumber: "*", qbAccount: "8006", isCapital: null } as never);
+    await expect(updateAccountMapping({ req: rule("8006", true), params: { id: "1" }, principal: finance })).rejects.toMatchObject({ status: 400 });
     expect(db.$transaction).not.toHaveBeenCalled();
   });
 
@@ -72,13 +85,13 @@ describe("held line account save", () => {
 
   it("refuses a Fixed Asset account on a line that isn't capital", async () => {
     heldLine(false);
-    await expect(put("8009")).rejects.toMatchObject({ status: 400, message: "A line's account takes an Expense, Other Expense, or Cost of Goods Sold account; Equipment is Fixed Asset" });
+    await expect(put("8009")).rejects.toMatchObject({ status: 400, code: "quickbooks-list-stale", message: "A line's account takes an Expense, Other Expense, or Cost of Goods Sold account; QuickBooks' list in the app shows Equipment as Fixed Asset. If you changed it in QuickBooks, press Update now, then save again." });
     expect(db.$transaction).not.toHaveBeenCalled();
   });
 
   it("takes only a Fixed Asset account on a capital line", async () => {
     heldLine(true);
-    await expect(put("8006")).rejects.toMatchObject({ status: 400, message: "A capital line's account takes a Fixed Asset account; Shop supplies is Expense" });
+    await expect(put("8006")).rejects.toMatchObject({ status: 400, code: "quickbooks-list-stale", message: "A capital line's account takes a Fixed Asset account; QuickBooks' list in the app shows Shop supplies as Expense. If you changed it in QuickBooks, press Update now, then save again." });
     heldLine(true);
     await put("8009");
     expect(db.$transaction).toHaveBeenCalledTimes(1);

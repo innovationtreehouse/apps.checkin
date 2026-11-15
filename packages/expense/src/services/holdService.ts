@@ -1,6 +1,6 @@
-// Account-mapping holds (NO_MATCH / MULTIPLE_MATCHES / NO_PART_NUMBER / NON_INVENTORY): FINANCE sets a line's
-// account by hand and resubmits. The same resubmit retries a failed QuickBooks post, and books an
-// UNBOOKED one (finance's "book it").
+// Account-mapping holds (NO_MATCH / MULTIPLE_MATCHES / NO_PART_NUMBER / NON_INVENTORY): FINANCE sets a held
+// line's account by hand, or fixes a rule, and resubmits. The same resubmit retries a failed QuickBooks post,
+// and books an UNBOOKED one (finance's "book it").
 import { db } from "../db";
 import type { ExpensePrincipal } from "../contract";
 import { getOrgId } from "../runtime";
@@ -14,7 +14,9 @@ import { requireFinance } from "./approvalService";
 import { ServiceError } from "@checkin/component-kit";
 
 /** Once the entry is (or is being) booked, a line's account is corrected in QuickBooks, not here. */
-const IN_QUICKBOOKS = new Set([POSTING, "CREATED", "MATCHED"]);
+export const IN_QUICKBOOKS = new Set([POSTING, "CREATED", "MATCHED"]);
+/** Past mapping and waiting on finance: a line's account may be fixed here without a hold. */
+export const WAITING_ON_FINANCE = new Set(["POST_FAILED", "NEEDS_FINANCE", "UNBOOKED", "AMBIGUOUS"]);
 
 export async function setHeldLineAccount(
   principal: ExpensePrincipal,
@@ -33,6 +35,10 @@ export async function setHeldLineAccount(
     await lockExpense(tx, expenseId);
     const { qbMatchState } = await tx.expense.findUniqueOrThrow({ where: { id: expenseId }, select: { qbMatchState: true } });
     if (IN_QUICKBOOKS.has(qbMatchState)) throw new ServiceError(409, "already posted to QuickBooks; correct it there");
+    // An account set by hand wins over every rule, so it goes only on a held line or an expense finance must fix.
+    if (!WAITING_ON_FINANCE.has(qbMatchState) && !(await tx.expenseHold.findFirst({ where: { expenseId, lineItemId, status: "PENDING" }, select: { id: true } }))) {
+      throw new ServiceError(409, "This line isn't held for an account; fix the account rule instead");
+    }
     const { resolvedQbAccount } = await tx.expenseLineItem.findUniqueOrThrow({ where: { id: lineItemId }, select: { resolvedQbAccount: true } });
     // The poster reads resolvedQbAccount, and nothing refreshes it on every path after the processing commit.
     await tx.expenseLineItem.update({
@@ -53,17 +59,13 @@ export async function setHeldLineAccount(
 /** Where a retry that did not reach the books leaves the expense, in finance's words. */
 const RETRY_REFUSALS: Record<Exclude<PostOutcome, "posted" | "matched"> | "unbound", [number, string]> = {
   unbound: [503, "QuickBooks isn't connected, so nothing was sent"],
-  failed: [503, "QuickBooks failed again; the expense waits as POST_FAILED and is retried automatically"],
+  failed: [503, "Not posted: the post failed again; see its QuickBooks reasons, then retry"],
   waiting: [409, "Not posted yet: a sign-off is missing, the daily limit is reached, or a post is in flight; it is retried automatically"],
   queued: [409, "Not posted: the expense waits for finance to match, link or book it in QuickBooks review"],
   not_sent: [409, "Not posted: the test-data rule keeps this expense out of this QuickBooks company"],
   needs_finance: [409, "Not posted: the expense still needs finance; see its QuickBooks reasons"],
   no_class: [409, "Not posted: a line's budget has no QuickBooks Class; it is retried once one is set"],
   unpostable: [409, "Not posted: the expense's own data can't make a QuickBooks entry; see its QuickBooks reasons"],
-  outage: [503, "QuickBooks did not answer; the expense waits as POST_FAILED and is retried automatically, with no try used up"],
-  disconnected: [503, "The QuickBooks connection needs to be renewed; the expense waits as POST_FAILED and is retried once it is"],
-  waiting_on_settings: [409, "Not posted: it waits on a QuickBooks setting; it is retried on each run once the setting is fixed"],
-  refused: [409, "Not posted: QuickBooks refused the entry; see its QuickBooks reasons"],
 };
 
 /** The refusal for a retry's outcome, or null when the expense reached the books. */

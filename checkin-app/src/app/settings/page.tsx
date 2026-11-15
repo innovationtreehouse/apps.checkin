@@ -6,7 +6,7 @@ import { useSession } from "next-auth/react";
 
 // Settings has no landing of its own — redirect to the first tab the viewer can
 // open. Board/sysadmin start on Membership Settings; operations (who reach only
-// Outreach) start there, and FINANCE (who reaches only Finance) on Finance, so
+// Outreach) start there, and FINANCE (who reaches only Expenses) on Expenses, so
 // widening the section gate never lands them on a page that bounces them back out.
 export default function SettingsIndex() {
   const { data: session, status } = useSession();

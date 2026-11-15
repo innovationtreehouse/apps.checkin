@@ -22,6 +22,7 @@
 import type { Prisma, OrgMembershipStatus } from "@/generated/prisma/client";
 import { withTx, type DbClient, type TxClient } from "@/lib/db-client";
 import type { AuditActor } from "@/lib/auditActor";
+import { lockLiveHouseholds } from "@/lib/household/archiveGuard";
 import { fromStatusWhere, isLegalTransition, type Transition, type Expect, type Equal } from "@/lib/lifecycle";
 
 export type HouseholdStatus = "NONE" | "ACTIVE" | "REVOKED" | "DENIED";
@@ -39,8 +40,8 @@ const ROUTE = "membership-ops/households/route.ts";
 
 export const TRANSITIONS: readonly Transition<TState>[] = [
     { from: "∅", to: "NONE", event: "ensureHouseholdMembership", actor: "applicant/board/system", guardSite: "householdStatus.ts insert by householdId skipping duplicates (create only, never sets status)" },
-    { from: "NONE", to: "ACTIVE", event: "application converges (paid + check cleared)", actor: "system", guardSite: "payment.ts settle / review.ts clearBackgroundCheck: setHouseholdStatus from [NONE, REVOKED, ACTIVE] under OrgMembership FOR UPDATE" },
-    { from: "REVOKED", to: "ACTIVE", event: "application converges (paid + check cleared)", actor: "system", guardSite: "payment.ts settle / review.ts clearBackgroundCheck: setHouseholdStatus from [NONE, REVOKED, ACTIVE] under OrgMembership FOR UPDATE" },
+    { from: "NONE", to: "ACTIVE", event: "application converges (paid + check cleared)", actor: "system", guardSite: "payment.ts settle / settleHouseholdBg.ts settleInTx:setHouseholdStatus from [NONE, REVOKED, ACTIVE] under OrgMembership FOR UPDATE" },
+    { from: "REVOKED", to: "ACTIVE", event: "application converges (paid + check cleared)", actor: "system", guardSite: "payment.ts settle / settleHouseholdBg.ts settleInTx:setHouseholdStatus from [NONE, REVOKED, ACTIVE] under OrgMembership FOR UPDATE" },
     { from: "ACTIVE", to: "REVOKED", event: "revoke", actor: "board", guardSite: `${ROUTE} setHouseholdStatus from [ACTIVE] + COI` },
     { from: "NONE", to: "DENIED", event: "deny", actor: "board", guardSite: `${ROUTE} setHouseholdStatus + COI + no board member, probed under the BOARD role lock` },
     { from: "ACTIVE", to: "DENIED", event: "deny", actor: "board", guardSite: `${ROUTE} setHouseholdStatus + COI + no board member, probed under the BOARD role lock` },
@@ -57,12 +58,20 @@ export function fromWhere(from: HouseholdStatus | readonly HouseholdStatus[]): W
     return fromStatusWhere<Where>(typeof from === "string" ? [from] : from);
 }
 
-/** ∅→NONE: the household's membership row, created at NONE if missing. Never changes an existing row. */
-export async function ensureHouseholdMembership(db: DbClient, householdId: number): Promise<{ id: number; status: HouseholdStatus }> {
-    // ON CONFLICT DO NOTHING waits out a concurrent insert without raising: a unique
-    // violation would abort a caller's transaction, leaving it unable to read the winner.
-    await db.orgMembership.createMany({ data: { householdId }, skipDuplicates: true });
-    return db.orgMembership.findUniqueOrThrow({ where: { householdId }, select: { id: true, status: true } });
+/**
+ * ∅→NONE: the household's membership row, created at NONE if missing. Never changes an
+ * existing row. Refuses an archived household, locking the membership row before the
+ * household row, the order archiving takes them in.
+ */
+export async function ensureHouseholdMembership(client: DbClient, householdId: number): Promise<{ id: number; status: HouseholdStatus }> {
+    return withTx(client, async (db) => {
+        await db.$queryRaw`SELECT id FROM "OrgMembership" WHERE "householdId" = ${householdId} FOR UPDATE`;
+        await lockLiveHouseholds(db, [householdId]);
+        // ON CONFLICT DO NOTHING waits out a concurrent insert without raising: a unique
+        // violation would abort a caller's transaction, leaving it unable to read the winner.
+        await db.orgMembership.createMany({ data: { householdId }, skipDuplicates: true });
+        return db.orgMembership.findUniqueOrThrow({ where: { householdId }, select: { id: true, status: true } });
+    });
 }
 
 /**

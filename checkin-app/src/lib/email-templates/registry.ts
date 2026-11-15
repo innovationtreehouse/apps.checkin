@@ -148,6 +148,12 @@ export const REGISTRY = {
         defaultSubject: "Membership: a paid application was blocked at background check",
         defaultBody: "A household that already paid did not pass background-check review (application #{{processId}}). The membership has not been activated and a refund may be needed — please review and contact the household. {{actionLink}}",
     },
+    "board.checkRejected": {
+        allowedTokens: { personName: text, householdName: text, reviewId: text, actionLink: link("Open applications") },
+        sampleCtx: { personName: "Alex Rivera", householdName: "Rivera", reviewId: "412", actionLink: SAMPLE_URL },
+        defaultSubject: "Membership: a background check was rejected",
+        defaultBody: "A background-check review of {{personName}} ({{householdName}}) was rejected (review #{{reviewId}}). No paid application was blocked, and nothing about the household's membership was changed automatically. Please review the case and decide what the Board does. {{actionLink}}",
+    },
     "board.paymentException": {
         // blurb: the exception kind's fixed description, kept in code (decision B-1).
         allowedTokens: { kind: text, blurb: text, exceptionId: text, actionLink: link("Open payment problems") },
@@ -175,28 +181,11 @@ export const REGISTRY = {
         defaultBody: "An edit to the dates or age limits of {{programName}} leaves these enrolled people outside its ages at the start date. Nothing was changed; please decide with the program leader and the families.\n{{people}}\n\n{{actionLink}}",
     },
 
-    "board.inventoryEventsStuck": {
-        // problem: what the catch-up found, in code because it depends on the failure.
-        allowedTokens: { problem: text },
-        sampleCtx: { problem: "found 2 newly failed and 3 unprocessed catalog event(s)" },
-        defaultSubject: "Inventory: catalog events need attention",
-        defaultBody: "The inventory catch-up {{problem}}. Until they apply, provisional items the catalog has reviewed can stay pending. The daily run keeps retrying; an engineer should check the reconcile logs. A failed event alerts only once; a provisional item that can't be applied alerts on each run.",
-    },
-
-    "board.expenseEventsStuck": {
-        // problem: what the catch-up found, in code because it depends on the failure.
-        allowedTokens: { problem: text },
-        sampleCtx: { problem: "found 2 newly failed and 3 unprocessed catalog event(s)" },
-        defaultSubject: "Expense: catalog events need attention",
-        defaultBody: "The expense catch-up {{problem}}. Until they apply, provisional items the catalog has reviewed can stay pending, and their budget buckets don't carry over to the real items. The daily run keeps retrying; an engineer should check the reconcile logs. A failed event alerts only once.",
-    },
-
-    "board.receiptMappingEventsStuck": {
-        // problem: what the catch-up found, in code because it depends on the failure.
-        allowedTokens: { problem: text },
-        sampleCtx: { problem: "found 2 newly failed and 3 unprocessed catalog event(s)" },
-        defaultSubject: "Receipt mapping: catalog events need attention",
-        defaultBody: "The receipt mapping catch-up {{problem}}. Until they apply, lines on receipts in review can stay on items the catalog has already reviewed. The daily run keeps retrying; an engineer should check the reconcile logs. A failed event alerts only once.",
+    "board.youthHouseholdLead": {
+        allowedTokens: { personName: text, householdName: text, actionLink: link("Open the household") },
+        sampleCtx: { personName: "Alex Rivera", householdName: "Rivera", actionLink: SAMPLE_URL },
+        defaultSubject: "Household lead under 18: {{personName}}",
+        defaultBody: "A date of birth saved for {{personName}}, a lead of {{householdName}}, shows they are under 18. They are still its lead; nothing was changed. Please decide with the household. {{actionLink}}",
     },
 
     // ── ops incidents (lib/opsIncidents.ts) ─────────────────────────────────
@@ -226,6 +215,19 @@ export const REGISTRY = {
         defaultBody: OPS_BODY,
     },
 
+    // ── Problems list (lib/problems.ts) ─────────────────────────────────────
+    // Ids, steps and dates only: no error text, amounts, donor or vendor names.
+    "ops.problemsDigest": {
+        allowedTokens: { count: text, items: text, actionLink: link("Open System Status") },
+        sampleCtx: {
+            count: "2",
+            items: "expense, QuickBooks posting: 7f3c, stuck since Nov 6, 2026, 2:00 AM\nScheduled job qbo-posting: last ran Nov 5, 2026, 2:00 AM",
+            actionLink: SAMPLE_URL,
+        },
+        defaultSubject: "Receipt flow: {{count}} problem(s) waiting on a person",
+        defaultBody: "These have been waiting more than a day. System Status lists each one with a link to its page where it has one.\n\n{{items}}\n\n{{actionLink}}",
+    },
+
     // ── finance ─────────────────────────────────────────────────────────────
     "finance.receiptMailCeiling": {
         allowedTokens: { unresolved: text, refused: text, actionLink: link("Open the incoming receipt queue") },
@@ -245,32 +247,7 @@ export const REGISTRY = {
         allowedTokens: { messages: text, since: text, actionLink: link("Open the incoming receipt queue") },
         sampleCtx: { messages: "6", since: ", the oldest received Sat, 07 Mar 2026 10:05:00 GMT", actionLink: SAMPLE_URL },
         defaultSubject: "Receipts: mailed receipts are about to be missed",
-        defaultBody: "Mail runs did not finish reading {{messages}} message(s) in the receipt mailbox{{since}}. They have left the 3-day reading window or will before the next run, so no receipt will be made from them. Open the receipt mailbox in Gmail and upload or forward them again. {{actionLink}}",
-    },
-    // One per cause of a failed mailbox listing; receiptAlerts.mailListingFailed picks by the failure's kind.
-    "finance.receiptMailboxUnreadable": {
-        allowedTokens: { actionLink: link("Open the incoming receipt queue") },
-        sampleCtx: { actionLink: SAMPLE_URL },
-        defaultSubject: "Receipts: the receipt mailbox needs reconnecting",
-        defaultBody: "Gmail refused today's mail run access to the receipt mailbox, so no mailed receipt was read. Mail leaves the 3-day reading window unread while this lasts, and no receipt will be made from it. Have an administrator reconnect the mailbox's Gmail access, then upload or forward anything that was missed. {{actionLink}}",
-    },
-    "finance.receiptMailboxUnanswered": {
-        allowedTokens: { actionLink: link("Open the incoming receipt queue") },
-        sampleCtx: { actionLink: SAMPLE_URL },
-        defaultSubject: "Receipts: Gmail did not answer the mail run",
-        defaultBody: "Gmail did not answer today's mail run, so no mailed receipt was read. The next run tries again; nothing needs fixing in the app. Mail leaves the 3-day reading window unread while this lasts, and no receipt will be made from it. If this repeats, upload or forward anything that was missed. {{actionLink}}",
-    },
-    "finance.receiptMailboxNotFound": {
-        allowedTokens: { actionLink: link("Open the incoming receipt queue") },
-        sampleCtx: { actionLink: SAMPLE_URL },
-        defaultSubject: "Receipts: Gmail can't find the receipt mailbox",
-        defaultBody: "Gmail has no mailbox at the address today's mail run asked for, so no mailed receipt was read. Mail leaves the 3-day reading window unread while this lasts, and no receipt will be made from it. Have an administrator check the receipt mailbox setting, then upload or forward anything that was missed. {{actionLink}}",
-    },
-    "finance.receiptMailboxFailed": {
-        allowedTokens: { actionLink: link("Open the incoming receipt queue") },
-        sampleCtx: { actionLink: SAMPLE_URL },
-        defaultSubject: "Receipts: the mail run failed unexpectedly",
-        defaultBody: "Today's mail run failed unexpectedly while listing the receipt mailbox, so no mailed receipt was read. It has been logged for the developers. Mail leaves the 3-day reading window unread while this lasts, and no receipt will be made from it. Upload or forward anything that was missed. {{actionLink}}",
+        defaultBody: "Mail runs did not finish reading {{messages}} message(s) in the receipt mailbox{{since}}. They have left the 30-day reading window or will before the next run, so no receipt will be made from them. Open the receipt mailbox in Gmail and upload or forward them again. {{actionLink}}",
     },
     "finance.incomeBucketUnusable": {
         allowedTokens: { bucketName: text, issue: text, itemCount: text, actionLink: link("Open income items") },
@@ -308,13 +285,6 @@ export const REGISTRY = {
         sampleCtx: { since: "2026-10-01", actionLink: SAMPLE_URL },
         defaultSubject: "Gifts of goods: the daily check for stray QuickBooks journal entries could not see them all",
         defaultBody: "QuickBooks returned more journal entries created since {{since}} than the daily check reads at once, so a journal entry the app created for a gift of goods may sit in QuickBooks unlinked. Check recent journal entries that carry a checkin key in their memo. {{actionLink}}",
-    },
-    "finance.inKindDrainStopped": {
-        // cause: the sender's sentence naming why the run stopped.
-        allowedTokens: { failures: text, remaining: text, cause: text, actionLink: link("Open the in-kind queue") },
-        sampleCtx: { failures: "3", remaining: "12", cause: "QuickBooks did not answer; it may be down. These gifts were not charged a try, and the next run tries them again.", actionLink: SAMPLE_URL },
-        defaultSubject: "Gifts of goods: today's QuickBooks run stopped early",
-        defaultBody: "The daily QuickBooks run for gifts of goods stopped after {{failures}} failed gifts, leaving {{remaining}} more for the next run. {{cause}} {{actionLink}}",
     },
 
     // ── receipt ─────────────────────────────────────────────────────────────

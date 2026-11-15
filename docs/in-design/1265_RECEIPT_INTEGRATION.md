@@ -58,7 +58,7 @@ Reading the code changed the scope in five places. Each is a delta below.
 | Finding | Where | Consequence for the port |
 |---|---|---|
 | **Auto-OCR at upload is not wired.** The upload form's "Auto OCR" toggle hides the detail fields but submits to the same endpoint, whose schema requires retailer and at least one line, so it 400s. OCR runs only from `retry-ocr`, which needs a receipt already in `ocr_failed`, a state nothing enters. | `ReceiptUploadPageClient.tsx`, `UploadBodySchema`, `receiptService.retryOcr` | OCR-at-intake is **net-new wiring** onto states the machine already defines (`auto_upload → uploaded / ocr_failed`). |
-| **The S1 push failure is swallowed.** `finalizeReceipt` sets `receipt_finalized`, then `.catch(console.error)` on the push. A failed push leaves a finalized receipt nobody downstream ever sees. The manual `push-to-inventory` route re-sends but is not idempotent (its own `concurrency.test.ts` pins duplicate pushes). | `receipt-flow.ts`, `concurrency.test.ts` | Record push outcome; retry in the daily catch-up step and manually (§4). |
+| **The S1 push failure is swallowed.** `finalizeReceipt` sets `receipt_finalized`, then `.catch(console.error)` on the push. A failed push leaves a finalized receipt nobody downstream ever sees. The manual `push-to-inventory` route re-sends but is not idempotent (its own `concurrency.test.ts` pins duplicate pushes). | `receipt-flow.ts`, `concurrency.test.ts` | Record push outcome; a failed push is stuck until a person sends it again (§4). |
 | **No "paid back" state anywhere.** `submitter_review` confirms *who* is owed; nothing records that they were paid. Expense carries `needsReimbursement` / `reimbursementFor` as display fields only. | receipt + expense schemas | FR3's port requirement does **not** survive as-is; the status is read from QuickBooks (§4). |
 | **No Gmail-inbox monitor.** The nearest thing is `receipt-load-app/scripts/mbox-extract.py`, an offline splitter for an exported mailbox used by the one-time backfill. `ocr-function` is a CLI that runs the Claude **Agent SDK** on a local `.eml` with the operator's Claude Code login. | `receipt-load-app/scripts`, `ocr-function/` | Gmail intake is net-new (§2a). `ocr-function` is **not ported**: the in-app OCR path already does the same job with the plain SDK. |
 | **No in-kind identification.** Nothing in receipt, workflow-mapping or expense mentions in-kind or donations. | grep across the fleet | FR5 has nothing to port; the in-kind mark is net-new (§4). |
@@ -168,7 +168,7 @@ it is skipped when the refresher or mailbox is unset (local, flow tests). The
 constraint to state plainly: no machine-facing route can be added to checkin
 today, so push is not an option without first changing that rule.
 
-**Reading the mailbox.** Each run lists messages from the last 3 days. A message
+**Reading the mailbox.** Each run lists messages from the last 30 days. A message
 yields one receipt per file of an accepted type (§2): each attachment, each inline
 image, and **the body**, which is dropped only as the bullets below allow. A
 message with no attachment (an order confirmation, owner decision) is the common
@@ -285,15 +285,17 @@ sender's land in the mail queue, bounded per run and in total (below). The size 
 list are the containment; the rate limits for flooding are designed with the
 mailbox-flooding hardening, not here.
 
-The 3-day
+The 30-day
 window plus the dedupe ledger makes a missed run harmless with no stored cursor.
 Each run reads oldest first and its receipt cap (§4) counts only receipts, the OCR
 spend. Held items have caps of their own, so untrusted mail cannot push a
-member's receipt out of the window within the documented ceiling: each listed
-message still costs one fetch before the ledger check, so a flood of more
-messages than a run can fetch in its time budget can (the `ponytail:` note on
-`MAIL_TIME_BUDGET_MS` in `mailIntake.ts`).
-- A message whose files are all in the ledger is skipped before any download.
+member's receipt out of the window within the documented ceiling. A finished
+message costs nothing to list again, but an unfinished one, or one that left no
+ledger row, is fetched every run; a flood of those larger than a run can fetch
+in its time budget, sustained inside the window, still can (the `ponytail:` note
+on `MAIL_TIME_BUDGET_MS` in `mailIntake.ts`).
+- A finished message is skipped before it is fetched: it has at least one ledger
+  row, none of them deferred, and it is not stored as left unread.
 - Each run spends at most 50 files and 50 MB on held mail; the rest wait for the
   next run. The charging rule is one function (`chargeHold`): each file downloaded
   from an unknown sender costs one file and its size, whether it is held, refused
@@ -315,8 +317,8 @@ check the folder in Gmail itself.
 
 **Mail about to leave the window** (`[Decision]`). The run reads mail oldest
 first, so mail it puts off (a cap or budget spent, the time budget reached, or
-a message whose reading failed) is read next run. Mail received more than two
-days ago will be out of the 3-day window by then, so finance gets one alert
+a message whose reading failed) is read next run. Mail received more than 29
+days ago will be out of the 30-day window by then, so finance gets one alert
 naming how many such messages there are and when the oldest arrived. Each such
 message is stored when the run leaves it, and removed once a later run reads it
 clean. The alert goes out on any run that finds one stored past that age, so a
@@ -324,12 +326,12 @@ crashed run, a missed day or a failed send only delays it, and it is marked sent
 only after it is sent, so it is not repeated. A message that cannot be fetched
 has no known age, so it alerts on the first run that fails to fetch it.
 
-**Mailbox that cannot be listed** (`[Decision]`). The run alerts finance on every
-run the listing fails, still sends the acknowledgements owed, and the cron run
-records a failure, so System Status shows it. `ponytail:` ceiling is a cron that
-does not run at all for longer than 3 days, which System Status shows as not
-running, or more than 30 mailed receipts in one window; widen the window or the
-cap if either happens.
+**Mailbox that cannot be listed** (`[Decision]`). The run still sends the
+acknowledgements owed, and the cron run records a failure, so the Problems list
+on System Status (and its daily email) shows the job until a run lists the mailbox. `ponytail:` ceiling is a cron that
+does not run at all for longer than 30 days, which System Status shows as not
+running, or a flood bigger than the per-run caps drain inside 30 days; widen the
+window or the caps if either happens.
 
 **Message to receipt.**
 
@@ -370,7 +372,7 @@ cap if either happens.
   resolved, on each run.
 - **Over the sender's daily upload limit: deferred, not held** (owner ruling
   2026-10-16). The file is stored in the ledger as `deferred`, with its bytes, so
-  it no longer depends on the 3-day window. Each run retries deferred files first,
+  it no longer depends on the 30-day window. Each run retries deferred files first,
   oldest first, inside the run's receipt cap, as the sender re-resolved then. The
   upload limit is checked before OCR, so a refused retry spends no reading and no
   cap, and that sender's other deferred files wait for the next run; one sender
@@ -512,10 +514,10 @@ invalid → needs submitter review → needs financial review → finalized*;
 an endpoint today; the e2e plan's "no REJECT endpoint" finding is stale.
 
 **Push outcome is recorded.** New `Receipt.pushedAt`, stamped when S1 returns. A
-failed push leaves it null with an audit row; the daily catch-up step re-pushes
-every finalized, unpushed receipt, and the manual `push-to-inventory` button does
-one at once. Catch-up skips a receipt after five bug failures in a row, until a
-manual push of that receipt; an outage is never charged to the receipt. Safe because S1 is idempotent on `receiptId` (§7).
+failed push leaves it null with an audit row, and the receipt is stuck, with its
+first failure time and latest error, until a person sends it again with the
+manual `push-to-inventory` button. Nothing re-pushes by itself. Sending again is
+safe because S1 is idempotent on `receiptId` (§7).
 
 **Catch-up steps: no database at boot, no new schedules** (plan rule 5). The
 library reads nothing at app start. Every sweep is a `try/catch` step inside the
@@ -523,26 +525,26 @@ existing prod `/api/cron/reconcile-shopify`, beside income and the Gmail step
 (§2a), so one failing step never fails the others or the reconcile:
 
 1. OCR-interrupted sweep (`auto_upload` older than ten minutes → `ocr_failed`).
-2. S1 re-push of finalized receipts with `pushedAt` null.
-3. X13 re-send for receipts with `donorSync = pending`.
-4. Gmail intake (phase G).
+2. Stuck-upload sweep (`uploaded` idle for over an hour → `flow_error`).
+3. Gmail intake (phase G).
+4. Outcome emails still owed to a receipt's uploader and the person reimbursed.
 
-Each step is idempotent, capped per run, and returns counts only (swept, pushed,
-re-sent, mail items read, failed) — no ids, names, addresses or amounts in the
-cron response. **Order and cost**, for whoever owns the shared step order and time
-budget of `reconcile-shopify`:
+None of them re-pushes a receipt or re-sends a donor. Each step is idempotent,
+capped per run, and returns counts only (swept, mail items read, sent, failed) —
+no ids, names, addresses or amounts in the cron response. **Order and cost**, for
+whoever owns the shared step order and time budget of `reconcile-shopify`:
 
 | Step | Cap per run | Cost |
 |---|---|---|
-| 1. OCR-interrupted sweep | none needed | one `UPDATE`; milliseconds |
-| 2. S1 re-push | 50 receipts | in-process calls; seconds |
-| 3. X13 re-send | 50 receipts | in-process calls; seconds |
-| 4. Gmail intake | 10 receipt files; 50 held files or 50 MB | one OCR call each, seconds to tens of seconds; starts no new message after 2 minutes |
+| 1. OCR-interrupted sweep | 50 receipts | one `UPDATE`; milliseconds |
+| 2. Stuck-upload sweep | 50 receipts | one `UPDATE`; milliseconds |
+| 3. Gmail intake | 10 receipt files; 50 held files or 50 MB | one OCR call each, seconds to tens of seconds; starts no new message after 2 minutes |
+| 4. Outcome emails | 50 notices; each given up after three failed sends | one email each; seconds |
 
-Gmail runs last because it is the only slow step; anything over its cap waits for
-the next day, which the 3-day window (§2a) allows. At hundreds of receipts a year
-the cap is rarely reached. Work done inside a user request (OCR, the first push, the first
-X13 call) stays in the request; the steps only catch what that missed.
+Gmail is the only slow step; anything over its cap waits for the next day, which
+the 30-day window (§2a) allows. At hundreds of receipts a year the cap is rarely
+reached. Work done inside a user request (OCR, the push, the X13 call) stays in the
+request; a push or X13 call that fails there waits for a person to send it again.
 
 **Reimbursement status (FR3 port requirement).** What the backlog row believed
 does survive: a submitter sees every receipt they uploaded (`listForOrg` filters to
@@ -641,13 +643,13 @@ instead of expense. This lane's part is the mark and nothing else:
 - `Receipt.donorSync` (`none` / `pending` / `synced`) tracks X13, because one
   nullable timestamp cannot tell "never in-kind" from "withdraw pending" from
   "first send failed":
-  - `none`: never in-kind. Untouched by X13 and by the catch-up step, so a plain
-    purchase never sends `withdrawInKind`.
+  - `none`: never in-kind. Untouched by X13, so a plain purchase never sends
+    `withdrawInKind`.
   - `pending`: set in the same write as any change that donations must hear
     about: the mark set, the donor edited, or the mark cleared on a receipt that
     is not `none`.
   - `synced`: set when the X13 call returns. A failed call leaves `pending`.
-  The daily catch-up step re-sends only `pending` rows (§4).
+  A `pending` row is sent again only when a person sends the receipt again (§4).
 - Donor names are **`pii`** on `Receipt`, matching bulk donation §4: read only by
   `FINANCE` (and by `BOARD` if donations' gate is reused). The uploader can enter
   them but does not read them back: the submitter list and detail views return the
@@ -732,12 +734,12 @@ caller and adopts it as written:
 2. **Payload:** `CompletedReceiptSchema` plus the optional `isInKind`, a MINOR bump to `RECEIPT_CONTRACT_VERSION` 1.1.0; `X-Schema-Version` negotiation dropped (one process, one `receipt-types`). The producer still asserts against the S1 fixtures.
 3. **Identities:** `orgId` is the injected `Org` id (the callee rejects any other); `submitterId` is the uploader's `Person.id`.
 4. **Idempotency (`CONCURRENCY.md` §4).** The callee's `@unique` on `receiptId` dedupes; no idempotency key is passed (the key helper was an HTTP leftover and is dropped). A replay, including a concurrent `P2002` loser, returns `created: false` even when the body differs (`submittedAt` is stamped fresh on every push).
-5. **Failure semantics:** a throw means not delivered, so this side retries: `pushedAt` stays null and the daily catch-up step or the manual `push-to-inventory` button resends (§4). The source's log-and-drop is not carried. `created: false` counts as pushed. A permanent throw (org mismatch, invalid payload) is a bug; it leaves the receipt visibly unpushed with an audit row per attempt.
+5. **Failure semantics:** a throw means not delivered: `pushedAt` stays null and the receipt is stuck until a person resends it with the manual `push-to-inventory` button (§4). Nothing resends by itself. The source's log-and-drop is not carried. `created: false` counts as pushed. A permanent throw (org mismatch, invalid payload) is a bug; it leaves the receipt visibly unpushed with an audit row per attempt.
 6. **The orchestrator owns the fan-out** to expense (S2) and inventory (S3). In the source receipt-app never calls expense or catalog; only `receipt-load-app`'s capital-seed proxy reached expense, and X7 drops it. `SettingsData.workflowMappingUrl` is deleted with the model (§1).
 
 **Inert means queue, never pretend.** Until X6 the inert `ReceiptSink` throws
-`not wired`, so finalized receipts wait unpushed and drain in the first daily
-catch-up step after the flip. X6 is this lane's PR; gate L7 W and L8 W. The full-pipeline journey flow
+`not wired`, so finalized receipts wait unpushed, stuck until a person sends
+each one again after the flip. X6 is this lane's PR; gate L7 W and L8 W. The full-pipeline journey flow
 test lands with X6.
 
 ### X13: in-kind donor → donations
@@ -767,8 +769,9 @@ The bulk-donation design (§2.4) owns the callee; agreed signature:
   receipt is not pushed while `donorSync` is `pending` (the push first tries the
   send), and `setInKind` re-checks the state under the detail row's lock, so the
   mark is fixed from finalize on.
-- A throw means not delivered: `donorSync` stays `pending`, and the daily catch-up
-  step or the next edit re-sends. **Inert at S:** throws `not wired`, so nothing is lost
+- A throw means not delivered: `donorSync` stays `pending`, and the receipt's
+  push waits on it. The next edit, or a person sending the receipt again, re-sends
+  the donor first. Nothing re-sends by itself. **Inert at S:** throws `not wired`, so nothing is lost
   while donations is not live.
 - Donor names leave this lane only through X13; they are never on S1.
 - Gate: L6 W and L8 W; X13 is this lane's PR.
@@ -801,7 +804,7 @@ The bulk-donation design (§2.4) owns the callee; agreed signature:
 ## 8. Testing
 
 The source's vitest suites port with the library (Anthropic client mocked). New:
-caps; auto-OCR success, failure and refusal; the catch-up steps (counts only); X13 state: a never-in-kind receipt never sends `withdrawInKind`, a failed first send stays `pending` and is retried;
+caps; auto-OCR success, failure and refusal; the catch-up steps (counts only); X13 state: a never-in-kind receipt never sends `withdrawInKind`, a failed first send stays `pending` until the receipt is sent again;
 self-approval refused; the reimbursement view against a stub
 port; magic-byte rejection of a renamed file and of a `text/plain` upload that is not UTF-8 or holds a NUL byte; OCR output never setting
 reimbursee, vendor or `needsReimbursement`; a non-adult uploader's

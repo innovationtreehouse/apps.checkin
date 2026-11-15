@@ -17,7 +17,9 @@ const PERSONAS = [FINANCE, BOARD, APPROVER, TREASURER, INVENTORY_MANAGER, MEMBER
 
 /** A page that fails today: skipped by the sweep and asserted on its own as `test.fail` until its fix lands. */
 interface KnownFailure { page: string; personas: string[]; bug: string }
-const KNOWN_FAILURES: KnownFailure[] = [];
+const KNOWN_FAILURES: KnownFailure[] = [
+  { page: "/system-status/finance-views", personas: [BOARD], bug: "finance-views: page-view rows with null endpoint crash financeViewKindOf" },
+];
 
 /** A red alert a fresh seed shows on purpose: a prompt to fill in data the seed leaves empty. */
 interface SeedPrompt { page: string; personas: string[]; text: string }

@@ -7,10 +7,9 @@ const row = (retailer: string, extra: Record<string, string>) => ({
   receiptTotalCents: 1000, state: "discarded", needsReimbursement: false, isInKind: false, ...extra,
 });
 const flagged = "2026-10-02T00:00:00Z";
-// Rows as GET /api/receipts/mine returns them: the stripper drops the pii suspect id.
+// Rows as GET /api/receipts/mine returns them. Clearing a flag empties duplicateFlaggedAt.
 const rows = [
   row("Bolt", { duplicateFlaggedAt: flagged }),
-  row("Cogs", { duplicateFlaggedAt: flagged, duplicateFlagClearedAt: "2026-10-03T00:00:00Z" }),
   row("Dyna", {}),
 ];
 
@@ -38,9 +37,8 @@ describe("A discarded receipt's state on My receipts", () => {
     expect(within(rowOf("Bolt")).queryByRole("link", { name: "another receipt" })).not.toBeInTheDocument();
   });
 
-  it("keeps the plain label for a cleared flag and for a receipt never flagged", () => {
+  it("keeps the plain label for a receipt with no open flag", () => {
     render(<MantineProvider><MyReceiptsPage /></MantineProvider>);
-    expect(within(rowOf("Cogs")).getByText("Discarded")).toBeInTheDocument();
     expect(within(rowOf("Dyna")).getByText("Discarded")).toBeInTheDocument();
   });
 });

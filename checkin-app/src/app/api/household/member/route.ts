@@ -23,6 +23,8 @@ import { trustStatus } from "@/lib/roles";
 import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
 import { personActor } from "@/lib/auditActor";
+import { notifyBoardOfYouthLeads } from "@/lib/membership/boardAlerts";
+import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
 
 class BecameTrustedError extends Error {}
 
@@ -141,6 +143,7 @@ export const PATCH = withAuth(
             }
 
             const { updatedHouseholdMember, leadRejection, deniedLead, warning } = await prisma.$transaction(async (tx) => {
+                await lockLiveHouseholds(tx, [householdId]);
                 if (email && !holdsGrant && email.toLowerCase() !== targetHouseholdMember.email?.toLowerCase()) {
                     await removeAliasesForSignInEmail(tx, email, personActor(userId), "household_card_edit");
                 }
@@ -235,6 +238,7 @@ export const PATCH = withAuth(
                 return { updatedHouseholdMember, leadRejection, deniedLead, warning };
             });
             invalidateAttendanceCache();
+            if (dob !== undefined) await notifyBoardOfYouthLeads([targetHouseholdMember]);
             if (deniedLead) {
                 const ref = { householdId: deniedLead.householdId, personId: deniedLead.personId };
                 try {
@@ -254,6 +258,7 @@ export const PATCH = withAuth(
             }, { status: 200 });
 
         } catch (error: unknown) {
+            if (error instanceof ArchivedHouseholdError) return apiError(error.message, error.status);
             if (error instanceof HouseholdLeadLimitError) {
                 return apiError(error.message, 400);
             }

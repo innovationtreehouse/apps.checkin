@@ -7,7 +7,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { loginAs } from "../flow-tests/helpers";
 import { watchPage, type PageWatch } from "./support/pageErrors";
-import { inReceiving } from "./support/receipts";
+import { inReceiving, resolveAndReopen } from "./support/receipts";
 import { BOARD, FINANCE, INVENTORY_MANAGER, MEMBER, releaseLibraries, type Undo } from "./support/seedState";
 import { signIn } from "./support/session";
 
@@ -63,7 +63,7 @@ test.describe("Part mapping in the browser", () => {
     const { context, page, watch } = await openAsManager(browser, id);
 
     await lineRow(page, line).getByRole("button", { name: "Associate" }).click();
-    await page.getByPlaceholder("Search the catalog by name, GTIN or category").fill("dISTRIBUTION h");
+    await page.getByPlaceholder("Search the catalog by name, Part ID or category").fill("dISTRIBUTION h");
     await expect(page.getByRole("radio", { name: /Power Distribution Hub/ })).toBeVisible();
     await noProblems(watch, "catalog search");
     await context.close();
@@ -74,9 +74,7 @@ test.describe("Part mapping in the browser", () => {
     const { receivedId: id } = await inReceiving(await loginAs(MANAGER), `E2E Part mapping non-inv ${stamp()}`, [{ description: line, quantity: 1, unitPrice: 7 }]);
     const { context, page, watch } = await openAsManager(browser, id);
 
-    await lineRow(page, line).getByRole("button", { name: "Not inventory" }).click();
-    await expect(page.getByText("Resolved", { exact: true })).toBeVisible();
-    await page.reload();
+    await resolveAndReopen(page, () => lineRow(page, line).getByRole("button", { name: "Not inventory" }).click());
     await expect(page.getByText("Resolved", { exact: true })).toBeVisible();
     await noProblems(watch, "not inventory");
     await context.close();
@@ -88,7 +86,7 @@ test.describe("Part mapping in the browser", () => {
     const { context, page, watch } = await openAsManager(browser, id);
 
     await lineRow(page, line).getByRole("button", { name: "Associate" }).click();
-    await page.getByPlaceholder("Search the catalog by name, GTIN or category").fill(`E2E no such item ${stamp()}`);
+    await page.getByPlaceholder("Search the catalog by name, Part ID or category").fill(`E2E no such item ${stamp()}`);
     await page.getByRole("button", { name: "Propose new item" }).click();
     await page.getByPlaceholder("Proposed name").fill(`E2E proposed item ${stamp()}`);
     await page.getByPlaceholder("Category", { exact: true }).click();
@@ -97,7 +95,7 @@ test.describe("Part mapping in the browser", () => {
     await page.getByRole("option", { name: "10 — Control System" }).click();
     await page.getByPlaceholder("Usage behavior").click();
     await page.getByRole("option", { name: "Durable" }).click();
-    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await resolveAndReopen(page, () => page.getByRole("button", { name: "Save", exact: true }).click());
     await expect(page.getByText("Resolved", { exact: true })).toBeVisible();
     await noProblems(watch, "propose");
     await context.close();

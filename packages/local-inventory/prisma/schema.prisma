@@ -165,6 +165,12 @@ model InventoryProvisionalItem {
   // canonical factor at merge time to detect a uom_mismatch. Integer.
   /// @sensitivity:public
   conversionFactor      Int       @default(1) @map("conversion_factor")
+  /// When applying the catalog's stored decision first failed; cleared once it applies.
+  /// @sensitivity:public
+  reconcileFirstFailedAt DateTime? @map("reconcile_first_failed_at")
+  /// The last error applying it; shown only on the provisional items page.
+  /// @sensitivity:internal
+  reconcileLastError    String?   @map("reconcile_last_error")
 
   @@map("provisional_items")
 }
@@ -237,8 +243,12 @@ model InventoryReceivedOrgEvent {
   receivedAt    DateTime @map("received_at")
   /// @sensitivity:public
   status        String   @default("pending")
+  /// The last error while failed; shown only on the org-events page.
   /// @sensitivity:internal
   failureReason String?  @map("failure_reason")
+  /// When the event first failed; cleared once it processes.
+  /// @sensitivity:public
+  firstFailedAt DateTime? @map("first_failed_at")
 
   @@map("received_org_events")
 }
@@ -282,10 +292,14 @@ model ReceivedInventoryDelta {
   resultJson    String?  @map("result_json")
   /// @sensitivity:public
   status        String
+  /// The last error while failed; shown only on the inventory log page.
   /// @sensitivity:internal
   failureReason String?  @map("failure_reason")
   /// @sensitivity:public
   receivedAt    DateTime @default(now()) @map("received_at")
+  /// When the apply first failed; cleared once it applies.
+  /// @sensitivity:public
+  firstFailedAt DateTime? @map("first_failed_at")
 
   @@unique([orgId, sourceKey])
   @@map("received_inventory_deltas")

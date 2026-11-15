@@ -7,6 +7,7 @@ import { normalizeAddressInput, pickAddress, type StructuredAddress } from "@/li
 import { apiError } from "@/lib/api-response";
 import { withIntakeNotesFor } from "@/lib/household/intakeNotes";
 import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/selfGrantGuard";
+import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
 
 /**
  * Admin edit of a household's own info (name, address, emergency contact).
@@ -98,64 +99,68 @@ export const PATCH = withAuth<{ params: Promise<{ id: string }> }>(
             return apiError("No fields to update provided", 400);
         }
 
-        // Emergency contact is its own entity; the admin editor maps onto the
-        // household's primary contact. Snapshot it before the change for the audit log.
-        const priorContact = await getPrimaryValidContact(prisma, id);
+        const updated = await prisma.$transaction(async (tx) => {
+            // The membership row before the household row, the order archiving takes them in.
+            await tx.$queryRaw`SELECT id FROM "OrgMembership" WHERE "householdId" = ${id} FOR UPDATE`;
+            await lockLiveHouseholds(tx, [id]);
 
-        const updated = Object.keys(data).length > 0
-            ? await prisma.household.update({ where: { id }, data })
-            : existing;
+            // Emergency contact is its own entity; the admin editor maps onto the
+            // household's primary contact. Snapshot it before the change for the audit log.
+            const priorContact = await getPrimaryValidContact(tx, id);
 
-        if (editsContact) {
-            // Rejects (direction A) a contact who is a member of this household.
-            await upsertPrimaryContact(prisma, id, { name: body.emergencyContactName, phone: body.emergencyContactPhone });
-        }
+            const written = Object.keys(data).length > 0
+                ? await tx.household.update({ where: { id }, data })
+                : existing;
 
-        if (editsHousehold) {
-            await prisma.auditLog.create({
-                data: {
-                    actorId: auth.user.id,
-                    action: "EDIT",
-                    tableName: "Household",
-                    affectedEntityId: id,
-                    oldData: {
-                        name: existing.name,
-                        ...pickAddress(existing),
-                        emergencyContactName: priorContact?.name ?? null,
-                        emergencyContactPhone: priorContact?.phone ?? null,
-                    },
-                    newData: { ...data, ...(editsContact && { emergencyContactName: body.emergencyContactName, emergencyContactPhone: body.emergencyContactPhone }) },
-                }
-            });
-        }
+            if (editsContact) {
+                // Rejects (direction A) a contact who is a member of this household.
+                await upsertPrimaryContact(tx, id, { name: body.emergencyContactName, phone: body.emergencyContactPhone });
+            }
 
-        // Separate audit row for the membership edit — a legible before/after of the
-        // join date on its own record, rather than folded into the Household row.
-        if (memberSinceChange) {
-            await prisma.orgMembership.update({
-                where: { id: memberSinceChange.orgMembershipId },
-                data: { memberSince: memberSinceChange.newValue },
-            });
-            await prisma.auditLog.create({
-                data: {
-                    actorId: auth.user.id,
-                    action: "EDIT",
-                    tableName: "OrgMembership",
-                    affectedEntityId: memberSinceChange.orgMembershipId,
-                    secondaryAffectedEntity: id,
-                    oldData: { memberSince: memberSinceChange.oldValue },
-                    newData: { memberSince: memberSinceChange.newValue },
-                }
-            });
-        }
+            if (editsHousehold) {
+                await tx.auditLog.create({
+                    data: {
+                        actorId: auth.user.id,
+                        action: "EDIT",
+                        tableName: "Household",
+                        affectedEntityId: id,
+                        oldData: {
+                            name: existing.name,
+                            ...pickAddress(existing),
+                            emergencyContactName: priorContact?.name ?? null,
+                            emergencyContactPhone: priorContact?.phone ?? null,
+                        },
+                        newData: { ...data, ...(editsContact && { emergencyContactName: body.emergencyContactName, emergencyContactPhone: body.emergencyContactPhone }) },
+                    }
+                });
+            }
 
-        if (isVolunteerFamilyChange) {
-            await prisma.$transaction([
-                prisma.orgMembership.update({
+            // Separate audit row for the membership edit — a legible before/after of the
+            // join date on its own record, rather than folded into the Household row.
+            if (memberSinceChange) {
+                await tx.orgMembership.update({
+                    where: { id: memberSinceChange.orgMembershipId },
+                    data: { memberSince: memberSinceChange.newValue },
+                });
+                await tx.auditLog.create({
+                    data: {
+                        actorId: auth.user.id,
+                        action: "EDIT",
+                        tableName: "OrgMembership",
+                        affectedEntityId: memberSinceChange.orgMembershipId,
+                        secondaryAffectedEntity: id,
+                        oldData: { memberSince: memberSinceChange.oldValue },
+                        newData: { memberSince: memberSinceChange.newValue },
+                    }
+                });
+            }
+
+            if (isVolunteerFamilyChange) {
+                await tx.orgMembership.update({
                     where: { id: isVolunteerFamilyChange.orgMembershipId },
                     data: { isVolunteerFamily: isVolunteerFamilyChange.newValue },
-                }),
-                prisma.auditLog.create({
+                });
+                await tx.auditLog.create({
                     data: {
                         actorId: auth.user.id,
                         action: "EDIT",
@@ -165,12 +170,14 @@ export const PATCH = withAuth<{ params: Promise<{ id: string }> }>(
                         oldData: { isVolunteerFamily: isVolunteerFamilyChange.oldValue },
                         newData: { isVolunteerFamily: isVolunteerFamilyChange.newValue },
                     }
-                }),
-            ]);
-        }
+                });
+            }
+            return written;
+        });
 
         return NextResponse.json({ household: withIntakeNotesFor(updated, auth.user) });
     } catch (error) {
+        if (error instanceof ArchivedHouseholdError) return apiError(error.message, error.status);
         if (error instanceof EmergencyContactError) {
             return apiError(error.message, 400);
         }

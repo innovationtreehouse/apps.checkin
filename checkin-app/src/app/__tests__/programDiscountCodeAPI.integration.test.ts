@@ -282,6 +282,26 @@ describe('POST /api/programs/[id]/discount-code — membership duration', () => 
         expect(mintSpy).not.toHaveBeenCalled();
     });
 
+    it('refuses an ended program: no signature and no code, so no checkout opens', async () => {
+        const ended = await prisma.program.create({
+            data: {
+                appliesToYear: boundary.getUTCFullYear() - 1,
+                startAt: new Date('2026-01-01'),
+                name: `Ended Prog ${TAG}`, phase: 'FINISHED', endAt: coveredEndAt,
+                shopifyVariantId: 'dev-mock-variant-discount-code-ended',
+                orgMemberPriceCents: 4000, nonOrgMemberPriceCents: 5000,
+                participants: { create: { personId: unsettledPersonId, status: 'PENDING' } },
+            },
+        });
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: unsettledPersonId } });
+        const res = await post(ended.id, [unsettledPersonId]);
+        expect(res.status).toBe(400);
+        const data = await res.json();
+        expect(data.error).toMatch(/program has ended/i);
+        expect(data.signature).toBeUndefined();
+        expect(mintSpy).not.toHaveBeenCalled();
+    });
+
     it('mints nothing for a member with no unpaid claim in the program', async () => {
         await prisma.programParticipant.update({
             where: { programId_personId: { programId: coveredProgramId, personId: settledPersonId } },

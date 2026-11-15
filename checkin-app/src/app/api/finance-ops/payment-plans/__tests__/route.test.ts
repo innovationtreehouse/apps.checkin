@@ -3,15 +3,18 @@
  */
 /**
  * GET /api/finance-ops/payment-plans through the real handler(): finance holds
- * everyones:pii on this route, so the query selects only the columns the queue
- * shows. A household's intake note and a person's date of birth or allergies are
+ * everyones:pii on this route, so the query selects only the participant, person,
+ * household and program columns the queue shows. A household's intake note and a person's date of birth or allergies are
  * never read.
  */
 import type { NextRequest } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { GET } from '../route';
 
-jest.mock('@/lib/finance/financeViewLog', () => ({ recordFinanceView: jest.fn().mockResolvedValue(undefined) }));
+jest.mock('@/lib/finance/financeViewLog', () => ({
+    ...jest.requireActual('@/lib/finance/financeViewLog'),
+    recordFinanceViewCall: jest.fn().mockResolvedValue(undefined),
+}));
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 
 const prismaMock = {
@@ -35,7 +38,7 @@ beforeEach(() => {
     mockSession.mockResolvedValue({ user: { id: 5, isFinance: true, isBoardMember: false } });
     prismaMock.programParticipant.findMany.mockResolvedValue([
         {
-            programId: 1, personId: 2, status: 'PENDING', isPaymentPlanRequested: true, pendingSince: new Date('2026-10-01T00:00:00Z'),
+            programId: 1, personId: 2, pendingSince: new Date('2026-10-01T00:00:00Z'), scholarshipRequestKind: 'PAYMENT_PLAN',
             person: {
                 id: 2, name: 'Kid', email: 'kid@example.com', householdId: 9,
                 household: {
@@ -53,11 +56,14 @@ beforeEach(() => {
 it('selects only the person, household and program columns the queue shows', async () => {
     expect((await GET(req())).status).toBe(200);
 
-    const { include } = prismaMock.programParticipant.findMany.mock.calls[0][0];
-    expect(Object.keys(include.person.select).sort()).toEqual(['email', 'household', 'householdId', 'id', 'name']);
-    expect(Object.keys(include.person.select.household.select).sort()).toEqual(['householdMembers', 'id', 'orgMembership']);
-    expect(include.person.select.household.select.orgMembership).toEqual({ select: { status: true } });
-    expect(Object.keys(include.program.select).sort()).toEqual(['id', 'name', 'nonOrgMemberPriceCents', 'orgMemberPriceCents', 'startAt']);
+    const args = prismaMock.programParticipant.findMany.mock.calls[0][0];
+    expect(args).not.toHaveProperty('include');
+    const { select } = args;
+    expect(Object.keys(select).sort()).toEqual(['pendingSince', 'person', 'personId', 'program', 'programId', 'scholarshipRequestKind']);
+    expect(Object.keys(select.person.select).sort()).toEqual(['email', 'household', 'householdId', 'id', 'name']);
+    expect(Object.keys(select.person.select.household.select).sort()).toEqual(['householdMembers', 'id', 'orgMembership']);
+    expect(select.person.select.household.select.orgMembership).toEqual({ select: { status: true } });
+    expect(Object.keys(select.program.select).sort()).toEqual(['id', 'name', 'nonOrgMemberPriceCents', 'orgMemberPriceCents', 'startAt']);
 });
 
 it('ships finance the participant and household-lead contact', async () => {

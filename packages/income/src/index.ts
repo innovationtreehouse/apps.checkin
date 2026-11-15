@@ -14,6 +14,7 @@ export * from "./lib/intake";
 export * from "./services/reconciliationService";
 export * from "./services/settingsService";
 export * from "./services/itemCategoryService";
+export * from "./services/quickBooksPicks";
 // Off the main entry, not a subpath: Turbopack's Docker build resolves a package's `.` export only.
 export * as routes from "./routes";
 export { seedIncomeDev } from "./seed";

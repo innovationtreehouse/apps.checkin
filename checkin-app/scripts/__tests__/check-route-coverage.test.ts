@@ -4,10 +4,12 @@ import * as path from "node:path";
 import {
     countDirectJsonEntries,
     extractExportedVerbs,
+    extractRegistryFirstMarkers,
     findBareIncludeLegs,
     findDirectJsonCalls,
     findStaleDirectJsonEntries,
     findOrphanRegistryEntries,
+    findRegistryFirstMarkerErrors,
     findPackageEgressLines,
     findUnregisteredPackageSurfaces,
     findUnregisteredBareIncludeLegs,
@@ -200,6 +202,50 @@ describe("findOrphanRegistryEntries", () => {
     });
 });
 
+describe("registry-first markers", () => {
+    const entry = "POST /api/thing";
+    const route = `export const GET = h;\n// registry-first: POST\n`;
+
+    it("reads a marker line, and ignores one after code or with an unknown verb", () => {
+        expect(extractRegistryFirstMarkers(route)).toEqual(["POST"]);
+        expect(extractRegistryFirstMarkers(`const x = 1; // registry-first: POST\n// registry-first: FETCH`)).toEqual([]);
+    });
+
+    it("rule 1: warns when the marker names the registered verb the file lacks", () => {
+        const verbs = extractExportedVerbs(route);
+        expect(verbs).toEqual(["GET"]);
+        expect(findRegistryFirstMarkerErrors("route.ts", ["POST"], verbs, "/api/thing", new Set([entry]))).toEqual([]);
+        const found = findOrphanRegistryEntries(
+            [entry], new Set(["GET /api/thing"]), new Set(["/api/thing"]), new Set([entry]));
+        expect(found).toHaveLength(1);
+        expect(found[0].severity).toBe("warn");
+        expect(found[0].message).toContain("marked registry-first");
+    });
+
+    it("rule 2: errors when the file exports the marked verb", () => {
+        const found = findRegistryFirstMarkerErrors(
+            "route.ts", ["POST"], ["GET", "POST"], "/api/thing", new Set([entry]));
+        expect(found).toHaveLength(1);
+        expect(found[0].severity).toBe("error");
+        expect(found[0].message).toContain("remove the marker");
+    });
+
+    it("rule 3: errors when the marked verb has no registry entry", () => {
+        const found = findRegistryFirstMarkerErrors("route.ts", ["PUT"], ["GET"], "/api/thing", new Set([entry]));
+        expect(found).toHaveLength(1);
+        expect(found[0].severity).toBe("error");
+        expect(found[0].message).toContain("PUT /api/thing has no registry entry");
+    });
+
+    it("rule 4: a marker for another verb leaves the missing verb an error", () => {
+        const found = findOrphanRegistryEntries(
+            [entry], new Set(["GET /api/thing"]), new Set(["/api/thing"]), new Set(["PATCH /api/thing"]));
+        expect(found).toHaveLength(1);
+        expect(found[0].severity).toBe("error");
+        expect(found[0].message).toContain("registry-first: POST");
+    });
+});
+
 describe("findPackageEgressLines", () => {
     it("flags a QuickBooks host held in a constant, away from any fetch", () => {
         expect(findPackageEgressLines(`const BASE = "https://sandbox-quickbooks.api.intuit.com";\nawait fetch(BASE);`))
@@ -281,7 +327,9 @@ describe("listEgressScanFiles", () => {
     it("skips tests, fixtures and generated code in any extension", () => {
         put("packages/a/src/x.test.mjs");
         put("packages/a/src/y.spec.js");
+        put("packages/a/src/z.test.ts");
         put("y-function/test/setup.ts");
+        put("packages/a/tests/t.ts");
         put("y-function/src/__fixtures__/f.js");
         put("packages/a/src/generated/g.cjs");
         put("packages/a/node_modules/m/index.js");

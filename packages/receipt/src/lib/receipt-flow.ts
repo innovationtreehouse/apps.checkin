@@ -1,20 +1,21 @@
+import { kindOf } from "@checkin/component-kit";
 import { CompletedReceiptSchema, type FinancialReviewReason } from "@checkin/receipt-types";
 import { db, type Db } from "../db";
 import type { Prisma, ReceiptOrgSettings } from "../generated/prisma/client";
 import { ingestResultSchema } from "../contract";
-import { audit, ReceiptStateConflictError, receiptRepo, type Actor, type ReceiptRow } from "../repositories/receipt";
-import { getOrgId, ports, receiptRuntime } from "../runtime";
+import { audit, CLEARED, ReceiptStateConflictError, receiptRepo, recordFailure, type Actor, type ReceiptRow } from "../repositories/receipt";
+import { getOrgId, ports } from "../runtime";
 import { sendDonorSync } from "./donor-sync";
 import { duplicateGroup } from "./duplicateGroup";
 import { liveIds } from "./livePeople";
 import { resolveNextState } from "../workflows/receipt.invariants";
 import { NEUTRAL_CONTEXT, type ReceiptMachineContext } from "../workflows/receipt.guards";
-import { receiptMath, type MathLine } from "./lineMath";
+import { disagreementText, receiptMath, type StoredLine } from "./lineMath";
 import { missingDetails, missingDetailsNote } from "./missingDetails";
 import { describeCorrection, editsSinceReading, READING_APPLIED, submitterCorrections } from "./submitterCorrections";
 
 export function validateLineItemMath(
-  lineItems: MathLine[],
+  lineItems: StoredLine[],
   shippingCents: number,
   taxCents: number,
   discountCents: number,
@@ -129,12 +130,10 @@ function submitterConfirmation(row: ReceiptRow) {
 
 /**
  * S1: deliver a finalized receipt to workflow-mapping. Never throws: a failure leaves `pushedAt`
- * null with an audit row, for the catch-up step or the manual button to resend. A refusal (the
- * receipt's own check or mapping's 4xx) is `push_refused`; any other failure is `push_failed`
- * with its kind in `valueBefore`. A receipt whose
- * donor sync is still pending is held back, so donations has the final in-kind state (and refuses
- * any older call still in flight) before the money side reaches it. A receipt that is not
- * finalized is refused before anything is sent or written.
+ * null, a `push_failed` audit row with its kind in `valueBefore`, and the receipt stuck until a
+ * person retries it. A receipt whose donor sync is still pending is held back, so donations has
+ * the final in-kind state (and refuses any older call still in flight) before the money side
+ * reaches it. A receipt that is not finalized is refused before anything is sent or written.
  */
 export async function pushReceipt(receiptId: string, actor: Actor | null): Promise<boolean> {
   try {
@@ -206,26 +205,23 @@ export async function pushReceipt(receiptId: string, actor: Actor | null): Promi
     if (!answer.success) throw new Error(`workflow-mapping answer unreadable: ${answer.error.message}`);
     const result = answer.data;
     await db.$transaction(async (tx) => {
-      await tx.receipt.update({ where: { id: receiptId }, data: { pushedAt: new Date() } });
+      await tx.receipt.update({ where: { id: receiptId }, data: { pushedAt: new Date(), ...CLEARED } });
       await audit(tx, receiptId, actor, { action: "pushed", valueAfter: result.created ? "created" : "replayed" });
     });
     return true;
   } catch (err) {
-    const kind = receiptRuntime.failed("push", err, `receipt ${receiptId}`);
+    console.error(`[receipt] push failed for receipt ${receiptId}:`, err);
+    const kind = kindOf(err);
     const valueAfter = err instanceof Error ? err.message : String(err);
-    await audit(
-      db,
-      receiptId,
-      actor,
-      kind === "data" ? { action: "push_refused", valueAfter } : { action: "push_failed", valueBefore: kind, valueAfter },
-    ).catch(() => undefined);
+    await audit(db, receiptId, actor, { action: "push_failed", valueBefore: kind, valueAfter }).catch(() => undefined);
+    await recordFailure(db, receiptId, err).catch(() => undefined);
     return false;
   }
 }
 
 async function finalizeReceipt(row: ReceiptRow, actor: Actor | null): Promise<void> {
   await db.$transaction(async (tx) => {
-    await receiptRepo.update(row.id, { detail: { state: "receipt_finalized", validationNotes: null } }, row.state, tx);
+    await receiptRepo.update(row.id, { core: CLEARED, detail: { state: "receipt_finalized", validationNotes: null } }, row.state, tx);
     await audit(tx, row.id, actor, {
       action: "finalized",
       fieldChanged: "state",
@@ -249,7 +245,7 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
 
   const transition = async (detail: Parameters<typeof receiptRepo.update>[1]["detail"], valueAfter: string) => {
     try {
-      await receiptRepo.update(receiptId, { detail }, row.state);
+      await receiptRepo.update(receiptId, { core: CLEARED, detail }, row.state);
     } catch (err) {
       if (err instanceof ReceiptStateConflictError) return;
       throw err;
@@ -276,7 +272,9 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
   const settings = await getOrgSettings(orgId);
   // A receipt with no lines can balance, but delivery requires at least one line.
   const noLines = lineItems.length === 0;
-  const valid = !noLines && validateLineItemMath(lineItems, row.shippingCents, row.taxCents, row.discountCents, total);
+  const math = receiptMath(lineItems, row.shippingCents, row.taxCents, row.discountCents, total);
+  const valid = !noLines && math.balanced;
+  const disagreeing = math.disagreeing.map((i) => disagreementText(lineItems[i], i));
   const { taxReview, ageReview, futureReview, corrected, corrections, ageLimitDays, diffDays } = await reviewFlags(row, settings);
 
   // QB-linked backfill is already reconciled in QuickBooks: the submitter step is implied and the
@@ -301,7 +299,7 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
     switch (nextState) {
       case "duplicate_flagged":
         await transition(
-          { state: "duplicate_flagged", duplicateFlaggedAt: new Date(), duplicateSuspectReceiptId: dupId, validationNotes: null },
+          { state: "duplicate_flagged", duplicateFlaggedAt: new Date(), validationNotes: null },
           `duplicate_flagged (suspect: ${dupId})`,
         );
         return;
@@ -309,8 +307,14 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
         await transition(
           noLines
             ? { state: "validation_failed", validationNotes: "The receipt has no line items. Add at least one line." }
-            : { state: "validation_failed", validationNotes: "Line items total does not match the receipt total." },
-          noLines ? "validation_failed (no line items)" : "validation_failed (line items total does not match receipt total)",
+            : disagreeing.length > 0
+              ? { state: "validation_failed", validationNotes: `A line's total does not add up. ${disagreeing.join("; ")}.` }
+              : { state: "validation_failed", validationNotes: "Line items total does not match the receipt total." },
+          noLines
+            ? "validation_failed (no line items)"
+            : disagreeing.length > 0
+              ? `validation_failed (${disagreeing.join("; ")})`
+              : "validation_failed (line items total does not match receipt total)",
         );
         return;
       case "submitter_review":
@@ -348,6 +352,7 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
       valueBefore: row.state,
       valueAfter: err instanceof Error ? err.message : String(err),
     });
+    await recordFailure(db, receiptId, err);
     throw err;
   }
 }

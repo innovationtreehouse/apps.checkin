@@ -25,6 +25,7 @@ import { pdf } from "@react-pdf/renderer";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl } from "@/test-helpers/rtl";
 import { notifications } from "@mantine/notifications";
 import { jsonBody } from "@/test-helpers/jsonBody";
+import { settleAfter } from "@/test-helpers/settle";
 import PrintBadgesPage from "../page";
 
 beforeEach(() => {
@@ -644,5 +645,23 @@ describe("a load that answers after a newer one", () => {
     await act(async () => { finishKi(); await new Promise((resolve) => setTimeout(resolve, 0)); });
     expect(screen.queryByText("Bo Board")).not.toBeInTheDocument();
     expect(screen.getByText("Kim Keyholder")).toBeInTheDocument();
+  });
+});
+
+describe("failed people search", () => {
+  it("shows an error with a retry, never the empty state", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    // Only the roster reads answer; the plain search URL matches no route and fails.
+    mockFetchJson({ "/api/people/search?roster=": { people: [] } });
+    renderWithProviders(<PrintBadgesPage />);
+
+    await settleAfter("/api/people/search");
+    expect(screen.queryByText("No participants found.")).not.toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load participants")).toBeInTheDocument();
+
+    mockFetchJson({ "/api/people/search": { people: participants } });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("Kim Keyholder")).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't load participants")).not.toBeInTheDocument();
   });
 });

@@ -6,6 +6,8 @@ jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), h
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { notifications } from "@mantine/notifications";
 import { renderWithProviders, setSession, resetRtl } from "@/test-helpers/rtl";
+import { QUICKBOOKS_LIST_STALE as KIT_LIST_STALE } from "@checkin/component-ui";
+import { QUICKBOOKS_LIST_STALE } from "@checkin/quickbooks/accountTypes";
 import BooksMapPage from "../page";
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -97,10 +99,41 @@ describe("books map page", () => {
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "PUT")).toHaveLength(1);
   });
 
-  it("shows the board the map without letting it edit", async () => {
+  it("shows the board the map without letting it edit, and lets it update the QuickBooks lists", async () => {
     setSession({ id: 1, isBoardMember: true });
     renderWithProviders(<BooksMapPage />);
     expect(await screen.findByRole("textbox", { name: "Shopify payouts: bank account" })).toBeDisabled();
     expect(screen.getByRole("textbox", { name: "Class for Robotics" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Update now" })).toBeEnabled();
+  });
+
+  it("reloads its pickers after Update now", async () => {
+    setSession({ id: 1, isFinance: true });
+    renderWithProviders(<BooksMapPage />);
+    await screen.findByRole("textbox", { name: "Class for Robotics" });
+    const accountReads = () => fetchMock.mock.calls.filter(([url, init]) => url.toString().includes("/quickbooks-accounts") && !init?.method).length;
+    expect(accountReads()).toBe(1);
+    fireEvent.click(screen.getByRole("button", { name: "Update now" }));
+    await waitFor(() => expect(accountReads()).toBe(2));
+    expect(fetchMock).toHaveBeenCalledWith("/api/books-map/quickbooks-lists/refresh", expect.objectContaining({ method: "POST" }));
+  });
+
+  it("offers Update now beside a save refused against an out-of-date QuickBooks list", async () => {
+    setSession({ id: 1, isFinance: true });
+    const refusal = "QuickBooks' list in the app doesn't have an account with id 8001. If you changed it in QuickBooks, press Update now, then save again.";
+    write = async () => jsonResponse(400, { error: refusal, code: "quickbooks-list-stale" });
+    renderWithProviders(<BooksMapPage />);
+    fireEvent.click(await screen.findByRole("textbox", { name: "Shopify payouts: bank account" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Checking" }));
+
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", title: "Account not saved" })));
+    const chip = jest.mocked(notifications.show).mock.calls.find(([n]) => n.title === "Account not saved")?.[0];
+    renderWithProviders(<>{chip?.message}</>);
+    expect(screen.getByText(/doesn't have an account with id 8001/)).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Update now" })).toHaveLength(2);
+  });
+
+  it("matches the client kit's stale-list code to the one saves throw", () => {
+    expect(KIT_LIST_STALE).toBe(QUICKBOOKS_LIST_STALE);
   });
 });

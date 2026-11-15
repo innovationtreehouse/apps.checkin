@@ -7,7 +7,7 @@
  * name while dropping the viewer's contact details.
  */
 import '@/security/registry';
-import { getRoute } from '@/security/core';
+import { getRoute, marks } from '@/security/core';
 import { stripValue } from '@/security/stripper';
 import { resolveAccess, type CallerContext } from '@/security/access-resolvers';
 import type { AuthenticatedUser } from '@/types/auth';
@@ -77,8 +77,8 @@ describe('finance view log admission', () => {
         expect(spec().orderedView.map(([role]) => role)).toEqual(['isBoardMember']);
     });
 
-    it('does not audit reading the log', () => {
-        expect(spec().auditedRead).toBeUndefined();
+    it('sends no marked field, so reading the log is not itself logged', () => {
+        expect((spec().returns ?? []).filter(model => (marks[model] ?? []).length > 0)).toEqual([]);
     });
 });
 

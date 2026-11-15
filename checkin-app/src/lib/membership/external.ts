@@ -5,28 +5,27 @@ import { EXTERNAL_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { config } from "@/lib/config";
 import { logger } from "@/lib/logger";
 import { backgroundCheckProvider } from "@/lib/membership/background-check/manual-adapter";
-import { notifyReviewers, applyVolunteerFamilyStatus } from "@/lib/membership/review";
+import { applyVolunteerFamilyStatus } from "@/lib/membership/review";
+import { householdCheckStarted } from "@/lib/membership/checkStanding";
 import { zohoSign } from "@/lib/membership/contract/zohoProvider";
 import { signingMockActive } from "@/lib/membership/contract/signingTarget";
 import { loadAgreementPdf, stampWatermark, AGREEMENT_FILENAME, AgreementUnavailableError } from "@/lib/membership/contract/agreementDocument";
 import { latestPendingExternal } from "@/lib/membership/phases";
 import { findOpenPersonAgreement } from "@/lib/membership/personAgreementTriggers";
-import { fromWhere, openProcess, zohoWebhookMatchable, type ProcessKind } from "@/lib/membership/lifecycle";
+import { fromWhere, openProcess, zohoWebhookMatchable } from "@/lib/membership/lifecycle";
 import { systemActor, personOrSystemActor } from "@/lib/auditActor";
 
 /**
  * EXTERNAL-phase service — the actions an applicant completes after intake:
- * signing the Zoho contract and consenting to a background check on Averity.
- * Once the contract is signed AND the check is handled (consent recorded, or a
+ * signing the Zoho contract and starting a lead's background check. Once the
+ * contract is signed AND the check is handled (`householdCheckStarted`, or a
  * still-valid prior check detected), the application advances to PENDING_PAYMENT.
  * The background check is NOT a gate on payment — it reviews in parallel and only
  * the final ACTIVE transition waits on it.
  *
  * The contract is recorded automatically (Zoho webhook) or manually by the
- * board. BG consent is human-marked (no Averity API): the applicant self-reports
- * after submitting on Averity (selfRecordBgConsent), with the board's
- * mark-bg-consent action as the backstop. The system never sees contract content
- * or check results.
+ * board. A check started is marked on the person whose check it is
+ * (checkStarted.ts). The system never sees contract content or check results.
  *
  * A contract signature with no session behind it (the Zoho webhook) is attributed
  * to the `webhook:zoho-contract` system actor in the audit log.
@@ -52,7 +51,8 @@ export interface ExternalStatus {
     contractSigned: boolean;
     /** True once a Zoho signing request exists — lets the UI say "Resume signing". */
     contractStarted: boolean;
-    bgConsented: boolean;
+    /** A lead's check is started, or the household's review waits to be named (`householdCheckStarted`). */
+    checkStarted: boolean;
     /** True when a still-valid prior check was detected — no new check is needed. */
     bgCleared: boolean;
     deepLinkUrl: string | null;
@@ -67,8 +67,9 @@ async function personName(personId: number | null): Promise<string | null> {
     return person?.name?.trim() || person?.email || null;
 }
 
-/** Applicant-facing status of the two external actions (+ the consent deep link). */
+/** Applicant-facing status of the two external actions (+ the background-check tool's link). */
 export async function getExternalStatus(process: {
+    orgMembershipId: number | null;
     contractSignedAt: Date | null;
     bgConsentAt: Date | null;
     bgClearedAt: Date | null;
@@ -78,7 +79,7 @@ export async function getExternalStatus(process: {
     return {
         contractSigned: !!process.contractSignedAt,
         contractStarted: !!process.zohoEnvelopeId,
-        bgConsented: !!process.bgConsentAt,
+        checkStarted: await applicationCheckStarted(process),
         bgCleared: !!process.bgClearedAt,
         deepLinkUrl: await backgroundCheckProvider.getConsentDeepLink(),
         signerName: await personName(process.zohoSignerPersonId),
@@ -86,10 +87,17 @@ export async function getExternalStatus(process: {
     };
 }
 
+/** `householdCheckStarted` for the household a household application belongs to. */
+async function applicationCheckStarted(process: { orgMembershipId: number | null; bgConsentAt: Date | null }): Promise<boolean> {
+    if (process.orgMembershipId === null) return false;
+    const membership = await prisma.orgMembership.findUnique({ where: { id: process.orgMembershipId }, select: { householdId: true } });
+    return !!membership && householdCheckStarted(prisma, membership.householdId, process);
+}
+
 /**
  * Once the contract is signed AND the background check is handled — either a
- * still-valid prior check (bgClearedAt) or fresh consent recorded (bgConsentAt)
- * — advance from EXTERNAL straight to PENDING_PAYMENT. RENEWAL processes take
+ * still-valid prior check (bgClearedAt) or the check started
+ * (`householdCheckStarted`) — advance from EXTERNAL straight to PENDING_PAYMENT. RENEWAL processes take
  * this gate too: a fresh agreement is signed every cycle (beginRenewal), and a
  * still-valid background check arrives here pre-cleared so only the signature
  * is pending. The background check does not gate payment: when it still needs
@@ -98,17 +106,17 @@ export async function getExternalStatus(process: {
  * household intake note is shown to the reviewers but does not gate payment.
  *
  * The conditional updateMany (status guard) is the atomic gate: two concurrent
- * callers (Zoho webhook + board "mark bg consent") both reach here, but only the
+ * callers (Zoho webhook + a check marked started) both reach here, but only the
  * one whose updateMany flips PENDING_EXTERNAL_ACTION sees count === 1 — so the
- * audit row and reviewer ping fire exactly once, and a later status is never
- * regressed. Mirrors review.ts `attest`.
+ * audit row is written exactly once, and a later status is never regressed. Mirrors review.ts `attest`.
  */
 export async function advanceExternalIfComplete(processId: number) {
     const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
     if (!process) return process;
     if (process.status !== "PENDING_EXTERNAL_ACTION") return process;
     if (!process.contractSignedAt) return process;
-    if (!process.bgClearedAt && !process.bgConsentAt) return process;
+    const started = !process.bgClearedAt && (await applicationCheckStarted(process));
+    if (!process.bgClearedAt && !started) return process;
 
     const advanced = await prisma.$transaction(async (tx) => {
         // A household INITIAL/RENEWAL always has a membership (orgMembershipId is
@@ -123,7 +131,7 @@ export async function advanceExternalIfComplete(processId: number) {
                 // Advance CAS from-state from the definition; the contract/BG narrowing stays literal.
                 ...fromWhere("PENDING_EXTERNAL_ACTION"),
                 contractSignedAt: { not: null },
-                OR: [{ bgClearedAt: { not: null } }, { bgConsentAt: { not: null } }],
+                ...(started ? {} : { bgClearedAt: { not: null } }),
             },
             data: { status: "PENDING_PAYMENT", stageEnteredAt: new Date() },
         });
@@ -145,12 +153,8 @@ export async function advanceExternalIfComplete(processId: number) {
         });
         return tx.orgMembershipProcess.findUnique({ where: { id: processId } });
     });
-    if (!advanced) return prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
-
-    // No valid prior check ⇒ a human review is still needed. Ping the reviewers;
-    // the review proceeds in parallel with payment (log-only until email is configured).
-    if (!advanced.bgClearedAt) await notifyReviewers();
-    return advanced;
+    // Reviewers are pinged when the household's check review opens, not here.
+    return advanced ?? prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
 }
 
 /**
@@ -216,126 +220,6 @@ export async function pickUpMissedSignature(process: Pick<OrgMembershipProcess, 
     } catch (e) {
         logger.warn(`Zoho signature check failed for membership process ${process.id}: ${e instanceof Error ? e.message : String(e)}`);
     }
-}
-
-/**
- * Records that the applicant submitted background-check consent, then maybe advance.
- * Only an open household application takes it, unless `kind` names the PERSON_BG
- * submit path, where consent is implicit in the external check.
- */
-export async function markBgConsent(processId: number, actorId: number, kind: "household" | "PERSON_BG" = "household") {
-    const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
-    if (!process) throw new ExternalError("not_found", "Application not found.");
-    const kinds: ProcessKind[] = kind === "PERSON_BG" ? ["PERSON_BG"] : ["INITIAL", "RENEWAL"];
-    if (!kinds.includes(process.kind) || !openProcess.has(process)) {
-        throw new ExternalError("wrong_phase", "This application is not open for background-check consent.");
-    }
-    // Conditional on bgConsentAt: null so concurrent marks write the audit row once.
-    await prisma.$transaction(async (tx) => {
-        const { count } = await tx.orgMembershipProcess.updateMany({
-            where: { id: processId, bgConsentAt: null, kind: { in: kinds }, ...openProcess.where },
-            data: { bgConsentAt: new Date() },
-        });
-        if (count !== 1) return;
-        await tx.auditLog.create({
-            data: { actorId, action: "EDIT", tableName: "OrgMembershipProcess", affectedEntityId: processId, newData: { bgConsentAt: true } },
-        });
-    });
-    return advanceExternalIfComplete(processId);
-}
-
-interface ConsentingPerson {
-    householdId: number | null;
-    isHouseholdLead: boolean;
-    isSysadmin: boolean;
-    household?: { orgMembership?: { processes: Pick<OrgMembershipProcess, "id" | "status">[] } | null } | null;
-}
-
-function canConsentForHousehold(person: ConsentingPerson) {
-    return !!person.householdId && (person.isHouseholdLead || person.isSysadmin);
-}
-
-/** The household application a person's consent goes to, ahead of any check of their own. */
-function householdConsentTarget(person: ConsentingPerson) {
-    return canConsentForHousehold(person) ? latestPendingExternal(person.household?.orgMembership?.processes) : undefined;
-}
-
-function findOwnPendingBg(personId: number) {
-    return prisma.orgMembershipProcess.findFirst({
-        where: { kind: "PERSON_BG", subjectPersonId: personId, status: "PENDING_BG_REVIEW" },
-        orderBy: { id: "desc" },
-        select: { id: true, bgConsentAt: true },
-    });
-}
-
-export interface OwnBackgroundCheck {
-    consented: boolean;
-    deepLinkUrl: string | null;
-}
-
-/**
- * The person's own background check awaiting review, as /membership offers it for
- * consent. Null when there is none, or when their consent would go to their
- * household's application instead.
- */
-export async function getOwnBackgroundCheck(person: ConsentingPerson & { id: number }): Promise<OwnBackgroundCheck | null> {
-    if (householdConsentTarget(person)) return null;
-    const process = await findOwnPendingBg(person.id);
-    if (!process) return null;
-    return { consented: !!process.bgConsentAt, deepLinkUrl: await backgroundCheckProvider.getConsentDeepLink() };
-}
-
-/**
- * Applicant self-report that they submitted background-check consent on
- * Averity. Honor-system by design: Averity has no API, so the applicant's
- * own claim records consent the same way a board mark does — through
- * markBgConsent, with the applicant as the audit actor, so a self-reported
- * consent stays distinguishable from a board-confirmed one. The board
- * mark-bg-consent action remains as the backstop. Idempotent (markBgConsent
- * no-ops on a second call).
- *
- * A household lead attests the household application awaiting external action.
- * Otherwise the caller attests their own open PERSON_BG obligation, if they have
- * one; the household gates refuse everyone else.
- */
-export async function selfRecordBgConsent(userId: number): Promise<ExternalStatus> {
-    const user = await prisma.person.findUnique({
-        where: { id: userId },
-        include: {
-            household: { include: { orgMembership: { include: { processes: true } } } },
-        },
-    });
-    if (!user) throw new ExternalError("not_found", "Application not found.");
-    const canAttestHousehold = canConsentForHousehold(user);
-
-    const householdProcess = householdConsentTarget(user);
-    if (householdProcess) {
-        const updated = await markBgConsent(householdProcess.id, userId);
-        if (!updated) throw new ExternalError("not_found", "Application not found.");
-        return getExternalStatus(updated);
-    }
-
-    const ownBg = await selfAttestPersonBg(userId);
-    if (ownBg) return getExternalStatus(ownBg);
-
-    if (!user.householdId) throw new ExternalError("no_household", "You must create a household first.");
-    if (!canAttestHousehold) {
-        throw new ExternalError("not_lead", "Only a household lead can confirm background-check consent.");
-    }
-    throw new ExternalError("wrong_phase", "No application is awaiting background-check consent.");
-}
-
-/**
- * Records consent on the caller's own PERSON_BG awaiting review, putting it in the
- * reviewer queue. Reviewers are pinged only on the first attestation, as on the
- * board's submit path. Returns null when the caller has no such obligation.
- */
-async function selfAttestPersonBg(userId: number) {
-    const process = await findOwnPendingBg(userId);
-    if (!process) return null;
-    const updated = await markBgConsent(process.id, userId, "PERSON_BG");
-    if (!process.bgConsentAt) await notifyReviewers();
-    return updated;
 }
 
 /**

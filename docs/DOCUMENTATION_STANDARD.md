@@ -25,6 +25,8 @@ domain rules — and gives everything else a shorter life.
 |---|---|---|
 | `docs/rules/` | Board and operations decisions; invariants new work must not violate | **Permanent, edited by later changes** |
 | `docs/conventions.md` | How we build, independent of any domain | Long-lived |
+| `docs/comment-rules.md` | Which comments to keep and which to delete, applying the `AGENTS.md` policy to the cases that recur here | Long-lived |
+| `docs/comment-rules-rationale.md` | Why the contested comment rules read as they do; the one class that keeps superseded evidence on purpose | Long-lived |
 | `docs/ops/` | How to run, deploy, test, and mock things; and states left by a data load, each with an exit condition | Long-lived; cleanup entries deleted as they close |
 | `docs/security/` | Security policy and boundary rules | Long-lived |
 | `docs/architecture/` | Standing architecture references: how a part of the system is shaped | Long-lived; edited when the shape changes |

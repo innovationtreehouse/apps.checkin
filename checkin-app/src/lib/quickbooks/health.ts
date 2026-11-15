@@ -1,6 +1,6 @@
 /**
- * QuickBooks rows for the System Status page: the connection, the books closing date, the
- * books map's account types, and whether each posting lane is bound. Reads live (token, closing date) only when the page
+ * QuickBooks rows for the System Status page: the connection, the books closing date, the account
+ * types of the books map and of every other stored pick, the age of the app's copy of QuickBooks' lists, and whether each posting lane is bound. Reads live (token, closing date) only when the page
  * asks, cached briefly, each under a short timeout, so a QuickBooks outage cannot hang it.
  * Never names a realm id, token or secret. Not counted in the nav badge, which stays a
  * presence check with no network read.
@@ -9,6 +9,7 @@ import type { QboAccount } from "@checkin/quickbooks";
 import { kindOf } from "@checkin/component-kit";
 import { message, withTimeout, type ConfigCheck } from "@/lib/configHealth";
 import { tryBuildQuickBooks } from "@/lib/quickbooks/client";
+import { quickBooksPicksCheck } from "@/lib/quickbooks/picksHealth";
 
 const CACHE_MS = 60_000;
 
@@ -86,6 +87,28 @@ async function closingDateCheck(read: () => Promise<string | null>): Promise<Con
     }
 }
 
+const LISTS_ID = "quickbooks-lists";
+const LISTS_LABEL = "QuickBooks lists";
+const LISTS_STALE_MS = 2 * 24 * 60 * 60 * 1000;
+
+/** The age of the app's copy of the account and Class lists, read from the copy, so it answers during an outage. */
+async function listsCheck(): Promise<ConfigCheck> {
+    const id = LISTS_ID;
+    const label = LISTS_LABEL;
+    if (!quickBooksExpectedHere()) return { id, label, ok: true, detail: "Not copied on this instance by design; its pickers use stand-in lists." };
+    try {
+        const lists = await withTimeout((await import("@/lib/finance/quickBooksLists")).quickBooksListsStatus(), "The saved lists read");
+        if (lists.length < 2) return { id, label, ok: false, detail: "Not copied yet. The daily posting run copies them, or press Update now on the Books map." };
+        const oldest = Math.min(...lists.map((l) => l.refreshedAt.getTime()));
+        const when = `${new Date(oldest).toISOString().slice(0, 16).replace("T", " ")} UTC`;
+        return Date.now() - oldest > LISTS_STALE_MS
+            ? { id, label, ok: false, detail: `Refreshed ${when}, more than two days ago. Press Update now on the Books map.` }
+            : { id, label, ok: true, detail: `Refreshed ${when}.` };
+    } catch (err) {
+        return { id, label, ok: false, detail: `Could not read it: ${message(err)}.` };
+    }
+}
+
 type Lane = {
     id: string;
     label: string;
@@ -151,6 +174,6 @@ async function laneChecks(): Promise<ConfigCheck[]> {
 }
 
 async function computeQuickBooksHealth(): Promise<ConfigCheck[]> {
-    const [connection, lanes] = await Promise.all([connectionChecks(), laneChecks()]);
-    return [...connection, ...lanes];
+    const [connection, lists, picks, lanes] = await Promise.all([connectionChecks(), listsCheck(), quickBooksPicksCheck(), laneChecks()]);
+    return [...connection, lists, picks, ...lanes];
 }

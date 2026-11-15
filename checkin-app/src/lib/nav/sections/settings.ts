@@ -1,8 +1,8 @@
 /**
- * Settings (settings/layout.tsx has no tab strip). The section admits sysadmin,
- * board, operations and FINANCE; each page's own gate is stricter, operations'
- * only destination is Outreach, Finance (the expense settings) admits FINANCE
- * or BOARD alone, and Receipt reading admits sysadmin, FINANCE or BOARD.
+ * Settings (settings/layout.tsx renders these links as its tab strip). The section
+ * admits sysadmin, board, operations and FINANCE; each page's own gate is stricter,
+ * operations' only destination is Outreach, Expenses admits FINANCE or BOARD alone,
+ * and Receipt reading admits sysadmin, FINANCE or BOARD.
  */
 import type { RoleFlag } from "@/lib/roles";
 import { EXPENSE_TABS } from "@checkin/expense/nav";

@@ -70,8 +70,6 @@ function open(after: unknown[], queueHref?: string) {
 
 async function approveFirstLine() {
   await act(async () => { fireEvent.click(screen.getAllByRole("button", { name: "Approve as Program approver" })[0]); });
-  const confirm = await screen.findByRole("button", { name: "Confirm" });
-  await act(async () => { fireEvent.click(confirm); });
   await settle();
 }
 

@@ -22,21 +22,46 @@ type SignoffExpense = Pick<
   | "everydayWithinLimits"
 >;
 
+type Parties = { submitterId: number; reimburseePersonId: number | null };
+
 /** The submitter and the reimbursee when known. */
-function partiesOf(expense: { submitterId: number; reimburseePersonId: number | null }): number[] {
+function partiesOf(expense: Parties): number[] {
   return expense.reimburseePersonId === null ? [expense.submitterId] : [expense.submitterId, expense.reimburseePersonId];
 }
 
-/**
- * Whether the person is the submitter, the reimbursee when known, or in either one's household,
- * each as the live person they name. A party naming nobody live cannot be checked, so everyone is conflicted.
- */
-export async function isConflicted(expense: { submitterId: number; reimburseePersonId: number | null }, personId: number): Promise<boolean> {
+/** The parties as the live people they name, and whether one of them names nobody live. */
+function resolveParties(expense: Parties, live: Map<number, number | null>): { parties: number[]; unresolved: boolean } {
   const stored = partiesOf(expense);
-  const live = await liveIds(stored);
   const parties = stored.flatMap((id) => live.get(id) ?? []);
-  if (parties.length < stored.length) return true;
-  return parties.includes(personId) || (await getExpenseRuntime().signoff.householdOf(parties)).includes(personId);
+  return { parties, unresolved: parties.length < stored.length };
+}
+
+/**
+ * The conflict rule: the person is a party or in a party's household. A party naming nobody live
+ * cannot be checked, so everyone is conflicted. `household` is read only when the parties alone do not decide.
+ */
+async function conflictedOn(
+  { parties, unresolved }: { parties: number[]; unresolved: boolean },
+  personId: number,
+  household: (parties: number[]) => number[] | Promise<number[]>,
+): Promise<boolean> {
+  return unresolved || parties.includes(personId) || (await household(parties)).includes(personId);
+}
+
+/** Whether the person is conflicted on the expense, in one liveIds and at most one householdOf read. */
+export async function isConflicted(expense: Parties, personId: number): Promise<boolean> {
+  const resolved = resolveParties(expense, await liveIds(partiesOf(expense)));
+  return conflictedOn(resolved, personId, (parties) => getExpenseRuntime().signoff.householdOf(parties));
+}
+
+/** The ids of the expenses the person is conflicted on, as isConflicted decides, in one liveIds and one householdsOf read. */
+export async function conflictedExpenses(expenses: (Parties & { id: string })[], personId: number): Promise<Set<string>> {
+  if (expenses.length === 0) return new Set();
+  const live = await liveIds(expenses.flatMap(partiesOf));
+  const resolved = expenses.map((e) => ({ id: e.id, ...resolveParties(e, live) }));
+  const households = await getExpenseRuntime().signoff.householdsOf([...new Set(resolved.flatMap((e) => (e.unresolved ? [] : e.parties)))]);
+  const conflicted = await Promise.all(resolved.map((e) => conflictedOn(e, personId, (parties) => parties.flatMap((id) => households.get(id) ?? []))));
+  return new Set(resolved.filter((_, i) => conflicted[i]).map((e) => e.id));
 }
 
 /**
@@ -245,12 +270,26 @@ export function lineHolds(approvalNeeded: boolean, facts: SignoffFacts, filled: 
  * the facts of that moment, and no seat is signed or voided on it after, so neither holds it again.
  */
 export async function unsignedLines(db: Db, expense: SignoffExpense & Pick<Expense, "state">): Promise<Map<number, LineHold[]>> {
-  const [facts, filled, approval] = await Promise.all([signoffFactsByLine(db, expense), filledSeatsByLine(db, expense.id), boardApprovalNeeded(db, expense)]);
-  const closed = expense.state === "qb_complete";
-  const out = new Map<number, LineHold[]>();
-  for (const [lineId, f] of facts) {
-    const missing = lineHolds(approval, f, filled.get(lineId) ?? []).filter((hold) => !closed || (hold !== "BOARD" && hold !== "BOARD_APPROVAL"));
-    if (missing.length > 0) out.set(lineId, missing);
+  return (await unsignedLinesForExpenses(db, [expense])).get(expense.id)!;
+}
+
+/** `unsignedLines` for each of the given expenses, read together. `readOnly` is for reads, which must not freeze the Everyday check. */
+export async function unsignedLinesForExpenses(
+  db: Db,
+  expenses: (SignoffExpense & Pick<Expense, "state">)[],
+  { readOnly = false } = {},
+): Promise<Map<string, Map<number, LineHold[]>>> {
+  const facts = await signoffFactsForExpenses(db, expenses, { readOnly });
+  const out = new Map<string, Map<number, LineHold[]>>();
+  for (const expense of expenses) {
+    const { byLine, filled, boardApprovalNeeded: approval } = facts.get(expense.id)!;
+    const closed = expense.state === "qb_complete";
+    const held = new Map<number, LineHold[]>();
+    for (const [lineId, f] of byLine) {
+      const missing = lineHolds(approval, f, filled.get(lineId) ?? []).filter((hold) => !closed || (hold !== "BOARD" && hold !== "BOARD_APPROVAL"));
+      if (missing.length > 0) held.set(lineId, missing);
+    }
+    out.set(expense.id, held);
   }
   return out;
 }
@@ -325,9 +364,11 @@ async function clearStepsAfterOwnerApproval(tx: Prisma.TransactionClient, actor:
   if (outbox.count > 0) {
     // Finance's skip is final, so going back never makes the expense postable again.
     const qbMatchState = expense.qbMatchState === "SKIPPED" ? "SKIPPED" : "UNMATCHED";
-    await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState, qbPostAttempts: 0, qbFailureKind: null } });
+    await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState } });
     await writeAudit(tx, actor, { expenseId, action: "qb_outbox_cleared", fieldChanged: "qbMatchState", valueBefore: expense.qbMatchState, valueAfter: qbMatchState, notes: reason });
   }
+  // Going back leaves any QuickBooks step it failed, with or without an outbox row.
+  await tx.expense.update({ where: { id: expenseId }, data: { qbFirstFailedAt: null, qbLastError: null } });
 }
 
 /**

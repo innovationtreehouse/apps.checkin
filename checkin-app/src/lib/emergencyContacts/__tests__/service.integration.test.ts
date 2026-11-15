@@ -291,8 +291,16 @@ describe("updateContact + deleteContact", () => {
     it("deletes a contact", async () => {
         const hh = await makeHousehold("del");
         const c = await createContact(prisma, hh, { name: "Temp", phone: "555-555-2000" });
+        await createContact(prisma, hh, { name: "Keeper", phone: "555-555-3000" });
         await deleteContact(prisma, hh, c.id);
         expect(await prisma.emergencyContact.findUnique({ where: { id: c.id } })).toBeNull();
+    });
+
+    it("refuses to delete the last valid contact", async () => {
+        const hh = await makeHousehold("del-last");
+        const c = await createContact(prisma, hh, { name: "Only", phone: "555-555-2000" });
+        await expect(deleteContact(prisma, hh, c.id)).rejects.toMatchObject({ code: "last_valid" });
+        expect(await prisma.emergencyContact.findUnique({ where: { id: c.id } })).not.toBeNull();
     });
 });
 

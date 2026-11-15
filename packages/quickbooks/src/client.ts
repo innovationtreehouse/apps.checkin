@@ -456,13 +456,14 @@ export class QuickBooksClient {
     return this.byIds("JournalEntry", ids);
   }
 
-  /** Reference lists (active entries) for the FINANCE bootstrap; not transaction history. */
+  /** Reference lists for the FINANCE bootstrap; not transaction history. Accounts and Vendors are active ones only. */
   accounts(): Promise<QboAccount[]> {
     return this.paged("SELECT * FROM Account");
   }
 
+  /** Every Class, inactive ones too: QuickBooks returns only active records unless the query names Active. */
   classes(): Promise<QboClass[]> {
-    return this.paged("SELECT * FROM Class");
+    return this.paged("SELECT * FROM Class WHERE Active IN (true, false)");
   }
 
   vendors(): Promise<QboVendor[]> {

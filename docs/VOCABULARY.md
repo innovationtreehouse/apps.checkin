@@ -136,7 +136,8 @@ adult) → two attestations → **clearance** (dated; the validity window runs f
 | **Attest** | one reviewer putting their name to a judgement about one adult — the act, and the only thing the app stores | `attest()`, `BackgroundCheckAttestation` | "Attest" |
 | **Approve / Reject** | the **value** carried on an attestation — what was judged, never the act of judging | `AttestationResult` | "Approve" / "Reject" |
 | **Clearance** / **cleared** | the outcome: two attestations, dated. The re-check window runs from that date | `bgClearedAt`, `PENDING_BG_CLEARANCE`, `Person.lastBackgroundCheck` | "cleared" |
-| **Consent** | the **applicant's** act — they submitted the Averity form. Never "attest" | `bgConsentAt`, `markBgConsent` | "consent" |
+| **Consent** | the applicant's act **in the outside background-check tool**. The app never sees or records it | `getConsentDeepLink` | "consent" (only for the tool's form) |
+| **Check started** | someone marked that a person's check was started outside, putting their review in the reviewers' queue. Not consent; approves nothing | `bgConsentAt` (PERSON_BG only), `markCheckStarted` | "check started" |
 | **Reset** | the board discarding a review's attestations so it needs two new approvals. The board never clears a check itself | `boardResetReview` | "Reset for re-review" |
 
 Rules:
@@ -233,3 +234,4 @@ Product-owner decision — **design to these; do not relitigate the names or sha
 
 - **Membership Year** = **Sept 1 – Aug 31**, one boundary for the whole organisation. The rule is in [../../docs/rules/membership.md](rules/membership.md).
 - **Treehouse Card** — any corporate/business/debit/credit card opened on the Treehouse EIN (reserved for future financial rules).
+- **Part ID** — the name every screen gives a catalog item's GTIN, shown in short form (`02B0011` minted, `P000002` provisional, 13 digits for a real barcode). A store's or manufacturer's number for the part is a **part #** (store part #, mfr part #), never a Part ID. The rule is in [rules/inventory.md](rules/inventory.md).

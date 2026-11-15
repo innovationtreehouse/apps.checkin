@@ -21,13 +21,13 @@ export interface ExternalStatus {
   contractStarted: boolean;
   signerName?: string | null;
   contractSignedAt?: string | null;
-  bgConsented: boolean;
+  checkStarted: boolean;
   bgCleared: boolean;
   deepLinkUrl: string | null;
 }
 
 export interface OwnBackgroundCheck {
-  consented: boolean;
+  checkStarted: boolean;
   deepLinkUrl: string | null;
 }
 
@@ -46,7 +46,7 @@ export interface IntakeState {
   external: ExternalStatus | null;
   /** The caller's own unsigned individual agreement, independent of the household's. */
   personAgreement: { id: number; started: boolean } | null;
-  /** The caller's own background check awaiting their consent, outside any household application. */
+  /** The caller's own check and the background-check tool's link, for the Background checks panel. */
   ownBackgroundCheck?: OwnBackgroundCheck | null;
   prefill: IntakePrefill;
 }
@@ -65,6 +65,8 @@ export const apiError = (data: { error?: string; detail?: string } | null | unde
 const networkError = () => notifications.show({ color: "red", message: "Network error.", autoClose: false });
 
 const SAVED_READ_ATTEMPTS = 3;
+const UNREAD_SAVE_WARNING =
+  "The page couldn't refresh after saving. Reload the page before saving again, or people you just added may be added twice.";
 
 /** Reads the state after a save, retrying a network failure or a 5xx with useLoad's backoff. Null when every attempt fails. */
 async function readSavedState(): Promise<IntakeState | null> {
@@ -89,6 +91,10 @@ export function useMembershipPage() {
   // Non-fatal notes from a save: parts that didn't go through (e.g. a second
   // guardian over the household cap) while the rest of the form did save.
   const [warnings, setWarnings] = useState<string[]>([]);
+  // The body of a save whose state could not be read. The form then holds new people
+  // without ids, so Save and Submit stay locked until a successful read hydrates it.
+  const [unreadSave, setUnreadSave] = useState<string | null>(null);
+  const saveLocked = unreadSave !== null;
   const form = useMembershipForm();
   const [payment, setPayment] = useState<MembershipPayment | null>(null);
   // Set when the applicant clicks the real Shopify checkout link (not the local
@@ -104,11 +110,6 @@ export function useMembershipPage() {
   const [planRequested, setPlanRequested] = useState(false);
   const [planKind, setPlanKind] = useState<string | null>(null);
   const [confirmPlanOpened, { open: openConfirmPlan, close: closeConfirmPlan }] = useDisclosure(false);
-  // Self-report gate for the background-check task: the confirm checkbox
-  // unlocks only after the applicant has opened the Averity consent link this
-  // visit, so they can't confirm a form they never saw.
-  const [bgLinkOpened, setBgLinkOpened] = useState(false);
-  const [bgConsenting, setBgConsenting] = useState(false);
 
   // Drop the holdoff and its sessionStorage record — the "Show the payment
   // button again" escape hatch for an abandoned checkout.
@@ -141,15 +142,18 @@ export function useMembershipPage() {
   const hydrate = useCallback((s: IntakeState) => {
     applyState(s);
     resetForm(s.prefill);
+    setUnreadSave(null);
   }, [applyState, resetForm]);
 
   const { data: loaded, error: loadError, reload: load } = useLoad<IntakeState>(
     sessionStatus === "authenticated" ? "/api/membership" : null,
   );
   const loading = state === null && !loadError;
-  // A background re-read keeps unsaved input.
+  // Input unchanged since an unread save is already on the server, so it is not unsaved.
+  const unsaved = form.isDirty && unreadSave !== JSON.stringify(buildIntakePayload(form.values));
+  // A background re-read keeps unsaved input; otherwise it hydrates the form and unlocks it.
   useSeedForm(loaded, false, (s) => {
-    if (form.isDirty) applyState(s);
+    if (unsaved) applyState(s);
     else hydrate(s);
   });
 
@@ -261,28 +265,27 @@ export function useMembershipPage() {
   };
 
   const save = async () => {
+    if (saveLocked) return;
     setSaving(true);
     flash("");
     try {
+      const body = JSON.stringify(buildIntakePayload(form.values));
       const res = await fetch("/api/membership/intake", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildIntakePayload(form.values)),
+        body,
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         // A null state means saved but unread; read it so new people get their ids and a
         // second save updates them rather than creating them again. A failed read leaves
-        // the form as typed. This read is direct, not through useLoad, because only its
-        // own answer may replace the form: a later background reload must not.
+        // the form as typed and locks Save and Submit. This read is direct, not through
+        // useLoad, because a background reload must not replace input edited since.
         const saved: IntakeState | null = data.state ?? await readSavedState();
         if (saved) hydrate(saved);
+        else setUnreadSave(body);
         flash("Progress saved.");
-        const rejections: string[] = (data.rejections ?? []).map((r: { message: string }) => r.message);
-        setWarnings(saved ? rejections : [
-          "The page couldn't refresh after saving. Reload the page before saving again, or people you just added may be added twice.",
-          ...rejections,
-        ]);
+        setWarnings((data.rejections ?? []).map((r: { message: string }) => r.message));
       } else flash(apiError(data, "Could not save."), true);
     } catch {
       networkError();
@@ -292,6 +295,7 @@ export function useMembershipPage() {
   };
 
   const submit = async () => {
+    if (saveLocked) return;
     // Highlight missing required fields up front — instant feedback, no round-trip.
     const errs = validateIntake(form.values);
     setFieldErrors(errs);
@@ -429,39 +433,17 @@ export function useMembershipPage() {
     }
   };
 
-  // Applicant confirms they submitted consent on Averity. On success the reload
-  // flips the task to done (and may advance the whole card to payment); on
-  // failure the checkbox reverts so they can retry.
-  const recordBgConsent = async () => {
-    setBgConsenting(true);
-    try {
-      const res = await fetch("/api/membership/bg-consent", { method: "POST" });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        load();
-        notifyNavRefresh();
-      } else {
-        setBgConsenting(false);
-        flash(apiError(data, "Could not record your consent. Please try again."), true);
-      }
-    } catch {
-      setBgConsenting(false);
-      networkError();
-    }
-  };
-
-  useUnsavedGuard(form.isDirty);
+  useUnsavedGuard(unsaved);
 
   return {
-    session, sessionStatus, state, loading, loadError, saving, setSaving, message, warnings, fieldErrors, clearErr, form,
+    session, sessionStatus, state, loading, loadError, saving, setSaving, message, fieldErrors, clearErr, form, saveLocked,
+    warnings: saveLocked ? [UNREAD_SAVE_WARNING, ...warnings] : warnings,
     load, startApplication, save, submit, startSigning, renew,
     payment: {
       payment, awaitingPayment, clearAwaitingPayment, handlePayClick, onMockPaid, onMockFailed,
       planRequested, planKind, setPlanKind, confirmPlanOpened, openConfirmPlan, closeConfirmPlan, requestPaymentPlan,
     },
-    bg: { linkOpened: bgLinkOpened, markLinkOpened: () => setBgLinkOpened(true), consenting: bgConsenting, recordConsent: recordBgConsent },
   };
 }
 
 export type PaymentControls = ReturnType<typeof useMembershipPage>["payment"];
-export type BgConsentControls = ReturnType<typeof useMembershipPage>["bg"];

@@ -53,7 +53,7 @@ beforeEach(() => {
 describe('withKiosk', () => {
     it('admits a valid kiosk signature and passes the parsed body + actor to the handler', async () => {
         mockPubKeys.mockReturnValue(['key']);
-        mockVerify.mockReturnValue({ ok: true });
+        mockVerify.mockReturnValue({ ok: true, keyFingerprint: '0123456789abcdef' });
 
         const res = await post({
             headers: { 'x-kiosk-signature': 'sig' },
@@ -64,7 +64,7 @@ describe('withKiosk', () => {
         expect(handler).toHaveBeenCalledTimes(1);
         const call = handler.mock.calls[0] as unknown[];
         expect(call[1]).toEqual({ participantId: 5 });   // parsed body
-        expect(call[2]).toEqual({ type: 'kiosk' });        // signed actor
+        expect(call[2]).toStrictEqual({ type: 'kiosk', keyFingerprint: '0123456789abcdef' }); // signed actor
     });
 
     it('feeds the RAW request body to the kiosk verifier (HMAC covers the bytes)', async () => {

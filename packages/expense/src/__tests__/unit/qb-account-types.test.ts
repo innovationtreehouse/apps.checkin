@@ -36,7 +36,7 @@ describe("expense QuickBooks account save", () => {
   it("refuses an account of another type, naming it", async () => {
     await expect(createQbAccount({ req: body("8001"), params: {}, principal: finance })).rejects.toMatchObject({
       status: 400,
-      message: "An expense account takes an Expense, Other Expense, Cost of Goods Sold, or Fixed Asset account; Checking is Bank",
+      code: "quickbooks-list-stale", message: "An expense account takes an Expense, Other Expense, Cost of Goods Sold, or Fixed Asset account; QuickBooks' list in the app shows Checking as Bank. If you changed it in QuickBooks, press Update now, then save again.",
     });
     expect(db.$transaction).not.toHaveBeenCalled();
   });
@@ -44,6 +44,13 @@ describe("expense QuickBooks account save", () => {
   it("refuses on change too", async () => {
     await expect(updateQbAccount({ req: body("8001"), params: { id: "1" }, principal: finance })).rejects.toMatchObject({ status: 400 });
     expect(db.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("renames an account without reading QuickBooks", async () => {
+    vi.mocked(db.expenseQbAccount.findFirst).mockResolvedValueOnce({ id: 1, qbAccount: "8006" } as never);
+    configureExpense({ org: async () => ({ id: ORG, name: "Org One" }) });
+    await updateQbAccount({ req: body("8006"), params: { id: "1" }, principal: finance });
+    expect(db.$transaction).toHaveBeenCalled();
   });
 
   it("answers 503 while QuickBooks isn't bound", async () => {

@@ -146,10 +146,11 @@ producer is the first instance.
   commit rule decides how a reaction and its ledger row land: expense writes
   both in one transaction; local inventory and receipt mapping react first and
   rely on idempotent reactions, so many local inventories can stay async against
-  one global catalog. A failed event is recorded and retried, and never holds
-  back the events after it. The catch-up cron step pages through the producer's
-  rows and consumes any not in the ledger (`sweepOrgEvents` in
-  `@checkin/component-kit`). The producer records nothing about who consumed
+  one global catalog. A failed event is recorded and waits for someone to press
+  Retry; it never holds back the events after it. The catch-up cron step pages
+  through the producer's rows and consumes only those with no ledger row
+  (`sweepOrgEvents` in `@checkin/component-kit`); expense and local inventory
+  also finish events their ledger holds as received but not yet processed. The producer records nothing about who consumed
   what — tracking consumers would couple it to them.
 
 ## UI and nav

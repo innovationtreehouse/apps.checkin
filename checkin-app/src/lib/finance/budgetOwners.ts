@@ -4,10 +4,11 @@ import { badRequest, forbidden, notFound, ApiResponseError } from "@/security/ha
 import { personActor } from "@/lib/auditActor";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { uniqueViolationFields } from "@/lib/prismaUniqueViolation";
-import { logger } from "@/lib/logger";
 import { config } from "@/lib/config";
-import { quickBooks } from "@/lib/components/ports";
+import { savedQuickBooksClasses } from "@/lib/finance/quickBooksLists";
 import { IN_LIVE_HOUSEHOLD } from "@/lib/household/archived";
+import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
+import { ServiceError } from "@checkin/component-kit";
 
 // Budget-owner buckets and their approvers. FINANCE manages buckets;
 // the BOARD sets each bucket's owner and treasurers.
@@ -40,18 +41,10 @@ export const LOCAL_QUICKBOOKS_CLASSES = [
     { id: "9005", name: "Retired", active: false },
 ];
 
-/** Every QuickBooks Class by its full name, inactive ones flagged, for the bucket form's picker. */
+/** Every Class in the app's QuickBooks list by its full name, inactive ones flagged, for the bucket form's picker. */
 export async function listQuickBooksClasses() {
     if (config.quickBooksMockActive()) return LOCAL_QUICKBOOKS_CLASSES.map((c) => ({ ...c }));
-    const qb = await quickBooks();
-    if (!qb) throw new ApiResponseError(503, "QuickBooks is not connected.");
-    const classes = await qb.classes().catch((error: unknown) => {
-        logger.error("QuickBooks Class list failed:", error);
-        throw new ApiResponseError(503, "QuickBooks did not return its Classes. Try again shortly.");
-    });
-    return classes
-        .map((c) => ({ id: c.Id, name: c.FullyQualifiedName, active: c.Active !== false }))
-        .sort((a, b) => a.name.localeCompare(b.name));
+    return savedQuickBooksClasses();
 }
 
 function readName(value: unknown): string {
@@ -79,6 +72,7 @@ function rethrowClassTaken(error: unknown): never {
 export async function createBudgetOwner(actorId: number, body: Record<string, unknown>) {
     const name = readName(body.name);
     const quickBooksClassId = body.quickBooksClassId === undefined ? null : readClassId(body.quickBooksClassId);
+    if (!quickBooksClassId) throw badRequest("A bucket needs a QuickBooks Class.");
     if (body.isOrgLevel !== undefined && typeof body.isOrgLevel !== "boolean") throw badRequest("isOrgLevel must be a boolean");
     const isOrgLevel = body.isOrgLevel === true;
     return prisma.$transaction(async (tx) => {
@@ -115,6 +109,10 @@ export async function updateBudgetOwner(actorId: number, id: number, body: Recor
         });
         if (!stored) throw notFound("Bucket not found");
         const { ownerId, _count, ...before } = stored;
+        // A bucket with no Class keeps saving without one; a bucket with one never loses it.
+        if (data.quickBooksClassId === null && before.quickBooksClassId !== null) {
+            throw badRequest("A bucket's QuickBooks Class can be changed but not cleared.");
+        }
         if (data.isOrgLevel === true && !before.isOrgLevel && (ownerId !== null || _count.treasurers > 0)) {
             // Only the Board removes approvers, so finance's change waits for it.
             throw new ApiResponseError(409, "The Board must remove this bucket's owner and treasurers first.");
@@ -201,6 +199,16 @@ async function assertMayName(actorId: number, budgetOwnerId: number, personId: n
     }
 }
 
+/** Nobody in an archived household is named an approver. */
+async function lockLiveOrRefuse(tx: Prisma.TransactionClient, personId: number) {
+    try {
+        await lockLiveHouseholdsOf(tx, [personId]);
+    } catch (e) {
+        if (e instanceof ServiceError) throw new ApiResponseError(e.status, e.message);
+        throw e;
+    }
+}
+
 /**
  * Sets or clears a bucket's owner. Nobody names, or removes, themself or anyone
  * in their own household, board members included.
@@ -214,6 +222,7 @@ export async function setBucketOwner(actorId: number, budgetOwnerId: number, per
     if (before.ownerId !== personId) {
         await prisma.$transaction(async (tx) => {
             await lockProgramBucket(tx, budgetOwnerId);
+            if (personId !== null) await lockLiveOrRefuse(tx, personId);
             await tx.budgetOwner.update({ where: { id: budgetOwnerId }, data: { ownerId: personId } });
             await tx.auditLog.create({
                 data: {
@@ -241,6 +250,7 @@ export async function setBucketTreasurer(actorId: number, budgetOwnerId: number,
         await lockProgramBucket(tx, budgetOwnerId);
         const isTreasurer = (await tx.budgetOwnerTreasurer.findUnique({ where: key, select: { personId: true } })) !== null;
         if (isTreasurer === on) return;
+        if (on) await lockLiveOrRefuse(tx, personId);
         if (on) await tx.budgetOwnerTreasurer.create({ data: { budgetOwnerId, personId } });
         else await tx.budgetOwnerTreasurer.delete({ where: key });
         await tx.auditLog.create({

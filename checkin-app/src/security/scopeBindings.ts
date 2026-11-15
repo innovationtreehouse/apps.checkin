@@ -118,6 +118,12 @@ export const SCOPE_BINDINGS = {
     // The caller's own Key Volunteer Agreement status and sign URL.
     KeyVolunteerSelfStatus: { their_own: { field: 'personId', eqCtx: 'selfId' } },
     KeyVolunteerSigning: { their_own: { field: 'personId', eqCtx: 'selfId' } },
+    // The family path's marking rows: the caller's own, and for a household lead
+    // each other adult in the household they lead.
+    CheckStartedRow: {
+        their_own: { field: 'personId', eqCtx: 'selfId' },
+        led_households: { field: 'personId', inCtx: 'ledHouseholdMemberIds' },
+    },
     ToolStatus: { their_own: { field: 'personId', eqCtx: 'selfId' } },
     Account: { their_own: { field: 'userId', eqCtx: 'selfId' } },
     Session: { their_own: { field: 'userId', eqCtx: 'selfId' } },
@@ -256,6 +262,11 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     // settling stock is board bookkeeping, with no program-facing view.
     'UnconfirmedStockRow',
     'UnconfirmedStockSettlement',
+    // The payment-plan Past views' rows (registry.ts). Their `personId` and
+    // `householdId` make them scopable, but both routes are finance-or-board with
+    // everyones grants: no family reads the board's decision history.
+    'ProgramPaymentPlanDecision',
+    'MembershipPaymentPlanDecision',
     // The reimbursee named on the QuickBooks Vendor link screen (registry/expense.ts).
     // Its `personId` makes it scopable, but the only route is FINANCE with everyones
     // grants, and the reimbursee never reads their own Vendor link.

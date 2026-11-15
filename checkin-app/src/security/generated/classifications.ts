@@ -21,7 +21,6 @@ export const classifications = {
         emailSuppressed: 'personal',
         householdId: 'public',
         isHouseholdLead: 'public',
-        mergedIntoId: 'internal',
         allergies: 'personal',
         isSysadmin: 'internal',
         isBoardMember: 'public',
@@ -115,8 +114,8 @@ export const classifications = {
         manualPaymentById: 'internal',
         certificationNote: 'internal',
         renewalReminderSentAt: 'internal',
-        isPaymentPlanRequested: 'internal',
-        scholarshipRequestKind: 'internal',
+        isPaymentPlanRequested: 'hardship',
+        scholarshipRequestKind: 'hardship',
         intakeNoteSnapshot: 'pii',
         noteAckById: 'internal',
         noteAckAt: 'internal',
@@ -265,6 +264,7 @@ export const classifications = {
         shopifyVariantId: 'public',
         claimantShopifyProductId: 'public',
         claimantShopifyVariantId: 'public',
+        claimantProductHiddenAt: 'internal',
         shopifyStockPushNeededAt: 'internal',
         shopifyStockPendingWrite: 'internal',
         shopifyStockCarry: 'internal',
@@ -294,20 +294,20 @@ export const classifications = {
     ProgramVolunteer: {
         programId: 'public',
         personId: 'public',
-        isCore: 'internal',
+        isCore: 'personal',
     },
     ProgramParticipant: {
         programId: 'public',
         personId: 'public',
         status: 'public',
-        isPaymentPlanRequested: 'internal',
-        scholarshipRequestKind: 'internal',
+        isPaymentPlanRequested: 'hardship',
+        scholarshipRequestKind: 'hardship',
         pendingSince: 'personal',
-        wasOrgMemberAtApproval: 'internal',
-        inventoryHeldAt: 'internal',
-        paymentPlanDeniedAt: 'internal',
+        wasOrgMemberAtApproval: 'hardship',
+        inventoryHeldAt: 'hardship',
+        paymentPlanDeniedAt: 'hardship',
         shopifyOrderId: 'internal',
-        seatTakenWithoutSaleAt: 'internal',
+        seatTakenWithoutSaleAt: 'hardship',
         endedAt: 'personal',
     },
     Event: {
@@ -318,7 +318,7 @@ export const classifications = {
         startAt: 'public',
         endAt: 'public',
         description: 'public',
-        attendanceConfirmedAt: 'internal',
+        attendanceConfirmedAt: 'personal',
         attendanceConfirmedById: 'internal',
         postEventEmailSent: 'internal',
         postEventEmailClaimedAt: 'internal',
@@ -451,6 +451,11 @@ export const classifications = {
         metric: 'internal',
         value: 'internal',
     },
+    KioskProtocolSeen: {
+        keyFingerprint: 'internal',
+        protocolVersion: 'internal',
+        lastSeenAt: 'internal',
+    },
     IntegrationErrorLog: {
         id: 'internal',
         source: 'internal',
@@ -580,6 +585,11 @@ export const classifications = {
         role: 'internal',
         quickBooksAccountId: 'internal',
     },
+    QuickBooksList: {
+        list: 'internal',
+        entries: 'internal',
+        refreshedAt: 'internal',
+    },
 } as const;
 
 export const relations = {
@@ -587,8 +597,6 @@ export const relations = {
         accounts: { model: 'Account', isList: true },
         sessions: { model: 'Session', isList: true },
         household: { model: 'Household', isList: false },
-        mergedInto: { model: 'Person', isList: false },
-        mergedFrom: { model: 'Person', isList: true },
         mergedArchive: { model: 'PersonMerge', isList: true },
         toolStatuses: { model: 'ToolStatus', isList: true },
         bgAttestations: { model: 'BackgroundCheckAttestation', isList: true },
@@ -752,6 +760,8 @@ export const relations = {
     },
     SystemMetricLog: {
     },
+    KioskProtocolSeen: {
+    },
     IntegrationErrorLog: {
     },
     CronRunLog: {
@@ -791,6 +801,13 @@ export const relations = {
     },
     BooksMapRoleAccount: {
     },
+    QuickBooksList: {
+    },
+} as const;
+
+export const marks = {
+    OrgMembershipProcess: ['isPaymentPlanRequested', 'scholarshipRequestKind'],
+    ProgramParticipant: ['isPaymentPlanRequested', 'scholarshipRequestKind', 'inventoryHeldAt', 'paymentPlanDeniedAt', 'seatTakenWithoutSaleAt'],
 } as const;
 
 export type Models = keyof typeof classifications;

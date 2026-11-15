@@ -4,14 +4,15 @@ import { useState } from 'react';
 import { NEW_PROGRAM_ROLES } from '@/lib/nav/sections/programOps';
 import { useRouter } from 'next/navigation';
 import { Alert, Box, Button, Card, Checkbox, Group, NumberInput, SimpleGrid, Stack, Text, TextInput } from '@mantine/core';
-import { notifications } from '@mantine/notifications';
+import { errorMessage, showError } from '@checkin/component-ui';
+import { api } from '@/lib/api';
 import { useRequireRole } from '@/hooks/useRequireRole';
 import { AdminPageHeader } from '@/components/admin/AdminPageHeader';
 import { EntityPicker } from '@/components/admin/EntityPicker';
 import { useUnsavedGuard, shallowEqual } from '@/components/UnsavedChangesProvider';
 
 import { PageLoader } from "@/components/ui/PageLoader";
-import { ProgramYearField, formYearsTouched, useMembershipYearBoundary } from '../ProgramYearField';
+import { ProgramYearField, YearBoundaryError, formYearsTouched, useMembershipYearBoundary } from '../ProgramYearField';
 type ParticipantOption = {
   id: number;
   name: string | null;
@@ -36,7 +37,6 @@ export default function CreateProgramPage() {
   const [publiclyVisible, setPubliclyVisible] = useState(false);
   const [saving, setSaving] = useState(false);
   const [submitted, setSubmitted] = useState(false);
-  const [message, setMessage] = useState("");
 
   // Program Leader selection state (the EntityPicker owns the transient query/results)
   const [leadMentorId, setLeadMentorId] = useState("");
@@ -44,7 +44,8 @@ export default function CreateProgramPage() {
 
   // End date before start date is invalid (ISO date strings compare lexically).
   const datesInvalid = Boolean(startAt && endAt && endAt < startAt);
-  const years = formYearsTouched(useMembershipYearBoundary(ready), startAt, endAt);
+  const yearBoundary = useMembershipYearBoundary(ready);
+  const years = formYearsTouched(yearBoundary.boundary, startAt, endAt);
   const crossing = years.length > 1;
   const yearMissing = crossing && (!user?.isBoardMember || appliesToYear == null || !years.includes(appliesToYear));
 
@@ -53,12 +54,10 @@ export default function CreateProgramPage() {
     if (!name || datesInvalid) return;
 
     setSaving(true);
-    setMessage("");
 
     try {
-      const res = await fetch('/api/programs', {
+      const data = await api<{ program: { id: number } }>('/api/programs', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name,
           startAt,
@@ -74,18 +73,10 @@ export default function CreateProgramPage() {
           leadMentorId: leadMentorId ? parseInt(leadMentorId) : null
         })
       });
-
-      if (res.ok) {
-        const data = await res.json();
-        setSubmitted(true); // clear unsaved-changes guard before redirect
-        router.push(`/program-ops/programs/${data.program.id}`);
-      } else {
-        const data = await res.json().catch(() => ({}));
-        setMessage(data.error || "Failed to create program.");
-        setSaving(false);
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error creating program.", autoClose: false });
+      setSubmitted(true); // clear unsaved-changes guard before redirect
+      router.push(`/program-ops/programs/${data.program.id}`);
+    } catch (e) {
+      showError(errorMessage(e), { title: "Couldn't create program" });
       setSaving(false);
     }
   };
@@ -171,6 +162,7 @@ export default function CreateProgramPage() {
             </SimpleGrid>
 
             <ProgramYearField years={years} value={appliesToYear} onChange={setAppliesToYear} canEdit={!!user?.isBoardMember} />
+            <YearBoundaryError load={yearBoundary} />
 
             <Card withBorder radius="md" padding="md">
               <Checkbox
@@ -225,10 +217,6 @@ export default function CreateProgramPage() {
                 label="Show to non-members"
                 description="List this members-only program publicly so non-members can see it. They still must be a member to enroll."
               />
-            )}
-
-            {message && (
-              <Alert color="red" variant="light" title="Couldn't create program">{message}</Alert>
             )}
 
             <Group justify="flex-end">

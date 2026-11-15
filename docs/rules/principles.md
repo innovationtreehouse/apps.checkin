@@ -38,7 +38,7 @@ Things every domain takes as true because they are handled outside the app.
   [Decision — *Policy: Ethics Policy, Art. III §III.2*]
 - Background-check review volume is low enough that a person handles mistakes,
   through a Board reset, rather than a dedicated app feature. So a mistaken
-  rejection has no withdraw of its own.  [Decision — owner ruling 2026-10-30]
+  rejection has no withdraw of its own.  [Decision]
 
 ---
 
@@ -384,6 +384,12 @@ consistency follows risk*, and no double booking follows *apply once*.
 - **A later change in the books goes back to finance.** If an entry the app
   booked or matched changes or disappears afterwards, finance is told. The app
   never corrects it or matches it again on its own.
+
+- **Finance is told at the alert address.** Finance and QuickBooks alerts go
+  to the alert address, a group address set in app settings. It is not a
+  person's address, so personal email opt-outs do not apply. With no address
+  set, no alert is sent and System Status shows the gap; no one else is sent
+  it instead.
 
 - **Only production reaches the real company.** Development uses only the
   accounting system's test company, and staging has none. The production company

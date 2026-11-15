@@ -4,10 +4,10 @@ import { Alert, Button, Group, Pagination, Text } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import useSWR from "swr";
 import { clearLoads, countFailure, endRetryChain, forgetFailures, invalidateLoads, loadGeneration, scheduleRetry } from "./loadCache";
-import { errorMessage, HttpError, request, type RequestOptions } from "./http";
+import { errorMessage, FAILURE_TEXT, HttpError, request, type RequestOptions } from "./http";
 
 export { invalidateLoads };
-export { errorMessage, HttpError, request, type RequestOptions };
+export { errorMessage, FAILURE_TEXT, HttpError, request, type RequestOptions };
 
 /** The signed-in person as package UIs see them. The host maps its session onto this once. */
 export interface Viewer {
@@ -139,6 +139,68 @@ export function createClient(base: string) {
   }
 
   return { api, useLoad };
+}
+
+/** The error code of a save refused because the app's copy of QuickBooks' lists lacks the pick; `@checkin/quickbooks` sets it. */
+export const QUICKBOOKS_LIST_STALE = "quickbooks-list-stale";
+
+/** One saved QuickBooks list, as GET /api/books-map/quickbooks-lists returns it. */
+interface QuickBooksListStatus {
+  list: string;
+  refreshedAt: string;
+  entries: number;
+}
+
+const hostRoutes = createClient("/api");
+
+const asOf = (iso: string) => new Date(iso).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" });
+
+/**
+ * When the app last copied QuickBooks' account and Class lists, and an "Update now" control that copies them again.
+ * A successful update re-reads every cached load, so pickers fed by `useLoad` refresh themselves; `onRefreshed`
+ * is for a page that loads its options another way.
+ */
+export function QuickBooksListsRefresh({ onRefreshed }: { onRefreshed?: () => void }) {
+  const status = hostRoutes.useLoad<QuickBooksListStatus[]>("/api/books-map/quickbooks-lists", { retry: false });
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+  const lists = Array.isArray(status.data) ? status.data : [];
+  const oldest = lists.map((s) => s.refreshedAt).sort()[0];
+
+  async function update() {
+    setBusy(true);
+    setFailed(null);
+    try {
+      await request("/api/books-map/quickbooks-lists/refresh", { method: "POST" });
+      onRefreshed?.();
+    } catch (e) {
+      setFailed(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Group gap="xs" wrap="wrap">
+      <Text size="sm" c="dimmed">
+        {status.data === null ? "QuickBooks lists" : oldest ? `QuickBooks lists as of ${asOf(oldest)}` : "QuickBooks lists not copied yet"}
+      </Text>
+      <Button size="xs" variant="light" loading={busy} onClick={() => void update()}>Update now</Button>
+      {failed && <Text size="sm" c="red">{failed}</Text>}
+    </Group>
+  );
+}
+
+/** A refusal's words for a toast or alert; a save refused against an out-of-date QuickBooks list also offers "Update now". */
+export function refusalMessage(e: unknown, { onRefreshed }: { onRefreshed?: () => void } = {}): ReactNode {
+  const message = errorMessage(e);
+  if (!(e instanceof HttpError) || e.code !== QUICKBOOKS_LIST_STALE) return message;
+  return (
+    <>
+      {message}
+      <QuickBooksListsRefresh onRefreshed={onRefreshed} />
+    </>
+  );
 }
 
 /** Tells the host nav to refetch its count pills after a write that changes them. */

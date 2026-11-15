@@ -16,6 +16,7 @@ import { normalizeEmail } from "@/lib/prismaEmailNormalize";
 import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
 import { lockBoardRoles } from "@/lib/roles";
 import { lockAndFindDeniedHousehold, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
+import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
 
 /** The household the person would join is DENIED. */
 class DeniedHouseholdAddError extends Error {
@@ -119,6 +120,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                 if (await lockAndFindDeniedHousehold(tx, [targetHouseholdId]) !== null) {
                     throw new DeniedHouseholdAddError(targetHouseholdId);
                 }
+                await lockLiveHouseholds(tx, [targetHouseholdId]);
                 if (email) await removeAliasesForSignInEmail(tx, email, personActor(auth.user.id), "participant_add");
                 return tx.person.create({
                     data: {
@@ -145,6 +147,9 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
     } catch (error: unknown) {
         if (error instanceof HouseholdLeadLimitError) {
             return apiError(error.message, 400);
+        }
+        if (error instanceof ArchivedHouseholdError) {
+            return apiError(error.message, error.status);
         }
         if (error instanceof DeniedHouseholdAddError) {
             await raiseDeniedHouseholdActivity({ householdId: error.householdId, what: "participant add refused" });

@@ -5,7 +5,7 @@
  * line and the receipt in its review lists. Only routes with no external integration: the local OCR
  * mock reads the upload. Real HTTP against the running dev server.
  */
-import { api, BASE, differentPurchases, loginAs, type Session } from "./helpers";
+import { api, BASE, differentPurchases, loginAs, newClassId, type Session } from "./helpers";
 
 const SUBMITTER = "inventory.manager@example.com";
 const FINANCE = "finance@example.com";
@@ -47,7 +47,7 @@ let original: Receipt | undefined;
 
 beforeAll(async () => {
   [submitter, finance, board, approver] = await Promise.all([loginAs(SUBMITTER), loginAs(FINANCE), loginAs(BOARD), loginAs(APPROVER)]);
-  const bucket = await post<{ id: number }>(finance, "/api/budget-owners", { name: `Receipt journey ${stamp}` });
+  const bucket = await post<{ id: number }>(finance, "/api/budget-owners", { name: `Receipt journey ${stamp}`, quickBooksClassId: newClassId() });
   expect(bucket.status).toBe(200);
   bucketId = bucket.json.id;
   expect((await send(board, "PUT", `/api/budget-owners/${bucketId}/owner`, { personId: approver.personaId })).status).toBe(200);
@@ -108,17 +108,17 @@ describe("receipt to expense journey", () => {
     expect(assigned.status).toBe(200);
     expect(assigned.json).toMatchObject({ ownerId: bucketId, status: "pending" });
 
-    const awaiting = await api<ExpenseRow[]>(approver, "/api/expense/expenses?view=owner_approval&page=1&limit=50");
+    const awaiting = await api<{ Expense: ExpenseRow[] }>(approver, "/api/expense/expenses?view=owner_approval&page=1&limit=50");
     expect(awaiting.status).toBe(200);
-    expect(awaiting.json.some((e) => e.id === expenseId)).toBe(true);
+    expect(awaiting.json.Expense.some((e) => e.id === expenseId)).toBe(true);
     const approved = await post<Approval>(approver, `/api/expense/expenses/${expenseId}/line-item-approvals/${unassigned.id}/approve`);
     expect(approved.status).toBe(200);
     expect(approved.json.status).toBe("approved");
 
     // FINANCE sees the approved line on the expense in its list, and the receipt in its review.
-    const listed = await api<ExpenseRow[]>(finance, "/api/expense/expenses?view=all&page=1&limit=50");
+    const listed = await api<{ Expense: ExpenseRow[] }>(finance, "/api/expense/expenses?view=all&page=1&limit=50");
     expect(listed.status).toBe(200);
-    expect(listed.json.some((e) => e.id === expenseId)).toBe(true);
+    expect(listed.json.Expense.some((e) => e.id === expenseId)).toBe(true);
     expect(await approvals(finance, expenseId)).toEqual([expect.objectContaining({ id: unassigned.id, ownerId: bucketId, status: "approved" })]);
     const receipts = await api<Receipt[]>(finance, "/api/receipts");
     expect(receipts.json.find((r) => r.id === copy.json.id)).toMatchObject({ state: "receipt_finalized" });

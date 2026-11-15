@@ -12,7 +12,6 @@ import {
   type DonationSink,
   type ExpenseSink,
   type InventorySink,
-  type WorkflowAlerts,
   type WorkflowPrincipal,
   type WorkflowRuntimeConfig,
 } from "./contract";
@@ -44,11 +43,6 @@ export function ports(): WorkflowPorts {
     inventorySink: r.inventorySink ?? inertInventorySink,
     catalogEventSource: r.catalogEventSource ?? inertCatalogEventSource,
   };
-}
-
-/** The alerts the host bound, if any. */
-export function getAlerts(): WorkflowAlerts | undefined {
-  return requireRuntime().alerts;
 }
 
 export { callerId };

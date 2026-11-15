@@ -68,6 +68,15 @@ describe('sendEmail no-key logging + capture', () => {
         expect(console.log).not.toHaveBeenCalledWith(expect.stringContaining(html));
     });
 
+    it('sends a subject with a newline as one line', async () => {
+        mockDevToolsActive = true;
+        mockCapture.mockResolvedValue(true);
+
+        await sendEmail('to@test.com', ' Line one\r\nBcc: x@test.com\t ', '<p>hi</p>');
+
+        expect(mockCapture).toHaveBeenCalledWith('test@test.com', 'to@test.com', 'Line one Bcc: x@test.com', '<p>hi</p>');
+    });
+
     it('captures and returns true on a dev instance (gating callers get the happy-path)', async () => {
         setNodeEnv('development');
         mockDevToolsActive = true;

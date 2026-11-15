@@ -48,7 +48,7 @@ describeDb("GTIN writes", () => {
 
   it("refuses another org's pending provisional part", async () => {
     await db.provisionalItemMap.create({ data: { orgId: "other-org", provisionalGtin13: PROVISIONAL } });
-    await expect(own(PROVISIONAL)).rejects.toMatchObject({ status: 400, message: "No active catalog item or pending provisional part has GTIN P000123" });
+    await expect(own(PROVISIONAL)).rejects.toMatchObject({ status: 400, message: "No active catalog item or pending provisional part has Part ID P000123" });
   });
 
   it("answers 502 and maps nothing when the catalog can't be reached", async () => {

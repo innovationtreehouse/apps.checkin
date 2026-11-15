@@ -3,7 +3,7 @@ import { useState } from "react";
 import { ActionIcon, Badge, Button, Group, Select, Table, Text, Title } from "@mantine/core";
 import { IconTrash } from "@tabler/icons-react";
 import { send, useLoad, useRoles } from "../components/api";
-import { LoadError } from "@checkin/component-ui";
+import { LoadError, QuickBooksListsRefresh } from "@checkin/component-ui";
 import { LINE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
 
 interface QbAccount {
@@ -80,6 +80,7 @@ export default function QbAccountsPage() {
               }
             }}
           >Add</Button>
+          <QuickBooksListsRefresh />
         </Group>
       )}
     </>

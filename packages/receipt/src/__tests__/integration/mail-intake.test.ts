@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { KindedError, type FailureReport } from "@checkin/component-kit";
+import { KindedError } from "@checkin/component-kit";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { db, getPrisma } from "../../db";
-import type { MailAgingOutEvent, MailboxReader, MailHoldCeilingEvent, MailListingFailedEvent, MailMessage, MailPart } from "../../contract";
+import type { MailAgingOutEvent, MailboxReader, MailHoldCeilingEvent, MailMessage, MailPart } from "../../contract";
 import { MAX_FILE_BYTES } from "../../lib/file-type";
 import {
   MAIL_CAP,
@@ -12,7 +12,10 @@ import {
   MAIL_TIME_BUDGET_MS,
   MAIL_WINDOW_DAYS,
   INLINE_FLOOR_BYTES,
+  MAIL_CATCH_UP_CAP,
+  mailRunState,
   readMailbox,
+  startMailRun,
 } from "../../services/mailIntake";
 import { createMemoryFileStore } from "../../lib/fileStorage";
 import { createGmailReader } from "../../lib/gmail";
@@ -33,7 +36,7 @@ function fakeMailbox() {
   const downloads: string[] = [];
   const reader: MailboxReader = {
     address: "receipts@example.org",
-    listRecent: async () => [...messages.keys()],
+    listRecent: async (days) => [...messages.values()].filter((m) => Number(m.internalDate) > Date.now() - days * DAY_MS).map((m) => m.id),
     getMessage: async (id) => messages.get(id) ?? Promise.reject(new Error(`no message ${id}`)),
     getAttachment: async (_messageId, attachmentId) => {
       downloads.push(attachmentId);
@@ -46,8 +49,6 @@ function fakeMailbox() {
 let mail: ReturnType<typeof fakeMailbox>;
 let alerts: MailHoldCeilingEvent[];
 let agingAlerts: MailAgingOutEvent[];
-let listingAlerts: MailListingFailedEvent[];
-let failures: FailureReport[];
 const DAY_MS = 24 * 60 * 60_000;
 
 const attachment = (id: string, content: string, over: Partial<MailPart> = {}): MailPart => {
@@ -82,7 +83,6 @@ function send(
 const testAlerts = () => ({
   mailHoldCeilingReached: async (event: MailHoldCeilingEvent) => void alerts.push(event),
   mailAgingOut: async (event: MailAgingOutEvent) => void agingAlerts.push(event),
-  mailListingFailed: async (event: MailListingFailedEvent) => void listingAlerts.push(event),
 });
 
 beforeEach(async () => {
@@ -90,10 +90,7 @@ beforeEach(async () => {
   mail = fakeMailbox();
   alerts = [];
   agingAlerts = [];
-  listingAlerts = [];
-  failures = [];
   configure({
-    onFailure: (r) => void failures.push(r),
     ocr: okOcr(),
     mailbox: mail.reader,
     alerts: testAlerts(),
@@ -245,6 +242,91 @@ describeDb("mail intake", () => {
   });
 });
 
+describeDb("mail intake catch-up", () => {
+  const hold = (until: Date) => db.receiptMailLease.create({ data: { orgId: TEST_ORG_ID, until } });
+  const runEnds = () => vi.waitFor(async () => expect((await mailRunState()).running).toBe(false), { timeout: 10_000 });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("reads past the cron's cap, records its counts and audits who started it", async () => {
+    configure({ ocr: okOcr(), mailbox: mail.reader, people: { submitterByEmail: async () => ({ ...ALICE, raisedMailLimit: true }) } });
+    expect(MAIL_CATCH_UP_CAP).toBeGreaterThan(MAIL_CAP);
+    for (let i = 0; i <= MAIL_CAP; i++) send(`m${i}`);
+    actAs(FINANCE);
+    expect(await mailQueueService.catchUp()).toMatchObject({ status: "started" });
+    await runEnds();
+    const state = await mailQueueService.catchUpState();
+    expect(state).toMatchObject({ status: "idle", lastRun: { status: "ok", messages: MAIL_CAP + 1, receipts: MAIL_CAP + 1, held: 0, waiting: 0, more: false } });
+    expect(state.lastRunAt).toBeInstanceOf(Date);
+    expect(await db.receiptAuditLog.findFirst({ where: { action: "mail_catch_up_started" } })).toMatchObject({ receiptId: null, userId: FINANCE.id });
+  });
+
+  it("writes the catch-up audit row before the run reads mail", async () => {
+    send("m1");
+    const audit = vi.spyOn(getPrisma().receiptAuditLog, "create");
+    const listing = vi.spyOn(mail.reader, "listRecent");
+    actAs(FINANCE);
+    expect(await mailQueueService.catchUp()).toMatchObject({ status: "started" });
+    await runEnds();
+    expect(audit.mock.calls[0][0]).toMatchObject({ data: { action: "mail_catch_up_started" } });
+    expect(listing).toHaveBeenCalledOnce();
+    expect(audit.mock.invocationCallOrder[0]).toBeLessThan(listing.mock.invocationCallOrder[0]);
+  });
+
+  it("starts no run and frees the lease when the catch-up audit write fails", async () => {
+    send("m1");
+    vi.spyOn(getPrisma().receiptAuditLog, "create").mockRejectedValueOnce(new Error("audit write failed"));
+    const listing = vi.spyOn(mail.reader, "listRecent");
+    actAs(FINANCE);
+    await expect(mailQueueService.catchUp()).rejects.toThrow("audit write failed");
+    expect(listing).not.toHaveBeenCalled();
+    expect(await mailRunState()).toMatchObject({ running: false, lastRunAt: null });
+    expect(await db.receiptMailItem.count()).toBe(0);
+    expect(await readMailbox()).toMatchObject({ status: "ok" });
+  });
+
+  it("says another run would read more when the cap stopped it", async () => {
+    configure({ ocr: okOcr(), mailbox: mail.reader, people: { submitterByEmail: async () => ({ ...ALICE, raisedMailLimit: true }) } });
+    for (let i = 0; i <= MAIL_CAP; i++) send(`m${i}`);
+    await readMailbox();
+    expect((await mailRunState()).lastRun).toMatchObject({ receipts: MAIL_CAP, waiting: 1, more: true });
+  });
+
+  it("refuses the cron and the button while another run holds the lease, reading nothing", async () => {
+    send("m1");
+    await hold(new Date(Date.now() + 60_000));
+    expect(await readMailbox()).toEqual({ status: "busy" });
+    actAs(FINANCE);
+    expect(await mailQueueService.catchUp()).toMatchObject({ status: "busy" });
+    expect(await mailQueueService.catchUpState()).toMatchObject({ status: "running" });
+    expect(await db.receiptMailItem.count()).toBe(0);
+    expect(await db.receiptAuditLog.count({ where: { action: "mail_catch_up_started" } })).toBe(0);
+  });
+
+  it("lets one of three simultaneous starts run", async () => {
+    send("m1");
+    const runs = await Promise.all([startMailRun(), startMailRun(), startMailRun()]);
+    expect(runs.map((r) => r.status).sort()).toEqual(["busy", "busy", "started"]);
+    for (const run of runs) if (run.status === "started") await run.done;
+    expect(await db.receiptMailItem.count()).toBe(1);
+  });
+
+  it("takes a lease a crashed run left past its expiry", async () => {
+    send("m1");
+    await hold(new Date(Date.now() - 1000));
+    expect(await readMailbox()).toMatchObject({ status: "ok", receipts: 1 });
+    expect((await mailRunState()).running).toBe(false);
+  });
+
+  it("refuses a catch-up with no mailbox set up", async () => {
+    configure({ ocr: okOcr() });
+    actAs(FINANCE);
+    await expect(mailQueueService.catchUp()).rejects.toMatchObject({ status: 409 });
+  });
+});
+
 describeDb("mail intake flood limits", () => {
   const stranger = (id: string, over: Partial<MailPart> = {}) =>
     send(id, { from: [`${id}@example.org`], parts: [attachment(`att-${id}`, pdf(id), over)] });
@@ -324,6 +406,72 @@ describeDb("mail intake flood limits", () => {
       return getMessage(id);
     };
     expect(await readMailbox()).toMatchObject({ messages: 1, receipts: 1, unread: 1 });
+    expect(agingAlerts).toEqual([]);
+  });
+});
+
+/** Records the ids each run fetches. */
+function trackFetches(): string[] {
+  const fetched: string[] = [];
+  const { getMessage } = mail.reader;
+  mail.reader.getMessage = async (id) => {
+    fetched.push(id);
+    return getMessage(id);
+  };
+  return fetched;
+}
+
+describeDb("mail intake re-reads", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("does not fetch a message whose files were all read or held", async () => {
+    send("member");
+    send("stranger", { from: ["stranger@example.org"] });
+    expect(await readMailbox()).toMatchObject({ receipts: 1, held: 1 });
+    const fetched = trackFetches();
+    expect(await readMailbox()).toMatchObject({ messages: 0, receipts: 0, held: 0, skipped: 2 });
+    expect(fetched).toEqual([]);
+  });
+
+  it("fetches a message again while it is partly read", async () => {
+    configure({ ocr: okOcr(), mailbox: mail.reader, alerts: testAlerts(), people: { submitterByEmail: async () => ({ ...ALICE, raisedMailLimit: true }) } });
+    for (let i = 0; i < MAIL_CAP - 1; i++) send(`m${i}`);
+    send("two", { parts: [attachment("a", pdf("a")), attachment("b", pdf("b"))] });
+    expect(await readMailbox()).toMatchObject({ receipts: MAIL_CAP, deferred: 1 });
+    const fetched = trackFetches();
+    expect(await readMailbox()).toMatchObject({ receipts: 1 });
+    expect(fetched).toEqual(["two"]);
+    fetched.length = 0;
+    await readMailbox();
+    expect(fetched).toEqual([]);
+  });
+
+  it("marks a message at risk before reading it, so a run dying part way through leaves it to fetch again", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    send("m1", { parts: [attachment("a", pdf("a")), attachment("b", pdf("b"))] });
+    const { getAttachment } = mail.reader;
+    let markedDuringRead = false;
+    mail.reader.getAttachment = async (messageId, attachmentId) => {
+      if (attachmentId !== "b") return getAttachment(messageId, attachmentId);
+      markedDuringRead = (await db.receiptMailAtRisk.count({ where: { gmailMessageId: "m1" } })) === 1;
+      throw new Error("Gmail request failed: 500");
+    };
+    expect(await readMailbox()).toMatchObject({ receipts: 1, failed: 1 });
+    expect(markedDuringRead).toBe(true);
+
+    mail.reader.getAttachment = getAttachment;
+    const fetched = trackFetches();
+    expect(await readMailbox()).toMatchObject({ receipts: 1 });
+    expect(fetched).toEqual(["m1"]);
+  });
+
+  it("reads mail 10 days old after the runs were down", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    send("m1");
+    vi.setSystemTime(Date.now() + 10 * DAY_MS);
+    expect(await readMailbox()).toMatchObject({ receipts: 1 });
     expect(agingAlerts).toEqual([]);
   });
 });
@@ -554,19 +702,14 @@ describeDb("mail intake listing failure", () => {
     };
     vi.spyOn(console, "error").mockImplementation(() => {});
   };
+  const loggedKind = (kind: string) =>
+    expect(console.error).toHaveBeenCalledWith(`[receipt] mailbox listing failed (${kind}):`, expect.anything());
 
-  it("alerts finance on each failing run and reports the failure", async () => {
+  it("reports the failure on each failing run", async () => {
     failListing();
     expect(await readMailbox()).toMatchObject({ status: "listing_failed", messages: 0 });
     expect(await readMailbox()).toMatchObject({ status: "listing_failed" });
-    expect(listingAlerts).toEqual([{ orgId: TEST_ORG_ID, kind: "connection" }, { orgId: TEST_ORG_ID, kind: "connection" }]);
-  });
-
-  it("hands each listing failure to the on-failure port", async () => {
-    failListing();
-    vi.spyOn(console, "warn").mockImplementation(() => {});
-    await readMailbox();
-    expect(failures).toEqual([{ lane: "mail-listing", kind: "connection" }]);
+    loggedKind("connection");
   });
 
   it.each([
@@ -575,7 +718,7 @@ describeDb("mail intake listing failure", () => {
     [404, "settings"],
     [429, "system"],
     [503, "system"],
-  ] as const)("names the cause of a Gmail %i in the alert", async (status, kind) => {
+  ] as const)("logs the cause of a Gmail %i", async (status, kind) => {
     vi.stubGlobal("fetch", async () => new Response("{}", { status }));
     vi.spyOn(console, "error").mockImplementation(() => {});
     mail.reader.listRecent = createGmailReader("receipts@example.org", async () => "token").listRecent;
@@ -584,7 +727,7 @@ describeDb("mail intake listing failure", () => {
     } finally {
       vi.unstubAllGlobals();
     }
-    expect(listingAlerts).toEqual([{ orgId: TEST_ORG_ID, kind }]);
+    loggedKind(kind);
   });
 
   it("reads a Gmail that cannot be reached as an outage", async () => {
@@ -598,7 +741,7 @@ describeDb("mail intake listing failure", () => {
     } finally {
       vi.unstubAllGlobals();
     }
-    expect(listingAlerts).toEqual([{ orgId: TEST_ORG_ID, kind: "system" }]);
+    loggedKind("system");
   });
 
   it("reads an unsorted failure, such as a token-source error, as a bug", async () => {
@@ -607,22 +750,11 @@ describeDb("mail intake listing failure", () => {
     };
     vi.spyOn(console, "error").mockImplementation(() => {});
     await readMailbox();
-    expect(listingAlerts).toEqual([{ orgId: TEST_ORG_ID, kind: "bug" }]);
-  });
-
-  it("still reports the failure when the alert send fails", async () => {
-    failListing();
-    configure({
-      ocr: okOcr(),
-      mailbox: mail.reader,
-      alerts: { ...testAlerts(), mailListingFailed: async () => { throw new Error("send failed"); } },
-      people: { submitterByEmail: async () => ALICE },
-    });
-    expect(await readMailbox()).toMatchObject({ status: "listing_failed" });
+    loggedKind("bug");
   });
 
   it("still sends the stored ageing alert and the replies owed", async () => {
-    await db.receiptMailAtRisk.create({ data: { orgId: TEST_ORG_ID, gmailMessageId: "earlier", receivedAt: new Date(Date.now() - 3 * DAY_MS) } });
+    await db.receiptMailAtRisk.create({ data: { orgId: TEST_ORG_ID, gmailMessageId: "earlier", receivedAt: new Date(Date.now() - MAIL_WINDOW_DAYS * DAY_MS) } });
     send("m1");
     await readMailbox();
     const sent: string[] = [];
@@ -767,7 +899,9 @@ describeDb("mail intake over a sender's daily upload limit", () => {
     expect(deferred).toMatchObject({ gmailMessageId: "m2", senderAddress: "alice@example.org", receiptId: null });
     expect(Buffer.from(deferred.fileBlob ?? []).toString()).toBe(pdf("m2"));
 
+    const fetched = trackFetches();
     expect(await readMailbox()).toMatchObject({ receipts: 0, overLimit: 0, skipped: 2 });
+    expect(fetched).toEqual(["m2"]);
 
     withLimits({ mailUploadsPerPersonPerDay: 30 });
     mail.messages.clear();

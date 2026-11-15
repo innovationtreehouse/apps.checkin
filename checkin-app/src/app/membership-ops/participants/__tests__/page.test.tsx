@@ -291,10 +291,8 @@ describe("AdminParticipantsIndex", () => {
             const url = typeof input === "string" ? input : input.toString();
             if (url.includes("/api/people/search")) return { ok: true, status: 200, json: async () => ({ people: [bob] }) } as Response;
             if (url.includes("/api/membership-ops/households?id=20")) {
-                return {
-                    ok: true, status: 200,
-                    json: async () => ({ household: { id: 20, name: "The B Family", emergencyContactName: null, emergencyContactPhone: null, householdMembers: bob.household!.householdMembers, householdLeads: [] } }),
-                } as Response;
+                const body = { household: { id: 20, name: "The B Family", emergencyContactName: null, emergencyContactPhone: null, householdMembers: bob.household!.householdMembers, householdLeads: [] } };
+                return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) } as Response;
             }
             if (url.includes("/api/membership-ops/households/20")) {
                 return { ok: true, status: 200, text: async () => JSON.stringify({ household: { id: 20, name: "The B Family Updated" } }) } as Response;
@@ -320,7 +318,8 @@ describe("AdminParticipantsIndex", () => {
             const url = typeof input === "string" ? input : input.toString();
             if (url.includes("/api/people/search")) return { ok: true, status: 200, json: async () => ({ people: [bob] }) } as Response;
             if (url.includes("/api/membership-ops/households?id=20")) {
-                return { ok: true, status: 200, json: async () => ({ household: { id: 20, name: "The B Family", householdMembers: bob.household!.householdMembers } }) } as Response;
+                const body = { household: { id: 20, name: "The B Family", householdMembers: bob.household!.householdMembers } };
+                return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) } as Response;
             }
             return { ok: false, status: 404, json: async () => ({}) } as Response;
         });

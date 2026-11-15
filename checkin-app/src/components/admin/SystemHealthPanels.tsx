@@ -1,9 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
+import { useSession } from "next-auth/react";
 import { Anchor, Badge, Button, Card, Center, Code, Group, List, Loader, Stack, Text, Title } from "@mantine/core";
 import { LoadError } from "@checkin/component-ui";
 import { useLoad } from "@/lib/api";
+import { mayRetry } from "@/lib/problemsRetryRoles";
 
 type DailyStat = {
   date: string;
@@ -205,8 +207,147 @@ export function OpenProblemsBox() {
   );
 }
 
-// Mirrors CronJobStatus in lib/cronRuns.ts (lastSuccessAt arrives JSON-serialized).
-type CronJob = { job: string; lastSuccessAt: string; stale: boolean; lastError?: string };
+// Mirrors Problem in lib/problems.ts (failedAt arrives JSON-serialized).
+type StuckItem = { library: string; id: string; step: string; href: string | null; failedAt: string };
+// Mirrors Notice in lib/problems.ts.
+type Notice = { text: string; href: string | null };
+type ProblemsPayload = { problems?: { items?: unknown; unread?: unknown; notices?: unknown }; cronJobs?: unknown };
+
+/**
+ * The receipt flow's Problems list: the count lines (each library's own, failed email sends), every stuck item, oldest first,
+ * with a link to its own page (which shows the error), when it failed and a Retry button, then every scheduled job that has not
+ * run on time or whose latest run reported failures (without the run's error text). From GET /api/system-status/config-health;
+ * Retry and Retry all POST /api/system-status/problems/retry.
+ */
+export function ProblemsBox() {
+  const [data, setData] = useState<{ items: StuckItem[]; unread: string[]; notices: Notice[]; staleJobs: CronJob[]; failingJobs: CronJob[] } | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  const viewer = useSession().data?.user;
+  const [retrying, setRetrying] = useState<{ done: number; total: number } | null>(null);
+  const [retried, setRetried] = useState<string | null>(null);
+
+  const load = useCallback(() =>
+    fetch('/api/system-status/config-health')
+      .then((res) => (res.ok ? res.json() : Promise.reject()))
+      .then(({ problems, cronJobs }: ProblemsPayload) => {
+        if (!Array.isArray(problems?.items) || !Array.isArray(problems?.unread) || !Array.isArray(problems?.notices) || !Array.isArray(cronJobs)) return setFailed(true);
+        setData({
+          items: problems.items as StuckItem[],
+          unread: problems.unread as string[],
+          notices: problems.notices as Notice[],
+          staleJobs: (cronJobs as CronJob[]).filter((j) => j.stale),
+          // Mirrors failingJob in lib/problems.ts: a late job is listed as late only.
+          failingJobs: (cronJobs as CronJob[]).filter((j) => j.lastError && !j.stale),
+        });
+      })
+      .catch(() => setFailed(true)), []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // One item at a time, in list order; a refused or failed item stays listed after the refresh.
+  const retry = async (items: StuckItem[]) => {
+    let ok = 0;
+    for (const [n, i] of items.entries()) {
+      setRetrying({ done: n, total: items.length });
+      const res = await fetch('/api/system-status/problems/retry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ library: i.library, step: i.step, id: i.id }),
+      }).catch(() => null);
+      const body: { results?: { ok?: unknown }[] } | null = res ? await res.json().catch(() => null) : null;
+      if (body?.results?.[0]?.ok === true) ok += 1;
+    }
+    setRetried(`${ok} of ${items.length} retried; ${items.length - ok} still stuck.`);
+    setRetrying(null);
+    await load();
+  };
+
+  const retryable = data ? data.items.filter((i) => mayRetry(viewer, i)) : [];
+  const total = data ? data.items.length + data.staleJobs.length + data.failingJobs.length + data.unread.length + data.notices.length : 0;
+
+  return (
+    <Card withBorder radius="md" padding="lg">
+      <Group gap="sm" mb="md">
+        <Title order={4}>Problems</Title>
+        {total > 0 && <Badge color="red">{total}</Badge>}
+      </Group>
+
+      {failed ? (
+        <Text c="yellow">Unable to load the Problems list.</Text>
+      ) : !data ? (
+        <Text c="dimmed">Checking for problems…</Text>
+      ) : total === 0 ? (
+        <Text c="dimmed">Nothing is stuck.</Text>
+      ) : (
+        <Stack gap="sm">
+        {retryable.length > 0 && (
+          <Group gap="sm">
+            <Button size="xs" variant="light" disabled={retrying !== null} onClick={() => retry(retryable)}>
+              Retry all
+            </Button>
+            {retrying ? (
+              <Text size="sm" c="dimmed">Retrying {retrying.done + 1} of {retrying.total}…</Text>
+            ) : retried && (
+              <Text size="sm" c="dimmed">{retried}</Text>
+            )}
+          </Group>
+        )}
+        <List spacing="sm" listStyleType="none">
+          {data.unread.map((library) => (
+            <List.Item key={`unread-${library}`}>
+              <Text c="yellow">{library === "email" ? "Failed email sends could not be counted." : <>Could not read {library}&apos;s stuck items.</>}</Text>
+            </List.Item>
+          ))}
+          {data.notices.map((notice) => (
+            <List.Item key={`notice-${notice.text}`}>
+              {notice.href ? <Anchor href={notice.href} c="red">{notice.text}</Anchor> : <Text c="red">{notice.text}</Text>}
+            </List.Item>
+          ))}
+          {data.items.map((i) => (
+            <List.Item key={`${i.library}-${i.step}-${i.id}`}>
+              <Group gap="xs">
+                <Badge variant="light">{i.library}</Badge>
+                <span>{i.step}</span>
+                {i.href ? <Anchor href={i.href}><Code>{i.id}</Code></Anchor> : <Code>{i.id}</Code>}
+                {mayRetry(viewer, i) && (
+                  <Button size="compact-xs" variant="subtle" disabled={retrying !== null} onClick={() => retry([i])}>
+                    Retry
+                  </Button>
+                )}
+              </Group>
+              <Text size="xs" c="dimmed" title={i.failedAt}>Failed {timeAgo(i.failedAt)}</Text>
+            </List.Item>
+          ))}
+          {data.staleJobs.map((j) => (
+            <List.Item key={`job-${j.job}`}>
+              <Group gap="xs">
+                <Badge variant="light" color="orange">scheduled job</Badge>
+                <Code>{j.job}</Code>
+              </Group>
+              <Text size="xs" c="dimmed" title={j.lastSuccessAt}>Has not run on time; last ran {timeAgo(j.lastSuccessAt)}</Text>
+            </List.Item>
+          ))}
+          {data.failingJobs.map((j) => (
+            <List.Item key={`failing-${j.job}`}>
+              <Group gap="xs">
+                <Badge variant="light" color="orange">scheduled job</Badge>
+                <Code>{j.job}</Code>
+              </Group>
+              <Text size="xs" c="dimmed" title={j.lastErrorAt}>Last run reported failures {timeAgo(j.lastErrorAt ?? j.lastSuccessAt)}</Text>
+            </List.Item>
+          ))}
+        </List>
+        </Stack>
+      )}
+    </Card>
+  );
+}
+
+// Mirrors CronJobStatus in lib/cronRuns.ts (its dates arrive JSON-serialized).
+type CronJob = { job: string; lastSuccessAt: string; stale: boolean; lastError?: string; lastErrorAt?: string };
 
 /** "3 hours ago" / "2 days ago" — coarse on purpose; the exact stamp is the title text. */
 function timeAgo(iso: string): string {
@@ -463,6 +604,10 @@ export function SystemVersionBox() {
 }
 
 type HeartbeatRow = { metric: string; timestamp: string; value: number };
+type ProtocolSeenRow = { keyFingerprint: string; protocolVersion: number; lastSeenAt: string };
+type Heartbeat = { SystemMetricLog?: HeartbeatRow[]; KioskProtocolSeen?: ProtocolSeenRow[] };
+
+const KEY_METRIC = "kiosk_key:";
 
 const CLOCK_WARN_SECONDS = 30;
 
@@ -476,8 +621,12 @@ function clockLine(skewSeconds: number | undefined): string {
 
 export function KioskHeartbeatBox() {
   // No retry: this box reports health, and retries would hide a down server.
-  const { data, error, reload } = useLoad<{ heartbeat?: HeartbeatRow[] }>("/api/system-status/kiosk-heartbeat", { retry: false });
-  const rows = data ? (Array.isArray(data.heartbeat) ? data.heartbeat : []) : null;
+  const { data, error, reload } = useLoad<{ heartbeat?: Heartbeat }>("/api/system-status/kiosk-heartbeat", { retry: false });
+  const rows = data ? data.heartbeat?.SystemMetricLog ?? [] : null;
+  const protocolSeen = data?.heartbeat?.KioskProtocolSeen ?? [];
+  const configuredKeys = new Set(
+    (rows ?? []).filter((r) => r.metric.startsWith(KEY_METRIC)).map((r) => r.metric.slice(KEY_METRIC.length)),
+  );
 
   const lastSeen = rows?.find((r) => r.metric === "kiosk_last_seen");
   const skew = rows?.find((r) => r.metric === "kiosk_clock_skew")?.value;
@@ -499,6 +648,18 @@ export function KioskHeartbeatBox() {
       {rows && !error && (
         <Text size="sm" c={clockOff ? "red" : "dimmed"} fw={clockOff ? 700 : undefined}>{clockLine(skew)}</Text>
       )}
+      {!error && protocolSeen.map((k) => (
+        <Text key={k.keyFingerprint} size="sm" c="dimmed">
+          Key <Code>{k.keyFingerprint}</Code>: protocol v{k.protocolVersion}, last seen{" "}
+          <span title={k.lastSeenAt}>{timeAgo(k.lastSeenAt)}</span>
+          {!configuredKeys.has(k.keyFingerprint) && " (key removed)"}
+        </Text>
+      ))}
+      {!error && [...configuredKeys].filter((fp) => !protocolSeen.some((k) => k.keyFingerprint === fp)).map((fp) => (
+        <Text key={fp} size="sm" c="dimmed">
+          Key <Code>{fp}</Code>: not seen since recording began
+        </Text>
+      ))}
     </Card>
   );
 }

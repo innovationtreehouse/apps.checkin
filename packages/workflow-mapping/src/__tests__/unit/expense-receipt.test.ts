@@ -7,6 +7,7 @@ const status = (recognitionStatus: string, gtins: { assignedGtin13?: string; pro
   recognitionStatus,
   assignedGtin13: gtins.assignedGtin13 ?? null,
   provisionalItemGtin13: gtins.provisionalItemGtin13 ?? null,
+  proposedName: null,
 });
 
 describe("lineResolution", () => {
@@ -16,7 +17,7 @@ describe("lineResolution", () => {
 
   it("carries the GTIN of recognized and provisional lines", () => {
     expect(lineResolution(status("recognized", { assignedGtin13: "0000000000017" }))).toEqual({ gtin13: "0000000000017" });
-    expect(lineResolution(status("provisional", { provisionalItemGtin13: "0000000000123" }))).toEqual({ gtin13: "0000000000123", isProvisional: true });
+    expect(lineResolution(status("provisional", { provisionalItemGtin13: "0000000000123" }))).toEqual({ gtin13: "0000000000123", isProvisional: true, provisionalName: null });
   });
 
   it("leaves an unrecognized or unknown line unresolved", () => {
@@ -34,6 +35,22 @@ describe("buildExpenseReceipt", () => {
     );
     expect(built.lineItems.map((li) => li.nonInventory)).toEqual([true, undefined]);
     expect(built.lineItems[0].gtin13 ?? null).toBeNull();
+  });
+
+  it("names a provisional part by its proposed name, else by the line's description", () => {
+    const receipt = CompletedReceiptSchema.parse(buildReceiptPayload({ lineCount: 2 }));
+    const proposed = { ...receipt, lineItems: receipt.lineItems.map((li, i) => ({ ...li, description: i === 0 ? "Y" : "Z" })) };
+    const built = buildExpenseReceipt(proposed, (li) => ({
+      gtin13: "0200000000015",
+      isProvisional: true,
+      provisionalName: li.description === "Y" ? "X" : null,
+    }));
+    expect(built.lineItems.map((li) => li.provisionalName)).toEqual(["X", "Z"]);
+  });
+
+  it("carries a provisional line's proposed name from its status", () => {
+    expect(lineResolution({ ...status("provisional", { provisionalItemGtin13: "0200000000015" }), proposedName: "X" }))
+      .toEqual({ gtin13: "0200000000015", isProvisional: true, provisionalName: "X" });
   });
 
   it("drops a GTIN the line arrived with once receiving marks it non-inventory", () => {

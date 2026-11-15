@@ -5,7 +5,7 @@
  * adapters in runtime.ts.
  */
 import { z } from "zod";
-import type { FailureKind, OnFailure } from "@checkin/component-kit";
+import type { FailureKind } from "@checkin/component-kit";
 import { CURRENCY_CODE, MAX_LINE_QUANTITY, type CompletedReceipt, type InKindDonor } from "@checkin/receipt-types";
 import type { ReceiptLimits } from "./lib/limits";
 
@@ -154,6 +154,7 @@ export const OcrLineItemSchema = z.object({
   manufacturer: z.string().max(100).optional(),
   quantity: z.number().finite().positive().max(MAX_LINE_QUANTITY),
   unitPrice: ocrMoney,
+  totalPrice: ocrMoney.optional(),
   isDelayed: z.boolean(),
 });
 
@@ -183,7 +184,8 @@ export const OCR_FILE_REFUSED = "the reading service refused the file";
 
 /** Reads a stored receipt file. Never throws: every failure is `{ success: false }`. */
 export interface OcrProvider {
-  extract(file: Buffer, mimeType: string): Promise<OcrResult>;
+  /** `rotation` is the clockwise turn, in degrees, that shows the receipt's image upright. */
+  extract(file: Buffer, mimeType: string, rotation?: number): Promise<OcrResult>;
 }
 
 // ── Mail intake (phase G) ────────────────────────────────────────────────────
@@ -214,8 +216,8 @@ export interface ReceiptReimbursees {
   byId(personId: number): Promise<(ReimburseeOption & { isAdult: boolean }) | null>;
   /** Whether this person has an account to sign in with, and so confirms for themself. */
   hasAccount(personId: number): Promise<boolean>;
-  /** Adds a non-member adult known only by name, in a household of their own. */
-  addNonMemberAdult(name: string): Promise<ReimburseeOption>;
+  /** Adds a non-member adult known only by name, in a household of their own, audited as added by `actorId`. */
+  addNonMemberAdult(name: string, actorId: number): Promise<ReimburseeOption>;
 }
 
 export const MailPartSchema: z.ZodType<MailPart> = z.lazy(() =>
@@ -268,12 +270,6 @@ export interface MailAgingOutEvent {
   oldestReceivedAt: Date | null;
 }
 
-export interface MailListingFailedEvent {
-  orgId: string;
-  /** Why the listing failed, which decides the alert's wording. */
-  kind: FailureKind;
-}
-
 /** One acknowledgement of a mailed receipt, to one recipient. */
 /** Why a mailed file was not accepted; `no_receipt` stands for a whole message that held nothing to read. */
 export type MailRefusalReason = "too_large" | "wrong_type" | "empty" | "forwarded" | "ceiling" | "no_receipt";
@@ -295,6 +291,21 @@ export interface MailAcknowledgement {
   receivedAt: Date;
   /** The message's refused files; only ever on the sender's copy. */
   refused: MailRefusal[];
+  /** Unique to this notice; its Message-ID is built from it by `noticeMessageId`. */
+  noticeId: string;
+}
+
+const NOTICE_ID_PREFIX = "<receipt-notice.";
+
+/** The Message-ID a notice goes out with, on the receipt mailbox's domain, so intake can tell a reply to it. */
+export function noticeMessageId(noticeId: string, mailboxAddress: string): string {
+  return `${NOTICE_ID_PREFIX}${noticeId}@${mailboxAddress.slice(mailboxAddress.lastIndexOf("@") + 1).toLowerCase()}>`;
+}
+
+/** True when `messageId` is one `noticeMessageId` made for this mailbox. */
+export function isNoticeMessageId(messageId: string, mailboxAddress: string): boolean {
+  const id = messageId.trim().toLowerCase();
+  return id.startsWith(NOTICE_ID_PREFIX) && id.endsWith(noticeMessageId("", mailboxAddress).slice(NOTICE_ID_PREFIX.length));
 }
 
 /** The host's mail out, for acknowledging mailed receipts. */
@@ -325,7 +336,6 @@ export interface OutcomeMail {
 export interface ReceiptAlerts {
   mailHoldCeilingReached(event: MailHoldCeilingEvent): Promise<void>;
   mailAgingOut(event: MailAgingOutEvent): Promise<void>;
-  mailListingFailed(event: MailListingFailedEvent): Promise<void>;
 }
 
 /** Where receipt and held-mail files live. The host binds it; the library takes no storage dependency. */
@@ -341,7 +351,6 @@ export interface ReceiptConfig {
   auth: ReceiptAuth;
   /** Async accessor, resolved per call: the host may read the org from its own store. */
   org: () => Promise<OrgIdentity>;
-  onFailure?: OnFailure;
   receiptSink?: ReceiptSink;
   donorSink?: DonorSink;
   reimbursementStatus?: ReimbursementStatus;

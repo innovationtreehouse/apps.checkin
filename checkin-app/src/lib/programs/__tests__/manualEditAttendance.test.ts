@@ -1,12 +1,13 @@
 /**
  * @jest-environment node
  *
- * The target guard on a lead's attendance correction: a withdrawn person can be
- * corrected only for a session that started before they left.
+ * A lead's attendance correction: the target guard (a withdrawn person can be
+ * corrected only for a session that started before they left) and the detach audit.
  */
 
 import prisma from '@/lib/prisma';
 import { manualEditAttendance, type EventEditContext } from '@/lib/programs/events';
+import { ArchivedHouseholdError } from '@/lib/household/archiveGuard';
 
 interface EnrollmentRow {
     status: string;
@@ -29,6 +30,11 @@ jest.mock('@/lib/prisma', () => ({
 }));
 
 jest.mock('@/lib/getFullAttendance', () => ({ invalidateAttendanceCache: jest.fn() }));
+// The archived-household guard has its own tests; here every household is live.
+jest.mock('@/lib/household/archiveGuard', () => ({
+    ...jest.requireActual('@/lib/household/archiveGuard'),
+    lockLiveHouseholdsOf: jest.fn(),
+}));
 
 const SESSION_START = new Date('2026-06-10T18:00:00Z');
 const ctx = {
@@ -74,4 +80,37 @@ it('refuses someone who withdrew before the session started', async () => {
 it('refuses someone with no enrollment', async () => {
     enrollment = null;
     expect(await correct()).toMatchObject({ ok: false, refusal: 'invalid' });
+});
+
+it('records the arrival and departure source of a detached badged visit', async () => {
+    enrollment = { status: 'ACTIVE', endedAt: null };
+    const visit = {
+        id: 9, arrivedAt: new Date('2026-06-10T18:05:00Z'), departedAt: new Date('2026-06-10T19:55:00Z'),
+        arrivedVia: 'SCANNER', departedVia: 'FACILITY_CLOSE',
+    };
+    const createMany = jest.fn();
+    const tx = {
+        $executeRaw: jest.fn(),
+        visit: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([visit]), updateMany: jest.fn() },
+        auditLog: { createMany },
+    };
+    (prisma.$transaction as jest.Mock).mockImplementation(async (fn: (t: typeof tx) => unknown) => fn(tx));
+
+    expect((await correct()).ok).toBe(true);
+    expect(createMany).toHaveBeenCalledWith({
+        data: [expect.objectContaining({
+            action: 'EDIT',
+            oldData: {
+                arrivedAt: visit.arrivedAt, departedAt: visit.departedAt,
+                arrivedVia: 'SCANNER', departedVia: 'FACILITY_CLOSE',
+                associatedEventId: 5,
+            },
+        })],
+    });
+});
+
+it('refuses a correction for someone in an archived household', async () => {
+    enrollment = { status: 'ACTIVE', endedAt: null };
+    (prisma.$transaction as jest.Mock).mockRejectedValueOnce(new ArchivedHouseholdError());
+    expect(await correct()).toMatchObject({ ok: false, refusal: 'conflict', message: expect.stringContaining('archived') });
 });

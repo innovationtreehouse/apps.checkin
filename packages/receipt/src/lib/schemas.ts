@@ -1,5 +1,6 @@
 // Inputs the services accept. Money in the upload and edit shapes is in dollars, as typed.
 import { z } from "zod";
+import { dollarsToCents } from "@checkin/money";
 import { CURRENCY_CODE, DEFAULT_CURRENCY, InKindDonorSchema, MAX_LINE_QUANTITY } from "@checkin/receipt-types";
 import { isIsoDate } from "./missingDetails";
 
@@ -24,6 +25,10 @@ const dollarString = z.string().refine(
   },
   { message: "must be a number from 0 to 21,474,836.47" },
 );
+/** A dollar input from these shapes in cents; a string that does not start with a number counts as 0. */
+export const toCents = (dollars: number | string | undefined): number =>
+  dollarsToCents(typeof dollars === "string" ? parseFloat(dollars) || 0 : (dollars ?? 0));
+
 /** Text a receipt cannot be checked without; blank or spaces-only is refused. */
 const requiredText = (name: string, max: number) => z.string({ error: `${name} is required` }).trim().min(1, { message: `${name} is required` }).max(max);
 /** A calendar date as the date picker sends it. */
@@ -98,12 +103,15 @@ export const InKindInputSchema = z
   .strict()
   .superRefine(inKindRules);
 
+export const RotationInputSchema = z.object({ rotation: z.literal([0, 90, 180, 270]) }).strict();
+
 export const AddLineItemSchema = z.object({
   description: z.string().min(1).max(500),
   partNumber: z.string().max(100).nullable().optional(),
   manufacturer: z.string().max(100).nullable().optional(),
   quantity: quantity.optional(),
   unitPrice: nonNegative.optional(),
+  totalPrice: nonNegative.optional(),
   isDelayed: z.boolean().optional(),
 });
 
@@ -126,6 +134,7 @@ export const EditLineItemSchema = z
     manufacturer: z.string().max(100).nullable().optional(),
     quantity: quantity.optional(),
     unitPrice: nonNegative.optional(),
+    totalPrice: nonNegative.optional(),
     isDelayed: z.boolean().optional(),
   })
   .strict();
