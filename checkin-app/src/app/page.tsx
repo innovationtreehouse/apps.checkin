@@ -1,6 +1,5 @@
 "use client";
 
-import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession, signIn } from "next-auth/react";
 import {
@@ -44,8 +43,10 @@ export default function Home() {
   const isDevInstance = useIsDevInstance();
   const isLocalInstance = useIsLocalInstance();
 
-  // null = not loaded yet; once loaded, status/processStatus drive the join banner.
-  const [membership, setMembership] = useState<{ status: string | null; processStatus: string | null } | null>(null);
+  const membership = useLoad<{ membershipStatus?: string | null; process?: { status?: string | null } | null }>(
+    session?.user ? '/api/membership' : null,
+    { expireOn401: false },
+  );
 
   // No auto-retry: a pending retry shows nothing, and a keyholder must see that the check failed.
   const attendancePath = session?.user ? '/api/attendance' : null;
@@ -62,24 +63,6 @@ export default function Home() {
   const unconfirmedSince = !reachable && (lastKeyholder || twoDeep)
     ? { lastSeenAt: safety?.building?.lastSeenAt ?? null, queued: safety?.building?.queued ?? 0 }
     : null;
-
-  useEffect(() => {
-    if (!session?.user) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setMembership(null);
-      return;
-    }
-    let cancelled = false;
-    fetch('/api/membership')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (!cancelled && data) {
-          setMembership({ status: data.membershipStatus ?? null, processStatus: data.process?.status ?? null });
-        }
-      })
-      .catch(() => { /* non-blocking: leave banner hidden on error */ });
-    return () => { cancelled = true; };
-  }, [session]);
 
   // While the session is still resolving, `session` is undefined — rendering the
   // ternary below as-is would flash the signed-out landing at a signed-in user.
@@ -117,8 +100,11 @@ export default function Home() {
               </Paper>
 
               {/* Visitor call-to-action — only for non-members; copy reflects in-flight state */}
-              {membership && membership.status !== 'ACTIVE' && (
-                <JoinTreehouseBanner processStatus={membership.processStatus} />
+              {membership.error && (
+                <LoadError what="your membership status" message={membership.error} onRetry={membership.reload} />
+              )}
+              {membership.data && membership.data.membershipStatus !== 'ACTIVE' && (
+                <JoinTreehouseBanner processStatus={membership.data.process?.status ?? null} />
               )}
 
               {/* In-app red-dot indicators (membership reviewer queue / blocked apps, …) */}

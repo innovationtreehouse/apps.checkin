@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { DEFAULT_THEME, MantineProvider, createTheme } from "@mantine/core";
 import FinanceReview from "@/components/finance/FinanceReview";
+import { jsonBody } from "@/test-helpers/jsonBody";
 
 let mockSearch = new URLSearchParams();
 const mockReplace = jest.fn();
@@ -55,7 +56,7 @@ beforeEach(() => {
   mockReceiptLoads = {};
   mockExpenseLoads = {};
   counts(EMPTY_RECEIPTS, EMPTY_EXPENSES);
-  fetchSpy = jest.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true, json: async () => ({ apply_failed: 0 }) } as Response);
+  fetchSpy = jest.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true, status: 200, ...jsonBody({ apply_failed: 0 }) } as Response);
 });
 afterEach(() => fetchSpy.mockRestore());
 
@@ -227,10 +228,22 @@ describe("the receipt tabs", () => {
 
   it("points Not delivered at Part mapping › Apply failed when receipts failed to apply", async () => {
     mockSearch = new URLSearchParams("queue=not_pushed");
-    fetchSpy.mockResolvedValue({ ok: true, json: async () => ({ apply_failed: 3 }) } as Response);
+    fetchSpy.mockResolvedValue({ ok: true, status: 200, ...jsonBody({ apply_failed: 3 }) } as Response);
     wrap();
     expect(await screen.findByRole("link", { name: "3 receipts failed to apply in part mapping" })).toHaveAttribute("href", "/inventory/receiving?queue=failed");
-    expect(fetchSpy).toHaveBeenCalledWith("/api/workflow-mapping/receipts/counts");
+    expect(fetchSpy).toHaveBeenCalledWith("/api/workflow-mapping/receipts/counts", expect.anything());
+  });
+
+  it("says the apply-failed count could not load, and Retry shows the pointer", async () => {
+    mockSearch = new URLSearchParams("queue=not_pushed");
+    fetchSpy.mockResolvedValue({ ok: false, status: 403, ...jsonBody({ error: "Forbidden" }) } as Response);
+    wrap();
+    expect(await screen.findByText("Couldn't load the part-mapping apply-failed count")).toBeInTheDocument();
+
+    fetchSpy.mockResolvedValue({ ok: true, status: 200, ...jsonBody({ apply_failed: 2 }) } as Response);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByRole("link", { name: "2 receipts failed to apply in part mapping" })).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't load the part-mapping apply-failed count")).not.toBeInTheDocument();
   });
 
   it("shows a failed receipt count load as a chip that stays up, naming the route, never inline", () => {

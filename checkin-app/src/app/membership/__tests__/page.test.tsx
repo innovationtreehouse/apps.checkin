@@ -583,22 +583,35 @@ describe("membership page", () => {
     expect(screen.queryByText("Your background check is being reviewed", { exact: false })).not.toBeInTheDocument();
   });
 
-  it("keeps the preparing-invoice placeholder when the membership fee request fails", async () => {
+  it("says the membership fee could not load, and Retry shows the fee", async () => {
     setSession({ id: 1 });
+    let feeFails = true;
     const fetchMock = jest.fn(async (input: RequestInfo | URL) => {
-      if (String(input).includes("/api/membership/payment")) return { ok: false, ...jsonBody(({})) } as Response;
+      if (String(input).includes("/api/membership/payment")) {
+        return feeFails
+          ? { ok: false, status: 409, ...jsonBody({ error: "The membership fee isn't set yet." }) } as Response
+          : { ok: true, status: 200, ...jsonBody({ amountCents: 12500, checkoutUrl: "https://shop.example/checkout" }) } as Response;
+      }
       return {
         ok: true,
+        status: 200,
         ...jsonBody(state({ process: { id: 1, kind: "INITIAL", status: "PENDING_PAYMENT" }, external: { contractSigned: true, contractStarted: true, checkStarted: true, bgCleared: false, deepLinkUrl: null } })),
       } as Response;
     });
     global.fetch = fetchMock as unknown as typeof fetch;
     renderWithProviders(<MembershipPage />);
 
-    expect(await screen.findByText("Preparing your invoice…")).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load your membership fee")).toBeInTheDocument();
+    expect(screen.getByText("The membership fee isn't set yet.")).toBeInTheDocument();
+    expect(screen.queryByText("Preparing your invoice…")).not.toBeInTheDocument();
+
+    feeFails = false;
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("$125.00", { exact: false })).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't load your membership fee")).not.toBeInTheDocument();
   });
 
-  it("keeps the preparing-invoice placeholder when the membership fee request throws", async () => {
+  it("keeps the preparing-invoice placeholder while a network failure on the membership fee retries", async () => {
     setSession({ id: 1 });
     const fetchMock = jest.fn(async (input: RequestInfo | URL) => {
       if (String(input).includes("/api/membership/payment")) throw new Error("boom");
