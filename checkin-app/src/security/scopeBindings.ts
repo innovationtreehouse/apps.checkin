@@ -63,6 +63,11 @@ export const SCOPE_BINDINGS = {
         },
         their_own: { field: 'personId', eqCtx: 'selfId' },
     },
+    // Same bindings as Person's on personId, so age follows dateOfBirth's grants.
+    ProgramRosterAge: {
+        their_own: { field: 'personId', eqCtx: 'selfId' },
+        their_program_participants: { field: 'personId', inCtx: 'participantIdsInScopePrograms' },
+    },
     ProgramVolunteer: {
         their_program_participants: {
             field: 'programId',

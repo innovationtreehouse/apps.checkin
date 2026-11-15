@@ -168,8 +168,9 @@ defineRoute({
     envelope: null,
     // Bag: { Program } with volunteers (ProgramVolunteer → participant Person),
     // participants (ProgramParticipant → participant Person → household Household
-    // → emergencyContacts EmergencyContact), events (Event), leadMentor (Person).
-    returns: ['Program', 'ProgramParticipant', 'ProgramVolunteer', 'Person', 'Household', 'EmergencyContact', 'Event'],
+    // → emergencyContacts EmergencyContact), events (Event), leadMentor (Person);
+    // and { ProgramRosterAge }, each roster person's age at the program's start.
+    returns: ['Program', 'ProgramParticipant', 'ProgramVolunteer', 'Person', 'Household', 'EmergencyContact', 'Event', 'ProgramRosterAge'],
     orderedView: [
         ['isSysadmin',             ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
         ['isBoardMember',          ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
