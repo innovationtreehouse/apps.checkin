@@ -1,6 +1,7 @@
 "use client";
 
 import { Button, Card, Center, Checkbox, Group, Loader, Modal, Radio, Stack, Text, Title } from '@mantine/core';
+import { LoadError } from '@checkin/component-ui';
 import { SCHOLARSHIP_REQUEST_KIND_OPTIONS } from '@/lib/scholarshipRequestKind';
 import FirstTimeIntakePanel from './FirstTimeIntakePanel';
 import type { EnrollmentPickerControls } from './useProgramEnrollment';
@@ -15,7 +16,7 @@ export default function EnrollmentPicker({ ageGated, ageRange, hasPrice, isClose
   controls: EnrollmentPickerControls;
 }) {
   const {
-    showIntake, setShowIntake, handleIntakeSaved, loadingHousehold, householdMembers, enrollBlock, needsSetup,
+    showIntake, setShowIntake, handleIntakeSaved, loadingHousehold, householdError, householdErrorWhat, reloadHousehold, householdMembers, enrollBlock, needsSetup,
     selectedParticipantIds, setSelectedParticipantIds, enrolling, handleEnroll, repeatPayments, setRepeatPayments,
     planKind, setPlanKind, confirmPlanOpened, openConfirmPlan, closeConfirmPlan, handleRequestPaymentPlan,
   } = controls;
@@ -31,7 +32,9 @@ export default function EnrollmentPicker({ ageGated, ageRange, hasPrice, isClose
       <>
       <Title order={4} mb="lg">Which of your household wants to enroll?</Title>
 
-      {loadingHousehold ? (
+      {householdError ? (
+        <LoadError what={householdErrorWhat} message={householdError} onRetry={reloadHousehold} />
+      ) : loadingHousehold ? (
         <Center py="md"><Loader size="sm" /></Center>
       ) : (
         <Checkbox.Group
@@ -63,7 +66,7 @@ export default function EnrollmentPicker({ ageGated, ageRange, hasPrice, isClose
         </Checkbox.Group>
       )}
 
-      {!loadingHousehold && needsSetup ? (
+      {householdError ? null : !loadingHousehold && needsSetup ? (
         // A first-time user finishes their household here, then enrolls.
         <Stack align="center" gap="sm">
           <Text c="dimmed" size="sm" ta="center">
@@ -114,7 +117,7 @@ export default function EnrollmentPicker({ ageGated, ageRange, hasPrice, isClose
           </Stack>
           <Group justify="flex-end" mt="md">
             <Button variant="default" onClick={() => setRepeatPayments([])}>Cancel</Button>
-            <Button color="yellow" onClick={() => { setRepeatPayments([]); handleEnroll(true); }}>
+            <Button color="yellow" disabled={enrolling} onClick={() => { setRepeatPayments([]); handleEnroll(true); }}>
               Pay again anyway
             </Button>
           </Group>
@@ -152,7 +155,7 @@ export default function EnrollmentPicker({ ageGated, ageRange, hasPrice, isClose
       {/* No force-enroll here: this picker only ever offers the caller's
           own household, so every enrollment from this page is conflicted
           and the server refuses the limit override. The refusal reason
-          shows in the red message Alert above. Comping someone else is
+          shows as a standing error message. Comping someone else is
           program-ops (ProgramRosterTab). */}
       </>
       )}

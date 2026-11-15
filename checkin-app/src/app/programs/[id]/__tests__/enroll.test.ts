@@ -9,12 +9,10 @@ describe('aggregateEnrollOutcomes', () => {
         const r = aggregateEnrollOutcomes(outcomes);
         expect(r.enrolledIds).toEqual([1, 2]);
         expect(r.errors).toEqual([]);
-        expect(r.needsOverride).toBe(false);
     });
 
-    // 409-as-success on the override-retry pass: members that already succeeded
-    // on the first pass come back 409 on the retry and must stay enrolled, not
-    // surface a spurious "already enrolled" error.
+    // 409-as-success: a member already claimed comes back 409 on a re-run and
+    // must stay enrolled, not surface a spurious "already enrolled" error.
     it('treats 409 (already enrolled) as enrolled, not an error', () => {
         const outcomes: EnrollOutcome[] = [
             { participantId: 1, ok: false, status: 409, error: 'Participant is already enrolled in this program.' },
@@ -23,7 +21,6 @@ describe('aggregateEnrollOutcomes', () => {
         const r = aggregateEnrollOutcomes(outcomes);
         expect(r.enrolledIds).toEqual([1, 2]);
         expect(r.errors).toEqual([]);
-        expect(r.needsOverride).toBe(false);
     });
 
     // Partial failure: one member enrolls, one fails — the success is kept and
@@ -31,8 +28,8 @@ describe('aggregateEnrollOutcomes', () => {
     it('aggregates per-member errors while keeping the successes', () => {
         const outcomes: EnrollOutcome[] = [
             { participantId: 1, ok: true, status: 200 },
-            { participantId: 2, ok: false, status: 400, error: 'Program has reached maximum capacity.', requiresOverride: true },
-            { participantId: 3, ok: false, status: 400, error: 'Participant must be at least 18 years old.', requiresOverride: true },
+            { participantId: 2, ok: false, status: 400, error: 'Program has reached maximum capacity.' },
+            { participantId: 3, ok: false, status: 400, error: 'Participant must be at least 18 years old.' },
         ];
         const r = aggregateEnrollOutcomes(outcomes);
         expect(r.enrolledIds).toEqual([1]);
@@ -40,13 +37,11 @@ describe('aggregateEnrollOutcomes', () => {
             'Program has reached maximum capacity.',
             'Participant must be at least 18 years old.',
         ]);
-        expect(r.needsOverride).toBe(true);
     });
 
     it('falls back to a default message when the route gives no error string', () => {
         const r = aggregateEnrollOutcomes([{ participantId: 1, ok: false, status: 500 }]);
         expect(r.errors).toEqual(['Failed to enroll in program.']);
-        expect(r.needsOverride).toBe(false);
     });
 });
 
