@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Alert, Badge, Button, Card, Group, Table, Text, Title } from "@mantine/core";
-import { errorMessage, showError, showSuccess } from "@checkin/component-ui";
+import { errorMessage, HttpError, showError, showSuccess } from "@checkin/component-ui";
 import { api } from "@/lib/api";
 import { formatCents } from "@checkin/money";
 // Type-only imports: erased at compile time, so the server modules' prisma
@@ -58,17 +58,12 @@ export function MatchAuditPanel() {
     setRunning(true);
     setError(null);
     try {
-      const res = await fetch('/api/finance-ops/s-read/match-audit');
-      if (res.status === 503) {
-        setResult(null);
-        setError('The Shopify mirror is not wired in this environment.');
-        return;
-      }
-      if (!res.ok) throw new Error();
-      setResult((await res.json()) as MatchAuditResult);
-    } catch {
+      setResult(await api<MatchAuditResult>('/api/finance-ops/s-read/match-audit'));
+    } catch (e) {
       setResult(null);
-      setError('Match audit failed to run — see the server log, or run diagnostics on the System Status page.');
+      setError(e instanceof HttpError && e.status === 503
+        ? 'The Shopify mirror is not wired in this environment.'
+        : 'Match audit failed to run — see the server log, or run diagnostics on the System Status page.');
     } finally {
       setRunning(false);
     }
