@@ -7,7 +7,7 @@ import { expect, test, type Locator, type Page, type Request } from "@playwright
 import { api, loginAs } from "../flow-tests/helpers";
 import { applicationAtIntake, applicationAtPayment, asViewer, newFamily, REVIEWER, review, settledFamily, signAgreement, submittedApplication } from "./support/families";
 import { persona } from "./support/kiosk";
-import { BOARD, send } from "./support/seedState";
+import { BOARD, recheckWindow, send, type Undo } from "./support/seedState";
 import { signIn } from "./support/session";
 
 const NEEDS_ATTENTION = "Your application needs attention.";
@@ -40,6 +40,10 @@ async function closedApplications(page: Page): Promise<void> {
 }
 
 test.describe("membership onboarding in the browser", () => {
+  let restoreWindow: Undo;
+  test.beforeAll(async () => { restoreWindow = await recheckWindow(); });
+  test.afterAll(async () => { await restoreWindow(); });
+
   test("M1: a new family becomes an active member", async ({ browser }) => {
     const email = await newFamily();
     const { name } = await persona(email);
@@ -130,6 +134,7 @@ test.describe("membership onboarding in the browser", () => {
     await asViewer(browser, REVIEWER, async (page) => {
       await page.goto("/membership-ops/review");
       const application = card(page, email);
+      await application.getByRole("radio", { name }).check();
       await application.getByLabel("Notes").fill("The report needs a second look.");
       await application.getByRole("button", { name: "Reject" }).click();
       await dialog(page).getByRole("button", { name: "Reject" }).click();
@@ -152,15 +157,14 @@ test.describe("membership onboarding in the browser", () => {
       await page.goto("/membership-ops/review");
       await page.getByText(rejectedList).click();
       await card(page, name).getByRole("button", { name: "Change to approve" }).click();
-      await dialog(page).getByRole("radio", { name }).check();
       await dialog(page).getByRole("button", { name: "Change to approve" }).click();
       await expect(page.getByText(/^Your answer is now an approval\./)).toBeVisible();
     });
 
     await asViewer(browser, BOARD, async (page) => {
       await page.goto("/membership-ops/review");
-      await expect(card(page, email)).toContainText("1/2 approvals so far.");
-      await expect(card(page, email)).toContainText(`This review is for ${name}`);
+      await expect(card(page, name)).toContainText("1/2 approvals so far.");
+      await expect(card(page, name)).toContainText(`Background check for ${name}`);
     });
 
     await asViewer(browser, email, async (page) => {
@@ -179,12 +183,15 @@ test.describe("membership onboarding in the browser", () => {
 
     await asViewer(browser, BOARD, async (page) => {
       await page.goto("/membership-ops/applications");
-      await card(page, name).getByRole("button", { name: "Reset for re-review" }).click();
+      // The reset goes to the person's check review; the family's application resumes from it.
+      await card(page, name).filter({ hasText: "Background check ·" }).getByRole("button", { name: "Reset for re-review" }).click();
+      await dialog(page).getByLabel("Reason").fill("The rejection was a misread.");
+      await dialog(page).getByRole("button", { name: "Start over" }).click();
       await expect(page.getByText("Sent back for re-review.")).toBeVisible();
 
       await page.goto("/membership-ops/review");
-      await expect(card(page, email)).toContainText("0/2 approvals so far.");
-      await expect(card(page, email).getByRole("radio", { name })).toBeVisible();
+      await expect(card(page, name)).toContainText("0/2 approvals so far.");
+      await expect(card(page, name)).toContainText(`Background check for ${name}`);
     });
 
     await review(BOARD, processId, email);

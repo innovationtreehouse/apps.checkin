@@ -125,8 +125,6 @@ test("a receipt goes from upload to an approved line in finance review", async (
     const watch = watchPage(page);
     await page.goto(`/programs-i-lead/expense-approvals/${encodeURIComponent(receiptId)}`);
     await lineAct(page, LINE, "Approve as Program approver");
-    await page.getByRole("dialog").getByRole("button", { name: "Confirm", exact: true }).click();
-    await expect(page.getByRole("dialog")).toBeHidden();
     // The approver's last decision returns them to the list once the page has refetched; a goto before that is aborted by it.
     await page.waitForURL((url) => url.pathname === "/programs-i-lead/expense-approvals");
     await page.goto(`/programs-i-lead/expense-approvals/${encodeURIComponent(receiptId)}`);

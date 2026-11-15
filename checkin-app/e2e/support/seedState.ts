@@ -5,7 +5,7 @@
 import { expect } from "@playwright/test";
 import { LIBRARY_KEYS, type LibraryKey } from "@/lib/libraryRelease";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
-import { api, loginAs, type Session } from "../../flow-tests/helpers";
+import { api, loginAs, setBgRecheckMonths, type Session } from "../../flow-tests/helpers";
 
 export const FINANCE = "finance@example.com";
 export const BOARD = "boardmember@example.com";
@@ -21,6 +21,11 @@ export const send = (s: Session, method: string, path: string, body?: unknown) =
 
 const release = (board: Session, library: LibraryKey, released: boolean) =>
   send(board, "PUT", "/api/settings/membership", { perYearVariantClient: true, releaseLibrary: { library, released } });
+
+/** Sets the background-check validity window; a fresh seed leaves it unset, so no review clears a household. */
+export async function recheckWindow(months = 24): Promise<Undo> {
+  return setBgRecheckMonths(await loginAs(BOARD), months);
+}
 
 /** Releases every library, which unhides library pages for everyone but the Board. */
 export async function releaseLibraries(): Promise<Undo> {
