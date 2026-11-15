@@ -10,16 +10,18 @@ import { CLOSED_STATES, blockedSeats, boardAuthorizationRefusal, reimburseeUnkno
 import { boardApprovalNeeded, isConflicted, filledSeatsByLine, signoffFactsByLine } from "../lib/signoff-facts";
 import { POSTABLE_QB_STATES, lastPostError } from "../lib/expense-qb-poster";
 import { reimburseeVendorId } from "./reimburseeVendorService";
+import { readExpenseSettings } from "./settingsService";
+import { capitalThresholdsUnset } from "../lib/expense-rules";
 
 /** Open flag rows that are reviews: the kept kinds. */
 export const OPEN_REVIEWS_WHERE: Prisma.ExpenseFlagWhereInput = { checkedOffAt: null, kind: { in: [...REVIEW_KINDS] } };
 
 /**
  * Bookkeeping on a purchase already signed off, which any finance holder does, conflicted or not
- * (docs/rules/expenses.md, Receipts): capital designation, depreciation, a hold's account, and
- * resubmitting a held or failed post.
+ * (docs/rules/expenses.md, Receipts): capital designation and its unset thresholds, depreciation,
+ * a hold's account, and resubmitting a held or failed post.
  */
-const BOOKKEEPING = new Set<ReasonCode>(["CAPITAL_REVIEW", "DEPRECIATION_CYCLE", "ACCOUNT_HOLD", "QB_POST_FAILED"]);
+const BOOKKEEPING = new Set<ReasonCode>(["CAPITAL_REVIEW", "CAPITAL_THRESHOLDS_UNSET", "DEPRECIATION_CYCLE", "ACCOUNT_HOLD", "QB_POST_FAILED"]);
 
 /** Reasons a conflicted FINANCE holder answers by choosing the line's bucket. */
 const BUCKET_CHOICE = new Set<ReasonCode>(["BUCKET_TO_ASSIGN", "BUCKET_UNKNOWN", "OWNER_EXCEPTION"]);
@@ -73,6 +75,7 @@ export async function expenseReasons(principal: ExpensePrincipal, expenseId: str
   const derived = deriveReasons({
     expense,
     receiptReview: expense.receiptReview,
+    capitalThresholdsUnset: expense.state === "capital_review" && capitalThresholdsUnset(await readExpenseSettings(db, expense.orgId)),
     approvedTaxCents: expense.taxApproval?.taxCents ?? null,
     approvals: expense.approvals,
     heldLines: new Set(expense.holds.map((h) => h.lineItemId)).size,

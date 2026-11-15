@@ -89,10 +89,11 @@ function DecidePanel({ item, buckets, onDone }: { item: QueueItem; buckets: Buck
   const [busy, setBusy] = useState(false);
   const needsValues = item.source === "manual" && !accepted;
   // The large-value warning's threshold, as the server reads it; until it loads, the server's flag stands.
-  const settings = useLoad<{ capitalLineItemThresholdCents: number }>(needsValues ? "/api/expense/org-settings" : null);
+  const settings = useLoad<{ capitalLineItemThresholdCents: number | null }>(needsValues ? "/api/expense/org-settings" : null);
   const valueCents = (lineId: number) => Math.round(Number(values[lineId] || 0) * 100);
   const allValued = item.lines.every((l) => valueCents(l.id) > 0);
-  const threshold = settings.data?.capitalLineItemThresholdCents;
+  // An unset threshold warns on every gift, as the server does.
+  const threshold = settings.data ? (settings.data.capitalLineItemThresholdCents ?? 0) : undefined;
   const warnLargeValue =
     needsValues && threshold !== undefined ? item.lines.reduce((sum, l) => sum + valueCents(l.id), 0) >= threshold : item.warnLargeValue;
   const bucketOptions = buckets.map((b) => ({ value: String(b.id), label: b.name }));

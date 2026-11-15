@@ -14,8 +14,9 @@ export { THRESHOLD_RULES, boardOnlyChanges } from "../lib/threshold-rules";
 
 /** The column defaults; a missing row reads as these. */
 export const DEFAULT_EXPENSE_SETTINGS: ExpenseSettings = {
-  capitalTotalThresholdCents: 0,
-  capitalLineItemThresholdCents: 0,
+  capitalReviewEnabled: true,
+  capitalTotalThresholdCents: null,
+  capitalLineItemThresholdCents: null,
   boardReviewTotalCents: 200_000,
   everydayTotalLimitCents: 50_000,
   everydayItemLimitCents: 25_000,
@@ -32,6 +33,7 @@ export const MAX_QB_CREATES = 1_000;
 const qbCreates = z.number().int().min(1).max(MAX_QB_CREATES);
 
 export const ExpenseSettingsPatchSchema = z.object({
+  capitalReviewEnabled: z.boolean(),
   capitalTotalThresholdCents: cents.nonnegative(),
   capitalLineItemThresholdCents: cents.nonnegative(),
   boardReviewTotalCents: cents.positive(),
@@ -43,6 +45,7 @@ export const ExpenseSettingsPatchSchema = z.object({
 }).partial().strict();
 
 const SELECT = {
+  capitalReviewEnabled: true,
   capitalTotalThresholdCents: true,
   capitalLineItemThresholdCents: true,
   boardReviewTotalCents: true,
@@ -82,6 +85,9 @@ export async function updateExpenseSettings(
       throw new ServiceError(403, `Only the Board can make this change to ${boardOnly.join(", ")}`);
     }
     const merged = { ...current, ...changes };
+    if (!merged.capitalReviewEnabled && keys.some((k) => k === "capitalTotalThresholdCents" || k === "capitalLineItemThresholdCents")) {
+      throw new ServiceError(409, "The capital thresholds cannot be changed while capital review is off");
+    }
     if (merged.qbMaxCreatesPerRun > merged.qbMaxCreatesPerDay) {
       throw new ServiceError(400, "The QuickBooks limit per run cannot be above the limit per day");
     }

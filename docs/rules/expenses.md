@@ -433,6 +433,22 @@ Things the app takes as true because they are handled outside it.
   loading a number already on the register changes nothing.
   [Decision]
 
+- An expense goes to capital review when its total, or a line's unit price, is
+  at or over its capital threshold.
+  [Decision — owner]
+
+- Capital review is a setting, on unless someone turns it off. While it is off,
+  no expense or donated line goes to capital review, and the thresholds cannot be
+  changed. Turning it off is the Board's; turning it on is finance's or the
+  Board's. Each change is recorded.
+  [Decision — owner]
+
+- The capital thresholds start unset, never at $0. While capital review is on
+  and either threshold is unset, every expense and donated line waits at capital
+  review, and finance is told to have the thresholds set or capital review turned
+  off. Setting a threshold from unset is the Board's.
+  [Decision — owner]
+
 ### Finance review
 
 - Finance works from one queue. Each reason for finance or the Board to act is

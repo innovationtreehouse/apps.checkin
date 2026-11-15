@@ -4,6 +4,7 @@
 export const classifications = {
     ExpenseOrgSettings: {
         orgId: 'internal',
+        capitalReviewEnabled: 'internal',
         capitalTotalThresholdCents: 'internal',
         capitalLineItemThresholdCents: 'internal',
         boardReviewTotalCents: 'internal',

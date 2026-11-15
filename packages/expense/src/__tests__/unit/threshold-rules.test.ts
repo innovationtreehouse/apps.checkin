@@ -7,7 +7,8 @@ const current = { ...DEFAULT_EXPENSE_SETTINGS, capitalTotalThresholdCents: 500_0
 
 describe("boardOnlyChanges", () => {
   it("lists a rule for every threshold", () => {
-    expect(Object.keys(THRESHOLD_RULES).sort()).toEqual(Object.keys(DEFAULT_EXPENSE_SETTINGS).sort());
+    const fields = Object.keys(DEFAULT_EXPENSE_SETTINGS).filter((k) => k !== "capitalReviewEnabled");
+    expect(Object.keys(THRESHOLD_RULES).sort()).toEqual(fields.sort());
   });
 
   it("tightening a policy threshold, or loosening it back up to the policy value, is FINANCE's", () => {
@@ -29,6 +30,21 @@ describe("boardOnlyChanges", () => {
       expect(boardOnlyChanges(at, { [field]: 0 })).toEqual([]);
     },
   );
+
+  it.each(["capitalTotalThresholdCents", "capitalLineItemThresholdCents"] as const)(
+    "%s: setting it from unset is the Board's, since unset holds every expense at review",
+    (field) => {
+      expect(boardOnlyChanges({ ...DEFAULT_EXPENSE_SETTINGS, [field]: null }, { [field]: 0 })).toEqual([field]);
+      expect(financeCeilingCents(field, null)).toBeNull();
+    },
+  );
+
+  it("turning capital review off is the Board's; turning it on is FINANCE's", () => {
+    const on = { ...DEFAULT_EXPENSE_SETTINGS, capitalReviewEnabled: true };
+    expect(boardOnlyChanges(on, { capitalReviewEnabled: false })).toEqual(["capitalReviewEnabled"]);
+    expect(boardOnlyChanges({ ...on, capitalReviewEnabled: false }, { capitalReviewEnabled: true })).toEqual([]);
+    expect(boardOnlyChanges(on, { capitalReviewEnabled: true })).toEqual([]);
+  });
 
   it("any change to an Everyday limit is the Board's, lowering included; resending the saved value is not a change", () => {
     expect(boardOnlyChanges(current, { everydayTotalLimitCents: 40_000, everydayItemLimitCents: 30_000 })).toEqual([
