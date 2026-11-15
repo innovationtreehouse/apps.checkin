@@ -46,22 +46,6 @@ export const DELETE = withAuth({}, async (_req, auth, { params }: { params: Prom
     if (isNaN(contactId)) return apiError("Invalid contact id", 400);
 
     try {
-        // A household must never be left without a valid emergency contact: block
-        // removing a valid contact unless another valid one is already on file.
-        // (Removing an already-invalid contact is always allowed — it doesn't drop
-        // the valid count, and lets a household clean up a flagged row.)
-        const target = await prisma.emergencyContact.findFirst({ where: { id: contactId, householdId: hh } });
-        if (!target) return apiError("Emergency contact not found.", 404);
-        const targetIsValid = target.conflictParticipantId === null && !!target.name.trim() && !!target.phone.trim();
-        if (targetIsValid) {
-            const otherValid = await prisma.emergencyContact.count({
-                where: { householdId: hh, id: { not: contactId }, conflictParticipantId: null, name: { not: "" }, phone: { not: "" } },
-            });
-            if (otherValid === 0) {
-                return apiError("Add a second emergency contact before removing this one — your household must always have at least one valid emergency contact.", 400);
-            }
-        }
-
         await deleteContact(prisma, hh, contactId);
         await prisma.auditLog.create({
             data: {

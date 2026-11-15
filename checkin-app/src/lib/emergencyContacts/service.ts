@@ -2,7 +2,7 @@ import prisma from "@/lib/prisma";
 import type { EmergencyContact } from "@/generated/prisma/client";
 import { identityKeys, sameIdentity, identityMatchReason, cleanEmail, normalizePhone } from "./identity";
 import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
-import type { DbClient } from "@/lib/db-client";
+import { type DbClient, withTx } from "@/lib/db-client";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { openProcess } from "@/lib/membership/lifecycle";
 
@@ -23,7 +23,7 @@ import { openProcess } from "@/lib/membership/lifecycle";
  */
 
 export class EmergencyContactError extends Error {
-    constructor(public readonly code: "is_member" | "incomplete" | "not_found", message: string) {
+    constructor(public readonly code: "is_member" | "incomplete" | "not_found" | "last_valid", message: string) {
         super(message);
         this.name = "EmergencyContactError";
     }
@@ -51,7 +51,7 @@ export function present(c: { id: number; name: string; phone: string; email: str
         email: c.email,
         relationship: c.relationship,
         priority: c.priority,
-        invalid: c.conflictParticipantId !== null || !c.name.trim() || !c.phone.trim(),
+        invalid: !isValid(c),
     };
 }
 
@@ -169,10 +169,30 @@ export async function updateContact(db: Db, householdId: number, contactId: numb
     return updated;
 }
 
+function isValid(c: { name: string; phone: string; conflictParticipantId: number | null }): boolean {
+    return c.conflictParticipantId === null && !!c.name.trim() && !!c.phone.trim();
+}
+
+/**
+ * Removes a contact, refusing to remove the household's last valid one. An
+ * invalid contact can always go: it doesn't count toward the floor.
+ */
 export async function deleteContact(db: Db, householdId: number, contactId: number): Promise<void> {
-    const existing = await db.emergencyContact.findFirst({ where: { id: contactId, householdId } });
-    if (!existing) throw new EmergencyContactError("not_found", "Emergency contact not found.");
-    await db.emergencyContact.delete({ where: { id: contactId } });
+    await withTx(db, async (tx) => {
+        // Read Committed lets two deletes each count the other's contact as the
+        // survivor; the Household row lock serializes them.
+        await tx.$queryRaw`SELECT id FROM "Household" WHERE id = ${householdId} FOR UPDATE`;
+        const contacts = await tx.emergencyContact.findMany({ where: { householdId } });
+        const target = contacts.find((c) => c.id === contactId);
+        if (!target) throw new EmergencyContactError("not_found", "Emergency contact not found.");
+        if (isValid(target) && !contacts.some((c) => c.id !== contactId && isValid(c))) {
+            throw new EmergencyContactError(
+                "last_valid",
+                "Add a second emergency contact before removing this one — your household must always have at least one valid emergency contact.",
+            );
+        }
+        await tx.emergencyContact.delete({ where: { id: contactId } });
+    });
     invalidateAttendanceCache();
 }
 
