@@ -5,7 +5,7 @@
  * line and the receipt in its review lists. Only routes with no external integration: the local OCR
  * mock reads the upload. Real HTTP against the running dev server.
  */
-import { api, BASE, differentPurchases, loginAs, type Session } from "./helpers";
+import { api, BASE, differentPurchases, loginAs, newClassId, type Session } from "./helpers";
 
 const SUBMITTER = "inventory.manager@example.com";
 const FINANCE = "finance@example.com";
@@ -47,7 +47,7 @@ let original: Receipt | undefined;
 
 beforeAll(async () => {
   [submitter, finance, board, approver] = await Promise.all([loginAs(SUBMITTER), loginAs(FINANCE), loginAs(BOARD), loginAs(APPROVER)]);
-  const bucket = await post<{ id: number }>(finance, "/api/budget-owners", { name: `Receipt journey ${stamp}` });
+  const bucket = await post<{ id: number }>(finance, "/api/budget-owners", { name: `Receipt journey ${stamp}`, quickBooksClassId: newClassId() });
   expect(bucket.status).toBe(200);
   bucketId = bucket.json.id;
   expect((await send(board, "PUT", `/api/budget-owners/${bucketId}/owner`, { personId: approver.personaId })).status).toBe(200);

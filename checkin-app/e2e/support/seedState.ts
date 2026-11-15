@@ -5,7 +5,7 @@
 import { expect } from "@playwright/test";
 import { LIBRARY_KEYS, type LibraryKey } from "@/lib/libraryRelease";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
-import { api, loginAs, setBgRecheckMonths, type Session } from "../../flow-tests/helpers";
+import { api, loginAs, newClassId, setBgRecheckMonths, type Session } from "../../flow-tests/helpers";
 
 export const FINANCE = "finance@example.com";
 export const BOARD = "boardmember@example.com";
@@ -40,7 +40,7 @@ export async function releaseLibraries(): Promise<Undo> {
 /** A new budget bucket owned by `ownerEmail`, with `treasurerEmail` as its treasurer when given. */
 export async function bucket(name: string, ownerEmail: string, treasurerEmail?: string): Promise<{ id: number; name: string; undo: Undo }> {
   const board = await loginAs(BOARD);
-  const created = await send(await loginAs(FINANCE), "POST", "/api/budget-owners", { name });
+  const created = await send(await loginAs(FINANCE), "POST", "/api/budget-owners", { name, quickBooksClassId: newClassId() });
   expect(created.status).toBe(200);
   const id = (created.json as { id: number }).id;
   const owner = await loginAs(ownerEmail);

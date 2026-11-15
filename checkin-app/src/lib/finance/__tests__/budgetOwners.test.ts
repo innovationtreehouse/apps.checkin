@@ -260,6 +260,28 @@ describe('updateBudgetOwner: org-level and restore', () => {
         });
     });
 
+    test.each([['an active', null], ['an archived', new Date('2026-10-01')]])('refuses clearing the Class of %s bucket, writing nothing', async (_name, archivedAt) => {
+        tx.budgetOwner.findUnique.mockResolvedValue(stored({ archivedAt }));
+        await expect(updateBudgetOwner(1, 7, { quickBooksClassId: null })).rejects.toMatchObject({
+            status: 400,
+            message: "A bucket's QuickBooks Class can be changed but not cleared.",
+        });
+        nothingWritten();
+        expect(tx.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    test('changes a bucket to another Class', async () => {
+        tx.budgetOwner.findUnique.mockResolvedValue(stored());
+        await updateBudgetOwner(1, 7, { quickBooksClassId: '13' });
+        expect(tx.budgetOwner.update).toHaveBeenCalledWith(expect.objectContaining({ data: { quickBooksClassId: '13' } }));
+    });
+
+    test('saves a bucket that has no Class without one', async () => {
+        tx.budgetOwner.findUnique.mockResolvedValue(stored({ quickBooksClassId: null }));
+        await updateBudgetOwner(1, 7, { name: 'Shop floor', quickBooksClassId: null });
+        expect(tx.budgetOwner.update).toHaveBeenCalledWith(expect.objectContaining({ data: { name: 'Shop floor', quickBooksClassId: null } }));
+    });
+
     test('archives only through the archive route', async () => {
         await expect(updateBudgetOwner(1, 7, { archived: true })).rejects.toMatchObject({ status: 400 });
         nothingWritten();
@@ -269,12 +291,41 @@ describe('updateBudgetOwner: org-level and restore', () => {
 describe('createBudgetOwner', () => {
     test('records whether the bucket is org-level', async () => {
         tx.budgetOwner.create.mockResolvedValue({ id: 11 });
-        await createBudgetOwner(1, { name: 'Facility', isOrgLevel: true });
-        expect(tx.budgetOwner.create).toHaveBeenCalledWith(expect.objectContaining({ data: { name: 'Facility', isOrgLevel: true, quickBooksClassId: null } }));
+        await createBudgetOwner(1, { name: 'Facility', isOrgLevel: true, quickBooksClassId: '12' });
+        expect(tx.budgetOwner.create).toHaveBeenCalledWith(expect.objectContaining({ data: { name: 'Facility', isOrgLevel: true, quickBooksClassId: '12' } }));
     });
 
     test('refuses a non-boolean isOrgLevel', async () => {
-        await expect(createBudgetOwner(1, { name: 'Facility', isOrgLevel: 'yes' })).rejects.toMatchObject({ status: 400 });
+        await expect(createBudgetOwner(1, { name: 'Facility', isOrgLevel: 'yes', quickBooksClassId: '12' })).rejects.toMatchObject({ status: 400 });
+    });
+
+    test.each([['no', {}], ['a null', { quickBooksClassId: null }], ['a blank', { quickBooksClassId: ' ' }]])(
+        'refuses a bucket with %s QuickBooks Class, writing nothing',
+        async (_name, body) => {
+            await expect(createBudgetOwner(1, { name: 'Shop', ...body })).rejects.toMatchObject({
+                status: 400,
+                message: 'A bucket needs a QuickBooks Class.',
+            });
+            expect(tx.budgetOwner.create).not.toHaveBeenCalled();
+            expect(tx.auditLog.create).not.toHaveBeenCalled();
+        },
+    );
+
+    test('creates a bucket with its QuickBooks Class and audits it', async () => {
+        tx.budgetOwner.create.mockResolvedValue({ id: 11 });
+        await createBudgetOwner(1, { name: 'Shop', quickBooksClassId: '12' });
+        expect(tx.budgetOwner.create).toHaveBeenCalledWith(expect.objectContaining({ data: { name: 'Shop', isOrgLevel: false, quickBooksClassId: '12' } }));
+        expect(tx.auditLog.create).toHaveBeenCalledWith({
+            data: expect.objectContaining({ action: 'CREATE', newData: { name: 'Shop', isOrgLevel: false, quickBooksClassId: '12' } }),
+        });
+    });
+
+    test('answers 409 when another bucket holds the Class', async () => {
+        tx.budgetOwner.create.mockRejectedValue({ code: 'P2002', meta: { target: ['quickBooksClassId'] } });
+        await expect(createBudgetOwner(1, { name: 'Shop', quickBooksClassId: '12' })).rejects.toMatchObject({
+            status: 409,
+            message: 'That QuickBooks Class is already mapped to another bucket.',
+        });
     });
 });
 
