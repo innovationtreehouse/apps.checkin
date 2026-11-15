@@ -70,18 +70,20 @@ function isStagingEnv(): boolean {
     }
 }
 
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
 /**
- * True on the deployed cloud dev instance: CHECKIN_ENV=dev and the ops-dev host
+ * True on the deployed cloud dev instance: CHECKIN_ENV=dev on any host but loopback
  * (config.baseUrl(), sourced from NEXTAUTH_URL). Unit tests also run as `dev`, on
- * localhost, so the host keeps the dev API gate off there. A mis-set NEXTAUTH_URL
- * would turn the gate off, but Google sign-in on dev fails without the real host.
+ * localhost, so the loopback exemption keeps the dev API gate off there. An
+ * unparsable URL counts as deployed, so the gate fails closed.
  */
 function isDeployedDevEnv(): boolean {
     if (readCheckinEnv() !== 'dev') return false;
     try {
-        return new URL(config.baseUrl()).hostname.startsWith('ops-dev.');
+        return !LOOPBACK_HOSTS.has(new URL(config.baseUrl()).hostname);
     } catch {
-        return false;
+        return true;
     }
 }
 
