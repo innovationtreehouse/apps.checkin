@@ -27,6 +27,7 @@ jest.mock('@/lib/shopify/stock', () => {
 });
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { DEFAULT_ACK_SUBJECT, DEFAULT_ACK_PROGRAM_BODY, renderAckBody } from '@/lib/scholarshipEmails';
+import { WITH_EMERGENCY_CONTACT } from '@/test-helpers/emergencyContact';
 
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
@@ -67,7 +68,7 @@ describe('Program payment-plan routes', () => {
 
     beforeAll(async () => {
         const mentor = await prisma.person.create({
-            data: { name: 'PP Mentor', email: `mentor-${TAG}@example.com`, household: { create: { name: "Test HH" } } },
+            data: { name: 'PP Mentor', email: `mentor-${TAG}@example.com`, household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } } },
         });
         mentorId = mentor.id;
         householdIds.push(mentor.householdId);
@@ -78,7 +79,7 @@ describe('Program payment-plan routes', () => {
         programId = program.id;
 
         const board = await prisma.person.create({
-            data: { name: 'PP Board', email: `board-${TAG}@example.com`, isBoardMember: true, household: { create: { name: "Test HH" } } },
+            data: { name: 'PP Board', email: `board-${TAG}@example.com`, isBoardMember: true, household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } } },
         });
         boardId = board.id;
         householdIds.push(board.householdId);
@@ -87,7 +88,7 @@ describe('Program payment-plan routes', () => {
         // approver, and (since finance-ops excludes sysadmins) the
         // remedy when the first board member has a household conflict.
         const board2 = await prisma.person.create({
-            data: { name: 'PP Board Two', email: `board2-${TAG}@example.com`, isBoardMember: true, household: { create: { name: "Test HH2" } } },
+            data: { name: 'PP Board Two', email: `board2-${TAG}@example.com`, isBoardMember: true, household: { create: { name: "Test HH2", ...WITH_EMERGENCY_CONTACT } } },
         });
         board2Id = board2.id;
         householdIds.push(board2.householdId);
@@ -105,7 +106,7 @@ describe('Program payment-plan routes', () => {
                 name: 'PP Self',
                 email: `self-${TAG}@example.com`,
                 dateOfBirth: new Date(Date.now() - (30 * 31556952000)),
-                household: { create: { name: "Test HH" } },
+                household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } },
             },
         });
         selfId = self.id;
@@ -118,21 +119,21 @@ describe('Program payment-plan routes', () => {
                 name: 'PP Other',
                 email: `other-${TAG}@example.com`,
                 dateOfBirth: new Date(Date.now() - (30 * 31556952000)),
-                household: { create: { name: "Test HH" } },
+                household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } },
             },
         });
         otherId = other.id;
         householdIds.push(other.householdId);
 
         const noise = await prisma.person.create({
-            data: { name: 'PP Noise', email: `noise-${TAG}@example.com`, household: { create: { name: "Test HH" } } },
+            data: { name: 'PP Noise', email: `noise-${TAG}@example.com`, household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } } },
         });
         noiseId = noise.id;
         householdIds.push(noise.householdId);
 
         // Household with an ACTIVE org membership, for the point-in-time snapshot tests.
         const member = await prisma.person.create({
-            data: { name: 'PP Member', email: `member-${TAG}@example.com`, household: { create: { name: "Member HH", orgMembership: { create: { status: 'ACTIVE' } } } } },
+            data: { name: 'PP Member', email: `member-${TAG}@example.com`, household: { create: { name: "Member HH", orgMembership: { create: { status: 'ACTIVE' } }, ...WITH_EMERGENCY_CONTACT } } },
         });
         memberId = member.id;
         householdIds.push(member.householdId);
@@ -1045,7 +1046,7 @@ describe('Program payment-plan routes', () => {
         }) as unknown as import('next/server').NextRequest;
 
         async function makeHousehold(label: string): Promise<number> {
-            const hh = await prisma.household.create({ data: { name: `Email ${label} ${TAG}` } });
+            const hh = await prisma.household.create({ data: { name: `Email ${label} ${TAG}`, ...WITH_EMERGENCY_CONTACT } });
             createdHouseholdIds.push(hh.id);
             return hh.id;
         }

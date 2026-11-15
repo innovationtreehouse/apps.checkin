@@ -171,6 +171,10 @@ Things the app takes as true because they are handled outside it.
 - A household that cannot enroll — nobody eligible, or no valid emergency contact
   — is offered the way to fix it rather than a refusal.  [Decision]
 
+- The server refuses a family's enrolment while the household has no valid
+  emergency contact; staff adding a participant from the program roster are
+  exempt.  [Decision]
+
 - Registration signs someone in before intake begins, so whether an account
   exists is answered by signing in and never by a public reply.  [Decision — *Principle: no existence oracle*]
 
