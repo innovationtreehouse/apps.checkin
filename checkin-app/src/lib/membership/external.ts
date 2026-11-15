@@ -453,6 +453,18 @@ export async function getOrCreateContractSigningUrl(userId: number): Promise<str
     return signingUrlForProcess(process, user, MEMBERSHIP_AGREEMENT);
 }
 
+/** Who a signing request is addressed to. */
+interface SigningRecipient {
+    email: string;
+    name: string;
+}
+
+/** The stored Zoho ids an embedded sign URL is minted from. */
+interface SigningIds {
+    requestId: string;
+    actionId: string;
+}
+
 /**
  * The embedded sign URL for `user` on `process`, creating the Zoho request on the
  * first call and reusing it after. Shared by every agreement the app signs.
@@ -466,9 +478,8 @@ export async function signingUrlForProcess(
         throw new ExternalError("not_configured", "Agreement signing isn't available yet. Please check back soon.");
     }
     const userId = user.id;
-    const recipientEmail = user.email;
-    const recipientName = user.name?.trim() || user.email || "Applicant";
-    if (!recipientEmail) throw new ExternalError("not_found", "Your account has no email on file to sign with.");
+    if (!user.email) throw new ExternalError("not_found", "Your account has no email on file to sign with.");
+    const recipient: SigningRecipient = { email: user.email, name: user.name?.trim() || user.email };
 
     const token = await zohoSign.getAccessToken();
 
@@ -477,178 +488,210 @@ export async function signingUrlForProcess(
     let requestId = process.zohoEnvelopeId;
     let actionId = process.zohoActionId;
 
-    // A stored request may be dead — declined by the signer, or expired after
-    // CONTRACT_EXPIRATION_DAYS — and Zoho can neither embed nor revive it. Check
-    // before reusing: forget dead ids and fall through to the create path
-    // below, so the same button self-recovers. A request already signed gets its
-    // signature recorded instead of a link. Best-effort — if the status read
-    // fails, proceed with the stored ids rather than blocking the click (worst
-    // case the embed call fails).
     if (requestId && !process.contractSignedAt) {
-        let signedAtZoho = false;
-        try {
-            const state = await zohoSign.getRequestStatus(token, requestId);
-            signedAtZoho = state === "completed";
-            if (state === "terminal") {
-                await clearDeadSigningRequest(process.id, requestId, userId);
-                requestId = null;
-                actionId = null;
-            }
-        } catch (e) {
-            logger.warn(`Zoho request-status check failed for membership process ${process.id}: ${e instanceof Error ? e.message : String(e)}`);
-        }
-        // The mock answers "completed" for every request; only its interstitial signs.
-        if (signedAtZoho && !(await signingMockActive())) {
-            await markContractSigned(process.id, userId);
-            throw new ExternalError("wrong_phase", "This agreement has already been signed.");
+        if (await storedRequestIsLive(process, requestId, token, userId)) {
+            await assertSignerIs(process.zohoSignerPersonId, userId);
+        } else {
+            requestId = null;
+            actionId = null;
         }
     }
 
-    if (requestId && !process.contractSignedAt) await assertSignerIs(process.zohoSignerPersonId, userId);
-
     if (!requestId || !actionId) {
-        // Claim before creating: Zoho charges per request, so only the claim's
-        // winner ever calls createRequest, and a concurrent click is told to wait
-        // instead of paying for an orphan. The claim matches an INCOMPLETE pair
-        // (either id null), not just a null envelope: setZohoEnvelope (the
-        // admin/email flow) stores an envelope WITHOUT an action id, which can't be
-        // embedded, so that state must stay claimable. A claim whose holder died
-        // before storing ids is claimable once past the window.
-        const claimedAt = new Date();
-        const claim = await prisma.orgMembershipProcess.updateMany({
-            where: {
-                id: process.id,
-                OR: [{ zohoEnvelopeId: null }, { zohoActionId: null }],
-                AND: [{ OR: [{ zohoSignerPersonId: null }, { zohoClaimedAt: { lt: new Date(claimedAt.getTime() - SIGNING_CLAIM_WINDOW_MS) } }] }],
-            },
-            data: { zohoSignerPersonId: userId, zohoClaimedAt: claimedAt },
-        });
-        if (claim.count === 0) {
-            const current = await prisma.orgMembershipProcess.findUnique({ where: { id: process.id } });
-            await assertSignerIs(current?.zohoSignerPersonId ?? null, userId);
-            requestId = current?.zohoEnvelopeId ?? null;
-            actionId = current?.zohoActionId ?? null;
-            if (!requestId || !actionId) {
-                throw new ExternalError("wrong_phase", "Your signing request is still being prepared. Please try again in a moment.");
-            }
-            logger.info(`Concurrent signing request for membership process ${process.id}; reusing stored ${requestId}.`);
-            return zohoSign.getEmbeddedSignUrl({ token, requestId, actionId, host: config.baseUrl() });
-        }
-
-        // Matching on claimedAt stops a holder that was taken over from touching the newer claim.
-        const ownClaim = { id: process.id, zohoSignerPersonId: userId, zohoClaimedAt: claimedAt };
-        const releaseClaim = () => prisma.orgMembershipProcess.updateMany({
-            where: { ...ownClaim, OR: [{ zohoEnvelopeId: null }, { zohoActionId: null }] },
-            data: { zohoSignerPersonId: null },
-        });
-
-        let created: Awaited<ReturnType<typeof zohoSign.createRequest>>;
-        try {
-            // Resolved ONCE for this request so the PDF-skip, watermark, and the
-            // provider calls below can't disagree if the dev signing-target radio
-            // flips mid-flow (signingMockActive also honors BoardSettings.devSigningTarget).
-            const signingMock = await signingMockActive();
-
-            // Mock mode never uploads the PDF (its createRequest ignores the bytes), so
-            // skip the S3 load that also 503s in dev — an empty placeholder keeps the
-            // create/submit calls type-identical. See docs/ops/contract-signing-mock.md.
-            let agreement;
-            if (signingMock) {
-                agreement = { pdf: Buffer.alloc(0), lastPageNo: 0, pageWidth: 0, pageHeight: 0 };
-            } else {
-                try {
-                    agreement = await document.load();
-                } catch (e) {
-                    if (e instanceof AgreementUnavailableError) {
-                        throw new ExternalError("agreement_unavailable", document.unavailableMessage);
-                    }
-                    throw e;
-                }
-            }
-
-            // On non-prod instances, mark the request + document as a DEV test so a
-            // signature can never be mistaken for a binding one — baked in server-side
-            // (CHECKIN_ENV), not editable by the applicant. Prod stays clean. The
-            // create/submit/embed flow is otherwise identical across envs. (Mock mode
-            // skips the watermark — the empty placeholder PDF is never rendered.)
-            //
-            // ops-stg is a SEPARATE exclusion, not a CheckinEnv value: CHECKIN_ENV=stg
-            // falls back to 'prod' (readCheckinEnv), so config.isProd() alone would
-            // call ops-stg's signing flow "prod" and produce a watermark-free document
-            // indistinguishable from a real binding agreement the moment a Zoho
-            // credential is ever wired to staging to rehearse signing.
-            const isProd = config.isProd() && !config.isStaging();
-            const pdf = isProd || signingMock ? agreement.pdf : await stampWatermark(agreement.pdf, "DEV TEST — NOT A LEGAL AGREEMENT");
-            const requestName = `${isProd ? "" : "[DEV TEST — NOT BINDING] "}${document.title} — ${recipientName}`;
-
-            // Return the embedded signer to checkin when they finish (Zoho navigates
-            // the window to these).
-            const base = config.baseUrl();
-            created = await zohoSign.createRequest({
-                token,
-                pdf,
-                filename: document.filename,
-                recipientEmail,
-                recipientName,
-                requestName,
-                expirationDays: CONTRACT_EXPIRATION_DAYS,
-                redirectPages: {
-                    sign_completed: `${base}${document.returnTo.signed}`,
-                    sign_success: `${base}${document.returnTo.signed}`,
-                    sign_declined: `${base}${document.returnTo.declined}`,
-                    sign_later: `${base}${document.returnTo.later}`,
-                },
-            });
-            await zohoSign.submitRequest({
-                token,
-                requestId: created.requestId,
-                actionId: created.actionId,
-                documentId: created.documentId,
-                recipientEmail,
-                recipientName,
-                lastPageNo: agreement.lastPageNo,
-                pageWidth: agreement.pageWidth,
-                pageHeight: agreement.pageHeight,
-                fieldSpecs: document.fieldSpecs,
-                prefill: { PrintedName: recipientName },
-            });
-        } catch (e) {
-            // Release the claim so the next click can retry.
-            await releaseClaim();
-            throw e;
-        }
-
-        let stored: { count: number };
-        try {
-            stored = await prisma.orgMembershipProcess.updateMany({
-                where: ownClaim,
-                data: { zohoEnvelopeId: created.requestId, zohoActionId: created.actionId },
-            });
-        } catch (e) {
-            await recallUnstoredRequest(token, created.requestId, process.id);
-            // If this fails too, the window frees the claim.
-            await releaseClaim().catch((releaseError) => logger.error(`Could not release signing claim for membership process ${process.id}: ${releaseError instanceof Error ? releaseError.message : String(releaseError)}`));
-            throw e;
-        }
-        if (stored.count === 0) {
-            await recallUnstoredRequest(token, created.requestId, process.id);
-            throw new ExternalError("wrong_phase", "Signing was reset while your request was being prepared. Please try again.");
-        }
-        requestId = created.requestId;
-        actionId = created.actionId;
-        await prisma.auditLog.create({
-            data: {
-                actorId: userId,
-                action: "EDIT",
-                tableName: "OrgMembershipProcess",
-                affectedEntityId: process.id,
-                newData: { zohoEnvelopeId: requestId, zohoActionId: actionId, zohoSignerPersonId: userId },
-            },
-        });
-        logger.info(`Created Zoho signing request ${requestId} for membership process ${process.id}.`);
+        ({ requestId, actionId } = await claimAndCreateRequest(process, userId, token, document, recipient));
     }
 
     return zohoSign.getEmbeddedSignUrl({ token, requestId, actionId, host: config.baseUrl() });
+}
+
+/**
+ * A stored request may be dead — declined by the signer, or expired after
+ * CONTRACT_EXPIRATION_DAYS — and Zoho can neither embed nor revive it. Returns
+ * false once a dead request is forgotten, so the caller falls through to create a
+ * fresh one and the same button self-recovers. A request already signed gets its
+ * signature recorded and throws instead of returning a link. Best-effort — if the
+ * status read fails, the stored ids are kept rather than blocking the click (worst
+ * case the embed call fails).
+ */
+async function storedRequestIsLive(process: OrgMembershipProcess, requestId: string, token: string, userId: number): Promise<boolean> {
+    let live = true;
+    let signedAtZoho = false;
+    try {
+        const state = await zohoSign.getRequestStatus(token, requestId);
+        signedAtZoho = state === "completed";
+        if (state === "terminal") {
+            await clearDeadSigningRequest(process.id, requestId, userId);
+            live = false;
+        }
+    } catch (e) {
+        logger.warn(`Zoho request-status check failed for membership process ${process.id}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    // The mock answers "completed" for every request; only its interstitial signs.
+    if (signedAtZoho && !(await signingMockActive())) {
+        await markContractSigned(process.id, userId);
+        throw new ExternalError("wrong_phase", "This agreement has already been signed.");
+    }
+    return live;
+}
+
+/**
+ * Claim before creating: Zoho charges per request, so only the claim's winner ever
+ * calls createRequest, and a concurrent click is told to wait instead of paying for
+ * an orphan. The claim matches an INCOMPLETE pair (either id null), not just a null
+ * envelope: setZohoEnvelope (the admin/email flow) stores an envelope WITHOUT an
+ * action id, which can't be embedded, so that state must stay claimable. A claim
+ * whose holder died before storing ids is claimable once past the window.
+ */
+async function claimAndCreateRequest(
+    process: OrgMembershipProcess,
+    userId: number,
+    token: string,
+    document: SigningDocument,
+    recipient: SigningRecipient,
+): Promise<SigningIds> {
+    const claimedAt = new Date();
+    const claim = await prisma.orgMembershipProcess.updateMany({
+        where: {
+            id: process.id,
+            OR: [{ zohoEnvelopeId: null }, { zohoActionId: null }],
+            AND: [{ OR: [{ zohoSignerPersonId: null }, { zohoClaimedAt: { lt: new Date(claimedAt.getTime() - SIGNING_CLAIM_WINDOW_MS) } }] }],
+        },
+        data: { zohoSignerPersonId: userId, zohoClaimedAt: claimedAt },
+    });
+    if (claim.count === 0) {
+        const current = await prisma.orgMembershipProcess.findUnique({ where: { id: process.id } });
+        await assertSignerIs(current?.zohoSignerPersonId ?? null, userId);
+        const requestId = current?.zohoEnvelopeId;
+        const actionId = current?.zohoActionId;
+        if (!requestId || !actionId) {
+            throw new ExternalError("wrong_phase", "Your signing request is still being prepared. Please try again in a moment.");
+        }
+        logger.info(`Concurrent signing request for membership process ${process.id}; reusing stored ${requestId}.`);
+        return { requestId, actionId };
+    }
+
+    // Matching on claimedAt stops a holder that was taken over from touching the newer claim.
+    const ownClaim = { id: process.id, zohoSignerPersonId: userId, zohoClaimedAt: claimedAt };
+    const releaseClaim = () => prisma.orgMembershipProcess.updateMany({
+        where: { ...ownClaim, OR: [{ zohoEnvelopeId: null }, { zohoActionId: null }] },
+        data: { zohoSignerPersonId: null },
+    });
+
+    let created: Awaited<ReturnType<typeof zohoSign.createRequest>>;
+    try {
+        created = await createSigningRequest(token, document, recipient);
+    } catch (e) {
+        // Release the claim so the next click can retry.
+        await releaseClaim();
+        throw e;
+    }
+
+    let stored: { count: number };
+    try {
+        stored = await prisma.orgMembershipProcess.updateMany({
+            where: ownClaim,
+            data: { zohoEnvelopeId: created.requestId, zohoActionId: created.actionId },
+        });
+    } catch (e) {
+        await recallUnstoredRequest(token, created.requestId, process.id);
+        // If this fails too, the window frees the claim.
+        await releaseClaim().catch((releaseError) => logger.error(`Could not release signing claim for membership process ${process.id}: ${releaseError instanceof Error ? releaseError.message : String(releaseError)}`));
+        throw e;
+    }
+    if (stored.count === 0) {
+        await recallUnstoredRequest(token, created.requestId, process.id);
+        throw new ExternalError("wrong_phase", "Signing was reset while your request was being prepared. Please try again.");
+    }
+    const { requestId, actionId } = created;
+    await prisma.auditLog.create({
+        data: {
+            actorId: userId,
+            action: "EDIT",
+            tableName: "OrgMembershipProcess",
+            affectedEntityId: process.id,
+            newData: { zohoEnvelopeId: requestId, zohoActionId: actionId, zohoSignerPersonId: userId },
+        },
+    });
+    logger.info(`Created Zoho signing request ${requestId} for membership process ${process.id}.`);
+    return { requestId, actionId };
+}
+
+/** Creates and submits the Zoho request for `document`, addressed to `recipient`. */
+async function createSigningRequest(token: string, document: SigningDocument, recipient: SigningRecipient) {
+    // Resolved ONCE for this request so the PDF-skip, watermark, and the
+    // provider calls below can't disagree if the dev signing-target radio
+    // flips mid-flow (signingMockActive also honors BoardSettings.devSigningTarget).
+    const signingMock = await signingMockActive();
+    const { agreement, pdf, requestName } = await buildAgreementPdf(document, signingMock, recipient.name);
+
+    // Return the embedded signer to checkin when they finish (Zoho navigates
+    // the window to these).
+    const base = config.baseUrl();
+    const created = await zohoSign.createRequest({
+        token,
+        pdf,
+        filename: document.filename,
+        recipientEmail: recipient.email,
+        recipientName: recipient.name,
+        requestName,
+        expirationDays: CONTRACT_EXPIRATION_DAYS,
+        redirectPages: {
+            sign_completed: `${base}${document.returnTo.signed}`,
+            sign_success: `${base}${document.returnTo.signed}`,
+            sign_declined: `${base}${document.returnTo.declined}`,
+            sign_later: `${base}${document.returnTo.later}`,
+        },
+    });
+    await zohoSign.submitRequest({
+        token,
+        requestId: created.requestId,
+        actionId: created.actionId,
+        documentId: created.documentId,
+        recipientEmail: recipient.email,
+        recipientName: recipient.name,
+        lastPageNo: agreement.lastPageNo,
+        pageWidth: agreement.pageWidth,
+        pageHeight: agreement.pageHeight,
+        fieldSpecs: document.fieldSpecs,
+        prefill: { PrintedName: recipient.name },
+    });
+    return created;
+}
+
+/** The PDF bytes and request name to send for `document`, marked as a test off prod. */
+async function buildAgreementPdf(document: SigningDocument, signingMock: boolean, recipientName: string) {
+    // Mock mode never uploads the PDF (its createRequest ignores the bytes), so
+    // skip the S3 load that also 503s in dev — an empty placeholder keeps the
+    // create/submit calls type-identical. See docs/ops/contract-signing-mock.md.
+    let agreement: LoadedAgreement;
+    if (signingMock) {
+        agreement = { pdf: Buffer.alloc(0), lastPageNo: 0, pageWidth: 0, pageHeight: 0 };
+    } else {
+        try {
+            agreement = await document.load();
+        } catch (e) {
+            if (e instanceof AgreementUnavailableError) {
+                throw new ExternalError("agreement_unavailable", document.unavailableMessage);
+            }
+            throw e;
+        }
+    }
+
+    // On non-prod instances, mark the request + document as a DEV test so a
+    // signature can never be mistaken for a binding one — baked in server-side
+    // (CHECKIN_ENV), not editable by the applicant. Prod stays clean. The
+    // create/submit/embed flow is otherwise identical across envs. (Mock mode
+    // skips the watermark — the empty placeholder PDF is never rendered.)
+    //
+    // ops-stg is a SEPARATE exclusion, not a CheckinEnv value: CHECKIN_ENV=stg
+    // falls back to 'prod' (readCheckinEnv), so config.isProd() alone would
+    // call ops-stg's signing flow "prod" and produce a watermark-free document
+    // indistinguishable from a real binding agreement the moment a Zoho
+    // credential is ever wired to staging to rehearse signing.
+    const isProd = config.isProd() && !config.isStaging();
+    const pdf = isProd || signingMock ? agreement.pdf : await stampWatermark(agreement.pdf, "DEV TEST — NOT A LEGAL AGREEMENT");
+    const requestName = `${isProd ? "" : "[DEV TEST — NOT BINDING] "}${document.title} — ${recipientName}`;
+    return { agreement, pdf, requestName };
 }
 
 /**
