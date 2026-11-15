@@ -322,7 +322,36 @@ describe("membership-ops/participants/merge page", () => {
     renderWithProviders(<MergeParticipants />);
 
     await selectBoth();
-    expect(await screen.findByText("Failed to analyze participants")).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load the merge analysis")).toBeInTheDocument();
+    expect(screen.getByText("Couldn't reach the server. Check your connection and try again.")).toBeInTheDocument();
+    expect(screen.queryByText("boom")).not.toBeInTheDocument();
+  });
+
+  it("shows a refused analysis in the server's words, and Retry loads it again", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const refusal = { error: "Cannot analyze: one of these participants has already been merged." };
+    let refuse = true;
+    global.fetch = jest.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("q=Alice")) return { ok: true, ...jsonBody({ people: [participantA] }) } as Response;
+      if (url.includes("q=Bob")) return { ok: true, ...jsonBody({ people: [participantB] }) } as Response;
+      if (url.includes("merge/analyze")) {
+        return refuse
+          ? { ok: false, status: 409, ...jsonBody(refusal) } as Response
+          : { ok: true, ...jsonBody({ participants: [participantA, participantB] }) } as Response;
+      }
+      return { ok: false, json: async () => ({}) } as Response;
+    }) as unknown as typeof fetch;
+    renderWithProviders(<MergeParticipants />);
+
+    await selectBoth();
+    expect(await screen.findByText(refusal.error)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Proceed to Preview" })).not.toBeInTheDocument();
+
+    refuse = false;
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("Keep and augment")).toBeInTheDocument();
+    expect(screen.queryByText(refusal.error)).not.toBeInTheDocument();
   });
 
   it("shows a red alert and disables Proceed when the merged participant is a lead of a household with other members", async () => {
