@@ -48,6 +48,9 @@ export default function ShopifyHoldsPage() {
   const [approveOpened, { open: openApprove, close: closeApprove }] = useDisclosure(false);
   const [denyOpened, { open: openDeny, close: closeDeny }] = useDisclosure(false);
   const [target, setTarget] = useState<Target>(null);
+  // The row whose write is in flight; its buttons stay disabled so a second click can't send again.
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const rowKey = (programId: number, participantId: number) => `${programId}-${participantId}`;
 
   const fetchRows = useCallback(() => fetch('/api/finance-ops/payment-plans?queue=holds')
     .then(async (res) => {
@@ -80,6 +83,7 @@ export default function ShopifyHoldsPage() {
     if (!target) return;
     const { programId, participantId } = target;
     setTarget(null);
+    setBusyKey(rowKey(programId, participantId));
     try {
       await api(url, { method: 'POST', body: JSON.stringify({ programId, participantId }) });
       drop(programId, participantId);
@@ -88,6 +92,8 @@ export default function ShopifyHoldsPage() {
     } catch (e) {
       showError(errorMessage(e));
       if (e instanceof HttpError) fetchRows();
+    } finally {
+      setBusyKey(null);
     }
   };
 
@@ -127,7 +133,7 @@ export default function ShopifyHoldsPage() {
         <Group justify="flex-end" gap="xs" wrap="nowrap">
           <Button
             size="xs" fz={15} color="red" variant="subtle"
-            disabled={ownHousehold(r)}
+            disabled={ownHousehold(r) || busyKey === rowKey(r.programId, r.personId)}
             title={ownHousehold(r) ? "You can't deny your own household's plan — someone outside your household must." : undefined}
             onClick={() => openFor(r, 'deny')}
           >
@@ -135,13 +141,13 @@ export default function ShopifyHoldsPage() {
           </Button>
           <Button
             size="xs" fz={15} color="red" variant="subtle"
-            disabled={ownHousehold(r)}
+            disabled={ownHousehold(r) || busyKey === rowKey(r.programId, r.personId)}
             title={ownHousehold(r) ? "You can't approve your own household's plan — someone outside your household must." : undefined}
             onClick={() => openFor(r, 'approve')}
           >
             Approve request without holding a seat
           </Button>
-          <Button size="xs" fz={15} color="blue" onClick={() => openFor(r, 'hold')}>
+          <Button size="xs" fz={15} color="blue" disabled={busyKey === rowKey(r.programId, r.personId)} onClick={() => openFor(r, 'hold')}>
             Confirm manual hold
           </Button>
         </Group>

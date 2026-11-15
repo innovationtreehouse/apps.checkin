@@ -34,6 +34,8 @@ export default function UnconfirmedShopifyStockPage() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [target, setTarget] = useState<{ row: Row; choice: Choice } | null>(null);
+  // The program whose write is in flight; its buttons stay disabled so a second click can't send again.
+  const [busyId, setBusyId] = useState<number | null>(null);
 
   const fetchRows = useCallback(() => fetch('/api/finance-ops/shopify-stock')
     .then(async (res) => {
@@ -58,18 +60,21 @@ export default function UnconfirmedShopifyStockPage() {
     if (!target) return;
     const { row, choice } = target;
     setTarget(null);
+    setBusyId(row.programId);
     try {
       await api(`/api/finance-ops/shopify-stock/${row.programId}`, {
         method: 'POST',
         body: JSON.stringify({ choice, expected: row.unconfirmed, since: row.unconfirmedSince }),
       });
-      fetchRows();
+      await fetchRows();
       showSuccess(choice === 'landed'
         ? `${row.programName}: cleared — Shopify already has the change.`
         : `${row.programName}: the change is owed again and will be pushed to Shopify.`);
     } catch (e) {
       showError(errorMessage(e));
-      if (e instanceof HttpError) fetchRows();
+      if (e instanceof HttpError) await fetchRows();
+    } finally {
+      setBusyId(null);
     }
   };
 
@@ -91,10 +96,10 @@ export default function UnconfirmedShopifyStockPage() {
       align: 'right',
       render: (r) => (
         <Group justify="flex-end" gap="xs" wrap="nowrap">
-          <Button size="xs" fz={15} variant="default" onClick={() => setTarget({ row: r, choice: 'notLanded' })}>
+          <Button size="xs" fz={15} variant="default" disabled={busyId === r.programId} onClick={() => setTarget({ row: r, choice: 'notLanded' })}>
             Shopify doesn&apos;t have it
           </Button>
-          <Button size="xs" fz={15} color="blue" onClick={() => setTarget({ row: r, choice: 'landed' })}>
+          <Button size="xs" fz={15} color="blue" disabled={busyId === r.programId} onClick={() => setTarget({ row: r, choice: 'landed' })}>
             Shopify has it
           </Button>
         </Group>

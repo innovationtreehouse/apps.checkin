@@ -59,6 +59,8 @@ export default function MembershipPaymentPlansPage() {
   const [confirmDenyOpened, { open: openConfirmDeny, close: closeConfirmDeny }] = useDisclosure(false);
   const [pendingDenial, setPendingDenial] = useState<number | null>(null);
   const [denying, setDenying] = useState(false);
+  // The request whose write is in flight; its buttons stay disabled so a second click can't send again.
+  const [busyId, setBusyId] = useState<number | null>(null);
 
   const fetchRequests = useCallback(() => fetch('/api/finance-ops/membership-payment-plans')
     .then(async (res) => {
@@ -88,6 +90,7 @@ export default function MembershipPaymentPlansPage() {
   };
 
   const doApprove = async (processId: number, reason: string) => {
+    setBusyId(processId);
     try {
       await api('/api/finance-ops/membership-payment-plans', { method: 'POST', body: JSON.stringify({ processId, reason }) });
       setRequests(prev => prev.filter(r => r.id !== processId));
@@ -96,6 +99,8 @@ export default function MembershipPaymentPlansPage() {
     } catch (e) {
       showError(errorMessage(e));
       if (e instanceof HttpError && e.status === 409) fetchRequests();
+    } finally {
+      setBusyId(null);
     }
   };
 
@@ -115,6 +120,7 @@ export default function MembershipPaymentPlansPage() {
 
   const doDeny = async (processId: number) => {
     setDenying(true);
+    setBusyId(processId);
     try {
       await api('/api/finance-ops/membership-payment-plans/refuse', { method: 'POST', body: JSON.stringify({ processId }) });
       setRequests(prev => prev.filter(r => r.id !== processId));
@@ -125,6 +131,7 @@ export default function MembershipPaymentPlansPage() {
       if (e instanceof HttpError && e.status === 409) fetchRequests();
     } finally {
       setDenying(false);
+      setBusyId(null);
     }
   };
 
@@ -186,10 +193,10 @@ export default function MembershipPaymentPlansPage() {
       align: 'right' as const,
       render: (req: MembershipPaymentPlanRequest) => (
         <Group justify="flex-end" gap="xs" wrap="nowrap">
-          <Button size="xs" fz={15} color="red" variant="light" disabled={ownHousehold(req)} title={ownHousehold(req) ? "You can't deny your own household's plan — someone outside your household must." : undefined} onClick={() => handleDeny(req.id)}>
+          <Button size="xs" fz={15} color="red" variant="light" disabled={ownHousehold(req) || busyId === req.id} title={ownHousehold(req) ? "You can't deny your own household's plan — someone outside your household must." : undefined} onClick={() => handleDeny(req.id)}>
             Deny
           </Button>
-          <Button size="xs" fz={15} variant="light" disabled={ownHousehold(req)} title={ownHousehold(req) ? "You can't approve your own household's plan — someone outside your household must." : undefined} onClick={() => handleApprove(req.id)}>
+          <Button size="xs" fz={15} variant="light" disabled={ownHousehold(req) || busyId === req.id} title={ownHousehold(req) ? "You can't approve your own household's plan — someone outside your household must." : undefined} onClick={() => handleApprove(req.id)}>
             Approve &amp; Activate
           </Button>
         </Group>

@@ -86,6 +86,8 @@ export default function PaymentProblemsPage() {
   const [pendingResolve, setPendingResolve] = useState<PaymentException | null>(null);
   const [note, setNote] = useState("");
   const [syncing, setSyncing] = useState(false);
+  // The problem whose write is in flight; its buttons stay disabled so a second click can't send again.
+  const [busyId, setBusyId] = useState<number | null>(null);
   // null = the mirror has never synced, or we can't read it — either way there is
   // nothing to say, so the status line just doesn't render.
   const [syncRun, setSyncRun] = useState<SyncRun | null>(null);
@@ -133,6 +135,7 @@ export default function PaymentProblemsPage() {
   }, [ready, fetchRows, fetchSyncRun]);
 
   const patch = async (id: number, action: 'acknowledge' | 'resolve', noteText?: string) => {
+    setBusyId(id);
     try {
       await api(`/api/finance-ops/payments/${id}`, { method: 'PATCH', body: JSON.stringify({ action, note: noteText }) });
       await fetchRows();
@@ -141,6 +144,8 @@ export default function PaymentProblemsPage() {
     } catch (e) {
       showError(errorMessage(e));
       if (e instanceof HttpError && e.status === 409) fetchRows();
+    } finally {
+      setBusyId(null);
     }
   };
 
@@ -271,11 +276,11 @@ export default function PaymentProblemsPage() {
       render: (row) => (
         <Group justify="flex-end" gap="xs" wrap="nowrap">
           {row.status === 'OPEN' && (
-            <Button size="xs" fz={15} variant="light" onClick={() => patch(row.id, 'acknowledge')}>
+            <Button size="xs" fz={15} variant="light" disabled={busyId === row.id} onClick={() => patch(row.id, 'acknowledge')}>
               Acknowledge
             </Button>
           )}
-          <Button size="xs" fz={15} variant="light" onClick={() => handleResolve(row)}>
+          <Button size="xs" fz={15} variant="light" disabled={busyId === row.id} onClick={() => handleResolve(row)}>
             Resolve
           </Button>
         </Group>
