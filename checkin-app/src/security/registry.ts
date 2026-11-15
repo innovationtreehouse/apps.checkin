@@ -905,16 +905,15 @@ defineRoute({
     orderedView: [],
 });
 
-// In-memory kiosk last-seen. No DB row: the stamp
-// lives on the task, so the bag is a synthesized SystemMetricLog (metric
-// `kiosk_last_seen`, timestamp = last verified kiosk request, value = age
-// in seconds). Empty array means never seen since this task started (or
-// overnight after scale-to-zero).
+// Kiosk readings. SystemMetricLog rows are synthesized from in-memory task
+// state (`kiosk_last_seen`, `kiosk_clock_skew`), so they vanish when the task
+// restarts. KioskProtocolSeen rows are stored: one per kiosk key fingerprint,
+// with the scan protocol version it last spoke and when.
 defineRoute({
     endpoint: 'GET /api/system-status/kiosk-heartbeat',
     authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
     envelope: 'heartbeat',
-    returns: ['SystemMetricLog'],
+    returns: ['SystemMetricLog', 'KioskProtocolSeen'],
     orderedView: [
         ['isSysadmin',    ['everyones:internal', 'member', 'public']],
         ['isBoardMember', ['everyones:internal', 'member', 'public']],
