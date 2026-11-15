@@ -31,19 +31,11 @@ All three read one helper, `legacyHouseholdCheckStarted(app)`, so the follow-up 
 deletes one function and its callers.
 
 **Exit condition.** No open INITIAL or RENEWAL application has `bgConsentAt` set and
-`bgClearedAt` null. Read-only check, run against production by whoever lands the
-follow-up PR:
-
-```sql
-SELECT count(*) FROM "OrgMembershipProcess"
-WHERE kind IN ('INITIAL','RENEWAL') AND "bgConsentAt" IS NOT NULL
-  AND "bgClearedAt" IS NULL
-  AND status IN ('INTAKE','PENDING_EXTERNAL_ACTION','PENDING_BG_REVIEW','PENDING_PAYMENT',
-                 'PENDING_BG_CLEARANCE','BLOCKED','PENDING_RENEWAL','RENEWAL_PENDING_BG');
-```
-
-The status list must match `openProcess` in `checkin-app/src/lib/membership/lifecycle.ts` at the
-time it is run. Re-read it there; do not trust this copy.
+`bgClearedAt` null. The System Status page shows the count, in the row
+"Applications on the old household check flag"
+(`checkin-app/src/lib/membership/legacyCheckFlagHealth.ts`, which reads the open
+statuses from `openProcess`). Step 3 can land once it reads 0. Nobody runs a query
+against production for this.
 
 Applications clear, finish or are closed in the normal course of things. A few
 stuck ones are a Board conversation, not a reason to keep the clause.
@@ -69,6 +61,8 @@ merged.
    - Delete `legacyHouseholdCheckStarted` and its three callers.
    - Delete `openRequestedReview`.
    - Narrow the sweep to re-settle only.
+   - Delete the System Status row `legacyCheckFlagHealth.ts`, its test and its line in the
+     config-health route.
    - Remove the rule sentence about the legacy clause, if one was written.
    - Delete this file.
 
