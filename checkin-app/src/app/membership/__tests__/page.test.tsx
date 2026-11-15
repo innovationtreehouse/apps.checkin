@@ -3,8 +3,16 @@ jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories run hoisted, before imports exist
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+// Renders the real panel and records its props, so a test can call onSave/onSubmit past disabled buttons.
+jest.mock("../IntakePanel", () => {
+  const { createElement } = jest.requireActual<typeof import("react")>("react");
+  const actual = jest.requireActual<typeof import("../IntakePanel")>("../IntakePanel");
+  return { __esModule: true, default: jest.fn((props: Parameters<typeof actual.default>[0]) => createElement(actual.default, props)) };
+});
 
 import { act, screen, fireEvent, waitFor } from "@testing-library/react";
+import IntakePanel from "../IntakePanel";
+import { UnsavedChangesProvider } from "@/components/UnsavedChangesProvider";
 import { notifications } from "@mantine/notifications";
 import { renderWithProviders, mockFetchJson, setSession, setCheckinEnv, resetRtl } from "@/test-helpers/rtl";
 import { jsonBody } from "@/test-helpers/jsonBody";
@@ -416,6 +424,66 @@ describe("membership page", () => {
       await settleAfter("/api/membership");
       expect(emName().value).toBe("Uncle Bo");
       expect(screen.getByRole("button", { name: "Save progress" })).toBeDisabled();
+    });
+
+    describe("once the save is locked", () => {
+      const complete = state({
+        ...intake,
+        prefill: {
+          ...emptyPrefill,
+          household: { name: null, notes: null, emergencyContactName: "From server", emergencyContactPhone: "512-555-1234", emergencyContactEmail: null, line1: "1 Treehouse Ln", line2: null, city: "Austin", state: "TX", postalCode: "78701" },
+          primaryParent: { id: 1, name: "Pat Parent", email: "pat@example.com", dob: "1980-01-01", allergies: null },
+        },
+      });
+      /** True when the unsaved-changes guard would block a reload. */
+      const reloadBlocked = () => {
+        const e = new Event("beforeunload", { cancelable: true });
+        window.dispatchEvent(e);
+        return e.defaultPrevented;
+      };
+      const panel = () => {
+        const props = jest.mocked(IntakePanel).mock.lastCall?.[0];
+        if (!props) throw new Error("IntakePanel has not rendered");
+        return props;
+      };
+
+      async function lockAfterSave() {
+        setSession({ id: 1 });
+        const mock = mockReads([[true, complete], [false, { error: "down" }, 503]]);
+        renderWithProviders(<UnsavedChangesProvider><MembershipPage /></UnsavedChangesProvider>);
+        await screen.findByText("Your household");
+        jest.useFakeTimers();
+
+        fireEvent.change(emName(), { target: { value: "Aunt Jo" } });
+        fireEvent.click(screen.getByRole("button", { name: "Save progress" }));
+        await waitFor(() => expect(mock.reads()).toBe(2));
+        await act(() => jest.advanceTimersByTimeAsync(2000));
+        await act(() => jest.advanceTimersByTimeAsync(4000));
+        await waitFor(() => expect(mock.reads()).toBe(4));
+        expect(await screen.findByText(reloadWarning)).toBeInTheDocument();
+        return mock;
+      }
+
+      it("lets the reload it asks for through, while the form still holds the saved input", async () => {
+        await lockAfterSave();
+        expect(emName().value).toBe("Aunt Jo");
+        expect(reloadBlocked()).toBe(false);
+      });
+
+      it("guards a reload again once the user edits", async () => {
+        await lockAfterSave();
+        fireEvent.change(emName(), { target: { value: "Uncle Bo" } });
+        expect(reloadBlocked()).toBe(true);
+      });
+
+      it("sends no request when save or submit is called", async () => {
+        const mock = await lockAfterSave();
+        const calls = mock.fetchMock.mock.calls.length;
+        await act(async () => { panel().onSave(); });
+        await act(async () => { panel().onSubmit(); });
+        await act(() => jest.advanceTimersByTimeAsync(60000));
+        expect(mock.fetchMock.mock.calls.length).toBe(calls);
+      });
     });
 
     it("fills in the saved people's ids, so a second save updates them", async () => {
