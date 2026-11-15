@@ -209,16 +209,18 @@ export function OpenProblemsBox() {
 
 // Mirrors Problem in lib/problems.ts (failedAt arrives JSON-serialized).
 type StuckItem = { library: string; id: string; step: string; href: string | null; failedAt: string };
+// Mirrors Notice in lib/problems.ts.
+type Notice = { text: string; href: string | null };
 type ProblemsPayload = { problems?: { items?: unknown; unread?: unknown; notices?: unknown }; cronJobs?: unknown };
 
 /**
- * The receipt flow's Problems list: each library's own lines, every stuck item, oldest first, with a
- * link to its own page (which shows the error), when it failed and a Retry button, then every scheduled job that has not run on time
- * or whose latest run reported failures (without the run's error text). From GET /api/system-status/config-health; Retry and
- * Retry all POST /api/system-status/problems/retry.
+ * The receipt flow's Problems list: the count lines (each library's own, failed email sends), every stuck item, oldest first,
+ * with a link to its own page (which shows the error), when it failed and a Retry button, then every scheduled job that has not
+ * run on time or whose latest run reported failures (without the run's error text). From GET /api/system-status/config-health;
+ * Retry and Retry all POST /api/system-status/problems/retry.
  */
 export function ProblemsBox() {
-  const [data, setData] = useState<{ items: StuckItem[]; unread: string[]; notices: string[]; staleJobs: CronJob[]; failingJobs: CronJob[] } | null>(null);
+  const [data, setData] = useState<{ items: StuckItem[]; unread: string[]; notices: Notice[]; staleJobs: CronJob[]; failingJobs: CronJob[] } | null>(null);
   const [failed, setFailed] = useState(false);
 
   const viewer = useSession().data?.user;
@@ -233,7 +235,7 @@ export function ProblemsBox() {
         setData({
           items: problems.items as StuckItem[],
           unread: problems.unread as string[],
-          notices: problems.notices as string[],
+          notices: problems.notices as Notice[],
           staleJobs: (cronJobs as CronJob[]).filter((j) => j.stale),
           // Mirrors failingJob in lib/problems.ts: a late job is listed as late only.
           failingJobs: (cronJobs as CronJob[]).filter((j) => j.lastError && !j.stale),
@@ -299,8 +301,8 @@ export function ProblemsBox() {
             </List.Item>
           ))}
           {data.notices.map((notice) => (
-            <List.Item key={`notice-${notice}`}>
-              <Text c="red">{notice}</Text>
+            <List.Item key={`notice-${notice.text}`}>
+              {notice.href ? <Anchor href={notice.href} c="red">{notice.text}</Anchor> : <Text c="red">{notice.text}</Text>}
             </List.Item>
           ))}
           {data.items.map((i) => (
