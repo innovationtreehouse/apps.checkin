@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { signOut, useSession } from 'next-auth/react';
 import { usePathname } from 'next/navigation';
 import { errorMessage, showError } from '@checkin/component-ui';
@@ -80,7 +80,10 @@ export default function OnboardingGate({ children }: { children: React.ReactNode
   const [emergencyContactEmail, setEmergencyContactEmail] = useState('');
 
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<{ phone?: string; contactPhone?: string; contactEmail?: string }>({});
+  const phoneRef = useRef<HTMLInputElement>(null);
+  const contactPhoneRef = useRef<HTMLInputElement>(null);
+  const contactEmailRef = useRef<HTMLInputElement>(null);
 
   const checkStatus = useCallback(() => fetch('/api/profile/onboarding-status')
     .then(async (res) => {
@@ -110,21 +113,21 @@ export default function OnboardingGate({ children }: { children: React.ReactNode
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (needsPhone && !isValidPhone(phone)) {
-      setError(PHONE_ERROR);
-      return;
-    }
-    if (needsEmergencyContact && !isValidPhone(emergencyContactPhone)) {
-      setError(`Emergency contact: ${PHONE_ERROR}`);
-      return;
-    }
-    if (needsEmergencyContact && emergencyContactEmail.trim() && !isValidEmail(emergencyContactEmail)) {
-      setError("That emergency contact email doesn't look right.");
+    const errors = {
+      phone: needsPhone && !isValidPhone(phone) ? PHONE_ERROR : undefined,
+      contactPhone: needsEmergencyContact && !isValidPhone(emergencyContactPhone) ? PHONE_ERROR : undefined,
+      contactEmail: needsEmergencyContact && emergencyContactEmail.trim() && !isValidEmail(emergencyContactEmail)
+        ? "That email doesn't look right."
+        : undefined,
+    };
+    setFieldErrors(errors);
+    const firstBroken = errors.phone ? phoneRef : errors.contactPhone ? contactPhoneRef : errors.contactEmail ? contactEmailRef : null;
+    if (firstBroken) {
+      firstBroken.current?.focus();
       return;
     }
 
     setSaving(true);
-    setError('');
 
     try {
       const payload: Record<string, string> = {};
@@ -178,8 +181,10 @@ export default function OnboardingGate({ children }: { children: React.ReactNode
                 label="Your Phone Number"
                 description="Required for all adult participants."
                 placeholder="(555) 123-4567"
+                ref={phoneRef}
                 value={phone}
-                onChange={(e) => setPhone(e.currentTarget.value)}
+                error={fieldErrors.phone}
+                onChange={(e) => { setPhone(e.currentTarget.value); setFieldErrors((f) => ({ ...f, phone: undefined })); }}
                 required
               />
             )}
@@ -206,25 +211,23 @@ export default function OnboardingGate({ children }: { children: React.ReactNode
                     type="tel"
                     label="Contact Phone"
                     placeholder="(555) 987-6543"
+                    ref={contactPhoneRef}
                     value={emergencyContactPhone}
-                    onChange={(e) => setEmergencyContactPhone(e.currentTarget.value)}
+                    error={fieldErrors.contactPhone}
+                    onChange={(e) => { setEmergencyContactPhone(e.currentTarget.value); setFieldErrors((f) => ({ ...f, contactPhone: undefined })); }}
                     required
                   />
                   <TextInput
                     type="email"
                     label="Contact Email (optional)"
                     placeholder="jane@example.com"
+                    ref={contactEmailRef}
                     value={emergencyContactEmail}
-                    onChange={(e) => setEmergencyContactEmail(e.currentTarget.value)}
+                    error={fieldErrors.contactEmail}
+                    onChange={(e) => { setEmergencyContactEmail(e.currentTarget.value); setFieldErrors((f) => ({ ...f, contactEmail: undefined })); }}
                   />
                 </Stack>
               </Paper>
-            )}
-
-            {error && (
-              <Alert color="red" variant="light">
-                {error}
-              </Alert>
             )}
 
             <Box>

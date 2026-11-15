@@ -153,4 +153,42 @@ describe("facility-ops/visits page", () => {
     );
     await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Visit updated successfully." })));
   });
+
+  it("flags a departure before arrival on the edited row's input and does not save", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const fetchMock = mockFetchJson({ "/api/facility/visits": { visits } });
+    renderWithProviders(<AdminVisitsPage />);
+    await screen.findByText("Val Volunteer");
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const confirmModal = await screen.findByRole("dialog", { name: "Edit Past Visit Record" });
+    fireEvent.click(within(confirmModal).getByRole("button", { name: "Continue" }));
+    const departed = screen.getByLabelText("Departed");
+    fireEvent.change(departed, { target: { value: "2000-01-01T00:00" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(departed).toHaveAttribute("aria-invalid", "true");
+    expect(departed).toHaveFocus();
+    expect(screen.getByText("Departure time must be after arrival time")).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/facility/visits", expect.objectContaining({ method: "PATCH" }));
+  });
+
+  it("flags each missing field in Add Past Visit on its input and does not post", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const fetchMock = mockFetchJson({ "/api/facility/visits": { visits }, "/api/people/search": { people: [] } });
+    renderWithProviders(<AdminVisitsPage />);
+    await screen.findByText("Val Volunteer");
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Visit" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add Past Visit" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add Visit" }));
+
+    const person = within(dialog).getByRole("textbox", { name: "Person" });
+    expect(person).toHaveAttribute("aria-invalid", "true");
+    expect(person).toHaveFocus();
+    expect(within(dialog).getByLabelText("Arrived")).toHaveAttribute("aria-invalid", "true");
+    expect(within(dialog).getByLabelText("Departed")).toHaveAttribute("aria-invalid", "true");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/insert"))).toBe(false);
+    expect(notifications.show).not.toHaveBeenCalled();
+  });
 });

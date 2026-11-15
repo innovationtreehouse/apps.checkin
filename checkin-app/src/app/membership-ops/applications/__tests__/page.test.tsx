@@ -197,6 +197,37 @@ describe("AdminMembershipPage", () => {
         expect(screen.getByText("A board member can reset this review.")).toBeInTheDocument();
     });
 
+    it("flags the Lead field when a two-lead household's check is marked started with no lead picked", async () => {
+        setSession({ id: 99, householdId: 99, isBoardMember: true });
+        const twoLeads = {
+            ...rows[0],
+            orgMembership: {
+                ...rows[0].orgMembership,
+                household: {
+                    ...household("Awaiting Family", 1),
+                    householdMembers: [
+                        { id: 1, name: "Lead One", email: "lead@example.com", isHouseholdLead: true },
+                        { id: 2, name: "Lead Two", email: "lead2@example.com", isHouseholdLead: true },
+                    ],
+                },
+            },
+        };
+        const fetchMock = mockFetchJson({ "/api/membership-ops/applications": { processes: [twoLeads] } });
+        renderPage();
+        await screen.findByText("Awaiting Family");
+
+        fireEvent.click(screen.getByRole("button", { name: "Mark a lead's check started" }));
+        const dialog = await screen.findByRole("dialog", { name: "Mark a lead's check started" });
+        fireEvent.click(within(dialog).getByRole("button", { name: "Mark check started" }));
+
+        const lead = within(dialog).getByRole("textbox", { name: /Lead/ });
+        expect(lead).toHaveAttribute("aria-invalid", "true");
+        expect(lead).toHaveFocus();
+        expect(within(dialog).getByText("Pick a lead.")).toBeInTheDocument();
+        expect(notifications.show).not.toHaveBeenCalledWith(expect.objectContaining({ message: "Pick a lead." }));
+        expect(fetchMock.mock.calls.some(([url]) => String(url).includes("person-bg"))).toBe(false);
+    });
+
     it("drives the external-action, certify, and reset controls", async () => {
         setSession({ id: 99, householdId: 99, isBoardMember: true });
         mockFetchJson({
@@ -327,6 +358,7 @@ describe("AdminMembershipPage", () => {
         fireEvent.click(screen.getByRole("button", { name: "Dismiss: opened by mistake" }));
         const dialog = await screen.findByRole("dialog", { name: "Dismiss: opened by mistake" });
         fireEvent.click(within(dialog).getByRole("button", { name: "Dismiss" }));
+        expectReasonFlagged(dialog, "A reason is required to dismiss a check review.");
         expect(fetchMock.mock.calls.some(([url]) => String(url).includes("reviews/dismiss"))).toBe(false);
         fireEvent.change(within(dialog).getByRole("textbox", { name: /Reason/ }), { target: { value: "never took the check" } });
         fireEvent.click(within(dialog).getByRole("button", { name: "Dismiss" }));
