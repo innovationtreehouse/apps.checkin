@@ -183,7 +183,7 @@ describe("AdminMembershipPage", () => {
         mockFetchJson({ "/api/membership-ops/applications": { processes: rows } });
         renderPage();
         await screen.findByText("Payment Family");
-        expect(screen.queryByRole("button", { name: /Certify payment plan/ })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: /Activate without payment/ })).not.toBeInTheDocument();
     });
 
     it("offers no review reset or override to a sysadmin off the board", async () => {
@@ -218,7 +218,7 @@ describe("AdminMembershipPage", () => {
         fireEvent.click(within(markDialog).getByRole("button", { name: "Mark check started" }));
         await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Check marked started." })));
 
-        fireEvent.click(screen.getByRole("button", { name: /Certify payment plan/ }));
+        fireEvent.click(screen.getByRole("button", { name: /Activate without payment/ }));
         // Mantine's `required` prop appends a visible " *" to the label text.
         const certifyReasonInput = await screen.findByLabelText(/^Reason/);
         // The confirm button is disabled until a reason is entered.
@@ -257,7 +257,7 @@ describe("AdminMembershipPage", () => {
         expect(screen.queryByText("The contract is already signed.")).not.toBeInTheDocument();
 
         const readsBefore = boardReads();
-        fireEvent.click(screen.getByRole("button", { name: /Certify payment plan/ }));
+        fireEvent.click(screen.getByRole("button", { name: /Activate without payment/ }));
         fireEvent.change(await screen.findByLabelText(/^Reason/), { target: { value: "Paid by check" } });
         fireEvent.click(screen.getByRole("button", { name: "Certify" }));
         await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "This application is no longer awaiting payment." })));
@@ -277,17 +277,17 @@ describe("AdminMembershipPage", () => {
         renderPage();
         await screen.findByText("Payment Family");
 
-        fireEvent.click(screen.getByRole("button", { name: /Certify payment plan/ }));
+        fireEvent.click(screen.getByRole("button", { name: /Activate without payment/ }));
         fireEvent.change(await screen.findByLabelText(/^Reason/), { target: { value: "Paid by check" } });
         fireEvent.click(screen.getByRole("button", { name: "Certify" }));
         await waitFor(() => expect(certifies()).toBe(1));
-        const rowButton = screen.getByRole("button", { name: /Certify payment plan/ });
+        const rowButton = screen.getByRole("button", { name: /Activate without payment/ });
         expect(rowButton).toBeDisabled();
         fireEvent.click(rowButton);
         expect(certifies()).toBe(1);
 
         release(answer({ ok: true }));
-        await waitFor(() => expect(screen.getByRole("button", { name: /Certify payment plan/ })).toBeEnabled());
+        await waitFor(() => expect(screen.getByRole("button", { name: /Activate without payment/ })).toBeEnabled());
     });
 
     const startedReview = (personId: number) => ({
