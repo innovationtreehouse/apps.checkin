@@ -10,6 +10,7 @@ import { FINANCE_VIEWS_ROLES } from "@/lib/nav/sections/systemStatus";
 import {
   FINANCE_VIEWS_PAGE_SIZE,
   FINANCE_VIEW_KINDS,
+  financeViewEndpoint,
   financeViewRecordHref,
   financeViewSentence,
   type FinanceViewRow,
@@ -68,6 +69,10 @@ function FinanceViewsPanel() {
       <Text size="sm" c="dimmed">
         Who viewed finance records, newest first. Visible to the Board only.
       </Text>
+      <Text size="xs" c="dimmed">
+        Newer rows name records as Model:id (Expense:e_123); search that form to find them. Record kind
+        covers older rows only.
+      </Text>
       <Group gap="sm" align="end">
         <Select
           label="Person"
@@ -90,7 +95,7 @@ function FinanceViewsPanel() {
         />
         <TextInput
           label="Record id"
-          placeholder="id"
+          placeholder="id or Model:id"
           value={record}
           onChange={(e) => {
             setRecord(e.currentTarget.value);
@@ -124,7 +129,7 @@ function FinanceViewsPanel() {
                       <Text size="sm">{financeViewSentence(row, names.get(row.actorId))}</Text>
                       {row.recordIds.length > 0 && <RecordIds row={row} />}
                       <Text size="xs" c="dimmed">
-                        {row.endpoint}
+                        {financeViewEndpoint(row)}
                       </Text>
                     </Table.Td>
                   </Table.Tr>

@@ -76,10 +76,24 @@ export interface FinanceViewRow {
   viewedAt: string;
   actorId: number;
   role: string | null;
-  endpoint: string;
+  /** Null on a row that carries `calls`. */
+  endpoint: string | null;
   params: unknown;
   recordIds: string[];
-  rowCount: number;
+  /** Null on a row that carries `calls`; it counts its records in `recordCount`. */
+  rowCount: number | null;
+  recordCount: number | null;
+  /** Each merged call as `{ endpoint, path, query, role }`. */
+  calls: unknown;
+}
+
+/** The row's registry key: its own, else its first call's. */
+export function financeViewEndpoint(row: FinanceViewRow): string | null {
+  if (row.endpoint !== null) return row.endpoint;
+  if (!Array.isArray(row.calls)) return null;
+  const first: unknown = row.calls[0];
+  if (first === null || typeof first !== "object" || !("endpoint" in first)) return null;
+  return typeof first.endpoint === "string" ? first.endpoint : null;
 }
 
 // List endpoints whose every returned id is a record with its own page.
@@ -106,13 +120,15 @@ function pathId(params: unknown): string | null {
 
 /** The detail page a row's endpoint opens and the record it names, if it is one. */
 function detailRecord(row: FinanceViewRow): { page: string; id: string | null } | null {
+  const endpoint = financeViewEndpoint(row);
+  if (endpoint === null) return null;
   for (const d of DETAIL_PAGES) {
-    if (row.endpoint === d.endpoint) {
+    if (endpoint === d.endpoint) {
       // A copied donor-read row carries no params; its one record id is the record.
       const id = pathId(row.params) ?? (row.recordIds.length === 1 ? row.recordIds[0] : null);
       return { page: d.page, id };
     }
-    const concrete = d.concrete.exec(row.endpoint);
+    const concrete = d.concrete.exec(endpoint);
     if (concrete && row.recordIds.includes(concrete[1])) return { page: d.page, id: concrete[1] };
   }
   return null;
@@ -120,6 +136,8 @@ function detailRecord(row: FinanceViewRow): { page: string; id: string | null } 
 
 /** The page a record id opens, or null where no page shows that record. */
 export function financeViewRecordHref(row: FinanceViewRow, recordId: string): string | null {
+  // A row that carries `calls` names records as refs (`Receipt:r_1`), not page ids.
+  if (row.endpoint === null) return null;
   const list = LIST_PAGES[row.endpoint];
   if (list) return `${list}/${encodeURIComponent(recordId)}`;
   const detail = detailRecord(row);
@@ -137,15 +155,17 @@ const ROLE_LABELS: Record<string, string> = {
   isBackgroundCheckReviewer: "Background checks",
 };
 
-/** Where the records were seen: "on the finance queue", "on the needs attention page". */
+/** Where the records were seen: " on the finance queue", " on the needs attention page"; empty when unknown. */
 function place(row: FinanceViewRow): string {
-  if (detailRecord(row)) return "on the record's page";
-  const segments = row.endpoint.replace(/^GET /, "").split("/").filter(Boolean).slice(1);
+  const endpoint = financeViewEndpoint(row);
+  if (endpoint === null) return "";
+  if (detailRecord(row)) return " on the record's page";
+  const segments = endpoint.replace(/^GET /, "").split("/").filter(Boolean).slice(1);
   const last = segments[segments.length - 1] ?? "";
-  if (last.startsWith("[")) return "on the record's page";
+  if (last.startsWith("[")) return " on the record's page";
   const words = last.replace(/-/g, " ");
-  if (segments.length === 1) return `on the ${words} list`;
-  return /(queue|list)$/.test(words) ? `on the ${words}` : `on the ${words} page`;
+  if (segments.length === 1) return ` on the ${words} list`;
+  return /(queue|list)$/.test(words) ? ` on the ${words}` : ` on the ${words} page`;
 }
 
 const DATE = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" });
@@ -155,8 +175,10 @@ const TIME = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digi
 export function financeViewSentence(row: FinanceViewRow, name: string | undefined): string {
   const who = name ?? `Person #${row.actorId}`;
   const role = row.role ? ` (${ROLE_LABELS[row.role] ?? row.role})` : "";
-  const kind = financeViewKindOf(row.endpoint);
-  const noun = row.rowCount === 1 ? (kind?.one ?? "finance record") : (kind?.many ?? "finance records");
+  const endpoint = financeViewEndpoint(row);
+  const kind = endpoint === null ? null : financeViewKindOf(endpoint);
+  const count = row.rowCount ?? row.recordCount ?? row.recordIds.length;
+  const noun = count === 1 ? (kind?.one ?? "finance record") : (kind?.many ?? "finance records");
   const at = new Date(row.viewedAt);
-  return `${who}${role} viewed ${row.rowCount} ${noun} ${place(row)}, ${DATE.format(at)} ${TIME.format(at)}`;
+  return `${who}${role} viewed ${count} ${noun}${place(row)}, ${DATE.format(at)} ${TIME.format(at)}`;
 }
