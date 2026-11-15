@@ -4,7 +4,7 @@ import { useViewer } from "@checkin/component-ui";
 import { Alert, Anchor, Badge, Button, Checkbox, Group, NumberInput, Paper, Select, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { act, api, useLoad, when } from "../components/api";
 import { formatGtinDisplay } from "@checkin/gtin";
-import { formatCents } from "@checkin/money";
+import { dollarsToCents, formatCents } from "@checkin/money";
 import { LINE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
 import { LoadError, QuickBooksListsRefresh } from "@checkin/component-ui";
 import { IN_KIND_STATE as STATE, type InKindSource, type WaitingOn } from "../components/inKindState";
@@ -90,7 +90,7 @@ function DecidePanel({ item, buckets, onDone }: { item: QueueItem; buckets: Buck
   const needsValues = item.source === "manual" && !accepted;
   // The large-value warning's threshold, as the server reads it; until it loads, the server's flag stands.
   const settings = useLoad<{ capitalLineItemThresholdCents: number | null }>(needsValues ? "/api/expense/org-settings" : null);
-  const valueCents = (lineId: number) => Math.round(Number(values[lineId] || 0) * 100);
+  const valueCents = (lineId: number) => dollarsToCents(values[lineId] || 0);
   const allValued = item.lines.every((l) => valueCents(l.id) > 0);
   // An unset threshold warns on every gift, as the server does.
   const threshold = settings.data ? (settings.data.capitalLineItemThresholdCents ?? 0) : undefined;
