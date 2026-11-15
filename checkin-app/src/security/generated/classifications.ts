@@ -170,6 +170,7 @@ export const classifications = {
         shopifyReconcileCursorAt: 'internal',
         scholarshipDenialGraceDays: 'public',
         releasedLibraries: 'public',
+        programStoreClosedAt: 'internal',
         updatedAt: 'internal',
     },
     EmailTemplate: {

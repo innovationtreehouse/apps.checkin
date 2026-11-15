@@ -825,6 +825,9 @@ model BoardSettings {
   /// entries show to everyone with access, not just board members. UI-only.
   /// @sensitivity:public
   releasedLibraries          String[]  @default([])
+  /// When the Board closed the store to program seats, so seats are claimed in the
+  /// app only. NULL = the store sells seats. @sensitivity:internal
+  programStoreClosedAt       DateTime?
   /// @sensitivity:internal
   updatedAt                  DateTime  @updatedAt
   /// Unused column awaiting its drop. Hidden from the client so no code reads or
