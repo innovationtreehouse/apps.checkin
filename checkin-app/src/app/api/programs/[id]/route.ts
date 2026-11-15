@@ -60,7 +60,7 @@ type RosterAge = { personId: number; age?: number | null };
 type ProgramBag = { Program: ProgramBody & { participants?: { personId: number }[] }; ProgramRosterAge: RosterAge[] };
 
 // Each roster row carries `age` only where the stripper kept it: null is an unknown date of birth.
-function withRosterAges({ Program, ProgramRosterAge }: ProgramBag): ProgramBody {
+function withRosterAges({ Program, ProgramRosterAge }: ProgramBag): ProgramBag['Program'] {
     const ages = new Map(ProgramRosterAge.filter(r => 'age' in r).map(r => [r.personId, r.age ?? null]));
     if (!Program.participants) return Program;
     return {
