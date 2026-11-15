@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { lineFormBody, type LineFormFields } from "../../lib/line-form";
+import { lineFormBody, lineFormStart, type LineFormFields } from "../../lib/line-form";
 import { AssociateBodySchema, ProposeBodySchema } from "../../services/lineItemService";
 
 const complete: LineFormFields = {
@@ -37,5 +37,18 @@ describe("lineFormBody", () => {
     ["no usage behavior", { usage: null }],
   ])("gives no propose body with %s", (_, missing) => {
     expect(lineFormBody("propose", { ...complete, ...missing })).toBeNull();
+  });
+});
+
+describe("lineFormStart", () => {
+  it("saving a decided line unchanged keeps its part and conversion factor", () => {
+    const start = lineFormStart({ assignedGtin13: "0022222222220", proposedName: null, conversionFactor: 12 });
+    expect(lineFormBody("associate", start)).toEqual({ gtin13: "0022222222220", conversionFactor: 12 });
+  });
+
+  it("keeps the name and factor when a proposed line is re-proposed", () => {
+    const start = lineFormStart({ assignedGtin13: null, proposedName: "Towels", conversionFactor: 4 });
+    expect(lineFormBody("propose", { ...start, categoryId: "3", subcategoryId: "12", usage: "Durable" }))
+      .toMatchObject({ proposedName: "Towels", conversionFactor: 4 });
   });
 });
