@@ -1,18 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import Link from "next/link";
 import { Anchor, Box, Button, Center, Group, Loader, Select, Stack, Table, Text, TextInput } from "@mantine/core";
-import { LoadError, useSetUrlFilters, useUrlFilter, useUrlPage } from "@checkin/component-ui";
+import { LoadError, useSetUrlFilters, useUrlBefore, useUrlFilter } from "@checkin/component-ui";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { useLoad } from "@/lib/api";
 import { FINANCE_VIEWS_ROLES } from "@/lib/nav/sections/systemStatus";
 import {
   FINANCE_VIEWS_PAGE_SIZE,
-  FINANCE_VIEW_KINDS,
-  financeViewEndpoint,
+  FINANCE_VIEW_MODELS,
+  financeViewCursor,
+  financeViewPlace,
   financeViewRecordHref,
-  financeViewSentence,
+  financeViewRecords,
+  financeViewTime,
+  financeViewViewer,
+  isFinanceViewModel,
   type FinanceViewRow,
 } from "@/lib/finance/financeViewKinds";
 
@@ -21,7 +25,7 @@ interface FinanceViewsResponse {
   Person: { id: number; name: string }[];
 }
 
-const KIND_OPTIONS = FINANCE_VIEW_KINDS.map((k) => ({ value: k.key, label: k.label }));
+const KIND_OPTIONS = FINANCE_VIEW_MODELS.map((m) => ({ value: m, label: m }));
 
 // The /system-status layout admits sysadmins too; this tab is the Board's alone (B11).
 export default function FinanceViewsPage() {
@@ -38,7 +42,7 @@ export default function FinanceViewsPage() {
 }
 
 function FinanceViewsPanel() {
-  const [page, setPage] = useUrlPage();
+  const [before, setBefore] = useUrlBefore();
   const [person, setPerson] = useUrlFilter("person");
   const [kind, setKind] = useUrlFilter("kind");
   const [from, setFrom] = useUrlFilter("from");
@@ -47,9 +51,10 @@ function FinanceViewsPanel() {
   // Typed text stays out of the URL; a change still starts again on page 1.
   const [record, setRecord] = useState("");
 
-  const qs = new URLSearchParams({ page: String(page) });
+  const qs = new URLSearchParams();
+  if (before) qs.set("before", before);
   if (person) qs.set("person", person);
-  if (kind) qs.set("kind", kind);
+  if (isFinanceViewModel(kind)) qs.set("kind", kind);
   if (record.trim()) qs.set("record", record.trim());
   if (from) qs.set("from", from);
   if (to) qs.set("to", to);
@@ -62,7 +67,8 @@ function FinanceViewsPanel() {
     .map((p) => ({ value: String(p.id), label: p.name }))
     .sort((a, b) => a.label.localeCompare(b.label));
   const rows = (data?.FinanceViewLog ?? []).slice(0, FINANCE_VIEWS_PAGE_SIZE);
-  const hasNext = (data?.FinanceViewLog.length ?? 0) > FINANCE_VIEWS_PAGE_SIZE;
+  const hasOlder = (data?.FinanceViewLog.length ?? 0) > FINANCE_VIEWS_PAGE_SIZE;
+  const last = rows[rows.length - 1];
 
   return (
     <Stack gap="sm">
@@ -70,8 +76,8 @@ function FinanceViewsPanel() {
         Who viewed finance records, newest first. Visible to the Board only.
       </Text>
       <Text size="xs" c="dimmed">
-        Newer rows name records as Model:id (Expense:e_123); search that form to find them. Record kind
-        covers older rows only.
+        Each record is named as Model:id (Expense:e_123), with the sensitive fields the viewer was sent.
+        Rows from before page views name bare ids, which the record type filter does not match.
       </Text>
       <Group gap="sm" align="end">
         <Select
@@ -85,13 +91,14 @@ function FinanceViewsPanel() {
           w={220}
         />
         <Select
-          label="Record kind"
+          label="Record type"
           placeholder="All"
           clearable
+          searchable
           data={KIND_OPTIONS}
-          value={kind || null}
+          value={isFinanceViewModel(kind) ? kind : null}
           onChange={(v) => setKind(v ?? "")}
-          w={180}
+          w={220}
         />
         <TextInput
           label="Record id"
@@ -99,7 +106,7 @@ function FinanceViewsPanel() {
           value={record}
           onChange={(e) => {
             setRecord(e.currentTarget.value);
-            if (page > 1) setFilters({});
+            if (before) setFilters({});
           }}
           w={200}
         />
@@ -126,11 +133,7 @@ function FinanceViewsPanel() {
                 {rows.map((row) => (
                   <Table.Tr key={row.id}>
                     <Table.Td>
-                      <Text size="sm">{financeViewSentence(row, names.get(row.actorId))}</Text>
-                      {row.recordIds.length > 0 && <RecordIds row={row} />}
-                      <Text size="xs" c="dimmed">
-                        {financeViewEndpoint(row)}
-                      </Text>
+                      <Entry row={row} name={names.get(row.actorId)} />
                     </Table.Td>
                   </Table.Tr>
                 ))}
@@ -138,13 +141,17 @@ function FinanceViewsPanel() {
             </Table>
             </Box>
           )}
-          {(page > 1 || hasNext) && (
+          {(before || hasOlder) && (
             <Group justify="center">
-              <Button variant="default" size="xs" disabled={stale || page === 1} onClick={() => setPage(page - 1)}>
-                Newer
+              <Button variant="default" size="xs" disabled={stale || !before} onClick={() => setBefore("")}>
+                Newest
               </Button>
-              <Text size="sm">Page {page}</Text>
-              <Button variant="default" size="xs" disabled={stale || !hasNext} onClick={() => setPage(page + 1)}>
+              <Button
+                variant="default"
+                size="xs"
+                disabled={stale || !hasOlder || !last}
+                onClick={() => last && setBefore(financeViewCursor(last))}
+              >
                 Older
               </Button>
             </Group>
@@ -155,22 +162,36 @@ function FinanceViewsPanel() {
   );
 }
 
-function RecordIds({ row }: { row: FinanceViewRow }) {
+/** "Pat Lee (Finance) viewed Expense:e_1 (submitterId), Receipt:r_9 on /expense/expenses/e_1, 6 Nov 2026 14:05". */
+function Entry({ row, name }: { row: FinanceViewRow; name: string | undefined }) {
+  const records = financeViewRecords(row);
+  const place = financeViewPlace(row);
   return (
-    <Group gap={6} wrap="wrap">
-      {row.recordIds.map((id) => {
-        const href = financeViewRecordHref(row, id);
-        return href ? (
-          <Anchor key={id} component={Link} href={href} size="xs">
-            {id}
-          </Anchor>
-        ) : (
-          <Text key={id} span size="xs">
-            {id}
-          </Text>
-        );
-      })}
-    </Group>
+    <Text size="sm">
+      {financeViewViewer(row, name)} viewed{" "}
+      {records.length === 0
+        ? "no named record"
+        : records.map((r, i) => (
+            <Fragment key={r.ref}>
+              {i > 0 && ", "}
+              <RecordRef recordRef={r.ref} />
+              {r.fields.length > 0 && ` (${r.fields.join(", ")})`}
+            </Fragment>
+          ))}
+      {place && ` ${place}`}, {financeViewTime(row)}
+    </Text>
+  );
+}
+
+/** A record links to its page where the app has one, and is plain text otherwise. */
+function RecordRef({ recordRef }: { recordRef: string }) {
+  const href = financeViewRecordHref(recordRef);
+  return href ? (
+    <Anchor component={Link} href={href} inherit>
+      {recordRef}
+    </Anchor>
+  ) : (
+    <>{recordRef}</>
   );
 }
 

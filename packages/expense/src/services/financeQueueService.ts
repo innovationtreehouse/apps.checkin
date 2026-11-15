@@ -194,8 +194,8 @@ function rowsOf(items: Item[], tab: FinanceQueueTabKey): FinanceQueueRow[] {
     }
     const e = it.expense;
     const row = e
-      ? { expenseId: e.id, vendorName: e.vendorName, date: e.receiptDate ?? e.submittedAt.toISOString().slice(0, 10), amountCents: e.receiptTotalCents, currency: e.currency }
-      : { expenseId: null, vendorName: it.intake!.vendorName, date: it.intake!.date, amountCents: it.intake!.amountCents, currency: it.intake!.currency, failureReason: it.intake!.failureReason };
+      ? { expenseId: e.id, receiptId: null, vendorName: e.vendorName, date: e.receiptDate ?? e.submittedAt.toISOString().slice(0, 10), amountCents: e.receiptTotalCents, currency: e.currency }
+      : { expenseId: null, receiptId: it.intake!.receiptId, vendorName: it.intake!.vendorName, date: it.intake!.date, amountCents: it.intake!.amountCents, currency: it.intake!.currency, failureReason: it.intake!.failureReason };
     rows.set(key, { row: { ...row, reasons: [it.reason] }, since: it.waitingSince });
   }
   const sorted = [...rows.values()].map(({ row, since }) => ({ row: { ...row, reasons: [...row.reasons].sort((a, b) => reasonOrder(a.code) - reasonOrder(b.code)) }, since }));

@@ -211,9 +211,12 @@ missed a row stored at a different time of day.
   shows its last page for a page past the end; a list without one shows the
   empty page with its pager.
 - **`limit` stays out of the URL** while no screen lets anyone pick a page size.
-- **Read and write it with `@checkin/component-ui`'s `useUrlPage`,
-  `useUrlFilter`, `useUrlChoice` and `useSetUrlFilters`**, never `useState`
-  for the page or a filter.
+- **A list that grows at its head while it is read pages by position, not
+  number.** It keeps `before`, the last row shown, in place of `page`, so a row
+  added between two pages never repeats on the next. A filter change drops it.
+- **Read and write it with `@checkin/component-ui`'s `useUrlPage` (or
+  `useUrlBefore`), `useUrlFilter`, `useUrlChoice` and `useSetUrlFilters`**,
+  never `useState` for the page or a filter.
 
 ---
 

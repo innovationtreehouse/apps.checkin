@@ -46,6 +46,7 @@ function signIn(flags: Partial<Record<Flag, boolean>>) {
 
 const ROW = {
     expenseId: 'e-1',
+    receiptId: null,
     vendorName: 'Acme',
     date: '2026-10-20',
     amountCents: 234000,
@@ -69,6 +70,7 @@ const ctx: CallerContext = {
 // A stored payload that never became an expense; its reason is the stored error text.
 const INTAKE_ROW = {
     expenseId: null,
+    receiptId: 'r-failed',
     vendorName: 'Bolt',
     date: '2026-10-02',
     amountCents: 900,
