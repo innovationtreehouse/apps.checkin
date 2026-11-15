@@ -34,20 +34,6 @@ online-store payouts (Income) and donations (Donations).
   restriction given in conversation needs the donor's written confirmation.
   — *Financial Policy, Art. VI §VI.2*
 
-### Donor privacy
-
-- Only the Board and Finance see full donor information, anonymous donors
-  included. — *Donor Privacy and Rights Policy, Art. V §V.02*
-
-- The Board and Finance roles are granted only to a Key Volunteer who has
-  signed the current agreement; the check is at the grant. — *Donor Privacy
-  and Rights Policy, Art. V §V.02*
-
-- The app records no donor's anonymity choice, so it shows donors to no one
-  beyond the Board and Finance; a report, export or list that would show them
-  to anyone else needs that choice first. — *Donor Privacy and Rights Policy,
-  Art. II–III*
-
 ---
 
 ## Assumptions
@@ -366,7 +352,11 @@ employer matches, paid in batches) and gifts of goods (in-kind).
   who submits a receipt for a gift of goods records its donor, and can say it
   isn't a gift after all.  [Decision]
 
-- Only finance and the board can see who gave.  [Decision — *Principle: least privilege*]
+- Only finance and the board can see who gave, anonymous donors included.  [Decision — *Policy: Donor Privacy and Rights Policy, Art. V §V.02*; *Principle: least privilege*]
+
+- The app records no donor's anonymity choice, so it shows donors to no one
+  beyond finance and the board. A report, export or list that would show them
+  to anyone else needs that choice recorded first.  [Decision — deliberate limit; *Policy: Donor Privacy and Rights Policy, Art. II–III*]
 
 - Every view of finance records that shows money or a person tied to it is
   recorded, other than a person's view of their own or their household's, each
