@@ -25,7 +25,7 @@ describeDb("finance queue — expenses tab", () => {
     const id = await seedExpense({ state: "capital_review", taxCents: 120, needsReimbursement: true });
     expect(await codes(FINANCE, "expenses", id)).toEqual(["CAPITAL_REVIEW", "REIMBURSEE_TO_NAME", "TAX_NOT_REVIEWED"]);
     const [row] = await financeQueueRows(FINANCE, "expenses");
-    expect(row).toMatchObject({ expenseId: id, vendorName: "Acme", amountCents: 100, currency: "USD" });
+    expect(row).toMatchObject({ expenseId: id, receiptId: null, vendorName: "Acme", amountCents: 100, currency: "USD" });
     expect(row.reasons.find((x) => x.code === "TAX_NOT_REVIEWED")?.text).toBe("Tax $1.20 not reviewed on the receipt");
   });
 
@@ -40,7 +40,7 @@ describeDb("finance queue — expenses tab", () => {
       data: { orgId: ORG, receiptId: "r-failed", status: "failed", failureReason: "boom", payloadJson: JSON.stringify({ vendorName: "Bolt", receiptTotalCents: 900, receiptDate: "2026-10-02", currency: "USD" }) },
     });
     const [row] = await financeQueueRows(FINANCE, "expenses");
-    expect(row).toMatchObject({ expenseId: null, vendorName: "Bolt", amountCents: 900, date: "2026-10-02", failureReason: "boom" });
+    expect(row).toMatchObject({ expenseId: null, receiptId: "r-failed", vendorName: "Bolt", amountCents: 900, date: "2026-10-02", failureReason: "boom" });
     expect(row.reasons).toEqual([{ code: "INTAKE_FAILED", text: "Receipt didn't become an expense", href: "/receipts/r-failed" }]);
   });
 

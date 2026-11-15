@@ -62,6 +62,8 @@ export interface FinanceQueueReason {
 /** GET /api/expense/finance-queue?tab=…: one record waiting on finance or the Board. A failed intake has no expense. */
 export interface FinanceQueueRow {
   expenseId: string | null;
+  /** A failed intake's receipt, the row's record while it has no expense; null on an expense row. */
+  receiptId: string | null;
   vendorName: string | null;
   date: string | null;
   amountCents: number;

@@ -1,7 +1,7 @@
 /**
  * @jest-environment node
  *
- * Finance view log contract (docs/in-design/FINANCE_VIEW_RECORD_IDS.md): a GET response
+ * Finance view log contract (the finance-view rule in docs/rules/revenue.md): a GET response
  * is logged when the stripped bag carries a marked field on a row that is not the
  * viewer's own. The log names each record as `Model:id` with the marked field names it
  * was sent. The writer (merging, windows, repeats) is covered by its own tests.
@@ -291,6 +291,16 @@ describe('record names', () => {
         const declarations = getRoute('GET /api/receipts/[id]/audit-logs')?.financeView?.records ?? [];
         expect(rowRecords('ReceiptAuditLog', { id: 41, receiptId: 'r9', valueAfter: '1200' }, declarations, { id: 'r9' })).toEqual([
             { ref: 'Receipt:r9', fields: ['valueAfter'] },
+        ]);
+    });
+
+    it('names a finance-queue intake row by its receipt, and an expense row by its expense', () => {
+        const declarations = getRoute('GET /api/expense/finance-queue')?.financeView?.records ?? [];
+        expect(rowRecords('FinanceQueueRow', { expenseId: null, receiptId: 'r-failed', amountCents: 900 }, declarations, {})).toEqual([
+            { ref: 'Receipt:r-failed', fields: ['amountCents'] },
+        ]);
+        expect(rowRecords('FinanceQueueRow', { expenseId: 'e_1', receiptId: null, amountCents: 900 }, declarations, {})).toEqual([
+            { ref: 'Expense:e_1', fields: ['amountCents'] },
         ]);
     });
 
