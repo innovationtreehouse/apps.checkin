@@ -10,6 +10,7 @@ import Anthropic, {
 } from "@anthropic-ai/sdk";
 import type { FailureKind } from "@checkin/component-kit";
 import { DEFAULT_CURRENCY } from "@checkin/receipt-types";
+import { ZodError } from "zod";
 import { OCR_FILE_REFUSED, OcrDataSchema, type OcrData, type OcrProvider, type OcrResult } from "../contract";
 
 const MODEL = "claude-opus-5-5";
@@ -171,11 +172,17 @@ export function createAnthropicOcr(apiKey: string | undefined): OcrProvider {
         }
         if (typeof raw !== "object" || raw === null) return { success: false, kind: "data", error: "the reader's answer could not be understood" };
 
-        const parsed = OcrDataSchema.safeParse(mapRawToOcrDataSafe(raw as Record<string, unknown>));
-        if (!parsed.success || !complete(parsed.data)) {
-          return { success: false, kind: "data", error: "no line items were found" };
+        let data: OcrData;
+        try {
+          data = mapRawToOcrData(raw as Record<string, unknown>);
+        } catch (err) {
+          // Field paths only: the values are receipt text, which is personal.
+          const fields = err instanceof ZodError ? err.issues.map((i) => i.path.map(String).join(".")) : [];
+          console.error("[receipt] OCR answer failed the schema:", { fields });
+          return { success: false, kind: "data", error: "the reader's answer had a field we could not use" };
         }
-        return { success: true, data: parsed.data };
+        if (!complete(data)) return { success: false, kind: "data", error: "no line items were found" };
+        return { success: true, data };
       } catch (err) {
         const kind = ocrKind(err);
         // The API's message can echo the request; log only what identifies the call.
@@ -185,14 +192,6 @@ export function createAnthropicOcr(apiKey: string | undefined): OcrProvider {
       }
     },
   };
-}
-
-function mapRawToOcrDataSafe(raw: Record<string, unknown>): OcrData | null {
-  try {
-    return mapRawToOcrData(raw);
-  } catch {
-    return null;
-  }
 }
 
 /** Deterministic local adapter (CHECKIN_ENV=local, flow tests, dev seed). */
