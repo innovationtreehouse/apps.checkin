@@ -6,6 +6,7 @@ import { alertAddressCheck, getConfigHealth } from "@/lib/configHealth";
 import { getCronJobStatuses } from "@/lib/cronRuns";
 import { getActiveIncidents } from "@/lib/opsIncidentView";
 import { getProblems } from "@/lib/problems";
+import { legacyCheckFlagCheck } from "@/lib/membership/legacyCheckFlagHealth";
 import { getQuickBooksHealth } from "@/lib/quickbooks/health";
 import { getReceiptMailboxHealth } from "@/lib/receipt/mailboxHealth";
 
@@ -20,7 +21,8 @@ export const dynamic = "force-dynamic";
  * only the counts; this is the detail view):
  *   - `checks`   — static env/config presence (lib/configHealth.ts), the alert address, then
  *                  the receipt mailbox and QuickBooks rows (lib/receipt/mailboxHealth.ts,
- *                  lib/quickbooks/health.ts), which read live and so stay off the badge.
+ *                  lib/quickbooks/health.ts) and the legacy check-flag count
+ *                  (lib/membership/legacyCheckFlagHealth.ts), which read live and so stay off the badge.
  *   - `cronJobs` — last successful run per cron sweep (lib/cronRuns.ts). Rides on this
  *                  route rather than its own: same page, same gate, same question, and a
  *                  new registered route would need its registry entry landed separately.
@@ -33,13 +35,14 @@ export const dynamic = "force-dynamic";
 export const GET = withAuth({}, async (_req, auth) => {
     if (auth.type !== "session") return apiError("Unauthorized", 401);
     if (!(auth.user.isSysadmin || auth.user.isBoardMember)) return apiError("Forbidden", 403);
-    const [settings, quickBooks, mailbox, cronJobs, incidents, problems] = await Promise.all([
+    const [settings, quickBooks, mailbox, legacyCheckFlag, cronJobs, incidents, problems] = await Promise.all([
         prisma.boardSettings.findUnique({ where: { id: 1 }, select: { alertEmailAddress: true } }),
         getQuickBooksHealth(),
         getReceiptMailboxHealth(),
+        legacyCheckFlagCheck(),
         getCronJobStatuses(),
         getActiveIncidents(),
         getProblems(),
     ]);
-    return NextResponse.json({ checks: [...getConfigHealth(), alertAddressCheck(settings?.alertEmailAddress), ...mailbox, ...quickBooks], cronJobs, incidents, problems });
+    return NextResponse.json({ checks: [...getConfigHealth(), alertAddressCheck(settings?.alertEmailAddress), ...mailbox, ...quickBooks, legacyCheckFlag], cronJobs, incidents, problems });
 });
