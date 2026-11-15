@@ -83,6 +83,18 @@ describe("FinanceViewsPage", () => {
         expect(screen.queryByRole("link")).not.toBeInTheDocument();
     });
 
+    it("says beside the result that older rows escape a record type", async () => {
+        setSession({ id: 2, isBoardMember: true });
+        mockFetchJson({ "/api/system-status/finance-views": { FinanceViewLog: [logRow], Person: [] } });
+        renderWithProviders(<FinanceViewsPage />);
+        await screen.findByText(/^Person #12 \(Finance\) viewed/);
+        expect(screen.queryByText(/so a record type does not match them/)).not.toBeInTheDocument();
+
+        setSearchParams("kind=Expense");
+        renderWithProviders(<FinanceViewsPage />);
+        expect(await screen.findByText(/so a record type does not match them/)).toBeInTheDocument();
+    });
+
     it("says so when nothing matches", async () => {
         setSession({ id: 2, isBoardMember: true });
         mockFetchJson({ "/api/system-status/finance-views": { FinanceViewLog: [], Person: [] } });

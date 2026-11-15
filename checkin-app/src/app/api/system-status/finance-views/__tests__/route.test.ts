@@ -132,11 +132,11 @@ describe("GET /api/system-status/finance-views", () => {
         expect(values[0]).toBe(12);
     });
 
-    it("filters by record id through array containment", async () => {
+    it("searches a record id as the bare id and every model's ref, through array overlap", async () => {
         await get("?record=%20Expense:e_1%20");
         const { text, values } = query();
-        expect(text).toContain('"recordIds" @> ARRAY[$1]::text[]');
-        expect(values[0]).toBe("Expense:e_1");
+        expect(text).toMatch(/"recordIds" && ARRAY\[\$1(,\$\d+)+\]::text\[\]/);
+        expect(values).toEqual(expect.arrayContaining(["Expense:e_1", "e_1", "Receipt:e_1", "QuickBooks.Transaction:e_1"]));
     });
 
     it("filters by an inclusive day range on viewedAt", async () => {

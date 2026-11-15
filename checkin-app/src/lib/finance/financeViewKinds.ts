@@ -52,6 +52,16 @@ export function parseRecordRef(ref: string): { model: FinanceViewModelName; id: 
   return isFinanceViewModel(model) && id.length > 0 ? { model, id } : null;
 }
 
+/**
+ * The `recordIds` values a record search matches: what was typed, the bare id, and that id under
+ * every model. `e_123` and `Expense:e_123` each find an older row's bare `e_123` and a newer row's
+ * `Expense:e_123`.
+ */
+export function recordSearchRefs(text: string): string[] {
+  const id = parseRecordRef(text)?.id ?? text;
+  return [...new Set([text, id, ...FINANCE_VIEW_MODELS.map((m) => `${m}:${id}`)])];
+}
+
 /** The page a record ref opens, or null where the app has no page for that record. */
 export function financeViewRecordHref(ref: string): string | null {
   const parsed = parseRecordRef(ref);

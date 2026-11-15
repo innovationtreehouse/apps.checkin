@@ -12,6 +12,7 @@ import {
   financeViewViewer,
   parseFinanceViewCursor,
   parseRecordRef,
+  recordSearchRefs,
   type FinanceViewRow,
 } from "@/lib/finance/financeViewKinds";
 
@@ -64,6 +65,28 @@ describe("parseRecordRef", () => {
     expect(parseRecordRef("unnamed:FinanceQueueRow")).toBeNull();
     expect(parseRecordRef("r_1")).toBeNull();
     expect(parseRecordRef("Expense:")).toBeNull();
+  });
+});
+
+describe("recordSearchRefs", () => {
+  it("searches a bare id as itself and under every model", () => {
+    const refs = recordSearchRefs("e_123");
+    expect(refs).toContain("e_123");
+    expect(refs).toContain("Expense:e_123");
+    expect(refs).toContain("QuickBooks.Transaction:e_123");
+    expect(refs).toHaveLength(FINANCE_VIEW_MODELS.length + 1);
+  });
+
+  it("searches a ref as the ref, its bare id, and that id under every model", () => {
+    const refs = recordSearchRefs("Expense:e_123");
+    expect(refs).toContain("e_123");
+    expect(refs).toContain("Receipt:e_123");
+    expect(refs).toHaveLength(FINANCE_VIEW_MODELS.length + 1);
+  });
+
+  it("keeps a composite id whole, and searches an unknown prefix as typed", () => {
+    expect(recordSearchRefs("12:345")).toContain("ProgramParticipant:12:345");
+    expect(recordSearchRefs("unnamed:FinanceQueueRow")).toContain("unnamed:FinanceQueueRow");
   });
 });
 

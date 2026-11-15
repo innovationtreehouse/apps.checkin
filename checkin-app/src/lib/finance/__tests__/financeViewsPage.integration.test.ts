@@ -6,7 +6,7 @@
  * `before` marker names, so a view logged between two pages never repeats a row.
  */
 import prisma from "@/lib/prisma";
-import { financeViewCursor, parseFinanceViewCursor } from "@/lib/finance/financeViewKinds";
+import { financeViewCursor, parseFinanceViewCursor, recordSearchRefs } from "@/lib/finance/financeViewKinds";
 import { financeViewsPageQuery, type FinanceViewsFilter } from "@/lib/finance/financeViewsPage";
 
 const TAG = "finance-views-page-test";
@@ -79,11 +79,13 @@ describe("financeViewsPageQuery (integration)", () => {
         expect(await pageIds({ model: "QuickBooks.Transaction" }, 10)).toEqual([qb.id]);
     });
 
-    test("the record filter matches one exact ref, and the person filter one viewer", async () => {
-        const mine = await logView("2026-11-06T10:00:00.000Z", ["Receipt:r_9"]);
-        await logView("2026-11-06T11:00:00.000Z", ["Receipt:r_90"]);
-        await logView("2026-11-06T12:00:00.000Z", ["Receipt:r_9"], OTHER_ACTOR);
+    test("a record search finds an older row's bare id and a newer row's ref, typed either way", async () => {
+        const older = await logView("2026-11-06T10:00:00.000Z", ["e_123"]);
+        const newer = await logView("2026-11-06T11:00:00.000Z", ["Expense:e_123", "Receipt:r_9"]);
+        await logView("2026-11-06T12:00:00.000Z", ["Expense:e_1234", "e_12"]);
+        await logView("2026-11-06T13:00:00.000Z", ["Expense:e_123"], OTHER_ACTOR);
 
-        expect(await pageIds({ record: "Receipt:r_9" }, 10)).toEqual([mine.id]);
+        expect(await pageIds({ records: recordSearchRefs("e_123") }, 10)).toEqual([newer.id, older.id]);
+        expect(await pageIds({ records: recordSearchRefs("Expense:e_123") }, 10)).toEqual([newer.id, older.id]);
     });
 });

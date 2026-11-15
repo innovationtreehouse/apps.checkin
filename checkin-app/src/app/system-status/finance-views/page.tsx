@@ -77,7 +77,7 @@ function FinanceViewsPanel() {
       </Text>
       <Text size="xs" c="dimmed">
         Each record is named as Model:id (Expense:e_123), with the sensitive fields the viewer was sent.
-        Rows from before page views name bare ids, which the record type filter does not match.
+        Rows from before page views name bare ids; a record id search finds both.
       </Text>
       <Group gap="sm" align="end">
         <Select
@@ -102,7 +102,7 @@ function FinanceViewsPanel() {
         />
         <TextInput
           label="Record id"
-          placeholder="id or Model:id"
+          placeholder="e_123 or Expense:e_123"
           value={record}
           onChange={(e) => {
             setRecord(e.currentTarget.value);
@@ -122,6 +122,12 @@ function FinanceViewsPanel() {
         </Center>
       ) : (
         <>
+          {isFinanceViewModel(kind) && (
+            <Text size="xs" c="dimmed">
+              Rows from before page views name bare ids, so a record type does not match them. To find one,
+              search its id under Record id with no record type.
+            </Text>
+          )}
           {rows.length === 0 ? (
             <Text c="dimmed" size="sm">
               No finance views match these filters.

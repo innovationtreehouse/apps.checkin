@@ -2,7 +2,7 @@ import prisma from "@/lib/prisma";
 import { handler, badRequest } from "@/security/handler";
 import { archivedPeople } from "@/lib/person/archivedPeople";
 import { parseDayAt } from "@/lib/time";
-import { FINANCE_VIEWS_PAGE_SIZE, isFinanceViewModel, parseFinanceViewCursor } from "@/lib/finance/financeViewKinds";
+import { FINANCE_VIEWS_PAGE_SIZE, isFinanceViewModel, parseFinanceViewCursor, recordSearchRefs } from "@/lib/finance/financeViewKinds";
 import { financeViewsPageQuery, type FinanceViewsFilter } from "@/lib/finance/financeViewsPage";
 
 /**
@@ -39,7 +39,7 @@ export const GET = handler('GET /api/system-status/finance-views', async ({ req 
     }
 
     const record = sp.get('record')?.trim();
-    if (record) filter.record = record;
+    if (record) filter.records = recordSearchRefs(record);
 
     // from/to are yyyy-mm-dd, an inclusive day range in server time, as on the Audit Log tab.
     filter.from = parseDay(sp.get('from'), 'from', '00:00:00.000');
