@@ -273,6 +273,7 @@ export type Authorize =
  */
 export const CRON_SECRET_ENV = {
     'qbo-posting': 'QBO_POSTING_CRON_SECRET',
+    'bg-settle': 'BG_SETTLE_CRON_SECRET',
 } as const;
 export type CronSecretName = keyof typeof CRON_SECRET_ENV;
 
