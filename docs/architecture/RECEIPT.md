@@ -196,11 +196,13 @@ shows a DMARC pass for that domain and a DKIM pass signed by exactly that domain
 
 Mail a run leaves unread is stored in `ReceiptMailAtRisk`, and finance gets one
 alert once such a message would leave the window before the next run. A failed
-listing alerts finance on every run and counts as a failure in the cron result.
+listing sends no alert of its own: it counts as a failure in the cron result, so
+the Problems list shows the job's latest run as failed and the daily problems email
+lists it.
 
 ## Daily steps
 
-There are no schedules of the library's own and nothing runs at boot. Three steps
+There are no schedules of the library's own and nothing runs at boot. Four steps
 run inside the host's existing daily `/api/cron/reconcile-shopify`, in this order,
 each in its own `try/catch` and each returning counts only. None retries a failed step:
 
@@ -208,7 +210,8 @@ each in its own `try/catch` and each returning counts only. None retries a faile
 |---|---|---|
 | `sweepInterruptedOcr` | `auto_upload` older than ten minutes to `ocr_failed` | 50 |
 | `sweepStuckUploaded` | `uploaded` idle for over an hour to `flow_error` | 50 |
-| `readMailbox` | the mailbox, last because it is the only slow step | as above |
+| `readMailbox` | the mailbox, the only slow step | as above |
+| `sweepOutcomeNotices` | sends the outcome emails still owed to a receipt's uploader and the person reimbursed; a notice is given up after three failed sends | 50 |
 
 ## Stuck receipts
 

@@ -219,7 +219,7 @@ stand for in today's copy, so a key without a link today has no `actionLink`.
 ### ops — 5
 | key | trigger | recipient | tokens |
 |-----|---------|-----------|--------|
-| `ops.incidentOpened` | a job run's failure opens an incident (`opsIncidents`): a connection, settings or bug failure on its first run; a system failure on the second run in a row, or the first when a lane stopped | the alert address setting (nothing sent if unset) | kind, cause, lanes, status, summary, firstSeen, runsSeen, items, todo, `actionLink` ("Open System Status") |
+| `ops.incidentOpened` | a job run's failure opens an incident (`opsIncidents`): a connection, settings or bug failure on its first run; a system failure on the second run in a row; a stopped job (no successful run in 48 hours) at once | the alert address setting (nothing sent if unset) | kind, cause, lanes, status, summary, firstSeen, runsSeen, items, todo, `actionLink` ("Open System Status") |
 | `ops.incidentReminder` | an incident is still open when its reminder falls due | the alert address setting (nothing sent if unset) | same as `ops.incidentOpened` |
 | `ops.incidentEscalated` | an incident has been open for 2 weeks | the Board address setting (nothing sent if unset) | same as `ops.incidentOpened` |
 | `ops.incidentRecovered` | a run covers every lane of an open incident without failing it | the alert address setting (nothing sent if unset) | same as `ops.incidentOpened` |
