@@ -83,3 +83,21 @@ it.each(["confirmAttendance", "cancel", "manualEditAttendance", "noSuchAction"])
         expect(existing).toEqual(missing);
     },
 );
+
+it("GET never reads the roster for a non-staff caller", async () => {
+    db.event.findUnique.mockResolvedValue(event);
+    expect((await get()).status).toBe(404);
+    expect(db.event.findUnique).toHaveBeenCalledTimes(1);
+    const { select } = db.event.findUnique.mock.calls[0][0];
+    expect(select).not.toHaveProperty("visits");
+    expect(select).not.toHaveProperty("rsvps");
+    expect(select.program.select).not.toHaveProperty("participants");
+});
+
+it("GET reads the roster for the event's lead mentor", async () => {
+    mockSession.mockResolvedValue({ user: { id: 10, householdId: 9, isSysadmin: false, isBoardMember: false, isKeyholder: false } });
+    db.event.findUnique.mockResolvedValue(event);
+    expect((await get()).status).toBe(200);
+    expect(db.event.findUnique).toHaveBeenCalledTimes(2);
+    expect(db.event.findUnique.mock.calls[1][0].select.program.select).toHaveProperty("participants");
+});
