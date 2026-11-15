@@ -139,6 +139,7 @@ export const PAGES: PageEntry[] = [
   { href: '/income/reconciliation', label: 'Income Reconciliation', section: 'Income', keywords: 'payout deposit quickbooks drift', visible: REVENUE('/income/reconciliation') },
   { href: '/income/items', label: 'Item Categories', section: 'Income', keywords: 'budget owner bucket class', visible: REVENUE('/income/items') },
   { href: '/income/exclusions', label: 'QB Exclusions', section: 'Income', keywords: 'quickbooks deposit exclude', visible: REVENUE('/income/exclusions') },
+  { href: '/income/settings', label: 'Income Settings', section: 'Income', keywords: 'cap limit benevity match window quickbooks', visible: REVENUE('/income/settings') },
 
   // My Receipts — anyone who may upload; Finance — finance.
   { href: '/receipts', label: 'My Receipts', section: 'My Receipts', keywords: 'receipt reimbursement upload purchase', visible: linkGate(MY_RECEIPTS, '/receipts') },
