@@ -487,9 +487,9 @@ describe('Trusted Adults service', () => {
     });
 
     it.each([
-        ['EXPIRED', 'EXPIRED' as const],
-        ['APPROVED past its review date', 'APPROVED' as const],
-    ])('force-approve refuses an %s review, with no write and no audit; the family renews', async (_label, status) => {
+        ['an EXPIRED review', 'EXPIRED' as const],
+        ['an APPROVED review past its review date', 'APPROVED' as const],
+    ])('force-approve refuses %s, with no write and no audit; the family renews', async (_label, status) => {
         const ta = await discloseOne();
         const reviewId = ta.reviews[0].id;
         await decideReview(reviewId, boardId, { decision: 'APPROVE', sharedNote: SHARED });
