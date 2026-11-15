@@ -181,6 +181,15 @@ describe("AdminEditHouseholdModal", () => {
     expect(await screen.findByDisplayValue("Smith Renamed")).toBeInTheDocument();
   });
 
+  it("says the household no longer exists, with no form or Save, when the read finds none", async () => {
+    mockFetchJson({ "/api/membership-ops/households?id=55": { household: null } });
+    renderWithProviders(<AdminEditHouseholdModal householdId={55} opened={true} onClose={jest.fn()} />);
+
+    expect(await screen.findByText("This household no longer exists.")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Household Name")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save Changes — As Admin" })).not.toBeInTheDocument();
+  });
+
   it("shows a server error message, then a network-error message, when saving fails", async () => {
     mockFetchJson({ "/api/membership-ops/households?id=55": { household } });
     renderWithProviders(<AdminEditHouseholdModal householdId={55} opened={true} onClose={jest.fn()} />);

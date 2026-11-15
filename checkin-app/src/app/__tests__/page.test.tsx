@@ -2,7 +2,7 @@
 jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
-import { screen, fireEvent } from "@testing-library/react";
+import { screen, fireEvent, waitFor } from "@testing-library/react";
 import { signIn } from "next-auth/react";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl } from "@/test-helpers/rtl";
 import Home from "../page";
@@ -76,5 +76,55 @@ describe("failed safety check", () => {
         fireEvent.click(screen.getByRole("button", { name: "Retry" }));
         expect(await screen.findByText(/Two-Deep Compliance is failing/)).toBeInTheDocument();
         expect(screen.queryByText("Couldn't load the building safety check")).not.toBeInTheDocument();
+    });
+});
+
+describe("cached safety check", () => {
+    it("shows the warning from this visit's own read, not an older cached all-clear", async () => {
+        setSession({ id: 1, name: "Ann Admin", isSysadmin: true });
+        mockFetchJson({
+            "/api/attendance": { access: "full", attendance: [], safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false }, building: { reachable: true, lastSeenAt: null } },
+            "/api/membership": { membershipStatus: "ACTIVE" },
+        });
+        const earlier = renderWithProviders(<Home />);
+        expect(await screen.findByText(/Welcome back/)).toBeInTheDocument();
+        earlier.unmount();
+
+        mockFetchJson({
+            "/api/attendance": { access: "full", attendance: [], safety: violating, building: { reachable: true, lastSeenAt: null } },
+            "/api/membership": { membershipStatus: "ACTIVE" },
+        });
+        renderWithProviders(<Home />);
+        expect(await screen.findByText(/Two-Deep Compliance is failing/)).toBeInTheDocument();
+    });
+
+    it("keeps a cached warning and says it is still checking until this visit's read answers", async () => {
+        setSession({ id: 1, name: "Ann Admin", isSysadmin: true });
+        mockFetchJson({
+            "/api/attendance": { access: "full", attendance: [], safety: violating, building: { reachable: true, lastSeenAt: null } },
+            "/api/membership": { membershipStatus: "ACTIVE" },
+        });
+        const earlier = renderWithProviders(<Home />);
+        expect(await screen.findByText(/Two-Deep Compliance is failing/)).toBeInTheDocument();
+        earlier.unmount();
+
+        const answer = mockFetchJson({
+            "/api/attendance": { access: "full", attendance: [], safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false }, building: { reachable: true, lastSeenAt: null } },
+            "/api/membership": { membershipStatus: "ACTIVE" },
+        });
+        const held: Array<() => void> = [];
+        let released = false;
+        global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => released
+            ? answer(input, init)
+            : new Promise<Response>((resolve) => { held.push(() => resolve(answer(input, init))); })) as unknown as typeof fetch;
+        renderWithProviders(<Home />);
+
+        expect(await screen.findByText("Checking building safety…")).toBeInTheDocument();
+        expect(screen.getByText(/Two-Deep Compliance is failing/)).toBeInTheDocument();
+
+        released = true;
+        held.forEach((release) => release());
+        await waitFor(() => expect(screen.queryByText("Checking building safety…")).not.toBeInTheDocument());
+        expect(screen.queryByText(/Two-Deep Compliance is failing/)).not.toBeInTheDocument();
     });
 });
