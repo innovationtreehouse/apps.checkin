@@ -149,7 +149,7 @@ GitHub calls in `SystemVersionBox` (rate limited) and `merge` scoring (three
 fetches per attempt).
 
 `reconnect: false` turns off the re-read on reconnect.
-`invalidate: false` keeps the load out of the re-read after another page's write; its own `reload()` still re-reads.
+`skipWriteReload: true` keeps the load out of the re-read after another page's write; its own `reload()` still re-reads.
 
 A read billed per wake stays behind a button and outside `useLoad`, as the
 conventions doc already requires. Each app batch checks this for its pages.

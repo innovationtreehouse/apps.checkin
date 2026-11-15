@@ -1,14 +1,20 @@
-// eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories run hoisted, before imports exist
-jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
-// eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories run hoisted, before imports exist
-jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
+type Rtl = typeof import("@/test-helpers/rtl");
+jest.mock("next/navigation", () => jest.requireActual<Rtl>("@/test-helpers/rtl").navMock());
+jest.mock("next-auth/react", () => jest.requireActual<Rtl>("@/test-helpers/rtl").authMock());
 jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
 
-import { screen } from "@testing-library/react";
+import { screen, fireEvent, within } from "@testing-library/react";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl } from "@/test-helpers/rtl";
+import { readsOf, reconnectAfterDedupe, unrelatedWrite } from "@/test-helpers/loadReads";
 import MembershipPaymentPlansPage from "../page";
 
-beforeEach(() => resetRtl());
+const LIST = "/api/finance-ops/membership-payment-plans";
+
+beforeEach(() => {
+  resetRtl();
+  setSession({ id: 1, isBoardMember: true });
+});
+afterEach(() => jest.useRealTimers());
 
 const requests = [
   {
@@ -27,11 +33,55 @@ const requests = [
 
 describe("finance-ops/membership-payment-plan page", () => {
   it("renders household name and lead email", async () => {
-    setSession({ id: 1, isBoardMember: true });
-    mockFetchJson({ "/api/finance-ops/membership-payment-plans": requests });
+    mockFetchJson({ [LIST]: requests });
     renderWithProviders(<MembershipPaymentPlansPage />);
 
     expect(await screen.findByText("Smith Family")).toBeInTheDocument();
     expect(screen.getByText("jane@example.com")).toBeInTheDocument();
+  });
+
+  it("reads the list once on mount and not again on reconnect", async () => {
+    jest.useFakeTimers();
+    const fetchMock = mockFetchJson({ [LIST]: requests });
+    renderWithProviders(<MembershipPaymentPlansPage />);
+    await screen.findByText("Smith Family");
+
+    await reconnectAfterDedupe();
+    expect(readsOf(fetchMock, LIST)).toHaveLength(1);
+  });
+
+  it("does not re-read after another page's write", async () => {
+    const fetchMock = mockFetchJson({ [LIST]: requests, "/api/unrelated": {} });
+    renderWithProviders(<MembershipPaymentPlansPage />);
+    await screen.findByText("Smith Family");
+
+    await unrelatedWrite();
+    expect(readsOf(fetchMock, LIST)).toHaveLength(1);
+  });
+
+  it("denies a request, then re-reads the list once and shows it without the row", async () => {
+    let denied = false;
+    const fetchMock = mockFetchJson({
+      [`${LIST}/refuse`]: () => { denied = true; return { success: true }; },
+      [LIST]: () => (denied ? [] : requests),
+    });
+    renderWithProviders(<MembershipPaymentPlansPage />);
+    await screen.findByText("Smith Family");
+
+    fireEvent.click(screen.getByRole("button", { name: "Deny" }));
+    const modal = await screen.findByRole("dialog", { name: "Deny Scholarship / Payment Plan" });
+    fireEvent.click(within(modal).getByRole("button", { name: "Deny" }));
+
+    expect(await screen.findByText("No pending membership scholarship or payment plan requests.")).toBeInTheDocument();
+    expect(readsOf(fetchMock, LIST)).toHaveLength(2);
+  });
+
+  it("shows a failed load in place of the table, not an empty list", async () => {
+    global.fetch = jest.fn(async () => new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 })) as unknown as typeof fetch;
+    renderWithProviders(<MembershipPaymentPlansPage />);
+
+    expect(await screen.findByText(/Forbidden/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /retry|try again/i })).toBeInTheDocument();
+    expect(screen.queryByText("No pending membership scholarship or payment plan requests.")).not.toBeInTheDocument();
   });
 });

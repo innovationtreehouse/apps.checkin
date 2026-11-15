@@ -1,10 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { Badge, Button, Group, Modal, SegmentedControl, Stack, Text } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { notifications } from '@mantine/notifications';
-import { AlertBanner } from '@/components/admin/AlertBanner';
 import { DataTable, type DataTableColumn } from '@/components/admin/DataTable';
 import { PastPaymentPlanDecisions, type PaymentPlanDecisionRow } from '@/components/admin/PastPaymentPlanDecisions';
 import { useRequireRole } from '@/hooks/useRequireRole';
@@ -16,8 +14,8 @@ import { formatCents } from '@checkin/money';
 import { landsNextYear } from '@/lib/programYear';
 import { scholarshipRequestKindLabel } from '@/lib/scholarshipRequestKind';
 
-import { errorMessage, HttpError, showError, showSuccess, useUrlChoice } from '@checkin/component-ui';
-import { api } from '@/lib/api';
+import { errorMessage, HttpError, LoadError, showError, showSuccess, useUrlChoice } from '@checkin/component-ui';
+import { api, useLoad } from '@/lib/api';
 import { PageLoader } from "@/components/ui/PageLoader";
 type HouseholdLead = { id: number; name: string | null; email: string | null };
 
@@ -74,11 +72,7 @@ export default function PendingParticipantsPage() {
   const ownHousehold = (req: PaymentPlanRequest) =>
     sharesHousehold(me?.householdId, req.person.householdId);
 
-  const [requests, setRequests] = useState<PaymentPlanRequest[]>([]);
-  const [cutoff, setCutoff] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
   const [view, setView] = useUrlChoice('view', VIEWS, 'pending');
-  const [message, setMessage] = useState("");
   const [confirmApproveOpened, { open: openConfirmApprove, close: closeConfirmApprove }] = useDisclosure(false);
   const [pendingApproval, setPendingApproval] = useState<{ programId: number; participantId: number } | null>(null);
   const [confirmRefuseOpened, { open: openConfirmRefuse, close: closeConfirmRefuse }] = useDisclosure(false);
@@ -87,27 +81,12 @@ export default function PendingParticipantsPage() {
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const rowKey = (programId: number, participantId: number) => `${programId}-${participantId}`;
 
-  const fetchRequests = useCallback(() => fetch('/api/finance-ops/payment-plans')
-    .then(async (res) => {
-      if (res.ok) {
-        const data = await res.json();
-        setRequests(data.ProgramParticipant ?? []);
-        setCutoff(data.BoardSettings?.orgMembershipYearBoundary ?? null);
-      } else {
-        setMessage("Failed to load requests. You may not have access.");
-      }
-    })
-    .catch(() => {
-      notifications.show({ color: "red", message: "Network error loading requests.", autoClose: false });
-    })
-    .finally(() => {
-      setLoading(false);
-    }),
-  []);
-
-  useEffect(() => {
-    if (ready) fetchRequests();
-  }, [ready, fetchRequests]);
+  // Each read logs a finance view, so it re-reads only on mount and after this page's own write.
+  const { data, error: loadError, reload } = useLoad<{ ProgramParticipant?: PaymentPlanRequest[]; BoardSettings?: { orgMembershipYearBoundary?: string | null } | null }>(
+    ready ? '/api/finance-ops/payment-plans' : null,
+    { reconnect: false, skipWriteReload: true },
+  );
+  const cutoff = data?.BoardSettings?.orgMembershipYearBoundary ?? null;
 
   const handleApprove = (programId: number, participantId: number) => {
     setPendingApproval({ programId, participantId });
@@ -118,12 +97,12 @@ export default function PendingParticipantsPage() {
     setBusyKey(rowKey(programId, participantId));
     try {
       await api('/api/finance-ops/payment-plans', { method: 'POST', body: JSON.stringify({ programId, participantId }) });
-      setRequests(prev => prev.filter(r => !(r.programId === programId && r.personId === participantId)));
+      await reload();
       notifyNavRefresh();
       showSuccess('Scholarship / payment plan approved.');
     } catch (e) {
       showError(errorMessage(e));
-      if (e instanceof HttpError && e.status === 409) fetchRequests();
+      if (e instanceof HttpError && e.status === 409) await reload();
     } finally {
       setBusyKey(null);
     }
@@ -146,12 +125,12 @@ export default function PendingParticipantsPage() {
     setBusyKey(rowKey(programId, participantId));
     try {
       await api('/api/finance-ops/payment-plans/refuse', { method: 'POST', body: JSON.stringify({ programId, participantId }) });
-      setRequests(prev => prev.filter(r => !(r.programId === programId && r.personId === participantId)));
+      await reload();
       notifyNavRefresh();
       showSuccess('Scholarship / payment plan refused.');
     } catch (e) {
       showError(errorMessage(e));
-      if (e instanceof HttpError && e.status === 409) fetchRequests();
+      if (e instanceof HttpError && e.status === 409) await reload();
     } finally {
       setBusyKey(null);
     }
@@ -165,7 +144,7 @@ export default function PendingParticipantsPage() {
     await doRefuse(programId, participantId);
   };
 
-  if (authLoading || loading) {
+  if (authLoading) {
     return <PageLoader />;
   }
 
@@ -267,8 +246,6 @@ export default function PendingParticipantsPage() {
         they keep the seat they took when they asked.
       </Text>
 
-      <AlertBanner message={message} tone="error" />
-
       <SegmentedControl
         value={view}
         onChange={setView}
@@ -278,10 +255,14 @@ export default function PendingParticipantsPage() {
 
       {view === 'past' ? (
         <PastPaymentPlanDecisions<PastProgramDecision> endpoint="/api/finance-ops/payment-plans/past" identityColumns={PAST_IDENTITY_COLUMNS} />
+      ) : loadError ? (
+        <LoadError what="payment plan requests" message={loadError} onRetry={reload} />
+      ) : !data ? (
+        <PageLoader />
       ) : (
         <DataTable
           columns={columns}
-          rows={requests}
+          rows={data.ProgramParticipant ?? []}
           getRowKey={(req) => `${req.programId}-${req.personId}`}
           emptyMessage="No pending scholarship or payment plan requests."
         />

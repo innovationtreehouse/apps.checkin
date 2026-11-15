@@ -1,10 +1,10 @@
-// eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories run hoisted, before imports exist
-jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
-// eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories run hoisted, before imports exist
-jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
+type Rtl = typeof import("@/test-helpers/rtl");
+jest.mock("next/navigation", () => jest.requireActual<Rtl>("@/test-helpers/rtl").navMock());
+jest.mock("next-auth/react", () => jest.requireActual<Rtl>("@/test-helpers/rtl").authMock());
 
 import { screen, fireEvent, waitFor } from "@testing-library/react";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl } from "@/test-helpers/rtl";
+import { reconnectAfterDedupe } from "@/test-helpers/loadReads";
 import UnconfirmedShopifyStockPage from "../page";
 
 const LIST = "/api/finance-ops/shopify-stock";
@@ -17,6 +17,7 @@ beforeEach(() => {
   resetRtl();
   setSession({ id: 1, isBoardMember: true });
 });
+afterEach(() => jest.useRealTimers());
 
 describe("finance-ops/shopify-stock page", () => {
   it("reads the list once on mount", async () => {
@@ -24,6 +25,16 @@ describe("finance-ops/shopify-stock page", () => {
     renderWithProviders(<UnconfirmedShopifyStockPage />);
 
     expect(await screen.findByText("Robotics")).toBeInTheDocument();
+    expect(reads(fetchMock)).toHaveLength(1);
+  });
+
+  it("does not re-read on reconnect", async () => {
+    jest.useFakeTimers();
+    const fetchMock = mockFetchJson({ [LIST]: [row] });
+    renderWithProviders(<UnconfirmedShopifyStockPage />);
+    await screen.findByText("Robotics");
+
+    await reconnectAfterDedupe();
     expect(reads(fetchMock)).toHaveLength(1);
   });
 

@@ -472,9 +472,9 @@ describe("loads that opt out of re-reads", () => {
     expect(gets(fetchMock)).toBe(1);
   });
 
-  it("invalidate: false is not re-read after another write, but is by its own reload", async () => {
+  it("skipWriteReload is not re-read after another write, but is by its own reload", async () => {
     const fetchMock = stubFetch(() => json([1]));
-    const { result } = renderHook(() => useLoad<number[]>("/x", { invalidate: false }));
+    const { result } = renderHook(() => useLoad<number[]>("/x", { skipWriteReload: true }));
     await advance();
     await api("/y", { method: "POST" });
     await advance();
@@ -485,17 +485,17 @@ describe("loads that opt out of re-reads", () => {
 
   it("a held key is re-read after a write again once its page unmounts", async () => {
     const fetchMock = stubFetch(() => json([1]));
-    renderHook(() => useLoad<number[]>("/x", { invalidate: false })).unmount();
+    renderHook(() => useLoad<number[]>("/x", { skipWriteReload: true })).unmount();
     await advance();
     await api("/y", { method: "POST" });
-    renderHook(() => useLoad<number[]>("/x", { invalidate: false }));
+    renderHook(() => useLoad<number[]>("/x", { skipWriteReload: true }));
     await advance();
     expect(gets(fetchMock)).toBe(2);
   });
 
   it("a hold is per URL, so a default mount of the same URL also skips the write's re-read", async () => {
     const fetchMock = stubFetch(() => json([1]));
-    renderHook(() => [useLoad<number[]>("/x", { invalidate: false }), useLoad<number[]>("/x")]);
+    renderHook(() => [useLoad<number[]>("/x", { skipWriteReload: true }), useLoad<number[]>("/x")]);
     await advance();
     await api("/y", { method: "POST" });
     await advance();
@@ -504,7 +504,7 @@ describe("loads that opt out of re-reads", () => {
 
   it("another load still re-reads after a write while one key is held", async () => {
     const fetchMock = stubFetch(() => json([1]));
-    renderHook(() => [useLoad<number[]>("/held", { invalidate: false }), useLoad<number[]>("/free")]);
+    renderHook(() => [useLoad<number[]>("/held", { skipWriteReload: true }), useLoad<number[]>("/free")]);
     await advance();
     await api("/y", { method: "POST" });
     await advance();
