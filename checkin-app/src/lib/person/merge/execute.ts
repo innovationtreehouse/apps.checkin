@@ -9,6 +9,7 @@ import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
 import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
 import { KIND_TO_FLAG, setRoleFlag, lockBoardRoles, RoleMatrixError, trustStatus } from "@/lib/roles";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
+import { notifyBoardOfYouthLeads } from "@/lib/membership/boardAlerts";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { anyMergedAway } from "@/lib/person/archivedPeople";
 import { bgSubjectKey, disputedCheckBlock, type CheckSide } from "./guard";
@@ -253,6 +254,7 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
             await logBackendError(error, "household background-check settle after merge", { householdId, keepId, mergeId });
         }
     }
+    await notifyBoardOfYouthLeads([keep]);
 
     invalidateAttendanceCache();
 }

@@ -181,6 +181,13 @@ export const REGISTRY = {
         defaultBody: "An edit to the dates or age limits of {{programName}} leaves these enrolled people outside its ages at the start date. Nothing was changed; please decide with the program leader and the families.\n{{people}}\n\n{{actionLink}}",
     },
 
+    "board.youthHouseholdLead": {
+        allowedTokens: { personName: text, householdName: text, actionLink: link("Open the household") },
+        sampleCtx: { personName: "Alex Rivera", householdName: "Rivera", actionLink: SAMPLE_URL },
+        defaultSubject: "Household lead under 18: {{personName}}",
+        defaultBody: "A date of birth saved for {{personName}}, a lead of {{householdName}}, shows they are under 18. They are still its lead; nothing was changed. Please decide with the household. {{actionLink}}",
+    },
+
     // ── ops incidents (lib/opsIncidents.ts) ─────────────────────────────────
     // Codes, counts and dates only: no amounts, donor or vendor names, or memo text.
     "ops.incidentOpened": {

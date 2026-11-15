@@ -22,6 +22,7 @@ import { mintPersonId } from "@/lib/person/mintId";
 import { nameWrite } from "@/lib/person/name";
 import type { TxClient } from "@/lib/db-client";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
+import { notifyBoardOfYouthLeads } from "@/lib/membership/boardAlerts";
 import { isDesignatedEmail, designatedEmailRefusalForBoard } from "@/lib/membership/volunteerDesignation";
 import { findSelfGrantRefusal, recordSelfGrantRefusal, type GrantSubject, type SelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
 
@@ -504,6 +505,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
     }
 
     invalidateAttendanceCache();
+    await notifyBoardOfYouthLeads(user.household?.householdMembers ?? []);
     // These write through the root client, so they wait for the commit: a person
     // created above isn't visible to another connection until then.
     for (const e of deniedPromotions) {

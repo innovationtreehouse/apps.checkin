@@ -23,6 +23,7 @@ import { trustStatus } from "@/lib/roles";
 import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
 import { personActor } from "@/lib/auditActor";
+import { notifyBoardOfYouthLeads } from "@/lib/membership/boardAlerts";
 
 class BecameTrustedError extends Error {}
 
@@ -235,6 +236,7 @@ export const PATCH = withAuth(
                 return { updatedHouseholdMember, leadRejection, deniedLead, warning };
             });
             invalidateAttendanceCache();
+            if (dob !== undefined) await notifyBoardOfYouthLeads([targetHouseholdMember]);
             if (deniedLead) {
                 const ref = { householdId: deniedLead.householdId, personId: deniedLead.personId };
                 try {
