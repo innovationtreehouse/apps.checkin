@@ -42,7 +42,7 @@ describe("account rule save", () => {
   it("refuses a donation account of another type, naming it", async () => {
     await expect(createAccountMap({ req: rule({ donationAccountId: "8001" }), params: {} })).rejects.toMatchObject({
       status: 400,
-      message: "A rule's donation account takes an Income or Other Income account; Checking is Bank",
+      code: "quickbooks-list-stale", message: "A rule's donation account takes an Income or Other Income account; QuickBooks' list in the app shows Checking as Bank. If you changed it in QuickBooks, press Update now, then save again.",
     });
     expect(accountMapService.createAccountMap).not.toHaveBeenCalled();
   });
@@ -65,7 +65,7 @@ describe("account rule save", () => {
     vi.mocked(accountMapService.findAccountMap).mockResolvedValueOnce({ donationAccountId: "8003", matchAccountId: "8003" } as never);
     await expect(updateAccountMap({ req: rule({ donationAccountId: "8003", matchAccountId: "8001" }), params: { id: "1" } })).rejects.toMatchObject({
       status: 400,
-      message: "A rule's match account takes an Income or Other Income account; Checking is Bank",
+      code: "quickbooks-list-stale", message: "A rule's match account takes an Income or Other Income account; QuickBooks' list in the app shows Checking as Bank. If you changed it in QuickBooks, press Update now, then save again.",
     });
   });
 

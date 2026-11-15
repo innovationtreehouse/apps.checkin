@@ -57,13 +57,15 @@ export interface IncomeConfig {
   deposits?: QbDepositSource;
   owners?: OwnerDirectory;
   /**
-   * Active QuickBooks Classes. Unbound or unreachable, no item can be assigned to a bucket, and
-   * a payout with a sale of a bucketed item holds as NEEDS_MAPPING; general-income payouts still post.
+   * Active QuickBooks Classes, read live at posting. Unbound or unreachable, a payout with a sale
+   * of a bucketed item holds as NEEDS_MAPPING; general-income payouts still post.
    */
   classes?: QbClassSource;
+  /** Active Classes in the host's copy of QuickBooks' Class list, read when an item is assigned to a bucket. Unbound, no item can be. */
+  savedClasses?: QbClassSource;
   /** Finance's books map: role -> QuickBooks account, bucket -> Class. A source whose bank role it leaves unset is not matched. */
   booksMap?: BooksMap;
-  /** QuickBooks' live account list, read when an item's account is saved. */
+  /** The host's copy of QuickBooks' accounts, read when an item's account is saved. */
   quickBooksAccounts?: QboAccountList;
   posting?: IncomePosting;
   alerts?: IncomeAlerts;

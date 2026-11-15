@@ -5,6 +5,7 @@ import { handler } from "@/security/handler";
 import { runExpenseQbPosting } from "@checkin/expense";
 import { runDonationDepositHandOver, runInKindQbPosting } from "@checkin/bulk-donation";
 import { drainIncomeOutbox, runIncomeOrphanSweep } from "@checkin/income";
+import { refreshQuickBooksLists } from "@/lib/finance/quickBooksLists";
 
 /** The run ledger's name for this job: the route's last path segment. */
 const JOB = "qbo-posting";
@@ -19,7 +20,7 @@ function drainProblems(label: string, lane: string, drain: DrainRun): string[] {
 }
 
 /**
- * Daily QuickBooks posting: expense's step (stranded recovery, the outbox drain, the drift check, the
+ * Daily QuickBooks posting: first the refresh of the app's copy of QuickBooks' account and Class lists, then expense's step (stranded recovery, the outbox drain, the drift check, the
  * retry of outcome emails still owed),
  * then donation handing completed disbursements to income, then the in-kind drain, then income's drain (reconcile, then the outbox), then income's orphan sweep. Answers only to QBO_POSTING_CRON_SECRET (registry `cronSecret`).
  *
@@ -33,6 +34,15 @@ function drainProblems(label: string, lane: string, drain: DrainRun): string[] {
 async function postAll(): Promise<string[]> {
     const failed: string[] = [];
 
+    try {
+        const lists = await refreshQuickBooksLists();
+        logger.info(`[qbo-posting] lists ${JSON.stringify(lists ?? "unbound")}`);
+        if (lists) laneReached("quickbooks lists-refresh");
+    } catch (err) {
+        logger.error("[qbo-posting] QuickBooks list refresh failed:", err);
+        stepCrashed(JOB, "lists", err, ["quickbooks lists-refresh"]);
+        failed.push("lists");
+    }
     try {
         const expense = await runExpenseQbPosting();
         logger.info(`[qbo-posting] expense ${JSON.stringify(expense)}`);

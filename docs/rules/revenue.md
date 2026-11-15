@@ -95,6 +95,10 @@ Things the app takes as true because they are handled outside it.
   items, in-kind income, the in-kind clearing account and the expense payment
   account.  [Decision — owner]
 
+- The app's copy of QuickBooks' account and Class lists refreshes once a day,
+  and finance or the Board may refresh it at any time. It is used at any age;
+  System Status flags it after two days without a refresh.  [Decision — owner]
+
 - Each online-store sale, giving-platform gift and gift of goods books to the
   account finance mapped for its item. A line with no mapping, or whose account
   can't be used, waits for finance; nothing books it to a fallback account. A
@@ -104,8 +108,11 @@ Things the app takes as true because they are handled outside it.
   line or role. The books map, the giving-platform account rules, expense's
   QuickBooks accounts and account rules, the account finance sets on a held
   expense line, the one finance sets on a gift-of-goods line and online-store
-  items' accounts refuse any other type on save, reading the type from
-  QuickBooks, and refuse the save while QuickBooks can't be read. A stored
+  items' accounts refuse any other type on save, reading the type from the
+  app's copy of QuickBooks' account list. A save whose account the copy
+  doesn't list, or lists under a type the save doesn't accept, is refused until
+  finance or the Board updates the copy; the save itself never reads
+  QuickBooks. A stored
   account that later reads as another type is flagged on System Status for
   finance to re-pick; the app never rewrites it. Online-store fees take only an
   Expense or Other Expense account.  [Decision — owner]
@@ -300,8 +307,9 @@ Income checks each online-store payout against the deposits in the books.
   sale. An item made by hand in the store can be decided on after its first sale.  [Decision — owner]
 
 - An item can be assigned to a bucket only if the bucket is live and its Class is
-  active in the books. While the books can't be reached to check, the assignment is
-  refused. Choosing general income needs no check.  [Decision — owner]
+  active in the books. The Class is checked against the app's copy of
+  QuickBooks' Class list; a Class the copy doesn't show as active is refused
+  until the copy is updated. Choosing general income needs no check.  [Decision — owner]
 
 - When a run finds an assigned bucket archived or without an active Class, it alerts
   finance once for that bucket and marks its items. A payout with a sale of those

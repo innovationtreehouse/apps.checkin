@@ -38,7 +38,7 @@ export interface QboAccountSummary {
   accountType: string;
 }
 
-/** The host's live read of QuickBooks' accounts; throws a 503 while QuickBooks can't be read. */
+/** The host's read of its copy of QuickBooks' accounts. */
 export type QboAccountList = () => Promise<readonly QboAccountSummary[]>;
 
 const either = new Intl.ListFormat("en", { type: "disjunction" });
@@ -48,10 +48,22 @@ export function acceptedAccountTypes(types: readonly string[]): string {
   return `${/^[AEIOU]/.test(types[0]) ? "an" : "a"} ${either.format(types)} account`;
 }
 
-/** Why `what` can't take account `id`, in finance's words; null when QuickBooks lists it under an allowed type. */
+/** Why `what` can't take account `id`, in finance's words; null when the app's QuickBooks list holds it under an allowed type. */
 export function accountTypeRefusal(accounts: readonly QboAccountSummary[], id: string, allowed: readonly string[], what: string): string | null {
   const account = accounts.find((a) => a.id === id);
-  if (!account) return `QuickBooks has no account with id ${id}`;
+  if (!account) return `QuickBooks' list in the app doesn't have an account with id ${id}`;
   if (allowed.includes(account.accountType)) return null;
-  return `${what} takes ${acceptedAccountTypes(allowed)}; ${account.name} is ${account.accountType}`;
+  return `${what} takes ${acceptedAccountTypes(allowed)}; QuickBooks' list in the app shows ${account.name} as ${account.accountType}`;
+}
+
+/** The error code of a save refused because the app's QuickBooks list lacks the pick or holds it under another type. */
+export const QUICKBOOKS_LIST_STALE = "quickbooks-list-stale";
+
+/** What a save refused against the app's QuickBooks list tells finance to do next. */
+export const UPDATE_NOW_HINT = "If you changed it in QuickBooks, press Update now, then save again.";
+
+/** accountTypeRefusal for a save, followed by the Update now hint. */
+export function staleListRefusal(accounts: readonly QboAccountSummary[], id: string, allowed: readonly string[], what: string): string | null {
+  const refusal = accountTypeRefusal(accounts, id, allowed, what);
+  return refusal && `${refusal}. ${UPDATE_NOW_HINT}`;
 }
