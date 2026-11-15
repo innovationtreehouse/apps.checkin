@@ -540,3 +540,12 @@ describe('routes audited before field marks still log', () => {
         expect(logs).toBe(true);
     });
 });
+
+describe('payment-plan Past routes log the archived filter', () => {
+    it.each([
+        'GET /api/finance-ops/payment-plans/past',
+        'GET /api/finance-ops/membership-payment-plans/past',
+    ])('%s records page and archived', endpoint => {
+        expect(getRoute(endpoint)?.financeView?.query).toEqual(['page', 'archived']);
+    });
+});
