@@ -47,6 +47,21 @@ export type ProcessStatus =
 
 export type ProcessKind = "INITIAL" | "RENEWAL" | "PERSON_BG" | "PERSON_AGREEMENT" | "KEY_VOLUNTEER_AGREEMENT";
 
+/**
+ * Narrows a household process (INITIAL/RENEWAL) to one whose orgMembershipId is set.
+ * The per-person kinds (PERSON_BG, PERSON_AGREEMENT, KEY_VOLUNTEER_AGREEMENT) carry
+ * none, so reaching a household-only step with one throws here.
+ */
+export function asHouseholdProcess<P extends { id: number; kind: ProcessKind; orgMembershipId: number | null }>(
+    process: P,
+): P & { orgMembershipId: number } {
+    const { orgMembershipId } = process;
+    if (orgMembershipId === null) {
+        throw new Error(`Membership process #${process.id} (${process.kind}) has no household membership.`);
+    }
+    return { ...process, orgMembershipId };
+}
+
 /** Every declared status (for reachability's `unreachable` computation). */
 export const ALL_STATUSES: readonly ProcessStatus[] = [
     "INTAKE",
