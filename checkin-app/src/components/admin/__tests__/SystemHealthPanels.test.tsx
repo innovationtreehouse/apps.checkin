@@ -211,6 +211,19 @@ describe("KioskHeartbeatBox", () => {
     expect(removed).toHaveTextContent("protocol v4, last seen 3 hours ago (key removed)");
   });
 
+  it("lists a configured key with no stored row as not seen since recording began", async () => {
+    mockFetchJson({
+      "/api/system-status/kiosk-heartbeat": {
+        heartbeat: {
+          SystemMetricLog: [{ metric: "kiosk_key:cccccccccccccccc", timestamp: new Date().toISOString(), value: 1 }],
+          KioskProtocolSeen: [],
+        },
+      },
+    });
+    renderWithProviders(<KioskHeartbeatBox />);
+    expect((await screen.findByText("cccccccccccccccc")).closest("p")).toHaveTextContent("not seen since recording began");
+  });
+
   it("shows a failed read at once, without retrying", async () => {
     const fetchFn = mockFetchJson({ "/api/system-status/kiosk-heartbeat": () => { throw new Error("down"); } });
     renderWithProviders(<KioskHeartbeatBox />);

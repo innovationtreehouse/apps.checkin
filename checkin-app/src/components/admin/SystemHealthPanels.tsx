@@ -654,6 +654,11 @@ export function KioskHeartbeatBox() {
           {!configuredKeys.has(k.keyFingerprint) && " (key removed)"}
         </Text>
       ))}
+      {!error && [...configuredKeys].filter((fp) => !protocolSeen.some((k) => k.keyFingerprint === fp)).map((fp) => (
+        <Text key={fp} size="sm" c="dimmed">
+          Key <Code>{fp}</Code>: not seen since recording began
+        </Text>
+      ))}
     </Card>
   );
 }
