@@ -39,7 +39,7 @@ const tabNames = () => screen.queryAllByRole("tab").map((t) => t.textContent);
 describe("SettingsLayout tab bar", () => {
   it("shows a board member every settings page they may open, Expenses and Receipt reading included", () => {
     renderLayout({ data: { user: { id: 2, isBoardMember: true } }, status: "authenticated" });
-    expect(tabNames()).toEqual(["Membership Settings", "Email Settings", "Outreach", "Shopify Webhook", expect.stringContaining("Expenses"), "Receipt reading"]);
+    expect(tabNames()).toEqual(["Membership Settings", "Email Settings", "Email Templates", "Outreach", "Shopify Webhook", expect.stringContaining("Expenses"), "Receipt reading"]);
   });
 
   it("keeps Localization from a board member who is not sysadmin", () => {
@@ -151,7 +151,7 @@ describe("SettingsLayout on the bare /settings path", () => {
     expect(push).toHaveBeenCalledWith("/");
   });
 
-  it.each(["/settings/membership", "/settings/localization", "/settings/email", "/settings/outreach", "/settings/shopify-webhook"])(
+  it.each(["/settings/membership", "/settings/localization", "/settings/email", "/settings/templates", "/settings/outreach", "/settings/shopify-webhook"])(
     "still keeps FINANCE off %s",
     (path) => {
       mockPathname = path;

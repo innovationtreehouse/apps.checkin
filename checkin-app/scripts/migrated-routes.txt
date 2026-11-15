@@ -15,6 +15,9 @@ GET /api/safety/board-contacts
 GET /api/settings/email
 GET /api/settings/membership
 GET /api/settings/membership/volunteer-designations
+GET /api/settings/templates
+PUT /api/settings/templates/[key]
+POST /api/settings/templates/[key]/test-send
 PATCH /api/attendance/manual/[id]
 DELETE /api/attendance/manual/[id]
 GET /api/system-status/errors

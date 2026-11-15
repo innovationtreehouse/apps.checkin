@@ -1,8 +1,8 @@
-import { escapeHtml } from "./base";
+import { baseEmailLayout, escapeHtml } from "./base";
 
 /**
  * Per-key `{{token}}` substitution for editable email templates. Dependency-free
- * (escapeHtml only) so the admin preview can import it client-side and render
+ * (./base only) so the admin preview can import it client-side and render
  * exactly what the send path renders.
  */
 
@@ -76,4 +76,34 @@ export function renderBodyHtml(substitutedBody: string): string {
         .filter((paragraph) => paragraph.length > 0)
         .map((paragraph) => `<p>${paragraph.split("\n").map((line) => line.trim()).join("<br>")}</p>`)
         .join("");
+}
+
+/** The copy a key sends: each given field, or the key's default where it is missing or blank. */
+export function withDefaults(
+    defaults: { defaultSubject: string; defaultBody: string },
+    copy: { subject: string; body: string } | null | undefined,
+): { subject: string; body: string } {
+    return {
+        subject: copy?.subject.trim() ? copy.subject : defaults.defaultSubject,
+        body: copy?.body.trim() ? copy.body : defaults.defaultBody,
+    };
+}
+
+/**
+ * The subject and branded HTML one template sends: the subject substituted raw,
+ * the body escaped and laid out. `appendix` is plain text added after the body,
+ * outside token substitution.
+ */
+export function renderTemplate(
+    subject: string,
+    body: string,
+    ctx: Record<string, string>,
+    tokens: TokenSpecs,
+    appendix?: string,
+): { subject: string; html: string } {
+    const substituted = substituteTokens(body, ctx, tokens, { escape: true });
+    return {
+        subject: substituteTokens(subject, ctx, tokens, { escape: false }),
+        html: baseEmailLayout(renderBodyHtml(appendix ? `${substituted}\n\n${escapeHtml(appendix)}` : substituted)),
+    };
 }
