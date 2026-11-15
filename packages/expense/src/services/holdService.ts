@@ -14,9 +14,9 @@ import { requireFinance } from "./approvalService";
 import { ServiceError } from "@checkin/component-kit";
 
 /** Once the entry is (or is being) booked, a line's account is corrected in QuickBooks, not here. */
-const IN_QUICKBOOKS = new Set([POSTING, "CREATED", "MATCHED"]);
+export const IN_QUICKBOOKS = new Set([POSTING, "CREATED", "MATCHED"]);
 /** Past mapping and waiting on finance: a line's account may be fixed here without a hold. */
-const WAITING_ON_FINANCE = new Set(["POST_FAILED", "NEEDS_FINANCE", "UNBOOKED", "AMBIGUOUS"]);
+export const WAITING_ON_FINANCE = new Set(["POST_FAILED", "NEEDS_FINANCE", "UNBOOKED", "AMBIGUOUS"]);
 
 export async function setHeldLineAccount(
   principal: ExpensePrincipal,
