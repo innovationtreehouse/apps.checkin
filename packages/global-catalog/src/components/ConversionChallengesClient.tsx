@@ -1,10 +1,9 @@
 "use client";
 import { useState } from "react";
 import { Button, Stack, Table, Text, Title } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
 import { formatGtinDisplay } from "../lib/gtin";
 import { api, useLoad } from "./api";
-import { errorMessage, LoadError, showError } from "@checkin/component-ui";
+import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
 import type { ConversionChallengeRow } from "./viewTypes";
 
 const PAGE_LIMIT = 200;
@@ -17,7 +16,7 @@ export default function ConversionChallengesClient() {
     setActing(id);
     try {
       await api(`/conversion-challenges/${id}/accept`, { method: "POST" });
-      notifications.show({ message: "Challenge accepted — conversion factor updated", color: "green" });
+      showSuccess("Challenge accepted — conversion factor updated");
     } catch (e) { showError(errorMessage(e)); }
     finally { setActing(null); }
   }
@@ -26,7 +25,7 @@ export default function ConversionChallengesClient() {
     setActing(id);
     try {
       await api(`/conversion-challenges/${id}/reject`, { method: "POST" });
-      notifications.show({ message: "Challenge rejected", color: "orange" });
+      showSuccess("Challenge rejected");
     } catch (e) { showError(errorMessage(e)); }
     finally { setActing(null); }
   }

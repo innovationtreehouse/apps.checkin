@@ -7,7 +7,7 @@ import { notifications } from "@mantine/notifications";
 import { IconArchive, IconCheck, IconEdit, IconPlus, IconScale, IconX } from "@tabler/icons-react";
 import { formatGtinDisplay } from "../lib/gtin";
 import { api, useLoad } from "./api";
-import { errorMessage, LoadError, showError } from "@checkin/component-ui";
+import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
 import { PART_NUMBER_HINT, partNumberLabel, type ItemRow, type ItemReferenceRow } from "./viewTypes";
 
 // conversionFactor is set by the reference matcher (S4), not the human UI — the
@@ -36,7 +36,7 @@ function ChallengeModal({ row, onClose }: { row: ItemReferenceRow | null; onClos
         method: "POST",
         body: JSON.stringify({ itemReferenceId: row.id, proposedFactor: factor, reason: reason.trim() }),
       });
-      notifications.show({ message: "Challenge filed for review", color: "green" });
+      showSuccess("Challenge filed for review");
       close();
     } catch (e) {
       showError(errorMessage(e));
@@ -96,7 +96,7 @@ function RefRow({ row: r, canEdit, onArchive, onChallenge, onEditingChange }: {
         }),
       });
       exitEdit();
-      notifications.show({ message: "Reference updated", color: "green" });
+      showSuccess("Reference updated");
     } catch (e) {
       showError(errorMessage(e));
     } finally {
@@ -181,7 +181,7 @@ export default function ItemReferencesModal({ item, opened, onClose, canEdit }: 
       });
       setAddForm(EMPTY_REF);
       setShowAdd(false);
-      notifications.show({ message: "Reference added", color: "green" });
+      showSuccess("Reference added");
     } catch (e) {
       showError(errorMessage(e));
     } finally { setCreating(false); }
@@ -190,7 +190,7 @@ export default function ItemReferencesModal({ item, opened, onClose, canEdit }: 
   async function handleArchive(id: number) {
     try {
       await api(`/item-references/${id}/archive`, { method: "POST" });
-      notifications.show({ message: "Reference archived", color: "orange" });
+      showSuccess("Reference archived");
     } catch (e) {
       showError(errorMessage(e));
     }

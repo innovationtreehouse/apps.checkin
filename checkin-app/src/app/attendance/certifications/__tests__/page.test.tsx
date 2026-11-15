@@ -2,7 +2,8 @@
 import { act, screen } from "@testing-library/react";
 jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
-import { renderWithProviders, mockFetchJson, resetRtl } from "@/test-helpers/rtl";
+import { notifications, notificationsStore } from "@mantine/notifications";
+import { renderWithProviders, mockFetchJson, resetRtl, setSearchParams } from "@/test-helpers/rtl";
 import KioskCertificationsDisplay from "../page";
 
 beforeEach(() => resetRtl());
@@ -98,6 +99,57 @@ describe("KioskCertificationsDisplay", () => {
         } finally {
             jest.useRealTimers();
         }
+    });
+
+    describe("when the server can't be reached on a later poll", () => {
+        function answerOnceThenFail() {
+            let calls = 0;
+            global.fetch = jest.fn(async () => {
+                calls += 1;
+                if (calls === 1) return { ok: true, status: 200, json: async () => ({ participants, tools }) } as unknown as Response;
+                throw new TypeError("fetch failed");
+            }) as unknown as typeof fetch;
+        }
+
+        async function pollTwice() {
+            jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] });
+            try {
+                renderWithProviders(<KioskCertificationsDisplay />);
+                expect(await screen.findByText("Alex")).toBeInTheDocument();
+                await act(async () => { jest.advanceTimersByTime(10_000); });
+                await act(async () => { jest.advanceTimersByTime(10_000); });
+            } finally {
+                jest.useRealTimers();
+            }
+        }
+
+        afterEach(() => act(() => notifications.clean()));
+
+        it("on the kiosk, keeps the grid, says it is not up to date, and raises nothing that waits", async () => {
+            setSearchParams("mode=kiosk");
+            answerOnceThenFail();
+            await pollTwice();
+            expect(screen.getByText("Alex")).toBeInTheDocument();
+            expect(screen.getByText("Not up to date")).toBeInTheDocument();
+            expect(notificationsStore.getState().notifications).toHaveLength(0);
+        });
+
+        it("off the kiosk, shows one standing error however many polls fail", async () => {
+            answerOnceThenFail();
+            await pollTwice();
+            expect(screen.getByText("Not up to date")).toBeInTheDocument();
+            const shown = notificationsStore.getState().notifications;
+            expect(shown).toHaveLength(1);
+            expect(shown[0]).toMatchObject({ color: "red", autoClose: false, message: "Couldn't reach the server. Check your connection and try again." });
+        });
+    });
+
+    it("says the server can't be reached when the first load never gets an answer", async () => {
+        global.fetch = jest.fn(async () => { throw new TypeError("fetch failed"); }) as unknown as typeof fetch;
+        setSearchParams("mode=kiosk");
+        renderWithProviders(<KioskCertificationsDisplay />);
+        expect(await screen.findByText("Couldn't reach the server. Check your connection and try again.")).toBeInTheDocument();
+        expect(screen.queryByText(/No active people found/)).not.toBeInTheDocument();
     });
 
     it("shows an error message when the fetch fails", async () => {
