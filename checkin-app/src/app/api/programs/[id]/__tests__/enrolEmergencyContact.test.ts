@@ -41,6 +41,7 @@ jest.mock("@/lib/program/capacity", () => ({
     ...jest.requireActual("@/lib/program/capacity"),
     lockProgramAndCheckCapacity: jest.fn(),
 }));
+jest.mock("@/lib/household/archiveGuard", () => ({ lockLiveHouseholdsOf: jest.fn() }));
 jest.mock("@/lib/conflictOfInterest", () => ({
     hasHouseholdConflict: jest.fn().mockResolvedValue(false),
     sharesHousehold: jest.fn(),
