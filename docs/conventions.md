@@ -364,11 +364,13 @@ another copy of the class and the caller sees a 500.
   receipt's `Access` does. It checks a role only when the decision turns on the
   data, which a registry entry cannot express. In bulk-donation, finance may
   lower the QuickBooks create limit, but raising it takes the board
-  (`packages/bulk-donation/src/services/settingsService.ts`).
+  (`packages/bulk-donation/src/services/settingsService.ts:46`).
 - **New code does not repeat `authorize`.** A role check that only restates
   the route's rule is a second copy of it, free to drift from the registry,
   which is the one place to audit who may do what. Existing ones, such as
-  expense's `requireFinance()`, stay until the route's policy can carry them.
+  expense's `requireFinance()` and the finance-or-board check at the top of
+  bulk-donation's `settingsChanges()` (`settingsService.ts:35`), stay until the
+  route's policy can carry them.
 
 The failure is drift. A role check copied into a library looks like extra
 safety; the day the registry entry changes, the two disagree, and whichever
