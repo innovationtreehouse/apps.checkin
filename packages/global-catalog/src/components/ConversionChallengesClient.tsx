@@ -49,6 +49,7 @@ export default function ConversionChallengesClient() {
               <Table.Th>Organization</Table.Th>
               <Table.Th>Item</Table.Th>
               <Table.Th>Manufacturer</Table.Th>
+              <Table.Th>Retailer</Table.Th>
               <Table.Th>Key</Table.Th>
               <Table.Th>Current</Table.Th>
               <Table.Th>Proposed</Table.Th>
@@ -66,6 +67,7 @@ export default function ConversionChallengesClient() {
                   <Text size="xs" c="dimmed" ff="monospace">{formatGtinDisplay(c.itemReference.gtin13)}</Text>
                 </Table.Td>
                 <Table.Td>{c.itemReference.manufacturer ?? <Text c="dimmed" size="sm">—</Text>}</Table.Td>
+                <Table.Td>{c.itemReference.retailer ?? <Text c="dimmed" size="sm">—</Text>}</Table.Td>
                 <Table.Td><Text size="sm" ff={c.itemReference.partNumber ? "monospace" : undefined}>{keyLabel(c)}</Text></Table.Td>
                 <Table.Td><Text size="sm">{c.currentFactor}x</Text></Table.Td>
                 <Table.Td><Text size="sm" fw={600} c="blue">{c.proposedFactor}x</Text></Table.Td>

@@ -1,23 +1,72 @@
 "use client";
 import { useState } from "react";
 import {
-  ActionIcon, Anchor, Button, Divider, Group, Modal, Table, Text, TextInput, Tooltip,
+  ActionIcon, Anchor, Button, Divider, Group, Modal, NumberInput, Stack, Table, Text, Textarea, TextInput, Tooltip,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { IconArchive, IconCheck, IconEdit, IconPlus, IconX } from "@tabler/icons-react";
+import { IconArchive, IconCheck, IconEdit, IconPlus, IconScale, IconX } from "@tabler/icons-react";
 import { formatGtinDisplay } from "../lib/gtin";
 import { api, useLoad } from "./api";
 import { errorMessage, LoadError, showError } from "@checkin/component-ui";
 import { PART_NUMBER_HINT, partNumberLabel, type ItemRow, type ItemReferenceRow } from "./viewTypes";
 
 // conversionFactor is set by the reference matcher (S4), not the human UI — the
-// create/update routes ignore it — so it is shown read-only here.
+// create/update routes ignore it — so it is shown read-only here and changed only
+// through a conversion challenge.
 const EMPTY_REF = { partNumber: "", description: "", manufacturer: "", retailer: "", url: "" };
 
-function RefRow({ row: r, canEdit, onArchive, onEditingChange }: {
+const REASON_MAX = 500;
+
+function ChallengeModal({ row, onClose }: { row: ItemReferenceRow | null; onClose: () => void }) {
+  const [proposed, setProposed] = useState<number | string>("");
+  const [reason, setReason] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const factor = typeof proposed === "number" ? proposed : Number.NaN;
+  const valid = row !== null && Number.isInteger(factor) && factor >= 1 && factor !== row.conversionFactor
+    && reason.trim().length > 0 && reason.trim().length <= REASON_MAX;
+
+  function close() { setProposed(""); setReason(""); onClose(); }
+
+  async function handleSubmit() {
+    if (!row || !valid) return;
+    setSubmitting(true);
+    try {
+      await api(`/conversion-challenges`, {
+        method: "POST",
+        body: JSON.stringify({ itemReferenceId: row.id, proposedFactor: factor, reason: reason.trim() }),
+      });
+      notifications.show({ message: "Challenge filed for review", color: "green" });
+      close();
+    } catch (e) {
+      showError(errorMessage(e));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Modal opened={row !== null} onClose={close} title="Challenge conversion factor" centered>
+      {row && (
+        <Stack gap="sm">
+          <TextInput label="Current factor" value={String(row.conversionFactor)} readOnly />
+          <NumberInput label="Proposed factor" min={1} step={1} allowDecimal={false} allowNegative={false} value={proposed} onChange={setProposed} data-autofocus />
+          <Textarea label="Reason" maxLength={REASON_MAX} autosize minRows={2} value={reason} onChange={(e) => setReason(e.currentTarget.value)} />
+          <Group justify="flex-end">
+            <Button variant="default" onClick={close}>Cancel</Button>
+            <Button loading={submitting} disabled={!valid} onClick={handleSubmit}>File challenge</Button>
+          </Group>
+        </Stack>
+      )}
+    </Modal>
+  );
+}
+
+function RefRow({ row: r, canEdit, onArchive, onChallenge, onEditingChange }: {
   row: ItemReferenceRow;
   canEdit: boolean;
   onArchive: () => void;
+  onChallenge: () => void;
   onEditingChange: (editing: boolean) => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -93,6 +142,9 @@ function RefRow({ row: r, canEdit, onArchive, onEditingChange }: {
           <Group gap={4}>
             <Tooltip label="Edit"><ActionIcon variant="subtle" size="sm" onClick={enterEdit}><IconEdit size={14} /></ActionIcon></Tooltip>
             <Tooltip label="Archive"><ActionIcon variant="subtle" color="orange" size="sm" onClick={onArchive}><IconArchive size={14} /></ActionIcon></Tooltip>
+            {!r.archivedAt && (
+              <Tooltip label="Challenge"><ActionIcon variant="subtle" color="blue" size="sm" aria-label="Challenge" onClick={onChallenge}><IconScale size={14} /></ActionIcon></Tooltip>
+            )}
           </Group>
         )}
       </Table.Td>
@@ -113,6 +165,7 @@ export default function ItemReferencesModal({ item, opened, onClose, canEdit }: 
   const [showAdd, setShowAdd] = useState(false);
   const [creating, setCreating] = useState(false);
   const [editingRows, setEditingRows] = useState<Set<number>>(new Set());
+  const [challenging, setChallenging] = useState<ItemReferenceRow | null>(null);
 
   const [wasOpened, setWasOpened] = useState(false);
   if (opened && !wasOpened) setWasOpened(true);
@@ -173,12 +226,12 @@ export default function ItemReferencesModal({ item, opened, onClose, canEdit }: 
               <Table.Th w="16%">Retailer</Table.Th>
               <Table.Th>URL</Table.Th>
               <Table.Th w="10%">Conv. Factor</Table.Th>
-              <Table.Th w={canEdit ? 80 : 0} />
+              <Table.Th w={canEdit ? 100 : 0} />
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
             {refs.map((r) => (
-              <RefRow key={r.id} row={r} canEdit={canEdit} onArchive={() => handleArchive(r.id)} onEditingChange={(e) => handleEditingChange(r.id, e)} />
+              <RefRow key={r.id} row={r} canEdit={canEdit} onArchive={() => handleArchive(r.id)} onChallenge={() => setChallenging(r)} onEditingChange={(e) => handleEditingChange(r.id, e)} />
             ))}
             {showAdd && (
               <Table.Tr>
@@ -206,6 +259,7 @@ export default function ItemReferencesModal({ item, opened, onClose, canEdit }: 
         ) : <span />}
         <Button variant="default" onClick={handleClose}>Close</Button>
       </Group>
+      <ChallengeModal row={challenging} onClose={() => setChallenging(null)} />
     </Modal>
   );
 }

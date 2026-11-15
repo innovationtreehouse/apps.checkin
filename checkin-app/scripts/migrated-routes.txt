@@ -58,6 +58,7 @@ POST /api/catalog/provisional-items/[id]/approve
 POST /api/catalog/provisional-items/[id]/reject
 POST /api/catalog/provisional-items/[id]/map-to-existing
 PUT /api/catalog/reference-conflicts/[id]/resolve
+POST /api/catalog/conversion-challenges
 POST /api/catalog/conversion-challenges/[id]/accept
 POST /api/catalog/conversion-challenges/[id]/reject
 GET /api/budget-owners
