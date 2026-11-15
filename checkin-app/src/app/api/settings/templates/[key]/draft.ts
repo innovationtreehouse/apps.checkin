@@ -9,13 +9,15 @@ const MAX_LEN = 5000;
 export async function readDraft(req: NextRequest, key: string): Promise<{ key: TemplateKey; subject: string; body: string }> {
     if (!Object.hasOwn(REGISTRY, key)) throw notFound("No such email template");
     const spec = REGISTRY[key as TemplateKey];
-    let input: { subject?: unknown; body?: unknown };
+    let input: unknown;
     try {
         input = await req.json();
     } catch {
         throw badRequest("Invalid JSON");
     }
-    const draft = { subject: input.subject, body: input.body };
+    if (typeof input !== "object" || input === null) throw badRequest("Send a subject and a body");
+    const { subject, body } = input as { subject?: unknown; body?: unknown };
+    const draft = { subject, body };
     for (const field of ["subject", "body"] as const) {
         const value = draft[field];
         if (typeof value !== "string") throw badRequest(`${field} must be a string`);

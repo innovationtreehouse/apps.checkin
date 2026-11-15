@@ -63,7 +63,7 @@ export default function EmailTemplatesPage() {
     setBusy(action);
     try {
       await api(`/api/settings/templates/${encodeURIComponent(key)}`, { method: "PUT", body: JSON.stringify(copy) });
-      if (action === "reset") setDraft(withDefaults(REGISTRY[key], null));
+      setDraft(withDefaults(REGISTRY[key], copy));
       showSuccess(action === "reset" ? "This email now sends its default wording." : "Template saved.");
     } catch (e) {
       showError(errorMessage(e));

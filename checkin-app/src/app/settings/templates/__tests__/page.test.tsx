@@ -59,6 +59,13 @@ describe("EmailTemplatesPage", () => {
     expect(JSON.parse(init!.body as string)).toEqual({ subject: "You're in {{programName}}", body: REGISTRY["enrollment.confirm"].defaultBody });
   });
 
+  it("shows the default a blank field sends once the save lands", async () => {
+    await open("enrollment.confirm");
+    fireEvent.change(screen.getByLabelText("Subject"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save template" }));
+    await waitFor(() => expect(screen.getByLabelText("Subject")).toHaveValue(REGISTRY["enrollment.confirm"].defaultSubject));
+  });
+
   it("flags a token the key does not have on its field and blocks save and send", async () => {
     await open("enrollment.confirm");
     fireEvent.change(screen.getByLabelText("Body"), { target: { value: "See {{actionLink}}" } });

@@ -81,6 +81,8 @@ describe('PUT /api/settings/templates/[key]', () => {
     });
 
     it.each([
+        ['a JSON null', null],
+        ['a JSON string', 'Hi'],
         ['a missing body', { subject: 'Hi' }],
         ['a non-string subject', { subject: 3, body: 'x' }],
         ['an over-long body', { subject: 'Hi', body: 'x'.repeat(5001) }],
