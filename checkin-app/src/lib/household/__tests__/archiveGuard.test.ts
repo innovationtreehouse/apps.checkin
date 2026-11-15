@@ -5,7 +5,8 @@
  * row or the connection sees it, and locks in household-id order.
  */
 
-import type { DbClient } from "@/lib/db-client";
+import { registerRootClient, type TxClient } from "@/lib/db-client";
+import type { PrismaClient } from "@/generated/prisma/client";
 import { ArchivedHouseholdError, lockLiveHouseholds, lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
 import { ServiceError } from "@checkin/component-kit";
 
@@ -20,7 +21,7 @@ function client(rows: Record<number, { archivedAt: Date | null }>, people: { id:
         person: { findMany: jest.fn() },
     };
     for (const read of people) db.person.findMany.mockResolvedValueOnce(read);
-    return { db: db as unknown as DbClient, locked };
+    return { db: db as unknown as TxClient, locked };
 }
 
 describe("lockLiveHouseholds", () => {
@@ -28,6 +29,12 @@ describe("lockLiveHouseholds", () => {
         const { db, locked } = client({ 3: { archivedAt: null }, 9: { archivedAt: null } });
         await expect(lockLiveHouseholds(db, [9, 3, 9])).resolves.toBeUndefined();
         expect(locked).toEqual([3, 9]);
+    });
+
+    it("refuses a root client, whose lock would not outlive the statement", async () => {
+        const { db } = client({ 3: { archivedAt: null } });
+        registerRootClient(db as unknown as PrismaClient);
+        await expect(lockLiveHouseholds(db, [3])).rejects.toThrow("inside a transaction");
     });
 
     it("refuses a household row security hides", async () => {

@@ -1,4 +1,4 @@
-import type { DbClient } from "@/lib/db-client";
+import { isRootClient, type TxClient } from "@/lib/db-client";
 import { ServiceError } from "@checkin/component-kit";
 
 export const ARCHIVED_HOUSEHOLD_REFUSAL = "This household is archived, so nothing about it can change. The Board can unarchive it.";
@@ -15,9 +15,11 @@ export class ArchivedHouseholdError extends ServiceError {
  * when one is archived. Archiving takes the same lock, so a write that calls this
  * in its transaction, before it writes, either commits before an archive reads the
  * household or is refused once it is archived. Take it after any OrgMembership or
- * application lock the transaction holds: archiving takes those first.
+ * application lock the transaction holds: archiving takes those first. Refuses a root
+ * client, whose row lock would end with the statement and serialize nothing.
  */
-export async function lockLiveHouseholds(db: DbClient, householdIds: readonly number[]): Promise<void> {
+export async function lockLiveHouseholds(db: TxClient, householdIds: readonly number[]): Promise<void> {
+    if (isRootClient(db)) throw new Error("lockLiveHouseholds must run inside a transaction.");
     for (const id of [...new Set(householdIds)].sort((a, b) => a - b)) {
         // Row security hides an archived row, so a missing row is an archived one.
         // A connection row security does not bind sees the row, and archivedAt says so.
@@ -27,7 +29,7 @@ export async function lockLiveHouseholds(db: DbClient, householdIds: readonly nu
 }
 
 /** {@link lockLiveHouseholds} for the households these people are in. A person moved meanwhile is refused. */
-export async function lockLiveHouseholdsOf(db: DbClient, personIds: readonly number[]): Promise<void> {
+export async function lockLiveHouseholdsOf(db: TxClient, personIds: readonly number[]): Promise<void> {
     const where = { id: { in: [...personIds] } };
     const before = await db.person.findMany({ where, select: { id: true, householdId: true } });
     await lockLiveHouseholds(db, before.map((p) => p.householdId));
