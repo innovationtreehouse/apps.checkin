@@ -31,6 +31,7 @@ jest.mock('@/lib/prisma', () => ({
 jest.mock('@/lib/membership/external', () => ({ advanceExternalIfComplete: jest.fn() }));
 jest.mock('@/lib/membership/householdStatus', () => ({ raiseDeniedHouseholdActivity: jest.fn() }));
 jest.mock('@/lib/membership/settleHouseholdBg', () => ({ settleHouseholdBg: jest.fn() }));
+jest.mock('@/lib/membership/payment', () => ({ liveYearVariantId: jest.fn() }));
 jest.mock('@/lib/logger', () => ({ logger: { info: jest.fn(), error: jest.fn() }, logBackendError: jest.fn() }));
 
 jest.mock('@/lib/membership/review', () => ({
@@ -50,6 +51,8 @@ const { raiseDeniedHouseholdActivity } = require('@/lib/membership/householdStat
 const { settleHouseholdBg } = require('@/lib/membership/settleHouseholdBg');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { logBackendError } = require('@/lib/logger');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { liveYearVariantId } = require('@/lib/membership/payment');
 
 // Mirrors the module-private monthsBefore in renewal.ts.
 function monthsBefore(date: Date, months: number): Date {
@@ -284,6 +287,7 @@ describe('runRenewalSweep skip-probe shape', () => {
         const boundary = new Date(Date.UTC(2000, 7, 1)); // Aug 1
         prisma.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: boundary });
         prisma.orgMembership.findMany.mockResolvedValue([]);
+        liveYearVariantId.mockResolvedValue('111');
 
         const now = new Date(Date.UTC(2026, 6, 15)); // Jul 15 — inside the 2-month window
         await runRenewalSweep(now);
@@ -296,5 +300,30 @@ describe('runRenewalSweep skip-probe shape', () => {
                 handledThisCycleWhere(2026, windowStart),
             ],
         });
+    });
+});
+
+describe('runRenewalSweep coming-year product', () => {
+    const boundary = new Date(Date.UTC(2000, 7, 1)); // Aug 1
+    const now = new Date(Date.UTC(2026, 6, 15)); // Jul 15 — inside the window for 2026-2027
+
+    beforeEach(() => {
+        prisma.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: boundary });
+        prisma.orgMembership.findMany.mockResolvedValue([]);
+    });
+
+    it('opens nothing and names the year when the coming year has no product', async () => {
+        liveYearVariantId.mockResolvedValue(null);
+        const result = await runRenewalSweep(now);
+        expect(result).toEqual({ opened: 0, skipped: 0, reason: 'no membership product set for 2026-2027' });
+        expect(liveYearVariantId).toHaveBeenCalledWith(boundary, now);
+        expect(prisma.orgMembership.findMany).not.toHaveBeenCalled();
+    });
+
+    it('opens renewals when the coming year has a product', async () => {
+        liveYearVariantId.mockResolvedValue('111');
+        const result = await runRenewalSweep(now);
+        expect(result).not.toHaveProperty('reason');
+        expect(prisma.orgMembership.findMany).toHaveBeenCalled();
     });
 });

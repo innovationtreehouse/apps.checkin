@@ -5,13 +5,13 @@ Everything here expires when the change has run. The design is in
 
 ## Where it stands
 
-PRs 1 to 8 are built. Every payment records its year, settled rows are filled,
-coverage reads the recorded year, settings hold a variant per year, and the
-checkout sells the live year's row (PR 8). The board entered the 2026-27 row in dev
-and production on 2026-11-13.
+PRs 1 to 9 are built. Every payment records its year, settled rows are filled,
+coverage reads the recorded year, settings hold a variant per year, the checkout
+sells the live year's row (PR 8), and the renewal sweep opens nothing while the
+coming year has no variant (PR 9). The board entered the 2026-27 row in dev and
+production on 2026-11-13.
 
-Left: PR 9 (renewals stop without a coming-year variant) and PR 10 (retire the
-single variant). The single variant id `BoardSettings.orgMembershipVariantId` is
+Left: PR 10 (retire the single variant), after PR 9 deploys and drains. The single variant id `BoardSettings.orgMembershipVariantId` is
 still read by the settings route and page, the registry, and the transitional entry
 in `membershipVariantYears` (through the webhook, the reconciler, reversals, the
 match audit and `income/appItems.ts`). PR 10 removes all of them.
@@ -250,7 +250,10 @@ and the coming year together and counts a year once when they are the same.
   live year's row in dev and production (it may reuse the existing variant id).
 - **Blocked on:** PR 7, and the rows entered.
 
-### PR 9: renewals stop without a coming-year variant [app]
+### PR 9: renewals stop without a coming-year variant [app] (built)
+
+Built in `runRenewalSweep` with `liveYearVariantId`, the checkout's own choice of
+variant, so a local instance with the Shopify mock active still opens renewals.
 
 - **Files:** `runRenewalSweep` in `checkin-app/src/lib/membership/renewal.ts`: a
   second early return when the coming year has no row, with a reason naming it.

@@ -484,6 +484,9 @@ Procedure below is built on them.
   household: that opens its renewal at any time of year, unless the household
   has already paid for the year now in effect.  [Decision]
 
+- Renewals do not open while the coming year has no membership product to pay
+  through.  [Decision — *Principle: an unconfigured setting does not act*]
+
 - Renewals start only from the board's own actions: its "open renewals" button
   opens them for every household due, and a board grant opens one
   for that single household. No scheduled run opens them.  [Decision — *Board
