@@ -39,6 +39,44 @@ describe("SignInPage", () => {
         expect(router.replace).toHaveBeenCalledWith("/");
     });
 
+    it("returns a signed-in visitor to the program page they came from", () => {
+        setSession({ id: 1, name: "Ann Admin" });
+        setSearchParams("callbackUrl=%2Fprograms%2F10");
+        renderWithProviders(<SignInPage />);
+
+        expect(router.replace).toHaveBeenCalledWith("/programs/10");
+    });
+
+    it("hands the program page to Google sign-in as the return target", () => {
+        setSearchParams("callbackUrl=%2Fprograms%2F10");
+        renderWithProviders(<SignInPage />);
+
+        fireEvent.click(screen.getByRole("button", { name: /sign in with google/i }));
+        expect(signIn).toHaveBeenCalledWith("google", { callbackUrl: "/programs/10" });
+    });
+
+    it.each([
+        "https://evil.example/programs/10",
+        "//evil.example/programs/10",
+        "/\\evil.example/programs/10",
+        "/..//evil.example",
+        "javascript:alert(1)",
+    ])("refuses the outside return target %s and falls back to /", (target) => {
+        setSearchParams(new URLSearchParams({ callbackUrl: target }));
+        renderWithProviders(<SignInPage />);
+
+        fireEvent.click(screen.getByRole("button", { name: /sign in with google/i }));
+        expect(signIn).toHaveBeenCalledWith("google", { callbackUrl: "/" });
+    });
+
+    it("refuses an outside return target for a signed-in visitor", () => {
+        setSession({ id: 1, name: "Ann Admin" });
+        setSearchParams(new URLSearchParams({ callbackUrl: "https://evil.example/" }));
+        renderWithProviders(<SignInPage />);
+
+        expect(router.replace).toHaveBeenCalledWith("/");
+    });
+
     it("renders no sign-in button while the session is still loading", () => {
         setSession(null, "loading");
         renderWithProviders(<SignInPage />);

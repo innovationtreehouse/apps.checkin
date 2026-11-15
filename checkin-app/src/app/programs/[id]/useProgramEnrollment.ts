@@ -68,6 +68,8 @@ async function attempt(write: Promise<unknown>): Promise<{ status: number; error
 export function useProgramEnrollment(id: string) {
   const { data: session, status, update: updateSession } = useSession();
   const router = useRouter();
+  // /signin validates callbackUrl and returns the visitor here once signed in.
+  const signInToProgram = () => router.push(`/signin?callbackUrl=${encodeURIComponent(`/programs/${id}`)}`);
   const isLocalInstance = useIsLocalInstance();
   const shopifyStoreDomain = useShopifyStoreDomain();
 
@@ -142,7 +144,7 @@ export function useProgramEnrollment(id: string) {
 
   const startEnrollmentProcess = () => {
     if (!session) {
-      router.push('/');
+      signInToProgram();
       return;
     }
     // Nobody is pre-checked: enrolling creates a PENDING row and a payment
@@ -170,7 +172,7 @@ export function useProgramEnrollment(id: string) {
   };
 
   const handleRequestPaymentPlan = async () => {
-    if (!session) return router.push('/');
+    if (!session) return signInToProgram();
     if (selectedParticipantIds.length === 0) return;
     if (!planKind) return;
     if (writing.current) return;
@@ -281,7 +283,7 @@ export function useProgramEnrollment(id: string) {
 
   const handleEnroll = async (confirmedRepeat = false) => {
     if (!session) {
-      router.push('/');
+      signInToProgram();
       return;
     }
     if (selectedParticipantIds.length === 0) return;
@@ -408,7 +410,7 @@ export function useProgramEnrollment(id: string) {
   };
 
   return {
-    session, status, program, programLoad, successMessage, startEnrollmentProcess, showEnrollmentSelection,
+    session, status, program, programLoad, successMessage, startEnrollmentProcess, signInToProgram, showEnrollmentSelection,
     picker: {
       showIntake, setShowIntake, handleIntakeSaved, loadingHousehold, householdError, householdErrorWhat, reloadHousehold, householdMembers, enrollBlock, needsSetup,
       selectedParticipantIds, setSelectedParticipantIds, enrolling, handleEnroll, repeatPayments, setRepeatPayments,
