@@ -204,4 +204,35 @@ describe("failed loads", () => {
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByRole("button", { name: "Send Opening-of-renewals campaign" })).toBeInTheDocument();
   });
+
+  it("holds the form and the send buttons until this visit's own reads answer, even with older reads cached", async () => {
+    router({
+      "/api/settings/outreach": { body: { settings: SETTINGS, nextDeadline: "2026-08-01" } },
+      "/api/outreach/status": { body: EMPTY_STATUS },
+    });
+    const earlier = renderWithProviders(<OutreachSettingsPage />);
+    await screen.findByDisplayValue("Time to {{actionWord}}");
+    earlier.unmount();
+
+    const answer = router({
+      "/api/settings/outreach": { body: { settings: { ...SETTINGS, outreachOpeningSubject: "Newer subject" }, nextDeadline: "2026-08-01" } },
+      "/api/outreach/status": { body: EMPTY_STATUS },
+    });
+    const held: Array<() => void> = [];
+    let released = false;
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => released
+      ? answer(input, init)
+      : new Promise<Response>((resolve) => { held.push(() => resolve(answer(input, init))); })) as unknown as typeof fetch;
+    renderWithProviders(<OutreachSettingsPage />);
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalled());
+    expect(screen.queryByDisplayValue("Time to {{actionWord}}")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save templates" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send Opening-of-renewals campaign" })).not.toBeInTheDocument();
+
+    released = true;
+    held.forEach((release) => release());
+    expect(await screen.findByDisplayValue("Newer subject")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Send Opening-of-renewals campaign" })).toBeInTheDocument();
+  });
 });
