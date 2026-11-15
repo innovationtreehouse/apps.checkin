@@ -4,7 +4,9 @@ import { defineFileRoute, defineRoute, type OrderedViewEntry } from '../core';
 // Submitters are adult members or Treehouse Volunteers (`receipt-submitter`,
 // docs/rules/expenses.md) and read only their own receipts: `their_own` resolves on the row's uploadedByUserId against
 // the session id, and grants no pii, so donor and reimbursee names
-// never come back to the uploader. Both views carry `public` for the receipt ids. FINANCE acts org-wide; BOARD reads alongside
+// never come back to the uploader. Both views carry a bare `public` token for the receipt ids, which admits every `public`
+// field on every returned row with no row gate; receipt ids are the only such fields today
+// (__tests__/receipt-public-fields.test.ts). FINANCE acts org-wide; BOARD reads alongside
 // FINANCE (finance's superuser) but takes no finance action. Sysadmins get
 // nothing extra (revenue.md), except the automatic-reading switch below, which
 // the owner opened to sysadmins (expenses.md). A route shared by both audiences lists

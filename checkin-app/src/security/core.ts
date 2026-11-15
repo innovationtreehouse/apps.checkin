@@ -322,9 +322,10 @@ export interface RouteSpec {
     /**
      * The models this route's handler is declared to return (top-level bag keys
      * + the models reached through their relations). Optional documentation of
-     * the response surface; consumed by the seam validator (validateRouteGrants) to check the
-     * declared set against what the handler actually ships. Not enforced by the
-     * runtime stripper (that gates per-field regardless of this list).
+     * the response surface; the seam validator (validateRouteGrants) checks that every
+     * row-scoped grant in orderedView binds on at least one of these models. Nothing
+     * checks it against what the handler actually ships, and the runtime stripper
+     * gates per-field regardless of this list.
      */
     returns?: readonly Models[];
     /**
