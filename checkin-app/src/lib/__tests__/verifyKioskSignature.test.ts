@@ -270,6 +270,6 @@ describe('kiosk signing contract (golden vector shared with the Python client)',
             vector.nonce,
             publicKey
         );
-        expect(res).toEqual({ ok: true });
+        expect(res).toEqual({ ok: true, keyFingerprint: kioskKeyFingerprint(publicKey) });
     });
 });
