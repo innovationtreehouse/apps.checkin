@@ -80,7 +80,7 @@ const bare = (quoted: string) => quoted.replace(/^"|"$/g, "");
 export class DevDataCheckRefused extends Error {}
 
 // Hosts a local database may live on: the laptop itself, or the `db` service in deploy/docker-compose*.yml.
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]", "db"]);
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "db"]);
 
 function isLocalHost(databaseUrl: string | undefined): boolean {
     try {

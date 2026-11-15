@@ -1,7 +1,7 @@
 import { DevDataCheckRefused, runDevDataCheck } from "../dataCheck";
 
-let mockReceipts = receiptClient("receipt_dev");
-jest.mock("@checkin/receipt", () => ({ getPrisma: () => mockReceipts }));
+let mockReceipts: () => ReturnType<typeof receiptClient> = () => receiptClient("receipt_dev");
+jest.mock("@checkin/receipt", () => ({ getPrisma: () => mockReceipts() }));
 jest.mock("../dataCheck", () => ({ ...jest.requireActual("../dataCheck"), runDevDataCheck: jest.fn() }));
 
 const report = {
@@ -62,7 +62,7 @@ describe("dev-data-check script", () => {
     it("refuses a receipt database that is not dev's, without counting it", async () => {
         jest.mocked(runDevDataCheck).mockResolvedValue(report);
         const client = receiptClient("receipt_prod");
-        mockReceipts = client;
+        mockReceipts = () => client;
         const { code, errors } = await runScript();
         expect(code).toBe(1);
         expect(errors).toEqual([["dev-data-check refused: not the dev database"]]);
@@ -71,9 +71,19 @@ describe("dev-data-check script", () => {
 
     it("counts receipts in dev's receipt database", async () => {
         jest.mocked(runDevDataCheck).mockResolvedValue(report);
-        mockReceipts = receiptClient("receipt_dev");
+        mockReceipts = () => receiptClient("receipt_dev");
         const { code, logs } = await runScript();
         expect(code).toBe(0);
         expect(JSON.parse(logs[0][0] as string).receiptsForInformation).toBe(3);
+    });
+
+    it("reports receipts unavailable when the receipt client cannot be built", async () => {
+        jest.mocked(runDevDataCheck).mockResolvedValue(report);
+        mockReceipts = () => {
+            throw new Error("RECEIPT_DATABASE_URL is not set");
+        };
+        const { code, logs } = await runScript();
+        expect(code).toBe(0);
+        expect(JSON.parse(logs[0][0] as string).receiptsForInformation).toBe("unavailable");
     });
 });

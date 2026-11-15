@@ -14,9 +14,10 @@ import { currentDatabase, DevDataCheckRefused, isAllowedDatabase, runDevDataChec
 // Receipts are counted for information only; they are mostly anonymous and outside the check.
 // A receipt database that is not dev's refuses the whole run; an unreachable one reads "unavailable".
 async function countReceipts(): Promise<number | "unavailable"> {
-    const receipts = getReceiptPrisma();
+    let receipts: ReturnType<typeof getReceiptPrisma>;
     let name: string;
     try {
+        receipts = getReceiptPrisma();
         name = await currentDatabase(receipts);
     } catch {
         return "unavailable";
