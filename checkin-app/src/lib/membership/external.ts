@@ -13,7 +13,7 @@ import { SIGN_FIELDS, type SignFieldSpec } from "@/lib/membership/contract/signF
 import { loadAgreementPdf, stampWatermark, AGREEMENT_FILENAME, AgreementUnavailableError, type LoadedAgreement } from "@/lib/membership/contract/agreementDocument";
 import { latestPendingExternal } from "@/lib/membership/phases";
 import { findOpenPersonAgreement } from "@/lib/membership/personAgreementTriggers";
-import { fromWhere, openProcess, zohoWebhookMatchable } from "@/lib/membership/lifecycle";
+import { asHouseholdProcess, fromWhere, openProcess, zohoWebhookMatchable } from "@/lib/membership/lifecycle";
 import { systemActor, personOrSystemActor } from "@/lib/auditActor";
 
 /**
@@ -119,11 +119,10 @@ export async function advanceExternalIfComplete(processId: number) {
     const started = !process.bgClearedAt && (await applicationCheckStarted(process));
     if (!process.bgClearedAt && !started) return process;
 
+    const { orgMembershipId } = asHouseholdProcess(process);
     const advanced = await prisma.$transaction(async (tx) => {
-        // A household INITIAL/RENEWAL always has a membership (orgMembershipId is
-        // only null for PERSON_BG, which never sits at PENDING_EXTERNAL_ACTION).
         const membership = await tx.orgMembership.findUnique({
-            where: { id: process.orgMembershipId! },
+            where: { id: orgMembershipId },
             select: { householdId: true },
         });
         const { count } = await tx.orgMembershipProcess.updateMany({
@@ -141,7 +140,7 @@ export async function advanceExternalIfComplete(processId: number) {
         // background check clears — so a pre-designated volunteer family must get
         // isVolunteerFamily here, not only at clearance. Sticky + idempotent;
         // clearBackgroundCheck's reviewer-marked pass remains the supplement.
-        if (membership) await applyVolunteerFamilyStatus(tx, process.orgMembershipId!, membership.householdId, false);
+        if (membership) await applyVolunteerFamilyStatus(tx, orgMembershipId, membership.householdId, false);
         await tx.auditLog.create({
             data: {
                 ...systemActor("system:membership-external-advance"),

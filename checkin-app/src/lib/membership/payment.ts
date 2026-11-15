@@ -9,7 +9,7 @@ import { openPersonBgForNewMember } from "@/lib/membership/personBgTriggers";
 import { openPersonAgreementForNewMember } from "@/lib/membership/personAgreementTriggers";
 import { config, DEV_MOCK_MEMBERSHIP_VARIANT_ID } from "@/lib/config";
 import { systemActor, personOrSystemActor } from "@/lib/auditActor";
-import { fromWhere } from "@/lib/membership/lifecycle";
+import { asHouseholdProcess, fromWhere } from "@/lib/membership/lifecycle";
 import { setHouseholdStatus, raiseDeniedHouseholdActivity, type HouseholdStatus } from "@/lib/membership/householdStatus";
 import { isOrderReversed } from "@/lib/finance/reconcile/exceptions";
 import { recordUnreportedReversal } from "@/lib/finance/reconcile/liveOrder";
@@ -81,9 +81,7 @@ export async function ensurePaymentLink(processId: number): Promise<{ amountCent
     if (!proc) throw new PaymentError("not_found", "Application not found.");
     if (proc.status !== "PENDING_PAYMENT") throw new PaymentError("wrong_phase", "This application is not awaiting payment.");
 
-    // orgMembershipId is non-null for any process in PENDING_PAYMENT (a PERSON_BG
-    // never enters payment); the guard above ensures we only reach here for those.
-    const membership = await prisma.orgMembership.findUnique({ where: { id: proc.orgMembershipId! }, select: { isVolunteerFamily: true } });
+    const membership = await prisma.orgMembership.findUnique({ where: { id: asHouseholdProcess(proc).orgMembershipId }, select: { isVolunteerFamily: true } });
     if (!membership) throw new PaymentError("not_found", "Membership not found.");
 
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
@@ -157,12 +155,12 @@ async function settle(
     if (opts.shopifyOrderId) await recordUnreportedReversal(opts.shopifyOrderId);
     const result = await prisma.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
-        const process = await tx.orgMembershipProcess.findUnique({ where: { id: processId } });
-        if (!process) throw new PaymentError("not_found", "Application not found.");
+        const found = await tx.orgMembershipProcess.findUnique({ where: { id: processId } });
+        if (!found) throw new PaymentError("not_found", "Application not found.");
+        const process = asHouseholdProcess(found);
         // Household row locked after the process row (the order review.ts takes), so a
         // deny can't commit between this DENIED check and the payment write.
-        // orgMembershipId is non-null for a payable process (PERSON_BG has no checkout).
-        const [membership] = await tx.$queryRaw<{ householdId: number; status: HouseholdStatus }[]>`SELECT "householdId", status FROM "OrgMembership" WHERE id = ${process.orgMembershipId!} FOR UPDATE`;
+        const [membership] = await tx.$queryRaw<{ householdId: number; status: HouseholdStatus }[]>`SELECT "householdId", status FROM "OrgMembership" WHERE id = ${process.orgMembershipId} FOR UPDATE`;
         if (!membership) throw new PaymentError("not_found", "Membership not found.");
 
         if (opts.via === "manual") {
@@ -238,7 +236,7 @@ async function settle(
         const disputed = !!process.bgClearedAt && (await householdHasDisputedCheck(tx, membership.householdId));
         const activating = !!process.bgClearedAt && !disputed;
         if (activating) {
-            const applied = await setHouseholdStatus(tx, process.orgMembershipId!, {
+            const applied = await setHouseholdStatus(tx, process.orgMembershipId, {
                 from: ["NONE", "REVOKED", "ACTIVE"],
                 to: "ACTIVE",
                 actor,
