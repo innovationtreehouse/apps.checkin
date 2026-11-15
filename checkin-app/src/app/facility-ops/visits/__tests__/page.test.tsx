@@ -41,6 +41,24 @@ describe("facility-ops/visits page", () => {
     expect(fetchMock.mock.calls.map(([url]) => url)).toContain("/api/facility/visits?closedOut=true");
   });
 
+  it("the closed-out filter names who closed for a keyholder close", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({
+      "/api/facility/visits?closedOut=true": { visits: [
+        { ...visits[0], departedVia: "FACILITY_CLOSE", facilityCloseId: 8, facilityClose: { closedBy: { name: "Kim Keyholder" } } },
+        { ...visits[0], id: 3, departedVia: "FACILITY_CLOSE", facilityCloseId: 9, facilityClose: { closedBy: null } },
+      ] },
+      "/api/facility/visits": { visits },
+    });
+    renderWithProviders(<AdminVisitsPage />);
+    await screen.findByText("Val Volunteer");
+
+    fireEvent.click(screen.getByRole("switch", { name: "Closed out by a close" }));
+
+    expect(await screen.findByText("#8 · Kim Keyholder")).toBeInTheDocument();
+    expect(screen.getByText("#9 · Keyholder")).toBeInTheDocument();
+  });
+
   it("loads and renders visit rows", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson({ "/api/facility/visits": { visits } });

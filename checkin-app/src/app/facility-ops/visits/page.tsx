@@ -24,6 +24,7 @@ type Visit = {
   arrivedVia?: VisitSource | null;
   departedVia?: VisitSource | null;
   facilityCloseId?: number | null;
+  facilityClose?: { closedBy?: { name?: string | null } | null } | null;
   person?: { name?: string | null; email?: string | null } | null;
   event?: { name?: string | null } | null;
 };
@@ -361,7 +362,7 @@ export default function AdminVisitsPage() {
                       ) : <Text component="span" c="yellow">Active</Text>}
                     </Table.Td>
                     {closedOut && (
-                      <Table.Td>#{v.facilityCloseId} · {v.departedVia === 'AUTO_CLOSE' ? 'Nightly' : 'Keyholder'}</Table.Td>
+                      <Table.Td>#{v.facilityCloseId} · {v.departedVia === 'AUTO_CLOSE' ? 'Nightly' : (v.facilityClose?.closedBy?.name ?? 'Keyholder')}</Table.Td>
                     )}
                     <Table.Td>
                       {v.departedAt ? (

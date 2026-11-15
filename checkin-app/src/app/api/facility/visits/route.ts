@@ -18,7 +18,8 @@ import { findVisitOverlaps, openOverlapRefusal, overlapFlag } from "@/lib/visit/
 //
 // ?closedOut=true lists the visits a close's stamp still ends, newest close
 // first. Visit.facilityCloseId says which close: after a pull-back the close log
-// names both closes, and this column names the one that stands.
+// names both closes, and this column names the one that stands. Each row carries
+// its close's closer name; a nightly sweep has no closer.
 export const GET = handler('GET /api/facility/visits', async ({ req }) => {
     const closedOut = new URL(req.url).searchParams.get('closedOut') === 'true';
     const visits = await prisma.visit.findMany({
@@ -31,6 +32,7 @@ export const GET = handler('GET /api/facility/visits', async ({ req }) => {
             person: {
                 select: { email: true, name: true, isSysadmin: true, isKeyholder: true },
             },
+            ...(closedOut ? { facilityClose: { select: { closedBy: { select: { name: true } } } } } : {}),
         },
     });
 
