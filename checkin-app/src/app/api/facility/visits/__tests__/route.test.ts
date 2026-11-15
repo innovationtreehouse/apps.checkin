@@ -3,7 +3,7 @@
  */
 /**
  * GET /api/facility/visits through the real handler(): the query selects only
- * the visit columns and person fields the visit log shows, plus the closer's
+ * the visit columns, person fields and event name the visit log shows, plus the closer's
  * name on the closed-out list.
  */
 import type { NextRequest } from 'next/server';
@@ -20,7 +20,7 @@ jest.mock('@/lib/prisma', () => ({
 
 const req = (query = '') => new Request(`http://localhost/api/facility/visits${query}`) as unknown as NextRequest;
 
-const VISIT_COLUMNS = ['arrivedAt', 'arrivedVia', 'departedAt', 'departedVia', 'facilityCloseId', 'id', 'person', 'personId'];
+const VISIT_COLUMNS = ['arrivedAt', 'arrivedVia', 'departedAt', 'departedVia', 'event', 'facilityCloseId', 'id', 'person', 'personId'];
 
 beforeEach(() => {
     jest.clearAllMocks();
@@ -35,6 +35,7 @@ it('selects only the columns the visit log shows', async () => {
     expect(args).not.toHaveProperty('include');
     expect(Object.keys(args.select).sort()).toEqual(VISIT_COLUMNS);
     expect(args.select.person).toEqual({ select: { email: true, name: true } });
+    expect(args.select.event).toEqual({ select: { name: true } });
 });
 
 it('adds the closer name on the closed-out list', async () => {
