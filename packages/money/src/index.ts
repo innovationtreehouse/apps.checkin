@@ -8,9 +8,12 @@
  * bug class (a boundary inventing a dollar-named field and forgetting the ÷100).
  */
 
+// Plain decimal text only: Number() would also take "0x10", "1e3" and "+5". Needs a digit, so blank ≠ $0.00.
+const PLAIN_DECIMAL = /^\s*-?(\d+\.?\d*|\.\d+)\s*$/;
+
 /**
- * Single parse contract for both entry points: Number() semantics (rejects trailing
- * garbage like "12.5x") plus explicit empty/blank-string rejection (blank ≠ $0.00).
+ * Single parse contract for both entry points: plain decimal text (optional leading minus,
+ * surrounding whitespace) parsed with Number(); everything else is invalid.
  * Returns integer cents, or NaN for invalid input — callers decide throw vs. null.
  *
  * Rounding: Math.round(n * 100) rounds a float product, so "1.005" → 100 (because
@@ -21,7 +24,7 @@
  * cent-safe range (> ~MAX_SAFE_INTEGER/100 dollars) and breaks it — none found.
  */
 function parseDollarsToCents(value: string | number): number {
-  if (typeof value === "string" && value.trim() === "") return NaN;
+  if (typeof value === "string" && !PLAIN_DECIMAL.test(value)) return NaN;
   const n = typeof value === "string" ? Number(value) : value;
   if (!Number.isFinite(n)) return NaN;
   return Math.round(Number((n * 100).toFixed(4)));
