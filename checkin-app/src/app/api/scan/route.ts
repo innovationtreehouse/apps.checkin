@@ -66,6 +66,8 @@ export const POST = withKiosk(
     if (auth.type !== 'kiosk') return apiError("Check in at the kiosk.", 403);
 
     const startTime = Date.now();
+    // The protocol version recorded for this kiosk key; set only once the body passes validation.
+    let seenVersion: number | null = null;
 
     try {
         const participantId = isPersonId(body.participantId) ? body.participantId : null;
@@ -153,6 +155,10 @@ export const POST = withKiosk(
         if (invalid && body.replay !== true) {
             return apiError(invalid, 400);
         }
+        // An absent version is 1; a replay whose own version is invalid parks and is not recorded.
+        seenVersion = body.protocolVersion === undefined ? 1
+            : typeof body.protocolVersion === 'number' && Number.isInteger(body.protocolVersion) && body.protocolVersion >= 1 ? body.protocolVersion
+            : null;
         const isReplay = body.replay === true && !invalid;
         const isDead = body.dead === true || (body.replay === true && invalid !== null);
         const deadStatus = invalid ? 400
@@ -572,7 +578,8 @@ export const POST = withKiosk(
         return await respond(result, closeRefused);
     } finally {
         // Errors propagate to withKiosk's top-level catch/500; this finally only
-        // records the metric. Times the handler body (post-auth), not rate-limit.
+        // records the metric and the kiosk's protocol version. The metric times the
+        // handler body (post-auth), not rate-limit.
         const durationMs = Date.now() - startTime;
         prisma.systemMetricLog.create({
             data: {
@@ -580,5 +587,15 @@ export const POST = withKiosk(
                 value: durationMs,
             }
         }).catch((err: unknown) => logger.error("Failed to log scan_response_time metric:", err));
+        const keyFingerprint = auth.keyFingerprint;
+        const protocolVersion = seenVersion;
+        if (keyFingerprint && protocolVersion !== null) {
+            const now = new Date();
+            prisma.kioskProtocolSeen.upsert({
+                where: { keyFingerprint },
+                create: { keyFingerprint, protocolVersion, lastSeenAt: now },
+                update: { protocolVersion, lastSeenAt: now },
+            }).catch((err: unknown) => logger.error("Failed to record kiosk protocol version:", err));
+        }
     }
 });

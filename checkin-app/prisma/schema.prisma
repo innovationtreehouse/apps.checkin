@@ -1734,6 +1734,19 @@ model SystemMetricLog {
   value     Float
 }
 
+/// The scan protocol version each kiosk signing key last sent, and when.
+/// One row per key. Rows are never deleted.
+model KioskProtocolSeen {
+  /// First 16 hex of SHA-256 over the kiosk's Ed25519 public key.
+  /// @sensitivity:internal
+  keyFingerprint  String   @id
+  /// The version the server acted on: an absent protocolVersion is 1.
+  /// @sensitivity:internal
+  protocolVersion Int
+  /// @sensitivity:internal
+  lastSeenAt      DateTime
+}
+
 /// Persisted external-integration / link failures (Shopify, etc.) surfaced on the
 /// System Status > Link Status tab. Rolling log: rows auto-purge after 90 days.
 model IntegrationErrorLog {

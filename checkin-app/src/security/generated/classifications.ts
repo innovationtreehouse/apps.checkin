@@ -451,6 +451,11 @@ export const classifications = {
         metric: 'internal',
         value: 'internal',
     },
+    KioskProtocolSeen: {
+        keyFingerprint: 'internal',
+        protocolVersion: 'internal',
+        lastSeenAt: 'internal',
+    },
     IntegrationErrorLog: {
         id: 'internal',
         source: 'internal',
@@ -749,6 +754,8 @@ export const relations = {
     ErrorLog: {
     },
     SystemMetricLog: {
+    },
+    KioskProtocolSeen: {
     },
     IntegrationErrorLog: {
     },
