@@ -2,9 +2,9 @@
  * @jest-environment node
  */
 /**
- * Integration tests for the recipient snapshot (lib/outreach/recipients.ts) — the
- * presets, the settled/in-flight predicates, suppression, dedup, tombstoning, and
- * the "leads without email" count. Runs against a real Postgres (localhost:5433,
+ * Integration tests for the recipient snapshot (lib/outreach/recipients.ts) — each email
+ * type's member-only audience, the reminder's renewed-household skip, archived and denied
+ * households, and the "leads without email" count. Runs against a real Postgres (localhost:5433,
  * INTEGRATION_DB=1) because the whole point is to exercise the real Prisma query
  * shape, not a mocked approximation of it.
  */
@@ -15,7 +15,6 @@ import { computeRecipientSnapshot } from '@/lib/outreach/recipients';
 const TAG = 'outreach-recipients-test';
 const BOUNDARY = new Date(Date.UTC(2000, 7, 1)); // Aug 1 (year is irrelevant — nextBoundary rolls it forward)
 const IN_SEASON_NOW = new Date(Date.UTC(2026, 6, 15)); // Jul 15 — inside the 2-month renewal window before Aug 1
-const OFF_SEASON_NOW = new Date(Date.UTC(2026, 0, 15)); // Jan 15 — well outside the window
 const PAST_BOUNDARY_NOW = new Date(Date.UTC(2026, 8, 15)); // Sep 15 — six weeks past the Aug 1 boundary
 
 async function setBoundary(date: Date | null) {
@@ -42,12 +41,20 @@ async function makeHousehold(label: string) {
 }
 
 async function makeLead(householdId: number, email: string | null, opts: { emailSuppressed?: boolean } = {}) {
-    const p = await prisma.person.create({
-        data: { name: label(email), email, householdId, isHouseholdLead: true, emailSuppressed: !!opts.emailSuppressed },
+    return prisma.person.create({
+        data: { name: email ?? 'no-email', email, householdId, isHouseholdLead: true, emailSuppressed: !!opts.emailSuppressed },
     });
-    return p;
 }
-function label(email: string | null) { return email ?? 'no-email'; }
+
+/** A household whose membership is ACTIVE, with one lead; returns the membership id. */
+async function makeMember(label: string, email: string | null, opts: { emailSuppressed?: boolean } = {}) {
+    const hh = await makeHousehold(label);
+    const membership = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'ACTIVE' } });
+    await makeLead(hh.id, email, opts);
+    return membership.id;
+}
+
+const emails = (snap: { items: { email: string }[] }) => snap.items.map((i) => i.email);
 
 describe('outreach recipient snapshot', () => {
     let restoreBoardSettings: () => Promise<void> = async () => {};
@@ -63,132 +70,114 @@ describe('outreach recipient snapshot', () => {
         await prisma.$disconnect();
     });
 
-    it('preset (a): non-member is join, unsettled member is renew, both included', async () => {
+    it('never includes a non-member household lead, for either email type', async () => {
         await setBoundary(BOUNDARY);
-        const nonMemberHh = await makeHousehold('NonMember');
-        await makeLead(nonMemberHh.id, `nonmember-${TAG}@example.com`);
-
-        const memberHh = await makeHousehold('UnsettledMember');
-        await prisma.orgMembership.create({ data: { householdId: memberHh.id, status: 'ACTIVE' } });
-        await makeLead(memberHh.id, `unsettled-${TAG}@example.com`);
-
-        const snap = await computeRecipientSnapshot('a', IN_SEASON_NOW);
-        const nonMemberItem = snap.items.find((i) => i.email === `nonmember-${TAG}@example.com`);
-        const memberItem = snap.items.find((i) => i.email === `unsettled-${TAG}@example.com`);
-        expect(nonMemberItem?.variant).toBe('join');
-        expect(nonMemberItem?.status).toBe('queued');
-        expect(memberItem?.variant).toBe('renew');
-        expect(memberItem?.status).toBe('queued');
-    });
-
-    it('preset (a) excludes a settled member in season AND after the boundary; a member settled only for the prior year is renew', async () => {
-        await setBoundary(BOUNDARY);
-        const hh = await makeHousehold('Settled');
-        const membership = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'ACTIVE' } });
-        const email = `settled-${TAG}@example.com`;
-        await makeLead(hh.id, email);
-        // A terminal ACTIVE RENEWAL recording the coming year — "settled for the coming cycle".
-        await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: membership.id, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: IN_SEASON_NOW, appliesToYear: 2026 },
-        });
-
-        const inSeason = await computeRecipientSnapshot('a', IN_SEASON_NOW);
-        expect(inSeason.items.find((i) => i.email === email)).toBeUndefined();
-
-        // The year they bought is now the live one: still settled, still left alone.
-        const pastBoundary = await computeRecipientSnapshot('a', PAST_BOUNDARY_NOW);
-        expect(pastBoundary.items.find((i) => i.email === email)).toBeUndefined();
-
-        // Off season, a household whose last settlement was for the PRIOR year is due.
-        const staleHh = await makeHousehold('SettledPriorYear');
-        const staleMembership = await prisma.orgMembership.create({ data: { householdId: staleHh.id, status: 'ACTIVE' } });
-        const staleEmail = `settled-prior-${TAG}@example.com`;
-        await makeLead(staleHh.id, staleEmail);
-        await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: staleMembership.id, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: new Date(Date.UTC(2024, 6, 15)), appliesToYear: 2024 },
-        });
-        const offSeason = await computeRecipientSnapshot('a', OFF_SEASON_NOW);
-        expect(offSeason.items.find((i) => i.email === staleEmail)?.variant).toBe('renew');
-    });
-
-    it('preset (b) additionally excludes in-flight RENEWAL and in-flight INITIAL households; preset (a) still includes them', async () => {
-        await setBoundary(BOUNDARY);
-
-        const renewingHh = await makeHousehold('InFlightRenewal');
-        const membership = await prisma.orgMembership.create({ data: { householdId: renewingHh.id, status: 'ACTIVE' } });
-        const renewingEmail = `inflight-renewal-${TAG}@example.com`;
-        await makeLead(renewingHh.id, renewingEmail);
-        await prisma.orgMembershipProcess.create({ data: { orgMembershipId: membership.id, kind: 'RENEWAL', status: 'PENDING_RENEWAL' } });
-
-        const applyingHh = await makeHousehold('InFlightInitial');
-        const applyingMembership = await prisma.orgMembership.create({ data: { householdId: applyingHh.id, status: 'NONE' } });
-        const applyingEmail = `inflight-initial-${TAG}@example.com`;
-        await makeLead(applyingHh.id, applyingEmail);
+        const none = await makeHousehold('NonMember');
+        await makeLead(none.id, `nonmember-${TAG}@example.com`);
+        const revoked = await makeHousehold('Revoked');
+        await prisma.orgMembership.create({ data: { householdId: revoked.id, status: 'REVOKED' } });
+        await makeLead(revoked.id, `revoked-${TAG}@example.com`);
+        const applying = await makeHousehold('Applying');
+        const applyingMembership = await prisma.orgMembership.create({ data: { householdId: applying.id, status: 'NONE' } });
+        await makeLead(applying.id, `applying-${TAG}@example.com`);
         await prisma.orgMembershipProcess.create({ data: { orgMembershipId: applyingMembership.id, kind: 'INITIAL', status: 'INTAKE' } });
 
-        const a = await computeRecipientSnapshot('a', IN_SEASON_NOW);
-        expect(a.items.find((i) => i.email === renewingEmail)).toBeDefined();
-        expect(a.items.find((i) => i.email === applyingEmail)).toBeDefined();
-
-        const b = await computeRecipientSnapshot('b', IN_SEASON_NOW);
-        expect(b.items.find((i) => i.email === renewingEmail)).toBeUndefined();
-        expect(b.items.find((i) => i.email === applyingEmail)).toBeUndefined();
+        for (const type of ['opening', 'reminder'] as const) {
+            const got = emails(await computeRecipientSnapshot(type, IN_SEASON_NOW));
+            expect(got).not.toContain(`nonmember-${TAG}@example.com`);
+            expect(got).not.toContain(`revoked-${TAG}@example.com`);
+            expect(got).not.toContain(`applying-${TAG}@example.com`);
+        }
     });
 
-    it('preset (c) is everyone — no settled/in-flight filtering', async () => {
+    it('opening goes to every member-household lead, renewed or not; a non-lead member gets nothing', async () => {
         await setBoundary(BOUNDARY);
-        const hh = await makeHousehold('SettledForC');
-        const membership = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'ACTIVE' } });
-        const email = `settled-c-${TAG}@example.com`;
-        await makeLead(hh.id, email);
+        await makeMember('OpenUnrenewed', `open-unrenewed-${TAG}@example.com`);
+        const renewedId = await makeMember('OpenRenewed', `open-renewed-${TAG}@example.com`);
         await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: membership.id, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: IN_SEASON_NOW, appliesToYear: 2026 },
+            data: { orgMembershipId: renewedId, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: IN_SEASON_NOW, appliesToYear: 2026 },
+        });
+        const hh = await prisma.orgMembership.findUniqueOrThrow({ where: { id: renewedId } });
+        await prisma.person.create({ data: { name: 'Second adult', email: `open-nonlead-${TAG}@example.com`, householdId: hh.householdId, isHouseholdLead: false } });
+
+        const got = emails(await computeRecipientSnapshot('opening', IN_SEASON_NOW));
+        expect(got).toContain(`open-unrenewed-${TAG}@example.com`);
+        expect(got).toContain(`open-renewed-${TAG}@example.com`);
+        expect(got).not.toContain(`open-nonlead-${TAG}@example.com`);
+    });
+
+    it('reminder skips a household that completed renewal for the coming year, in season and after the boundary', async () => {
+        await setBoundary(BOUNDARY);
+        const id = await makeMember('Renewed', `renewed-${TAG}@example.com`);
+        await prisma.orgMembershipProcess.create({
+            data: { orgMembershipId: id, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: IN_SEASON_NOW, appliesToYear: 2026 },
+        });
+        const joinedId = await makeMember('JoinedInWindow', `joined-${TAG}@example.com`);
+        await prisma.orgMembershipProcess.create({
+            data: { orgMembershipId: joinedId, kind: 'INITIAL', status: 'ACTIVE', stageEnteredAt: IN_SEASON_NOW, appliesToYear: 2026 },
         });
 
-        const c = await computeRecipientSnapshot('c', IN_SEASON_NOW);
-        expect(c.items.find((i) => i.email === email)).toBeDefined();
+        for (const now of [IN_SEASON_NOW, PAST_BOUNDARY_NOW]) {
+            const got = emails(await computeRecipientSnapshot('reminder', now));
+            expect(got).not.toContain(`renewed-${TAG}@example.com`);
+            expect(got).not.toContain(`joined-${TAG}@example.com`);
+        }
     });
 
-    it('suppressed JOIN lead is recorded skipped_unsubscribed; suppressed RENEW lead is still queued', async () => {
+    it('reminder still goes to a household whose renewal is in progress, or settled only for the prior year', async () => {
         await setBoundary(BOUNDARY);
+        const openedId = await makeMember('RenewalOpened', `renewal-opened-${TAG}@example.com`);
+        await prisma.orgMembershipProcess.create({ data: { orgMembershipId: openedId, kind: 'RENEWAL', status: 'PENDING_RENEWAL' } });
+        // Paid, waiting on the background check: renewal has not completed.
+        const paidId = await makeMember('RenewalPaid', `renewal-paid-${TAG}@example.com`);
+        await prisma.orgMembershipProcess.create({
+            data: { orgMembershipId: paidId, kind: 'RENEWAL', status: 'PENDING_BG_CLEARANCE', paidAt: IN_SEASON_NOW, appliesToYear: 2026 },
+        });
+        const priorId = await makeMember('SettledPriorYear', `settled-prior-${TAG}@example.com`);
+        await prisma.orgMembershipProcess.create({
+            data: { orgMembershipId: priorId, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: new Date(Date.UTC(2025, 6, 15)), appliesToYear: 2025 },
+        });
 
-        const nonMemberHh = await makeHousehold('SuppressedJoin');
-        const joinEmail = `suppressed-join-${TAG}@example.com`;
-        await makeLead(nonMemberHh.id, joinEmail, { emailSuppressed: true });
-
-        const memberHh = await makeHousehold('SuppressedRenew');
-        await prisma.orgMembership.create({ data: { householdId: memberHh.id, status: 'ACTIVE' } });
-        const renewEmail = `suppressed-renew-${TAG}@example.com`;
-        await makeLead(memberHh.id, renewEmail, { emailSuppressed: true });
-
-        const snap = await computeRecipientSnapshot('a', IN_SEASON_NOW);
-        const joinItem = snap.items.find((i) => i.email === joinEmail);
-        const renewItem = snap.items.find((i) => i.email === renewEmail);
-        expect(joinItem?.variant).toBe('join');
-        expect(joinItem?.status).toBe('skipped_unsubscribed');
-        expect(renewItem?.variant).toBe('renew');
-        expect(renewItem?.status).toBe('queued'); // renew is never suppressed
+        const got = emails(await computeRecipientSnapshot('reminder', IN_SEASON_NOW));
+        expect(got).toContain(`renewal-opened-${TAG}@example.com`);
+        expect(got).toContain(`renewal-paid-${TAG}@example.com`);
+        expect(got).toContain(`settled-prior-${TAG}@example.com`);
     });
 
-    // No standalone "two leads share an email" case: Person.email is @unique at the DB
-    // level AND auto-lowercased at write (lib/prismaEmailNormalize.ts) — two distinct
-    // Person rows literally cannot carry the same lowercased email, so this scenario
-    // can't be constructed against the real schema (resolveHouseholdRecipients's
-    // identical dedupe, emailRecipients.ts:31-38, is untested for the same reason). The
-    // dedup in recipients.ts stays as defense-in-depth matching that precedent.
-
-    it('counts a lead without an email in leadsWithoutEmail, and gives them no item', async () => {
+    it('an invitation opt-out does not drop a member lead', async () => {
         await setBoundary(BOUNDARY);
-        const hh = await makeHousehold('NoEmailLead');
-        await makeLead(hh.id, null);
+        await makeMember('Suppressed', `suppressed-${TAG}@example.com`, { emailSuppressed: true });
 
-        const before = await computeRecipientSnapshot('a', IN_SEASON_NOW);
-        // Add one more no-email lead and confirm the count increments by exactly one —
-        // avoids a brittle absolute-count assertion (other suites' fixtures may exist).
-        const hh2 = await makeHousehold('NoEmailLead2');
-        await makeLead(hh2.id, null);
-        const after = await computeRecipientSnapshot('a', IN_SEASON_NOW);
+        for (const type of ['opening', 'reminder'] as const) {
+            expect(emails(await computeRecipientSnapshot(type, IN_SEASON_NOW))).toContain(`suppressed-${TAG}@example.com`);
+        }
+    });
+
+    it('leaves out denied and archived households', async () => {
+        await setBoundary(BOUNDARY);
+        const denied = await makeHousehold('Denied');
+        await prisma.orgMembership.create({ data: { householdId: denied.id, status: 'DENIED' } });
+        await makeLead(denied.id, `denied-${TAG}@example.com`);
+        const archivedId = await makeMember('Archived', `archived-${TAG}@example.com`);
+        const archived = await prisma.orgMembership.findUniqueOrThrow({ where: { id: archivedId } });
+        await prisma.household.update({ where: { id: archived.householdId }, data: { archivedAt: IN_SEASON_NOW } });
+
+        for (const type of ['opening', 'reminder'] as const) {
+            const got = emails(await computeRecipientSnapshot(type, IN_SEASON_NOW));
+            expect(got).not.toContain(`denied-${TAG}@example.com`);
+            expect(got).not.toContain(`archived-${TAG}@example.com`);
+        }
+    });
+
+    it('counts a member lead without an email in leadsWithoutEmail, and not a non-member one', async () => {
+        await setBoundary(BOUNDARY);
+        // Relative counts: other suites' fixtures may share the database.
+        const before = await computeRecipientSnapshot('opening', IN_SEASON_NOW);
+        await makeMember('NoEmailMember', null);
+        const nonMember = await makeHousehold('NoEmailNonMember');
+        await makeLead(nonMember.id, null);
+        const after = await computeRecipientSnapshot('opening', IN_SEASON_NOW);
         expect(after.leadsWithoutEmail).toBe(before.leadsWithoutEmail + 1);
-        expect(after.items.some((i) => i.email === undefined as never)).toBe(false);
+        expect(after.items).toHaveLength(before.items.length);
     });
 });

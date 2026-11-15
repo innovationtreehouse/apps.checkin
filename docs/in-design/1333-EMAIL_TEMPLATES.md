@@ -316,15 +316,14 @@ stand for in today's copy, so a key without a link today has no `actionLink`.
 ### outreach — 2 (flag D: folded in from `BoardSettings`; joins the registry in step 5)
 | key | trigger | recipient | tokens |
 |-----|---------|-----------|--------|
-| `outreach.opening` | outreach batch opening (was `outreachOpening{Subject,Body}`) | prospects | name, deadline, actionWord, `actionLink` |
-| `outreach.reminder` | outreach reminder (was `outreachReminder{Subject,Body}`) | prospects | name, deadline, actionWord, `actionLink` |
+| `outreach.opening` | outreach batch opening (was `outreachOpening{Subject,Body}`) | member-household leads | name, deadline, actionWord, `actionLink` |
+| `outreach.reminder` | outreach reminder (was `outreachReminder{Subject,Body}`) | leads of member households not yet renewed | name, deadline, actionWord, `actionLink` |
 
-> Fold detail: outreach carries extra machinery the transactional flows don't — join/renew
-> **variants**, a conditional **unsubscribe footer** appended after substitution, and a
-> boundary-derived `{{deadline}}`. That render *wrapper* (`renderOutreachEmail`) stays; only the
-> **source of subject/body** moves from `BoardSettings` columns to the two `outreach.*` rows.
-> The unsubscribe footer and variant `actionWord` remain outreach-specific ctx, not editor-facing
-> copy. The four `outreach*` `BoardSettings` columns + the `settings/outreach` page are removed in
+> Fold detail: outreach goes only to member households, so it has no join variant and no
+> unsubscribe footer; `{{actionWord}}` always renders "renew" until this step settles the token
+> set. It still carries a boundary-derived `{{deadline}}`. That render *wrapper*
+> (`renderOutreachEmail`) stays; only the **source of subject/body** moves from `BoardSettings`
+> columns to the two `outreach.*` rows. The four `outreach*` `BoardSettings` columns + the `settings/outreach` page are removed in
 > the follow-up contract release (step 8), not here. Its sandboxed-iframe preview is superseded by
 > the plain-text preview (no HTML authoring → no iframe needed).
 

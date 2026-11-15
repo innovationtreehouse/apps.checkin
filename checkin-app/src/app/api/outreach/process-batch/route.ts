@@ -3,7 +3,7 @@ import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
 import { sendEmail } from "@/lib/email";
-import { renderOutreachEmail, resolveBoundary, loadTemplate, BoundaryNotSetError, type EmailType, type OutreachVariant } from "@/lib/outreach/render";
+import { renderOutreachEmail, resolveBoundary, loadTemplate, BoundaryNotSetError, type EmailType } from "@/lib/outreach/render";
 import type { BusinessRole } from "@/types/auth";
 
 export const dynamic = "force-dynamic";
@@ -62,25 +62,16 @@ export const POST = withAuth({ roles: ROLES }, async (req) => {
 
         const person = await prisma.person.findUnique({
             where: { id: item.personId },
-            select: { name: true, emailSuppressed: true, household: { select: { orgMembership: { select: { status: true } } } } },
+            select: { name: true, household: { select: { orgMembership: { select: { status: true } } } } },
         });
         // A household denied or archived after the snapshot was frozen gets nothing either.
         if (person && (!person.household || person.household.orgMembership?.status === "DENIED")) {
             await prisma.bulkSendItem.update({ where: { id: item.id }, data: { status: "skipped_denied" } });
             continue;
         }
-        // Honor an unsubscribe that landed AFTER the snapshot was frozen: the drain resumes
-        // arbitrarily later (survives deploys), so re-check suppression at send time. Join-only,
-        // recorded (not dropped) as the same status the snapshot path uses — spec §2.4.
-        if (item.variant === "join" && person?.emailSuppressed) {
-            await prisma.bulkSendItem.update({ where: { id: item.id }, data: { status: "skipped_unsubscribed" } });
-            continue;
-        }
         const { subject, html } = renderOutreachEmail(template.subject, template.body, {
             name: person?.name ?? "",
-            variant: item.variant as OutreachVariant,
             boundary,
-            personId: item.variant === "join" ? item.personId : undefined,
         });
 
         const ok = await sendEmail(item.email, subject, html);
