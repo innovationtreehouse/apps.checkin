@@ -34,6 +34,20 @@ online-store payouts (Income) and donations (Donations).
   restriction given in conversation needs the donor's written confirmation.
   — *Financial Policy, Art. VI §VI.2*
 
+### Donor privacy
+
+- Only the Board and Finance see full donor information, anonymous donors
+  included. — *Donor Privacy and Rights Policy, Art. V §V.02*
+
+- The Board and Finance roles are granted only to a Key Volunteer who has
+  signed the current agreement; the check is at the grant. — *Donor Privacy
+  and Rights Policy, Art. V §V.02*
+
+- The app records no donor's anonymity choice, so it shows donors to no one
+  beyond the Board and Finance; a report, export or list that would show them
+  to anyone else needs that choice first. — *Donor Privacy and Rights Policy,
+  Art. II–III*
+
 ---
 
 ## Assumptions
