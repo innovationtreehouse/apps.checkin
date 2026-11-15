@@ -36,7 +36,7 @@ describe("expense QuickBooks account save", () => {
   it("refuses an account of another type, naming it", async () => {
     await expect(createQbAccount({ req: body("8001"), params: {}, principal: finance })).rejects.toMatchObject({
       status: 400,
-      message: "An expense account takes an Expense, Other Expense, Cost of Goods Sold, or Fixed Asset account; Checking is Bank",
+      code: "quickbooks-list-stale", message: "An expense account takes an Expense, Other Expense, Cost of Goods Sold, or Fixed Asset account; QuickBooks' list in the app shows Checking as Bank. If you changed it in QuickBooks, press Update now, then save again.",
     });
     expect(db.$transaction).not.toHaveBeenCalled();
   });

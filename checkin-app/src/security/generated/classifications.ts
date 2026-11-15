@@ -585,6 +585,11 @@ export const classifications = {
         role: 'internal',
         quickBooksAccountId: 'internal',
     },
+    QuickBooksList: {
+        list: 'internal',
+        entries: 'internal',
+        refreshedAt: 'internal',
+    },
 } as const;
 
 export const relations = {
@@ -795,6 +800,8 @@ export const relations = {
         person: { model: 'Person', isList: false },
     },
     BooksMapRoleAccount: {
+    },
+    QuickBooksList: {
     },
 } as const;
 

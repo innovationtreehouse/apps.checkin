@@ -1,6 +1,6 @@
 /** Finance curation: comment rules (read + delete) and the GL account map. */
 import { httpError, mapServiceErrors, parseBody, parseId } from "@checkin/component-kit";
-import { LINE_ACCOUNT_TYPES, accountTypeRefusal } from "@checkin/quickbooks";
+import { LINE_ACCOUNT_TYPES, QUICKBOOKS_LIST_STALE, staleListRefusal } from "@checkin/quickbooks";
 import { z } from "zod";
 import { accountMapService } from "../services/accountMapService";
 import { commentRuleService } from "../services/commentRuleService";
@@ -30,7 +30,7 @@ type AccountMapBody = z.infer<typeof accountMapSchema>;
 
 type StoredAccounts = { donationAccountId: string | null; matchAccountId: string | null };
 
-/** Refuses a rule account QuickBooks doesn't list, or lists under a type a gift can't book to; an account the stored rule already has isn't re-read. */
+/** Refuses a rule account the app's QuickBooks list lacks, or lists under a type a gift can't book to; an account the stored rule already has isn't re-read. */
 async function refuseWrongTypes(data: AccountMapBody, stored?: StoredAccounts | null): Promise<void> {
   const picked = ([
     ["donation", data.donationAccountId, stored?.donationAccountId],
@@ -39,8 +39,8 @@ async function refuseWrongTypes(data: AccountMapBody, stored?: StoredAccounts | 
   if (picked.length === 0) return;
   const accounts = await mapServiceErrors(getQuickBooksAccounts());
   for (const { kind, id } of picked) {
-    const refusal = accountTypeRefusal(accounts, id, LINE_ACCOUNT_TYPES.givingGift, `A rule's ${kind} account`);
-    if (refusal) throw httpError(400, refusal);
+    const refusal = staleListRefusal(accounts, id, LINE_ACCOUNT_TYPES.givingGift, `A rule's ${kind} account`);
+    if (refusal) throw httpError(400, refusal, QUICKBOOKS_LIST_STALE);
   }
 }
 

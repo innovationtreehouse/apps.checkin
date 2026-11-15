@@ -728,11 +728,11 @@ the parts specific to expenses.
   [Decision — owner]
 
 - An expense line's account comes from finance's own mapping rules and account
-  list, which finance keeps by hand. The accounts on that list, Classes, Vendors
-  and the books map's accounts finance picks from QuickBooks' live lists, one at
-  a time. The app
-  never imports the chart of accounts, the Class list or the vendor list in
-  bulk, and never matches vendor names on its own.
+  list, which finance keeps by hand. Finance picks the accounts on that list,
+  Classes and the books map's accounts one at a time. The app keeps a
+  read-only copy of QuickBooks' account and Class lists to offer and check
+  those picks, and never creates a mapping from it. It never copies the vendor
+  list, and never matches vendor names on its own.
   [Decision — deliberate limit]
 
 - Expense posting switches on the first time the daily catch-up runs with

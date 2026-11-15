@@ -4,9 +4,8 @@ import { badRequest, forbidden, notFound, ApiResponseError } from "@/security/ha
 import { personActor } from "@/lib/auditActor";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { uniqueViolationFields } from "@/lib/prismaUniqueViolation";
-import { logger } from "@/lib/logger";
 import { config } from "@/lib/config";
-import { quickBooks } from "@/lib/components/ports";
+import { savedQuickBooksClasses } from "@/lib/finance/quickBooksLists";
 import { IN_LIVE_HOUSEHOLD } from "@/lib/household/archived";
 
 // Budget-owner buckets and their approvers. FINANCE manages buckets;
@@ -40,18 +39,10 @@ export const LOCAL_QUICKBOOKS_CLASSES = [
     { id: "9005", name: "Retired", active: false },
 ];
 
-/** Every QuickBooks Class by its full name, inactive ones flagged, for the bucket form's picker. */
+/** Every Class in the app's QuickBooks list by its full name, inactive ones flagged, for the bucket form's picker. */
 export async function listQuickBooksClasses() {
     if (config.quickBooksMockActive()) return LOCAL_QUICKBOOKS_CLASSES.map((c) => ({ ...c }));
-    const qb = await quickBooks();
-    if (!qb) throw new ApiResponseError(503, "QuickBooks is not connected.");
-    const classes = await qb.classes().catch((error: unknown) => {
-        logger.error("QuickBooks Class list failed:", error);
-        throw new ApiResponseError(503, "QuickBooks did not return its Classes. Try again shortly.");
-    });
-    return classes
-        .map((c) => ({ id: c.Id, name: c.FullyQualifiedName, active: c.Active !== false }))
-        .sort((a, b) => a.name.localeCompare(b.name));
+    return savedQuickBooksClasses();
 }
 
 function readName(value: unknown): string {

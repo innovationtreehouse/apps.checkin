@@ -4,7 +4,7 @@
  * each value by the model the host classifies it as.
  */
 import { httpError, mapServiceErrors, parseBody, parseId } from "@checkin/component-kit";
-import { LINE_ACCOUNT_TYPES, accountTypeRefusal } from "@checkin/quickbooks";
+import { LINE_ACCOUNT_TYPES, QUICKBOOKS_LIST_STALE, staleListRefusal } from "@checkin/quickbooks";
 import { z } from "zod";
 import { db } from "./db";
 import type { IncomeRouteHandler } from "./contract";
@@ -123,8 +123,8 @@ export const setItemCategory: IncomeRouteHandler = async ({ req, params }) => {
   const { budgetOwnerId, quickBooksAccountId } = await parseBody(req, setCategoryBody);
   if (typeof quickBooksAccountId === "string") {
     const accounts = await mapServiceErrors(getQuickBooksAccounts());
-    const refusal = accountTypeRefusal(accounts, quickBooksAccountId, LINE_ACCOUNT_TYPES.storeSale, "An item's account");
-    if (refusal) throw httpError(400, refusal);
+    const refusal = staleListRefusal(accounts, quickBooksAccountId, LINE_ACCOUNT_TYPES.storeSale, "An item's account");
+    if (refusal) throw httpError(400, refusal, QUICKBOOKS_LIST_STALE);
   }
   const [orgId, who] = await Promise.all([getOrgId(), actor()]);
   return {

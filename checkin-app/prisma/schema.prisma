@@ -2192,3 +2192,15 @@ model BooksMapRoleAccount {
   /// @sensitivity:internal
   quickBooksAccountId String
 }
+
+/// The app's read-only copy of one QuickBooks list, replaced whole by each refresh.
+model QuickBooksList {
+  /// "account" or "class".
+  /// @sensitivity:internal
+  list        String   @id
+  /// The list as QuickBooks returned it, trimmed to { id, name, accountType?, active }.
+  /// @sensitivity:internal
+  entries     Json
+  /// @sensitivity:internal
+  refreshedAt DateTime
+}

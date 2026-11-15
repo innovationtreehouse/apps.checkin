@@ -25,6 +25,7 @@ const tx = {
     auditLog: { create: jest.fn() },
     $queryRaw: jest.fn(),
 };
+const savedList = jest.fn();
 jest.mock('@/lib/quickbooks/client', () => ({ getQuickBooks: jest.fn() }));
 jest.mock('@checkin/expense', () => ({ holdBucketLines: jest.fn() }));
 jest.mock('@/lib/prisma', () => ({
@@ -44,6 +45,7 @@ jest.mock('@/lib/prisma', () => ({
                 return Promise.resolve(b);
             },
         },
+        quickBooksList: { findUnique: (args: unknown) => savedList(args) },
         $transaction: (fn: (t: typeof tx) => Promise<unknown>) => fn(tx),
     },
 }));
@@ -287,54 +289,27 @@ describe('QuickBooks Class id', () => {
 });
 
 describe('listQuickBooksClasses', () => {
-    test('lists every Class by full name, sorted, with inactive ones flagged', async () => {
-        const classes = jest.fn().mockResolvedValue([
-            { Id: '9', Name: 'Robotics', FullyQualifiedName: 'Programs:Robotics' }, // no Active field: active
-            { Id: '3', Name: 'Facility', FullyQualifiedName: 'Facility', Active: true },
-            { Id: '4', Name: 'Old', FullyQualifiedName: 'Old', Active: false },
-        ]);
-        jest.mocked(getQuickBooks).mockResolvedValue({ classes } as unknown as Awaited<ReturnType<typeof getQuickBooks>>);
-        await expect(listQuickBooksClasses()).resolves.toEqual([
-            { id: '3', name: 'Facility', active: true },
-            { id: '4', name: 'Old', active: false },
-            { id: '9', name: 'Programs:Robotics', active: true },
-        ]);
+    const saved = process.env.CHECKIN_ENV;
+    afterEach(() => { process.env.CHECKIN_ENV = saved; });
+
+    test('local lists the stand-in Classes without asking QuickBooks or the copy', async () => {
+        process.env.CHECKIN_ENV = 'local';
+        await expect(listQuickBooksClasses()).resolves.toEqual(LOCAL_QUICKBOOKS_CLASSES);
+        expect(getQuickBooks).not.toHaveBeenCalled();
+        expect(savedList).not.toHaveBeenCalled();
     });
 
-    test('answers 503 while QuickBooks is off', async () => {
-        jest.mocked(getQuickBooks).mockResolvedValue(null);
-        await expect(listQuickBooksClasses()).rejects.toMatchObject({ status: 503 });
+    test.each(['prod', 'dev', '', 'stg'])('%p lists the copy\'s Classes and never asks QuickBooks', async (env) => {
+        process.env.CHECKIN_ENV = env;
+        savedList.mockResolvedValue({ entries: [{ id: '3', name: 'Facility', active: true }, { id: '4', name: 'Old', active: false }] });
+        await expect(listQuickBooksClasses()).resolves.toEqual([{ id: '3', name: 'Facility', active: true }, { id: '4', name: 'Old', active: false }]);
+        expect(savedList).toHaveBeenCalledWith(expect.objectContaining({ where: { list: 'class' } }));
+        expect(getQuickBooks).not.toHaveBeenCalled();
     });
 
-    test('answers 503, not 500, when QuickBooks fails the request', async () => {
-        const classes = jest.fn().mockRejectedValue(new Error('QuickBooks query failed: codes 3200'));
-        jest.mocked(getQuickBooks).mockResolvedValue({ classes } as unknown as Awaited<ReturnType<typeof getQuickBooks>>);
-        jest.spyOn(console, 'error').mockImplementation(() => {});
-        await expect(listQuickBooksClasses()).rejects.toMatchObject({ status: 503, message: 'QuickBooks did not return its Classes. Try again shortly.' });
-    });
-
-    describe('by CHECKIN_ENV', () => {
-        const saved = process.env.CHECKIN_ENV;
-        afterEach(() => { process.env.CHECKIN_ENV = saved; });
-
-        test('local lists the stand-in Classes without asking QuickBooks', async () => {
-            process.env.CHECKIN_ENV = 'local';
-            jest.mocked(getQuickBooks).mockClear();
-            await expect(listQuickBooksClasses()).resolves.toEqual(LOCAL_QUICKBOOKS_CLASSES);
-            expect(getQuickBooks).not.toHaveBeenCalled();
-        });
-
-        test.each(['prod', 'dev', '', 'stg'])('%p asks QuickBooks and never lists the stand-ins', async (env) => {
-            process.env.CHECKIN_ENV = env;
-            jest.mocked(getQuickBooks).mockResolvedValue(null);
-            await expect(listQuickBooksClasses()).rejects.toMatchObject({ status: 503, message: 'QuickBooks is not connected.' });
-            expect(getQuickBooks).toHaveBeenCalled();
-        });
-    });
-
-    test('an empty company lists no Classes', async () => {
-        const classes = jest.fn().mockResolvedValue([]);
-        jest.mocked(getQuickBooks).mockResolvedValue({ classes } as unknown as Awaited<ReturnType<typeof getQuickBooks>>);
+    test('an empty copy lists no Classes', async () => {
+        process.env.CHECKIN_ENV = 'prod';
+        savedList.mockResolvedValue(null);
         await expect(listQuickBooksClasses()).resolves.toEqual([]);
     });
 });

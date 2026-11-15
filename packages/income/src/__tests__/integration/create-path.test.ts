@@ -140,6 +140,7 @@ function bind(over: Partial<IncomeConfig> = {}) {
     booksMap: shopifyMap,
     posting: { client: new QuickBooksClient(tokens, realm), mirrorNewestWins: true },
     classes: { activeClassIds: async () => activeClasses },
+    savedClasses: { activeClassIds: async () => activeClasses },
     alerts: {
       postCapReached: async (e) => void alerts.push(e),
       bucketUnusable: async (e) => void bucketAlerts.push(e),
@@ -1398,11 +1399,17 @@ describeDb("item assignment", () => {
     expect(await db.incomeItemCategory.count()).toBe(0);
   });
 
-  it("refuses a bucket while QuickBooks can't be reached, but still takes general income", async () => {
+  it("refuses a Class the saved list doesn't show as active with the stale-list code", async () => {
+    owners = [{ id: 7, name: "Camp", archivedAt: null, quickBooksClassId: "700" }];
+    activeClasses = [];
+    await expect(assign(7)).rejects.toMatchObject({ status: 422, code: "quickbooks-list-stale" });
+  });
+
+  it("checks the saved Class list, never the live one, and refuses a bucket while the saved list is unbound", async () => {
     owners = [{ id: 7, name: "Camp", archivedAt: null, quickBooksClassId: "700" }];
     bind({ classes: { activeClassIds: async () => { throw new Error("socket hang up"); } } });
-    await expect(assign(7)).rejects.toMatchObject({ status: 503 });
-    bind({ classes: undefined });
+    expect(await assign(7)).toMatchObject({ budgetOwnerId: 7 });
+    bind({ savedClasses: undefined });
     await expect(assign(7)).rejects.toMatchObject({ status: 503 });
     expect(await assign(null)).toMatchObject({ budgetOwnerId: null });
   });
