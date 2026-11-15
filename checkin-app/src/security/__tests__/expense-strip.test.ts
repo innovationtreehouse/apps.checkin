@@ -217,7 +217,7 @@ describe('expense stripper', () => {
             mayRecordBoardAuthorization: false,
         };
         expect(strip('ExpenseLineSignoffStatus', { ...status, signerUserId: 9, signerUsername: 'jordan' }, INTERNAL_ONLY)).toEqual(status);
-        expect(strip('ExpenseLineSignoffStatus', status, ['public'])).toEqual({ actions: [{}] });
+        expect(strip('ExpenseLineSignoffStatus', status, ['public'])).toEqual({});
     });
 
     it('an act on a line passes only its classified fields', () => {

@@ -11,12 +11,14 @@
  * For each scalar field, visibility is decided by `fieldVisible(tier, tokens,
  * scopes)` where `scopes = scopesHeld(modelName, row, callerCtx)` — the
  * per-row predicate; a field a file route serves is never emitted. Relations
- * are recursed into; each `_count` key is gated to relations the view can see
- * (see relationVisible).
+ * are recursed into, and dropped when no row of the target could show the view
+ * a field; a related row that shows no field reads as absent (see
+ * hideEmptyRows); each `_count` key is gated to relations the view can see (see
+ * relationVisible).
  *
  * IMPORTANT: This file is CODEOWNERS-gated.
  */
-import { classifications, relations, fieldVisible, isFileOnlyField, type Scope, type Tier, type Token } from './core';
+import { classifications, relations, fieldVisible, isFileOnlyField, modelVisible, type Scope, type Tier, type Token } from './core';
 import { scopesHeld, type CallerContext } from './access-resolvers';
 
 export function stripBag(
@@ -90,14 +92,29 @@ export function stripValue(
 
     for (const [relName, relInfo] of Object.entries(rels)) {
         if (!(relName in obj)) continue;
-        result[relName] = stripValue(relInfo.model, obj[relName], tokens, callerCtx);
+        // A relation whose target shows this view no field would leave only its row count.
+        if (!modelVisible(tokens, relInfo.model)) continue;
+        result[relName] = hideEmptyRows(stripValue(relInfo.model, obj[relName], tokens, callerCtx));
     }
     return result;
 }
 
 /**
- * Whether the caller can see a relation at all — true iff at least one field of
- * the target model is visible under these tokens/scopes. A `_count` reveals no
+ * A related row the caller sees no field of reads as no row: dropped from a
+ * list, `null` for a single relation, so its existence and count stay hidden.
+ */
+function hideEmptyRows(value: unknown): unknown {
+    if (Array.isArray(value)) return value.filter(row => !isEmptyRow(row));
+    return isEmptyRow(value) ? null : value;
+}
+
+function isEmptyRow(value: unknown): boolean {
+    return typeof value === 'object' && value !== null && Object.keys(value).length === 0;
+}
+
+/**
+ * Whether the caller can see a relation at all — true iff at least one JSON field
+ * of the target model is visible under these tokens/scopes. A `_count` reveals no
  * more than the existence of the relation's rows, so it rides the same
  * visibility as the relation's least-sensitive visible field. Evaluated with the
  * parent row's scopes (an aggregate has no per-child row to resolve). Unknown
@@ -112,8 +129,7 @@ function relationVisible(
         | Record<string, Tier>
         | undefined;
     if (!tiers) return false;
-    for (const tier of Object.values(tiers)) {
-        if (fieldVisible(tier, tokens, scopes)) return true;
-    }
-    return false;
+    return Object.entries(tiers).some(
+        ([field, tier]) => !isFileOnlyField(targetModel, field) && fieldVisible(tier, tokens, scopes),
+    );
 }
