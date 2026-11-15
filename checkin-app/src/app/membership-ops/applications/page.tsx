@@ -10,6 +10,7 @@ import { api, useLoad } from "@/lib/api";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
 import { sharesHousehold } from "@/lib/conflictOfInterest";
 import { PageLoader } from "@/components/ui/PageLoader";
+import { ReasonConfirm } from "@/components/ReasonConfirm";
 import { StatusFilterBadge, ActiveFilterNotice, useStatusFilter } from "@/components/StatusFilter";
 import { CLOSABLE_STATUSES, awaitingBgReview, refundLandsIn, type ProcessKind, type ProcessStatus } from "@/lib/membership/lifecycle";
 
@@ -146,35 +147,33 @@ function ApplicationsBoard() {
   // Every reset takes a reason. A review a household asked for can also be reset as
   // naming the wrong person, which returns it to no person.
   const confirmResetReview = (r: ProcessRow) => {
-    let reason = "";
     let wrongPerson = false;
-    const modalId = modals.openConfirmModal({
+    const modalId = `reset-review-${r.id}`;
+    modals.open({
+      modalId,
       title: "Start this background-check review over?",
       children: (
-        <Stack gap="xs">
+        <ReasonConfirm
+          confirmLabel="Start over"
+          missingReason="A reason is required to start a review over."
+          onCancel={() => modals.close(modalId)}
+          onConfirm={(reason) => {
+            modals.close(modalId);
+            resetReview(r.id, reason, wrongPerson);
+          }}
+        >
           <Text size="sm">
             This discards the {r.attestations.length} decision(s) recorded for <strong>{processLabel(r)}</strong>{" "}
             and asks the reviewers to start again. The check itself has not cleared, so nothing else changes.
           </Text>
-          <Textarea label="Reason" required autosize minRows={2} onChange={(e) => { reason = e.currentTarget.value; }} />
           {r.kind === "PERSON_BG" && r.requestedForHouseholdId !== null && r.subjectPerson && (
             <Switch
               label="The review names the wrong person — the next reviewer names again"
               onChange={(e) => { wrongPerson = e.currentTarget.checked; }}
             />
           )}
-        </Stack>
+        </ReasonConfirm>
       ),
-      labels: { confirm: "Start over", cancel: "Cancel" },
-      closeOnConfirm: false,
-      onConfirm: () => {
-        if (!reason.trim()) {
-          showError("A reason is required to start a review over.");
-          return;
-        }
-        modals.close(modalId);
-        resetReview(r.id, reason.trim(), wrongPerson);
-      },
     });
   };
 
@@ -185,28 +184,26 @@ function ApplicationsBoard() {
     !rows.some((p) => p.kind === "PERSON_BG" && p.status === "BLOCKED" && p.subjectPerson?.householdId === r.orgMembership?.householdId);
 
   const confirmRelease = (r: ProcessRow) => {
-    let reason = "";
-    const modalId = modals.openConfirmModal({
+    const modalId = `release-${r.id}`;
+    modals.open({
+      modalId,
       title: "Release this household from a departed person's rejection?",
       children: (
-        <Stack gap="xs">
+        <ReasonConfirm
+          confirmLabel="Release"
+          missingReason="A reason is required to release a household."
+          onCancel={() => modals.close(modalId)}
+          onConfirm={(reason) => {
+            modals.close(modalId);
+            releaseApplication(r.id, reason);
+          }}
+        >
           <Text size="sm">
             The person whose check was rejected has left <strong>{processLabel(r)}</strong>. Releasing lets this
             application move on. Their rejection stays on them and still blocks any household they are in.
           </Text>
-          <Textarea label="Reason" required autosize minRows={2} onChange={(e) => { reason = e.currentTarget.value; }} />
-        </Stack>
+        </ReasonConfirm>
       ),
-      labels: { confirm: "Release", cancel: "Cancel" },
-      closeOnConfirm: false,
-      onConfirm: () => {
-        if (!reason.trim()) {
-          showError("A reason is required to release a household.");
-          return;
-        }
-        modals.close(modalId);
-        releaseApplication(r.id, reason.trim());
-      },
     });
   };
 

@@ -23,7 +23,15 @@ import { notifications } from "@mantine/notifications";
 import { settleAfter } from "@/test-helpers/settle";
 import AdminMembershipPage from "../page";
 
-// modals.openConfirmModal is a no-op without a provider, so a confirmed action would
+// A missing reason shows on the field, with focus on it, and raises no lower-right message.
+const expectReasonFlagged = (dialog: HTMLElement, message: string) => {
+    const field = within(dialog).getByRole("textbox", { name: /Reason/ });
+    expect(field).toHaveAttribute("aria-invalid", "true");
+    expect(field).toHaveFocus();
+    expect(within(dialog).getByText(message)).toBeInTheDocument();
+    expect(notifications.show).not.toHaveBeenCalledWith(expect.objectContaining({ message }));
+};
+// modals.open is a no-op without a provider, so a confirmed action would
 // silently never fire. Wrapped here rather than in the shared harness: several suites
 // jest.mock("@mantine/modals") and would get an undefined ModalsProvider.
 const renderPage = () => renderWithProviders(<ModalsProvider><AdminMembershipPage /></ModalsProvider>);
@@ -300,6 +308,7 @@ describe("AdminMembershipPage", () => {
         expect(await screen.findByText("Start this background-check review over?")).toBeInTheDocument();
         const dialog = screen.getByRole("dialog");
         fireEvent.click(within(dialog).getByRole("button", { name: "Start over" }));
+        expectReasonFlagged(dialog, "A reason is required to start a review over.");
         expect(fetchMock.mock.calls.some(([url]) => String(url).includes("review-override"))).toBe(false);
         fireEvent.change(within(dialog).getByRole("textbox", { name: /Reason/ }), { target: { value: "names the wrong parent" } });
         fireEvent.click(within(dialog).getByRole("switch", { name: /names the wrong person/ }));
@@ -325,6 +334,7 @@ describe("AdminMembershipPage", () => {
         fireEvent.click(screen.getByRole("button", { name: "Release" }));
         const dialog = await screen.findByRole("dialog", { name: "Release this household from a departed person's rejection?" });
         fireEvent.click(within(dialog).getByRole("button", { name: "Release" }));
+        expectReasonFlagged(dialog, "A reason is required to release a household.");
         expect(fetchMock.mock.calls.some(([url]) => String(url).includes("review-override"))).toBe(false);
         fireEvent.change(within(dialog).getByRole("textbox", { name: /Reason/ }), { target: { value: " divorced, moved out " } });
         fireEvent.click(within(dialog).getByRole("button", { name: "Release" }));
