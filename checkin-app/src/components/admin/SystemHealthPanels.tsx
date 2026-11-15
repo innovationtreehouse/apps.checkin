@@ -247,7 +247,7 @@ export function ProblemsBox() {
     load();
   }, [load]);
 
-  // One item at a time, in list order; a refused or failed item (a 403 too) stays listed after the refresh.
+  // One item at a time, in list order; a refused or failed item stays listed after the refresh.
   const retry = async (items: StuckItem[]) => {
     let ok = 0;
     for (const [n, i] of items.entries()) {
@@ -265,6 +265,7 @@ export function ProblemsBox() {
     await load();
   };
 
+  const retryable = data ? data.items.filter((i) => mayRetry(viewer, i)) : [];
   const total = data ? data.items.length + data.staleJobs.length + data.failingJobs.length + data.unread.length + data.notices.length : 0;
 
   return (
@@ -282,9 +283,9 @@ export function ProblemsBox() {
         <Text c="dimmed">Nothing is stuck.</Text>
       ) : (
         <Stack gap="sm">
-        {data.items.length > 0 && (
+        {retryable.length > 0 && (
           <Group gap="sm">
-            <Button size="xs" variant="light" disabled={retrying !== null} onClick={() => retry(data.items)}>
+            <Button size="xs" variant="light" disabled={retrying !== null} onClick={() => retry(retryable)}>
               Retry all
             </Button>
             {retrying ? (
