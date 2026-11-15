@@ -5,10 +5,9 @@ import {
   Group, Modal, NumberInput, Paper, Stack, Text, TextInput, Title, Tooltip,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
-import { notifications } from "@mantine/notifications";
 import { IconArchive, IconArchiveOff, IconEdit, IconPlus } from "@tabler/icons-react";
 import { api, useCanManage, useLoad } from "./api";
-import { errorMessage, LoadError, showError } from "@checkin/component-ui";
+import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
 import type { CategoryRow, SubcategoryRow } from "./viewTypes";
 
 function ListItem({ label, isArchived, isSelected, canEdit, onSelect, onEdit, onArchive, onUnarchive }: {
@@ -61,10 +60,10 @@ export default function CategoriesClient() {
       if (editCat) {
         const updated = await api<CategoryRow>(`/categories/${editCat.id}`, { method: "PUT", body: JSON.stringify(catForm) });
         if (selectedCat?.id === updated.id) setSelectedCat(updated);
-        notifications.show({ message: "Category updated", color: "green" });
+        showSuccess("Category updated");
       } else {
         await api<CategoryRow>("/categories", { method: "POST", body: JSON.stringify(catForm) });
-        notifications.show({ message: "Category created", color: "green" });
+        showSuccess("Category created");
       }
       closeCatModal();
     } catch (err) {
@@ -79,10 +78,10 @@ export default function CategoriesClient() {
     try {
       if (editSub) {
         await api<SubcategoryRow>(`/subcategories/${editSub.id}`, { method: "PUT", body: JSON.stringify({ name: subForm.name }) });
-        notifications.show({ message: "Subcategory updated", color: "green" });
+        showSuccess("Subcategory updated");
       } else {
         await api<SubcategoryRow>("/subcategories", { method: "POST", body: JSON.stringify({ name: subForm.name, number: subForm.number, categoryId: selectedCat.id }) });
-        notifications.show({ message: "Subcategory created", color: "green" });
+        showSuccess("Subcategory created");
       }
       closeSubModal();
     } catch (err) {
@@ -94,7 +93,7 @@ export default function CategoriesClient() {
     try {
       await api(`/categories/${id}/archive`, { method: "POST" });
       if (selectedCat?.id === id) setSelectedCat(null);
-      notifications.show({ message: "Category archived", color: "orange" });
+      showSuccess("Category archived");
     } catch (err) { showError(errorMessage(err)); }
   }
 
@@ -102,21 +101,21 @@ export default function CategoriesClient() {
     try {
       const updated = await api<CategoryRow>(`/categories/${id}/unarchive`, { method: "POST" });
       if (selectedCat?.id === id) setSelectedCat(updated);
-      notifications.show({ message: "Category unarchived", color: "green" });
+      showSuccess("Category unarchived");
     } catch (err) { showError(errorMessage(err)); }
   }
 
   async function handleSubArchive(id: number) {
     try {
       await api(`/subcategories/${id}/archive`, { method: "POST" });
-      notifications.show({ message: "Subcategory archived", color: "orange" });
+      showSuccess("Subcategory archived");
     } catch (err) { showError(errorMessage(err)); }
   }
 
   async function handleSubUnarchive(id: number) {
     try {
       await api(`/subcategories/${id}/unarchive`, { method: "POST" });
-      notifications.show({ message: "Subcategory unarchived", color: "green" });
+      showSuccess("Subcategory unarchived");
     } catch (err) { showError(errorMessage(err)); }
   }
 

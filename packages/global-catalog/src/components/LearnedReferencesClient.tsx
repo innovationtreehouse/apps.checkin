@@ -2,9 +2,8 @@
 import { useState } from "react";
 import { ActionIcon, Checkbox, Group, Stack, Table, Text, TextInput, Tooltip } from "@mantine/core";
 import { useDebouncedValue } from "@mantine/hooks";
-import { notifications } from "@mantine/notifications";
 import { IconArchive, IconArchiveOff } from "@tabler/icons-react";
-import { errorMessage, LoadError, showError } from "@checkin/component-ui";
+import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
 import { formatGtinDisplay } from "../lib/gtin";
 import { api, useLoad } from "./api";
 import { SortIcon, THEAD_STYLE } from "./sortableTable";
@@ -34,14 +33,14 @@ export default function LearnedReferencesClient() {
   async function handleArchive(id: number) {
     try {
       await api(`/item-references/${id}/archive`, { method: "POST" });
-      notifications.show({ message: "Reference archived", color: "orange" });
+      showSuccess("Reference archived");
     } catch (e) { showError(errorMessage(e)); }
   }
 
   async function handleUnarchive(id: number) {
     try {
       await api(`/item-references/${id}/unarchive`, { method: "POST" });
-      notifications.show({ message: "Reference unarchived", color: "green" });
+      showSuccess("Reference unarchived");
     } catch (e) { showError(errorMessage(e)); }
   }
 

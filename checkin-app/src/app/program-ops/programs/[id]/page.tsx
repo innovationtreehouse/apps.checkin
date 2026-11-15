@@ -192,7 +192,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
     }
     setSaving(true);
     try {
-      await api(`/api/programs/${id}`, {
+      const saved = await api<{ warning?: string; notice?: string }>(`/api/programs/${id}`, {
         method: 'PATCH',
         body: JSON.stringify({
           startAt: startAt || null,
@@ -209,7 +209,9 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
           nonMemberPrice: nonMemberPrice || null,
         })
       });
-      showSuccess("Saved.");
+      const followUps = [saved?.warning, saved?.notice].filter((m): m is string => !!m);
+      for (const message of followUps) notifications.show({ color: "yellow", message, autoClose: false });
+      if (followUps.length === 0) showSuccess("Saved.");
       notifyNavRefresh();
       setSeededGeneral(generalForm);
       await reload();
