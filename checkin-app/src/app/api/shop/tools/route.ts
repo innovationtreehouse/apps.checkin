@@ -15,11 +15,13 @@ export const GET = withAuth({}, async (_req, auth) => {
     try {
         const tools = await prisma.tool.findMany({
             orderBy: { name: 'asc' },
-            include: {
-                _count: {
-                    select: { toolStatuses: true }
-                }
-            }
+            // The columns the tool lists read; a column added later stays out until selected here.
+            select: {
+                id: true,
+                name: true,
+                safetyGuide: true,
+                _count: { select: { toolStatuses: true } },
+            },
         });
 
         return NextResponse.json(tools);
