@@ -3,8 +3,8 @@
  *
  * The sysadmin role alone never shows a household's intake note
  * (docs/rules/membership.md); the Board, or a lead of that household, still sees it.
- * The full role matrix runs on the households GET; each other admin route that
- * returns a Household row is pinned to the same rule with a sysadmin-only caller.
+ * The households GET never reads the note; each admin route that returns a
+ * Household row is pinned to the rule with a sysadmin-only caller.
  */
 
 import type { NextRequest } from "next/server";
@@ -80,46 +80,37 @@ function request(url: string, method = "GET", body?: unknown) {
     return new Request(url, { method, headers: { cookie: "x=1" }, ...(body !== undefined && { body: JSON.stringify(body) }) }) as unknown as NextRequest;
 }
 
-async function detailNotes(user: Record<string, unknown>) {
-    signIn(user);
-    db.household.findUnique.mockResolvedValue({ ...HOUSEHOLD, householdMembers: [], orgMembership: null, emergencyContacts: [] });
-    const res = await GET(request("http://localhost/api/membership-ops/households?id=10"));
-    expect(res.status).toBe(200);
-    return (await res.json()).household.intakeNotes;
-}
-
 beforeEach(() => jest.clearAllMocks());
 
-describe("GET /api/membership-ops/households intake note", () => {
-    it("is null for a sysadmin with no other role", async () => {
-        expect(await detailNotes(SYSADMIN_ONLY)).toBeNull();
+describe("GET /api/membership-ops/households", () => {
+    it("selects the detail columns the household page and Edit Info modal read, never the intake note", async () => {
+        signIn({ isBoardMember: true });
+        db.household.findUnique.mockResolvedValue({ ...HOUSEHOLD, intakeNotes: undefined, archivedAt: null, householdMembers: [], orgMembership: null, emergencyContacts: [] });
+        const res = await GET(request("http://localhost/api/membership-ops/households?id=10"));
+        expect(res.status).toBe(200);
+
+        const args = db.household.findUnique.mock.calls[0][0];
+        expect(args).not.toHaveProperty("include");
+        expect(Object.keys(args.select).sort()).toEqual(
+            ["archivedAt", "city", "emergencyContacts", "householdMembers", "id", "line1", "line2", "name", "orgMembership", "postalCode", "state"],
+        );
+        expect(args.select.orgMembership).toEqual({ select: { id: true, status: true, memberSince: true, isVolunteerFamily: true } });
+        expect((await res.json()).household).not.toHaveProperty("intakeNotes");
     });
 
-    it("is null for a sysadmin who leads a different household", async () => {
-        expect(await detailNotes({ isSysadmin: true, householdLead: true, householdId: 11 })).toBeNull();
-    });
-
-    it("is shown to a sysadmin who is a Board member", async () => {
-        expect(await detailNotes({ isSysadmin: true, isBoardMember: true })).toBe(NOTE);
-    });
-
-    it("is shown to a sysadmin who leads that household", async () => {
-        expect(await detailNotes({ isSysadmin: true, householdLead: true, householdId: 10 })).toBe(NOTE);
-    });
-
-    it("is shown to a Board member", async () => {
-        expect(await detailNotes({ isBoardMember: true })).toBe(NOTE);
-    });
-});
-
-describe("GET /api/membership-ops/households list intake notes", () => {
-    it("are null for a sysadmin, except on the household they lead", async () => {
-        signIn({ isSysadmin: true, householdLead: true, householdId: 11 });
-        db.household.findMany.mockResolvedValue([10, 11].map((id) => ({ ...HOUSEHOLD, id, householdMembers: [], orgMembership: null, emergencyContacts: [] })));
+    it("selects only the list columns the households page and pickers read", async () => {
+        signIn({ isBoardMember: true });
+        db.household.findMany.mockResolvedValue([{ id: 10, name: "Test Household", householdMembers: [], orgMembership: { status: "ACTIVE", memberSince: null, processes: [] } }]);
         const res = await GET(request("http://localhost/api/membership-ops/households"));
         expect(res.status).toBe(200);
-        const notes = Object.fromEntries((await res.json()).households.map((h: { id: number; intakeNotes: string | null }) => [h.id, h.intakeNotes]));
-        expect(notes).toEqual({ 10: null, 11: NOTE });
+
+        const args = db.household.findMany.mock.calls[0][0];
+        expect(args).not.toHaveProperty("include");
+        expect(Object.keys(args.select).sort()).toEqual(["householdMembers", "id", "name", "orgMembership"]);
+        expect(Object.keys(args.select.orgMembership.select).sort()).toEqual(["memberSince", "processes", "status"]);
+        const [row] = (await res.json()).households;
+        expect(Object.keys(row).sort()).toEqual(["awaitingPayment", "bgValidUntil", "householdMembers", "id", "name", "orgMembership", "settledForComingYear", "validUntil"]);
+        expect(row.orgMembership).toEqual({ status: "ACTIVE", memberSince: null });
     });
 });
 
