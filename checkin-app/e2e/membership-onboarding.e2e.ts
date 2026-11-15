@@ -135,8 +135,7 @@ test.describe("membership onboarding in the browser", () => {
 
     await asViewer(browser, REVIEWER, async (page) => {
       await page.goto("/membership-ops/review");
-      const application = card(page, email);
-      await application.getByRole("radio", { name }).check();
+      const application = card(page, name);
       await application.getByLabel("Notes").fill("The report needs a second look.");
       await application.getByRole("button", { name: "Reject" }).click();
       await dialog(page).getByRole("button", { name: "Reject" }).click();

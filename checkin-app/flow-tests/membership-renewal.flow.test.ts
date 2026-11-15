@@ -125,7 +125,7 @@ describe("flow: annual membership renewal (CUJS A2)", () => {
         // The mark opened the lead's own check review; two distinct reviewers approve it.
         const queued = await queuedReviewFor(board, lead.personaId);
         expect(queued).toBeDefined();
-        expect(queued!.subjectPerson).toBeNull();
+        expect(queued!.subjectPerson?.id).toBe(lead.personaId);
         const subjectPersonIds = [lead.personaId];
         for (const reviewer of [board, reviewer2]) {
             const approve = await api(reviewer, "/api/membership/reviews", {
