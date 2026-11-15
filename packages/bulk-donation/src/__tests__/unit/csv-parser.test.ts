@@ -52,9 +52,21 @@ describe('parseBenevityCsv', () => {
     expect(result[0].companyName).toBe('Acme Corp');
   });
 
-  it('parses a flat export, which has no Net Total Payment footer, with its fees', () => {
-    const result = parseBenevityCsv(toCsv([makeRow(), makeRow({ 'Transaction ID': 'TXN-002', 'Merchant Fee': '-1.00' })]));
-    expect(result.map((r) => r.merchantFeeCents)).toEqual([100, -100]);
+  it('parses a flat export, which has no Net Total Payment footer, with zero and positive fees', () => {
+    const result = parseBenevityCsv(toCsv([makeRow(), makeRow({ 'Transaction ID': 'TXN-002', 'Cause Support Fee': '0.00', 'Merchant Fee': '0.00' })]));
+    expect(result.map((r) => r.merchantFeeCents)).toEqual([100, 0]);
+  });
+
+  it('refuses a flat export with a negative fee, naming the line and the fee column', () => {
+    const csv = toCsv([makeRow(), makeRow({ 'Transaction ID': 'TXN-002', 'Merchant Fee': '-1.00' })]);
+    expect(() => parseBenevityCsv(csv)).toThrow(
+      'Could not import the CSV (1 problem):\nline 3 (TXN-002), "Merchant Fee": the fee is negative ("-1.00") and the file has no "Net Total Payment" line to check it against',
+    );
+  });
+
+  it('lists every negative fee in a flat export', () => {
+    const csv = toCsv([makeRow({ 'Cause Support Fee': '-2.50', 'Check Fee': '-0.01' })]);
+    expect(() => parseBenevityCsv(csv)).toThrow(/2 problems.*\n.*"Cause Support Fee".*\n.*"Check Fee"/);
   });
 
   it('parses numeric money fields as integer cents', () => {
@@ -251,7 +263,7 @@ describe('Donations Report layout', () => {
     `Example Co,Example Nonprofit,${date},Pat,Example,Not shared by donor,Not shared by donor,Not shared by donor,` +
     `Not shared by donor,00000,,${comment},${txn},One Time,USD,,Donation,User Donation,${gross},${match},0.00,0.00,`;
   const TOTALS = 'Totals,,,,,,,,,,,,,,,,,,"1,700.00","3,200.00",0.00,0.00';
-  const report = (opts: { checkFee?: string; match?: string; checkFeeLabel?: string; extraGift?: string; totals?: string | null; net?: string } = {}) => Buffer.from([
+  const report = (opts: { checkFee?: string; match?: string; checkFeeLabel?: string; extraGift?: string; totals?: string | null; net?: string | null } = {}) => Buffer.from([
     'Donations Report,',
     '"#-------------------------------------------",',
     'Charity Name,Example Nonprofit',
@@ -270,7 +282,7 @@ describe('Donations Report layout', () => {
     ...(opts.totals === null ? [] : [opts.totals ?? TOTALS]),
     'Total Donations (Gross),"4,900.00"',
     `${opts.checkFeeLabel ?? 'Check Fee'},${opts.checkFee ?? '0.00'}`,
-    `Net Total Payment,${opts.net ?? '"4,900.00"'}`,
+    ...(opts.net === null ? [] : [`Net Total Payment,${opts.net ?? '"4,900.00"'}`]),
     '',
   ].join('\r\n'));
 
@@ -369,6 +381,12 @@ describe('Donations Report layout', () => {
   it('accepts a negative fee when Net Total Payment agrees with it', () => {
     const csv = report({ extraGift: feeGift('0.00', '-200.00'), totals: feeTotals('0.00', '-200.00'), net: '"5,100.00"' });
     expect(parseBenevityCsv(csv)).toHaveLength(3);
+  });
+
+  it('refuses a negative fee in a report that has no Net Total Payment line', () => {
+    const csv = report({ extraGift: feeGift('0.00', '-200.00'), totals: feeTotals('0.00', '-200.00'), net: null });
+    expect(() => parseBenevityCsv(csv))
+      .toThrow('line 15 (TXNAAAA003), "Merchant Fee": the fee is negative ("-200.00") and the file has no "Net Total Payment" line to check it against');
   });
 
   it('refuses the file when Net Total Payment disagrees with the gifts', () => {
