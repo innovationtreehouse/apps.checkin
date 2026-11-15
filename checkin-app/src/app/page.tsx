@@ -10,6 +10,7 @@ import {
   Container,
   Divider,
   Group,
+  Loader,
   Paper,
   Stack,
   Text,
@@ -30,6 +31,7 @@ import { PageLoader } from '@/components/ui/PageLoader';
 import { BuildingUnconfirmedAlert } from '@/components/BuildingUnconfirmedAlert';
 import { LoadError } from '@checkin/component-ui';
 import { useLoad } from '@/lib/api';
+import { useFreshRead } from '@/hooks/useFreshRead';
 
 type AttendanceAnswer = {
   safety?: { isLastKeyholder?: boolean; isTwoDeepViolation?: boolean };
@@ -46,15 +48,19 @@ export default function Home() {
   const [membership, setMembership] = useState<{ status: string | null; processStatus: string | null } | null>(null);
 
   // No auto-retry: a pending retry shows nothing, and a keyholder must see that the check failed.
-  const attendance = useLoad<AttendanceAnswer>(session?.user ? '/api/attendance' : null, { retry: false, expireOn401: false });
-  const lastKeyholder = Boolean(attendance.data?.safety?.isLastKeyholder && session?.user?.isKeyholder);
-  const twoDeep = Boolean(attendance.data?.safety?.isTwoDeepViolation);
-  const reachable = attendance.data?.building?.reachable === true;
+  const attendancePath = session?.user ? '/api/attendance' : null;
+  const attendance = useLoad<AttendanceAnswer>(attendancePath, { retry: false, expireOn401: false });
+  // A cached answer may be old, so the page says it is still checking until this visit's read answers.
+  const { fresh, retry: retryAttendance } = useFreshRead(attendancePath, attendance.reload);
+  const safety = attendance.data;
+  const lastKeyholder = Boolean(safety?.safety?.isLastKeyholder && session?.user?.isKeyholder);
+  const twoDeep = Boolean(safety?.safety?.isTwoDeepViolation);
+  const reachable = safety?.building?.reachable === true;
   const isLastKeyholder = reachable && lastKeyholder;
   const isTwoDeepViolation = reachable && twoDeep;
   // The kiosk is unreachable or still syncing, so the building state behind a warning can't be confirmed.
   const unconfirmedSince = !reachable && (lastKeyholder || twoDeep)
-    ? { lastSeenAt: attendance.data?.building?.lastSeenAt ?? null, queued: attendance.data?.building?.queued ?? 0 }
+    ? { lastSeenAt: safety?.building?.lastSeenAt ?? null, queued: safety?.building?.queued ?? 0 }
     : null;
 
   useEffect(() => {
@@ -123,8 +129,14 @@ export default function Home() {
                 <LoadError
                   what="the building safety check"
                   message={`${attendance.error} Two-deep and last-keyholder warnings can't show until it loads.`}
-                  onRetry={attendance.reload}
+                  onRetry={retryAttendance}
                 />
+              )}
+              {attendancePath && !fresh && !attendance.error && (
+                <Group gap="xs" role="status">
+                  <Loader size="xs" />
+                  <Text size="sm" c="dimmed">Checking building safety…</Text>
+                </Group>
               )}
               {unconfirmedSince && <BuildingUnconfirmedAlert lastSeenAt={unconfirmedSince.lastSeenAt} queued={unconfirmedSince.queued} />}
               {isTwoDeepViolation && (
