@@ -680,6 +680,10 @@ Procedure below is built on them.
 - Finance is granted on the same terms as BOARD and BG reviewer.  [Decision —
   @thpr, 2026-10-31]
 
+- The Board and Finance roles are granted only to a Key Volunteer who has signed
+  the current agreement; the check is at the grant.  [Decision — @thpr,
+  2026-11-15; *Policy: Donor Privacy and Rights Policy, Art. V §V.02*]
+
 - Keyholder is not gated on the agreement.  [Decision — deliberate limit, @thpr,
   2026-10-31]
 
