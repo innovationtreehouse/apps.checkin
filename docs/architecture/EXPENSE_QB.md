@@ -295,7 +295,10 @@ windowed reader around its receipt date. A created entry is compared with what t
 app posted (amount, date, key, accounts, Vendor). A matched entry is compared with
 its baseline, and the accounts on it are compared only when the baseline recorded
 them, because they are finance's. Any difference, or a missing entry, raises
-`QB_DRIFT` with what QuickBooks showed. The check only reads QuickBooks; its writes
+`QB_DRIFT` with what QuickBooks showed. An open `QB_DRIFT` whose entry matches again
+is checked off by the system with "Resolved in QuickBooks" and the date, counted as
+`resolved`; the close matches the `observed` it read, so a finance check-off or a new
+drift landing first wins. The check only reads QuickBooks; its writes
 are in the expense database, where it raises the flags and stores a baseline for a
 matched entry that has none, raising nothing for that entry on that run.
 

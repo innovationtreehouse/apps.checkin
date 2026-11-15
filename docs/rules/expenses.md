@@ -465,6 +465,11 @@ Things the app takes as true because they are handled outside it.
   expense's review closes on its own once the expense posts.
   [Decision — owner]
 
+- A drift fixed in QuickBooks closes its open review on the next daily run,
+  recorded as closed by the system. A drift finance already checked off stays
+  checked off.
+  [Decision — owner]
+
 ### Spending sign-off
 
 - A reimbursement reaches the books only once each of its lines is signed by
