@@ -92,11 +92,16 @@ Things the app takes as true because they are handled outside it.
   of the same message. Finance refuses a receipt by rejecting it, with a reason,
   from any open state. The Board neither discards nor rejects. An open receipt
   is one not yet finalized, discarded or rejected. Finance may add a discarded
-  or rejected receipt's file to the mailbox ignore list.
+  or rejected receipt's file to the mailbox ignore list, and may remove an
+  entry. The ignore list filters mail only; an upload never consults it.
   [Decision — owner]
 
 - A receipt finance rejected counts in its uploader's My receipts pill, with
   finance's reason, until the uploader acknowledges it on the receipt.
+  [Decision — owner]
+
+- Hiding completed receipts in My receipts never hides one that is owed and
+  not shown paid in the accounting system.
   [Decision — owner]
 
 - When finance rejects a receipt, its uploader gets one email naming the
@@ -249,6 +254,14 @@ Things the app takes as true because they are handled outside it.
   counts only after finance or the Board approves it, on an authenticated first
   mail assigned to that person.  [Decision — owner]
 
+- Mail intake only reads the receipt mailbox: it never labels, moves or
+  deletes mail, and it does not read Spam or Trash.
+  [Decision — deliberate limit]
+
+- Finance does not assign or release a held or deferred mailed file to
+  themself or anyone in their household.
+  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+
 - A test or staging instance reads only its own test mailbox, never the real
   one. It refuses to read mail unless it is told which mailbox is the real one
   and is pointed at a different one.
@@ -317,6 +330,15 @@ Things the app takes as true because they are handled outside it.
   reading with lines but no retailer, date or total is kept, and its submitter
   fills those in before any other check runs.
   [Decision]
+
+- An automatic reading fills only the receipt's own details: retailer, date,
+  amounts, lines and backorder marks. It never sets who is reimbursed, the
+  vendor, or whether reimbursement is claimed; only a person sets those.
+  [Decision]
+
+- A receipt file is stored and served exactly as received. The app never strips
+  metadata from a file or redacts it.
+  [Decision — deliberate limit]
 
 - Every reading counts against the person's daily reading allowance, whether
   it succeeds or fails. The app never reads the receipt again by itself,

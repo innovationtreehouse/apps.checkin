@@ -261,8 +261,9 @@ is not yet paid, and a failed read shows as "status unavailable".
 ## File storage
 
 The S3 move is partly built. The code to write to and read from a bucket has
-shipped behind a flag that defaults to off, and the steps that would empty the
-database column have not been built. Whether the buckets exist, and whether the
+shipped behind a flag that defaults to off, and so has the task that copies
+existing rows to the bucket. The steps that would empty the database column have
+not been built. Whether the buckets exist, and whether the
 flag is on in a given environment, is set outside this repo.
 
 **Built.**
@@ -283,6 +284,11 @@ flag is on in a given environment, is set outside this repo.
 - Assigning or discarding a stored mail item deletes its object after the commit.
   A discarded item keeps its `fileKey`, to name the object for an admin restore; an
   assigned one clears it.
+- `backfillFiles` and `verifyFiles` in `src/services/fileBackfill.ts`, run by
+  `checkin-app/scripts/receipt-file-backfill.ts`, copy existing rows' bytes to the
+  store and check the copy. The copy sets `file_key` and `file_size` and never
+  touches `file_blob`. How and when to run it is in
+  `docs/ops/receipt-files-backfill.md`.
 - Daily byte limits sum `file_size`, falling back to the column's length for older
   rows. The config-health page reports a flag that is on with no
   `RECEIPT_FILES_S3_BUCKET`, and with the flag on and no bucket a deployed instance
@@ -290,8 +296,6 @@ flag is on in a given environment, is set outside this repo.
 
 **Not built.**
 
-- A task that copies existing rows' bytes to the bucket and verifies them. Rows
-  stored in `file_blob` stay there.
 - Removing the `file_blob` reads and the flag, then dropping the column.
 - Retention: nothing deletes a receipt file on a schedule.
 - Automatic discard of held mail nobody acts on: a held item waits for finance.
