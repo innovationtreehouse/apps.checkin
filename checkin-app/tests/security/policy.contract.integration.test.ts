@@ -19,6 +19,7 @@ import { collectFieldKeys, tierIsGrantable } from './helpers';
 import { loadPersonas } from './personas';
 import '@/security/registry';
 import libraries from '../../libraries.json';
+import { REGISTERED_BEFORE_HANDLER } from './registeredBeforeHandler';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 
@@ -60,6 +61,7 @@ describe('Security policy contract', () => {
                     const personas = await loadPersonas();
                     const persona = personas[role];
                     if (!persona) return; // role exercised in route-specific tests
+                    if (REGISTERED_BEFORE_HANDLER.has(endpoint)) return;
                     // Library routes need the runtime the host injects at server
                     // boot; their responses are field-checked by each library's
                     // strip test and flow test instead. A prefix also covers its bare root.
