@@ -363,6 +363,38 @@ describe("budgets org-level and restore", () => {
   });
 });
 
+describe("budgets inactive QuickBooks Classes", () => {
+  const classes = async () => jsonResponse(200, [{ id: "12", name: "Shop", active: true }, { id: "14", name: "Retired", active: false }]);
+  const writes = () => (global.fetch as jest.Mock).mock.calls.filter(([, init]) => init?.method);
+
+  it("offers no inactive Class on create", async () => {
+    mockServer(ok, { classes });
+    renderWithProviders(<BudgetsPage />);
+    fireEvent.click(await screen.findByRole("textbox", { name: "QuickBooks Class" }));
+    expect((await screen.findAllByRole("option")).map((o) => o.textContent)).toEqual(["Shop"]);
+  });
+
+  it("warns beside the edit picker when the saved Class is inactive, and a rename keeps it", async () => {
+    mockServer(ok, { classes, buckets: async () => jsonResponse(200, [{ ...programBucket, quickBooksClassId: "14" }]) });
+    renderWithProviders(<BudgetsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const dialog = await screen.findByRole("dialog");
+    const warning = within(dialog).getByText("Retired is inactive in QuickBooks. Pick an active one.").closest<HTMLElement>("[role=alert]")!;
+    expect(within(warning).getByRole("button", { name: "Update now" })).toBeInTheDocument();
+    const picker = within(dialog).getByRole("textbox", { name: "QuickBooks Class" });
+    expect(picker).toHaveValue("");
+    fireEvent.click(picker);
+    expect((await screen.findAllByRole("option")).map((o) => o.textContent)).toEqual(["Shop"]);
+
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "Old robotics" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(writes()).toEqual([[
+      "/api/budget-owners/7",
+      expect.objectContaining({ method: "PATCH", body: JSON.stringify({ name: "Old robotics", quickBooksClassId: "14", isOrgLevel: false }) }),
+    ]]));
+  });
+});
+
 describe("budgets approvers owner", () => {
   const people = async () => jsonResponse(200, [{ id: 9, name: "Tess Treasurer" }, { id: 11, name: "Olive Owner" }]);
   const writes = () => (global.fetch as jest.Mock).mock.calls.filter(([, init]) => init?.method);
