@@ -59,15 +59,10 @@ output must pass it:
 - A re-run skips rows already loaded, by the unique `(orgId, importSourceId)`, so
   a batch can be sent again safely.
 
-## 3. Before the OCR batch runs in prod
+The vendor compliance check for the Anthropic API, which the OCR batch uses, is
+recorded on #1266.
 
-Do not set `ANTHROPIC_API_KEY` in prod until Anthropic's SOC 2 and ISO 27001
-attestations are recorded on #1266. The *Definitions Policy, Art. III, "Suitably
-Secure Electronic Means"* requires both of a SaaS vendor (`docs/rules/revenue.md`,
-Vendors). Without the key, every reading in prod fails as "OCR is not
-configured". Manual entry and import keep working.
-
-## 4. Done looks like
+## 3. Done looks like
 
 - The four tools are in `packages/receipt/scripts/` as operator scripts.
 - They produce batches that pass the import route's checks.
