@@ -30,6 +30,14 @@ export const receivedReceiptLineStatusEnum = [
 ] as const;
 export type ReceivedReceiptLineStatus = (typeof receivedReceiptLineStatusEnum)[number];
 
+/** Why matching couldn't run, as the receipt page says it. */
+export const MATCHING_PENDING_REASON = {
+  catalog_unavailable: "the catalog was unavailable",
+  catalog_settings: "of a catalog settings error",
+  unexpected_error: "of an unexpected error",
+} as const;
+export type MatchingPendingReason = keyof typeof MATCHING_PENDING_REASON;
+
 export const workflowAuditEventTypeEnum = [
   "receipt_created",
   "receipt_proceeded",
@@ -68,7 +76,7 @@ export const AUDIT_EVENT_LABEL: Record<WorkflowAuditEventType, string> = {
   provisional_rejected: "Proposed catalog item rejected",
   org_event_rejected: "Catalog event from another org skipped",
   auto_proceed_triggered: "Sent to apply automatically (every line mapped)",
-  matching_deferred: "Matching pending: the catalog was unavailable",
+  matching_deferred: "Matching pending: matching couldn't run",
   line_matched: "Line matched to catalog item",
   matching_ran: "Matching ran",
   matching_gave_up: "Matching stopped retrying after 5 days; map the lines by hand",

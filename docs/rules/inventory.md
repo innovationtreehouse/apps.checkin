@@ -158,12 +158,14 @@ How the pieces are built is described in
   changes a receipt whose goods are already in stock.
   `[Decision — deliberate limit]`
 
-- When a receipt arrives while the catalog is unavailable, its lines are not
-  matched and the receipt shows "Matching pending" while it waits for review.
-  An inventory manager runs matching from the receipt, or maps the lines by
-  hand; matching never re-runs by itself. Matching fills only lines nobody has
-  decided, and a receipt whose every line is then decided is sent to apply, as
-  on arrival.
+- When catalog matching fails as a receipt arrives, whatever the error, the
+  receipt is still saved: its lines are not matched and it shows "Matching
+  pending" with the reason (catalog unavailable, catalog settings error, or
+  unexpected error) while it waits for review. The failure never sends the
+  receipt back to the receipt pipeline. An inventory manager runs matching from
+  the receipt, or maps the lines by hand; matching never re-runs by itself.
+  Matching fills only lines nobody has decided, and a receipt whose every line
+  is then decided is sent to apply, as on arrival.
   `[Decision — owner]`
 
 - A receipt's lines can be edited only while it waits for review. Once it is
