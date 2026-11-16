@@ -6,6 +6,8 @@
  *    (not null), and the response carries them back so the client can redirect.
  * 2. Stores those date-only strings at the calendar-date convention (UTC
  *    midnight), which formatDateOnly renders back as the picked date.
+ * 3. Refuses a name that is not a string, blank, or over 250 characters, and
+ *    saves it trimmed.
  */
 
 import { POST } from '@/app/api/programs/route';
@@ -61,6 +63,42 @@ jest.mock('@/lib/prisma', () => {
         $transaction: (fn: (tx: unknown) => unknown) => fn(db),
     };
     return { __esModule: true, default: db };
+});
+
+describe('POST /api/programs — name', () => {
+    const post = (name: unknown) => POST(new Request('http://localhost/api/programs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, leadMentorId: 7, startAt: '2024-09-01', endAt: '2024-12-15', maxParticipants: 5 }),
+    }) as unknown as import('next/server').NextRequest);
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: 1, isBoardMember: true } });
+        mockProgramCreate.mockResolvedValue({ id: 45, name: 'x' });
+    });
+
+    it.each([
+        ['a number', 123],
+        ['an object', { first: 'x' }],
+        ['whitespace only', '   '],
+        ['251 characters', 'a'.repeat(251)],
+    ])('refuses %s', async (_label, name) => {
+        const res = await post(name);
+        expect(res.status).toBe(400);
+        expect(mockProgramCreate).not.toHaveBeenCalled();
+    });
+
+    it('accepts 250 characters', async () => {
+        const name = 'a'.repeat(250);
+        expect((await post(name)).status).toBe(200);
+        expect(mockProgramCreate.mock.calls[0][0].data.name).toBe(name);
+    });
+
+    it('saves the trimmed name', async () => {
+        expect((await post('  Woodshop  ')).status).toBe(200);
+        expect(mockProgramCreate.mock.calls[0][0].data.name).toBe('Woodshop');
+    });
 });
 
 describe('POST /api/programs — startAt/endAt date preservation', () => {

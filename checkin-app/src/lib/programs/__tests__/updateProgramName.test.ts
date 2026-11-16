@@ -1,0 +1,85 @@
+/**
+ * @jest-environment node
+ *
+ * updateProgram: the name is checked and trimmed, and the audit's "before" copy
+ * is read on the transaction client that makes the write.
+ */
+import type { Program } from '@/generated/prisma/client';
+import { updateProgram } from '@/lib/programs/update';
+
+jest.mock('@/lib/logger', () => ({ logger: { error: jest.fn(), warn: jest.fn() } }));
+jest.mock('@/lib/programAnnounce', () => ({ maybeAnnounceOnOpen: jest.fn().mockResolvedValue(undefined) }));
+jest.mock('@/lib/shopify/stock', () => ({ STOCK_BOOKKEEPING_RESET: {} }));
+jest.mock('@/lib/emailRecipients', () => ({ emailBoardMembers: jest.fn() }));
+
+const program = {
+    id: 5, name: 'Robotics', leadMentorId: 7, phase: 'PLANNING', enrollmentStatus: 'CLOSED',
+    startAt: new Date('2026-09-01'), endAt: new Date('2026-12-01'), appliesToYear: 2026,
+    offSaleAt: null, saleEndedAt: null, productHiddenAt: null,
+    minAge: null, maxAge: null, maxParticipants: 10,
+    orgMemberOnly: false, publiclyVisible: false,
+    orgMemberPriceCents: null, nonOrgMemberPriceCents: null, shopifyVariantId: null,
+} as unknown as Program;
+
+// The row as a concurrent edit left it, after the caller read `program`.
+const rowAtWrite = { ...program, name: 'Robotics (renamed meanwhile)' };
+
+const tx = {
+    $queryRaw: jest.fn().mockResolvedValue([]),
+    program: {
+        findUnique: jest.fn().mockResolvedValue(rowAtWrite),
+        update: jest.fn(({ data }: { data: Partial<Program> }) => Promise.resolve({ ...rowAtWrite, ...data })),
+    },
+    auditLog: { create: jest.fn().mockResolvedValue({}) },
+};
+
+jest.mock('@/lib/prisma', () => ({
+    __esModule: true,
+    default: {
+        $transaction: (fn: (t: unknown) => unknown) => fn(tx),
+        auditLog: { create: jest.fn().mockResolvedValue({}) },
+    },
+}));
+
+const actor = { id: 1, isSysadmin: true, isBoardMember: true };
+
+beforeEach(() => jest.clearAllMocks());
+
+describe('updateProgram name', () => {
+    it.each([
+        ['a number', 123],
+        ['an object', { first: 'x' }],
+        ['whitespace only', '   '],
+        ['251 characters', 'a'.repeat(251)],
+    ])('refuses %s', async (_label, name) => {
+        const result = await updateProgram(program, { name }, actor);
+        expect(result).toMatchObject({ ok: false, refusal: 'invalid' });
+        expect(tx.program.update).not.toHaveBeenCalled();
+    });
+
+    it('accepts 250 characters', async () => {
+        const name = 'a'.repeat(250);
+        const result = await updateProgram(program, { name }, actor);
+        expect(result.ok).toBe(true);
+        expect(tx.program.update.mock.calls[0][0].data.name).toBe(name);
+    });
+
+    it('saves the trimmed name', async () => {
+        await updateProgram(program, { name: '  Woodshop  ' }, actor);
+        expect(tx.program.update.mock.calls[0][0].data.name).toBe('Woodshop');
+    });
+});
+
+describe('updateProgram audit', () => {
+    it('reads the "before" copy on the transaction client and audits it there', async () => {
+        await updateProgram(program, { name: 'Woodshop' }, actor);
+        expect(tx.program.findUnique).toHaveBeenCalledWith({ where: { id: program.id } });
+        expect(tx.auditLog.create).toHaveBeenCalledWith({
+            data: expect.objectContaining({
+                action: 'EDIT', tableName: 'Program', affectedEntityId: program.id,
+                oldData: rowAtWrite,
+                newData: expect.objectContaining({ name: 'Woodshop' }),
+            }),
+        });
+    });
+});
