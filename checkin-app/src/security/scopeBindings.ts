@@ -144,6 +144,10 @@ export const SCOPE_BINDINGS = {
     // safeguarding context. A "your own actions" view would be a conscious
     // future decision. See docs/security/auth-consistency-analysis.md §7.5.1.
     AuditLog: { their_own: { field: 'actorId', eqCtx: 'selfId' } },
+    // Bound for coverage; Board-only by tier-grant control. The roster's only
+    // view is sysadmin-or-board with everyones grants, so no route grants a
+    // their_households token on it.
+    VolunteerRosterRow: { their_households: { field: 'householdId', eqCtx: 'householdId' } },
     TrustedAdult: {
         their_households: { field: 'householdId', eqCtx: 'householdId' },
         their_program_households: { field: 'householdId', inCtx: 'householdIdsInScopePrograms' },

@@ -34,6 +34,7 @@ import { handler } from '@/security/handler';
 import { fileHandler, type FileResult } from '@/security/fileHandler';
 import { buildCallerContext, resolveAccess, scopesHeld, type CallerContext } from '@/security/access-resolvers';
 import { stripValue } from '@/security/stripper';
+import { ageBand } from '@/lib/programAge';
 
 const { NextRequest } = jest.requireActual<{ NextRequest: typeof NextRequestType }>('next/server');
 jest.mock('@/lib/finance/financeViewLog', () => ({
@@ -90,6 +91,9 @@ function request(endpoint: string) {
     const [method, path] = endpoint.split(' ');
     return new NextRequest(`http://localhost${path.replace(/\[[^\]]+\]/g, '1')}`, { method });
 }
+const declaredAdult = ageBand({ dateOfBirth: null, isDeclaredAdult: true });
+const noAgeOnFile = ageBand({ dateOfBirth: null });
+const youthByBirthDate = ageBand({ dateOfBirth: new Date(Date.now() - 10 * 365 * 86_400_000) });
 const params = { params: Promise.resolve({ id: '1', lineItemId: '1', otherId: '1' }) };
 
 beforeEach(() => mockSession.mockReset());
@@ -296,6 +300,9 @@ describe('receipt submitter admission', () => {
         ['an adult with an ACTIVE membership and no role', { ageBand: 'adult', isActiveOrgMember: true }],
         ['a role holder of unknown age with no membership', { isKeyholder: true }],
         ['a staff account with no membership', { email: 'staff@innovationtreehouse.org', hd: 'innovationtreehouse.org', emailVerified: true }],
+        ['a staff account of unknown age with no membership', { ageBand: noAgeOnFile, email: 'staff@innovationtreehouse.org', hd: 'innovationtreehouse.org', emailVerified: true }],
+        ['an over-25 declared adult with an ACTIVE membership', { ageBand: declaredAdult, isActiveOrgMember: true }],
+        ['a Board member who is a youth by date of birth', { ageBand: youthByBirthDate, isBoardMember: true }],
     ] as [string, Flags][])('admits %s', async (_who, flags) => {
         for (const endpoint of SUBMITTER_ROUTES) {
             expect({ endpoint, status: await status(endpoint, flags) }).toEqual({ endpoint, status: 200 });
@@ -309,6 +316,7 @@ describe('receipt submitter admission', () => {
         ['a youth with an ACTIVE membership', { ageBand: 'youth', isActiveOrgMember: true }],
         ['a program-volunteer youth with an ACTIVE membership', { ageBand: 'youth', isProgramVolunteer: true, isActiveOrgMember: true }],
         ['a caller of unknown age', { ageBand: 'unknown' }],
+        ['a caller with no age on file and an ACTIVE membership', { ageBand: noAgeOnFile, isActiveOrgMember: true }],
         ['a caller with no age band', {}],
     ] as [string, Flags][])('refuses %s', async (_who, flags) => {
         for (const endpoint of SUBMITTER_ROUTES) {

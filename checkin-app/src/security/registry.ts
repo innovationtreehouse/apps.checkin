@@ -343,12 +343,12 @@ defineRoute({
 
 // Board's volunteer roster: households on volunteer dues + the emails designated
 // ahead of signup. Exposes household leads' addresses and the designated
-// addresses (Person.email and VolunteerDesignation.email are both 'pii'), so
-// only isSysadmin/board may see it.
+// addresses (VolunteerRosterRow.email and VolunteerRosterDesignation.email are
+// 'pii'), so only isSysadmin/board may see it.
 //
 // The grant deliberately stops short of 'personal'. The roster is standing +
-// contact data — household name, lead names, one lead email, memberSince, the
-// designated address — and no personal-tier field (dateOfBirth, allergies,
+// contact data — household name, lead names, one email, memberSince, the
+// designations — and no personal-tier field (dateOfBirth, allergies,
 // notificationSettings) belongs in it. 'internal' IS granted: a row's status
 // is derived from OrgMembershipProcess.status, so a blocked or in-flight
 // application is observable in the response even though the column itself
@@ -360,10 +360,10 @@ defineRoute({
     endpoint: 'GET /api/membership-ops/volunteer-memberships',
     authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
     envelope: 'rows',
-    // Bag: { OrgMembership } with household (Household → householdMembers Person,
-    // leads flagged isHouseholdLead) and processes (OrgMembershipProcess), plus
-    // { VolunteerDesignation } for the pre-designated emails.
-    returns: ['OrgMembership', 'Household', 'Person', 'OrgMembershipProcess', 'VolunteerDesignation'],
+    // Bag: { VolunteerRosterRow } with designations (VolunteerRosterDesignation),
+    // assembled by the route from OrgMembership, Household, Person,
+    // OrgMembershipProcess and VolunteerDesignation.
+    returns: ['VolunteerRosterRow'],
     orderedView: [
         ['isSysadmin',    ['everyones:pii', 'everyones:internal', 'member', 'public']],
         ['isBoardMember', ['everyones:pii', 'everyones:internal', 'member', 'public']],
