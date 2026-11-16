@@ -77,6 +77,8 @@ export async function archiveApplication(processId: number, actorId: number) {
 
 const HOUSEHOLD_KINDS = ["INITIAL", "RENEWAL"] as const;
 
+const RESTORE_CLOSE_REASON = "household restored";
+
 /**
  * Locks a household's applications FOR UPDATE and returns the open ones, for a
  * restore to close. Taken before the household row, the order the payment and
@@ -126,7 +128,7 @@ export async function closeForRestore(
                 tableName: "OrgMembershipProcess",
                 affectedEntityId: p.id,
                 oldData: { status: p.status },
-                newData: { status: "ARCHIVED", reason: action === "restore" ? "household restored" : "household archived" },
+                newData: { status: "ARCHIVED", reason: action === "restore" ? RESTORE_CLOSE_REASON : "household archived" },
             },
         });
     }
@@ -160,11 +162,42 @@ async function reopenRefusal(tx: Prisma.TransactionClient, process: OrgMembershi
 }
 
 /**
+ * Whether the household was denied at any point after this application closed, or the
+ * close was the restore's own. Zoho gives no signing time, so a signature found at
+ * Reopen may have been made during that denial.
+ */
+async function deniedSinceClose(processId: number, householdId: number): Promise<boolean> {
+    const close = await prisma.auditLog.findFirst({
+        where: { tableName: "OrgMembershipProcess", affectedEntityId: processId, newData: { path: ["status"], equals: "ARCHIVED" } },
+        orderBy: { id: "desc" },
+        select: { id: true },
+    });
+    if (!close) return false;
+    const evidence = await prisma.auditLog.findFirst({
+        where: {
+            OR: [
+                { id: close.id, newData: { path: ["reason"], equals: RESTORE_CLOSE_REASON } },
+                {
+                    tableName: "OrgMembership",
+                    secondaryAffectedEntity: householdId,
+                    id: { gt: close.id },
+                    OR: [{ newData: { path: ["status"], equals: "DENIED" } }, { oldData: { path: ["status"], equals: "DENIED" } }],
+                },
+            ],
+        },
+        select: { id: true },
+    });
+    return evidence !== null;
+}
+
+/**
  * Board "Reopen": returns a closed application to the step it was closed from
  * (`archivedFromStatus`, captured by the close write). Refuses with the reason when
  * the household is DENIED or already has another open application, then picks up a
  * signature made while closed and re-runs the external advance so a gate met while
- * closed doesn't strand the application. The households it touches are then settled
+ * closed doesn't strand the application. A signature found at Zoho for an application
+ * whose household was denied since the close is not recorded: the family signs again.
+ * The households it touches are then settled
  * on their people's check standing, which may block it or open its check review.
  */
 export async function unarchiveApplication(processId: number, actorId: number) {
@@ -210,7 +243,8 @@ export async function unarchiveApplication(processId: number, actorId: number) {
         }
         throw e;
     }
-    await pickUpMissedSignature(process);
+    const refuseSigned = householdId != null && await deniedSinceClose(processId, householdId);
+    await pickUpMissedSignature(process, { refuseSigned, actorId });
     const { settleHouseholdBg } = await settleModule();
     for (const id of await reviewHouseholds(prisma, process)) await settleHouseholdBg(id);
     const advanced = await advanceExternalIfComplete(processId);

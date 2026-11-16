@@ -8,6 +8,7 @@ import { backgroundCheckProvider } from "@/lib/membership/background-check/manua
 import { applyVolunteerFamilyStatus } from "@/lib/membership/review";
 import { householdCheckStarted } from "@/lib/membership/checkStanding";
 import { zohoSign } from "@/lib/membership/contract/zohoProvider";
+import type { ZohoRequestState } from "@/lib/membership/contract/zohoClient";
 import { signingMockActive } from "@/lib/membership/contract/signingTarget";
 import { SIGN_FIELDS, type SignFieldSpec } from "@/lib/membership/contract/signFields";
 import { loadAgreementPdf, stampWatermark, AGREEMENT_FILENAME, AgreementUnavailableError, type LoadedAgreement } from "@/lib/membership/contract/agreementDocument";
@@ -209,15 +210,35 @@ export async function markContractSigned(processId: number, actorId?: number, re
  * triggered the check did not sign. Best-effort: on any failure the application
  * stays unsigned and "Resume signing" asks again. A dead request is left for that
  * click to replace. The mock answers "completed" for every request, so it is skipped.
+ *
+ * With `refuseSigned`, a completed request is forgotten instead, so the next click
+ * creates a fresh one; so is one Zoho can't be asked about, since "Resume signing"
+ * would otherwise record it.
  */
-export async function pickUpMissedSignature(process: Pick<OrgMembershipProcess, "id" | "contractSignedAt" | "zohoEnvelopeId">) {
-    if (process.contractSignedAt || !process.zohoEnvelopeId || !config.zohoAvailable()) return;
+export async function pickUpMissedSignature(
+    process: Pick<OrgMembershipProcess, "id" | "contractSignedAt" | "zohoEnvelopeId">,
+    opts: { refuseSigned: boolean; actorId: number },
+) {
+    const requestId = process.zohoEnvelopeId;
+    if (process.contractSignedAt || !requestId || !config.zohoAvailable()) return;
+    const warn = (e: unknown) => logger.warn(`Zoho signature check failed for membership process ${process.id}: ${e instanceof Error ? e.message : String(e)}`);
+    let state: ZohoRequestState | "unreachable";
     try {
         if (await signingMockActive()) return;
         const token = await zohoSign.getAccessToken();
-        if ((await zohoSign.getRequestStatus(token, process.zohoEnvelopeId)) === "completed") await markContractSigned(process.id);
+        state = await zohoSign.getRequestStatus(token, requestId);
     } catch (e) {
-        logger.warn(`Zoho signature check failed for membership process ${process.id}: ${e instanceof Error ? e.message : String(e)}`);
+        warn(e);
+        state = "unreachable";
+    }
+    try {
+        if (opts.refuseSigned && (state === "completed" || state === "unreachable")) {
+            await clearDeadSigningRequest(process.id, requestId, opts.actorId, "household denied since close");
+        } else if (state === "completed") {
+            await markContractSigned(process.id);
+        }
+    } catch (e) {
+        warn(e);
     }
 }
 
@@ -254,7 +275,7 @@ export async function findProcessByEnvelope(requestId: string) {
  * so a concurrent re-create's fresh ids are never clobbered and the audit row is
  * written only by the caller that actually cleared.
  */
-async function clearDeadSigningRequest(processId: number, requestId: string, actorId: number) {
+async function clearDeadSigningRequest(processId: number, requestId: string, actorId: number, reason?: string) {
     const cleared = await prisma.$transaction(async (tx) => {
         const { count } = await tx.orgMembershipProcess.updateMany({
             where: { id: processId, zohoEnvelopeId: requestId, contractSignedAt: null },
@@ -268,12 +289,12 @@ async function clearDeadSigningRequest(processId: number, requestId: string, act
                 tableName: "OrgMembershipProcess",
                 affectedEntityId: processId,
                 oldData: { zohoEnvelopeId: requestId },
-                newData: { zohoEnvelopeId: null, zohoActionId: null, zohoSignerPersonId: null },
+                newData: { zohoEnvelopeId: null, zohoActionId: null, zohoSignerPersonId: null, ...(reason ? { reason } : {}) },
             },
         });
         return true;
     });
-    if (cleared) logger.info(`Cleared dead Zoho signing request ${requestId} for membership process ${processId}.`);
+    if (cleared) logger.info(`Cleared ${reason ? "refused" : "dead"} Zoho signing request ${requestId} for membership process ${processId}.`);
 }
 
 /**
