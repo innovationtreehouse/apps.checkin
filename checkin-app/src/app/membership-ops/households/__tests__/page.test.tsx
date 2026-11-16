@@ -3,12 +3,14 @@ jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories run hoisted, before imports exist
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 
-import { screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, screen, fireEvent, waitFor } from "@testing-library/react";
+import { notifications, notificationsStore } from "@mantine/notifications";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl, router } from "@/test-helpers/rtl";
 import { pinTimezone } from "@/test-helpers/tz";
 import AdminHouseholdsPage from "../page";
 
 beforeEach(() => resetRtl());
+afterEach(() => act(() => notifications.clean()));
 
 const households = {
   households: [
@@ -135,6 +137,10 @@ describe("membership-ops/households page", () => {
         }),
       ),
     );
+    await waitFor(() => expect(notificationsStore.getState().notifications).toHaveLength(1));
+    const shown = notificationsStore.getState().notifications[0];
+    expect(shown).toMatchObject({ message: "Membership revoked.", color: "green", role: "status" });
+    expect(shown.autoClose).not.toBe(false);
   });
 
   it("posts the year on the button pressed, with a required reason", async () => {

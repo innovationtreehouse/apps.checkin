@@ -173,6 +173,45 @@ describe("facility-ops/visits page", () => {
     expect(fetchMock).not.toHaveBeenCalledWith("/api/facility/visits", expect.objectContaining({ method: "PATCH" }));
   });
 
+  it("clears the edited row's departure error once the arrival it was checked against changes", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({ "/api/facility/visits": { visits } });
+    renderWithProviders(<AdminVisitsPage />);
+    await screen.findByText("Val Volunteer");
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const confirmModal = await screen.findByRole("dialog", { name: "Edit Past Visit Record" });
+    fireEvent.click(within(confirmModal).getByRole("button", { name: "Continue" }));
+    const departed = screen.getByLabelText("Departed");
+    fireEvent.change(departed, { target: { value: "2000-01-01T00:00" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(departed).toHaveAttribute("aria-invalid", "true");
+
+    fireEvent.change(screen.getByLabelText("Arrived"), { target: { value: "1999-12-31T23:00" } });
+
+    expect(departed).not.toHaveAttribute("aria-invalid", "true");
+    expect(screen.queryByText("Departure time must be after arrival time")).not.toBeInTheDocument();
+  });
+
+  it("clears Add Past Visit's departure error once the arrival changes", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({ "/api/facility/visits": { visits }, "/api/people/search": { people: [] } });
+    renderWithProviders(<AdminVisitsPage />);
+    await screen.findByText("Val Volunteer");
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Visit" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add Past Visit" });
+    fireEvent.change(within(dialog).getByLabelText("Arrived"), { target: { value: "2026-01-01T12:00" } });
+    fireEvent.change(within(dialog).getByLabelText("Departed"), { target: { value: "2026-01-01T10:00" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add Visit" }));
+    expect(within(dialog).getByText("Departure time must be after arrival time")).toBeInTheDocument();
+
+    fireEvent.change(within(dialog).getByLabelText("Arrived"), { target: { value: "2026-01-01T09:00" } });
+
+    expect(within(dialog).getByLabelText("Departed")).not.toHaveAttribute("aria-invalid", "true");
+    expect(within(dialog).queryByText("Departure time must be after arrival time")).not.toBeInTheDocument();
+  });
+
   it("flags each missing field in Add Past Visit on its input and does not post", async () => {
     setSession({ id: 1, isSysadmin: true });
     const fetchMock = mockFetchJson({ "/api/facility/visits": { visits }, "/api/people/search": { people: [] } });

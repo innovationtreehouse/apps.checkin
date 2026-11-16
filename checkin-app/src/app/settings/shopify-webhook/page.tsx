@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import {
   Alert,
   Anchor,
@@ -18,7 +18,9 @@ import {
   Text,
   Title,
 } from "@mantine/core";
+import { LoadError } from "@checkin/component-ui";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { useLoad } from "@/lib/api";
 import { SETTINGS_ADMIN_ROLES } from "@/lib/nav/sections/settings";
 import type { ShopifyWebhookReceipt } from "@/lib/shopifyWebhookReceipt";
 
@@ -51,26 +53,13 @@ export default function ShopifyWebhookSettingsPage() {
   // before any content renders. The status route re-enforces the same roles.
   const { ready, loading: authLoading } = useRequireRole(SETTINGS_ADMIN_ROLES);
 
-  const [status, setStatus] = useState<Status | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [failed, setFailed] = useState(false);
-
-  const load = useCallback(() => fetch("/api/settings/shopify-webhook")
-    .then(async (res) => {
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setStatus((await res.json()) as Status);
-    })
-    .catch(() => {
-      setFailed(true);
-    })
-    .finally(() => {
-      setLoading(false);
-    }),
-  []);
-
-  useEffect(() => {
-    if (ready) load();
-  }, [ready, load]);
+  const { data: status, error, reload } = useLoad<Status>(ready ? "/api/settings/shopify-webhook" : null);
+  const [refreshing, setRefreshing] = useState(false);
+  const refresh = async () => {
+    setRefreshing(true);
+    await reload();
+    setRefreshing(false);
+  };
 
   if (authLoading) return <Center mih="60vh"><Loader /></Center>;
   if (!ready) return null; // redirect to / is in flight
@@ -79,11 +68,11 @@ export default function ShopifyWebhookSettingsPage() {
 
   return (
     <Stack>
-      {loading && !status ? (
+      {error ? (
+        <LoadError what="webhook status" message={error} onRetry={reload} />
+      ) : !status ? (
         <Center py="xl"><Loader /></Center>
-      ) : failed && !status ? (
-        <Text c="red">Failed to load webhook status.</Text>
-      ) : status ? (
+      ) : (
         <>
           <Card withBorder radius="md" padding="lg">
             <Title order={3} mb="xs">Webhook endpoint</Title>
@@ -126,7 +115,7 @@ export default function ShopifyWebhookSettingsPage() {
           <Card withBorder radius="md" padding="lg">
             <Group justify="space-between" mb="xs">
               <Title order={3}>Recent deliveries</Title>
-              <Button size="xs" variant="light" onClick={() => { setLoading(true); setFailed(false); load(); }} loading={loading}>
+              <Button size="xs" variant="light" onClick={() => void refresh()} loading={refreshing}>
                 Refresh
               </Button>
             </Group>
@@ -194,7 +183,7 @@ export default function ShopifyWebhookSettingsPage() {
             )}
           </Card>
         </>
-      ) : null}
+      )}
     </Stack>
   );
 }

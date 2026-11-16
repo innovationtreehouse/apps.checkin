@@ -62,7 +62,7 @@ export function MatchAuditPanel() {
     } catch (e) {
       setResult(null);
       setError(e instanceof HttpError && e.status === 503
-        ? 'The Shopify mirror is not wired in this environment.'
+        ? errorMessage(e)
         : 'Match audit failed to run — see the server log, or run diagnostics on the System Status page.');
     } finally {
       setRunning(false);

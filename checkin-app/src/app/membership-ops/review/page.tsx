@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useSession } from "next-auth/react";
 import { Alert, Button, Card, Checkbox, Container, Group, Radio, Stack, Text, Textarea, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { LoadError } from "@checkin/component-ui";
+import { LoadError, showSuccess } from "@checkin/component-ui";
 import { modals } from "@mantine/modals";
 import { type AlertTone } from "@/components/admin/AlertBanner";
 import { useLoad } from "@/lib/api";
@@ -62,7 +62,7 @@ export default function MembershipReviewPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        notifications.show({ message: "Your answer is now an approval. The review needs one more reviewer to clear." });
+        showSuccess("Your answer is now an approval. The review needs one more reviewer to clear.");
         notifyNavRefresh();
       } else {
         notifications.show({ color: "red", message: data.error || "Could not change your answer.", autoClose: false });
@@ -103,7 +103,7 @@ export default function MembershipReviewPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        notifications.show({ message: "Review started over — reviewers have been notified." });
+        showSuccess("Review started over — reviewers have been notified.");
         // A repeated reset passes the server's check once the review is open, so the row stays busy until it re-reads.
         await Promise.all([reload(), reloadMine()]);
         notifyNavRefresh();
@@ -163,7 +163,7 @@ export default function MembershipReviewPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        notifications.show({ message: "Your approval was withdrawn. The review is waiting for reviewers again." });
+        showSuccess("Your approval was withdrawn. The review is waiting for reviewers again.");
         notifyNavRefresh();
       } else {
         notifications.show({ color: "red", message: data.error || "Could not undo your approval.", autoClose: false });
@@ -265,7 +265,7 @@ export default function MembershipReviewPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        notifications.show({ message: result === "APPROVE" ? "Attestation recorded — thank you." : "Recorded. The board has been notified." });
+        showSuccess(result === "APPROVE" ? "Attestation recorded — thank you." : "Recorded. The board has been notified.");
         setSubjects((s) => { const next = { ...s }; delete next[processId]; return next; });
         reload();
         notifyNavRefresh();

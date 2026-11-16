@@ -1,9 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { signIn } from "next-auth/react";
 import { Card, Center, Divider, Group, SimpleGrid, Stack, Text } from "@mantine/core";
+import { LoadError } from "@checkin/component-ui";
 import { useCheckinEnv } from "@/components/EnvProvider";
+import { useLoad } from "@/lib/api";
 import { RoleBadge } from "@/components/ui/RoleBadge";
 
 interface Persona {
@@ -24,25 +26,15 @@ interface Persona {
  * Only rendered in dev mode when the user is NOT signed in.
  */
 export default function DevLoginPicker({ callbackUrl = "/" }: { callbackUrl?: string }) {
-  const [personas, setPersonas] = useState<Persona[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [signingIn, setSigningIn] = useState<string | null>(null);
-  const [now, setNow] = useState<number | null>(null);
   const checkinEnv = useCheckinEnv();
-
-  useEffect(() => {
-    fetch("/api/auth/dev-personas", { cache: "no-store" })
-      .then((res) => res.json())
-      .then((data) => {
-        setPersonas(data.personas || []);
-        setNow(Date.now());
-        setLoading(false);
-      })
-      .catch(() => {
-        setNow(Date.now());
-        setLoading(false);
-      });
-  }, []);
+  // Signed out on the dev instance the route refuses, so a 401 or 403 hides the picker.
+  const { data, error, status, reload } = useLoad<{ personas?: Persona[] }>(
+    checkinEnv === "prod" ? null : "/api/auth/dev-personas",
+    { expireOn401: false },
+  );
+  const personas = data?.personas ?? [];
+  const [signingIn, setSigningIn] = useState<string | null>(null);
+  const [now] = useState(() => Date.now());
 
   const handleLogin = (persona: Persona) => {
     setSigningIn(persona.email);
@@ -73,7 +65,7 @@ export default function DevLoginPicker({ callbackUrl = "/" }: { callbackUrl?: st
     if (p.isBackgroundCheckReviewer) badges.push({ role: "isBackgroundCheckReviewer" });
     if (p.toolStatuses?.length > 0) badges.push({ role: "_certified", label: "Certified" });
     if (p.householdId) badges.push({ role: "_household", label: "Household" });
-    if (p.dateOfBirth && now !== null) {
+    if (p.dateOfBirth) {
       const age = Math.floor((now - new Date(p.dateOfBirth).getTime()) / (365.25 * 24 * 60 * 60 * 1000));
       if (age < 18) badges.push({ role: "_student", label: `Student (${age})` });
     }
@@ -84,7 +76,9 @@ export default function DevLoginPicker({ callbackUrl = "/" }: { callbackUrl?: st
   // when unset — a client bundle has no server env of its own to read.
   if (checkinEnv === 'prod') return null;
 
-  if (loading) {
+  if (status === 401 || status === 403) return null;
+  if (error) return <LoadError what="dev personas" message={error} onRetry={reload} />;
+  if (!data) {
     return (
       <Center mt="md">
         <Text c="dimmed">Loading dev personas...</Text>
