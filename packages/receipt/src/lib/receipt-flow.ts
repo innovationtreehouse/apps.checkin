@@ -245,17 +245,19 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
 
   const transition = async (detail: Parameters<typeof receiptRepo.update>[1]["detail"], valueAfter: string) => {
     try {
-      await receiptRepo.update(receiptId, { core: CLEARED, detail }, row.state);
+      await db.$transaction(async (tx) => {
+        await receiptRepo.update(receiptId, { core: CLEARED, detail }, row.state, tx);
+        await audit(tx, receiptId, actor, {
+          action: "pipeline_transition",
+          fieldChanged: "state",
+          valueBefore: row.state,
+          valueAfter,
+        });
+      });
     } catch (err) {
       if (err instanceof ReceiptStateConflictError) return;
       throw err;
     }
-    await audit(db, receiptId, actor, {
-      action: "pipeline_transition",
-      fieldChanged: "state",
-      valueBefore: row.state,
-      valueAfter,
-    });
   };
 
   const total = row.receiptTotalCents;
@@ -342,16 +344,18 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
   } catch (err) {
     if (err instanceof ReceiptStateConflictError) return;
     try {
-      await receiptRepo.update(receiptId, { detail: { state: "flow_error" } }, row.state);
+      await db.$transaction(async (tx) => {
+        await receiptRepo.update(receiptId, { detail: { state: "flow_error" } }, row.state, tx);
+        await audit(tx, receiptId, actor, {
+          action: "pipeline_failed",
+          fieldChanged: "state",
+          valueBefore: row.state,
+          valueAfter: err instanceof Error ? err.message : String(err),
+        });
+      });
     } catch (conflict) {
       throw conflict instanceof ReceiptStateConflictError ? err : conflict;
     }
-    await audit(db, receiptId, actor, {
-      action: "pipeline_failed",
-      fieldChanged: "state",
-      valueBefore: row.state,
-      valueAfter: err instanceof Error ? err.message : String(err),
-    });
     await recordFailure(db, receiptId, err);
     throw err;
   }
