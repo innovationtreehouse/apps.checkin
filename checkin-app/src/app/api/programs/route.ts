@@ -13,7 +13,7 @@ import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { staleWhileRevalidate } from "@/lib/staleCache";
 import { validateProgramAgeBounds, isLeaderAgeEligible } from "@/lib/programAge";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
-import { resolveProgramYear } from "@/lib/programs/update";
+import { parseProgramName, resolveProgramYear } from "@/lib/programs/update";
 import { enrollmentClosedBy } from "@/lib/programs/saleState";
 import { isLiveHousehold } from "@/lib/household/archived";
 import { ARCHIVED_HOUSEHOLD_REFUSAL, lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
@@ -191,11 +191,11 @@ export const POST = withAuth({ roles: ['isBoardMember'] }, async (req, auth) => 
 
     try {
         const body = await req.json();
-        const { name, leadMentorId, startAt, endAt, appliesToYear, orgMemberOnly, publiclyVisible, minAge, maxAge, memberPrice, nonMemberPrice, maxParticipants } = body;
+        const { leadMentorId, startAt, endAt, appliesToYear, orgMemberOnly, publiclyVisible, minAge, maxAge, memberPrice, nonMemberPrice, maxParticipants } = body;
 
-        if (!name) {
-            return apiError("Program name is required", 400);
-        }
+        const parsedName = parseProgramName(body.name ?? "");
+        if (!parsedName.ok) return apiError(parsedName.message, 400);
+        const { name } = parsedName;
 
         if (!leadMentorId) {
             return apiError("Program Leader is required", 400);

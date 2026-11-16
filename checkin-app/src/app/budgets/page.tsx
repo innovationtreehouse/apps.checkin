@@ -5,7 +5,7 @@ import {
   Badge, Button, Card, Center, Checkbox, Group, Loader, Modal, Select, Stack, Table, Text, TextInput, Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { errorMessage, LoadError, QuickBooksListsRefresh } from "@checkin/component-ui";
+import { errorMessage, InactivePickWarning, LoadError, QuickBooksListsRefresh } from "@checkin/component-ui";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { api, useLoad } from "@/lib/api";
@@ -127,16 +127,10 @@ export default function BudgetsPage() {
   const classNames = new Map((classes ?? []).map((c) => [c.id, c.active ? c.name : `${c.name} (inactive)`]));
   const takenBy = new Map(allBuckets.filter((b) => b.quickBooksClassId).map((b) => [b.quickBooksClassId, b.id]));
   const className = (id: string) => classNames.get(id) ?? `QuickBooks id ${id}`;
-  // Active Classes no other bucket holds, plus `keep` (the bucket's saved Class and the current pick)
-  // even when inactive or missing from the list, so the picker never drops a Class it is showing.
-  const classChoices = (bucketId: number | null, keep: (string | null)[]) => {
-    const kept = new Set(keep.filter((id): id is string => id !== null));
-    const options = (classes ?? [])
-      .filter((c) => kept.has(c.id) || (c.active && (takenBy.get(c.id) ?? bucketId) === bucketId))
-      .map((c) => ({ value: c.id, label: classNames.get(c.id) ?? c.name }));
-    for (const id of kept) if (!options.some((o) => o.value === id)) options.push({ value: id, label: className(id) });
-    return options;
-  };
+  // Active Classes no other bucket holds; a saved inactive or missing Class shows as a warning instead.
+  const classChoices = (bucketId: number | null) => (classes ?? [])
+    .filter((c) => c.active && (takenBy.get(c.id) ?? bucketId) === bucketId)
+    .map((c) => ({ value: c.id, label: c.name }));
   const classPlaceholder = (empty: string) => (classes ? empty : classesLoad.error ? "Classes unavailable" : "Loading…");
 
   if (authLoading) return <PageLoader />;
@@ -170,7 +164,7 @@ export default function BudgetsPage() {
                 description="Every bucket books to a Class"
                 placeholder={classPlaceholder("Pick a Class")}
                 searchable
-                data={classChoices(null, [newClassId])}
+                data={classChoices(null)}
                 value={newClassId}
                 onChange={setNewClassId}
                 w={280}
@@ -252,10 +246,11 @@ export default function BudgetsPage() {
             label="QuickBooks Class"
             placeholder={classPlaceholder("None")}
             searchable
-            data={editing ? classChoices(editing.id, [editing.quickBooksClassId, editClassId]) : []}
+            data={editing ? classChoices(editing.id) : []}
             value={editClassId}
             onChange={setEditClassId}
           />
+          {editClassId === editing?.quickBooksClassId && <InactivePickWarning saved={editClassId} options={classes} />}
           <QuickBooksListsRefresh />
           <Checkbox
             label="Org-level"

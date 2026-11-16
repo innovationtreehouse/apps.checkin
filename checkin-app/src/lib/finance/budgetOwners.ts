@@ -9,6 +9,7 @@ import { savedQuickBooksClasses } from "@/lib/finance/quickBooksLists";
 import { IN_LIVE_HOUSEHOLD } from "@/lib/household/archived";
 import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
 import { ServiceError } from "@checkin/component-kit";
+import { QUICKBOOKS_LIST_STALE, UPDATE_NOW_HINT } from "@checkin/quickbooks";
 
 // Budget-owner buckets and their approvers. FINANCE manages buckets;
 // the BOARD sets each bucket's owner and treasurers.
@@ -47,6 +48,15 @@ export async function listQuickBooksClasses() {
     return savedQuickBooksClasses();
 }
 
+/**
+ * One Class as the save check reads it. The local stand-ins answer active for an id they don't list,
+ * because flow tests mint a fresh Class id for each bucket.
+ */
+export async function findQuickBooksClass(id: string) {
+    if (config.quickBooksMockActive()) return LOCAL_QUICKBOOKS_CLASSES.find((c) => c.id === id) ?? { id, name: id, active: true };
+    return (await savedQuickBooksClasses()).find((c) => c.id === id);
+}
+
 function readName(value: unknown): string {
     if (typeof value !== "string" || !value.trim()) throw badRequest("name is required");
     return value.trim();
@@ -59,6 +69,14 @@ function readClassId(value: unknown): string | null {
     // QuickBooks ref ids are numeric; the expense poster refuses anything else.
     if (id && !/^\d+$/.test(id)) throw badRequest("quickBooksClassId must be a QuickBooks id (digits only)");
     return id || null;
+}
+
+/** Refuses a Class the app's copy of QuickBooks' Class list lacks or shows as inactive (docs/rules/expenses.md). */
+async function refuseUnusableClass(classId: string) {
+    const klass = await findQuickBooksClass(classId);
+    if (klass?.active) return;
+    const why = klass ? `QuickBooks' list in the app shows ${klass.name} as inactive` : `QuickBooks' list in the app doesn't have a Class with id ${classId}`;
+    throw new ApiResponseError(400, `${why}. ${UPDATE_NOW_HINT}`, QUICKBOOKS_LIST_STALE);
 }
 
 // A QuickBooks Class maps to one bucket.
@@ -75,6 +93,7 @@ export async function createBudgetOwner(actorId: number, body: Record<string, un
     if (!quickBooksClassId) throw badRequest("A bucket needs a QuickBooks Class.");
     if (body.isOrgLevel !== undefined && typeof body.isOrgLevel !== "boolean") throw badRequest("isOrgLevel must be a boolean");
     const isOrgLevel = body.isOrgLevel === true;
+    await refuseUnusableClass(quickBooksClassId);
     return prisma.$transaction(async (tx) => {
         const bucket = await tx.budgetOwner
             .create({ data: { name, isOrgLevel, quickBooksClassId }, select: BUCKET_SELECT })
@@ -113,6 +132,11 @@ export async function updateBudgetOwner(actorId: number, id: number, body: Recor
         if (data.quickBooksClassId === null && before.quickBooksClassId !== null) {
             throw badRequest("A bucket's QuickBooks Class can be changed but not cleared.");
         }
+        // A new Class, or the one a restore brings back, must be active; an unchanged Class on a live bucket isn't re-read.
+        const classId = data.quickBooksClassId ?? before.quickBooksClassId;
+        const classChanged = data.quickBooksClassId != null && data.quickBooksClassId !== before.quickBooksClassId;
+        const restoring = data.archivedAt === null && before.archivedAt !== null;
+        if (classId && (classChanged || restoring)) await refuseUnusableClass(classId);
         if (data.isOrgLevel === true && !before.isOrgLevel && (ownerId !== null || _count.treasurers > 0)) {
             // Only the Board removes approvers, so finance's change waits for it.
             throw new ApiResponseError(409, "The Board must remove this bucket's owner and treasurers first.");
