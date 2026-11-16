@@ -5,10 +5,14 @@ import { useSession } from "next-auth/react";
 import { useEffect } from "react";
 import { Center, Loader, Stack, Text } from "@mantine/core";
 import { PageContainer } from "@/components/ui/PageContainer";
-import { settingsRolesFor } from "@/lib/nav/sections/settings";
-import { hasAnyRole } from "@/lib/nav/gates";
+import { SectionTabs } from "@/components/ui/SectionTabs";
+import { TabBadge } from "@/components/ui/CountBadge";
+import { sectionTabBadge } from "@/components/navBadges";
+import { useTodoCounts } from "@/hooks/useTodoCounts";
+import { SETTINGS, settingsRolesFor } from "@/lib/nav/sections/settings";
+import { hasAnyRole, visibleLinks } from "@/lib/nav/gates";
 
-// Settings is isSysadmin/board/operations, Finance is FINANCE/board, and the bare /settings
+// Settings is isSysadmin/board/operations, Expenses is FINANCE/board, and the bare /settings
 // index admits both so it can redirect each to their own tab. The gate lives here
 // because the membership and finance settings pages self-gate nothing. Operations' only real
 // destination is settings/outreach — every other settings page carries its own stricter
@@ -18,6 +22,7 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
   const { data: session, status } = useSession();
   const router = useRouter();
   const allowed = hasAnyRole(session?.user, settingsRolesFor(usePathname() ?? ""));
+  const counts = useTodoCounts(status === "authenticated");
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -42,5 +47,11 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
     return null;
   }
 
-  return <PageContainer>{children}</PageContainer>;
+  const links = visibleLinks(SETTINGS, session.user, counts);
+  return (
+    <PageContainer>
+      <SectionTabs links={links} mb="md" badgeFor={(href) => <TabBadge badge={sectionTabBadge(links, href, counts)} />} />
+      {children}
+    </PageContainer>
+  );
 }

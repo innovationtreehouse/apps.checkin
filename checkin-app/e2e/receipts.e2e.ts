@@ -205,6 +205,7 @@ test.describe("receipts in the browser", () => {
 
     await ageLimit.fill(before);
     await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(page.locator(".mantine-Notification-root").filter({ hasText: "Settings saved" })).toBeVisible();
     await page.reload();
     await expect(ageLimit).toHaveValue(before);
     await noProblems(watch, "receipt settings");

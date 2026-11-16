@@ -207,8 +207,9 @@ defineRoute({
 // personal-tier data (dob, incl. youth) for everyone enrolled in / RSVP'd to
 // the program. This route is FAIL-CLOSED,
 // staff-only: the handler fn (events/[id]/route.ts) does an inline event->program
-// lead/core-vol/admin gate and throws 403 for everyone else, so non-staff never
-// receive the roster at all. That gate is NOT here in `authorize` because the
+// lead/core-vol/admin gate and answers 404 to everyone else, the same answer as a
+// missing event, so non-staff never receive the roster nor learn the event
+// exists. That gate is NOT here in `authorize` because the
 // roster's identities (name/id, and the existence of each enrollment/RSVP/Visit
 // row) are tier 'public', so per-field stripping cannot hide the "who attends"
 // association — only admission can; and the event->program check can't be
@@ -216,9 +217,11 @@ defineRoute({
 // resolveAccess keys those on a PROGRAM id). The orderedView below is therefore
 // defense-in-depth over the staff tiers only: admin -> everyones:*, and this
 // event's lead/core-vol -> their_program_participants:* via the per-row scope
-// resolver (mirrors 'GET /api/trusted-adults/operational'). internal tier is
-// granted to that scope so staff keep attendanceConfirmedAt (rendered by
-// program-ops/sessions/[id]).
+// resolver (mirrors 'GET /api/trusted-adults/operational'). That scope stops at
+// personal: the two staff-only fields the session page renders
+// (Event.attendanceConfirmedAt, ProgramVolunteer.isCore) are personal, and every
+// internal ProgramParticipant field says how a family pays, which is not a
+// program leader's (docs/rules/programs.md).
 defineRoute({
     endpoint: 'GET /api/events/[id]',
     authorize: 'authenticated',
@@ -232,7 +235,6 @@ defineRoute({
         ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
         ['authenticated', ['their_program_participants:pii',
                            'their_program_participants:personal',
-                           'their_program_participants:internal',
                            'their_own:pii',
                            'their_own:personal',
                            'member', 'public']],
@@ -405,33 +407,6 @@ defineRoute({
     ],
 });
 
-// Tombstone census. Lists merged-away Person rows and, per tombstone, the
-// residue still parked on it, for sysadmin/board triage. The bag is
-// { Person } (each tombstone's id/name/email + its survivor via mergedInto, plus a
-// _count of the residue relations) and { PersonMerge } (fromId only, so the page
-// can flag a tombstone that has no archive row). Exposes tombstone identity,
-// so isSysadmin/board only — the same band that already sees applicant PII.
-//
-// The grant is pii + internal + public: email is the one pii field; name/id/
-// mergedInto are public; PersonMerge.fromId and the `roles`/`rawBadgeLogs` relations
-// are internal-tier, and `_count` is gated per-relation on relationVisible (any
-// field of the target model visible under these tokens) — without everyones:internal
-// those two counts silently drop and PersonMerge always reads empty, understating
-// the census (every tombstone reads "no archive" and the no-pathway total
-// under-reports).
-defineRoute({
-    endpoint: 'GET /api/membership-ops/participants/tombstones',
-    authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
-    envelope: null,
-    // Bag: { Person } (tombstones, with mergedInto Person for the survivor and a
-    // _count of the residue relations) and { PersonMerge } (archive rows, fromId).
-    returns: ['Person', 'PersonMerge'],
-    orderedView: [
-        ['isSysadmin',    ['everyones:internal', 'everyones:pii', 'public']],
-        ['isBoardMember', ['everyones:internal', 'everyones:pii', 'public']],
-    ],
-});
-
 // A reviewer withdraws their own approval while the review still waits on its
 // second reviewer; the service enforces ownership, APPROVE-only and phase. Same
 // admission band as the queue. No bag: the response is {}, no model data.
@@ -440,6 +415,42 @@ defineRoute({
     authorize: { anyRole: ['isBackgroundCheckReviewer', 'isBoardMember'] },
     envelope: null,
     orderedView: [],
+});
+
+// A reviewer or Board member dismisses a check review opened by mistake: it
+// undoes a "check started" mark and decides nothing about anyone. Same
+// admission band as undo; a sysadmin who is neither cannot dismiss. No bag.
+defineRoute({
+    endpoint: 'POST /api/membership/reviews/dismiss',
+    authorize: { anyRole: ['isBackgroundCheckReviewer', 'isBoardMember'] },
+    envelope: null,
+    orderedView: [],
+});
+
+// The family path for marking a background check started: GET lists the rows
+// the caller may mark, POST marks one and returns the refreshed rows. Any
+// signed-in person is admitted; the handler narrows the subject to the caller
+// and, for a household lead, the other adults of the household they lead. The
+// row's `state` reaches only those two scopes, so a non-lead sibling or anyone
+// else keeps personId and name alone.
+const CHECK_STARTED_VIEW: readonly OrderedViewEntry[] = [
+    ['authenticated', ['their_own:internal', 'led_households:internal', 'public']],
+];
+
+defineRoute({
+    endpoint: 'GET /api/membership/check-started',
+    authorize: 'authenticated',
+    envelope: 'rows',
+    returns: ['CheckStartedRow'],
+    orderedView: CHECK_STARTED_VIEW,
+});
+
+defineRoute({
+    endpoint: 'POST /api/membership/check-started',
+    authorize: 'authenticated',
+    envelope: 'rows',
+    returns: ['CheckStartedRow'],
+    orderedView: CHECK_STARTED_VIEW,
 });
 
 // The caller's own Key Volunteer Agreement: its status, the embedded sign URL
@@ -561,17 +572,32 @@ defineRoute({
 // deciding — wasOrgMemberAtApproval is only stamped on approval). Board/finance
 // only, no sysadmin, and they hold everyones:* so they see every field — the win
 // is the declared policy: any role later added to this view is field-stripped
-// automatically.
+// automatically. everyones:hardship is the request itself; only Board and
+// finance views hold it.
 defineRoute({
     endpoint: 'GET /api/finance-ops/payment-plans',
     authorize: 'finance-or-board',
     envelope: null,
     returns: ['ProgramParticipant', 'Person', 'Program', 'Household', 'OrgMembership', 'BoardSettings'],
     orderedView: [
-        ['isFinance',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
-        ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
+        ['isFinance',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
+        ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
     ],
-    auditedRead: true,
+    financeView: { records: [{ key: 'ProgramParticipant', id: ['programId', 'personId'], model: 'ProgramParticipant' }] },
+});
+
+// The payment-plan queue's Past view: approved and refused requests, one
+// ProgramPaymentPlanDecision row each. Same audience and grants as the queue.
+defineRoute({
+    endpoint: 'GET /api/finance-ops/payment-plans/past',
+    authorize: 'finance-or-board',
+    envelope: null,
+    returns: ['ProgramPaymentPlanDecision'],
+    orderedView: [
+        ['isFinance',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
+        ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
+    ],
+    financeView: { records: [{ key: 'ProgramPaymentPlanDecision', id: ['programId', 'personId'], model: 'ProgramParticipant' }], query: ['page', 'archived'] },
 });
 
 // The "who is 18 as of the member-year start" roster (Membership Audit). Ships
@@ -622,17 +648,31 @@ defineRoute({
 // OrgMembershipProcess rows the household asked to pay by plan, with the
 // membership + household nested. Board/finance only, no sysadmin, and they hold
 // everyones:* so they see every field — the win is the declared policy: any role
-// later added to this view is field-stripped automatically.
+// later added to this view is field-stripped automatically. everyones:hardship is
+// the request itself; only Board and finance views hold it.
 defineRoute({
     endpoint: 'GET /api/finance-ops/membership-payment-plans',
     authorize: 'finance-or-board',
     envelope: null,
     returns: ['OrgMembershipProcess', 'OrgMembership', 'Household', 'Person'],
     orderedView: [
-        ['isFinance',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
-        ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
+        ['isFinance',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
+        ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
     ],
-    auditedRead: true,
+});
+
+// The membership payment-plan queue's Past view: approved and refused requests,
+// one MembershipPaymentPlanDecision row each. Same audience and grants as the queue.
+defineRoute({
+    endpoint: 'GET /api/finance-ops/membership-payment-plans/past',
+    authorize: 'finance-or-board',
+    envelope: null,
+    returns: ['MembershipPaymentPlanDecision'],
+    orderedView: [
+        ['isFinance',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
+        ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
+    ],
+    financeView: { records: [{ key: 'MembershipPaymentPlanDecision', id: 'processId', model: 'OrgMembershipProcess' }], query: ['page', 'archived'] },
 });
 
 // Board's unconfirmed Shopify stock screen: programs whose stock write could not
@@ -725,8 +765,9 @@ defineRoute({
     endpoint: 'GET /api/facility/visits',
     authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
     envelope: 'visits',
-    // Bag: { Visit } with person (Person).
-    returns: ['Visit', 'Person'],
+    // Bag: { Visit } with person (Person) and facilityClose (FacilityClose,
+    // whose closedBy is a Person) naming who closed and when.
+    returns: ['Visit', 'Person', 'FacilityClose'],
     orderedView: [
         ['isSysadmin',    ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
         ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
@@ -775,8 +816,8 @@ defineRoute({
 
 // Finance view log (B11) — who viewed finance records. Board only: finance
 // holders are most of the people it records, and sysadmins are kept out by
-// least privilege; anyRole has no sysadmin auto-admit. Not
-// `auditedRead`: the log holds no finance content, so reading it is not logged.
+// least privilege; anyRole has no sysadmin auto-admit. The log carries no
+// marked field, so reading it is not itself logged.
 //
 // FinanceViewLog has no relation to Person, so viewer names travel as a second
 // bag key of { id, name } rows, both public-tier. The handler always emits both
@@ -839,6 +880,21 @@ defineRoute({
     orderedView: [],
 });
 
+// Retry and Retry all on the Problems list: re-runs each named stuck item's
+// step and answers whether it ran. Admits the people who see System Status;
+// each step's own role check runs inside the route. No error text leaves (see
+// problemsSyntheticClassifications.ts), so neither view needs a personal grant.
+defineRoute({
+    endpoint: 'POST /api/system-status/problems/retry',
+    authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
+    envelope: 'results',
+    returns: ['ProblemRetryResult'],
+    orderedView: [
+        ['isSysadmin',    ['everyones:internal']],
+        ['isBoardMember', ['everyones:internal']],
+    ],
+});
+
 // Daily QuickBooks expense posting (stranded recovery + outbox drain), a money
 // write, so it answers only to its own secret, never the shared CRON_SECRET.
 // Admission gate only: the response carries no rows.
@@ -849,16 +905,15 @@ defineRoute({
     orderedView: [],
 });
 
-// In-memory kiosk last-seen. No DB row: the stamp
-// lives on the task, so the bag is a synthesized SystemMetricLog (metric
-// `kiosk_last_seen`, timestamp = last verified kiosk request, value = age
-// in seconds). Empty array means never seen since this task started (or
-// overnight after scale-to-zero).
+// Kiosk readings. SystemMetricLog rows are synthesized from in-memory task
+// state (`kiosk_last_seen`, `kiosk_clock_skew`), so they vanish when the task
+// restarts. KioskProtocolSeen rows are stored: one per kiosk key fingerprint,
+// with the scan protocol version it last spoke and when.
 defineRoute({
     endpoint: 'GET /api/system-status/kiosk-heartbeat',
     authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
     envelope: 'heartbeat',
-    returns: ['SystemMetricLog'],
+    returns: ['SystemMetricLog', 'KioskProtocolSeen'],
     orderedView: [
         ['isSysadmin',    ['everyones:internal', 'member', 'public']],
         ['isBoardMember', ['everyones:internal', 'member', 'public']],
@@ -973,6 +1028,42 @@ defineRoute({
     orderedView: [
         ['isBoardMember', ['everyones:internal', 'public']],
     ],
+});
+
+// Email Templates tab: the Board's saved subject/body overrides. The list
+// returns every saved row; a key with no row sends its registry default.
+// Subject, body and the saver's Person id are internal; no person record leaves.
+defineRoute({
+    endpoint: 'GET /api/settings/templates',
+    authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
+    envelope: 'templates',
+    returns: ['EmailTemplate'],
+    orderedView: [
+        ['isSysadmin',    ['everyones:internal', 'public']],
+        ['isBoardMember', ['everyones:internal', 'public']],
+    ],
+});
+
+// Save one key's subject/body after token validation; `[key]` is a registry key.
+// Returns the saved row, or null once a blank save removes it.
+defineRoute({
+    endpoint: 'PUT /api/settings/templates/[key]',
+    authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
+    envelope: 'template',
+    returns: ['EmailTemplate'],
+    orderedView: [
+        ['isSysadmin',    ['everyones:internal', 'public']],
+        ['isBoardMember', ['everyones:internal', 'public']],
+    ],
+});
+
+// Send the editor's unsaved subject/body, filled from the key's sample values,
+// to the caller's own address. Admission gate only: the response carries no rows.
+defineRoute({
+    endpoint: 'POST /api/settings/templates/[key]/test-send',
+    authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
+    envelope: null,
+    orderedView: [],
 });
 
 // ─── Outbound surfaces ─────────────────────────────────────────────────────

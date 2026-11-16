@@ -16,7 +16,10 @@ import { handler } from '@/security/handler';
 import { stripValue } from '@/security/stripper';
 
 const { NextRequest } = jest.requireActual<{ NextRequest: typeof NextRequestType }>('next/server');
-jest.mock('@/lib/finance/financeViewLog', () => ({ recordFinanceView: jest.fn().mockResolvedValue(undefined) }));
+jest.mock('@/lib/finance/financeViewLog', () => ({
+    ...jest.requireActual('@/lib/finance/financeViewLog'),
+    recordFinanceViewCall: jest.fn().mockResolvedValue(undefined),
+}));
 const mockSession = getServerSession as jest.MockedFunction<typeof getServerSession>;
 
 const ROWS = 'GET /api/expense/finance-queue';
@@ -43,6 +46,7 @@ function signIn(flags: Partial<Record<Flag, boolean>>) {
 
 const ROW = {
     expenseId: 'e-1',
+    receiptId: null,
     vendorName: 'Acme',
     date: '2026-10-20',
     amountCents: 234000,
@@ -66,6 +70,7 @@ const ctx: CallerContext = {
 // A stored payload that never became an expense; its reason is the stored error text.
 const INTAKE_ROW = {
     expenseId: null,
+    receiptId: 'r-failed',
     vendorName: 'Bolt',
     date: '2026-10-02',
     amountCents: 900,

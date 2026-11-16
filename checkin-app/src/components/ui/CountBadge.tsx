@@ -1,7 +1,7 @@
 "use client";
 
 import { Badge, type BadgeProps } from '@mantine/core';
-import type { NavBadge } from '@/components/navBadges';
+import { badgeText, type NavBadge } from '@/components/navBadges';
 
 /**
  * Centralized numeric count badge. AppFrame, the section layouts, TodoCard, and
@@ -54,7 +54,7 @@ export function TabBadge({ badge }: { badge: NavBadge | null }) {
   if (!badge) return null;
   return (
     <CountBadge intent={badgeIntentFor(badge.color) ?? 'info'} aria-label={badge.label}>
-      {badge.count}
+      {badgeText(badge.count)}
     </CountBadge>
   );
 }

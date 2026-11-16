@@ -52,7 +52,7 @@ describe("ParticipantEventsDashboard", () => {
         const fetchMock = jest.fn(async (input: RequestInfo | URL) => {
             const url = typeof input === "string" ? input : input.toString();
             if (url.includes("/api/events/10/rsvp")) {
-                return { ok: false, status: 403, json: async () => ({ error: "Not allowed." }) } as Response;
+                return { ok: false, status: 403, text: async () => JSON.stringify({ error: "Not allowed." }) } as Response;
             }
             return { ok: true, status: 200, text: async () => JSON.stringify([event]) } as Response;
         });

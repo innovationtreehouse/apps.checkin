@@ -6,7 +6,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../lib/db/index";
-import type { CatalogEventSource, InventoryAlerts, OrgEventRecord } from "../../contract";
+import type { CatalogEventSource, OrgEventRecord } from "../../contract";
 import { configureLocalInventory, getServices } from "../../runtime";
 import { catchUpOrgEvents, orgEventConsumer } from "../../lib/services/orgEventConsumer";
 import { setupIntegrationDb } from "../helpers/setup";
@@ -25,12 +25,11 @@ const approved = (id: number, orgId?: string) =>
   event(id, "provisional_approved", { provisionalGtin13: PROV, realGtin13: REAL, name: "Widget" }, orgId);
 const rejected = (id: number) => event(id, "provisional_rejected", { provisionalGtin13: PROV_2, rejectionReason: "dup" });
 
-function configure(catalogEventSource?: CatalogEventSource, alerts?: InventoryAlerts) {
+function configure(catalogEventSource?: CatalogEventSource) {
   configureLocalInventory({
     auth: { getPrincipal: async () => null },
     org: async () => ({ id: TEST_ORG_ID, name: "Org One" }),
     catalogEventSource,
-    alerts,
   });
 }
 
@@ -47,11 +46,12 @@ describeDb("S5 handler", () => {
     expect(await db.inventoryReceivedOrgEvent.findMany()).toMatchObject([{ id: 5, status: "processed" }]);
   });
 
-  it("records a payload that breaks the contract as failed, and catch-up retries it", async () => {
+  it("records a payload that breaks the contract as failed, with its error and first failure time", async () => {
     await orgEventConsumer.onOrgEvents([event(6, "provisional_approved", { provisionalGtin13: PROV, realGtin13: 123 })]);
-    expect(await db.inventoryReceivedOrgEvent.findFirst({ where: { id: 6 } })).toMatchObject({ status: "failed" });
-
-    expect(await catchUpOrgEvents()).toMatchObject({ failed: 1, processed: 0 });
+    const row = await db.inventoryReceivedOrgEvent.findFirst({ where: { id: 6 } });
+    expect(row).toMatchObject({ status: "failed" });
+    expect(row?.failureReason).toBeTruthy();
+    expect(row?.firstFailedAt).toBeInstanceOf(Date);
   });
 
   it("skips an event for another org without recording it", async () => {
@@ -77,11 +77,8 @@ describeDb("S5 handler", () => {
 });
 
 describeDb("S5 catch-up", () => {
-  it("records that no catalog is connected with the inert event source, and alerts nobody", async () => {
-    const orgEventsStuck = vi.fn(async () => {});
-    configure(undefined, { orgEventsStuck });
+  it("records that no catalog is connected with the inert event source", async () => {
     expect(await catchUpOrgEvents()).toEqual({ processed: 0, duplicate: 0, failed: 0, skipped: 0, reconciled: 0, reconcileFailed: 0, unprocessed: 0, unreadable: false, notConnected: true });
-    expect(orgEventsStuck).not.toHaveBeenCalled();
   });
 
   it("consumes an event that committed after a higher id was already received", async () => {
@@ -132,7 +129,7 @@ describeDb("S5 catch-up: first run over an empty ledger", () => {
     provisionalLog: await db.provisionalItemLog.count(),
   });
 
-  it("changes no stock and no status, and raises no alert", async () => {
+  it("changes no stock and no status", async () => {
     const reviewed = (provisionalGtin13: string, status: string, resolvedToGtin13: string | null) => ({
       provisionalGtin13, name: "Widget", usageBehavior: "Unknown", orgId: TEST_ORG_ID, status, resolvedToGtin13,
     });
@@ -160,7 +157,6 @@ describeDb("S5 catch-up: first run over an empty ledger", () => {
       ],
     });
     const before = await state();
-    const orgEventsStuck = vi.fn(async () => {});
     const mapped = (id: number, provisionalGtin13: string, realGtin13: string) =>
       event(id, "provisional_mapped_to_existing", { provisionalGtin13, realGtin13, conversionFactor: 12 });
     configure(
@@ -170,106 +166,52 @@ describeDb("S5 catch-up: first run over an empty ledger", () => {
         mapped(3, P_MAPPED_OPEN, REAL_3),
         event(4, "provisional_rejected", { provisionalGtin13: P_REJECTED, rejectionReason: "dup" }),
       ]),
-      { orgEventsStuck },
     );
 
     expect(await catchUpOrgEvents()).toMatchObject({ processed: 4, failed: 0, reconciled: 0 });
 
     expect(await state()).toEqual(before);
-    expect(orgEventsStuck).not.toHaveBeenCalled();
   });
 });
 
-describeDb("S5 catch-up: alerts", () => {
+describeDb("S5 catch-up: what it leaves", () => {
   const malformed = (id: number) => event(id, "provisional_approved", { provisionalGtin13: PROV, realGtin13: 123 });
 
-  it("alerts once when the catalog can't be read, and still reconciles", async () => {
-    const orgEventsStuck = vi.fn(async () => {});
+  it("still reconciles when the catalog can't be read", async () => {
     await orgEventConsumer.onOrgEvents([approved(5)]);
     await db.inventoryProvisionalItem.create({
       data: { provisionalGtin13: PROV, name: "Widget", usageBehavior: "Unknown", orgId: TEST_ORG_ID, status: "pending" },
     });
-    configure({ eventsSince: async () => { throw new Error("catalog down"); } }, { orgEventsStuck });
+    configure({ eventsSince: async () => { throw new Error("catalog down"); } });
 
     expect(await catchUpOrgEvents()).toMatchObject({ unreadable: true, reconciled: 1 });
-    expect(orgEventsStuck).toHaveBeenCalledTimes(1);
-    expect(orgEventsStuck).toHaveBeenCalledWith({ failed: 0, unprocessed: 0, unreadable: true, stuckProvisionals: [] });
   });
 
-  it("alerts once for events that fail or don't fit this run, and leaves them for the next", async () => {
-    const orgEventsStuck = vi.fn(async () => {});
-    configure(pagedSource([malformed(1), malformed(2), rejected(3)]), { orgEventsStuck });
+  it("leaves events that don't fit this run for the next", async () => {
+    configure(pagedSource([malformed(1), malformed(2), rejected(3)]));
 
     expect(await catchUpOrgEvents(2)).toMatchObject({ failed: 2, unprocessed: 1 });
-    expect(orgEventsStuck).toHaveBeenCalledTimes(1);
-    expect(orgEventsStuck).toHaveBeenCalledWith({ failed: 2, unprocessed: 1, unreadable: false, stuckProvisionals: [] });
     expect(await db.inventoryReceivedOrgEvent.count({ where: { id: 3 } })).toBe(0);
   });
 
-  it("alerts when an event first fails in the sweep, not on later retries", async () => {
-    const orgEventsStuck = vi.fn(async () => {});
-    configure(pagedSource([malformed(1)]), { orgEventsStuck });
-
-    await catchUpOrgEvents();
-    expect(orgEventsStuck).toHaveBeenCalledTimes(1);
-
-    expect(await catchUpOrgEvents()).toMatchObject({ failed: 1 });
-    expect(orgEventsStuck).toHaveBeenCalledTimes(1);
-    expect(await db.inventoryReceivedOrgEvent.findFirst({ where: { id: 1 } })).toMatchObject({ status: "failed" });
-  });
-
-  it("alerts when an event first fails in the call-out, not when the sweep retries it", async () => {
-    const orgEventsStuck = vi.fn(async () => {});
-    configure(pagedSource([malformed(1)]), { orgEventsStuck });
-
+  it("never retries a failed event: it waits for Retry with its first failure time", async () => {
     await orgEventConsumer.onOrgEvents([malformed(1)]);
-    expect(orgEventsStuck).toHaveBeenCalledWith({ failed: 1, unprocessed: 0, unreadable: false });
+    const before = await db.inventoryReceivedOrgEvent.findFirst({ where: { id: 1 } });
+    configure(pagedSource([malformed(1), rejected(2)]));
 
-    await catchUpOrgEvents();
-    expect(orgEventsStuck).toHaveBeenCalledTimes(1);
+    expect(await catchUpOrgEvents()).toMatchObject({ processed: 1, failed: 0 });
+
+    expect(await db.inventoryReceivedOrgEvent.findFirst({ where: { id: 1 } })).toEqual(before);
   });
 
-  it("doesn't alert while a capped sweep makes progress, and drains over later runs", async () => {
-    const orgEventsStuck = vi.fn(async () => {});
-    configure(pagedSource([rejected(1), rejected(2), rejected(3)]), { orgEventsStuck });
+  it("drains a capped sweep over later runs", async () => {
+    configure(pagedSource([rejected(1), rejected(2), rejected(3)]));
 
     expect(await catchUpOrgEvents(2)).toMatchObject({ processed: 2, unprocessed: 1 });
     expect(await catchUpOrgEvents(2)).toMatchObject({ processed: 1, unprocessed: 0 });
-
-    expect(orgEventsStuck).not.toHaveBeenCalled();
   });
 
-  it("alerts on every run while a capped sweep processes nothing", async () => {
-    const orgEventsStuck = vi.fn(async () => {});
-    configure(pagedSource([rejected(1), rejected(2)]), { orgEventsStuck });
-
-    await catchUpOrgEvents(0);
-    await catchUpOrgEvents(0);
-    expect(orgEventsStuck).toHaveBeenCalledTimes(2);
-  });
-
-  it("runs a new event even when failed rows alone would fill the cap", async () => {
-    await orgEventConsumer.onOrgEvents(Array.from({ length: 10 }, (_, i) => malformed(i + 1)));
-    configure(pagedSource([...Array.from({ length: 10 }, (_, i) => malformed(i + 1)), rejected(100)]));
-
-    expect(await catchUpOrgEvents(10)).toMatchObject({ processed: 1, failed: 9, unprocessed: 1 });
-
-    expect(await db.inventoryReceivedOrgEvent.findFirst({ where: { id: 100 } })).toMatchObject({ status: "processed" });
-  });
-
-  it("retries every failed row when the cap has room", async () => {
-    await orgEventConsumer.onOrgEvents([malformed(1), malformed(2), malformed(3)]);
-    configure(pagedSource([malformed(1), malformed(2), malformed(3), rejected(100)]));
-
-    expect(await catchUpOrgEvents(10)).toMatchObject({ processed: 1, failed: 3, unprocessed: 0 });
-  });
-
-  it("finishes the run when the alert itself throws", async () => {
-    configure(pagedSource([malformed(1)]), { orgEventsStuck: async () => { throw new Error("mail down"); } });
-    expect(await catchUpOrgEvents()).toMatchObject({ failed: 1 });
-  });
-
-  it("finishes the sweep when a ledger write throws", async () => {
+  it("finishes the sweep when a ledger write throws, and reads that event again next run", async () => {
     const spy = vi.spyOn(db.inventoryReceivedOrgEvent, "createMany").mockRejectedValueOnce(new Error("db blip"));
     configure(pagedSource([rejected(1), rejected(2)]));
     try {
@@ -277,6 +219,7 @@ describeDb("S5 catch-up: alerts", () => {
     } finally {
       spy.mockRestore();
     }
+    expect(await catchUpOrgEvents()).toMatchObject({ processed: 1 });
   });
 });
 
@@ -338,25 +281,19 @@ describeDb("S5 catch-up: stored resolutions", () => {
     expect(await qty(REAL)).toBe(10);
   });
 
-  it("alerts on every run while a reconcile keeps failing, and stops once it applies", async () => {
-    await orgEventConsumer.onOrgEvents([approved(5)]);
+  it("leaves a provisional whose decision is held by a failed event for that event's Retry", async () => {
+    // The handler stores the resolution before the merge, so a merge that throws leaves both behind.
     await pendingProvisionalWithStock(3);
-    const orgEventsStuck = vi.fn(async () => {});
-    configure(undefined, { orgEventsStuck });
-    const spy = vi.spyOn(getServices().provisionalItemService, "reconcileProvisionalOnCreate")
-      .mockRejectedValueOnce(new Error("boom"))
-      .mockRejectedValueOnce(new Error("boom"));
+    await db.inventoryProvisionalResolution.create({ data: { orgId: TEST_ORG_ID, provisionalGtin13: PROV, kind: "approved", realGtin13: REAL, sourceEventId: 5 } });
+    await db.inventoryReceivedOrgEvent.create({ data: { id: 5, orgId: TEST_ORG_ID, eventType: "provisional_approved", payload: approved(5).payload, receivedAt: new Date(), status: "failed", failureReason: "boom", firstFailedAt: new Date() } });
+    const reconcile = vi.spyOn(getServices().provisionalItemService, "reconcileProvisionalOnCreate");
 
     try {
-      await catchUpOrgEvents();
-      await catchUpOrgEvents();
-      expect(orgEventsStuck).toHaveBeenCalledTimes(2);
-      expect(orgEventsStuck).toHaveBeenLastCalledWith({ failed: 0, unprocessed: 0, unreadable: false, stuckProvisionals: [{ gtin13: PROV, name: "Widget" }] });
-
-      expect(await catchUpOrgEvents()).toMatchObject({ reconcileFailed: 0 });
-      expect(orgEventsStuck).toHaveBeenCalledTimes(2);
+      expect(await catchUpOrgEvents()).toMatchObject({ reconciled: 0, reconcileFailed: 0 });
+      expect(reconcile).not.toHaveBeenCalled();
+      expect(await db.inventoryProvisionalItem.findFirst({ where: { provisionalGtin13: PROV } })).toMatchObject({ status: "pending", reconcileFirstFailedAt: null });
     } finally {
-      spy.mockRestore();
+      reconcile.mockRestore();
     }
   });
 
@@ -368,19 +305,23 @@ describeDb("S5 catch-up: stored resolutions", () => {
     expect(await qty(PROV)).toBe(2);
   });
 
-  it("counts a reconcile that throws as failed, and the next run applies it", async () => {
+  it("records a reconcile that throws, and later runs leave it for Retry", async () => {
     await orgEventConsumer.onOrgEvents([approved(5)]);
     await pendingProvisionalWithStock(3);
     const spy = vi.spyOn(getServices().provisionalItemService, "reconcileProvisionalOnCreate").mockRejectedValueOnce(new Error("boom"));
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     try {
       expect(await catchUpOrgEvents()).toMatchObject({ reconciled: 0, reconcileFailed: 1 });
-      expect(await db.inventoryProvisionalItem.findFirst({ where: { provisionalGtin13: PROV } })).toMatchObject({ status: "pending" });
+      const failed = await db.inventoryProvisionalItem.findFirst({ where: { provisionalGtin13: PROV } });
+      expect(failed).toMatchObject({ status: "pending", reconcileLastError: "boom" });
+      expect(failed?.reconcileFirstFailedAt).toBeInstanceOf(Date);
 
-      expect(await catchUpOrgEvents()).toMatchObject({ reconciled: 1, reconcileFailed: 0 });
-      expect(await qty(REAL)).toBe(3);
+      expect(await catchUpOrgEvents()).toMatchObject({ reconciled: 0, reconcileFailed: 0 });
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(await qty(PROV)).toBe(3);
     } finally {
-      spy.mockRestore();
+      vi.restoreAllMocks();
     }
   });
 });

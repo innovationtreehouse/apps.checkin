@@ -530,11 +530,12 @@ describeDb("merge after a concurrent resolution", () => {
     const holderPid = await rowLocked;
     const approve = provisional.approveProvisional(TEST_ORG_ID, PROVISIONAL, REAL, 23, 1);
     await waitersBehind(db, holderPid, 1);
-    const reject = provisional.rejectProvisional(TEST_ORG_ID, PROVISIONAL, "dup");
+    // Attach the expectation now: the reject can settle before the approve does.
+    const rejected = expect(provisional.rejectProvisional(TEST_ORG_ID, PROVISIONAL, "dup")).rejects.toMatchObject({ status: 409 });
     await waitersBehind(db, holderPid, 2);
     release();
     await Promise.all([holder, approve]);
-    await expect(reject).rejects.toMatchObject({ status: 409 });
+    await rejected;
 
     expect(await db.inventoryProvisionalItem.findFirst()).toMatchObject({ status: "approved", resolvedToGtin13: REAL });
     expect(await qty(REAL)).toBe(5);

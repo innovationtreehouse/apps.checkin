@@ -40,7 +40,7 @@ beforeEach(() => {
 });
 
 describe("OutreachSettingsPage", () => {
-  it("loads the four fields and renders a live dual-variant preview", async () => {
+  it("loads the four fields and renders a live preview", async () => {
     router({
       "/api/settings/outreach": { body: { settings: SETTINGS, nextDeadline: "2026-08-01" } },
       "/api/outreach/status": { body: EMPTY_STATUS },
@@ -50,10 +50,8 @@ describe("OutreachSettingsPage", () => {
     await screen.findByDisplayValue("Time to {{actionWord}}");
     expect(screen.getAllByDisplayValue(/Hi \{\{name\}\}/)).toHaveLength(2);
 
-    // Live preview substitutes the tokens for both variants (join/renew). The body renders in a
-    // scriptless sandboxed iframe (XSS hardening), so assert against its srcDoc, not the DOM text.
-    expect(screen.getByTitle("Opening of renewals: join preview").getAttribute("srcdoc")).toMatch(/please join by 2026-08-01/);
-    expect(screen.getByTitle("Opening of renewals: renew preview").getAttribute("srcdoc")).toMatch(/please renew by 2026-08-01/);
+    // The body renders in a scriptless sandboxed iframe (XSS hardening), so assert against its srcDoc.
+    expect(screen.getByTitle("Opening of renewals: preview").getAttribute("srcdoc")).toMatch(/please renew by 2026-08-01/);
   });
 
   it("live preview updates as the board types", async () => {
@@ -67,8 +65,7 @@ describe("OutreachSettingsPage", () => {
     const subjectInputs = screen.getAllByLabelText("Subject");
     fireEvent.change(subjectInputs[0], { target: { value: "Brand new subject {{actionWord}}" } });
 
-    expect(await screen.findByText("Brand new subject join")).toBeInTheDocument();
-    expect(screen.getByText("Brand new subject renew")).toBeInTheDocument();
+    expect(await screen.findByText("Brand new subject renew")).toBeInTheDocument();
   });
 
   it("sends a test email for a template", async () => {
@@ -108,7 +105,7 @@ describe("OutreachSettingsPage", () => {
     router({
       "/api/settings/outreach": { body: { settings: SETTINGS, nextDeadline: "2026-08-01" } },
       "/api/outreach/status": { body: EMPTY_STATUS },
-      "/api/outreach/send": { body: { bulkSend: { id: 1 }, counts: { queued: 10, skippedUnsubscribed: 2, leadsWithoutEmail: 1, total: 10 } } },
+      "/api/outreach/send": { body: { bulkSend: { id: 1 }, counts: { queued: 10, leadsWithoutEmail: 1, total: 10 } } },
       "/api/outreach/process-batch": { body: { bulkSendId: 1, processed: 10, remaining: 0 } },
     });
     renderWithProviders(<OutreachSettingsPage />);
@@ -118,11 +115,28 @@ describe("OutreachSettingsPage", () => {
 
     const modal = await screen.findByRole("dialog", { name: "Confirm send" });
     expect(within(modal).getByText(/10/)).toBeInTheDocument();
-    expect(within(modal).getByText(/2 more are skipped/)).toBeInTheDocument();
+    expect(within(modal).getByText(/1 household lead\(s\) have no email/)).toBeInTheDocument();
 
     fireEvent.click(within(modal).getByRole("button", { name: "Send now" }));
 
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Confirm send" })).not.toBeInTheDocument());
+  });
+
+  it("send panel has no audience picker; each email type sends only its type", async () => {
+    const fetchMock = router({
+      "/api/settings/outreach": { body: { settings: SETTINGS, nextDeadline: "2026-08-01" } },
+      "/api/outreach/status": { body: EMPTY_STATUS },
+      "/api/outreach/send": { body: { bulkSend: { id: 2 }, counts: { queued: 0, leadsWithoutEmail: 0, total: 0 } } },
+    });
+    renderWithProviders(<OutreachSettingsPage />);
+    await screen.findByDisplayValue("Time to {{actionWord}}");
+
+    expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Send Reminder campaign" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith("/api/outreach/send", expect.objectContaining({ body: JSON.stringify({ emailType: "reminder" }) })),
+    );
   });
 
   it("offers Resume for an in-flight send reported by status", async () => {
@@ -130,7 +144,7 @@ describe("OutreachSettingsPage", () => {
       "/api/settings/outreach": { body: { settings: SETTINGS, nextDeadline: "2026-08-01" } },
       "/api/outreach/status": {
         body: {
-          inFlight: { id: 5, emailType: "opening", audience: "a", startedAt: new Date().toISOString(), completedAt: null, counts: { queued: 3, sent: 7, failed: 0, skipped_unsubscribed: 0, skipped_denied: 0, sending: 0, total: 10 } },
+          inFlight: { id: 5, emailType: "opening", startedAt: new Date().toISOString(), completedAt: null, counts: { queued: 3, sent: 7, failed: 0, skipped_unsubscribed: 0, skipped_denied: 0, skipped_not_member: 0, sending: 0, total: 10 } },
           lastCompleted: null,
         },
       },
@@ -147,12 +161,78 @@ describe("OutreachSettingsPage", () => {
       "/api/outreach/status": {
         body: {
           inFlight: null,
-          lastCompleted: { id: 9, emailType: "reminder", audience: "c", startedAt: new Date().toISOString(), completedAt: new Date().toISOString(), counts: { queued: 0, sent: 8, failed: 2, skipped_unsubscribed: 0, skipped_denied: 0, sending: 0, total: 10 } },
+          lastCompleted: { id: 9, emailType: "reminder", startedAt: new Date().toISOString(), completedAt: new Date().toISOString(), counts: { queued: 0, sent: 8, failed: 2, skipped_unsubscribed: 0, skipped_denied: 0, skipped_not_member: 0, sending: 0, total: 10 } },
         },
       },
     });
     renderWithProviders(<OutreachSettingsPage />);
 
     expect(await screen.findByRole("button", { name: /Retry 2 failed/ })).toBeInTheDocument();
+  });
+});
+
+describe("failed loads", () => {
+  it("shows the templates error with Retry, and no form or Save, until the templates load", async () => {
+    router({ "/api/outreach/status": { body: EMPTY_STATUS } });
+    renderWithProviders(<OutreachSettingsPage />);
+
+    expect(await screen.findByText("Couldn't load the outreach templates")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Subject")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save templates" })).not.toBeInTheDocument();
+
+    router({
+      "/api/settings/outreach": { body: { settings: SETTINGS, nextDeadline: "2026-08-01" } },
+      "/api/outreach/status": { body: EMPTY_STATUS },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByDisplayValue("Time to {{actionWord}}")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save templates" })).toBeInTheDocument();
+  });
+
+  it("offers no new send while the send status is unknown, and Retry recovers", async () => {
+    router({ "/api/settings/outreach": { body: { settings: SETTINGS, nextDeadline: "2026-08-01" } } });
+    renderWithProviders(<OutreachSettingsPage />);
+
+    expect(await screen.findByText("Couldn't load the send status")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send Opening-of-renewals campaign" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send Reminder campaign" })).not.toBeInTheDocument();
+
+    router({
+      "/api/settings/outreach": { body: { settings: SETTINGS, nextDeadline: "2026-08-01" } },
+      "/api/outreach/status": { body: EMPTY_STATUS },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByRole("button", { name: "Send Opening-of-renewals campaign" })).toBeInTheDocument();
+  });
+
+  it("holds the form and the send buttons until this visit's own reads answer, even with older reads cached", async () => {
+    router({
+      "/api/settings/outreach": { body: { settings: SETTINGS, nextDeadline: "2026-08-01" } },
+      "/api/outreach/status": { body: EMPTY_STATUS },
+    });
+    const earlier = renderWithProviders(<OutreachSettingsPage />);
+    await screen.findByDisplayValue("Time to {{actionWord}}");
+    earlier.unmount();
+
+    const answer = router({
+      "/api/settings/outreach": { body: { settings: { ...SETTINGS, outreachOpeningSubject: "Newer subject" }, nextDeadline: "2026-08-01" } },
+      "/api/outreach/status": { body: EMPTY_STATUS },
+    });
+    const held: Array<() => void> = [];
+    let released = false;
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => released
+      ? answer(input, init)
+      : new Promise<Response>((resolve) => { held.push(() => resolve(answer(input, init))); })) as unknown as typeof fetch;
+    renderWithProviders(<OutreachSettingsPage />);
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalled());
+    expect(screen.queryByDisplayValue("Time to {{actionWord}}")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save templates" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send Opening-of-renewals campaign" })).not.toBeInTheDocument();
+
+    released = true;
+    held.forEach((release) => release());
+    expect(await screen.findByDisplayValue("Newer subject")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Send Opening-of-renewals campaign" })).toBeInTheDocument();
   });
 });

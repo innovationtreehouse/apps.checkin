@@ -6,6 +6,8 @@ import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { apiError } from "@/lib/api-response";
 import { isKnownAdult } from "@/lib/programAge";
 import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/selfGrantGuard";
+import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
+import { ServiceError } from "@checkin/component-kit";
 
 /**
  * A volunteer row confers volunteer standing and core grants scopes over enrolled
@@ -54,12 +56,15 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
 
         // No eligibility gate (age/membership): a plain volunteer can be anyone.
         // Being made core (PATCH) is what requires a known adult.
-        const assignment = await prisma.programVolunteer.create({
-            data: {
-                programId,
-                personId: participantId,
-                isCore: false
-            }
+        const assignment = await prisma.$transaction(async (tx) => {
+            await lockLiveHouseholdsOf(tx, [participantId]);
+            return tx.programVolunteer.create({
+                data: {
+                    programId,
+                    personId: participantId,
+                    isCore: false
+                }
+            });
         });
 
         await prisma.auditLog.create({
@@ -77,6 +82,9 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
     } catch (error) {
         // P2002 = unique violation on @@id([programId, participantId]). Benign
         // double-submit re-assigns the same volunteer; 409 instead of 500.
+        if (error instanceof ServiceError) {
+            return apiError(error.message, error.status);
+        }
         if (isPrismaError(error, 'P2002')) {
             return apiError("Participant is already a volunteer for this program.", 409);
         }
@@ -193,16 +201,19 @@ export const PATCH = withAuth({}, async (req, auth, { params }: { params: Promis
             }
         }
 
-        const assignment = await prisma.programVolunteer.update({
-            where: {
-                programId_personId: {
-                    programId,
-                    personId: participantId
+        const assignment = await prisma.$transaction(async (tx) => {
+            if (isCore) await lockLiveHouseholdsOf(tx, [participantId]);
+            return tx.programVolunteer.update({
+                where: {
+                    programId_personId: {
+                        programId,
+                        personId: participantId
+                    }
+                },
+                data: {
+                    isCore
                 }
-            },
-            data: {
-                isCore
-            }
+            });
         });
 
         await prisma.auditLog.create({
@@ -218,6 +229,9 @@ export const PATCH = withAuth({}, async (req, auth, { params }: { params: Promis
 
         return NextResponse.json({ success: true, assignment });
     } catch (error) {
+        if (error instanceof ServiceError) {
+            return apiError(error.message, error.status);
+        }
         logger.error("Volunteer toggle error:", error);
         return apiError("Failed to toggle volunteer", 500);
     }

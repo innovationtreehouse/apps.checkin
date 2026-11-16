@@ -15,8 +15,11 @@ const expensePostingMissing = jest.fn();
 jest.mock("@/lib/expense/configure", () => ({ expensePostingMissing }));
 const misTypedRoleAccounts = jest.fn();
 jest.mock("@/lib/finance/booksMap", () => ({ misTypedRoleAccounts }));
+jest.mock("@/lib/quickbooks/picksHealth", () => ({ quickBooksPicksCheck: async () => ({ id: "quickbooks-pick-types", label: "QuickBooks picks: account types", ok: true, detail: "" }) }));
 const getOrg = jest.fn();
 jest.mock("@/lib/components/host", () => ({ getOrg }));
+const quickBooksListsStatus = jest.fn();
+jest.mock("@/lib/finance/quickBooksLists", () => ({ quickBooksListsStatus }));
 // The libraries' root entries pull in their generated Prisma clients, which the jest env does not build.
 const postingOnAt = jest.fn();
 jest.mock("@checkin/income", () => ({ postingOnAt }));
@@ -54,6 +57,7 @@ beforeEach(() => {
     expenseOnAt.mockResolvedValue(null);
     accounts.mockResolvedValue([]);
     misTypedRoleAccounts.mockResolvedValue([]);
+    quickBooksListsStatus.mockResolvedValue([]);
 });
 afterEach(() => {
     process.env = { ...ENV };
@@ -171,6 +175,45 @@ describe("books map account types row", () => {
         expect((await rows())["quickbooks-account-types"]).toMatchObject({ ok: false, detail: "Not read while QuickBooks is off." });
         process.env.CHECKIN_ENV = "stg";
         expect((await rows())["quickbooks-account-types"]).toMatchObject({ ok: true, detail: "Not read while QuickBooks is off." });
+    });
+});
+
+describe("QuickBooks lists row", () => {
+    const HOUR = 60 * 60 * 1000;
+    const copied = (...hoursAgo: number[]) =>
+        quickBooksListsStatus.mockResolvedValue(hoursAgo.map((h, i) => ({ list: ["account", "class"][i], refreshedAt: new Date(Date.now() - h * HOUR), entries: 3 })));
+    beforeEach(() => tryBuildQuickBooks.mockReturnValue({ ok: false, reason: "x" }));
+
+    it("is green with the older list's refresh time", async () => {
+        copied(1, 30);
+        const at = new Date(Date.now() - 30 * HOUR).toISOString().slice(0, 16).replace("T", " ");
+        expect((await rows())["quickbooks-lists"]).toEqual({ id: "quickbooks-lists", label: "QuickBooks lists", ok: true, detail: `Refreshed ${at} UTC.` });
+    });
+
+    it("turns red after two days without a refresh", async () => {
+        copied(1, 49);
+        expect((await rows())["quickbooks-lists"]).toMatchObject({ ok: false, detail: expect.stringContaining("more than two days ago. Press Update now on the Books map.") });
+    });
+
+    it("is red before the first copy", async () => {
+        expect((await rows())["quickbooks-lists"]).toMatchObject({ ok: false, detail: "Not copied yet. The daily posting run copies them, or press Update now on the Books map." });
+    });
+
+    it("is red when the copy can't be read", async () => {
+        quickBooksListsStatus.mockRejectedValue(new Error("db down"));
+        expect((await rows())["quickbooks-lists"]).toMatchObject({ ok: false, detail: "Could not read it: db down." });
+    });
+
+    it("reads the copy, never QuickBooks, so it answers while QuickBooks is off", async () => {
+        copied(1, 1);
+        expect((await rows())["quickbooks-lists"].ok).toBe(true);
+        expect(accounts).not.toHaveBeenCalled();
+    });
+
+    it("is green and unread where QuickBooks is off by design", async () => {
+        process.env.CHECKIN_ENV = "local";
+        expect((await rows())["quickbooks-lists"]).toMatchObject({ ok: true });
+        expect(quickBooksListsStatus).not.toHaveBeenCalled();
     });
 });
 

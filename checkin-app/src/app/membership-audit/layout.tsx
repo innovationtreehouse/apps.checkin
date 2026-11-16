@@ -4,7 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { Box, Center, Loader, Stack, Tabs, Text } from "@mantine/core";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { useTodoCounts } from "@/hooks/useTodoCounts";
-import { tabBadgeFor } from "@/components/navBadges";
+import { badgeText, tabBadgeFor } from "@/components/navBadges";
 import { CountBadge, badgeIntentFor } from "@/components/ui/CountBadge";
 import { ScrollableTabsList } from "@/components/ui/ScrollableTabsList";
 import { PageContainer } from "@/components/ui/PageContainer";
@@ -52,7 +52,7 @@ export default function MembershipAuditLayout({ children }: { children: React.Re
                 rightSection={
                   badge && intent ? (
                     <CountBadge intent={intent} aria-label={badge.label}>
-                      {badge.count}
+                      {badgeText(badge.count)}
                     </CountBadge>
                   ) : undefined
                 }

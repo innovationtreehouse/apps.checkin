@@ -34,3 +34,7 @@ export const listIgnored: ReceiptRouteHandler = async () => ({ ReceiptIgnoredFil
 export const removeIgnored: ReceiptRouteHandler = async ({ params }) => ({
   ReceiptIgnoredFileView: await mailQueueService.removeIgnored(parseId(params.id, "ignored file id")),
 });
+
+export const catchUpState: ReceiptRouteHandler = async () => ({ ReceiptMailCatchUp: await mailQueueService.catchUpState() });
+
+export const catchUp: ReceiptRouteHandler = async () => ({ ReceiptMailCatchUp: await mailQueueService.catchUp() });

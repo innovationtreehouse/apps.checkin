@@ -245,7 +245,7 @@ describeDb("orgEventsRepository.updateStatus", () => {
 });
 
 describeDb("orgEventsRepository.findPending", () => {
-  it("returns pending and failed events for the org, not processed ones", async () => {
+  it("returns pending events for the org, not processed or failed ones", async () => {
     await eventsRepo.insert({ id: 1, orgId: ORG, eventType: "t", payload: "{}", receivedAt: new Date() });
     await eventsRepo.insert({ id: 2, orgId: ORG, eventType: "t", payload: "{}", receivedAt: new Date() });
     await eventsRepo.insert({ id: 3, orgId: ORG, eventType: "t", payload: "{}", receivedAt: new Date() });
@@ -257,7 +257,7 @@ describeDb("orgEventsRepository.findPending", () => {
     const pending = await eventsRepo.findPending(ORG);
     const ids = pending.map((e) => e.id);
     expect(ids).toContain(1);
-    expect(ids).toContain(3);
+    expect(ids).not.toContain(3);
     expect(ids).not.toContain(2);
     expect(ids).not.toContain(4);
   });

@@ -16,8 +16,8 @@ import {
     Title,
     Tooltip,
 } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
-import { AlertBanner, type AlertTone } from "@/components/admin/AlertBanner";
+import { errorMessage, HttpError, showError, showSuccess } from "@checkin/component-ui";
+import { api } from "@/lib/api";
 import { TrustedAdultContact } from "@/components/TrustedAdultContact";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { isAuthorizedApproval } from "@/lib/trusted-adult/filters";
@@ -107,11 +107,6 @@ export default function AdminTrustedAdultsPage() {
     // When a prior board note exists, force the board to pick "reuse" or "write new"
     // before approving — no default, so submitting is a deliberate choice, not a stale carry-over.
     const [noteChoice, setNoteChoice] = useState<Record<number, "reuse" | "new">>({});
-    // Per-review confirmation, rendered card-local so the notice stays next to the
-    // button that triggered it (a single page-top banner scrolls off-screen on long queues).
-    const [notices, setNotices] = useState<Record<number, { text: string; tone: AlertTone }>>({});
-    const clearNotice = (id: number) =>
-        setNotices((n) => { const c = { ...n }; delete c[id]; return c; });
     // Native in-app prompt (replaces window.prompt): cancel closes without acting,
     // so no decision fires unless the board submits a note.
     const [prompt, setPrompt] = useState<{ title: string; onSubmit: (note: string) => void } | null>(null);
@@ -142,28 +137,29 @@ export default function AdminTrustedAdultsPage() {
         if (ready) loadList();
     }, [ready, loadList]);
 
+    // A failure shows away from its card, so it is titled with the household it concerns.
+    const failed = async (reviewId: number, e: unknown) => {
+        const ta = items.find((t) => t.reviews[0]?.id === reviewId);
+        showError(errorMessage(e), {
+            key: `trusted-adult-review-${reviewId}`,
+            title: ta?.household?.name || `Household ${ta?.household?.id ?? ""}`.trim(),
+        });
+        // A 409 means the review moved on under the board; re-read so the card shows where it is now.
+        if (e instanceof HttpError && e.status === 409) await load();
+    };
+
     const decide = async (reviewId: number, decision: string, extra?: Record<string, unknown>) => {
         setBusyId(reviewId);
-        clearNotice(reviewId);
         try {
-            const res = await fetch("/api/safety/trusted-adults/decision", {
+            const body = await api<{ status: string }>("/api/safety/trusted-adults/decision", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ reviewId, decision, ...extra }),
             });
-            const body = await res.json().catch(() => ({}));
-            if (!res.ok) {
-                if (body.code === "wrong_phase") {
-                    notifications.show({ color: "red", message: body.error ?? "This review is no longer awaiting board review.", autoClose: false });
-                    await load();
-                } else {
-                    setNotices((n) => ({ ...n, [reviewId]: { text: body.error ?? "Decision failed.", tone: "error" } }));
-                }
-            } else {
-                notifications.show({ message: `Recorded: ${label(body.status)}.` });
-                await load();
-                notifyNavRefresh();
-            }
+            showSuccess(`Recorded: ${label(body.status)}.`);
+            await load();
+            notifyNavRefresh();
+        } catch (e) {
+            await failed(reviewId, e);
         } finally {
             setBusyId(null);
         }
@@ -171,21 +167,16 @@ export default function AdminTrustedAdultsPage() {
 
     const override = async (reviewId: number, action: string, extra?: Record<string, unknown>) => {
         setBusyId(reviewId);
-        clearNotice(reviewId);
         try {
-            const res = await fetch("/api/safety/trusted-adults/override", {
+            await api("/api/safety/trusted-adults/override", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ reviewId, action, ...extra }),
             });
-            const body = await res.json().catch(() => ({}));
-            if (!res.ok) {
-                setNotices((n) => ({ ...n, [reviewId]: { text: body.error ?? "Override failed.", tone: "error" } }));
-            } else {
-                // Override deliberately shows no success notice — just reload.
-                await load();
-                notifyNavRefresh();
-            }
+            // The re-read card shows the new status, so an override shows no success message.
+            await load();
+            notifyNavRefresh();
+        } catch (e) {
+            await failed(reviewId, e);
         } finally {
             setBusyId(null);
         }
@@ -420,15 +411,6 @@ export default function AdminTrustedAdultsPage() {
                                     {status === "DENIED" && hasLivePriorApproval ? "Revoke approval" : "Revoke"}
                                 </Button>
                             </Group>
-                        )}
-
-                        {latest && notices[latest.id] && (
-                            <AlertBanner
-                                message={notices[latest.id].text}
-                                tone={notices[latest.id].tone}
-                                mt="xs"
-                                onClose={() => clearNotice(latest.id)}
-                            />
                         )}
                     </Card>
                 );

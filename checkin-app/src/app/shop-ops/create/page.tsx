@@ -2,10 +2,8 @@
 
 import { useState } from "react";
 import { Button, Card, Flex, ScrollArea, Stack, Text, TextInput } from "@mantine/core";
-import { AlertBanner, type AlertTone } from "@/components/admin/AlertBanner";
-import { notifications } from "@mantine/notifications";
-import { LoadError } from "@checkin/component-ui";
-import { useLoad } from "@/lib/api";
+import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
+import { api, useLoad } from "@/lib/api";
 
 type ToolListItem = {
   id: number;
@@ -18,30 +16,18 @@ export default function CreateToolPage() {
   const [newToolName, setNewToolName] = useState("");
   const [newToolGuide, setNewToolGuide] = useState("");
   const [saving, setSaving] = useState(false);
-  const [createMessage, setCreateMessage] = useState<{ text: string; tone: AlertTone } | null>(null);
   const { data: tools, error, reload } = useLoad<ToolListItem[]>("/api/shop/tools");
 
   const handleCreateTool = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
-    setCreateMessage(null);
-
     try {
-      const res = await fetch("/api/shop/tools", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newToolName, safetyGuide: newToolGuide }),
-      });
-
-      if (res.ok) {
-        notifications.show({ message: "New tool added successfully!" });
-        setNewToolName("");
-        setNewToolGuide("");
-        reload();
-      } else {
-        const data = await res.json();
-        setCreateMessage({ text: data.error || "Failed to create tool.", tone: "error" });
-      }
+      await api("/api/shop/tools", { method: "POST", body: JSON.stringify({ name: newToolName, safetyGuide: newToolGuide }) });
+      showSuccess("New tool added successfully!");
+      setNewToolName("");
+      setNewToolGuide("");
+    } catch (err) {
+      showError(errorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -54,8 +40,6 @@ export default function CreateToolPage() {
           Define a new piece of shop equipment to begin tracking safety certifications,
           authorizing Certifiers, and tracking usage.
         </Text>
-
-        <AlertBanner message={createMessage?.text} tone={createMessage?.tone} mb="md" />
 
         <form onSubmit={handleCreateTool}>
           <Stack>

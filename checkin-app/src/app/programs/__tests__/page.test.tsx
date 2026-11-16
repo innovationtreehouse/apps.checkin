@@ -57,6 +57,13 @@ describe("PublicProgramsDirectory", () => {
     renderWithProviders(<PublicProgramsDirectory />);
     expect(await screen.findByText(/No active programs currently available/)).toBeInTheDocument();
   });
+
+  it("shows a failed load in place of the list, never as an empty directory", async () => {
+    mockFetchJson({}); // every fetch 404s
+    renderWithProviders(<PublicProgramsDirectory />);
+    expect(await screen.findByText("Couldn't load the program directory")).toBeInTheDocument();
+    expect(screen.queryByText(/No active programs currently available/)).not.toBeInTheDocument();
+  });
 });
 
 describe("slow-load wait message", () => {

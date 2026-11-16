@@ -5,11 +5,11 @@
  * ReceiptView — the receipt as the library returns it: `Receipt` and its
  * `ReceiptDetail` flattened into one row (repositories/receipt.ts `ReceiptRow`),
  * plus the detail screen's line items and review reasons and "My receipts"'
- * paid status (`reimbursement`: `{ paidOn }` or null), and on a finalized receipt
- * not yet delivered to receiving its push record: whether catch-up has given up
- * (`pushGivenUp`), and the latest failure's time and message (`lastPushFailedAt`,
- * `lastPushFailure`). The message is the latest push_failed or push_refused audit
- * row's `valueAfter`, so it keeps that column's `personal` tier. A finalized receipt also carries its
+ * paid status (`reimbursement`: `{ paidOn }` or null), and on a stuck receipt its
+ * first failure's time (`lastPushFailedAt`) and, on the single-receipt read, its
+ * step's last error (`lastError`), a flow or
+ * push error. It is the receipt's `lastError` column, so it keeps that column's
+ * `personal` tier. A finalized receipt also carries its
  * purchase's outcome downstream (`purchaseOutcome`): receiving's progress, the
  * expense's status with each rejected line's note, and an in-kind gift's
  * decision. The line notes are approvers' free text, so the field is `personal`,
@@ -26,8 +26,9 @@
  * every line of their own receipt. A line without the stamp fails closed.
  *
  * ReceiptQueueCounts — how many of the org's receipts each review queue holds:
- * a count per state, finalized receipts not yet delivered, and those catch-up
- * gave up on. Counts only, `internal`.
+ * a count per state, finalized receipts not yet delivered, and those whose push
+ * failed (`failedPushes`). `actionableByState` is the per-state count a finance
+ * viewer can act on, filled for finance viewers only. Counts only, `internal`.
  *
  * ReceiptImportResult — one row of a bulk-import response. ReceiptPushResult —
  * a manual S1 re-send's outcome. Both are financial plumbing, `internal`.
@@ -35,6 +36,11 @@
  * ReceiptIgnoredFileView — one entry of the mailbox ignore list: a file's hash,
  * finance's free-text reason, the adding person's id and when. All `internal`
  * (owner ruling 2026-10-16): a hash fingerprints a file without holding it.
+ *
+ * ReceiptMailCatchUp — mail intake's run state: `status` (POST: started or
+ * busy; GET: running or idle), when the last run ended (`lastRunAt`), and that
+ * run's counts (`lastRun`: messages read, receipts made, held, still waiting,
+ * failed, and whether work remains). Counts only, `internal`.
  *
  * ReceiptFlowStatus — how many records sit in each state of the receipt flow:
  * receipts (plus finalized ones not yet delivered), receiving records and
@@ -68,31 +74,36 @@
  * A submitter's page reads it to hide "Read it again" while reading is off, so
  * it is `public`.
  *
+ * ReceiptOcrAllowance — the person whose daily automatic-reading allowance
+ * finance or the Board just reset: their `personId`, `public` as Person.id is.
+ *
  * ReceiptDuplicateGroup — a receipt's duplicate group as finance compares it:
  * its members in upload order and the ids of the receipts dismissed against it.
  * ReceiptDuplicateMember — one member: its id, state, how it is shown (the
  * state, or a rejection with its reason) and, for a member rejected as a copy,
- * the id of the receipt kept in its place (`copyOfId`). Members may be other
- * submitters' receipts, so the ids are `pii`, as `copyOfId` is on ReceiptView;
- * the label carries a rejection reason, `personal` like `validationNotes`; the
- * uploader's name (`uploaderName`) is `pii`, for finance and the Board only.
+ * the id of the receipt kept in its place (`copyOfId`). The ids are `public`, as
+ * Receipt.id is; the label carries a rejection reason, `personal` like
+ * `validationNotes`; the uploader's name (`uploaderName`) is `pii`, for finance
+ * and the Board only.
  *
  * ReceiptDuplicateQueueRow — one group in Finance review's Duplicates tab: its
  * oldest held member's id, vendor, date and total, how many live members it has,
- * whether one is rejected, and when the oldest was held. The id and the rejected
- * marker describe other submitters' receipts, so they are `pii`, as on ReceiptView.
+ * whether one is rejected, and when the oldest was held. The id is `public`, as
+ * Receipt.id is; the rejected marker describes other submitters' receipts, so it
+ * is `pii`.
  *
  * On ReceiptView, `duplicateNotice` names the viewer's own other copy of the
  * receipt and never another person's, so its uploader reads it (`internal`).
- * `copyOfId` and `copyOfLabel` name the receipt kept in place of one rejected as
- * a copy, which may be another person's, so they are `pii`.
+ * `copyOfId` names the receipt kept in place of one rejected as a copy and is
+ * `public`, as Receipt.id is, so the uploader reads it. `copyOfLabel` names
+ * that receipt, which may be another person's, as "receipt <id>"; it is `pii`.
  *
  * Hand-authored, not generated: these describe API responses, not tables. This
  * is a security-boundary artifact — changes ship in a boundary PR.
  */
 export const classifications = {
   ReceiptView: {
-    id: "internal",
+    id: "public",
     orgId: "internal",
     uploadedByUserId: "internal",
     uploadedAt: "internal",
@@ -129,14 +140,14 @@ export const classifications = {
     financialReviewReasons: "internal",
     complete: "internal",
     reimbursement: "internal",
-    pushGivenUp: "internal",
     lastPushFailedAt: "internal",
-    lastPushFailure: "personal",
+    lastError: "personal",
     purchaseOutcome: "personal",
     rejectionUnacknowledged: "internal",
     duplicateNotice: "internal",
-    copyOfId: "pii",
+    copyOfId: "public",
     copyOfLabel: "pii",
+    rotation: "internal",
   },
   ReceiptLineView: {
     id: "internal",
@@ -200,7 +211,8 @@ export const classifications = {
   ReceiptQueueCounts: {
     byState: "internal",
     notPushed: "internal",
-    pushGivenUp: "internal",
+    failedPushes: "internal",
+    actionableByState: "internal",
   },
   ReceiptFlowStatus: {
     asOf: "public",
@@ -215,18 +227,21 @@ export const classifications = {
   ReceiptOcrSwitch: {
     ocrEnabled: "public",
   },
+  ReceiptOcrAllowance: {
+    personId: "public",
+  },
   ReceiptDuplicateGroup: {
-    dismissed: "pii",
+    dismissed: "public",
   },
   ReceiptDuplicateMember: {
-    id: "pii",
+    id: "public",
     state: "internal",
     label: "personal",
-    copyOfId: "pii",
+    copyOfId: "public",
     uploaderName: "pii",
   },
   ReceiptDuplicateQueueRow: {
-    id: "pii",
+    id: "public",
     retailer: "internal",
     receiptDate: "internal",
     receiptTotalCents: "internal",
@@ -242,6 +257,7 @@ export const classifications = {
     addedByUserId: "internal",
     createdAt: "internal",
   },
+  ReceiptMailCatchUp: { status: "internal", lastRunAt: "internal", lastRun: "internal" },
 } as const;
 
 export const relations = {
@@ -254,4 +270,15 @@ export const relations = {
   ReceiptDuplicateGroup: {
     members: { model: "ReceiptDuplicateMember", isList: true },
   },
+} as const;
+
+// Finance marks: the fields whose presence in a response makes it a logged finance view.
+export const marks = {
+  ReceiptView: ["retailer", "uploadedByUserId", "reimbursementFor", "reimburseePersonId", "donorFirstName", "donorLastName", "donorCompanyName", "shippingCents", "taxCents", "discountCents", "receiptTotalCents"],
+  ReceiptLineView: ["uploadedByUserId", "unitPriceCents", "totalPriceCents"],
+  ReceiptConfirmationView: ["retailer", "reimburseePersonId", "shippingCents", "taxCents", "discountCents", "receiptTotalCents"],
+  ReceiptConfirmationLineView: ["reimburseePersonId", "unitPriceCents", "totalPriceCents"],
+  ReceiptReimbursedView: ["retailer", "reimburseePersonId", "receiptTotalCents"],
+  ReceiptDuplicateQueueRow: ["retailer", "receiptTotalCents"],
+  ReceiptDuplicateMember: ["uploaderName"],
 } as const;

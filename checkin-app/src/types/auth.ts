@@ -35,6 +35,6 @@ export type AuthenticatedUser = SessionUser &
  * Result of authenticating a request — either kiosk, session, or unauthenticated.
  */
 export type AuthResult =
-    | { type: 'kiosk' }
+    | { type: 'kiosk'; keyFingerprint?: string }
     | { type: 'session'; user: AuthenticatedUser }
     | { type: 'unauthenticated' };

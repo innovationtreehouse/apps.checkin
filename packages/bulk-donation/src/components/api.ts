@@ -1,5 +1,5 @@
 "use client";
-import { createClient, errorMessage, HttpError, useViewer, type Loaded } from "@checkin/component-ui";
+import { createClient, HttpError, refusalMessage, useViewer, type Loaded } from "@checkin/component-ui";
 import { notifications } from "@mantine/notifications";
 
 /**
@@ -54,7 +54,7 @@ export async function act(call: () => Promise<unknown>, ok: string | ((result: u
     return true;
   } catch (e) {
     notifications.show({
-      message: errorMessage(e),
+      message: refusalMessage(e),
       color: "red",
       autoClose: false,
       styles: { description: { whiteSpace: "pre-line", maxHeight: "50vh", overflowY: "auto" } },

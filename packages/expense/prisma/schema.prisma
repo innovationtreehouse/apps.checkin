@@ -107,8 +107,10 @@ model Expense {
   /// @sensitivity:internal
   orgId              String    @map("org_id")
   /// @sensitivity:pii
+  /// @financeMark
   submitterId        Int       @map("submitter_id")
   /// @sensitivity:internal
+  /// @financeMark
   vendorName         String?   @map("vendor_name")
   /// @sensitivity:internal
   receiptNumber      String?   @map("receipt_number")
@@ -117,12 +119,16 @@ model Expense {
   /// @sensitivity:internal
   currency           String    @default("USD")
   /// @sensitivity:internal
+  /// @financeMark
   taxCents           Int       @default(0) @map("tax_cents")
   /// @sensitivity:internal
+  /// @financeMark
   shippingCents      Int       @default(0) @map("shipping_cents")
   /// @sensitivity:internal
+  /// @financeMark
   discountCents      Int       @default(0) @map("discount_cents")
   /// @sensitivity:internal
+  /// @financeMark
   receiptTotalCents  Int       @map("receipt_total_cents")
   /// @sensitivity:internal
   receiptDate        String?   @map("receipt_date")
@@ -130,9 +136,11 @@ model Expense {
   needsReimbursement Boolean   @default(false) @map("needs_reimbursement")
   // Display only; the reimbursee is reimburseePersonId.
   /// @sensitivity:pii
+  /// @financeMark
   reimbursementFor   String?   @map("reimbursement_for")
   // checkin Person.id owed the reimbursement (no FK; Person lives in checkin's schema).
   /// @sensitivity:pii
+  /// @financeMark
   reimburseePersonId Int?      @map("reimbursee_person_id")
   /// @sensitivity:internal
   submittedAt        DateTime  @map("submitted_at")
@@ -161,12 +169,19 @@ model Expense {
   qbTxnEntity        String?   @map("qb_txn_entity")
   /// @sensitivity:internal
   qbVendorId         String?   @map("qb_vendor_id")
-  // Failed QuickBooks posts since the last success or finance retry; at the limit the expense stops at NEEDS_FINANCE.
+  // Not read or written; dropped in a later release, once no running code writes it.
   /// @sensitivity:internal
   qbPostAttempts     Int       @default(0) @map("qb_post_attempts")
-  // The kind of the last failed post (system, connection, settings, data, bug); null when the last post did not fail or none failed.
+  // Not read or written; dropped in a later release, once no running code writes it.
   /// @sensitivity:internal
   qbFailureKind      String?   @map("qb_failure_kind")
+  // When the expense first failed to prepare for QuickBooks (qb_error) or to post; set while null,
+  // cleared when that step succeeds. Set means stuck.
+  /// @sensitivity:internal
+  qbFirstFailedAt    DateTime? @map("qb_first_failed_at")
+  // The latest error of that failed step; the expense's own page shows it to finance and the Board while it is stuck.
+  /// @sensitivity:personal
+  qbLastError        String?   @map("qb_last_error")
   // When a post claimed the expense (POSTING) before calling QuickBooks; cleared when it settles.
   /// @sensitivity:internal
   qbClaimedAt        DateTime? @map("qb_claimed_at")
@@ -225,6 +240,7 @@ model ExpenseReceiptReview {
   reasons           String[]
   // The receipt's tax when finance approved it; the approval covers that amount only.
   /// @sensitivity:internal
+  /// @financeMark
   approvedTaxCents  Int?      @map("approved_tax_cents")
   /// @sensitivity:pii
   approvedByUserId  Int?      @map("approved_by_user_id")
@@ -244,6 +260,7 @@ model ExpenseTaxApproval {
   /// @sensitivity:internal
   expenseId        String   @id @map("expense_id")
   /// @sensitivity:internal
+  /// @financeMark
   taxCents         Int      @map("tax_cents")
   /// @sensitivity:pii
   approvedByUserId Int      @map("approved_by_user_id")
@@ -275,8 +292,10 @@ model ExpenseLineItem {
   /// @sensitivity:internal
   quantity          Float    @default(1)
   /// @sensitivity:internal
+  /// @financeMark
   unitPriceCents    Int      @map("unit_price_cents")
   /// @sensitivity:internal
+  /// @financeMark
   totalPriceCents   Int      @map("total_price_cents")
   /// @sensitivity:internal
   gtin13            String?
@@ -301,10 +320,13 @@ model ExpenseLineItem {
   /// @sensitivity:internal
   signedSubcategory  String? @map("signed_subcategory")
   /// @sensitivity:internal
+  /// @financeMark
   allocatedTaxCents      Int?  @map("allocated_tax_cents")
   /// @sensitivity:internal
+  /// @financeMark
   allocatedShippingCents Int?  @map("allocated_shipping_cents")
   /// @sensitivity:internal
+  /// @financeMark
   allocatedDiscountCents Int?  @map("allocated_discount_cents")
   // QuickBooks match state: UNMATCHED | MATCHED | CREATED | AMBIGUOUS | UNBOOKED | POST_FAILED.
   // Read only: the expense holds its QuickBooks entry; qb_txn_id is unique, so a line held an entry at most once.
@@ -483,8 +505,10 @@ model ExpenseAuditLog {
   /// @sensitivity:internal
   fieldChanged String?   @map("field_changed")
   /// @sensitivity:personal
+  /// @financeMark
   valueBefore  String?   @map("value_before")
   /// @sensitivity:personal
+  /// @financeMark
   valueAfter   String?   @map("value_after")
   /// @sensitivity:internal
   lineItemId   Int?      @map("line_item_id")
@@ -565,6 +589,7 @@ model ReceivedExpensePayload {
   /// @sensitivity:internal
   receiptId     String   @unique @map("receipt_id")
   /// @sensitivity:personal
+  /// @financeMark
   payloadJson   String   @map("payload_json")
   /// @sensitivity:internal
   status        String
@@ -572,9 +597,12 @@ model ReceivedExpensePayload {
   failureReason String?  @map("failure_reason")
   /// @sensitivity:internal
   receivedAt    DateTime @default(now()) @map("received_at")
-  // Replays run so far; at the cap the payload is given up for a developer.
+  // Not read or written; dropped in a later release, once no running code writes it.
   /// @sensitivity:internal
   replayAttempts Int?    @map("replay_attempts")
+  // When the payload first failed to build; set while null, cleared when it applies.
+  /// @sensitivity:internal
+  firstFailedAt  DateTime? @map("first_failed_at")
 
   @@map("received_expense_payloads")
 }
@@ -595,6 +623,9 @@ model ExpenseReceivedOrgEvent {
   status        String   @default("pending")
   /// @sensitivity:personal
   failureReason String?  @map("failure_reason")
+  // When the event first failed to apply; set while null, cleared when it applies.
+  /// @sensitivity:internal
+  firstFailedAt DateTime? @map("first_failed_at")
 
   @@map("received_org_events")
 }
@@ -619,6 +650,7 @@ model CapitalAsset {
   /// @sensitivity:internal
   acquisitionDate      String?  @map("acquisition_date")
   /// @sensitivity:internal
+  /// @financeMark
   costCents            Int?     @map("cost_cents")
   /// @sensitivity:internal
   depreciationYears    Int?     @map("depreciation_years")
@@ -665,6 +697,7 @@ model DonatedCapitalLine {
   quantity          Float
   // The line's value with its share of the receipt's tax and shipping.
   /// @sensitivity:internal
+  /// @financeMark
   costCents         Int       @map("cost_cents")
   /// @sensitivity:internal
   acquisitionDate   String?   @map("acquisition_date")
@@ -732,6 +765,7 @@ model ExpenseReimburseeVendor {
   /// @sensitivity:internal
   orgId      String   @map("org_id")
   /// @sensitivity:pii
+  /// @financeMark
   reimburseePersonId Int @map("reimbursee_person_id")
   /// @sensitivity:internal
   qbVendorId String   @map("qb_vendor_id")

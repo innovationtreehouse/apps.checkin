@@ -7,18 +7,15 @@
  * Bound crossings: CatalogReader → catalog reads, CatalogSubmissions →
  * catalog proposals, conflicts and provisional GTINs, InventorySink →
  * local-inventory apply, ExpenseSink → expense intake, DonationSink →
- * donations ingestInKind, the org-event replay read, and on-failure → the
- * job run in progress.
+ * donations ingestInKind, and the org-event replay read.
  */
 import { configureWorkflowMapping, type ExpenseSink } from "@checkin/workflow-mapping";
 import { expenseIntake } from "@checkin/expense";
 import { ingestInKind } from "@checkin/bulk-donation";
 import { catalogEventsSince, getOrg, getPrincipal } from "@/lib/components/host";
-import { orgEventAlerts } from "@/lib/components/orgEventAlerts";
 import { catalogReader } from "@/lib/catalog/reader";
 import { createCatalogSubmissions } from "@/lib/catalog/submissions";
 import { createLocalInventorySink } from "@/lib/workflowMapping/inventorySink";
-import { reportTo } from "@/lib/finishRun";
 
 /**
  * The intake parses the receipt, asserts the org and dedupes on receiptId itself.
@@ -39,9 +36,7 @@ export function configureRuntime(): void {
     catalogSubmissions: createCatalogSubmissions(getOrg),
     inventorySink: createLocalInventorySink(getOrg),
     catalogEventSource: { eventsSince: catalogEventsSince },
-    alerts: orgEventAlerts("board.receiptMappingEventsStuck", "Receipt mapping catalog event alert failed:"),
     expenseSink,
     donationSink: { ingestInKind },
-    onFailure: reportTo("workflow-mapping"),
   });
 }

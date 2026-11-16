@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import {
-  Alert, Badge, Button, Card, Center, Group, Loader, Modal, Progress, Radio, Stack, Text, Textarea, TextInput, Title,
+  Alert, Button, Card, Center, Group, Loader, Modal, Progress, Stack, Text, Textarea, TextInput, Title,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
-import { errorMessage, HttpError, invalidateLoads, showError, showSuccess } from "@checkin/component-ui";
-import { api } from "@/lib/api";
-import { SettingsTabs } from "@/components/admin/SettingsTabs";
+import { errorMessage, HttpError, invalidateLoads, LoadError, showError, showSuccess } from "@checkin/component-ui";
+import { api, useLoad } from "@/lib/api";
+import { useFreshRead } from "@/hooks/useFreshRead";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { SETTINGS_ROLES } from "@/lib/nav/sections/settings";
 import { useUnsavedGuard, shallowEqual } from "@/components/UnsavedChangesProvider";
@@ -28,6 +28,7 @@ interface Counts {
   failed: number;
   skipped_unsubscribed: number;
   skipped_denied: number;
+  skipped_not_member: number;
   sending: number;
   total: number;
 }
@@ -35,53 +36,44 @@ interface Counts {
 interface BulkSendSummary {
   id: number;
   emailType: string;
-  audience: string;
   startedAt: string;
   completedAt: string | null;
   counts: Counts;
 }
 
 const SAMPLE_NAME = "Jordan Rivera";
+const STATUS_PATH = "/api/outreach/status";
 const TEMPLATE_LABEL: Record<TemplateKey, string> = { opening: "Opening of renewals", reminder: "Reminder" };
-const AUDIENCE_LABEL: Record<string, string> = {
-  a: "Unsettled members + non-members (default)",
-  b: "Same as (a), excluding in-flight renewals/applications",
-  c: "Everyone (all live leads with an email)",
+const AUDIENCE_LABEL: Record<TemplateKey, string> = {
+  opening: "every member household's leads",
+  reminder: "leads of member households that have not completed renewal",
 };
 
 export default function OutreachSettingsPage() {
   const { ready, loading: authLoading } = useRequireRole(SETTINGS_ROLES);
 
-  const [loading, setLoading] = useState(true);
   const [opening, setOpening] = useState({ subject: "", body: "" });
   const [reminder, setReminder] = useState({ subject: "", body: "" });
   const [initial, setInitial] = useState<{ opening: { subject: string; body: string }; reminder: { subject: string; body: string } } | null>(null);
-  const [nextDeadline, setNextDeadline] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [testSending, setTestSending] = useState<TemplateKey | null>(null);
 
-  const load = useCallback(() => fetch("/api/settings/outreach")
-    .then(async (res) => {
-      if (res.ok) {
-        const data = (await res.json()) as { settings: Settings; nextDeadline: string | null };
-        const snap = {
-          opening: { subject: data.settings.outreachOpeningSubject ?? "", body: data.settings.outreachOpeningBody ?? "" },
-          reminder: { subject: data.settings.outreachReminderSubject ?? "", body: data.settings.outreachReminderBody ?? "" },
-        };
-        setOpening(snap.opening);
-        setReminder(snap.reminder);
-        setInitial(snap);
-        setNextDeadline(data.nextDeadline);
-      }
-    })
-    .finally(() => {
-      setLoading(false);
-    }),
-  []);
-
-  useEffect(() => {
-    if (ready) load();
-  }, [ready, load]);
+  const templatesPath = ready ? "/api/settings/outreach" : null;
+  const { data, error: loadError, reload } = useLoad<{ settings: Settings; nextDeadline: string | null }>(templatesPath);
+  const { fresh, retry } = useFreshRead(templatesPath, reload);
+  const nextDeadline = data?.nextDeadline ?? null;
+  // Each fresh read of the settings resets the form to it.
+  const [formFor, setFormFor] = useState<typeof data>(null);
+  if (data && data !== formFor) {
+    setFormFor(data);
+    const snap = {
+      opening: { subject: data.settings.outreachOpeningSubject ?? "", body: data.settings.outreachOpeningBody ?? "" },
+      reminder: { subject: data.settings.outreachReminderSubject ?? "", body: data.settings.outreachReminderBody ?? "" },
+    };
+    setOpening(snap.opening);
+    setReminder(snap.reminder);
+    setInitial(snap);
+  }
 
   const isDirty = !!initial && !shallowEqual(
     { os: initial.opening.subject, ob: initial.opening.body, rs: initial.reminder.subject, rb: initial.reminder.body },
@@ -102,8 +94,7 @@ export default function OutreachSettingsPage() {
         }),
       });
       showSuccess("Outreach templates saved.");
-      setLoading(true);
-      await load();
+      await reload();
     } catch (e) {
       showError(errorMessage(e));
     } finally {
@@ -116,7 +107,7 @@ export default function OutreachSettingsPage() {
     setTestSending(key);
     try {
       await api("/api/outreach/test-send", { method: "POST", body: JSON.stringify({ subject: t.subject, body: t.body }) });
-      showSuccess("Test email sent (both variants) to your address.");
+      showSuccess("Test email sent to your address.");
     } catch (e) {
       showError(errorMessage(e));
     } finally {
@@ -129,9 +120,9 @@ export default function OutreachSettingsPage() {
 
   return (
     <Stack>
-      <SettingsTabs active="outreach" />
-
-      {loading ? (
+      {loadError ? (
+        <LoadError what="the outreach templates" message={loadError} onRetry={retry} />
+      ) : data === null || !fresh ? (
         <Center py="xl"><Loader /></Center>
       ) : (
         <>
@@ -180,28 +171,14 @@ function TemplateCard({
   testSending: boolean;
   onSendTest: () => void;
 }) {
-  const deadlineText = deadline ?? "(boundary not set)";
-  const preview = (variant: "join" | "renew") =>
-    substituteTokens(value.body, {
-      name: SAMPLE_NAME,
-      deadline: deadlineText,
-      actionWord: variant === "renew" ? "renew" : "join",
-      actionLink: "/membership",
-    }) + (variant === "join" ? '<p><a href="#">Unsubscribe from invitations</a></p>' : "");
-  const previewSubject = (variant: "join" | "renew") =>
-    substituteTokens(value.subject, {
-      name: SAMPLE_NAME,
-      deadline: deadlineText,
-      actionWord: variant === "renew" ? "renew" : "join",
-      actionLink: "/membership",
-    });
+  const tokens = { name: SAMPLE_NAME, deadline: deadline ?? "(boundary not set)", actionWord: "renew", actionLink: "/membership" };
 
   return (
     <Card withBorder radius="md" padding="lg">
       <Title order={3} mb="xs">{title}</Title>
       <Text c="dimmed" size="sm" mb="md">
         Tokens: <code>{"{{name}}"}</code> <code>{"{{deadline}}"}</code> <code>{"{{actionWord}}"}</code> <code>{"{{actionLink}}"}</code>.
-        {" "}The action link always points at <code>/membership</code>, for both members and non-members.
+        {" "}<code>{"{{actionWord}}"}</code> is always &quot;renew&quot;; the action link points at <code>/membership</code>.
       </Text>
 
       <Stack gap="sm">
@@ -219,56 +196,36 @@ function TemplateCard({
         />
       </Stack>
 
-      <Group mt="md" grow align="flex-start">
-        {(["join", "renew"] as const).map((variant) => (
-          <Card key={variant} withBorder padding="sm" radius="sm">
-            <Badge size="sm" mb="xs" variant="light">{variant === "join" ? "Join (non-member preview)" : "Renew (member preview)"}</Badge>
-            <Text fw={600} size="sm" mb={4}>{previewSubject(variant)}</Text>
-            {/* Template body is operator-authored HTML (PUT is open to isOperations). Render it in a
-                scriptless sandboxed iframe so an <img onerror> can't run in a board/sysadmin session
-                that opens this same-origin admin page — sandbox="" blocks scripts while still showing
-                the markup a mail client would. */}
-            <iframe
-              title={`${title}: ${variant} preview`}
-              sandbox=""
-              srcDoc={`<style>body{margin:0;font:13px system-ui,sans-serif}</style>${preview(variant)}`}
-              style={{ border: 0, width: "100%", height: 160 }}
-            />
-          </Card>
-        ))}
-      </Group>
+      <Card mt="md" withBorder padding="sm" radius="sm">
+        <Text fw={600} size="sm" mb={4}>{substituteTokens(value.subject, tokens)}</Text>
+        {/* Template body is operator-authored HTML (PUT is open to isOperations). Render it in a
+            scriptless sandboxed iframe so an <img onerror> can't run in a board/sysadmin session
+            that opens this same-origin admin page — sandbox="" blocks scripts while still showing
+            the markup a mail client would. */}
+        <iframe
+          title={`${title}: preview`}
+          sandbox=""
+          srcDoc={`<style>body{margin:0;font:13px system-ui,sans-serif}</style>${substituteTokens(value.body, tokens)}`}
+          style={{ border: 0, width: "100%", height: 160 }}
+        />
+      </Card>
 
       <Button mt="md" variant="light" loading={testSending} onClick={onSendTest}>
-        Send test to me (both variants)
+        Send test to me
       </Button>
     </Card>
   );
 }
 
 function SendPanel({ deadlineSet }: { deadlineSet: boolean }) {
-  const [audience, setAudience] = useState<"a" | "b" | "c">("a");
-  const [panelLoading, setPanelLoading] = useState(true);
-  const [inFlight, setInFlight] = useState<BulkSendSummary | null>(null);
-  const [lastCompleted, setLastCompleted] = useState<BulkSendSummary | null>(null);
+  const { data: status, error: statusError, reload: refreshStatus } = useLoad<{ inFlight: BulkSendSummary | null; lastCompleted: BulkSendSummary | null }>(STATUS_PATH);
+  const { fresh: statusFresh, retry: retryStatus } = useFreshRead(STATUS_PATH, refreshStatus);
+  const inFlight = status?.inFlight ?? null;
+  const lastCompleted = status?.lastCompleted ?? null;
   const [draining, setDraining] = useState(false);
-  const [confirm, setConfirm] = useState<{ emailType: TemplateKey; bulkSendId: number; counts: { queued: number; skippedUnsubscribed: number; leadsWithoutEmail: number } } | null>(null);
+  const [confirm, setConfirm] = useState<{ emailType: TemplateKey; bulkSendId: number; counts: { queued: number; leadsWithoutEmail: number } } | null>(null);
   const [confirmOpened, { open: openConfirm, close: closeConfirm }] = useDisclosure(false);
   const [starting, setStarting] = useState<TemplateKey | null>(null);
-
-  const refreshStatus = useCallback(async () => {
-    try {
-      const res = await fetch("/api/outreach/status");
-      if (res.ok) {
-        const data = (await res.json()) as { inFlight: BulkSendSummary | null; lastCompleted: BulkSendSummary | null };
-        setInFlight(data.inFlight);
-        setLastCompleted(data.lastCompleted);
-      }
-    } finally {
-      setPanelLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { refreshStatus(); }, [refreshStatus]);
 
   const drain = async (bulkSendId: number) => {
     setDraining(true);
@@ -295,12 +252,12 @@ function SendPanel({ deadlineSet }: { deadlineSet: boolean }) {
     try {
       const data = await api<{
         bulkSend: { id: number };
-        counts: { queued: number; skippedUnsubscribed: number; leadsWithoutEmail: number };
-      }>("/api/outreach/send", { method: "POST", body: JSON.stringify({ emailType, audience }) });
+        counts: { queued: number; leadsWithoutEmail: number };
+      }>("/api/outreach/send", { method: "POST", body: JSON.stringify({ emailType }) });
       setConfirm({
         emailType,
         bulkSendId: data.bulkSend.id,
-        counts: { queued: data.counts.queued, skippedUnsubscribed: data.counts.skippedUnsubscribed, leadsWithoutEmail: data.counts.leadsWithoutEmail },
+        counts: { queued: data.counts.queued, leadsWithoutEmail: data.counts.leadsWithoutEmail },
       });
       openConfirm();
     } catch (e) {
@@ -330,24 +287,25 @@ function SendPanel({ deadlineSet }: { deadlineSet: boolean }) {
     await drain(bulkSendId);
   };
 
-  const done = (c: Counts) => c.sent + c.failed + c.skipped_unsubscribed + c.skipped_denied;
+  const done = (c: Counts) => c.sent + c.failed + c.skipped_unsubscribed + c.skipped_denied + c.skipped_not_member;
   const progress = (c: Counts) => (c.total === 0 ? 100 : Math.round((done(c) / c.total) * 100));
 
   return (
     <Card withBorder radius="md" padding="lg" style={{ borderColor: "var(--mantine-color-yellow-5)" }}>
       <Title order={3} mb="xs">Send a campaign</Title>
       <Text c="dimmed" size="sm" mb="md">
-        One email per live household lead with an email; the copy resolves join vs. renew from
-        current membership. Sending is manual — nothing here runs on a schedule.
+        The opening goes to {AUDIENCE_LABEL.opening}; the reminder goes to {AUDIENCE_LABEL.reminder}.
+        Sending is manual — nothing here runs on a schedule.
       </Text>
 
-      {panelLoading ? (
+      {statusError ? (
+        <LoadError what="the send status" message={`${statusError} No new send can start until it loads.`} onRetry={retryStatus} />
+      ) : status === null || !statusFresh ? (
         <Center py="md"><Loader size="sm" /></Center>
       ) : inFlight ? (
         <Stack>
           <Alert color="blue" variant="light">
-            A {TEMPLATE_LABEL[inFlight.emailType as TemplateKey] ?? inFlight.emailType} send (audience {inFlight.audience}) is
-            in progress — {done(inFlight.counts)} of{" "}
+            A {TEMPLATE_LABEL[inFlight.emailType as TemplateKey] ?? inFlight.emailType} send is in progress — {done(inFlight.counts)} of{" "}
             {inFlight.counts.total} done.
           </Alert>
           <Progress value={progress(inFlight.counts)} animated={draining} />
@@ -362,18 +320,6 @@ function SendPanel({ deadlineSet }: { deadlineSet: boolean }) {
         </Stack>
       ) : (
         <Stack>
-          <Radio.Group label="Audience" value={audience} onChange={(v) => setAudience(v as "a" | "b" | "c")}>
-            <Stack gap={4} mt="xs">
-              {(["a", "b", "c"] as const).map((key) => (
-                <Radio key={key} value={key} label={AUDIENCE_LABEL[key]} />
-              ))}
-            </Stack>
-          </Radio.Group>
-          <Text size="xs" c="dimmed">
-            Off-season, no member has yet &quot;settled&quot; for the coming cycle — presets (a) and (b) count
-            every current member until the renewal window opens.
-          </Text>
-
           <Group>
             <Button disabled={!deadlineSet} loading={starting === "opening"} onClick={() => startSend("opening")}>
               Send Opening-of-renewals campaign
@@ -385,10 +331,11 @@ function SendPanel({ deadlineSet }: { deadlineSet: boolean }) {
 
           {lastCompleted && (
             <Text size="sm" c="dimmed">
-              Last sent: {TEMPLATE_LABEL[lastCompleted.emailType as TemplateKey] ?? lastCompleted.emailType} (audience{" "}
-              {lastCompleted.audience}) — {lastCompleted.counts.sent} sent, {lastCompleted.counts.failed} failed,{" "}
-              {lastCompleted.counts.skipped_unsubscribed} skipped (unsubscribed),{" "}
-              {lastCompleted.counts.skipped_denied > 0 && `${lastCompleted.counts.skipped_denied} skipped (denied), `}on{" "}
+              Last sent: {TEMPLATE_LABEL[lastCompleted.emailType as TemplateKey] ?? lastCompleted.emailType}{" "}
+              — {lastCompleted.counts.sent} sent, {lastCompleted.counts.failed} failed,{" "}
+              {lastCompleted.counts.skipped_unsubscribed > 0 && `${lastCompleted.counts.skipped_unsubscribed} skipped (unsubscribed), `}
+              {lastCompleted.counts.skipped_denied > 0 && `${lastCompleted.counts.skipped_denied} skipped (denied), `}
+              {lastCompleted.counts.skipped_not_member > 0 && `${lastCompleted.counts.skipped_not_member} skipped (no longer a member), `}on{" "}
               {lastCompleted.completedAt ? new Date(lastCompleted.completedAt).toLocaleString() : ""}.
               {lastCompleted.counts.failed > 0 && (
                 <>
@@ -409,7 +356,6 @@ function SendPanel({ deadlineSet }: { deadlineSet: boolean }) {
           <Stack>
             <Text>
               This will send to <strong>{confirm.counts.queued}</strong> recipient(s).{" "}
-              {confirm.counts.skippedUnsubscribed > 0 && <>{confirm.counts.skippedUnsubscribed} more are skipped (unsubscribed). </>}
               {confirm.counts.leadsWithoutEmail > 0 && <>{confirm.counts.leadsWithoutEmail} household lead(s) have no email on file and are not counted.</>}
             </Text>
             <Group justify="flex-end">

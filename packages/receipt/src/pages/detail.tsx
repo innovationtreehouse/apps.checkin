@@ -8,17 +8,20 @@ import { Alert, Anchor, Badge, Button, Group, Mark, Modal, Paper, Stack, Table, 
 import DonationFields, { donorInput, NO_DONATION } from "../components/DonationFields";
 import DuplicateCompare, { type CompareReceipt } from "../components/DuplicateCompare";
 import ReceiptFile from "../components/ReceiptFile";
+import { useRotation } from "../components/useRotation";
 import ReceiptEditor from "../components/ReceiptEditor";
 import { CONFIRM_AS_READ, confirmedByReimbursee } from "../components/ConfirmationList";
 import { api, BASE, errorMessage, outcomeSteps, receiptStateLabel, send, STATE_LABELS, useLoad, useRoles, type ReceiptListRow } from "../components/api";
 import { formatCents } from "@checkin/money";
-import { differenceDollars, draftMath, draftProblem, EMPTY_DRAFT, hasTypedDetails, isDirty, planSave, roundingAllowed, type Draft, type ServerLine } from "../components/receiptDraft";
+import { draftBalance, draftMath, draftProblem, EMPTY_DRAFT, hasTypedDetails, isDirty, planSave, type Draft, type ServerLine } from "../components/receiptDraft";
 import { returnQueue, reviewDetailHref, reviewHref } from "../components/reviewQueue";
 import { useReceipts } from "../components/useReceipts";
-import { day } from "../lib/describeReceipt";
+import { day, REJECTED_AS_COPY } from "../lib/describeReceipt";
 import type { DuplicateGroup } from "../lib/duplicateGroup";
 import { missingDetails } from "../lib/missingDetails";
 import { OCR_OFF_NOTE } from "../lib/ocrOff";
+import { DAILY_LIMIT_REACHED } from "../lib/ocrAllowance";
+import AllowanceReset from "../components/AllowanceReset";
 import { describeCorrection, editsSinceReading, submitterCorrections, type SubmitterCorrection } from "../lib/submitterCorrections";
 
 const REVIEW_REASON_LABELS: Record<string, string> = {
@@ -35,6 +38,7 @@ function Flagged({ on, children }: { on: boolean; children: React.ReactNode }) {
 
 interface Receipt extends ReceiptListRow {
   mimeType: string;
+  rotation: number;
   taxCents: number | null;
   shippingCents: number | null;
   discountCents: number | null;
@@ -43,9 +47,6 @@ interface Receipt extends ReceiptListRow {
   receiptNumber?: string | null;
   orderNumber?: string | null;
   currency?: string;
-  /** Finance and board views only. */
-  duplicateSuspectReceiptId?: string | null;
-  duplicateFlagClearedAt?: string | null;
   financialReviewReasons: string[];
   lineItems: ServerLine[];
   /** The viewer's own other copy of this receipt; never another person's. */
@@ -106,7 +107,10 @@ function DonationPanel({ receipt, onSaved }: { receipt: Receipt; onSaved: () => 
   const donor = donation.isInKind ? donorInput(donation) : null;
   const save = async () => {
     const body = donation.isInKind ? { isInKind: true, donor } : { isInKind: false };
-    if (await send(`/${receipt.id}/in-kind`, "PUT", body, "Donation saved", "Couldn't change the donation")) onSaved();
+    if (await send(`/${receipt.id}/in-kind`, "PUT", body, "Donation saved", "Couldn't change the donation")) {
+      setTouched(false);
+      onSaved();
+    }
   };
   return (
     <Paper withBorder p="sm">
@@ -151,7 +155,6 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
   const liveIds = group.data?.members.filter((m) => m.state !== "discarded").map((m) => m.id) ?? [];
   const comparing = open && liveIds.some((m) => m !== id);
   const compared = useReceipts<CompareReceipt>([...otherMembers.map((m) => m.id), ...(group.data?.dismissed ?? [])]);
-  const suspectId = receipt.data?.duplicateSuspectReceiptId ?? null;
   const memberKey = group.data ? group.data.members.map((m) => m.id).join(",") : null;
   const seen = useRef<Set<string> | null>(null);
   const [fresh, setFresh] = useState<ReadonlySet<string>>(new Set<string>());
@@ -200,6 +203,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
   const busy = useRef(false);
 
   const r = receipt.data;
+  const turn = useRotation(id, r?.rotation);
   if (receipt.error) return <Alert color="red">{receipt.error}</Alert>;
   if (!r) return <Text>Loading…</Text>;
 
@@ -262,13 +266,14 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
     redrawCompare();
   };
   const hrefOf = (other: string) => reviewDetailHref(other, returnQueue(queueParam, r.state));
-  const originalHref = suspectId ? hrefOf(suspectId) : "";
   const editing = EDITABLE.has(r.state) && !r.pushedAt && (own || isFinance);
   const dirty = editing && isDirty(r, draft);
   const totalsOff = r.state === "validation_failed";
   // A saved receipt whose lines already add up still needs a way out of Totals off.
   const savedAddsUp = totalsOff && draftMath(r, EMPTY_DRAFT)?.balanced === true;
   const unread = r.state === "ocr_failed";
+  const lastFailure = audit.data?.filter((a) => a.action.startsWith("ocr_failed")).at(-1);
+  const allowanceUsedUp = unread && lastFailure?.action === "ocr_failed" && lastFailure.valueAfter === DAILY_LIMIT_REACHED;
   // Details saved before a failed resubmit still need a way out of Couldn't read.
   const savedTyped = unread && missingDetails(r).length === 0;
   const failed = (message: string) => notifications.show({ title: "Receipt not saved", message, color: "red", autoClose: false });
@@ -343,11 +348,12 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
   /** Saves a receipt whose totals were off, and resubmits it once its lines add up to its total. */
   const saveTotalsOff = () =>
     exclusive(async () => {
-      const math = draftMath(r, draft);
+      const { math, differenceCents, disagreements } = draftBalance(r, draft);
       if (dirty && !(await saveDraft())) return;
       if (math?.balanced) await resubmit(dirty);
+      else if (disagreements.length > 0) stillOff(`Saved. ${disagreements.join("; ")}; stays in Totals off.`);
       else {
-        const off = math ? `${differenceDollars(Math.abs(math.differenceCents))} off${roundingAllowed(math.allowedCents)}` : "off";
+        const off = math && differenceCents !== null ? `${formatCents(Math.abs(differenceCents))} off` : "off";
         stillOff(`Saved. Still ${off}; stays in Totals off.`);
       }
     });
@@ -413,18 +419,18 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
           onKeepThisOne={() => void act("/keep-this-one", "POST", { shownIds: liveIds }, "Kept; the other copies are rejected", "Couldn't keep this receipt", true).then(redrawCompare)}
           onRejectMatch={(otherId, reason) => void rejectMatch(otherId, reason)}
           onRejectAsCopy={(reason) => void act("/reject", "POST", { reason }, "Rejected", "Couldn't reject this receipt", true).then(redrawCompare)}
+          turn={turn}
         />
       )}
-      {!comparing && suspectId && (
+      {!comparing && r.copyOfId && r.copyOfLabel && (
         <Text size="sm">
-          This receipt was flagged as a possible duplicate of <Anchor component={Link} href={originalHref}>another receipt</Anchor>
-          {r.duplicateFlagClearedAt ? " and cleared as not a duplicate." : "."}
+          {REJECTED_AS_COPY}<Anchor component={Link} href={hrefOf(r.copyOfId)}>{r.copyOfLabel}</Anchor>
         </Text>
       )}
 
       <Group align="flex-start" grow wrap="wrap">
         <Paper withBorder p="sm" miw={280}>
-          <ReceiptFile src={`${BASE}/${r.id}/file`} mimeType={r.mimeType} />
+          <ReceiptFile src={`${BASE}/${r.id}/file`} mimeType={r.mimeType} rotation={turn[0]} onRotate={turn[1]} />
         </Paper>
         <Stack miw={280}>
           <Text>Date: <Flagged on={dateFlagged}>{r.receiptDate ?? "—"}</Flagged>{correctionNote(correctionOf("date"))}</Text>
@@ -454,7 +460,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
             <Group gap="xs">
               <Button size="xs" disabled={!dirty && !savedAddsUp && !savedTyped} loading={saving} onClick={() => void (totalsOff ? saveTotalsOff() : unread ? afterSave(() => resubmit(dirty)) : save())}>Save changes</Button>
               {dirty && (
-                <Button size="xs" variant="subtle" onClick={() => setDraft(EMPTY_DRAFT)}>Undo changes</Button>
+                <Button size="xs" variant="subtle" disabled={saving} onClick={() => setDraft(EMPTY_DRAFT)}>Undo changes</Button>
               )}
             </Group>
           )}
@@ -470,7 +476,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
                   </Button>
                 )}
                 {isAdult && !r.isInKind && (
-                  <Button size="xs" variant="light" onClick={() => void act("/reimbursement", "PUT", { needsReimbursement: !r.needsReimbursement }, "Updated", "Couldn't change who paid")}>
+                  <Button size="xs" variant="light" disabled={saving} onClick={() => void afterSave(() => act("/reimbursement", "PUT", { needsReimbursement: !r.needsReimbursement }, "Updated", "Couldn't change who paid"))}>
                     {r.needsReimbursement ? "I didn't pay for this" : "I paid for this myself"}
                   </Button>
                 )}
@@ -480,10 +486,11 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
               <Text size="sm" c="dimmed">{OCR_OFF_NOTE}</Text>
             )}
             {(own || isFinance) && r.state === "ocr_failed" && !ocrOff && (
-              <Button size="xs" variant="light" onClick={() => (dirty || hasTypedDetails(r) ? setConfirmingRead(true) : void readAgain())}>Read it again</Button>
+              <Button size="xs" variant="light" disabled={saving} onClick={() => (dirty || hasTypedDetails(r) ? setConfirmingRead(true) : void readAgain())}>Read it again</Button>
             )}
+            {(isFinance || isBoard) && allowanceUsedUp && <AllowanceReset personId={r.uploadedByUserId} />}
             {own && !TERMINAL.has(r.state) && (
-              <Button size="xs" variant="subtle" color="red" onClick={() => void act("/discard", "POST", {}, "Discarded", "Couldn't discard this receipt", true)}>Discard</Button>
+              <Button size="xs" variant="subtle" color="red" disabled={saving} onClick={() => void act("/discard", "POST", {}, "Discarded", "Couldn't discard this receipt", true)}>Discard</Button>
             )}
           </Group>
 
@@ -502,13 +509,18 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
             <Paper withBorder p="sm">
               <Stack gap="xs">
                 <Text fw={500} size="sm">Finance</Text>
+                {r.lastPushFailedAt && (
+                  <Text size="sm" c="red">
+                    Stuck since {new Date(r.lastPushFailedAt).toLocaleString()}: {r.lastError ?? "no error recorded"}
+                  </Text>
+                )}
                 {r.state === "financial_review" && !own && (
                   <Button size="xs" w="fit-content" color="green" onClick={() => void act("/approve", "POST", {}, "Approved", "Couldn't approve this receipt", true)}>Approve</Button>
                 )}
                 {!TERMINAL.has(r.state) && !r.pushedAt && !own && (
                   <Group align="end" gap="xs">
                     <Textarea label="Reason to reject" autosize value={rejectReason} onChange={(e) => setRejectReason(e.currentTarget.value)} style={{ flex: 1 }} />
-                    <Button size="xs" color="red" variant="light" disabled={!rejectReason.trim()} onClick={() => void act("/reject", "POST", { reason: rejectReason.trim() }, "Rejected", "Couldn't reject this receipt", true)}>Reject</Button>
+                    <Button size="xs" color="red" variant="light" disabled={saving || !rejectReason.trim()} onClick={() => void act("/reject", "POST", { reason: rejectReason.trim() }, "Rejected", "Couldn't reject this receipt", true)}>Reject</Button>
                   </Group>
                 )}
                 {r.state === "financial_review" && own && <Text size="sm" c="dimmed">Someone else in finance decides on your own receipt.</Text>}
@@ -538,7 +550,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
         </Stack>
       </Group>
 
-      {editing && <ReceiptEditor receipt={r} draft={draft} onChange={setDraft} taxNote={own} />}
+      {editing && <ReceiptEditor receipt={r} draft={draft} onChange={setDraft} taxNote={own} disabled={saving} />}
 
       <Modal opened={confirmingRead} onClose={() => setConfirmingRead(false)} title="Read it again">
         <Stack>

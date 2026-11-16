@@ -1,4 +1,4 @@
-import { Prisma, type PrismaClient } from "@/generated/prisma/client";
+import type { Prisma, PrismaClient } from "@/generated/prisma/client";
 
 /**
  * Shared root-or-tx client types. A transaction client exposes `$transaction`

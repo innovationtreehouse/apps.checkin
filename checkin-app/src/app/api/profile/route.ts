@@ -9,6 +9,7 @@ import { normalizeAdultDob } from "@/lib/person/adultDob";
 import { nameWrite, nicknameWrite, isNicknameWrite } from "@/lib/person/name";
 import { apiError } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
+import { notifyBoardOfYouthLeads } from "@/lib/membership/boardAlerts";
 
 export const GET = handler('GET /api/profile', async ({ auth }) => {
     if (auth.type !== 'session') throw unauthorized();
@@ -93,6 +94,7 @@ export const PATCH = withAuth(
                     newData: updatedProfile,
                 }
             });
+            if (dob !== undefined) await notifyBoardOfYouthLeads([{ id: userId, dateOfBirth: me?.dateOfBirth ?? null }]);
 
             return NextResponse.json({ profile: updatedProfile }, { status: 200 });
 

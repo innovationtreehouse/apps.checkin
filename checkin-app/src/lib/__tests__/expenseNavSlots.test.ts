@@ -55,6 +55,11 @@ describe("Finance section", () => {
     expect(Object.values(badges).filter(Boolean)).toHaveLength(1);
     expect(FINANCE.links.map((t) => t.badge?.(released) ?? null).filter(Boolean)).toEqual([]);
   });
+
+  it("says only \"more than\" once the pill passes its ceiling, since the expense side stops counting there", () => {
+    const c = counts([...LIBRARY_KEYS], { expense: { financeQueue: 100 }, receipt: { awaitingFinance: 2 } });
+    expect(FINANCE.links[0].badge?.(c)).toEqual({ count: 102, color: "treehouseGreen", label: "More than 99 items wait on you in Finance review" });
+  });
 });
 
 describe("Programs I Lead library tabs", () => {
@@ -72,13 +77,19 @@ describe("Programs I Lead library tabs", () => {
     expect(names(visibleLinks(PROGRAMS_I_LEAD, member, approverUnreleased))).toEqual(["In-kind gifts"]);
   });
 
-  it("badges with lines awaiting the viewer's sign-off", () => {
+  it("badges with the sum of the views' actionable counts", () => {
     const approvals = PROGRAMS_I_LEAD.links.find((l) => l.href === "/programs-i-lead/expense-approvals");
-    expect(approvals?.badge?.(counts([...LIBRARY_KEYS], { expense: { awaitingMySignoff: 2 } }))).toEqual({
-      count: 2,
+    const expense = { approver: 1, "actionable:owner_approval": 2, "actionable:qb_pending": 1 };
+    expect(approvals?.badge?.(counts([...LIBRARY_KEYS], { expense }))).toEqual({
+      count: 3,
       color: "treehouseGreen",
-      label: "2 expense lines awaiting your sign-off",
+      label: "3 expenses you can act on",
     });
+  });
+
+  it("shows no badge when the viewer can act on nothing, whatever the views hold", () => {
+    const approvals = PROGRAMS_I_LEAD.links.find((l) => l.href === "/programs-i-lead/expense-approvals");
+    expect(approvals?.badge?.(counts([...LIBRARY_KEYS], { expense: { approver: 1, "actionable:owner_approval": 0 } }))).toBeNull();
   });
 });
 

@@ -150,7 +150,7 @@ describeDb("going back clears every later step of the expense", () => {
     bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5] }) });
     await seedOrgSettings();
     const id = await seedExpense({ state: "qb_pending", receiptTotalCents: 9000 });
-    await db.expense.update({ where: { id }, data: { receiptDate: "2026-09-10", qbMatchState, qbPostAttempts: 2 } });
+    await db.expense.update({ where: { id }, data: { receiptDate: "2026-09-10", qbMatchState, qbFirstFailedAt: new Date(), qbLastError: "timeout" } });
     const li = await seedLineItem(id, { unitPriceCents: 9000, totalPriceCents: 9000, isCapital: true, partNumber: null, manualQbAccount: "5000" });
     await db.expenseLineItem.update({ where: { id: li }, data: { capitalOwnerId: 100, depreciationYears: 5 } });
     const approvalId = await seedApproval(id, li, { ownerId: 100, status: "approved", decidedByUserId: 2 });
@@ -164,6 +164,14 @@ describeDb("going back clears every later step of the expense", () => {
   const reopen = (id: string, li: number) =>
     db.$transaction((tx) => clearFrom(tx, { userId: 3 }, id, [li], "APPROVAL", "finance changed the receipt"));
 
+  it("a qb_error expense, which has no outbox row, leaves its failed step when it goes back", async () => {
+    const { id, li } = await capitalExpense();
+    await db.expenseEvent.deleteMany({ where: { expenseId: id } });
+    await db.expense.update({ where: { id }, data: { state: "qb_error", qbMatchState: "UNMATCHED" } });
+    await reopen(id, li);
+    expect(await db.expense.findUniqueOrThrow({ where: { id } })).toMatchObject({ state: "owner_approval", qbFirstFailedAt: null, qbLastError: null });
+  });
+
   it("a skipped expense stays skipped when it goes back", async () => {
     const { id, li } = await capitalExpense("SKIPPED");
     await reopen(id, li);
@@ -175,7 +183,7 @@ describeDb("going back clears every later step of the expense", () => {
     const { id, li, approvalId } = await capitalExpense();
     await reopen(id, li);
 
-    expect(await db.expense.findUniqueOrThrow({ where: { id } })).toMatchObject({ state: "owner_approval", qbMatchState: "UNMATCHED", qbPostAttempts: 0 });
+    expect(await db.expense.findUniqueOrThrow({ where: { id } })).toMatchObject({ state: "owner_approval", qbMatchState: "UNMATCHED", qbFirstFailedAt: null, qbLastError: null });
     // The hand-set account was checked against the capital designation, so it goes with it.
     expect(await db.expenseLineItem.findUniqueOrThrow({ where: { id: li } })).toMatchObject({ isCapital: false, capitalOwnerId: null, depreciationYears: null, manualQbAccount: null });
     expect(await db.capitalAsset.count({ where: { sourceExpenseId: id } })).toBe(0);

@@ -2,7 +2,8 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 /**
  * Custom Prisma generator that emits a typed sensitivity-classification map
- * from /// @sensitivity:<tier> comments on each scalar/enum field.
+ * from /// @sensitivity:<tier> comments on each scalar/enum field, and the
+ * finance marks (/// @financeMark) that make a response a logged finance view.
  *
  * Wired into prisma/schema.prisma as `generator security`. Runs as part of
  * `prisma generate`. Throws on any unannotated or unknown-tier field.
@@ -15,13 +16,17 @@ const { generatorHandler } = require('@prisma/generator-helper');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
-const VALID_TIERS = ['public', 'member', 'pii', 'personal', 'internal', 'secret'];
+const VALID_TIERS = ['public', 'member', 'pii', 'personal', 'internal', 'hardship', 'secret'];
 
 function parseTier(documentation) {
     if (!documentation) return null;
     const match = /@sensitivity:(\w+)/.exec(documentation);
     if (!match) return null;
     return VALID_TIERS.includes(match[1]) ? match[1] : null;
+}
+
+function hasFinanceMark(documentation) {
+    return Boolean(documentation) && /(^|\s)@financeMark(\s|$)/.test(documentation);
 }
 
 generatorHandler({
@@ -71,6 +76,23 @@ generatorHandler({
                 lines.push(`        ${field.name}: { model: '${field.type}', isList: ${field.isList} },`);
             }
             lines.push('    },');
+        }
+        lines.push('} as const;');
+        lines.push('');
+        // Finance marks: the fields whose presence in a response makes it a logged finance view.
+        lines.push('export const marks = {');
+        for (const model of options.dmmf.datamodel.models) {
+            const marked = model.fields
+                .filter(f => (f.kind === 'scalar' || f.kind === 'enum') && hasFinanceMark(f.documentation))
+                .map(f => `'${f.name}'`);
+            if (marked.length) lines.push(`    ${model.name}: [${marked.join(', ')}],`);
+        }
+        for (const model of options.dmmf.datamodel.models) {
+            for (const field of model.fields) {
+                if (field.kind === 'object' && hasFinanceMark(field.documentation)) {
+                    errors.push(`${model.name}.${field.name}: @financeMark belongs on a scalar field, not a relation`);
+                }
+            }
         }
         lines.push('} as const;');
         lines.push('');

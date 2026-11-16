@@ -4,12 +4,11 @@ import { useState, useEffect, Suspense } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Button, Card, Checkbox, Container, Group, Select, SimpleGrid, Stack, Text, TextInput } from '@mantine/core';
-import { notifications } from '@mantine/notifications';
 import { AdminPageHeader } from '@/components/admin/AdminPageHeader';
 import { AlertBanner } from '@/components/admin/AlertBanner';
 import { useUnsavedGuard, shallowEqual } from '@/components/UnsavedChangesProvider';
-import { LoadError } from '@checkin/component-ui';
-import { useLoad } from '@/lib/api';
+import { errorMessage, LoadError, showError } from '@checkin/component-ui';
+import { api, useLoad } from '@/lib/api';
 
 import { PageLoader } from "@/components/ui/PageLoader";
 const DAYS_MAP = [
@@ -143,21 +142,11 @@ export function NewEventForm() {
         payload.recurrence = { daysOfWeek, until };
       }
 
-      const res = await fetch('/api/events', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      if (res.ok) {
-        setSubmitted(true); // clear unsaved-changes guard before redirect
-        router.push(programId ? `/program-ops/programs/${programId}` : '/program-ops/events');
-      } else {
-        const err = await res.json().catch(() => ({}));
-        setMessage(err.error || "Failed to create event");
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error", autoClose: false });
+      await api('/api/events', { method: 'POST', body: JSON.stringify(payload) });
+      setSubmitted(true); // clear unsaved-changes guard before redirect
+      router.push(programId ? `/program-ops/programs/${programId}` : '/program-ops/events');
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setSaving(false);
     }

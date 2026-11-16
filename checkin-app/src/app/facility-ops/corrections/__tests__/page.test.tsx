@@ -31,6 +31,18 @@ describe("facility-ops/corrections page", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("period=week"), expect.anything()));
   });
 
+  it("marks a person the merge archive names as merged", async () => {
+    setSession({ id: 1, isBoardMember: true });
+    mockFetchJson({ [ROUTE]: {
+      ...payload,
+      Person: [{ id: 3, name: "Pat Staff", mergedArchive: [{ fromId: 4, toId: 3 }] }, { id: 4, name: "Sam Subject" }],
+    } });
+    renderWithProviders(<CorrectionsPage />);
+
+    expect(await screen.findByText("Sam Subject (merged)")).toBeInTheDocument();
+    expect(screen.getByText("Pat Staff")).toBeInTheDocument();
+  });
+
   it("shows the failure, not a count of zero, when the load fails", async () => {
     setSession({ id: 1, isBoardMember: true });
     mockFetchJson({});

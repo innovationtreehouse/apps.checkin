@@ -40,10 +40,11 @@ How the pieces are built is described in
   item, across the whole catalog. A change must not create a second item for the
   same GTIN or move a GTIN to a different item. `[Decision]`
 
-- A GTIN shown to a person uses its short form: `P000123` for a provisional GTIN,
-  `03B0042` for one minted from the catalog's category and sequence, and the 13
-  digits for a manufacturer's GTIN. CSV exports, URLs and API values keep the raw
-  digits. `[Decision]`
+- A GTIN shown to a person is its **Part ID**, under that name on every screen:
+  `P000123` for a provisional GTIN, `03B0042` for one minted from the catalog's
+  category and sequence, and the 13 digits for a manufacturer's GTIN. A store's or
+  manufacturer's own number for a part is a part #, never a Part ID. CSV exports,
+  URLs and API values keep the raw digits. `[Decision — owner]`
 
 - A person picks a part from the catalog rather than typing its GTIN. A new org
   item or part-bucket mapping takes only a GTIN-13 with a valid check digit that
@@ -92,7 +93,7 @@ How the pieces are built is described in
   is left to decide and the conflict is closed as resolved. A resolved conflict
   records the item it was decided against; its audit entry keeps the item raised.
   This screen offers no way back to the original item; that is fixed by hand in
-  the global catalog. `[Decision — owner ruling 2026-10-31]`
+  the global catalog. `[Decision]`
 
 ### On-hand stock
 
@@ -129,6 +130,12 @@ How the pieces are built is described in
   The factor must match only when merging into existing stock.
   `[Decision — owner]`
 
+- A receipt's or donation's stock change, or a catalog decision, that fails
+  to apply stays failed with its error and the time it first failed. Nothing
+  retries it automatically: a person retries it from the Problems list on
+  System Status. The error shows only on the item's own inventory page.
+  `[Decision — owner]`
+
 ### Receiving
 
 - Receiving is the only way a receipt's goods reach stock, and only after every
@@ -143,27 +150,26 @@ How the pieces are built is described in
   `[Decision — deliberate limit]`
 
 - When a receipt arrives while the catalog is unavailable, its lines are not
-  matched and the receipt shows "Matching pending". Matching that couldn't run
-  is retried once a day while the receipt waits for review, for up to five
-  days; it fills only lines nobody has decided, and a receipt whose every line
-  is then decided is sent to apply, as on arrival. After five days the lines
-  are left for mapping by hand and finance is alerted once. An inventory
-  manager can also run matching at once from the receipt.
+  matched and the receipt shows "Matching pending" while it waits for review.
+  An inventory manager runs matching from the receipt, or maps the lines by
+  hand; matching never re-runs by itself. Matching fills only lines nobody has
+  decided, and a receipt whose every line is then decided is sent to apply, as
+  on arrival.
   `[Decision — owner]`
 
 - A receipt's lines can be edited only while it waits for review. Once it is
-  sent to apply, its lines can't be edited, even when the apply fails. A
-  failure that may be temporary is retried automatically once a day, up to
-  five times. After the fifth try, or as soon as a part is refused outright,
-  the receipt waits in Apply failed for a person, who either retries it with
-  the same lines or corrects it by hand outside receiving and closes it as
-  handled by hand. A close-out names, for each part not applied, whether it
+  sent to apply, its lines can't be edited, even when the apply fails. A failed
+  apply is never retried automatically: the receipt waits in Apply failed, and
+  on the Problems list, for a person, who either retries it with the same lines
+  or corrects it by hand outside receiving and closes it as handled by hand. A
+  receipt whose part was taken but not confirmed stays applying, on the
+  Problems list, until a person retries it. A close-out names, for each part not applied, whether it
   was done by hand or isn't needed, and carries a note; a blank note is
   refused. A closed receipt can't be reopened. `[Decision — owner]`
 
-- The person who uploaded a receipt, or anyone in their household, may map its
-  lines in Part mapping (link, propose or mark not inventory) and send it to
-  apply. There is no conflict-of-interest check on mapping: it decides what the
+- Inventory managers map a receipt's lines in Part mapping (link, propose or
+  mark not inventory) and send it to apply. There is no conflict-of-interest
+  check on mapping: it decides what the
   goods are, not what is paid. Finance and the expense sign-off seats decide
   the money side, under the conflict rules in `expenses.md`.
   `[Decision — owner]`
@@ -193,6 +199,12 @@ How the pieces are built is described in
   that proportionate. Widening reading further, or widening writing
   at all, is a decision on the record.
   `[Decision — *Principle: least privilege*]`
+
+- The catalog audience reads finished catalog data: items, categories,
+  subcategories, references and the audit trail. The review queues are read
+  and worked by inventory managers only. Those queues are provisional items,
+  item-reference proposals, reference conflicts and conversion challenges.
+  `[Decision — owner]`
 
 - On-hand stock is read by the same audience as the catalog; only inventory
   managers change it. `[Decision — *Principle: least privilege*]`

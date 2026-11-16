@@ -11,7 +11,6 @@
  * the person reimbursed (purchaseOutcomeMail.ts).
  */
 import type { JWT } from "next-auth/jwt";
-import type { FailureKind } from "@checkin/component-kit";
 import { expenseOutcomes, reimbursementStatus, submitterConfirmations } from "@checkin/expense";
 import {
   configureReceipt,
@@ -36,7 +35,6 @@ import { config } from "@/lib/config";
 import { receiptFileStore } from "@/lib/receipt/fileStore";
 import { gmailAccessToken } from "@/lib/receipt/gmailToken";
 import { receiptMailboxConfig } from "@/lib/receipt/mailboxConfig";
-import { reportTo } from "@/lib/finishRun";
 
 /** Each finalized receipt's downstream outcome, joined from receiving, expense and donations. */
 async function purchaseOutcomes(receiptIds: string[]): Promise<Map<string, PurchaseOutcome>> {
@@ -165,9 +163,9 @@ async function reimburseeHasAccount(personId: number): Promise<boolean> {
   return (await prisma.person.count({ where: { id: personId, ...SIGN_IN_VERIFIED_PERSON } })) > 0;
 }
 
-async function addNonMemberReimbursee(name: string): Promise<ReimburseeOption> {
+async function addNonMemberReimbursee(name: string, actorId: number): Promise<ReimburseeOption> {
   const [{ default: prisma }, { addNonMemberAdult }] = await Promise.all([import("@/lib/prisma"), import("@/lib/person/ownHousehold")]);
-  return addNonMemberAdult(prisma, name);
+  return addNonMemberAdult(prisma, name, actorId);
 }
 
 /** The Gmail reader when mail intake binds (mailboxConfig.ts); otherwise intake reports "unbound". */
@@ -180,37 +178,24 @@ function receiptMailbox(): MailboxReader | undefined {
   return createGmailReader(mailbox.mailboxAddress, gmailAccessToken(mailbox));
 }
 
-/** The mail-run alert that names the cause of a failed mailbox listing. */
-const MAILBOX_LISTING_ALERT = {
-  connection: "finance.receiptMailboxUnreadable",
-  system: "finance.receiptMailboxUnanswered",
-  settings: "finance.receiptMailboxNotFound",
-  data: "finance.receiptMailboxFailed",
-  bug: "finance.receiptMailboxFailed",
-} as const satisfies Record<FailureKind, string>;
-
 const alerts: ReceiptAlerts = {
   async mailHoldCeilingReached({ unresolved, refused }) {
-    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-    await notifyFinanceAlert("finance.receiptMailCeiling", {
+    const { emailAlert } = await import("@/lib/emailRecipients");
+    await emailAlert("finance.receiptMailCeiling", {
       unresolved: String(unresolved),
       refused: String(refused),
       actionLink: `${config.baseUrl()}/receipts/mail`,
-    }, "Receipt mail ceiling alert failed:");
+    });
   },
   async mailAgingOut({ messages, oldestReceivedAt }) {
-    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-    await notifyFinanceAlert("finance.receiptMailAgeing", {
+    const { emailAlert } = await import("@/lib/emailRecipients");
+    const sent = await emailAlert("finance.receiptMailAgeing", {
       messages: String(messages),
       since: oldestReceivedAt ? `, the oldest received ${oldestReceivedAt.toUTCString()}` : "",
       actionLink: `${config.baseUrl()}/receipts/mail`,
-    }, "Receipt mail ageing alert failed:");
-  },
-  async mailListingFailed({ kind }) {
-    const { notifyFinanceAlert } = await import("@/lib/emailRecipients");
-    await notifyFinanceAlert(MAILBOX_LISTING_ALERT[kind], {
-      actionLink: `${config.baseUrl()}/receipts/mail`,
-    }, "Receipt mailbox listing alert failed:");
+    });
+    // Throwing leaves the mail unstamped, so the next run alerts again.
+    if (!sent) throw new Error("Receipt mail ageing alert was not sent");
   },
 };
 
@@ -246,7 +231,6 @@ const outcomeMail: OutcomeMail = {
 
 export function configureRuntime(): void {
   configureReceipt({
-    onFailure: reportTo("receipt"),
     auth: { getPrincipal },
     org: getOrg,
     households: { householdOf },

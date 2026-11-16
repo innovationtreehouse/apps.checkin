@@ -9,7 +9,9 @@
  * renewal's createRenewalProcess / renewalConcurrency.integration.test.ts intent,
  * as a mocked-prisma unit test.
  */
+import { getOwnBackgroundCheck as getOwnBackgroundCheckFn } from '@/lib/membership/checkStarted';
 import { getIntakeState, startIntake, saveIntake, submitIntake, IntakeError } from '@/lib/membership/intake';
+import { ArchivedHouseholdError, lockLiveHouseholds } from '@/lib/household/archiveGuard';
 import { Prisma } from '@/generated/prisma/client';
 import { findSelfGrantRefusal, recordSelfGrantRefusal } from '@/lib/membership/selfGrantGuard';
 import { invalidateAttendanceCache } from '@/lib/getFullAttendance';
@@ -26,6 +28,13 @@ const mockHousehold = { update: jest.fn() };
 const tx = { $queryRaw: txQueryRaw, person: mockPerson, household: mockHousehold, orgMembershipProcess: txMembershipProcess, auditLog: txAuditLog };
 /** The id txQueryRaw hands back for mintPersonId. */
 const MINTED_ID = 2503;
+
+// The archived-household guard has its own tests; here every household is live.
+jest.mock("@/lib/household/archiveGuard", () => ({
+    ...jest.requireActual("@/lib/household/archiveGuard"),
+    lockLiveHouseholds: jest.fn(),
+    lockLiveHouseholdsOf: jest.fn(),
+}));
 
 jest.mock('@/lib/logger', () => ({ logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() }, logBackendError: jest.fn() }));
 jest.mock('@/lib/person/mailAliases', () => ({ removeAliasesForSignInEmail: jest.fn() }));
@@ -44,7 +53,8 @@ jest.mock('@/lib/prisma', () => ({
     },
 }));
 
-jest.mock('@/lib/membership/external', () => ({ getExternalStatus: jest.fn(), advanceExternalIfComplete: jest.fn(), getOwnBackgroundCheck: jest.fn() }));
+jest.mock('@/lib/membership/external', () => ({ getExternalStatus: jest.fn(), advanceExternalIfComplete: jest.fn() }));
+jest.mock('@/lib/membership/checkStarted', () => ({ getOwnBackgroundCheck: jest.fn() }));
 jest.mock('@/lib/emergencyContacts/service', () => ({
     upsertPrimaryContact: jest.fn(),
     reconcileHouseholdConflicts: jest.fn(),
@@ -54,10 +64,9 @@ jest.mock('@/lib/household/leads', () => {
     return { ...actual, addHouseholdLead: jest.fn() };
 });
 jest.mock('@/lib/membership/renewal', () => ({
-    householdBgIsFresh: jest.fn(),
-    nextBoundary: jest.fn(),
     householdApplicationOpenOrBlockedWhere: { OR: [] },
 }));
+jest.mock('@/lib/membership/settleHouseholdBg', () => ({ settleHouseholdBg: jest.fn() }));
 jest.mock('@/lib/membership/householdStatus', () => ({
     ensureHouseholdMembership: jest.fn(),
     lockAndFindDeniedHousehold: jest.fn(),
@@ -76,11 +85,12 @@ const { upsertPrimaryContact, reconcileHouseholdConflicts } = require('@/lib/eme
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { addHouseholdLead, HouseholdLeadLimitError, HouseholdLeadDeniedError, HouseholdLeadYouthError, MAX_HOUSEHOLD_LEADS } = require('@/lib/household/leads');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { householdBgIsFresh } = require('@/lib/membership/renewal');
+const { settleHouseholdBg } = require('@/lib/membership/settleHouseholdBg');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { applyVolunteerFamilyStatus } = require('@/lib/membership/review');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { advanceExternalIfComplete, getOwnBackgroundCheck } = require('@/lib/membership/external');
+const { advanceExternalIfComplete } = require('@/lib/membership/external');
+const getOwnBackgroundCheck = jest.mocked(getOwnBackgroundCheckFn);
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { ensureHouseholdMembership, raiseDeniedHouseholdActivity } = require('@/lib/membership/householdStatus');
 
@@ -179,6 +189,15 @@ describe('startIntake race guard', () => {
         expect(txMembershipProcess.create).not.toHaveBeenCalled();
     });
 
+    it('archived: an archived household starts no application', async () => {
+        underLock('NONE', []);
+        (lockLiveHouseholds as jest.Mock).mockRejectedValueOnce(new ArchivedHouseholdError());
+
+        await expect(startIntake(1)).rejects.toBeInstanceOf(ArchivedHouseholdError);
+        expect(lockLiveHouseholds).toHaveBeenCalledWith(expect.anything(), [7]);
+        expect(txMembershipProcess.create).not.toHaveBeenCalled();
+    });
+
     it('P2002 race loser: a concurrent insert gets past the FOR UPDATE lock, winner found on re-query', async () => {
         const winner = { id: 101, orgMembershipId: 42, kind: 'INITIAL', status: 'INTAKE' };
         const p2002 = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', { code: 'P2002', clientVersion: '7.8.0' });
@@ -221,15 +240,15 @@ describe('getIntakeState', () => {
         expect(state.prefill.children).toEqual([]);
     });
 
-    it("returns the caller's own background check as the external service reads it", async () => {
+    it("returns the caller's own background check as the check-started service reads it", async () => {
         const caller = { id: 1, householdId: null, household: null, isHouseholdLead: false, isSysadmin: false };
         prisma.person.findUnique.mockResolvedValue(caller);
-        getOwnBackgroundCheck.mockResolvedValue({ consented: false, deepLinkUrl: 'https://averity.example/consent' });
+        getOwnBackgroundCheck.mockResolvedValue({ checkStarted: false, deepLinkUrl: 'https://averity.example/consent' });
 
         const state = await getIntakeState(1);
 
-        expect(getOwnBackgroundCheck).toHaveBeenCalledWith(caller);
-        expect(state.ownBackgroundCheck).toEqual({ consented: false, deepLinkUrl: 'https://averity.example/consent' });
+        expect(getOwnBackgroundCheck).toHaveBeenCalledWith(1);
+        expect(state.ownBackgroundCheck).toEqual({ checkStarted: false, deepLinkUrl: 'https://averity.example/consent' });
     });
 
     it('loads every household member, by id', async () => {
@@ -265,7 +284,7 @@ describe('getIntakeState', () => {
                 emergencyContacts: [{ name: 'Aunt', phone: '555-555-2000', email: 'a@x.com' }],
             },
         });
-        getExternalStatus.mockResolvedValue({ contractSigned: false, contractStarted: false, bgConsented: false, bgCleared: false, deepLinkUrl: null });
+        getExternalStatus.mockResolvedValue({ contractSigned: false, contractStarted: false, checkStarted: false, bgCleared: false, deepLinkUrl: null });
 
         const state = await getIntakeState(1);
 
@@ -369,6 +388,13 @@ describe('saveIntake', () => {
         prisma.person.findUnique.mockResolvedValue(baseUser);
         getExternalStatus.mockResolvedValue(null);
         prisma.volunteerDesignation.findMany.mockResolvedValue([{ email: 'volunteer@gmail.com' }]);
+    });
+
+    it('saves nothing for an archived household', async () => {
+        (lockLiveHouseholds as jest.Mock).mockRejectedValueOnce(new ArchivedHouseholdError());
+        await expect(saveIntake(1, { household: { line1: '1 Main St' } })).rejects.toBeInstanceOf(ArchivedHouseholdError);
+        expect(lockLiveHouseholds).toHaveBeenCalledWith(expect.anything(), [7]);
+        expect(mockPerson.update).not.toHaveBeenCalled();
     });
 
     describe('age fields', () => {
@@ -883,7 +909,6 @@ describe('submitIntake', () => {
     });
 
     it('writes the status and its audit row in one transaction', async () => {
-        householdBgIsFresh.mockResolvedValue(false);
         prisma.auditLog.create.mockRejectedValueOnce(new Error('audit write failed'));
 
         await expect(submitIntake(1)).rejects.toThrow('audit write failed');
@@ -901,7 +926,6 @@ describe('submitIntake', () => {
     });
 
     it('CAS from INTAKE: a concurrent archive or double submit (count 0) → no_process, no audit, no advance (F-11)', async () => {
-        householdBgIsFresh.mockResolvedValue(false);
         prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 0 });
 
         await expect(submitIntake(1)).rejects.toMatchObject({ code: 'no_process' });
@@ -921,36 +945,27 @@ describe('submitIntake', () => {
         });
     });
 
-    it('complete + bgFresh=false → no bgClearedAt stamp, allowlist deferred to the external advance', async () => {
-        householdBgIsFresh.mockResolvedValue(false);
-
+    it('lands at PENDING_EXTERNAL_ACTION without stamping, then settles the household before the external advance', async () => {
         await submitIntake(1);
 
         expect(prisma.orgMembershipProcess.updateMany).toHaveBeenCalledWith({
             where: { id: 11, status: 'INTAKE' },
             data: expect.not.objectContaining({ bgClearedAt: expect.anything() }),
         });
+        // Settle stamps a qualifying household, and blocks one whose adult is disputed.
+        expect(settleHouseholdBg).toHaveBeenCalledWith(7);
+        expect(settleHouseholdBg.mock.invocationCallOrder[0]).toBeLessThan(advanceExternalIfComplete.mock.invocationCallOrder[0]);
         expect(applyVolunteerFamilyStatus).not.toHaveBeenCalled();
     });
 
-    it('complete + bgFresh=true → stamps bgClearedAt, advances, and matches the volunteer allowlist', async () => {
-        householdBgIsFresh.mockResolvedValue(true);
+    it('a failed settle is logged and the committed intake still returns', async () => {
+        settleHouseholdBg.mockRejectedValueOnce(new Error('settle failed'));
 
-        const result = await submitIntake(1);
-
-        expect(prisma.orgMembershipProcess.updateMany).toHaveBeenCalledWith({
-            where: { id: 11, status: 'INTAKE' },
-            data: expect.objectContaining({ status: 'PENDING_EXTERNAL_ACTION', bgClearedAt: expect.any(Date) }),
-        });
-        expect(prisma.auditLog.create).toHaveBeenCalled();
-        // Fresh-check shortcut skips clearBackgroundCheck for the whole cycle, so
-        // the designation allowlist must be matched here or never.
-        expect(applyVolunteerFamilyStatus).toHaveBeenCalledWith(prisma, 42, 7, false);
-        expect(result).toEqual({ id: 11, status: 'PENDING_EXTERNAL_ACTION' });
+        await expect(submitIntake(1)).resolves.toEqual({ id: 11, status: 'PENDING_EXTERNAL_ACTION' });
+        expect(logBackendError).toHaveBeenCalledWith(expect.any(Error), expect.any(String), { householdId: 7, processId: 11 });
     });
 
     it('re-runs the external advance after landing at PENDING_EXTERNAL_ACTION and returns its result', async () => {
-        householdBgIsFresh.mockResolvedValue(false);
         // Board pre-marked contract + BG consent on the INTAKE row, so the gate is
         // already met when we arrive — the advance carries the process to PENDING_PAYMENT.
         advanceExternalIfComplete.mockResolvedValue({ id: 11, status: 'PENDING_PAYMENT' });
@@ -962,7 +977,6 @@ describe('submitIntake', () => {
     });
 
     it('falls back to the re-read process when the external advance is a no-op', async () => {
-        householdBgIsFresh.mockResolvedValue(false);
         // Nothing pre-marked ⇒ advanceExternalIfComplete finds the gate unmet and
         // returns the still-PENDING_EXTERNAL_ACTION process (here left undefined to
         // exercise the fallback); submitIntake reports the phase it advanced to.
@@ -974,18 +988,4 @@ describe('submitIntake', () => {
         expect(result).toEqual({ id: 11, status: 'PENDING_EXTERNAL_ACTION' });
     });
 
-    it('complete + fresh check + intake note → the note does not disqualify the shortcut', async () => {
-        prisma.person.findUnique.mockResolvedValue({
-            ...inFlightUser,
-            household: { ...inFlightUser.household, intakeNotes: 'please treat us as a volunteer household' },
-        });
-        householdBgIsFresh.mockResolvedValue(true);
-
-        await submitIntake(1);
-
-        expect(prisma.orgMembershipProcess.updateMany).toHaveBeenCalledWith({
-            where: { id: 11, status: 'INTAKE' },
-            data: expect.objectContaining({ bgClearedAt: expect.any(Date) }),
-        });
-    });
 });

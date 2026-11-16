@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { Anchor, Badge, Table, Text } from "@mantine/core";
-import { isDiscardedDuplicate, latestOutcome, receiptStateLabel, type ReceiptListRow } from "./api";
+import { latestOutcome, receiptStateLabel, type ReceiptListRow } from "./api";
 import { formatCents } from "@checkin/money";
 import { REJECTED_AS_COPY } from "../lib/describeReceipt";
 import { SUBMITTER_ACTION_STATES } from "../nav";
@@ -56,9 +56,6 @@ export default function ReceiptTable({
                 ) : (
                   receiptStateLabel(r)
                 )}
-                {isDiscardedDuplicate(r) && r.duplicateSuspectReceiptId && (
-                  <> of <Anchor component={Link} href={detailHref(r.duplicateSuspectReceiptId)}>another receipt</Anchor></>
-                )}
                 {flagMine && waitsOnUploader(r) && (
                   <Badge ml="xs" size="sm" color="treehouseGreen" c="black">Needs you</Badge>
                 )}
@@ -71,10 +68,9 @@ export default function ReceiptTable({
               )}
               {delivery && (
                 <Table.Td>
-                  {r.pushGivenUp && <Badge size="sm" color="red" mr="xs">Catch-up stopped: re-send by hand</Badge>}
-                  {r.lastPushFailure ? (
+                  {r.lastPushFailedAt ? (
                     <Text size="sm" span>
-                      Failed{r.lastPushFailedAt ? ` ${new Date(r.lastPushFailedAt).toLocaleString()}` : ""}: {r.lastPushFailure}
+                      Failed since {new Date(r.lastPushFailedAt).toLocaleString()}: re-send from its page
                     </Text>
                   ) : (
                     <Text size="sm" c="dimmed" span>No failed attempt recorded</Text>

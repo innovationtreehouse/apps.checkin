@@ -73,7 +73,6 @@ export const classifications = {
         donationType: 'internal',
         donationAccount: 'internal',
         matchAccount: 'internal',
-        feesAccount: 'internal',
         donationAccountId: 'internal',
         matchAccountId: 'internal',
         createdAt: 'internal',
@@ -218,6 +217,8 @@ export const classifications = {
         qbCreateAttemptedAt: 'internal',
         qbPostAttempts: 'internal',
         qbFailureKind: 'internal',
+        qbFirstFailedAt: 'internal',
+        qbLastError: 'internal',
         qbNote: 'internal',
         bookedTotalCents: 'internal',
         bookedTxnDate: 'internal',
@@ -265,6 +266,18 @@ export const relations = {
     },
     InKindPosting: {
     },
+} as const;
+
+export const marks = {
+    UploadedFile: ['fileBlob'],
+    Transaction: ['companyName', 'donationAmountCents', 'matchAmountCents', 'causeSupportFeeCents', 'merchantFeeCents', 'checkFeeCents', 'donorFirstName', 'donorLastName', 'donorComment'],
+    TransactionCommentRule: ['comment'],
+    DisbursementEvent: ['payload'],
+    InKindDonation: ['receiptTotalCents', 'donorFirstName', 'donorLastName', 'donorCompanyName', 'uploadedByUserId'],
+    ManualInKindDonation: ['donorFirstName', 'donorLastName', 'donorCompanyName'],
+    ManualInKindDonationLine: ['valueCents', 'suggestedValueCents'],
+    InKindDonationLine: ['valueCents'],
+    InKindPosting: ['bookedTotalCents'],
 } as const;
 
 export type Models = keyof typeof classifications;

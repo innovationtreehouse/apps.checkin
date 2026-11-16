@@ -48,7 +48,7 @@ export interface NewReceipt {
     Prisma.ReceiptUncheckedCreateInput,
     "id" | "orgId" | "uploadedByUserId" | "fileBlob" | "fileKey" | "fileSize" | "fileHash" | "mimeType" | "details" | "lineItems" | "auditLogs"
   >;
-  detail: Omit<Prisma.ReceiptDetailUncheckedCreateWithoutReceiptInput, "orgId" | "duplicateSuspectReceiptId">;
+  detail: Omit<Prisma.ReceiptDetailUncheckedCreateWithoutReceiptInput, "orgId">;
   lines: NewLine[];
   auditAction: string;
   /** Enforce the daily upload limits for this insert (every upload; the FINANCE import has its own caps). */
@@ -60,9 +60,8 @@ export interface NewReceipt {
 }
 
 /**
- * Insert a receipt under a transaction-scoped advisory lock on (org, file hash), recording the
- * earliest existing receipt with the same file as its duplicate suspect. The lock serialises
- * only identical files in one org, so a second concurrent upload always sees the first.
+ * Insert a receipt under a transaction-scoped advisory lock on (org, file hash). The lock
+ * serialises only identical files in one org, so a second concurrent upload always sees the first.
  * The (orgId, fileHash) index stays non-unique: a duplicate inserts and is flagged for a person.
  */
 export async function insertReceipt(r: NewReceipt): Promise<string> {
@@ -116,11 +115,6 @@ async function insertInto(tx: Prisma.TransactionClient, id: string, fileKey: str
   const fileHash = sha256Hex(r.file);
   if (r.limits) await enforceUploadLimits(tx, r.orgId, r.actor.id, r.file.length, r.limits, r.mailLimit);
   await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${`${r.orgId}:${fileHash}`}, 0))`;
-  const suspect = await tx.receipt.findFirst({
-    where: { orgId: r.orgId, fileHash },
-    orderBy: [{ uploadedAt: "asc" }, { id: "asc" }],
-    select: { id: true },
-  });
   await tx.receipt.create({
     data: {
       ...r.core,
@@ -132,7 +126,7 @@ async function insertInto(tx: Prisma.TransactionClient, id: string, fileKey: str
       fileSize: r.file.length,
       fileHash,
       mimeType: r.mimeType,
-      details: { create: { ...r.detail, orgId: r.orgId, duplicateSuspectReceiptId: suspect?.id ?? null } },
+      details: { create: { ...r.detail, orgId: r.orgId } },
       lineItems: { create: toLineRows(r.lines) },
     },
   });

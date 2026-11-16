@@ -211,9 +211,12 @@ missed a row stored at a different time of day.
   shows its last page for a page past the end; a list without one shows the
   empty page with its pager.
 - **`limit` stays out of the URL** while no screen lets anyone pick a page size.
-- **Read and write it with `@checkin/component-ui`'s `useUrlPage`,
-  `useUrlFilter`, `useUrlChoice` and `useSetUrlFilters`**, never `useState`
-  for the page or a filter.
+- **A list that grows at its head while it is read pages by position, not
+  number.** It keeps `before`, the last row shown, in place of `page`, so a row
+  added between two pages never repeats on the next. A filter change drops it.
+- **Read and write it with `@checkin/component-ui`'s `useUrlPage` (or
+  `useUrlBefore`), `useUrlFilter`, `useUrlChoice` and `useSetUrlFilters`**,
+  never `useState` for the page or a filter.
 
 ---
 
@@ -228,6 +231,56 @@ missed a row stored at a different time of day.
     own database.
   - `@checkin/quickbooks`: moving a day for a books window (`shiftDate`).
   - `@checkin/money` and `@checkin/component-ui`: as the section above says.
+
+---
+
+## One process, one implementation
+
+- **A step that happens in two places is one piece of code both call.** When
+  the same decision, check or sequence of steps is needed by two libraries, two
+  kinds of record or two routes, it is written once and both call it. A copy, a
+  near-copy or a second implementation "for our side" is a fork: the two drift,
+  and each fix lands in only one of them.
+- **A record crosses into another library only to change owner.** Handing a
+  record to the library that takes the next step is fine when nothing flows
+  back and the hand-over is audited and either atomic or retried. Copying it so
+  another library can run the same steps on its own copy is the fork above.
+- **Where the domain says two things are treated the same, they run the same
+  code.** "The same rule" kept true by two implementations is a rule waiting to
+  diverge.
+
+The failure is slow. Each copy is correct the day it is written; the defect is
+the later fix that reaches one of them.
+
+---
+
+## A simple machine with a known risk beats a complete one nobody can read
+
+- **Whether a step can be undone depends on what undoing it costs, and where.**
+  - **A bad state that lives entirely in the app, the app must give a way out
+    of.** Nobody can repair it by hand without editing the database, so the
+    software owes a path back: an undo, or a reset that returns the record to a
+    known starting point and has it go through again.
+  - **A decision whose effects are outside the app may be declared
+    irreversible.** Once it has reached the books, a physical label or another
+    party, unwinding it in the app would mean modelling every outside effect
+    to keep them in step. Past that point the app says the decision is final,
+    and a mistake is cleaned up by hand. That costs a person some work, and it
+    keeps the machine readable. The point is chosen, stated and the same
+    everywhere the decision is taken.
+- **Take a decision as late as it can be taken, after the things that could
+  reverse it.** A decision taken before its record settles needs machinery to
+  unwind it when the record moves; one taken after needs none.
+- **An edge case the design does not handle is an accepted, written-down risk,
+  not a branch.** Record how it could happen, what it costs when it does, and
+  how it is cleaned up by hand. Do not add a state, flag or route whose only
+  purpose is a case that rarely or never happens.
+- **A state nothing can reach is removed.** Code for an unreachable case is not
+  insurance; it is a second account of the system that every reader has to
+  disprove.
+
+The failure is unreadability. A machine that covers everything is one nobody
+can hold in their head, and the bugs live in the transitions nobody traced.
 
 ---
 
@@ -299,6 +352,32 @@ missed a row stored at a different time of day.
 The failure shows only in a built app. In unit tests every module is loaded once,
 so `instanceof` holds; in the server, the same 409 arrives as an error from
 another copy of the class and the caller sees a 500.
+
+---
+
+## Access is declared once, per route; code checks only what the declaration can't say
+
+- **The route's registry entry is the gate.** Its `authorize` names who may
+  call the route, and `handler()` (`checkin-app/src/security/handler.ts`)
+  enforces it before any library code runs: a caller it refuses gets a 401 or
+  403. The stripper then removes every field the caller's view does not grant.
+- **A library narrows rows and checks the rules that depend on the data.** A
+  library service asks its runtime for the signed-in principal, which is a 401
+  when there is none, and narrows the rows to what that actor may see, as
+  receipt's `Access` does. It checks a role only when the decision turns on the
+  data, which a registry entry cannot express. In bulk-donation, finance may
+  lower the QuickBooks create limit, but raising it takes the board
+  (`packages/bulk-donation/src/services/settingsService.ts:46`).
+- **New code does not repeat `authorize`.** A role check that only restates
+  the route's rule is a second copy of it, free to drift from the registry,
+  which is the one place to audit who may do what. Existing ones, such as
+  expense's `requireFinance()` and the finance-or-board check at the top of
+  bulk-donation's `settingsChanges()` (`settingsService.ts:35`), stay until the
+  route's policy can carry them.
+
+The failure is drift. A role check copied into a library looks like extra
+safety; the day the registry entry changes, the two disagree, and whichever
+one is stricter decides what the route does.
 
 ---
 

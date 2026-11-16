@@ -1,5 +1,5 @@
-import { render, screen } from "@testing-library/react";
-import { MantineProvider } from "@mantine/core";
+import { screen } from "@testing-library/react";
+import { renderWithProviders } from "@/test-helpers/rtl";
 import SettingsLayout from "../layout";
 
 const push = jest.fn();
@@ -13,26 +13,61 @@ jest.mock("next/navigation", () => ({
 jest.mock("next-auth/react", () => ({
   useSession: () => mockSession,
 }));
+let mockCounts: unknown = null;
+jest.mock("@/hooks/useTodoCounts", () => ({
+  useTodoCounts: () => mockCounts,
+}));
 
 const CHILD = "child-marker";
 const renderLayout = (session: { data: unknown; status: string }) => {
   mockSession = session;
-  return render(
-    <MantineProvider>
-      <SettingsLayout>
-        <div>{CHILD}</div>
-      </SettingsLayout>
-    </MantineProvider>,
+  return renderWithProviders(
+    <SettingsLayout>
+      <div>{CHILD}</div>
+    </SettingsLayout>,
   );
 };
 
 beforeEach(() => {
   push.mockClear();
   mockPathname = "/settings/membership";
+  mockCounts = null;
+});
+
+const tabNames = () => screen.queryAllByRole("tab").map((t) => t.textContent);
+
+describe("SettingsLayout tab bar", () => {
+  it("shows a board member every settings page they may open, Expenses and Receipt reading included", () => {
+    renderLayout({ data: { user: { id: 2, isBoardMember: true } }, status: "authenticated" });
+    expect(tabNames()).toEqual(["Membership Settings", "Email Settings", "Outreach", "Shopify Webhook", expect.stringContaining("Expenses"), "Receipt reading"]);
+  });
+
+  it("keeps Localization from a board member who is not sysadmin", () => {
+    renderLayout({ data: { user: { id: 2, isBoardMember: true } }, status: "authenticated" });
+    expect(tabNames()).not.toContain("Localization");
+  });
+
+  it("shows a sysadmin Localization and no Expenses", () => {
+    renderLayout({ data: { user: { id: 1, isSysadmin: true } }, status: "authenticated" });
+    expect(tabNames()).toContain("Localization");
+    expect(tabNames().some((n) => n?.includes("Expenses"))).toBe(false);
+  });
+
+  it("renders on the expense settings page with Expenses active", () => {
+    mockPathname = "/settings/finance";
+    renderLayout({ data: { user: { id: 2, isBoardMember: true } }, status: "authenticated" });
+    expect(screen.getByRole("tab", { name: /Expenses/ })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("pills Membership Settings when a required membership setting is unset", () => {
+    mockCounts = { admin: { settingsMisconfig: 2 } };
+    renderLayout({ data: { user: { id: 2, isBoardMember: true } }, status: "authenticated" });
+    expect(screen.getByLabelText("2 required membership settings not configured")).toBeInTheDocument();
+  });
 });
 
 describe("SettingsLayout role gate", () => {
-  it("admits a sysadmin (chrome-less passthrough)", () => {
+  it("admits a sysadmin", () => {
     renderLayout({ data: { user: { id: 1, isSysadmin: true } }, status: "authenticated" });
     expect(screen.getByText(CHILD)).toBeInTheDocument();
     expect(push).not.toHaveBeenCalled();

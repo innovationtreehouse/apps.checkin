@@ -25,7 +25,7 @@ describe("itemOrderBy", () => {
 });
 
 describe("itemSearch", () => {
-  const gtinClauses = (q: string) => itemSearch(q).filter((clause) => "gtin13" in clause);
+  const gtinClauses = (q: string, nameGtins: string[] = []) => itemSearch(q, nameGtins).filter((clause) => "gtin13" in clause);
 
   it("matches a short ID's GTIN exactly, and its typed text as-is", () => {
     expect(gtinClauses("03B0042")).toEqual([
@@ -40,6 +40,13 @@ describe("itemSearch", () => {
 
   it("keeps partial-digit search without an exact match", () => {
     expect(gtinClauses("0200")).toEqual([{ gtin13: { contains: "0200" } }]);
+  });
+
+  it("matches the GTINs whose name matched, once each", () => {
+    expect(gtinClauses("drill", ["4006381333931", "4006381333931"])).toEqual([
+      { gtin13: { contains: "drill" } },
+      { gtin13: { in: ["4006381333931"] } },
+    ]);
   });
 
   it("searches location and backstock names", () => {

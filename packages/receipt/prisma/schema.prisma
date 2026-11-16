@@ -36,17 +36,20 @@ model ReceiptOrgSettings {
 }
 
 model Receipt {
-  /// @sensitivity:internal
+  // A random UUID: it names a receipt and reveals nothing about it.
+  /// @sensitivity:public
   id                 String   @id
   /// @sensitivity:internal
   orgId              String   @map("org_id")
   // The uploader's checkin Person.id.
   /// @sensitivity:internal
+  /// @financeMark
   uploadedByUserId   Int      @map("uploaded_by_user_id")
   /// @sensitivity:internal
   uploadedAt         DateTime @default(now()) @map("uploaded_at")
   // Null once the file lives in the store under fileKey.
   /// @sensitivity:pii
+  /// @financeMark
   fileBlob           Bytes?   @map("file_blob")
   // The object holding the file; null means the bytes are in fileBlob.
   /// @sensitivity:pii
@@ -61,9 +64,11 @@ model Receipt {
   needsReimbursement Boolean  @default(false) @map("needs_reimbursement")
   // Display only; the reimbursee's identity is reimburseePersonId.
   /// @sensitivity:pii
+  /// @financeMark
   reimbursementFor   String?  @map("reimbursement_for")
   // The checkin Person.id owed the reimbursement, named by the uploader; null for backfill.
   /// @sensitivity:internal
+  /// @financeMark
   reimburseePersonId Int?     @map("reimbursee_person_id")
   // upload | email | import
   /// @sensitivity:internal
@@ -71,10 +76,13 @@ model Receipt {
   /// @sensitivity:internal
   isInKind           Boolean  @default(false) @map("is_in_kind")
   /// @sensitivity:pii
+  /// @financeMark
   donorFirstName     String?  @map("donor_first_name")
   /// @sensitivity:pii
+  /// @financeMark
   donorLastName      String?  @map("donor_last_name")
   /// @sensitivity:pii
+  /// @financeMark
   donorCompanyName   String?  @map("donor_company_name")
   // X13 delivery: none (never in-kind) | pending | synced
   /// @sensitivity:internal
@@ -85,6 +93,15 @@ model Receipt {
   // Stamped when the S1 push returns; null means not yet delivered.
   /// @sensitivity:internal
   pushedAt           DateTime? @map("pushed_at")
+  // When the step it is stuck in first failed; null while nothing is stuck. Times the Problems list.
+  /// @sensitivity:internal
+  firstFailedAt      DateTime? @map("first_failed_at")
+  // The latest failure's error, shown on the receipt's own page only.
+  /// @sensitivity:personal
+  lastError          String?   @map("last_error")
+  // Clockwise degrees the file's image displays turned: 0, 90, 180 or 270.
+  /// @sensitivity:internal
+  rotation           Int       @default(0)
 
   details       ReceiptDetail?
   financeReview ReceiptFinanceReview?
@@ -108,6 +125,7 @@ model ReceiptDetail {
   /// @sensitivity:internal
   orgId                      String    @map("org_id")
   /// @sensitivity:internal
+  /// @financeMark
   retailer                   String?
   /// @sensitivity:internal
   receiptNumber              String?   @map("receipt_number")
@@ -118,12 +136,16 @@ model ReceiptDetail {
   /// @sensitivity:internal
   currency                   String    @default("USD")
   /// @sensitivity:internal
+  /// @financeMark
   shippingCents              Int       @default(0) @map("shipping_cents")
   /// @sensitivity:internal
+  /// @financeMark
   taxCents                   Int       @default(0) @map("tax_cents")
   /// @sensitivity:internal
+  /// @financeMark
   discountCents              Int       @default(0) @map("discount_cents")
   /// @sensitivity:internal
+  /// @financeMark
   receiptTotalCents          Int?      @map("receipt_total_cents")
   /// @sensitivity:internal
   state                      String    @default("uploaded")
@@ -132,13 +154,13 @@ model ReceiptDetail {
   /// @sensitivity:internal
   duplicateFlaggedAt         DateTime? @map("duplicate_flagged_at")
   /// @sensitivity:internal
-  duplicateFlagClearedAt     DateTime? @map("duplicate_flag_cleared_at")
+  duplicateFlagClearedAt     DateTime? @map("duplicate_flag_cleared_at") @ignore
   /// Another submitter's receipt id: pii keeps it off the submitter's own view.
   /// @sensitivity:pii
-  duplicateSuspectReceiptId  String?   @map("duplicate_suspect_receipt_id")
+  duplicateSuspectReceiptId  String?   @map("duplicate_suspect_receipt_id") @ignore
   /// Status of another submitter's receipt: pii keeps it off the submitter's own view.
   /// @sensitivity:pii
-  duplicateSuspectIsRejected Boolean?  @map("duplicate_suspect_is_rejected")
+  duplicateSuspectIsRejected Boolean?  @map("duplicate_suspect_is_rejected") @ignore
   /// @sensitivity:personal
   validationNotes            String?   @map("validation_notes")
   /// @sensitivity:internal
@@ -188,6 +210,7 @@ model ReceiptFinanceReview {
   note            String?
   // The receipt's tax when finance decided; a later change to the tax is not covered.
   /// @sensitivity:internal
+  /// @financeMark
   taxCents        Int?     @map("tax_cents")
   /// @sensitivity:internal
   decidedAt       DateTime @default(now()) @map("decided_at")
@@ -213,8 +236,10 @@ model ReceiptLineItem {
   /// @sensitivity:internal
   quantity        Float   @default(1)
   /// @sensitivity:internal
+  /// @financeMark
   unitPriceCents  Int     @map("unit_price_cents")
   /// @sensitivity:internal
+  /// @financeMark
   totalPriceCents Int     @map("total_price_cents")
   /// @sensitivity:internal
   isDelayed       Boolean @default(false) @map("is_delayed")
@@ -243,9 +268,12 @@ model ReceiptAuditLog {
   action       String
   /// @sensitivity:internal
   fieldChanged String?  @map("field_changed")
-  /// @sensitivity:personal
+  // The values can hold a donor's name or company, so they are pii.
+  /// @sensitivity:pii
+  /// @financeMark
   valueBefore  String?  @map("value_before")
-  /// @sensitivity:personal
+  /// @sensitivity:pii
+  /// @financeMark
   valueAfter   String?  @map("value_after")
   /// @sensitivity:internal
   lineItemId   Int?     @map("line_item_id")
@@ -309,6 +337,7 @@ model ReceiptMailItem {
   /// @sensitivity:internal
   receivedAt     DateTime  @map("received_at")
   /// @sensitivity:pii
+  /// @financeMark
   senderAddress  String    @map("sender_address")
   // held | deferred | assigned | discarded | refused
   /// @sensitivity:internal
@@ -324,6 +353,7 @@ model ReceiptMailItem {
   refusal        Json?
   // Kept only while held or deferred; cleared once the item becomes a receipt or is discarded.
   /// @sensitivity:pii
+  /// @financeMark
   fileBlob       Bytes?    @map("file_blob")
   // The object holding the file. Cleared when the item becomes a receipt; a discarded item keeps it,
   // to name the object for an admin restore. Null with no fileBlob means no file is kept.
@@ -403,6 +433,22 @@ model ReceiptMailAtRisk {
 
   @@index([orgId, alertedAt])
   @@map("receipt_mail_at_risk")
+}
+
+// The org's mail intake run: held while `until` is in the future, so the cron and finance's
+// catch-up never read the mailbox at once. A run releases it with its counts; a crashed process's lease expires.
+model ReceiptMailLease {
+  /// @sensitivity:internal
+  orgId     String    @id @map("org_id")
+  /// @sensitivity:internal
+  until     DateTime
+  /// @sensitivity:internal
+  lastRunAt DateTime? @map("last_run_at")
+  // The last finished run's MailRunSummary.
+  /// @sensitivity:internal
+  lastRun   Json?     @map("last_run")
+
+  @@map("receipt_mail_lease")
 }
 
 // One email owed per receipt outcome: to its uploader, and to the person reimbursed when that

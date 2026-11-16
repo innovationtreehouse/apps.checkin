@@ -29,7 +29,7 @@ describeDb("POST org-items", () => {
     configureLocalInventory({
       auth: { getPrincipal: async () => ({ id: 1, name: "Manager" }) },
       org: async () => ({ id: TEST_ORG_ID, name: "Org One" }),
-      catalog: { getActiveItem: async (gtin13: string) => (gtin13 === CATALOG_GTIN ? { gtin13 } : null) },
+      catalog: { searchItems: async () => [], getActiveItem: async (gtin13: string) => (gtin13 === CATALOG_GTIN ? { gtin13 } : null) },
     });
   });
 
@@ -54,14 +54,14 @@ describeDb("POST org-items", () => {
 
   it("refuses another org's provisional part", async () => {
     await provisional(PROVISIONAL, "pending", { orgId: TEST_ORG_ID_2 });
-    await expect(post(PROVISIONAL)).rejects.toMatchObject({ status: 400, message: "No active catalog item or pending provisional part has GTIN P000123" });
+    await expect(post(PROVISIONAL)).rejects.toMatchObject({ status: 400, message: "No active catalog item or pending provisional part has Part ID P000123" });
   });
 
   it("answers 502 and adds nothing when the catalog can't be reached", async () => {
     configureLocalInventory({
       auth: { getPrincipal: async () => ({ id: 1, name: "Manager" }) },
       org: async () => ({ id: TEST_ORG_ID, name: "Org One" }),
-      catalog: { getActiveItem: async () => { throw new Error("catalog down"); } },
+      catalog: { searchItems: async () => [], getActiveItem: async () => { throw new Error("catalog down"); } },
     });
     await expect(post(CATALOG_GTIN)).rejects.toMatchObject({ status: 502 });
     expect(await db.orgItem.count()).toBe(0);
@@ -80,7 +80,7 @@ describeDb("POST org-items", () => {
     configureLocalInventory({
       auth: { getPrincipal: async () => ({ id: 1, name: "Manager" }) },
       org: async () => ({ id: TEST_ORG_ID, name: "Org One" }),
-      catalog: { getActiveItem: async () => { throw foreignNotWired("catalog.getActiveItem"); } },
+      catalog: { searchItems: async () => [], getActiveItem: async () => { throw foreignNotWired("catalog.getActiveItem"); } },
     });
     await expect(post(CATALOG_GTIN)).rejects.toMatchObject({ status: 503, message: "No catalog is connected" });
     expect(await db.orgItem.count()).toBe(0);
@@ -90,7 +90,7 @@ describeDb("POST org-items", () => {
     configureLocalInventory({
       auth: { getPrincipal: async () => ({ id: 1, name: "Manager" }) },
       org: async () => ({ id: TEST_ORG_ID, name: "Org One" }),
-      catalog: { getActiveItem: async () => { throw Object.assign(new Error("Database does not exist"), { code: "P1003" }); } },
+      catalog: { searchItems: async () => [], getActiveItem: async () => { throw Object.assign(new Error("Database does not exist"), { code: "P1003" }); } },
     });
     await expect(post(CATALOG_GTIN)).rejects.toMatchObject({ status: 503, message: "The catalog database does not exist; the infra operator checks its settings" });
     expect(await db.orgItem.count()).toBe(0);

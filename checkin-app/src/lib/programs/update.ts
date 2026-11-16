@@ -13,6 +13,8 @@ import { isSaleEnded, saleStockDelta } from "@/lib/programs/saleState";
 import { countStockTakenSeats } from "@/lib/program/capacity";
 import { membershipYearLabel, programYearsTouched } from "@/lib/programYear";
 import { ProgramPhase, EnrollmentStatus, type Program } from "@/generated/prisma/client";
+import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
+import { ServiceError } from "@checkin/component-kit";
 
 export interface ProgramEditor {
     id: number;
@@ -350,10 +352,17 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         ...(newShopifyVariantId !== undefined && newShopifyVariantId !== currentProgram.shopifyVariantId && STOCK_BOOKKEEPING_RESET),
     };
 
-    const updatedProgram = await prisma.program.update({
-        where: { id: programId },
-        data: updateData
-    });
+    const newLeader = leadMentorId !== undefined && leadMentorId !== currentProgram.leadMentorId ? leadMentorId : null;
+    let updatedProgram: Program;
+    try {
+        updatedProgram = await prisma.$transaction(async (tx) => {
+            if (newLeader !== null) await lockLiveHouseholdsOf(tx, [newLeader]);
+            return tx.program.update({ where: { id: programId }, data: updateData });
+        });
+    } catch (e) {
+        if (e instanceof ServiceError) return refuse("conflict", e.message);
+        throw e;
+    }
 
     await prisma.auditLog.create({
         data: {

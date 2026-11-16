@@ -8,7 +8,8 @@
 
 import { runRenewalSweep, beginRenewal, nextBoundary } from '@/lib/membership/renewal';
 import { attest } from '@/lib/membership/review';
-import { markBgConsent, markContractSigned } from '@/lib/membership/external';
+import { markContractSigned } from '@/lib/membership/external';
+import { markCheckStarted } from '@/lib/membership/checkStarted';
 import prisma from '@/lib/prisma';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 
@@ -22,6 +23,9 @@ describe('Membership renewal', () => {
     // The sweep is global; track where we started so afterAll can remove every
     // process this test opened (including renewals on other suites' memberships).
     let preMaxProcessId = 0;
+    // The sweeps below run inside the 2026-2027 window, which opens only with a product for 2026.
+    const SWEEP_YEAR = 2026;
+    let prevSweepYearRow: { membershipYear: number; shopifyVariantId: string; productUrl: string | null } | null = null;
 
     async function makeActiveMembership(label: string, parentBg: Date | null, leadEmail?: string) {
         const hh = await prisma.household.create({ data: { name: `${label} ${TAG}` } });
@@ -36,8 +40,9 @@ describe('Membership renewal', () => {
         const hhs = await prisma.household.findMany({ where: { OR: [{ name: { contains: TAG } }, { householdMembers: { some: { email: { contains: TAG } } } }] }, select: { id: true } });
         const ids = hhs.map((h) => h.id);
         if (ids.length) {
-            await prisma.backgroundCheckAttestation.deleteMany({ where: { process: { orgMembership: { householdId: { in: ids } } } } });
-            await prisma.orgMembershipProcess.deleteMany({ where: { orgMembership: { householdId: { in: ids } } } });
+            const processes = { OR: [{ orgMembership: { householdId: { in: ids } } }, { requestedForHouseholdId: { in: ids } }] };
+            await prisma.backgroundCheckAttestation.deleteMany({ where: { process: processes } });
+            await prisma.orgMembershipProcess.deleteMany({ where: processes });
             await prisma.orgMembership.deleteMany({ where: { householdId: { in: ids } } });
             await prisma.person.deleteMany({ where: { householdId: { in: ids } } });
             await prisma.household.deleteMany({ where: { id: { in: ids } } });
@@ -60,6 +65,12 @@ describe('Membership renewal', () => {
         const maxRow = await prisma.orgMembershipProcess.findFirst({ orderBy: { id: 'desc' }, select: { id: true } });
         preMaxProcessId = maxRow?.id ?? 0;
         restoreBoardSettings = await snapshotBoardSettings();
+        prevSweepYearRow = await prisma.membershipYearVariant.findUnique({ where: { membershipYear: SWEEP_YEAR } });
+        await prisma.membershipYearVariant.upsert({
+            where: { membershipYear: SWEEP_YEAR },
+            create: { membershipYear: SWEEP_YEAR, shopifyVariantId: '990000000002655' },
+            update: { shopifyVariantId: '990000000002655' },
+        });
         await wipe();
         const r1 = await prisma.person.create({ data: { email: `rev1-${TAG}@example.com`, name: 'Rev1', isBackgroundCheckReviewer: true, household: { create: { name: `Rev1 HH ${TAG}` } } } });
         rev1 = r1.id;
@@ -71,6 +82,8 @@ describe('Membership renewal', () => {
         await prisma.backgroundCheckAttestation.deleteMany({ where: { processId: { gt: preMaxProcessId } } });
         await prisma.orgMembershipProcess.deleteMany({ where: { id: { gt: preMaxProcessId } } });
         await wipe();
+        await prisma.membershipYearVariant.deleteMany({ where: { membershipYear: SWEEP_YEAR } });
+        if (prevSweepYearRow) await prisma.membershipYearVariant.create({ data: prevSweepYearRow });
         await restoreBoardSettings();
         await prisma.$disconnect();
     });
@@ -164,19 +177,19 @@ describe('Membership renewal', () => {
         expect((await prisma.orgMembershipProcess.findUnique({ where: { id: proc.id } }))?.status).toBe('PENDING_PAYMENT');
     });
 
-    it('beginRenewal with an expired background check requires signature + consent; payment opens; review clears in parallel', async () => {
+    it('beginRenewal with an expired background check requires signature + a lead\'s check started; payment opens; review clears in parallel', async () => {
         await setBoundary(new Date(Date.UTC(2000, 7, 1)));
         const m = await makeActiveMembership('Stale', null); // no background check on record
         const proc = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.orgMembershipId, kind: 'RENEWAL', status: 'PENDING_RENEWAL' } });
         const out = await beginRenewal(proc.id, m.leadId);
         // Same external step as a new applicant — the member must sign a fresh
-        // agreement AND consent on Averity; nothing sits in the review queue yet.
+        // agreement AND start their check; nothing sits in the review queue yet.
         expect(out.status).toBe('PENDING_EXTERNAL_ACTION');
         expect(out.bgClearedAt).toBeNull();
         await expect(attest(rev1, proc.id, { result: 'APPROVE', subjectPersonIds: [m.leadId] })).rejects.toMatchObject({ code: 'wrong_phase' });
 
-        // Consent alone is not enough — the renewal re-signs the agreement too.
-        await markBgConsent(proc.id, rev1);
+        // A started check alone is not enough — the renewal re-signs the agreement too.
+        await markCheckStarted(m.leadId, m.leadId);
         expect((await prisma.orgMembershipProcess.findUnique({ where: { id: proc.id } }))?.status).toBe('PENDING_EXTERNAL_ACTION');
 
         // Signature lands → payment opens; the 2-of-N review runs in parallel:
@@ -184,8 +197,13 @@ describe('Membership renewal', () => {
         await markContractSigned(proc.id);
         expect((await prisma.orgMembershipProcess.findUnique({ where: { id: proc.id } }))?.status).toBe('PENDING_PAYMENT');
 
-        await attest(rev1, proc.id, { result: 'APPROVE', subjectPersonIds: [m.leadId] });
-        const final = await attest(rev2, proc.id, { result: 'APPROVE', subjectPersonIds: [m.leadId] });
-        expect(final.status).toBe('PENDING_PAYMENT');
+        // The mark opened the lead's check review; the review clears the lead and the renewal.
+        const review = await prisma.orgMembershipProcess.findFirstOrThrow({ where: { kind: 'PERSON_BG', requestedForHouseholdId: m.householdId } });
+        await attest(rev1, review.id, { result: 'APPROVE', subjectPersonIds: [m.leadId] });
+        const final = await attest(rev2, review.id, { result: 'APPROVE' });
+        expect(final.status).toBe('ACTIVE');
+        const renewal = await prisma.orgMembershipProcess.findUnique({ where: { id: proc.id } });
+        expect(renewal?.status).toBe('PENDING_PAYMENT');
+        expect(renewal?.bgClearedAt).not.toBeNull();
     });
 });

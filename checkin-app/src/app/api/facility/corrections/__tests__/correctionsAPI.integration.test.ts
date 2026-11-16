@@ -7,7 +7,7 @@
  * Covers: auth rejection (401/403), the tableName='Visit' pin (a Person audit
  * row must never appear), the flagged JSON-path filter, the synthesized bag (oldData never rides; newData is rebuilt to
  * {type, significance}; before/after Visit times are extracted from the raw
- * blobs), and Person name resolution.
+ * blobs), Person name resolution, and the merge-archive marker on survivors.
  */
 import { GET } from '@/app/api/facility/corrections/route';
 import prisma from '@/lib/prisma';
@@ -35,6 +35,7 @@ describe('GET /api/facility/corrections', () => {
     const personIds: number[] = [];
     const auditIds: number[] = [];
     const householdIds: number[] = [];
+    const mergeIds: number[] = [];
 
     beforeAll(async () => {
         const board = await prisma.person.create({
@@ -66,6 +67,7 @@ describe('GET /api/facility/corrections', () => {
 
     afterAll(async () => {
         await prisma.auditLog.deleteMany({ where: { id: { in: auditIds } } });
+        await prisma.personMerge.deleteMany({ where: { id: { in: mergeIds } } });
         await prisma.person.deleteMany({ where: { id: { in: personIds } } });
         await prisma.household.deleteMany({ where: { id: { in: householdIds } } });
     });
@@ -75,6 +77,83 @@ describe('GET /api/facility/corrections', () => {
         auditIds.push(row.id);
         return row;
     }
+
+    async function createPerson(name: string) {
+        const p = await prisma.person.create({
+            data: { name, email: `${name.replace(/\s+/g, '-').toLowerCase()}-${TAG}@example.com`, household: { create: { name: 'Test HH' } } },
+        });
+        householdIds.push(p.householdId);
+        personIds.push(p.id);
+        return p.id;
+    }
+
+    // A merge deletes the merged-away Person and leaves only the archive row.
+    async function mergeAway(name: string, toId: number) {
+        const fromId = await createPerson(name);
+        await prisma.person.delete({ where: { id: fromId } });
+        const merge = await prisma.personMerge.create({ data: { fromId, toId, snapshot: { name } } });
+        mergeIds.push(merge.id);
+        return fromId;
+    }
+
+    async function seedVisitRow(actorId: number, subjectId: number, visitId: number) {
+        return seed({
+            actorId, action: 'EDIT', tableName: 'Visit', affectedEntityId: visitId,
+            secondaryAffectedEntity: subjectId, timestamp: new Date(),
+            oldData: { id: visitId, personId: subjectId, arrivedAt: '2026-07-01T09:00:00.000Z' },
+            newData: { id: visitId, personId: subjectId, arrivedAt: '2026-07-01T09:00:00.000Z', type: 'lead_attendance_correction' },
+        });
+    }
+
+    type PersonOut = { id: number; name?: string | null; mergedArchive?: { fromId: number; toId: number }[] };
+
+    async function peopleById() {
+        const res = await GET(nextReq({ from: '2000-01-01', to: '2035-01-01', flagged: 'false' }));
+        expect(res.status).toBe(200);
+        const body = await res.json();
+        return new Map<number, PersonOut>(body.Person.map((p: PersonOut) => [p.id, p]));
+    }
+
+    it('names a merged-away person from the archive and marks their survivor', async () => {
+        const survivorId = await createPerson('Corr Survivor Named');
+        const goneId = await mergeAway('Corr Gone Named', survivorId);
+        await seedVisitRow(survivorId, goneId, 8);
+
+        const people = await peopleById();
+        expect(people.get(goneId)?.name).toBe('Corr Gone Named');
+        const survivor = people.get(survivorId);
+        expect(survivor?.name).toBe('Corr Survivor Named');
+        expect(survivor?.mergedArchive).toEqual([{ fromId: goneId, toId: survivorId }]);
+    });
+
+    it('adds a survivor no audit row names, carrying only its id and the archive row', async () => {
+        const survivorId = await createPerson('Corr Survivor Unnamed');
+        const goneId = await mergeAway('Corr Gone Unnamed', survivorId);
+        await seedVisitRow(leadId, goneId, 9);
+
+        const people = await peopleById();
+        expect(people.get(goneId)?.name).toBe('Corr Gone Unnamed');
+        const survivor = people.get(survivorId);
+        expect(survivor).toBeDefined();
+        expect(survivor?.name).toBeUndefined();
+        expect(survivor?.mergedArchive).toEqual([{ fromId: goneId, toId: survivorId }]);
+    });
+
+    it('collects both archive rows when two people merged into one survivor', async () => {
+        const survivorId = await createPerson('Corr Survivor Twice');
+        const goneA = await mergeAway('Corr Gone A', survivorId);
+        const goneB = await mergeAway('Corr Gone B', survivorId);
+        await seedVisitRow(goneA, goneB, 10);
+
+        const people = await peopleById();
+        expect(people.get(goneA)?.name).toBe('Corr Gone A');
+        expect(people.get(goneB)?.name).toBe('Corr Gone B');
+        expect(people.get(survivorId)?.mergedArchive).toEqual(expect.arrayContaining([
+            { fromId: goneA, toId: survivorId },
+            { fromId: goneB, toId: survivorId },
+        ]));
+        expect(people.get(survivorId)?.mergedArchive).toHaveLength(2);
+    });
 
     it('401 without a session', async () => {
         mockSession.mockResolvedValue(null);

@@ -568,14 +568,6 @@ describe("findOrCreateInKindJournal", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("debits an account a retired role still holds in the books map", async () => {
-    fetchMock
-      .mockResolvedValueOnce(rows("JournalEntry", []))
-      .mockResolvedValueOnce(prefs("2025-02-28"))
-      .mockResolvedValueOnce(json({ JournalEntry: { Id: "89" } }));
-    await expect(findOrCreateInKindJournal(client(), jreq({ accounts: { ...accounts, FIXED_ASSETS: "150", INKIND_EXPENSE: "600" } }))).resolves.toEqual({ kind: "created", id: "89" });
-  });
-
   it("refuses an unbalanced entry, before reading QuickBooks", async () => {
     const lines = jreq().lines.map((l) => (l.accountId === "150" ? { ...l, amountCents: 99_99 } : l));
     await expect(findOrCreateInKindJournal(client(), jreq({ lines }))).rejects.toThrow(/not balanced/);

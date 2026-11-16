@@ -172,8 +172,8 @@ describe("expense — field stripping", () => {
 
   it("confines an approver's list to their bucket's expenses", async () => {
     const approver = await loginAs(APPROVER);
-    const { json } = await api<ExpenseRow[]>(approver, "/api/expense/expenses");
-    expect(json.map((e) => e.id)).toEqual([PROGRAM_EXPENSE]);
+    const { json } = await api<{ Expense: ExpenseRow[] }>(approver, "/api/expense/expenses");
+    expect(json.Expense.map((e) => e.id)).toEqual([PROGRAM_EXPENSE]);
     expect((await api(approver, `/api/expense/expenses/${HELD_EXPENSE}`)).status).toBe(404);
   });
 });

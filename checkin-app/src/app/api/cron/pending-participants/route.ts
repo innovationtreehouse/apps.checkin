@@ -81,7 +81,8 @@ export const GET = withCron(async () => {
                 // Never auto-removed: flagged for the board to act on.
                 overdueCount++;
                 overdueDigest.push({ name: record.person.name ?? "(no name on file)", programName: record.program.name, diffDays });
-            } else if (diffDays === 6 || diffDays === 3 || diffDays === 1) {
+            } else if (record.program.phase !== "FINISHED" && (diffDays === 6 || diffDays === 3 || diffDays === 1)) {
+                // An ended program offers no payment, so its families get no reminder to pay.
                 warnedCount++;
                 const key = diffDays === 6
                     ? "participant.pendingWarning.day6"

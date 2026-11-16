@@ -11,6 +11,6 @@
     { "name": "a fractional quantity", "expect": "refused", "status": 400, "message": "expected int, received number", "set": { "lineItems.0.quantityDelta": 1.5 } },
     { "name": "an empty receiptId", "expect": "refused", "status": 400, "message": "at source.receiptId", "set": { "receiptId": "" } },
     { "name": "a blank orgId", "expect": "refused", "status": 400, "message": "at orgId", "set": { "orgId": "  " } },
-    { "name": "a provisional line whose GTIN is outside the provisional range", "expect": "refused", "status": 400, "message": "Not a provisional GTIN", "set": { "lineItems.0.isProvisional": true } }
+    { "name": "a provisional line whose GTIN is outside the provisional range", "expect": "refused", "status": 400, "message": "Not a provisional Part ID", "set": { "lineItems.0.isProvisional": true } }
   ]
 }

@@ -57,7 +57,7 @@ describeDb("manual upload", () => {
     expect(ports.calls.pushes[0]).toMatchObject({ receiptId: r.id, currency: "USD" });
   });
 
-  it.each(["$", "US$", "XX"])("a finalized receipt with a stored currency of %j stays unpushed, audited as refused", async (code) => {
+  it.each(["$", "US$", "XX"])("a finalized receipt with a stored currency of %j stays unpushed, audited as a data failure", async (code) => {
     ports.fail.push = true;
     const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
     await db.receiptDetail.update({ where: { id: r.id }, data: { currency: code } });
@@ -65,7 +65,7 @@ describeDb("manual upload", () => {
     ports.calls.pushes.length = 0;
     expect(await pushReceipt(r.id, null)).toBe(false);
     expect(ports.calls.pushes).toHaveLength(0);
-    expect(await actions(r.id)).toContain("push_refused");
+    expect(await db.receiptAuditLog.findFirst({ where: { receiptId: r.id, action: "push_failed" }, orderBy: { id: "desc" }, select: { valueBefore: true } })).toEqual({ valueBefore: "data" });
   });
 
   it("with no sink bound, the inert port leaves the receipt unpushed", async () => {
@@ -255,14 +255,14 @@ describeDb("auto upload (OCR at intake)", () => {
     expect(await actions(r.id)).toContain("ocr_failed:settings");
   });
 
-  it("after an outage, tells the submitter to read it again later and spends no allowance", async () => {
+  it("after an outage, tells the submitter to read it again later", async () => {
     configure({ receiptSink: ports.receiptSink, ocr: failingOcr("system", "the reading service did not answer") });
     const r = await receiptService.upload(textFile(), "text/plain", {});
     expect(r.state).toBe("ocr_failed");
     expect(r.validationNotes).toBe(
-      'Automatic reading is unavailable right now: the reading service did not answer. Press "Read it again" later, or type the details. This didn\'t count against your daily reading allowance.',
+      'Automatic reading is unavailable right now: the reading service did not answer. Press "Read it again" later, or type the details.',
     );
-    expect(await actions(r.id)).toEqual(expect.arrayContaining(["ocr_call_refunded", "ocr_failed:system"]));
+    expect(await actions(r.id)).toContain("ocr_failed:system");
   });
 
   it("says when the reading service needs reconnecting", async () => {
@@ -272,12 +272,11 @@ describeDb("auto upload (OCR at intake)", () => {
     expect(await actions(r.id)).toContain("ocr_failed:connection");
   });
 
-  it("names what was wrong with a receipt that can't be read, and keeps the call spent", async () => {
+  it("names what was wrong with a receipt that can't be read", async () => {
     configure({ receiptSink: ports.receiptSink, ocr: failingOcr("data", "no line items were found") });
     const r = await receiptService.upload(textFile(), "text/plain", {});
     expect(r.validationNotes).toBe("This receipt couldn't be read automatically: no line items were found. Type the details.");
     expect(await actions(r.id)).toContain("ocr_failed:data");
-    expect(await actions(r.id)).not.toContain("ocr_call_refunded");
   });
 
   it("OCR output never sets reimbursement, reimbursee or vendor", async () => {

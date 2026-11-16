@@ -38,7 +38,7 @@ describe("item account save", () => {
   it("refuses an account of another type, naming it", async () => {
     await expect(save({ budgetOwnerId: null, quickBooksAccountId: "1001" })).rejects.toMatchObject({
       status: 400,
-      message: "An item's account takes an Income or Other Income account; Checking is Bank",
+      code: "quickbooks-list-stale", message: "An item's account takes an Income or Other Income account; QuickBooks' list in the app shows Checking as Bank. If you changed it in QuickBooks, press Update now, then save again.",
     });
     expect(itemCategoryService.setCategory).not.toHaveBeenCalled();
   });

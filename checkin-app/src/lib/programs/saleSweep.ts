@@ -69,6 +69,36 @@ async function hideEndedProducts(now: Date): Promise<number> {
 }
 
 /**
+ * Takes both store products of every ended (FINISHED) program off sale, so an
+ * ended program can't be paid for; the Board settles its unpaid claims by hand.
+ * Each product's stamp is set only after Shopify confirms, so a failed hide
+ * (already alerted) is retried on the next run. Nothing re-lists either product.
+ */
+async function hideFinishedProducts(now: Date): Promise<number> {
+    const owed = await prisma.program.findMany({
+        where: {
+            phase: "FINISHED",
+            OR: [
+                { productHiddenAt: null, shopifyProductId: { not: null } },
+                { claimantProductHiddenAt: null, claimantShopifyProductId: { not: null } },
+            ],
+        },
+        select: { id: true, shopifyProductId: true, productHiddenAt: true, claimantShopifyProductId: true, claimantProductHiddenAt: true },
+    });
+    let hidden = 0;
+    for (const program of owed) {
+        if (program.shopifyProductId && !program.productHiddenAt && await setProgramProductOffSale(program)) {
+            hidden += (await prisma.program.updateMany({ where: { id: program.id, productHiddenAt: null }, data: { productHiddenAt: now } })).count;
+        }
+        if (program.claimantShopifyProductId && !program.claimantProductHiddenAt
+            && await setProgramProductOffSale({ shopifyProductId: program.claimantShopifyProductId })) {
+            hidden += (await prisma.program.updateMany({ where: { id: program.id, claimantProductHiddenAt: null }, data: { claimantProductHiddenAt: now } })).count;
+        }
+    }
+    return hidden;
+}
+
+/**
  * One week after a sale ends (saleEndedAt is stamped on the off-sale date's
  * daily run), emails the board the claims still unpaid — once
  * per program. The conditional claim on unpaidClaimsNotifiedAt makes a
@@ -118,7 +148,8 @@ async function notifyUnpaidClaims(now: Date): Promise<number> {
 export async function runSaleSweep(now: Date = new Date()): Promise<{ salesEnded: number; productsHidden: number; unpaidNotified: number } | { error: string }> {
     try {
         const salesEnded = await endDueSales(now);
-        return { salesEnded, productsHidden: await hideEndedProducts(now), unpaidNotified: await notifyUnpaidClaims(now) };
+        const productsHidden = await hideEndedProducts(now) + await hideFinishedProducts(now);
+        return { salesEnded, productsHidden, unpaidNotified: await notifyUnpaidClaims(now) };
     } catch (e) {
         logger.error("[sale-sweep] failed:", e);
         return { error: e instanceof Error ? e.message : String(e) };

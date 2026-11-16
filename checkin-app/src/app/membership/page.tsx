@@ -11,12 +11,12 @@ import { useMembershipPage } from "./useMembershipPage";
 import IntakePanel from "./IntakePanel";
 import ExternalActionPanel from "./ExternalActionPanel";
 import PaymentPanel from "./PaymentPanel";
-import OwnBackgroundCheckPanel from "./OwnBackgroundCheckPanel";
+import BackgroundChecksPanel from "./BackgroundChecksPanel";
 
 export default function MembershipPage() {
   const {
-    session, sessionStatus, state, loading, loadError, saving, setSaving, message, warnings, fieldErrors, clearErr, form,
-    load, startApplication, save, submit, startSigning, renew, payment, bg,
+    session, sessionStatus, state, loading, loadError, saving, setSaving, message, warnings, fieldErrors, clearErr, form, saveLocked,
+    load, startApplication, save, submit, startSigning, renew, payment,
   } = useMembershipPage();
   const confirmNav = useConfirmNav();
 
@@ -49,7 +49,7 @@ export default function MembershipPage() {
   const isActive = state?.membershipStatus === "ACTIVE";
   const isRenewal = state?.process?.kind === "RENEWAL";
   // Steps whose every action is the lead's — household details, contract signing,
-  // background-check consent, membership fee and checkout. Each backing route refuses a
+  // membership fee and checkout. Each backing route refuses a
   // non-lead, so rendering the controls for one would only produce a 403.
   const isLeadOnlyStep = isIntake || inStatus === "PENDING_EXTERNAL_ACTION" || inStatus === "PENDING_PAYMENT";
 
@@ -92,7 +92,7 @@ export default function MembershipPage() {
         </Card>
       )}
 
-      {state?.ownBackgroundCheck && <OwnBackgroundCheckPanel check={state.ownBackgroundCheck} />}
+      {state?.ownBackgroundCheck && <BackgroundChecksPanel selfId={session.user.id} ownCheck={state.ownBackgroundCheck} onMarked={load} />}
 
       {!state?.process ? (
         isActive ? (
@@ -164,9 +164,9 @@ export default function MembershipPage() {
                 </Text>
               </Card>
             ) : isIntake ? (
-              <IntakePanel form={form} fieldErrors={fieldErrors} clearErr={clearErr} message={message} saving={saving} onSave={save} onSubmit={submit} />
+              <IntakePanel form={form} fieldErrors={fieldErrors} clearErr={clearErr} message={message} saving={saving} locked={saveLocked} onSave={save} onSubmit={submit} />
             ) : inStatus === "PENDING_EXTERNAL_ACTION" ? (
-              <ExternalActionPanel external={state.external} isRenewal={isRenewal} saving={saving} onSign={startSigning} onRefresh={load} bg={bg} />
+              <ExternalActionPanel external={state.external} isRenewal={isRenewal} saving={saving} onSign={startSigning} onRefresh={load} />
             ) : inStatus === "PENDING_PAYMENT" ? (
               <PaymentPanel processId={state.process.id} bgCleared={!!state.external?.bgCleared} saving={saving} setSaving={setSaving} controls={payment} />
             ) : inStatus === "PENDING_BG_CLEARANCE" ? (

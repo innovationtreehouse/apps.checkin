@@ -1,20 +1,18 @@
 "use client";
 
 import { useState, Suspense } from "react";
-import { Alert, Button, Card, Center, Group, Loader, Modal, Stack, Switch, Text, Textarea } from "@mantine/core";
+import { Alert, Button, Card, Center, Group, Loader, Modal, Select, Stack, Switch, Text, Textarea } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
-import { AlertBanner } from "@/components/admin/AlertBanner";
-import { notifications } from "@mantine/notifications";
-import { LoadError } from "@checkin/component-ui";
+import { errorMessage, HttpError, LoadError, showError, showSuccess } from "@checkin/component-ui";
 import { modals } from "@mantine/modals";
 import { useSession } from "next-auth/react";
-import { useLoad } from "@/lib/api";
+import { api, useLoad } from "@/lib/api";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
 import { sharesHousehold } from "@/lib/conflictOfInterest";
 import { PageLoader } from "@/components/ui/PageLoader";
+import { ReasonConfirm } from "@/components/ReasonConfirm";
 import { StatusFilterBadge, ActiveFilterNotice, useStatusFilter } from "@/components/StatusFilter";
-import { CLOSABLE_STATUSES, awaitingBgReview, refundLandsIn, type ProcessStatus } from "@/lib/membership/lifecycle";
-import { clearingApprovals } from "@/lib/membership/approvals";
+import { CLOSABLE_STATUSES, awaitingBgReview, refundLandsIn, type ProcessKind, type ProcessStatus } from "@/lib/membership/lifecycle";
 
 interface Person {
   id: number;
@@ -39,7 +37,8 @@ interface ProcessRow {
   bgClearedAt: string | null;
   paidAt: string | null;
   attestations: Attestation[];
-  subjectPerson: { id: number; name: string | null } | null;
+  requestedForHouseholdId: number | null;
+  subjectPerson: { id: number; name: string | null; householdId: number | null } | null;
   orgMembership: {
     householdId: number;
     isVolunteerFamily: boolean;
@@ -71,11 +70,29 @@ const kindLabel = (kind: string) => KIND_LABELS[kind] ?? kind;
 const statusColor = (status: string) => STATUS_COLORS[status] || "gray";
 const statusLabel = (status: string) => (status === "ARCHIVED" ? "CLOSED" : status.replace(/_/g, " "));
 
-// The background check is a parallel track: an application still needs review
-// when it hasn't cleared and is past consent. ONE definition, shared with the
-// server (fix #1): awaitingBgReview.has — client-safe (booleans in, no Prisma).
+// A check review in the reviewer queue. ONE definition, shared with the server:
+// awaitingBgReview.has — client-safe (booleans in, no Prisma).
 const awaitingBg = (r: ProcessRow) =>
-  awaitingBgReview.has({ status: r.status as ProcessStatus, bgConsentAt: !!r.bgConsentAt, bgClearedAt: !!r.bgClearedAt });
+  awaitingBgReview.has({ kind: r.kind as ProcessKind, status: r.status as ProcessStatus, bgConsentAt: !!r.bgConsentAt, bgClearedAt: !!r.bgClearedAt });
+
+const leadsOf = (r: ProcessRow) => (r.orgMembership?.household?.householdMembers ?? []).filter((p) => p.isHouseholdLead);
+
+// A household's check is started when an open review has a lead's check started, or a
+// review it asked for waits to be named, or the application carries the legacy flag.
+// Mirrors householdCheckStarted on the server, from rows this page already has.
+const householdCheckStarted = (r: ProcessRow, rows: readonly ProcessRow[]) => {
+  const householdId = r.orgMembership?.householdId;
+  if (householdId === undefined) return false;
+  if (r.bgConsentAt) return true;
+  const leadIds = new Set(leadsOf(r).map((p) => p.id));
+  return rows.some((p) =>
+    p.kind === "PERSON_BG" && (p.status === "PENDING_BG_REVIEW" || p.status === "BLOCKED") &&
+    ((!!p.bgConsentAt && !!p.subjectPerson && leadIds.has(p.subjectPerson.id)) || (!p.subjectPerson && p.requestedForHouseholdId === householdId)));
+};
+
+// A household application with its check started and not cleared waits on its people's check reviews.
+const waitingOnCheckReview = (r: ProcessRow, rows: readonly ProcessRow[]) =>
+  r.kind !== "PERSON_BG" && !!r.orgMembership && !r.bgClearedAt && r.status !== "BLOCKED" && householdCheckStarted(r, rows);
 
 // Mirror archiveApplication's and recordRefund's gates; the server re-checks.
 const closable = (r: ProcessRow) => !r.paidAt && (CLOSABLE_STATUSES as readonly string[]).includes(r.status);
@@ -97,10 +114,8 @@ function ApplicationsBoard() {
   // the EXTERNAL-phase route).
   // The disabled state is UX only — the server is the real enforcement.
   const ownHousehold = (r: ProcessRow) =>
-    sharesHousehold(me?.householdId, r.orgMembership?.householdId);
+    [r.orgMembership?.householdId, r.subjectPerson?.householdId, r.requestedForHouseholdId].some((h) => sharesHousehold(me?.householdId, h ?? null));
   const [busyId, setBusyId] = useState<number | null>(null);
-  const [message, setMessage] = useState("");
-  const [messageId, setMessageId] = useState<number | null>(null);
   const { active, toggle, clear } = useStatusFilter();
   const [certifyOpened, { open: openCertify, close: closeCertify }] = useDisclosure(false);
   const [pendingCertify, setPendingCertify] = useState<number | null>(null);
@@ -115,102 +130,155 @@ function ApplicationsBoard() {
   );
   const rows = data?.processes ?? [];
 
-  const act = async (processId: number, action: string, extra?: Record<string, unknown>) => {
+  // The row stays busy until the list re-reads, so a second click can't act on a stale row. A 409 means the
+  // row changed under the board, so it re-reads too.
+  const post = async (processId: number, path: string, body: Record<string, unknown>, done: string) => {
     setBusyId(processId);
-    setMessageId(processId);
-    setMessage("");
     try {
-      const res = await fetch("/api/membership-ops/applications/external", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processId, action, ...extra }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        notifications.show({ message: "Updated." });
-        reload();
-        notifyNavRefresh();
-      } else {
-        setMessage(data.error || "Action failed.");
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
+      await api(path.startsWith("/") ? path : `/api/membership-ops/applications/${path}`, { method: "POST", body: JSON.stringify({ processId, ...body }), invalidate: false });
+      showSuccess(done);
+      notifyNavRefresh();
+      await reload();
+    } catch (e) {
+      // The title names the application, since the message sits away from its row.
+      const row = rows.find((r) => r.id === processId);
+      showError(errorMessage(e), { key: `application-${processId}`, title: row ? processLabel(row) : `Application #${processId}` });
+      if (e instanceof HttpError && e.status === 409) await reload();
     } finally {
       setBusyId(null);
     }
   };
 
-  const resetReview = async (processId: number) => {
-    setBusyId(processId);
-    setMessageId(processId);
-    setMessage("");
-    try {
-      const res = await fetch("/api/membership-ops/applications/review-override", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processId, action: "reset" }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        notifications.show({ message: "Sent back for re-review." });
-        // A repeated reset passes the server's check once the review is open, so the row stays busy until it re-reads.
-        await reload();
-        notifyNavRefresh();
-      } else if (data.code === "wrong_phase") {
-        notifications.show({ color: "red", message: data.error || "This application is no longer blocked.", autoClose: false });
-        reload();
-      } else {
-        setMessage(data.error || "Reset failed.");
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    } finally {
-      setBusyId(null);
-    }
+  const act = (processId: number, action: string) => post(processId, "external", { action }, "Updated.");
+  const resetReview = (processId: number, reason: string, wrongPerson: boolean) =>
+    post(processId, "review-override", { action: "reset", reason, wrongPerson }, "Sent back for re-review.");
+  const releaseApplication = (processId: number, reason: string) =>
+    post(processId, "review-override", { action: "release", reason }, "Released — the application moves on.");
+  const archive = (processId: number) => post(processId, "archive", {}, "Application closed.");
+  const markLeadCheckStarted = (processId: number, personId: number) =>
+    post(processId, "/api/membership-audit/person-bg", { personId }, "Check marked started.");
+  const dismissReview = (processId: number, reason: string) =>
+    post(processId, "/api/membership/reviews/dismiss", { reason }, "Dismissed: the check is no longer marked started.");
+
+  const confirmMarkLead = (r: ProcessRow) => {
+    const leads = leadsOf(r);
+    let personId: number | null = leads.length === 1 ? leads[0].id : null;
+    const modalId = modals.openConfirmModal({
+      title: "Mark a lead's check started",
+      children: (
+        <Stack gap="xs">
+          <Text size="sm">Pick the lead whose check was started in the background-check tool. Their review goes to the reviewers.</Text>
+          <Select
+            label="Lead"
+            required
+            data={leads.map((p) => ({ value: String(p.id), label: p.name || p.email || `Person #${p.id}` }))}
+            defaultValue={personId === null ? null : String(personId)}
+            onChange={(v) => { personId = v ? Number(v) : null; }}
+          />
+        </Stack>
+      ),
+      labels: { confirm: "Mark check started", cancel: "Cancel" },
+      closeOnConfirm: false,
+      onConfirm: () => {
+        if (personId === null) {
+          showError("Pick a lead.");
+          return;
+        }
+        modals.close(modalId);
+        markLeadCheckStarted(r.id, personId);
+      },
+    });
   };
 
-  const archive = async (processId: number) => {
-    setBusyId(processId);
-    setMessageId(processId);
-    setMessage("");
-    try {
-      const res = await fetch("/api/membership-ops/applications/archive", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processId }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        notifications.show({ message: "Application closed." });
-        reload();
-        notifyNavRefresh();
-      } else {
-        setMessage(data.error || "Couldn't close the application.");
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    } finally {
-      setBusyId(null);
-    }
+  const confirmDismiss = (r: ProcessRow) => {
+    let reason = "";
+    const modalId = modals.openConfirmModal({
+      title: "Dismiss: opened by mistake",
+      children: (
+        <Stack gap="xs">
+          <Text size="sm">
+            This undoes the &quot;check started&quot; mark on <strong>{processLabel(r)}</strong>. It decides nothing:
+            no approval, no rejection. Check the background-check tool first.
+          </Text>
+          <Textarea label="Reason" required autosize minRows={2} onChange={(e) => { reason = e.currentTarget.value; }} />
+        </Stack>
+      ),
+      labels: { confirm: "Dismiss", cancel: "Cancel" },
+      closeOnConfirm: false,
+      onConfirm: () => {
+        if (!reason.trim()) {
+          showError("A reason is required to dismiss a check review.");
+          return;
+        }
+        modals.close(modalId);
+        dismissReview(r.id, reason.trim());
+      },
+    });
   };
 
-  // An awaiting row only ever holds APPROVE attestations (any REJECT blocks it).
+  // An awaiting review only ever holds APPROVE attestations (any REJECT blocks it).
   const approvals = (r: ProcessRow) => r.attestations.filter((a) => a.result === "APPROVE").length;
-  // Approvals that count toward clearing; unnamed or other-adult approvals don't.
-  const counted = (r: ProcessRow) => clearingApprovals(r.attestations, r.kind === "PERSON_BG");
 
+  // Every reset takes a reason. A review a household asked for can also be reset as
+  // naming the wrong person, which returns it to no person.
   const confirmResetReview = (r: ProcessRow) => {
-    modals.openConfirmModal({
+    let wrongPerson = false;
+    const modalId = `reset-review-${r.id}`;
+    modals.open({
+      modalId,
       title: "Start this background-check review over?",
       children: (
-        <Text size="sm">
-          This discards the {approvals(r)} approval(s) recorded for <strong>{processLabel(r)}</strong>{" "}
-          and asks the reviewers to start again. Use it when an approval was recorded by
-          mistake — the check itself has not cleared yet, so nothing else changes.
-        </Text>
+        <ReasonConfirm
+          confirmLabel="Start over"
+          missingReason="A reason is required to start a review over."
+          onCancel={() => modals.close(modalId)}
+          onConfirm={(reason) => {
+            modals.close(modalId);
+            resetReview(r.id, reason, wrongPerson);
+          }}
+        >
+          <Text size="sm">
+            This discards the {r.attestations.length} decision(s) recorded for <strong>{processLabel(r)}</strong>{" "}
+            and asks the reviewers to start again. The check itself has not cleared, so nothing else changes.
+          </Text>
+          {r.kind === "PERSON_BG" && r.requestedForHouseholdId !== null && r.subjectPerson && (
+            <Switch
+              label="The review names the wrong person — the next reviewer names again"
+              onChange={(e) => { wrongPerson = e.currentTarget.checked; }}
+            />
+          )}
+        </ReasonConfirm>
       ),
-      labels: { confirm: "Discard approvals", cancel: "Cancel" },
-      onConfirm: () => resetReview(r.id),
+    });
+  };
+
+  // A blocked household application with nobody in its household under a blocked check
+  // review: whoever's rejection blocked it has left. The server re-checks.
+  const releasable = (r: ProcessRow) =>
+    r.kind !== "PERSON_BG" && r.status === "BLOCKED" && !!r.orgMembership &&
+    !rows.some((p) => p.kind === "PERSON_BG" && p.status === "BLOCKED" && p.subjectPerson?.householdId === r.orgMembership?.householdId);
+
+  const confirmRelease = (r: ProcessRow) => {
+    const modalId = `release-${r.id}`;
+    modals.open({
+      modalId,
+      title: "Release this household from a departed person's rejection?",
+      children: (
+        <ReasonConfirm
+          confirmLabel="Release"
+          missingReason="A reason is required to release a household."
+          onCancel={() => modals.close(modalId)}
+          onConfirm={(reason) => {
+            modals.close(modalId);
+            releaseApplication(r.id, reason);
+          }}
+        >
+          <Text size="sm">
+            The person whose check was rejected has left <strong>{processLabel(r)}</strong>. Releasing lets this
+            application move on. Their rejection stays on them and still blocks any household they are in.
+          </Text>
+        </ReasonConfirm>
+      ),
     });
   };
 
@@ -234,83 +302,9 @@ function ApplicationsBoard() {
 
   // Board reopen of a closed application — the server restores the step it was
   // closed from, or refuses with the reason.
-  const unarchive = async (processId: number) => {
-    setBusyId(processId);
-    setMessageId(processId);
-    setMessage("");
-    try {
-      const res = await fetch("/api/membership-ops/applications/unarchive", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processId }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        notifications.show({ message: "Application reopened." });
-        reload();
-        notifyNavRefresh();
-      } else {
-        notifications.show({ color: "red", message: data.error || "Couldn't reopen the application.", autoClose: false });
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const certify = async (processId: number, reason: string) => {
-    setBusyId(processId);
-    setMessageId(processId);
-    setMessage("");
-    try {
-      const res = await fetch("/api/membership-ops/applications/certify-payment", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processId, reason }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        notifications.show({ message: "Certified — membership activated." });
-        reload();
-        notifyNavRefresh();
-      } else if (data.code === "wrong_phase") {
-        notifications.show({ color: "red", message: data.error || "This application is no longer awaiting payment.", autoClose: false });
-        reload();
-      } else {
-        setMessage(data.error || "Certification failed.");
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const recordRefund = async (processId: number, reason: string) => {
-    setBusyId(processId);
-    setMessageId(processId);
-    setMessage("");
-    try {
-      const res = await fetch("/api/membership-ops/applications/refund", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processId, reason }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        notifications.show({ message: "Refund recorded." });
-        reload();
-        notifyNavRefresh();
-      } else {
-        setMessage(data.error || "Couldn't record the refund.");
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    } finally {
-      setBusyId(null);
-    }
-  };
+  const unarchive = (processId: number) => post(processId, "unarchive", {}, "Application reopened.");
+  const certify = (processId: number, reason: string) => post(processId, "certify-payment", { reason }, "Certified — membership activated.");
+  const recordRefund = (processId: number, reason: string) => post(processId, "refund", { reason }, "Refund recorded.");
 
   const handleRefund = (processId: number) => {
     setPendingRefund(processId);
@@ -360,7 +354,7 @@ function ApplicationsBoard() {
     <Stack>
       <Text c="dimmed">
         In-flight applications. Use the manual controls below to confirm the contract was signed
-        or that background-check consent was received. (The contract is also confirmed
+        or to mark a lead&apos;s background check started. (The contract is also confirmed
         automatically once the Zoho webhook is configured.)
       </Text>
 
@@ -444,17 +438,17 @@ function ApplicationsBoard() {
                     )}
                   </div>
                   <div>
-                    <Text size="xs" c="dimmed" mb={4}>Background-check consent</Text>
-                    {r.bgConsentAt ? (
-                      <Text c="green" fw={600}>✓ Received</Text>
+                    <Text size="xs" c="dimmed" mb={4}>Background check started</Text>
+                    {householdCheckStarted(r, rows) ? (
+                      <Text c="green" fw={600}>✓ Started</Text>
                     ) : (
-                      <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => act(r.id, "mark-bg-consent")}>
-                        Confirm BG consent
+                      <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || leadsOf(r).length === 0} onClick={() => confirmMarkLead(r)}>
+                        Mark a lead&apos;s check started
                       </Button>
                     )}
                   </div>
-                  {ownHousehold(r) && (
-                    <Text size="xs" c="dimmed">You can&apos;t confirm your own household&apos;s contract or consent — someone outside your household must.</Text>
+                  {ownHousehold(r) && !r.contractSignedAt && (
+                    <Text size="xs" c="dimmed">You can&apos;t confirm your own household&apos;s contract — someone outside your household must.</Text>
                   )}
                 </Group>
               )}
@@ -462,8 +456,8 @@ function ApplicationsBoard() {
               {awaitingBg(r) && (
                 <Group mt="md" gap="md" wrap="wrap" align="center">
                   <Text size="sm" c="dimmed">
-                    Background check (in parallel) — <Text component="span" fw={600}>{counted(r)}/2</Text> approvals toward clearance.
-                    {approvals(r) > counted(r) && ` ${approvals(r) - counted(r)} more recorded that name no one or a different adult — start the review over to clear it.`}
+                    Background check — <Text component="span" fw={600}>{approvals(r)}/2</Text> approvals toward clearance
+                    {r.subjectPerson ? "." : "; the first reviewer names the person."}
                   </Text>
                   {/* The board's way back from a reviewer's misclick: the review is still
                       open, so discarding the attestations undoes it with nothing to unwind. */}
@@ -472,7 +466,18 @@ function ApplicationsBoard() {
                       Discard approvals — start the review over
                     </Button>
                   )}
+                  {me?.isBoardMember && r.attestations.length === 0 && (
+                    <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => confirmDismiss(r)}>
+                      Dismiss: opened by mistake
+                    </Button>
+                  )}
                 </Group>
+              )}
+
+              {waitingOnCheckReview(r, rows) && (
+                <Text size="sm" c="dimmed" mt="md">
+                  Background check (in parallel) — waiting on the household&apos;s check review.
+                </Text>
               )}
 
               {r.status === "PENDING_PAYMENT" && (
@@ -507,12 +512,23 @@ function ApplicationsBoard() {
                       <Text size="sm" mb="sm">
                         A reset sends the review back for two new approvals. The reviewer who rejected
                         may also change their answer to approve, which does the same and counts as the first.
+                        An application blocked by a person&apos;s check review moves on when that review is reset.
                       </Text>
-                      <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => resetReview(r.id)}>
-                        Reset for re-review
-                      </Button>
+                      <Group gap="xs">
+                        <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => confirmResetReview(r)}>
+                          Reset for re-review
+                        </Button>
+                        {releasable(r) && (
+                          <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => confirmRelease(r)}>
+                            Release
+                          </Button>
+                        )}
+                      </Group>
+                      {releasable(r) && (
+                        <Text size="xs" c="dimmed" mt="sm">Nobody in this household is under a rejected check review now, so the Board can release it.</Text>
+                      )}
                       {ownHousehold(r) && (
-                        <Text size="xs" c="dimmed" mt="sm">You can&apos;t reset your own household&apos;s review — someone outside your household must.</Text>
+                        <Text size="xs" c="dimmed" mt="sm">You can&apos;t reset or release your own household&apos;s application — someone outside your household must.</Text>
                       )}
                     </>
                   ) : (
@@ -534,10 +550,6 @@ function ApplicationsBoard() {
                         : "After refunding in Shopify. The application goes back to awaiting payment; the background check is unchanged."}
                   </Text>
                 </Group>
-              )}
-
-              {messageId === r.id && (
-                <AlertBanner message={message} tone="error" mt="md" />
               )}
 
               <Group justify="flex-end" mt="md">

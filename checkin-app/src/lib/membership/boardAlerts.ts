@@ -1,9 +1,12 @@
+import prisma from "@/lib/prisma";
 import { emailBoardMembers } from "@/lib/emailRecipients";
 import { config } from "@/lib/config";
+import { logger } from "@/lib/logger";
+import { isYouth } from "@/lib/time";
 
 /**
- * Board-facing membership email alerts. Kept dependency-free (delegates to the
- * prisma + email + logger only emailRecipients helper) so both the review path
+ * Board-facing membership email alerts. Kept dependency-light (prisma plus the
+ * emailRecipients helper) so both the review path
  * (review.ts) and the payment path (payment.ts) can fire them without an import
  * cycle.
  */
@@ -20,6 +23,59 @@ export async function notifyBoardPaidReject(processId: number): Promise<void> {
         processId: String(processId),
         actionLink: `${config.baseUrl()}/membership-ops/applications`,
     }, "Paid-reject board ping failed:");
+}
+
+/**
+ * Email board members that a check review was rejected where no paid application
+ * was blocked: an ACTIVE household, one with no open application, or one
+ * whose open application is unpaid. Nothing changes on the membership; the Board decides.
+ * Never throws: it runs after the decision has committed.
+ * A paid application blocked by the rejection gets `notifyBoardPaidReject` instead.
+ */
+export async function notifyBoardCheckRejected(reviewId: number): Promise<void> {
+    const review = await prisma.orgMembershipProcess.findUnique({
+        where: { id: reviewId },
+        select: { subjectPerson: { select: { name: true, household: { select: { name: true } } } } },
+    }).catch((error: unknown) => {
+        logger.error("Check-rejected board ping failed:", { reviewId }, error);
+        return null;
+    });
+    const person = review?.subjectPerson;
+    if (!person) return;
+    await emailBoardMembers("board.checkRejected", {
+        personName: person.name,
+        householdName: person.household.name,
+        reviewId: String(reviewId),
+        actionLink: `${config.baseUrl()}/membership-ops/applications`,
+    }, "Check-rejected board ping failed:");
+}
+
+/**
+ * Email board members about each household lead a save has just shown to be under 18.
+ * `before` is each saved person's date of birth before the save; only a lead who was
+ * not a youth then is named, so re-saving the same date sends nothing. Call after the
+ * save commits. Never throws.
+ */
+export async function notifyBoardOfYouthLeads(before: { id: number; dateOfBirth: Date | null }[]): Promise<void> {
+    const newlyYouth = before.filter((p) => !isYouth(p.dateOfBirth)).map((p) => p.id);
+    if (newlyYouth.length === 0) return;
+    let leads;
+    try {
+        leads = await prisma.person.findMany({
+            where: { id: { in: newlyYouth }, isHouseholdLead: true },
+            select: { name: true, dateOfBirth: true, household: { select: { id: true, name: true } } },
+        });
+    } catch (error) {
+        logger.error("Youth-lead board ping failed:", { ids: newlyYouth }, error);
+        return;
+    }
+    for (const lead of leads.filter((p) => isYouth(p.dateOfBirth))) {
+        await emailBoardMembers("board.youthHouseholdLead", {
+            personName: lead.name,
+            householdName: lead.household.name,
+            actionLink: `${config.baseUrl()}/membership-ops/households/${lead.household.id}`,
+        }, "Youth-lead board ping failed:");
+    }
 }
 
 /** One-line human description per payment-exception kind, for the board email. */

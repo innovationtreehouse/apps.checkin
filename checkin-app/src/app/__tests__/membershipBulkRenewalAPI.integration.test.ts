@@ -4,7 +4,8 @@
 /**
  * Integration tests for the board's yearly "Open renewals" button: inside the
  * renewal window it opens a renewal for every ACTIVE household not already handled
- * this cycle (F-34), and refuses outside the window.
+ * this cycle (F-34), and refuses outside the window or while the coming year has
+ * no membership product.
  */
 
 import { POST as BULK } from '@/app/api/settings/membership/bulk-open-renewals/route';
@@ -12,7 +13,8 @@ import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
 import { sendEmail } from '@/lib/email';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
-import { liveMembershipYear } from '@/lib/membership/renewal';
+import { liveMembershipYear, membershipYearCycle } from '@/lib/membership/renewal';
+import { membershipYearLabel } from '@/lib/programYear';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 jest.mock('@/lib/email', () => ({ runPaced: (tasks: Array<() => Promise<unknown>>) => Promise.all(tasks.map((t) => t())), sendEmail: jest.fn().mockResolvedValue(true) }));
@@ -36,6 +38,15 @@ describe('Bulk renewal migration', () => {
     let sysId: number, boardId: number, plainId: number;
     let mA: number, mB: number, mHandled: number;
     let restoreBoardSettings: () => Promise<void>;
+    let comingYear: number;
+    let prevComingRow: { membershipYear: number; shopifyVariantId: string; productUrl: string | null } | null = null;
+    async function setComingRow() {
+        await prisma.membershipYearVariant.upsert({
+            where: { membershipYear: comingYear },
+            create: { membershipYear: comingYear, shopifyVariantId: '990000000001655' },
+            update: { shopifyVariantId: '990000000001655' },
+        });
+    }
 
     /** A boundary `daysAhead` from today (the window opens two months before it). */
     async function setBoundaryDaysAhead(daysAhead: number) {
@@ -46,6 +57,7 @@ describe('Bulk renewal migration', () => {
             create: { id: 1, standardMembershipFeeCents: 0, volunteerMembershipFeeCents: 0, orgMembershipYearBoundary: boundary },
             update: { orgMembershipYearBoundary: boundary },
         });
+        return boundary;
     }
     let preMaxProcessId = 0;
 
@@ -80,12 +92,16 @@ describe('Bulk renewal migration', () => {
         // Already renewed for the coming year inside this window: must not be billed again.
         mHandled = await makeActive('Handled');
         await prisma.orgMembershipProcess.create({ data: { orgMembershipId: mHandled, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: new Date(), appliesToYear: liveMembershipYear(new Date(Date.now() + 30 * 86_400_000), new Date()) } });
-        await setBoundaryDaysAhead(30);
+        comingYear = membershipYearCycle(await setBoundaryDaysAhead(30), new Date()).cycleStart.getUTCFullYear();
+        prevComingRow = await prisma.membershipYearVariant.findUnique({ where: { membershipYear: comingYear } });
+        await setComingRow();
     });
 
     afterAll(async () => {
         await prisma.orgMembershipProcess.deleteMany({ where: { id: { gt: preMaxProcessId } } });
         await wipe();
+        await prisma.membershipYearVariant.deleteMany({ where: { membershipYear: comingYear } });
+        if (prevComingRow) await prisma.membershipYearVariant.create({ data: prevComingRow });
         await restoreBoardSettings();
         await prisma.$disconnect();
     });
@@ -132,6 +148,18 @@ describe('Bulk renewal migration', () => {
         const res = await BULK(jsonReq());
         expect(res.status).toBe(409);
         await setBoundaryDaysAhead(30);
+    });
+
+    it('refuses while the coming year has no membership product, naming the year', async () => {
+        asBoard(boardId);
+        await prisma.membershipYearVariant.delete({ where: { membershipYear: comingYear } });
+        try {
+            const res = await BULK(jsonReq());
+            expect(res.status).toBe(409);
+            expect(JSON.stringify(await res.json())).toContain(membershipYearLabel(comingYear));
+        } finally {
+            await setComingRow();
+        }
     });
 
     it('a isSysadmin may also trigger it', async () => {

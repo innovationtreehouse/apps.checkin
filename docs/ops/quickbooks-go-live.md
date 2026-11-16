@@ -163,8 +163,9 @@ repeats step 3 with the infra operator.
 
 **Who:** Finance, with the FINANCE role, on the Books map screen (`/books-map`).
 
-The account picker reads QuickBooks live, which is why this follows step 4. Each
-save is audited. Each pick can switch a lane on at the next daily run, and that
+The pickers read the app's copy of QuickBooks' account and Class lists. The
+daily `qbo-posting` run fills it once the app is connected, so this follows
+step 4 and that run. Each save is audited. Each pick can switch a lane on at the next daily run, and that
 can't be undone, so don't pick an account to try it out. Clearing a role later
 stops the lane from posting, but the switch-on date stays.
 
@@ -176,7 +177,7 @@ stops the lane from posting, but the switch-on date stays.
 | Gifts of goods | Gifts of goods: in-kind income, clearing account (finance's past bookings) | Both, and a clearing account different from both bank accounts and the Organisation card | QuickBooks posting: gifts of goods |
 
 Each role takes only the QuickBooks account types below. The picker lists only
-those, and a save of any other type, or while QuickBooks can't be read, is
+those, and a save of an account the copy lacks, or holds under any other type, is
 refused. A role already set to another type shows on the
 "QuickBooks books map: account types" status row; re-pick it.
 
@@ -191,14 +192,14 @@ refused. A role already set to another type shows on the
 
 Then give each budget bucket its QuickBooks Class on the same screen. On the income
 items screen (`/income/items`), give each Shopify item a bucket (or general income)
-and then the QuickBooks account its sales book to; the picker reads QuickBooks live
+and then the QuickBooks account its sales book to; the picker reads the app's copy
 and lists only Income and Other Income accounts. An item is decided only once it
 has both. A payout with an undecided item, or a bucket that can't be used, holds
 for finance rather than posting.
 
 Benevity gifts and employer matches book to the accounts on their account rules,
 not to a role. On the account map (`/donations/account-map`), pick a donation
-account and a match account for every rule; the picker reads QuickBooks live. A
+account and a match account for every rule; the picker reads the app's copy. A
 batch with a gift whose rule lacks the account it needs holds on the disbursement
 holds screen until finance picks one and resubmits.
 

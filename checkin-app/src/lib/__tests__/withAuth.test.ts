@@ -113,16 +113,16 @@ describe('withAuth', () => {
         expect(handler).not.toHaveBeenCalled();
     });
 
-    it('invokes the handler for a kiosk request on an allowKiosk route', async () => {
+    it('invokes the handler for a kiosk request on an allowKiosk route, carrying the signing key fingerprint', async () => {
         mockPubKeys.mockReturnValue(['key']);
-        mockVerify.mockReturnValue({ ok: true });
+        mockVerify.mockReturnValue({ ok: true, keyFingerprint: '0123456789abcdef' });
         const route = withAuth({ allowKiosk: true }, handler);
         const res = await route(kioskReq());
 
         expect(res.status).toBe(200);
         expect(handler).toHaveBeenCalledTimes(1);
         // calls tuple is typed empty (handler declares no params); cast to read forwarded auth.
-        expect((handler.mock.calls[0] as unknown[])[1]).toEqual({ type: 'kiosk' });
+        expect((handler.mock.calls[0] as unknown[])[1]).toEqual({ type: 'kiosk', keyFingerprint: '0123456789abcdef' });
     });
 
     it('invokes the handler for a session holding a required role', async () => {

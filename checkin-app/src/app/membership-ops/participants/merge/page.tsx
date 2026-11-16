@@ -2,17 +2,15 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Alert, Anchor, Box, Button, Card, Group, List, Paper, Radio, SimpleGrid, Stack, Text, TextInput, Title } from "@mantine/core";
-import Link from "next/link";
-import { notifications } from "@mantine/notifications";
-import { AlertBanner } from "@/components/admin/AlertBanner";
+import { Alert, Box, Button, Card, Group, List, Paper, Radio, SimpleGrid, Stack, Text, TextInput, Title } from "@mantine/core";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { MEMBERSHIP_OPS_ADMIN_ROLES } from "@/lib/nav/sections/membershipOps";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { formatPhone } from "@/lib/phone";
 import { formatDateOnly } from "@/lib/time";
 import { searchId } from "@/lib/searchId";
-import { useLoad } from "@/lib/api";
+import { api, useLoad } from "@/lib/api";
+import { clearError, errorMessage, HttpError, LoadError, showError } from "@checkin/component-ui";
 
 interface ParticipantMergeView {
   id: number;
@@ -29,7 +27,34 @@ interface ParticipantMergeView {
 
 interface BgNotice {
   date: string;
-  makesHouseholdValid: boolean;
+}
+
+interface Collision {
+  type: string;
+  message: string;
+  attestationIds?: number[];
+}
+
+// The membership block and background-check notice turn on which record is merged
+// away, so each comes per direction (see lib/person/merge/guard.ts).
+interface MergeAnalysis {
+  participants: [ParticipantMergeView, ParticipantMergeView];
+  membershipBlock?: { aAsKeeper: string | null; bAsKeeper: string | null } | null;
+  bgNotice?: { aAsKeeper: BgNotice | null; bAsKeeper: BgNotice | null } | null;
+  collisions?: Collision[];
+}
+
+// Recommends keeping the record with more activity or better data.
+function activityScore(p: ParticipantMergeView): number {
+  let s = 0;
+  s += p._count.visits * 2;
+  s += p._count.rawBadgeLogs;
+  s += p._count.programParticipants * 5;
+  s += p._count.programVolunteers * 5;
+  if (p.email) s += 10;
+  if (p.phone) s += 10;
+  if (p.googleId) s += 20; // real account
+  return s;
 }
 
 // Per-field conflict radios — mirrors the server's CONFLICT_FIELDS (route.ts).
@@ -85,13 +110,23 @@ function isSearchable(query: string) {
 
 // Results for a picker that is still searching. They clear once a person is picked
 // or the query gets too short, and otherwise stay up until the current query's answer lands.
-function usePeopleSearch(query: string, picked: boolean) {
+// A failed search raises a chip that stays until dismissed or a later search answers.
+function usePeopleSearch(label: string, query: string, picked: boolean) {
   const active = !picked && isSearchable(query);
-  const { data } = useLoad<{ people?: ParticipantMergeView[] }>(
+  const { data, error, loading, reload } = useLoad<{ people?: ParticipantMergeView[] }>(
     active ? `/api/people/search?q=${encodeURIComponent(query)}` : null,
-    { keepPrevious: true },
+    { keepPrevious: true, retry: false },
   );
-  return data?.people ?? [];
+  const key = `merge-search-${label}`;
+  const answered = !!data && !error && !loading;
+  // Bumped once a retry answers, so a retry that fails again raises the chip again.
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    if (error) showError(error, { key, title: `Couldn't search for ${label}` });
+    else if (answered) clearError(key);
+  }, [error, answered, key, label, attempt]);
+  const retry = () => reload().then(() => setAttempt((n) => n + 1));
+  return { results: error ? [] : data?.people ?? [], failed: !!error, retry };
 }
 
 export default function MergeParticipants() {
@@ -103,24 +138,33 @@ export default function MergeParticipants() {
   const [pA, setPA] = useState<ParticipantMergeView | null>(null);
   const [pB, setPB] = useState<ParticipantMergeView | null>(null);
 
-  const resultsA = usePeopleSearch(searchA, !!pA);
-  const resultsB = usePeopleSearch(searchB, !!pB);
+  const searchResultsA = usePeopleSearch("Participant 1", searchA, !!pA);
+  const searchResultsB = usePeopleSearch("Participant 2", searchB, !!pB);
 
-  const [analyzedA, setAnalyzedA] = useState<ParticipantMergeView | null>(null);
-  const [analyzedB, setAnalyzedB] = useState<ParticipantMergeView | null>(null);
+  // Keyed on the selected pair, so only that pair's answer shows, and a merge
+  // deletes the record the operator was shown.
+  const aId = pA?.id;
+  const bId = pB?.id;
+  const analysis = useLoad<MergeAnalysis>(
+    aId !== undefined && bId !== undefined ? `/api/membership-ops/participants/merge/analyze?a=${aId}&b=${bId}` : null,
+    { retry: false },
+  );
+  const [analyzedA, analyzedB] = analysis.data?.participants ?? [null, null];
+  const membershipBlock = analysis.data?.membershipBlock ?? null;
+  const bgNotices = analysis.data?.bgNotice ?? null;
+  const collisions = analysis.data?.collisions ?? [];
 
-  const [keepId, setKeepId] = useState<number | null>(null);
+  // Swap Kept/Merged overrides the recommended keeper until either side is re-picked.
+  const [keepOverride, setKeepOverride] = useState<number | null>(null);
+  const recommendedKeepId = analyzedA && analyzedB
+    ? (activityScore(analyzedA) >= activityScore(analyzedB) ? analyzedA.id : analyzedB.id)
+    : null;
+  const keepId = keepOverride ?? recommendedKeepId;
 
-  const [loading, setLoading] = useState(false);
   const [merging, setMerging] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
   const [previewMode, setPreviewMode] = useState(false);
-
-  // Why the merge is refused on household-membership grounds, per direction —
-  // the rule turns on which record is merged away (see lib/person/merge/guard.ts).
-  const [membershipBlock, setMembershipBlock] = useState<{ aAsKeeper: string | null; bAsKeeper: string | null } | null>(null);
 
   // One choice per true conflict field ('keep' | 'merge'); default 'keep' (the
   // keeper's value). Reset below whenever the keeper flips (Swap Kept/Merged) or
@@ -138,8 +182,7 @@ export default function MergeParticipants() {
   const swapDirectionBlock = (keeperIsA ? membershipBlock?.bAsKeeper : membershipBlock?.aAsKeeper) ?? null;
   const swapClearsMembershipBlock = !!membershipBlockReason && !swapDirectionBlock;
 
-  // The background-check date the survivor would adopt, per direction like the block above.
-  const [bgNotices, setBgNotices] = useState<{ aAsKeeper: BgNotice | null; bAsKeeper: BgNotice | null } | null>(null);
+  // The background-check date the survivor would adopt.
   const bgNotice = (keeperIsA ? bgNotices?.aAsKeeper : bgNotices?.bAsKeeper) ?? null;
 
   const conflicts: ConflictField[] = keepParticipant && mergeParticipant
@@ -169,61 +212,12 @@ export default function MergeParticipants() {
     }
   }
 
-  // Picking (or un-picking) either side drops the analysis; the effect below re-runs it.
   const pick = (a: ParticipantMergeView | null, b: ParticipantMergeView | null) => {
     setPA(a);
     setPB(b);
-    setAnalyzedA(null);
-    setAnalyzedB(null);
-    setKeepId(null);
+    setKeepOverride(null);
     setPreviewMode(false);
-    setMembershipBlock(null);
-    setBgNotices(null);
-    setLoading(!!(a && b));
   };
-
-  // Only the selected pair's response lands, so what is on screen is always the
-  // current selection, and a merge deletes the record the operator was shown.
-  const aId = pA?.id;
-  const bId = pB?.id;
-  useEffect(() => {
-    if (aId === undefined || bId === undefined) return;
-    let selected = true;
-    fetch(`/api/membership-ops/participants/merge/analyze?a=${aId}&b=${bId}`)
-      .then(r => r.json())
-      .then(d => {
-        if (selected && d.participants) {
-          setAnalyzedA(d.participants[0]);
-          setAnalyzedB(d.participants[1]);
-          setMembershipBlock(d.membershipBlock ?? null);
-          setBgNotices(d.bgNotice ?? null);
-
-          // Recommend keeping the one with more activity or better data
-          const score = (p: ParticipantMergeView) => {
-            let s = 0;
-            s += p._count.visits * 2;
-            s += p._count.rawBadgeLogs;
-            s += p._count.programParticipants * 5;
-            s += p._count.programVolunteers * 5;
-            if (p.email) s += 10;
-            if (p.phone) s += 10;
-            if (p.googleId) s += 20; // real account
-            return s;
-          };
-          const sA = score(d.participants[0]);
-          const sB = score(d.participants[1]);
-
-          setKeepId(sA >= sB ? aId : bId);
-        }
-      })
-      .catch(() => {
-        if (selected) setError("Failed to analyze participants");
-      })
-      .finally(() => {
-        if (selected) setLoading(false);
-      });
-    return () => { selected = false; };
-  }, [aId, bId]);
 
   if (authLoading) {
     return <PageLoader />;
@@ -235,11 +229,9 @@ export default function MergeParticipants() {
 
   const handleMerge = async () => {
     setMerging(true);
-    setError(null);
     try {
-      const res = await fetch("/api/membership-ops/participants/merge", {
+      await api("/api/membership-ops/participants/merge", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           keepId: keepParticipant?.id,
           mergeId: mergeParticipant?.id,
@@ -247,25 +239,17 @@ export default function MergeParticipants() {
           ...(emailChangeReason.trim() && { emailChangeReason }),
         })
       });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        setSuccess(true);
-      } else if (typeof data.error === "string" && data.error.includes("lead of a household with other members")) {
-        notifications.show({ color: "red", message: data.error, autoClose: false });
-        // No page-level reload here; clear the stale analyzed selection so the
-        // user re-picks (and re-analyzes) against current household state.
-        pick(null, null);
-      } else {
-        setError(data.error || "Failed to merge");
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error", autoClose: false });
+      setSuccess(true);
+    } catch (e) {
+      showError(errorMessage(e));
+      // Clear the stale analyzed selection so the user re-picks against current household state.
+      if (e instanceof HttpError && e.message.includes("lead of a household with other members")) pick(null, null);
     } finally {
       setMerging(false);
     }
   };
 
-  const renderSearch = (label: string, value: string, setValue: (v: string) => void, results: ParticipantMergeView[], selected: ParticipantMergeView | null, setSelected: (p: ParticipantMergeView | null) => void) => (
+  const renderSearch = (label: string, value: string, setValue: (v: string) => void, search: ReturnType<typeof usePeopleSearch>, selected: ParticipantMergeView | null, setSelected: (p: ParticipantMergeView | null) => void) => (
     <Box style={{ flex: 1, position: "relative" }}>
       {selected ? (
         <Card withBorder radius="md" padding="md" bg="var(--mantine-color-blue-light)">
@@ -285,9 +269,12 @@ export default function MergeParticipants() {
             onChange={(e) => setValue(e.currentTarget.value)}
             placeholder="Search by name, email, or ID..."
           />
-          {results.length > 0 && (
+          {search.failed && (
+            <Button size="xs" variant="light" color="red" mt="xs" onClick={search.retry}>Retry search</Button>
+          )}
+          {search.results.length > 0 && (
             <Paper withBorder shadow="md" radius="sm" pos="absolute" left={0} right={0} style={{ zIndex: 10, maxHeight: 320, overflowY: "auto" }}>
-              {results.map((r) => (
+              {search.results.map((r) => (
                 <Box key={r.id} p="sm" style={{ cursor: "pointer", borderBottom: "1px solid var(--mantine-color-default-border)" }} onClick={() => setSelected(r)}>
                   <Text>{r.name || "Unnamed"} <Text component="span" size="xs" c="dimmed">(ID: {r.id})</Text></Text>
                   <Text size="xs" c="dimmed">{r.email}</Text>
@@ -382,12 +369,7 @@ export default function MergeParticipants() {
           Combine two participant records. The data from the merged record (visits, programs, etc)
           will be moved to the kept record. The merged record will be deleted, and an archive of it names the kept record.
         </Text>
-        <Anchor component={Link} href="/membership-ops/participants/tombstones" size="sm">
-          View tombstone census
-        </Anchor>
       </div>
-
-      {!previewMode && <AlertBanner message={error} tone="error" />}
 
       {!previewMode ? (
         <>
@@ -395,17 +377,18 @@ export default function MergeParticipants() {
               otherwise clips the search results dropdown below to a sliver — see renderSearch. */}
           <Card withBorder radius="md" padding="lg" style={{ overflow: "visible" }}>
             <Group align="flex-start" gap="xl" grow>
-              {renderSearch("Participant 1", searchA, setSearchA, resultsA, pA, (p) => pick(p, pB))}
-              {renderSearch("Participant 2", searchB, setSearchB, resultsB, pB, (p) => pick(pA, p))}
+              {renderSearch("Participant 1", searchA, setSearchA, searchResultsA, pA, (p) => pick(p, pB))}
+              {renderSearch("Participant 2", searchB, setSearchB, searchResultsB, pB, (p) => pick(pA, p))}
             </Group>
           </Card>
 
-          {loading && <Text>Analyzing participants...</Text>}
+          {analysis.loading && <Text>Analyzing participants...</Text>}
+          {analysis.error && <LoadError what="the merge analysis" message={analysis.error} onRetry={analysis.reload} />}
 
           {analyzedA && analyzedB && (
             <Stack>
               <Group justify="center">
-                <Button variant="default" onClick={() => setKeepId(keepId === analyzedA.id ? analyzedB.id : analyzedA.id)}>
+                <Button variant="default" onClick={() => setKeepOverride(keepId === analyzedA.id ? analyzedB.id : analyzedA.id)}>
                   Swap Kept / Merged
                 </Button>
               </Group>
@@ -414,6 +397,19 @@ export default function MergeParticipants() {
                 <Alert color="red" variant="light" fw={700} title="Household membership blocks this merge">
                   {membershipBlockReason}
                   {swapClearsMembershipBlock && " Swapping which record is kept clears this."}
+                </Alert>
+              )}
+
+              {collisions.length > 0 && (
+                <Alert color="red" variant="light" title="These records collide">
+                  <List size="sm">
+                    {collisions.map((c, i) => (
+                      <List.Item key={i}>
+                        {c.message}
+                        {c.attestationIds && c.attestationIds.length > 0 && ` Attestation IDs: ${c.attestationIds.join(", ")}.`}
+                      </List.Item>
+                    ))}
+                  </List>
                 </Alert>
               )}
 
@@ -496,7 +492,6 @@ export default function MergeParticipants() {
               <strong>{keepParticipant.name || keepParticipant.email || `ID ${keepParticipant.id}`}</strong> will
               end up with the background-check date {formatDateOnly(bgNotice.date)}, carried over
               from <strong>{mergeParticipant.name || mergeParticipant.email || `ID ${mergeParticipant.id}`}</strong>.
-              {bgNotice.makesHouseholdValid && " This makes the household's background check valid: an application waiting on the check may advance, and a paid one may activate the household."}
             </Alert>
           )}
 
@@ -507,12 +502,6 @@ export default function MergeParticipants() {
             value={emailChangeReason}
             onChange={(e) => setEmailChangeReason(e.currentTarget.value)}
           />
-
-          {error && (
-            <Alert color="red" variant="light" mb="md" fw={700}>
-              {error}
-            </Alert>
-          )}
 
           <Group justify="flex-end">
             <Button variant="default" onClick={() => setPreviewMode(false)} disabled={merging}>Cancel</Button>

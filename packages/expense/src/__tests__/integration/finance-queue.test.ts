@@ -1,13 +1,19 @@
 /** The finance queue's expense tabs: each reason is read from the record, and counts are this viewer's. */
-import { beforeEach, expect, it } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, ORG } from "../helpers/seed";
 import { financeQueueActionable, financeQueueCounts, financeQueueRows } from "../../services/financeQueueService";
+import { expenseActionCounts, expensesAwaitingMyApproval, signoffsAwaitingCount } from "../../services/badgeCounts";
 import { raiseFlag } from "../../services/flagService";
 import { expenseReasons } from "../../services/reasonService";
 import { writeAudit } from "../../lib/audit";
 import { SYSTEM_ACTOR } from "../../lib/system-actor";
+
+vi.mock("../../services/reasonService", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("../../services/reasonService")>();
+  return { ...mod, expenseReasons: vi.fn(mod.expenseReasons) };
+});
 
 const FINANCE = principal(3, { isFinance: true });
 const BOARD = principal(5, { isBoard: true });
@@ -24,7 +30,7 @@ describeDb("finance queue — expenses tab", () => {
     const id = await seedExpense({ state: "capital_review", taxCents: 120, needsReimbursement: true });
     expect(await codes(FINANCE, "expenses", id)).toEqual(["CAPITAL_REVIEW", "REIMBURSEE_TO_NAME", "TAX_NOT_REVIEWED"]);
     const [row] = await financeQueueRows(FINANCE, "expenses");
-    expect(row).toMatchObject({ expenseId: id, vendorName: "Acme", amountCents: 100, currency: "USD" });
+    expect(row).toMatchObject({ expenseId: id, receiptId: null, vendorName: "Acme", amountCents: 100, currency: "USD" });
     expect(row.reasons.find((x) => x.code === "TAX_NOT_REVIEWED")?.text).toBe("Tax $1.20 not reviewed on the receipt");
   });
 
@@ -39,7 +45,7 @@ describeDb("finance queue — expenses tab", () => {
       data: { orgId: ORG, receiptId: "r-failed", status: "failed", failureReason: "boom", payloadJson: JSON.stringify({ vendorName: "Bolt", receiptTotalCents: 900, receiptDate: "2026-10-02", currency: "USD" }) },
     });
     const [row] = await financeQueueRows(FINANCE, "expenses");
-    expect(row).toMatchObject({ expenseId: null, vendorName: "Bolt", amountCents: 900, date: "2026-10-02", failureReason: "boom" });
+    expect(row).toMatchObject({ expenseId: null, receiptId: "r-failed", vendorName: "Bolt", amountCents: 900, date: "2026-10-02", failureReason: "boom" });
     expect(row.reasons).toEqual([{ code: "INTAKE_FAILED", text: "Receipt didn't become an expense", href: "/receipts/r-failed" }]);
   });
 
@@ -70,15 +76,15 @@ describeDb("finance queue — expenses tab", () => {
 
   it("gives a viewer with neither role nothing", async () => {
     await seedExpense({ state: "capital_review" });
-    expect(await financeQueueActionable(principal(2))).toBe(0);
+    expect(await financeQueueActionable(principal(2), 99)).toBe(0);
     expect(await financeQueueRows(principal(2), "expenses")).toEqual([]);
   });
 });
 
 describeDb("finance queue — QuickBooks tab", () => {
-  it("reads exhausted posts and AMBIGUOUS from the match state, and the three reviews from their rows", async () => {
+  it("reads failed posts and AMBIGUOUS from the match state, and the three reviews from their rows", async () => {
     const failed = await seedExpense({ state: "qb_complete" });
-    await db.expense.update({ where: { id: failed }, data: { qbMatchState: "NEEDS_FINANCE", qbPostAttempts: 5 } });
+    await db.expense.update({ where: { id: failed }, data: { qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: new Date(), qbLastError: "timeout" } });
     const ambiguous = await seedExpense({ state: "qb_complete" });
     await db.expense.update({ where: { id: ambiguous }, data: { qbMatchState: "AMBIGUOUS" } });
     const drift = await seedExpense({ state: "qb_complete" });
@@ -88,7 +94,7 @@ describeDb("finance queue — QuickBooks tab", () => {
 
     const rows = await financeQueueRows(FINANCE, "quickbooks");
     const text = (id: string) => rows.find((r) => r.expenseId === id)?.reasons[0].text;
-    expect(text(failed)).toBe("Posting failed 5 times");
+    expect(text(failed)).toBe("Not posted");
     expect(text(ambiguous)).toBe("Several QuickBooks entries match; pick one");
     expect(text(drift)).toBe("Changed in QuickBooks after posting: amount, account");
     expect(text(dup)).toBe("Duplicate entry in QuickBooks needs voiding");
@@ -111,36 +117,23 @@ describeDb("finance queue — QuickBooks tab", () => {
     expect(rows.map((r) => r.reasons.map((x) => [x.code, x.text]))).toEqual([[["QB_NO_CLASS", "A line has no budget bucket, so it has no QuickBooks class"]]]);
   });
 
-  it("shows an outboxed expense a setting stops, naming the setting on the expense and generically in the queue", async () => {
+  it("names a failed post's error on the expense and leaves it out of the queue", async () => {
     const id = await seedExpense({ state: "qb_complete" });
-    await db.expense.update({ where: { id }, data: { qbMatchState: "POST_FAILED", qbFailureKind: "settings" } });
-    await db.expenseEvent.create({ data: { orgId: ORG, expenseId: id } });
-    await writeAudit(db, SYSTEM_ACTOR, { expenseId: id, action: "qb_waiting_on_settings", notes: "not charged (settings): the books map has no payment account" });
+    await db.expense.update({ where: { id }, data: { qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: new Date(), qbLastError: "the books map has no payment account" } });
+    await writeAudit(db, SYSTEM_ACTOR, { expenseId: id, action: "qb_needs_finance", notes: "the books map has no payment account" });
 
-    expect((await expenseReasons(FINANCE, id)).find((r) => r.code === "QB_WAITING_ON_SETTING")).toMatchObject({ tab: "qb", actionable: true, detail: "the books map has no payment account" });
+    expect((await expenseReasons(FINANCE, id)).find((r) => r.code === "QB_POST_FAILED")).toMatchObject({ tab: "qb", actionable: true, detail: "the books map has no payment account" });
     const rows = await financeQueueRows(FINANCE, "quickbooks");
-    expect(rows.map((r) => r.reasons.map((x) => [x.code, x.text]))).toEqual([[["QB_WAITING_ON_SETTING", "Waiting on a QuickBooks setting"]]]);
+    expect(rows.map((r) => r.reasons.map((x) => [x.code, x.text]))).toEqual([[["QB_POST_FAILED", "Not posted"]]]);
   });
 
-  it("drops the setting reason once the expense posts", async () => {
-    const id = await seedExpense({ state: "qb_complete" });
-    await db.expense.update({ where: { id }, data: { qbMatchState: "CREATED", qbFailureKind: "settings", qbTxnId: "77" } });
-    expect((await expenseReasons(FINANCE, id)).map((r) => r.code)).not.toContain("QB_WAITING_ON_SETTING");
+  it("shows a qb_error expense as waiting for Retry, with nothing for finance to act on", async () => {
+    const id = await seedExpense({ state: "qb_error" });
+    const rows = await financeQueueRows(FINANCE, "quickbooks");
+    expect(rows.map((r) => [r.expenseId, r.reasons.map((x) => [x.code, x.text])])).toEqual([[id, [["QB_PROCESSING_FAILED", "Could not be prepared for QuickBooks; it waits for Retry on the Problems list"]]]]);
+    expect((await financeQueueCounts(FINANCE)).quickbooks).toMatchObject({ actionable: 0, total: 1 });
   });
 
-  it("drops the setting reason once a retry clears the failure kind", async () => {
-    const id = await seedExpense({ state: "qb_complete" });
-    await db.expense.update({ where: { id }, data: { qbMatchState: "POST_FAILED", qbFailureKind: null } });
-    await db.expenseEvent.create({ data: { orgId: ORG, expenseId: id } });
-    expect((await expenseReasons(FINANCE, id)).map((r) => r.code)).not.toContain("QB_WAITING_ON_SETTING");
-  });
-
-  it("shows no setting reason on the expense or in the queue for an expense with no outbox row", async () => {
-    const id = await seedExpense({ state: "qb_complete" });
-    await db.expense.update({ where: { id }, data: { qbMatchState: "POST_FAILED", qbFailureKind: "settings" } });
-    expect((await expenseReasons(FINANCE, id)).map((r) => r.code)).not.toContain("QB_WAITING_ON_SETTING");
-    expect(await codes(FINANCE, "quickbooks", id)).toEqual([]);
-  });
 });
 
 describeDb("finance queue — account holds tab", () => {
@@ -202,7 +195,7 @@ describeDb("finance queue — To sign and Board tabs", () => {
     bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5, 6], households: [[1, 3]] }) });
     const { id } = await pending();
     expect(await codes(BOARD, "board", id)).toEqual(["BOARD_SIGNATURE"]);
-    expect(await financeQueueActionable(BOARD)).toBe(1);
+    expect(await financeQueueActionable(BOARD, 99)).toBe(1);
   });
 });
 
@@ -220,5 +213,98 @@ describeDb("finance queue — a signer held in owner approval", () => {
     const id = await seedExpense({ state: "owner_approval", receiptTotalCents: 100_000 });
     await seedApproval(id, await seedLineItem(id), { ownerId: 7, status: "approved" });
     expect(await codes(principal(6, { isBoard: true }), "board", id)).toContain("SIGNER_HELD");
+  });
+});
+
+describeDb("finance queue — line approvals only the Board can give", () => {
+  // 1 submitter, 11 their household · 3 FINANCE · 5,6 Board · bucket 7 org-level, 100 approved by 2.
+  beforeEach(() => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2] }, orgLevel: [7], finance: [3], board: [5, 6], households: [[1, 6]] }) });
+  });
+
+  async function awaiting(ownerId: number) {
+    const id = await seedExpense({ state: "owner_approval" });
+    await seedApproval(id, await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" }), { ownerId, status: "pending" });
+    return id;
+  }
+
+  it("counts an org-level line in green for a Board member without a conflict", async () => {
+    const id = await awaiting(7);
+    const [row] = (await financeQueueRows(BOARD, "board")).filter((r) => r.expenseId === id);
+    expect(row.reasons).toEqual([{ code: "BOARD_LINE_APPROVAL", text: "1 line to approve as Board" }]);
+    expect((await financeQueueCounts(BOARD)).board).toMatchObject({ actionable: 1, total: 1, byReason: { BOARD_LINE_APPROVAL: 1 } });
+    expect(await financeQueueActionable(BOARD, 99)).toBe(1);
+  });
+
+  it("lists it in gray for a Board member in the submitter's household, so they see another Board member must act", async () => {
+    const id = await awaiting(7);
+    const conflicted = principal(6, { isBoard: true });
+    const [row] = (await financeQueueRows(conflicted, "board")).filter((r) => r.expenseId === id);
+    expect(row.reasons).toEqual([{ code: "BOARD_LINE_APPROVAL", text: "1 line waits for another Board member's approval: you are conflicted" }]);
+    expect((await financeQueueCounts(conflicted)).board).toMatchObject({ actionable: 0, total: 1, byReason: {} });
+    expect(await financeQueueActionable(conflicted, 99)).toBe(0);
+  });
+
+  it("leaves out a program line its bucket approver can approve, and lists nothing for FINANCE outside the Board", async () => {
+    const id = await awaiting(100);
+    expect(await codes(BOARD, "board", id)).not.toContain("BOARD_LINE_APPROVAL");
+    expect(await codes(FINANCE, "board", await awaiting(7))).not.toContain("BOARD_LINE_APPROVAL");
+  });
+
+  it("counts a program line in green when every bucket approver is conflicted", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5, 6], households: [[1, 2]] }) });
+    const id = await awaiting(100);
+    expect(await codes(BOARD, "board", id)).toEqual(["BOARD_LINE_APPROVAL"]);
+  });
+
+  it("counts an org-level line once, green in the Board tab only, for a Board member who also approves a bucket", async () => {
+    bindPorts({ signoff: directory({ approvers: { 100: [2], 200: [5] }, orgLevel: [7], finance: [3], board: [5, 6], households: [[1, 6]] }) });
+    const orgLine = await awaiting(7);
+    const ownBucket = await awaiting(200);
+    expect(await codes(BOARD, "board", orgLine)).toEqual(["BOARD_LINE_APPROVAL"]);
+    expect(await codes(BOARD, "board", ownBucket)).not.toContain("BOARD_LINE_APPROVAL");
+    expect((await financeQueueCounts(BOARD)).board).toMatchObject({ actionable: 1, byReason: { BOARD_LINE_APPROVAL: 1 } });
+    expect((await expensesAwaitingMyApproval(BOARD)).map((e) => e.expenseId)).toEqual([ownBucket]);
+    expect(await signoffsAwaitingCount(BOARD)).toBe(1);
+    expect((await expenseActionCounts(BOARD)).owner_approval).toBe(1);
+  });
+});
+
+describeDb("finance queue — the Finance review pill", () => {
+  const pageActionable = async (p: typeof FINANCE) => Object.values(await financeQueueCounts(p)).reduce((sum, c) => sum + c.actionable, 0);
+
+  async function signable(submittedAt: Date) {
+    const id = await seedExpense({ state: "qb_pending", submittedAt });
+    const line = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
+    await seedApproval(id, line, { ownerId: 100, status: "approved", decidedByUserId: 2 });
+    return { id, line };
+  }
+
+  it("matches the page's actionable count at or under the ceiling", async () => {
+    await seedExpense({ state: "capital_review", needsReimbursement: true });
+    await seedExpense({ state: "capital_review" });
+    await signable(new Date("2026-03-01T00:00:00Z"));
+    const page = await pageActionable(FINANCE);
+    expect(page).toBeGreaterThan(2);
+    expect(await financeQueueActionable(FINANCE, page)).toBe(page);
+    expect(await financeQueueActionable(FINANCE, 99)).toBe(page);
+  });
+
+  it("answers one more than the ceiling once the count passes it", async () => {
+    for (let i = 0; i < 4; i++) await seedExpense({ state: "capital_review" });
+    expect(await pageActionable(FINANCE)).toBe(4);
+    vi.mocked(expenseReasons).mockClear();
+    expect(await financeQueueActionable(FINANCE, 2)).toBe(3);
+    expect(expenseReasons).toHaveBeenCalledTimes(3);
+  });
+
+  it("still counts an older waiting signature behind more than a page of newer Treasurer-signed expenses", async () => {
+    await signable(new Date("2026-01-01T00:00:00Z"));
+    for (let day = 1; day <= 30; day++) {
+      const { id, line } = await signable(new Date(Date.UTC(2026, 1, day)));
+      await db.expenseLineSignoff.create({ data: { expenseId: id, lineItemId: line, seat: "TREASURER", signerUserId: 4 } });
+    }
+    expect((await financeQueueCounts(FINANCE)).toSign).toMatchObject({ actionable: 1 });
+    expect(await financeQueueActionable(FINANCE, 99)).toBe(await pageActionable(FINANCE));
   });
 });

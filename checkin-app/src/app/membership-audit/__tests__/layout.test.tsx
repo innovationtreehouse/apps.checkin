@@ -13,8 +13,9 @@ jest.mock("next/navigation", () => ({
 jest.mock("next-auth/react", () => ({
   useSession: () => mockSession,
 }));
+let mockCounts: unknown = null;
 jest.mock("@/hooks/useTodoCounts", () => ({
-  useTodoCounts: () => null,
+  useTodoCounts: () => mockCounts,
 }));
 
 beforeAll(() => {
@@ -55,6 +56,7 @@ const renderLayout = (pathname: string, session: { data: unknown; status: string
 
 beforeEach(() => {
   push.mockClear();
+  mockCounts = null;
 });
 
 describe("MembershipAuditLayout role gate", () => {
@@ -79,5 +81,16 @@ describe("MembershipAuditLayout role gate", () => {
   it("redirects unauthenticated callers", () => {
     renderLayout("/membership-audit/emergency-contacts", { data: null, status: "unauthenticated" });
     expect(push).toHaveBeenCalledWith("/");
+  });
+});
+
+describe("MembershipAuditLayout tab badges", () => {
+  it("shows 99+ above the badge ceiling", () => {
+    mockCounts = { admin: { householdsMissingContact: 250, unclaimedHouseholds: 0, brokenHouseholds: 0 } };
+    renderLayout("/membership-audit/emergency-contacts", {
+      data: { user: { id: 1, isBoardMember: true } },
+      status: "authenticated",
+    });
+    expect(screen.getByLabelText("250 households missing an emergency contact")).toHaveTextContent("99+");
   });
 });

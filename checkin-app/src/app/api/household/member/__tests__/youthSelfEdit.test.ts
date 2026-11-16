@@ -11,6 +11,13 @@ import { getServerSession } from "next-auth/next";
 import prisma from "@/lib/prisma";
 import { PATCH } from "@/app/api/household/member/route";
 
+// The archived-household guard has its own tests; here every household is live.
+jest.mock("@/lib/household/archiveGuard", () => ({
+    ...jest.requireActual("@/lib/household/archiveGuard"),
+    lockLiveHouseholds: jest.fn(),
+    lockLiveHouseholdsOf: jest.fn(),
+}));
+
 jest.mock("next-auth/next", () => ({ getServerSession: jest.fn() }));
 jest.mock("@/lib/auth-options", () => ({ authOptions: {} }));
 jest.mock("@/lib/logger", () => ({ logger: { error: jest.fn() } }));

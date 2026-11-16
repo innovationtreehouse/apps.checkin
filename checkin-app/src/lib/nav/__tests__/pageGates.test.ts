@@ -35,7 +35,6 @@ const CASES: Array<[string, readonly RoleFlag[], NavGate]> = [
   ["/membership-ops/participants", MEMBERSHIP_PARTICIPANTS_ROLES, linkGate(MEMBERSHIP_OPS, "/membership-ops/participants")],
   ["/membership-ops/participants/merge", MEMBERSHIP_OPS_ADMIN_ROLES, linkGate(MEMBERSHIP_OPS, "/membership-ops/participants/merge")],
   ["/membership-ops/participants/new", MEMBERSHIP_OPS_ADMIN_ROLES, pageGate("/membership-ops/participants/new")],
-  ["/membership-ops/participants/tombstones", MEMBERSHIP_OPS_ADMIN_ROLES, pageGate("/membership-ops/participants/tombstones")],
   ["/membership-ops/roles", MEMBERSHIP_OPS_ADMIN_ROLES, linkGate(MEMBERSHIP_OPS, "/membership-ops/roles")],
   ["/membership-ops/volunteer-memberships", MEMBERSHIP_OPS_ADMIN_ROLES, linkGate(MEMBERSHIP_OPS, "/membership-ops/volunteer-memberships")],
   ["/program-ops/new", NEW_PROGRAM_ROLES, linkGate(PROGRAM_OPS, "/program-ops/new")],

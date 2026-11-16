@@ -2,7 +2,9 @@
 import { useState } from "react";
 import { Badge, Button, Group, Paper, Select, Table, Text } from "@mantine/core";
 import { formatCents } from "@checkin/money";
+import { formatGtinDisplay } from "@checkin/gtin";
 import { LINE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
+import { QuickBooksListsRefresh } from "@checkin/component-ui";
 import { send, useLoad } from "./api";
 import NonInventoryBadge from "./NonInventoryBadge";
 
@@ -47,7 +49,7 @@ interface MatchedRule {
 export const HOLD_REASON_WORDS: Record<string, string> = {
   NO_MATCH: "No account rule matches",
   MULTIPLE_MATCHES: "Several account rules match",
-  NO_PART_NUMBER: "No part number; pick an account",
+  NO_PART_NUMBER: "No Part ID; pick an account",
   NON_INVENTORY: "Not stock; pick an account",
 };
 
@@ -80,9 +82,9 @@ export function matchedRulesOf(matchedRows: string): MatchedRule[] {
 }
 
 /**
- * Lines the QuickBooks processor could not give an account. FINANCE sets one per line and resubmits;
- * Resubmit stays disabled while a held line has no account, and the server refuses it as well. A
- * refused resubmit may still have moved the expense, so `onRefused` rereads it.
+ * Lines the QuickBooks processor could not give an account. FINANCE sets one per line, or fixes an
+ * account rule, and resubmits; the resubmit re-runs the mapping and holds again any line still
+ * unresolved. A refused resubmit may still have moved the expense, so `onRefused` rereads it.
  */
 export default function AccountHoldsPanel({ expenseId, holds, lines, currency, isFinance, onChanged, onRefused }: {
   expenseId: string;
@@ -117,14 +119,16 @@ export default function AccountHoldsPanel({ expenseId, holds, lines, currency, i
         <Text fw={600}>Account holds</Text>
         {isFinance && (
           <Group gap="xs">
+            <QuickBooksListsRefresh />
             {withoutAccount > 0 && (
               <Text size="xs" c="dimmed">
-                {withoutAccount === 1 ? "1 held line has no account yet" : `${withoutAccount} held lines have no account yet`}
+                {withoutAccount === 1
+                  ? "1 held line has no account yet. Resubmit checks the account rules again and holds it if it still matches none."
+                  : `${withoutAccount} held lines have no account yet. Resubmit checks the account rules again and holds each one that still matches none.`}
               </Text>
             )}
             <Button
               size="xs"
-              disabled={withoutAccount > 0}
               onClick={async () => { if (await send(`${base}/resubmit`, "POST", {}, "Resubmitted")) onChanged(); else onRefused(); }}
             >Resubmit</Button>
           </Group>
@@ -146,12 +150,12 @@ export default function AccountHoldsPanel({ expenseId, holds, lines, currency, i
                   <Badge variant="light" color="orange">{HOLD_REASON_WORDS[h.reason] ?? h.reason}</Badge>
                   {ctx && (
                     <Text size="xs" c="dimmed" mt={4}>
-                      Looked up by category {ctx.category ?? "—"}, subcategory {ctx.subcategory ?? "—"}, part number {ctx.partNumber ?? "—"}
+                      Looked up by category {ctx.category ?? "—"}, subcategory {ctx.subcategory ?? "—"}, Part ID {ctx.partNumber ? formatGtinDisplay(ctx.partNumber) : "—"}
                     </Text>
                   )}
                   {rules.map((r) => (
                     <Text key={r.id} size="xs" c="dimmed" mt={4}>
-                      Rule {r.category} / {r.subcategory} / {r.partNumber} → {accountLabel(r.qbAccount)}
+                      Rule {r.category} / {r.subcategory} / {formatGtinDisplay(r.partNumber)} → {accountLabel(r.qbAccount)}
                     </Text>
                   ))}
                 </Table.Td>

@@ -26,6 +26,10 @@ const buildQuickBooks = jest.fn();
 jest.mock("@/lib/quickbooks/client", () => ({ getQuickBooks, buildQuickBooks }));
 const listQuickBooksAccounts = jest.fn();
 jest.mock("@/lib/finance/booksMap", () => ({ listQuickBooksAccounts: () => listQuickBooksAccounts() }));
+const listQuickBooksClasses = jest.fn();
+jest.mock("@/lib/finance/budgetOwners", () => ({ listQuickBooksClasses: () => listQuickBooksClasses() }));
+const emailAlert = jest.fn().mockResolvedValue(true);
+jest.mock("@/lib/emailRecipients", () => ({ emailAlert }));
 
 async function config(): Promise<IncomeConfig> {
   await jest.isolateModulesAsync(async () => {
@@ -71,10 +75,22 @@ describe("income QuickBooks Class binding", () => {
     await expect((await config()).classes!.activeClassIds()).resolves.toEqual(["1", "3"]);
   });
 
-  it("throws while QuickBooks is off, so an assignment is refused", async () => {
+  it("throws while QuickBooks is off", async () => {
     process.env.QBO_REALM_ID = "123";
     getQuickBooks.mockResolvedValue(null);
     await expect((await config()).classes!.activeClassIds()).rejects.toThrow("QuickBooks is off");
+  });
+});
+
+describe("income saved Class list binding", () => {
+  it("answers the active Classes in the app's copy without asking QuickBooks", async () => {
+    delete process.env.QBO_REALM_ID;
+    listQuickBooksClasses.mockResolvedValue([
+      { id: "1", name: "Camp", active: true },
+      { id: "2", name: "Old", active: false },
+    ]);
+    await expect((await config()).savedClasses!.activeClassIds()).resolves.toEqual(["1"]);
+    expect(getQuickBooks).not.toHaveBeenCalled();
   });
 });
 
@@ -122,10 +138,10 @@ describe("income posting binding", () => {
 });
 
 describe("Benevity posting readiness", () => {
-  it("names every live Benevity role the books map leaves unset; gifts and matches book to their rules' accounts, net of fees", async () => {
+  it("names every Benevity role the books map leaves unset; gifts and matches book to their rules' accounts, net of fees", async () => {
     const { benevityPostingMissing } = await import("../configure");
     process.env.QBO_REALM_ID = "123";
-    roleAccounts.mockResolvedValue({ BENEVITY_DONATIONS: "2", BENEVITY_FEES: "4" });
+    roleAccounts.mockResolvedValue({});
     await expect(benevityPostingMissing()).resolves.toEqual(["no account picked for: Benevity disbursements: bank account"]);
 
     delete process.env.QBO_REALM_ID;
@@ -135,9 +151,21 @@ describe("Benevity posting readiness", () => {
 });
 
 describe("income QuickBooks account list binding", () => {
-  it("reads the books map's live account list", async () => {
+  it("reads the books map's account list", async () => {
     const accounts = [{ id: "4001", name: "Sales", accountType: "Income" }];
     listQuickBooksAccounts.mockResolvedValue(accounts);
     await expect((await config()).quickBooksAccounts!()).resolves.toEqual(accounts);
+  });
+});
+
+describe("income alerts", () => {
+  it("sends each alert to the alert address", async () => {
+    const { alerts } = await config();
+    await alerts!.postCapReached({ orgId: "org", cap: "count", created: 5, createdCents: 500, remaining: 2 });
+    await alerts!.bucketUnusable({ orgId: "org", budgetOwnerId: 3, bucketName: null, issue: "archived", itemCount: 4 });
+    await alerts!.sweepIncomplete({ orgId: "org", since: new Date("2026-10-01T08:00:00Z") });
+    expect(emailAlert.mock.calls.map((c) => c[0])).toEqual(["finance.incomePostCap", "finance.incomeBucketUnusable", "finance.incomeSweepIncomplete"]);
+    expect(emailAlert.mock.calls[1][1]).toMatchObject({ bucketName: "#3", itemCount: "4" });
+    expect(emailAlert.mock.calls[2][1].since).toBe("2026-10-01");
   });
 });

@@ -3,7 +3,7 @@
  * to when that is someone else, who can say "not me" by discarding it and replying. The sender
  * is also told which of the message's files were refused and why.
  */
-import type { MailAcknowledgement, MailRefusalReason } from "@checkin/receipt";
+import { noticeMessageId, type MailAcknowledgement, type MailRefusalReason } from "@checkin/receipt";
 import { sendTemplated } from "@/lib/email-templates/send";
 import { config } from "@/lib/config";
 
@@ -34,16 +34,17 @@ function refusedText(ack: MailAcknowledgement): string | undefined {
 /** Sends one acknowledgement or refusal notice. Never mails the receipt mailbox itself, so intake never reads its own reply. */
 export async function sendMailReply(ack: MailAcknowledgement, mailboxAddress: string | undefined): Promise<boolean> {
   if (mailboxAddress && ack.to.toLowerCase() === mailboxAddress.toLowerCase()) return true;
+  const headers = mailboxAddress ? { ...AUTO_REPLY_HEADERS, "Message-ID": noticeMessageId(ack.noticeId, mailboxAddress) } : AUTO_REPLY_HEADERS;
   const when = day(ack.receivedAt);
   const refused = refusedText(ack);
-  if (ack.receiptId === null) return sendTemplated("receipt.mailRefused", ack.to, { when }, AUTO_REPLY_HEADERS, refused);
+  if (ack.receiptId === null) return sendTemplated("receipt.mailRefused", ack.to, { when }, headers, refused);
   if (!ack.mine) {
-    return sendTemplated("receipt.mailReplySender", ack.to, { when, creditedName: ack.creditedName || "a Treehouse member" }, AUTO_REPLY_HEADERS, refused);
+    return sendTemplated("receipt.mailReplySender", ack.to, { when, creditedName: ack.creditedName || "a Treehouse member" }, headers, refused);
   }
   return sendTemplated("receipt.mailReplyCredited", ack.to, {
     creditedName: ack.creditedName ?? "",
     from: ack.to.toLowerCase() === ack.senderAddress ? "you emailed" : `emailed from ${ack.senderAddress}`,
     when,
     actionLink: `${config.baseUrl()}/receipts/${encodeURIComponent(ack.receiptId)}`,
-  }, AUTO_REPLY_HEADERS, refused);
+  }, headers, refused);
 }

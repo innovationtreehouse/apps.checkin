@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { Anchor, Badge, Checkbox, Group, Pagination, SegmentedControl, Table, Text, Title } from "@mantine/core";
 import { formatCents } from "@checkin/money";
 import { STATE_COLORS, STATE_LABELS } from "../lib/expense-constants";
+import type { ExpenseWaitingOn } from "../lib/waiting-on";
 import { PAGE_SIZE, useLoad } from "../components/api";
 import { lastPage, LoadError, useUrlChoice, useUrlFilter, useUrlPage } from "@checkin/component-ui";
 import { EXPENSE_LIST_VIEWS } from "../nav";
@@ -17,6 +18,9 @@ interface ExpenseRow {
   state: string;
   needsReimbursement: boolean;
 }
+
+/** The rows alone, or beside each row's state label. */
+type ListAnswer = ExpenseRow[] | { Expense: ExpenseRow[]; ExpenseWaitingOn?: ExpenseWaitingOn[] };
 
 const VIEWS = [
   { value: "all", label: "All", description: "Every expense you can see, newest first. Open one to act on it." },
@@ -54,7 +58,7 @@ const VIEWS = [
   {
     value: "qb_pending",
     label: "QB pending",
-    description: "Signed-off expenses waiting for the app to post them to QuickBooks. Nobody needs to act.",
+    description: "Approved expenses waiting on their last signatures or on posting to QuickBooks.",
   },
 ];
 
@@ -67,7 +71,8 @@ export default function ExpensesPage() {
  * The expense queue by view. The routes confine an approver to their buckets' expenses, so the
  * same list serves Finance and the approver's Programs I Lead tab. `views` are the views the
  * viewer can act in (expenseViewsFor); the routes refuse the others. `viewBadge` is the host's
- * pill beside a view's label: what the viewer can act on there.
+ * pill beside a view's label, given the view's total and whether it is selected; without it the
+ * label carries the total.
  */
 export function ExpenseList({
   detailBase,
@@ -78,7 +83,7 @@ export function ExpenseList({
   detailBase: string;
   defaultView: string;
   views?: readonly string[];
-  viewBadge?: (view: string) => ReactNode;
+  viewBadge?: (view: string, total: number | undefined, selected: boolean) => ReactNode;
 }) {
   const shown = VIEWS.filter((v) => views.includes(v.value));
   const fallbackView = (shown.find((v) => v.value === defaultView) ?? shown.find((v) => v.value === "all") ?? VIEWS[0]).value;
@@ -92,14 +97,16 @@ export function ExpenseList({
   const filter = `view=${view}${activeOnly ? "&active=1" : ""}`;
   const total = useLoad<{ total: number }>(`/expenses/count?${filter}`, { keepPrevious: true });
   const [page, setPage] = useUrlPage(total.data ? lastPage(total.data.total) : null);
-  const rows = useLoad<ExpenseRow[]>(`/expenses?${filter}&page=${page}&limit=${PAGE_SIZE}`, { keepPrevious: true });
+  const rows = useLoad<ListAnswer>(`/expenses?${filter}&page=${page}&limit=${PAGE_SIZE}`, { keepPrevious: true });
+  const answer = rows.data;
+  const list = answer === null ? null : Array.isArray(answer) ? answer : answer.Expense;
+  const labels = new Map((answer && !Array.isArray(answer) ? (answer.ExpenseWaitingOn ?? []) : []).map((w) => [w.expenseId, w.label]));
   const listHref = `${detailBase}?view=${view}&page=${page}${onlyActive ? "" : "&active=0"}`;
 
   const label = (v: { value: string; label: string }) => {
     const n = v.value === "all" ? undefined : counts.data?.[v.value];
-    const text = n ? `${v.label} (${n})` : v.label;
-    const badge = viewBadge?.(v.value);
-    return badge ? <Group gap={6} wrap="nowrap" justify="center">{text}{badge}</Group> : text;
+    if (!viewBadge) return n ? `${v.label} (${n})` : v.label;
+    return <Group gap={6} wrap="nowrap" justify="center">{v.label}{viewBadge(v.value, n, v.value === view)}</Group>;
   };
 
   return (
@@ -131,7 +138,7 @@ export function ExpenseList({
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
-          {(rows.data ?? []).map((e) => (
+          {(list ?? []).map((e) => (
             <Table.Tr key={e.id}>
               <Table.Td>
                 <Anchor href={`${detailBase}/${encodeURIComponent(e.id)}?from=${encodeURIComponent(listHref)}`}>{e.vendorName ?? e.id}</Anchor>
@@ -140,13 +147,13 @@ export function ExpenseList({
               <Table.Td>{e.receiptDate ?? "—"}</Table.Td>
               <Table.Td>{formatCents(e.receiptTotalCents, e.currency)}</Table.Td>
               <Table.Td>
-                <Badge color={STATE_COLORS[e.state] ?? "gray"} variant="light">{STATE_LABELS[e.state] ?? e.state}</Badge>
+                <Badge color={STATE_COLORS[e.state] ?? "gray"} variant="light">{labels.get(e.id) ?? STATE_LABELS[e.state] ?? e.state}</Badge>
               </Table.Td>
             </Table.Tr>
           ))}
         </Table.Tbody>
       </Table>
-      {rows.data?.length === 0 && <Text c="dimmed" mt="md">Nothing in this view.</Text>}
+      {list?.length === 0 && <Text c="dimmed" mt="md">Nothing in this view.</Text>}
       <Group justify="center" mt="md">
         <Pagination value={page} onChange={setPage} total={lastPage(total.data?.total ?? 0)} />
       </Group>

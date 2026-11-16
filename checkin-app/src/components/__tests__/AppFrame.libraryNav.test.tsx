@@ -117,6 +117,13 @@ describe("AppFrame library nav slots", () => {
     expect(screen.getByText("Revenue Ops").closest("a")).not.toHaveAttribute("data-active");
   });
 
+  it("shows 99+ on the Finance review pill past its ceiling", () => {
+    setSession({ id: 2, isFinance: true });
+    mockedUseTodoCounts.mockReturnValue(counts({ libraries: { expense: { financeQueue: 100 }, receipt: { awaitingFinance: 0 } } }));
+    renderFrame();
+    expect(screen.getByLabelText("More than 99 items wait on you in Finance review")).toHaveTextContent(/^99\+$/);
+  });
+
   it.each([
     ["FINANCE", "/income/reconciliation", { id: 2, isFinance: true }],
     ["FINANCE", "/income/exclusions", { id: 2, isFinance: true }],

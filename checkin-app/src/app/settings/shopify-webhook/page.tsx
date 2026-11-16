@@ -18,7 +18,6 @@ import {
   Text,
   Title,
 } from "@mantine/core";
-import { SettingsTabs } from "@/components/admin/SettingsTabs";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { SETTINGS_ADMIN_ROLES } from "@/lib/nav/sections/settings";
 import type { ShopifyWebhookReceipt } from "@/lib/shopifyWebhookReceipt";
@@ -80,8 +79,6 @@ export default function ShopifyWebhookSettingsPage() {
 
   return (
     <Stack>
-      <SettingsTabs active="shopify-webhook" />
-
       {loading && !status ? (
         <Center py="xl"><Loader /></Center>
       ) : failed && !status ? (

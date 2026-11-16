@@ -40,7 +40,7 @@ export function lineAccounts(
     const why = accountId
       ? unusable(accountId, capital.has(l.id), qb, roleAccounts)
       : !l.gtin13
-        ? "it has no GTIN-13"
+        ? "it has no Part ID"
         : rule && "reason" in rule
           ? rule.reason
           : "no account rule was read for it";

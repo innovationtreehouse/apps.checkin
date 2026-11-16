@@ -9,36 +9,31 @@ export type EnrollOutcome = {
     ok: boolean;
     status: number;
     error?: string;
-    requiresOverride?: boolean;
 };
 
 /**
  * Fold per-participant POST outcomes into the aggregate the UI acts on.
  *
- * 409 = already enrolled = the desired end state (covers override-retry passes
- * where a member already succeeded on the first pass), so it counts as enrolled
- * — NOT an error. Any other non-ok status contributes its error message and, if
- * the route flagged requiresOverride, raises the override prompt.
+ * 409 = already enrolled = the desired end state (a re-run after an earlier
+ * pass or a resumed checkout), so it counts as enrolled — NOT an error. Any
+ * other non-ok status contributes its error message.
  */
 export function aggregateEnrollOutcomes(outcomes: EnrollOutcome[]): {
     enrolledIds: number[];
     errors: string[];
-    needsOverride: boolean;
 } {
     const enrolledIds: number[] = [];
     const errors: string[] = [];
-    let needsOverride = false;
 
     for (const o of outcomes) {
         if (o.ok || o.status === 409) {
             enrolledIds.push(o.participantId);
             continue;
         }
-        if (o.requiresOverride) needsOverride = true;
         errors.push(o.error || "Failed to enroll in program.");
     }
 
-    return { enrolledIds, errors, needsOverride };
+    return { enrolledIds, errors };
 }
 
 /**

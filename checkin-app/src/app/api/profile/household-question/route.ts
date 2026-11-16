@@ -1,5 +1,6 @@
 import { ApiResponseError, handler } from "@/security/handler";
 import { answerHouseholdQuestion, householdQuestion, JoinQuestionError, type JoinRefusal } from "@/lib/household/joinQuestion";
+import { ArchivedHouseholdError } from "@/lib/household/archiveGuard";
 
 const REFUSALS: Record<JoinRefusal, { message: string; status: number }> = {
     not_pending: { message: "There is no question to answer.", status: 409 },
@@ -25,6 +26,7 @@ export const POST = handler("POST /api/profile/household-question", async ({ req
     try {
         await answerHouseholdQuestion(auth.user.id, join);
     } catch (error) {
+        if (error instanceof ArchivedHouseholdError) throw new ApiResponseError(error.status, error.message);
         if (!(error instanceof JoinQuestionError)) throw error;
         const { message, status } = REFUSALS[error.refusal];
         throw new ApiResponseError(status, message);

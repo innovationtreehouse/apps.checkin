@@ -4,7 +4,7 @@
  * their own household, an org-level bucket takes no approvers, and archive keeps
  * the row. Real HTTP against the running dev server and the seeded DB.
  */
-import { loginAs, api, type Session } from "./helpers";
+import { loginAs, api, newClassId, type Session } from "./helpers";
 
 const FINANCE = "finance@example.com";
 const BOARD = "boardmember@example.com";
@@ -24,7 +24,7 @@ let bucketId: number;
 
 beforeAll(async () => {
   [finance, board, outsider] = await Promise.all([loginAs(FINANCE), loginAs(BOARD), loginAs(OUTSIDER)]);
-  const created = await send(finance, "POST", "/api/budget-owners", { name: `Flow approvers ${Date.now()}` });
+  const created = await send(finance, "POST", "/api/budget-owners", { name: `Flow approvers ${Date.now()}`, quickBooksClassId: newClassId() });
   expect(created.status).toBe(200);
   bucketId = (created.json as Bucket).id;
 });
@@ -38,12 +38,13 @@ const approvers = async (s: Session) => {
 describe("budget-owner buckets", () => {
   it("finance creates, renames and maps a bucket; the board reads it", async () => {
     const name = `Flow bucket ${Date.now()}`;
-    const created = await send(finance, "POST", "/api/budget-owners", { name, isOrgLevel: true });
+    const firstClassId = newClassId();
+    const created = await send(finance, "POST", "/api/budget-owners", { name, isOrgLevel: true, quickBooksClassId: firstClassId });
     expect(created.status).toBe(200);
     const bucket = created.json as Bucket;
-    expect(bucket).toMatchObject({ name, isOrgLevel: true, archivedAt: null, quickBooksClassId: null });
+    expect(bucket).toMatchObject({ name, isOrgLevel: true, archivedAt: null, quickBooksClassId: firstClassId });
 
-    const classId = String(Date.now());
+    const classId = newClassId();
     const edited = await send(finance, "PATCH", `/api/budget-owners/${bucket.id}`, { name: `${name} (renamed)`, quickBooksClassId: classId });
     expect(edited.status).toBe(200);
     expect(edited.json).toMatchObject({ name: `${name} (renamed)`, quickBooksClassId: classId });
@@ -51,6 +52,22 @@ describe("budget-owner buckets", () => {
     const listed = await api<Bucket[]>(board, "/api/budget-owners");
     expect(listed.status).toBe(200);
     expect(listed.json.find((b) => b.id === bucket.id)).toMatchObject({ quickBooksClassId: classId });
+  });
+
+  it("refuses a bucket with no Class, a second bucket on a taken Class, and clearing a Class", async () => {
+    const name = `Flow class ${Date.now()}`;
+    const noClass = await send(finance, "POST", "/api/budget-owners", { name });
+    expect(noClass.status).toBe(400);
+    expect(JSON.stringify(noClass.json)).toMatch(/needs a QuickBooks Class/);
+
+    const quickBooksClassId = newClassId();
+    const created = await send(finance, "POST", "/api/budget-owners", { name, quickBooksClassId });
+    expect(created.status).toBe(200);
+    expect((await send(finance, "POST", "/api/budget-owners", { name, quickBooksClassId })).status).toBe(409);
+
+    const id = (created.json as Bucket).id;
+    expect((await send(finance, "PATCH", `/api/budget-owners/${id}`, { quickBooksClassId: null })).status).toBe(400);
+    expect((await send(finance, "PUT", `/api/books-map/classes/${id}`, { quickBooksClassId: null })).status).toBe(400);
   });
 
   it("refuses bucket writes to the board and to a plain member", async () => {
@@ -61,7 +78,7 @@ describe("budget-owner buckets", () => {
   });
 
   it("archive keeps the row: hidden by default, listed with includeArchived=1", async () => {
-    const created = await send(finance, "POST", "/api/budget-owners", { name: `Flow archive ${Date.now()}` });
+    const created = await send(finance, "POST", "/api/budget-owners", { name: `Flow archive ${Date.now()}`, quickBooksClassId: newClassId() });
     expect(created.status).toBe(200);
     const id = (created.json as Bucket).id;
 
@@ -77,10 +94,10 @@ describe("budget-owner buckets", () => {
 });
 
 describe("changing a bucket", () => {
-  const create = async () => (await send(finance, "POST", "/api/budget-owners", { name: `Flow change ${Date.now()}` })).json as Bucket;
+  const create = async () => (await send(finance, "POST", "/api/budget-owners", { name: `Flow change ${Date.now()}`, quickBooksClassId: newClassId() })).json as Bucket;
 
   it("finance restores an archived bucket with its Class", async () => {
-    const quickBooksClassId = String(Date.now());
+    const quickBooksClassId = newClassId();
     const { id } = await create();
     await send(finance, "PATCH", `/api/budget-owners/${id}`, { quickBooksClassId });
     await send(finance, "POST", `/api/budget-owners/${id}/archive`);
@@ -162,7 +179,7 @@ describe("bucket approvers", () => {
   });
 
   it("an org-level bucket takes no approvers", async () => {
-    const created = await send(finance, "POST", "/api/budget-owners", { name: `Flow org-level ${Date.now()}`, isOrgLevel: true });
+    const created = await send(finance, "POST", "/api/budget-owners", { name: `Flow org-level ${Date.now()}`, isOrgLevel: true, quickBooksClassId: newClassId() });
     const id = (created.json as Bucket).id;
     expect((await send(board, "PUT", `/api/budget-owners/${id}/owner`, { personId: outsider.personaId })).status).toBe(409);
   });

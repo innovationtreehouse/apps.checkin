@@ -1,6 +1,6 @@
 /** Finance curation: comment rules (read + delete) and the GL account map. */
 import { httpError, mapServiceErrors, parseBody, parseId } from "@checkin/component-kit";
-import { LINE_ACCOUNT_TYPES, accountTypeRefusal } from "@checkin/quickbooks";
+import { LINE_ACCOUNT_TYPES, QUICKBOOKS_LIST_STALE, staleListRefusal } from "@checkin/quickbooks";
 import { z } from "zod";
 import { accountMapService } from "../services/accountMapService";
 import { commentRuleService } from "../services/commentRuleService";
@@ -28,14 +28,19 @@ const accountMapSchema = z.object({
 
 type AccountMapBody = z.infer<typeof accountMapSchema>;
 
-/** Refuses a rule account QuickBooks doesn't list, or lists under a type a gift can't book to. Reads QuickBooks live. */
-async function refuseWrongTypes(data: AccountMapBody): Promise<void> {
-  const picked = ([["donation", data.donationAccountId], ["match", data.matchAccountId]] as const).flatMap(([kind, id]) => (id === null ? [] : [{ kind, id }]));
+type StoredAccounts = { donationAccountId: string | null; matchAccountId: string | null };
+
+/** Refuses a rule account the app's QuickBooks list lacks, or lists under a type a gift can't book to; an account the stored rule already has isn't re-read. */
+async function refuseWrongTypes(data: AccountMapBody, stored?: StoredAccounts | null): Promise<void> {
+  const picked = ([
+    ["donation", data.donationAccountId, stored?.donationAccountId],
+    ["match", data.matchAccountId, stored?.matchAccountId],
+  ] as const).flatMap(([kind, id, storedId]) => (id === null || id === storedId ? [] : [{ kind, id }]));
   if (picked.length === 0) return;
   const accounts = await mapServiceErrors(getQuickBooksAccounts());
   for (const { kind, id } of picked) {
-    const refusal = accountTypeRefusal(accounts, id, LINE_ACCOUNT_TYPES.givingGift, `A rule's ${kind} account`);
-    if (refusal) throw httpError(400, refusal);
+    const refusal = staleListRefusal(accounts, id, LINE_ACCOUNT_TYPES.givingGift, `A rule's ${kind} account`);
+    if (refusal) throw httpError(400, refusal, QUICKBOOKS_LIST_STALE);
   }
 }
 
@@ -65,8 +70,8 @@ export const createAccountMap: DonationRouteHandler = async ({ req }) => {
 export const updateAccountMap: DonationRouteHandler = async ({ req, params }) => {
   const id = parseId(params.id);
   const data = await parseBody(req, accountMapSchema);
-  await refuseWrongTypes(data);
   const orgId = await getOrgId();
+  await refuseWrongTypes(data, await accountMapService.findAccountMap(orgId, id));
   const audit = await actor(req);
   return { AccountMap: await mapServiceErrors(() => accountMapService.updateAccountMap(orgId, id, data, audit)) };
 };

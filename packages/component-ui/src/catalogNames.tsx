@@ -43,7 +43,7 @@ export function CatalogNamesUnavailable({ lookup }: { lookup: CatalogNames }) {
   if (lookup.failed.size === 0) return null;
   return (
     <Alert color="yellow" mb="md">
-      Item names couldn&apos;t be loaded from the catalog. Showing part numbers.
+      Item names couldn&apos;t be loaded from the catalog. Showing Part IDs.
     </Alert>
   );
 }

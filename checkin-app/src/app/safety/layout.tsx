@@ -7,7 +7,7 @@ import { useRequireRole } from "@/hooks/useRequireRole";
 import { linkGate, visibleLinks } from "@/lib/nav/gates";
 import { SAFETY, SAFETY_ROLES } from "@/lib/nav/sections/safety";
 import { useTodoCounts } from "@/hooks/useTodoCounts";
-import { tabBadgeFor } from "@/components/navBadges";
+import { badgeText, tabBadgeFor } from "@/components/navBadges";
 import { CountBadge } from "@/components/ui/CountBadge";
 import { ScrollableTabsList } from "@/components/ui/ScrollableTabsList";
 import { PageContainer } from "@/components/ui/PageContainer";
@@ -63,7 +63,7 @@ export default function SafetyLayout({ children }: { children: React.ReactNode }
               value={t.href}
               // Active tab recolors its content to the tabs color (green); pin dark text so the
               // green count badge isn't rendered green-on-green on the active tab.
-              rightSection={t.count ? <CountBadge intent="action">{t.count}</CountBadge> : undefined}
+              rightSection={t.count ? <CountBadge intent="action">{badgeText(t.count)}</CountBadge> : undefined}
             >
               {t.name}
             </Tabs.Tab>

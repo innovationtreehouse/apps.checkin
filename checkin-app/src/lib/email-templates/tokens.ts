@@ -18,6 +18,12 @@ export type TokenSpecs = Record<string, TokenSpec>;
 
 const TOKEN_RE = /\{\{\s*(\w+)\s*\}\}/g;
 
+/** A link token becomes an anchor only for a web URL or a single-slash site path, never `javascript:`, `data:`, `//host` or `/\host`. */
+const SAFE_HREF_RE = /^(https?:\/\/|\/(?![/\\]))/i;
+
+/** URL parsers strip tabs and newlines, so `/\t/host` would resolve to another host; any control character makes the value text. */
+const hasControlChar = (value: string) => Array.from(value).some(c => c <= "\u001F" || c === "\u007F");
+
 /** Every `{{token}}` name in `text` that `tokens` does not allow. */
 export function findUnknownTokens(text: string, tokens: TokenSpecs): string[] {
     const found = new Set<string>();
@@ -30,7 +36,8 @@ export function findUnknownTokens(text: string, tokens: TokenSpecs): string[] {
 /**
  * Replace the allowed tokens with their `ctx` values (missing → ""). With
  * `escape` (the body) the template text and every value are HTML-escaped and a
- * link token becomes an anchor; without it (the subject, which is not HTML)
+ * link token with a web or site-relative URL becomes an anchor (any other
+ * value is shown as text); without it (the subject, which is not HTML)
  * everything is inserted raw and a link token is its URL. Unknown tokens are
  * left as written; save-time validation rejects them.
  */
@@ -52,7 +59,7 @@ export function substituteTokens(
         }
         const value = Object.hasOwn(ctx, m[1]) ? ctx[m[1]] : "";
         if (!escape) out += value;
-        else if (spec.kind === "link") out += `<a href="${escapeHtml(value)}">${escapeHtml(spec.label ?? value)}</a>`;
+        else if (spec.kind === "link" && !hasControlChar(value) && SAFE_HREF_RE.test(value)) out += `<a href="${escapeHtml(value)}">${escapeHtml(spec.label ?? value)}</a>`;
         else out += escapeHtml(value);
     }
     out += escape ? escapeHtml(template.slice(last)) : template.slice(last);

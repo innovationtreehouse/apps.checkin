@@ -1,6 +1,6 @@
-// Counts for the host's nav pills: "Expense approvals" (lines waiting on the caller's approval,
-// the program approver's sign-off) and each expense list view's items the caller can act on. The
-// finance queue counts itself (financeQueueService). Each reads only the caller's own scope.
+// Counts for the host's nav pills: each expense list view's items the caller can act on, and the
+// lines waiting on the caller's approval. The finance queue counts itself (financeQueueService).
+// Each reads only the caller's own scope.
 import { db } from "../db";
 import type { ExpensePrincipal } from "../contract";
 import { getExpenseRuntime, getOrgId } from "../runtime";
@@ -8,8 +8,8 @@ import { callerId } from "../lib/caller";
 import type { Expense, Prisma } from "../generated/prisma/client";
 import { EXPENSE_ACTION_VIEWS, type ExpenseActionView } from "../nav";
 import { logError } from "../lib/logger";
-import { approvableByCallerWhere, boardAuthorizationRefusal, reimburseeUnknown } from "../lib/signoff";
-import { boardApprovalNeeded, isConflicted, signoffFactsByLine } from "../lib/signoff-facts";
+import { approvableByCallerWhere, approvesAsStandIn, boardAuthorizationRefusal, reimburseeUnknown } from "../lib/signoff";
+import { conflictedExpenses, signoffFactsForExpenses, type ExpenseSignoffFacts } from "../lib/signoff-facts";
 import { callerLinesFor } from "./signoffService";
 
 /** The most expenses a sign-off badge or list reports for one caller. */
@@ -26,17 +26,20 @@ export interface ExpenseAwaitingApproval {
 
 /**
  * The expenses waiting on the caller's approval, each with the lines whose main act for the
- * caller (from lineActions) is approval, newest first. Candidates are the expenses the query can
- * tell have a line the caller may approve (approvableByCallerWhere); their facts are read
- * together and lineActions decides. "Waiting on you" lists all of them
- * (allExpensesAwaitingMyApproval); a badge poll reads a bounded slice (expensesAwaitingMyApproval).
+ * caller (from lineActions) is approval as the line's bucket approver, newest first. A line the
+ * caller approves only as a Board member counts in Finance review's Board tab instead
+ * (boardApprovalsWaiting), split by the same approvesAsStandIn, so no line counts in both.
+ * Candidates are the expenses the query can tell have a line the caller may approve
+ * (approvableByCallerWhere); their facts are read together and lineActions decides. "Waiting on
+ * you" lists all of them (allExpensesAwaitingMyApproval); a badge poll reads a bounded slice
+ * (expensesAwaitingMyApproval).
  */
 async function awaitingApproval(principal: ExpensePrincipal, bounded: boolean): Promise<ExpenseAwaitingApproval[]> {
   const me = callerId(principal);
   const dir = getExpenseRuntime().signoff;
   const buckets = await dir.bucketsApprovedBy(me);
-  if (buckets.length === 0 && !principal.isBoard) return [];
-  const where = approvableByCallerWhere(me, await dir.householdIds(me), buckets, principal.isBoard);
+  if (buckets.length === 0) return [];
+  const where = approvableByCallerWhere(me, await dir.householdIds(me), buckets);
   const candidates = await db.expense.findMany({
     where: { orgId: await getOrgId(), ...where },
     orderBy: [{ submittedAt: "desc" }, { id: "asc" }],
@@ -48,7 +51,7 @@ async function awaitingApproval(principal: ExpensePrincipal, bounded: boolean): 
     if (bounded && out.length === SIGNOFF_BADGE_EXPENSE_CAP) break;
     const lineItemIds = linesOf
       .get(expense.id)!
-      .filter((line) => line.actions.some((a) => a.act === "approve" && a.primary))
+      .filter((line) => line.actions.some((a) => a.act === "approve" && a.primary) && !approvesAsStandIn(line.facts, me))
       .map((line) => line.lineItemId);
     if (lineItemIds.length > 0) out.push({ expenseId: expense.id, lineItemIds });
   }
@@ -59,7 +62,7 @@ async function awaitingApproval(principal: ExpensePrincipal, bounded: boolean): 
  * For the badges: the SIGNOFF_BADGE_EXPENSE_CAP newest expenses waiting on the caller's approval
  * among the SIGNOFF_BADGE_CANDIDATE_CAP newest candidates. Past either cap it is a lower bound: it
  * never counts a line the caller cannot approve, but leaves out work older than the candidates
- * read. The approver pill and the owner-approval view count read this.
+ * read. The owner-approval view count reads this.
  */
 export function expensesAwaitingMyApproval(principal: ExpensePrincipal): Promise<ExpenseAwaitingApproval[]> {
   return awaitingApproval(principal, true);
@@ -70,13 +73,13 @@ export function allExpensesAwaitingMyApproval(principal: ExpensePrincipal): Prom
   return awaitingApproval(principal, false);
 }
 
-/** One nav poll's expensesAwaitingMyApproval, read on first use and shared by the approver pill and the owner-approval count. */
+/** One nav poll's expensesAwaitingMyApproval, read on first use and shared by the counts that read it. */
 export function approvalPoll(principal: ExpensePrincipal): () => Promise<ExpenseAwaitingApproval[]> {
   let read: Promise<ExpenseAwaitingApproval[]> | undefined;
   return () => (read ??= expensesAwaitingMyApproval(principal));
 }
 
-/** The approver pill: lines waiting on the caller's approval (expensesAwaitingMyApproval). */
+/** Lines waiting on the caller's approval (expensesAwaitingMyApproval). */
 export async function signoffsAwaitingCount(principal: ExpensePrincipal, awaiting = approvalPoll(principal)): Promise<number> {
   return (await awaiting()).reduce((n, e) => n + e.lineItemIds.length, 0);
 }
@@ -119,8 +122,8 @@ export async function expenseActionCounts(principal: ExpensePrincipal, awaiting 
  * QB pending expenses the caller can move toward QuickBooks, across at most
  * SIGNOFF_BADGE_EXPENSE_CAP of them (newest first): set an unknown reimbursee (FINANCE) or record
  * the Board authorization. The query reads stored ids, so a merged-away submitter's expense stays a
- * candidate here and canMoveQbPending refuses it. Treasurer and Board signatures are the finance queue's To sign and
- * Board counts; a line's approval, the program approver's sign-off, is signoffsAwaitingCount's.
+ * candidate here and canMoveQbPending refuses it. The expenses' sign-off facts, and the unknown-reimbursee expenses' conflict checks, are each read together. Treasurer and Board signatures are the finance queue's To sign and
+ * Board counts; a line's approval, the program approver's sign-off, is the owner-approval count's.
  */
 export async function qbPendingActionCount(principal: ExpensePrincipal): Promise<number> {
   const me = callerId(principal);
@@ -129,15 +132,18 @@ export async function qbPendingActionCount(principal: ExpensePrincipal): Promise
     orderBy: { submittedAt: "desc" },
     take: SIGNOFF_BADGE_EXPENSE_CAP,
   });
-  let count = 0;
-  for (const expense of expenses) if (await canMoveQbPending(principal, me, expense)) count++;
-  return count;
+  const unknown = expenses.filter(reimburseeUnknown);
+  const [facts, conflicted] = await Promise.all([
+    signoffFactsForExpenses(db, expenses.filter((e) => !reimburseeUnknown(e)), { readOnly: true }),
+    principal.isFinance ? conflictedExpenses(unknown, me) : new Set<string>(),
+  ]);
+  return expenses.filter((expense) => canMoveQbPending(principal, me, expense, facts, conflicted)).length;
 }
 
-async function canMoveQbPending(principal: ExpensePrincipal, me: number, expense: Expense): Promise<boolean> {
-  if (reimburseeUnknown(expense)) return principal.isFinance && !(await isConflicted(expense, me));
-  const [facts, approvalNeeded] = await Promise.all([signoffFactsByLine(db, expense, { readOnly: true }), boardApprovalNeeded(db, expense)]);
-  const lines = [...facts.values()];
-  const takesAuthorization = expense.boardAuthorization === null && (approvalNeeded || lines.some((f) => f.boardSeat));
+function canMoveQbPending(principal: ExpensePrincipal, me: number, expense: Expense, facts: Map<string, ExpenseSignoffFacts>, conflicted: Set<string>): boolean {
+  if (reimburseeUnknown(expense)) return principal.isFinance && !conflicted.has(expense.id);
+  const { byLine, boardApprovalNeeded } = facts.get(expense.id)!;
+  const lines = [...byLine.values()];
+  const takesAuthorization = expense.boardAuthorization === null && (boardApprovalNeeded || lines.some((f) => f.boardSeat));
   return takesAuthorization && boardAuthorizationRefusal(lines, me) === null;
 }

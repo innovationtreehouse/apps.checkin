@@ -1,8 +1,8 @@
 "use client";
 
-import { Anchor, Box, Button, Card, Checkbox, Group, Stack, Text, ThemeIcon, Title } from "@mantine/core";
+import { Box, Button, Card, Group, Stack, Text, ThemeIcon, Title } from "@mantine/core";
 import { APP_TIMEZONE, formatDate } from "@/lib/time";
-import type { BgConsentControls, ExternalStatus } from "./useMembershipPage";
+import type { ExternalStatus } from "./useMembershipPage";
 
 function ExternalTask({ done, title, doneText, doneExtra, children }: { done: boolean; title: string; doneText: string; doneExtra?: React.ReactNode; children: React.ReactNode }) {
   return (
@@ -25,14 +25,13 @@ function ExternalTask({ done, title, doneText, doneExtra, children }: { done: bo
   );
 }
 
-/** The PENDING_EXTERNAL_ACTION step: sign the agreement and consent to the background check. */
-export default function ExternalActionPanel({ external, isRenewal, saving, onSign, onRefresh, bg }: {
+/** The PENDING_EXTERNAL_ACTION step: sign the agreement and start a lead's background check. */
+export default function ExternalActionPanel({ external, isRenewal, saving, onSign, onRefresh }: {
   external: ExternalStatus | null;
   isRenewal: boolean;
   saving: boolean;
   onSign: () => void;
   onRefresh: () => void;
-  bg: BgConsentControls;
 }) {
   return (
     <Card withBorder radius="md" padding="lg">
@@ -71,46 +70,15 @@ export default function ExternalActionPanel({ external, isRenewal, saving, onSig
           </ExternalTask>
         ) : (
           <ExternalTask
-            done={!!external?.bgConsented}
-            title="Start your background check"
+            done={!!external?.checkStarted}
+            title="Background check started"
             doneText="Background check started — we&apos;ll finish it in the background."
-            doneExtra={external?.deepLinkUrl ? (
-              <Text size="sm" c="dimmed" mt="xs">
-                Checked it by mistake, or still need to finish the form?{" "}
-                <Anchor href={external.deepLinkUrl} target="_blank" rel="noopener noreferrer">
-                  Reopen the Averity consent form →
-                </Anchor>
-              </Text>
-            ) : undefined}
           >
-            <Stack gap="xs" align="flex-start">
-              <Text c="dimmed">
-                Consent to your background check on Averity. It runs in the background — you
-                can keep going and pay while it completes.
-              </Text>
-              {external?.deepLinkUrl ? (
-                <>
-                  <Button
-                    component="a"
-                    href={external.deepLinkUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={bg.markLinkOpened}
-                  >
-                    Consent on Averity →
-                  </Button>
-                  <Checkbox
-                    label="I submitted my consent on Averity"
-                    description={bg.linkOpened ? undefined : "Open the Averity form above first, then confirm here."}
-                    checked={bg.consenting}
-                    disabled={!bg.linkOpened || bg.consenting}
-                    onChange={(e) => { if (e.currentTarget.checked) bg.recordConsent(); }}
-                  />
-                </>
-              ) : (
-                <Text c="dimmed">The background-check link isn&apos;t available yet. Please check back shortly.</Text>
-              )}
-            </Stack>
+            <Text c="dimmed">
+              Not yet. Start a household lead&apos;s check in the background-check tool, then mark it
+              started in the Background checks panel above. It runs in the background — you can
+              keep going and pay while it completes.
+            </Text>
           </ExternalTask>
         )}
 

@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Select, Stack, Table, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { errorMessage } from "@checkin/component-ui";
+import { errorMessage, QuickBooksListsRefresh, refusalMessage } from "@checkin/component-ui";
 import type { BooksMapRole } from "@checkin/quickbooks";
 import { BOOKS_MAP_ROLE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -33,7 +33,7 @@ interface AccountOption extends Option {
   accountType: string;
 }
 
-function showError(title: string, message: string) {
+function showError(title: string, message: ReactNode) {
   notifications.hide(title);
   notifications.show({ id: title, color: "red", title, message, autoClose: false });
 }
@@ -81,7 +81,7 @@ export default function BooksMapPage() {
     try {
       await api(url, { method: "PUT", body: JSON.stringify(body) });
     } catch (e) {
-      showError(failed, errorMessage(e));
+      showError(failed, refusalMessage(e, { onRefreshed: () => void load() }));
       return;
     }
     notifications.show({ message: "Saved." });
@@ -94,6 +94,7 @@ export default function BooksMapPage() {
   return (
     <Stack>
       <Title order={2}>Books map</Title>
+      <QuickBooksListsRefresh onRefreshed={() => void load()} />
       <Text c="dimmed">
         Which QuickBooks account each kind of incoming money books to, and which QuickBooks Class each budget bucket
         books to. Income reads the Shopify and Benevity accounts and the Classes from here, gifts of goods read their four
@@ -139,7 +140,6 @@ export default function BooksMapPage() {
                   value={r.quickBooksClassId}
                   placeholder="Not set"
                   searchable
-                  clearable
                   disabled={!isFinance}
                   onChange={(v) => void save(`/api/books-map/classes/${r.budgetOwnerId}`, { quickBooksClassId: v }, "Class not saved")}
                 />

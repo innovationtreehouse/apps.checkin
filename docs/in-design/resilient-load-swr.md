@@ -134,7 +134,7 @@ A loop of writes passes `invalidate: false` on each and calls `invalidateLoads`
 once when it ends, however it ends. The mail page's Release All is the one use,
 because each re-read of its held list writes an audit row per item.
 
-Reads that write an audit row (`auditedRead` routes and the held mail list) log
+Reads that write an audit row (finance views that send a marked field, and the held mail list) log
 each re-read, so those logs grow with invalidation. The owner accepted this, since
 each re-read is shown to the person.
 

@@ -100,3 +100,12 @@ export const relations = {
     enrollments: { model: "MatchAuditEnrollmentRow", isList: true },
   },
 } as const;
+
+// Finance marks: the fields whose presence in a response makes it a logged finance view.
+export const marks = {
+  PaymentQueueRow: ["familyName", "familyEmail"],
+  PaymentQueueLiveOrder: ["totalCents", "totalRefundedCents"],
+  MatchAuditOrderRow: ["customerEmail", "totalCents", "discountCodes"],
+  MatchAuditMembershipRow: ["householdName", "manualPaymentByName"],
+  MatchAuditEnrollmentRow: ["personName"],
+} as const;

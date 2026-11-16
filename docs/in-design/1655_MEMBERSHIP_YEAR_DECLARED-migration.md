@@ -5,15 +5,16 @@ Everything here expires when the change has run. The design is in
 
 ## Where it stands
 
-Nothing is built. There is no year column on the settlement record and no per-year
-variant table; the coverage probes still infer the year from `stageEnteredAt`; and
-the single variant id `BoardSettings.orgMembershipVariantId` is read in eight
-production files. The prerequisites have landed: coverage follows the live
-membership year (#1812), and both board grants pay a real application through
-`certifyPaymentPlan` (#2003), so no grant is a bare status change any more.
+PRs 1 to 9 are built. Every payment records its year, settled rows are filled,
+coverage reads the recorded year, settings hold a variant per year, the checkout
+sells the live year's row (PR 8), and the renewal sweep opens nothing while the
+coming year has no variant (PR 9). The board entered the 2026-27 row in dev and
+production on 2026-11-13.
 
-Ten pull requests finish this. The owner has answered every question; one PR waits
-on an operations step in production (the board entering variants).
+Left: PR 10 (retire the single variant), after PR 9 deploys and drains. The single variant id `BoardSettings.orgMembershipVariantId` is
+still read by the settings route and page, the registry, and the transitional entry
+in `membershipVariantYears` (through the webhook, the reconciler, reversals, the
+match audit and `income/appItems.ts`). PR 10 removes all of them.
 
 ## Decisions settled
 
@@ -224,7 +225,11 @@ Shopify products.
 - **Migration safety:** none.
 - **Blocked on:** PR 6.
 
-### PR 8: checkout sells the live year [app]
+### PR 8: checkout sells the live year [app] (built)
+
+Built as `liveYearVariantId` in `payment.ts`, shared by the checkout link, the dev
+orders-paid route and the dev Shopify page. The nav count asks about the live year
+and the coming year together and counts a year once when they are the same.
 
 - **Files:**
   - `ensurePaymentLink` in `checkin-app/src/lib/membership/payment.ts`: the variant
@@ -234,8 +239,9 @@ Shopify products.
     variant.
   - `checkin-app/src/app/dev/shopify/page.tsx`: "has a variant" reads the live
     year's row.
-  - `checkin-app/src/lib/nav/todoCounts.ts`: the single-variant term becomes "the
-    live year has no row".
+  - `checkin-app/src/lib/nav/todoCounts.ts`: the single-variant term and the
+    coming-year term become one count of the live year and the coming year with no
+    row, a year counted once when they are the same.
 - **Tests:** integration (`membershipPaymentAPI`, `api/dev/shopify/orders-paid`),
   then the flow suite (`npm run test:flow:standalone`, heavy), since every
   membership flow pays through the mock checkout.
@@ -244,7 +250,10 @@ Shopify products.
   live year's row in dev and production (it may reuse the existing variant id).
 - **Blocked on:** PR 7, and the rows entered.
 
-### PR 9: renewals stop without a coming-year variant [app]
+### PR 9: renewals stop without a coming-year variant [app] (built)
+
+Built in `runRenewalSweep` with `liveYearVariantId`, the checkout's own choice of
+variant, so a local instance with the Shopify mock active still opens renewals.
 
 - **Files:** `runRenewalSweep` in `checkin-app/src/lib/membership/renewal.ts`: a
   second early return when the coming year has no row, with a reason naming it.
@@ -306,8 +315,10 @@ coming membership year" with (PR 4):
 **Insert** under Renewal, after the line on when renewals open (PR 9):
 
 ```markdown
-- Renewals do not open while the coming year has no membership product to pay
-  through.  [Decision — *Principle: an unconfigured setting does not act*]
+- The board's "open renewals" button opens nothing while the coming year has no
+  membership product to pay through. A board grant still opens one household's
+  renewal, because the board pays it by grant once it reaches payment.
+  [Decision — *Principle: an unconfigured setting does not act*]
 ```
 
 Nothing about the column, the variant table, the fill or the reader fragments goes

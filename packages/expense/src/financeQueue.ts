@@ -21,9 +21,9 @@ export const TAB_OF_QUEUE: Record<QueueTab, FinanceQueueTabKey> = { expenses: "e
 
 /**
  * The finance queue's reason codes: every expense-page reason (lib/reasons.ts), a failed intake,
- * and the signatures the viewer may give.
+ * the line approvals only a Board member can give, and the signatures the viewer may give.
  */
-export type FinanceQueueReasonCode = ReasonCode | "INTAKE_FAILED" | "TREASURER_SIGNATURE" | "BOARD_SIGNATURE";
+export type FinanceQueueReasonCode = ReasonCode | "INTAKE_FAILED" | "TREASURER_SIGNATURE" | "BOARD_LINE_APPROVAL" | "BOARD_SIGNATURE";
 
 /** Each reason's chip label, in the order a tab's list sorts by. */
 export const FINANCE_QUEUE_REASONS: Record<FinanceQueueReasonCode, string> = {
@@ -42,10 +42,11 @@ export const FINANCE_QUEUE_REASONS: Record<FinanceQueueReasonCode, string> = {
   QB_DRIFT: "Changed in QuickBooks",
   QB_POST_HELD: "Closed but not posted",
   QB_NO_CLASS: "No QuickBooks class",
-  QB_WAITING_ON_SETTING: "Waiting on a setting",
+  QB_PROCESSING_FAILED: "Waits for Retry",
   QB_AWAITING_MATCH: "Waiting for a match",
   QB_VENDOR_MISSING: "No QuickBooks vendor",
   QB_UNBOOKED: "Not booked in QuickBooks",
+  BOARD_LINE_APPROVAL: "Approval to give as Board",
   BOARD_APPROVAL: "Board approval not recorded",
   SIGNER_HELD: "Held, no conflict-free signer",
   BOARD_SIGNATURE: "Board signature to give",
@@ -61,6 +62,8 @@ export interface FinanceQueueReason {
 /** GET /api/expense/finance-queue?tab=…: one record waiting on finance or the Board. A failed intake has no expense. */
 export interface FinanceQueueRow {
   expenseId: string | null;
+  /** A failed intake's receipt, the row's record while it has no expense; null on an expense row. */
+  receiptId: string | null;
   vendorName: string | null;
   date: string | null;
   amountCents: number;

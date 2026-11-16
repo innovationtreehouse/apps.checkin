@@ -126,6 +126,21 @@ function standIn(facts: SignoffFacts, filled: FilledSeat[], seat: Seat): boolean
   return seat === "TREASURER" && availableSigners(facts, filled, seat).length === 0;
 }
 
+/** The line is in the approval step, its reimbursee named and its approval not yet given. */
+function approvalOpen({ expense, approval }: LineActionsInput): boolean {
+  return expense.state === "owner_approval" && !expense.reimburseeUnknown && !!approval && APPROVABLE.has(approval.status);
+}
+
+/**
+ * Whether the line's approval is the next step and only a Board member can give it: an org-level
+ * line, or one no bucket approver may approve. A reimbursement line waits for its submitter first.
+ */
+export function approvalWaitsOnBoard(input: LineActionsInput): boolean {
+  if (!approvalOpen(input)) return false;
+  if (input.facts.kind === "reimbursement" && !input.filled.some((f) => f.seat === "SUBMITTER")) return false;
+  return !input.facts.approvers.some((id) => approvesAsApprover(input, id));
+}
+
 /** Plain status for each open seat or hold the caller has no act on. */
 function awaiting(input: LineActionsInput, acts: LineAction[]): string[] {
   const { expense, approval, facts, filled } = input;
@@ -133,13 +148,13 @@ function awaiting(input: LineActionsInput, acts: LineAction[]): string[] {
   if (CLOSED_STATES.has(expense.state)) return [];
   const out: string[] = [];
   if (approval?.bucketFinal && APPROVABLE.has(approval.status)) out.push("Finance made this bucket final");
-  if (approval && APPROVABLE.has(approval.status) && expense.state === "owner_approval" && !expense.reimburseeUnknown && !acts.some((a) => a.act === "approve")) {
+  if (approvalOpen(input) && !acts.some((a) => a.act === "approve")) {
     // Whether a bucket approver could approve once the person reimbursed has confirmed, which comes first.
     const confirmed = filled.some((f) => f.seat === "SUBMITTER")
       ? input
       : { ...input, filled: [...filled, { seat: "SUBMITTER" as const, signerUserId: facts.reimburseeId ?? facts.submitterId }] };
     const approver = facts.approvers.some((id) => approvesAsApprover(confirmed, id));
-    out.push(approver ? "Awaiting approval" : "Awaiting a Board stand-in");
+    out.push(approver ? "Awaiting approval" : facts.orgLevel ? "Awaiting a Board member's approval" : "Awaiting a Board stand-in");
   }
   if (expense.reimburseeUnknown) out.push("Held until finance names the reimbursee");
   const blocked = blockedSeats(facts, filled);

@@ -6,6 +6,7 @@ import {
 import { formatGtinDisplay } from "@checkin/gtin";
 import { formatCents } from "@checkin/money";
 import { NOT_SENT, QB_OFF, STATE_COLORS, STATE_LABELS } from "../lib/expense-constants";
+import type { ExpenseWaitingOn } from "../lib/waiting-on";
 import { reviewKindOf, type ReviewKind } from "../lib/flags";
 import type { QueueReason, ReasonCode } from "../lib/reasons";
 import { REASON_PLACE, reasonText } from "../lib/reasonWords";
@@ -74,6 +75,8 @@ interface Expense {
   qbTxnEntity?: string | null;
   qbVendorId?: string | null;
   qbMatchBaseline?: string | null;
+  qbFirstFailedAt?: string | null;
+  qbLastError?: string | null;
   lineItems: Line[];
   approvals: Approval[];
   flags?: Flag[];
@@ -102,8 +105,10 @@ interface Bucket {
 }
 
 /** The detail response: the bag, or the expense alone when the reasons were stripped. */
-type Detail = Expense | { Expense: Expense; ExpenseQueueReason?: QueueReason[] };
+type Detail = Expense | { Expense: Expense; ExpenseQueueReason?: QueueReason[]; ExpenseWaitingOn?: ExpenseWaitingOn[] };
 const expenseOf = (d: Detail | null) => (d && "Expense" in d ? d.Expense : d);
+/** The state label the route derived; null when the response carried none. */
+const waitingOnOf = (d: Detail | null) => (d && "Expense" in d ? (d.ExpenseWaitingOn?.[0]?.label ?? null) : null);
 /** The open reasons; null when the response carried none, so nothing is known about them. */
 const reasonsOf = (d: Detail | null) => (d && "Expense" in d ? d.ExpenseQueueReason ?? null : null);
 
@@ -486,6 +491,10 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
   const statuses = (signoffs.data ?? []).map((s) => ({ ...s, actions: s.actions ?? [], awaiting: s.awaiting ?? [] }));
   const statusOf = new Map(statuses.map((s) => [s.lineItemId, s]));
 
+  function postAction(action: LineAction, approval: Approval, body: unknown) {
+    return send(`${base}/line-item-approvals/${approval.id}/${approvalRoute(action.act, approval)}`, "POST", body, `${actLabel(action)} done`);
+  }
+
   async function runAction() {
     if (!dialog) return;
     const { action, approval } = dialog;
@@ -495,23 +504,31 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
       : action.act === "raise-exception" || action.act === "reject-exception" ? { notes: text }
       : route === "finance-assign" ? { ownerId: Number(bucket), final, note: final ? text : null }
       : { ownerId: Number(bucket), ...(route === "assign-owner" ? { permanent } : {}) };
-    if (await send(`${base}/line-item-approvals/${approval.id}/${route}`, "POST", body, `${actLabel(action)} done`)) {
+    if (await postAction(action, approval, body)) {
       setDialog(null);
       await decided();
     }
+  }
+
+  async function approveNow(action: LineAction, approval: Approval) {
+    if (await postAction(action, approval, { reason: null })) await decided();
   }
 
   async function sign(lineItemId: number, seat: string) {
     if (await send(`${base}/line-items/${lineItemId}/signoffs`, "POST", { seat }, `Signed as ${SEAT_LABEL[seat] ?? seat}`)) await decided();
   }
 
-  /** A seat signs at once; every other act opens the dialog for its note or bucket. */
+  /** A seat sign and an approval without a reason act at once; every other act opens the dialog for its note or bucket. */
   function take(lineItemId: number, action: LineAction, approval: Approval | undefined) {
     if (action.act === "sign") {
       void sign(lineItemId, action.seat ?? "");
       return;
     }
     if (!approval) return;
+    if (action.act === "approve" && !action.noteRequired) {
+      void approveNow(action, approval);
+      return;
+    }
     setText(""); setBucket(null); setPermanent(false); setFinal(false);
     setDialog({ action, approval });
   }
@@ -521,7 +538,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
 
   const capitalRows = e.lineItems.map((l) => ({ line: l, value: capital[l.id] ?? { isCapital: l.isCapital, years: l.depreciationYears ?? "", owner: l.capitalOwnerId ? String(l.capitalOwnerId) : "" } }));
   const needsBucket = dialog?.action.act === "assign-bucket" || dialog?.action.act === "resolve-bucket";
-  const takesNote = !needsBucket && dialog !== null && (dialog.action.act !== "approve" || dialog.action.noteRequired);
+  const takesNote = !needsBucket && dialog !== null;
   // "Always use this bucket" maps the line's GTIN, so a non-inventory line or one without a GTIN never offers it.
   const dialogLine = dialog ? e.lineItems.find((l) => l.id === dialog.approval.lineItemId) : undefined;
   const canMapPart = dialog !== null && approvalRoute(dialog.action.act, dialog.approval) === "assign-owner" && !!dialogLine?.gtin13 && !dialogLine.nonInventory;
@@ -540,7 +557,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
       <Anchor href={listHref} size="sm">← Back</Anchor>
       <Group>
         <Title order={3}>{e.vendorName ?? e.id}</Title>
-        <Badge color={STATE_COLORS[e.state] ?? "gray"} variant="light">{STATE_LABELS[e.state] ?? e.state}</Badge>
+        <Badge color={STATE_COLORS[e.state] ?? "gray"} variant="light">{waitingOnOf(expense.data) ?? STATE_LABELS[e.state] ?? e.state}</Badge>
         {e.backfill && <Badge color="gray">Backfill</Badge>}
         {e.isTestData && <Badge color="grape">Test data</Badge>}
       </Group>
@@ -552,6 +569,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
         />
       )}
       <ReasonsAlert reasons={reasons} currency={e.currency} />
+      {(isFinance || isBoard) && e.qbFirstFailedAt && <Text size="sm" c="red">Last error: {e.qbLastError ?? "no error recorded"}</Text>}
       {e.qbMatchState && NOT_SENT[e.qbMatchState] && <Text size="sm" c="orange">{NOT_SENT[e.qbMatchState]}</Text>}
       {isFinance && (e.qbMatchState === "NEEDS_FINANCE" || open("QB_AWAITING_MATCH") || open("QB_VENDOR_MISSING") || open("QB_UNBOOKED")) && (
         <Paper withBorder p="sm">
@@ -631,7 +649,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
             <Table.Th ta="right">Qty</Table.Th>
             <Table.Th ta="right">Unit</Table.Th>
             <Table.Th ta="right">Total</Table.Th>
-            <Table.Th>Part No.</Table.Th>
+            <Table.Th>Part ID</Table.Th>
             <Table.Th>Bucket</Table.Th>
             <Table.Th>Approval</Table.Th>
             <Table.Th>Sign-off</Table.Th>

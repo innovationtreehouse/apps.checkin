@@ -9,6 +9,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { api, differentPurchases } from "../flow-tests/helpers";
 import { lineAct, lineRow } from "./support/expenseLines";
 import { watchPage, type PageWatch } from "./support/pageErrors";
+import { resolveAndReopen } from "./support/receipts";
 import { APPROVER, bucket, FINANCE, INVENTORY_MANAGER, releaseLibraries, type Undo } from "./support/seedState";
 import { signIn } from "./support/session";
 
@@ -94,13 +95,10 @@ test("a receipt goes from upload to an approved line in finance review", async (
     await expect(page.getByText("Needs mapping", { exact: true })).toBeVisible();
 
     await line(page).getByRole("button", { name: "Associate" }).click();
-    await page.getByPlaceholder("Search the catalog by name, GTIN or category").fill(CATALOG_ITEM);
+    await page.getByPlaceholder("Search the catalog by name, Part ID or category").fill(CATALOG_ITEM);
     await page.getByRole("radio", { name: new RegExp(CATALOG_ITEM) }).click();
-    // Saving the last line applies the receipt; reloading before it answers would abort it.
-    const associated = page.waitForResponse((res) => res.request().method() === "POST" && /\/lines\/\d+\/associate$/.test(new URL(res.url()).pathname));
-    await page.getByRole("button", { name: "Save", exact: true }).click();
-    expect((await associated).status()).toBe(200);
-    await eventually(page, page.getByText("Resolved", { exact: true }));
+    await resolveAndReopen(page, () => page.getByRole("button", { name: "Save", exact: true }).click());
+    await expect(page.getByText("Resolved", { exact: true })).toBeVisible();
     await noProblems(watch, "Part mapping");
   });
 
@@ -125,8 +123,6 @@ test("a receipt goes from upload to an approved line in finance review", async (
     const watch = watchPage(page);
     await page.goto(`/programs-i-lead/expense-approvals/${encodeURIComponent(receiptId)}`);
     await lineAct(page, LINE, "Approve as Program approver");
-    await page.getByRole("dialog").getByRole("button", { name: "Confirm", exact: true }).click();
-    await expect(page.getByRole("dialog")).toBeHidden();
     // The approver's last decision returns them to the list once the page has refetched; a goto before that is aborted by it.
     await page.waitForURL((url) => url.pathname === "/programs-i-lead/expense-approvals");
     await page.goto(`/programs-i-lead/expense-approvals/${encodeURIComponent(receiptId)}`);
