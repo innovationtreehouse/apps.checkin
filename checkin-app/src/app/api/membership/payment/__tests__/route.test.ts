@@ -19,12 +19,21 @@ import { GET } from '../route';
 import prisma from '@/lib/prisma';
 
 type Get = (req: Request, auth: unknown) => Promise<Response>;
-const get = () => (GET as unknown as Get)(new Request('http://localhost/api/membership/payment'), { type: 'session', user: { id: 7, isBoardMember: false } });
+const SESSION = { type: 'session', user: { id: 7, isBoardMember: false } };
+const get = (auth: unknown = SESSION) => (GET as unknown as Get)(new Request('http://localhost/api/membership/payment'), auth);
 
 describe('GET /api/membership/payment finance contact', () => {
+    it('refuses a caller without a session', async () => {
+        prisma.boardSettings.findUnique = jest.fn();
+        const res = await get({ type: 'kiosk' });
+        expect(res.status).toBe(401);
+        expect(prisma.boardSettings.findUnique).not.toHaveBeenCalled();
+    });
+
     it.each([
         [{ financeContactEmail: ' finance@example.org ' }, 'finance@example.org'],
         [{ financeContactEmail: null }, null],
+        [{ financeContactEmail: '' }, null],
         [{ financeContactEmail: '  ' }, null],
         [null, null],
     ])('returns %o as %p', async (row, expected) => {
