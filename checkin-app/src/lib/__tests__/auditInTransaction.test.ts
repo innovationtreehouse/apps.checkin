@@ -31,9 +31,6 @@ const ALLOWLIST: Record<string, { count: number; reason: string }> = {
     "app/api/membership-ops/participants/[id]/household/route.ts": { count: 1, reason: TO_FIX },
     "app/api/membership-ops/contacts/route.ts": { count: 1, reason: TO_FIX },
     "app/api/profile/route.ts": { count: 1, reason: TO_FIX },
-    // Membership
-    "lib/membership/external.ts": { count: 2, reason: TO_FIX },
-    "lib/membership/grant.ts": { count: 1, reason: TO_FIX },
     // Finance and settings
     "app/api/finance-ops/payments/[id]/route.ts": { count: 1, reason: TO_FIX },
     "app/api/finance-ops/s-read/match-audit/track/route.ts": { count: 1, reason: TO_FIX },
