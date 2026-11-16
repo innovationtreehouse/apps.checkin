@@ -276,12 +276,9 @@ Things the app takes as true because they are handled outside it.
 
 - Changing a person's email unlinks their sign-in service accounts.  [Decision — *Principle: fail closed*]
 
-- A person's identifier is opaque, and its only job is to be unique and to stay
-  unique. It is never reissued and never worked out from the people already on
-  file: issuing the highest number in use plus one hands a deleted person's
-  number to a new one, and every badge printed for the first would then scan as
-  the second at the kiosk. Numbers are issued in order from a count the database
-  keeps, which a pause cannot skip ahead and a deletion cannot wind back.  [Decision]
+- A person's identifier is unique and stays unique. It is never reissued, not
+  even a deleted person's, so a badge printed for one person can never scan as
+  another at the kiosk.  [Decision]
 
 - A person is never lost. A merge deletes the merged-away record and keeps an
   archive of it, which names the surviving record. The merged-away person drops
@@ -295,8 +292,7 @@ Things the app takes as true because they are handled outside it.
 
 - A merged person's pre-merge state is held in the archive, so a merge of the wrong two
   people can be investigated and the person reconstructed. There is no un-merge:
-  what the record does not carry is which rows moved, so putting a bad merge right
-  is hand work, not a button.  [Decision — *Principle: decisions are reversible*]
+  putting a bad merge right is hand work.  [Decision — *Principle: decisions are reversible*]
 
 - A person's membership standing belongs to their household, and merging two
   records never alters it as a side effect, with one exception: after a merge both
@@ -367,8 +363,8 @@ Things the app takes as true because they are handled outside it.
   Nothing is blocked; the household resolves it.  [Decision]
 
 - A missing emergency contact is the household's to fix and the board's to chase.
-  It raises a list of the households to contact, a count in the board's
-  navigation, and a notification the front desk sees too. Nothing is blocked —
+  The board is shown the households to contact, and the front desk sees them
+  too. Nothing is blocked —
   chasing it is a conversation, not a refusal at the door.  [Decision — *Principle: people decide about people*]
 
 ### Trusted adults
@@ -411,14 +407,13 @@ Things the app takes as true because they are handled outside it.
 - An approval lasts a year. The family is warned a month out and resubmits
   without re-entering what the board already holds.  [Decision]
 
-- An approval past its review date no longer authorises, whether or not the expiry
-  job has run; the job only records the expiry and tells the family.  [Decision — *Principle: fail closed*]
+- An approval past its review date no longer authorises, even before the expiry
+  is recorded and the family told.  [Decision — *Principle: fail closed*]
 
 - A withdrawn trusted adult can be hidden from the household's own view, and the
-  household cannot bring it back. The record is kept, but no board surface lists
-  it either — the review queue holds what is awaiting action or expiring, and the
-  pickup list holds what is approved. A withdrawn one survives in the audit trail
-  rather than in anyone's view.  [Decision]
+  household cannot bring it back. The record is kept, but no board view lists
+  it either. A withdrawn one survives in the audit trail rather than in anyone's
+  view.  [Decision]
 
 - One board member settles a disclosure; it does not need the whole board.  [Decision]
 

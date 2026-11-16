@@ -52,9 +52,10 @@ fields, `forceCloseConfirmed` and a kiosk `forceCloseToken`, from that kiosk's
 live scans and queued rows. All of it is the `LegacyKiosk` branch of
 `processCheckout` and its caller in the scan route.
 
-- **Surfaced:** not by the app; the server keeps no record of which protocol a
-  kiosk speaks. The door kiosk's release tag says which it runs, and System
-  Status shows its unsynced-scan count.
+- **Surfaced:** System Status shows sysadmins and Board members, for each kiosk
+  signing key, the scan protocol version the server last received and when,
+  and the kiosk's unsynced-scan count. Recording the version never delays,
+  fails or changes a scan.
 - **Exit:** every kiosk runs a release that speaks protocol 6 or later, and its
   unsynced count has read zero since the upgrade, so no queued row can still
   carry the old fields. Then delete the legacy branch, `shownEmpty`, and the old
