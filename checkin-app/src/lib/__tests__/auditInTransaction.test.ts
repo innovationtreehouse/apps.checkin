@@ -20,7 +20,6 @@ const ALLOWLIST: Record<string, { count: number; reason: string }> = {
     "app/api/programs/[id]/volunteers/route.ts": { count: 3, reason: TO_FIX },
     "app/api/programs/[id]/participants/route.ts": { count: 1, reason: TO_FIX },
     "app/api/programs/route.ts": { count: 1, reason: TO_FIX },
-    "lib/programs/update.ts": { count: 1, reason: TO_FIX },
     "lib/programAnnounce.ts": { count: 1, reason: TO_FIX },
     "app/api/events/route.ts": { count: 1, reason: TO_FIX },
     "lib/lifecycleDrift.ts": { count: 1, reason: TO_FIX },
