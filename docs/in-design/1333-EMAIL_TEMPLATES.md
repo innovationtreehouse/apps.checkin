@@ -283,13 +283,13 @@ stand for in today's copy, so a key without a link today has no `actionLink`.
 | `trustedAdult.deniedRevoked` | DENY + `revokePriorApprovals` | family | adultName, `actionLink` |
 | `trustedAdult.changeNotApproved` | DENY, prior approval survives | family | adultName, until, `actionLink` |
 | `trustedAdult.notApproved` | DENY, nothing survives | family | adultName, `actionLink` |
-| `trustedAdult.overrideDecided` | `overrideReview` deny/revoke | family | adultName, action, `actionLink` |
+| `trustedAdult.overrideDecided` | `revokeReview` | family | adultName, action, `actionLink` |
 | `trustedAdult.expiring` | `runExpirySweep` warning | family | deadline, `actionLink` |
 | `trustedAdult.expired` | `runExpirySweep` lapse, adult left unauthorized | family | adultName, `actionLink` |
 
 > `deniedRevoked` (from the normal decide path) and `overrideDecided` (from the
-> sysadmin override path) share a subject but keep **separate keys** — different code paths,
-> different bodies (`overrideDecided` carries an `{{action}}` = denied/revoked token). Deliberately
+> board revoke, `revokeReview`) share a subject but keep **separate keys** — different code paths,
+> different bodies (`overrideDecided` carries an `{{action}}` token, which is now always "revoked"). Deliberately
 > not merged: collapsing them is exactly the "resolve at build" shortcut we're avoiding.
 > The "View your trusted adults" link that `notifyHouseholdFamily` appends today is the
 > `{{actionLink}}` token (label "View your trusted adults") in each family template.
