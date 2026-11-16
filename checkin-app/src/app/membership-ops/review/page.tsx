@@ -214,7 +214,7 @@ export default function MembershipReviewPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        showSuccess("Dismissed: the check is no longer marked started.");
+        notifications.show({ message: "Dismissed: the check is no longer marked started." });
         notifyNavRefresh();
       } else {
         notifications.show({ color: "red", message: data.error || "Could not dismiss this check review.", autoClose: false });

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Select, Stack, Table, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { errorMessage, QuickBooksListsRefresh, refusalMessage, showSuccess } from "@checkin/component-ui";
+import { errorMessage, QuickBooksListsRefresh, refusalMessage } from "@checkin/component-ui";
 import type { BooksMapRole } from "@checkin/quickbooks";
 import { BOOKS_MAP_ROLE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -84,7 +84,7 @@ export default function BooksMapPage() {
       showError(failed, refusalMessage(e, { onRefreshed: () => void load() }));
       return;
     }
-    showSuccess("Saved.");
+    notifications.show({ message: "Saved." });
     await load();
   };
 

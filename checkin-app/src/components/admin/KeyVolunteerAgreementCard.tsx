@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { Badge, Button, Card, Group, Text, Title } from "@mantine/core";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
-import { showSuccess } from "@checkin/component-ui";
 
 /**
  * Board-only: the Key Volunteer Agreement's current version, whether its
@@ -39,7 +38,10 @@ export function KeyVolunteerAgreementCard({ initialVersion }: { initialVersion: 
         return;
       }
       setVersion(data.agreementVersion);
-      showSuccess(`Version ${data.agreementVersion} is current. ${data.agreementsOpened ?? 0} Key Volunteer(s) asked to sign it.`);
+      notifications.show({
+        color: "green",
+        message: `Version ${data.agreementVersion} is current. ${data.agreementsOpened ?? 0} Key Volunteer(s) asked to sign it.`,
+      });
     } catch {
       notifications.show({ color: "red", autoClose: false, message: "Network error starting a new agreement version" });
     } finally {
