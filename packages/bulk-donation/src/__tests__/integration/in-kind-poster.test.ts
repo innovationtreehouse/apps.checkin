@@ -162,7 +162,7 @@ function configure() {
     },
     capital,
     partAccounts: rules,
-    quickBooksAccounts: async () => QB_ACCOUNTS.map((a) => ({ id: a.Id, name: a.FullyQualifiedName, accountType: a.AccountType ?? "" })),
+    quickBooksAccounts: async () => QB_ACCOUNTS.map((a) => ({ id: a.Id, name: a.FullyQualifiedName, accountType: a.AccountType ?? "", active: a.Active !== false })),
     inKindQb: {
       client: async () => client,
       booksMap: { accounts: async () => accounts, classes: async () => new Map([[1, "77"], [2, "78"]]) },

@@ -11,6 +11,7 @@ import { nameWrite, nicknameWrite, isNicknameWrite } from "@/lib/person/name";
 import { apiError } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { notifyBoardOfYouthLeads } from "@/lib/membership/boardAlerts";
+import { personActor, recordAudit } from "@/lib/auditActor";
 
 export const GET = handler('GET /api/profile', async ({ auth }) => {
     if (auth.type !== 'session') throw unauthorized();
@@ -67,35 +68,34 @@ export const PATCH = withAuth(
                 return apiError(AGE_LEAD_ONLY_REFUSAL, 403);
             }
 
-            const updatedProfile = await prisma.person.update({
-                where: { id: userId },
-                data: {
-                    name: nameWrite(name),
-                    nickname: nicknameWrite(nickname),
-                    phone: phone !== undefined ? (phone === "" ? null : formatPhone(phone)) : undefined,
-                    ...age,
-                    notificationSettings: notificationSettings !== undefined ? notificationSettings : undefined,
-                },
-                select: {
-                    name: true,
-                    nickname: true,
-                    email: true,
-                    phone: true,
-                    dateOfBirth: true,
-                    notificationSettings: true,
-                }
-            });
-            invalidateAttendanceCache();
-
-            await prisma.auditLog.create({
-                data: {
-                    actorId: userId,
+            const updatedProfile = await prisma.$transaction(async (tx) => {
+                const updatedProfile = await tx.person.update({
+                    where: { id: userId },
+                    data: {
+                        name: nameWrite(name),
+                        nickname: nicknameWrite(nickname),
+                        phone: phone !== undefined ? (phone === "" ? null : formatPhone(phone)) : undefined,
+                        ...age,
+                        notificationSettings: notificationSettings !== undefined ? notificationSettings : undefined,
+                    },
+                    select: {
+                        name: true,
+                        nickname: true,
+                        email: true,
+                        phone: true,
+                        dateOfBirth: true,
+                        notificationSettings: true,
+                    }
+                });
+                await recordAudit(tx, personActor(userId), {
                     action: "EDIT",
                     tableName: "Person",
                     affectedEntityId: userId,
                     newData: updatedProfile,
-                }
+                });
+                return updatedProfile;
             });
+            invalidateAttendanceCache();
             if (dob !== undefined) await notifyBoardOfYouthLeads([{ id: userId, dateOfBirth: me?.dateOfBirth ?? null }]);
 
             return NextResponse.json({ profile: updatedProfile }, { status: 200 });

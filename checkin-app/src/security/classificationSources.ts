@@ -29,6 +29,8 @@ import * as programSynthetic from './programSyntheticClassifications';
 import * as budgetOwnerSynthetic from './budgetOwnerSyntheticClassifications';
 import * as keyVolunteerSynthetic from './keyVolunteerSyntheticClassifications';
 import * as checkStartedSynthetic from './checkStartedSyntheticClassifications';
+import * as volunteerRosterSynthetic from './volunteerRosterSyntheticClassifications';
+import * as householdSynthetic from './householdSyntheticClassifications';
 import * as problemsSynthetic from './problemsSyntheticClassifications';
 import * as shopifyReadGenerated from './generated/shopify-read-classifications';
 import * as shopifyReadSynthetic from './shopifyReadSyntheticClassifications';
@@ -61,6 +63,8 @@ export const CLASSIFICATION_SOURCES = [
     { source: 'budget-owner-synthetic', classifications: budgetOwnerSynthetic.classifications, relations: budgetOwnerSynthetic.relations, marks: budgetOwnerSynthetic.marks },
     { source: 'key-volunteer-synthetic', classifications: keyVolunteerSynthetic.classifications, relations: keyVolunteerSynthetic.relations, marks: keyVolunteerSynthetic.marks },
     { source: 'check-started-synthetic', classifications: checkStartedSynthetic.classifications, relations: checkStartedSynthetic.relations, marks: checkStartedSynthetic.marks },
+    { source: 'volunteer-roster-synthetic', classifications: volunteerRosterSynthetic.classifications, relations: volunteerRosterSynthetic.relations, marks: volunteerRosterSynthetic.marks },
+    { source: 'household-synthetic', classifications: householdSynthetic.classifications, relations: householdSynthetic.relations, marks: householdSynthetic.marks },
     { source: 'problems-synthetic', classifications: problemsSynthetic.classifications, relations: problemsSynthetic.relations, marks: problemsSynthetic.marks },
     { source: 'shopify-read', classifications: shopifyReadGenerated.classifications, relations: shopifyReadGenerated.relations, marks: shopifyReadGenerated.marks },
     { source: 'shopify-read-synthetic', classifications: shopifyReadSynthetic.classifications, relations: shopifyReadSynthetic.relations, marks: shopifyReadSynthetic.marks },

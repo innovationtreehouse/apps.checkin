@@ -376,19 +376,32 @@ Things the app takes as true because they are handled outside it.
 
 ### Budget buckets
 
-- A budget bucket is an accounting bucket, not a person. Finance creates,
-  renames and archives buckets and maps each to a class in the accounting
-  system. Archiving never deletes a bucket.
-  [Decision]
+- A budget bucket is an accounting bucket, not a person. Finance creates and
+  renames buckets and maps each to a class in the accounting system.
+  Archiving never deletes a bucket.  [Decision]
+
+- Finance archives a bucket only when nothing unfinished points at it: an open
+  expense line, a giving-platform gift not yet deposited, a gift of goods not
+  yet booked, a donated line waiting for capital review, a store item mapped to
+  it, or a part mapped to it for future receipts. The refusal names each kind,
+  how many, and where finance moves them.  [Decision — owner]
 
 - A bucket is created with its class. Finance may change a bucket's class but
   not clear it, and no two buckets share a class. A bucket that has no class
   still saves without one, and its lines wait until finance picks one.
   [Decision — owner]
 
+- A bucket is created with, or changed to, only a class the app's copy of
+  QuickBooks' lists shows as active. A class the copy shows as inactive is
+  refused the same way as one the copy lacks, until finance or the Board
+  updates the copy. A save that keeps the bucket's class is not checked, so a
+  bucket whose class went inactive can still be renamed.  [Decision — owner]
+
 - Finance may restore an archived bucket. It comes back with its class, owner
   and treasurers. An archived bucket keeps its class, so no other bucket can
-  hold that class when it returns. Each restore is recorded.
+  hold that class when it returns. Its class must be active in the app's copy
+  of QuickBooks' lists, or the same save must pick an active one. Each restore
+  is recorded.
   [Decision]
 
 - A bucket's approvers are its owner and its treasurers, stored on the bucket

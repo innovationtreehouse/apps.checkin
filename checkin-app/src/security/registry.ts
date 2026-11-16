@@ -343,12 +343,12 @@ defineRoute({
 
 // Board's volunteer roster: households on volunteer dues + the emails designated
 // ahead of signup. Exposes household leads' addresses and the designated
-// addresses (Person.email and VolunteerDesignation.email are both 'pii'), so
-// only isSysadmin/board may see it.
+// addresses (VolunteerRosterRow.email and VolunteerRosterDesignation.email are
+// 'pii'), so only isSysadmin/board may see it.
 //
 // The grant deliberately stops short of 'personal'. The roster is standing +
-// contact data — household name, lead names, one lead email, memberSince, the
-// designated address — and no personal-tier field (dateOfBirth, allergies,
+// contact data — household name, lead names, one email, memberSince, the
+// designations — and no personal-tier field (dateOfBirth, allergies,
 // notificationSettings) belongs in it. 'internal' IS granted: a row's status
 // is derived from OrgMembershipProcess.status, so a blocked or in-flight
 // application is observable in the response even though the column itself
@@ -360,10 +360,10 @@ defineRoute({
     endpoint: 'GET /api/membership-ops/volunteer-memberships',
     authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
     envelope: 'rows',
-    // Bag: { OrgMembership } with household (Household → householdMembers Person,
-    // leads flagged isHouseholdLead) and processes (OrgMembershipProcess), plus
-    // { VolunteerDesignation } for the pre-designated emails.
-    returns: ['OrgMembership', 'Household', 'Person', 'OrgMembershipProcess', 'VolunteerDesignation'],
+    // Bag: { VolunteerRosterRow } with designations (VolunteerRosterDesignation),
+    // assembled by the route from OrgMembership, Household, Person,
+    // OrgMembershipProcess and VolunteerDesignation.
+    returns: ['VolunteerRosterRow'],
     orderedView: [
         ['isSysadmin',    ['everyones:pii', 'everyones:internal', 'member', 'public']],
         ['isBoardMember', ['everyones:pii', 'everyones:internal', 'member', 'public']],
@@ -983,6 +983,36 @@ defineRoute({
     returns: ['Household'],
     orderedView: [
         ['authenticated', ['public']],
+    ],
+});
+
+// My Household: the caller's household, its members and its membership status.
+// Any session is admitted, a caller with no household included (household null);
+// every sensitive field is gated to the caller's own household.
+defineRoute({
+    endpoint: 'GET /api/household',
+    authorize: 'authenticated',
+    envelope: null,
+    // Bag: { HouseholdPage } with household (HouseholdPageHousehold →
+    // householdMembers HouseholdPeer, orgMembership OrgMembership).
+    returns: ['HouseholdPage', 'HouseholdPageHousehold', 'HouseholdPeer', 'OrgMembership'],
+    orderedView: [
+        ['authenticated', ['their_households:pii', 'their_households:personal', 'their_households:internal', 'member', 'public']],
+    ],
+});
+
+// A household lead adds a member. The route refuses staff accounts, a caller
+// with no household and a non-lead; the view gates the new member and the
+// emergency-contact warning to the caller's own household.
+defineRoute({
+    endpoint: 'PATCH /api/household',
+    authorize: 'authenticated',
+    envelope: null,
+    // Bag: { HouseholdMemberAdded } with member (HouseholdPeer) and warning
+    // (EmergencyContactWarning, or null).
+    returns: ['HouseholdMemberAdded', 'HouseholdPeer', 'EmergencyContactWarning'],
+    orderedView: [
+        ['authenticated', ['their_households:pii', 'their_households:personal', 'their_households:internal', 'member', 'public']],
     ],
 });
 

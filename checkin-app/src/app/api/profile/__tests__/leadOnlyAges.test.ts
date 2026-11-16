@@ -17,18 +17,22 @@ jest.mock("@/lib/auth-options", () => ({ authOptions: {} }));
 jest.mock("@/lib/logger", () => ({ logger: { error: jest.fn() } }));
 jest.mock("@/lib/getFullAttendance", () => ({ invalidateAttendanceCache: jest.fn() }));
 jest.mock("@/lib/membership/boardAlerts", () => ({ notifyBoardOfYouthLeads: jest.fn() }));
+const tx = {
+    person: { update: jest.fn() },
+    auditLog: { create: jest.fn() },
+};
 jest.mock("@/lib/prisma", () => ({
     __esModule: true,
     default: {
-        person: { findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn() },
-        auditLog: { create: jest.fn() },
+        person: { findUnique: jest.fn(), findMany: jest.fn() },
+        $transaction: jest.fn((fn: (t: unknown) => unknown) => fn(tx)),
     },
 }));
 
 const mockSession = getServerSession as jest.Mock;
 const findMe = prisma.person.findUnique as jest.Mock;
 const findLeads = prisma.person.findMany as jest.Mock;
-const update = prisma.person.update as jest.Mock;
+const update = tx.person.update;
 
 const ME = 3;
 const LEAD = 1;

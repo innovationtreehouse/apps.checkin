@@ -15,6 +15,7 @@ import { membershipYearLabel, programYearsTouched } from "@/lib/programYear";
 import { ProgramPhase, EnrollmentStatus, type Program } from "@/generated/prisma/client";
 import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
 import { ServiceError } from "@checkin/component-kit";
+import { personActor, recordAudit } from "@/lib/auditActor";
 
 export interface ProgramEditor {
     id: number;
@@ -24,7 +25,7 @@ export interface ProgramEditor {
 
 /** The PATCH body as the edit form sends it; every field is optional. */
 export interface ProgramPatch {
-    name?: string;
+    name?: unknown;
     leadMentorId?: unknown;
     startAt?: unknown;
     endAt?: unknown;
@@ -63,6 +64,17 @@ export type ProgramUpdateResult =
     | { ok: false; refusal: ProgramRefusal; message: string };
 
 const refuse = (refusal: ProgramRefusal, message: string) => ({ ok: false as const, refusal, message });
+
+export const PROGRAM_NAME_MAX = 250;
+
+/** A program name as saved: a string, trimmed, non-empty, at most PROGRAM_NAME_MAX characters. */
+export function parseProgramName(name: unknown): { ok: true; name: string } | { ok: false; message: string } {
+    if (typeof name !== "string") return { ok: false, message: "Program name must be text" };
+    const trimmed = name.trim();
+    if (!trimmed) return { ok: false, message: "Program name is required" };
+    if (trimmed.length > PROGRAM_NAME_MAX) return { ok: false, message: `Program name must be ${PROGRAM_NAME_MAX} characters or fewer.` };
+    return { ok: true, name: trimmed };
+}
 
 export type ProgramYearResult =
     | { ok: true; appliesToYear: number }
@@ -136,6 +148,12 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
     const { name, startAt, endAt, orgMemberOnly, publiclyVisible, announceOnOpen, phase, enrollmentStatus, minAge, maxAge, maxParticipants, leadMentorNotificationSettings, memberPrice, nonMemberPrice, shopifyProductId, shopifyVariantId } = patch;
     let leadMentorId: number | undefined;
 
+    let newName: string | undefined;
+    if (name !== undefined) {
+        const parsed = parseProgramName(name);
+        if (!parsed.ok) return refuse("invalid", parsed.message);
+        newName = parsed.name;
+    }
     if (announceOnOpen !== undefined && typeof announceOnOpen !== "boolean") {
         return refuse("invalid", "announceOnOpen must be a boolean");
     }
@@ -316,7 +334,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
     }
 
     const updateData: Record<string, unknown> = {
-        ...(name !== undefined && { name }),
+        ...(newName !== undefined && { name: newName }),
         ...(leadMentorId !== undefined && { leadMentorId }),
         ...(newStartAt !== undefined && { startAt: newStartAt }),
         ...(newEndAt !== undefined && { endAt: newEndAt }),
@@ -356,24 +374,25 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
     let updatedProgram: Program;
     try {
         updatedProgram = await prisma.$transaction(async (tx) => {
+            // Locked so the audit's "before" is the row this update replaces. Program before
+            // households, the order enrollment takes them in (changeProgramStockWith).
+            await tx.$queryRaw`SELECT id FROM "Program" WHERE id = ${programId} FOR UPDATE`;
             if (newLeader !== null) await lockLiveHouseholdsOf(tx, [newLeader]);
-            return tx.program.update({ where: { id: programId }, data: updateData });
+            const before = await tx.program.findUnique({ where: { id: programId } });
+            const after = await tx.program.update({ where: { id: programId }, data: updateData });
+            await recordAudit(tx, personActor(actor.id), {
+                action: 'EDIT',
+                tableName: 'Program',
+                affectedEntityId: after.id,
+                oldData: before ?? undefined,
+                newData: after,
+            });
+            return after;
         });
     } catch (e) {
         if (e instanceof ServiceError) return refuse("conflict", e.message);
         throw e;
     }
-
-    await prisma.auditLog.create({
-        data: {
-            actorId: actor.id,
-            action: 'EDIT',
-            tableName: 'Program',
-            affectedEntityId: updatedProgram.id,
-            oldData: currentProgram,
-            newData: updatedProgram
-        }
-    });
 
     // The edit has landed; a failed re-check is logged, not reported as a failed save.
     await flagEnrollmentsNoLongerFitting(currentProgram, updatedProgram)

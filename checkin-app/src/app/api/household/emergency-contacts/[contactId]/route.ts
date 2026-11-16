@@ -6,6 +6,8 @@ import { updateContact, deleteContact, present, EmergencyContactError } from "@/
 import { leadHousehold } from "@/lib/household/leads";
 import { apiError } from "@/lib/api-response";
 import { ArchivedHouseholdError } from "@/lib/household/archiveGuard";
+import { personActor, recordAudit } from "@/lib/auditActor";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
 export const PATCH = withAuth({}, async (req, auth, { params }: { params: Promise<{ contactId: string }> }) => {
     if (auth.type !== "session") return apiError("Unauthorized", 401);
@@ -16,17 +18,18 @@ export const PATCH = withAuth({}, async (req, auth, { params }: { params: Promis
 
     try {
         const { name, phone, email, relationship, priority } = await req.json();
-        const contact = await updateContact(prisma, hh, contactId, { name, phone, email, relationship, priority });
-        await prisma.auditLog.create({
-            data: {
-                actorId: auth.user.id,
+        const contact = await prisma.$transaction(async (tx) => {
+            const contact = await updateContact(tx, hh, contactId, { name, phone, email, relationship, priority });
+            await recordAudit(tx, personActor(auth.user.id), {
                 action: "EDIT",
                 tableName: "EmergencyContact",
                 affectedEntityId: contact.id,
                 secondaryAffectedEntity: hh,
                 newData: { name: contact.name, phone: contact.phone },
-            },
+            });
+            return contact;
         });
+        invalidateAttendanceCache();
         // present(): same wire shape as GET/POST — never the raw row (internal
         // createdAt/updatedAt + conflict bookkeeping don't belong on the wire).
         return NextResponse.json({ contact: present(contact) });
@@ -48,16 +51,16 @@ export const DELETE = withAuth({}, async (_req, auth, { params }: { params: Prom
     if (isNaN(contactId)) return apiError("Invalid contact id", 400);
 
     try {
-        await deleteContact(prisma, hh, contactId);
-        await prisma.auditLog.create({
-            data: {
-                actorId: auth.user.id,
+        await prisma.$transaction(async (tx) => {
+            await deleteContact(tx, hh, contactId);
+            await recordAudit(tx, personActor(auth.user.id), {
                 action: "DELETE",
                 tableName: "EmergencyContact",
                 affectedEntityId: contactId,
                 secondaryAffectedEntity: hh,
-            },
+            });
         });
+        invalidateAttendanceCache();
         return NextResponse.json({ success: true });
     } catch (error) {
         if (error instanceof ArchivedHouseholdError) return apiError(error.message, error.status);

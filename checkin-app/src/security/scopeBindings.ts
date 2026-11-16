@@ -53,6 +53,11 @@ export const SCOPE_BINDINGS = {
         their_program_households: { field: 'householdId', inCtx: 'householdIdsInScopePrograms' },
     },
     OrgMembership: { their_households: { field: 'householdId', eqCtx: 'householdId' } },
+    // The /api/household response models: the caller's household and its members,
+    // row-scoped (see ROW_SCOPE_KEY) so a row without its key fails closed.
+    HouseholdPageHousehold: { their_households: { field: 'id', eqCtx: 'householdId' } },
+    HouseholdPeer: { their_households: { field: 'householdId', eqCtx: 'householdId' } },
+    EmergencyContactWarning: { their_households: { field: 'householdId', eqCtx: 'householdId' } },
     Program: {
         their_program_participants: { field: 'id', inCtx: ['programsLed', 'programsCoreVolIn'] },
     },
@@ -139,6 +144,10 @@ export const SCOPE_BINDINGS = {
     // safeguarding context. A "your own actions" view would be a conscious
     // future decision. See docs/security/auth-consistency-analysis.md §7.5.1.
     AuditLog: { their_own: { field: 'actorId', eqCtx: 'selfId' } },
+    // Bound for coverage; Board-only by tier-grant control. The roster's only
+    // view is sysadmin-or-board with everyones grants, so no route grants a
+    // their_households token on it.
+    VolunteerRosterRow: { their_households: { field: 'householdId', eqCtx: 'householdId' } },
     TrustedAdult: {
         their_households: { field: 'householdId', eqCtx: 'householdId' },
         their_program_households: { field: 'householdId', inCtx: 'householdIdsInScopePrograms' },
@@ -171,6 +180,9 @@ export const SCOPE_BINDINGS = {
  */
 export const ROW_SCOPE_KEY: Record<string, string> = {
     EmergencyContact: 'householdId',
+    HouseholdPageHousehold: 'id',
+    HouseholdPeer: 'householdId',
+    EmergencyContactWarning: 'householdId',
 };
 
 /**

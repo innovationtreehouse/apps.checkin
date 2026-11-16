@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import InKindQueuePage from "@checkin/bulk-donation/pages/inKindQueue";
 
@@ -6,12 +6,13 @@ const mockReload = jest.fn();
 const mockApi = jest.fn<Promise<unknown>, unknown[]>();
 let mockUser: Record<string, unknown> = { id: 1, isFinance: true };
 let mockQueue: unknown[] = [];
+let mockLive: unknown[] = [];
 
 jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: mockUser } }) }));
 jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
 jest.mock("@checkin/bulk-donation/components/api", () => ({
   ...jest.requireActual("@checkin/bulk-donation/components/api"),
-  useLoad: (path: string) => ({ data: path === "/in-kind/queue" ? mockQueue : [], error: null, reload: mockReload }),
+  useLoad: (path: string) => ({ data: path === "/in-kind/queue" ? mockQueue : path === "/api/books-map/quickbooks-accounts" ? mockLive : [], error: null, reload: mockReload }),
   api: (...args: unknown[]) => mockApi(...args),
 }));
 
@@ -60,6 +61,7 @@ beforeEach(() => {
   mockApi.mockResolvedValue({});
   mockUser = { id: 1, isFinance: true };
   mockQueue = [unbooked];
+  mockLive = [];
 });
 
 describe("in-kind queue: the accept screen", () => {
@@ -156,5 +158,21 @@ describe("in-kind queue: finance's QuickBooks actions", () => {
     mockUser = { id: 1, isBoardMember: true };
     wrap();
     expect(screen.queryByRole("button", { name: "QuickBooks" })).toBeNull();
+  });
+});
+
+describe("in-kind queue: inactive QuickBooks accounts", () => {
+  it("offers no inactive account, and warns beside a line set by hand to one", () => {
+    mockLive = [
+      { id: "600", name: "Supplies", accountType: "Expense", active: true },
+      { id: "601", name: "Old supplies", accountType: "Expense", active: false },
+    ];
+    mockQueue = [{ ...unbooked, lines: [{ id: 9, gtin13: null, description: "Lumber", quantity: 1, valueCents: 3500, suggestedValueCents: null, quickBooksAccountId: "601" }] }];
+    wrap();
+    fireEvent.click(screen.getByRole("button", { name: "QuickBooks" }));
+    const warning = screen.getByText("Old supplies is inactive in QuickBooks. Pick an active one.").closest<HTMLElement>("[role=alert]")!;
+    expect(within(warning).getByRole("button", { name: "Update now" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("textbox", { name: "Account" }));
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["Supplies (Expense)"]);
   });
 });

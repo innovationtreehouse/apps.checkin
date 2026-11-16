@@ -9,6 +9,7 @@ import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
 import { lockBoardRoles } from "@/lib/roles";
 import { lockAndFindDeniedHousehold, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
+import { personActor, recordAudit } from "@/lib/auditActor";
 
 /** The person's row was deleted, by a merge or otherwise, between the pre-check and the write. */
 class PersonGoneError extends Error {}
@@ -82,7 +83,7 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
         // the target household, so the move must be written first; one
         // transaction keeps the whole reassign atomic and puts the helper's lock
         // in it. A same-household no-op leaves the flag untouched.
-        const { updatedParticipant, targetHouseholdId } = await prisma.$transaction(async (tx) => {
+        const { updatedParticipant } = await prisma.$transaction(async (tx) => {
             // Moving someone out of a DENIED household would free them of the denial, and
             // moving someone in would put them under it (a board member included, which a
             // deny refuses). The BOARD lock comes first, as a deny takes it, so a deny of
@@ -113,6 +114,13 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
                 throw now === null ? new PersonGoneError() : new StaleSourceHouseholdError();
             }
             const updated = await tx.person.findUniqueOrThrow({ where: { id: participantId }, include: { household: true } });
+            await recordAudit(tx, personActor(auth.user.id), {
+                action: "EDIT",
+                tableName: "Person",
+                affectedEntityId: participantId,
+                oldData: { householdId: participant.householdId },
+                newData: { householdId: targetHouseholdId, createNew: Boolean(createNew) },
+            });
 
             if (!createNew) return { updatedParticipant: updated, targetHouseholdId };
 
@@ -124,17 +132,6 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
                 updatedParticipant: { ...updated, isHouseholdLead: updated.isHouseholdLead || created },
                 targetHouseholdId,
             };
-        });
-
-        await prisma.auditLog.create({
-            data: {
-                actorId: auth.user.id,
-                action: "EDIT",
-                tableName: "Person",
-                affectedEntityId: participantId,
-                oldData: { householdId: participant.householdId },
-                newData: { householdId: targetHouseholdId, createNew: Boolean(createNew) },
-            },
         });
 
         invalidateAttendanceCache();
