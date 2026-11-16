@@ -3,6 +3,7 @@ import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { logBackendError } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
+import { personActor, recordAudit } from "@/lib/auditActor";
 import { invalidateKioskCertificationsCache } from "@/lib/getKioskCertifications";
 
 export const PATCH = withAuth(
@@ -24,19 +25,18 @@ export const PATCH = withAuth(
         if (name !== undefined) data.name = name;
         if (safetyGuide !== undefined) data.safetyGuide = safetyGuide || null;
 
-        const tool = await prisma.tool.update({
-            where: { id: toolId },
-            data,
-        });
-
-        await prisma.auditLog.create({
-            data: {
-                actorId: auth.user.id,
+        const tool = await prisma.$transaction(async (tx) => {
+            const updated = await tx.tool.update({
+                where: { id: toolId },
+                data,
+            });
+            await recordAudit(tx, personActor(auth.user.id), {
                 action: 'EDIT',
                 tableName: 'Tool',
                 affectedEntityId: toolId,
-                newData: tool,
-            },
+                newData: updated,
+            });
+            return updated;
         });
 
         invalidateKioskCertificationsCache();

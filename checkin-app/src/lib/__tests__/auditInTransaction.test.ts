@@ -40,9 +40,6 @@ const ALLOWLIST: Record<string, { count: number; reason: string }> = {
     "app/api/admin/settings/localization/route.ts": { count: 1, reason: TO_FIX },
     "app/api/settings/email/route.ts": { count: 1, reason: TO_FIX },
     "app/api/settings/outreach/route.ts": { count: 1, reason: TO_FIX },
-    // Shop
-    "app/api/shop/tools/route.ts": { count: 1, reason: TO_FIX },
-    "app/api/shop/tools/[id]/route.ts": { count: 1, reason: TO_FIX },
     // Nightly: the date-of-birth purge is to fix; the close summary is a board notice.
     "app/api/cron/nightly/route.ts": {
         count: 2,
