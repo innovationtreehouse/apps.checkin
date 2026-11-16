@@ -16,9 +16,6 @@ const REVIEW_QUEUE_SELECT = {
     requestedForHousehold: {
         select: {
             name: true,
-            // The applicant's "anything else we should know?" note — the signal a
-            // volunteer-only household uses to ask the reviewer to mark them volunteer.
-            intakeNotes: true,
             householdMembers: { where: { isHouseholdLead: true }, select: { id: true, name: true, email: true } },
         },
     },
@@ -37,9 +34,8 @@ const REVIEW_QUEUE_SELECT = {
  * reviewer B never learns that reviewer A signed off.
  *
  * A review with a person selects that person (name + household context). A review a
- * household asked for also selects that household: its name, its intake note, and
- * ONLY its leads' person rows, the people its first reviewer names from. Children
- * are never selected.
+ * household asked for also selects that household: its name and ONLY its leads'
+ * person rows, the people its first reviewer names from. Children are never selected.
  */
 export const GET = handler("GET /api/membership/reviews", async ({ req, auth }) => {
     if (auth.type !== "session") throw unauthorized();

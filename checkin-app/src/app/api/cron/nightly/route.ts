@@ -141,19 +141,18 @@ export const GET = withCron(() => duringNightlyRun(async () => {
         // a 26+ person is dead weight on our most-sensitive field. Strip it and set the
         // declared-adult flag so age gates / search / UI still see them as an adult.
         // Runs nightly to catch members as they age in. Raw SQL so age is judged in the DB, tombstones included.
-        const purgedPeople = await prisma.$queryRaw<{ id: number }[]>`
-            UPDATE "Person"
-            SET "dateOfBirth" = NULL, "isDeclaredAdult" = true
-            WHERE "dateOfBirth" IS NOT NULL
-              AND "dateOfBirth" <= (CURRENT_DATE - INTERVAL '26 years')
-            RETURNING "id"`;
-        const adultDobPurged = purgedPeople.length;
-        if (adultDobPurged > 0) {
+        const purgedPeople = await prisma.$transaction(async (tx) => {
+            const purged = await tx.$queryRaw<{ id: number }[]>`
+                UPDATE "Person"
+                SET "dateOfBirth" = NULL, "isDeclaredAdult" = true
+                WHERE "dateOfBirth" IS NOT NULL
+                  AND "dateOfBirth" <= (CURRENT_DATE - INTERVAL '26 years')
+                RETURNING "id"`;
             // The row records that a date of birth was removed, never the date
             // itself: retention forbids keeping it past 25, and an audit row
             // outlives the Person field it would be copied from.
-            await prisma.auditLog.createMany({
-                data: purgedPeople.map(({ id }) => ({
+            await tx.auditLog.createMany({
+                data: purged.map(({ id }) => ({
                     ...systemActor("cron:nightly"),
                     action: 'DELETE' as const,
                     tableName: 'Person',
@@ -161,6 +160,10 @@ export const GET = withCron(() => duringNightlyRun(async () => {
                     newData: { field: 'dateOfBirth', reason: 'aged_out_over_25' }
                 }))
             });
+            return purged;
+        });
+        const adultDobPurged = purgedPeople.length;
+        if (adultDobPurged > 0) {
             logger.info(`Nightly cron: purged DoB for ${adultDobPurged} member(s) now over 25 (#1165).`);
         }
 

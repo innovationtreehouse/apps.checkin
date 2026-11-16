@@ -21,14 +21,16 @@ export const passthroughOutbound: Outbound = (_surface, bag, send) => send(bag);
 
 export async function seedOrgSettings(opts?: {
   orgId?: string;
-  capitalTotalThresholdCents?: number;
-  capitalLineItemThresholdCents?: number;
+  capitalReviewEnabled?: boolean;
+  capitalTotalThresholdCents?: number | null;
+  capitalLineItemThresholdCents?: number | null;
 }): Promise<void> {
   await db.expenseOrgSettings.create({
     data: {
       orgId: opts?.orgId ?? ORG,
-      capitalTotalThresholdCents: opts?.capitalTotalThresholdCents ?? 5000,
-      capitalLineItemThresholdCents: opts?.capitalLineItemThresholdCents ?? 2500,
+      capitalReviewEnabled: opts?.capitalReviewEnabled ?? true,
+      capitalTotalThresholdCents: opts?.capitalTotalThresholdCents === undefined ? 5000 : opts.capitalTotalThresholdCents,
+      capitalLineItemThresholdCents: opts?.capitalLineItemThresholdCents === undefined ? 2500 : opts.capitalLineItemThresholdCents,
     },
   });
 }
@@ -193,7 +195,7 @@ export function principal(id: number, roles: { isFinance?: boolean; isBoard?: bo
 }
 
 /** QuickBooks' account list as the integration tiers see it: each account id they save, typed Expense. */
-const STAND_IN_ACCOUNTS = ["4000", "4100", "5000", "5100", "5200", "60", "6000", "6100", "62", "6200"].map((id) => ({ id, name: `Account ${id}`, accountType: "Expense" }));
+const STAND_IN_ACCOUNTS = ["4000", "4100", "5000", "5100", "5200", "60", "6000", "6100", "62", "6200"].map((id) => ({ id, name: `Account ${id}`, accountType: "Expense", active: true }));
 const standInAccounts = async () => STAND_IN_ACCOUNTS;
 
 /** Rebinds the runtime with test ports (org stays ORG); QuickBooks' account list is the stand-in unless a test binds one. */

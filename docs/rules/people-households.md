@@ -143,6 +143,31 @@ Things the app takes as true because they are handled outside it.
 
 ### Archived households
 
+- Only the Board archives or unarchives a household. A sysadmin who is not on the
+  Board may not, and neither may a household lead.  [Decision — owner]
+
+- Nothing archives a household automatically: archiving is always a Board
+  member's act.  [Decision — deliberate limit]
+
+- A household cannot be archived while any of these holds:
+  - the household is denied;
+  - it has an ACTIVE membership, lapsed or not, so a lapsed household still
+    ACTIVE waits until the Board revokes it;
+  - a member is enrolled in a program not yet finished;
+  - a member holds any role, or volunteers on or leads a program not yet finished;
+  - it has an open trusted-adult review, until the review is decided or withdrawn;
+  - it has an open application holding a payment with no recorded refund.
+
+  The Board ends or settles each one first.  [Decision — owner]
+
+- An archived household and its members drop out of every active list, picker,
+  search, count, worklist and roster, enrollment included. History, reports, the
+  audit log and the Board's household page reached by id still show them.  [Decision — owner]
+
+- Unarchiving returns the household as it was, since archiving deletes none of its
+  records or its members'. Only the applications the archive closed stay
+  closed.  [Decision — *Principle: decisions are reversible*]
+
 - An archived household refuses every change until the Board unarchives it. Nobody
   is added to it, moved into or out of it, edited, or made or unmade its lead; its
   address, settings and emergency contacts stay as they are; it starts no
@@ -156,9 +181,6 @@ Things the app takes as true because they are handled outside it.
   application just added, or the change is refused because the household is now
   archived.  [Decision]
 
-- A household with an open trusted-adult review cannot be archived until the
-  review is decided or withdrawn.  [Decision — owner ruling HA-9]
-
 - On an archived household, a member may still edit their own profile, and the
   Board may still record a background-check result for a member. At first sign-in,
   joining an archived household is refused; declining it still moves the account
@@ -169,6 +191,10 @@ Things the app takes as true because they are handled outside it.
 - Every household member has a date of birth or an over-25 declaration, never
   both. The declaration stands in for a date nobody has, so a date on file
   displaces it. Neither present is a surfaced gap.  [Decision]
+
+- Once a household has a lead, only a lead of it sets or changes a member's date
+  of birth or over-25 declaration, the member's own included. The board and
+  sysadmin path into any household is separate.  [Decision — owner ruling]
 
 - A lead may declare a non-lead adult in their household as over 25. A save that
   blanks a date of birth showing someone is under 18 and declares them over 25 is
@@ -189,8 +215,9 @@ Things the app takes as true because they are handled outside it.
 - Date of birth is the only field with an ageing-out rule. Broader retention is
   not automated; the general obligation is met by hand.  [Decision — deliberate limit]
 
-- A youth cannot edit their own profile. As with leadership, an unknown date of
-  birth reads as adult.  [Decision — deliberate limit]
+- A youth cannot edit their own profile, and an unknown date of birth reads as
+  adult. On a non-lead's own profile in a household with a lead, the date of birth
+  and over-25 declaration are the lead's to set.  [Decision]
 
 - Self-service member add always creates a new person, never adopts an existing
   account by email. Where the address is already in use the add is refused
@@ -254,12 +281,9 @@ Things the app takes as true because they are handled outside it.
 
 - Changing a person's email unlinks their sign-in service accounts.  [Decision — *Principle: fail closed*]
 
-- A person's identifier is opaque, and its only job is to be unique and to stay
-  unique. It is never reissued and never worked out from the people already on
-  file: issuing the highest number in use plus one hands a deleted person's
-  number to a new one, and every badge printed for the first would then scan as
-  the second at the kiosk. Numbers are issued in order from a count the database
-  keeps, which a pause cannot skip ahead and a deletion cannot wind back.  [Decision]
+- A person's identifier is unique and stays unique. It is never reissued, not
+  even a deleted person's, so a badge printed for one person can never scan as
+  another at the kiosk.  [Decision]
 
 - A person is never lost. A merge deletes the merged-away record and keeps an
   archive of it, which names the surviving record. The merged-away person drops
@@ -273,8 +297,7 @@ Things the app takes as true because they are handled outside it.
 
 - A merged person's pre-merge state is held in the archive, so a merge of the wrong two
   people can be investigated and the person reconstructed. There is no un-merge:
-  what the record does not carry is which rows moved, so putting a bad merge right
-  is hand work, not a button.  [Decision — *Principle: decisions are reversible*]
+  putting a bad merge right is hand work.  [Decision — *Principle: decisions are reversible*]
 
 - A person's membership standing belongs to their household, and merging two
   records never alters it as a side effect, with one exception: after a merge both
@@ -284,6 +307,11 @@ Things the app takes as true because they are handled outside it.
   Application and review). A merge that would move a person across a
   denied-or-revoked boundary, or abandon an active membership, is refused until the
   household side is settled by hand.  [Decision — *Principle: identity is not authorisation*]
+
+- A program payment from a checkout opened before a merge, for the merged-away
+  person, is flagged for the Board, not applied: the kept person is not activated
+  and their place still reads as unpaid. Anyone else the checkout names is
+  activated as usual. The Board settles the merged person's place by hand.  [Decision — deliberate limit; owner ruling]
 
 ### Roles
 
@@ -345,8 +373,8 @@ Things the app takes as true because they are handled outside it.
   Nothing is blocked; the household resolves it.  [Decision]
 
 - A missing emergency contact is the household's to fix and the board's to chase.
-  It raises a list of the households to contact, a count in the board's
-  navigation, and a notification the front desk sees too. Nothing is blocked —
+  The board is shown the households to contact, and the front desk sees them
+  too. Nothing is blocked —
   chasing it is a conversation, not a refusal at the door.  [Decision — *Principle: people decide about people*]
 
 ### Trusted adults
@@ -367,13 +395,21 @@ Things the app takes as true because they are handled outside it.
 - Withdrawing a trusted adult retires every approval they hold, not just the
   most recent, and drops them from the pickup list at once.  [Decision]
 
-- A board override that denies a change leaves the earlier approval standing.  [Decision]
+- Approving a renewal or a change retires the approval it replaces, so a trusted
+  adult holds at most one live approval. Resetting that approval puts the
+  replaced one back.  [Decision]
 
-- Force-approve refuses an adult the household withdrew, and refuses when the
-  family's household or the adult's own household is denied.  [Decision]
+- A board denial of a change leaves the earlier approval standing.  [Decision]
 
-- A board revoke of a trusted adult cannot be undone. Force-approve refuses them,
-  and the family resubmits.  [Decision]
+- The board can reset a denial, or an approval still in force: the decision is
+  undone and the review waits for a board decision again, made the normal way.
+  The family is not emailed, because the decision that follows sends its own
+  notice. Reset refuses an adult the household withdrew, an expired approval
+  (the family renews it), an approved change, and a household that is denied,
+  whether the family's or the adult's own.  [Decision]
+
+- A board revoke of a trusted adult cannot be undone, and reset does not reach
+  it. The family resubmits.  [Decision]
 
 - Denying a household's membership revokes, at once and in the same act, every
   review not already revoked or denied — approved, open or expired — on the
@@ -384,17 +420,24 @@ Things the app takes as true because they are handled outside it.
   household brings none back. Revoking a household's membership revokes no
   trusted adult.  [Decision]
 
-- An approval lasts a year. The family is warned a month out and resubmits
-  without re-entering what the board already holds.  [Decision]
+- A first approval lasts a year from the family's submission. A renewal lasts a
+  year from the later of the previous approval's end and the renewal's
+  submission. An approved change keeps the end of the approval it changes, while
+  that approval still runs. Resetting and re-approving never moves the date. An
+  approval that would already have lapsed is refused: the board denies it and
+  the family renews. The family is warned a month out and resubmits without
+  re-entering what the board already holds.  [Decision]
 
-- An approval past its review date no longer authorises, whether or not the expiry
-  job has run; the job only records the expiry and tells the family.  [Decision — *Principle: fail closed*]
+- A family can renew a trusted adult whose approval is still running only from
+  the month-out warning, so renewals never stack a further year on top.  [Decision]
+
+- An approval past its review date no longer authorises, even before the expiry
+  is recorded and the family told.  [Decision — *Principle: fail closed*]
 
 - A withdrawn trusted adult can be hidden from the household's own view, and the
-  household cannot bring it back. The record is kept, but no board surface lists
-  it either — the review queue holds what is awaiting action or expiring, and the
-  pickup list holds what is approved. A withdrawn one survives in the audit trail
-  rather than in anyone's view.  [Decision]
+  household cannot bring it back. The record is kept, but no board view lists
+  it either. A withdrawn one survives in the audit trail rather than in anyone's
+  view.  [Decision]
 
 - One board member settles a disclosure; it does not need the whole board.  [Decision]
 

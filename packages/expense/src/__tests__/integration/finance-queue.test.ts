@@ -2,7 +2,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
-import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, ORG } from "../helpers/seed";
+import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, seedOrgSettings, ORG } from "../helpers/seed";
 import { financeQueueActionable, financeQueueCounts, financeQueueRows } from "../../services/financeQueueService";
 import { expenseActionCounts, expensesAwaitingMyApproval, signoffsAwaitingCount } from "../../services/badgeCounts";
 import { raiseFlag } from "../../services/flagService";
@@ -24,6 +24,9 @@ const codes = async (p: typeof FINANCE, tab: Parameters<typeof financeQueueRows>
 beforeEach(() => {
   bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5, 6], households: [[1, 11]] }) });
 });
+
+// These suites are not about capital review; with it off, no expense stops at that step.
+beforeEach(() => seedOrgSettings({ capitalReviewEnabled: false }));
 
 describeDb("finance queue — expenses tab", () => {
   it("lists the finance steps from the expense's own state, and one row per expense with its reasons", async () => {

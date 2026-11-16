@@ -15,6 +15,9 @@ GET /api/safety/board-contacts
 GET /api/settings/email
 GET /api/settings/membership
 GET /api/settings/membership/volunteer-designations
+GET /api/settings/templates
+PUT /api/settings/templates/[key]
+POST /api/settings/templates/[key]/test-send
 PATCH /api/attendance/manual/[id]
 DELETE /api/attendance/manual/[id]
 GET /api/system-status/errors
@@ -55,6 +58,7 @@ POST /api/catalog/provisional-items/[id]/approve
 POST /api/catalog/provisional-items/[id]/reject
 POST /api/catalog/provisional-items/[id]/map-to-existing
 PUT /api/catalog/reference-conflicts/[id]/resolve
+POST /api/catalog/conversion-challenges
 POST /api/catalog/conversion-challenges/[id]/accept
 POST /api/catalog/conversion-challenges/[id]/reject
 GET /api/budget-owners

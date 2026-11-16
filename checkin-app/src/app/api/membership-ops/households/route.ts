@@ -17,7 +17,6 @@ import { ReviewError } from "@/lib/membership/review";
 import { lockBoardRoles } from "@/lib/roles";
 import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { searchId } from "@/lib/searchId";
-import { withIntakeNotesFor } from "@/lib/household/intakeNotes";
 import { withArchivedHouseholds } from "@/lib/household/archived";
 import { ArchivedHouseholdError } from "@/lib/household/archiveGuard";
 
@@ -25,7 +24,7 @@ export const dynamic = 'force-dynamic';
 
 // Emergency contacts are their own entity; the admin editor works in
 // terms of a single primary contact, so map the household's primary valid contact
-// back onto the flat emergencyContactName/Phone shape the client expects. Include
+// back onto the flat emergencyContactName/Phone shape the client expects. Select
 // it inline (below) with this where/order so Prisma infers the result type.
 const PRIMARY_CONTACT_WHERE = { conflictParticipantId: null, name: { not: "" }, phone: { not: "" } };
 
@@ -41,9 +40,8 @@ function withFlatContact<T extends { emergencyContacts: { name: string; phone: s
 
 export const GET = withAuth(
     { roles: ['isSysadmin', 'isBoardMember'] },
-    async (req, auth) => {
+    async (req) => {
         try {
-            const viewer = auth.type === 'session' ? auth.user : {};
             const url = new URL(req.url);
             const id = url.searchParams.get('id');
             const q = url.searchParams.get('q') || '';
@@ -52,7 +50,10 @@ export const GET = withAuth(
                 // The Board looks up an archived household by id, to read or unarchive it.
                 const household = await withArchivedHouseholds((tx) => tx.household.findUnique({
                     where: { id: parseInt(id) },
-                    include: {
+                    // The detail page and the Edit Info modal read these.
+                    select: {
+                        id: true, name: true, archivedAt: true,
+                        line1: true, line2: true, city: true, state: true, postalCode: true,
                         householdMembers: {
                             select: {
                                 id: true, name: true, email: true, isHouseholdLead: true, lastBackgroundCheck: true,
@@ -68,7 +69,7 @@ export const GET = withAuth(
                                 },
                             }
                         },
-                        orgMembership: true,
+                        orgMembership: { select: { id: true, status: true, memberSince: true, isVolunteerFamily: true } },
                         emergencyContacts: {
                             where: PRIMARY_CONTACT_WHERE,
                             orderBy: [{ priority: "asc" }, { id: "asc" }],
@@ -139,7 +140,7 @@ export const GET = withAuth(
                 return NextResponse.json({
                     signing,
                     household: {
-                        ...withFlatContact(withIntakeNotesFor(household, viewer)),
+                        ...withFlatContact(household),
                         householdMembers: membersWithBg,
                         householdLeads,
                         bgValidUntil: householdBgValidUntil,
@@ -171,7 +172,9 @@ export const GET = withAuth(
 
             const households = await prisma.household.findMany({
                 where: whereClause,
-                include: {
+                // The list and the household pickers read only these columns.
+                select: {
+                    id: true, name: true,
                     householdMembers: {
                         // isHouseholdLead + lastBackgroundCheck drive the household-level "BG valid
                         // until" below. Board-only endpoint; lastBackgroundCheck rides along in the
@@ -182,9 +185,10 @@ export const GET = withAuth(
                     // (an application a grant can pay) and settledThisCycleWhere (a fee-paid
                     // process recording the live year; ARCHIVED never paid). No boundary
                     // matches no row, keeping one query shape.
-                    // orgMembership's own scalars (status, memberSince) still ride along.
                     orgMembership: {
-                        include: {
+                        select: {
+                            status: true,
+                            memberSince: true,
                             processes: {
                                 where: {
                                     OR: [
@@ -195,12 +199,6 @@ export const GET = withAuth(
                                 select: { id: true, status: true },
                             },
                         },
-                    },
-                    emergencyContacts: {
-                        where: PRIMARY_CONTACT_WHERE,
-                        orderBy: [{ priority: "asc" }, { id: "asc" }],
-                        select: { name: true, phone: true },
-                        take: 1,
                     },
                 },
                 orderBy: {
@@ -225,7 +223,7 @@ export const GET = withAuth(
                     .reduce<Date | null>((acc, m) => (!acc || m.lastBackgroundCheck! > acc ? m.lastBackgroundCheck! : acc), null);
                 const bgValidUntil = bgValidUntilBoundary(latestLeadBg, bgSettings);
                 return {
-                    ...withFlatContact(withIntakeNotesFor(h, viewer)),
+                    ...h,
                     orgMembership: h.orgMembership ? orgMembership : null,
                     awaitingPayment,
                     settledForComingYear,

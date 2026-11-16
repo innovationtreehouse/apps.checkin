@@ -6,6 +6,7 @@ import { markContractSigned, setZohoEnvelope, resetSigning, ExternalError } from
 import { applicantHousehold } from "@/lib/membership/review";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { apiError } from "@/lib/api-response";
+import { mayManageKeyVolunteers } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,9 @@ export const dynamic = "force-dynamic";
  *
  * A signed contract and a lead's check started advance the application to
  * PENDING_PAYMENT; the background check then reviews in parallel with payment.
+ *
+ * On a Key Volunteer Agreement, every action but 'reset-signing' is the Board's,
+ * or a sysadmin's while no board member exists (mayManageKeyVolunteers).
  */
 export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (req, auth) => {
     if (auth.type !== "session") return apiError("Unauthorized", 401);
@@ -44,9 +48,12 @@ export const POST = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (
     // the Zoho webhook's entry point (system actor).
     const process = await prisma.orgMembershipProcess.findUnique({
         where: { id: processId },
-        select: { orgMembershipId: true, subjectPersonId: true },
+        select: { orgMembershipId: true, subjectPersonId: true, kind: true },
     });
     if (!process) return apiError("Application not found", 404);
+    if (process.kind === "KEY_VOLUNTEER_AGREEMENT" && action !== "reset-signing" && !(await mayManageKeyVolunteers(prisma, auth.user))) {
+        return apiError("Only board members can act on a Key Volunteer Agreement.", 403);
+    }
     if (await hasHouseholdConflict(prisma, actorId, await applicantHousehold(prisma, process))) {
         return apiError("You cannot act on your own household's application — someone outside your household must.", 403);
     }

@@ -8,7 +8,7 @@ afterEach(() => act(() => notifications.clean()));
 
 const shown = () => notificationsStore.getState().notifications;
 
-const trustedAdult = (overrides: Partial<{ id: number; status: string }> = {}) => ({
+const trustedAdult = (overrides: Partial<{ id: number; status: string; reviewBy: string }> = {}) => ({
   id: overrides.id ?? 1,
   trustedAdultName: "Jane Doe",
   trustedAdultPhone: "555-010-0000",
@@ -22,13 +22,32 @@ const trustedAdult = (overrides: Partial<{ id: number; status: string }> = {}) =
       status: overrides.status ?? "APPROVED",
       sharedNote: null,
       effectiveFrom: "2026-01-01T00:00:00.000Z",
-      reviewBy: "2027-01-01T00:00:00.000Z",
+      reviewBy: overrides.reviewBy ?? "2027-01-01T00:00:00.000Z",
       createdAt: "2026-01-01T00:00:00.000Z",
     },
   ],
 });
 
 describe("TrustedAdultPanel", () => {
+  it("offers no same-info resubmit before an approval's expiry warning window", async () => {
+    const reviewBy = new Date(Date.now() + 200 * 86400000).toISOString();
+    mockFetchJson({ "/api/trusted-adults/mine": { trustedAdults: [trustedAdult({ reviewBy })] } });
+    renderWithProviders(<TrustedAdultPanel />);
+    await screen.findByText("Jane Doe");
+
+    expect(screen.queryByRole("button", { name: "Resubmit (same info)" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Submit with new info" })).toBeInTheDocument();
+  });
+
+  it("offers the same-info resubmit inside the warning window", async () => {
+    const reviewBy = new Date(Date.now() + 10 * 86400000).toISOString();
+    mockFetchJson({ "/api/trusted-adults/mine": { trustedAdults: [trustedAdult({ reviewBy })] } });
+    renderWithProviders(<TrustedAdultPanel />);
+    await screen.findByText("Jane Doe");
+
+    expect(screen.getByRole("button", { name: "Resubmit (same info)" })).toBeInTheDocument();
+  });
+
   it("loads and renders the list from the mine endpoint", async () => {
     mockFetchJson({ "/api/trusted-adults/mine": { trustedAdults: [trustedAdult()] } });
     renderWithProviders(<TrustedAdultPanel />);
@@ -150,6 +169,33 @@ describe("TrustedAdultPanel", () => {
       ]),
     );
     expect(screen.getByRole("button", { name: /Submit for board review/i })).toBeInTheDocument();
+  });
+
+  it("shows the load failure with a retry, not an empty list, when the load fails", async () => {
+    mockFetchJson({});
+    renderWithProviders(<TrustedAdultPanel />);
+
+    expect(await screen.findByText("Couldn't load your trusted adults")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Retry/i })).toBeInTheDocument();
+    expect(screen.queryByText("No trusted adults added yet.")).not.toBeInTheDocument();
+  });
+
+  it("replaces the list with the load failure when a reload after a write fails", async () => {
+    let listLoads = 0;
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "POST") return new Response("{}", { status: 200 });
+      listLoads += 1;
+      return listLoads === 1
+        ? new Response(JSON.stringify({ trustedAdults: [trustedAdult()] }), { status: 200 })
+        : new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
+    }) as unknown as typeof fetch;
+    renderWithProviders(<TrustedAdultPanel />);
+
+    const card = (await screen.findByText("Jane Doe")).closest(".mantine-Card-root") as HTMLElement;
+    fireEvent.click(within(card).getByRole("button", { name: /Withdraw/i }));
+
+    expect(await screen.findByText("Couldn't load your trusted adults")).toBeInTheDocument();
+    expect(screen.queryByText("Jane Doe")).not.toBeInTheDocument();
   });
 
   it("offers Delete (not Withdraw) once an entry is withdrawn", async () => {

@@ -21,7 +21,6 @@ beforeEach(() => { resetRtl(); (notifications.show as jest.Mock).mockClear(); })
 
 const smiths = {
   name: "The Smiths",
-  intakeNotes: "We're volunteer only — no students.",
   householdMembers: [
     { id: 1, name: "Pat Smith", email: "pat@example.com" },
     { id: 2, name: "Sam Smith", email: "sam@example.com" },
@@ -45,7 +44,6 @@ describe("membership-ops/review page", () => {
     expect(screen.getByText("Pat Smith <pat@example.com>", { exact: false })).toBeInTheDocument();
     expect(screen.getByText("Whose check did you review?")).toBeInTheDocument();
     expect(screen.getByText("0/2 approvals so far.")).toBeInTheDocument();
-    expect(screen.getByText("We're volunteer only — no students.")).toBeInTheDocument();
     expect(screen.getByText("This is a volunteer only family (no students)")).toBeInTheDocument();
   });
 
@@ -185,7 +183,6 @@ describe("membership-ops/review page", () => {
     renderPage();
 
     expect(await screen.findByText("Kit Smith")).toBeInTheDocument();
-    expect(screen.getByText("We're volunteer only — no students.")).toBeInTheDocument();
     expect(screen.queryByText("This is a volunteer only family (no students)")).not.toBeInTheDocument();
   });
 

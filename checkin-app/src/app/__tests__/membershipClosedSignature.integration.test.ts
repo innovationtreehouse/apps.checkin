@@ -8,9 +8,10 @@
  * Zoho is mocked; none of this has run against real Zoho.
  */
 
-import { archiveApplication, unarchiveApplication } from '@/lib/membership/archive';
+import { archiveApplication, closeForRestore, lockOpenApplications, unarchiveApplication } from '@/lib/membership/archive';
+import { setHouseholdStatus } from '@/lib/membership/householdStatus';
 import { findProcessByEnvelope, getOrCreateContractSigningUrl } from '@/lib/membership/external';
-import { SYSTEM_ACTOR } from '@/lib/auditActor';
+import { SYSTEM_ACTOR, personActor } from '@/lib/auditActor';
 import { normalizeAuditData } from '@/lib/auditPayload';
 import { createRequest, getEmbeddedSignUrl, getRequestStatus } from '@/lib/membership/contract/zohoClient';
 import prisma from '@/lib/prisma';
@@ -54,7 +55,32 @@ async function closedApplication(data: Record<string, unknown> = {}) {
     });
     const board = await makePerson('board');
     await archiveApplication(process.id, board.id);
-    return { processId: process.id, requestId, leadId: lead.id, boardId: board.id };
+    return { processId: process.id, requestId, leadId: lead.id, boardId: board.id, membershipId: membership.id };
+}
+
+/** Like closedApplication, but left open: the board's restore is what closes it. */
+async function openApplication(data: Record<string, unknown> = {}) {
+    const household = await prisma.household.create({ data: { name: `Applicant ${TAG}` } });
+    const membership = await prisma.orgMembership.create({ data: { householdId: household.id, status: 'NONE' } });
+    const lead = await makePerson('lead', { householdId: household.id, isHouseholdLead: true });
+    const requestId = `zoho-${crypto.randomUUID()}`;
+    const process = await prisma.orgMembershipProcess.create({
+        data: { orgMembershipId: membership.id, kind: 'INITIAL', status: 'PENDING_EXTERNAL_ACTION', zohoEnvelopeId: requestId, zohoActionId: `act-${requestId}`, zohoSignerPersonId: lead.id, ...data },
+    });
+    const board = await makePerson('board');
+    return { processId: process.id, requestId, leadId: lead.id, boardId: board.id, membershipId: membership.id };
+}
+
+/** The board's deny, then its restore, as the households route runs them. */
+async function denyThenRestore(membershipId: number, boardId: number, duringDenial: () => Promise<unknown> = async () => {}) {
+    const actor = personActor(boardId);
+    await setHouseholdStatus(prisma, membershipId, { from: ['NONE'], to: 'DENIED', actor, reason: 'test deny' });
+    await duringDenial();
+    await prisma.$transaction(async (tx) => {
+        const open = await lockOpenApplications(tx, membershipId);
+        await setHouseholdStatus(tx, membershipId, { from: ['DENIED'], to: 'NONE', actor, reason: 'test restore' });
+        await closeForRestore(tx, open, actor);
+    });
 }
 
 const read = (id: number) => prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id } });
@@ -174,5 +200,61 @@ describe('a signature that lands while the application is closed', () => {
         const row = await read(process.id);
         expect(row.contractSignedAt).not.toBeNull();
         expect(row.status).toBe('ACTIVE');
+    });
+
+    describe('across a denial of the household', () => {
+        it('closed, then denied and restored: a signature found at reopen is not recorded and the family signs again', async () => {
+            const { processId, membershipId, boardId, leadId } = await closedApplication({ bgConsentAt: new Date() });
+            await denyThenRestore(membershipId, boardId);
+            mockGetRequestStatus.mockResolvedValue('completed');
+
+            await expect(unarchiveApplication(processId, boardId)).resolves.toEqual({ status: 'PENDING_EXTERNAL_ACTION' });
+
+            const row = await read(processId);
+            expect(row.contractSignedAt).toBeNull();
+            expect(row.zohoEnvelopeId).toBeNull();
+            expect(await signatureAudits(processId)).toHaveLength(0);
+
+            // The next sign click has no old request to ask Zoho about, so nothing records it.
+            mockGetRequestStatus.mockClear();
+            await getOrCreateContractSigningUrl(leadId).catch(() => undefined);
+            expect(mockGetRequestStatus).not.toHaveBeenCalled();
+            expect((await read(processId)).contractSignedAt).toBeNull();
+        });
+
+        it('open through the denial and closed by the restore: a signature found at reopen is not recorded', async () => {
+            const { processId, membershipId, boardId } = await openApplication({ bgConsentAt: new Date() });
+            await denyThenRestore(membershipId, boardId);
+            mockGetRequestStatus.mockResolvedValue('completed');
+
+            await expect(unarchiveApplication(processId, boardId)).resolves.toEqual({ status: 'PENDING_EXTERNAL_ACTION' });
+
+            const row = await read(processId);
+            expect(row.contractSignedAt).toBeNull();
+            expect(row.zohoEnvelopeId).toBeNull();
+        });
+
+        it('the request is forgotten without asking Zoho, so a pending one is replaced too', async () => {
+            const { processId, requestId, membershipId, boardId } = await closedApplication();
+            await denyThenRestore(membershipId, boardId);
+
+            await unarchiveApplication(processId, boardId);
+
+            expect(mockGetRequestStatus).not.toHaveBeenCalled();
+            const row = await read(processId);
+            expect(row).toMatchObject({ zohoEnvelopeId: null, zohoActionId: null, zohoSignerPersonId: null });
+            const forgot = await prisma.auditLog.findMany({ where: { tableName: 'OrgMembershipProcess', affectedEntityId: processId, oldData: { path: ['zohoEnvelopeId'], equals: requestId } } });
+            expect(forgot.map((r) => normalizeAuditData(r.newData))).toEqual([expect.objectContaining({ unarchived: true, zohoEnvelopeId: null, reason: 'household denied since close' })]);
+        });
+
+        it('a signature recorded before the close still carries over', async () => {
+            const signedAt = new Date();
+            const { processId, membershipId, boardId } = await openApplication({ contractSignedAt: signedAt, bgConsentAt: new Date() });
+            await denyThenRestore(membershipId, boardId);
+
+            await unarchiveApplication(processId, boardId);
+            expect((await read(processId)).contractSignedAt).toEqual(signedAt);
+            expect(mockGetRequestStatus).not.toHaveBeenCalled();
+        });
     });
 });

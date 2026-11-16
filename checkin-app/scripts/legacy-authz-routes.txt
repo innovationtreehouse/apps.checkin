@@ -149,8 +149,6 @@ POST /api/trusted-adults/[id]/renew
 POST /api/trusted-adults/[id]/resubmit
 POST /api/trusted-adults/[id]/withdraw
 POST /api/trusted-adults
-GET /api/unsubscribe
-POST /api/unsubscribe
 POST /api/webhooks/resend
 POST /api/webhooks/shopify/reversals
 POST /api/webhooks/shopify

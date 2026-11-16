@@ -4,7 +4,7 @@
  * Board ruling B15, 2026-10-27: a participant's own email is hidden from
  * program leaders while the participant is under 13.
  */
-import { emailWithheldParticipants, leaderMaySeeEmail, rosterHousehold, rosterPerson, withholdEmail } from "@/lib/person/leaderEmail";
+import { adultPhoneOnly, emailWithheldParticipants, leaderMaySeeEmail, rosterHousehold, rosterPerson, withholdEmail } from "@/lib/person/leaderEmail";
 
 beforeAll(() => {
     jest.useFakeTimers({ now: new Date("2026-10-27T17:00:00Z"), doNotFake: ["nextTick", "setImmediate", "setTimeout", "setInterval", "queueMicrotask"] });
@@ -65,5 +65,26 @@ describe("emailWithheldParticipants", () => {
     });
     it("names nobody for a viewer who is not a leader", () => {
         expect(emailWithheldParticipants(participants, false).size).toBe(0);
+    });
+});
+
+describe("adultPhoneOnly", () => {
+    const START = new Date("2027-01-10T00:00:00Z");
+    const withPhone = (dateOfBirth: Date | null, isDeclaredAdult = false) => ({ ...person(dateOfBirth), phone: "5125551234", isDeclaredAdult });
+    it("keeps the phone of a participant who is 18 on the program's start", () => {
+        expect(adultPhoneOnly(withPhone(new Date("2009-01-10T00:00:00Z")), START).phone).toBe("5125551234");
+    });
+    // 18 today, 17 on the start date: the start decides.
+    it("drops the phone of a participant under 18 on the program's start", () => {
+        expect(adultPhoneOnly(withPhone(new Date("2008-10-27T00:00:00Z")), new Date("2026-10-26T00:00:00Z")).phone).toBeNull();
+        expect(adultPhoneOnly(withPhone(new Date("2009-01-11T00:00:00Z")), START).phone).toBeNull();
+    });
+    it("drops the phone of a participant with no date of birth", () => {
+        expect(adultPhoneOnly(withPhone(null), START).phone).toBeNull();
+    });
+    it("keeps the phone of a declared adult with no date of birth, and never ships the declaration", () => {
+        const shipped = adultPhoneOnly(withPhone(null, true), START);
+        expect(shipped.phone).toBe("5125551234");
+        expect(shipped).not.toHaveProperty("isDeclaredAdult");
     });
 });

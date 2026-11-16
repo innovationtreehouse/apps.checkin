@@ -125,9 +125,9 @@ test.describe("person merge carrying a background check", () => {
     const refusal = `Cannot merge: this person's background check is disputed by review #${reviewId}`;
     await asViewer(browser, BOARD, async (page) => {
       await requestMerge(page, email, source);
-      await expect(page.locator(".mantine-Alert-root").filter({ hasText: refusal })).toBeVisible();
+      await expect(page.locator(".mantine-Notification-root").filter({ hasText: refusal })).toBeVisible();
       await expect(heading(page, "Merge Successful!")).toHaveCount(0);
-    }, new RegExp(`^error alert: ${refusal}\\b`));
+    }, new RegExp(`^error chip: ${refusal}\\b`));
 
     expect([await persona(email), await persona(source)]).toEqual([kept, merged]);
     await asViewer(browser, email, async (page) => {

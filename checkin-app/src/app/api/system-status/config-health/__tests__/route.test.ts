@@ -18,6 +18,10 @@ jest.mock('@/lib/quickbooks/health', () => ({
 
 jest.mock('@/lib/receipt/mailboxHealth', () => ({ getReceiptMailboxHealth: async () => [] }));
 
+jest.mock('@/lib/membership/legacyCheckFlagHealth', () => ({
+    legacyCheckFlagCheck: async () => ({ id: 'membership-legacy-check-flag', label: 'Applications on the old household check flag', ok: true, detail: '0.' }),
+}));
+
 jest.mock('@/lib/problems', () => ({
     getProblems: async () => ({
         items: [{ library: 'expense', id: 'e1', step: 'intake', href: '/receipts/e1', failedAt: new Date('2026-11-01T12:00:00.000Z') }],
@@ -62,6 +66,7 @@ describe('GET /api/system-status/config-health — auth gate', () => {
         expect(Array.isArray(body.checks)).toBe(true);
         expect(body.checks.some((c: { id: string }) => c.id === 'zoho-esign')).toBe(true);
         expect(body.checks.some((c: { id: string }) => c.id === 'quickbooks-connection')).toBe(true);
+        expect(body.checks.some((c: { id: string }) => c.id === 'membership-legacy-check-flag')).toBe(true);
         // Never leaks secret values — only booleans + labels + detail.
         for (const c of body.checks) {
             expect(typeof c.ok).toBe('boolean');

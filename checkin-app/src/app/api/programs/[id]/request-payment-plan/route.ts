@@ -8,9 +8,10 @@ import { changeProgramStockWith, StockNotRecordedError } from "@/lib/shopify/sto
 import { ENROLLMENT_WRITES } from "@/lib/programs/enrollmentState";
 import { ScholarshipRequestKind } from "@/generated/prisma/client";
 import { scholarshipRequestKindLabel } from "@/lib/scholarshipRequestKind";
-import { resolveScholarshipRecipients, notifyReviewTeam, sendScholarshipAck, resolveAckCopy } from "@/lib/scholarshipEmails";
+import { resolveScholarshipRecipients, notifyReviewTeam, sendScholarshipAck } from "@/lib/scholarshipEmails";
 import { config } from "@/lib/config";
-import { escapeHtml } from "@/lib/email-templates/base";
+import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
+import { householdMayEnrol, NO_EMERGENCY_CONTACT_TO_ENROL } from "@/lib/emergencyContacts/service";
 
 export const POST = withAuth({}, async (req, auth, { params }: { params: Promise<{ id: string }> }) => {
     if (auth.type !== 'session') return apiError("Unauthorized", 401);
@@ -98,6 +99,12 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             return apiError("This enrollment is not awaiting payment", 409);
         }
 
+        const householdId = participant.person?.householdId;
+        const isExternalAdmin = isSysAdminOrBoard && !isSelf && !(await hasHouseholdConflict(prisma, currentUserId, householdId));
+        if (!isExternalAdmin && !(await householdMayEnrol(prisma, householdId))) {
+            return apiError(NO_EMERGENCY_CONTACT_TO_ENROL, 400);
+        }
+
         // Hold ledger: APPLICATION takes a seat out
         // of Shopify's pool (-1), stamping inventoryHeldAt so every later release
         // path (withdrawal / payment / grace-expiry) or approval knows there's a
@@ -174,26 +181,16 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             const personName = participant.person?.name || 'A household member';
             const programName = participant.program?.name || 'a program';
             await notifyReviewTeam(
-                `New scholarship / payment-plan request: ${personName} — ${programName}`,
-                `<p>The Scholarship Review Team has a new request to review.</p>`
-                + `<p><strong>${escapeHtml(personName)}</strong> requested a scholarship / payment plan for <strong>${escapeHtml(programName)}</strong>.</p>`
-                + `<p>What they asked for: <strong>${escapeHtml(scholarshipRequestKindLabel(kind))}</strong></p>`
-                + `<p>Review it here: <a href="${base}/finance-ops/payment-plan">${base}/finance-ops/payment-plan</a></p>`,
+                "scholarship.programReview",
+                { personName, programName, requestKind: scholarshipRequestKindLabel(kind), actionLink: `${base}/finance-ops/payment-plan` },
                 "Scholarship review-team notify failed (program request):",
             );
             // A participant with no household can't have leads to ack — skip the
             // ack, review-team notify above still fired.
             if (participant.person?.householdId) {
                 const recipients = await resolveScholarshipRecipients(participant.person.householdId, participantId);
-                const ackSettings = await prisma.boardSettings.findUnique({
-                    where: { id: 1 },
-                    select: { scholarshipAckSubject: true, scholarshipAckProgramBody: true },
-                });
-                const ack = resolveAckCopy(ackSettings, "program", { programName });
-                // Shopify-failure branch: the operational-incident copy is deliberately
-                // hard-coded (not configurable) — the configured subject still applies.
-                const ackBody = warning ? `<p>${escapeHtml(warning)}</p>` : ack.body;
-                await sendScholarshipAck(recipients, ack.subject, ackBody);
+                if (warning) await sendScholarshipAck(recipients, "scholarship.ackProgramHoldFailed", {});
+                else await sendScholarshipAck(recipients, "scholarship.ackProgram", { programName });
             }
         }
 

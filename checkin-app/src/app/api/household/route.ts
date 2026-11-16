@@ -7,10 +7,11 @@ import { reconcileAndWarn } from "@/lib/emergencyContacts/service";
 import { isValidEmail } from "@/lib/emergencyContacts/identity";
 import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import { isOrgAccount } from "@/lib/orgAccount";
-import { HOUSEHOLD_PEER_SELECT, HOUSEHOLD_PEER_WITH_SIGN_IN_SELECT } from "@/lib/household/participantProjection";
-import { householdLeadship } from "@/lib/household/leads";
+import { HOUSEHOLD_PEER_SELECT, HOUSEHOLD_PEER_WITH_EMAIL_LOCK_SELECT } from "@/lib/household/participantProjection";
+import { householdLeadship, setsHouseholdAges } from "@/lib/household/leads";
+import { isEmailLocked } from "@/lib/person/emailLock";
 import { EMAIL_IN_USE_REFUSAL } from "@/lib/household/emailInUse";
-import { normalizeAdultDob } from "@/lib/person/adultDob";
+import { AGE_LEAD_ONLY_REFUSAL, normalizeAdultDob } from "@/lib/person/adultDob";
 import { mintPersonId } from "@/lib/person/mintId";
 import { apiError } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
@@ -30,11 +31,18 @@ export const GET = withAuth(
 
             const user = await prisma.person.findUnique({
                 where: { id: userId },
-                include: {
+                select: {
                     household: {
-                        include: {
-                            householdMembers: { select: HOUSEHOLD_PEER_WITH_SIGN_IN_SELECT },
-                            orgMembership: true,
+                        select: {
+                            id: true,
+                            name: true,
+                            line1: true,
+                            line2: true,
+                            city: true,
+                            state: true,
+                            postalCode: true,
+                            householdMembers: { select: HOUSEHOLD_PEER_WITH_EMAIL_LOCK_SELECT },
+                            orgMembership: { select: { status: true, memberSince: true, isVolunteerFamily: true } },
                         }
                     }
                 }
@@ -42,24 +50,16 @@ export const GET = withAuth(
 
             if (!user) return apiError("User not found", 404);
 
-            // intakeNotes is the family's free-text "anything else we should know?"
-            // note written BY the lead TO the board/BG reviewers — schema classifies
-            // it 'pii' for the reviewer queue, and guards against it reaching any
-            // other household-scoped view. Household peers (incl. youth with their
-            // own logins) have no business reading a note a parent wrote about them.
-            // Only the lead sees it, matching the lead-gated editor on /my-household
-            // and the 403 on PATCH /api/household/settings. Address stays: shared
-            // household data the family authored.
-            const canSeeNotes = user.isHouseholdLead;
             const household = user.household && {
                 ...user.household,
-                ...(canSeeNotes ? {} : { intakeNotes: null }),
-                // A linked sign-in locks the member's email on the household card;
-                // only the boolean leaves, never Account data.
-                householdMembers: user.household.householdMembers.map(({ _count, ...m }) => ({
-                    ...m,
-                    hasSignIn: _count.accounts > 0,
-                })),
+                // Only the lock's boolean leaves; its inputs are internal-tier.
+                householdMembers: user.household.householdMembers.map((m) => {
+                    const {
+                        _count, budgetOwnersOwned, budgetOwnerTreasurerships, instancesLed,
+                        household: _household, lastBackgroundCheck, canAccessStaging, ...peer
+                    } = m;
+                    return { ...peer, emailLocked: isEmailLocked(m) };
+                }),
             };
             // Where the locked-email help text points members to change it.
             const { replyTo } = await getEmailSenderIdentity();
@@ -127,6 +127,10 @@ export const PATCH = withAuth(
             }
 
             const householdId = hh.householdId;
+            // Every new member carries an age, so adding one is an age write.
+            if (!(await setsHouseholdAges(prisma, userId, householdId))) {
+                return apiError(AGE_LEAD_ONLY_REFUSAL, 403);
+            }
 
             const { member, warning } = await prisma.$transaction(async (tx) => {
                 await lockLiveHouseholds(tx, [householdId]);

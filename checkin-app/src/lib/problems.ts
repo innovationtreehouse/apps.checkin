@@ -4,6 +4,7 @@ import { getCronJobStatuses, type CronJobStatus } from "@/lib/cronRuns";
 import { sendTemplated } from "@/lib/email-templates/send";
 import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
+import { unreadLine } from "@/lib/problemsLines";
 import { APP_TIMEZONE, formatDateTime } from "@/lib/time";
 
 /** One stuck item on the Problems list, named by the library that holds it. */
@@ -11,31 +12,35 @@ export interface Problem extends StuckItem {
     library: string;
 }
 
-type Retry = (item: { id: string; step: string }) => Promise<void>;
+/** The person who pressed Retry. */
+type ProblemRetrier = { userId: number; username: string | null };
+
+type Retry = (item: { id: string; step: string }, by: ProblemRetrier) => Promise<void>;
 
 /**
  * Each receipt-flow library's "stuck items" and "retry" ports, and its own Problems lines where it
  * has them; one with no database configured is not read.
  */
-const SOURCES: { library: string; env: string; read: () => Promise<StuckItem[]>; retry: Retry; notices?: () => Promise<string[]> }[] = [
+const SOURCES: { library: string; env: string; read: () => Promise<StuckItem[]>; retry: Retry; notices?: () => Promise<Notice[]> }[] = [
     {
         library: "receipt",
         env: "RECEIPT_DATABASE_URL",
         read: async () => (await import("@checkin/receipt")).stuckItems(),
         retry: async (item) => (await import("@checkin/receipt")).retryStuckItem(item),
-        notices: async () => (await import("@checkin/receipt")).problemNotices(),
+        notices: async () => (await (await import("@checkin/receipt")).problemNotices()).map((text) => ({ text, href: null })),
     },
     {
         library: "workflow mapping",
         env: "WORKFLOW_MAPPING_DATABASE_URL",
         read: async () => (await import("@checkin/workflow-mapping")).stuckItems(),
         retry: async (item) => (await import("@checkin/workflow-mapping")).retryStuckItem(item),
+        notices: async () => (await import("@checkin/workflow-mapping")).problemNotices(),
     },
     {
         library: "expense",
         env: "EXPENSE_DATABASE_URL",
         read: async () => (await import("@checkin/expense")).stuckItems(),
-        retry: async (item) => (await import("@checkin/expense")).retryStuckItem(item),
+        retry: async (item, by) => (await import("@checkin/expense")).retryStuckItem(item, by),
     },
     {
         library: "gifts",
@@ -50,6 +55,9 @@ const SOURCES: { library: string; env: string; read: () => Promise<StuckItem[]>;
         retry: async (item) => (await import("@checkin/local-inventory")).retryStuckItem(item),
     },
 ];
+
+/** The database env var of each library the Problems list reads. */
+export const LIBRARY_DB_VARS = SOURCES.map((s) => s.env);
 
 /** A count line on the Problems list, with the page that shows its detail where there is one. */
 export interface Notice {
@@ -70,10 +78,10 @@ async function emailFailureNotices(now: Date): Promise<Notice[]> {
  * Runs one listed item's step once, through the library the Problems list names it by. A library
  * that is not listed or has no database answers 404; the library's own retry answers the rest.
  */
-export async function retryProblem({ library, step, id }: { library: string; step: string; id: string }): Promise<void> {
+export async function retryProblem({ library, step, id }: { library: string; step: string; id: string }, by: ProblemRetrier): Promise<void> {
     const source = SOURCES.find((s) => s.library === library && process.env[s.env]);
     if (!source) throw new ServiceError(404, "No such library on the Problems list");
-    await source.retry({ id, step });
+    await source.retry({ id, step }, by);
 }
 
 /**
@@ -85,7 +93,7 @@ export async function getProblems(now = new Date()): Promise<{ items: Problem[];
     const results = await Promise.allSettled([
         ...wired.map(async (s) => ({
             items: await s.read(),
-            notices: s.notices ? (await s.notices()).map((text) => ({ text, href: null })) : [],
+            notices: s.notices ? await s.notices() : [],
         })),
         emailFailureNotices(now).then((notices) => ({ items: [], notices })),
     ]);
@@ -136,7 +144,7 @@ export async function sendProblemsDigest(now = new Date()): Promise<void> {
             ...stuck.map((i) => `${i.library}, ${i.step}: ${i.id}, stuck since ${when(i.failedAt)}`),
             ...stale.map((j) => `Scheduled job ${j.job}: last ran ${when(j.lastSuccessAt)}`),
             ...failing.map((j) => `Scheduled job ${j.job}: last run reported failures, ${when(j.lastErrorAt ?? j.lastSuccessAt)}`),
-            ...unread.map((library) => (library === "email" ? "Failed email sends could not be counted." : `${library}: its stuck items could not be read`)),
+            ...unread.map(unreadLine),
             ...notices.map((n) => n.text),
         ];
         const ctx = { count: String(lines.length), items: lines.join("\n"), actionLink: `${config.baseUrl()}/system-status/health` };

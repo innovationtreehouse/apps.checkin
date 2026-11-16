@@ -16,3 +16,8 @@ export { errorMessage, notifyNavCounts, refusalMessage, type Loaded } from "@che
 export function useIsFinance(): boolean {
   return useViewer()?.isFinance === true;
 }
+
+/** Whether the viewer is on the Board, who alone may raise an income cap. */
+export function useIsBoard(): boolean {
+  return useViewer()?.isBoardMember === true;
+}

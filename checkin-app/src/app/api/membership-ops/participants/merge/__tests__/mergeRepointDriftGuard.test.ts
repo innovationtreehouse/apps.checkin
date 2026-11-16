@@ -86,7 +86,6 @@ const DISPOSITIONS: Record<string, string> = {
     'BackgroundCheckAttestation.subjectPersonId': 'repointed (SET NULL) — loop-or-skip on bgSubjectKey. Two collision classes are pre-refused: one reviewer naming both identities (the unique triple), and the cross-role case where one record reviewed a check naming the other, which would otherwise become a self-review.',
     'Event.attendanceConfirmedById': 'repointed (SET NULL) — who confirmed attendance is a staff-action audit fact; left behind it reads as nobody.',
     'FacilityClose.closedById': 'repointed (SET NULL) — who closed the facility is an audit fact; left behind it reads as a deleted closer.',
-    'OrgMembershipProcess.noteAckById': 'repointed (SET NULL) — who read the family intake note, same audit-fact rationale.',
     'OrgMembershipProcess.zohoSignerPersonId': 'repointed (SET NULL) — who the agreement request is addressed to, and who signed; the same human follows the survivor.',
     'OrgMembershipProcess.subjectPersonId': 'repointed (SET NULL) — step 5 updateMany, then archiveDuplicatePersonBg leaves the survivor exactly one open PERSON_BG.',
     'PresenceEvent.personId': 'repointed (CASCADE) — the append-only presence log projects visits, so events left on a tombstone would flush against a person the projection can no longer treat as live; the log follows the survivor like RawBadgeLog does.',
@@ -116,6 +115,7 @@ const DISPOSITIONS: Record<string, string> = {
 
     // ── deliberately left ─────────────────────────────────────────────────────
     'Person.mergedIntoId': 'deliberately-left (SET NULL) — the merge neither reads nor writes it, and no Person row sets it: a merged-away record is archived in PersonMerge and deleted. The column awaits its drop.',
+    'OrgMembershipProcess.noteAckById': 'deliberately-left (SET NULL) — the merge neither reads nor writes it, and nothing sets it. The column awaits its drop.',
     'Session.userId': 'deliberately-left (CASCADE) — deleted, not moved: a session is an auth artifact, and there is no reason for the survivor to inherit the merged-away login.',
 };
 

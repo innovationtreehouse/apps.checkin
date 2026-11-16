@@ -16,4 +16,4 @@ export { orgEventConsumer, catchUpOrgEvents } from "./services/orgEventConsumer"
 export * as routes from "./routes";
 export type { WorkflowRouteCtx, WorkflowBag, WorkflowRouteHandler } from "./routes";
 
-export { retryStuckItem, stuckItems } from "./stuckItems";
+export { problemNotices, retryStuckItem, stuckItems } from "./stuckItems";

@@ -40,6 +40,7 @@ import {
     INITIAL_STATES,
     type ProcessKind,
     type ProcessStatus,
+    asHouseholdProcess,
 } from '@/lib/membership/lifecycle';
 import { assertEnumParity, reachability } from '@/lib/lifecycle';
 
@@ -274,7 +275,7 @@ describe('isLegalTransition covers the declared edges', () => {
     });
 
     test('rejects undeclared edges', () => {
-        // The external advance always opens payment — an intake note does not hold it.
+        // The external advance always opens payment.
         expect(isLegalTransition('PENDING_EXTERNAL_ACTION', 'PENDING_BG_REVIEW')).toBe(false);
         expect(isLegalTransition('INTAKE', 'ACTIVE')).toBe(false);
         expect(isLegalTransition('ACTIVE', 'PENDING_PAYMENT')).toBe(false);
@@ -312,5 +313,15 @@ describe('enum parity with Prisma', () => {
     });
     test('ProcessKind union matches OrgMembershipProcessKind keys', () => {
         expect(() => assertEnumParity(ALL_KINDS, OrgMembershipProcessKind, 'OrgMembershipProcessKind')).not.toThrow();
+    });
+});
+
+describe('asHouseholdProcess', () => {
+    test('passes a household process through with its orgMembershipId', () => {
+        const process = { id: 7, kind: 'RENEWAL' as const, orgMembershipId: 42, status: 'PENDING_RENEWAL' };
+        expect(asHouseholdProcess(process)).toEqual(process);
+    });
+    test.each(['PERSON_BG', 'PERSON_AGREEMENT', 'KEY_VOLUNTEER_AGREEMENT'] as const)('throws for a %s process', (kind) => {
+        expect(() => asHouseholdProcess({ id: 9, kind, orgMembershipId: null })).toThrow(`Membership process #9 (${kind}) has no household membership.`);
     });
 });

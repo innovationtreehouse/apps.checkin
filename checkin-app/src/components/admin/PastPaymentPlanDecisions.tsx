@@ -1,12 +1,11 @@
 "use client";
 
-import { useEffect, useState } from 'react';
 import { Button, Checkbox, Group, Stack, Text } from '@mantine/core';
-import { useUrlFilter, useUrlPage } from '@checkin/component-ui';
-import { AlertBanner } from '@/components/admin/AlertBanner';
+import { LoadError, useUrlFilter, useUrlPage } from '@checkin/component-ui';
 import { DataTable, type DataTableColumn } from '@/components/admin/DataTable';
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { PageLoader } from '@/components/ui/PageLoader';
+import { useLoad } from '@/lib/api';
 import { PAST_PAGE_SIZE } from '@/lib/finance/paymentPlanHistoryPage';
 
 export type PaymentPlanDecisionRow = {
@@ -28,17 +27,11 @@ export function PastPaymentPlanDecisions<T extends PaymentPlanDecisionRow>({ end
   const [page, setPage] = useUrlPage();
   const [archived, setArchived] = useUrlFilter('archived');
   const query = `page=${page - 1}${archived === '1' ? '&archived=1' : ''}`;
-  const [loaded, setLoaded] = useState<{ query: string; rows: T[]; error: string } | null>(null);
-
-  useEffect(() => {
-    fetch(`${endpoint}?${query}`)
-      .then(async (res) => {
-        if (!res.ok) throw new Error();
-        const rows: T[] = await res.json();
-        setLoaded({ query, rows, error: '' });
-      })
-      .catch(() => setLoaded({ query, rows: [], error: 'Failed to load past requests.' }));
-  }, [endpoint, query]);
+  // Each read logs a finance view, so it reads once per page shown, with no retry.
+  const { data: rows, error, reload } = useLoad<T[]>(
+    `${endpoint}?${query}`,
+    { retry: false, reconnect: false, skipWriteReload: true },
+  );
 
   const showArchived = (
     <Checkbox
@@ -47,8 +40,8 @@ export function PastPaymentPlanDecisions<T extends PaymentPlanDecisionRow>({ end
       onChange={(e) => setArchived(e.currentTarget.checked ? '1' : '')}
     />
   );
-  if (loaded?.query !== query) return <Stack>{showArchived}<PageLoader /></Stack>;
-  const { rows, error } = loaded;
+  if (error) return <Stack>{showArchived}<LoadError what="past requests" message={error} onRetry={reload} /></Stack>;
+  if (!rows) return <Stack>{showArchived}<PageLoader /></Stack>;
 
   const columns: DataTableColumn<T>[] = [
     ...identityColumns,
@@ -73,7 +66,6 @@ export function PastPaymentPlanDecisions<T extends PaymentPlanDecisionRow>({ end
   return (
     <Stack>
       {showArchived}
-      <AlertBanner message={error} tone="error" />
       <DataTable columns={columns} rows={rows} getRowKey={(row) => row.id} emptyMessage="No decided requests." />
       <Group justify="flex-end">
         <Button variant="default" size="xs" disabled={page === 1} onClick={() => setPage(page - 1)}>Newer</Button>

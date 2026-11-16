@@ -1,31 +1,31 @@
 import { aggregateEnrollOutcomes, buildShopifyCheckoutUrl, findRepeatPayments, type EnrollOutcome } from '../enroll';
 
 describe('aggregateEnrollOutcomes', () => {
-    it('collects every ok participant as enrolled with no errors', () => {
+    it('collects every ok participant as enrolled with no refusals', () => {
         const outcomes: EnrollOutcome[] = [
             { participantId: 1, ok: true, status: 200 },
             { participantId: 2, ok: true, status: 200 },
         ];
         const r = aggregateEnrollOutcomes(outcomes);
         expect(r.enrolledIds).toEqual([1, 2]);
-        expect(r.errors).toEqual([]);
+        expect(r.refused).toEqual([]);
     });
 
     // 409-as-success: a member already claimed comes back 409 on a re-run and
     // must stay enrolled, not surface a spurious "already enrolled" error.
-    it('treats 409 (already enrolled) as enrolled, not an error', () => {
+    it('treats 409 (already enrolled) as enrolled, not a refusal', () => {
         const outcomes: EnrollOutcome[] = [
             { participantId: 1, ok: false, status: 409, error: 'Participant is already enrolled in this program.' },
             { participantId: 2, ok: true, status: 200 },
         ];
         const r = aggregateEnrollOutcomes(outcomes);
         expect(r.enrolledIds).toEqual([1, 2]);
-        expect(r.errors).toEqual([]);
+        expect(r.refused).toEqual([]);
     });
 
     // Partial failure: one member enrolls, one fails — the success is kept and
     // only the real failure is aggregated.
-    it('aggregates per-member errors while keeping the successes', () => {
+    it('aggregates per-member refusals while keeping the successes', () => {
         const outcomes: EnrollOutcome[] = [
             { participantId: 1, ok: true, status: 200 },
             { participantId: 2, ok: false, status: 400, error: 'Program has reached maximum capacity.' },
@@ -33,15 +33,15 @@ describe('aggregateEnrollOutcomes', () => {
         ];
         const r = aggregateEnrollOutcomes(outcomes);
         expect(r.enrolledIds).toEqual([1]);
-        expect(r.errors).toEqual([
-            'Program has reached maximum capacity.',
-            'Participant must be at least 18 years old.',
+        expect(r.refused).toEqual([
+            { participantId: 2, error: 'Program has reached maximum capacity.' },
+            { participantId: 3, error: 'Participant must be at least 18 years old.' },
         ]);
     });
 
     it('falls back to a default message when the route gives no error string', () => {
         const r = aggregateEnrollOutcomes([{ participantId: 1, ok: false, status: 500 }]);
-        expect(r.errors).toEqual(['Failed to enroll in program.']);
+        expect(r.refused).toEqual([{ participantId: 1, error: 'Failed to enroll in program.' }]);
     });
 });
 

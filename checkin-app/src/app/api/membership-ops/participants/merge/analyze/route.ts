@@ -27,7 +27,7 @@ export const GET = withAuth(
                     // Explicit select, not a bare include — an include returns the whole
                     // Person row (allergies, notificationSettings, emailVerified,
                     // lastBackgroundCheck, waiverSignedBy, ...) plus the whole Household
-                    // (intakeNotes, line1/city/state/postalCode), and a plain
+                    // (line1/city/state/postalCode), and a plain
                     // `householdMembers: true` returns full Person rows one level down for
                     // people who aren't even being merged.
                     // googleId/dateOfBirth ARE deliberately kept on the two merge subjects:

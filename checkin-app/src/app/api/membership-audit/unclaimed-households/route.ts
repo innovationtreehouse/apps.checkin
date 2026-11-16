@@ -22,7 +22,11 @@ export const GET = withAuth(
             // shared predicate so the list and the badge can't drift.
             const households = await prisma.household.findMany({
                 where: UNCLAIMED_OR_BROKEN_HOUSEHOLD_WHERE,
-                include: { householdMembers: true }
+                select: {
+                    id: true,
+                    name: true,
+                    householdMembers: { select: { id: true, name: true, email: true } },
+                },
             });
 
             const result = households.map(h => ({

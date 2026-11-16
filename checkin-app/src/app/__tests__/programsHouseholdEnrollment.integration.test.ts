@@ -20,6 +20,7 @@
 import { POST } from '@/app/api/programs/[id]/participants/route';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
+import { WITH_EMERGENCY_CONTACT } from '@/test-helpers/emergencyContact';
 
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
@@ -59,7 +60,7 @@ describe('Multi-select household enrollment (integration)', () => {
         await cleanup();
 
         // One household: a lead + three adult dependents (no age limits in play).
-        const household = await prisma.household.create({ data: { name: "Test HH" } });
+        const household = await prisma.household.create({ data: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } });
         const lead = await prisma.person.create({
             // Adult DOB: the lead self-enrolls below, and only a known adult may.
             data: {

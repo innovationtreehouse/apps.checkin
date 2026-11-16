@@ -1,4 +1,5 @@
-import type { ExpenseOrgSettings, ExpenseLineItem } from "../db/schema";
+import type { ExpenseLineItem } from "../db/schema";
+import type { ExpenseSettings } from "../contract";
 
 // ── Approval terminal states ──────────────────────────────────────────────────
 
@@ -17,20 +18,26 @@ export function anyRejected(approvals: { status: string }[]): boolean {
 
 // ── Capital classification ────────────────────────────────────────────────────
 
+export type CapitalSettings = Pick<ExpenseSettings, "capitalReviewEnabled" | "capitalTotalThresholdCents" | "capitalLineItemThresholdCents">;
+
+/** Capital review is on but a threshold is unset, so every expense and donated line waits at review. */
+export function capitalThresholdsUnset(s: CapitalSettings): boolean {
+  return s.capitalReviewEnabled && (s.capitalTotalThresholdCents === null || s.capitalLineItemThresholdCents === null);
+}
+
 /**
- * Determines whether an expense qualifies for capital review based on org thresholds.
- * Returns false when org settings are unavailable (treat as non-capital).
+ * Whether spending goes to capital review: never while review is off, always while a threshold is
+ * unset, and otherwise when the total or a unit price is at or over its threshold.
  */
 export function classifyCapital(
   receiptTotalCents: number,
   lineItems: Pick<ExpenseLineItem, "unitPriceCents">[],
-  org: Pick<ExpenseOrgSettings, "capitalTotalThresholdCents" | "capitalLineItemThresholdCents"> | null | undefined,
+  s: CapitalSettings,
 ): boolean {
-  if (!org) return false;
-  return (
-    receiptTotalCents > org.capitalTotalThresholdCents ||
-    lineItems.some((li) => li.unitPriceCents > org.capitalLineItemThresholdCents)
-  );
+  if (!s.capitalReviewEnabled) return false;
+  if (s.capitalTotalThresholdCents === null || s.capitalLineItemThresholdCents === null) return true;
+  const { capitalTotalThresholdCents: total, capitalLineItemThresholdCents: unit } = s;
+  return receiptTotalCents >= total || lineItems.some((li) => li.unitPriceCents >= unit);
 }
 
 // ── Hold reasons ──────────────────────────────────────────────────────────────

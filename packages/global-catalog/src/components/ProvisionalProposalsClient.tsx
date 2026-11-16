@@ -5,11 +5,10 @@ import {
   Radio, ScrollArea, Select, Stack, Table, Text, Textarea, TextInput, Title, Tooltip,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
-import { notifications } from "@mantine/notifications";
 import { IconEye, IconLink, IconX } from "@tabler/icons-react";
 import { formatGtinDisplay } from "../lib/gtin";
 import { api, useCanManage, useLoad } from "./api";
-import { catalogItemLabel, catalogSearchTerm, errorMessage, LoadError, MIN_CATALOG_SEARCH_LENGTH, showError, useCatalogSearch, type CatalogItem } from "@checkin/component-ui";
+import { catalogItemLabel, catalogSearchTerm, errorMessage, LoadError, MIN_CATALOG_SEARCH_LENGTH, showError, showSuccess, useCatalogSearch, type CatalogItem } from "@checkin/component-ui";
 import { USAGE_BEHAVIORS } from "./viewTypes";
 import type { CategoryRow, ProvisionalItemRow, SubcategoryRow } from "./viewTypes";
 
@@ -110,7 +109,7 @@ export default function ProvisionalProposalsClient() {
           subcategoryId: approveSubcategoryId ? parseInt(approveSubcategoryId, 10) : undefined,
         }),
       });
-      notifications.show({ message: "Proposal approved, new catalog item created", color: "green" });
+      showSuccess("Proposal approved, new catalog item created");
       closeApprove();
     } catch (e) { showError(errorMessage(e)); }
     finally { setApproving(false); }
@@ -121,7 +120,7 @@ export default function ProvisionalProposalsClient() {
     setRejecting(true);
     try {
       await api(`/provisional-items/${rejectTarget.id}/reject`, { method: "POST", body: JSON.stringify({ rejectionReason: rejectReason }) });
-      notifications.show({ message: "Proposal rejected", color: "orange" });
+      showSuccess("Proposal rejected");
       closeReject(); setRejectReason(""); setRejectTarget(null);
     } catch (e) { showError(errorMessage(e)); }
     finally { setRejecting(false); }
@@ -132,7 +131,7 @@ export default function ProvisionalProposalsClient() {
     setMapping(true);
     try {
       await api(`/provisional-items/${mapTarget.id}/map-to-existing`, { method: "POST", body: JSON.stringify({ realGtin13: mapChoice.gtin13 }) });
-      notifications.show({ message: "Provisional item mapped to existing catalog entry", color: "blue" });
+      showSuccess("Provisional item mapped to existing catalog entry");
       closeMapModal();
     } catch (e) { showError(errorMessage(e)); }
     finally { setMapping(false); }

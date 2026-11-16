@@ -39,9 +39,14 @@ export type ProgramDetail = {
     personId: number;
     status: string;
     pendingSince: string | null;
+    // Age in whole years at the program's start; null when the date of birth is unknown.
+    age?: number | null;
     person: {
       name: string | null;
       email: string;
+      // Present for an adult participant only, and only to a viewer granted it.
+      phone?: string | null;
+      householdId: number;
       // householdMembers is the household's leads (the parents) only. Contact
       // fields are optional because the response stripper drops them for a
       // viewer without the grant.
@@ -192,7 +197,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
     }
     setSaving(true);
     try {
-      await api(`/api/programs/${id}`, {
+      const saved = await api<{ warning?: string; notice?: string }>(`/api/programs/${id}`, {
         method: 'PATCH',
         body: JSON.stringify({
           startAt: startAt || null,
@@ -209,7 +214,9 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
           nonMemberPrice: nonMemberPrice || null,
         })
       });
-      showSuccess("Saved.");
+      const followUps = [saved?.warning, saved?.notice].filter((m): m is string => !!m);
+      for (const message of followUps) notifications.show({ color: "yellow", message, autoClose: false });
+      if (followUps.length === 0) showSuccess("Saved.");
       notifyNavRefresh();
       setSeededGeneral(generalForm);
       await reload();
@@ -515,6 +522,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
               program={program}
               isSysAdminOrBoard={!!isSysAdminOrBoard}
               isBoardMember={!!user?.isBoardMember}
+              viewerHouseholdId={sessionUser?.householdId ?? null}
               fetchProgram={reload}
             />
           </Tabs.Panel>

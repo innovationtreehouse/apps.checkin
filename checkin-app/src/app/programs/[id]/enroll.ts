@@ -1,6 +1,6 @@
 // Pure helpers for the multi-select household enrollment flow in
 // useProgramEnrollment.ts. Kept apart so the money-path logic — 409-as-success
-// idempotency, per-member error aggregation, and the Shopify cart assembly —
+// idempotency, per-member refusal aggregation, and the Shopify cart assembly —
 // is unit-testable without rendering the page. The hook imports them; tests in
 // __tests__/enroll.test.ts exercise them directly.
 
@@ -11,29 +11,31 @@ export type EnrollOutcome = {
     error?: string;
 };
 
+export type EnrollRefusal = { participantId: number; error: string };
+
 /**
  * Fold per-participant POST outcomes into the aggregate the UI acts on.
  *
  * 409 = already enrolled = the desired end state (a re-run after an earlier
- * pass or a resumed checkout), so it counts as enrolled — NOT an error. Any
- * other non-ok status contributes its error message.
+ * pass or a resumed checkout), so it counts as enrolled — NOT a refusal. Any
+ * other non-ok status is a refusal carrying the server's message.
  */
 export function aggregateEnrollOutcomes(outcomes: EnrollOutcome[]): {
     enrolledIds: number[];
-    errors: string[];
+    refused: EnrollRefusal[];
 } {
     const enrolledIds: number[] = [];
-    const errors: string[] = [];
+    const refused: EnrollRefusal[] = [];
 
     for (const o of outcomes) {
         if (o.ok || o.status === 409) {
             enrolledIds.push(o.participantId);
             continue;
         }
-        errors.push(o.error || "Failed to enroll in program.");
+        refused.push({ participantId: o.participantId, error: o.error || "Failed to enroll in program." });
     }
 
-    return { enrolledIds, errors };
+    return { enrolledIds, refused };
 }
 
 /**

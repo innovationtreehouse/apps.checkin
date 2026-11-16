@@ -9,11 +9,14 @@
  */
 import { GET } from '../route';
 import prisma from '@/lib/prisma';
+import { ORG_DOMAIN } from '@/lib/config';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const mockSession = require('next-auth/next').getServerSession;
+// NEXTAUTH_URL below is a non-loopback host, so the dev API gate is on: sessions carry the org claims.
+const orgClaims = { hd: ORG_DOMAIN, emailVerified: true };
 
 const findMany = jest.fn();
 
@@ -41,14 +44,14 @@ describe('GET /api/settings/shopify-webhook', () => {
     });
 
     it('403 for a signed-in member without board or sysadmin role', async () => {
-        mockSession.mockResolvedValue({ user: { id: 5, isSysadmin: false, isBoardMember: false } });
+        mockSession.mockResolvedValue({ user: { id: 5, ...orgClaims, isSysadmin: false, isBoardMember: false } });
         const res = await GET(req());
         expect(res.status).toBe(403);
         expect(findMany).not.toHaveBeenCalled();
     });
 
     it('200 for a board member with the endpoint URL, store domain, and latest receipts', async () => {
-        mockSession.mockResolvedValue({ user: { id: 5, isBoardMember: true } });
+        mockSession.mockResolvedValue({ user: { id: 5, ...orgClaims, isBoardMember: true } });
         findMany.mockResolvedValue([
             {
                 id: 42,
@@ -94,7 +97,7 @@ describe('GET /api/settings/shopify-webhook', () => {
     });
 
     it('passes the delivery id, trigger time, and retry flag through', async () => {
-        mockSession.mockResolvedValue({ user: { id: 5, isBoardMember: true } });
+        mockSession.mockResolvedValue({ user: { id: 5, ...orgClaims, isBoardMember: true } });
         findMany.mockResolvedValue([
             {
                 id: 43,
@@ -122,7 +125,7 @@ describe('GET /api/settings/shopify-webhook', () => {
     });
 
     it('200 for a sysadmin', async () => {
-        mockSession.mockResolvedValue({ user: { id: 5, isSysadmin: true } });
+        mockSession.mockResolvedValue({ user: { id: 5, ...orgClaims, isSysadmin: true } });
         const res = await GET(req());
         expect(res.status).toBe(200);
     });

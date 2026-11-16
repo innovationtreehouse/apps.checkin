@@ -168,8 +168,9 @@ defineRoute({
     envelope: null,
     // Bag: { Program } with volunteers (ProgramVolunteer → participant Person),
     // participants (ProgramParticipant → participant Person → household Household
-    // → emergencyContacts EmergencyContact), events (Event), leadMentor (Person).
-    returns: ['Program', 'ProgramParticipant', 'ProgramVolunteer', 'Person', 'Household', 'EmergencyContact', 'Event'],
+    // → emergencyContacts EmergencyContact), events (Event), leadMentor (Person);
+    // and { ProgramRosterAge }, each roster person's age at the program's start.
+    returns: ['Program', 'ProgramParticipant', 'ProgramVolunteer', 'Person', 'Household', 'EmergencyContact', 'Event', 'ProgramRosterAge'],
     orderedView: [
         ['isSysadmin',             ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
         ['isBoardMember',          ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
@@ -342,12 +343,12 @@ defineRoute({
 
 // Board's volunteer roster: households on volunteer dues + the emails designated
 // ahead of signup. Exposes household leads' addresses and the designated
-// addresses (Person.email and VolunteerDesignation.email are both 'pii'), so
-// only isSysadmin/board may see it.
+// addresses (VolunteerRosterRow.email and VolunteerRosterDesignation.email are
+// 'pii'), so only isSysadmin/board may see it.
 //
 // The grant deliberately stops short of 'personal'. The roster is standing +
-// contact data — household name, lead names, one lead email, memberSince, the
-// designated address — and no personal-tier field (dateOfBirth, allergies,
+// contact data — household name, lead names, one email, memberSince, the
+// designations — and no personal-tier field (dateOfBirth, allergies,
 // notificationSettings) belongs in it. 'internal' IS granted: a row's status
 // is derived from OrgMembershipProcess.status, so a blocked or in-flight
 // application is observable in the response even though the column itself
@@ -359,10 +360,10 @@ defineRoute({
     endpoint: 'GET /api/membership-ops/volunteer-memberships',
     authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
     envelope: 'rows',
-    // Bag: { OrgMembership } with household (Household → householdMembers Person,
-    // leads flagged isHouseholdLead) and processes (OrgMembershipProcess), plus
-    // { VolunteerDesignation } for the pre-designated emails.
-    returns: ['OrgMembership', 'Household', 'Person', 'OrgMembershipProcess', 'VolunteerDesignation'],
+    // Bag: { VolunteerRosterRow } with designations (VolunteerRosterDesignation),
+    // assembled by the route from OrgMembership, Household, Person,
+    // OrgMembershipProcess and VolunteerDesignation.
+    returns: ['VolunteerRosterRow'],
     orderedView: [
         ['isSysadmin',    ['everyones:pii', 'everyones:internal', 'member', 'public']],
         ['isBoardMember', ['everyones:pii', 'everyones:internal', 'member', 'public']],
@@ -384,7 +385,7 @@ defineRoute({
     ],
 });
 
-// Board archives or unarchives a household (docs/in-design/HOUSEHOLD_ARCHIVE.md).
+// Board archives or unarchives a household.
 // Board only, NOT sysadmin: archival is a membership decision. The bag is
 // { Household }, the updated row; the view keeps id, name and archivedAt and
 // drops the address and intake note, which the action's caller does not need.
@@ -765,9 +766,10 @@ defineRoute({
     endpoint: 'GET /api/facility/visits',
     authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
     envelope: 'visits',
-    // Bag: { Visit } with person (Person) and facilityClose (FacilityClose,
-    // whose closedBy is a Person) naming who closed and when.
-    returns: ['Visit', 'Person', 'FacilityClose'],
+    // Bag: { Visit } with person (Person), event (Event) naming the session
+    // attended, and facilityClose (FacilityClose, whose closedBy is a Person)
+    // naming who closed and when.
+    returns: ['Visit', 'Person', 'Event', 'FacilityClose'],
     orderedView: [
         ['isSysadmin',    ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
         ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
@@ -905,6 +907,16 @@ defineRoute({
     orderedView: [],
 });
 
+// Daily household background-check catch-up (opens a check review where one is
+// due, settles applications waiting on their check). It writes membership state,
+// so it answers only to its own secret. Admission gate only: counts, no rows.
+defineRoute({
+    endpoint: 'GET /api/cron/bg-settle',
+    authorize: { cronSecret: 'bg-settle' },
+    envelope: null,
+    orderedView: [],
+});
+
 // Kiosk readings. SystemMetricLog rows are synthesized from in-memory task
 // state (`kiosk_last_seen`, `kiosk_clock_skew`), so they vanish when the task
 // restarts. KioskProtocolSeen rows are stored: one per kiosk key fingerprint,
@@ -971,6 +983,36 @@ defineRoute({
     returns: ['Household'],
     orderedView: [
         ['authenticated', ['public']],
+    ],
+});
+
+// My Household: the caller's household, its members and its membership status.
+// Any session is admitted, a caller with no household included (household null);
+// every sensitive field is gated to the caller's own household.
+defineRoute({
+    endpoint: 'GET /api/household',
+    authorize: 'authenticated',
+    envelope: null,
+    // Bag: { HouseholdPage } with household (HouseholdPageHousehold →
+    // householdMembers HouseholdPeer, orgMembership OrgMembership).
+    returns: ['HouseholdPage', 'HouseholdPageHousehold', 'HouseholdPeer', 'OrgMembership'],
+    orderedView: [
+        ['authenticated', ['their_households:pii', 'their_households:personal', 'their_households:internal', 'member', 'public']],
+    ],
+});
+
+// A household lead adds a member. The route refuses staff accounts, a caller
+// with no household and a non-lead; the view gates the new member and the
+// emergency-contact warning to the caller's own household.
+defineRoute({
+    endpoint: 'PATCH /api/household',
+    authorize: 'authenticated',
+    envelope: null,
+    // Bag: { HouseholdMemberAdded } with member (HouseholdPeer) and warning
+    // (EmergencyContactWarning, or null).
+    returns: ['HouseholdMemberAdded', 'HouseholdPeer', 'EmergencyContactWarning'],
+    orderedView: [
+        ['authenticated', ['their_households:pii', 'their_households:personal', 'their_households:internal', 'member', 'public']],
     ],
 });
 

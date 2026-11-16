@@ -51,6 +51,8 @@ describe("getConfigHealth — prod, nothing configured", () => {
         expect(c["zoho-esign"].detail).toContain("ZOHO_CLIENT_ID");
         expect(c["agreement-pdf-s3"].ok).toBe(false);
         expect(c["agreement-pdf-s3"].detail).toContain("AGREEMENT_PDF_S3_BUCKET");
+        expect(c["kva-pdf-s3"].ok).toBe(false);
+        expect(c["kva-pdf-s3"].detail).toContain("KVA_PDF_S3_KEY");
         expect(c["zoho-webhook-secret"].ok).toBe(false);
         expect(c["zoho-webhook-secret"].detail).toContain("ZOHO_WEBHOOK_SECRET");
         expect(c["resend-email"].ok).toBe(false);
@@ -63,7 +65,7 @@ describe("getConfigHealth — prod, nothing configured", () => {
         expect(c["receipt-ocr"].detail).toContain("ANTHROPIC_API_KEY");
         expect(c["receipt-mailbox"].ok).toBe(false);
         expect(c["receipt-mailbox"].detail).toContain("RECEIPT_MAILBOX_ADDRESS");
-        expect(openConfigIssues(checks)).toBe(8);
+        expect(openConfigIssues(checks)).toBe(9);
     });
 });
 

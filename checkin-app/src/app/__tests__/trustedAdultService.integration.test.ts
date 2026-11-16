@@ -4,7 +4,7 @@
 /**
  * Integration tests for Trusted Adult management: household-scoped disclosure,
  * single-board-member decision (approve requires the shared note), one-click
- * renewal, the 1-year expiry sweep (warn-then-expire), withdrawal, override, and
+ * renewal, the 1-year expiry sweep (warn-then-expire), withdrawal, board reset and revoke, and
  * the household-lead guard.
  */
 
@@ -16,7 +16,8 @@ import {
     resubmitWithChanges,
     withdrawTrustedAdult,
     hideTrustedAdult,
-    overrideReview,
+    resetReview,
+    revokeReview,
     runExpirySweep,
 } from '@/lib/trusted-adult/service';
 import prisma from '@/lib/prisma';
@@ -56,8 +57,8 @@ describe('Trusted Adults service', () => {
         leadId = lead.id;
         await prisma.person.update({ where: { id: lead.id }, data: { isHouseholdLead: true } });
 
-        // A board member who is also a lead of the disclosing household: overriding this
-        // household's own review is a conflict of interest (force-approve Grandma for their kids).
+        // A board member who is also a lead of the disclosing household: deciding or resetting
+        // this household's own review is a conflict of interest.
         const boardLead = await prisma.person.create({
             data: { name: 'BoardLead', email: `boardlead-${TAG}@ex.com`, isBoardMember: true, householdId: hh.id },
         });
@@ -92,6 +93,10 @@ describe('Trusted Adults service', () => {
             disclosedById: leadId,
         });
     }
+
+    // A renewal opens only inside the expiry warning window; move the live approval there.
+    const intoRenewalWindow = (taId: number) =>
+        prisma.trustedAdultReview.updateMany({ where: { trustedAdultId: taId, status: 'APPROVED' }, data: { reviewBy: new Date(Date.now() + 10 * 86_400_000) } });
 
     it('creates a trusted adult with an INITIAL review pending board review and pings the board', async () => {
         const ta = await discloseOne();
@@ -170,23 +175,24 @@ describe('Trusted Adults service', () => {
         expect(normalizeAuditData(audit?.newData)).toMatchObject({ status: 'PENDING_SUBJECT_ACTION', decision: 'REQUEST_INFO' });
     });
 
-    it('audit records the deciding/overriding board member on DENY and override-deny', async () => {
+    it('audit records the deciding/resetting board member on DENY and reset', async () => {
         const ta = await discloseOne();
-        await decideReview(ta.reviews[0].id, boardId, { decision: 'DENY' });
+        await decideReview(ta.reviews[0].id, boardId, { decision: 'DENY', note: 'Not known to us.' });
         const denyAudit = await latestAudit(ta.id);
         expect(denyAudit?.actorId).toBe(boardId);
         expect(normalizeAuditData(denyAudit?.newData)).toMatchObject({ status: 'DENIED', decision: 'DENY' });
 
-        const ta2 = await discloseOne();
-        await overrideReview(ta2.reviews[0].id, boardId, 'deny');
-        const overrideAudit = await latestAudit(ta2.id);
-        expect(overrideAudit?.actorId).toBe(boardId);
-        expect(normalizeAuditData(overrideAudit?.newData)).toMatchObject({ status: 'DENIED', override: 'deny' });
+        await resetReview(ta.reviews[0].id, boardId, 'Denied the wrong adult.');
+        const resetAudit = await latestAudit(ta.id);
+        expect(resetAudit?.actorId).toBe(boardId);
+        expect(normalizeAuditData(resetAudit?.oldData)).toMatchObject({ status: 'DENIED', decision: 'DENY', decidedById: boardId, decisionNote: 'Not known to us.' });
+        expect(normalizeAuditData(resetAudit?.newData)).toMatchObject({ status: 'PENDING_BOARD_REVIEW', override: 'reset', reason: 'Denied the wrong adult.' });
     });
 
     it('renewal opens a fresh review reusing the same trusted adult, and refuses while one is open', async () => {
         const ta = await discloseOne();
         await decideReview(ta.reviews[0].id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
+        await intoRenewalWindow(ta.id);
         const review = await renewTrustedAdult(ta.id, leadId);
         expect(review.kind).toBe('RENEWAL');
         expect(review.status).toBe('PENDING_BOARD_REVIEW');
@@ -203,6 +209,7 @@ describe('Trusted Adults service', () => {
     it('only a household lead may renew; an outsider may not', async () => {
         const ta = await discloseOne();
         await decideReview(ta.reviews[0].id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
+        await intoRenewalWindow(ta.id);
         await expect(renewTrustedAdult(ta.id, outsiderId)).rejects.toMatchObject({ code: 'forbidden' });
         const review = await renewTrustedAdult(ta.id, leadId);
         expect(review.status).toBe('PENDING_BOARD_REVIEW');
@@ -381,7 +388,7 @@ describe('Trusted Adults service', () => {
         expect(normalizeAuditData(audit?.newData)).toMatchObject({ status: 'EXPIRED' });
     });
 
-    it('a lead can withdraw; board override can force-revoke; force-approve needs a note', async () => {
+    it('a lead can withdraw; the board can reset with a reason, then revoke', async () => {
         const ta = await discloseOne();
         await withdrawTrustedAdult(ta.id, leadId);
         const latest = await prisma.trustedAdultReview.findFirst({ where: { trustedAdultId: ta.id }, orderBy: { id: 'desc' } });
@@ -393,30 +400,28 @@ describe('Trusted Adults service', () => {
 
         const ta2 = await discloseOne();
         const reviewId = ta2.reviews[0].id;
-        await expect(overrideReview(reviewId, boardId, 'approve')).rejects.toMatchObject({ code: 'bad_input' });
-        const approved = await overrideReview(reviewId, boardId, 'approve', SHARED);
-        expect(approved.status).toBe('APPROVED');
-        const approveAudit = await latestAudit(ta2.id);
-        expect(approveAudit?.actorId).toBe(boardId); // the overriding board member
-        expect(normalizeAuditData(approveAudit?.newData)).toMatchObject({ status: 'APPROVED', override: 'approve' });
+        await decideReview(reviewId, boardId, { decision: 'APPROVE', sharedNote: SHARED });
+        await expect(resetReview(reviewId, boardId, '  ')).rejects.toMatchObject({ code: 'bad_input' });
+        const reset = await resetReview(reviewId, boardId, 'Approved too soon.');
+        expect(reset).toMatchObject({ status: 'PENDING_BOARD_REVIEW', decision: null, decidedById: null, sharedNote: null, effectiveFrom: null, reviewBy: null });
 
-        const revoked = await overrideReview(reviewId, boardId, 'revoke');
+        const revoked = await revokeReview(reviewId, boardId);
         expect(revoked.status).toBe('REVOKED');
         const revokeAudit = await latestAudit(ta2.id);
         expect(revokeAudit?.actorId).toBe(boardId);
         expect(normalizeAuditData(revokeAudit?.newData)).toMatchObject({ status: 'REVOKED', override: 'revoke' });
     });
 
-    // A renewal after approval leaves TWO APPROVED reviews. Withdraw must revoke BOTH, or
-    // the unexpired one keeps the adult on the pickup list.
+    // Withdraw revokes every review the adult has, the superseded approval included.
     it('withdraw revokes every APPROVED review, so a renewed-then-approved TA leaves none live', async () => {
         const ta = await discloseOne();
         await decideReview(ta.reviews[0].id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
 
         // Resubmit while the first approval is still live → a second review, also approved.
+        await intoRenewalWindow(ta.id);
         const renewed = await renewTrustedAdult(ta.id, leadId);
         await decideReview(renewed.id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
-        expect(await prisma.trustedAdultReview.count({ where: { trustedAdultId: ta.id, status: 'APPROVED' } })).toBe(2);
+        expect(await prisma.trustedAdultReview.count({ where: { trustedAdultId: ta.id, status: 'APPROVED' } })).toBe(1);
 
         await withdrawTrustedAdult(ta.id, leadId);
 
@@ -447,16 +452,13 @@ describe('Trusted Adults service', () => {
         expect(normalizeAuditData(audit?.newData)).toMatchObject({ hiddenAt: expect.anything() });
     });
 
-    // overrideReview's defining job: force a terminal state regardless of the review's
-    // CURRENT phase (no phase guard, unlike decideReview). These pin that contract by
-    // overriding reviews that are ALREADY terminal, and assert the audit oldData.status
-    // reflects the prior terminal state — not a fresh PENDING one.
+    // Revoke reaches a review in any phase; reset reaches only the latest decided review.
 
-    it('override-revokes a LIVE APPROVED review and audits the prior APPROVED state', async () => {
+    it('revokes a LIVE APPROVED review and audits the prior APPROVED state', async () => {
         const ta = await discloseOne();
         await decideReview(ta.reviews[0].id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
 
-        const revoked = await overrideReview(ta.reviews[0].id, boardId, 'revoke');
+        const revoked = await revokeReview(ta.reviews[0].id, boardId);
         expect(revoked.status).toBe('REVOKED');
 
         const audit = await latestAudit(ta.id);
@@ -464,54 +466,122 @@ describe('Trusted Adults service', () => {
         expect(normalizeAuditData(audit?.newData)).toMatchObject({ status: 'REVOKED', override: 'revoke' });
     });
 
-    it('override-approves an already DENIED review and audits the prior DENIED state', async () => {
+    it('resets a DENIED review to board review, and the next decision goes through decideReview', async () => {
         const ta = await discloseOne();
         await decideReview(ta.reviews[0].id, boardId, { decision: 'DENY' });
 
-        const approved = await overrideReview(ta.reviews[0].id, boardId, 'approve', SHARED);
-        expect(approved.status).toBe('APPROVED');
+        const reset = await resetReview(ta.reviews[0].id, boardId, 'Denied by mistake.');
+        expect(reset.status).toBe('PENDING_BOARD_REVIEW');
 
-        const audit = await latestAudit(ta.id);
-        expect(normalizeAuditData(audit?.oldData)).toMatchObject({ status: 'DENIED' });
-        expect(normalizeAuditData(audit?.newData)).toMatchObject({ status: 'APPROVED', override: 'approve' });
+        const approved = await decideReview(ta.reviews[0].id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
+        expect(approved.status).toBe('APPROVED');
     });
 
-    it('force-approve refuses a review the board already revoked; the family resubmits', async () => {
+    it('a reset and a fresh approval keep the date the first approval had', async () => {
         const ta = await discloseOne();
-        await overrideReview(ta.reviews[0].id, boardId, 'revoke'); // terminal: REVOKED
+        const reviewId = ta.reviews[0].id;
+        await prisma.trustedAdultReview.update({ where: { id: reviewId }, data: { createdAt: new Date(Date.now() - 30 * 86_400_000) } });
+        const first = await decideReview(reviewId, boardId, { decision: 'APPROVE', sharedNote: SHARED });
 
-        await expect(overrideReview(ta.reviews[0].id, boardId, 'approve', SHARED)).rejects.toMatchObject({ code: 'wrong_phase' });
+        await resetReview(reviewId, boardId, 'Wrong shared note.');
+        const again = await decideReview(reviewId, boardId, { decision: 'APPROVE', sharedNote: SHARED });
+
+        expect(again.reviewBy).toEqual(first.reviewBy);
+    });
+
+    it('reset refuses a review the board already revoked; the family resubmits', async () => {
+        const ta = await discloseOne();
+        await revokeReview(ta.reviews[0].id, boardId); // terminal: REVOKED
+
+        await expect(resetReview(ta.reviews[0].id, boardId, 'Undo the revoke.')).rejects.toMatchObject({ code: 'wrong_phase' });
 
         const audit = await latestAudit(ta.id);
         expect(normalizeAuditData(audit?.newData)).toMatchObject({ status: 'REVOKED', override: 'revoke' });
     });
 
-    // Conflict of interest on the OVERRIDE path — mirrors decideReview's rule, and no
-    // role is exempt. A board member who leads the disclosing household must not override
-    // its own review (they'd force-approve their own trusted adult); nor may a sysadmin.
-    it('refuses a board member overriding their OWN household review, leaving DB + audit untouched', async () => {
+    it.each([
+        ['an EXPIRED review', 'EXPIRED' as const],
+        ['an APPROVED review past its review date', 'APPROVED' as const],
+    ])('reset refuses %s, with no write and no audit; the family renews', async (_label, status) => {
         const ta = await discloseOne();
         const reviewId = ta.reviews[0].id;
+        await decideReview(reviewId, boardId, { decision: 'APPROVE', sharedNote: SHARED });
+        const lapsedOn = new Date(Date.now() - 86_400_000);
+        await prisma.trustedAdultReview.update({ where: { id: reviewId }, data: { status, reviewBy: lapsedOn } });
+        const auditBefore = await prisma.auditLog.count({ where: { tableName: 'TrustedAdult', affectedEntityId: ta.id } });
+
+        await expect(resetReview(reviewId, boardId, 'Second look.')).rejects.toMatchObject({
+            code: 'wrong_phase',
+            message: expect.stringContaining('renews'),
+        });
+
+        const after = await prisma.trustedAdultReview.findUniqueOrThrow({ where: { id: reviewId } });
+        expect(after.status).toBe(status);
+        expect(after.reviewBy).toEqual(lapsedOn);
+        expect(await prisma.auditLog.count({ where: { tableName: 'TrustedAdult', affectedEntityId: ta.id } })).toBe(auditBefore);
+    });
+
+    it.each([
+        ['awaiting board review', 'PENDING_BOARD_REVIEW' as const],
+        ['awaiting the family', 'PENDING_SUBJECT_ACTION' as const],
+    ])('reset refuses a review %s', async (_label, status) => {
+        const ta = await discloseOne();
+        await prisma.trustedAdultReview.update({ where: { id: ta.reviews[0].id }, data: { status } });
+
+        await expect(resetReview(ta.reviews[0].id, boardId, 'Second look.')).rejects.toMatchObject({ code: 'wrong_phase' });
+    });
+
+    it('reset refuses an approved change, whose edits are already on the adult', async () => {
+        const ta = await discloseOne();
+        await decideReview(ta.reviews[0].id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
+        const change = await resubmitWithChanges(ta.id, leadId, { trustedAdultName: 'Grandma Renamed', trustedAdultEmail: 'g@example.com', familyContext: 'Pickup.' });
+        await decideReview(change.id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
+
+        await expect(resetReview(change.id, boardId, 'Second look.')).rejects.toMatchObject({ code: 'wrong_phase' });
+
+        expect((await prisma.trustedAdultReview.findUniqueOrThrow({ where: { id: change.id } })).status).toBe('APPROVED');
+    });
+
+    it('reset emails the board and not the family', async () => {
+        const ta = await discloseOne();
+        await decideReview(ta.reviews[0].id, boardId, { decision: 'DENY' });
+        sendEmail.mockClear();
+
+        await resetReview(ta.reviews[0].id, boardId, 'Second look.');
+
+        const to = sendEmail.mock.calls.map((c) => c[0]);
+        expect(to).toContain(`board-${TAG}@ex.com`);
+        expect(to).not.toContain(`lead-${TAG}@ex.com`);
+    });
+
+    // Conflict of interest on the reset and revoke paths — mirrors decideReview's rule, and
+    // no role is exempt. A board member who leads the disclosing household must not reset
+    // its own review (they could re-open their own trusted adult's denial); nor may a sysadmin.
+    it('refuses a board member resetting their OWN household review, leaving DB + audit untouched', async () => {
+        const ta = await discloseOne();
+        const reviewId = ta.reviews[0].id;
+        await decideReview(reviewId, boardId, { decision: 'DENY' });
         const before = await prisma.trustedAdultReview.findUnique({ where: { id: reviewId } });
         const auditBefore = await latestAudit(ta.id);
 
-        await expect(overrideReview(reviewId, boardLeadId, 'approve', SHARED)).rejects.toMatchObject({ code: 'forbidden' });
+        await expect(resetReview(reviewId, boardLeadId, 'My own family.')).rejects.toMatchObject({ code: 'forbidden' });
+        await expect(revokeReview(reviewId, boardLeadId)).rejects.toMatchObject({ code: 'forbidden' });
 
-        // State machine and audit log both unchanged — the rejected override wrote nothing.
+        // State machine and audit log both unchanged — the rejected reset wrote nothing.
         const after = await prisma.trustedAdultReview.findUnique({ where: { id: reviewId } });
         expect(after!.status).toBe(before!.status);
-        expect(after!.decidedById).toBeNull();
+        expect(after!.decidedById).toBe(boardId);
         const auditAfter = await latestAudit(ta.id);
         expect(auditAfter?.id).toBe(auditBefore?.id); // no new audit row appended
     });
 
-    it('allows a cross-household board member to override (no conflict)', async () => {
+    it('allows a cross-household board member to revoke (no conflict)', async () => {
         const ta = await discloseOne(); // householdId; boardId lives in a different household
-        const revoked = await overrideReview(ta.reviews[0].id, boardId, 'revoke');
+        const revoked = await revokeReview(ta.reviews[0].id, boardId);
         expect(revoked.status).toBe('REVOKED');
     });
 
-    // decideReview acts ONLY on PENDING_BOARD_REVIEW (unlike overrideReview, which has
+    // decideReview acts ONLY on PENDING_BOARD_REVIEW (unlike revokeReview, which has
     // no phase guard). Deciding any other state is a no-op 409 — pin that for each
     // non-pending status, asserting the status is untouched and no audit row is written.
     it('decideReview on a non-PENDING_BOARD_REVIEW review is wrong_phase, status unchanged, no new audit', async () => {

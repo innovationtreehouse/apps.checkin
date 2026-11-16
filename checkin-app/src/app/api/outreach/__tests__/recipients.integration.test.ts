@@ -40,17 +40,17 @@ async function makeHousehold(label: string) {
     return prisma.household.create({ data: { name: `${label} ${TAG}` } });
 }
 
-async function makeLead(householdId: number, email: string | null, opts: { emailSuppressed?: boolean } = {}) {
+async function makeLead(householdId: number, email: string | null) {
     return prisma.person.create({
-        data: { name: email ?? 'no-email', email, householdId, isHouseholdLead: true, emailSuppressed: !!opts.emailSuppressed },
+        data: { name: email ?? 'no-email', email, householdId, isHouseholdLead: true },
     });
 }
 
 /** A household whose membership is ACTIVE, with one lead; returns the membership id. */
-async function makeMember(label: string, email: string | null, opts: { emailSuppressed?: boolean } = {}) {
+async function makeMember(label: string, email: string | null) {
     const hh = await makeHousehold(label);
     const membership = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'ACTIVE' } });
-    await makeLead(hh.id, email, opts);
+    await makeLead(hh.id, email);
     return membership.id;
 }
 
@@ -142,15 +142,6 @@ describe('outreach recipient snapshot', () => {
         expect(got).toContain(`renewal-opened-${TAG}@example.com`);
         expect(got).toContain(`renewal-paid-${TAG}@example.com`);
         expect(got).toContain(`settled-prior-${TAG}@example.com`);
-    });
-
-    it('an invitation opt-out does not drop a member lead', async () => {
-        await setBoundary(BOUNDARY);
-        await makeMember('Suppressed', `suppressed-${TAG}@example.com`, { emailSuppressed: true });
-
-        for (const type of ['opening', 'reminder'] as const) {
-            expect(emails(await computeRecipientSnapshot(type, IN_SEASON_NOW))).toContain(`suppressed-${TAG}@example.com`);
-        }
     });
 
     it('leaves out denied and archived households', async () => {

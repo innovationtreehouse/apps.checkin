@@ -10,7 +10,7 @@ import { matchLines, type Matching } from "./receiptIntakeService";
 
 type PendingRow = Pick<ReceivedReceipt, "id" | "orgId" | "receiptId" | "state" | "receiptJson" | "matchingPendingSince">;
 
-/** Matching on the lines nobody has decided yet. An unbound catalog, a settings failure or a bug counts as not run. */
+/** Matching on the lines nobody has decided yet. An unbound catalog or an unreadable stored receipt counts as not run. */
 async function matchUndecided(row: PendingRow): Promise<{ matching: Matching; lineIds: Map<number, number> }> {
   const lines = await db.receivedReceiptLineStatus.findMany({
     where: { receivedReceiptId: row.id, recognitionStatus: "unrecognized" },
@@ -18,26 +18,27 @@ async function matchUndecided(row: PendingRow): Promise<{ matching: Matching; li
   });
   const lineIds = new Map(lines.map((l) => [l.receiptLineItemId, l.id]));
   const parsed = parseStoredReceipt(row.receiptJson);
-  if (!parsed.ok) return { matching: { ran: false, err: new KindedError("data", parsed.error) }, lineIds };
+  if (!parsed.ok) return { matching: { ran: false, err: new KindedError("data", parsed.error), reason: "unexpected_error" }, lineIds };
   const undecided: CompletedReceiptLineItem[] = parsed.receipt.lineItems.filter((li) => lineIds.has(li.receiptLineItemId));
-  try {
-    const matching = await matchLines(undecided, parsed.receipt.vendorName);
-    if (matching.ran && matching.note) return { matching: { ran: false, err: new NotWiredError("CatalogReader.lookupItems") }, lineIds };
-    return { matching, lineIds };
-  } catch (err) {
-    return { matching: { ran: false, err }, lineIds };
+  const matching = await matchLines(undecided, parsed.receipt.vendorName);
+  if (matching.ran && matching.note) {
+    return { matching: { ran: false, err: new NotWiredError("CatalogReader.lookupItems"), reason: "catalog_settings" }, lineIds };
   }
+  return { matching, lineIds };
 }
 
 /**
  * A person runs matching for one receipt still waiting for mapping. Each match is written only
  * while the line is unrecognized and the receipt waits for mapping, so a person's decision always
  * stands. When matching ran the flag clears and the receipt does what arrival would have: every
- * line decided sends it. When it could not run, the receipt stays pending, unchanged.
+ * line decided sends it. When it could not run, the receipt stays pending with this attempt's reason.
  */
 export async function rerunMatching(row: PendingRow, actor: Actor): Promise<"ran" | "deferred"> {
   const { matching, lineIds } = await matchUndecided(row);
-  if (!matching.ran) return "deferred";
+  if (!matching.ran) {
+    await db.receivedReceipt.updateMany({ where: { id: row.id }, data: { matchingPendingReason: matching.reason } });
+    return "deferred";
+  }
 
   let matched = 0;
   for (const [receiptLineItemId, resolved] of matching.recognized) {

@@ -178,7 +178,7 @@ Shopify products.
     transition row becomes the grant's; `grantableRenewalWhere` widens to "an
     application awaiting payment, joining or renewing", which the list route's
     probe uses to show the coming-year button. Regenerate
-    `checkin-app/docs/generated/lifecycle/membership.md`.
+    `docs/generated/lifecycle/membership.md`.
   - `checkin-app/src/app/api/membership-ops/households/route.ts`: the list response
     carries the years a grant may record now, each with its label (the year in
     progress; inside the window, the coming year too). `POST` takes `year` and
@@ -277,7 +277,7 @@ variant, so a local instance with the Shopify mock active still opens renewals.
   this lands and goes to the board; confirm first that no such process is still
   awaiting payment. If the boundary-isolation check flags the removed
   classifications, follow the decommission shape in
-  `checkin-app/docs/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md` rule 7.
+  `docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md` rule 7.
 - **Rules:** none; then the Last step below.
 - **Blocked on:** PR 9 deployed and drained.
 

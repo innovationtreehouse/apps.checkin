@@ -295,15 +295,17 @@ describe("membership page", () => {
 
   describe("the read after a save that returned no state", () => {
     const intake = { process: { id: 1, kind: "INITIAL", status: "INTAKE" } };
-    const household = { name: null, notes: null, emergencyContactName: "From server", emergencyContactPhone: null, emergencyContactEmail: null };
+    const household = { name: null, emergencyContactName: "From server", emergencyContactPhone: null, emergencyContactEmail: null };
     const secondaryParent = { id: 7, name: "Sam Second", email: null, dob: null, over25: true, allergies: null };
     const saved = state({ ...intake, prefill: { ...emptyPrefill, household, secondaryParent } });
 
-    /** Every save answers no state; reads of /api/membership answer `reads` in turn, the last one repeating. "offline" throws. */
+    /** Every save answers no state; reads of /api/membership answer `reads` in turn, the last one repeating. "offline" throws.
+     *  The Key Volunteer panel's status read answers nothing owed and is not counted. */
     function mockReads(reads: Array<[ok: boolean, body: unknown, status?: number] | "offline">) {
       let n = 0;
       const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         void init;
+        if (String(input).includes("/key-volunteer")) return { ok: true, status: 200, ...jsonBody({ owesSignature: false }) } as Response;
         const read = String(input).includes("/intake") ? [true, { state: null, rejections: [] }] as const : reads[Math.min(n++, reads.length - 1)];
         if (read === "offline") throw new TypeError("Failed to fetch");
         const [ok, body, status = ok ? 200 : 403] = read;
@@ -420,7 +422,7 @@ describe("membership page", () => {
         ...intake,
         prefill: {
           ...emptyPrefill,
-          household: { name: null, notes: null, emergencyContactName: "From server", emergencyContactPhone: "512-555-1234", emergencyContactEmail: null, line1: "1 Treehouse Ln", line2: null, city: "Austin", state: "TX", postalCode: "78701" },
+          household: { name: null, emergencyContactName: "From server", emergencyContactPhone: "512-555-1234", emergencyContactEmail: null, line1: "1 Treehouse Ln", line2: null, city: "Austin", state: "TX", postalCode: "78701" },
           primaryParent: { id: 1, name: "Pat Parent", email: "pat@example.com", dob: "1980-01-01", allergies: null },
         },
       });
@@ -581,22 +583,35 @@ describe("membership page", () => {
     expect(screen.queryByText("Your background check is being reviewed", { exact: false })).not.toBeInTheDocument();
   });
 
-  it("keeps the preparing-invoice placeholder when the membership fee request fails", async () => {
+  it("says the membership fee could not load, and Retry shows the fee", async () => {
     setSession({ id: 1 });
+    let feeFails = true;
     const fetchMock = jest.fn(async (input: RequestInfo | URL) => {
-      if (String(input).includes("/api/membership/payment")) return { ok: false, ...jsonBody(({})) } as Response;
+      if (String(input).includes("/api/membership/payment")) {
+        return feeFails
+          ? { ok: false, status: 409, ...jsonBody({ error: "The membership fee isn't set yet." }) } as Response
+          : { ok: true, status: 200, ...jsonBody({ amountCents: 12500, checkoutUrl: "https://shop.example/checkout" }) } as Response;
+      }
       return {
         ok: true,
+        status: 200,
         ...jsonBody(state({ process: { id: 1, kind: "INITIAL", status: "PENDING_PAYMENT" }, external: { contractSigned: true, contractStarted: true, checkStarted: true, bgCleared: false, deepLinkUrl: null } })),
       } as Response;
     });
     global.fetch = fetchMock as unknown as typeof fetch;
     renderWithProviders(<MembershipPage />);
 
-    expect(await screen.findByText("Preparing your invoice…")).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load your membership fee")).toBeInTheDocument();
+    expect(screen.getByText("The membership fee isn't set yet.")).toBeInTheDocument();
+    expect(screen.queryByText("Preparing your invoice…")).not.toBeInTheDocument();
+
+    feeFails = false;
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("$125.00", { exact: false })).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't load your membership fee")).not.toBeInTheDocument();
   });
 
-  it("keeps the preparing-invoice placeholder when the membership fee request throws", async () => {
+  it("keeps the preparing-invoice placeholder while a network failure on the membership fee retries", async () => {
     setSession({ id: 1 });
     const fetchMock = jest.fn(async (input: RequestInfo | URL) => {
       if (String(input).includes("/api/membership/payment")) throw new Error("boom");

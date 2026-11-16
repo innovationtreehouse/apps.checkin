@@ -72,6 +72,34 @@ describe("MembershipSettingsPage", () => {
     );
   });
 
+  it.each([
+    ["12.34", 1234],
+    ["1.005", 101],
+  ])("saves a fee of %s as %d cents", async (typed, cents) => {
+    setSession({ id: 1, isSysadmin: true });
+    const fetchMock = mockFetchJson({ "/api/settings/membership": body() });
+    renderWithProviders(<MembershipSettingsPage />);
+    fireEvent.change(await screen.findByDisplayValue("150.00"), { target: { value: typed } });
+    fireEvent.change(screen.getByDisplayValue("50.00"), { target: { value: typed } });
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/settings/membership", expect.objectContaining({ method: "PUT" })));
+    const [, putOpts] = fetchMock.mock.calls.find(([, opts]) => opts?.method === "PUT")!;
+    expect(JSON.parse(putOpts!.body as string)).toEqual(
+      expect.objectContaining({ standardMembershipFeeCents: cents, volunteerMembershipFeeCents: cents }),
+    );
+  });
+
+  it.each(["12abc", "", "-1", "1,200", "0x10", "1e3", "+5"])("refuses a fee of %j with a field error and saves nothing", async (typed) => {
+    setSession({ id: 1, isSysadmin: true });
+    const fetchMock = mockFetchJson({ "/api/settings/membership": body() });
+    renderWithProviders(<MembershipSettingsPage />);
+    fireEvent.change(await screen.findByDisplayValue("150.00"), { target: { value: typed } });
+    fireEvent.change(screen.getByDisplayValue("50.00"), { target: { value: typed } });
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    expect(await screen.findAllByText("Enter a dollar amount of 0 or more.")).toHaveLength(2);
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/settings/membership", expect.objectContaining({ method: "PUT" }));
+  });
+
   it("shows a warning when the background-check interval is unset, and edits every remaining field", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson({ "/api/settings/membership": body({ bgRecheckMonths: 0 }) });

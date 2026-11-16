@@ -18,6 +18,7 @@ declare module "next-auth" {
       isOperations?: boolean;
       isInventoryManager?: boolean;
       isFinance?: boolean;
+      isKeyVolunteer?: boolean;
       householdJoinPending?: boolean;
       householdId?: number | null;
       householdLead?: boolean;
@@ -57,6 +58,7 @@ declare module "next-auth" {
     isOperations?: boolean;
     isInventoryManager?: boolean;
     isFinance?: boolean;
+    isKeyVolunteer?: boolean;
     householdJoinPending?: boolean;
     householdId?: number | null;
     householdLead?: boolean;
@@ -87,6 +89,7 @@ declare module "next-auth/jwt" {
     isOperations?: boolean;
     isInventoryManager?: boolean;
     isFinance?: boolean;
+    isKeyVolunteer?: boolean;
     householdJoinPending?: boolean;
     householdId?: number | null;
     householdLead?: boolean;

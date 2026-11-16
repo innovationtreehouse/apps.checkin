@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useSession } from "next-auth/react";
 import { Alert, Button, Card, Checkbox, Container, Group, Radio, Stack, Text, Textarea, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { LoadError } from "@checkin/component-ui";
+import { LoadError, showSuccess } from "@checkin/component-ui";
 import { modals } from "@mantine/modals";
 import { type AlertTone } from "@/components/admin/AlertBanner";
 import { useLoad } from "@/lib/api";
@@ -23,7 +23,7 @@ interface Person {
 interface QueueItem {
   id: number;
   subjectPerson: { id: number; name: string | null; householdId: number | null; household: { name: string | null } | null } | null;
-  requestedForHousehold: { name: string | null; intakeNotes: string | null; householdMembers: Person[] } | null;
+  requestedForHousehold: { name: string | null; householdMembers: Person[] } | null;
   _count: { attestations: number };
 }
 
@@ -62,7 +62,7 @@ export default function MembershipReviewPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        notifications.show({ message: "Your answer is now an approval. The review needs one more reviewer to clear." });
+        showSuccess("Your answer is now an approval. The review needs one more reviewer to clear.");
         notifyNavRefresh();
       } else {
         notifications.show({ color: "red", message: data.error || "Could not change your answer.", autoClose: false });
@@ -103,7 +103,7 @@ export default function MembershipReviewPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        notifications.show({ message: "Review started over — reviewers have been notified." });
+        showSuccess("Review started over — reviewers have been notified.");
         // A repeated reset passes the server's check once the review is open, so the row stays busy until it re-reads.
         await Promise.all([reload(), reloadMine()]);
         notifyNavRefresh();
@@ -163,7 +163,7 @@ export default function MembershipReviewPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        notifications.show({ message: "Your approval was withdrawn. The review is waiting for reviewers again." });
+        showSuccess("Your approval was withdrawn. The review is waiting for reviewers again.");
         notifyNavRefresh();
       } else {
         notifications.show({ color: "red", message: data.error || "Could not undo your approval.", autoClose: false });
@@ -265,7 +265,7 @@ export default function MembershipReviewPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        notifications.show({ message: result === "APPROVE" ? "Attestation recorded — thank you." : "Recorded. The board has been notified." });
+        showSuccess(result === "APPROVE" ? "Attestation recorded — thank you." : "Recorded. The board has been notified.");
         setSubjects((s) => { const next = { ...s }; delete next[processId]; return next; });
         reload();
         notifyNavRefresh();
@@ -448,7 +448,6 @@ export default function MembershipReviewPage() {
             const subject = item.subjectPerson;
             const requested = item.requestedForHousehold;
             const leads = requested?.householdMembers ?? [];
-            const notes = requested?.intakeNotes?.trim();
             return (
             <Card key={item.id} withBorder radius="md" padding="lg">
               <Text fw={700} fz="lg">{applicantLabel(item)}</Text>
@@ -485,13 +484,7 @@ export default function MembershipReviewPage() {
                 </Stack>
               )}
 
-              {/* The intake note belongs to the household that asked for the check; the volunteer-only mark is offered only on a review of one of its leads. */}
-              {requested && notes && (
-                <Alert color="yellow" variant="light" mt="md" title="From the applicant — “Anything else we should know?”">
-                  <Text style={{ whiteSpace: "pre-wrap" }}>{notes}</Text>
-                </Alert>
-              )}
-
+              {/* The volunteer-only mark is offered only on a review of one of the requesting household's leads. */}
               {requested && (!subject || leads.some((p) => p.id === subject.id)) && (
                 <Checkbox
                   my="md"

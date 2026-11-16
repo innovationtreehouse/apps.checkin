@@ -42,6 +42,7 @@ const CASES: Array<[string, readonly RoleFlag[], NavGate]> = [
   ["/safety/emergency-contacts", SAFETY_ROLES, linkGate(SAFETY, "/safety/emergency-contacts")],
   ["/safety/trusted-adults", TRUSTED_ADULTS_ROLES, linkGate(SAFETY, "/safety/trusted-adults")],
   ["/settings/email", SETTINGS_ADMIN_ROLES, linkGate(SETTINGS, "/settings/email")],
+  ["/settings/templates", SETTINGS_ADMIN_ROLES, linkGate(SETTINGS, "/settings/templates")],
   ["/settings/localization", LOCALIZATION_ROLES, linkGate(SETTINGS, "/settings/localization")],
   ["/settings/outreach", SETTINGS_ROLES, linkGate(SETTINGS, "/settings/outreach")],
   ["/settings/shopify-webhook", SETTINGS_ADMIN_ROLES, linkGate(SETTINGS, "/settings/shopify-webhook")],

@@ -7,6 +7,7 @@ import { advanceWorkflow, advanceWorkflowInTx, unlessRaceLost, type Actor } from
 import { SYSTEM_ACTOR } from "./system-actor";
 import { logError } from "./logger";
 import { lockBucketLines } from "./signoff-facts";
+import { readExpenseSettings } from "../services/settingsService";
 
 const partOwners = createPartOwnerRepository(db);
 
@@ -100,11 +101,11 @@ export async function checkApprovalAutoTransition(expenseId: string, actor: Acto
   const allTerminal = approvals.every((a) => isTerminalApproval(a.status));
   if (!allTerminal) return;
 
-  const org = await db.expenseOrgSettings.findFirst({ where: { orgId: expense.orgId } });
+  const settings = await readExpenseSettings(db, expense.orgId);
 
   const lineItems = await db.expenseLineItem.findMany({ where: { expenseId } });
 
-  const hasCapital = classifyCapital(expense.receiptTotalCents, lineItems, org);
+  const hasCapital = classifyCapital(expense.receiptTotalCents, lineItems, settings);
   const rejected = anyRejected(approvals);
   const event = { type: "ALL_APPROVALS_TERMINAL" as const, hasCapital, anyRejected: rejected };
   const context = { hasCapital };

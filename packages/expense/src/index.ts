@@ -35,6 +35,7 @@ export * from "./services/holdService";
 export * from "./services/intakeService";
 export * from "./services/provisionalItemMapService";
 export * from "./services/quickBooksPicks";
+export * from "./services/bucketUses";
 export * from "./services/qbMatchService";
 export * from "./services/reimbursementStatus";
 export * from "./services/reimburseeVendorService";

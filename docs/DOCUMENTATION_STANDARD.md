@@ -1,8 +1,7 @@
 # Documentation standard
 
 How documentation in this repo is organised, written, and retired. Read this
-before writing or moving any doc. This is the standard in force; the one-time
-move of the existing corpus into it runs in `docs/in-design/DOCUMENTATION_MIGRATION.md`.
+before writing or moving any doc.
 
 ---
 
@@ -62,9 +61,10 @@ One file per domain, named for the domain and not for any feature:
 | `expenses.md` | receipts, expenses, budget buckets, spending sign-off |
 | `attendance-checkin.md` | check-in, kiosk, visits, hours |
 | `tools-certification.md` | tool levels, certification, shop access |
+| `inventory.md` | the shared catalog, local stock, receiving goods against receipts |
 
 Alongside them, `principles.md` — rules that hold across every domain. It is not
-a seventh domain; see §3.3.
+an eighth domain; see §3.3.
 
 Add a file when a domain genuinely accumulates standing rules. Do not create
 empty ones in advance.
@@ -110,7 +110,7 @@ the board.
 ### 3.3 Cross-cutting rules — `principles.md`
 
 Some rules hold in every domain — least privilege, for one. Writing them into
-six files means writing them six times, so they live in
+eight files means writing them eight times, so they live in
 `docs/rules/principles.md` and the domain files cite them.
 
 They sit **between** the two authority levels. No policy names them, so they
@@ -172,8 +172,8 @@ official is the same defect as an unratified policy written as settled.
 
 **A principle** is cited the same shape: `— *Principle: fail closed*`.
 
-**Never cite a doc that is scheduled to be deleted.** A pointer into a folder
-the migration empties rots on a date already agreed. A bare source-file path is
+**Never cite a doc that is scheduled to be deleted.** A pointer into
+`docs/in-design/` rots on the day that work merges. A bare source-file path is
 the most a "where this bites" hint should carry, and most rules need none.
 
 ### 3.6 Tagging a procedure line
@@ -277,7 +277,7 @@ have marked shipped, correct code as a violation. State the guards and carve-out
 the code actually has, or the register does damage rather than none.
 
 (The tier split above is illustrative. Which of these is actually
-policy-backed is settled during the migration, against the real policy corpus.)
+policy-backed is settled against the real policy corpus.)
 
 **Write rules as constraints, not descriptions.** If the sentence does not let a
 reviewer tell whether a change violates it, rewrite the sentence.

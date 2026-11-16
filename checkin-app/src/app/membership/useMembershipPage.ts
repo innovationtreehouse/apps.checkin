@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useSession } from "next-auth/react";
 import type { OrgMembershipProcessStatus, OrgMembershipStatus } from "@/generated/prisma/client";
 import { notifications } from "@mantine/notifications";
+import { showSuccess } from "@checkin/component-ui";
 import { useDisclosure } from "@mantine/hooks";
 import type { AlertTone } from "@/components/admin/AlertBanner";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
@@ -96,7 +97,6 @@ export function useMembershipPage() {
   const [unreadSave, setUnreadSave] = useState<string | null>(null);
   const saveLocked = unreadSave !== null;
   const form = useMembershipForm();
-  const [payment, setPayment] = useState<MembershipPayment | null>(null);
   // Set when the applicant clicks the real Shopify checkout link (not the local
   // mock, which settles synchronously and never needs a holdoff). Persisted to
   // sessionStorage keyed by process id, so a tab refresh mid-checkout keeps the
@@ -184,11 +184,9 @@ export function useMembershipPage() {
             /* best-effort — the Zoho webhook is still a backstop */
           }
           load();
-          notifications.show({
-            message: signedNow
-              ? "Thanks — your signature was received."
-              : "Signature received — finalizing. If it doesn't update shortly, use “Refresh status”.",
-          });
+          showSuccess(signedNow
+            ? "Thanks — your signature was received."
+            : "Signature received — finalizing. If it doesn't update shortly, use “Refresh status”.");
         })();
       }
     }
@@ -197,17 +195,12 @@ export function useMembershipPage() {
     if (declined) setMessage({ text: "You declined the agreement. You can restart signing when you're ready.", tone: "error" });
   }, [sessionStatus, load]);
 
-  // When awaiting payment, fetch the membership-fee amount and Shopify checkout link. Leads
+  // When awaiting payment, read the membership-fee amount and Shopify checkout link. Leads
   // only — the route refuses anyone else, and the card hides the money from them.
-  useEffect(() => {
-    if (state?.process?.status !== "PENDING_PAYMENT" || !state.isLead) return;
-    let cancelled = false;
-    fetch("/api/membership/payment")
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => { if (!cancelled && data) setPayment(data); })
-      .catch(() => { /* shown as link-unavailable */ });
-    return () => { cancelled = true; };
-  }, [state?.process?.status, state?.isLead]);
+  const paymentLoad = useLoad<MembershipPayment>(
+    state?.process?.status === "PENDING_PAYMENT" && state.isLead ? "/api/membership/payment" : null,
+  );
+  const payment = paymentLoad.data;
 
   // Returning from the Shopify checkout tab: refetch once when this tab becomes
   // visible again, ONLY while a payment holdoff is active — so the paid state
@@ -404,7 +397,7 @@ export function useMembershipPage() {
       });
       if (res.ok) {
         setPlanRequested(true);
-        notifications.show({ message: "Requested! The Scholarship Review Team will follow up." });
+        showSuccess("Requested! The Scholarship Review Team will follow up.");
       } else {
         const data = await res.json().catch(() => ({}));
         notifications.show({ color: "red", message: data.error || "Could not request a payment plan.", autoClose: false });
@@ -440,7 +433,8 @@ export function useMembershipPage() {
     warnings: saveLocked ? [UNREAD_SAVE_WARNING, ...warnings] : warnings,
     load, startApplication, save, submit, startSigning, renew,
     payment: {
-      payment, awaitingPayment, clearAwaitingPayment, handlePayClick, onMockPaid, onMockFailed,
+      payment, paymentError: paymentLoad.error, reloadPayment: paymentLoad.reload,
+      awaitingPayment, clearAwaitingPayment, handlePayClick, onMockPaid, onMockFailed,
       planRequested, planKind, setPlanKind, confirmPlanOpened, openConfirmPlan, closeConfirmPlan, requestPaymentPlan,
     },
   };

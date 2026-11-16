@@ -31,7 +31,7 @@ what code is running in prod right now, not just what's in this PR.
 write null to, a rename of anything old code touches.
 
 - **No** → expand-only (additive column/table/index/backfill) is fine to ship
-  with the code that uses it. Stop here.
+  with the code that uses it. Skip to step 4.
 - **Yes** → does *this same PR* also contain the expand/backfill stage it
   depends on? If so, **split it**: ship expand + cutover now, the destructive
   step in a follow-up PR only after the cutover code is fully rolled out.
@@ -64,21 +64,26 @@ ALTER TABLE "Foo" RENAME CONSTRAINT "old_pkey" TO "new_pkey";
 ALTER INDEX "old_idx" RENAME TO "new_idx";
 ```
 
-### 4. Does this migration have more than one statement that must succeed together?
-Prisma does **not** wrap a migration file in a transaction on Postgres
-(`prisma/prisma#15295`) — a multi-statement migration can partially apply
+### 4. Is the migration wrapped in `BEGIN;` / `COMMIT;`?
+Every new migration wraps, single-statement ones included. Prisma does
+**not** wrap a migration file in a transaction on Postgres
+(`prisma/prisma#15295`), so a multi-statement migration can partially apply
 (2026-07-02: one table's `ALTER` committed, the sibling's rolled back, and it
-took manual surgery to recover). Wrap it:
+took manual surgery to recover).
 ```sql
 BEGIN;
--- ...both statements...
+-- ...the migration's statements...
 COMMIT;
 ```
-Every new migration wraps, even a single statement: CI fails a newly added
-file that does not open with `BEGIN;` and close with `COMMIT;`
-(`migration-safety.yml` → "New migrations wrap in a transaction"). For SQL that cannot run in a
+CI fails any `migration.sql` a PR adds, in checkin's chain or a
+`packages/*/prisma/migrations` chain, whose first SQL line is not `BEGIN;` or
+whose last is not `COMMIT;` (blank and comment lines ignored;
+`migration-safety.yml` → "New migrations wrap in a transaction"). Two
+escapes, per the deploy doc's rule 5: for SQL that cannot run in a
 transaction (`CREATE INDEX CONCURRENTLY`), add `-- no-transaction: <reason>`
-and make each statement retry-safe instead; see the deploy doc's rule 5.
+and make each statement retry-safe; a coalesce baseline (its directory holds
+`reconcile.sql`) is exempt. Never edit a migration already on `main` to
+satisfy the lint — that breaks its checksum.
 
 ### 5. New foreign key or flag you'll query by?
 Postgres does not auto-index FK columns. Add `@@index` for any relation
@@ -122,7 +127,8 @@ on each one — that's expected, not a sign something's broken.
 - [ ] Non-TS readers/writers grepped to zero (scripts, VOCABULARY.md, audit
       `tableName` literals, seed.ts)
 - [ ] Any rename is hand-written SQL, not Prisma-generated DROP+ADD
-- [ ] Multi-statement migrations wrapped in `BEGIN;`/`COMMIT;`
+- [ ] Every new migration wrapped in `BEGIN;`/`COMMIT;`, or marked
+      `-- no-transaction: <reason>` with retry-safe statements
 - [ ] New queried FK/flag has `@@index`
 - [ ] Cross-PR migration timestamp ordering checked if another schema PR is open
 - [ ] `@sensitivity` + regenerated `classifications.ts` if fields changed

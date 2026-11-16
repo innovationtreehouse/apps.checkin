@@ -6,6 +6,8 @@ import type { ExpensePosting } from "../contract";
 import { db } from "../db";
 import { getExpenseRuntime } from "../runtime";
 import { raiseFlag } from "../services/flagService";
+import { writeAudit } from "./audit";
+import { SYSTEM_ACTOR } from "./system-actor";
 import { lineCents } from "../qb-write";
 import { logError } from "./logger";
 
@@ -100,7 +102,26 @@ async function readEntry(posting: ExpensePosting, entity: string | null, qbTxnId
   return entries.find((e) => e.Id === qbTxnId);
 }
 
-export type DriftCounts = { checked: number; drifted: number; failed: number };
+/**
+ * Closes an expense's open QB_DRIFT once its entry matches again, as checked off by the system.
+ * The close matches the `observed` read, so a concurrent check-off or a new drift wins, and clears
+ * it, so the same drift returning reopens the flag.
+ */
+async function closeResolvedDrift(expenseId: string, now: Date): Promise<boolean> {
+  const open = await db.expenseFlag.findFirst({ where: { expenseId, kind: "QB_DRIFT", checkedOffAt: null } });
+  if (!open) return false;
+  const notes = `Resolved in QuickBooks ${now.toISOString().slice(0, 10)}`;
+  return db.$transaction(async (tx) => {
+    const { count } = await tx.expenseFlag.updateMany({
+      where: { id: open.id, checkedOffAt: null, observed: open.observed },
+      data: { checkedOffAt: now, checkedOffByUserId: SYSTEM_ACTOR.userId, checkedOffByUsername: SYSTEM_ACTOR.username, notes, observed: null },
+    });
+    if (count > 0) await writeAudit(tx, SYSTEM_ACTOR, { expenseId, action: "flag_checked_off", valueAfter: "QB_DRIFT", notes });
+    return count > 0;
+  });
+}
+
+export type DriftCounts = { checked: number; drifted: number; resolved: number; failed: number };
 
 /** What the drain posted for a CREATED expense: its lines' amounts and the account each was posted to. */
 async function postedEntry(id: string, vendorId: string | null, txnDate: string): Promise<PostedEntry> {
@@ -119,7 +140,8 @@ async function postedEntry(id: string, vendorId: string | null, txnDate: string)
  * The cron's drift step over CREATED and MATCHED expenses. A created entry is compared with what
  * the drain posted, its date included, a matched one with its baseline; a matched entry with no
  * baseline stores one on this read and raises nothing. Each entry is read through the windowed reader around the
- * receipt date, padded with the match grace on both sides. Capped; returns counts only.
+ * receipt date, padded with the match grace on both sides. An open QB_DRIFT whose entry matches
+ * again is closed. Capped; returns counts only.
  */
 export async function checkQbDrift(now = new Date()): Promise<DriftCounts | "unbound"> {
   const posting = await getExpenseRuntime().quickbooks.posting();
@@ -130,7 +152,7 @@ export async function checkQbDrift(now = new Date()): Promise<DriftCounts | "unb
     select: { id: true },
   });
 
-  const counts: DriftCounts = { checked: 0, drifted: 0, failed: 0 };
+  const counts: DriftCounts = { checked: 0, drifted: 0, resolved: 0, failed: 0 };
   for (const { id } of todaysSlice(inQb, MAX_DRIFT_CHECKS_PER_RUN, now)) {
     try {
       const expense = await db.expense.findUniqueOrThrow({ where: { id } });
@@ -147,7 +169,10 @@ export async function checkQbDrift(now = new Date()): Promise<DriftCounts | "unb
         continue;
       }
       const drift: DriftField[] = expected ? driftOf(expected, entry) : ["missing"];
-      if (drift.length === 0) continue;
+      if (drift.length === 0) {
+        if (await closeResolvedDrift(id, now)) counts.resolved++;
+        continue;
+      }
       counts.drifted++;
       await flagDrift(id, drift, entry);
     } catch (err) {

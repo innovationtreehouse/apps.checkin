@@ -28,6 +28,7 @@ jest.mock("@/lib/membership/householdStatus", () => ({ raiseDeniedHouseholdActiv
 jest.mock("@/lib/household/leads", () => ({
     ...jest.requireActual("@/lib/household/leads"),
     householdLeadship: jest.fn(),
+    setsHouseholdAges: jest.fn().mockResolvedValue(true),
     addHouseholdLead: jest.fn(),
 }));
 
@@ -78,6 +79,9 @@ beforeEach(() => {
             canAccessStaging: false,
             household: { orgMembership: { isVolunteerFamily: false } },
             _count: { accounts: 0, roles: 0, programsLed: 0, programVolunteers: 0, bgAttestationsAsSubject: 0, personBgProcesses: 0, toolStatuses: 0 },
+            budgetOwnersOwned: [],
+            budgetOwnerTreasurerships: [],
+            instancesLed: [],
         }));
     tx.person.update.mockResolvedValue({ id: OTHER });
     tx.person.findUnique.mockResolvedValue({ isHouseholdLead: false });

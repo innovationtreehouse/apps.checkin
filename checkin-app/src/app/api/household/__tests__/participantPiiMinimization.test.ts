@@ -13,7 +13,7 @@ import type { NextRequest } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { getKioskPublicKeys, verifyKioskSignature } from "@/lib/verify-kiosk";
 import prisma from "@/lib/prisma";
-import { HOUSEHOLD_PEER_WITH_SIGN_IN_SELECT } from "@/lib/household/participantProjection";
+import { HOUSEHOLD_PEER_WITH_EMAIL_LOCK_SELECT } from "@/lib/household/participantProjection";
 import { GET as householdGET } from "@/app/api/household/route";
 import { GET as attendanceGET } from "@/app/api/attendance/route";
 
@@ -76,11 +76,16 @@ describe("Participant PII minimization (M1, M2)", () => {
             waiverSignedBy: 1,
             notificationSettings: null,
             householdId: 10,
-            _count: { accounts: 1 },
+            canAccessStaging: false,
+            _count: { accounts: 1, roles: 0, programsLed: 0, programVolunteers: 0, bgAttestationsAsSubject: 0, personBgProcesses: 0, toolStatuses: 0 },
+            budgetOwnersOwned: [],
+            budgetOwnerTreasurerships: [],
+            instancesLed: [],
+            household: { orgMembership: { isVolunteerFamily: false } },
         } as Record<string, unknown>;
 
         (prisma.person.findUnique as jest.Mock).mockImplementation((args) => {
-            const peerSelect = args.include.household.include.householdMembers.select as Record<string, boolean>;
+            const peerSelect = args.select.household.select.householdMembers.select as Record<string, boolean>;
             const projected = Object.fromEntries(
                 Object.keys(peerSelect).filter((k) => peerSelect[k]).map((k) => [k, rawPeer[k]])
             );
@@ -118,73 +123,21 @@ describe("Participant PII minimization (M1, M2)", () => {
         expect(peer.waiverSignedBy).toBeUndefined();
         expect(peer.notificationSettings).toBeUndefined();
 
-        // A linked sign-in reaches the client as a boolean only.
-        expect(peer.hasSignIn).toBe(true);
-        expect(peer._count).toBeUndefined();
-        expect(peer.accounts).toBeUndefined();
+        // The email lock reaches the client as a boolean only.
+        expect(peer.emailLocked).toBe(true);
+        for (const input of ["_count", "accounts", "budgetOwnersOwned", "budgetOwnerTreasurerships", "instancesLed", "household", "canAccessStaging"]) {
+            expect(peer[input]).toBeUndefined();
+        }
 
         // Pin the actual query shape, not just this test's mock.
         const callArgs = (prisma.person.findUnique as jest.Mock).mock.calls[0][0];
-        expect(callArgs.include.household.include.householdMembers).toEqual({ select: HOUSEHOLD_PEER_WITH_SIGN_IN_SELECT });
-    });
-
-    // Household.intakeNotes is the family's free-text note TO the board (tier
-    // 'pii', read by the BG-review queue). Household peers — including youth
-    // with their own logins — must not receive a note a parent wrote about
-    // them. Only the lead, who authored it and edits it on /my-household, does.
-    describe("GET /api/household intakeNotes is lead-only", () => {
-        const mockCaller = (caller: Record<string, unknown>) => {
-            mockSession.mockResolvedValue({ user: { id: 1 } });
-            (prisma.person.findUnique as jest.Mock).mockResolvedValue({
-                id: 1,
-                householdId: 10,
-                ...caller,
-                household: {
-                    id: 10,
-                    name: "Test Household",
-                    line1: "123 Main St",
-                    city: "Austin",
-                    state: "TX",
-                    postalCode: "78701",
-                    intakeNotes: "we are volunteer only; dad lost his job",
-                    orgMembership: null,
-                    householdMembers: [],
-                },
-            });
-        };
-
-        const get = async () => {
-            const req = new Request("http://localhost/api/household") as unknown as NextRequest;
-            const res = await householdGET(req);
-            expect(res.status).toBe(200);
-            return (await res.json()).household;
-        };
-
-        it("strips the note for a non-lead household member", async () => {
-            mockCaller({ isHouseholdLead: false, isSysadmin: false });
-            const household = await get();
-
-            expect(household.intakeNotes).toBeNull();
-            // The address is shared household data the family authored — a peer
-            // still gets it. Only the note is lead-gated.
-            expect(household.line1).toBe("123 Main St");
-            expect(household.postalCode).toBe("78701");
-        });
-
-        it("returns the note to a household lead", async () => {
-            mockCaller({ isHouseholdLead: true, isSysadmin: false });
-            expect((await get()).intakeNotes).toBe("we are volunteer only; dad lost his job");
-        });
-
-        it("strips the note for a sysadmin who is not a lead", async () => {
-            mockCaller({ isHouseholdLead: false, isSysadmin: true });
-            expect((await get()).intakeNotes).toBeNull();
-        });
-
-        it("returns the note to a sysadmin who leads the household", async () => {
-            mockCaller({ isHouseholdLead: true, isSysadmin: true });
-            expect((await get()).intakeNotes).toBe("we are volunteer only; dad lost his job");
-        });
+        expect(callArgs).not.toHaveProperty("include");
+        expect(Object.keys(callArgs.select).sort()).toEqual(["household"]);
+        expect(Object.keys(callArgs.select.household.select).sort()).toEqual(
+            ["city", "householdMembers", "id", "line1", "line2", "name", "orgMembership", "postalCode", "state"],
+        );
+        expect(callArgs.select.household.select.orgMembership).toEqual({ select: { status: true, memberSince: true, isVolunteerFamily: true } });
+        expect(callArgs.select.household.select.householdMembers).toEqual({ select: HOUSEHOLD_PEER_WITH_EMAIL_LOCK_SELECT });
     });
 
     it("GET /api/attendance (full access) does not leak email/googleId", async () => {

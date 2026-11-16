@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Button, Card, Group, Stack, Text, Textarea, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import { showSuccess } from "@checkin/component-ui";
 import { APP_TIMEZONE, formatDate } from "@/lib/time";
 
 export type Signing = {
@@ -31,7 +32,7 @@ export function SigningStatusCard({ signing, onChange }: { signing: Signing | nu
       });
       const data = await res.json().catch(() => null);
       if (res.ok) {
-        notifications.show({ message: "Signing reset. The next lead to click sign gets a new request." });
+        showSuccess("Signing reset. The next lead to click sign gets a new request.");
         setResetting(false);
         setReason("");
         onChange();

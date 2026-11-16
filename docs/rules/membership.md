@@ -142,10 +142,14 @@ Things the app takes as true because they are handled outside it. They sit
 between the two tiers because the Policy rules above rest on them and the
 Procedure below is built on them.
 
-- Every board member has signed the key volunteer agreement and is a designated
-  background-check reviewer. Board membership alone therefore qualifies someone
-  wherever a reviewer is required — the queue, the attestation, and the sensitive
-  fields that go with it.
+- Every board member is a designated background-check reviewer. Board membership
+  alone therefore qualifies someone wherever a reviewer is required — the queue,
+  the attestation, and the sensitive fields that go with it. That they have signed
+  the key volunteer agreement is procedure, under Key Volunteers below.
+
+- A person grandfathered as a Key Volunteer when the agreement gate went live had
+  signed the key volunteer agreement on paper before then; the record dated at
+  that migration stands for that signature.
 
 - A non-board reviewer was authorised in writing by the board before the reviewer
   role was granted. Granting the role is what represents that authorisation, so
@@ -191,12 +195,8 @@ Procedure below is built on them.
 
 ### Application and review
 
-- An intake note does not hold the application. It is shown to the reviewers,
-  who read it while the family pays.
-  (`checkin-app/src/lib/membership/external.ts`)  [Decision]
-
 - An application in background-check review is the reviewers' work, not the
-  board's. Board queues count blocked applications only.  [Decision]
+  board's. The board is asked to act only on a blocked one.  [Decision]
 
 - A check review is about one person, named when the check is marked started;
   the reviewer confirms the report is that person's and asks the Board for a
@@ -238,8 +238,8 @@ Procedure below is built on them.
 
 - Every check-review rejection sends the Board one email. A rejection that blocks
   a paid application sends the paid-application email; any other names the
-  person, their household and the review. A retry, a later settle or the daily
-  sweep does not send it again; a rejection after a Board reset is a new decision
+  person, their household and the review. It is sent once per rejection; a
+  rejection after a Board reset is a new decision
   and does.  [Decision — *Principle: people decide about people*]
 
 - Once a lead is cleared, a review the household asked for that still names
@@ -253,8 +253,8 @@ Procedure below is built on them.
   active household only renews; a revoked one continues the renewal it already
   has open, or else starts a new joining application.  [Decision]
 
-- A household with a blocked application cannot start another one. The board's
-  "Reset for re-review" sends it back for two new approvals. Denying the
+- A household with a blocked application cannot start another one. A board reset
+  sends it back for two new approvals. Denying the
   household is a household action and leaves the application blocked; neither a
   reset nor the rejector's change to approve, below, reopens it then.  [Decision — *Principle: people decide about people*]
 
@@ -299,6 +299,10 @@ Procedure below is built on them.
   finds the same review recorded under two identities, only a board member may
   remove the duplicate.  [Decision]
 
+- Removing a duplicate attestation reopens nothing. A check it helped clear stays
+  cleared, with its date, and so does any application that clearance completed.
+  A board member re-reviews such a check by hand.  [Decision — deliberate limit; owner ruling]
+
 - The Participants directory is for sysadmins, the board and operations. A
   background-check reviewer works from the review queue.  [Decision — owner; *Principle: least privilege*]
 
@@ -308,16 +312,24 @@ Procedure below is built on them.
   requires documentation only for a disqualifying offence. An approval needs
   none.  [Decision — *Policy: Membership Policy, Art. IX*]
 
-- The board may close an unpaid application ("Close application"), at any open
+- The board may close an unpaid application, at any open
   step but blocked, older steps included; there is no minimum wait. It is never
   destroyed, and "Reopen" returns it to the step it was closed from. A paid,
   blocked or active application cannot be closed: a paid one only once its
   refund is recorded. The one exception is a restore, below, which also closes a
   blocked application. Reopening refuses a denied household, or one with another
-  open application. The word "archive" is reserved for archiving a household.  [Decision —
+  open application.  [Decision —
   *Principle: decisions are reversible*]
 
-- A refund made in the online store is recorded by the board ("Record refund"),
+- Reopening an application whose household was denied after it closed, or whose
+  close was the restore's, does not record a signature made while it was closed;
+  the family signs again.  [Decision — owner ruling]
+
+- Archiving a household closes its open initial and renewal applications, blocked
+  ones included, in the same step, as a restore does. Per-person applications stay
+  open. Unarchiving the household reopens none of them.  [Decision — owner]
+
+- A refund made in the online store is recorded by the board,
   with a reason, by someone outside the household, on a paid application at any
   step that never became a membership. It stays offered until it is recorded,
   including after a denial. The application keeps its step, unpaid, and the
@@ -342,6 +354,14 @@ Procedure below is built on them.
 - A reviewer is barred from a check review about someone in their household and
   from one their household requested. The Board's reset and release carry the
   same bar.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
+
+- A board member is barred from a trusted-adult review their household
+  requested, one where they are the trusted adult, and one whose trusted adult is
+  in their household, whichever family asked. The adult counts as in the
+  household when their linked person is, or, with no linked person, when their
+  email or phone matches someone in it. A name alone never counts: a review
+  whose adult has only a name is not blocked, and the board page warns that no
+  conflict can be confirmed.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
 ### Activation
 
@@ -374,15 +394,15 @@ Procedure below is built on them.
 
 - Anything that reaches a denied household after the denial — a family's
   payment, an approval that would clear its check, a start or renewal, a board
-  grant or a household move — changes nothing and goes to the board's
-  payment-problems queue with an email. Any other board action on a denied
+  grant or a household move — changes nothing and is raised to the board,
+  with an email. Any other board action on a denied
   household is refused and tells the person acting why.  [Decision — *Principle: people decide about people*]
 
 - Denying a household revokes trusted-adult access in the same act, both ways;
   `people-households.md` (Trusted adults) states it. Nothing else the household
   holds is removed by the denial. Each program enrollment, pending or active, and
   each program role, volunteer or lead, held by one of its members in a program
-  not yet finished goes to the board's payment-problems queue for removal by hand,
+  not yet finished is raised to the board for removal by hand,
   so the board can speak to the program's leaders first. The board gets one email
   per denial that leaves it something to remove.  [Decision — *Principle: people decide about people*]
 
@@ -423,16 +443,15 @@ Procedure below is built on them.
 - The membership fee has two rates, standard and Volunteer Family. The designation changes
   what a household pays and nothing about its review.  [Decision]
 
-- A reviewer's Volunteer Family tick is written onto the household that requested
-  the review, at once, as its own audited change; the review never stores it. A
-  reviewer can set it and cannot remove it; removing it is a Board edit.  [Decision — deliberate limit]
+- A reviewer's Volunteer Family tick marks the household that requested the
+  review at once, and the change is audited. A reviewer can set it and cannot remove it; removing it is a Board edit.  [Decision — deliberate limit]
 
 - The tick is offered, and written, only on a review of one of that household's
   leads. A review of any other adult in it, an adult child's or a non-lead's own,
   carries no tick.  [Decision — owner]
 
-- A volunteer designation matches on canonical email, so address variants cannot
-  change what a family owes.  [Decision]
+- Variants of one email address count as that address for a volunteer
+  designation, so they cannot change what a family owes.  [Decision]
 
 - A volunteer designation applies only to a person who has signed in with that
   address. The Board sees everyone on file with the address when it designates
@@ -490,13 +509,13 @@ Procedure below is built on them.
   household: that opens its renewal at any time of year, unless the household
   has already paid for the year now in effect.  [Decision]
 
-- The board's "open renewals" button opens nothing while the coming year has no
-  membership product to pay through. A board grant still opens one household's
+- Renewals do not open while the coming year has no membership product to pay
+  through. A board grant still opens one household's
   renewal, because the board pays it by grant once it reaches payment.
   [Decision — *Principle: an unconfigured setting does not act*]
 
-- Renewals start only from the board's own actions: its "open renewals" button
-  opens them for every household due, and a board grant opens one
+- Renewals start only from the board's own actions: the board opens them for every
+  household due, and a board grant opens one
   for that single household. No scheduled run opens them.  [Decision — *Board
   ruling B6*]
 
@@ -514,8 +533,8 @@ Procedure below is built on them.
   nothing it can see. Lapsing changes what the membership covers and nothing
   else: status does not move, and only a person revokes.  [Decision — *Policy: Membership Policy, Art. III §III.1; Art. XI*; *Principle: people decide about people*]
 
-- A membership payment or grant records the one membership year it buys, and
-  coverage, the renewal sweep and member pricing read that recorded year. A
+- A membership payment or grant buys one membership year, and coverage, renewal
+  and member pricing follow that year. A
   checkout offered from the day the renewal window opens sells the coming year, to
   a family joining exactly as to one renewing; a background check clearing later
   never changes the year bought.  [Decision]
@@ -529,13 +548,6 @@ Procedure below is built on them.
 
 - Treehouse accounts are not program families: no self-service member add, no
   membership grant. Only the member add is enforced server-side.  [Decision]
-
-- An intake note is readable by the household's leads and the reviewers, not by
-  its other members.  [Decision — *Policy: Membership Policy, Art. VI §VI.2; Records Policy, Art. IV*]
-
-- The sysadmin role never shows a household's intake note; a sysadmin sees it
-  only through another role they hold (a lead of that household, the Board, a
-  reviewer).  [Decision]
 
 - Whether an application asked for a scholarship or payment plan, and which, is
   read by the board and finance only. A sysadmin or background-check reviewer
@@ -643,14 +655,11 @@ Procedure below is built on them.
   is left out: at that age, not being a lead reads as a spouse the household has not
   marked, not as an adult child.  [Decision — deliberate limit]
 
-- The one-year window is what stops the request repeating. An attachment is never
-  cleared when a program ends, so without it someone who took a single class at 18
-  would be asked again every year until they aged out. Every program carries an
-  end date, so the window bounds them all.  [Decision — deliberate limit]
+- The one-year window is what stops the request repeating. Without it, someone
+  who took a single class at 18 would be asked again every year until they aged
+  out.  [Decision — deliberate limit]
 
-- Never opened for a household lead, who signs the household's agreement. An open
-  individual agreement on a lead would take the place of the household one in the
-  signing flow and stall the household's activation or renewal.  [Decision]
+- Never opened for a household lead, who signs the household's agreement.  [Decision]
 
 - The board may open one by hand for someone the automatic rule leaves out — not
   attached to a program, or over 25 — but never for a lead, and never for someone
@@ -659,3 +668,64 @@ Procedure below is built on them.
 - It gates nothing. An unsigned individual agreement never blocks participation,
   check-in, or the household's own membership.  [Decision — deliberate limit;
   *Principle: people decide about people*]
+
+### Key Volunteers
+
+- BOARD and BG reviewer, the two roles the policy names, are granted only to a
+  person who holds the Key Volunteer role and has signed the current version of the
+  key volunteer agreement. The check is at the grant, for every actor, system paths
+  included; it is not repeated when the role is used. A person merge carries a role
+  the merged-away record already held, which is not a new grant.  [Decision —
+  @thpr, 2026-10-30; *Policy: Membership Policy, Art. VI §VI.2*]
+
+- Finance is granted on the same terms as BOARD and BG reviewer.  [Decision —
+  @thpr, 2026-10-31]
+
+- The Board and Finance roles are granted only to a Key Volunteer who has signed
+  the current agreement; the check is at the grant.  [Decision — @thpr,
+  2026-11-15; *Policy: Donor Privacy and Rights Policy, Art. V §V.02*]
+
+- Keyholder is not gated on the agreement.  [Decision — deliberate limit, @thpr,
+  2026-10-31]
+
+- Using a role is not gated on the agreement. A person who holds one of those roles
+  keeps using it while a re-sign is outstanding, and the app does not block review
+  or board action on an unsigned agreement. The agreement is confirmed offline,
+  person to person, before anyone is given a reviewer or board role.  [Decision —
+  deliberate limit, @thpr, 2026-10-30, against *Membership Policy, Art. VI §VI.2*]
+
+- The Key Volunteer role is granted and removed by the Board alone. It cannot be
+  removed while the person holds BOARD, BG reviewer or Finance; that role is
+  removed first. It grants no access of its own: the Board grants it to whoever owes the
+  agreement, and the app records the role, not the reason.  [Decision — @thpr,
+  2026-10-30]
+
+- Granting the role opens the person's agreement. It settles on their signature,
+  through the same e-signature flow as the membership agreement, and the Board may
+  record a paper signature by hand. A signing request is created only when the
+  person first chooses to sign, since each request costs money.  [Decision —
+  @thpr, 2026-10-30]
+
+- On a Key Volunteer Agreement, recording the signature by hand and attaching a
+  signing request are for a board member only; a sysadmin who is not on the Board
+  cannot, outside the bootstrap case below. Resetting the signing is not limited
+  to the Board.  [Decision — @thpr, 2026-11-08]
+
+- While no board member exists, a sysadmin may grant and remove the Key Volunteer
+  role and record its signature by hand, so a new installation can seat its first
+  board.  [Decision — @thpr, 2026-11-08]
+
+- Removing the Key Volunteer role while its agreement is open and unsigned closes
+  that agreement and recalls its signing request, with an audit record. It is a
+  Board act, or a sysadmin's while no board member exists; nothing removes the
+  role automatically.  [Decision — @thpr, 2026-11-08]
+
+- The agreement is signed once and signed again only when the Board marks it
+  materially changed by starting a new version. A new version asks every Key
+  Volunteer to sign again, closes any agreement still open at an older version, and
+  removes no one's role. A wording fix that is not material leaves the version
+  alone.  [Decision — @thpr, 2026-10-30]
+
+- Everyone who held BOARD, BG reviewer or Finance when the gate went live was
+  recorded as a Key Volunteer who had signed version 1, on the date of that migration, without a
+  signing request.  [Decision — @thpr, 2026-10-30]

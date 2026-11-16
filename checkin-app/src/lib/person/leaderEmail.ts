@@ -20,6 +20,19 @@ export function rosterPerson<P extends { email: string | null; dateOfBirth: Date
     return viewerIsLeader && !leaderMaySeeEmail(dateOfBirth) ? { ...person, email: null } : person;
 }
 
+/**
+ * A participant's own phone ships only for an adult at the program's start: 18+
+ * by date of birth, or declared over 25 with none on file. Unknown age is not
+ * adult. The declaration is read here and never leaves.
+ */
+export function adultPhoneOnly<P extends { phone: string | null; dateOfBirth: Date | null; isDeclaredAdult: boolean | null }>(
+    { isDeclaredAdult, ...person }: P,
+    programStart: Date,
+): Omit<P, "isDeclaredAdult"> {
+    const adult = person.dateOfBirth ? calculateAge(person.dateOfBirth, programStart) >= 18 : !!isDeclaredAdult;
+    return adult ? person : { ...person, phone: null };
+}
+
 /** The enrolled participants whose email the viewer may not see, wherever the response lists them. */
 export function emailWithheldParticipants(
     participants: { personId: number; person: { dateOfBirth: Date | null } }[],

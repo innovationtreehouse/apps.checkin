@@ -13,7 +13,7 @@
  *      exactly as the generated models do.
  *   4. An ignore-list entry reaches FINANCE whole and never carries file bytes.
  *   5. A duplicate group reaches FINANCE whole; an internal-only view keeps
- *      only each member's state, and a submitter's view never holds the uploader.
+ *      only each member's state, and only a pii view holds the uploader.
  *   6. A duplicates queue row reaches FINANCE whole; an internal-only view loses
  *      its receipt id and rejected marker.
  *   7. Audit change values are `pii`: finance and the Board keep them on the
@@ -182,7 +182,7 @@ describe('ReceiptView tiering', () => {
         // Who confirmed a receipt and the Board's reason stay off the view; the reimbursee's confirmation view covers confirming.
         // The rejection acknowledgement reaches the view as the `rejectionUnacknowledged` flag.
         const detail = omit(receiptGenerated.classifications.ReceiptDetail, 'id', 'orgId', 'reviewedByUserId', 'reviewedOnBehalfReason', 'rejectionAcknowledgedAt');
-        const view = omit(receiptSynthetic.classifications.ReceiptView, 'duplicateNotice', 'copyOfId', 'copyOfLabel', 'financialReviewReasons', 'complete', 'reimbursement', 'lastPushFailedAt', 'purchaseOutcome', 'rejectionUnacknowledged');
+        const view = omit(receiptSynthetic.classifications.ReceiptView, 'copyOfId', 'copyOfLabel', 'financialReviewReasons', 'complete', 'reimbursement', 'lastPushFailedAt', 'purchaseOutcome', 'rejectionUnacknowledged');
         expect(view).toEqual({ ...receipt, ...detail });
     });
 
@@ -197,6 +197,10 @@ describe('ReceiptQueueCounts', () => {
     it('an internal-only view keeps every count', () => {
         const counts = { byState: { financial_review: 2 }, notPushed: 3, failedPushes: 1, actionableByState: { financial_review: 2 } };
         expect(stripValue('ReceiptQueueCounts', counts, INTERNAL_ONLY, ctx())).toEqual(counts);
+    });
+
+    it('classifies exactly the fields queueCounts sends', () => {
+        expect(Object.keys(receiptSynthetic.classifications.ReceiptQueueCounts).sort()).toEqual(['actionableByState', 'byState', 'failedPushes', 'notPushed']);
     });
 });
 
@@ -227,9 +231,9 @@ describe('ReceiptDuplicateGroup', () => {
         });
     });
 
-    it("a submitter's view of its own member strips the uploader's name", () => {
-        const out = stripValue('ReceiptDuplicateMember', group().members[0], ['their_own:personal', 'their_own:internal'], ctx());
-        expect(out).not.toHaveProperty('uploaderName');
+    it("a view holding personal but not pii keeps the label and strips the uploader's name", () => {
+        const { uploaderName: _name, ...rest } = group().members[0];
+        expect(stripValue('ReceiptDuplicateMember', group().members[0], ['everyones:personal', 'everyones:internal', 'public'], ctx())).toEqual(rest);
     });
 });
 

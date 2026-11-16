@@ -5,11 +5,10 @@ import {
   Table, Text, TextInput, Title, Tooltip,
 } from "@mantine/core";
 import { useDisclosure, useDebouncedValue } from "@mantine/hooks";
-import { notifications } from "@mantine/notifications";
 import { IconArchive, IconArchiveOff, IconEdit, IconLink, IconPlus } from "@tabler/icons-react";
 import { formatGtinDisplay } from "../lib/gtin";
 import { api, lastPage, useCanManage, useLoad } from "./api";
-import { errorMessage, LoadError, showError, useSetUrlFilters, useUrlChoice, useUrlFilter, useUrlPage } from "@checkin/component-ui";
+import { errorMessage, LoadError, showError, showSuccess, useSetUrlFilters, useUrlChoice, useUrlFilter, useUrlPage } from "@checkin/component-ui";
 import { USAGE_BEHAVIORS } from "./viewTypes";
 import type { CategoryRow, ItemRow, SubcategoryRow, UsageBehavior } from "./viewTypes";
 import ItemReferencesModal from "./ItemReferencesModal";
@@ -84,10 +83,10 @@ export default function GlobalInventoryClient() {
     try {
       if (editItem) {
         await api(`/items/${editItem.gtin13}`, { method: "PUT", body: JSON.stringify({ name: form.name, usageBehavior: form.usageBehavior || undefined }) });
-        notifications.show({ message: "Item updated", color: "green" });
+        showSuccess("Item updated");
       } else {
         await api("/items", { method: "POST", body: JSON.stringify({ name: form.name, categoryId: parseInt(form.categoryId, 10), subcategoryId: parseInt(form.subcategoryId, 10), usageBehavior: form.usageBehavior }) });
-        notifications.show({ message: "Item created", color: "green" });
+        showSuccess("Item created");
       }
       close();
     } catch (err) {
@@ -101,7 +100,7 @@ export default function GlobalInventoryClient() {
     try {
       await api(`/items/${archiveTarget.gtin13}/archive`, { method: "POST" });
       closeArchive();
-      notifications.show({ message: "Item archived", color: "orange" });
+      showSuccess("Item archived");
     } catch (err) {
       showError(errorMessage(err));
     } finally { setArchiving(false); }
@@ -110,7 +109,7 @@ export default function GlobalInventoryClient() {
   async function handleUnarchive(gtin13: string) {
     try {
       await api(`/items/${gtin13}/unarchive`, { method: "POST" });
-      notifications.show({ message: "Item unarchived", color: "green" });
+      showSuccess("Item unarchived");
     } catch (err) {
       showError(errorMessage(err));
     }

@@ -194,6 +194,12 @@ export interface OcrProvider {
 export interface ReceiptPeople {
   /** The one live person allowed to submit receipts whom the host identifies by exactly this address, else null. */
   submitterByEmail(address: string): Promise<ReceiptPrincipal | null>;
+  /**
+   * Approves `address` as this person's mail alias and runs `assign` inside the same host
+   * transaction: a refused or failed alias write runs no assign, and an assign that throws undoes
+   * the alias. Unbound, finance cannot remember an address while assigning.
+   */
+  rememberMailAlias?<T>(input: { actorId: number; personId: number; address: string; mailItemId: number }, assign: () => Promise<T>): Promise<T>;
 }
 
 /** The host's names for its people, for finance reading who uploaded a receipt. */

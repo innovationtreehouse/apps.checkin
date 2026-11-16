@@ -49,6 +49,12 @@ by anyone, and the mistake is only visible to whoever owns it.
   arrangement is how a design announces it needs the invariant moved into the
   data rather than reasserted at each site.
 
+- **A person query drops an archived household's members only when it filters on
+  their household with `IN_LIVE_HOUSEHOLD`.** Row security hides the archived
+  household row, not its people. A relation include returns the person with a
+  null household, and a `NOT: { household: … }` filter matches them, so neither
+  excludes anyone.
+
 The failure is silent by construction. Forgetting produces no error, no failed
 test and no wrong-looking code — just a row that should not have been there,
 counted, rendered, or accepted as proof of who someone is. It is found when

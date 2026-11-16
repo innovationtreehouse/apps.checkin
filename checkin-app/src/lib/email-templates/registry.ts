@@ -1,4 +1,3 @@
-import { DEFAULT_ACK_MEMBERSHIP_BODY, DEFAULT_ACK_PROGRAM_BODY, DEFAULT_ACK_SUBJECT } from "@/lib/scholarshipAckCopy";
 import type { TokenSpec, TokenSpecs } from "./tokens";
 
 /**
@@ -32,6 +31,10 @@ const OPS_SAMPLE = {
     todo: "Finance repeats step 3 of the QuickBooks go-live runbook with the infra operator and reseeds the secret (docs/ops/quickbooks-go-live.md).",
     actionLink: SAMPLE_URL,
 };
+const ACK_SUBJECT = "We received your scholarship / payment-plan request";
+const OUTREACH_TOKENS = { name: text, deadline: text, actionLink: link() };
+const OUTREACH_SAMPLE = { name: "Jordan Rivera", deadline: "2027-01-01", actionLink: SAMPLE_URL };
+
 const OPS_SUBJECT = "[{{kind}}] {{cause}}: {{lanes}} — {{status}}";
 const OPS_BODY = "{{summary}}\n\nLanes: {{lanes}}\nFirst seen: {{firstSeen}}\nRuns seen: {{runsSeen}}\nItems waiting: {{items}}\n\nWhat to do: {{todo}}\n\n{{actionLink}}";
 
@@ -255,6 +258,16 @@ export const REGISTRY = {
         defaultSubject: "Income: a budget-owner bucket can't take sales",
         defaultBody: "The budget-owner bucket {{bucketName}} {{issue}}. {{itemCount}} store item(s) are assigned to it, and payouts with their sales wait until you restore the bucket or its Class, or reassign the items. {{actionLink}}",
     },
+    "finance.bucketClassUnusable": {
+        allowedTokens: { bucketName: text, issue: text, actionLink: link("Open budgets") },
+        sampleCtx: {
+            bucketName: "Robotics",
+            issue: "Robotics's QuickBooks Class Programs:Robotics is inactive in QuickBooks. Lines in this bucket will wait until you pick an active Class or reactivate it in QuickBooks.",
+            actionLink: SAMPLE_URL,
+        },
+        defaultSubject: "Budgets: the bucket {{bucketName}} can't take lines",
+        defaultBody: "{{issue}} {{actionLink}}",
+    },
     "finance.incomeSweepIncomplete": {
         allowedTokens: { since: text, actionLink: link("Open income reconciliation") },
         sampleCtx: { since: "2026-10-01", actionLink: SAMPLE_URL },
@@ -422,20 +435,36 @@ export const REGISTRY = {
     "scholarship.ackMembership": {
         allowedTokens: {},
         sampleCtx: {},
-        defaultSubject: DEFAULT_ACK_SUBJECT,
-        defaultBody: DEFAULT_ACK_MEMBERSHIP_BODY,
+        defaultSubject: ACK_SUBJECT,
+        defaultBody: "Hi — we've received your household's scholarship / payment-plan request for your Treehouse membership fee. "
+            + "The Scholarship Review Team will review it and follow up.",
     },
     "scholarship.ackProgram": {
         allowedTokens: { programName: text },
         sampleCtx: { programName: "Robotics Club" },
-        defaultSubject: DEFAULT_ACK_SUBJECT,
-        defaultBody: DEFAULT_ACK_PROGRAM_BODY,
+        defaultSubject: ACK_SUBJECT,
+        defaultBody: "Hi — we've received your scholarship / payment-plan request for {{programName}}. "
+            + "The Scholarship Review Team will review it and follow up. Your spot is held while they do.",
     },
     "scholarship.ackProgramHoldFailed": {
         allowedTokens: {},
         sampleCtx: {},
-        defaultSubject: DEFAULT_ACK_SUBJECT,
+        defaultSubject: ACK_SUBJECT,
         defaultBody: "Your scholarship / payment-plan request has been recorded and the board notified. A seat-reservation step needs a board member to finish it — nothing more is required from you.",
+    },
+
+    // ── outreach ────────────────────────────────────────────────────────────
+    "outreach.opening": {
+        allowedTokens: OUTREACH_TOKENS,
+        sampleCtx: OUTREACH_SAMPLE,
+        defaultSubject: "Time to renew your Innovation Treehouse membership",
+        defaultBody: "Hi {{name}},\n\nMembership for the new year is open. Renew before {{deadline}} here:\n\n{{actionLink}}\n\nQuestions? Reply to this email.",
+    },
+    "outreach.reminder": {
+        allowedTokens: OUTREACH_TOKENS,
+        sampleCtx: OUTREACH_SAMPLE,
+        defaultSubject: "Reminder: renew by {{deadline}}",
+        defaultBody: "Hi {{name}},\n\nMembership for the new year closes on {{deadline}}. If you haven't yet, renew here:\n\n{{actionLink}}\n\nQuestions? Reply to this email.",
     },
 } satisfies Record<string, TemplateSpec>;
 

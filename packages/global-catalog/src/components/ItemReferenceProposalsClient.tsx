@@ -4,11 +4,10 @@ import {
   ActionIcon, Button, Group, Modal, Stack, Table, Text, Textarea, Title, Tooltip,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
-import { notifications } from "@mantine/notifications";
 import { IconCheck, IconX } from "@tabler/icons-react";
 import { formatGtinDisplay } from "../lib/gtin";
 import { api, useLoad } from "./api";
-import { errorMessage, LoadError, showError } from "@checkin/component-ui";
+import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
 import { PART_NUMBER_HINT, type ItemReferenceProposalRow } from "./viewTypes";
 
 const PAGE_LIMIT = 200;
@@ -26,7 +25,7 @@ export default function ItemReferenceProposalsClient() {
     setApproving(id);
     try {
       await api(`/proposals/item-references/${id}/approve`, { method: "POST" });
-      notifications.show({ message: "Mapping approved and written to item references", color: "green" });
+      showSuccess("Mapping approved and written to item references");
     } catch (e) { showError(errorMessage(e)); }
     finally { setApproving(null); }
   }
@@ -36,7 +35,7 @@ export default function ItemReferenceProposalsClient() {
     setRejecting(true);
     try {
       await api(`/proposals/item-references/${rejectTarget.id}/reject`, { method: "POST", body: JSON.stringify({ rejectionReason: rejectReason }) });
-      notifications.show({ message: "Proposal rejected", color: "orange" });
+      showSuccess("Proposal rejected");
       closeReject();
       setRejectReason("");
       setRejectTarget(null);

@@ -49,12 +49,10 @@ beforeEach(() => {
 function seedVisit(arrivedAtIso: string) {
     const arrivedAt = new Date(arrivedAtIso);
     mockVisits.mockResolvedValue([{
-        id: 1,
+        personId: 1,
         arrivedAt,
         departedAt: new Date(arrivedAt.getTime() + 60 * 60 * 1000),
         associatedEventId: null,
-        person: { id: 1 },
-        event: null,
     }]);
 }
 

@@ -332,6 +332,12 @@ describe("ProblemsBox", () => {
     expect(screen.getByText("6")).toBeInTheDocument();
   });
 
+  it("says failed email sends could not be counted when the email count is unread", async () => {
+    mockFetchJson({ "/api/system-status/config-health": { problems: { items: [], unread: ["email"], notices: [] }, cronJobs: [] } });
+    renderWithProviders(<ProblemsBox />);
+    expect(await screen.findByText("Failed email sends could not be counted.")).toBeInTheDocument();
+  });
+
   it("lists a job whose latest run reported failures, without its error text, and a late one only once", async () => {
     const problems = { items: [], unread: [], notices: [] };
     mockFetchJson({

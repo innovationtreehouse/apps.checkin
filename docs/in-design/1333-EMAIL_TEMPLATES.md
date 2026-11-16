@@ -158,10 +158,10 @@ diff is behavior-neutral on wording. The old inline builders and hardcoded subje
   `sampleCtx` (client-side, reusing the shared substitute fn so preview can't drift from send)
   → save (token-validated) → optional **send-to-self** (reuse the outreach test-send pattern).
 
-## Key list (58)
+## Key list
 
-56 keys are in the registry. The 2 `outreach.*` keys join it in step 5, because outreach has
-no default copy in code today (the Board writes it, and it is empty until they do).
+Every key below is in the registry, with the 2 `outreach.*` keys added in step 5. Their default
+wording was approved by the owner.
 `link` tokens are noted; everything else is `text`. Tokens are named after the words they
 stand for in today's copy, so a key without a link today has no `actionLink`.
 
@@ -283,13 +283,13 @@ stand for in today's copy, so a key without a link today has no `actionLink`.
 | `trustedAdult.deniedRevoked` | DENY + `revokePriorApprovals` | family | adultName, `actionLink` |
 | `trustedAdult.changeNotApproved` | DENY, prior approval survives | family | adultName, until, `actionLink` |
 | `trustedAdult.notApproved` | DENY, nothing survives | family | adultName, `actionLink` |
-| `trustedAdult.overrideDecided` | `overrideReview` deny/revoke | family | adultName, action, `actionLink` |
+| `trustedAdult.overrideDecided` | `revokeReview` | family | adultName, action, `actionLink` |
 | `trustedAdult.expiring` | `runExpirySweep` warning | family | deadline, `actionLink` |
 | `trustedAdult.expired` | `runExpirySweep` lapse, adult left unauthorized | family | adultName, `actionLink` |
 
 > `deniedRevoked` (from the normal decide path) and `overrideDecided` (from the
-> sysadmin override path) share a subject but keep **separate keys** — different code paths,
-> different bodies (`overrideDecided` carries an `{{action}}` = denied/revoked token). Deliberately
+> board revoke, `revokeReview`) share a subject but keep **separate keys** — different code paths,
+> different bodies (`overrideDecided` carries an `{{action}}` token, which is now always "revoked"). Deliberately
 > not merged: collapsing them is exactly the "resolve at build" shortcut we're avoiding.
 > The "View your trusted adults" link that `notifyHouseholdFamily` appends today is the
 > `{{actionLink}}` token (label "View your trusted adults") in each family template.
@@ -304,28 +304,30 @@ stand for in today's copy, so a key without a link today has no `actionLink`.
 | `scholarship.ackProgram` | `sendScholarshipAck` program (was `DEFAULT_ACK_PROGRAM_BODY`) | family | programName |
 | `scholarship.ackProgramHoldFailed` | program request whose Shopify seat hold failed | family | — |
 
-> Fold detail: the ACK copy currently lives in `BoardSettings.scholarshipAck{Subject,Membership
-> Body,ProgramBody}` and is edited on `settings/email`. The sweep migrates those values into the
-> two `scholarship.ack*` rows and moves editing to the new tab. The three `BoardSettings` columns
+> Fold detail: the step 5 migration copies `BoardSettings.scholarshipAck{Subject,Membership
+> Body,ProgramBody}` into the three `scholarship.ack*` rows (the subject into all three; the
+> hold-failed body stays its default). `settings/email` reads and writes those rows, and still
+> writes the columns. The three `BoardSettings` columns
 > + their `settings/email` controls are **dropped in the follow-up contract release** (build
 > order step 8), not here — old pods still read them during the drain. The three
 > `scholarship.ack*` subjects are the same at the start; each key owns its own subject going
-> forward. Until step 4 the ACK defaults stay in `scholarshipAckCopy.ts` and the registry
-> imports them, so the default wording exists in one place.
+> forward. The ACK defaults live in the registry.
 
-### outreach — 2 (flag D: folded in from `BoardSettings`; joins the registry in step 5)
+### outreach — 2 (flag D: folded in from `BoardSettings` in step 5)
 | key | trigger | recipient | tokens |
 |-----|---------|-----------|--------|
-| `outreach.opening` | outreach batch opening (was `outreachOpening{Subject,Body}`) | member-household leads | name, deadline, actionWord, `actionLink` |
-| `outreach.reminder` | outreach reminder (was `outreachReminder{Subject,Body}`) | leads of member households not yet renewed | name, deadline, actionWord, `actionLink` |
+| `outreach.opening` | outreach batch opening (was `outreachOpening{Subject,Body}`) | member-household leads | name, deadline, `actionLink` (shows the URL) |
+| `outreach.reminder` | outreach reminder (was `outreachReminder{Subject,Body}`) | leads of member households not yet renewed | name, deadline, `actionLink` (shows the URL) |
 
-> Fold detail: outreach goes only to member households, so it has no join variant and no
-> unsubscribe footer; `{{actionWord}}` always renders "renew" until this step settles the token
-> set. It still carries a boundary-derived `{{deadline}}`. That render *wrapper*
-> (`renderOutreachEmail`) stays; only the **source of subject/body** moves from `BoardSettings`
-> columns to the two `outreach.*` rows. The four `outreach*` `BoardSettings` columns + the `settings/outreach` page are removed in
-> the follow-up contract release (step 8), not here. Its sandboxed-iframe preview is superseded by
-> the plain-text preview (no HTML authoring → no iframe needed).
+> Fold detail: outreach goes only to member households, so it has no join variant, no
+> unsubscribe footer and no `{{actionWord}}`: the step 5 migration writes "renew" in its place
+> when it copies the Board's `BoardSettings` copy into the two rows, and outreach copy written as
+> HTML makes no row, since a body is plain text. `{{deadline}}` is the next
+> membership-year boundary (`outreachCtx`), and each send goes through `sendTemplated`. The
+> `settings/outreach` editor reads and writes the two rows, and still writes the columns; as on the
+> templates tab, only the Board and sysadmins may change the wording there (Operations still sends). The four `outreach*` `BoardSettings` columns + the `settings/outreach` page are removed in
+> the follow-up contract release (step 8), not here. Its preview renders the plain-text body the
+> way the templates tab does; the body is no longer HTML.
 
 ## Sub-decisions
 
@@ -367,7 +369,7 @@ not a zero-visual-change one. Uniform branding is a stated goal of this work.
    render wrappers + both preview consumers to read from `EmailTemplate`. **Leave the old
    `BoardSettings` columns in place and still populated** this release. Add the two
    `outreach.*` registry entries here; their default wording is a Board decision.
-6. Grep-to-zero enforcement test (`sendEmail(` only in `email.ts` + renderer).
+6. Grep-to-zero enforcement test (`sendEmail(` only in `email.ts` + renderer). **Done**: `src/lib/email-templates/__tests__/sendDoor.test.ts`.
 7. Admin tab: `settings/templates` page + API route (list/get/save + validate + send-to-self),
    add the templates link to `SETTINGS.links`.
 8. **Follow-up release (contract): drop the moved `BoardSettings` columns + old

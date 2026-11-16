@@ -4,8 +4,8 @@
 /**
  * GET /api/finance-ops/payment-plans through the real handler(): finance holds
  * everyones:pii on this route, so the query selects only the participant, person,
- * household and program columns the queue shows. A household's intake note and a person's date of birth or allergies are
- * never read.
+ * household and program columns the queue shows. A person's date of birth or
+ * allergies are never read.
  */
 import type { NextRequest } from 'next/server';
 import { getServerSession } from 'next-auth/next';

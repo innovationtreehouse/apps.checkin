@@ -1,5 +1,5 @@
 /**
- * core.ts flat-merges every classification source into one map keyed by model
+ * classificationSources.ts flat-merges every classification source into one map keyed by model
  * name, so a model declared by two sources is silently overwritten by the later
  * one — its fields stripped (or exposed) under the wrong tiers. Vendored
  * libraries collide on names (SettingsData, ReceivedOrgEvent, AuditLog, …);

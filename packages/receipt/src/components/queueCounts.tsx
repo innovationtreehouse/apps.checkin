@@ -67,7 +67,7 @@ export function QueueCount({ badge, selected = false }: { badge: QueueBadge | nu
         : { color: "treehouseGreen", c: "black" };
   return (
     <Badge size="sm" variant="filled" {...look} aria-label={`${badge.count} ${badge.intent === "action" ? "to act on" : "in this queue"}`}>
-      {badge.count}
+      {badge.count > 99 ? "99+" : badge.count}
     </Badge>
   );
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import { LoadError } from "@checkin/component-ui";
 import { formatCents } from "@checkin/money";
 import { Alert, Anchor, Button, Card, Group, Modal, Radio, Stack, Text, Title } from "@mantine/core";
 import DevMockPaymentButton from "@/components/dev/DevMockPaymentButton";
@@ -17,7 +18,7 @@ export default function PaymentPanel({ processId, bgCleared, saving, setSaving, 
 }) {
   const isLocalInstance = useIsLocalInstance();
   const {
-    payment, awaitingPayment, clearAwaitingPayment, handlePayClick, onMockPaid, onMockFailed,
+    payment, paymentError, reloadPayment, awaitingPayment, clearAwaitingPayment, handlePayClick, onMockPaid, onMockFailed,
     planRequested, planKind, setPlanKind, confirmPlanOpened, openConfirmPlan, closeConfirmPlan, requestPaymentPlan,
   } = controls;
 
@@ -96,6 +97,8 @@ export default function PaymentPanel({ processId, bgCleared, saving, setSaving, 
             <Anchor href="mailto:finance@innovationtreehouse.org">finance@innovationtreehouse.org</Anchor>.
           </Text>
         </>
+      ) : paymentError ? (
+        <LoadError what="your membership fee" message={paymentError} onRetry={reloadPayment} />
       ) : (
         <Text c="dimmed">Preparing your invoice…</Text>
       )}

@@ -3,7 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useLayoutEffect, use
 import { Alert, Button, Group, Pagination, Text } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import useSWR from "swr";
-import { clearLoads, countFailure, endRetryChain, forgetFailures, invalidateLoads, loadGeneration, scheduleRetry } from "./loadCache";
+import { clearLoads, countFailure, endRetryChain, forgetFailures, holdFromInvalidation, invalidateLoads, loadGeneration, scheduleRetry } from "./loadCache";
 import { errorMessage, FAILURE_TEXT, HttpError, request, type RequestOptions } from "./http";
 
 export { invalidateLoads };
@@ -96,10 +96,16 @@ export function createClient(base: string) {
    * is for a pager or search box, whose rows each act on their own id; it never keeps an empty list.
    * `expireOn401: false` is for a read mounted on every page: routes also answer 401 to a session
    * next-auth reports as signed in, such as a denied household, so it must not move anyone.
+   * `reconnect: false` and `skipWriteReload: true` are for a read that logs a view or wakes a sleeping
+   * database: no re-read on reconnect, and none after another page's write; `reload()` still re-reads.
    */
-  function useLoad<T>(path: string | null, { retry = true, keepPrevious = false, expireOn401 = true }: { retry?: boolean; keepPrevious?: boolean; expireOn401?: boolean } = {}): Loaded<T> {
+  function useLoad<T>(
+    path: string | null,
+    { retry = true, keepPrevious = false, expireOn401 = true, reconnect = true, skipWriteReload = false }: { retry?: boolean; keepPrevious?: boolean; expireOn401?: boolean; reconnect?: boolean; skipWriteReload?: boolean } = {},
+  ): Loaded<T> {
     const url = path === null ? null : resolve(path);
     useEffect(() => () => { if (url !== null) forgetFailures(url); }, [url]);
+    useEffect(() => (url !== null && skipWriteReload ? holdFromInvalidation(url) : undefined), [url, skipWriteReload]);
     const swr = useSWR<T, LoadFailure>(
       url,
       (key: string) =>
@@ -109,7 +115,7 @@ export function createClient(base: string) {
         ),
       {
         revalidateOnFocus: false,
-        revalidateOnReconnect: true,
+        revalidateOnReconnect: reconnect,
         dedupingInterval: 5000,
         onErrorRetry: (failure, key, _config, revalidate, options) => {
           if (failure.retrying) scheduleRetry(key, 2000 * 2 ** (failure.attempt - 1), () => revalidate(options));
@@ -188,6 +194,26 @@ export function QuickBooksListsRefresh({ onRefreshed }: { onRefreshed?: () => vo
       <Button size="xs" variant="light" loading={busy} onClick={() => void update()}>Update now</Button>
       {failed && <Text size="sm" c="red">{failed}</Text>}
     </Group>
+  );
+}
+
+/**
+ * A saved QuickBooks pick the app's copy shows as inactive or no longer holds, as a warning beside its picker
+ * with "Update now"; the picker never offers it. Nothing while the pick is active, unset, or the list isn't loaded.
+ */
+export function InactivePickWarning({ saved, options, onRefreshed }: {
+  saved: string | null | undefined;
+  options: readonly { id: string; name: string; active: boolean }[] | null | undefined;
+  onRefreshed?: () => void;
+}) {
+  if (!saved || !options?.length) return null;
+  const entry = options.find((o) => o.id === saved);
+  if (entry?.active) return null;
+  return (
+    <Alert color="yellow" variant="light" p="xs">
+      <Text size="sm">{entry ? `${entry.name} is inactive in QuickBooks.` : `QuickBooks id ${saved} is not in QuickBooks' list in the app.`} Pick an active one.</Text>
+      <QuickBooksListsRefresh onRefreshed={onRefreshed} />
+    </Alert>
   );
 }
 

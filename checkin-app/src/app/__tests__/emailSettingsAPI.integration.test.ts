@@ -23,6 +23,7 @@ function jsonReq(method: string, body?: unknown) {
 }
 
 const TAG = 'email-settings-test';
+const ACK_KEYS = ['scholarship.ackMembership', 'scholarship.ackProgram', 'scholarship.ackProgramHoldFailed'];
 
 describe('Email sender-identity settings API', () => {
     let boardId: number, plainId: number;
@@ -46,6 +47,7 @@ describe('Email sender-identity settings API', () => {
 
     afterAll(async () => {
         await restoreBoardSettings();
+        await prisma.emailTemplate.deleteMany({ where: { key: { in: ACK_KEYS } } });
         await wipe();
         await prisma.$disconnect();
     });
@@ -152,6 +154,34 @@ describe('Email sender-identity settings API', () => {
         expect(after.scholarshipAckSubject).toBe('Custom subject');
         expect(after.scholarshipAckMembershipBody).toBe('Custom membership body.');
         expect(after.scholarshipAckProgramBody).toBe('Custom program body for {{programName}}.');
+
+        const rows = await prisma.emailTemplate.findMany({ where: { key: { in: ACK_KEYS } }, orderBy: { key: 'asc' } });
+        expect(rows.map(({ key, subject, body, updatedBy }) => ({ key, subject, body, updatedBy }))).toEqual([
+            { key: 'scholarship.ackMembership', subject: 'Custom subject', body: 'Custom membership body.', updatedBy: boardId },
+            { key: 'scholarship.ackProgram', subject: 'Custom subject', body: 'Custom program body for {{programName}}.', updatedBy: boardId },
+            { key: 'scholarship.ackProgramHoldFailed', subject: 'Custom subject', body: '', updatedBy: boardId },
+        ]);
+    });
+
+    it('an unchanged ACK subject leaves a program subject edited elsewhere alone', async () => {
+        asBoard(boardId);
+        await EMAIL_PUT(jsonReq('PUT', { scholarshipAckSubject: 'Shared', scholarshipAckMembershipBody: 'm', scholarshipAckProgramBody: 'p' }));
+        await prisma.emailTemplate.update({ where: { key: 'scholarship.ackProgram' }, data: { subject: 'Program only' } });
+
+        await EMAIL_PUT(jsonReq('PUT', { scholarshipAckSubject: 'Shared', scholarshipAckMembershipBody: 'm2', scholarshipAckProgramBody: 'p' }));
+
+        const program = await prisma.emailTemplate.findUniqueOrThrow({ where: { key: 'scholarship.ackProgram' } });
+        expect(program.subject).toBe('Program only');
+        expect((await prisma.emailTemplate.findUniqueOrThrow({ where: { key: 'scholarship.ackMembership' } })).body).toBe('m2');
+    });
+
+    it('rejects a {{programName}} the membership ACK cannot fill, saving nothing', async () => {
+        asBoard(boardId);
+        await EMAIL_PUT(jsonReq('PUT', { scholarshipAckSubject: 'Before' }));
+        const bad = await EMAIL_PUT(jsonReq('PUT', { scholarshipAckSubject: 'About {{programName}}' }));
+        expect(bad.status).toBe(400);
+        expect((await bad.json()).error).toMatch(/programName/);
+        expect((await (await EMAIL_GET(jsonReq('GET'))).json()).settings.scholarshipAckSubject).toBe('Before');
     });
 
     it('blank ACK fields clear back to null (default copy applies)', async () => {
@@ -163,6 +193,7 @@ describe('Email sender-identity settings API', () => {
         expect(s.scholarshipAckSubject).toBeNull();
         expect(s.scholarshipAckMembershipBody).toBeNull();
         expect(s.scholarshipAckProgramBody).toBeNull();
+        expect(await prisma.emailTemplate.count({ where: { key: { in: ACK_KEYS } } })).toBe(0);
     });
 
     it('rejects an over-length ACK body and keeps the previous value', async () => {

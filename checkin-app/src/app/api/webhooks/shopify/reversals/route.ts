@@ -18,8 +18,8 @@ import { nudgeProgramStock } from "@/lib/shopify/stock";
  *
  * Each maps the affected Shopify order id to the membership process / program
  * enrollment it activated and raises a PaymentException (board decides — we never
- * auto-revert access, except removing a program enrollment whose seat the refund
- * restocked; see raiseReversalByOrderId). Whatever this drops, the daily reconciler still catches (within ~24h).
+ * auto-revert access; a restocked seat a child still holds is taken back off sale,
+ * see raiseReversalByOrderId). Whatever this drops, the daily reconciler still catches (within ~24h).
  * Same HMAC verify as the orders/paid route; the topic rides the x-shopify-topic
  * header.
  */

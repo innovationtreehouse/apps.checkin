@@ -79,6 +79,32 @@ describe("failed safety check", () => {
     });
 });
 
+describe("failed membership read", () => {
+    it("says the membership status could not load instead of hiding the join banner, and Retry shows it", async () => {
+        setSession({ id: 1, name: "Val Visitor" });
+        let membershipFails = true;
+        global.fetch = jest.fn(async (input: RequestInfo | URL) => {
+            const url = String(input);
+            const failed = membershipFails && url.includes("/api/membership");
+            const body = failed
+                ? { error: "Forbidden" }
+                : url.includes("/api/membership")
+                    ? { membershipStatus: null, process: null }
+                    : { access: "full", attendance: [], safety: { facilityOpen: true, isLastKeyholder: false, isTwoDeepViolation: false }, building: { reachable: true, lastSeenAt: null } };
+            return { ok: !failed, status: failed ? 403 : 200, json: async () => body, text: async () => JSON.stringify(body) } as Response;
+        }) as unknown as typeof fetch;
+        const { container } = renderWithProviders(<Home />);
+
+        expect(await screen.findByText("Couldn't load your membership status")).toBeInTheDocument();
+        expect(container.querySelector('a[href="/membership"]')).toBeNull();
+
+        membershipFails = false;
+        fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+        await waitFor(() => expect(container.querySelector('a[href="/membership"]')).not.toBeNull());
+        expect(screen.queryByText("Couldn't load your membership status")).not.toBeInTheDocument();
+    });
+});
+
 describe("cached safety check", () => {
     it("shows the warning from this visit's own read, not an older cached all-clear", async () => {
         setSession({ id: 1, name: "Ann Admin", isSysadmin: true });
