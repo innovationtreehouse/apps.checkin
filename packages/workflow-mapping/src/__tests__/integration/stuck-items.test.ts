@@ -3,7 +3,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { db } from "../../db";
 import { executePushAndSettle } from "../../lib/apply-receipt";
 import { orgEventConsumer } from "../../services/orgEventConsumer";
-import { retryStuckItem, stuckItems } from "../../stuckItems";
+import { problemNotices, retryStuckItem, stuckItems } from "../../stuckItems";
 import { describeDb } from "../helpers/db";
 import { OTHER_ORG_ID, TEST_ORG_ID, clearAll, configure, makeLineStatus, makeReceipt, recordingSinks } from "../helpers/setup";
 
@@ -133,5 +133,35 @@ describeDb("retryStuckItem", () => {
     await expect(retryStuckItem({ id: "42", step: "catalog event" })).rejects.toMatchObject({ status: 404 });
     await expect(retryStuckItem({ id: "x", step: "catalog event" })).rejects.toMatchObject({ status: 404 });
     await expect(retryStuckItem({ id: healthy.receiptId, step: "nonsense" })).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+describeDb("problemNotices", () => {
+  const QUEUE = "/inventory/receiving?queue=mapping";
+
+  /** A receipt in Matching pending with `reason` recorded. */
+  async function pending(reason: string | null, orgId?: string) {
+    const r = await makeReceipt({ orgId });
+    await db.receivedReceipt.update({ where: { id: r.id }, data: { matchingPendingSince: new Date(), matchingPendingReason: reason } });
+  }
+
+  it("has no line while no receipt waits for a catalog error", async () => {
+    await makeReceipt();
+    await pending("unexpected_error");
+    await pending("catalog_unavailable", OTHER_ORG_ID);
+
+    expect(await problemNotices()).toEqual([]);
+  });
+
+  it("counts catalog errors per reason, reading no reason as unavailable, each linking to the mapping queue", async () => {
+    await pending("catalog_unavailable");
+    await pending(null);
+    await pending("catalog_settings");
+    await pending("unexpected_error");
+
+    expect(await problemNotices()).toEqual([
+      { text: "Receipts in Matching pending because the catalog was unavailable: 2", href: QUEUE },
+      { text: "Receipts in Matching pending because of a catalog settings error: 1", href: QUEUE },
+    ]);
   });
 });
