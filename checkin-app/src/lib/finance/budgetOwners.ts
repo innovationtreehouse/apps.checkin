@@ -160,7 +160,7 @@ export async function updateBudgetOwner(actorId: number, id: number, body: Recor
 }
 
 /** Every kind of unfinished work the libraries still point at bucket `id`; 503 when one can't be read. */
-async function unfinishedBucketUses(id: number) {
+export async function unfinishedBucketUses(id: number) {
     try {
         const libraries = await Promise.all([import("@checkin/expense"), import("@checkin/bulk-donation"), import("@checkin/income")]);
         return (await Promise.all(libraries.map((lib) => lib.unfinishedBucketUses(id)))).flat();

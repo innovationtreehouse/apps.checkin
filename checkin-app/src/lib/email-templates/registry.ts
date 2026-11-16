@@ -258,6 +258,16 @@ export const REGISTRY = {
         defaultSubject: "Income: a budget-owner bucket can't take sales",
         defaultBody: "The budget-owner bucket {{bucketName}} {{issue}}. {{itemCount}} store item(s) are assigned to it, and payouts with their sales wait until you restore the bucket or its Class, or reassign the items. {{actionLink}}",
     },
+    "finance.bucketClassUnusable": {
+        allowedTokens: { bucketName: text, issue: text, actionLink: link("Open budgets") },
+        sampleCtx: {
+            bucketName: "Robotics",
+            issue: "Robotics's QuickBooks Class Programs:Robotics is inactive in QuickBooks. Lines in this bucket will wait until you pick an active Class or reactivate it in QuickBooks.",
+            actionLink: SAMPLE_URL,
+        },
+        defaultSubject: "Budgets: the bucket {{bucketName}} can't take lines",
+        defaultBody: "{{issue}} {{actionLink}}",
+    },
     "finance.incomeSweepIncomplete": {
         allowedTokens: { since: text, actionLink: link("Open income reconciliation") },
         sampleCtx: { since: "2026-10-01", actionLink: SAMPLE_URL },
