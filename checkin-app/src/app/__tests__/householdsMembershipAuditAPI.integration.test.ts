@@ -398,9 +398,7 @@ describe('POST /api/membership-ops/households — grant/revoke audit logging', (
         const processCount = await prisma.orgMembershipProcess.count({ where: { orgMembershipId: grantableMembershipId } });
         expect(processCount).toBe(1);
 
-        // Both the activate() transition audit (written first, inside
-        // certifyPaymentPlan) and the supplementary grant marker (written after)
-        // must exist for this process.
+        // The activate() transition audit carries the reason and the granted year.
         const audits = await prisma.auditLog.findMany({
             where: { actorId: boardId, tableName: 'OrgMembershipProcess', affectedEntityId: grantableProcessId },
             orderBy: { id: 'asc' },
@@ -409,9 +407,7 @@ describe('POST /api/membership-ops/households — grant/revoke audit logging', (
         expect(activateAudit).toBeTruthy();
         expect((activateAudit!.newData as { via: string }).via).toBe('manual');
         expect((activateAudit!.newData as { certificationNote?: string }).certificationNote).toBe('Family paid the membership fee in person at the board meeting.');
-        const grantAudit = audits.find(a => (a.newData as { grantedYear?: number })?.grantedYear === YEAR);
-        expect(grantAudit).toBeTruthy();
-        expect((grantAudit!.newData as { reason?: string }).reason).toBe('Family paid the membership fee in person at the board meeting.');
+        expect(activateAudit).toMatchObject({ secondaryAffectedEntity: grantableHouseholdId, newData: expect.objectContaining({ grantedYear: YEAR, reason: 'Family paid the membership fee in person at the board meeting.' }) });
     });
 
     it.each([[YEAR - 1], [YEAR + 2], [String(YEAR)], [null]])('refuses year %s, which no button offers (400, nothing paid)', async (year) => {

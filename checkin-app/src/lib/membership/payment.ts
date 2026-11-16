@@ -150,7 +150,7 @@ export type ActivateOutcome =
  */
 async function settle(
     processId: number,
-    opts: { via: "payment" | "manual"; actorId?: number; shopifyOrderId?: string; hasMembershipItem?: boolean; reason?: string; appliesToYear?: number | null; requireRequested?: boolean },
+    opts: { via: "payment" | "manual"; actorId?: number; shopifyOrderId?: string; hasMembershipItem?: boolean; reason?: string; appliesToYear?: number | null; grantedYear?: number; requireRequested?: boolean },
 ): Promise<{ outcome: ActivateOutcome; householdId?: number; disputed?: boolean }> {
     if (opts.shopifyOrderId) await recordUnreportedReversal(opts.shopifyOrderId);
     const result = await prisma.$transaction(async (tx) => {
@@ -193,6 +193,8 @@ async function settle(
         const missingItem = opts.via === "payment" && opts.hasMembershipItem === false;
         const closesRequest = opts.via === "manual" && opts.requireRequested === true;
         const approvalAudit = closesRequest ? { paymentPlanApproved: true, isPaymentPlanRequested: false } : {};
+        const isGrant = opts.via === "manual" && opts.grantedYear !== undefined;
+        const grantAudit = isGrant ? { grantedYear: opts.grantedYear, reason: opts.reason ?? null } : {};
 
         if (process.status === "BLOCKED") {
             // Checked before stamping paidAt: a board reset of a paid BLOCKED row
@@ -257,10 +259,11 @@ async function settle(
                 action: "EDIT",
                 tableName: "OrgMembershipProcess",
                 affectedEntityId: processId,
+                ...(isGrant ? { secondaryAffectedEntity: membership.householdId } : {}),
                 oldData: { status: process.status },
                 newData: activating
-                    ? { status: "ACTIVE", via: opts.via, ...(certificationNote ? { certificationNote } : {}), ...approvalAudit }
-                    : { status: "PENDING_BG_CLEARANCE", via: opts.via, paid: true, ...(disputed ? { bgCleared: false, reason: "a person in the household has a disputed background check" } : {}), ...(certificationNote ? { certificationNote } : {}), ...approvalAudit },
+                    ? { status: "ACTIVE", via: opts.via, ...(certificationNote ? { certificationNote } : {}), ...approvalAudit, ...grantAudit }
+                    : { status: "PENDING_BG_CLEARANCE", via: opts.via, paid: true, ...(disputed ? { bgCleared: false, reason: "a person in the household has a disputed background check" } : {}), ...(certificationNote ? { certificationNote } : {}), ...approvalAudit, ...grantAudit },
             },
         });
         return activating
@@ -326,7 +329,7 @@ async function auditNoItem(tx: Prisma.TransactionClient, processId: number, stat
 /** Record a payment against a process (see settle). Returns the process row. */
 export async function activate(
     processId: number,
-    opts: { via: "payment" | "manual"; actorId?: number; shopifyOrderId?: string; hasMembershipItem?: boolean; reason?: string; appliesToYear?: number | null; requireRequested?: boolean },
+    opts: { via: "payment" | "manual"; actorId?: number; shopifyOrderId?: string; hasMembershipItem?: boolean; reason?: string; appliesToYear?: number | null; grantedYear?: number; requireRequested?: boolean },
 ) {
     await settle(processId, opts);
     return prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
@@ -354,7 +357,7 @@ export async function certifyPaymentPlan(processId: number, actorId: number, opt
     }
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
     const appliesToYear = opts?.year ?? liveMembershipYear(settings?.orgMembershipYearBoundary, new Date());
-    return activate(processId, { via: "manual", actorId, reason: opts?.reason, appliesToYear, requireRequested: opts?.requireRequested });
+    return activate(processId, { via: "manual", actorId, reason: opts?.reason, appliesToYear, grantedYear: opts?.year, requireRequested: opts?.requireRequested });
 }
 
 /** An order's membership line and the year it buys; the year is null when no boundary is set. */
