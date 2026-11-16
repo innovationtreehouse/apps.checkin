@@ -388,7 +388,7 @@ describe('Cron Nightly API Integration Tests', () => {
             expect(closed?.departedVia).toBe('AUTO_CLOSE');
         });
 
-        it('audits the DoB purge per person, attributed to cron:nightly, without recording the date', async () => {
+        it('keeps the dates of birth when the purge cannot write its audit rows', async () => {
             await closeAllOpenVisits();
             await prisma.auditLog.deleteMany();
             mockBadVisitIds.clear();
@@ -396,28 +396,69 @@ describe('Cron Nightly API Integration Tests', () => {
             const dob = new Date(Date.UTC(1990, 3, 17));
             const agedOut = await prisma.person.create({
                 data: {
-                    email: 'agedout-nightly@example.com',
-                    name: 'Aged Out',
+                    email: 'agedout-kept-nightly@example.com',
+                    name: 'Aged Out Kept',
                     dateOfBirth: dob,
                     household: { create: { name: 'Test HH' } }
                 }
             });
 
+            // Rejects only the purge's rows, on whichever client writes them.
+            const trigger = `reject_dob_purge_audit_${process.pid}_${Date.now()}`;
+            const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+            try {
+                await prisma.$executeRawUnsafe(`
+                    CREATE FUNCTION ${trigger}() RETURNS trigger AS $$
+                    BEGIN RAISE EXCEPTION 'audit write rejected'; END $$ LANGUAGE plpgsql`);
+                await prisma.$executeRawUnsafe(`
+                    CREATE TRIGGER ${trigger} BEFORE INSERT ON "AuditLog"
+                    FOR EACH ROW WHEN (NEW."tableName" = 'Person' AND NEW."action" = 'DELETE')
+                    EXECUTE FUNCTION ${trigger}()`);
+
+                const res = await GET(cronReq());
+                expect(res.status).toBe(500);
+                expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Cron handler error'), expect.anything());
+            } finally {
+                errorSpy.mockRestore();
+                await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS ${trigger} ON "AuditLog"`);
+                await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS ${trigger}()`);
+            }
+
+            const kept = await prisma.person.findUnique({ where: { id: agedOut.id } });
+            expect(kept?.dateOfBirth).toEqual(dob);
+            expect(kept?.isDeclaredAdult).toBe(false);
+            expect(await prisma.auditLog.count({ where: { tableName: 'Person', affectedEntityId: agedOut.id } })).toBe(0);
+        });
+
+        it('audits the DoB purge per person, attributed to cron:nightly, without recording the date', async () => {
+            await closeAllOpenVisits();
+            await prisma.auditLog.deleteMany();
+            mockBadVisitIds.clear();
+
+            const dob = new Date(Date.UTC(1990, 3, 17));
+            const agedOut = await Promise.all(['agedout-nightly@example.com', 'agedout2-nightly@example.com'].map((email) =>
+                prisma.person.create({
+                    data: { email, name: 'Aged Out', dateOfBirth: dob, household: { create: { name: 'Test HH' } } }
+                })
+            ));
+
             const res = await GET(cronReq());
             expect(res.status).toBe(200);
             const data = await res.json();
-            expect(data.adultDobPurged).toBeGreaterThanOrEqual(1);
+            expect(data.adultDobPurged).toBeGreaterThanOrEqual(2);
 
-            const purged = await prisma.person.findUnique({ where: { id: agedOut.id } });
-            expect(purged?.dateOfBirth).toBeNull();
-            expect(purged?.isDeclaredAdult).toBe(true);
+            for (const person of agedOut) {
+                const purged = await prisma.person.findUnique({ where: { id: person.id } });
+                expect(purged?.dateOfBirth).toBeNull();
+                expect(purged?.isDeclaredAdult).toBe(true);
 
-            const row = await prisma.auditLog.findFirst({
-                where: { tableName: 'Person', affectedEntityId: agedOut.id, action: 'DELETE' }
-            });
-            expect(row).not.toBeNull();
-            expect(row?.actorId).toBe(0);
-            expect(row?.actorSystem).toBe('cron:nightly');
+                const rows = await prisma.auditLog.findMany({
+                    where: { tableName: 'Person', affectedEntityId: person.id, action: 'DELETE' }
+                });
+                expect(rows).toHaveLength(1);
+                expect(rows[0].actorId).toBe(0);
+                expect(rows[0].actorSystem).toBe('cron:nightly');
+            }
 
             // The purge exists to destroy the date; a row that carries it out
             // has re-stored it. Scan every field the purge wrote, not just the

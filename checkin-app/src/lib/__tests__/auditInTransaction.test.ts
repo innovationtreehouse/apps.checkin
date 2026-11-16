@@ -43,10 +43,9 @@ const ALLOWLIST: Record<string, { count: number; reason: string }> = {
     // Shop
     "app/api/shop/tools/route.ts": { count: 1, reason: TO_FIX },
     "app/api/shop/tools/[id]/route.ts": { count: 1, reason: TO_FIX },
-    // Nightly: the date-of-birth purge is to fix; the close summary is a board notice.
     "app/api/cron/nightly/route.ts": {
-        count: 2,
-        reason: "to fix: date-of-birth purge; by design: close summary is a board notice, each closed visit has its own row",
+        count: 1,
+        reason: "by design: close summary is a board notice, each closed visit has its own row",
     },
 
     "lib/receipt/mailAliases.ts": { count: 1, reason: REFUSAL },
