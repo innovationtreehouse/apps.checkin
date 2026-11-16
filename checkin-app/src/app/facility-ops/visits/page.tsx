@@ -297,6 +297,7 @@ export default function AdminVisitsPage() {
                       <TextInput
                         type="datetime-local"
                         size="xs"
+                        aria-label="Arrived"
                         value={editForm.arrivedAt}
                         onChange={(e) => { setEditForm({ ...editForm, arrivedAt: e.currentTarget.value }); setEditDepartedError(undefined); }}
                       />
