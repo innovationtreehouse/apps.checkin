@@ -254,6 +254,10 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     // grants: the uploader and recorder ids feed the accept screen's conflict
     // warnings, and no uploader-facing view reads the queue.
     'InKindQueueItemView',
+    // The Board's volunteer roster row (GET /api/membership-ops/volunteer-memberships).
+    // `householdId` makes it scopable, but its only view is sysadmin-or-board with
+    // everyones grants, and no household reads its own roster row.
+    'VolunteerRosterRow',
     // In-kind receipt gifts gain an uploader id (the accept step), which makes the
     // model scopable, but every route that returns it is finance-or-board with
     // everyones grants: the uploader id feeds the accept step's conflict check, and
