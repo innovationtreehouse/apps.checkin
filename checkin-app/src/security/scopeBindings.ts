@@ -149,6 +149,8 @@ export const SCOPE_BINDINGS = {
     Receipt: { their_own: { field: 'uploadedByUserId', eqCtx: 'selfId' } },
     ReceiptView: { their_own: { field: 'uploadedByUserId', eqCtx: 'selfId' } },
     ReceiptLineView: { their_own: { field: 'uploadedByUserId', eqCtx: 'selfId' } },
+    // The notice of a submitter's other copy belongs to that copy's uploader.
+    ReceiptDuplicateNotice: { their_own: { field: 'uploadedByUserId', eqCtx: 'selfId' } },
     // The confirmation that signs a reimbursement belongs to the person reimbursed.
     ReceiptConfirmationView: { their_own: { field: 'reimburseePersonId', eqCtx: 'selfId' } },
     ReceiptConfirmationLineView: { their_own: { field: 'reimburseePersonId', eqCtx: 'selfId' } },
