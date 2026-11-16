@@ -414,7 +414,8 @@ Things the app takes as true because they are handled outside it.
   year from the later of the previous approval's end and the renewal's
   submission, so renewing early loses nothing. An approved change keeps the end
   of the approval it changes, while that approval still runs. Resetting and
-  re-approving never moves the date. The family is warned a month out and
+  re-approving never moves the date. An approval that would already have lapsed
+  is refused: the board denies it and the family renews. The family is warned a month out and
   resubmits without re-entering what the board already holds.  [Decision]
 
 - An approval past its review date no longer authorises, whether or not the expiry

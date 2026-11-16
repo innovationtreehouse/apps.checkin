@@ -182,7 +182,7 @@ describe('Trusted Adults service', () => {
         const resetAudit = await latestAudit(ta.id);
         expect(resetAudit?.actorId).toBe(boardId);
         expect(normalizeAuditData(resetAudit?.oldData)).toMatchObject({ status: 'DENIED', decision: 'DENY', decidedById: boardId, decisionNote: 'Not known to us.' });
-        expect(normalizeAuditData(resetAudit?.newData)).toMatchObject({ status: 'PENDING_BOARD_REVIEW', action: 'board reset', reason: 'Denied the wrong adult.' });
+        expect(normalizeAuditData(resetAudit?.newData)).toMatchObject({ status: 'PENDING_BOARD_REVIEW', override: 'reset', reason: 'Denied the wrong adult.' });
     });
 
     it('renewal opens a fresh review reusing the same trusted adult, and refuses while one is open', async () => {

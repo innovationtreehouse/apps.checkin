@@ -4,13 +4,15 @@
 /**
  * When a trusted-adult approval ends. A first approval runs a year from the family's submission;
  * a renewal a year from the later of the previous end and its own submission; an approved change
- * keeps the end of the approval it changes while that approval runs.
+ * keeps the end of the approval it changes while that approval runs. An approval that would
+ * already have lapsed is refused.
  */
 
 import {
     createTrustedAdult,
     decideReview,
     renewTrustedAdult,
+    resetReview,
     resubmitWithChanges,
     withdrawTrustedAdult,
 } from '@/lib/trusted-adult/service';
@@ -77,14 +79,28 @@ describe('trusted-adult approval dates', () => {
         return prisma.trustedAdultReview.findUniqueOrThrow({ where: { id: reviewId } });
     };
 
-    async function discloseApprovedDaysAgo(days: number) {
-        const ta = await createTrustedAdult({
+    const disclose = () =>
+        createTrustedAdult({
             householdId,
             trustedAdultName: 'Jane External',
             trustedAdultEmail: 'jane@example.com',
             familyContext: 'Our nanny; may collect the kids.',
             disclosedById: leadId,
         });
+
+    const expectLapsedRefusal = async (reviewId: number) => {
+        await expect(decideReview(reviewId, boardId, { decision: 'APPROVE', sharedNote: SHARED })).rejects.toMatchObject({
+            code: 'wrong_phase',
+            message: expect.stringContaining('already have lapsed'),
+        });
+        expect(await prisma.trustedAdultReview.findUniqueOrThrow({ where: { id: reviewId } })).toMatchObject({
+            status: 'PENDING_BOARD_REVIEW',
+            reviewBy: null,
+        });
+    };
+
+    async function discloseApprovedDaysAgo(days: number) {
+        const ta = await disclose();
         const submitted = await submittedDaysAgo(ta.reviews[0].id, days);
         const approved = await approve(ta.reviews[0].id);
         return { taId: ta.id, submitted, approved };
@@ -106,8 +122,8 @@ describe('trusted-adult approval dates', () => {
     });
 
     it('a renewal after the previous approval lapsed runs a year from its own submission', async () => {
-        const { taId, approved: first } = await discloseApprovedDaysAgo(400);
-        await prisma.trustedAdultReview.update({ where: { id: first.id }, data: { status: 'EXPIRED' } });
+        const { taId, approved: first } = await discloseApprovedDaysAgo(100);
+        await prisma.trustedAdultReview.update({ where: { id: first.id }, data: { status: 'EXPIRED', reviewBy: new Date(Date.now() - 10 * DAY_MS) } });
         const renewal = await submittedDaysAgo((await renewTrustedAdult(taId, leadId)).id, 2);
 
         const renewed = await approve(renewal.id);
@@ -129,8 +145,8 @@ describe('trusted-adult approval dates', () => {
     });
 
     it('a change submitted after the approval lapsed runs a year from its own submission', async () => {
-        const { taId, approved: first } = await discloseApprovedDaysAgo(400);
-        await prisma.trustedAdultReview.update({ where: { id: first.id }, data: { status: 'EXPIRED' } });
+        const { taId, approved: first } = await discloseApprovedDaysAgo(100);
+        await prisma.trustedAdultReview.update({ where: { id: first.id }, data: { status: 'EXPIRED', reviewBy: new Date(Date.now() - 10 * DAY_MS) } });
         const change = await submittedDaysAgo((await resubmitWithChanges(taId, leadId, {
             trustedAdultName: 'Jane External',
             trustedAdultEmail: 'jane.new@example.com',
@@ -140,6 +156,35 @@ describe('trusted-adult approval dates', () => {
         const changed = await approve(change.id);
 
         expect(changed.reviewBy).toEqual(plusYear(change.createdAt));
+    });
+
+    it('refuses to approve a first review submitted more than a year ago', async () => {
+        const ta = await disclose();
+        await submittedDaysAgo(ta.reviews[0].id, 400);
+
+        await expectLapsedRefusal(ta.reviews[0].id);
+    });
+
+    it('refuses to re-approve, after a reset, a denial submitted more than a year ago', async () => {
+        const ta = await disclose();
+        await submittedDaysAgo(ta.reviews[0].id, 400);
+        await decideReview(ta.reviews[0].id, boardId, { decision: 'DENY' });
+        await resetReview(ta.reviews[0].id, boardId, 'Denied by mistake.');
+
+        await expectLapsedRefusal(ta.reviews[0].id);
+    });
+
+    it('refuses a change submitted while the approval ran but decided after it lapsed', async () => {
+        const { taId, approved: first } = await discloseApprovedDaysAgo(100);
+        const change = await resubmitWithChanges(taId, leadId, {
+            trustedAdultName: 'Jane External',
+            trustedAdultEmail: 'jane.new@example.com',
+            familyContext: 'Our nanny; may collect the kids.',
+        });
+        await submittedDaysAgo(change.id, 10);
+        await prisma.trustedAdultReview.update({ where: { id: first.id }, data: { reviewBy: new Date(Date.now() - 5 * DAY_MS) } });
+
+        await expectLapsedRefusal(change.id);
     });
 
     it('a revoked approval gives a later renewal nothing to build on', async () => {

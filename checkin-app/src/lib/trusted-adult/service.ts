@@ -457,12 +457,17 @@ export async function decideReview(reviewId: number, boardMemberId: number, inpu
         };
         let status: string;
         switch (input.decision) {
-            case "APPROVE":
+            case "APPROVE": {
+                const end = await approvalEnd(tx, review);
+                if (end <= now) {
+                    throw new TrustedAdultError("wrong_phase", "This approval would already have lapsed — deny it and the family renews.");
+                }
                 status = "APPROVED";
                 data.effectiveFrom = now;
-                data.reviewBy = await approvalEnd(tx, review);
+                data.reviewBy = end;
                 data.sharedNote = input.sharedNote!.trim();
                 break;
+            }
             case "DENY":
                 status = "DENIED";
                 break;
@@ -656,7 +661,7 @@ export async function resetReview(reviewId: number, actorId: number, reason: str
                 reviewBy: review.reviewBy,
                 expiryWarningSentAt: review.expiryWarningSentAt,
             },
-            { reviewId, status: "PENDING_BOARD_REVIEW", action: "board reset", reason: reason.trim() },
+            { reviewId, status: "PENDING_BOARD_REVIEW", override: "reset", reason: reason.trim() },
         );
         return updated;
     });

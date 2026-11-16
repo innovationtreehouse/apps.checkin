@@ -203,7 +203,7 @@ describe('Trusted Adults API', () => {
         expect(await ok.json()).toEqual({ status: 'PENDING_BOARD_REVIEW' });
         const overrideLog = await expectAuditRow(prisma, { action: 'EDIT', tableName: 'TrustedAdult', affectedEntityId: ta.id });
         expect(overrideLog.actorId).toBe(boardId);
-        expect(auditJson(overrideLog.newData)).toMatchObject({ action: 'board reset', reason: 'Second look.' });
+        expect(auditJson(overrideLog.newData)).toMatchObject({ override: 'reset', reason: 'Second look.' });
     });
 
     // The override route's gate accepts a sysadmin in place of a board member, but the
