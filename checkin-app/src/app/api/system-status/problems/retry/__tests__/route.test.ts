@@ -65,7 +65,7 @@ describe('POST /api/system-status/problems/retry', () => {
         expect(res.status).toBe(200);
         expect(await res.json()).toEqual({ results: [{ step: 'flow', id: 'r1', ok: true }] });
         expect(retry).toHaveBeenCalledTimes(1);
-        expect(retry).toHaveBeenCalledWith(ITEM, { userId: 5 });
+        expect(retry).toHaveBeenCalledWith(ITEM, { userId: 5, username: null });
     });
 
     it.each([
@@ -114,7 +114,7 @@ describe('POST /api/system-status/problems/retry', () => {
         const res = await press({ library: 'expense', step: 'intake', id: 'r2' });
 
         expect(res.status).toBe(200);
-        expect(retry).toHaveBeenCalledWith({ library: 'expense', step: 'intake', id: 'r2' }, { userId: 5 });
+        expect(retry).toHaveBeenCalledWith({ library: 'expense', step: 'intake', id: 'r2' }, { userId: 5, username: null });
     });
 
     it.each([404, 409, 503])('answers %i with ok false and no error text when the library refuses', async (status) => {

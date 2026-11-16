@@ -47,7 +47,7 @@ afterAll(() => {
 });
 
 describe("retryProblem", () => {
-    const BY = { userId: 5 };
+    const BY = { userId: 5, username: "Pat" };
 
     it("hands the expense library the person who pressed Retry", async () => {
         await retryProblem({ library: "expense", step: "QuickBooks posting", id: "e1" }, BY);

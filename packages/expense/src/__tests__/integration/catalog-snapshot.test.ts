@@ -188,6 +188,82 @@ describeDb("a Retry or Resubmit before QuickBooks reads the live catalog", () =>
     expect(await reresolved(id)).toHaveLength(0);
   });
 
+  it("a Resubmit audits only the line that moved, not a resolved line beside a held one", async () => {
+    const { id, li } = await seedLine(["Hardware"]);
+    const other = await seedLineItem(id, { partNumber: "PN-2" });
+    await seedApproval(id, other, { ownerId: 100, status: "approved" });
+    const OTHER_GTIN = "0000000000024";
+    // `li` sits under Tools (unmapped, so held) until fixed; `other` stays in Hardware throughout.
+    const files = (liUnder: "Hardware" | "Tools") => {
+      catalogFiles(li, liUnder);
+      inv.lookupItems.mockResolvedValue([{ index: li, gtin13: GTIN, conversionVersion: 1 }, { index: other, gtin13: OTHER_GTIN, conversionVersion: 1 }]);
+      inv.getItem.mockImplementation(async (gtin13: string) =>
+        gtin13 === GTIN && liUnder === "Tools" ? { gtin13, categoryId: 2, subcategoryId: 20 } : { gtin13, categoryId: 1, subcategoryId: 10 });
+    };
+    files("Tools");
+    await signLine(FINANCE, li, "TREASURER");
+    await signLine(FINANCE, other, "TREASURER");
+    await db.expense.update({ where: { id }, data: { state: "qb_pending" } });
+    await checkAndProcessExpense(ORG, id);
+    expect((await db.expense.findUniqueOrThrow({ where: { id } })).state).toBe("qb_on_hold");
+
+    await resubmitHeldExpense(FINANCE, id);
+    expect(await reresolved(id)).toHaveLength(0);
+
+    files("Hardware");
+    await resubmitHeldExpense(FINANCE, id);
+    expect((await reresolved(id)).map((r) => r.lineItemId)).toEqual([li]);
+  });
+
+  it("a part the catalog no longer has clears the snapshot and is audited once", async () => {
+    const { id, li } = await seedLine(["Hardware"]);
+    catalogFiles(li, "Tools");
+    await signLine(FINANCE, li, "TREASURER");
+    await db.expense.update({ where: { id }, data: { state: "qb_pending" } });
+    await checkAndProcessExpense(ORG, id);
+
+    inv.getItem.mockResolvedValue(null);
+    await resubmitHeldExpense(FINANCE, id);
+    await resubmitHeldExpense(FINANCE, id);
+
+    expect(await snapshot(li)).toEqual({ signedGtin13: null, signedCategory: null, signedSubcategory: null });
+    expect(await reresolved(id)).toMatchObject([{ valueBefore: "Tools/Drills → no account", valueAfter: "no category → no account" }]);
+  });
+
+  it("a line with no earlier catalog read is not audited as changed", async () => {
+    const { id, li } = await seedLine();
+    inv.lookupItems.mockRejectedValue(new Error("catalog down"));
+    await signLine(FINANCE, li, "TREASURER");
+    await db.expense.update({ where: { id }, data: { state: "qb_pending" } });
+    await checkAndProcessExpense(ORG, id);
+    expect((await db.expense.findUniqueOrThrow({ where: { id } })).state).toBe("qb_error");
+
+    catalogFiles(li, "Hardware");
+    await retryStuckItem({ id, step: "QuickBooks processing" }, { userId: 5 });
+
+    expect((await db.expenseLineItem.findUniqueOrThrow({ where: { id: li } })).resolvedQbAccount).toBe("4000");
+    expect(await reresolved(id)).toHaveLength(0);
+  });
+
+  it("a held Resubmit leaves alone an expense a drain outboxed while the catalog was read", async () => {
+    const { id, li } = await seedLine(["Hardware"]);
+    catalogFiles(li, "Hardware");
+    await signLine(FINANCE, li, "TREASURER");
+    await db.expense.update({ where: { id }, data: { state: "qb_on_hold" } });
+
+    catalogFiles(li, "Tools");
+    inv.lookupItems.mockImplementationOnce(async () => {
+      await db.expense.update({ where: { id }, data: { state: "qb_complete" } });
+      await db.expenseEvent.create({ data: { orgId: ORG, expenseId: id } });
+      return [{ index: li, gtin13: GTIN, conversionVersion: 1 }];
+    });
+    await resubmitHeldExpense(FINANCE, id);
+
+    expect((await snapshot(li)).signedCategory).toBe("Hardware");
+    expect(await reresolved(id)).toHaveLength(0);
+    expect(await db.expenseHold.count({ where: { expenseId: id } })).toBe(0);
+  });
+
   it("a posted expense is never re-resolved", async () => {
     const { id, li } = await seedLine();
     catalogFiles(li, "Hardware");
