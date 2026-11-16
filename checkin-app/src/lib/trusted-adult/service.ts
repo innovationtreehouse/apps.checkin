@@ -535,11 +535,12 @@ export async function decideReview(reviewId: number, boardMemberId: number, inpu
         // Approving a MODIFIED review is the moment its proposed edits become fact.
         if (input.decision === "APPROVE") await promoteProposal(tx, review);
         await audit(tx, personActor(boardMemberId), review.trustedAdultId, { status: review.status }, { status, decision: input.decision });
-        // "Deny & Revoke": reject the adult outright. Revoke every APPROVED row, lapsed
-        // ones included, so the sweep cannot later tell the family it merely expired.
+        // "Deny & Revoke": reject the adult outright. Revoke every approval, lapsed and retired
+        // ones included, so the sweep cannot later tell the family it merely expired and a
+        // later renewal cannot date itself from one.
         if (input.decision === "DENY" && input.revokePriorApprovals) {
             const live = await tx.trustedAdultReview.findMany({
-                where: { trustedAdultId: review.trustedAdultId, status: "APPROVED" },
+                where: { trustedAdultId: review.trustedAdultId, status: { in: ["APPROVED", "SUPERSEDED"] } },
                 orderBy: { id: "desc" },
             });
             if (live.length) {
@@ -618,19 +619,20 @@ export async function revokeReview(reviewId: number, actorId: number) {
         const review = await tx.trustedAdultReview.findUnique({ where: { id: reviewId } });
         if (!review) throw new TrustedAdultError("not_found", "Review not found.");
 
+        // Retired approvals go too, so a later renewal cannot date itself from one.
         const others = await tx.trustedAdultReview.findMany({
-            where: { trustedAdultId: review.trustedAdultId, status: "APPROVED", id: { not: reviewId } },
-            select: { id: true },
+            where: { trustedAdultId: review.trustedAdultId, status: { in: ["APPROVED", "SUPERSEDED"] }, id: { not: reviewId } },
+            select: { id: true, status: true },
             orderBy: { id: "asc" },
         });
-        const settled = review.status === "REVOKED" || review.status === "SUPERSEDED";
+        const settled = review.status === "REVOKED";
         if (settled && others.length === 0) {
             throw new TrustedAdultError("wrong_phase", "This review has already been settled — reload the page.");
         }
         if (others.length) {
             await tx.trustedAdultReview.updateMany({ where: { id: { in: others.map((r) => r.id) } }, data: { status: "REVOKED" } });
             for (const r of others) {
-                await audit(tx, actor, review.trustedAdultId, { status: "APPROVED", reviewId: r.id }, { status: "REVOKED", reviewId: r.id, override: "revoke", overrideOf: reviewId });
+                await audit(tx, actor, review.trustedAdultId, { status: r.status, reviewId: r.id }, { status: "REVOKED", reviewId: r.id, override: "revoke", overrideOf: reviewId });
             }
         }
         if (settled) return review;

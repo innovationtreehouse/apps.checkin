@@ -222,6 +222,7 @@ describe('trusted-adult pickup list safety', () => {
 
             await revokeReview(firstReviewId, boardId);
 
+            expect(await statuses(taId)).toEqual(['REVOKED', 'REVOKED']);
             expect(await onPickupList(taId)).toBe(false);
         });
 
