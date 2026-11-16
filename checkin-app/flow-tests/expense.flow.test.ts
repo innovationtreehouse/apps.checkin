@@ -297,3 +297,52 @@ describe("expense — FINANCE journey", () => {
     expect((await api(f, `/expense/expenses/${PROGRAM_EXPENSE}`)).status).toBe(200);
   });
 });
+
+describe("expense — held expense into the outbox", () => {
+  type Held = { Expense: { state: string; qbMatchState: string; holds: { lineItemId: number; reason: string; status: string }[] } };
+  type QueueRow = { expenseId: string | null; reasons: { code: string }[] };
+
+  it("sets the held line's account, approves the tax, signs, and resubmits it to qb_complete with nothing left in the finance queue", async () => {
+    const f = await loginAs(FINANCE);
+    const board = await loginAs(BOARD);
+    const HE = `/api/expense/expenses/${HELD_EXPENSE}`;
+    const H = `/api/expense/expense-holds/${HELD_EXPENSE}`;
+    const read = async () => (await api<Held>(f, HE)).json.Expense;
+    const reasonsOf = async () => {
+      const codes: string[] = [];
+      for (const tab of ["expenses", "holds"]) {
+        const row = (await api<QueueRow[]>(f, `/api/expense/finance-queue?tab=${tab}`)).json.find((r) => r.expenseId === HELD_EXPENSE);
+        codes.push(...(row?.reasons ?? []).map((x) => x.code));
+      }
+      return codes;
+    };
+
+    const before = await read();
+    expect(before.state).toBe("qb_on_hold");
+    const [hold] = before.holds;
+    expect(hold).toMatchObject({ reason: "NO_MATCH", status: "PENDING" });
+    expect(await reasonsOf()).toEqual(expect.arrayContaining(["ACCOUNT_HOLD", "TAX_NOT_REVIEWED"]));
+
+    expect((await send(f, "PUT", `${H}/line-items/${hold.lineItemId}/account`, { qbAccount: "8006" })).status).toBe(200);
+    expect((await send(f, "POST", `${HE}/tax-approval`, { note: "Tax checked against the receipt" })).status).toBe(200);
+    expect((await send(f, "POST", `${HE}/tax-approval`, {})).status).toBe(409);
+    expect(await reasonsOf()).not.toContain("TAX_NOT_REVIEWED");
+
+    // An unsigned line keeps the expense out of the outbox: a resubmit leaves it held.
+    expect((await send(f, "POST", `${H}/resubmit`, {})).status).toBe(200);
+    expect((await read()).state).toBe("qb_on_hold");
+
+    const [line] = (await api<SignoffStatus[]>(f, `${HE}/signoffs`)).json;
+    for (const seat of line.missing) {
+      expect([seat, (await send(seat === "BOARD" ? board : f, "POST", `${HE}/line-items/${line.lineItemId}/signoffs`, { seat })).status]).toEqual([seat, 200]);
+    }
+    expect((await api<SignoffStatus[]>(f, `${HE}/signoffs`)).json[0].missing).toEqual([]);
+
+    // QuickBooks is not connected here, so the outbox commit is as far as it goes.
+    expect((await send(f, "POST", `${H}/resubmit`, {})).status).toBe(200);
+    const after = await read();
+    expect(after).toMatchObject({ state: "qb_complete", qbMatchState: "UNMATCHED" });
+    expect(after.holds).toEqual([expect.objectContaining({ lineItemId: hold.lineItemId, status: "RESOLVED" })]);
+    expect(await reasonsOf()).toEqual([]);
+  });
+});
