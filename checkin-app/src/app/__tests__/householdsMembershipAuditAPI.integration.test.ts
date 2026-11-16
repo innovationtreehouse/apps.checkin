@@ -407,7 +407,7 @@ describe('POST /api/membership-ops/households — grant/revoke audit logging', (
         expect(activateAudit).toBeTruthy();
         expect((activateAudit!.newData as { via: string }).via).toBe('manual');
         expect((activateAudit!.newData as { certificationNote?: string }).certificationNote).toBe('Family paid the membership fee in person at the board meeting.');
-        expect((activateAudit!.newData as { grantedYear?: number }).grantedYear).toBe(YEAR);
+        expect(activateAudit).toMatchObject({ secondaryAffectedEntity: grantableHouseholdId, newData: expect.objectContaining({ grantedYear: YEAR, reason: 'Family paid the membership fee in person at the board meeting.' }) });
     });
 
     it.each([[YEAR - 1], [YEAR + 2], [String(YEAR)], [null]])('refuses year %s, which no button offers (400, nothing paid)', async (year) => {

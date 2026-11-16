@@ -193,7 +193,8 @@ async function settle(
         const missingItem = opts.via === "payment" && opts.hasMembershipItem === false;
         const closesRequest = opts.via === "manual" && opts.requireRequested === true;
         const approvalAudit = closesRequest ? { paymentPlanApproved: true, isPaymentPlanRequested: false } : {};
-        const grantAudit = opts.via === "manual" && opts.grantedYear !== undefined ? { grantedYear: opts.grantedYear } : {};
+        const isGrant = opts.via === "manual" && opts.grantedYear !== undefined;
+        const grantAudit = isGrant ? { grantedYear: opts.grantedYear, reason: opts.reason ?? null } : {};
 
         if (process.status === "BLOCKED") {
             // Checked before stamping paidAt: a board reset of a paid BLOCKED row
@@ -258,6 +259,7 @@ async function settle(
                 action: "EDIT",
                 tableName: "OrgMembershipProcess",
                 affectedEntityId: processId,
+                ...(isGrant ? { secondaryAffectedEntity: membership.householdId } : {}),
                 oldData: { status: process.status },
                 newData: activating
                     ? { status: "ACTIVE", via: opts.via, ...(certificationNote ? { certificationNote } : {}), ...approvalAudit, ...grantAudit }
