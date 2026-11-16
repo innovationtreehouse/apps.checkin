@@ -196,7 +196,7 @@ Procedure below is built on them.
 ### Application and review
 
 - An application in background-check review is the reviewers' work, not the
-  board's. Board queues count blocked applications only.  [Decision]
+  board's. The board is asked to act only on a blocked one.  [Decision]
 
 - A check review is about one person, named when the check is marked started;
   the reviewer confirms the report is that person's and asks the Board for a
@@ -238,8 +238,8 @@ Procedure below is built on them.
 
 - Every check-review rejection sends the Board one email. A rejection that blocks
   a paid application sends the paid-application email; any other names the
-  person, their household and the review. A retry, a later settle or the daily
-  sweep does not send it again; a rejection after a Board reset is a new decision
+  person, their household and the review. It is sent once per rejection; a
+  rejection after a Board reset is a new decision
   and does.  [Decision — *Principle: people decide about people*]
 
 - Once a lead is cleared, a review the household asked for that still names
@@ -253,8 +253,8 @@ Procedure below is built on them.
   active household only renews; a revoked one continues the renewal it already
   has open, or else starts a new joining application.  [Decision]
 
-- A household with a blocked application cannot start another one. The board's
-  "Reset for re-review" sends it back for two new approvals. Denying the
+- A household with a blocked application cannot start another one. A board reset
+  sends it back for two new approvals. Denying the
   household is a household action and leaves the application blocked; neither a
   reset nor the rejector's change to approve, below, reopens it then.  [Decision — *Principle: people decide about people*]
 
@@ -299,6 +299,10 @@ Procedure below is built on them.
   finds the same review recorded under two identities, only a board member may
   remove the duplicate.  [Decision]
 
+- Removing a duplicate attestation reopens nothing. A check it helped clear stays
+  cleared, with its date, and so does any application that clearance completed.
+  A board member re-reviews such a check by hand.  [Decision — deliberate limit; owner ruling]
+
 - The Participants directory is for sysadmins, the board and operations. A
   background-check reviewer works from the review queue.  [Decision — owner; *Principle: least privilege*]
 
@@ -308,20 +312,20 @@ Procedure below is built on them.
   requires documentation only for a disqualifying offence. An approval needs
   none.  [Decision — *Policy: Membership Policy, Art. IX*]
 
-- The board may close an unpaid application ("Close application"), at any open
+- The board may close an unpaid application, at any open
   step but blocked, older steps included; there is no minimum wait. It is never
   destroyed, and "Reopen" returns it to the step it was closed from. A paid,
   blocked or active application cannot be closed: a paid one only once its
   refund is recorded. The one exception is a restore, below, which also closes a
   blocked application. Reopening refuses a denied household, or one with another
-  open application. The word "archive" is reserved for archiving a household.  [Decision —
+  open application.  [Decision —
   *Principle: decisions are reversible*]
 
 - Archiving a household closes its open initial and renewal applications, blocked
   ones included, in the same step, as a restore does. Per-person applications stay
   open. Unarchiving the household reopens none of them.  [Decision — owner]
 
-- A refund made in the online store is recorded by the board ("Record refund"),
+- A refund made in the online store is recorded by the board,
   with a reason, by someone outside the household, on a paid application at any
   step that never became a membership. It stays offered until it is recorded,
   including after a denial. The application keeps its step, unpaid, and the
@@ -386,15 +390,15 @@ Procedure below is built on them.
 
 - Anything that reaches a denied household after the denial — a family's
   payment, an approval that would clear its check, a start or renewal, a board
-  grant or a household move — changes nothing and goes to the board's
-  payment-problems queue with an email. Any other board action on a denied
+  grant or a household move — changes nothing and is raised to the board,
+  with an email. Any other board action on a denied
   household is refused and tells the person acting why.  [Decision — *Principle: people decide about people*]
 
 - Denying a household revokes trusted-adult access in the same act, both ways;
   `people-households.md` (Trusted adults) states it. Nothing else the household
   holds is removed by the denial. Each program enrollment, pending or active, and
   each program role, volunteer or lead, held by one of its members in a program
-  not yet finished goes to the board's payment-problems queue for removal by hand,
+  not yet finished is raised to the board for removal by hand,
   so the board can speak to the program's leaders first. The board gets one email
   per denial that leaves it something to remove.  [Decision — *Principle: people decide about people*]
 
@@ -435,16 +439,15 @@ Procedure below is built on them.
 - The membership fee has two rates, standard and Volunteer Family. The designation changes
   what a household pays and nothing about its review.  [Decision]
 
-- A reviewer's Volunteer Family tick is written onto the household that requested
-  the review, at once, as its own audited change; the review never stores it. A
-  reviewer can set it and cannot remove it; removing it is a Board edit.  [Decision — deliberate limit]
+- A reviewer's Volunteer Family tick marks the household that requested the
+  review at once, and the change is audited. A reviewer can set it and cannot remove it; removing it is a Board edit.  [Decision — deliberate limit]
 
 - The tick is offered, and written, only on a review of one of that household's
   leads. A review of any other adult in it, an adult child's or a non-lead's own,
   carries no tick.  [Decision — owner]
 
-- A volunteer designation matches on canonical email, so address variants cannot
-  change what a family owes.  [Decision]
+- Variants of one email address count as that address for a volunteer
+  designation, so they cannot change what a family owes.  [Decision]
 
 - A volunteer designation applies only to a person who has signed in with that
   address. The Board sees everyone on file with the address when it designates
@@ -502,13 +505,13 @@ Procedure below is built on them.
   household: that opens its renewal at any time of year, unless the household
   has already paid for the year now in effect.  [Decision]
 
-- The board's "open renewals" button opens nothing while the coming year has no
-  membership product to pay through. A board grant still opens one household's
+- Renewals do not open while the coming year has no membership product to pay
+  through. A board grant still opens one household's
   renewal, because the board pays it by grant once it reaches payment.
   [Decision — *Principle: an unconfigured setting does not act*]
 
-- Renewals start only from the board's own actions: its "open renewals" button
-  opens them for every household due, and a board grant opens one
+- Renewals start only from the board's own actions: the board opens them for every
+  household due, and a board grant opens one
   for that single household. No scheduled run opens them.  [Decision — *Board
   ruling B6*]
 
@@ -526,8 +529,8 @@ Procedure below is built on them.
   nothing it can see. Lapsing changes what the membership covers and nothing
   else: status does not move, and only a person revokes.  [Decision — *Policy: Membership Policy, Art. III §III.1; Art. XI*; *Principle: people decide about people*]
 
-- A membership payment or grant records the one membership year it buys, and
-  coverage, the renewal sweep and member pricing read that recorded year. A
+- A membership payment or grant buys one membership year, and coverage, renewal
+  and member pricing follow that year. A
   checkout offered from the day the renewal window opens sells the coming year, to
   a family joining exactly as to one renewing; a background check clearing later
   never changes the year bought.  [Decision]
@@ -648,14 +651,11 @@ Procedure below is built on them.
   is left out: at that age, not being a lead reads as a spouse the household has not
   marked, not as an adult child.  [Decision — deliberate limit]
 
-- The one-year window is what stops the request repeating. An attachment is never
-  cleared when a program ends, so without it someone who took a single class at 18
-  would be asked again every year until they aged out. Every program carries an
-  end date, so the window bounds them all.  [Decision — deliberate limit]
+- The one-year window is what stops the request repeating. Without it, someone
+  who took a single class at 18 would be asked again every year until they aged
+  out.  [Decision — deliberate limit]
 
-- Never opened for a household lead, who signs the household's agreement. An open
-  individual agreement on a lead would take the place of the household one in the
-  signing flow and stall the household's activation or renewal.  [Decision]
+- Never opened for a household lead, who signs the household's agreement.  [Decision]
 
 - The board may open one by hand for someone the automatic rule leaves out — not
   attached to a program, or over 25 — but never for a lead, and never for someone

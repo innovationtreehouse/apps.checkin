@@ -169,8 +169,8 @@ up to 30 days without losing mail.
 **Files in a message**, in reading order: each attachment of an accepted type, each
 inline part of an accepted non-text type at 5 KB or more, then the body stored as
 text. A body with no amount written to two decimals is skipped. A message attached
-whole is never opened, only counted. Finance's ignore list skips a file by exact
-hash, and upload never consults that list.
+whole is never opened, only counted. Finance's ignore list, which finance adds to from
+a discarded or rejected receipt, skips a file by exact hash, and upload never consults that list.
 
 **Sender.** The address counts only when the message has one `From` with one
 address, and the topmost `Authentication-Results`, written by `mx.google.com`,
