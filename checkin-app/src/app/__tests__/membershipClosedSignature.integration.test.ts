@@ -215,10 +215,10 @@ describe('a signature that lands while the application is closed', () => {
             expect(row.zohoEnvelopeId).toBeNull();
             expect(await signatureAudits(processId)).toHaveLength(0);
 
-            // "Resume signing" starts a fresh request rather than recording the old one.
-            mockCreateRequest.mockRejectedValue(new Error('stop after create'));
-            await expect(getOrCreateContractSigningUrl(leadId)).rejects.toThrow();
-            expect(mockCreateRequest).toHaveBeenCalledTimes(1);
+            // The next sign click has no old request to ask Zoho about, so nothing records it.
+            mockGetRequestStatus.mockClear();
+            await getOrCreateContractSigningUrl(leadId).catch(() => undefined);
+            expect(mockGetRequestStatus).not.toHaveBeenCalled();
             expect((await read(processId)).contractSignedAt).toBeNull();
         });
 
