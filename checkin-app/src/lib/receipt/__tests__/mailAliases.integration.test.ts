@@ -8,7 +8,7 @@ import { SELF_GRANT_REFUSAL_TABLE } from "@/lib/membership/selfGrantGuard";
 import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
 import { createInOwnHousehold } from "@/lib/person/ownHousehold";
 import { configureRuntime } from "../configure";
-import { MAIL_ALIAS_REFUSAL_TABLE, addMailAlias, approveMailAlias, removeMailAlias } from "../mailAliases";
+import { MAIL_ALIAS_REFUSAL_TABLE, addMailAlias, approveMailAlias, rememberMailAlias, removeMailAlias } from "../mailAliases";
 
 jest.mock("@aws-sdk/client-lambda", () => ({ LambdaClient: jest.fn(), InvokeCommand: jest.fn() }));
 jest.mock("@checkin/receipt", () => ({
@@ -133,6 +133,54 @@ describe("mail aliases", () => {
             const audit = await prisma.auditLog.findFirstOrThrow({ where: { tableName: "PersonMailAlias", affectedEntityId: alias.id, action: "EDIT" } });
             expect(audit.newData).toMatchObject({ mailItemId: 5 });
             expect(await resolve("first@example.com")).toMatchObject({ id: pat.id });
+        });
+    });
+
+    describe("remembering while assigning", () => {
+        const remember = (address: string, assign: () => Promise<string> = async () => "r-1", personId = pat.id, actorId = actor.id) =>
+            rememberMailAlias({ actorId, personId, address, mailItemId: 9 }, assign);
+
+        it("adds and approves the alias around the assign, with the add's and the approval's audit rows", async () => {
+            expect(await remember("Pat.Work@Example.com")).toBe("r-1");
+            const alias = await prisma.personMailAlias.findUniqueOrThrow({ where: { address: "pat.work@example.com" } });
+            expect(alias).toMatchObject({ personId: pat.id, addedById: actor.id, approvedById: actor.id, approvedAt: expect.any(Date) });
+            const audits = await prisma.auditLog.findMany({ where: { tableName: "PersonMailAlias", affectedEntityId: alias.id }, orderBy: { id: "asc" } });
+            expect(audits.map((a) => [a.action, a.newData])).toEqual([
+                ["CREATE", { personId: pat.id }],
+                ["EDIT", { approved: true, mailItemId: 9 }],
+            ]);
+            expect(await resolver()("pat.work@example.com")).toMatchObject({ id: pat.id });
+        });
+
+        it("approves the same person's pending alias on that address instead of adding one", async () => {
+            const pending = await add("pending@example.com");
+            await remember("pending@example.com");
+            expect(await prisma.personMailAlias.findUniqueOrThrow({ where: { id: pending.id } })).toMatchObject({ approvedById: actor.id });
+            expect(await prisma.personMailAlias.count({ where: { address: "pending@example.com" } })).toBe(1);
+        });
+
+        it("rolls the alias and its audit rows back when the assign fails", async () => {
+            await expect(remember("rollback@example.com", async () => {
+                throw new Error("claim lost");
+            })).rejects.toThrow("claim lost");
+            expect(await prisma.personMailAlias.count({ where: { address: "rollback@example.com" } })).toBe(0);
+            expect(await prisma.auditLog.count({ where: { tableName: "PersonMailAlias", secondaryAffectedEntity: pat.id } })).toBe(0);
+        });
+
+        it("refuses an address the add would refuse, audits it, and never assigns", async () => {
+            const assign = jest.fn(async () => "r-1");
+            await add("taken@example.com", other.email ?? "");
+            await expect(remember("taken@example.com", assign)).rejects.toMatchObject({ status: 409, message: expect.stringContaining("alias") });
+            await expect(remember(other.email ?? "", assign)).rejects.toMatchObject({ status: 409, message: expect.stringContaining("sign-in") });
+            expect(assign).not.toHaveBeenCalled();
+            expect(await prisma.auditLog.count({ where: { tableName: MAIL_ALIAS_REFUSAL_TABLE, affectedEntityId: pat.id, newData: { path: ["attempted"], equals: "remember" } } })).toBe(2);
+        });
+
+        it("refuses the actor's own household and never assigns", async () => {
+            const assign = jest.fn(async () => "r-1");
+            await expect(remember("mine@example.com", assign, actor.id)).rejects.toMatchObject({ status: 403 });
+            expect(assign).not.toHaveBeenCalled();
+            expect(await prisma.personMailAlias.count({ where: { address: "mine@example.com" } })).toBe(0);
         });
     });
 
