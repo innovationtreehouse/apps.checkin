@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 
 /**
  * An audit row commits with the change it records (docs/in-design/AUDIT_IN_TRANSACTION.md).
@@ -50,7 +50,7 @@ const ALLOWLIST: Record<string, { count: number; reason: string }> = {
     },
 
     "lib/receipt/mailAliases.ts": { count: 1, reason: REFUSAL },
-    "lib/membership/selfGrantGuard.ts": { count: 1, reason: `${REFUSAL}; its callers pass the root client` },
+    "lib/membership/selfGrantGuard.ts": { count: 1, reason: `${REFUSAL}; the refusal paths pass the root client` },
     "lib/finance/reconcile/reversals.ts": { count: 1, reason: "by design: observation, nothing changed" },
     "app/api/finance-ops/s-read/sync/route.ts": { count: 1, reason: "by design: attempt at an outside system, written before the call" },
     "app/api/system-status/problems/retry/route.ts": { count: 1, reason: "by design: attempt at a library retry, written with its outcome" },
@@ -77,7 +77,7 @@ function auditWriteCounts(): Record<string, number> {
     const counts: Record<string, number> = {};
     for (const path of sourceFiles(SRC)) {
         const count = countAuditWrites(readFileSync(path, "utf8"));
-        if (count > 0) counts[relative(SRC, path)] = count;
+        if (count > 0) counts[relative(SRC, path).split(sep).join("/")] = count;
     }
     return counts;
 }

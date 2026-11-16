@@ -1,5 +1,6 @@
 import { SYSTEM_ACTOR, SYSTEM_ACTORS, personActor, personOrSystemActor, recordAudit, systemActor } from "@/lib/auditActor";
-import type { TxClient } from "@/lib/db-client";
+import type { PrismaClient } from "@/generated/prisma/client";
+import { type TxClient, registerRootClient } from "@/lib/db-client";
 
 describe("auditActor", () => {
     it("names the automated path alongside the sentinel id", () => {
@@ -32,11 +33,18 @@ describe("recordAudit", () => {
         const create = jest.fn().mockResolvedValue({ id: 1 });
         const tx = { auditLog: { create } } as unknown as TxClient;
 
-        await recordAudit(tx, personActor(7), { action: "EDIT", tableName: "Tool", affectedEntityId: 3, newData: { name: "Saw" } });
+        const entry = {
+            action: "EDIT",
+            tableName: "Tool",
+            affectedEntityId: 3,
+            secondaryAffectedEntity: null,
+            oldData: { name: "Saw", tags: ["wood"] },
+            newData: { name: "Saw", tags: [] },
+        } as const;
 
-        expect(create).toHaveBeenCalledWith({
-            data: { actorId: 7, actorSystem: null, action: "EDIT", tableName: "Tool", affectedEntityId: 3, newData: { name: "Saw" } },
-        });
+        await recordAudit(tx, personActor(7), entry);
+
+        expect(create).toHaveBeenCalledWith({ data: { actorId: 7, actorSystem: null, ...entry } });
     });
 
     it("opens no transaction of its own", async () => {
@@ -46,5 +54,13 @@ describe("recordAudit", () => {
         await recordAudit(tx, systemActor("cron:nightly"), { action: "DELETE", tableName: "Person", affectedEntityId: 1 });
 
         expect($transaction).not.toHaveBeenCalled();
+    });
+
+    it("refuses the root client, which would commit the row on its own", () => {
+        const create = jest.fn();
+        const root = registerRootClient({ auditLog: { create } } as unknown as PrismaClient);
+
+        expect(() => recordAudit(root, personActor(7), { action: "EDIT", tableName: "Tool", affectedEntityId: 3 })).toThrow(/inside the change's transaction/);
+        expect(create).not.toHaveBeenCalled();
     });
 });

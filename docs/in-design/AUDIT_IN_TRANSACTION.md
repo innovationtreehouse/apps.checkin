@@ -76,16 +76,17 @@ Why this shape, and not something larger:
   a caller's. The actor plumbing already exists: `personActor` refuses a missing
   actor, `systemActor` names an automated path from a closed list. `recordAudit`
   only joins them. It adds no transaction of its own.
-- **The actor is a separate parameter of type `AuditActor`.** A caller has to go
-  through `personActor` or `systemActor` to get one, so a hand-built
-  `actorId: auth.user.id` with no check is no longer possible at a call site that
-  uses the helper. That closes the second half of the problem — hand-built
-  payloads that skip the fail-closed actor check — at every site this work
-  touches.
+- **The actor is a separate parameter of type `AuditActor`.** Every site this
+  work moves gets its actor from `personActor` or `systemActor`, so the
+  fail-closed actor check runs there instead of a hand-built
+  `actorId: auth.user.id`. `AuditActor` is a plain object type, so the compiler
+  would accept a hand-built one; review checks that each new call goes through
+  the two functions.
 - **The first parameter is named and typed `tx`.** The type does not stop a
   caller from passing the root client, because Prisma's root client is assignable
-  to its transaction-client type. The guard below closes that gap; the name makes
-  the intent obvious in review.
+  to its transaction-client type. `recordAudit` closes that gap at run time: it
+  throws when handed the root client, as `lockLiveHouseholds` already does. The
+  name makes the intent obvious in review.
 - **The existing per-file `audit(tx, …)` helpers** in the trusted-adult service,
   membership review and household background-check settlement already write
   inside their transactions. They stay as they are. Rewriting them onto
@@ -155,7 +156,8 @@ share a transaction with their changes is worth its own check, but not here.
 ### The guard
 
 A unit test, `checkin-app/src/lib/__tests__/auditInTransaction.test.ts`, reads
-every `.ts` file under `checkin-app/src` (excluding tests) and fails on any
+every `.ts` and `.tsx` file under `checkin-app/src` (excluding tests and
+generated code) and fails on any
 `prisma.auditLog.create(Many)` or `db.auditLog.create(Many)` not in its
 allowlist.
 Each allowlist entry is a file path, its match count and a one-line reason from
