@@ -7,6 +7,7 @@ import { isValidEmail } from "@/lib/emergencyContacts/identity";
 import { normalizeEmail } from "@/lib/prismaEmailNormalize";
 import { logBackendError } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
+import { personActor, recordAudit } from "@/lib/auditActor";
 
 // Email-only contact creation for Board + Operations; do NOT add 'isSysadmin'
 // (docs/rules/membership.md, "Adding a contact").
@@ -38,17 +39,16 @@ export const POST = withAuth({ roles: ['isBoardMember', 'isOperations'] }, async
             );
         }
 
-        const person = await createParticipantWithHousehold({ name: name.trim(), email });
-
-        await prisma.auditLog.create({
-            data: {
-                actorId: auth.user.id,
+        const person = await prisma.$transaction(async (tx) => {
+            const person = await createParticipantWithHousehold({ name: name.trim(), email }, tx);
+            await recordAudit(tx, personActor(auth.user.id), {
                 action: "CREATE",
                 tableName: "Person",
                 affectedEntityId: person.id,
                 secondaryAffectedEntity: person.householdId,
                 newData: { name: person.name, email: person.email },
-            },
+            });
+            return person;
         });
 
         // Re-fetch with household (+ its members) included so the client's

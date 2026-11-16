@@ -41,18 +41,39 @@ describe("EmailSettingsPage", () => {
     });
   });
 
-  it("already set: fields locked until the confirm checkbox unlocks them", async () => {
+  it("already set: From and Reply-To locked until the confirm checkbox unlocks them; other fields stay editable", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson({ "/api/settings/email": { settings: { emailFromAddress: "Org <no-reply@org.test>", emailReplyToAddress: null } } });
     renderWithProviders(<EmailSettingsPage />);
 
     const from = await screen.findByLabelText(/From address/i);
+    const replyTo = screen.getByLabelText(/Reply-To address/i);
     expect(from).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Save settings" })).toBeDisabled();
+    expect(replyTo).toBeDisabled();
+    expect(screen.getByLabelText(/Alert address/i)).not.toBeDisabled();
+    expect(screen.getByLabelText(/Scholarship ACK subject/i)).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save settings" })).not.toBeDisabled();
 
     fireEvent.click(screen.getByLabelText(/let me edit the sender addresses/i));
     expect(from).not.toBeDisabled();
-    expect(screen.getByRole("button", { name: "Save settings" })).not.toBeDisabled();
+    expect(replyTo).not.toBeDisabled();
+  });
+
+  it("already set: saves an alert address without unlocking, sending the From unchanged", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const fetchMock = mockFetchJson({ "/api/settings/email": { settings: { emailFromAddress: "Org <no-reply@org.test>", emailReplyToAddress: null } } });
+    renderWithProviders(<EmailSettingsPage />);
+
+    await screen.findByLabelText(/From address/i);
+    fireEvent.change(screen.getByLabelText(/Alert address/i), { target: { value: "alerts@org.test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/settings/email", expect.objectContaining({ method: "PUT" })));
+    const [, putOpts] = fetchMock.mock.calls.find(([, opts]) => opts?.method === "PUT")!;
+    expect(JSON.parse(putOpts!.body as string)).toMatchObject({
+      emailFromAddress: "Org <no-reply@org.test>",
+      alertEmailAddress: "alerts@org.test",
+    });
   });
 
   it("accepts a comma-separated Reply-To list: no inline error, PUT fires", async () => {

@@ -20,17 +20,9 @@ const ALLOWLIST: Record<string, { count: number; reason: string }> = {
     "app/api/programs/[id]/volunteers/route.ts": { count: 3, reason: TO_FIX },
     "app/api/programs/[id]/participants/route.ts": { count: 1, reason: TO_FIX },
     "app/api/programs/route.ts": { count: 1, reason: TO_FIX },
-    "lib/programs/update.ts": { count: 1, reason: TO_FIX },
     "lib/programAnnounce.ts": { count: 1, reason: TO_FIX },
     "app/api/events/route.ts": { count: 1, reason: TO_FIX },
     "lib/lifecycleDrift.ts": { count: 1, reason: TO_FIX },
-    // Households and people
-    "app/api/household/lead/route.ts": { count: 2, reason: TO_FIX },
-    "app/api/household/emergency-contacts/route.ts": { count: 1, reason: TO_FIX },
-    "app/api/household/emergency-contacts/[contactId]/route.ts": { count: 2, reason: TO_FIX },
-    "app/api/membership-ops/participants/[id]/household/route.ts": { count: 1, reason: TO_FIX },
-    "app/api/membership-ops/contacts/route.ts": { count: 1, reason: TO_FIX },
-    "app/api/profile/route.ts": { count: 1, reason: TO_FIX },
     // Finance and settings
     "app/api/finance-ops/payments/[id]/route.ts": { count: 1, reason: TO_FIX },
     "app/api/finance-ops/s-read/match-audit/track/route.ts": { count: 1, reason: TO_FIX },
@@ -40,10 +32,9 @@ const ALLOWLIST: Record<string, { count: number; reason: string }> = {
     // Shop
     "app/api/shop/tools/route.ts": { count: 1, reason: TO_FIX },
     "app/api/shop/tools/[id]/route.ts": { count: 1, reason: TO_FIX },
-    // Nightly: the date-of-birth purge is to fix; the close summary is a board notice.
     "app/api/cron/nightly/route.ts": {
-        count: 2,
-        reason: "to fix: date-of-birth purge; by design: close summary is a board notice, each closed visit has its own row",
+        count: 1,
+        reason: "by design: close summary is a board notice, each closed visit has its own row",
     },
 
     "lib/receipt/mailAliases.ts": { count: 1, reason: REFUSAL },
