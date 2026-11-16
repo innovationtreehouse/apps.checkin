@@ -297,8 +297,9 @@ export default function AdminVisitsPage() {
                       <TextInput
                         type="datetime-local"
                         size="xs"
+                        aria-label="Arrived"
                         value={editForm.arrivedAt}
-                        onChange={(e) => setEditForm({ ...editForm, arrivedAt: e.currentTarget.value })}
+                        onChange={(e) => { setEditForm({ ...editForm, arrivedAt: e.currentTarget.value }); setEditDepartedError(undefined); }}
                       />
                     </Table.Td>
                     <Table.Td>
@@ -382,7 +383,7 @@ export default function AdminVisitsPage() {
             label="Arrived"
             value={addForm.arrivedAt}
             error={addErrors.arrivedAt}
-            onChange={(e) => { setAddForm({ ...addForm, arrivedAt: e.currentTarget.value }); setAddErrors({ ...addErrors, arrivedAt: undefined }); }}
+            onChange={(e) => { setAddForm({ ...addForm, arrivedAt: e.currentTarget.value }); setAddErrors({ ...addErrors, arrivedAt: undefined, departedAt: undefined }); }}
           />
           <TextInput
             ref={addDepartedRef}

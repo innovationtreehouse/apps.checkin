@@ -6,7 +6,7 @@ const mockDb = {
 };
 jest.mock("@/lib/prisma", () => ({ __esModule: true, get default() { return mockDb; } }));
 
-import { decideReview, overrideReview } from "@/lib/trusted-adult/service";
+import { decideReview, resetReview } from "@/lib/trusted-adult/service";
 
 const BOARD_MEMBER = 1;
 const REVIEW = 9;
@@ -53,8 +53,8 @@ describe("trusted-adult review: adult in the deciding board member's household",
         expect(mockDb.$transaction).not.toHaveBeenCalled();
     });
 
-    it("overrideReview refuses and audits the refusal, writing no decision", async () => {
-        await expect(overrideReview(REVIEW, BOARD_MEMBER, "approve", "May pick up."))
+    it("resetReview refuses and audits the refusal, writing nothing", async () => {
+        await expect(resetReview(REVIEW, BOARD_MEMBER, "Second look."))
             .rejects.toMatchObject({ code: "forbidden" });
         expect(mockDb.auditLog.create).toHaveBeenCalledWith(refusalAudit);
         expect(mockDb.$transaction).not.toHaveBeenCalled();

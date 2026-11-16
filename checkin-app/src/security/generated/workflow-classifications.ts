@@ -29,6 +29,7 @@ export const classifications = {
         applyFirstFailedAt: 'public',
         inventoryUnconfirmedAt: 'public',
         matchingPendingSince: 'internal',
+        matchingPendingReason: 'internal',
         createdAt: 'public',
         updatedAt: 'public',
     },

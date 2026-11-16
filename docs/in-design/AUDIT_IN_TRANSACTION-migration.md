@@ -7,6 +7,12 @@ Inventory taken with `git grep -nE '(prisma|db)\.auditLog\.create'` over
 `checkin-app/src` on `origin/main` at `4fa679bb7`. Line numbers are the
 `auditLog.create` line. Re-run the grep before each PR: lines drift.
 
+The grep finds 41 sites: 35 on the root client and 6 in helpers that take a
+`DbClient` parameter (`lib/attendance/close.ts` ×3, `lib/membership/review.ts`,
+`lib/membership/selfGrantGuard.ts`, `lib/trusted-adult/service.ts`). The six
+helpers stay as they are; their callers pass a transaction client, except the
+refusal recorder's.
+
 Sites already written with a transaction client (`tx.auditLog.create`, 91 of
 them) are not listed; they are correct. Library packages are out of scope.
 
@@ -79,7 +85,7 @@ library function that only uses the root client.
 
 | Site | Why |
 |---|---|
-| `lib/membership/selfGrantGuard.ts:88` (`recordSelfGrantRefusal`; root-client callers in `finance-ops/payments/[id]`, `membership/intake.ts`, `membership/review.ts`, `receipt/mailAliases.ts` ×2, `trusted-adult/service.ts`, and every `refuseSelfGrant(prisma, …)`) | refusal; must survive it. Matched by `db.`, so not in the guard's allowlist, only here |
+| `lib/membership/selfGrantGuard.ts:88` (`recordSelfGrantRefusal`; root-client callers in `finance-ops/payments/[id]`, `membership/intake.ts`, `membership/review.ts`, `receipt/mailAliases.ts` ×2, `trusted-adult/service.ts`, and every `refuseSelfGrant(prisma, …)`) | refusal; must survive it |
 | `lib/receipt/mailAliases.ts:136` | refusal (no passing mail item) |
 | `lib/finance/reconcile/reversals.ts:330` | observation; nothing changed |
 | `app/api/finance-ops/s-read/sync/route.ts:53` | attempt at an outside system, written before the call |
@@ -97,7 +103,7 @@ each is based on `main`, not on PR 1's branch.
 
 | PR | Scope | Sites | Proof |
 |---|---|---|---|
-| 1 | `recordAudit` + `AuditEntry` in `lib/auditActor.ts`; the guard test with all 35 root-client sites allowlisted (the 28 to fix, marked "to fix", plus the 7 by-design ones) | 0 | guard passes on `main` |
+| 1 | `recordAudit` + `AuditEntry` in `lib/auditActor.ts`; the guard test with all 41 sites allowlisted (the 28 to fix, marked "to fix", the 7 by-design root-client ones, and the 6 `DbClient`-param helpers) | 0 | guard passes on `main` |
 | 2 | Programs and volunteers | 9 | guard entries removed; integration test on volunteer removal |
 | 3 | Households and people, including the `createParticipantWithHousehold` db param | 8 | guard entries removed; integration test on lead removal |
 | 4 | Membership (`external.ts`, `grant.ts`) | 3 | guard entries removed; integration test on setting the signing envelope |

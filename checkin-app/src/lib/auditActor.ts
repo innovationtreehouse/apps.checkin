@@ -1,3 +1,6 @@
+import type { AuditAction, Prisma } from "@/generated/prisma/client";
+import { type TxClient, isRootClient } from "@/lib/db-client";
+
 /**
  * Who an AuditLog row is attributed to.
  *
@@ -69,4 +72,24 @@ export function personActor(actorId: number): AuditActor {
 /** For paths a person OR an automated path can take (e.g. board certify vs. Shopify webhook). */
 export function personOrSystemActor(actorId: number | null | undefined, name: SystemActorName): AuditActor {
     return actorId ? personActor(actorId) : systemActor(name);
+}
+
+/** The change half of an `auditLog.create` payload. */
+export type AuditEntry = {
+    action: AuditAction;
+    tableName: string;
+    affectedEntityId: number;
+    secondaryAffectedEntity?: number | null;
+    oldData?: Prisma.InputJsonValue;
+    newData?: Prisma.InputJsonValue;
+};
+
+/**
+ * Write an audit row with the transaction client that made the change, so the
+ * two commit together. Opens no transaction of its own. Refuses the root client,
+ * which the `TxClient` type accepts but which would commit the row on its own.
+ */
+export function recordAudit(tx: TxClient, actor: AuditActor, entry: AuditEntry) {
+    if (isRootClient(tx)) throw new Error("recordAudit must run inside the change's transaction.");
+    return tx.auditLog.create({ data: { ...actor, ...entry } });
 }

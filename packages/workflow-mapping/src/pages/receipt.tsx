@@ -14,6 +14,7 @@ import { LINE_STATUS_COLOR, LINE_STATUS_LABEL, api, stateColor, stateLabel, erro
 import { formatCents } from "@checkin/money";
 import { type LineFormFields, type LineFormKind, lineFormBody, lineFormStart, lineFormUnchanged } from "../lib/line-form";
 import { lineLockReason } from "../lib/line-lock";
+import { MATCHING_PENDING_REASON } from "../db/schema";
 
 interface Receipt {
   id: number;
@@ -25,8 +26,16 @@ interface Receipt {
   expenseAppliedAt: string | null;
   donationAppliedAt: string | null;
   matchingPendingSince?: string | null;
+  matchingPendingReason?: string | null;
   applyFirstFailedAt?: string | null;
 }
+const PENDING_REASON_TEXT: Readonly<Record<string, string>> = MATCHING_PENDING_REASON;
+
+/** Why matching couldn't run; a pending receipt with no recorded reason waited on a catalog outage. */
+function matchingPendingReason(receipt: Receipt): string {
+  return PENDING_REASON_TEXT[receipt.matchingPendingReason ?? "catalog_unavailable"] ?? MATCHING_PENDING_REASON.unexpected_error;
+}
+
 interface LineItem {
   receiptLineItemId: number;
   lineNumber: number;
@@ -176,7 +185,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
       const after = await api<Detail>(base);
       if (leaveIfResolved(after.ReceivedReceipt.state)) return;
       if (after.ReceivedReceipt.matchingPendingSince) {
-        notifications.show({ message: "Catalog still unavailable. Try again later, or map the lines by hand.", color: "gray" });
+        notifications.show({ message: `Matching still couldn't run because ${matchingPendingReason(after.ReceivedReceipt)}. Try again later, or map the lines by hand.`, color: "gray" });
       } else {
         const matched = after.ReceivedReceiptLineStatus.filter((ls) => undecided.has(ls.id) && ls.recognitionStatus === "recognized").length;
         notifications.show({ message: `${matched} ${matched === 1 ? "line" : "lines"} matched`, color: "green" });
@@ -219,7 +228,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
         <Field label="Received" value={new Date(receipt.createdAt).toLocaleString()} />
       </Group>
       {receipt.matchingPendingSince && (
-        <Text size="sm" c="dimmed" mb="md">{"Matching didn't run because the catalog was unavailable. Run matching now, or map the lines by hand."}</Text>
+        <Text size="sm" c="dimmed" mb="md">{`Matching didn't run because ${matchingPendingReason(receipt)}. Run matching now, or map the lines by hand.`}</Text>
       )}
       {receipt.validationNotes && <Alert color="orange" mb="md" title="Last push failed">{receipt.validationNotes}</Alert>}
       {receipt.state === "applying" && !stuck && (

@@ -211,7 +211,9 @@ export default function AdminTrustedAdultsPage() {
                 const latest = ta.reviews[0];
                 const status = latest?.status ?? "PENDING_BOARD_REVIEW";
                 const pending = status === "PENDING_BOARD_REVIEW";
-                const expired = status === "EXPIRED" || (latest?.status === "APPROVED" && !isAuthorizedApproval(latest, new Date()));
+                // Mirrors resetReview: a denial, or an approval in force that is not an approved change.
+                const resettable = status === "DENIED"
+                    || (latest?.status === "APPROVED" && latest.kind !== "MODIFIED" && isAuthorizedApproval(latest, new Date()));
                 const sharedVal = latest ? shared[latest.id] ?? "" : "";
                 const prior = priorDecisionReview(ta.reviews);
                 const priorMeta = prior?.decision ? PRIOR_DECISION_META[prior.decision] : null;
@@ -394,24 +396,19 @@ export default function AdminTrustedAdultsPage() {
                         {latest && !pending && status !== "REVOKED" && (
                             <Group gap="xs" mt="md">
                                 <Text size="xs" c="dimmed">Override:</Text>
-                                {!expired && (
+                                {resettable && (
                                 <Button
                                     size="xs" fz={15}
                                     variant="subtle"
                                     disabled={isSelf}
                                     loading={busyId === latest.id}
                                     onClick={() => openPrompt({
-                                        title: "Shared note (required to force-approve)",
-                                        onSubmit: (note) => override(latest.id, "approve", { sharedNote: note }),
+                                        title: "Reason for the reset (the review goes back to the board)",
+                                        onSubmit: (reason) => override(latest.id, "reset", { reason }),
                                     })}
                                 >
-                                    Force approve
+                                    Reset
                                 </Button>
-                                )}
-                                {status !== "DENIED" && (
-                                    <Button size="xs" fz={15} variant="subtle" color="red" disabled={isSelf} loading={busyId === latest.id} onClick={() => override(latest.id, "deny")}>
-                                        Force deny
-                                    </Button>
                                 )}
                                 <Button size="xs" fz={15} variant="subtle" color="gray" disabled={isSelf} loading={busyId === latest.id} onClick={() => override(latest.id, "revoke")}>
                                     {status === "DENIED" && hasLivePriorApproval ? "Revoke approval" : "Revoke"}
