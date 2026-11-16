@@ -140,7 +140,7 @@ describe("Account holds panel", () => {
       [{ lineItemId: 1, reason: "NO_MATCH" }, { lineItemId: 2, reason: "NO_PART_NUMBER" }],
     );
     expect(resubmit()).toBeEnabled();
-    expect(screen.getByText("1 held line has no account yet. Resubmit checks the account rules again and holds it if it still matches none.")).toBeInTheDocument();
+    expect(screen.getByText("1 held line has no account yet. Resubmit re-reads the catalog, checks the account rules again, and holds it if it still matches none.")).toBeInTheDocument();
   });
 
   it("counts several held lines with no account", () => {
@@ -148,7 +148,7 @@ describe("Account holds panel", () => {
       [{ id: 1, description: "Cable" }, { id: 2, description: "Tape" }],
       [{ lineItemId: 1, reason: "NO_MATCH" }, { lineItemId: 2, reason: "NO_PART_NUMBER" }],
     );
-    expect(screen.getByText("2 held lines have no account yet. Resubmit checks the account rules again and holds each one that still matches none.")).toBeInTheDocument();
+    expect(screen.getByText("2 held lines have no account yet. Resubmit re-reads the catalog, checks the account rules again, and holds each one that still matches none.")).toBeInTheDocument();
   });
 
   it("says nothing about missing accounts once every held line has one", () => {

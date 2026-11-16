@@ -734,6 +734,14 @@ the parts specific to expenses.
   Problems list. No posting run retries it.
   [Decision — owner]
 
+- A signed line's account reads its part's catalog category as it stood when the
+  line's last seat was signed, so a later catalog edit does not move the first
+  post. A finance Retry or Resubmit while the expense is not yet in QuickBooks
+  reads the catalog as it is now, so a catalog fix releases a hold, and records
+  each line whose category or account changed, with who pressed it. Once the
+  expense is in QuickBooks its accounts are never re-read from the catalog.
+  [Decision — owner]
+
 - An account rule names its part by the part's GTIN-13, or `*` for any part. A
   new or changed part must be one of these; a rule stored with any other value
   is kept, and its page shows that it never matches.

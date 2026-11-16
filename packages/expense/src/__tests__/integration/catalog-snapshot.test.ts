@@ -1,7 +1,8 @@
 /**
- * A line's catalog inputs to its QuickBooks account are fixed at sign-off: a later catalog edit
- * does not move a signed line's account, clearing a step clears the snapshot, and a line whose snapshot
- * failed at sign-off takes it at its first successful posting lookup.
+ * A line's catalog inputs to its QuickBooks account are fixed at sign-off for the first post: a later
+ * catalog edit does not move a signed line's account, clearing a step clears the snapshot, and a line
+ * whose snapshot failed at sign-off takes it at its first successful posting lookup. A person's Retry or
+ * Resubmit before the expense is in QuickBooks reads the live catalog and audits each account it moves.
  */
 import { it, expect, vi, beforeEach } from "vitest";
 import { describeDb } from "../helpers/db";
@@ -9,7 +10,16 @@ import { db } from "../../db";
 import { bindPorts, directory, principal, seedAccountMapping, seedApproval, seedExpense, seedLineItem, ORG } from "../helpers/seed";
 import { signLine } from "../../services/signoffService";
 import { clearFrom } from "../../lib/signoff-facts";
-import { checkAndProcessExpense } from "../../lib/expense-qb-processor";
+import { checkAndProcessExpense, retryQbPost } from "../../lib/expense-qb-processor";
+import { postExpenseToQb } from "../../lib/expense-qb-poster";
+import { resubmitHeldExpense } from "../../services/holdService";
+import { retryStuckItem } from "../../stuckItems";
+import { QuickBooksClient } from "@checkin/quickbooks";
+
+vi.mock("../../lib/expense-qb-poster", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/expense-qb-poster")>()),
+  postExpenseToQb: vi.fn(async () => "posted" as const),
+}));
 
 const GTIN = "0000000000017";
 const FINANCE = principal(3, { isFinance: true });
@@ -36,13 +46,13 @@ function catalogFiles(lineItemId: number, under: "Hardware" | "Tools") {
   );
 }
 
-async function seedLine(): Promise<{ id: string; li: number }> {
+async function seedLine(mapped: Array<"Hardware" | "Tools"> = ["Hardware", "Tools"]): Promise<{ id: string; li: number }> {
   const id = await seedExpense({ state: "owner_approval" });
   const li = await seedLineItem(id, { partNumber: "PN-1" });
   // A card charge approved by its bucket owner, so the Treasurer seat is next.
   await seedApproval(id, li, { ownerId: 100, status: "approved" });
-  await seedAccountMapping({ category: "Hardware", qbAccount: "4000" });
-  await seedAccountMapping({ category: "Tools", qbAccount: "5000" });
+  if (mapped.includes("Hardware")) await seedAccountMapping({ category: "Hardware", qbAccount: "4000" });
+  if (mapped.includes("Tools")) await seedAccountMapping({ category: "Tools", qbAccount: "5000" });
   return { id, li };
 }
 
@@ -55,10 +65,24 @@ async function postedAccount(id: string): Promise<string> {
 const snapshot = async (li: number) =>
   db.expenseLineItem.findUniqueOrThrow({ where: { id: li }, select: { signedGtin13: true, signedCategory: true, signedSubcategory: true } });
 
+const posting = {
+  client: new QuickBooksClient({ current: async () => "tok" }, { env: "sandbox", realmId: "123" }),
+  paymentAccountId: "35",
+  paymentType: "CreditCard" as const,
+  prod: false,
+  sweepIncomplete: async () => {},
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
-  bindPorts({ catalog: inv, signoff: directory({ approvers: { 100: [2], 101: [4] }, finance: [3], board: [5] }) });
+  bindPorts({
+    catalog: inv,
+    signoff: directory({ approvers: { 100: [2], 101: [4] }, finance: [3], board: [5] }),
+    quickbooks: { posting: async () => posting },
+  });
 });
+
+const reresolved = (id: string) => db.expenseAuditLog.findMany({ where: { expenseId: id, action: "qb_account_reresolved" } });
 
 describeDb("a signed line's account is fixed at sign-off", () => {
   it("a catalog edit after sign-off does not move the line's account", async () => {
@@ -99,5 +123,162 @@ describeDb("a signed line's account is fixed at sign-off", () => {
 
     await db.$transaction((tx) => clearFrom(tx, { userId: 3 }, id, [li], "APPROVAL", "test"));
     expect(await snapshot(li)).toEqual({ signedGtin13: null, signedCategory: null, signedSubcategory: null });
+  });
+});
+
+describeDb("a Retry or Resubmit before QuickBooks reads the live catalog", () => {
+  it("a catalog fix releases a NO_MATCH hold on Resubmit and audits the change", async () => {
+    const { id, li } = await seedLine(["Hardware"]);
+    catalogFiles(li, "Tools");
+    await signLine(FINANCE, li, "TREASURER");
+    await db.expense.update({ where: { id }, data: { state: "qb_pending" } });
+    await checkAndProcessExpense(ORG, id);
+    expect((await db.expense.findUniqueOrThrow({ where: { id } })).state).toBe("qb_on_hold");
+
+    catalogFiles(li, "Hardware");
+    await resubmitHeldExpense(FINANCE, id);
+
+    expect((await db.expenseLineItem.findUniqueOrThrow({ where: { id: li } })).resolvedQbAccount).toBe("4000");
+    expect(await db.expenseHold.count({ where: { expenseId: id, status: "PENDING" } })).toBe(0);
+    expect((await snapshot(li)).signedCategory).toBe("Hardware");
+    expect(await reresolved(id)).toMatchObject([
+      { userId: 3, lineItemId: li, valueBefore: "Tools/Drills → no account", valueAfter: "Hardware/Cables → 4000" },
+    ]);
+  });
+
+  it("an account change on retry writes an audit row naming the line and the person", async () => {
+    const { id, li } = await seedLine();
+    catalogFiles(li, "Hardware");
+    await signLine(FINANCE, li, "TREASURER");
+    expect(await postedAccount(id)).toBe("4000");
+    await db.expense.update({ where: { id }, data: { qbMatchState: "POST_FAILED" } });
+
+    catalogFiles(li, "Tools");
+    expect(await retryQbPost(ORG, id, { userId: 3 })).toBe("posted");
+
+    expect((await db.expenseLineItem.findUniqueOrThrow({ where: { id: li } })).resolvedQbAccount).toBe("5000");
+    expect(await snapshot(li)).toEqual({ signedGtin13: GTIN, signedCategory: "Tools", signedSubcategory: "Drills" });
+    expect(await reresolved(id)).toMatchObject([
+      { userId: 3, lineItemId: li, valueBefore: "Hardware/Cables → 4000", valueAfter: "Tools/Drills → 5000" },
+    ]);
+  });
+
+  it("a Problems-list Retry of a failed post reads the live catalog and audits as the person who pressed it", async () => {
+    const { id, li } = await seedLine();
+    catalogFiles(li, "Hardware");
+    await signLine(FINANCE, li, "TREASURER");
+    expect(await postedAccount(id)).toBe("4000");
+    await db.expense.update({ where: { id }, data: { qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: new Date() } });
+
+    catalogFiles(li, "Tools");
+    await retryStuckItem({ id, step: "QuickBooks posting" }, { userId: 5 });
+
+    expect((await db.expenseLineItem.findUniqueOrThrow({ where: { id: li } })).resolvedQbAccount).toBe("5000");
+    expect(await reresolved(id)).toMatchObject([{ userId: 5, lineItemId: li, valueBefore: "Hardware/Cables → 4000", valueAfter: "Tools/Drills → 5000" }]);
+  });
+
+  it("a retry whose catalog read is unchanged writes no audit row", async () => {
+    const { id, li } = await seedLine();
+    catalogFiles(li, "Hardware");
+    await signLine(FINANCE, li, "TREASURER");
+    await postedAccount(id);
+    await db.expense.update({ where: { id }, data: { qbMatchState: "POST_FAILED" } });
+
+    expect(await retryQbPost(ORG, id, { userId: 3 })).toBe("posted");
+    expect(await reresolved(id)).toHaveLength(0);
+  });
+
+  it("a Resubmit audits only the line that moved, not a resolved line beside a held one", async () => {
+    const { id, li } = await seedLine(["Hardware"]);
+    const other = await seedLineItem(id, { partNumber: "PN-2" });
+    await seedApproval(id, other, { ownerId: 100, status: "approved" });
+    const OTHER_GTIN = "0000000000024";
+    // `li` sits under Tools (unmapped, so held) until fixed; `other` stays in Hardware throughout.
+    const files = (liUnder: "Hardware" | "Tools") => {
+      catalogFiles(li, liUnder);
+      inv.lookupItems.mockResolvedValue([{ index: li, gtin13: GTIN, conversionVersion: 1 }, { index: other, gtin13: OTHER_GTIN, conversionVersion: 1 }]);
+      inv.getItem.mockImplementation(async (gtin13: string) =>
+        gtin13 === GTIN && liUnder === "Tools" ? { gtin13, categoryId: 2, subcategoryId: 20 } : { gtin13, categoryId: 1, subcategoryId: 10 });
+    };
+    files("Tools");
+    await signLine(FINANCE, li, "TREASURER");
+    await signLine(FINANCE, other, "TREASURER");
+    await db.expense.update({ where: { id }, data: { state: "qb_pending" } });
+    await checkAndProcessExpense(ORG, id);
+    expect((await db.expense.findUniqueOrThrow({ where: { id } })).state).toBe("qb_on_hold");
+
+    await resubmitHeldExpense(FINANCE, id);
+    expect(await reresolved(id)).toHaveLength(0);
+
+    files("Hardware");
+    await resubmitHeldExpense(FINANCE, id);
+    expect((await reresolved(id)).map((r) => r.lineItemId)).toEqual([li]);
+  });
+
+  it("a part the catalog no longer has clears the snapshot and is audited once", async () => {
+    const { id, li } = await seedLine(["Hardware"]);
+    catalogFiles(li, "Tools");
+    await signLine(FINANCE, li, "TREASURER");
+    await db.expense.update({ where: { id }, data: { state: "qb_pending" } });
+    await checkAndProcessExpense(ORG, id);
+
+    inv.getItem.mockResolvedValue(null);
+    await resubmitHeldExpense(FINANCE, id);
+    await resubmitHeldExpense(FINANCE, id);
+
+    expect(await snapshot(li)).toEqual({ signedGtin13: null, signedCategory: null, signedSubcategory: null });
+    expect(await reresolved(id)).toMatchObject([{ valueBefore: "Tools/Drills → no account", valueAfter: "no category → no account" }]);
+  });
+
+  it("a line with no earlier catalog read is not audited as changed", async () => {
+    const { id, li } = await seedLine();
+    inv.lookupItems.mockRejectedValue(new Error("catalog down"));
+    await signLine(FINANCE, li, "TREASURER");
+    await db.expense.update({ where: { id }, data: { state: "qb_pending" } });
+    await checkAndProcessExpense(ORG, id);
+    expect((await db.expense.findUniqueOrThrow({ where: { id } })).state).toBe("qb_error");
+
+    catalogFiles(li, "Hardware");
+    await retryStuckItem({ id, step: "QuickBooks processing" }, { userId: 5 });
+
+    expect((await db.expenseLineItem.findUniqueOrThrow({ where: { id: li } })).resolvedQbAccount).toBe("4000");
+    expect(await reresolved(id)).toHaveLength(0);
+  });
+
+  it("a held Resubmit leaves alone an expense a drain outboxed while the catalog was read", async () => {
+    const { id, li } = await seedLine(["Hardware"]);
+    catalogFiles(li, "Hardware");
+    await signLine(FINANCE, li, "TREASURER");
+    await db.expense.update({ where: { id }, data: { state: "qb_on_hold" } });
+
+    catalogFiles(li, "Tools");
+    inv.lookupItems.mockImplementationOnce(async () => {
+      await db.expense.update({ where: { id }, data: { state: "qb_complete" } });
+      await db.expenseEvent.create({ data: { orgId: ORG, expenseId: id } });
+      return [{ index: li, gtin13: GTIN, conversionVersion: 1 }];
+    });
+    await resubmitHeldExpense(FINANCE, id);
+
+    expect((await snapshot(li)).signedCategory).toBe("Hardware");
+    expect(await reresolved(id)).toHaveLength(0);
+    expect(await db.expenseHold.count({ where: { expenseId: id } })).toBe(0);
+  });
+
+  it("a posted expense is never re-resolved", async () => {
+    const { id, li } = await seedLine();
+    catalogFiles(li, "Hardware");
+    await signLine(FINANCE, li, "TREASURER");
+    await postedAccount(id);
+    vi.mocked(postExpenseToQb).mockClear();
+
+    for (const qbMatchState of ["CREATED", "MATCHED"] as const) {
+      await db.expense.update({ where: { id }, data: { qbMatchState } });
+      catalogFiles(li, "Tools");
+      expect(await retryQbPost(ORG, id, { userId: 3 })).toBe(false);
+    }
+    expect((await db.expenseLineItem.findUniqueOrThrow({ where: { id: li } })).resolvedQbAccount).toBe("4000");
+    expect((await snapshot(li)).signedCategory).toBe("Hardware");
+    expect(await reresolved(id)).toHaveLength(0);
+    expect(postExpenseToQb).not.toHaveBeenCalled();
   });
 });

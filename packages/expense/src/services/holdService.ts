@@ -75,6 +75,8 @@ export function retryRefusal(outcome: PostOutcome | "unbound"): ServiceError | n
   return new ServiceError(status, message);
 }
 
+export const NO_SINGLE_ACCOUNT = "A line no longer resolves to one QuickBooks account; fix the account mapping first";
+
 export async function resubmitHeldExpense(principal: ExpensePrincipal, expenseId: string): Promise<void> {
   requireFinance(principal);
   const orgId = await getOrgId();
@@ -84,11 +86,11 @@ export async function resubmitHeldExpense(principal: ExpensePrincipal, expenseId
   if (expense.qbMatchState === "UNBOOKED") return bookExpenseToQb(orgId, expenseId, actorOf(principal));
   if (expense.qbMatchState === "POST_FAILED" || expense.qbMatchState === "NEEDS_FINANCE") {
     const outcome = await retryQbPost(orgId, expenseId, actorOf(principal));
-    if (outcome === false) throw new ServiceError(409, "A line no longer resolves to one QuickBooks account; fix the account mapping first");
+    if (outcome === false) throw new ServiceError(409, NO_SINGLE_ACCOUNT);
     const refusal = retryRefusal(outcome);
     if (refusal) throw refusal;
     return;
   }
   await writeAudit(db, actorOf(principal), { expenseId, action: "hold_resubmitted" });
-  await checkAndProcessExpense(orgId, expenseId);
+  await checkAndProcessExpense(orgId, expenseId, actorOf(principal));
 }
