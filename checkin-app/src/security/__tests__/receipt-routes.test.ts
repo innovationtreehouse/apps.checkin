@@ -474,13 +474,26 @@ describe('the submitter view', () => {
     });
 
     it("gives the uploader the kept receipt's id but not its label on every receipt route, and keeps the notice of their own copy", () => {
-        const copy = { ...row, copyOfId: 'r-kept', copyOfLabel: 'receipt r-kept', duplicateNotice: { matchId: 'r-mine', uploadedAt: '2026-10-03T00:00:00.000Z' } };
+        const copy = { ...row, copyOfId: 'r-kept', copyOfLabel: 'receipt r-kept', duplicateNotice: { matchId: 'r-mine', uploadedAt: '2026-10-03T00:00:00.000Z', uploadedByUserId: 7 } };
         for (const endpoint of jsonRoutes) {
             const submitter = new Map(getRoute(endpoint)!.orderedView).get('authenticated');
             if (!submitter || !getRoute(endpoint)!.returns?.includes('ReceiptView')) continue;
             const out = stripValue('ReceiptView', copy, submitter, ctx) as Record<string, unknown>;
             expect({ endpoint, id: out.id, copyOfId: out.copyOfId, leaked: 'copyOfLabel' in out }).toEqual({ endpoint, id: copy.id, copyOfId: 'r-kept', leaked: false });
             expect(out.duplicateNotice).toEqual(copy.duplicateNotice);
+        }
+    });
+
+    it.each([
+        ["another person's", 8],
+        ['an unstamped', undefined],
+    ])("drops the notice of %s copy on every receipt route", (_whose, uploadedByUserId) => {
+        const notice = { matchId: 'r-other', uploadedAt: '2026-10-03T00:00:00.000Z', uploadedByUserId };
+        for (const endpoint of jsonRoutes) {
+            const submitter = new Map(getRoute(endpoint)!.orderedView).get('authenticated');
+            if (!submitter || !getRoute(endpoint)!.returns?.includes('ReceiptView')) continue;
+            const out = stripValue('ReceiptView', { ...row, duplicateNotice: notice }, submitter, ctx) as Record<string, unknown>;
+            expect({ endpoint, notice: out.duplicateNotice }).toEqual({ endpoint, notice: null });
         }
     });
 
