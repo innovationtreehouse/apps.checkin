@@ -15,7 +15,7 @@ const STATUS_BATCH = 200;
 const DESCRIPTION = { donation: "Benevity donations", match: "Benevity matches" } as const;
 
 /** Outside prod only a TEST_PREFIX disbursement is handed over; prod never hands one over. */
-const sendable = (deposits: IncomeDeposits, disbursementId: string) => disbursementId.startsWith(TEST_PREFIX) !== deposits.prod;
+export const depositSendable = (deposits: IncomeDeposits, disbursementId: string) => disbursementId.startsWith(TEST_PREFIX) !== deposits.prod;
 
 /** Marks a disbursement as told to finance, so a batch that never hands over is raised once. */
 const RAISED_EVENT = "DEPOSIT_HANDOVER_RAISED";
@@ -85,7 +85,7 @@ export async function expectedDeposit(e: Pick<DisbursementEvent, "orgId" | "disb
 export async function handOverDeposit(orgId: string, disbursementId: string): Promise<void> {
   try {
     const deposits = getIncomeDeposits();
-    if (!deposits || !sendable(deposits, disbursementId)) return;
+    if (!deposits || !depositSendable(deposits, disbursementId)) return;
     const e = await db.disbursementEvent.findFirst({ where: { orgId, disbursementId } });
     if (e) await deposits.expectDeposit(orgId, disbursementId, await expectedDeposit(e));
   } catch (err) {
@@ -127,7 +127,7 @@ export async function runDonationDepositHandOver(orgId: string): Promise<HandOve
   const counts: HandOverCounts = { acknowledged: 0, sent: 0, failed: 0 };
   const failures: DepositHandOverFailure[] = [];
   const events = (await db.disbursementEvent.findMany({ where: { orgId }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] })).filter((e) =>
-    sendable(deposits, e.disbursementId),
+    depositSendable(deposits, e.disbursementId),
   );
   for (let i = 0; i < events.length; i += STATUS_BATCH) {
     const batch = events.slice(i, i + STATUS_BATCH);

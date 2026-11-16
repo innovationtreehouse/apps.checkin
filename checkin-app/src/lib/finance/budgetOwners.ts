@@ -135,8 +135,28 @@ export async function updateBudgetOwner(actorId: number, id: number, body: Recor
     return holdBucketLines(id, change);
 }
 
+/** Every kind of unfinished work the libraries still point at bucket `id`; 503 when one can't be read. */
+async function unfinishedBucketUses(id: number) {
+    try {
+        const libraries = await Promise.all([import("@checkin/expense"), import("@checkin/bulk-donation"), import("@checkin/income")]);
+        return (await Promise.all(libraries.map((lib) => lib.unfinishedBucketUses(id)))).flat();
+    } catch (err) {
+        console.error(`[budget-owners] reading what still uses bucket ${id} failed`, err);
+        throw new ApiResponseError(503, "Can't check what still uses this bucket; try again.");
+    }
+}
+
 // Archive is soft: library rows reference buckets by id, and updateBudgetOwner restores it.
+// The library reads run before the commit, across other databases, so a line assigned in between can still land (accepted).
 export async function archiveBudgetOwner(actorId: number, id: number) {
+    const stored = await prisma.budgetOwner.findUnique({ where: { id }, select: BUCKET_SELECT });
+    if (!stored) throw notFound("Bucket not found");
+    if (stored.archivedAt) return stored;
+    const uses = await unfinishedBucketUses(id);
+    if (uses.length > 0) {
+        const list = uses.map((u) => `${u.what}: ${u.count} (${u.where})`).join("; ");
+        throw new ApiResponseError(409, `This bucket still has unfinished work. Move it to another bucket first: ${list}.`);
+    }
     return prisma.$transaction(async (tx) => {
         const before = await tx.budgetOwner.findUnique({ where: { id }, select: { archivedAt: true } });
         if (!before) throw notFound("Bucket not found");

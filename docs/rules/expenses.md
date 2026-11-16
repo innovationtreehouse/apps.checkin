@@ -379,10 +379,15 @@ Things the app takes as true because they are handled outside it.
 
 ### Budget buckets
 
-- A budget bucket is an accounting bucket, not a person. Finance creates,
-  renames and archives buckets and maps each to a class in the accounting
-  system. Archiving keeps the row, because finance records point at it.
-  [Decision]
+- A budget bucket is an accounting bucket, not a person. Finance creates and
+  renames buckets and maps each to a class in the accounting system.
+  Archiving keeps the row, because finance records point at it.  [Decision]
+
+- Finance archives a bucket only when nothing unfinished points at it: an open
+  expense line, a giving-platform gift not yet deposited, a gift of goods not
+  yet booked, a donated line waiting for capital review, a store item mapped to
+  it, or a part mapped to it for future receipts. The refusal names each kind,
+  how many, and where finance moves them.  [Decision — owner]
 
 - A bucket is created with its class. Finance may change a bucket's class but
   not clear it, and no two buckets share a class. A bucket that has no class
