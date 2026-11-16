@@ -16,9 +16,6 @@ const REFUSAL = "by design: refusal, must survive the refusal it records";
 const DB_PARAM = "by design: DbClient-param helper; callers pass their transaction client";
 
 const ALLOWLIST: Record<string, { count: number; reason: string }> = {
-    // Shop
-    "app/api/shop/tools/route.ts": { count: 1, reason: TO_FIX },
-    "app/api/shop/tools/[id]/route.ts": { count: 1, reason: TO_FIX },
     "app/api/cron/nightly/route.ts": {
         count: 1,
         reason: "by design: close summary is a board notice, each closed visit has its own row",
