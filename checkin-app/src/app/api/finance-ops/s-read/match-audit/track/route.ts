@@ -6,6 +6,7 @@ import type { TxClient } from "@/lib/db-client";
 import * as mirror from "@/lib/shopifyRead/client";
 import { recordPaymentException, type PaymentExceptionNotice } from "@/lib/finance/reconcile/exceptions";
 import { notifyBoardPaymentException } from "@/lib/membership/boardAlerts";
+import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { isPaid } from "@/lib/finance/reconcile/orderStatus";
 
 /**
@@ -150,22 +151,37 @@ export const POST = handler(
         const body = parseTrackBody(raw);
         if (!body) throw new ApiResponseError(400, "Invalid track request body");
 
-        try {
-            const notice = await prisma.$transaction(async (tx) => {
-                const raised =
-                    body.kind === "order" ? await trackOrder(tx, body.shopifyOrderId)
-                    : body.kind === "membership" ? await trackMembership(tx, body.processId)
-                    : await trackEnrollment(tx, body.programId, body.personId);
-                // The decision is audited with its actor; the row points at the gap, not
-                // the PaymentException, which dedup may have left unchanged.
-                await recordAudit(tx, personActor(auth.user.id), {
-                    action: "CREATE",
-                    tableName: "MATCH_AUDIT_TRACK",
-                    affectedEntityId: 0,
-                    newData: body,
-                });
-                return raised;
+        // The decision is audited with its actor; the row points at the gap, not
+        // the PaymentException, which dedup may have left unchanged.
+        const audit = (tx: TxClient) =>
+            recordAudit(tx, personActor(auth.user.id), {
+                action: "CREATE",
+                tableName: "MATCH_AUDIT_TRACK",
+                affectedEntityId: 0,
+                newData: body,
             });
+        try {
+            let notice: PaymentExceptionNotice | null;
+            try {
+                notice = await prisma.$transaction(async (tx) => {
+                    const raised =
+                        body.kind === "order" ? await trackOrder(tx, body.shopifyOrderId)
+                        : body.kind === "membership" ? await trackMembership(tx, body.processId)
+                        : await trackEnrollment(tx, body.programId, body.personId);
+                    await audit(tx);
+                    return raised;
+                });
+            } catch (error) {
+                if (body.kind !== "order" || !isPrismaError(error, "P2002")) throw error;
+                // A concurrent click created this order's exception first; this click is tracked by it.
+                const existing = await prisma.paymentException.findFirst({
+                    where: { kind: "UNMATCHED_ORDER", shopifyOrderId: body.shopifyOrderId, personId: null },
+                    select: { id: true },
+                });
+                if (!existing) throw error;
+                await prisma.$transaction(audit);
+                notice = null;
+            }
             if (notice) await notifyBoardPaymentException(notice.kind, notice.severity, notice.exceptionId);
         } catch (error) {
             if (error instanceof ApiResponseError) throw error;

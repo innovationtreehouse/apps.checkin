@@ -20,6 +20,7 @@ const prismaMock = {
     orgMembershipProcess: { findFirst: jest.fn(), findUnique: jest.fn() },
     programParticipant: { findFirst: jest.fn(), findUnique: jest.fn() },
     auditLog: { create: jest.fn() },
+    paymentException: { findFirst: jest.fn() },
 };
 jest.mock('@/lib/prisma', () => ({
     __esModule: true,
@@ -33,6 +34,7 @@ jest.mock('@/lib/prisma', () => ({
             findUnique: (...a: unknown[]) => prismaMock.programParticipant.findUnique(...a),
         },
         auditLog: { create: (...a: unknown[]) => prismaMock.auditLog.create(...a) },
+        paymentException: { findFirst: (...a: unknown[]) => prismaMock.paymentException.findFirst(...a) },
         $transaction: (fn: (tx: unknown) => unknown) => fn(jest.requireMock('@/lib/prisma').default),
     },
 }));
@@ -195,6 +197,34 @@ describe('kind: order', () => {
         expect(first.status).toBe(200);
         expect(second.status).toBe(200);
         expect(recordPaymentExceptionMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('concurrent click that loses the unique-index race: 200 tracked by the existing exception, audited', async () => {
+        mirrorMock.ordersByLegacyIds.mockResolvedValue([paidOrder('906')]);
+        recordPaymentExceptionMock.mockRejectedValue(Object.assign(new Error('unique'), { code: 'P2002' }));
+        prismaMock.paymentException.findFirst.mockResolvedValue({ id: 11 });
+        const res = await POST(req({ kind: 'order', shopifyOrderId: '906' }));
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual({ tracked: true });
+        expect(prismaMock.paymentException.findFirst).toHaveBeenCalledWith({
+            where: { kind: 'UNMATCHED_ORDER', shopifyOrderId: '906', personId: null },
+            select: { id: true },
+        });
+        expect(prismaMock.auditLog.create).toHaveBeenCalledWith({
+            data: expect.objectContaining({ actorId: 5, tableName: 'MATCH_AUDIT_TRACK', newData: { kind: 'order', shopifyOrderId: '906' } }),
+        });
+        expect(notifyMock).not.toHaveBeenCalled();
+    });
+
+    it('a unique violation with no exception to show for it is still a 500', async () => {
+        mirrorMock.ordersByLegacyIds.mockResolvedValue([paidOrder('907')]);
+        recordPaymentExceptionMock.mockRejectedValue(Object.assign(new Error('unique'), { code: 'P2002' }));
+        prismaMock.paymentException.findFirst.mockResolvedValue(null);
+        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+        const res = await POST(req({ kind: 'order', shopifyOrderId: '907' }));
+        errorSpy.mockRestore();
+        expect(res.status).toBe(500);
+        expect(prismaMock.auditLog.create).not.toHaveBeenCalled();
     });
 });
 
