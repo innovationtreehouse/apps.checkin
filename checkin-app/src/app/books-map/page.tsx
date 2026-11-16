@@ -1,14 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Select, Stack, Table, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { errorMessage, QuickBooksListsRefresh, refusalMessage } from "@checkin/component-ui";
+import { LoadError, QuickBooksListsRefresh, refusalMessage } from "@checkin/component-ui";
 import type { BooksMapRole } from "@checkin/quickbooks";
 import { BOOKS_MAP_ROLE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { useRequireRole } from "@/hooks/useRequireRole";
-import { api } from "@/lib/api";
+import { api, useLoad } from "@/lib/api";
 import { FINANCE_ROLES } from "@/lib/nav/sections/finance";
 import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
 
@@ -59,33 +59,20 @@ export default function BooksMapPage() {
   const { user, loading: authLoading, ready } = useRequireRole(FINANCE_ROLES);
   const isFinance = !!user?.isFinance;
 
-  const [classRows, setClassRows] = useState<ClassRow[]>([]);
-  const [accountRows, setAccountRows] = useState<AccountRow[]>([]);
-  const [classes, setClasses] = useState<Option[] | null>(null);
-  const [accounts, setAccounts] = useState<AccountOption[] | null>(null);
+  const map = useLoad<{ BooksMapClass: ClassRow[]; BooksMapAccount: AccountRow[] }>(ready ? "/api/books-map" : null);
+  const classes = useLoad<Option[]>(ready ? "/api/budget-owners/quickbooks-classes" : null);
+  const accounts = useLoad<AccountOption[]>(ready ? "/api/books-map/quickbooks-accounts" : null);
 
-  const load = useCallback(() => Promise.allSettled([
-    api<{ BooksMapClass: ClassRow[]; BooksMapAccount: AccountRow[] }>("/api/books-map"),
-    api<Option[]>("/api/budget-owners/quickbooks-classes"),
-    api<AccountOption[]>("/api/books-map/quickbooks-accounts"),
-  ]).then(([map, c, a]) => {
-    if (map.status === "fulfilled") { setClassRows(map.value.BooksMapClass); setAccountRows(map.value.BooksMapAccount); } else showError("Books map not loaded", errorMessage(map.reason));
-    if (c.status === "fulfilled") setClasses(c.value); else showError("QuickBooks Classes unavailable", errorMessage(c.reason));
-    if (a.status === "fulfilled") setAccounts(a.value); else showError("QuickBooks accounts unavailable", errorMessage(a.reason));
-  }), []);
-
-  useEffect(() => { if (ready) void load(); }, [ready, load]);
-
+  // A successful write re-reads every load on the page, so a save needs no reload of its own.
   const save = async (url: string, body: unknown, failed: string) => {
     notifications.hide(failed);
     try {
       await api(url, { method: "PUT", body: JSON.stringify(body) });
     } catch (e) {
-      showError(failed, refusalMessage(e, { onRefreshed: () => void load() }));
+      showError(failed, refusalMessage(e));
       return;
     }
     notifications.show({ message: "Saved." });
-    await load();
   };
 
   if (authLoading) return <PageLoader />;
@@ -94,7 +81,7 @@ export default function BooksMapPage() {
   return (
     <Stack>
       <Title order={2}>Books map</Title>
-      <QuickBooksListsRefresh onRefreshed={() => void load()} />
+      <QuickBooksListsRefresh />
       <Text c="dimmed">
         Which QuickBooks account each kind of incoming money books to, and which QuickBooks Class each budget bucket
         books to. Income reads the Shopify and Benevity accounts and the Classes from here, gifts of goods read their four
@@ -102,52 +89,62 @@ export default function BooksMapPage() {
         to the Benevity disbursements bank account below. {isFinance ? "Changes are recorded in the audit log." : "Finance edits them."}
       </Text>
 
-      <Title order={4}>Accounts</Title>
-      <Table>
-        <Table.Thead><Table.Tr><Table.Th>Role</Table.Th><Table.Th>QuickBooks account</Table.Th></Table.Tr></Table.Thead>
-        <Table.Tbody>
-          {accountRows.map((r) => (
-            <Table.Tr key={r.role}>
-              <Table.Td>{BOOKS_MAP_ROLE_LABELS[r.role] ?? r.role}</Table.Td>
-              <Table.Td>
-                <Select
-                  aria-label={BOOKS_MAP_ROLE_LABELS[r.role] ?? r.role}
-                  data={accountChoices(accounts, r.role, r.quickBooksAccountId)}
-                  value={r.quickBooksAccountId}
-                  placeholder="Not set"
-                  searchable
-                  clearable
-                  disabled={!isFinance}
-                  onChange={(v) => void save(`/api/books-map/accounts/${r.role}`, { quickBooksAccountId: v }, "Account not saved")}
-                />
-              </Table.Td>
-            </Table.Tr>
-          ))}
-        </Table.Tbody>
-      </Table>
+      {classes.error && <LoadError what="QuickBooks Classes" message={classes.error} onRetry={classes.reload} />}
+      {accounts.error && <LoadError what="QuickBooks accounts" message={accounts.error} onRetry={accounts.reload} />}
+      {map.error ? (
+        <LoadError what="the books map" message={map.error} onRetry={map.reload} />
+      ) : !map.data ? (
+        <PageLoader />
+      ) : (
+        <>
+          <Title order={4}>Accounts</Title>
+          <Table>
+            <Table.Thead><Table.Tr><Table.Th>Role</Table.Th><Table.Th>QuickBooks account</Table.Th></Table.Tr></Table.Thead>
+            <Table.Tbody>
+              {map.data.BooksMapAccount.map((r) => (
+                <Table.Tr key={r.role}>
+                  <Table.Td>{BOOKS_MAP_ROLE_LABELS[r.role] ?? r.role}</Table.Td>
+                  <Table.Td>
+                    <Select
+                      aria-label={BOOKS_MAP_ROLE_LABELS[r.role] ?? r.role}
+                      data={accountChoices(accounts.data, r.role, r.quickBooksAccountId)}
+                      value={r.quickBooksAccountId}
+                      placeholder="Not set"
+                      searchable
+                      clearable
+                      disabled={!isFinance}
+                      onChange={(v) => void save(`/api/books-map/accounts/${r.role}`, { quickBooksAccountId: v }, "Account not saved")}
+                    />
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
 
-      <Title order={4}>Classes</Title>
-      <Table>
-        <Table.Thead><Table.Tr><Table.Th>Bucket</Table.Th><Table.Th>QuickBooks Class</Table.Th></Table.Tr></Table.Thead>
-        <Table.Tbody>
-          {classRows.map((r) => (
-            <Table.Tr key={r.budgetOwnerId}>
-              <Table.Td>{r.budgetOwnerName}</Table.Td>
-              <Table.Td>
-                <Select
-                  aria-label={`Class for ${r.budgetOwnerName}`}
-                  data={choices(classes, r.quickBooksClassId)}
-                  value={r.quickBooksClassId}
-                  placeholder="Not set"
-                  searchable
-                  disabled={!isFinance}
-                  onChange={(v) => void save(`/api/books-map/classes/${r.budgetOwnerId}`, { quickBooksClassId: v }, "Class not saved")}
-                />
-              </Table.Td>
-            </Table.Tr>
-          ))}
-        </Table.Tbody>
-      </Table>
+          <Title order={4}>Classes</Title>
+          <Table>
+            <Table.Thead><Table.Tr><Table.Th>Bucket</Table.Th><Table.Th>QuickBooks Class</Table.Th></Table.Tr></Table.Thead>
+            <Table.Tbody>
+              {map.data.BooksMapClass.map((r) => (
+                <Table.Tr key={r.budgetOwnerId}>
+                  <Table.Td>{r.budgetOwnerName}</Table.Td>
+                  <Table.Td>
+                    <Select
+                      aria-label={`Class for ${r.budgetOwnerName}`}
+                      data={choices(classes.data, r.quickBooksClassId)}
+                      value={r.quickBooksClassId}
+                      placeholder="Not set"
+                      searchable
+                      disabled={!isFinance}
+                      onChange={(v) => void save(`/api/books-map/classes/${r.budgetOwnerId}`, { quickBooksClassId: v }, "Class not saved")}
+                    />
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </>
+      )}
     </Stack>
   );
 }

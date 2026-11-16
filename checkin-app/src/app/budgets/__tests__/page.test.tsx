@@ -206,20 +206,21 @@ describe("budgets page write errors", () => {
     })));
   });
 
-  it("shows a red chip when the reload after a write fails", async () => {
-    let reloads = 0;
-    mockServer(ok, {
-      buckets: async () => (reloads++ === 0 ? jsonResponse(200, [programBucket]) : htmlResponse(502)),
-    });
-    await createBucket();
+  it("shows a failed bucket load in place of the table, not an empty list", async () => {
+    mockServer(ok, { buckets: async () => jsonResponse(403, { error: "Finance only" }) });
+    renderWithProviders(<BudgetsPage />);
 
-    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
-      color: "red",
-      title: "Buckets not loaded",
-      message: "The server is unavailable. Try again in a minute.",
-      autoClose: false,
-    })));
-    expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Bucket created." }));
+    expect(await screen.findByText("Couldn't load buckets")).toBeInTheDocument();
+    expect(screen.getByText("Finance only")).toBeInTheDocument();
+    expect(screen.queryByText("No buckets.")).not.toBeInTheDocument();
+  });
+
+  it("re-reads the buckets after a create, with no reload of its own", async () => {
+    mockServer(ok);
+    await createBucket();
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Bucket created." })));
+    const bucketReads = () => (global.fetch as jest.Mock).mock.calls.filter(([url, init]) => String(url) === "/api/budget-owners?includeArchived=1" && !init?.method);
+    await waitFor(() => expect(bucketReads()).toHaveLength(2));
   });
 
   it("replaces the failure chip on a retry and clears it on success", async () => {
@@ -238,16 +239,13 @@ describe("budgets page write errors", () => {
     expect((notifications.hide as jest.Mock).mock.calls.filter(([id]) => id === "Bucket not created").length).toBeGreaterThanOrEqual(3);
   });
 
-  it("shows a red chip when the QuickBooks Class list fails", async () => {
-    mockServer(ok, { classes: async () => jsonResponse(502, { error: "QuickBooks is not connected" }) });
+  it("shows a failed QuickBooks Class load, and the buckets still", async () => {
+    mockServer(ok, { classes: async () => jsonResponse(409, { error: "QuickBooks is not connected" }) });
     renderWithProviders(<BudgetsPage />);
 
-    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
-      color: "red",
-      title: "QuickBooks Classes unavailable",
-      message: "QuickBooks is not connected",
-      autoClose: false,
-    })));
+    expect(await screen.findByText("Couldn't load QuickBooks Classes")).toBeInTheDocument();
+    expect(screen.getByText("QuickBooks is not connected")).toBeInTheDocument();
+    expect(screen.getByText("Robotics")).toBeInTheDocument();
   });
 
   it("shows an approver change failure in a red chip", async () => {
@@ -265,31 +263,22 @@ describe("budgets page write errors", () => {
     expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument();
   });
 
-  it("says the approvers couldn't be loaded instead of spinning", async () => {
-    mockServer(ok, { approvers: async () => { throw new TypeError("Failed to fetch"); } });
+  it("shows a failed approvers load in place of the list instead of spinning", async () => {
+    mockServer(ok, { approvers: async () => jsonResponse(404, { error: "Bucket not found" }) });
     renderWithProviders(<BudgetsPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Approvers" }));
 
-    expect(await screen.findByText("Approvers couldn't be loaded.")).toBeInTheDocument();
-    expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
-      color: "red",
-      title: "Approvers not loaded",
-      message: "Couldn't reach the server. Check your connection and try again.",
-      autoClose: false,
-    }));
+    expect(await screen.findByText("Couldn't load approvers")).toBeInTheDocument();
+    expect(screen.getByText("Bucket not found")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
   });
 
-  it("shows a red chip when the people for the approver pickers fail to load", async () => {
-    mockServer(ok, { approverOptions: async () => htmlResponse(504) });
+  it("shows a failed load of the people for the approver pickers, and the approvers still", async () => {
+    mockServer(ok, { approverOptions: async () => jsonResponse(403, { error: "Board only" }) });
     renderWithProviders(<BudgetsPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Approvers" }));
 
-    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
-      color: "red",
-      title: "People not loaded",
-      message: "The server is unavailable. Try again in a minute.",
-      autoClose: false,
-    })));
+    expect(await screen.findByText("Couldn't load people for the pickers")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Remove" })).toBeInTheDocument();
   });
 });

@@ -1,16 +1,19 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Alert, Box, Button, Card, Group, Modal, Paper, Stack, Switch, Table, Text, Textarea, TextInput, UnstyledButton } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import { useDebouncedValue } from "@mantine/hooks";
+import { LoadError } from "@checkin/component-ui";
 import { IconChevronDown, IconChevronUp, IconSelector } from "@tabler/icons-react";
 import { EntityPicker } from "@/components/admin/EntityPicker";
 import { AdminEditHouseholdModal } from "@/components/admin/AdminEditHouseholdModal";
 import { RoleBadge } from "@/components/ui/RoleBadge";
 import { ROLE_FLAGS } from "@/lib/roles";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { useLoad } from "@/lib/api";
 import { MEMBERSHIP_PARTICIPANTS_ROLES } from "@/lib/nav/sections/membershipOps";
 
 type HouseholdRef = {
@@ -40,8 +43,6 @@ type PersonRow = {
 
 export default function AdminParticipantsIndex() {
   const [searchQuery, setSearchQuery] = useState("");
-  const [results, setResults] = useState<PersonRow[]>([]);
-  const [loading, setLoading] = useState(false);
   const [sortBy, setSortBy] = useState<"id" | "name" | "email" | "household">("id");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const router = useRouter();
@@ -55,6 +56,19 @@ export default function AdminParticipantsIndex() {
   const canAddContact = !!me?.isBoardMember || !!me?.isOperations;
   // The email decides who signs in as a person, so only the board changes it (with a reason).
   const canEditEmail = !!me?.isBoardMember;
+
+  const [debouncedQuery] = useDebouncedValue(searchQuery, 250);
+  const search = useLoad<{ people?: PersonRow[] }>(
+    ready ? `/api/people/search?q=${encodeURIComponent(debouncedQuery)}` : null,
+    { keepPrevious: true },
+  );
+  // A contact added here shows first even when the search would not find it.
+  const [added, setAdded] = useState<PersonRow[]>([]);
+  const found = search.data?.people ?? [];
+  const results = [
+    ...added.map((a) => found.find((p) => p.id === a.id) ?? a),
+    ...found.filter((p) => !added.some((a) => a.id === p.id)),
+  ];
 
   const toggleSort = (col: "id" | "name" | "email" | "household") => {
     if (sortBy === col) {
@@ -82,27 +96,6 @@ export default function AdminParticipantsIndex() {
     if (av > bv) return sortDir === "asc" ? 1 : -1;
     return 0;
   });
-
-  const fetchParticipants = async (query = "") => {
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/people/search?q=${encodeURIComponent(query)}`);
-      const data = await res.json();
-      if (data.people) {
-        setResults(data.people);
-      }
-    } catch (err) {
-      console.error("Participants page action failed:", err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (!ready) return;
-    const id = setTimeout(() => fetchParticipants(searchQuery), 250);
-    return () => clearTimeout(id);
-  }, [ready, searchQuery]);
 
   const [assignModalOpen, setAssignModalOpen] = useState(false);
   const [selectedParticipant, setSelectedParticipant] = useState<PersonRow | null>(null);
@@ -160,8 +153,7 @@ export default function AdminParticipantsIndex() {
         })
       });
       if (res.ok) {
-        const data = await res.json();
-        setResults(results.map(p => p.id === selectedParticipant.id ? data.participant : p));
+        void search.reload();
         closeAssign();
         showNotification("Household assigned successfully!");
       } else {
@@ -194,8 +186,7 @@ export default function AdminParticipantsIndex() {
         body: JSON.stringify(editForm)
       });
       if (res.ok) {
-        const data = await res.json();
-        setResults(results.map(p => p.id === editingParticipant.id ? { ...p, ...data.participant } : p));
+        void search.reload();
         setEditModalOpen(false);
         setEditingParticipant(null);
         showNotification("Person updated successfully!");
@@ -230,7 +221,7 @@ export default function AdminParticipantsIndex() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        setResults((r) => [data.participant, ...r]);
+        setAdded((a) => [data.participant, ...a]);
         showNotification("Contact added.");
         closeAddContact();
       } else if (data.fields?.includes("email")) {
@@ -271,7 +262,9 @@ export default function AdminParticipantsIndex() {
         />
 
         <Box mt="lg">
-          {results.length > 0 ? (
+          {search.error ? (
+            <LoadError what="people" message={search.error} onRetry={search.reload} />
+          ) : results.length > 0 ? (
             <Table.ScrollContainer minWidth={700}>
               <Table striped highlightOnHover withTableBorder verticalSpacing="xs">
                 <Table.Thead>
@@ -345,7 +338,7 @@ export default function AdminParticipantsIndex() {
                 </Table.Tbody>
               </Table>
             </Table.ScrollContainer>
-          ) : searchQuery && !loading ? (
+          ) : searchQuery && search.data && !search.loading ? (
             <Text ta="center" c="dimmed">No people found.</Text>
           ) : null}
         </Box>
@@ -507,11 +500,7 @@ export default function AdminParticipantsIndex() {
         householdId={editHouseholdId}
         opened={editHouseholdId !== null}
         onClose={() => setEditHouseholdId(null)}
-        onSaved={(h) => {
-          setResults(results.map(p =>
-            p.household?.id === h.id ? { ...p, household: { ...p.household, name: h.name } } : p
-          ));
-        }}
+        onSaved={() => void search.reload()}
       />
     </Stack>
   );
