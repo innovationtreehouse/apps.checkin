@@ -11,7 +11,6 @@ const SRC = join(__dirname, "..", "..");
 const SKIP_DIRS = new Set(["__tests__", "generated"]);
 const AUDIT_WRITE = /\b(?:prisma|db)\.auditLog\.create(?:Many)?\(/g;
 
-const TO_FIX = "to fix: move inside the change's transaction";
 const REFUSAL = "by design: refusal, must survive the refusal it records";
 const DB_PARAM = "by design: DbClient-param helper; callers pass their transaction client";
 
