@@ -168,8 +168,8 @@ test("a receipt goes from upload to an approved line in finance review", async (
     await page.goto(`/expense/expenses/${encodeURIComponent(receiptId)}`);
     await expect(line(page).getByText("✓ Treasurer", { exact: true })).toBeVisible();
     const base = `/api/expense/expenses/${encodeURIComponent(receiptId)}`;
-    const signoffs = await api<{ ExpenseLineSignoffStatus: Array<{ missing: string[] }> }>(finance.session, `${base}/signoffs`);
-    expect(signoffs.json.ExpenseLineSignoffStatus.map((s) => s.missing)).toEqual([[]]);
+    const signoffs = await api<Array<{ missing: string[] }>>(finance.session, `${base}/signoffs`);
+    expect(signoffs.json.map((s) => s.missing)).toEqual([[]]);
     // With every seat signed the expense leaves for QuickBooks; no account rule is seeded, so the line holds for an account.
     const expense = await api<{ Expense: { state: string } }>(finance.session, base);
     expect(expense.json.Expense.state).toBe("qb_on_hold");
