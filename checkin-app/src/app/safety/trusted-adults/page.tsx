@@ -211,6 +211,7 @@ export default function AdminTrustedAdultsPage() {
                 const latest = ta.reviews[0];
                 const status = latest?.status ?? "PENDING_BOARD_REVIEW";
                 const pending = status === "PENDING_BOARD_REVIEW";
+                const expired = status === "EXPIRED" || (latest?.status === "APPROVED" && !isAuthorizedApproval(latest, new Date()));
                 const sharedVal = latest ? shared[latest.id] ?? "" : "";
                 const prior = priorDecisionReview(ta.reviews);
                 const priorMeta = prior?.decision ? PRIOR_DECISION_META[prior.decision] : null;
@@ -393,6 +394,7 @@ export default function AdminTrustedAdultsPage() {
                         {latest && !pending && status !== "REVOKED" && (
                             <Group gap="xs" mt="md">
                                 <Text size="xs" c="dimmed">Override:</Text>
+                                {!expired && (
                                 <Button
                                     size="xs" fz={15}
                                     variant="subtle"
@@ -405,6 +407,7 @@ export default function AdminTrustedAdultsPage() {
                                 >
                                     Force approve
                                 </Button>
+                                )}
                                 {status !== "DENIED" && (
                                     <Button size="xs" fz={15} variant="subtle" color="red" disabled={isSelf} loading={busyId === latest.id} onClick={() => override(latest.id, "deny")}>
                                         Force deny

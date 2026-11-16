@@ -397,6 +397,8 @@ Things the app takes as true because they are handled outside it.
 - A board revoke of a trusted adult cannot be undone. Force-approve refuses them,
   and the family resubmits.  [Decision]
 
+- Force-approve refuses an expired approval; the family renews it.  [Decision]
+
 - Denying a household's membership revokes, at once and in the same act, every
   review not already revoked or denied — approved, open or expired — on the
   household's own trusted adults, and on any other household's trusted adult who
