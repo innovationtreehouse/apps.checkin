@@ -395,6 +395,10 @@ Things the app takes as true because they are handled outside it.
 - Withdrawing a trusted adult retires every approval they hold, not just the
   most recent, and drops them from the pickup list at once.  [Decision]
 
+- Approving a renewal or a change retires the approval it replaces, so a trusted
+  adult holds at most one live approval. Resetting that approval puts the
+  replaced one back.  [Decision]
+
 - A board denial of a change leaves the earlier approval standing.  [Decision]
 
 - The board can reset a denial, or an approval still in force: the decision is
