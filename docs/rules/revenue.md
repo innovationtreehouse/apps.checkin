@@ -99,6 +99,11 @@ Things the app takes as true because they are handled outside it.
   and finance or the Board may refresh it at any time. It is used at any age;
   System Status flags it after two days without a refresh.  [Decision — owner]
 
+- Every QuickBooks Class and account picker lists only entries the app's copy
+  of QuickBooks' lists shows as active. A saved pick the copy shows as inactive
+  or no longer holds is shown as a warning beside the picker, with Update now,
+  never offered as a choice.  [Decision — owner]
+
 - Each online-store sale, giving-platform gift and gift of goods books to the
   account finance mapped for its item. A line with no mapping, or whose account
   can't be used, waits for finance; nothing books it to a fallback account. A
@@ -110,11 +115,11 @@ Things the app takes as true because they are handled outside it.
   expense line, the one finance sets on a gift-of-goods line and online-store
   items' accounts refuse any other type on save, reading the type from the
   app's copy of QuickBooks' account list. A save whose account the copy
-  doesn't list, or lists under a type the save doesn't accept, is refused until
-  finance or the Board updates the copy; the save itself never reads
-  QuickBooks. A stored
-  account that later reads as another type is flagged on System Status for
-  finance to re-pick; the app never rewrites it. Online-store fees take only an
+  doesn't list, shows as inactive, or lists under a type the save doesn't
+  accept, is refused until finance or the Board updates the copy; the save
+  itself never reads QuickBooks. A stored account that later reads as inactive
+  or as another type is flagged on System Status for finance to re-pick; the
+  app never rewrites it. Online-store fees take only an
   Expense or Other Expense account.  [Decision — owner]
 
 - A financial control flags something for a person to sign off, and the sign-off

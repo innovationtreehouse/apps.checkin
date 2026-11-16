@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Select, Stack, Table, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { errorMessage, QuickBooksListsRefresh, refusalMessage } from "@checkin/component-ui";
+import { errorMessage, InactivePickWarning, QuickBooksListsRefresh, refusalMessage } from "@checkin/component-ui";
 import type { BooksMapRole } from "@checkin/quickbooks";
 import { BOOKS_MAP_ROLE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -38,18 +38,16 @@ function showError(title: string, message: ReactNode) {
   notifications.show({ id: title, color: "red", title, message, autoClose: false });
 }
 
-/** Options for a picker: active entries, plus the saved one even when inactive or missing. */
-function choices(options: Option[] | null, saved: string | null) {
-  const list = (options ?? []).filter((o) => o.active || o.id === saved).map((o) => ({ value: o.id, label: o.active ? o.name : `${o.name} (inactive)` }));
-  if (saved && !list.some((o) => o.value === saved)) list.push({ value: saved, label: `QuickBooks id ${saved}` });
-  return list;
+/** Options for a picker: active entries only; a saved inactive or missing one shows as a warning instead. */
+function choices(options: Option[] | null) {
+  return (options ?? []).filter((o) => o.active).map((o) => ({ value: o.id, label: o.name }));
 }
 
 /** A role's account options: only the types it accepts, plus the saved one marked when it is of another type. */
 function accountChoices(options: AccountOption[] | null, role: BooksMapRole, saved: string | null) {
   const allowed = BOOKS_MAP_ROLE_ACCOUNT_TYPES[role];
   const fits = (options ?? []).filter((o) => allowed.includes(o.accountType) || o.id === saved);
-  return choices(fits, saved).map((c) => {
+  return choices(fits).map((c) => {
     const type = fits.find((o) => o.id === c.value)?.accountType;
     return type && !allowed.includes(type) ? { ...c, label: `${c.label} (wrong type: ${type})` } : c;
   });
@@ -120,6 +118,7 @@ export default function BooksMapPage() {
                   disabled={!isFinance}
                   onChange={(v) => void save(`/api/books-map/accounts/${r.role}`, { quickBooksAccountId: v }, "Account not saved")}
                 />
+                <InactivePickWarning saved={r.quickBooksAccountId} options={accounts} onRefreshed={() => void load()} />
               </Table.Td>
             </Table.Tr>
           ))}
@@ -136,13 +135,14 @@ export default function BooksMapPage() {
               <Table.Td>
                 <Select
                   aria-label={`Class for ${r.budgetOwnerName}`}
-                  data={choices(classes, r.quickBooksClassId)}
+                  data={choices(classes)}
                   value={r.quickBooksClassId}
                   placeholder="Not set"
                   searchable
                   disabled={!isFinance}
                   onChange={(v) => void save(`/api/books-map/classes/${r.budgetOwnerId}`, { quickBooksClassId: v }, "Class not saved")}
                 />
+                <InactivePickWarning saved={r.quickBooksClassId} options={classes} onRefreshed={() => void load()} />
               </Table.Td>
             </Table.Tr>
           ))}
