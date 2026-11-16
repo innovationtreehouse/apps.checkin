@@ -4,7 +4,7 @@ import { Badge, Button, Group, Paper, Select, Table, Text } from "@mantine/core"
 import { formatCents } from "@checkin/money";
 import { formatGtinDisplay } from "@checkin/gtin";
 import { LINE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
-import { QuickBooksListsRefresh } from "@checkin/component-ui";
+import { InactivePickWarning, QuickBooksListsRefresh } from "@checkin/component-ui";
 import { send, useLoad } from "./api";
 import NonInventoryBadge from "./NonInventoryBadge";
 
@@ -31,7 +31,9 @@ interface QbAccount {
 /** One account from QuickBooks' live list, as the host's books-map route returns it. */
 interface LiveAccount {
   id: string;
+  name: string;
   accountType: string;
+  active: boolean;
 }
 interface LookupContext {
   category: string | null;
@@ -105,7 +107,7 @@ export default function AccountHoldsPanel({ expenseId, holds, lines, currency, i
   const lineOf = new Map(lines.map((l) => [l.id, l]));
   const accountName = new Map((accounts.data ?? []).map((a) => [a.qbAccount, a.name]));
   const accountLabel = (code: string) => (accountName.has(code) ? `${accountName.get(code)} (${code})` : code);
-  const typeOf = new Map((live.data ?? []).map((a) => [a.id, a.accountType]));
+  const typeOf = new Map((live.data ?? []).filter((a) => a.active).map((a) => [a.id, a.accountType]));
   /** A capital line books to a Fixed Asset account; any other line to an expense type. */
   const optionsFor = (capital: boolean) => {
     const allowed: readonly string[] = capital ? LINE_ACCOUNT_TYPES.donatedCapital : LINE_ACCOUNT_TYPES.donatedGoods;
@@ -178,6 +180,7 @@ export default function AccountHoldsPanel({ expenseId, holds, lines, currency, i
                           if (await send(`${base}/line-items/${h.lineItemId}/account`, "PUT", { qbAccount: picked[h.id] }, "Account set")) onChanged();
                         }}
                       >Set account</Button>
+                      {!picked[h.id] && <InactivePickWarning saved={line?.manualQbAccount} options={live.data} />}
                     </Group>
                   ) : (line?.manualQbAccount ? accountLabel(line.manualQbAccount) : "—")}
                 </Table.Td>

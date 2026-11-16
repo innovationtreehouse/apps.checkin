@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import QbAccountsPage from "@checkin/expense/pages/qbAccounts";
 
@@ -74,6 +74,13 @@ describe("QuickBooks accounts page", () => {
     ]);
     expect(screen.getByRole("row", { name: /Supplies/ })).toHaveTextContent("Shop supplies");
     expect(screen.getByRole("row", { name: /Gone/ })).toHaveTextContent("Not in QuickBooks");
+  });
+
+  it("warns on a saved row whose QuickBooks account is inactive", () => {
+    renderPage({ data: liveAccounts, error: null }, [{ id: 3, name: "Old", qbAccount: "8009" }]);
+    const warning = screen.getByText("Old supplies is inactive in QuickBooks. Pick an active one.").closest<HTMLElement>("[role=alert]")!;
+    expect(within(warning).getByRole("button", { name: "Update now" })).toBeInTheDocument();
+    expect(screen.queryByText(/\(inactive\)/)).not.toBeInTheDocument();
   });
 
   it("shows the load error and no way to type an id when QuickBooks can't be read", () => {
