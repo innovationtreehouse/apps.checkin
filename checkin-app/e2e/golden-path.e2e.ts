@@ -170,9 +170,9 @@ test("a receipt goes from upload to an approved line in finance review", async (
     const base = `/api/expense/expenses/${encodeURIComponent(receiptId)}`;
     const signoffs = await api<Array<{ missing: string[] }>>(finance.session, `${base}/signoffs`);
     expect(signoffs.json.map((s) => s.missing)).toEqual([[]]);
-    // With every seat signed the expense leaves for QuickBooks; no account rule is seeded, so the line holds for an account.
+    // A fresh seed leaves the capital thresholds unset, so every expense waits at capital review before posting (docs/rules/expenses.md).
     const expense = await api<{ Expense: { state: string } }>(finance.session, base);
-    expect(expense.json.Expense.state).toBe("qb_on_hold");
+    expect(expense.json.Expense.state).toBe("capital_review");
     await noProblems(watch, "the signed expense");
   });
 
