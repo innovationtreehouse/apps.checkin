@@ -53,6 +53,11 @@ export const SCOPE_BINDINGS = {
         their_program_households: { field: 'householdId', inCtx: 'householdIdsInScopePrograms' },
     },
     OrgMembership: { their_households: { field: 'householdId', eqCtx: 'householdId' } },
+    // The /api/household response models: the caller's household and its members,
+    // row-scoped (see ROW_SCOPE_KEY) so a row without its key fails closed.
+    HouseholdPageHousehold: { their_households: { field: 'id', eqCtx: 'householdId' } },
+    HouseholdPeer: { their_households: { field: 'householdId', eqCtx: 'householdId' } },
+    EmergencyContactWarning: { their_households: { field: 'householdId', eqCtx: 'householdId' } },
     Program: {
         their_program_participants: { field: 'id', inCtx: ['programsLed', 'programsCoreVolIn'] },
     },
@@ -171,6 +176,9 @@ export const SCOPE_BINDINGS = {
  */
 export const ROW_SCOPE_KEY: Record<string, string> = {
     EmergencyContact: 'householdId',
+    HouseholdPageHousehold: 'id',
+    HouseholdPeer: 'householdId',
+    EmergencyContactWarning: 'householdId',
 };
 
 /**

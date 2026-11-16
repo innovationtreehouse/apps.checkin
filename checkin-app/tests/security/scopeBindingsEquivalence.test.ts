@@ -286,8 +286,19 @@ function eq(a: Set<string>, b: Set<string>): boolean {
  *
  * ProgramRosterAge.their_own / their_program_participants: the oracle has no case
  * for roster ages. Bound like Person on personId: their_own on personId === selfId,
- * and their_program_participants on personId ∈ ctx.participantIdsInScopePrograms.
+ * and their_program_participants on personId ∈ ctx.participantIdsInScopePrograms. *
+ * HouseholdPageHousehold / HouseholdPeer / EmergencyContactWarning: the oracle has
+ * no case for the /api/household response models. Each is row-scoped on one key
+ * (id, householdId, householdId): a non-object row or a row without a numeric key
+ * holds nothing; otherwise everyones, plus their_households when the key equals
+ * ctx.householdId.
  */
+const HOUSEHOLD_ROUTE_KEYS: Record<string, string> = {
+    HouseholdPageHousehold: 'id',
+    HouseholdPeer: 'householdId',
+    EmergencyContactWarning: 'householdId',
+};
+
 function expectedFromSnapshot(
     model: string,
     row: Record<string, unknown> | null | undefined,
@@ -351,6 +362,14 @@ function expectedFromSnapshot(
         if (row.personId === callerCtx.selfId) expected.add('their_own');
         if (callerCtx.participantIdsInScopePrograms.has(row.personId)) expected.add('their_program_participants');
     }
+    const householdKey = HOUSEHOLD_ROUTE_KEYS[model];
+    if (householdKey !== undefined) {
+        const key = row && typeof row === 'object' ? row[householdKey] : undefined;
+        if (typeof key !== 'number') return new Set<Scope>();
+        const scopes = new Set<Scope>(['everyones']);
+        if (key === callerCtx.householdId) scopes.add('their_households');
+        return scopes;
+    }
     return expected;
 }
 
@@ -377,6 +396,6 @@ describe('scopesHeld ≡ frozen switch + intentional deltas (personas × models 
     it('covers every bound model', () => {
         // Guard against the row set silently not exercising a model.
         expect(MODELS).toEqual(expect.arrayContaining(Object.keys(SCOPE_BINDINGS)));
-        expect(Object.keys(SCOPE_BINDINGS).length).toBe(28);
+        expect(Object.keys(SCOPE_BINDINGS).length).toBe(31);
     });
 });

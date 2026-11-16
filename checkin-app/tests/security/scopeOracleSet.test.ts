@@ -53,6 +53,7 @@ const ORACLES = [
     'finance-views-route.test.ts',
     'household-archive-routes.test.ts',
     'household-lead-program-scope.test.ts',
+    'household-route-strip.test.ts',
     'impersonatedBy-inertness.test.ts',
     'income-strip.test.ts',
     'inventory-strip.test.ts',

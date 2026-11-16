@@ -986,6 +986,36 @@ defineRoute({
     ],
 });
 
+// My Household: the caller's household, its members and its membership status.
+// Any session is admitted, a caller with no household included (household null);
+// every sensitive field is gated to the caller's own household.
+defineRoute({
+    endpoint: 'GET /api/household',
+    authorize: 'authenticated',
+    envelope: null,
+    // Bag: { HouseholdPage } with household (HouseholdPageHousehold →
+    // householdMembers HouseholdPeer, orgMembership OrgMembership).
+    returns: ['HouseholdPage', 'HouseholdPageHousehold', 'HouseholdPeer', 'OrgMembership'],
+    orderedView: [
+        ['authenticated', ['their_households:pii', 'their_households:personal', 'their_households:internal', 'member', 'public']],
+    ],
+});
+
+// A household lead adds a member. The route refuses staff accounts, a caller
+// with no household and a non-lead; the view gates the new member and the
+// emergency-contact warning to the caller's own household.
+defineRoute({
+    endpoint: 'PATCH /api/household',
+    authorize: 'authenticated',
+    envelope: null,
+    // Bag: { HouseholdMemberAdded } with member (HouseholdPeer) and warning
+    // (EmergencyContactWarning, or null).
+    returns: ['HouseholdMemberAdded', 'HouseholdPeer', 'EmergencyContactWarning'],
+    orderedView: [
+        ['authenticated', ['their_households:pii', 'their_households:personal', 'their_households:internal', 'member', 'public']],
+    ],
+});
+
 // App-localization singleton (timezone/locale) — sysadmin-only surface,
 // wholly public-tier data; the gate is about who may see admin settings
 // screens, not the fields. Declared public-only ON PURPOSE: AppSettings is the
