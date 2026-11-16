@@ -19,6 +19,7 @@ import { apiError } from "@/lib/api-response";
 import { ServiceError } from "@checkin/component-kit";
 import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
 import { householdMayEnrol, NO_EMERGENCY_CONTACT_TO_ENROL } from "@/lib/emergencyContacts/service";
+import { personActor, recordAudit } from "@/lib/auditActor";
 
 export const POST = withAuth({}, async (req, auth, { params }: { params: Promise<{ id: string }> }) => {
     if (auth.type !== 'session') return apiError("Unauthorized", 401);
@@ -218,6 +219,13 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
                         ...(takesSeatWithoutSale && { seatTakenWithoutSaleAt: new Date() }),
                     }
                 });
+                await recordAudit(tx, personActor(currentUserId), {
+                    action: 'CREATE',
+                    tableName: 'ProgramParticipant',
+                    affectedEntityId: participantId,
+                    secondaryAffectedEntity: programId,
+                    newData: row
+                });
                 return { result: row, delta };
             }
             // One row per (person, program): re-enrolment reactivates the withdrawn
@@ -238,22 +246,18 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             });
             if (count === 0) return { result: null, delta: 0 };
             const row = await tx.programParticipant.findUniqueOrThrow({ where: { programId_personId: { programId, personId: participantId } } });
+            await recordAudit(tx, personActor(currentUserId), {
+                action: 'EDIT',
+                tableName: 'ProgramParticipant',
+                affectedEntityId: participantId,
+                secondaryAffectedEntity: programId,
+                newData: row
+            });
             return { result: row, delta };
         }, { inRequest: true });
         if (!enrollment) {
             return apiError("Participant is already enrolled in this program.", 409);
         }
-
-        await prisma.auditLog.create({
-            data: {
-                actorId: currentUserId,
-                action: existingClaim?.status === 'WITHDRAWN' ? 'EDIT' : 'CREATE',
-                tableName: 'ProgramParticipant',
-                affectedEntityId: participantId,
-                secondaryAffectedEntity: programId,
-                newData: enrollment
-            }
-        });
 
         // Trigger notification
         await sendNotification(participantId, 'PROGRAM_ENROLLMENT', { programName: currentProgram.name });

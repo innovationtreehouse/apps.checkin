@@ -5,6 +5,7 @@ import { APP_TIMEZONE } from "@/lib/time";
 import { APP_LOCALE } from "@/lib/appSettings";
 import { apiError } from "@/lib/api-response";
 import { handler } from "@/security/handler";
+import { personActor, recordAudit } from "@/lib/auditActor";
 
 export const dynamic = "force-dynamic";
 
@@ -51,20 +52,19 @@ export const PUT = withAuth({ roles: ["isSysadmin"] }, async (req, auth) => {
         data.locale = loc;
     }
 
-    const settings = await prisma.appSettings.upsert({
-        where: { id: 1 },
-        create: { ...DEFAULTS, ...data },
-        update: data,
-    });
-
-    await prisma.auditLog.create({
-        data: {
-            actorId: auth.user.id,
+    const settings = await prisma.$transaction(async (tx) => {
+        const saved = await tx.appSettings.upsert({
+            where: { id: 1 },
+            create: { ...DEFAULTS, ...data },
+            update: data,
+        });
+        await recordAudit(tx, personActor(auth.user.id), {
             action: "EDIT",
             tableName: "AppSettings",
             affectedEntityId: 1,
             newData: data,
-        },
+        });
+        return saved;
     });
 
     return NextResponse.json({ settings });
