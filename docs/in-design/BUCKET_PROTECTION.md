@@ -40,7 +40,7 @@ holding as the backstop.
   from the copy, or any archived bucket still has unfinished work.
 - **Posting:** no change. Each lane still holds a line whose bucket is archived
   or has no usable Class.
-- **Not changing:** restoring a bucket, the rule that a Class can be changed but
+- **Not changing:** the rule that a Class can be changed but
   not cleared, the daily refresh and "Update now", and income's own alert at
   posting for items in an unusable bucket.
 - **Cost:** one read per library, one check in the host, one email template, one

@@ -3,7 +3,7 @@ import { db } from "../db";
 import { getOrgId } from "../runtime";
 
 /**
- * Each item account that `accounts` lacks or lists under a type a store sale can't book to, one line per item
+ * Each item account that `accounts` lacks, shows as inactive, or lists under a type a store sale can't book to, one line per item
  * naming the screen where finance re-picks it, for System Status. Stored values stay as they are.
  */
 export async function misTypedQuickBooksPicks(accounts: readonly QboAccountSummary[]): Promise<string[]> {

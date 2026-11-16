@@ -165,7 +165,7 @@ async function lockForEdit(
   return locked;
 }
 
-/** Move along one machine edge with a compare-and-set on the current state, then audit. */
+/** Move along one machine edge with a compare-and-set on the current state, audited in the same transaction. */
 async function step(
   row: ReceiptRow,
   event: ReceiptEvent,
@@ -176,14 +176,17 @@ async function step(
   valueAfter: string | null = null,
   tx?: Prisma.TransactionClient,
 ): Promise<void> {
-  try {
-    assertLegalTransition(row.state, event);
-    assertExpectedState(row.state, event, NEUTRAL_CONTEXT, expected);
-    await receiptRepo.update(row.id, { core: set.core, detail: { ...set.detail, state: expected } }, row.state, tx);
-  } catch (e) {
-    transitionError(e);
-  }
-  await audit(tx ?? db, row.id, actor, { action, valueAfter });
+  const write = async (client: Prisma.TransactionClient) => {
+    try {
+      assertLegalTransition(row.state, event);
+      assertExpectedState(row.state, event, NEUTRAL_CONTEXT, expected);
+      await receiptRepo.update(row.id, { core: set.core, detail: { ...set.detail, state: expected } }, row.state, client);
+    } catch (e) {
+      transitionError(e);
+    }
+    await audit(client, row.id, actor, { action, valueAfter });
+  };
+  await (tx ? write(tx) : db.$transaction(write));
 }
 
 /** An audited 403: the attempt is on the receipt's record even though nothing changed. */
@@ -1091,9 +1094,11 @@ export const receiptService = {
     const held = ((await computeGroup(row.orgId, id))?.members ?? []).filter((m) => m.id !== id && m.state === "duplicate_flagged").map((m) => m.id);
     const flaggedAgainst = held.length > 0 ? await receiptRepo.list({ orgId: row.orgId, id: { in: held } }) : [];
     for (const flagged of flaggedAgainst) await refuseSelfDecision(flagged, actor, "reject the suspected original");
-    await db.$transaction((tx) => rejectAsFinance(row, note, actor, tx));
+    await db.$transaction(async (tx) => {
+      await rejectAsFinance(row, note, actor, tx);
+      for (const flagged of flaggedAgainst) await audit(tx, flagged.id, actor, { action: "suspected_original_rejected", valueAfter: row.id });
+    });
     await sendOutcomeNotices([id]);
-    for (const flagged of flaggedAgainst) await audit(db, flagged.id, actor, { action: "suspected_original_rejected", valueAfter: row.id });
     return load(id, "finance", actor);
   },
 
@@ -1597,8 +1602,10 @@ export const receiptService = {
     const row = await load(id, "submitter", actor);
     if (row.state !== "rejected") throw new ServiceError(400, "Only a rejected receipt is acknowledged");
     if (row.rejectionAcknowledgedAt === null) {
-      const acknowledged = await db.receiptDetail.updateMany({ where: { id, rejectionAcknowledgedAt: null }, data: { rejectionAcknowledgedAt: new Date() } });
-      if (acknowledged.count > 0) await audit(db, id, actor, { action: "rejection_acknowledged" });
+      await db.$transaction(async (tx) => {
+        const acknowledged = await tx.receiptDetail.updateMany({ where: { id, rejectionAcknowledgedAt: null }, data: { rejectionAcknowledgedAt: new Date() } });
+        if (acknowledged.count > 0) await audit(tx, id, actor, { action: "rejection_acknowledged" });
+      });
     }
     return toSubmitterView(await load(id, "submitter", actor));
   },

@@ -9,8 +9,8 @@ vi.mock("../../services/itemCategoryService", () => ({
 }));
 
 const ACCOUNTS = [
-  { id: "4001", name: "Sales:Memberships", accountType: "Income" },
-  { id: "1001", name: "Checking", accountType: "Bank" },
+  { id: "4001", name: "Sales:Memberships", accountType: "Income", active: true },
+  { id: "1001", name: "Checking", accountType: "Bank", active: true },
 ];
 
 const configure = (quickBooksAccounts?: () => Promise<typeof ACCOUNTS>) =>
