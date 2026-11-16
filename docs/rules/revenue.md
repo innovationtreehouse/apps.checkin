@@ -276,9 +276,9 @@ Income checks each online-store payout against the deposits in the books.
 - Until income's posting is switched on, the app only matches. A payout it cannot
   match goes to finance, which has the app book it or skips it with a reason.  [Decision — owner]
 
-- Posting, once switched on, stays on. Online-store payouts and giving-platform deposits each have their own switch-on.
-  A payout the app first sees after that books on its own, matching first, however
-  late it arrived.  [Decision — owner]
+- Posting, once switched on, stays on. Online-store payouts and giving-platform
+  deposits each have their own switch-on. A payout the app first sees after
+  that books on its own, matching first, however late it arrived.  [Decision — owner]
 
 - The app never changes or deletes anything already in the books.  [Decision — deliberate limit]
 
