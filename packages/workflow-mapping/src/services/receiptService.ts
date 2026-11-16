@@ -3,7 +3,7 @@ import { DEFAULT_CURRENCY } from "@checkin/receipt-types";
 import { db } from "../db";
 import { receivedReceiptStateEnum, type ReceivedReceiptState } from "../db/schema";
 import { executePushAndSettle, type ApplyResult } from "../lib/apply-receipt";
-import { insertAuditEvent } from "../lib/audit";
+import { insertAuditEvent, parseAuditDetails } from "../lib/audit";
 import { parseStoredReceipt } from "../lib/parse-receipt";
 import { getOrgId, ports, requireActor } from "../runtime";
 import {
@@ -223,7 +223,7 @@ export const receiptService = {
       lineStatusId: row.lineStatusId,
       fromState: row.fromState,
       toState: row.toState,
-      details: row.details ? (JSON.parse(row.details) as unknown) : null,
+      details: parseAuditDetails(row.details),
       createdAt: row.createdAt.toISOString(),
     }));
   },
