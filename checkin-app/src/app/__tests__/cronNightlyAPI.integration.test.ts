@@ -404,22 +404,24 @@ describe('Cron Nightly API Integration Tests', () => {
             });
 
             // Rejects only the purge's rows, on whichever client writes them.
-            await prisma.$executeRawUnsafe(`
-                CREATE FUNCTION reject_dob_purge_audit() RETURNS trigger AS $$
-                BEGIN RAISE EXCEPTION 'audit write rejected'; END $$ LANGUAGE plpgsql`);
-            await prisma.$executeRawUnsafe(`
-                CREATE TRIGGER reject_dob_purge_audit BEFORE INSERT ON "AuditLog"
-                FOR EACH ROW WHEN (NEW."tableName" = 'Person' AND NEW."action" = 'DELETE')
-                EXECUTE FUNCTION reject_dob_purge_audit()`);
+            const trigger = `reject_dob_purge_audit_${process.pid}_${Date.now()}`;
             const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
             try {
+                await prisma.$executeRawUnsafe(`
+                    CREATE FUNCTION ${trigger}() RETURNS trigger AS $$
+                    BEGIN RAISE EXCEPTION 'audit write rejected'; END $$ LANGUAGE plpgsql`);
+                await prisma.$executeRawUnsafe(`
+                    CREATE TRIGGER ${trigger} BEFORE INSERT ON "AuditLog"
+                    FOR EACH ROW WHEN (NEW."tableName" = 'Person' AND NEW."action" = 'DELETE')
+                    EXECUTE FUNCTION ${trigger}()`);
+
                 const res = await GET(cronReq());
                 expect(res.status).toBe(500);
                 expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Cron handler error'), expect.anything());
             } finally {
                 errorSpy.mockRestore();
-                await prisma.$executeRawUnsafe(`DROP TRIGGER reject_dob_purge_audit ON "AuditLog"`);
-                await prisma.$executeRawUnsafe(`DROP FUNCTION reject_dob_purge_audit()`);
+                await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS ${trigger} ON "AuditLog"`);
+                await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS ${trigger}()`);
             }
 
             const kept = await prisma.person.findUnique({ where: { id: agedOut.id } });
