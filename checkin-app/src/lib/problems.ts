@@ -21,19 +21,20 @@ type Retry = (item: { id: string; step: string }, by: ProblemRetrier) => Promise
  * Each receipt-flow library's "stuck items" and "retry" ports, and its own Problems lines where it
  * has them; one with no database configured is not read.
  */
-const SOURCES: { library: string; env: string; read: () => Promise<StuckItem[]>; retry: Retry; notices?: () => Promise<string[]> }[] = [
+const SOURCES: { library: string; env: string; read: () => Promise<StuckItem[]>; retry: Retry; notices?: () => Promise<Notice[]> }[] = [
     {
         library: "receipt",
         env: "RECEIPT_DATABASE_URL",
         read: async () => (await import("@checkin/receipt")).stuckItems(),
         retry: async (item) => (await import("@checkin/receipt")).retryStuckItem(item),
-        notices: async () => (await import("@checkin/receipt")).problemNotices(),
+        notices: async () => (await (await import("@checkin/receipt")).problemNotices()).map((text) => ({ text, href: null })),
     },
     {
         library: "workflow mapping",
         env: "WORKFLOW_MAPPING_DATABASE_URL",
         read: async () => (await import("@checkin/workflow-mapping")).stuckItems(),
         retry: async (item) => (await import("@checkin/workflow-mapping")).retryStuckItem(item),
+        notices: async () => (await import("@checkin/workflow-mapping")).problemNotices(),
     },
     {
         library: "expense",
@@ -92,7 +93,7 @@ export async function getProblems(now = new Date()): Promise<{ items: Problem[];
     const results = await Promise.allSettled([
         ...wired.map(async (s) => ({
             items: await s.read(),
-            notices: s.notices ? (await s.notices()).map((text) => ({ text, href: null })) : [],
+            notices: s.notices ? await s.notices() : [],
         })),
         emailFailureNotices(now).then((notices) => ({ items: [], notices })),
     ]);
