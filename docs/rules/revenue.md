@@ -103,6 +103,11 @@ Things the app takes as true because they are handled outside it.
   or no longer holds is shown as a warning, never offered as a choice.
   [Decision — owner]
 
+- After each refresh of the copy, the app checks every live bucket's Class, and
+  every archived bucket that still has unfinished work. It alerts finance once
+  for each bucket and problem, shows them on System Status, and alerts again if
+  a problem comes back after it cleared.  [Decision — owner]
+
 - Each online-store sale, giving-platform gift and gift of goods books to the
   account finance mapped for its item. A line with no mapping, or whose account
   can't be used, waits for finance; nothing books it to a fallback account. A

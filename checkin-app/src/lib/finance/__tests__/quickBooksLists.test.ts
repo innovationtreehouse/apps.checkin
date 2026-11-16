@@ -3,7 +3,8 @@
  */
 /**
  * The refresh reads both QuickBooks lists and writes both rows in one transaction, trimmed and
- * sorted; it writes nothing while QuickBooks is off, under CHECKIN_ENV=local, or when a read fails.
+ * sorted, then runs the bucket Class check on the new Classes; it writes and checks nothing while
+ * QuickBooks is off, under CHECKIN_ENV=local, or when a read fails.
  * The readers return the copy and never call QuickBooks.
  */
 import { refreshQuickBooksLists, savedQuickBooksAccounts, savedQuickBooksClasses } from '../quickBooksLists';
@@ -12,7 +13,9 @@ import { getQuickBooks } from '@/lib/quickbooks/client';
 const upsert = jest.fn((args: unknown) => args);
 const transaction = jest.fn(async (ops: unknown[]) => ops);
 const findUnique = jest.fn();
+const checkBucketClasses = jest.fn();
 jest.mock('@/lib/quickbooks/client', () => ({ getQuickBooks: jest.fn() }));
+jest.mock('../bucketClassCheck', () => ({ checkBucketClasses: (classes: unknown) => checkBucketClasses(classes) }));
 jest.mock('@/lib/prisma', () => ({
     __esModule: true,
     default: {
@@ -59,6 +62,7 @@ describe('refreshQuickBooksLists', () => {
             { id: '9', name: 'Programs:Robotics', active: true },
         ]);
         expect(written[0].update.refreshedAt).toBe(written[1].update.refreshedAt);
+        expect(checkBucketClasses).toHaveBeenCalledWith(written[1].update.entries);
     });
 
     it('writes nothing and rethrows when a read fails', async () => {
@@ -66,6 +70,18 @@ describe('refreshQuickBooksLists', () => {
         client(async () => [], async () => { throw failure; });
         await expect(refreshQuickBooksLists()).rejects.toBe(failure);
         expect(transaction).not.toHaveBeenCalled();
+        expect(checkBucketClasses).not.toHaveBeenCalled();
+    });
+
+    it('keeps the written copy when the bucket check fails', async () => {
+        client(async () => [], async () => []);
+        const failure = new Error('library down');
+        checkBucketClasses.mockRejectedValueOnce(failure);
+        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+        await expect(refreshQuickBooksLists()).resolves.toMatchObject({ accounts: 0, classes: 0 });
+        expect(logged).toHaveBeenCalledWith(expect.stringContaining('bucket Class check failed'), failure);
+        logged.mockRestore();
+        expect(transaction).toHaveBeenCalledTimes(1);
     });
 
     it('answers null and writes nothing while QuickBooks is off', async () => {
