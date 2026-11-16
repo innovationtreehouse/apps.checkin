@@ -14,7 +14,7 @@ jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 1
 
 const receipt = {
   id: 7, state: "pending_review", validationNotes: null, createdAt: "2026-10-02T15:30:00Z",
-  inventoryAppliedAt: null, expenseAppliedAt: null, donationAppliedAt: null, matchingPendingSince: null as string | null,
+  inventoryAppliedAt: null, expenseAppliedAt: null, donationAppliedAt: null, matchingPendingSince: null as string | null, matchingPendingReason: null as string | null,
   applyFirstFailedAt: null as string | null,
 };
 const baseDetail = {
@@ -459,6 +459,17 @@ describe("the receiving page for one receipt", () => {
     expect(screen.getByText("Matching didn't run because the catalog was unavailable. Run matching now, or map the lines by hand.")).toBeInTheDocument();
   });
 
+  it.each([
+    ["catalog_unavailable", "the catalog was unavailable"],
+    ["catalog_settings", "of a catalog settings error"],
+    ["unexpected_error", "of an unexpected error"],
+    ["unknown_code", "of an unexpected error"],
+  ])("says why matching couldn't run for reason %s", (reason, why) => {
+    detail = { ...detail, ReceivedReceipt: { ...receipt, matchingPendingSince: "2026-10-02T15:30:00Z", matchingPendingReason: reason } };
+    wrap();
+    expect(screen.getByText(`Matching didn't run because ${why}. Run matching now, or map the lines by hand.`)).toBeInTheDocument();
+  });
+
   describe("Run matching now", () => {
     const pending = () => ({ ...baseDetail, ReceivedReceipt: { ...receipt, matchingPendingSince: "2026-10-02T15:30:00Z" } });
     /** The receipt as the reload after the run reads it. */
@@ -499,12 +510,15 @@ describe("the receiving page for one receipt", () => {
       expect(mockApi).toHaveBeenCalledWith("/receipts/7/run-matching", { method: "POST" });
     });
 
-    it("says the catalog is still unavailable when matching couldn't run again", async () => {
+    it("says why when matching couldn't run again", async () => {
       detail = pending();
-      afterRun(pending());
+      afterRun({ ...baseDetail, ReceivedReceipt: { ...pending().ReceivedReceipt, matchingPendingReason: "catalog_settings" } });
       wrap();
       fireEvent.click(screen.getByRole("button", { name: "Run matching now" }));
-      await waitFor(() => expect(mockShow).toHaveBeenCalledWith({ message: "Catalog still unavailable. Try again later, or map the lines by hand.", color: "gray" }));
+      await waitFor(() => expect(mockShow).toHaveBeenCalledWith({
+        message: "Matching still couldn't run because of a catalog settings error. Try again later, or map the lines by hand.",
+        color: "gray",
+      }));
     });
   });
 
