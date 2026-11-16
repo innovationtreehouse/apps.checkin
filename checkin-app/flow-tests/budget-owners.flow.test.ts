@@ -110,6 +110,32 @@ describe("changing a bucket", () => {
     expect(restored.json).toMatchObject({ archivedAt: null, quickBooksClassId });
   });
 
+  it("archive is refused while a store item is mapped to the bucket, and succeeds once it is unmapped", async () => {
+    // An item maps only to a bucket whose Class is active in the stand-in list (LOCAL_QUICKBOOKS_CLASSES); take the first one free.
+    let id = 0;
+    for (const quickBooksClassId of ["9001", "9002", "9003", "9004"]) {
+      const created = await send(finance, "POST", "/api/budget-owners", { name: `Flow in use ${Date.now()}`, quickBooksClassId });
+      if (created.status === 200) {
+        id = (created.json as Bucket).id;
+        break;
+      }
+      expect(created.status).toBe(409);
+    }
+    expect(id).toBeGreaterThan(0);
+    const variant = String(Date.now());
+    expect((await send(finance, "PUT", `/api/income/items/${variant}/category`, { budgetOwnerId: id })).status).toBe(200);
+
+    const refused = await send(finance, "POST", `/api/budget-owners/${id}/archive`);
+    expect(refused.status).toBe(409);
+    expect(refused.json).toMatchObject({ error: expect.stringContaining("store items mapped to it: 1 (Income › Item Categories)") });
+    expect((await api<Bucket[]>(finance, "/api/budget-owners")).json.find((b) => b.id === id)?.archivedAt).toBeNull();
+
+    expect((await send(finance, "DELETE", `/api/income/items/${variant}/category`)).status).toBe(200);
+    const archived = await send(finance, "POST", `/api/budget-owners/${id}/archive`);
+    expect(archived.status).toBe(200);
+    expect((archived.json as Bucket).archivedAt).not.toBeNull();
+  });
+
   it("finance changes the flag, refused while the Board's owner or treasurer holds the bucket", async () => {
     const { id } = await create();
     await send(board, "PUT", `/api/budget-owners/${id}/owner`, { personId: outsider.personaId });
