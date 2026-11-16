@@ -234,22 +234,17 @@ describe('a signature that lands while the application is closed', () => {
             expect(row.zohoEnvelopeId).toBeNull();
         });
 
-        it('Zoho down at reopen: the request is forgotten so "Resume signing" cannot record it later', async () => {
-            const { processId, membershipId, boardId } = await closedApplication();
-            await denyThenRestore(membershipId, boardId);
-            mockGetRequestStatus.mockRejectedValueOnce(new Error('Zoho 503'));
-
-            await expect(unarchiveApplication(processId, boardId)).resolves.toEqual({ status: 'PENDING_EXTERNAL_ACTION' });
-            expect((await read(processId)).zohoEnvelopeId).toBeNull();
-        });
-
-        it('Zoho still waiting after the restore: the request is kept for the family to sign', async () => {
+        it('the request is forgotten without asking Zoho, so a pending one is replaced too', async () => {
             const { processId, requestId, membershipId, boardId } = await closedApplication();
             await denyThenRestore(membershipId, boardId);
-            mockGetRequestStatus.mockResolvedValue('in_progress');
 
             await unarchiveApplication(processId, boardId);
-            expect((await read(processId)).zohoEnvelopeId).toBe(requestId);
+
+            expect(mockGetRequestStatus).not.toHaveBeenCalled();
+            const row = await read(processId);
+            expect(row).toMatchObject({ zohoEnvelopeId: null, zohoActionId: null, zohoSignerPersonId: null });
+            const forgot = await prisma.auditLog.findMany({ where: { tableName: 'OrgMembershipProcess', affectedEntityId: processId, oldData: { path: ['zohoEnvelopeId'], equals: requestId } } });
+            expect(forgot.map((r) => normalizeAuditData(r.newData))).toEqual([expect.objectContaining({ unarchived: true, zohoEnvelopeId: null, reason: 'household denied since close' })]);
         });
 
         it('a signature recorded before the close still carries over', async () => {

@@ -11,14 +11,13 @@ const tx = {
     $queryRaw: jest.fn(),
     orgMembership: { findUnique: jest.fn() },
     orgMembershipProcess: { findFirst: jest.fn(), updateMany: jest.fn() },
-    auditLog: { create: jest.fn() },
+    auditLog: { create: jest.fn(), findFirst: jest.fn() },
 };
 
 jest.mock('@/lib/prisma', () => ({
     __esModule: true,
     default: {
         orgMembershipProcess: { findUnique: jest.fn() },
-        auditLog: { findFirst: jest.fn().mockResolvedValue(null) },
         $transaction: jest.fn(),
     },
 }));
@@ -93,28 +92,37 @@ describe('unarchiveApplication (Reopen)', () => {
         expect(settleHouseholdBg).toHaveBeenCalledWith(5);
     });
 
-    describe('signature pickup across a denial', () => {
-        const auditFindFirst = jest.mocked(prisma.auditLog.findFirst);
+    describe('signing request across a denial', () => {
         const reopen = async () => {
-            findUnique.mockResolvedValue(row({ status: 'ARCHIVED', archivedFromStatus: 'PENDING_EXTERNAL_ACTION' }));
+            findUnique.mockResolvedValue(row({ status: 'ARCHIVED', archivedFromStatus: 'PENDING_EXTERNAL_ACTION', zohoEnvelopeId: 'req-1', zohoActionId: 'act-1', zohoSignerPersonId: 7, contractSignedAt: null }));
             tx.orgMembership.findUnique.mockResolvedValue({ status: 'NONE' });
             tx.orgMembershipProcess.findFirst.mockResolvedValue(null);
             tx.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
             await unarchiveApplication(1, 2);
-            return jest.mocked(pickUpMissedSignature).mock.calls[0][1];
+            return tx.orgMembershipProcess.updateMany.mock.calls[0][0].data;
         };
-        afterEach(() => auditFindFirst.mockReset().mockResolvedValue(null));
+        afterEach(() => tx.auditLog.findFirst.mockReset());
 
-        it('records the signature when the household was not denied since the close', async () => {
-            auditFindFirst.mockResolvedValueOnce({ id: 40 } as never).mockResolvedValueOnce(null);
-            await expect(reopen()).resolves.toEqual({ refuseSigned: false, actorId: 2 });
+        it('keeps the request and asks Zoho when the household was not denied since the close', async () => {
+            tx.auditLog.findFirst.mockResolvedValueOnce({ id: 40 }).mockResolvedValueOnce(null);
+            expect(await reopen()).not.toHaveProperty('zohoEnvelopeId');
+            expect(pickUpMissedSignature).toHaveBeenCalled();
         });
 
-        it('refuses the signature when a denial or the restore follows the close', async () => {
-            auditFindFirst.mockResolvedValueOnce({ id: 40 } as never).mockResolvedValueOnce({ id: 41 } as never);
-            await expect(reopen()).resolves.toEqual({ refuseSigned: true, actorId: 2 });
-            expect(auditFindFirst).toHaveBeenLastCalledWith(expect.objectContaining({
-                where: { OR: expect.arrayContaining([expect.objectContaining({ tableName: 'OrgMembership', secondaryAffectedEntity: 5, id: { gt: 40 } })]) },
+        it('forgets the request in the reopen write when a denial, a restore or the restore close follows the close', async () => {
+            tx.auditLog.findFirst.mockResolvedValueOnce({ id: 40 }).mockResolvedValueOnce({ id: 41 });
+            expect(await reopen()).toMatchObject({ zohoEnvelopeId: null, zohoActionId: null, zohoSignerPersonId: null });
+            expect(pickUpMissedSignature).not.toHaveBeenCalled();
+            expect(tx.auditLog.findFirst).toHaveBeenLastCalledWith(expect.objectContaining({
+                where: {
+                    OR: [
+                        { id: 40, newData: { path: ['reason'], equals: 'household restored' } },
+                        expect.objectContaining({ tableName: 'OrgMembership', secondaryAffectedEntity: 5, id: { gt: 40 } }),
+                    ],
+                },
+            }));
+            expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+                data: expect.objectContaining({ newData: expect.objectContaining({ zohoEnvelopeId: null, reason: 'household denied since close' }) }),
             }));
         });
     });
