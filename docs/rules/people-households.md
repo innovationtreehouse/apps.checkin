@@ -389,6 +389,9 @@ Things the app takes as true because they are handled outside it.
 - Withdrawing a trusted adult retires every approval they hold, not just the
   most recent, and drops them from the pickup list at once.  [Decision]
 
+- Approving a renewal or a change retires the approval it replaces, so a trusted
+  adult holds at most one live approval.  [Decision]
+
 - A board override that denies a change leaves the earlier approval standing.  [Decision]
 
 - Force-approve refuses an adult the household withdrew, and refuses when the
