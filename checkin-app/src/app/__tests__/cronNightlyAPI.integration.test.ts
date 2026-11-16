@@ -411,10 +411,13 @@ describe('Cron Nightly API Integration Tests', () => {
                 CREATE TRIGGER reject_dob_purge_audit BEFORE INSERT ON "AuditLog"
                 FOR EACH ROW WHEN (NEW."tableName" = 'Person' AND NEW."action" = 'DELETE')
                 EXECUTE FUNCTION reject_dob_purge_audit()`);
+            const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
             try {
                 const res = await GET(cronReq());
                 expect(res.status).toBe(500);
+                expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Cron handler error'), expect.anything());
             } finally {
+                errorSpy.mockRestore();
                 await prisma.$executeRawUnsafe(`DROP TRIGGER reject_dob_purge_audit ON "AuditLog"`);
                 await prisma.$executeRawUnsafe(`DROP FUNCTION reject_dob_purge_audit()`);
             }
