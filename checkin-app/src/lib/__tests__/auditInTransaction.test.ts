@@ -16,13 +16,6 @@ const REFUSAL = "by design: refusal, must survive the refusal it records";
 const DB_PARAM = "by design: DbClient-param helper; callers pass their transaction client";
 
 const ALLOWLIST: Record<string, { count: number; reason: string }> = {
-    // Programs and volunteers
-    "app/api/programs/[id]/volunteers/route.ts": { count: 3, reason: TO_FIX },
-    "app/api/programs/[id]/participants/route.ts": { count: 1, reason: TO_FIX },
-    "app/api/programs/route.ts": { count: 1, reason: TO_FIX },
-    "lib/programAnnounce.ts": { count: 1, reason: TO_FIX },
-    "app/api/events/route.ts": { count: 1, reason: TO_FIX },
-    "lib/lifecycleDrift.ts": { count: 1, reason: TO_FIX },
     // Membership
     "lib/membership/external.ts": { count: 2, reason: TO_FIX },
     "lib/membership/grant.ts": { count: 1, reason: TO_FIX },
