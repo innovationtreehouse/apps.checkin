@@ -294,6 +294,25 @@ describe("EventAdminPage", () => {
         expect(fetchMock).not.toHaveBeenCalledWith("/api/events/5", expect.objectContaining({ method: "PATCH" }));
     });
 
+    it("manual edit: changing the arrival clears a departure error checked against the old one", async () => {
+        setSession({ id: 1, isSysadmin: true });
+        mockFetchJson({ "/api/events/5": baseEvent() });
+        renderPage(params);
+        await screen.findByText("Robotics Session");
+
+        fireEvent.click(screen.getAllByRole("button", { name: "Manual Edit" })[1]);
+        await screen.findByText(/Manual Edit: Pat Participant/);
+        fireEvent.change(screen.getByLabelText("Arrived Time"), { target: { value: "2020-01-01T19:10" } });
+        fireEvent.change(screen.getByLabelText("Departed Time"), { target: { value: "2020-01-01T18:10" } });
+        fireEvent.click(screen.getByRole("button", { name: "Save" }));
+        expect(screen.getByText("Departure time must be after arrival time")).toBeInTheDocument();
+
+        fireEvent.change(screen.getByLabelText("Arrived Time"), { target: { value: "2020-01-01T17:10" } });
+
+        expect(screen.getByLabelText("Departed Time")).not.toHaveAttribute("aria-invalid", "true");
+        expect(screen.queryByText("Departure time must be after arrival time")).not.toBeInTheDocument();
+    });
+
     it("manual edit modal: Cancel button and the (X) close button both dismiss without saving", async () => {
         setSession({ id: 1, isSysadmin: true });
         const fetchMock = mockFetchJson({ "/api/events/5": baseEvent() });

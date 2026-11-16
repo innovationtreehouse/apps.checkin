@@ -5,7 +5,7 @@ import {
   Badge, Button, Card, Center, Checkbox, Group, Loader, Modal, Select, Stack, Table, Text, TextInput, Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { errorMessage, QuickBooksListsRefresh } from "@checkin/component-ui";
+import { errorMessage, QuickBooksListsRefresh, showSuccess } from "@checkin/component-ui";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { api } from "@/lib/api";
@@ -96,7 +96,7 @@ export default function BudgetsPage() {
       showError(failed, errorMessage(e));
       return false;
     }
-    notifications.show({ message: done });
+    showSuccess(done);
     setLoading(true);
     await load();
     return true;

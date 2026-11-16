@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Alert, Box, Button, Card, Group, Modal, Paper, Stack, Switch, Table, Text, Textarea, TextInput, UnstyledButton } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
+import { showError, showSuccess } from "@checkin/component-ui";
 import { IconChevronDown, IconChevronUp, IconSelector } from "@tabler/icons-react";
 import { EntityPicker } from "@/components/admin/EntityPicker";
 import { AdminEditHouseholdModal } from "@/components/admin/AdminEditHouseholdModal";
@@ -128,7 +128,8 @@ export default function AdminParticipantsIndex() {
   const [addContactFieldErrors, setAddContactFieldErrors] = useState<{ email?: string }>({});
 
   const showNotification = (message: string, type: 'success' | 'error' = 'success') => {
-    notifications.show({ message, color: type === 'error' ? 'red' : 'green', autoClose: type === 'error' ? false : 4000 });
+    if (type === 'error') showError(message);
+    else showSuccess(message);
   };
 
   const closeAssign = () => {

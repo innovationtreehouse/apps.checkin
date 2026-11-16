@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useSession } from "next-auth/react";
 import type { OrgMembershipProcessStatus, OrgMembershipStatus } from "@/generated/prisma/client";
 import { notifications } from "@mantine/notifications";
+import { showSuccess } from "@checkin/component-ui";
 import { useDisclosure } from "@mantine/hooks";
 import type { AlertTone } from "@/components/admin/AlertBanner";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
@@ -183,11 +184,9 @@ export function useMembershipPage() {
             /* best-effort — the Zoho webhook is still a backstop */
           }
           load();
-          notifications.show({
-            message: signedNow
-              ? "Thanks — your signature was received."
-              : "Signature received — finalizing. If it doesn't update shortly, use “Refresh status”.",
-          });
+          showSuccess(signedNow
+            ? "Thanks — your signature was received."
+            : "Signature received — finalizing. If it doesn't update shortly, use “Refresh status”.");
         })();
       }
     }
@@ -398,7 +397,7 @@ export function useMembershipPage() {
       });
       if (res.ok) {
         setPlanRequested(true);
-        notifications.show({ message: "Requested! The Scholarship Review Team will follow up." });
+        showSuccess("Requested! The Scholarship Review Team will follow up.");
       } else {
         const data = await res.json().catch(() => ({}));
         notifications.show({ color: "red", message: data.error || "Could not request a payment plan.", autoClose: false });
