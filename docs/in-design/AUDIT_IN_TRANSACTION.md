@@ -116,9 +116,8 @@ Why this shape, and not something larger:
 **Refusals.** A refused request changes nothing, so there is no transaction to
 share. `recordSelfGrantRefusal`, the mail-alias refusal, and similar rows are
 written on the root client on purpose: they must survive the refusal they
-describe. They stay outside. The mail-alias one is in the guard's allowlist
-with that reason; the self-grant recorder takes a `DbClient` parameter, which the
-guard does not match.
+describe. They stay outside, and both are in the guard's allowlist with that
+reason.
 
 **Attempts at outside systems.** Some rows record that someone asked the app to
 do something outside it — start a Shopify sync, retry a failed step in a
@@ -157,14 +156,18 @@ share a transaction with their changes is worth its own check, but not here.
 
 A unit test, `checkin-app/src/lib/__tests__/auditInTransaction.test.ts`, reads
 every `.ts` file under `checkin-app/src` (excluding tests) and fails on any
-`prisma.auditLog.create` or `prisma.auditLog.createMany` not in its allowlist.
+`prisma.auditLog.create(Many)` or `db.auditLog.create(Many)` not in its
+allowlist.
 Each allowlist entry is a file path, its match count and a one-line reason from
 the edge cases above. It also fails when a file has fewer matches than its entry
 says, so the list cannot go stale.
 
-The guard matches the root client by its import name. Sites that take a
-`DbClient` parameter (the kiosk-leave and close-departure loggers, the refusal
-recorder) are not matched by name; their callers today all pass a transaction
+The guard matches the root client by its import name, `prisma`, and the
+`DbClient` parameter by its conventional name, `db`. The six `db.` sites — the
+kiosk-leave and close-departure loggers, the trusted-adult and membership-review
+`audit` helpers, and the refusal recorder — stay on the allowlist for good, so a
+new helper of that kind shows up in review. What the guard cannot check is what
+a caller passes to such a helper: their callers today all pass a transaction
 client except the refusal paths. That is an accepted limit: a text guard cannot
 follow a value through a parameter, and narrowing those parameters to `TxClient`
 would not be enforced by the type either.
