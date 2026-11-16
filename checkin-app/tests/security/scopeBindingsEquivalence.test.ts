@@ -272,8 +272,8 @@ function eq(a: Set<string>, b: Set<string>): boolean {
  * hand a program lead the parents' phone/email on the roster. On a household-lead
  * row in an in-scope household the resolver adds their_program_households.
  *
- * Receipt / ReceiptView / ReceiptLineView.their_own: the oracle has no case for
- * receipt models. Each is bound `their_own` on uploadedByUserId === selfId, so on
+ * Receipt / ReceiptView / ReceiptLineView / ReceiptDuplicateNotice.their_own: the
+ * oracle has no case for receipt models. Each is bound `their_own` on uploadedByUserId === selfId, so on
  * such a row the resolver adds their_own.
  *
  * KeyVolunteerSelfStatus / KeyVolunteerSigning.their_own: the oracle has no case for
@@ -326,7 +326,7 @@ function expectedFromSnapshot(
         expected.add('their_program_households');
     }
     if (
-        (model === 'Receipt' || model === 'ReceiptView' || model === 'ReceiptLineView') &&
+        (model === 'Receipt' || model === 'ReceiptView' || model === 'ReceiptLineView' || model === 'ReceiptDuplicateNotice') &&
         row &&
         typeof row === 'object' &&
         typeof row.uploadedByUserId === 'number' &&
@@ -377,6 +377,6 @@ describe('scopesHeld ≡ frozen switch + intentional deltas (personas × models 
     it('covers every bound model', () => {
         // Guard against the row set silently not exercising a model.
         expect(MODELS).toEqual(expect.arrayContaining(Object.keys(SCOPE_BINDINGS)));
-        expect(Object.keys(SCOPE_BINDINGS).length).toBe(27);
+        expect(Object.keys(SCOPE_BINDINGS).length).toBe(28);
     });
 });
