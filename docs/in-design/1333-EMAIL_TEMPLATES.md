@@ -283,7 +283,7 @@ stand for in today's copy, so a key without a link today has no `actionLink`.
 | `trustedAdult.deniedRevoked` | DENY + `revokePriorApprovals` | family | adultName, `actionLink` |
 | `trustedAdult.changeNotApproved` | DENY, prior approval survives | family | adultName, until, `actionLink` |
 | `trustedAdult.notApproved` | DENY, nothing survives | family | adultName, `actionLink` |
-| `trustedAdult.overrideDecided` | `overrideReview` deny/revoke | family | adultName, action, `actionLink` |
+| `trustedAdult.overrideDecided` | `revokeReview` | family | adultName, action, `actionLink` |
 | `trustedAdult.expiring` | `runExpirySweep` warning | family | deadline, `actionLink` |
 | `trustedAdult.expired` | `runExpirySweep` lapse, adult left unauthorized | family | adultName, `actionLink` |
 
