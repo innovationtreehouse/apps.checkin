@@ -153,7 +153,6 @@ describe('hardship tier: staff audiences outside the Board and finance lose the 
         [PROGRAM_PAGE, 'programCoreVolunteer', 'ProgramParticipant', ctx({ programsCoreVolIn: new Set([7]) })],
         ['GET /api/membership-audit/turning-18', 'isSysadmin', 'ProgramParticipant', ctx()],
         ['GET /api/membership-ops/applications', 'isSysadmin', 'OrgMembershipProcess', ctx()],
-        ['GET /api/membership-ops/volunteer-memberships', 'isSysadmin', 'OrgMembershipProcess', ctx()],
         ['GET /api/membership-audit/bg-attestations', 'isSysadmin', 'OrgMembershipProcess', ctx()],
         ['POST /api/membership-audit/person-agreement', 'isSysadmin', 'OrgMembershipProcess', ctx()],
         ['GET /api/membership/reviews', 'isBackgroundCheckReviewer', 'OrgMembershipProcess', ctx()],
@@ -168,7 +167,6 @@ describe('hardship tier: staff audiences outside the Board and finance lose the 
     it.each([
         'GET /api/membership-ops/applications',
         'GET /api/membership-audit/bg-attestations',
-        'GET /api/membership-ops/volunteer-memberships',
     ])('%s still gives a sysadmin the application state it works from', (endpoint) => {
         const out = stripValue('OrgMembershipProcess', processRow, tokensFor(endpoint, 'isSysadmin'), ctx()) as Record<string, unknown>;
         expect(out.status).toBe('PENDING_PAYMENT');

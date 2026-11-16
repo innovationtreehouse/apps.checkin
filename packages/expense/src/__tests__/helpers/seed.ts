@@ -195,7 +195,7 @@ export function principal(id: number, roles: { isFinance?: boolean; isBoard?: bo
 }
 
 /** QuickBooks' account list as the integration tiers see it: each account id they save, typed Expense. */
-const STAND_IN_ACCOUNTS = ["4000", "4100", "5000", "5100", "5200", "60", "6000", "6100", "62", "6200"].map((id) => ({ id, name: `Account ${id}`, accountType: "Expense" }));
+const STAND_IN_ACCOUNTS = ["4000", "4100", "5000", "5100", "5200", "60", "6000", "6100", "62", "6200"].map((id) => ({ id, name: `Account ${id}`, accountType: "Expense", active: true }));
 const standInAccounts = async () => STAND_IN_ACCOUNTS;
 
 /** Rebinds the runtime with test ports (org stays ORG); QuickBooks' account list is the stand-in unless a test binds one. */
