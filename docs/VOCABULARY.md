@@ -210,7 +210,7 @@ Both are non-household people attached to a household, and **may be the same per
 
 ### Membership application
 
-**`OrgMembershipProcess` = the membership "application"** — technically an intake process, called an **"application"** because it includes a background check (vendor **Averity**) and **can be rejected**. One `OrgMembershipProcess` = one cycle (`INITIAL` or `RENEWAL`); `INTAKE` is its first stage.
+**`OrgMembershipProcess` = the membership "application"** — technically an intake process, called an **"application"** because it includes a background check (vendor **Averity**) and **can be rejected**. One `OrgMembershipProcess` = one cycle (`INITIAL` or `RENEWAL`); `INTAKE` is its first stage. An application is **closed**, never archived; **archive** is reserved for archiving a household.
 
 ### Corporation (aspirational)
 
