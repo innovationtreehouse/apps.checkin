@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import type { DbClient } from "@/lib/db-client";
 import { REGISTRY, type TemplateKey } from "./registry";
 import { findUnknownTokens } from "./tokens";
 
@@ -21,9 +22,9 @@ export function unknownTokenError<F extends string>(targets: FieldTargets<F>, da
 }
 
 /** Each field's saved copy, or null when its row or part is missing or blank. */
-export async function readTemplateFields<F extends string>(targets: FieldTargets<F>): Promise<Record<F, string | null>> {
+export async function readTemplateFields<F extends string>(targets: FieldTargets<F>, db: DbClient = prisma): Promise<Record<F, string | null>> {
     const keys = [...new Set(Object.values<FieldTargets<F>[F]>(targets).flat().map((t) => t.key))];
-    const rows = await prisma.emailTemplate.findMany({ where: { key: { in: keys } }, select: { key: true, subject: true, body: true } });
+    const rows = await db.emailTemplate.findMany({ where: { key: { in: keys } }, select: { key: true, subject: true, body: true } });
     const byKey = new Map(rows.map((row) => [row.key, row]));
     const out = {} as Record<F, string | null>;
     for (const field of Object.keys(targets) as F[]) {
@@ -40,11 +41,12 @@ export async function readTemplateFields<F extends string>(targets: FieldTargets
  * and body is removed, which sends the registry default.
  */
 export async function writeTemplateFields<F extends string>(
+    db: DbClient,
     targets: FieldTargets<F>,
     data: Partial<Record<F, string | null>>,
     updatedBy: number,
 ): Promise<void> {
-    const current = await readTemplateFields(targets);
+    const current = await readTemplateFields(targets, db);
     const changes = new Map<TemplateKey, { subject?: string; body?: string }>();
     for (const field of Object.keys(data) as F[]) {
         if (data[field] === undefined) continue;
@@ -53,13 +55,13 @@ export async function writeTemplateFields<F extends string>(
         for (const { key, part } of targets[field]) changes.set(key, { ...changes.get(key), [part]: value });
     }
     for (const [key, change] of changes) {
-        const row = await prisma.emailTemplate.findUnique({ where: { key }, select: { subject: true, body: true } });
+        const row = await db.emailTemplate.findUnique({ where: { key }, select: { subject: true, body: true } });
         const subject = change.subject ?? row?.subject ?? "";
         const body = change.body ?? row?.body ?? "";
         if (!subject.trim() && !body.trim()) {
-            await prisma.emailTemplate.deleteMany({ where: { key } });
+            await db.emailTemplate.deleteMany({ where: { key } });
             continue;
         }
-        await prisma.emailTemplate.upsert({ where: { key }, create: { key, subject, body, updatedBy }, update: { subject, body, updatedBy } });
+        await db.emailTemplate.upsert({ where: { key }, create: { key, subject, body, updatedBy }, update: { subject, body, updatedBy } });
     }
 }

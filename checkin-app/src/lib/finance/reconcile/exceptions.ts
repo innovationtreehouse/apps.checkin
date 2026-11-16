@@ -47,7 +47,7 @@ export type PaymentExceptionNotice = { kind: PaymentExceptionKind; severity: Sev
  * no order is itself a new event (a denial, a Board click) and always reopens, as does
  * a ref with `reopen`.
  * Returns the notice owed by a newly-opened, reopened or newly-critical row. Inside a
- * transaction, pass an orderless ref: a unique violation would abort the transaction.
+ * transaction a unique violation is rethrown, since it has aborted the transaction.
  */
 export async function recordPaymentException(db: DbClient, kind: PaymentExceptionKind, ref: ExceptionRef): Promise<PaymentExceptionNotice | null> {
     const severity: Severity = ref.severity ?? (CRITICAL_KINDS.has(kind) ? "CRITICAL" : "WARN");
@@ -99,8 +99,9 @@ export async function recordPaymentException(db: DbClient, kind: PaymentExceptio
         });
         return { kind, severity, exceptionId: created.id };
     } catch (e: unknown) {
-        // Unique-index race (two runs, same order) — the other run created it. Safe.
-        if (isPrismaError(e, "P2002")) return null;
+        // Unique-index race (two runs, same order) — the other run created it. Safe on the
+        // root client; inside a transaction the violation has aborted it, so the caller decides.
+        if (isPrismaError(e, "P2002") && isRootClient(db)) return null;
         throw e;
     }
 }

@@ -5,6 +5,7 @@ import { apiError } from "@/lib/api-response";
 import { isValidEmailHeader, parseEmailHeaderList } from "@/lib/emailHeader";
 import { isValidEmail } from "@/lib/emergencyContacts/identity";
 import { handler } from "@/security/handler";
+import { personActor, recordAudit } from "@/lib/auditActor";
 import { readTemplateFields, unknownTokenError, writeTemplateFields, type FieldTargets } from "@/lib/email-templates/settingsFields";
 
 export const dynamic = "force-dynamic";
@@ -131,19 +132,17 @@ export const PUT = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
     const tokenError = unknownTokenError(ACK_TARGETS, ack);
     if (tokenError) return apiError(tokenError, 400);
 
-    await prisma.boardSettings.upsert({ where: { id: 1 }, create: { id: 1, ...data }, update: data, select: SELECT });
-    await writeTemplateFields(ACK_TARGETS, ack, auth.user.id);
-    const settings = await readSettings();
-
-    await prisma.auditLog.create({
-        data: {
-            actorId: auth.user.id,
+    await prisma.$transaction(async (tx) => {
+        await tx.boardSettings.upsert({ where: { id: 1 }, create: { id: 1, ...data }, update: data, select: SELECT });
+        await writeTemplateFields(tx, ACK_TARGETS, ack, auth.user.id);
+        await recordAudit(tx, personActor(auth.user.id), {
             action: "EDIT",
             tableName: "BoardSettings",
             affectedEntityId: 1,
             newData: data,
-        },
+        });
     });
+    const settings = await readSettings();
 
     return NextResponse.json({ settings });
 });

@@ -10,6 +10,13 @@ jest.mock('@/lib/auth', () => ({
     withAuth: (_opts: unknown, handler: (req: Request, auth: unknown, ctx: unknown) => unknown) =>
         (req: Request, auth: unknown, ctx: unknown) => handler(req, auth, ctx),
 }));
+// The shared prisma mock has no $transaction; this one runs the callback on itself.
+jest.mock('@/lib/prisma', () => {
+    const models: Record<string, unknown> = {};
+    const client = new Proxy(models, { get: (target, prop: string) => (target[prop] ??= {}) });
+    models.$transaction = (fn: (tx: unknown) => unknown) => fn(client);
+    return { __esModule: true, default: client };
+});
 jest.mock('@/lib/shopifyRead/client', () => ({
     ordersByLegacyIds: jest.fn(),
     orderAttr: (o: { noteAttributes?: { key: string; value: string }[] | null }, key: string) =>

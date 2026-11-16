@@ -297,9 +297,27 @@ function waitingOn(g: Gift, buckets: Map<number, Bucket>, sides: { side: string;
   if (!g.decisionOutcome) out.push("decision");
   else if (g.budgetOwnerId === null || buckets.get(g.budgetOwnerId)?.held !== false) out.push("bucket");
   if (g.decisionOutcome === "ACCEPTED" && (g.capitalSubmittedAt === null || inCapitalReview.has(bookingKey(g.source, g.id)))) out.push("capital");
-  const booked = (["revenue", "expense"] as const).every((side) => BOOKED_STATES.includes(bookedSide(sides, side) ?? ""));
-  if (!booked && posting?.matchState !== QB_MATCH_STATE.DISMISSED) out.push("booking");
+  if (!isBooked(sides, posting)) out.push("booking");
   return out;
+}
+
+/** Both sides are in QuickBooks, or finance skipped the gift. */
+const isBooked = (sides: { side: string; matchState: string }[], posting: Posting | undefined) =>
+  (["revenue", "expense"] as const).every((side) => BOOKED_STATES.includes(bookedSide(sides, side) ?? "")) || posting?.matchState === QB_MATCH_STATE.DISMISSED;
+
+/** How many gifts of goods in bucket `bucketId` are not yet booked, refused or returned. */
+export async function unbookedGiftsIn(bucketId: number): Promise<number> {
+  const orgId = await getOrgId();
+  const where = { orgId, budgetOwnerId: bucketId, OR: [{ decisionOutcome: null }, { decisionOutcome: { notIn: ["REFUSED", "RETURNED"] } }] };
+  const select = { id: true } as const;
+  const [receipts, manuals, bookings, postings] = await Promise.all([
+    db.inKindDonation.findMany({ where, select }),
+    db.manualInKindDonation.findMany({ where, select }),
+    readBookings(db, orgId),
+    readPostings(db, orgId),
+  ]);
+  const keys = [...receipts.map((g) => bookingKey("receipt", g.id)), ...manuals.map((g) => bookingKey("manual", g.id))];
+  return keys.filter((key) => !isBooked(bookings.get(key) ?? [], postings.get(key))).length;
 }
 
 /**

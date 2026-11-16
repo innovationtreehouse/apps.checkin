@@ -1,9 +1,12 @@
 import { logger } from "@/lib/logger";
 import { ApiResponseError, handler } from "@/security/handler";
 import prisma from "@/lib/prisma";
-import { personActor } from "@/lib/auditActor";
+import { personActor, recordAudit } from "@/lib/auditActor";
+import type { TxClient } from "@/lib/db-client";
 import * as mirror from "@/lib/shopifyRead/client";
-import { raisePaymentException } from "@/lib/finance/reconcile/exceptions";
+import { recordPaymentException, type PaymentExceptionNotice } from "@/lib/finance/reconcile/exceptions";
+import { notifyBoardPaymentException } from "@/lib/membership/boardAlerts";
+import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { isPaid } from "@/lib/finance/reconcile/orderStatus";
 
 /**
@@ -54,7 +57,7 @@ function parseTrackBody(raw: unknown): TrackBody | null {
     return null;
 }
 
-async function trackOrder(shopifyOrderId: string): Promise<void> {
+async function trackOrder(tx: TxClient, shopifyOrderId: string): Promise<PaymentExceptionNotice | null> {
     // Staleness guards — the since-resolved cases for a paid-unclaimed order are:
     // it got activated, or it got refunded/cancelled.
     const [order] = await mirror.ordersByLegacyIds([shopifyOrderId]);
@@ -66,20 +69,20 @@ async function trackOrder(shopifyOrderId: string): Promise<void> {
     // variant set per click (a second sweep) buys only defense against a forged id, not
     // against the real "since-resolved" cases (activated / refunded), which the checks
     // here cover. Add the variant intersection if a non-board surface ever calls this.
-    const claimedProc = await prisma.orgMembershipProcess.findFirst({
+    const claimedProc = await tx.orgMembershipProcess.findFirst({
         where: { shopifyOrderId, status: { not: "ARCHIVED" } },
         select: { id: true },
     });
-    const claimedEnroll = await prisma.programParticipant.findFirst({
+    const claimedEnroll = await tx.programParticipant.findFirst({
         where: { shopifyOrderId },
         select: { programId: true },
     });
     if (claimedProc || claimedEnroll) throw new ApiResponseError(409, "Order has since been claimed by an activation");
-    await raisePaymentException("UNMATCHED_ORDER", { shopifyOrderId, reopen: true });
+    return recordPaymentException(tx, "UNMATCHED_ORDER", { shopifyOrderId, reopen: true });
 }
 
-async function trackMembership(processId: number): Promise<void> {
-    const p = await prisma.orgMembershipProcess.findUnique({
+async function trackMembership(tx: TxClient, processId: number): Promise<PaymentExceptionNotice | null> {
+    const p = await tx.orgMembershipProcess.findUnique({
         where: { id: processId },
         select: { status: true, kind: true, shopifyOrderId: true, manualPaymentById: true },
     });
@@ -94,21 +97,20 @@ async function trackMembership(processId: number): Promise<void> {
         if ((await mirror.orderLegacyIdsPresent([p.shopifyOrderId])).has(p.shopifyOrderId)) {
             throw new ApiResponseError(409, "Membership is no longer a gap (its order is now in the mirror)");
         }
-        await raisePaymentException("PAYMENT_UNVERIFIABLE", { processId });
-        return;
+        return recordPaymentException(tx, "PAYMENT_UNVERIFIABLE", { processId });
     }
     if (p.manualPaymentById != null) throw new ApiResponseError(409, "Membership is no longer a gap (payment recorded manually since the audit)");
     // ponytail: for the null-order kinds the @@unique(kind, shopifyOrderId) index does
     // NOT dedup (NULLs are distinct — no NULLS NOT DISTINCT), so two *concurrent*
     // clicks on the same row could create two ACTIVE_WITHOUT_PAYMENT rows.
-    // raisePaymentException's app-level findFirst guards the real case (sequential
+    // recordPaymentException's app-level findFirst guards the real case (sequential
     // human clicks). Ceiling: a partial unique index with NULLS NOT DISTINCT would
     // close the race — deferred, it needs a migration and P3 ships none.
-    await raisePaymentException("ACTIVE_WITHOUT_PAYMENT", { processId });
+    return recordPaymentException(tx, "ACTIVE_WITHOUT_PAYMENT", { processId });
 }
 
-async function trackEnrollment(programId: number, personId: number): Promise<void> {
-    const e = await prisma.programParticipant.findUnique({
+async function trackEnrollment(tx: TxClient, programId: number, personId: number): Promise<PaymentExceptionNotice | null> {
+    const e = await tx.programParticipant.findUnique({
         where: { programId_personId: { programId, personId } }, // @@id([programId, personId]) — schema.prisma
         select: { status: true, shopifyOrderId: true, wasOrgMemberAtApproval: true },
     });
@@ -120,17 +122,16 @@ async function trackEnrollment(programId: number, personId: number): Promise<voi
         if ((await mirror.orderLegacyIdsPresent([e.shopifyOrderId])).has(e.shopifyOrderId)) {
             throw new ApiResponseError(409, "Enrollment is no longer a gap (its order is now in the mirror)");
         }
-        await raisePaymentException("PAYMENT_UNVERIFIABLE", { programId, personId });
-        return;
+        return recordPaymentException(tx, "PAYMENT_UNVERIFIABLE", { programId, personId });
     }
     if (e.wasOrgMemberAtApproval != null) throw new ApiResponseError(409, "Enrollment is no longer a gap (scholarship-approved since the audit)");
     // ponytail: for the null-order kinds the @@unique(kind, shopifyOrderId) index does
     // NOT dedup (NULLs are distinct — no NULLS NOT DISTINCT), so two *concurrent*
     // clicks on the same row could create two ACTIVE_WITHOUT_PAYMENT rows.
-    // raisePaymentException's app-level findFirst guards the real case (sequential
+    // recordPaymentException's app-level findFirst guards the real case (sequential
     // human clicks). Ceiling: a partial unique index with NULLS NOT DISTINCT would
     // close the race — deferred, it needs a migration and P3 ships none.
-    await raisePaymentException("ACTIVE_WITHOUT_PAYMENT", { programId, personId });
+    return recordPaymentException(tx, "ACTIVE_WITHOUT_PAYMENT", { programId, personId });
 }
 
 export const POST = handler(
@@ -150,21 +151,38 @@ export const POST = handler(
         const body = parseTrackBody(raw);
         if (!body) throw new ApiResponseError(400, "Invalid track request body");
 
-        try {
-            if (body.kind === "order") await trackOrder(body.shopifyOrderId);
-            else if (body.kind === "membership") await trackMembership(body.processId);
-            else await trackEnrollment(body.programId, body.personId);
-            // The decision is audited with its actor; the row points at the gap, not
-            // the PaymentException, which dedup may have left unchanged.
-            await prisma.auditLog.create({
-                data: {
-                    ...personActor(auth.user.id),
-                    action: "CREATE",
-                    tableName: "MATCH_AUDIT_TRACK",
-                    affectedEntityId: 0,
-                    newData: body,
-                },
+        // The decision is audited with its actor; the row points at the gap, not
+        // the PaymentException, which dedup may have left unchanged.
+        const audit = (tx: TxClient) =>
+            recordAudit(tx, personActor(auth.user.id), {
+                action: "CREATE",
+                tableName: "MATCH_AUDIT_TRACK",
+                affectedEntityId: 0,
+                newData: body,
             });
+        try {
+            let notice: PaymentExceptionNotice | null;
+            try {
+                notice = await prisma.$transaction(async (tx) => {
+                    const raised =
+                        body.kind === "order" ? await trackOrder(tx, body.shopifyOrderId)
+                        : body.kind === "membership" ? await trackMembership(tx, body.processId)
+                        : await trackEnrollment(tx, body.programId, body.personId);
+                    await audit(tx);
+                    return raised;
+                });
+            } catch (error) {
+                if (body.kind !== "order" || !isPrismaError(error, "P2002")) throw error;
+                // A concurrent click created this order's exception first; this click is tracked by it.
+                const existing = await prisma.paymentException.findFirst({
+                    where: { kind: "UNMATCHED_ORDER", shopifyOrderId: body.shopifyOrderId, personId: null },
+                    select: { id: true },
+                });
+                if (!existing) throw error;
+                await prisma.$transaction(audit);
+                notice = null;
+            }
+            if (notice) await notifyBoardPaymentException(notice.kind, notice.severity, notice.exceptionId);
         } catch (error) {
             if (error instanceof ApiResponseError) throw error;
             logger.error("Failed to track match-audit gap:", error);

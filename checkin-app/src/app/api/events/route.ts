@@ -7,6 +7,7 @@ import { fromZonedTime } from 'date-fns-tz';
 import { getAppSettings } from "@/lib/appSettings";
 import { apiError } from "@/lib/api-response";
 import { handler } from "@/security/handler";
+import { personActor, recordAudit } from "@/lib/auditActor";
 
 // List standalone (one-time) events — those with no associated program.
 // Registry-governed (GET /api/events): admission anyRole sysadmin/board;
@@ -20,6 +21,15 @@ export const GET = handler('GET /api/events', async () => {
     });
     return { Event: events };
 });
+
+type NewEvent = {
+    name: string;
+    description: string | null;
+    programId: number | null;
+    startAt: Date;
+    endAt: Date;
+    recurringGroupId?: string;
+};
 
 export const POST = withAuth({}, async (req, auth) => {
     if (auth.type !== 'session') return apiError("Unauthorized", 401);
@@ -65,7 +75,7 @@ export const POST = withAuth({}, async (req, auth) => {
             return apiError("Event end time must be after start time", 400);
         }
 
-        const eventsToCreate = [];
+        const eventsToCreate: NewEvent[] = [];
 
         if (!recurrence || !recurrence.daysOfWeek || recurrence.daysOfWeek.length === 0 || !recurrence.until) {
             // Single event
@@ -119,20 +129,19 @@ export const POST = withAuth({}, async (req, auth) => {
             return apiError("No events generated from constraints.", 400);
         }
 
-        const insertedEvents = await prisma.event.createMany({
-            data: eventsToCreate
-        });
-
-        // We don't individually audit log massive lists in bulk.
-        // We log the action summary.
-        await prisma.auditLog.create({
-            data: {
-                actorId: user.id,
+        // One summary row for the batch, not a row per event.
+        const sample = eventsToCreate[0];
+        const insertedEvents = await prisma.$transaction(async (tx) => {
+            const inserted = await tx.event.createMany({
+                data: eventsToCreate
+            });
+            await recordAudit(tx, personActor(user.id), {
                 action: 'CREATE',
                 tableName: 'Event',
                 affectedEntityId: programId ? parseInt(programId) : 0,
-                newData: { count: insertedEvents.count, sample: eventsToCreate[0] }
-            }
+                newData: { count: inserted.count, sample: { ...sample, startAt: sample.startAt.toISOString(), endAt: sample.endAt.toISOString() } }
+            });
+            return inserted;
         });
 
         return NextResponse.json({ success: true, count: insertedEvents.count });
