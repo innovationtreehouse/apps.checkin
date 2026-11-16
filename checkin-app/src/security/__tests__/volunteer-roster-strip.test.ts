@@ -10,6 +10,7 @@ import { stripBag } from '@/security/stripper';
 import type { CallerContext } from '@/security/access-resolvers';
 import { getRoute, type Token } from '@/security/core';
 import { classifications, relations } from '@/security/volunteerRosterSyntheticClassifications';
+import { SCOPE_BINDINGS } from '@/security/scopeBindings';
 import '@/security/registry';
 
 const ENDPOINT = 'GET /api/membership-ops/volunteer-memberships';
@@ -66,6 +67,14 @@ describe('volunteer roster synthetic view', () => {
         expect(relations).toEqual({
             VolunteerRosterRow: { designations: { model: 'VolunteerRosterDesignation', isList: true } },
         });
+    });
+
+    it('binds their_households on householdId for coverage only', () => {
+        expect(SCOPE_BINDINGS.VolunteerRosterRow).toEqual({
+            their_households: { field: 'householdId', eqCtx: 'householdId' },
+        });
+        const grants = getRoute(ENDPOINT)?.orderedView.flatMap(([, tokens]) => tokens) ?? [];
+        expect(grants.filter((t) => t.startsWith('their_households'))).toEqual([]);
     });
 
     it.each(['isSysadmin', 'isBoardMember'])('keeps exactly the declared fields for %s', (role) => {

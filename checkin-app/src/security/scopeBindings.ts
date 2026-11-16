@@ -139,6 +139,10 @@ export const SCOPE_BINDINGS = {
     // safeguarding context. A "your own actions" view would be a conscious
     // future decision. See docs/security/auth-consistency-analysis.md §7.5.1.
     AuditLog: { their_own: { field: 'actorId', eqCtx: 'selfId' } },
+    // Bound for coverage; Board-only by tier-grant control. The roster's only
+    // view is sysadmin-or-board with everyones grants, so no route grants a
+    // their_households token on it.
+    VolunteerRosterRow: { their_households: { field: 'householdId', eqCtx: 'householdId' } },
     TrustedAdult: {
         their_households: { field: 'householdId', eqCtx: 'householdId' },
         their_program_households: { field: 'householdId', inCtx: 'householdIdsInScopePrograms' },
@@ -254,10 +258,6 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     // grants: the uploader and recorder ids feed the accept screen's conflict
     // warnings, and no uploader-facing view reads the queue.
     'InKindQueueItemView',
-    // The Board's volunteer roster row (GET /api/membership-ops/volunteer-memberships).
-    // `householdId` makes it scopable, but its only view is sysadmin-or-board with
-    // everyones grants, and no household reads its own roster row.
-    'VolunteerRosterRow',
     // In-kind receipt gifts gain an uploader id (the accept step), which makes the
     // model scopable, but every route that returns it is finance-or-board with
     // everyones grants: the uploader id feeds the accept step's conflict check, and
