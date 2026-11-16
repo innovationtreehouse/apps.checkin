@@ -412,11 +412,14 @@ Things the app takes as true because they are handled outside it.
 
 - A first approval lasts a year from the family's submission. A renewal lasts a
   year from the later of the previous approval's end and the renewal's
-  submission, so renewing early loses nothing. An approved change keeps the end
-  of the approval it changes, while that approval still runs. Resetting and
-  re-approving never moves the date. An approval that would already have lapsed
-  is refused: the board denies it and the family renews. The family is warned a month out and
-  resubmits without re-entering what the board already holds.  [Decision]
+  submission. An approved change keeps the end of the approval it changes, while
+  that approval still runs. Resetting and re-approving never moves the date. An
+  approval that would already have lapsed is refused: the board denies it and
+  the family renews. The family is warned a month out and resubmits without
+  re-entering what the board already holds.  [Decision]
+
+- A family can renew a trusted adult whose approval is still running only from
+  the month-out warning, so renewals never stack a further year on top.  [Decision]
 
 - An approval past its review date no longer authorises, whether or not the expiry
   job has run; the job only records the expiry and tells the family.  [Decision — *Principle: fail closed*]

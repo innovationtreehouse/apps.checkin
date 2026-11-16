@@ -141,8 +141,8 @@ export async function createTrustedAdult(input: CreateInput) {
 
 /**
  * Open a RENEWAL review against an existing Trusted Adult, reusing every fact on
- * file (no re-entry). Allowed only when no review is already in flight. Callable
- * by a lead of the household.
+ * file (no re-entry). Allowed only when no review is already in flight and any live
+ * approval is inside its expiry warning window. Callable by a lead of the household.
  */
 export async function renewTrustedAdult(id: number, actorId: number) {
     const ta = await prisma.trustedAdult.findUnique({ where: { id }, select: { id: true, householdId: true } });
@@ -157,6 +157,19 @@ export async function renewTrustedAdult(id: number, actorId: number) {
         const latest = await tx.trustedAdultReview.findFirst({ where: { trustedAdultId: ta.id }, orderBy: { id: "desc" } });
         if (latest && (latest.status === "PENDING_BOARD_REVIEW" || latest.status === "PENDING_SUBJECT_ACTION")) {
             throw new TrustedAdultError("already_open", "A review for this trusted adult is already in progress.");
+        }
+        // A renewal adds a year to the current end, so it opens only once the expiry warning window does.
+        const now = new Date();
+        const current = await tx.trustedAdultReview.aggregate({
+            where: { trustedAdultId: ta.id, ...authorizedReview(now) },
+            _max: { reviewBy: true },
+        });
+        const end = current._max.reviewBy;
+        if (end && end > daysFromNow(now, WARN_LEAD_DAYS)) {
+            throw new TrustedAdultError(
+                "wrong_phase",
+                `This approval runs until ${end.toISOString().slice(0, 10)}. You can renew it from ${WARN_LEAD_DAYS} days before then.`,
+            );
         }
         const created = await tx.trustedAdultReview.create({
             data: { trustedAdultId: ta.id, householdId: ta.householdId, kind: "RENEWAL", status: "PENDING_BOARD_REVIEW" },

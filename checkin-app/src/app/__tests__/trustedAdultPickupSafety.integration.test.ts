@@ -91,6 +91,10 @@ describe('trusted-adult pickup list safety', () => {
         return { taId: ta.id, firstReviewId: ta.reviews[0].id };
     }
 
+    // A renewal opens only inside the expiry warning window; move the live approval there.
+    const intoRenewalWindow = (taId: number) =>
+        prisma.trustedAdultReview.updateMany({ where: { trustedAdultId: taId, status: 'APPROVED' }, data: { reviewBy: new Date(Date.now() + 10 * 86_400_000) } });
+
     async function onPickupList(taId: number): Promise<boolean> {
         (getServerSession as jest.Mock).mockResolvedValue({
             user: { id: boardId, householdId: boardHouseholdId, isSysadmin: false, isBoardMember: true, isKeyholder: false, isBackgroundCheckReviewer: false },
@@ -108,6 +112,7 @@ describe('trusted-adult pickup list safety', () => {
     describe('Board override', () => {
         it('approving a renewal leaves the earlier approval APPROVED, and revoking ends both', async () => {
             const { taId } = await discloseApproved();
+            await intoRenewalWindow(taId);
             const renewal = await renewTrustedAdult(taId, leadId);
             await decideReview(renewal.id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
             expect(await statuses(taId)).toEqual(['APPROVED', 'APPROVED']);
@@ -120,6 +125,7 @@ describe('trusted-adult pickup list safety', () => {
 
         it('revoke on a declined change also ends the approval beneath it', async () => {
             const { taId } = await discloseApproved();
+            await intoRenewalWindow(taId);
             const renewal = await renewTrustedAdult(taId, leadId);
             await decideReview(renewal.id, boardId, { decision: 'DENY' });
             expect(await onPickupList(taId)).toBe(true);
@@ -140,6 +146,7 @@ describe('trusted-adult pickup list safety', () => {
 
         it('resetting an approved renewal leaves the earlier approval on the pickup list', async () => {
             const { taId } = await discloseApproved();
+            await intoRenewalWindow(taId);
             const renewal = await renewTrustedAdult(taId, leadId);
             await decideReview(renewal.id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
 
@@ -151,6 +158,7 @@ describe('trusted-adult pickup list safety', () => {
 
         it('revoke from a stale page on the older approval still ends the newer one', async () => {
             const { taId, firstReviewId } = await discloseApproved();
+            await intoRenewalWindow(taId);
             const renewal = await renewTrustedAdult(taId, leadId);
             await decideReview(renewal.id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
 
@@ -161,6 +169,7 @@ describe('trusted-adult pickup list safety', () => {
 
         it('a pending renewal does not disturb the live approval', async () => {
             const { taId } = await discloseApproved();
+            await intoRenewalWindow(taId);
             await renewTrustedAdult(taId, leadId);
             expect(await onPickupList(taId)).toBe(true);
         });
@@ -209,6 +218,7 @@ describe('trusted-adult pickup list safety', () => {
 
         it('denying a change does not tell the family a lapsed approval still stands', async () => {
             const { taId, firstReviewId } = await discloseApproved();
+            await intoRenewalWindow(taId);
             const renewal = await renewTrustedAdult(taId, leadId);
             await lapse(firstReviewId);
             sendEmail.mockClear();
@@ -221,6 +231,7 @@ describe('trusted-adult pickup list safety', () => {
 
         it('Deny & Revoke also retires a lapsed approval, so the sweep sends no later "expired" email', async () => {
             const { taId, firstReviewId } = await discloseApproved();
+            await intoRenewalWindow(taId);
             const renewal = await renewTrustedAdult(taId, leadId);
             await lapse(firstReviewId);
 

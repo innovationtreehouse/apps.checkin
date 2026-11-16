@@ -112,8 +112,18 @@ describe('trusted-adult approval dates', () => {
         expect(approved.reviewBy).toEqual(plusYear(submitted.createdAt));
     });
 
-    it('an early renewal adds a year to the previous end', async () => {
-        const { taId, approved: first } = await discloseApprovedDaysAgo(300);
+    it('refuses a renewal before the expiry warning window opens', async () => {
+        const { taId } = await discloseApprovedDaysAgo(20);
+
+        await expect(renewTrustedAdult(taId, leadId)).rejects.toMatchObject({
+            code: 'wrong_phase',
+            message: expect.stringContaining('You can renew it from 30 days before then'),
+        });
+        expect(await prisma.trustedAdultReview.count({ where: { trustedAdultId: taId } })).toBe(1);
+    });
+
+    it('a renewal inside the warning window adds a year to the previous end', async () => {
+        const { taId, approved: first } = await discloseApprovedDaysAgo(340);
         const renewal = await renewTrustedAdult(taId, leadId);
 
         const renewed = await approve(renewal.id);

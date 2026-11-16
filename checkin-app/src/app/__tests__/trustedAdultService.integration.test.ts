@@ -94,6 +94,10 @@ describe('Trusted Adults service', () => {
         });
     }
 
+    // A renewal opens only inside the expiry warning window; move the live approval there.
+    const intoRenewalWindow = (taId: number) =>
+        prisma.trustedAdultReview.updateMany({ where: { trustedAdultId: taId, status: 'APPROVED' }, data: { reviewBy: new Date(Date.now() + 10 * 86_400_000) } });
+
     it('creates a trusted adult with an INITIAL review pending board review and pings the board', async () => {
         const ta = await discloseOne();
         expect(ta.householdId).toBe(householdId);
@@ -188,6 +192,7 @@ describe('Trusted Adults service', () => {
     it('renewal opens a fresh review reusing the same trusted adult, and refuses while one is open', async () => {
         const ta = await discloseOne();
         await decideReview(ta.reviews[0].id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
+        await intoRenewalWindow(ta.id);
         const review = await renewTrustedAdult(ta.id, leadId);
         expect(review.kind).toBe('RENEWAL');
         expect(review.status).toBe('PENDING_BOARD_REVIEW');
@@ -204,6 +209,7 @@ describe('Trusted Adults service', () => {
     it('only a household lead may renew; an outsider may not', async () => {
         const ta = await discloseOne();
         await decideReview(ta.reviews[0].id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
+        await intoRenewalWindow(ta.id);
         await expect(renewTrustedAdult(ta.id, outsiderId)).rejects.toMatchObject({ code: 'forbidden' });
         const review = await renewTrustedAdult(ta.id, leadId);
         expect(review.status).toBe('PENDING_BOARD_REVIEW');
@@ -413,6 +419,7 @@ describe('Trusted Adults service', () => {
         await decideReview(ta.reviews[0].id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
 
         // Resubmit while the first approval is still live → a second review, also approved.
+        await intoRenewalWindow(ta.id);
         const renewed = await renewTrustedAdult(ta.id, leadId);
         await decideReview(renewed.id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
         expect(await prisma.trustedAdultReview.count({ where: { trustedAdultId: ta.id, status: 'APPROVED' } })).toBe(2);
