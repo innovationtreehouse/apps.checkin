@@ -18,6 +18,7 @@ import { enrollmentClosedBy } from "@/lib/programs/saleState";
 import { isLiveHousehold } from "@/lib/household/archived";
 import { ARCHIVED_HOUSEHOLD_REFUSAL, lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
 import { ServiceError } from "@checkin/component-kit";
+import { personActor, recordAudit } from "@/lib/auditActor";
 
 
 // Public catalog projection: every Program column whose `/// @sensitivity:` tier
@@ -270,7 +271,7 @@ export const POST = withAuth({ roles: ['isBoardMember'] }, async (req, auth) => 
 
         const newProgram = await prisma.$transaction(async (tx) => {
             await lockLiveHouseholdsOf(tx, [mentorId]);
-            return tx.program.create({
+            const created = await tx.program.create({
                 data: {
                     name,
                     leadMentorId: mentorId,
@@ -293,16 +294,13 @@ export const POST = withAuth({ roles: ['isBoardMember'] }, async (req, auth) => 
                     claimantShopifyVariantId: claimantData?.claimantShopifyVariantId || null,
                 }
             });
-        });
-
-        await prisma.auditLog.create({
-            data: {
-                actorId: auth.user.id,
+            await recordAudit(tx, personActor(auth.user.id), {
                 action: 'CREATE',
                 tableName: 'Program',
-                affectedEntityId: newProgram.id,
-                newData: newProgram
-            }
+                affectedEntityId: created.id,
+                newData: created
+            });
+            return created;
         });
 
         if (newProgram.leadMentorId) {

@@ -8,6 +8,7 @@ import { isKnownAdult } from "@/lib/programAge";
 import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/selfGrantGuard";
 import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
 import { ServiceError } from "@checkin/component-kit";
+import { personActor, recordAudit } from "@/lib/auditActor";
 
 /**
  * A volunteer row confers volunteer standing and core grants scopes over enrolled
@@ -58,24 +59,21 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         // Being made core (PATCH) is what requires a known adult.
         const assignment = await prisma.$transaction(async (tx) => {
             await lockLiveHouseholdsOf(tx, [participantId]);
-            return tx.programVolunteer.create({
+            const created = await tx.programVolunteer.create({
                 data: {
                     programId,
                     personId: participantId,
                     isCore: false
                 }
             });
-        });
-
-        await prisma.auditLog.create({
-            data: {
-                actorId: currentUserId,
+            await recordAudit(tx, personActor(currentUserId), {
                 action: 'CREATE',
                 tableName: 'ProgramVolunteer',
                 affectedEntityId: participantId,
                 secondaryAffectedEntity: programId,
-                newData: assignment
-            }
+                newData: created
+            });
+            return created;
         });
 
         return NextResponse.json({ success: true, assignment });
@@ -128,24 +126,23 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
             return apiError("Forbidden: Not authorized to remove volunteers", 403);
         }
 
-        const assignment = await prisma.programVolunteer.delete({
-            where: {
-                programId_personId: {
-                    programId,
-                    personId: participantId
+        const assignment = await prisma.$transaction(async (tx) => {
+            const removed = await tx.programVolunteer.delete({
+                where: {
+                    programId_personId: {
+                        programId,
+                        personId: participantId
+                    }
                 }
-            }
-        });
-
-        await prisma.auditLog.create({
-            data: {
-                actorId: currentUserId,
+            });
+            await recordAudit(tx, personActor(currentUserId), {
                 action: 'DELETE',
                 tableName: 'ProgramVolunteer',
                 affectedEntityId: participantId,
                 secondaryAffectedEntity: programId,
-                oldData: assignment
-            }
+                oldData: removed
+            });
+            return removed;
         });
 
         return NextResponse.json({ success: true, assignment });
@@ -203,7 +200,7 @@ export const PATCH = withAuth({}, async (req, auth, { params }: { params: Promis
 
         const assignment = await prisma.$transaction(async (tx) => {
             if (isCore) await lockLiveHouseholdsOf(tx, [participantId]);
-            return tx.programVolunteer.update({
+            const updated = await tx.programVolunteer.update({
                 where: {
                     programId_personId: {
                         programId,
@@ -214,17 +211,14 @@ export const PATCH = withAuth({}, async (req, auth, { params }: { params: Promis
                     isCore
                 }
             });
-        });
-
-        await prisma.auditLog.create({
-            data: {
-                actorId: currentUserId,
+            await recordAudit(tx, personActor(currentUserId), {
                 action: 'EDIT',
                 tableName: 'ProgramVolunteer',
                 affectedEntityId: participantId,
                 secondaryAffectedEntity: programId,
-                newData: assignment
-            }
+                newData: updated
+            });
+            return updated;
         });
 
         return NextResponse.json({ success: true, assignment });
