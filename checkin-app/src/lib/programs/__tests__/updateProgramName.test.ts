@@ -11,6 +11,8 @@ jest.mock('@/lib/logger', () => ({ logger: { error: jest.fn(), warn: jest.fn() }
 jest.mock('@/lib/programAnnounce', () => ({ maybeAnnounceOnOpen: jest.fn().mockResolvedValue(undefined) }));
 jest.mock('@/lib/shopify/stock', () => ({ STOCK_BOOKKEEPING_RESET: {} }));
 jest.mock('@/lib/emailRecipients', () => ({ emailBoardMembers: jest.fn() }));
+jest.mock('@/lib/conflictOfInterest', () => ({ hasHouseholdConflict: jest.fn().mockResolvedValue(false) }));
+jest.mock('@/lib/household/archiveGuard', () => ({ lockLiveHouseholdsOf: jest.fn().mockResolvedValue(undefined) }));
 
 const program = {
     id: 5, name: 'Robotics', leadMentorId: 7, phase: 'PLANNING', enrollmentStatus: 'CLOSED',
@@ -38,6 +40,7 @@ jest.mock('@/lib/prisma', () => ({
     default: {
         $transaction: (fn: (t: unknown) => unknown) => fn(tx),
         auditLog: { create: jest.fn().mockResolvedValue({}) },
+        person: { findUnique: jest.fn().mockResolvedValue({ dateOfBirth: null, isDeclaredAdult: true, householdId: 3 }) },
     },
 }));
 
@@ -81,5 +84,12 @@ describe('updateProgram audit', () => {
                 newData: expect.objectContaining({ name: 'Woodshop' }),
             }),
         });
+    });
+
+    it('locks the program before a new leader\'s household, as enrollment does', async () => {
+        const { lockLiveHouseholdsOf } = jest.requireMock('@/lib/household/archiveGuard');
+        await updateProgram(program, { leadMentorId: 9 }, actor);
+        expect(lockLiveHouseholdsOf).toHaveBeenCalledWith(tx, [9]);
+        expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(lockLiveHouseholdsOf.mock.invocationCallOrder[0]);
     });
 });

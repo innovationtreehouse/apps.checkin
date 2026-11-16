@@ -374,9 +374,10 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
     let updatedProgram: Program;
     try {
         updatedProgram = await prisma.$transaction(async (tx) => {
-            if (newLeader !== null) await lockLiveHouseholdsOf(tx, [newLeader]);
-            // Locked so the audit's "before" is the row this update replaces.
+            // Locked so the audit's "before" is the row this update replaces. Program before
+            // households, the order enrollment takes them in (changeProgramStockWith).
             await tx.$queryRaw`SELECT id FROM "Program" WHERE id = ${programId} FOR UPDATE`;
+            if (newLeader !== null) await lockLiveHouseholdsOf(tx, [newLeader]);
             const before = await tx.program.findUnique({ where: { id: programId } });
             const after = await tx.program.update({ where: { id: programId }, data: updateData });
             await recordAudit(tx, personActor(actor.id), {
