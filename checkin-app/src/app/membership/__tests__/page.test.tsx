@@ -197,6 +197,26 @@ describe("membership page", () => {
     expect(screen.getByRole("link", { name: /Pay here with Shopify/ })).toHaveAttribute("href", "https://shop.example/checkout");
   });
 
+  it.each([
+    ["shows the finance contact address as a mailto link when it is set", "finance@example.org"],
+    ["shows no finance address when the setting is unset", null],
+  ])("%s", async (_name, financeContactEmail) => {
+    setSession({ id: 1 });
+    mockFetchJson({
+      "/api/membership/payment": { amountCents: 12500, checkoutUrl: "https://shop.example/checkout", financeContactEmail },
+      "/api/membership": state({ process: { id: 1, kind: "INITIAL", status: "PENDING_PAYMENT" }, external: { contractSigned: true, contractStarted: true, checkStarted: true, bgCleared: true, deepLinkUrl: null } }),
+    });
+    renderWithProviders(<MembershipPage />);
+
+    expect(await screen.findByText("$125.00", { exact: false })).toBeInTheDocument();
+    if (financeContactEmail) {
+      expect(screen.getByRole("link", { name: financeContactEmail })).toHaveAttribute("href", `mailto:${financeContactEmail}`);
+    } else {
+      expect(screen.queryByText(/For any questions/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: /@/ })).not.toBeInTheDocument();
+    }
+  });
+
   // ── non-lead household members see progress, never a lead-only task ────────
   it("hides the intake form from a non-lead household member", async () => {
     setSession({ id: 2 });

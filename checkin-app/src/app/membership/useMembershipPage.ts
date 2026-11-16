@@ -55,6 +55,7 @@ export interface IntakeState {
 export interface MembershipPayment {
   amountCents: number;
   checkoutUrl: string | null;
+  financeContactEmail: string | null;
 }
 
 // Build an error message from an API response, appending the dev-only `detail`
