@@ -7,6 +7,7 @@ import { apiError } from "@/lib/api-response";
 import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
 import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { ArchivedHouseholdError } from "@/lib/household/archiveGuard";
+import { personActor, recordAudit } from "@/lib/auditActor";
 
 export const POST = withAuth(
     {},
@@ -51,23 +52,24 @@ export const POST = withAuth(
                 return apiError("You cannot make yourself or someone in your own household a lead — someone outside your household must.", 403);
             }
 
-            const { created } = await addHouseholdLead(prisma, targetHouseholdId, participantId);
+            const newLead = { householdId: targetHouseholdId, participantId };
+            const created = await prisma.$transaction(async (tx) => {
+                const { created } = await addHouseholdLead(tx, targetHouseholdId, participantId);
+                if (created) {
+                    await recordAudit(tx, personActor(userId), {
+                        action: "CREATE",
+                        tableName: "Person",
+                        affectedEntityId: participantId,
+                        secondaryAffectedEntity: targetHouseholdId,
+                        newData: { ...newLead, isHouseholdLead: true },
+                    });
+                }
+                return created;
+            });
 
             if (!created) {
                 return NextResponse.json({ message: "Member is already a lead" }, { status: 200 });
             }
-
-            const newLead = { householdId: targetHouseholdId, participantId };
-            await prisma.auditLog.create({
-                data: {
-                    actorId: userId,
-                    action: "CREATE",
-                    tableName: "Person",
-                    affectedEntityId: participantId,
-                    secondaryAffectedEntity: targetHouseholdId,
-                    newData: { ...newLead, isHouseholdLead: true }
-                }
-            });
 
             return NextResponse.json({ lead: newLead, message: "Member promoted to lead successfully." }, { status: 200 });
 
@@ -132,24 +134,25 @@ export const DELETE = withAuth(
             // Locked demote: refuses to drop the household's last lead, and
             // serializes concurrent demotes so two can't both pass the guard and
             // zero-lead the household (see removeHouseholdLead).
-            const result = await removeHouseholdLead(prisma, targetHouseholdId, participantId);
+            const result = await prisma.$transaction(async (tx) => {
+                const result = await removeHouseholdLead(tx, targetHouseholdId, participantId);
+                if (result.removed) {
+                    await recordAudit(tx, personActor(userId), {
+                        action: "DELETE",
+                        tableName: "Person",
+                        affectedEntityId: participantId,
+                        secondaryAffectedEntity: targetHouseholdId,
+                        oldData: { householdId: targetHouseholdId, personId: participantId, isHouseholdLead: true },
+                    });
+                }
+                return result;
+            });
             if (!result.removed) {
                 if (result.reason === "last_lead") {
                     return apiError("Cannot remove the last lead of a household.", 400);
                 }
                 return apiError("Member is not a lead", 400);
             }
-
-            await prisma.auditLog.create({
-                data: {
-                    actorId: userId,
-                    action: "DELETE",
-                    tableName: "Person",
-                    affectedEntityId: participantId,
-                    secondaryAffectedEntity: targetHouseholdId,
-                    oldData: { householdId: targetHouseholdId, personId: participantId, isHouseholdLead: true }
-                }
-            });
 
             return NextResponse.json({ message: "Lead removed successfully." }, { status: 200 });
 
