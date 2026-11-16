@@ -92,8 +92,7 @@ Things the app takes as true because they are handled outside it.
   of the same message. Finance refuses a receipt by rejecting it, with a reason,
   from any open state. The Board neither discards nor rejects. An open receipt
   is one not yet finalized, discarded or rejected. Finance may add a discarded
-  or rejected receipt's file to the mailbox ignore list, and may remove an
-  entry. The ignore list filters mail only; an upload never consults it.
+  or rejected receipt's file to the mailbox ignore list.
   [Decision — owner]
 
 - A receipt finance rejected counts in its uploader's My receipts pill, with
