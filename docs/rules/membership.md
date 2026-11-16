@@ -299,6 +299,10 @@ Procedure below is built on them.
   finds the same review recorded under two identities, only a board member may
   remove the duplicate.  [Decision]
 
+- Removing a duplicate attestation reopens nothing. A check it helped clear stays
+  cleared, with its date, and so does any application that clearance completed.
+  A board member re-reviews such a check by hand.  [Decision — deliberate limit; owner ruling]
+
 - The Participants directory is for sysadmins, the board and operations. A
   background-check reviewer works from the review queue.  [Decision — owner; *Principle: least privilege*]
 
