@@ -717,3 +717,7 @@ Procedure below is built on them.
   Volunteer to sign again, closes any agreement still open at an older version, and
   removes no one's role. A wording fix that is not material leaves the version
   alone.  [Decision — @thpr, 2026-10-30]
+
+- Everyone who held BOARD, BG reviewer or Finance when the gate went live was
+  recorded as a Key Volunteer who had signed version 1, on the date of that migration, without a
+  signing request.  [Decision — @thpr, 2026-10-30]
