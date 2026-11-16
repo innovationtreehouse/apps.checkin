@@ -2,7 +2,7 @@ import { isNotWired, kindOf } from "@checkin/component-kit";
 import { CompletedReceiptSchema, type CompletedReceiptLineItem } from "@checkin/receipt-types";
 import type { z } from "zod";
 import { db, isUniqueConstraintError } from "../db";
-import type { ReceivedReceipt, ReceivedReceiptState } from "../db/schema";
+import type { MatchingPendingReason, ReceivedReceipt, ReceivedReceiptState } from "../db/schema";
 import { executePushAndSettle } from "../lib/apply-receipt";
 import { insertAuditEvent } from "../lib/audit";
 import { catalogLookupResultSchema, type CatalogLookupResult } from "../contract";
@@ -13,10 +13,20 @@ export type Recognized = Map<number, { gtin13: string; conversionFactor: number;
 
 const CATALOG_NOT_CONNECTED = "catalog not connected";
 
-/** What one matching attempt did: it ran (an unbound catalog says so in `note`), or the catalog was unavailable. */
-export type Matching = { ran: true; recognized: Recognized; note: string | null } | { ran: false; err: unknown };
+/** What one matching attempt did: it ran (an unbound catalog says so in `note`), or it couldn't run and why. */
+export type Matching =
+  | { ran: true; recognized: Recognized; note: string | null }
+  | { ran: false; err: unknown; reason: MatchingPendingReason };
 
-/** Matches lines against the catalog. A system or connection failure is `ran: false`; a settings failure or a bug throws. */
+/** The reason a person reads for a failed catalog lookup; never the error text. */
+function pendingReason(err: unknown): MatchingPendingReason {
+  const kind = kindOf(err);
+  if (kind === "system" || kind === "connection") return "catalog_unavailable";
+  if (kind === "settings") return "catalog_settings";
+  return "unexpected_error";
+}
+
+/** Matches lines against the catalog. Any failed lookup is `ran: false` with its reason; it never throws. */
 export async function matchLines(lineItems: CompletedReceiptLineItem[], retailer: string | null): Promise<Matching> {
   const recognized: Recognized = new Map();
   if (!retailer || lineItems.length === 0) return { ran: true, recognized, note: null };
@@ -33,9 +43,7 @@ export async function matchLines(lineItems: CompletedReceiptLineItem[], retailer
     results = catalogLookupResultSchema.array().parse(await ports().catalogReader.lookupItems(retailer, lookups));
   } catch (err) {
     if (isNotWired(err)) return { ran: true, recognized, note: CATALOG_NOT_CONNECTED };
-    const kind = kindOf(err);
-    if (kind === "system" || kind === "connection") return { ran: false, err };
-    throw err;
+    return { ran: false, err, reason: pendingReason(err) };
   }
   for (const result of results) {
     const li = lineItems[result.index];
@@ -51,17 +59,6 @@ export async function matchLines(lineItems: CompletedReceiptLineItem[], retailer
   return { ran: true, recognized, note: null };
 }
 
-/** Matching on arrival. A bug leaves every line unrecognized, as if nothing matched; a settings failure throws, so the sender retries. */
-async function matchOnArrival(lineItems: CompletedReceiptLineItem[], retailer: string | null): Promise<Matching> {
-  try {
-    return await matchLines(lineItems, retailer);
-  } catch (err) {
-    if (kindOf(err) === "settings") throw err;
-    console.warn("[workflow-mapping/intake] catalog lookup failed (non-fatal):", err);
-    return { ran: true, recognized: new Map(), note: null };
-  }
-}
-
 export interface IngestResult {
   id: number;
   state: ReceivedReceiptState;
@@ -71,8 +68,8 @@ export interface IngestResult {
 /**
  * S1 callee: deliver a finished receipt. Idempotent on `receiptId` — a replay returns the stored
  * `{ id, state }` with `created: false`, even if the body differs. Throws only on an invalid
- * payload, an org mismatch, a database failure, or a catalog settings failure; a failed push is
- * recorded as `apply_failed`. An unavailable catalog saves the receipt with matching pending.
+ * payload, an org mismatch, or a database failure; a failed push is recorded as `apply_failed`.
+ * A failed catalog lookup of any kind saves the receipt with matching pending and its reason.
  */
 export async function ingestReceipt(input: z.input<typeof CompletedReceiptSchema>): Promise<IngestResult> {
   const receipt = CompletedReceiptSchema.parse(input);
@@ -82,7 +79,8 @@ export async function ingestReceipt(input: z.input<typeof CompletedReceiptSchema
   const existing = await db.receivedReceipt.findUnique({ where: { receiptId: receipt.receiptId } });
   if (existing) return { id: existing.id, state: existing.state as ReceivedReceiptState, created: false };
 
-  const matching = await matchOnArrival(receipt.lineItems, receipt.vendorName);
+  const matching = await matchLines(receipt.lineItems, receipt.vendorName);
+  if (!matching.ran) console.warn(`[workflow-mapping/intake] catalog lookup failed (${matching.reason}):`, matching.err);
   const newlyRecognized: Recognized = matching.ran ? matching.recognized : new Map();
   const hasUnrecognized = receipt.lineItems.some((li) => !newlyRecognized.has(li.receiptLineItemId));
   const initialState = initialReceiptState(hasUnrecognized);
@@ -98,6 +96,7 @@ export async function ingestReceipt(input: z.input<typeof CompletedReceiptSchema
           state: initialState,
           receiptJson: JSON.stringify(receipt),
           matchingPendingSince: matching.ran ? null : new Date(),
+          matchingPendingReason: matching.ran ? null : matching.reason,
         },
       });
       await tx.receivedReceiptLineStatus.createMany({
@@ -122,7 +121,13 @@ export async function ingestReceipt(input: z.input<typeof CompletedReceiptSchema
         details: matching.ran ? matching.note : null,
       });
       if (!matching.ran) {
-        await insertAuditEvent(tx, { orgId, actorUserId: null, eventType: "matching_deferred", receivedReceiptId: row.id });
+        await insertAuditEvent(tx, {
+          orgId,
+          actorUserId: null,
+          eventType: "matching_deferred",
+          receivedReceiptId: row.id,
+          details: JSON.stringify({ reason: matching.reason }),
+        });
       }
       return row;
     });

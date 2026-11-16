@@ -133,6 +133,29 @@ describe("books map page", () => {
     expect(screen.getAllByRole("button", { name: "Update now" })).toHaveLength(2);
   });
 
+  it("shows a failed books map load in place of the tables", async () => {
+    setSession({ id: 1, isFinance: true });
+    const reply = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) =>
+      input.toString() === "/api/books-map" ? jsonResponse(403, { error: "Finance only" }) : reply(input, init));
+    renderWithProviders(<BooksMapPage />);
+
+    expect(await screen.findByText("Couldn't load the books map")).toBeInTheDocument();
+    expect(screen.getByText("Finance only")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Class for Robotics" })).not.toBeInTheDocument();
+  });
+
+  it("shows a failed QuickBooks account list load beside the map", async () => {
+    setSession({ id: 1, isFinance: true });
+    const reply = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) =>
+      input.toString().includes("/quickbooks-accounts") ? jsonResponse(404, { error: "No saved list" }) : reply(input, init));
+    renderWithProviders(<BooksMapPage />);
+
+    expect(await screen.findByText("Couldn't load QuickBooks accounts")).toBeInTheDocument();
+    expect(await screen.findByRole("textbox", { name: "Class for Robotics" })).toBeInTheDocument();
+  });
+
   describe("inactive QuickBooks entries", () => {
     // The copy marks Class 9005 and account 8005 inactive; both are saved picks here.
     beforeEach(() => {

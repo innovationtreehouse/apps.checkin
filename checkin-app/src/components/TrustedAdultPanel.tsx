@@ -208,6 +208,8 @@ export default function TrustedAdultPanel() {
                 const expiringSoon =
                     reviewBy && effectiveStatus === "APPROVED" && reviewBy.getTime() - now < EXPIRING_SOON_DAYS * 86400000;
                 const canResubmit = !changePending && (!!liveApproval || ["EXPIRED", "DENIED", "REVOKED"].includes(effectiveStatus));
+                // Mirrors renewTrustedAdult: a live approval renews only inside the expiry warning window.
+                const canRenew = canResubmit && (!liveApproval || !!expiringSoon);
 
                 return (
                     <Card key={ta.id} withBorder radius="md" padding="sm">
@@ -249,9 +251,11 @@ export default function TrustedAdultPanel() {
                             <Group gap="xs" style={{ flexShrink: 0 }}>
                                 {canResubmit && (
                                     <>
-                                        <Button size="xs" fz={15} variant="light" onClick={() => act(ta.id, "renew", "Sent to the board for review.")}>
-                                            Resubmit (same info)
-                                        </Button>
+                                        {canRenew && (
+                                            <Button size="xs" fz={15} variant="light" onClick={() => act(ta.id, "renew", "Sent to the board for review.")}>
+                                                Resubmit (same info)
+                                            </Button>
+                                        )}
                                         <Button size="xs" fz={15} variant="light" color="blue" onClick={() => startResubmit(ta)}>
                                             Submit with new info
                                         </Button>

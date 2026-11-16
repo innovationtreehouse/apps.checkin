@@ -7,7 +7,7 @@ import { MEMBERSHIP_OPS_ADMIN_ROLES } from '@/lib/nav/sections/membershipOps';
 import { Badge, Button, Group, List, Modal, Stack, Table, Text, Textarea, TextInput, Tooltip } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
-import { LoadError } from '@checkin/component-ui';
+import { LoadError, showSuccess } from '@checkin/component-ui';
 import { useLoad } from '@/lib/api';
 import { AdminEditHouseholdModal } from '@/components/admin/AdminEditHouseholdModal';
 import { sharesHousehold } from '@/lib/conflictOfInterest';
@@ -68,7 +68,7 @@ export default function AdminHouseholdsPage() {
 
       if (res.ok) {
         reload();
-        notifications.show({ message: 'Membership revoked.' });
+        showSuccess('Membership revoked.');
       } else {
         const data = await res.json().catch(() => ({}));
         notifications.show({ color: 'red', message: data.error || 'Failed to update membership.', autoClose: false });
@@ -91,7 +91,7 @@ export default function AdminHouseholdsPage() {
       if (res.ok) {
         const data = await res.json().catch(() => ({}));
         reload();
-        notifications.show({ message: data.message || `Granted ${grantYear.label}.` });
+        showSuccess(data.message || `Granted ${grantYear.label}.`);
       } else {
         const data = await res.json().catch(() => ({}));
         notifications.show({ color: 'red', message: data.error || 'Failed to grant membership.', autoClose: false });
@@ -138,7 +138,7 @@ export default function AdminHouseholdsPage() {
 
       if (res.ok) {
         reload();
-        notifications.show({ message: deny ? 'Membership denied — members can no longer log in.' : 'Membership restored.' });
+        showSuccess(deny ? 'Membership denied — members can no longer log in.' : 'Membership restored.');
       } else {
         const data = await res.json().catch(() => ({}));
         notifications.show({ color: 'red', message: data.error || 'Failed to update membership.', autoClose: false });

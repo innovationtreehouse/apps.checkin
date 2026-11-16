@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, Card, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import { showSuccess } from "@checkin/component-ui";
 
 type SelfStatus = { owesSignature: boolean; agreementVersion: number; requestStarted: boolean; documentConfigured: boolean };
 
@@ -33,11 +34,9 @@ export default function KeyVolunteerAgreementPanel() {
       .then((data: SelfStatus | null) => {
         setStatus(data);
         if (kvaReturn === "signed") {
-          notifications.show({
-            message: data && !data.owesSignature
-              ? "Thanks — your Key Volunteer Agreement signature was received."
-              : "Signature received — finalizing. Reload the page shortly to see it.",
-          });
+          showSuccess(data && !data.owesSignature
+            ? "Thanks — your Key Volunteer Agreement signature was received."
+            : "Signature received — finalizing. Reload the page shortly to see it.");
         } else if (kvaReturn === "declined") {
           notifications.show({ color: "red", autoClose: false, message: "You declined the Key Volunteer Agreement. You can sign it when you're ready." });
         }

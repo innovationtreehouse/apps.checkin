@@ -81,9 +81,12 @@ model ReceivedReceipt {
   // Set when inventory may have taken the delta without its stamp; never cleared, so lines stay locked.
   /// @sensitivity:public
   inventoryUnconfirmedAt DateTime? @map("inventory_unconfirmed_at")
-  // Set when matching was deferred because the catalog was unreachable; cleared when a person runs it or sends the receipt.
+  // Set when matching couldn't run on arrival; cleared when a person runs it or sends the receipt.
   /// @sensitivity:internal
   matchingPendingSince   DateTime? @map("matching_pending_since")
+  // Why matching couldn't run, when it last failed: a MatchingPendingReason code.
+  /// @sensitivity:internal
+  matchingPendingReason  String?   @map("matching_pending_reason")
   /// @sensitivity:public
   createdAt       DateTime @default(now()) @map("created_at")
   /// @sensitivity:public

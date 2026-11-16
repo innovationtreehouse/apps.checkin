@@ -389,15 +389,17 @@ Things the app takes as true because they are handled outside it.
 - Withdrawing a trusted adult retires every approval they hold, not just the
   most recent, and drops them from the pickup list at once.  [Decision]
 
-- A board override that denies a change leaves the earlier approval standing.  [Decision]
+- A board denial of a change leaves the earlier approval standing.  [Decision]
 
-- Force-approve refuses an adult the household withdrew, and refuses when the
-  family's household or the adult's own household is denied.  [Decision]
+- The board can reset a denial, or an approval still in force: the decision is
+  undone and the review waits for a board decision again, made the normal way.
+  The family is not emailed, because the decision that follows sends its own
+  notice. Reset refuses an adult the household withdrew, an expired approval
+  (the family renews it), an approved change, and a household that is denied,
+  whether the family's or the adult's own.  [Decision]
 
-- A board revoke of a trusted adult cannot be undone. Force-approve refuses them,
-  and the family resubmits.  [Decision]
-
-- Force-approve refuses an expired approval; the family renews it.  [Decision]
+- A board revoke of a trusted adult cannot be undone, and reset does not reach
+  it. The family resubmits.  [Decision]
 
 - Denying a household's membership revokes, at once and in the same act, every
   review not already revoked or denied — approved, open or expired — on the
@@ -408,8 +410,16 @@ Things the app takes as true because they are handled outside it.
   household brings none back. Revoking a household's membership revokes no
   trusted adult.  [Decision]
 
-- An approval lasts a year. The family is warned a month out and resubmits
-  without re-entering what the board already holds.  [Decision]
+- A first approval lasts a year from the family's submission. A renewal lasts a
+  year from the later of the previous approval's end and the renewal's
+  submission. An approved change keeps the end of the approval it changes, while
+  that approval still runs. Resetting and re-approving never moves the date. An
+  approval that would already have lapsed is refused: the board denies it and
+  the family renews. The family is warned a month out and resubmits without
+  re-entering what the board already holds.  [Decision]
+
+- A family can renew a trusted adult whose approval is still running only from
+  the month-out warning, so renewals never stack a further year on top.  [Decision]
 
 - An approval past its review date no longer authorises, whether or not the expiry
   job has run; the job only records the expiry and tells the family.  [Decision — *Principle: fail closed*]
