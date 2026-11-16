@@ -469,7 +469,7 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
           })()}
           {manualStatus === "Present" && (
             <>
-              <TextInput type="datetime-local" label="Arrived Time" value={manualArrived} onChange={(e) => setManualArrived(e.currentTarget.value)} />
+              <TextInput type="datetime-local" label="Arrived Time" value={manualArrived} onChange={(e) => { setManualArrived(e.currentTarget.value); setManualDepartedError(undefined); }} />
               <TextInput
                 ref={manualDepartedRef}
                 type="datetime-local"
