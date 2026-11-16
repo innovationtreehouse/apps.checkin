@@ -1,6 +1,7 @@
 import { type DbClient, type TxClient, withTx } from "@/lib/db-client";
 import prisma from "@/lib/prisma";
 import { isYouth } from "@/lib/time";
+import { mayDeclareAges } from "@/lib/person/adultDob";
 import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
 import { lockLiveHouseholds } from "@/lib/household/archiveGuard";
 
@@ -48,6 +49,12 @@ export const MAX_HOUSEHOLD_LEADS = 2;
  */
 export const householdLeadsWhere = (householdId: number) =>
     ({ householdId, isHouseholdLead: true }) as const;
+
+/** Whether the caller may set ages in this household ({@link mayDeclareAges}). */
+export async function setsHouseholdAges(db: DbClient, callerId: number, householdId: number): Promise<boolean> {
+    const leads = await db.person.findMany({ where: householdLeadsWhere(householdId), select: { id: true } });
+    return mayDeclareAges(callerId, leads.map((l) => l.id));
+}
 
 /** Thrown by {@link addHouseholdLead} when the per-household lead cap is reached. */
 export class HouseholdLeadLimitError extends Error {

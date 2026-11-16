@@ -30,6 +30,7 @@ jest.mock("@/lib/person/mintId", () => ({ mintPersonId: jest.fn().mockResolvedVa
 jest.mock("@/lib/household/leads", () => ({
     ...jest.requireActual("@/lib/household/leads"),
     householdLeadship: jest.fn(),
+    setsHouseholdAges: jest.fn().mockResolvedValue(true),
 }));
 
 const tx = {

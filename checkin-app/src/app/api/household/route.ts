@@ -8,10 +8,10 @@ import { isValidEmail } from "@/lib/emergencyContacts/identity";
 import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import { isOrgAccount } from "@/lib/orgAccount";
 import { HOUSEHOLD_PEER_SELECT, HOUSEHOLD_PEER_WITH_EMAIL_LOCK_SELECT } from "@/lib/household/participantProjection";
-import { householdLeadship } from "@/lib/household/leads";
+import { householdLeadship, setsHouseholdAges } from "@/lib/household/leads";
 import { isEmailLocked } from "@/lib/person/emailLock";
 import { EMAIL_IN_USE_REFUSAL } from "@/lib/household/emailInUse";
-import { normalizeAdultDob } from "@/lib/person/adultDob";
+import { AGE_LEAD_ONLY_REFUSAL, normalizeAdultDob } from "@/lib/person/adultDob";
 import { mintPersonId } from "@/lib/person/mintId";
 import { apiError } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
@@ -127,6 +127,10 @@ export const PATCH = withAuth(
             }
 
             const householdId = hh.householdId;
+            // Every new member carries an age, so adding one is an age write.
+            if (!(await setsHouseholdAges(prisma, userId, householdId))) {
+                return apiError(AGE_LEAD_ONLY_REFUSAL, 403);
+            }
 
             const { member, warning } = await prisma.$transaction(async (tx) => {
                 await lockLiveHouseholds(tx, [householdId]);

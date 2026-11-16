@@ -54,3 +54,22 @@ export function normalizeAdultDob(
   if (calculateAge(d) > MAX_PROGRAM_AGE) return { dateOfBirth: null, isDeclaredAdult: true };
   return { dateOfBirth: d, isDeclaredAdult: false };
 }
+
+export const AGE_LEAD_ONLY_REFUSAL =
+  "Only a household lead can set or change a date of birth or over-25 declaration in this household.";
+
+/** Once a household has a lead, only a lead sets its members' ages, their own included. */
+export function mayDeclareAges(callerId: number, leadIds: readonly number[]): boolean {
+  return leadIds.length === 0 || leadIds.includes(callerId);
+}
+
+/** Whether writing `age` (from {@link normalizeAdultDob}) changes what is on file; a new person has nothing on file. */
+export function changesAge(
+  age: { dateOfBirth?: Date | null; isDeclaredAdult?: boolean },
+  onFile?: { dateOfBirth: Date | null; isDeclaredAdult: boolean | null } | null,
+): boolean {
+  const dobChanged = age.dateOfBirth !== undefined
+    && (age.dateOfBirth?.getTime() ?? null) !== (onFile?.dateOfBirth?.getTime() ?? null);
+  const declarationChanged = age.isDeclaredAdult !== undefined && age.isDeclaredAdult !== !!onFile?.isDeclaredAdult;
+  return dobChanged || declarationChanged;
+}

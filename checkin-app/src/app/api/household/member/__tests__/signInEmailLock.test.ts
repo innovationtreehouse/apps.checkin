@@ -29,6 +29,7 @@ jest.mock("@/lib/emergencyContacts/service", () => ({ reconcileAndWarn: jest.fn(
 jest.mock("@/lib/household/leads", () => ({
     ...jest.requireActual("@/lib/household/leads"),
     householdLeadship: jest.fn(),
+    setsHouseholdAges: jest.fn().mockResolvedValue(true),
 }));
 
 const tx = {

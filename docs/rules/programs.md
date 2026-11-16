@@ -111,7 +111,7 @@ Things the app takes as true because they are handled outside it.
 - No program targets anyone over 25, and an age limit above that is refused.  [Decision]
 
 - A declared adult clears any youth minimum and fails any youth maximum. Nothing
-  verifies the claim, and no guardian is told.  [Decision — deliberate limit]
+  verifies the claim, and no guardian is told.  [Decision]
 
 - A program leader is 23 or older, the floor belonging to the role rather than to
   adulthood. A program volunteer has no age floor at all — youth volunteer too.  [Decision — *Policy: Sponsored Program Policy, Art. IV*]

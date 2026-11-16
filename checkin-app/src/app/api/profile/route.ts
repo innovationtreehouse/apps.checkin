@@ -5,7 +5,8 @@ import { withAuth } from "@/lib/auth";
 import { handler, notFound, unauthorized } from "@/security/handler";
 import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import { isYouth } from "@/lib/time";
-import { normalizeAdultDob } from "@/lib/person/adultDob";
+import { AGE_LEAD_ONLY_REFUSAL, changesAge, normalizeAdultDob } from "@/lib/person/adultDob";
+import { setsHouseholdAges } from "@/lib/household/leads";
 import { nameWrite, nicknameWrite, isNicknameWrite } from "@/lib/person/name";
 import { apiError } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
@@ -38,7 +39,7 @@ export const PATCH = withAuth(
 
             const me = await prisma.person.findUnique({
                 where: { id: userId },
-                select: { dateOfBirth: true },
+                select: { dateOfBirth: true, isDeclaredAdult: true, householdId: true },
             });
             if (isYouth(me?.dateOfBirth)) {
                 return apiError("Youth profiles are read-only.", 403);
@@ -60,6 +61,13 @@ export const PATCH = withAuth(
                 return apiError("Invalid nickname", 400);
             }
 
+            // The profile form always submits both age fields, so either one
+            // stands for both; notification-only PATCHes leave them unchanged.
+            const age = dob !== undefined || over25 !== undefined ? normalizeAdultDob(dob || null, !!over25) : {};
+            if (me?.householdId && changesAge(age, me) && !(await setsHouseholdAges(prisma, userId, me.householdId))) {
+                return apiError(AGE_LEAD_ONLY_REFUSAL, 403);
+            }
+
             const updatedProfile = await prisma.$transaction(async (tx) => {
                 const updatedProfile = await tx.person.update({
                     where: { id: userId },
@@ -67,11 +75,7 @@ export const PATCH = withAuth(
                         name: nameWrite(name),
                         nickname: nicknameWrite(nickname),
                         phone: phone !== undefined ? (phone === "" ? null : formatPhone(phone)) : undefined,
-                        // The profile form always submits both age fields, so either one
-                        // stands for both; notification-only PATCHes leave them unchanged.
-                        ...(dob !== undefined || over25 !== undefined
-                            ? normalizeAdultDob(dob || null, !!over25)
-                            : {}),
+                        ...age,
                         notificationSettings: notificationSettings !== undefined ? notificationSettings : undefined,
                     },
                     select: {
