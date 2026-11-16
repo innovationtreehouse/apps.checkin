@@ -8,16 +8,20 @@
  * unknown person is refused as not found, and an org-level bucket takes no
  * approvers. Whether a bucket is org-level changes only when no approver or
  * awaited Board seat depends on it, and a restore brings an archived bucket back.
+ * Archive is refused while any library still has unfinished work in the bucket.
  */
-import { createBudgetOwner, findQuickBooksClass, listQuickBooksClasses, LOCAL_QUICKBOOKS_CLASSES, setBucketOwner, setBucketTreasurer, updateBudgetOwner, OWN_HOUSEHOLD_MESSAGE } from '../budgetOwners';
+import { archiveBudgetOwner, createBudgetOwner, findQuickBooksClass, listQuickBooksClasses, LOCAL_QUICKBOOKS_CLASSES, setBucketOwner, setBucketTreasurer, updateBudgetOwner, OWN_HOUSEHOLD_MESSAGE } from '../budgetOwners';
 import { getQuickBooks } from '@/lib/quickbooks/client';
-import { holdBucketLines } from '@checkin/expense';
+import { holdBucketLines, unfinishedBucketUses as expenseUses } from '@checkin/expense';
+import { unfinishedBucketUses as donationUses } from '@checkin/bulk-donation';
+import { unfinishedBucketUses as incomeUses } from '@checkin/income';
 
 const households: Record<number, number> = { 1: 10, 2: 10, 3: 20, 4: 30, 5: 40 };
-const buckets: Record<number, { isOrgLevel: boolean; ownerId: number | null }> = {
+const buckets: Record<number, { isOrgLevel: boolean; ownerId: number | null; archivedAt?: Date }> = {
     7: { isOrgLevel: false, ownerId: null },
     8: { isOrgLevel: true, ownerId: null },
     9: { isOrgLevel: false, ownerId: 2 },
+    10: { isOrgLevel: false, ownerId: null, archivedAt: new Date('2026-10-01') },
 };
 const tx = {
     budgetOwner: { create: jest.fn(), update: jest.fn(), findUnique: jest.fn() },
@@ -33,7 +37,9 @@ jest.mock('@/lib/household/archiveGuard', () => ({
     lockLiveHouseholds: jest.fn(),
     lockLiveHouseholdsOf: jest.fn(),
 }));
-jest.mock('@checkin/expense', () => ({ holdBucketLines: jest.fn() }));
+jest.mock('@checkin/expense', () => ({ holdBucketLines: jest.fn(), unfinishedBucketUses: jest.fn() }));
+jest.mock('@checkin/bulk-donation', () => ({ unfinishedBucketUses: jest.fn() }));
+jest.mock('@checkin/income', () => ({ unfinishedBucketUses: jest.fn() }));
 jest.mock('@/lib/prisma', () => ({
     __esModule: true,
     default: {
@@ -60,6 +66,7 @@ beforeEach(() => {
     jest.clearAllMocks();
     tx.budgetOwnerTreasurer.findUnique.mockResolvedValue(null);
     tx.$queryRaw.mockResolvedValue([{ isOrgLevel: false }]);
+    for (const read of [expenseUses, donationUses, incomeUses]) jest.mocked(read).mockResolvedValue([]);
     savedList.mockResolvedValue({ entries: COPY });
 });
 
@@ -449,5 +456,54 @@ describe('listQuickBooksClasses', () => {
         process.env.CHECKIN_ENV = 'prod';
         savedList.mockResolvedValue(null);
         await expect(listQuickBooksClasses()).resolves.toEqual([]);
+    });
+});
+
+describe('archiveBudgetOwner', () => {
+    test('refuses a bucket with unfinished work, naming every kind, and writes nothing', async () => {
+        jest.mocked(expenseUses).mockResolvedValue([
+            { what: 'open expense lines', count: 3, where: 'Finance › Expenses' },
+            { what: 'parts mapped to it for future receipts', count: 2, where: 'Finance › Part Buckets' },
+        ]);
+        jest.mocked(donationUses).mockResolvedValue([{ what: 'gifts of goods not yet booked', count: 1, where: 'Donations › Queue' }]);
+        jest.mocked(incomeUses).mockResolvedValue([{ what: 'store items mapped to it', count: 4, where: 'Income › Item Categories' }]);
+        await expect(archiveBudgetOwner(1, 7)).rejects.toMatchObject({
+            status: 409,
+            message:
+                'This bucket still has unfinished work. Move it to another bucket first: open expense lines: 3 (Finance › Expenses); ' +
+                'parts mapped to it for future receipts: 2 (Finance › Part Buckets); gifts of goods not yet booked: 1 (Donations › Queue); ' +
+                'store items mapped to it: 4 (Income › Item Categories).',
+        });
+        for (const read of [expenseUses, donationUses, incomeUses]) expect(read).toHaveBeenCalledWith(7);
+        nothingWritten();
+    });
+
+    test('archives a bucket nothing unfinished uses and audits it', async () => {
+        const archivedAt = new Date('2026-11-15');
+        tx.budgetOwner.findUnique.mockResolvedValue({ archivedAt: null });
+        tx.budgetOwner.update.mockResolvedValue({ id: 7, archivedAt });
+        await archiveBudgetOwner(1, 7);
+        expect(tx.budgetOwner.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 7 }, data: { archivedAt: expect.any(Date) } }));
+        expect(tx.auditLog.create).toHaveBeenCalledWith({
+            data: expect.objectContaining({ action: 'EDIT', tableName: 'BudgetOwner', affectedEntityId: 7, oldData: { archivedAt: null }, newData: { archivedAt } }),
+        });
+    });
+
+    test('refuses with 503 when a library cannot be read, and writes nothing', async () => {
+        jest.spyOn(console, 'error').mockImplementation(() => {});
+        jest.mocked(donationUses).mockRejectedValue(new Error('connection refused'));
+        await expect(archiveBudgetOwner(1, 7)).rejects.toMatchObject({ status: 503, message: "Can't check what still uses this bucket; try again." });
+        nothingWritten();
+    });
+
+    test('answers an archived bucket as it is, reading no library', async () => {
+        await expect(archiveBudgetOwner(1, 10)).resolves.toMatchObject({ archivedAt: new Date('2026-10-01') });
+        for (const read of [expenseUses, donationUses, incomeUses]) expect(read).not.toHaveBeenCalled();
+        nothingWritten();
+    });
+
+    test('refuses an unknown bucket as not found', async () => {
+        await expect(archiveBudgetOwner(1, 404)).rejects.toMatchObject({ status: 404 });
+        nothingWritten();
     });
 });

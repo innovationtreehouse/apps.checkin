@@ -7,6 +7,7 @@ import { findUnknownTokens } from "@/lib/email-templates/tokens";
 import { readTemplateFields, writeTemplateFields, type FieldTargets } from "@/lib/email-templates/settingsFields";
 import { nextBoundary } from "@/lib/membership/renewal";
 import type { BusinessRole } from "@/types/auth";
+import { personActor, recordAudit } from "@/lib/auditActor";
 
 export const dynamic = "force-dynamic";
 
@@ -76,11 +77,10 @@ export const PUT = withAuth({ roles: EDIT_ROLES }, async (req, auth) => {
         data[field] = value.trim() ? value : null;
     }
 
-    await prisma.boardSettings.upsert({ where: { id: 1 }, create: { id: 1, ...data }, update: data, select: SELECT });
-    await writeTemplateFields(TARGETS, data, auth.user.id);
-
-    await prisma.auditLog.create({
-        data: { actorId: auth.user.id, action: "EDIT", tableName: "BoardSettings", affectedEntityId: 1, newData: data },
+    await prisma.$transaction(async (tx) => {
+        await tx.boardSettings.upsert({ where: { id: 1 }, create: { id: 1, ...data }, update: data, select: SELECT });
+        await writeTemplateFields(tx, TARGETS, data, auth.user.id);
+        await recordAudit(tx, personActor(auth.user.id), { action: "EDIT", tableName: "BoardSettings", affectedEntityId: 1, newData: data });
     });
 
     return NextResponse.json({ settings: await readTemplateFields(TARGETS) });
