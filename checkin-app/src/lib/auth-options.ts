@@ -21,6 +21,7 @@ import { nameWrite } from "@/lib/person/name";
 import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
 import { systemActor } from "@/lib/auditActor";
 import { asksHouseholdQuestion } from "@/lib/household/joinQuestion";
+import { type DbClient, withTx } from "@/lib/db-client";
 
 // Stable id for the dev/local persona-mint credential flow.
 export const PERSONA_MINT_PROVIDER_ID = "persona-mint";
@@ -71,14 +72,15 @@ function idTokenEmail(idToken: string | undefined): string | null {
 
 // Every participant must belong to a household (Participant.householdId is
 // required), so new sign-ups get a single-person household they lead.
+// Pass a tx client to join the caller's transaction.
 export async function createParticipantWithHousehold(data: {
     name?: string | null;
     email?: string | null;
     image?: string | null;
     googleId?: string | null;
     emailVerified?: Date | null;
-}) {
-    return prisma.$transaction(async (tx) => {
+}, db: DbClient = prisma) {
+    return withTx(db, async (tx) => {
         if (data.email) await removeAliasesForSignInEmail(tx, data.email, systemActor("system:google-sign-in"), "first_sign_in");
         const household = await tx.household.create({
             data: { name: data.name?.trim() || data.email?.trim() || "Household" },
