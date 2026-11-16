@@ -310,7 +310,7 @@ Things the app takes as true because they are handled outside it.
 - A program payment from a checkout opened before a merge, for the merged-away
   person, is flagged for the Board, not applied: the kept person is not activated
   and their place still reads as unpaid. Anyone else the checkout names is
-  activated as usual. The Board settles the merged person's place by hand.  [Decision — deliberate limit; owner ruling 2026-11-01]
+  activated as usual. The Board settles the merged person's place by hand.  [Decision — deliberate limit; owner ruling]
 
 ### Roles
 
