@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Badge, Button, Card, Group, Text, Title } from "@mantine/core";
 import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
+import { LoadError } from "@checkin/component-ui";
+import { useLoad } from "@/lib/api";
 
 /**
  * Board-only: the Key Volunteer Agreement's current version, whether its
@@ -12,21 +14,12 @@ import { notifications } from "@mantine/notifications";
  */
 export function KeyVolunteerAgreementCard({ initialVersion }: { initialVersion: number }) {
   const [version, setVersion] = useState(initialVersion);
-  const [documentConfigured, setDocumentConfigured] = useState<boolean | null>(null);
-  const [holders, setHolders] = useState<number | null>(null);
   const [bumping, setBumping] = useState(false);
 
-  useEffect(() => {
-    fetch("/api/membership/key-volunteer")
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: { documentConfigured?: boolean } | null) => setDocumentConfigured(data?.documentConfigured ?? null))
-      .catch(() => setDocumentConfigured(null));
-    fetch("/api/roles")
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: { people?: { isKeyVolunteer?: boolean }[] } | null) =>
-        setHolders(data?.people ? data.people.filter((p) => p.isKeyVolunteer).length : null))
-      .catch(() => setHolders(null));
-  }, []);
+  const agreement = useLoad<{ documentConfigured?: boolean }>("/api/membership/key-volunteer");
+  const roles = useLoad<{ people?: { isKeyVolunteer?: boolean }[] }>("/api/roles");
+  const documentConfigured = agreement.data?.documentConfigured ?? null;
+  const holders = roles.data?.people ? roles.data.people.filter((p) => p.isKeyVolunteer).length : null;
 
   const bump = async () => {
     setBumping(true);
@@ -67,6 +60,8 @@ export function KeyVolunteerAgreementCard({ initialVersion }: { initialVersion: 
   return (
     <Card withBorder radius="md" padding="lg">
       <Title order={3} mb="xs">Key Volunteer Agreement</Title>
+      {agreement.error && <LoadError what="the agreement document status" message={agreement.error} onRetry={agreement.reload} />}
+      {roles.error && <LoadError what="the Key Volunteer count" message={roles.error} onRetry={roles.reload} />}
       <Group gap="sm" mb="sm">
         <Text size="sm">Current version: <strong>{version}</strong></Text>
         {documentConfigured === true && <Badge color="green" variant="light">Document in place</Badge>}
