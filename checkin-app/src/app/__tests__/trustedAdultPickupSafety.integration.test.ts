@@ -201,6 +201,19 @@ describe('trusted-adult pickup list safety', () => {
             expect(again.reviewBy).toEqual(first.reviewBy);
         });
 
+        it('resetting a renewal leaves a retired approval revoked if it was revoked since', async () => {
+            const { taId, firstReviewId } = await discloseApproved();
+            await intoRenewalWindow(taId);
+            const renewal = await renewTrustedAdult(taId, leadId);
+            await decideReview(renewal.id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
+            await prisma.trustedAdultReview.update({ where: { id: firstReviewId }, data: { status: 'REVOKED' } });
+
+            await resetReview(renewal.id, boardId, 'Renewal needs a second look.');
+
+            expect(await statuses(taId)).toEqual(['REVOKED', 'PENDING_BOARD_REVIEW']);
+            expect(await onPickupList(taId)).toBe(false);
+        });
+
         it('revoke from a stale page on a superseded review still ends the live approval', async () => {
             const { taId, firstReviewId } = await discloseApproved();
             await intoRenewalWindow(taId);
