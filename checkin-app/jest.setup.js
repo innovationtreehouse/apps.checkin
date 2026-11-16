@@ -45,7 +45,7 @@ process.env.CHECKIN_ENV = 'dev';
 // relies on it too); @/lib/prisma reads TEST_DB_POOL_MAX when it first loads.
 {
   const { testPath } = expect.getState();
-  if (testPath && /(Concurrency|mintId|facilityCloseLock|cronNightlyLock|scanFlushRace|programRefundRace|membershipRefundGate|membershipPaymentPlanRace)\.integration\.test\.[jt]sx?$/.test(testPath)) {
+  if (testPath && /(Concurrency|mintId|facilityCloseLock|cronNightlyLock|scanFlushRace|programRefundRace|membershipRefundGate|membershipPaymentPlanRace|participants\/merge\/__tests__\/route)\.integration\.test\.[jt]sx?$/.test(testPath)) {
     process.env.TEST_DB_POOL_MAX = '2';
   }
 }
