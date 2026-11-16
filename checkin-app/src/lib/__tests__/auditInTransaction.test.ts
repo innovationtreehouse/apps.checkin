@@ -19,9 +19,6 @@ const ALLOWLIST: Record<string, { count: number; reason: string }> = {
     // Membership
     "lib/membership/external.ts": { count: 2, reason: TO_FIX },
     "lib/membership/grant.ts": { count: 1, reason: TO_FIX },
-    // Shop
-    "app/api/shop/tools/route.ts": { count: 1, reason: TO_FIX },
-    "app/api/shop/tools/[id]/route.ts": { count: 1, reason: TO_FIX },
     "app/api/cron/nightly/route.ts": {
         count: 1,
         reason: "by design: close summary is a board notice, each closed visit has its own row",
