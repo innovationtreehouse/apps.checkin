@@ -1,6 +1,6 @@
 // Inputs the services accept. Money in the upload and edit shapes is in dollars, as typed.
 import { z } from "zod";
-import { dollarsToCents } from "@checkin/money";
+import { dollarsToCents, dollarsToCentsOrNull } from "@checkin/money";
 import { CURRENCY_CODE, DEFAULT_CURRENCY, InKindDonorSchema, MAX_LINE_QUANTITY } from "@checkin/receipt-types";
 import { isIsoDate } from "./missingDetails";
 
@@ -16,18 +16,17 @@ const nonNegative = finite.nonnegative();
 const quantity = finite.positive().max(MAX_LINE_QUANTITY);
 const cents = z.number().int().nonnegative();
 const currencyCode = z.string().regex(CURRENCY_CODE, { message: "Currency must be a 3-letter code, like USD" });
-/** The most a money column holds: its integer cents limit, in dollars. */
-const MAX_DOLLARS = (2 ** 31 - 1) / 100;
+/** The most a money column holds: its integer cents limit. */
+const MAX_CENTS = 2 ** 31 - 1;
 const dollarString = z.string().refine(
   (v) => {
-    const dollars = parseFloat(v);
-    return Number.isFinite(dollars) && dollars >= 0 && dollars <= MAX_DOLLARS;
+    const cents = dollarsToCentsOrNull(v);
+    return cents !== null && cents >= 0 && cents <= MAX_CENTS;
   },
   { message: "must be a number from 0 to 21,474,836.47" },
 );
-/** A dollar input from these shapes in cents; a string that does not start with a number counts as 0. */
-export const toCents = (dollars: number | string | undefined): number =>
-  dollarsToCents(typeof dollars === "string" ? parseFloat(dollars) || 0 : (dollars ?? 0));
+/** A dollar input from these shapes in cents; missing counts as 0, and text that is not a plain decimal throws. */
+export const toCents = (dollars: number | string | undefined): number => dollarsToCents(dollars ?? 0);
 
 /** Text a receipt cannot be checked without; blank or spaces-only is refused. */
 const requiredText = (name: string, max: number) => z.string({ error: `${name} is required` }).trim().min(1, { message: `${name} is required` }).max(max);
