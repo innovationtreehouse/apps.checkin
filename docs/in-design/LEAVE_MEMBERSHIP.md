@@ -173,6 +173,9 @@ For `docs/rules/membership.md`, Procedure > Renewal, if the design is agreed:
 
 ## Mechanism
 
+Everything in this section is proposed. None of it exists in the code yet: no
+column, no service, no routes, and no change to any existing writer.
+
 ### Data
 
 One nullable column on the household's membership:
@@ -184,7 +187,7 @@ person-merge drift guard is not touched.
 
 ### Service
 
-`lib/membership/notRenewing.ts`, each function a compare-and-set with its audit
+`checkin-app/src/lib/membership/notRenewing.ts`, each function a compare-and-set with its audit
 row in one transaction:
 
 - `markNotRenewing(personId)`: the caller is a lead of an ACTIVE, live household
@@ -193,13 +196,14 @@ row in one transaction:
 - `clearNotRenewing(personId)`: the caller is a lead of that household; sets it
   to null.
 
-`beginRenewal` sets the column to null in the same transaction that moves the
-renewal forward. A repeat of either call is a no-op success
+PR 3 changes `beginRenewal`, which today writes only the renewal, so that it
+also sets the column to null in the same transaction that moves the renewal
+forward. A repeat of either call is a no-op success
 (*Principle: apply once*).
 
 ### Query narrowed
 
-The outreach audience (`lib/outreach/recipients.ts`) skips a household whose
+The outreach audience (`checkin-app/src/lib/outreach/recipients.ts`) skips a household whose
 `notRenewingYear` is the coming year, for both the opening message and the
 reminder. Nothing else reads the column apart from the household page and the
 Board's households list.
@@ -239,7 +243,7 @@ Board's households list.
   already paid, repeat); the outreach audience skipping only the noted year;
   `beginRenewal` clearing the note.
 - Integration: mark, then confirm the renewal, against a real database.
-- Flow: `flow-tests/not-renewing.flow.test.ts`: a seeded lead marks the
+- Flow: `checkin-app/flow-tests/not-renewing.flow.test.ts`: a seeded lead marks the
   household, the outreach audience no longer contains it, the lead undoes it and
   it returns.
 
@@ -268,18 +272,20 @@ owner's direction of 2026-11-17 answered several.
 Each PR is based on `main`; none stacks on another.
 
 1. **Registry entries (boundary, alone).** `POST` and
-   `DELETE /api/membership/not-renewing` in `src/security/registry.ts`, and
+   `DELETE /api/membership/not-renewing` in `checkin-app/src/security/registry.ts`, and
    whatever the `notRenewing` flag on `GET /api/membership-ops/applications`
    rows needs there, with their tests. An unused `defineRoute` is inert, so this
    ships first.
 2. **Migration (expand only).** Add `OrgMembership.notRenewingYear`, nullable,
    with its `@sensitivity` annotation. Old code ignores it, so it is safe against
    the old code still serving traffic. No contract step.
-3. **Service, routes and outreach.** `lib/membership/notRenewing.ts`, the two
+3. **Service, routes and outreach.** `checkin-app/src/lib/membership/notRenewing.ts`, the two
    route handlers, the outreach audience, `beginRenewal` clearing the note, the
    Board email, the households list field, tests, and the register lines above.
 4. **UI.** The household page control, the lead's renewal banner, the Board's
-   households label and the Applications tab tag and filter. Closes #3446.
+   households label and the Applications tab tag and filter. This last
+   implementation PR is the one that closes #3446; this design PR only
+   references it.
 
 ## Appendix: provenance
 
