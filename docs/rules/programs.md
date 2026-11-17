@@ -392,6 +392,9 @@ Things the app takes as true because they are handled outside it.
 
 - Denying a request does not release the seat; the family may still pay for it.  [Decision]
 
+- A denied scholarship or payment-plan request cannot be sent again; the family
+  follows up with finance at the contact address instead.  [Decision — owner: a family must not hold a seat by re-asking]
+
 - A denial starts the grace clock and sends nothing, so the board's own message
   has to state the deadline.  [Decision — deliberate limit]
 
