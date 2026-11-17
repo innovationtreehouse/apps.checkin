@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import type { DbClient } from "@/lib/db-client";
 import { logger } from "@/lib/logger";
 import { unentitledMemberCodeUse } from "@/lib/programs/memberDiscountCode";
 import { fromWhere } from "@/lib/programs/enrollmentState";
@@ -60,7 +61,7 @@ export async function orderEntitlesEnrollment(order: EntitlementOrder, programId
     const program = await prisma.program.findUnique({ where: { id: programId }, select: { shopifyVariantId: true, claimantShopifyVariantId: true } });
     const variantIds = new Set(program ? programVariantIds(program) : []);
     const seats = order.lines.filter((l) => variantIds.has(l.variantId)).reduce((n, l) => n + l.currentQuantity, 0);
-    const unspent = Math.max(0, seats - await seatsSpentBy(order, programId));
+    const unspent = Math.max(0, seats - (order.legacyId ? await seatsSpentBy(prisma, order.legacyId, programId) : 0));
     if (awaiting === 0) {
         const surplus = await surplusSeats(order, programId, personIds, unspent);
         return { ok: false, kind: surplus?.kind ?? null, personId: surplus?.personId, nothingAwaiting: true };
@@ -100,24 +101,23 @@ async function surplusSeats(order: EntitlementOrder, programId: number, personId
  * and those who have since left (removed or withdrawn). Each spent one of its seats.
  * Scoped by order, not by the people a caller names, because the seats belong to the order.
  */
-async function seatsSpentBy(order: EntitlementOrder, programId: number): Promise<number> {
-    if (!order.legacyId) return 0;
+export async function seatsSpentBy(db: DbClient, shopifyOrderId: string, programId: number): Promise<number> {
     // A withdrawn row still carries the order until a re-enrolment clears it; the audit keeps it after.
-    const holders = await prisma.programParticipant.findMany({
-        where: { programId, shopifyOrderId: order.legacyId, OR: [fromWhere("ACTIVE"), fromWhere("WITHDRAWN")] },
+    const holders = await db.programParticipant.findMany({
+        where: { programId, shopifyOrderId, OR: [fromWhere("ACTIVE"), fromWhere("WITHDRAWN")] },
         select: { personId: true },
     });
-    const left = await prisma.auditLog.findMany({
+    const left = await db.auditLog.findMany({
         where: {
             tableName: "ProgramParticipant",
             secondaryAffectedEntity: programId,
             OR: [
-                { action: "DELETE", oldData: { path: ["shopifyOrderId"], equals: order.legacyId } },
+                { action: "DELETE", oldData: { path: ["shopifyOrderId"], equals: shopifyOrderId } },
                 {
                     action: "EDIT",
                     AND: [
                         { newData: { path: ["status"], equals: "WITHDRAWN" } },
-                        { newData: { path: ["shopifyOrderId"], equals: order.legacyId } },
+                        { newData: { path: ["shopifyOrderId"], equals: shopifyOrderId } },
                     ],
                 },
             ],
