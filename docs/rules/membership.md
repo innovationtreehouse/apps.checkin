@@ -329,11 +329,6 @@ Procedure below is built on them.
   ones included, in the same step, as a restore does. Per-person applications stay
   open. Unarchiving the household reopens none of them.  [Decision — owner]
 
-- A blocked application that is closed and reopened stays blocked by the same
-  rejection. A reset of the application cannot lift it; only the person's check
-  review or the Board's release of someone who has left the household
-  can.  [Decision — owner ruling]
-
 - A refund made in the online store is recorded by the board,
   with a reason, by someone outside the household, on a paid application at any
   step that never became a membership. It stays offered until it is recorded,
