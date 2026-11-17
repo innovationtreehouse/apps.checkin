@@ -157,7 +157,7 @@ describe('reviewBadges (Review tab + Membership Ops nav)', () => {
     };
     expect(navBadgeFor('/membership-ops', counts)).toEqual([
       { count: 3, color: 'treehouseGreen', label: '2 pending membership reviews; 1 background check you can review now' },
-      { count: 43, color: 'gray', label: '40 in-flight applications; 3 you approved awaiting a second reviewer' },
+      { count: 41, color: 'gray', label: '38 in-flight applications; 3 you approved awaiting a second reviewer' },
     ]);
   });
 
@@ -249,7 +249,7 @@ describe('tabBadgeFor', () => {
 
   it('applications tab shows every in-flight application (gray)', () => {
     expect(tabBadgeFor('/membership-ops/applications', admin({ applicationsTotal: 40 })))
-      .toEqual({ count: 40, color: 'gray', label: '40 other applications' });
+      .toEqual({ count: 40, color: 'gray', label: '40 applications' });
   });
 
   it('applications tab splits red (missing signature or check) from gray (the rest)', () => {

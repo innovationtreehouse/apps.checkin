@@ -136,7 +136,7 @@ export function applicationBadges(counts: TodoCounts | null): NavBadge[] {
   if (incomplete > 0)
     out.push({ count: incomplete, color: 'red', label: `${incomplete} application${plural(incomplete, '', 's')} missing a signature or background check` });
   if (rest > 0)
-    out.push({ count: rest, color: 'gray', label: `${rest} other application${plural(rest, '', 's')}` });
+    out.push({ count: rest, color: 'gray', label: `${rest}${incomplete > 0 ? ' other' : ''} application${plural(rest, '', 's')}` });
   return out;
 }
 
@@ -207,7 +207,7 @@ export function navBadgeFor(href: string, counts: TodoCounts | null): NavBadge[]
       const actionLabel = `${membership} pending membership review${plural(membership, '', 's')}; ${canActOn} background check${plural(canActOn, '', 's')} you can review now`;
 
       const incomplete = counts.admin ? counts.admin.applicationsIncomplete : 0;
-      const apps = counts.admin ? counts.admin.applicationsTotal - incomplete : 0;
+      const apps = counts.admin ? counts.admin.applicationsTotal - incomplete - membership : 0;
       const awaiting = counts.review?.approvedAwaitingSecond ?? 0;
       const info = apps + awaiting;
       const infoLabel = `${apps} in-flight application${plural(apps, '', 's')}; ${awaiting} you approved awaiting a second reviewer`;

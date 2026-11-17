@@ -3,7 +3,7 @@ import type { OrgMembershipProcessStatus, TrustedAdultReviewStatus } from "@/gen
 import type { AuthenticatedUser } from "@/types/auth";
 import { countHouseholdsMissingValidContact } from "@/lib/emergencyContacts/service";
 import { canReviewBackgroundChecks, reviewQueueCounts } from "@/lib/membership/review";
-import { openProcess, SETTLES_ON_SIGNATURE } from "@/lib/membership/lifecycle";
+import { awaitingBgReview, openProcess, SETTLES_ON_SIGNATURE } from "@/lib/membership/lifecycle";
 import { getLeadConflicts } from "@/lib/attendanceConflicts";
 import { pickAddress, validateAddress } from "@/lib/address";
 import { alertAddressCheck, getConfigHealth, openConfigIssues } from "@/lib/configHealth";
@@ -77,7 +77,8 @@ export type TodoCounts = {
     // `membership` = board-actionable (BLOCKED, green). `applicationsTotal` =
     // every open application, the gray count shown on the Applications tab —
     // mirrors what /api/membership-ops/applications lists. `applicationsIncomplete` =
-    // the part of that total still missing a signature or a cleared check (red).
+    // the part of that total still missing a signature, or a cleared check for a
+    // check reviewer (red).
     // `brokenEmails` = people whose email Resend has reported as undeliverable
     // (bounce/complaint) and no later delivery has cleared — see webhooks/resend.
     // Red pill on the Membership Ops nav item + the Manage Memberships (households) tab.
@@ -472,17 +473,21 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
         prisma.orgMembershipProcess.count({
             where: openProcess.where,
         }),
-        // Open applications still missing a signature or a cleared check, other than
-        // renewals not yet started and BLOCKED rows (already in `membership`).
+        // Open applications past intake still missing a signature, or (for check
+        // reviewers) a cleared check. Leaves out unstarted renewals, BLOCKED rows
+        // (in `membership`) and check reviews (in the review queue's own pills).
         prisma.orgMembershipProcess.count({
             where: {
                 AND: [
                     openProcess.where,
-                    { status: { notIn: ["PENDING_RENEWAL", "BLOCKED"] } },
+                    { status: { notIn: ["INTAKE", "PENDING_RENEWAL", "BLOCKED"] } },
+                    { NOT: awaitingBgReview.where },
                     {
                         OR: [
                             { kind: { not: "PERSON_BG" }, contractSignedAt: null },
-                            { kind: { notIn: [...SETTLES_ON_SIGNATURE] }, bgClearedAt: null },
+                            ...(canReviewBackgroundChecks(user)
+                                ? [{ kind: { notIn: [...SETTLES_ON_SIGNATURE] }, bgClearedAt: null }]
+                                : []),
                         ],
                     },
                 ],
