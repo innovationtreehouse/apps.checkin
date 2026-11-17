@@ -160,7 +160,12 @@ function KioskDisplayInner() {
     const handleMessage = (event: MessageEvent) => {
       // Only the kiosk wrapper that frames this page, served from the same Pi proxy origin, may push a roster.
       if (event.source !== window.parent || event.origin !== window.location.origin) return;
-      if (typeof event.data === "object" && event.data?.type === "refresh-attendance" && event.data.attendance) {
+      if (typeof event.data === "object" && event.data?.type === "refresh-attendance") {
+        // A partial push would render missing counts as an empty building, so it reloads instead.
+        if (!event.data.attendance || !event.data.counts || !event.data.safety) {
+          fetchAttendance();
+          return;
+        }
         setData({ access: "full", attendance: event.data.attendance, counts: event.data.counts, safety: event.data.safety });
         setAsOf(new Date().toISOString());
         setNamesAreKioskLabels(true);
