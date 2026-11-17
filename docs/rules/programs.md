@@ -392,9 +392,6 @@ Things the app takes as true because they are handled outside it.
 
 - Denying a request does not release the seat; the family may still pay for it.  [Decision]
 
-- A denied scholarship or payment-plan request on a held seat cannot be sent
-  again; the family follows up with finance at the contact address instead.  [Decision — owner: a family must not hold a seat by re-asking]
-
 - A denial starts the grace clock and sends nothing, so the board's own message
   has to state the deadline.  [Decision — deliberate limit]
 
@@ -405,17 +402,16 @@ Things the app takes as true because they are handled outside it.
   the person deciding confirms the oversell risk.  [Decision — deliberate limit]
 
 - Denying a request whose seat hold failed returns the enrollment to unpaid. The
-  family goes back to paying normally, and the denial is kept in the audit log.
-  Such a family may ask again. A failed seat hold happens only while the app writes
-  the store's stock.  [Decision — deliberate limit]
+  family goes back to paying normally, and the denial is kept in the audit log.  [Decision]
 
 ### Access to program information
 
 - A program's catalogue entry is public; its roster is visible only to the people
-  running it — its leader, its core volunteers, the board and sysadmins — and to
-  people enrolled in it. The catalogue filters rather than gates: an anonymous
+  running it — its leader, its core volunteers, the board and sysadmins — to
+  finance, which activates places paid outside the store from it, and to people
+  enrolled in it. The catalogue filters rather than gates: an anonymous
   caller reaches it and sees less, and is never told that a hidden members-only
-  program exists.  [Decision — *Policy: Records Policy, Art. IV*]
+  program exists.  [Decision — owner: Finance reaches the roster to activate places paid outside the store; *Policy: Records Policy, Art. IV*]
 
 - A members-only program is hidden by default and keeps that silence on its own
   page: an anonymous caller is told there is no such program; a signed-in caller
