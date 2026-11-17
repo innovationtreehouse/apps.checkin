@@ -287,7 +287,7 @@ export async function answerInfoRequest(id: number, actorId: number, input: Answ
             throw new TrustedAdultError("wrong_phase", "The board hasn't asked for more information on this trusted adult.");
         }
         const parent = await tx.trustedAdult.findUniqueOrThrow({ where: { id: ta.id } });
-        const current = latest.proposedName === null
+        const current = latest.proposedName == null
             ? { name: parent.trustedAdultName, phone: parent.trustedAdultPhone, email: parent.trustedAdultEmail, context: parent.familyContext }
             : { name: latest.proposedName, phone: latest.proposedPhone, email: latest.proposedEmail, context: latest.proposedContext };
         const next = { name: input.trustedAdultName.trim(), phone: contact.phone, email: contact.email, context: input.familyContext.trim() };
@@ -432,7 +432,7 @@ function promoteProposal(
     tx: TxClient,
     review: { trustedAdultId: number; proposedName: string | null; proposedPhone: string | null; proposedEmail: string | null; proposedContext: string | null },
 ) {
-    if (review.proposedName === null) return;
+    if (review.proposedName == null) return;
     return tx.trustedAdult.update({
         where: { id: review.trustedAdultId },
         data: {
@@ -770,7 +770,7 @@ export async function resetReview(reviewId: number, actorId: number, reason: str
         if (review.status !== "APPROVED" && review.status !== "DENIED") {
             throw new TrustedAdultError("wrong_phase", "Only an approved or denied review can be reset.");
         }
-        if (review.status === "APPROVED" && review.proposedName !== null) {
+        if (review.status === "APPROVED" && review.proposedName != null) {
             throw new TrustedAdultError("wrong_phase", "This approved change is already on the trusted adult, so it can't be reset. Revoke the approval and the family resubmits.");
         }
         if (await adultHouseholdDenied(tx, head.trustedAdult)) {

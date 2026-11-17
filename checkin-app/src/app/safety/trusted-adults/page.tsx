@@ -214,7 +214,7 @@ export default function AdminTrustedAdultsPage() {
                 const pending = status === "PENDING_BOARD_REVIEW";
                 // Mirrors resetReview: a denial, or an approval in force that is not an approved change.
                 const resettable = status === "DENIED"
-                    || (latest?.status === "APPROVED" && latest.proposedName === null && isAuthorizedApproval(latest, new Date()));
+                    || (latest?.status === "APPROVED" && latest.proposedName == null && isAuthorizedApproval(latest, new Date()));
                 const sharedVal = latest ? shared[latest.id] ?? "" : "";
                 const prior = priorDecisionReview(ta.reviews);
                 const priorMeta = prior?.decision ? PRIOR_DECISION_META[prior.decision] : null;
