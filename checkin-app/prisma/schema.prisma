@@ -79,6 +79,16 @@ enum ProgramParticipantStatus {
   WITHDRAWN
 }
 
+/// What a hand enrollment by the Board or Finance stands for.
+enum EnrollmentBasis {
+  // Paid outside the store: a check or cash.
+  OUTSIDE_PAYMENT
+  // A store order matched by hand; its id is the place's shopifyOrderId.
+  MATCHED_ORDER
+  // No payment.
+  COMP
+}
+
 /// What a household asked for when they requested help with a fee. Recorded at
 /// the moment of the request, because the two asks need different conversations
 /// and the review team cannot tell them apart from the request alone — offering
@@ -1271,6 +1281,12 @@ model ProgramParticipant {
   /// @sensitivity:hardship
   /// @financeMark
   seatTakenWithoutSaleAt DateTime?
+  /// What a place the Board or Finance enrolled by hand stands for. Null for a place
+  /// paid through the store, a free one, an approved request, and comps made before
+  /// this column existed. How a family paid is the Board's and finance's alone.
+  /// @sensitivity:hardship
+  /// @financeMark
+  enrollmentBasis      EnrollmentBasis?
   /// When the person withdrew: set with status WITHDRAWN, null otherwise.
   /// Same tier as pendingSince — a workflow timestamp lead mentors need.
   /// @sensitivity:personal

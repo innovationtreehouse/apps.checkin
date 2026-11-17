@@ -387,7 +387,7 @@ describe('Program Participants API Integration Tests', () => {
 
              const data = await res.json();
              expect(data.success).toBe(true);
-             expect(data.enrollment.status).toBe('ACTIVE'); // override → confirmed comp
+             expect(data.enrollment.status).toBe('ACTIVE'); // a free program
 
              // Program is now intentionally over its cap of 1.
              const enrolled = await prisma.programParticipant.count({ where: { programId: fullProgramId } });
@@ -476,29 +476,22 @@ describe('Program Participants API Integration Tests', () => {
              expect(data.enrollment.status).toBe('PENDING'); // not a comp
         });
 
-        // The comp still belongs to genuine admin action: a board member
-        // enrolling someone OUTSIDE their household (the program-ops surface).
-        it('should require override + comp (ACTIVE) when a board member enrolls a non-household participant', async () => {
+        // Skipping payment takes a stated basis: a board member enrolling someone
+        // OUTSIDE their household (the program-ops surface) without one adds a place
+        // that waits for payment.
+        it('should comp (ACTIVE) only when a board member names the basis for a non-household participant', async () => {
              (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
 
-             const promptReq = new Request(`http://localhost:4000/api/programs/${standardProgramId}/participants`, {
+             const compReq = new Request(`http://localhost:4000/api/programs/${standardProgramId}/participants`, {
                  method: 'POST',
-                 body: JSON.stringify({ participantId: otherId }) // not in board's household, no override
+                 body: JSON.stringify({ participantId: otherId, basis: 'COMP' }) // not in board's household
              });
-             const promptRes = await POST(promptReq as unknown as import("next/server").NextRequest, createParams(standardProgramId) as unknown as never);
-             expect(promptRes.status).toBe(400);
-             expect((await promptRes.json()).requiresOverride).toBe(true);
-
-             const forceReq = new Request(`http://localhost:4000/api/programs/${standardProgramId}/participants`, {
-                 method: 'POST',
-                 body: JSON.stringify({ participantId: otherId, override: true })
-             });
-             const forceRes = await POST(forceReq as unknown as import("next/server").NextRequest, createParams(standardProgramId) as unknown as never);
-             expect(forceRes.status).toBe(200);
-             expect((await forceRes.json()).enrollment.status).toBe('ACTIVE'); // admin comp
+             const compRes = await POST(compReq as unknown as import("next/server").NextRequest, createParams(standardProgramId) as unknown as never);
+             expect(compRes.status).toBe(200);
+             expect((await compRes.json()).enrollment).toMatchObject({ status: 'ACTIVE', enrollmentBasis: 'COMP' });
         });
 
-        // A board/sysadmin comp seats a participant with NO Shopify
+        // A board/finance comp seats a participant with NO Shopify
         // checkout, so unlike a paid PENDING enrollment nothing ever fires
         // Shopify's own sale-time -1. The comp path must reconcile it (-1),
         // exactly like a paid sale and like scholarship apply — else the
@@ -511,14 +504,14 @@ describe('Program Participants API Integration Tests', () => {
                 data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Comp Shopify Partic API Test', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), maxParticipants: 5, orgMemberPriceCents: 1000, shopifyVariantId: 'dev-mock-variant-comp-partic' },
             });
             try {
-                (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+                (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardRemoverId, isBoardMember: true } });
                 const res = await POST(
                     // CHECKIN_ENV=local arms the keyless-kiosk fallback — send a cookie so
                     // the request isn't hijacked as `kiosk` before the session gate runs.
                     new Request(`http://localhost:4000/api/programs/${shopifyProgram.id}/participants`, {
                         method: 'POST',
                         headers: { cookie: 'session=test' },
-                        body: JSON.stringify({ participantId: otherId, override: true }), // external admin comp
+                        body: JSON.stringify({ participantId: otherId, basis: 'COMP' }),
                     }) as unknown as import("next/server").NextRequest,
                     createParams(shopifyProgram.id) as unknown as never,
                 );
@@ -560,11 +553,11 @@ describe('Program Participants API Integration Tests', () => {
                 data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Comp Shopify Fail Partic API Test', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), maxParticipants: 5, orgMemberPriceCents: 1000, shopifyVariantId: 'dev-mock-variant-comp-fail' },
             });
             try {
-                (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+                (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardRemoverId, isBoardMember: true } });
                 const res = await POST(
                     new Request(`http://localhost:4000/api/programs/${shopifyProgram.id}/participants`, {
                         method: 'POST',
-                        body: JSON.stringify({ participantId: otherId, override: true }),
+                        body: JSON.stringify({ participantId: otherId, basis: 'COMP' }),
                     }) as unknown as import("next/server").NextRequest,
                     createParams(shopifyProgram.id) as unknown as never,
                 );
@@ -681,10 +674,9 @@ describe('Program Participants API Integration Tests', () => {
              }
         });
 
-        // The members-only gate lives inside enforceLimits, so it must not break
-        // the deliberate comp path — a confirmed board/sysadmin override still
-        // seats a non-member.
-        it('should let a confirmed admin comp a non-member into a members-only program', async () => {
+        // The members-only gate lives inside enforceLimits, so a confirmed
+        // board/sysadmin override still seats a non-member.
+        it('should let a confirmed admin override seat a non-member in a members-only program', async () => {
              (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
 
              const req = new Request(`http://localhost:4000/api/programs/${memberOnlyProgramId}/participants`, {
