@@ -61,9 +61,7 @@ No existing rule changes. The new rules are listed under
 - **Not a non-lead or a youth,** for the same reason they cannot confirm a
   renewal.
 - **The whole household.** Membership belongs to the family
-  (*Membership Policy, Art. III §III.1*). One person leaving the family, such as
-  an adult child moving out, is the Board's or a sysadmin's move to a household of
-  their own, as today (L9).
+  (*Membership Policy, Art. III §III.1*), so the note covers the household.
 - **Only an ACTIVE household, not archived,** and only while the family has not
   already paid for the coming year. A family that has renewed has nothing left to
   decline; talking to the Board is the way out of a renewal already paid.
@@ -240,7 +238,6 @@ Board's households list.
 
 | ID | Question | Default |
 |---|---|---|
-| L9 | Can a lead remove one member from the household themselves? | No; stays a Board and sysadmin move, out of scope. |
 | L10 | Board notice: email and label only, or a count in the Board's menu too? | Email and label; no count, since there is nothing to do. |
 | L11 | The control's wording: "We won't be renewing", or other words? | "We won't be renewing", with the label "Not renewing" for the Board. |
 | L12 | Should the family be able to say it outside the renewal window, for example in March? | Yes, at any time; it applies to the coming year. |
