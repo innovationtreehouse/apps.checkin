@@ -13,7 +13,9 @@ import type { Prisma } from "@/generated/prisma/client";
  *
  * Single-pool model: `shopifyVariantId` covers
  * BOTH tiers by itself — member pricing is a checkout-time discount code, not a
- * separate variant — so it is the only variant a priced program needs.
+ * separate variant — so it is the only variant a priced program needs while the
+ * store is open. While the Board has closed the store to program seats the public
+ * item is a draft nobody can buy, so the reserved-seat variant is the one needed.
  *
  * The JS predicate and the Prisma WHERE below are the same condition on two sides
  * of the wire — the count query (nav/todo-counts) and the per-row/detail UI.
@@ -25,17 +27,21 @@ type CheckoutFields = {
   orgMemberPriceCents?: number | null;
   nonOrgMemberPriceCents?: number | null;
   shopifyVariantId?: string | null;
+  claimantShopifyVariantId?: string | null;
 };
 
-export function isProgramCheckoutBroken(p: CheckoutFields): boolean {
-  if (p.shopifyVariantId) return false; // single pool covers both tiers
+export function isProgramCheckoutBroken(p: CheckoutFields, storeClosed = false): boolean {
+  if (storeClosed ? p.claimantShopifyVariantId : p.shopifyVariantId) return false;
   return (p.orgMemberPriceCents ?? 0) > 0 || (p.nonOrgMemberPriceCents ?? 0) > 0;
 }
 
-export const PROGRAM_CHECKOUT_BROKEN_WHERE: Prisma.ProgramWhereInput = {
-  shopifyVariantId: null,
-  OR: [
-    { orgMemberPriceCents: { gt: 0 } },
-    { nonOrgMemberPriceCents: { gt: 0 } },
-  ],
-};
+export function programCheckoutBrokenWhere(storeClosed = false): Prisma.ProgramWhereInput {
+  const noVariant: Prisma.ProgramWhereInput = storeClosed ? { claimantShopifyVariantId: null } : { shopifyVariantId: null };
+  return {
+    ...noVariant,
+    OR: [
+      { orgMemberPriceCents: { gt: 0 } },
+      { nonOrgMemberPriceCents: { gt: 0 } },
+    ],
+  };
+}

@@ -17,6 +17,7 @@ jest.mock('@/lib/prisma', () => ({
     __esModule: true,
     default: {
         program: { updateMany: jest.fn(), findUnique: jest.fn(), findUniqueOrThrow: jest.fn() },
+        boardSettings: { findUnique: jest.fn().mockResolvedValue(null) },
         $transaction: jest.fn(async (fn: (t: unknown) => unknown) => {
             txOpen = true;
             try { return await fn(tx); } finally { txOpen = false; }
@@ -68,7 +69,7 @@ describe('POST /api/programs/[id]/sync-shopify claim', () => {
 
     it('calls Shopify with no transaction open, under stable handles, then records under its token', async () => {
         expect((await post()).status).toBe(200);
-        expect(createShopifySingleVariantProgram).toHaveBeenCalledWith('Robotics', 7500, null, 'checkin-program-5-robotics');
+        expect(createShopifySingleVariantProgram).toHaveBeenCalledWith('Robotics', 7500, null, 'checkin-program-5-robotics', true);
         expect(createClaimantProduct).toHaveBeenCalledWith('Robotics', 7500, 'checkin-program-5-robotics-reserved-seat');
 
         const claim = db.program.updateMany.mock.calls[0][0];
@@ -90,6 +91,12 @@ describe('POST /api/programs/[id]/sync-shopify claim', () => {
         db.program.findUnique.mockResolvedValue({ id: 5 });
         expect((await post()).status).toBe(409);
         expect(createShopifySingleVariantProgram).not.toHaveBeenCalled();
+    });
+
+    it('creates the public item as a draft while the store is closed to program seats', async () => {
+        (prisma as unknown as { boardSettings: { findUnique: jest.Mock } }).boardSettings.findUnique.mockResolvedValueOnce({ programStoreClosedAt: new Date() });
+        expect((await post()).status).toBe(200);
+        expect(createShopifySingleVariantProgram).toHaveBeenCalledWith('Robotics', 7500, null, 'checkin-program-5-robotics', false);
     });
 
     it('is a 409 that records nothing when its claim was taken over mid-run', async () => {
