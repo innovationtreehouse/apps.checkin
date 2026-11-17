@@ -979,6 +979,10 @@ model TrustedAdultReview {
   /// Narrative safeguarding content — same band as TrustedAdult.familyContext.
   /// @sensitivity:internal
   proposedContext      String?
+  /// The family's answer to the board's request for more information. Narrative
+  /// safeguarding content — same band as proposedContext.
+  /// @sensitivity:internal
+  familyReply          String?
   /// @sensitivity:public
   createdAt            DateTime               @default(now())
   /// @sensitivity:internal
