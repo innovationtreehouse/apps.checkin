@@ -123,26 +123,31 @@ test.describe("expenses in the browser", () => {
     await finance.context.close();
   });
 
-  // Raising a capital threshold is the Board's alone (settingsService boardOnlyChanges), so the Board saves it.
+  // Setting or raising a capital threshold is the Board's alone (settingsService boardOnlyChanges), so the Board saves it.
   test("the Board saves the expense settings", async ({ browser }) => {
     const { context } = await signIn(browser, BOARD);
     const page = await context.newPage();
     const watch = watchPage(page);
     await page.goto("/settings/finance");
-    const unitThreshold = page.getByLabel(/^Capital review: unit price over/);
-    await expect(unitThreshold).not.toHaveValue("");
+    const save = page.getByRole("button", { name: "Save", exact: true });
+    await expect(save).toBeEnabled();
+    await expect(page.getByRole("switch", { name: "Capital review" })).toBeChecked();
+    const unitThreshold = page.getByLabel(/^Capital review: unit price at or over/);
     const before = await unitThreshold.inputValue();
 
     await unitThreshold.fill("4321");
-    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await save.click();
     await expect(page.locator(".mantine-Notification-root").filter({ hasText: "Settings saved" })).toBeVisible();
     await page.reload();
-    await expect(unitThreshold).toHaveValue(/^\$?4321(\.00)?$/);
+    await expect(unitThreshold).toHaveValue(/^\$?4,?321(\.00)?$/);
 
-    await unitThreshold.fill(before);
-    await page.getByRole("button", { name: "Save", exact: true }).click();
-    await page.reload();
-    await expect(unitThreshold).toHaveValue(before);
+    // The page cannot clear a threshold back to unset, so only a set one is put back.
+    if (before) {
+      await unitThreshold.fill(before);
+      await save.click();
+      await page.reload();
+      await expect(unitThreshold).toHaveValue(before);
+    }
     await noProblems(watch, "expense settings");
     await context.close();
   });
@@ -152,10 +157,11 @@ test.describe("expenses in the browser", () => {
     const page = await context.newPage();
     const watch = watchPage(page);
     await page.goto("/settings/finance");
-    const unitThreshold = page.getByLabel(/^Capital review: unit price over/);
-    await expect(unitThreshold).not.toHaveValue("");
     const save = page.getByRole("button", { name: "Save", exact: true });
-    if ((await unitThreshold.isEditable()) && (await save.isEnabled())) {
+    await expect(save).toBeEnabled();
+    const unitThreshold = page.getByLabel(/^Capital review: unit price at or over/);
+    await expect(unitThreshold).toBeVisible();
+    if (await unitThreshold.isEditable()) {
       const before = Number((await unitThreshold.inputValue()).replace(/[^0-9.]/g, "")) || 0;
       await unitThreshold.fill(String(before + 1000));
       await save.click();

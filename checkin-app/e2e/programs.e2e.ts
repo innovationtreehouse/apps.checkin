@@ -9,13 +9,19 @@ import { addYouth, asViewer, settledFamily } from "./support/families";
 import { claim, inDays, newLeader, newProgram, newSession, paidYouth, PROGRAM_DATES } from "./support/programs";
 import { BOARD } from "./support/seedState";
 
-const ONLY_BOARD_REMOVES = "Only the Board removes a paid place";
 const REASON = "The family moved away.";
 
 const dialog = (page: Page) => page.getByRole("dialog");
 const card = (page: Page, text: string): Locator => page.locator(".mantine-Card-root").filter({ hasText: text });
 /** The innermost card naming `name`: on the roster tab, that person's place. */
 const place = (page: Page, name: string): Locator => card(page, name).last();
+const rowActions = (page: Page, name: string): Locator => page.getByRole("button", { name: `Actions for ${name}`, exact: true });
+
+/** Opens the Remove dialog from the person's row menu. */
+async function openRemove(page: Page, name: string): Promise<void> {
+  await rowActions(page, name).click();
+  await page.getByRole("menuitem", { name: "Remove" }).click();
+}
 
 async function programPage(page: Page, id: number): Promise<void> {
   await page.goto(`/programs/${id}`);
@@ -179,14 +185,13 @@ test.describe("programs in the browser", () => {
 
     await asViewer(browser, program.leader, async (page) => {
       await roster(page, program.id);
-      const remove = place(page, youth.name).getByRole("button", { name: "Remove" });
-      await expect(remove).toBeDisabled();
-      await expect(remove).toHaveAttribute("title", ONLY_BOARD_REMOVES);
+      await expect(place(page, youth.name)).toBeVisible();
+      await expect(rowActions(page, youth.name)).toHaveCount(0);
     });
 
     await asViewer(browser, BOARD, async (page) => {
       await roster(page, program.id);
-      await place(page, youth.name).getByRole("button", { name: "Remove" }).click();
+      await openRemove(page, youth.name);
       const withdraw = dialog(page).getByRole("button", { name: "Withdrew: keep history" });
       await expect(withdraw).toBeDisabled();
       await expect(dialog(page).getByRole("button", { name: "Never took part: remove" })).toBeDisabled();
@@ -208,7 +213,7 @@ test.describe("programs in the browser", () => {
       await roster(page, program.id);
       await expect(page.getByRole("heading", { name: "Active Participants (2)" })).toBeVisible();
       for (const [youth, act] of [[withdrawn, "Withdrew: keep history"], [removed, "Never took part: remove"]] as const) {
-        await place(page, youth.name).getByRole("button", { name: "Remove" }).click();
+        await openRemove(page, youth.name);
         await dialog(page).getByLabel("Reason").fill(REASON);
         await dialog(page).getByRole("button", { name: act }).click();
         await expect(place(page, youth.name)).toHaveCount(0);
