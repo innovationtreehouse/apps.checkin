@@ -1,6 +1,5 @@
-import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { withAuth } from "@/lib/auth";
+import { handler } from "@/security/handler";
 import { canonicalizeEmail } from "@/lib/emailNormalize";
 import { IN_FLIGHT_INITIAL, IN_FLIGHT_RENEWAL, type ProcessStatus } from "@/lib/membership/lifecycle";
 import type { OrgMembershipStatus } from "@/generated/prisma/client";
@@ -72,7 +71,7 @@ const processStatus = (processes: { status: ProcessStatus }[]) =>
 const isRevoked = (status: OrgMembershipStatus | undefined) => status === "REVOKED" || status === "DENIED";
 
 /** GET — the volunteer roster: current volunteer households + pre-designated emails. */
-export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async () => {
+export const GET = handler("GET /api/membership-ops/volunteer-memberships", async () => {
     const [memberships, designations] = await Promise.all([
         prisma.orgMembership.findMany({
             where: { isVolunteerFamily: true, household: { archivedAt: null } },
@@ -186,5 +185,5 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async ()
         if (household) rowByHousehold.set(household.id, row);
     }
 
-    return NextResponse.json({ rows });
+    return { VolunteerRosterRow: rows };
 });
