@@ -102,6 +102,11 @@ async function surplusSeats(order: EntitlementOrder, programId: number, personId
  * Scoped by order, not by the people a caller names, because the seats belong to the order.
  */
 export async function seatsSpentBy(db: DbClient, shopifyOrderId: string, programId: number): Promise<number> {
+    return (await peopleSpentBy(db, shopifyOrderId, programId)).size;
+}
+
+/** The people behind {@link seatsSpentBy}: each already took one of the order's seats. */
+export async function peopleSpentBy(db: DbClient, shopifyOrderId: string, programId: number): Promise<Set<number>> {
     // A withdrawn row still carries the order until a re-enrolment clears it; the audit keeps it after.
     const holders = await db.programParticipant.findMany({
         where: { programId, shopifyOrderId, OR: [fromWhere("ACTIVE"), fromWhere("WITHDRAWN")] },
@@ -124,7 +129,7 @@ export async function seatsSpentBy(db: DbClient, shopifyOrderId: string, program
         },
         select: { affectedEntityId: true },
     });
-    return new Set([...holders.map((h) => h.personId), ...left.map((d) => d.affectedEntityId)]).size;
+    return new Set([...holders.map((h) => h.personId), ...left.map((d) => d.affectedEntityId)]);
 }
 
 /**

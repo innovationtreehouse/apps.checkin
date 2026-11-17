@@ -168,6 +168,16 @@ describe("activateProgramEnrollment public stock", () => {
         expect(mockRows.get(1)).toMatchObject({ status: "PENDING" });
     });
 
+    it("does not re-seat a person the order already paid for, who left and came back", async () => {
+        mockSpent.push({ personId: 1 });
+        seat(1, false);
+        seat(2, false);
+        const res = await activateProgramEnrollment({ programId: 7, personIds: [1, 2], shopifyOrderId: "5", lines: [{ variantId: "pub", quantity: 2 }] });
+        expect(res).toMatchObject({ activatedCount: 1, refusedPersonIds: [1] });
+        expect(mockRows.get(1)).toMatchObject({ status: "PENDING" });
+        expect(mockRows.get(2)).toMatchObject({ status: "ACTIVE" });
+    });
+
     it("counts the order's current quantity, not the units an edit took off", async () => {
         seat(1, false);
         seat(2, false);

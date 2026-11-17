@@ -26,7 +26,13 @@ export type HandProgram = {
 };
 
 /** A matched store order, read from the mirror before the transaction. */
-export type MatchedOrder = { shopifyOrderId: string; lines: { variantId: string; quantity: number; currentQuantity: number }[] };
+export type MatchedOrder = {
+    shopifyOrderId: string;
+    lines: { variantId: string; quantity: number; currentQuantity: number }[];
+    /** The program and people the app's checkout signed onto the order, when it went through that checkout. */
+    cartProgramId: number | null;
+    cartPersonIds: number[] | null;
+};
 
 /**
  * Look up the order a Board or Finance member matched by hand. Refused unless the
@@ -38,7 +44,14 @@ export async function readMatchedOrder(shopifyOrderId: string): Promise<MatchedO
     const [order] = await mirror.ordersByLegacyIds([shopifyOrderId]);
     if (!order) throw new ServiceError(409, "No store order with that id.");
     if (isReversed(order) || !isPaid(order)) throw new ServiceError(409, "That order is not paid, or was refunded or cancelled.");
-    return { shopifyOrderId, lines: await mirror.orderLines(order.orderGid) };
+    const program = mirror.orderAttr(order, "Program_ID");
+    const people = mirror.orderAttr(order, "CheckMeIn_Account_ID");
+    return {
+        shopifyOrderId,
+        lines: await mirror.orderLines(order.orderGid),
+        cartProgramId: program ? parseInt(program, 10) : null,
+        cartPersonIds: people ? people.split(",").map((s) => parseInt(s.trim(), 10)) : null,
+    };
 }
 
 /**
@@ -62,9 +75,16 @@ export async function enrollByHandIn(
     const matched = basis === "MATCHED_ORDER";
     if (matched !== !!order) throw new ServiceError(400, "A store order is matched only with its id.");
     if (order) {
+        // An order the app's checkout made pays for the program and people it names; the
+        // webhook and reconciler activate those, so a hand match must not spend it on someone else.
+        if ((order.cartProgramId !== null && order.cartProgramId !== program.id)
+            || (order.cartPersonIds !== null && order.cartPersonIds.some((id) => id !== personId))) {
+            throw new ServiceError(409, "That order's checkout was for another program or other people; it pays for them, not for this person.");
+        }
         if (await isOrderReversed(tx, order.shopifyOrderId)) throw new ServiceError(409, "That order was refunded or cancelled.");
-        const unspent = await unspentSeats(tx, program, program.id, order.shopifyOrderId, order.lines);
-        if (!unspent) throw new ServiceError(409, "That order has no seat in this program left to give.");
+        const cap = await unspentSeats(tx, program, program.id, order.shopifyOrderId, order.lines);
+        if (cap?.spentOn.has(personId)) throw new ServiceError(409, "That order already paid for this person's earlier place.");
+        if (!cap?.unspent) throw new ServiceError(409, "That order has no seat in this program left to give.");
     }
 
     const now = new Date();

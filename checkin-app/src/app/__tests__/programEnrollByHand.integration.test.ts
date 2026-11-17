@@ -211,6 +211,45 @@ describe('enroll by hand', () => {
         expect((await rowOf(b.id)).status).toBe('PENDING');
     });
 
+    it("refuses to spend an order the app's checkout made for someone else", async () => {
+        const a = await child();
+        const b = await child(a.householdId);
+        await claim(a.id, true);
+        await claim(b.id);
+        const oid = newOrderId();
+        ordersByLegacyIds.mockImplementation(async (ids: string[]) => ids.map((id) => ({
+            ...paidOrder(id),
+            noteAttributes: [{ key: 'Program_ID', value: String(programId) }, { key: 'CheckMeIn_Account_ID', value: String(a.id) }],
+        })));
+
+        as(financeId, { isFinance: true });
+        const { status, data } = await post({ participantId: b.id, basis: 'MATCHED_ORDER', shopifyOrderId: oid });
+        expect(status).toBe(409);
+        expect(data.error).toMatch(/other people/);
+        expect((await rowOf(b.id)).status).toBe('PENDING');
+    });
+
+    it('does not let an order re-seat a person it already paid for, who left and came back', async () => {
+        const a = await child();
+        const b = await child(a.householdId);
+        await claim(a.id);
+        await claim(b.id);
+        const oid = newOrderId();
+        await activateProgramEnrollment({ programId, personIds: [a.id], shopifyOrderId: oid, lines: [{ ...LINE, quantity: 2, currentQuantity: 2 }] });
+        // a is removed (the audit keeps the order) and enrolls again.
+        await prisma.programParticipant.delete({ where: { programId_personId: { programId, personId: a.id } } });
+        await prisma.auditLog.create({ data: { actorId: boardId, action: 'DELETE', tableName: 'ProgramParticipant', affectedEntityId: a.id, secondaryAffectedEntity: programId, oldData: { programId, personId: a.id, status: 'ACTIVE', shopifyOrderId: oid } } });
+        await claim(a.id);
+        orderLines.mockResolvedValue([{ ...LINE, quantity: 2, currentQuantity: 2 }]);
+
+        as(financeId, { isFinance: true });
+        expect((await post({ participantId: a.id, basis: 'MATCHED_ORDER', shopifyOrderId: oid })).status).toBe(409);
+        const replay = await activateProgramEnrollment({ programId, personIds: [a.id], shopifyOrderId: oid, lines: [{ ...LINE, quantity: 2, currentQuantity: 2 }] });
+        expect(replay.activatedCount).toBe(0);
+        expect((await post({ participantId: b.id, basis: 'MATCHED_ORDER', shopifyOrderId: oid })).status).toBe(200);
+        expect((await rowOf(a.id)).status).toBe('PENDING');
+    });
+
     describe.each([
         ['OUTSIDE_PAYMENT', 0, true],
         ['COMP', 0, true],

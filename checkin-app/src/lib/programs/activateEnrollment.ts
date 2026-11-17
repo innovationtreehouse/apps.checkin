@@ -6,7 +6,7 @@ import { ENROLLMENT_WRITES, fromWhere } from "@/lib/programs/enrollmentState";
 import { saleStockDelta } from "@/lib/programs/saleState";
 import { isOrderReversed, raisePaymentException, recordReversal } from "@/lib/finance/reconcile/exceptions";
 import { takeBackRestockedSeats } from "@/lib/finance/reconcile/reversals";
-import { seatsSpentBy } from "@/lib/finance/reconcile/program";
+import { peopleSpentBy } from "@/lib/finance/reconcile/program";
 import { programVariantIds } from "@/lib/programs/variants";
 
 /**
@@ -47,8 +47,9 @@ export interface ActivateEnrollmentResult {
 }
 
 /**
- * Seats on this program's variants the order still has to give, counted under the
- * order's lock, so two activations of one order cannot both spend its last seat.
+ * Seats on this program's variants the order still has to give, and the people it
+ * already seated, counted under the order's lock, so two activations of one order
+ * cannot both spend its last seat and nobody is seated twice by it.
  * Null when the caller gave no lines: there is nothing to count against.
  */
 export async function unspentSeats(
@@ -57,11 +58,12 @@ export async function unspentSeats(
     programId: number,
     shopifyOrderId: string,
     lines: ActivateEnrollmentInput["lines"],
-): Promise<number | null> {
+): Promise<{ unspent: number; spentOn: Set<number> } | null> {
     if (!lines?.length || !shopifyOrderId) return null;
     const variantIds = new Set(programVariantIds(program));
     const seats = lines.filter((l) => variantIds.has(l.variantId)).reduce((n, l) => n + (l.currentQuantity ?? l.quantity), 0);
-    return Math.max(0, seats - await seatsSpentBy(db, shopifyOrderId, programId));
+    const spentOn = await peopleSpentBy(db, shopifyOrderId, programId);
+    return { unspent: Math.max(0, seats - spentOn.size), spentOn };
 }
 
 /**
@@ -122,7 +124,8 @@ export async function activateProgramEnrollment(input: ActivateEnrollmentInput):
         let releasedHoldCount = 0;
         const refusedPersonIds: number[] = [];
         for (const personId of personIds) {
-            if (cap !== null && activatedCount >= cap) {
+            // A person the order already seated, who left and came back, is not seated by it again.
+            if (cap !== null && (activatedCount >= cap.unspent || cap.spentOn.has(personId))) {
                 refusedPersonIds.push(personId);
                 continue;
             }
