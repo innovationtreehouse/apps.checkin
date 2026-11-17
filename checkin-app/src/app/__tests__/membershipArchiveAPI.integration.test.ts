@@ -453,6 +453,25 @@ describe('Membership application archive API', () => {
         expect({ status: after?.status, paidAt: after?.paidAt }).toEqual({ status: 'BLOCKED', paidAt: null });
     });
 
+    it('the red refund-owed count takes paid, unrefunded applications of denied households, board and sysadmin only', async () => {
+        const board = { id: boardId, isBoardMember: true } as AuthenticatedUser;
+        const owed = async (u: AuthenticatedUser) => (await todoCounts(u)).admin?.applicationsAwaitingRefund ?? 0;
+        const before = await owed(board);
+
+        const { processId: owedId } = await makeProcess('DeniedPaidOwed', 'PENDING_BG_CLEARANCE', { paidAt: new Date(), membershipStatus: 'DENIED' });
+        const { processId: refundedId } = await makeProcess('DeniedPaidRefunded', 'BLOCKED', { paidAt: new Date(), membershipStatus: 'DENIED' });
+        await recordRefund(refundedId, boardId, 'Refunded in Shopify');
+        await makeProcess('BlockedPaidNotDenied', 'BLOCKED', { paidAt: new Date() });
+        await makeProcess('DeniedUnpaid', 'PENDING_PAYMENT', { membershipStatus: 'DENIED' });
+
+        expect(await owed(board)).toBe(before + 1);
+        expect(await owed({ id: boardId, isSysadmin: true } as AuthenticatedUser)).toBe(before + 1);
+        expect((await todoCounts({ id: boardId } as AuthenticatedUser)).admin).toBeUndefined();
+
+        await recordRefund(owedId, boardId, 'Refunded in Shopify');
+        expect(await owed(board)).toBe(before);
+    });
+
     it('record refund refuses unpaid, ACTIVE, and own-household applications', async () => {
         const unpaid = await makeProcess('RefundUnpaid', 'PENDING_BG_CLEARANCE');
         await expect(recordRefund(unpaid.processId, boardId, 'x')).rejects.toMatchObject({ code: 'wrong_phase' });

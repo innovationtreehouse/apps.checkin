@@ -106,4 +106,14 @@ describe("MembershipOpsLayout Applications tab pills", () => {
     expect(screen.getByLabelText("2 applications missing a signature or background check")).toHaveTextContent("2");
     expect(screen.getByLabelText("3 other applications")).toHaveTextContent("3");
   });
+
+  it("folds applications awaiting a refund into the red pill", () => {
+    mockCounts = { admin: { applicationsTotal: 5, applicationsIncomplete: 2, applicationsAwaitingRefund: 1, brokenEmails: 0 } };
+    renderLayout("/membership-ops/applications", {
+      data: { user: { id: 1, isBoardMember: true } },
+      status: "authenticated",
+    });
+    expect(screen.getByLabelText("2 applications missing a signature or background check; 1 paid application of a denied household awaiting a refund")).toHaveTextContent("3");
+    expect(screen.getByLabelText("3 other applications")).toHaveTextContent("3");
+  });
 });

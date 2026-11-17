@@ -382,6 +382,12 @@ export function refundLandsIn(status: ProcessStatus): ProcessStatus | null {
     return REFUND_LANDS_IN[status] ?? null;
 }
 
+/** A paid application the board can "Record refund" on: paid, at a step `REFUND_LANDS_IN` names. */
+export const refundableApplication = defineStateSet<Where>()({
+    statuses: Object.keys(REFUND_LANDS_IN) as ProcessStatus[],
+    flags: { paidAt: true },
+});
+
 /**
  * Steps a row closed before the unpaid-only rule may still hold in
  * `archivedFromStatus`. Reopening restores them (a BLOCKED row comes back blocked);
