@@ -10,7 +10,7 @@ import {
     type RouteGrantSpec,
 } from '@/security/scopes';
 import { SCOPE_BINDINGS, OPT_OUT_PENDING_ROUTE } from '@/security/scopeBindings';
-import { classifications, allRoutes, allFileRoutes } from '@/security/core';
+import { classifications, allRoutes, allFileRoutes, marks } from '@/security/core';
 // Side-effect import: registers every route via defineRoute() so allRoutes()
 // yields the real policy surface for the CI gate below.
 import '@/security/registry';
@@ -126,23 +126,16 @@ describe('CI gate — zero errors over the real registry', () => {
 });
 
 // Coverage-only bindings: the model binds a scope so validateBindings passes, but
-// no route that returns it grants any scoped token beyond `everyones`, so the
-// binding never changes what a caller sees.
+// no route that returns it grants any scoped token beyond `everyones`, and it
+// carries no finance mark (isOwnRow would read the binding), so the binding never
+// changes what a caller sees or what the finance view log records.
 describe('coverage-only bindings stay inert', () => {
     const COVERAGE_ONLY = [
         'VolunteerRosterRow',
         'BudgetOwnerApprover',
         'BudgetOwnerTreasurer',
         'PersonMailAlias',
-        'UploadedFile',
-        'InKindQueueItemView',
-        'ReceiptAuditLog',
-        'InKindDonation',
         'ExpenseReimburseeView',
-        'ProgramPaymentPlanDecision',
-        'MembershipPaymentPlanDecision',
-        'PaymentQueueRow',
-        'MatchAuditEnrollmentRow',
         'UnconfirmedStockRow',
         'UnconfirmedStockSettlement',
         'FinanceViewLog',
@@ -161,5 +154,6 @@ describe('coverage-only bindings stay inert', () => {
                 .map(t => `${v.endpoint}: ${t}`),
         );
         expect(scoped).toEqual([]);
+        expect(marks[model as keyof typeof marks]).toBeUndefined();
     });
 });

@@ -150,20 +150,12 @@ export const SCOPE_BINDINGS = {
     VolunteerRosterRow: { their_households: { field: 'householdId', eqCtx: 'householdId' } },
     // Bound for coverage; finance-or-Board-only by tier-grant control. Every
     // route returning these grants only everyones tokens, so the bound scope
-    // never reaches them: nobody reads their own finance, audit or Board
-    // bookkeeping rows, and no program lead reads the stock screen.
+    // never reaches them, and none carries a finance mark, so isOwnRow never
+    // reads the binding either.
     BudgetOwnerApprover: { their_own: { field: 'personId', eqCtx: 'selfId' } },
     BudgetOwnerTreasurer: { their_own: { field: 'personId', eqCtx: 'selfId' } },
     PersonMailAlias: { their_own: { field: 'personId', eqCtx: 'selfId' } },
-    UploadedFile: { their_own: { field: 'uploadedByUserId', eqCtx: 'selfId' } },
-    InKindQueueItemView: { their_own: { field: 'uploadedByUserId', eqCtx: 'selfId' } },
-    ReceiptAuditLog: { their_own: { field: 'userId', eqCtx: 'selfId' } },
-    InKindDonation: { their_own: { field: 'uploadedByUserId', eqCtx: 'selfId' } },
     ExpenseReimburseeView: { their_own: { field: 'personId', eqCtx: 'selfId' } },
-    ProgramPaymentPlanDecision: { their_own: { field: 'personId', eqCtx: 'selfId' } },
-    MembershipPaymentPlanDecision: { their_households: { field: 'householdId', eqCtx: 'householdId' } },
-    PaymentQueueRow: { their_own: { field: 'personId', eqCtx: 'selfId' } },
-    MatchAuditEnrollmentRow: { their_own: { field: 'personId', eqCtx: 'selfId' } },
     UnconfirmedStockRow: {
         their_program_participants: { field: 'programId', inCtx: ['programsLed', 'programsCoreVolIn'] },
     },
@@ -216,8 +208,11 @@ export const ROW_SCOPE_KEY: Record<string, string> = {
  *
  * A model whose routes exist but are finance- or Board-only gets a
  * coverage-only binding on its natural key instead (no view grants the token).
- * The one exception is a scopable model with no natural key; it stays here,
- * named as "not pending" in its comment. Structurally un-scopable models (no
+ * Two kinds stay here, each named "not pending" in its comment: a scopable model
+ * with no natural key, and a finance-marked model, where a their_own or
+ * their_households binding would make isOwnRow (financeView.ts) treat the row as
+ * the viewer's own and leave the view out of the finance view log. Structurally
+ * un-scopable models (no
  * actor FK) are auto-exempt by isScopable() in validateBindings; "never leaves,
  * even to admins" content is tiered `secret`.
  *
@@ -257,6 +252,18 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     // INVENTORY_MANAGER view.
     'InventoryLog',
     'LocationLog',
+    // Not pending: finance-marked, finance- or Board-only rows. Their owner key
+    // (the uploader or audit actor, or the family a decision or queue row names)
+    // would make isOwnRow treat the row as the viewer's own, so a staff member's
+    // views of rows naming them would drop out of the finance view log.
+    'UploadedFile',
+    'InKindQueueItemView',
+    'ReceiptAuditLog',
+    'InKindDonation',
+    'ProgramPaymentPlanDecision',
+    'MembershipPaymentPlanDecision',
+    'PaymentQueueRow',
+    'MatchAuditEnrollmentRow',
     // Expense audit log. Its `userId` is the acting checkin Person.id, read
     // only by FINANCE/BOARD (everyones:pii). A "my expense history" view is the
     // plausible future reader; that is when it earns `their_own` on `userId`.

@@ -288,8 +288,8 @@ function eq(a: Set<string>, b: Set<string>): boolean {
  * for roster ages. Bound like Person on personId: their_own on personId === selfId,
  * and their_program_participants on personId ∈ ctx.participantIdsInScopePrograms.
  *
- * VolunteerRosterRow / MembershipPaymentPlanDecision.their_households: the oracle
- * has no case for these. Bound for coverage on householdId === ctx.householdId.
+ * VolunteerRosterRow.their_households: the oracle has no case for the volunteer
+ * roster row. Bound for coverage on householdId === ctx.householdId.
  *
  * OWNER_KEYS models.their_own: the oracle has no case for these finance and Board
  * models. Each is bound for coverage on its owner key === selfId.
@@ -314,14 +314,7 @@ const OWNER_KEYS: Record<string, string> = {
     BudgetOwnerApprover: 'personId',
     BudgetOwnerTreasurer: 'personId',
     PersonMailAlias: 'personId',
-    UploadedFile: 'uploadedByUserId',
-    InKindQueueItemView: 'uploadedByUserId',
-    ReceiptAuditLog: 'userId',
-    InKindDonation: 'uploadedByUserId',
     ExpenseReimburseeView: 'personId',
-    ProgramPaymentPlanDecision: 'personId',
-    PaymentQueueRow: 'personId',
-    MatchAuditEnrollmentRow: 'personId',
     FinanceViewLog: 'actorId',
 };
 
@@ -389,7 +382,7 @@ function expectedFromSnapshot(
         if (callerCtx.participantIdsInScopePrograms.has(row.personId)) expected.add('their_program_participants');
     }
     if (
-        (model === 'VolunteerRosterRow' || model === 'MembershipPaymentPlanDecision') &&
+        model === 'VolunteerRosterRow' &&
         row &&
         typeof row === 'object' &&
         typeof row.householdId === 'number' &&
@@ -444,6 +437,6 @@ describe('scopesHeld ≡ frozen switch + intentional deltas (personas × models 
     it('covers every bound model', () => {
         // Guard against the row set silently not exercising a model.
         expect(MODELS).toEqual(expect.arrayContaining(Object.keys(SCOPE_BINDINGS)));
-        expect(Object.keys(SCOPE_BINDINGS).length).toBe(47);
+        expect(Object.keys(SCOPE_BINDINGS).length).toBe(39);
     });
 });
