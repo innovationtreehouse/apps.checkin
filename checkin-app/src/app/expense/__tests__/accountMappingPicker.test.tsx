@@ -176,7 +176,7 @@ describe("Account mapping inactive QuickBooks accounts", () => {
       ],
     };
     render(<MantineProvider><AccountMappingPage /></MantineProvider>);
-    const warning = screen.getByText("Old supplies is inactive in QuickBooks. Pick an active one.").closest<HTMLElement>("[role=alert]")!;
+    const warning = screen.getByText("Old supplies is inactive in QuickBooks. Delete it and add an active account.").closest<HTMLElement>("[role=alert]")!;
     expect(within(warning).getByRole("button", { name: "Update now" })).toBeInTheDocument();
     expect(offered()).toEqual(["Supplies"]);
   });
