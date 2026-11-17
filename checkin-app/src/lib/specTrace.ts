@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { appendFileSync } from "node:fs";
 import { config } from "@/lib/config";
 
@@ -19,5 +20,27 @@ export function startSpecTrace(file: string | null): void {
 export function specTrace(name: string, fields: Record<string, unknown>): void {
     if (sink === null || config.isProd()) return;
     const line = { tag: "trace", ts: Date.now(), ns: process.hrtime.bigint().toString(), event: { name, ...fields } };
-    appendFileSync(sink, JSON.stringify(line) + "\n");
+    write([JSON.stringify(line) + "\n"]);
+}
+
+/** Lines emitted inside an open {@link traceOnCommit}, held until it commits. */
+const held = new AsyncLocalStorage<string[]>();
+
+function write(lines: string[]): void {
+    const outer = held.getStore();
+    if (outer) outer.push(...lines);
+    else if (sink !== null) for (const line of lines) appendFileSync(sink, line);
+}
+
+/**
+ * Run a transaction so the trace lines emitted inside it are written only once
+ * it commits; a rollback drops them, so a trace never shows an action the
+ * database undid.
+ */
+export async function traceOnCommit<T>(transaction: () => Promise<T>): Promise<T> {
+    if (sink === null) return transaction();
+    const lines: string[] = [];
+    const result = await held.run(lines, transaction);
+    write(lines);
+    return result;
 }
