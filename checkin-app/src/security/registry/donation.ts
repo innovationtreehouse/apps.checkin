@@ -12,7 +12,7 @@ const IN_KIND_BY_SOURCE: FinanceViewModel = { field: 'source', map: { receipt: '
 // Ops (OPERATIONS or INVENTORY_MANAGER) is admitted only to the no-receipt
 // in-kind routes, with no `pii`: it records donors but never reads them back.
 // No sysadmin view: Finance Ops excludes sysadmins. No
-// model has a scope binding, so `everyones:` is the only scope.
+// view grants a scoped token, so `everyones:` is the only scope.
 //
 // UploadedFile.fileBlob (the raw Benevity CSV) leaves only through the file
 // route below, which makes it file-only: every JSON route strips it.

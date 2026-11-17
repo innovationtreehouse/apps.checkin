@@ -93,7 +93,9 @@ async function personNames(personIds: number[]): Promise<Map<number, string>> {
  * verified-email claim: mail intake by DMARC alignment, the finance mail queue by the finance
  * holder who typed it.
  */
-async function submitterByEmail(address: string): Promise<ReceiptPrincipal | null> {
+async function submitterByEmail(rawAddress: string): Promise<ReceiptPrincipal | null> {
+  // Aliases are stored lowercase.
+  const address = rawAddress.trim().toLowerCase();
   const [{ default: prisma }, { SIGN_IN_VERIFIED_PERSON }, { assignParticipantClaims }, { canSubmitReceipts }, { isKnownAdult }] =
     await Promise.all([
       import("@/lib/prisma"),
@@ -133,6 +135,8 @@ async function submitterByEmail(address: string): Promise<ReceiptPrincipal | nul
 
 /** Live people whose name contains the query, by name. */
 const AGE_FIELDS = { id: true, name: true, dateOfBirth: true, isDeclaredAdult: true } as const;
+/** The most name matches read before the adult filter. */
+const REIMBURSEE_SCAN_CAP = 500;
 
 /** Live known adults whose name contains the query, by name. Adulthood is isKnownAdult, applied after the name match. */
 async function searchReimbursees(query: string, limit: number): Promise<ReimburseeOption[]> {
@@ -144,6 +148,8 @@ async function searchReimbursees(query: string, limit: number): Promise<Reimburs
     where: { name: { contains: query, mode: "insensitive" }, ...IN_LIVE_HOUSEHOLD },
     select: AGE_FIELDS,
     orderBy: [{ name: "asc" }, { id: "asc" }],
+    // ponytail: fixed scan cap; a query matching more people than this offers adults from the first rows only.
+    take: REIMBURSEE_SCAN_CAP,
   });
   return matches.filter(isKnownAdult).slice(0, limit).map(({ id, name }) => ({ id, name }));
 }

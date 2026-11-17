@@ -11,6 +11,7 @@ import { recordSelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
 import { authorizedReview, expiringApprovals, isAuthorizedApproval } from "@/lib/trusted-adult/filters";
 import { config } from "@/lib/config";
 import { validateContact } from "@/lib/trusted-adult/contact";
+import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
 import type { TxClient } from "@/lib/db-client";
 
 /**
@@ -116,6 +117,13 @@ export async function createTrustedAdult(input: CreateInput) {
     if (!household) throw new TrustedAdultError("not_found", "Household not found.");
 
     const ta = await prisma.$transaction(async (tx) => {
+        // Locks the membership rows a denial updates: a concurrent deny either lands first and is seen here,
+        // or waits and then revokes the review this creates. Membership rows before the household row,
+        // the order archiving takes them in.
+        const households = await adultHouseholdIds(tx, { householdId: input.householdId, trustedAdultPersonId: input.trustedAdultPersonId ?? null });
+        if ((await lockAndFindDeniedHousehold(tx, households)) !== null) {
+            throw new TrustedAdultError("wrong_phase", "This household has been denied membership, so this trusted adult cannot be added.");
+        }
         await lockLiveHousehold(tx, input.householdId);
         const created = await tx.trustedAdult.create({
             data: {
@@ -280,12 +288,19 @@ async function restoreSupersededBy(tx: TxClient, actor: AuditActor, taId: number
     }
 }
 
-/** A denial of the adult's own household, or of the household they belong to. */
-async function adultHouseholdDenied(tx: TxClient, ta: { householdId: number; trustedAdultPersonId: number | null }) {
+type AdultHouseholds = { householdId: number; trustedAdultPersonId: number | null };
+
+/** The household that names the adult, and the household the adult belongs to. */
+async function adultHouseholdIds(tx: TxClient, ta: AdultHouseholds) {
     const person = ta.trustedAdultPersonId
         ? await tx.person.findUnique({ where: { id: ta.trustedAdultPersonId }, select: { householdId: true } })
         : null;
-    const householdIds = person ? [ta.householdId, person.householdId] : [ta.householdId];
+    return person ? [ta.householdId, person.householdId] : [ta.householdId];
+}
+
+/** A denial of the adult's own household, or of the household they belong to. */
+async function adultHouseholdDenied(tx: TxClient, ta: AdultHouseholds) {
+    const householdIds = await adultHouseholdIds(tx, ta);
     return (await tx.orgMembership.count({ where: { householdId: { in: householdIds }, status: "DENIED" } })) > 0;
 }
 
@@ -511,6 +526,9 @@ export async function decideReview(reviewId: number, boardMemberId: number, inpu
         let status: string;
         switch (input.decision) {
             case "APPROVE": {
+                if (await adultHouseholdDenied(tx, head.trustedAdult)) {
+                    throw new TrustedAdultError("wrong_phase", "This household has been denied membership, so its trusted-adult review cannot be approved.");
+                }
                 const end = await approvalEnd(tx, review);
                 if (end <= now) {
                     throw new TrustedAdultError("wrong_phase", "This approval would already have lapsed — deny it and the family renews.");

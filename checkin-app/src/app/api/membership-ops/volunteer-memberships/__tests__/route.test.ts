@@ -5,18 +5,27 @@
  * Unit tests for GET /api/membership-ops/volunteer-memberships — the roster's
  * row assembly: how a volunteer OrgMembership and a VolunteerDesignation each
  * map to a status, and how designations resolve to households through the same
- * canonicalized household-lead rule that grants the fee. The deny paths
- * (401 anon / 403 plain member) are in authzRoleRejection.integration.test.ts.
+ * canonicalized household-lead rule that grants the fee. The rows ship through
+ * handler() as the registry's VolunteerRosterRow bag.
  */
 import { GET } from '../route';
 import prisma from '@/lib/prisma';
+import { getServerSession } from 'next-auth/next';
+import { handler } from '@/security/handler';
+import { classifications } from '@/security/volunteerRosterSyntheticClassifications';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
+jest.mock('@/security/handler', () => {
+    const actual = jest.requireActual('@/security/handler');
+    return { ...actual, handler: jest.fn(actual.handler) };
+});
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const mockSession = require('next-auth/next').getServerSession;
+const handlerEndpoint = jest.mocked(handler).mock.calls[0]?.[0];
 
-const req = () => new Request('http://localhost/api/membership-ops/volunteer-memberships');
+const mockSession = jest.mocked(getServerSession);
+
+const req = () =>
+    new Request('http://localhost/api/membership-ops/volunteer-memberships') as unknown as Parameters<typeof GET>[0];
 
 const lead = (name: string, email?: string) => ({ name, ...(email ? { email } : {}) });
 
@@ -219,4 +228,72 @@ it('skips the person lookup when there are no designations', async () => {
     await rowsFor();
 
     expect(prisma.person.findMany).not.toHaveBeenCalled();
+});
+
+describe('access and response shape', () => {
+    it('serves the roster through handler() under its registry entry', () => {
+        expect(handlerEndpoint).toBe('GET /api/membership-ops/volunteer-memberships');
+    });
+
+    it('401s a caller with no session', async () => {
+        mockSession.mockResolvedValue(null);
+        mockDb({ memberships: [membership()] });
+
+        expect((await GET(req())).status).toBe(401);
+        expect(prisma.orgMembership.findMany).not.toHaveBeenCalled();
+    });
+
+    it('403s a signed-in caller who is neither sysadmin nor board', async () => {
+        mockSession.mockResolvedValue({ user: { id: 9, householdId: 3, isHouseholdLead: true } });
+        mockDb({ memberships: [membership()] });
+
+        expect((await GET(req())).status).toBe(403);
+        expect(prisma.orgMembership.findMany).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['sysadmin', { isSysadmin: true }],
+        ['board member', { isBoardMember: true }],
+    ])('gives a %s every declared field and nothing more', async (_who, roles) => {
+        mockSession.mockResolvedValue({ user: { id: 5, ...roles } });
+        mockDb({
+            memberships: [membership()],
+            designations: [designation(7, 'ana@example.com'), designation(8, 'zoe@example.com')],
+            people: [leadPerson('ana@example.com')],
+        });
+
+        const res = await GET(req());
+        expect(res.status).toBe(200);
+        const body = await res.json();
+        expect(Object.keys(body)).toEqual(['rows']);
+
+        const rowFields = [...Object.keys(classifications.VolunteerRosterRow), 'designations'].sort();
+        const designationFields = Object.keys(classifications.VolunteerRosterDesignation).sort();
+        for (const row of body.rows) {
+            expect(Object.keys(row).sort()).toEqual(rowFields);
+            for (const d of row.designations) expect(Object.keys(d).sort()).toEqual(designationFields);
+        }
+        expect(body.rows).toEqual([
+            {
+                key: 'hh:1',
+                status: 'VOLUNTEER',
+                householdId: 1,
+                householdName: 'Alvarez',
+                leads: ['Ana Alvarez'],
+                email: 'ana@example.com',
+                memberSince: '2025-03-04T00:00:00.000Z',
+                designations: [{ id: 7, email: 'ana@example.com', createdAt: '2026-07-01T00:00:00.000Z' }],
+            },
+            {
+                key: 'des:8',
+                status: 'DESIGNATED',
+                householdId: null,
+                householdName: null,
+                leads: [],
+                email: 'zoe@example.com',
+                memberSince: null,
+                designations: [{ id: 8, email: 'zoe@example.com', createdAt: '2026-07-01T00:00:00.000Z' }],
+            },
+        ]);
+    });
 });
