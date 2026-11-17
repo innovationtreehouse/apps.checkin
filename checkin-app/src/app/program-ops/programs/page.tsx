@@ -9,6 +9,7 @@ import { LoadError } from "@checkin/component-ui";
 import { DataTable, type DataTableColumn } from "@/components/admin/DataTable";
 import { useLoad } from "@/lib/api";
 import { isProgramCheckoutBroken } from "@/lib/programCheckout";
+import { useProgramStoreClosed } from "../useProgramStoreClosed";
 import { formatDateOnly } from "@/lib/time";
 
 type Program = {
@@ -23,6 +24,7 @@ type Program = {
   orgMemberPriceCents?: number | null;
   nonOrgMemberPriceCents?: number | null;
   shopifyVariantId?: string | null;
+  claimantShopifyVariantId?: string | null;
   maxParticipants?: number | null;
   _count?: { participants?: number; events?: number };
 };
@@ -53,6 +55,7 @@ export default function AdminProgramsIndex() {
   const [publicOnly, setPublicOnly] = useState(false);
   const router = useRouter();
   const { data: session } = useSession();
+  const storeClosed = useProgramStoreClosed(!!(session?.user?.isSysadmin || session?.user?.isBoardMember));
 
   const visiblePrograms = programs.filter(
     (p) =>
@@ -66,7 +69,7 @@ export default function AdminProgramsIndex() {
       render: (p) => (
         <Group gap="xs" wrap="nowrap">
           <Text fw={600}>{p.name}</Text>
-          {isProgramCheckoutBroken(p) && (
+          {isProgramCheckoutBroken(p, storeClosed) && (
             <Tooltip label="Priced but no Shopify checkout variant — paid enrollment will not work. Open the program to sync.">
               <Badge color="red" variant="filled">⚠️ Broken checkout</Badge>
             </Tooltip>
