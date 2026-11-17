@@ -161,7 +161,7 @@ export const GET = withCron(() => duringNightlyRun(async () => {
                 }))
             });
             return purged;
-        });
+        }, { maxWait: 5_000, timeout: 15_000 });
         const adultDobPurged = purgedPeople.length;
         if (adultDobPurged > 0) {
             logger.info(`Nightly cron: purged DoB for ${adultDobPurged} member(s) now over 25 (#1165).`);
