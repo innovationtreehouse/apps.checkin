@@ -324,8 +324,8 @@ export async function assignOwner(
     });
 
     for (const s of [...sameExpense.map((a) => ({ ...a, expenseId })), ...siblings]) {
-      // A line assigned since it was listed keeps that assignment.
-      const { count } = await tx.lineItemOwnerApproval.updateMany({ where: { id: s.approvalId, ownerId: null }, data: assigned });
+      // A line assigned or decided since it was listed keeps that outcome.
+      const { count } = await tx.lineItemOwnerApproval.updateMany({ where: { id: s.approvalId, ownerId: null, status: "pending" }, data: assigned });
       if (count === 0) continue;
       await writeAudit(tx, actor, {
         expenseId: s.expenseId,
