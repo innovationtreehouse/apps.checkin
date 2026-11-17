@@ -1,5 +1,5 @@
 /** Closing an apply_failed receipt as handled by hand: the note, a disposition per unapplied part, and no push after. */
-import { beforeEach, expect, it } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 import { toHttpError } from "@checkin/component-kit";
 import { db } from "../../db";
 import { APPLY_FAILED_QUEUE_STATES, type ReceivedReceiptState } from "../../db/schema";
@@ -92,6 +92,44 @@ describeDb("closeOut", () => {
     expect(results.map((x) => x.status).sort()).toEqual(["fulfilled", "rejected"]);
     expect(await closeRows(r.id)).toHaveLength(1);
     expect(await status(() => receiptService.closeOut(r.id, body))).toBe(409);
+  });
+
+  it("loses to a retry that moves the receipt after the close-out loaded it, and writes no row", async () => {
+    const r = await failedReceipt({ inventoryApplied: true });
+    const findMany = db.receivedReceiptLineStatus.findMany.bind(db.receivedReceiptLineStatus);
+    const spy = vi.spyOn(db.receivedReceiptLineStatus, "findMany").mockImplementationOnce((async (args: Parameters<typeof findMany>[0]) => {
+      await db.receivedReceipt.update({ where: { id: r.id }, data: { state: "applying" } });
+      return findMany(args);
+    }) as unknown as typeof db.receivedReceiptLineStatus.findMany);
+    try {
+      expect(await status(() => receiptService.closeOut(r.id, { note: "n", legs: { expense: "done_by_hand" } }))).toBe(409);
+      expect(spy).toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await stateOf(r.id)).toBe("applying");
+    expect(await closeRows(r.id)).toHaveLength(0);
+  });
+
+  it.each([
+    ["succeeds", false, "receipt_apply_succeeded"],
+    ["fails", true, "receipt_apply_failed"],
+  ])("a push that %s after a close-out leaves the receipt closed and writes no settle row", async (_name, failing, eventType) => {
+    const r = await makeReceipt({ state: "applying" });
+    // A person closes the receipt out while this push still waits on its sink.
+    configure({
+      ...sinks,
+      expenseSink: {
+        pushReceipt: async () => {
+          await db.receivedReceipt.update({ where: { id: r.id }, data: { state: "closed_by_hand" } });
+          if (failing) throw new Error("expense down");
+        },
+      },
+    });
+    expect(await executePushAndSettle(r.id, r)).toBeNull();
+    const after = await db.receivedReceipt.findUniqueOrThrow({ where: { id: r.id } });
+    expect(after).toMatchObject({ state: "closed_by_hand", applyFirstFailedAt: null, validationNotes: null });
+    expect(await db.workflowAuditLog.count({ where: { receivedReceiptId: r.id, eventType } })).toBe(0);
   });
 
   it("401s without a signed-in caller and 404s another org's receipt", async () => {

@@ -10,7 +10,6 @@ import type { Prisma } from "../generated/prisma/client";
 import { getOrgId, ports } from "../runtime";
 import { parseStoredReceipt } from "./parse-receipt";
 import { insertAuditEvent } from "./audit";
-import { isInventoryLine } from "./legs";
 
 export type ApplyResult =
   | { state: "resolved" }
@@ -72,7 +71,8 @@ export function buildExpenseReceipt(
  * Claims the receipt with a lease (`applyClaimedAt`) by conditional update, so
  * of concurrent callers only one pushes, and no transaction stays open across
  * the sinks. Returns null when another push holds a live claim or the receipt
- * is no longer `applying`. The claim is released when the push settles. A push that fails or
+ * is no longer `applying`, including when it stops being `applying` mid-push (a person closed it
+ * out after a takeover). The claim is released when the push settles. A push that fails or
  * throws leaves the receipt stuck with its error and first failure time, for a person's Retry.
  */
 export async function executePushAndSettle(
@@ -147,15 +147,30 @@ export async function sweepStuckApplying(): Promise<{
   return counts;
 }
 
-/** Records a push's latest error, and its first failure time while none is set. */
+type Client = Db | Prisma.TransactionClient;
+
+/** Writes a push's outcome only while the receipt is still `applying`; false when it has moved on. */
+async function settleIfApplying(client: Client, receiptId: number, data: Prisma.ReceivedReceiptUpdateManyMutationInput): Promise<boolean> {
+  const { count } = await client.receivedReceipt.updateMany({ where: { id: receiptId, state: "applying" }, data });
+  return count === 1;
+}
+
+/** Records a push's latest error, and its first failure time while none is set; false when the receipt has moved on. */
 async function recordFailure(
   receiptId: number,
   error: string,
   data: { state?: "apply_failed"; inventoryUnconfirmedAt?: Date } = {},
-  client: Db | Prisma.TransactionClient = db,
-): Promise<void> {
-  await client.receivedReceipt.update({ where: { id: receiptId }, data: { ...data, validationNotes: error } });
+  client: Client = db,
+): Promise<boolean> {
+  if (!(await settleIfApplying(client, receiptId, { ...data, validationNotes: error }))) return false;
   await client.receivedReceipt.updateMany({ where: { id: receiptId, applyFirstFailedAt: null }, data: { applyFirstFailedAt: new Date() } });
+  return true;
+}
+
+/** A line the inventory leg carries. */
+function isInventoryLine(ls: LineStatusFields): boolean {
+  if (ls.recognitionStatus === "provisional") return !!ls.provisionalItemGtin13;
+  return ls.recognitionStatus === "recognized" && ls.assignedGtin13 != null;
 }
 
 async function pushAndSettle(
@@ -163,7 +178,7 @@ async function pushAndSettle(
   received: Pick<ReceivedReceipt, "id" | "orgId" | "receiptJson">,
   actorUserId?: number | null,
   actorUsername?: string | null,
-): Promise<ApplyResult> {
+): Promise<ApplyResult | null> {
   const actor = { actorUserId: actorUserId ?? null, actorUsername: actorUsername ?? null };
   await insertAuditEvent(db, {
     orgId: received.orgId,
@@ -269,11 +284,8 @@ async function pushAndSettle(
     return settleFailed(receiptId, received.orgId, actor, error);
   }
 
-  await db.$transaction(async (tx) => {
-    await tx.receivedReceipt.update({
-      where: { id: receiptId },
-      data: { state: "resolved", validationNotes: null, applyFirstFailedAt: null },
-    });
+  const settled = await db.$transaction(async (tx) => {
+    if (!(await settleIfApplying(tx, receiptId, { state: "resolved", validationNotes: null, applyFirstFailedAt: null }))) return false;
     await insertAuditEvent(tx, {
       orgId: received.orgId,
       ...actor,
@@ -282,8 +294,9 @@ async function pushAndSettle(
       fromState: "applying",
       toState: "resolved",
     });
+    return true;
   });
-  return { state: "resolved" };
+  return settled ? { state: "resolved" } : null;
 }
 
 async function settleUnstamped(
@@ -292,9 +305,9 @@ async function settleUnstamped(
   actor: { actorUserId: number | null; actorUsername: string | null },
   error: string,
   unstamped: { inventoryUnstamped: boolean; moneyUnstamped: boolean },
-): Promise<ApplyResult> {
-  await db.$transaction(async (tx) => {
-    await recordFailure(receiptId, error, unstamped.inventoryUnstamped ? { inventoryUnconfirmedAt: new Date() } : {}, tx);
+): Promise<ApplyResult | null> {
+  const settled = await db.$transaction(async (tx) => {
+    if (!(await recordFailure(receiptId, error, unstamped.inventoryUnstamped ? { inventoryUnconfirmedAt: new Date() } : {}, tx))) return false;
     await insertAuditEvent(tx, {
       orgId,
       ...actor,
@@ -304,8 +317,9 @@ async function settleUnstamped(
       toState: "applying",
       details: JSON.stringify({ error, ...unstamped }),
     });
+    return true;
   });
-  return { state: "applying", error };
+  return settled ? { state: "applying", error } : null;
 }
 
 async function settleFailed(
@@ -313,9 +327,9 @@ async function settleFailed(
   orgId: string,
   actor: { actorUserId: number | null; actorUsername: string | null },
   error: string,
-): Promise<ApplyResult> {
-  await db.$transaction(async (tx) => {
-    await recordFailure(receiptId, error, { state: "apply_failed" }, tx);
+): Promise<ApplyResult | null> {
+  const settled = await db.$transaction(async (tx) => {
+    if (!(await recordFailure(receiptId, error, { state: "apply_failed" }, tx))) return false;
     await insertAuditEvent(tx, {
       orgId,
       ...actor,
@@ -325,6 +339,7 @@ async function settleFailed(
       toState: "apply_failed",
       details: JSON.stringify({ error }),
     });
+    return true;
   });
-  return { state: "apply_failed", error };
+  return settled ? { state: "apply_failed", error } : null;
 }
