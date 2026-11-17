@@ -1,7 +1,7 @@
 import type { Prisma, OrgMembershipProcess } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
-import { ReviewError, applicantHousehold, reviewHouseholds } from "@/lib/membership/review";
+import { ReviewError, applicantHousehold, reviewHouseholds, wrongPersonClosedAt } from "@/lib/membership/review";
 import { reviewHoldsRejection } from "@/lib/membership/checkStanding";
 import { CLOSABLE_STATUSES, RESTORABLE_STATUSES, RESTORE_CLOSABLE_STATUSES, fromWhere, openProcess } from "@/lib/membership/lifecycle";
 import { advanceExternalIfComplete, pickUpMissedSignature } from "@/lib/membership/external";
@@ -227,6 +227,9 @@ export async function unarchiveApplication(processId: number, actorId: number) {
             // Same lock startIntake/createRenewalProcess take, so a new application
             // can't open between the sibling check and the reopen.
             if (householdId != null) await tx.$queryRaw`SELECT id FROM "OrgMembership" WHERE "householdId" = ${householdId} FOR UPDATE`;
+            if (process.kind === "PERSON_BG" && await wrongPersonClosedAt(tx, processId)) {
+                throw new ReviewError("wrong_phase", "The Board closed this check review as opened for the wrong person. Reopen it with a reason instead.");
+            }
             const refusal = await reopenRefusal(tx, process, householdId);
             if (refusal) throw new ReviewError("wrong_phase", refusal);
             const forgotRequest = householdId != null && process.zohoEnvelopeId != null && process.contractSignedAt == null

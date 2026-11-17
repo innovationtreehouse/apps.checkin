@@ -416,6 +416,70 @@ describe("AdminMembershipPage", () => {
         );
     });
 
+    it.each([
+        ["an open", reviewRow],
+        ["a blocked", { ...reviewRow, status: "BLOCKED", attestations: [{ id: 2, result: "REJECT", subjectPersonId: 21, isMarkedVolunteerFamily: false }] }],
+    ])("closes %s check review as opened for the wrong person, with a reason", async (_label, review) => {
+        setSession({ id: 99, householdId: 99, isBoardMember: true });
+        const fetchMock = mockFetchJson({
+            "/api/membership-ops/applications/review-override": { outcome: { status: "ARCHIVED" } },
+            "/api/membership-ops/applications": { processes: [review] },
+        });
+        renderPage();
+        await screen.findByText("Robin Payment");
+
+        fireEvent.click(screen.getByRole("button", { name: "Close: opened for the wrong person" }));
+        const dialog = await screen.findByRole("dialog", { name: "Close this check review as opened for the wrong person?" });
+        fireEvent.click(within(dialog).getByRole("button", { name: "Close review" }));
+        expectReasonFlagged(dialog, "A reason is required to close a review as opened for the wrong person.");
+        expect(fetchMock.mock.calls.some(([url]) => String(url).includes("review-override"))).toBe(false);
+        fireEvent.change(within(dialog).getByRole("textbox", { name: /Reason/ }), { target: { value: " another person's report " } });
+        fireEvent.click(within(dialog).getByRole("button", { name: "Close review" }));
+
+        await waitFor(() =>
+            expect(fetchMock).toHaveBeenCalledWith(
+                "/api/membership-ops/applications/review-override",
+                expect.objectContaining({ body: JSON.stringify({ processId: 5, action: "reset", reason: "another person's report", closeAsWrongPerson: true }) }),
+            ),
+        );
+    });
+
+    it("offers the wrong-person close to the Board only", async () => {
+        setSession({ id: 99, householdId: 99, isBoardMember: false, isBackgroundCheckReviewer: true });
+        mockFetchJson({ "/api/membership-ops/applications": { processes: [reviewRow] } });
+        renderPage();
+        await screen.findByText("Robin Payment");
+        expect(screen.queryByRole("button", { name: "Close: opened for the wrong person" })).not.toBeInTheDocument();
+    });
+
+    it("reopens a closed check review, with a reason, from the closed list", async () => {
+        setSession({ id: 99, householdId: 99, isBoardMember: true });
+        const fetchMock = mockFetchJson({
+            "/api/membership-ops/applications/review-override": { outcome: { status: "BLOCKED" } },
+            "/api/membership-ops/applications?archived=1": { processes: [{ ...reviewRow, status: "ARCHIVED" }] },
+            "/api/membership-ops/applications": { processes: rows },
+        });
+        renderPage();
+        await screen.findByText("Awaiting Family");
+        fireEvent.click(screen.getByLabelText("Show closed applications"));
+        await screen.findByText("Robin Payment");
+
+        fireEvent.click(screen.getByRole("button", { name: "Reopen: closed as wrong person" }));
+        const dialog = await screen.findByRole("dialog", { name: "Reopen this check review?" });
+        fireEvent.click(within(dialog).getByRole("button", { name: "Reopen review" }));
+        expectReasonFlagged(dialog, "A reason is required to reopen a review.");
+        fireEvent.change(within(dialog).getByRole("textbox", { name: /Reason/ }), { target: { value: "it was them after all" } });
+        fireEvent.click(within(dialog).getByRole("button", { name: "Reopen review" }));
+
+        await waitFor(() =>
+            expect(fetchMock).toHaveBeenCalledWith(
+                "/api/membership-ops/applications/review-override",
+                expect.objectContaining({ body: JSON.stringify({ processId: 5, action: "reopen", reason: "it was them after all" }) }),
+            ),
+        );
+        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Check review reopened." })));
+    });
+
     it("releases a blocked household whose rejected person has left, with a reason", async () => {
         setSession({ id: 99, householdId: 99, isBoardMember: true });
         const fetchMock = mockFetchJson({

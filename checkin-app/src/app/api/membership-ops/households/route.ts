@@ -19,6 +19,7 @@ import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { searchId } from "@/lib/searchId";
 import { withArchivedHouseholds } from "@/lib/household/archived";
 import { ArchivedHouseholdError } from "@/lib/household/archiveGuard";
+import { householdCheckStandings } from "@/lib/membership/checkStanding";
 
 export const dynamic = 'force-dynamic';
 
@@ -106,11 +107,15 @@ export const GET = withAuth(
                     orgMembershipYearBoundary: settings?.orgMembershipYearBoundary ?? null,
                     bgRecheckMonths: settings?.bgRecheckMonths ?? 0,
                 };
+                // Only whether each member's check is disputed: never the review, its decisions or who made them.
+                const { members: standings } = await householdCheckStandings(prisma, household.id, null);
+                const disputed = new Set(standings.filter((m) => m.standing === "DISPUTED").map((m) => m.personId));
                 // Per member — every member with a passed check (leads AND non-lead PERSON_BG
                 // subjects alike); null when no check on file / policy unset.
                 const membersWithBg = household.householdMembers.map((m) => ({
                     ...m,
                     bgValidUntil: bgValidUntilBoundary(m.lastBackgroundCheck, bgSettings),
+                    disputed: disputed.has(m.id),
                 }));
                 // Household level — the LATER lastBackgroundCheck among household leads who
                 // passed (either lead's valid check covers the household).

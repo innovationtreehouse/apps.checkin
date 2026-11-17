@@ -122,7 +122,11 @@ admins" → tier the field `secret`; "admin-only by policy" is **not** opt-out �
 sensitive fields `internal`, and never grant `their_*:internal` on a route (`AuditLog` and
 `BackgroundCheckAttestation` are the test cases). What remains is one hand-maintained **work queue**,
 `OPT_OUT_PENDING_ROUTE`, that each future self-facing route drains by moving its model into a real
-binding in the same PR.
+binding in the same PR. Two kinds of entry stay in it for good, each marked "not pending" in its
+comment: a model whose scopable field holds another system's id (the inventory logs' local `userId`),
+so it has no natural key to bind; and a finance-marked model, where a `their_own` or
+`their_households` binding would make `isOwnRow` treat the row as the viewer's own and leave the view
+out of the finance view log.
 
 **Certifier — Option A (a first-class `Authorize` term).** The shop-certifier gate is a `toolStatus`
 (`MAY_CERTIFY_OTHERS`), not a global role. It is admitted as a first-class `certifier` `Authorize` term
@@ -242,9 +246,12 @@ The lever is **negative tests (the `fd192fc` pattern)**, not the validator gate 
 
 `OPT_OUT_PENDING_ROUTE` (`scopeBindings.ts`) — sensitive, scopable models whose scoped route is not
 built yet. Each future self-facing route moves its model OUT of the set and INTO a real binding in the
-same PR. **Done when the set is empty.** Live members (each documented in-file with its reader and the
-future route that would earn it a binding): `OrgMembershipProcess`, `BackgroundCheckAttestation`,
-`Corporation`, `VolunteerDesignation`, `PaymentException`, `PersonRole`, `BulkSendItem`.
+same PR. **Done when only the "not pending" entries remain.** Pending members (each documented in-file
+with its reader and the future route that would earn it a binding): `PresenceEvent`,
+`OrgMembershipProcess`, `BackgroundCheckAttestation`, `Corporation`, `VolunteerDesignation`,
+`PaymentException`, `PersonRole`, `BulkSendItem`, `ExpenseAuditLog`. The "not pending" entries are
+`InventoryLog` and `LocationLog` (no natural key) and eight finance-marked models (see the
+Opt-out model paragraph above).
 
 ### Residual risk ranking
 

@@ -356,6 +356,7 @@ async function resetOcrAllowance(personId: number, raw: unknown): Promise<{ pers
   const parsed = ResetReasonSchema.safeParse(raw);
   if (!parsed.success) throw new ServiceError(400, parsed.error.issues.map((i) => i.message).join("; "));
   const actor = await requireActor();
+  if (!(await ports().reimbursees.byId(personId))) throw new ServiceError(404, "No such person");
   await db.receiptAuditLog.create({
     data: { receiptId: null, userId: actor.id, username: actor.name, action: OCR_ALLOWANCE_RESET, fieldChanged: "person", valueBefore: String(personId), valueAfter: parsed.data.reason },
   });

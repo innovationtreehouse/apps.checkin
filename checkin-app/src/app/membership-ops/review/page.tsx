@@ -93,17 +93,17 @@ export default function MembershipReviewPage() {
       onConfirm: () => changeToApprove(item.id),
     });
 
-  const resetReview = async (processId: number, reason: string, wrongPerson: boolean) => {
+  const resetReview = async (processId: number, reason: string, wrongPerson: boolean, closeAsWrongPerson = false) => {
     setBusyId(processId);
     try {
       const res = await fetch("/api/membership-ops/applications/review-override", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processId, action: "reset", reason, wrongPerson }),
+        body: JSON.stringify({ processId, action: "reset", reason, wrongPerson, closeAsWrongPerson }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        showSuccess("Review started over — reviewers have been notified.");
+        showSuccess(closeAsWrongPerson ? "Review closed as opened for the wrong person." : "Review started over — reviewers have been notified.");
         // A repeated reset passes the server's check once the review is open, so the row stays busy until it re-reads.
         await Promise.all([reload(), reloadMine()]);
         notifyNavRefresh();
@@ -149,6 +149,34 @@ export default function MembershipReviewPage() {
         }
         modals.close(modalId);
         resetReview(item.id, reason.trim(), wrongPerson);
+      },
+    });
+  };
+
+  // B27: the Board closes a review opened for the wrong person; its decisions stay on record and stop counting.
+  const confirmCloseWrongPerson = (item: QueueItem) => {
+    let reason = "";
+    const modalId = modals.openConfirmModal({
+      title: "Close this check review as opened for the wrong person?",
+      children: (
+        <Stack gap="xs">
+          <Text size="sm">
+            This closes the review of <strong>{applicantLabel(item)}</strong>. Its decisions stay on record
+            against it but no longer count against anyone. The Board can reopen it.
+          </Text>
+          <Textarea label="Reason" required autosize minRows={2} onChange={(e) => { reason = e.currentTarget.value; }} />
+        </Stack>
+      ),
+      labels: { confirm: "Close review", cancel: "Cancel" },
+      confirmProps: { color: "red" },
+      closeOnConfirm: false,
+      onConfirm: () => {
+        if (!reason.trim()) {
+          notifications.show({ color: "red", message: "A reason is required to close a review as opened for the wrong person.", autoClose: false });
+          return;
+        }
+        modals.close(modalId);
+        resetReview(item.id, reason.trim(), false, true);
       },
     });
   };
@@ -424,9 +452,14 @@ export default function MembershipReviewPage() {
                   Undo my approval
                 </Button>
                 {canReset ? (
-                  <Button size="xs" variant="default" loading={busyId === item.id} onClick={() => confirmReset(item)}>
-                    Start review over
-                  </Button>
+                  <>
+                    <Button size="xs" variant="default" loading={busyId === item.id} onClick={() => confirmReset(item)}>
+                      Start review over
+                    </Button>
+                    <Button size="xs" variant="default" color="red" loading={busyId === item.id} onClick={() => confirmCloseWrongPerson(item)}>
+                      Close: opened for the wrong person
+                    </Button>
+                  </>
                 ) : (
                   <Text size="xs" c="dimmed">A board member can start this review over.</Text>
                 )}
