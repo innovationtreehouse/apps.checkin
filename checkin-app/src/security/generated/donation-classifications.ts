@@ -149,6 +149,7 @@ export const classifications = {
         capitalSubmittedAt: 'internal',
         capitalFirstFailedAt: 'internal',
         capitalLastError: 'personal',
+        capitalReviewNeeded: 'internal',
     },
     InKindSyncMark: {
         orgId: 'internal',
@@ -176,6 +177,7 @@ export const classifications = {
         capitalSubmittedAt: 'internal',
         capitalFirstFailedAt: 'internal',
         capitalLastError: 'personal',
+        capitalReviewNeeded: 'internal',
     },
     ManualInKindDonationLine: {
         id: 'internal',
@@ -186,6 +188,12 @@ export const classifications = {
         valueCents: 'internal',
         suggestedValueCents: 'internal',
         quickBooksAccountId: 'internal',
+        isCapital: 'internal',
+        depreciationYears: 'internal',
+        capitalBucketId: 'internal',
+        capitalDecidedByUserId: 'internal',
+        capitalDecidedAt: 'internal',
+        registeredAt: 'internal',
     },
     InKindDonationLine: {
         id: 'internal',
@@ -197,6 +205,12 @@ export const classifications = {
         quantity: 'internal',
         valueCents: 'internal',
         quickBooksAccountId: 'internal',
+        isCapital: 'internal',
+        depreciationYears: 'internal',
+        capitalBucketId: 'internal',
+        capitalDecidedByUserId: 'internal',
+        capitalDecidedAt: 'internal',
+        registeredAt: 'internal',
     },
     InKindBooking: {
         id: 'internal',
