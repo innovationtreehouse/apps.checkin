@@ -42,6 +42,41 @@ export async function recordFailure(client: Tx, receiptId: string, err: unknown)
 /** A step that succeeds leaves the receipt no longer stuck. */
 export const CLEARED = { firstFailedAt: null, lastError: null } as const;
 
+/** How long a finalized receipt's own push may take before the undelivered receipt counts as stuck. */
+export const PUSH_GRACE_MS = 10 * 60 * 1000;
+
+/**
+ * Finalized and not delivered, and either its push failed or it was finalized over PUSH_GRACE_MS
+ * ago. The second arm catches a push that never recorded its failure: a crash after finalize, or a
+ * failed `recordFailure`.
+ */
+export function stuckUndelivered(now = new Date()): Prisma.ReceiptWhereInput {
+  const graceStart = new Date(now.getTime() - PUSH_GRACE_MS);
+  return {
+    pushedAt: null,
+    details: { state: "receipt_finalized" },
+    OR: [{ firstFailedAt: { not: null } }, { auditLogs: { none: { action: "finalized", changedAt: { gt: graceStart } } } }],
+  };
+}
+
+/** When each matching receipt became stuck: its first failure, else its finalize, else its upload. */
+export async function stuckSince(where: Prisma.ReceiptWhereInput): Promise<Map<string, Date>> {
+  const rows = await db.receipt.findMany({
+    where,
+    select: {
+      id: true,
+      firstFailedAt: true,
+      uploadedAt: true,
+      auditLogs: { where: { action: "finalized" }, orderBy: { changedAt: "desc" }, take: 1, select: { changedAt: true } },
+    },
+  });
+  return new Map(rows.map((r) => [r.id, r.firstFailedAt ?? r.auditLogs[0]?.changedAt ?? r.uploadedAt]));
+}
+
+/** A `.catch` for `recordFailure`: a failure that could not be recorded is logged, and the caller goes on. */
+export const logUnrecorded = (receiptId: string) => (err: unknown) =>
+  console.error(`[receipt] recording the failure of receipt ${receiptId} failed:`, err);
+
 export const receiptRepo = {
   /** Org-scoped. Like every read here, it answers with the live people, not the stored ids. */
   async find(id: string, orgId: string, tx?: Prisma.TransactionClient): Promise<ReceiptRow | undefined> {

@@ -5,11 +5,11 @@ import { join } from "node:path";
 import { ServiceError } from "@checkin/component-kit";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { db } from "../../db";
-import { receiptRepo } from "../../repositories/receipt";
+import { PUSH_GRACE_MS, receiptRepo } from "../../repositories/receipt";
 import { receiptService } from "../../services/receiptService";
 import { READING_FAILURES_NOTICE_AT, STILL_STUCK, problemNotices, retryStuckItem, stuckItems } from "../../stuckItems";
 import { describeDb } from "../helpers/db";
-import { ALICE, TEST_ORG_ID, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile } from "../helpers/setup";
+import { ALICE, FINANCE, TEST_ORG_ID, actAs, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile } from "../helpers/setup";
 
 let ports: ReturnType<typeof recordingPorts>;
 
@@ -57,10 +57,10 @@ describeDb("stuckItems", () => {
     ]));
   });
 
-  it("leaves out a pushed receipt, one never failed, and another org's", async () => {
+  it("leaves out a pushed receipt, one finalized within the push grace, and another org's", async () => {
     const at = new Date();
     await makeReceipt("receipt_finalized", { pushed: true, firstFailedAt: at });
-    await makeReceipt("receipt_finalized");
+    await history(await makeReceipt("receipt_finalized"), [["finalized", at.toISOString()]]);
     await makeReceipt("flow_error", { orgId: "00000000-0000-0000-0000-000000000099", firstFailedAt: at });
 
     expect(await stuckItems()).toEqual([]);
@@ -152,6 +152,44 @@ async function retimeStuck(): Promise<void> {
 async function history(receiptId: string, rows: Array<[action: string, at: string]>): Promise<void> {
   for (const [action, at] of rows) await db.receiptAuditLog.create({ data: { receiptId, action, changedAt: new Date(at) } });
 }
+
+/** A receipt finalized by the flow whose push never ran or never recorded its failure, finalized `agoMs` before now. */
+async function undeliveredSilently(agoMs: number): Promise<{ id: string; finalizedAt: Date }> {
+  ports.fail.push = true;
+  const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+  ports.fail.push = false;
+  const finalizedAt = new Date(Date.now() - agoMs);
+  await db.receipt.update({ where: { id: r.id }, data: { firstFailedAt: null, lastError: null } });
+  await db.receiptAuditLog.updateMany({ where: { receiptId: r.id, action: "finalized" }, data: { changedAt: finalizedAt } });
+  return { id: r.id, finalizedAt };
+}
+
+describeDb("an undelivered receipt with no recorded failure", () => {
+  it("past the push grace, it is listed timed by its finalize, counted for finance, and a retry delivers it", async () => {
+    const { id, finalizedAt } = await undeliveredSilently(PUSH_GRACE_MS + 60_000);
+
+    expect(await stuckItems()).toEqual([{ id, step: "push to mapping", href: `/receipts/${id}`, failedAt: finalizedAt }]);
+    expect((await receiptService.countAwaitingFinance(FINANCE.id)).total).toBe(1);
+    actAs(FINANCE);
+    expect((await receiptService.listNeedsAttention("finance")).map((r) => r.id)).toEqual([id]);
+
+    await retryStuckItem({ id, step: "push to mapping" });
+
+    expect((await db.receipt.findUniqueOrThrow({ where: { id } })).pushedAt).not.toBeNull();
+    expect(await stuckItems()).toEqual([]);
+    expect((await receiptService.countAwaitingFinance(FINANCE.id)).total).toBe(0);
+  });
+
+  it("within the push grace, it is not listed, not counted, and not retried", async () => {
+    const { id } = await undeliveredSilently(PUSH_GRACE_MS - 60_000);
+    const sent = ports.calls.pushes.length;
+
+    expect(await stuckItems()).toEqual([]);
+    expect((await receiptService.countAwaitingFinance(FINANCE.id)).total).toBe(0);
+    await expect(retryStuckItem({ id, step: "push to mapping" })).rejects.toMatchObject({ status: 404 });
+    expect(ports.calls.pushes).toHaveLength(sent);
+  });
+});
 
 describeDb("first failure backfill since the last success", () => {
   const OLD = "2026-09-01T10:00:00.000Z";

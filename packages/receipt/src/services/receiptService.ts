@@ -38,7 +38,7 @@ import {
   UploadInputSchema,
   type DonorInput,
 } from "../lib/schemas";
-import { audit, ReceiptStateConflictError, receiptRepo, type Actor, type ReceiptRow, type ReceiptUpdate } from "../repositories/receipt";
+import { audit, ReceiptStateConflictError, receiptRepo, stuckSince, stuckUndelivered, type Actor, type ReceiptRow, type ReceiptUpdate } from "../repositories/receipt";
 import { getOrgId, limits, ports, requireActor } from "../runtime";
 import { OCR_OFF_NOTE } from "../lib/ocrOff";
 import { DAILY_LIMIT_REACHED } from "../lib/ocrAllowance";
@@ -60,17 +60,21 @@ const EDITABLE: ReadonlySet<string> = new Set(["ocr_failed", "validation_failed"
 const IN_SUBMITTER_REVIEW: ReadonlySet<string> = new Set(["submitter_review"]);
 const NEEDS_ATTENTION = ["duplicate_flagged", "validation_failed", "submitter_review", "ocr_failed", "flow_error"];
 
-/** When each stuck receipt of `ids` first failed, as the review list shows it; no error text. */
+/** When each undelivered receipt of `ids` that is stuck became stuck, as the review list shows it; no error text. */
 async function firstFailures(ids: string[]): Promise<Map<string, { lastPushFailedAt: Date }>> {
   if (ids.length === 0) return new Map();
-  const rows = await db.receipt.findMany({ where: { id: { in: ids }, firstFailedAt: { not: null } }, select: { id: true, firstFailedAt: true } });
-  return new Map(rows.flatMap((r) => (r.firstFailedAt ? [[r.id, { lastPushFailedAt: r.firstFailedAt }] as const] : [])));
+  const since = await stuckSince({ id: { in: ids }, ...stuckUndelivered() });
+  return new Map([...since].map(([id, at]) => [id, { lastPushFailedAt: at }]));
 }
 
-/** A stuck receipt's first failure time and latest error, for finance on the receipt's own page. */
+/** A stuck receipt's stuck-since time and latest error, for finance on the receipt's own page. */
 async function failureOf(id: string): Promise<{ lastPushFailedAt: Date; lastError: string | null } | undefined> {
-  const row = await db.receipt.findUnique({ where: { id }, select: { firstFailedAt: true, lastError: true } });
-  return row?.firstFailedAt ? { lastPushFailedAt: row.firstFailedAt, lastError: row.lastError } : undefined;
+  const [since, row] = await Promise.all([
+    stuckSince({ id, OR: [{ firstFailedAt: { not: null } }, stuckUndelivered()] }),
+    db.receipt.findUnique({ where: { id }, select: { lastError: true } }),
+  ]);
+  const at = since.get(id);
+  return at && row ? { lastPushFailedAt: at, lastError: row.lastError } : undefined;
 }
 
 /** The receipt as a submitter sees it: donor names are pii, read by finance only. */
@@ -1492,7 +1496,7 @@ export const receiptService = {
 
   /**
    * The org's receipts narrowed by `filter`; an unknown state matches no rows. A finalized
-   * receipt whose push failed carries when it first failed.
+   * receipt stuck undelivered carries when it became stuck.
    */
   async list(filter: ReceiptListFilter) {
     await requireActor();
@@ -1513,9 +1517,10 @@ export const receiptService = {
   ): Promise<{ byState: Record<string, number>; actionableByState?: Record<string, number>; notPushed: number; failedPushes: number }> {
     await requireActor();
     const orgId = await getOrgId();
-    const [groups, undelivered, finance] = await Promise.all([
+    const [groups, notPushed, failedPushes, finance] = await Promise.all([
       db.receiptDetail.groupBy({ by: ["state"], where: { orgId }, _count: { _all: true } }),
-      db.receipt.findMany({ where: { orgId, pushedAt: null, details: { state: "receipt_finalized" } }, select: { firstFailedAt: true } }),
+      db.receipt.count({ where: { orgId, pushedAt: null, details: { state: "receipt_finalized" } } }),
+      db.receipt.count({ where: { orgId, ...stuckUndelivered() } }),
       financeViewerId === null ? null : receiptService.countAwaitingFinance(financeViewerId),
     ]);
     const byState: Record<string, number> = Object.fromEntries(groups.map((g) => [g.state, g._count._all]));
@@ -1523,22 +1528,22 @@ export const receiptService = {
     return {
       byState,
       ...(finance ? { actionableByState: finance.byState } : {}),
-      notPushed: undelivered.length,
-      failedPushes: undelivered.filter((r) => r.firstFailedAt).length,
+      notPushed,
+      failedPushes,
     };
   },
 
   /**
    * How many of the org's receipts wait on this FINANCE viewer, for the host's nav pill and the
    * review queues. Duplicates count once per group, and a group with any member the viewer is
-   * conflicted on is left out. The total also holds finalized receipts whose push failed,
+   * conflicted on is left out. The total also holds finalized receipts stuck undelivered,
    * which have no queue state of their own. A receipt the viewer is conflicted on is left out.
    */
   async countAwaitingFinance(viewerId: number): Promise<FinanceCounts> {
     const orgId = await getOrgId();
     const [queued, failedPushes, household] = await Promise.all([
       receiptRepo.listParties({ orgId, details: { state: { in: [...FINANCE_ACTION_STATES] } } }),
-      receiptRepo.listParties({ orgId, pushedAt: null, firstFailedAt: { not: null }, details: { state: "receipt_finalized" } }),
+      receiptRepo.listParties({ orgId, ...stuckUndelivered() }),
       ports().households.householdOf([viewerId]),
     ]);
     const conflicted = new Set([viewerId, ...household]);
@@ -1572,7 +1577,7 @@ export const receiptService = {
       details: { state: { in: NEEDS_ATTENTION } },
     });
     if (access !== "finance") return rows.map(toSubmitterView);
-    const stopped = await receiptRepo.list({ orgId, pushedAt: null, firstFailedAt: { not: null }, details: { state: "receipt_finalized" } });
+    const stopped = await receiptRepo.list({ orgId, ...stuckUndelivered() });
     const [failed, conflicted] = await Promise.all([firstFailures(stopped.map((r) => r.id)), Promise.all(stopped.map((r) => isConflicted(r, actor.id)))]);
     return [...rows, ...stopped.flatMap((r, i) => (conflicted[i] ? [] : [{ ...r, ...failed.get(r.id) }]))];
   },
