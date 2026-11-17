@@ -140,7 +140,8 @@ export async function peopleSpentBy(db: DbClient, shopifyOrderId: string, progra
 export async function reconcileForwardProgram(order: MirrorOrder): Promise<boolean> {
     if (order.legacyId) {
         const known = await prisma.programParticipant.findFirst({ where: { shopifyOrderId: order.legacyId }, select: { programId: true } });
-        if (known) return true;
+        // A hand match can spend part of an order; one with seats left is judged like any other.
+        if (known && (await unspentOn(order, known.programId)) <= 0) return true;
     }
 
     // Preferred: the cart attributes the enroll flow's checkout link set — the same
@@ -186,6 +187,14 @@ export async function reconcileForwardProgram(order: MirrorOrder): Promise<boole
     }
 
     return activateProgramFromOrder(order, programs[0], matched.map((p) => p.personId));
+}
+
+/** Seats on this program's variants the order carries that nobody has spent yet. */
+async function unspentOn(order: MirrorOrder, programId: number): Promise<number> {
+    const program = await prisma.program.findUnique({ where: { id: programId }, select: { shopifyVariantId: true, claimantShopifyVariantId: true } });
+    const variantIds = new Set(program ? programVariantIds(program) : []);
+    const seats = (await mirror.orderLines(order.orderGid)).filter((l) => variantIds.has(l.variantId)).reduce((n, l) => n + l.currentQuantity, 0);
+    return seats - (order.legacyId ? await seatsSpentBy(prisma, order.legacyId, programId) : 0);
 }
 
 /** Shared tail for both program-matching paths: judge, then activate through the one choke point. */

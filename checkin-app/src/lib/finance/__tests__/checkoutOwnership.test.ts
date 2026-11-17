@@ -29,6 +29,7 @@ import * as mirror from "@/lib/shopifyRead/client";
 import { activateProgramEnrollment } from "@/lib/programs/activateEnrollment";
 import { signCheckout } from "@/lib/programs/checkoutSignature";
 import { runReconcile } from "../reconcile";
+import { reconcileForwardProgram } from "../reconcile/program";
 
 const PROGRAM = 7;
 const CHILD = 41;
@@ -97,5 +98,29 @@ describe("runReconcile — program checkout ownership", () => {
         await reconcile(order(null), OWN_HOUSEHOLD);
         expect(activate).not.toHaveBeenCalled();
         expect(raisedKinds()).toEqual(["UNMATCHED_ORDER"]);
+    });
+
+    describe("an order someone already holds", () => {
+        const held = (lines: number) => {
+            (prisma.programParticipant.findFirst as jest.Mock).mockResolvedValue({ programId: PROGRAM });
+            (prisma.programParticipant.findMany as jest.Mock).mockResolvedValue([{ personId: 50 }]); // matched by hand
+            (mirror.orderLines as jest.Mock).mockResolvedValue([{ variantId: "V1", quantity: lines, currentQuantity: lines }]);
+        };
+        afterEach(() => (mirror.orderLines as jest.Mock).mockResolvedValue([{ variantId: "V1", quantity: 1, currentQuantity: 1 }]));
+
+        it("is left alone once every seat it carries is spent", async () => {
+            held(1);
+            childHouseholds.mockResolvedValue([{ householdId: OWN_HOUSEHOLD }]);
+            expect(await reconcileForwardProgram(order(signCheckout(PROGRAM, [CHILD], OWN_HOUSEHOLD)))).toBe(true);
+            expect(activate).not.toHaveBeenCalled();
+            expect(raisedKinds()).toEqual([]);
+        });
+
+        it("is judged again while a seat it carries is unspent, so the rest of it is not lost", async () => {
+            held(2);
+            childHouseholds.mockResolvedValue([{ householdId: OWN_HOUSEHOLD }]);
+            expect(await reconcileForwardProgram(order(signCheckout(PROGRAM, [CHILD], OWN_HOUSEHOLD)))).toBe(true);
+            expect(activate).toHaveBeenCalledWith(expect.objectContaining({ programId: PROGRAM, personIds: [CHILD] }));
+        });
     });
 });
