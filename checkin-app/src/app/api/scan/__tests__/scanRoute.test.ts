@@ -119,7 +119,7 @@ describe('POST /api/scan', () => {
         expect(json.error).toBe('Invalid JSON payload.');
     });
 
-    it('should return 400 if participantId is missing', async () => {
+    it('should return 400 if no badge id is sent', async () => {
         (authenticateRequest as jest.Mock).mockResolvedValue({ type: 'kiosk' });
         const req = new Request('http://localhost/api/scan', {
             method: 'POST',
