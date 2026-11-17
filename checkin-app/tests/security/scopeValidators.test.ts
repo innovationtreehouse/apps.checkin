@@ -10,7 +10,7 @@ import {
     type RouteGrantSpec,
 } from '@/security/scopes';
 import { SCOPE_BINDINGS, OPT_OUT_PENDING_ROUTE } from '@/security/scopeBindings';
-import { classifications, allRoutes } from '@/security/core';
+import { classifications, allRoutes, allFileRoutes } from '@/security/core';
 // Side-effect import: registers every route via defineRoute() so allRoutes()
 // yields the real policy surface for the CI gate below.
 import '@/security/registry';
@@ -122,5 +122,44 @@ describe('CI gate — zero errors over the real registry', () => {
     it('validateRouteGrants is clean (every granted row-scope resolves on a returned model)', () => {
         const routes: RouteGrantSpec[] = [...allRoutes()].map(([, spec]) => spec);
         expect(validateRouteGrants(routes, SCOPE_BINDINGS)).toEqual([]);
+    });
+});
+
+// Coverage-only bindings: the model binds a scope so validateBindings passes, but
+// no route that returns it grants any scoped token beyond `everyones`, so the
+// binding never changes what a caller sees.
+describe('coverage-only bindings stay inert', () => {
+    const COVERAGE_ONLY = [
+        'VolunteerRosterRow',
+        'BudgetOwnerApprover',
+        'BudgetOwnerTreasurer',
+        'PersonMailAlias',
+        'UploadedFile',
+        'InKindQueueItemView',
+        'ReceiptAuditLog',
+        'InKindDonation',
+        'ExpenseReimburseeView',
+        'ProgramPaymentPlanDecision',
+        'MembershipPaymentPlanDecision',
+        'PaymentQueueRow',
+        'MatchAuditEnrollmentRow',
+        'UnconfirmedStockRow',
+        'UnconfirmedStockSettlement',
+        'FinanceViewLog',
+    ];
+    const views = [
+        ...[...allRoutes()].map(([endpoint, spec]) => ({ endpoint, models: spec.returns ?? [], orderedView: spec.orderedView })),
+        ...[...allFileRoutes()].map(([endpoint, spec]) => ({ endpoint, models: [spec.file.model], orderedView: spec.orderedView })),
+    ];
+
+    it.each(COVERAGE_ONLY)('%s is bound, and every route returning it grants only everyones tokens', (model) => {
+        expect(model in SCOPE_BINDINGS).toBe(true);
+        const returning = views.filter(v => (v.models as readonly string[]).includes(model));
+        const scoped = returning.flatMap(v =>
+            v.orderedView.flatMap(([, tokens]) => tokens)
+                .filter(t => t !== 'public' && t !== 'member' && !t.startsWith('everyones:'))
+                .map(t => `${v.endpoint}: ${t}`),
+        );
+        expect(scoped).toEqual([]);
     });
 });
