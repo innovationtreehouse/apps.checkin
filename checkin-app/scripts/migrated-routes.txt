@@ -210,6 +210,7 @@ GET /api/receipts/[id]/file
 DELETE /api/membership-ops/bg-attestations/[id]
 POST /api/membership-ops/households/[id]/archive
 POST /api/membership-ops/households/[id]/unarchive
+GET /api/membership-ops/volunteer-memberships
 POST /api/membership/reviews/undo
 POST /api/membership/reviews/dismiss
 GET /api/membership/check-started

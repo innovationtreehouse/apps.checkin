@@ -408,6 +408,9 @@ Things the app takes as true because they are handled outside it.
   (the family renews it), an approved change, and a household that is denied,
   whether the family's or the adult's own.  [Decision]
 
+- No trusted adult can be named, and no trusted-adult review approved, while the
+  family's household or the adult's own household is denied membership.  [Decision — owner ruling 2026-11-17]
+
 - A board revoke of a trusted adult cannot be undone, and reset does not reach
   it. The family resubmits.  [Decision]
 

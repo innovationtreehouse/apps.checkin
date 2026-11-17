@@ -28,4 +28,21 @@ describe("gmailTokenSource", () => {
         expect(kindOf(err)).toBe("settings");
         expect((err as Error).message).toMatch(/GMAIL_REFRESHER_FN.*Ops/);
     });
+
+    it("answers a failure from memory for a minute, then asks the refresher again", async () => {
+        jest.useFakeTimers();
+        try {
+            const revoked = new Error("revoked");
+            const invoke = jest.fn().mockRejectedValueOnce(revoked).mockResolvedValue(answer());
+            const token = gmailTokenSource("gmail-refresher", MAILBOX, invoke);
+            await expect(token()).rejects.toBe(revoked);
+            await expect(token()).rejects.toBe(revoked);
+            expect(invoke).toHaveBeenCalledTimes(1);
+            jest.advanceTimersByTime(60_001);
+            await expect(token()).resolves.toBe("tok-1");
+            expect(invoke).toHaveBeenCalledTimes(2);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
 });

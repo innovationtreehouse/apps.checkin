@@ -799,12 +799,9 @@ model BoardSettings {
   /// orders changed after this are re-scanned each run. Null = scan from the start.
   /// @sensitivity:internal
   shopifyReconcileCursorAt   DateTime?
-  /// Grace period (days) a denied scholarship applicant keeps their held seat
-  /// before the grace-period expiry cron auto-withdraws them and releases it.
-  /// NULL = the expiry feature is OFF (a denied hold is only ever released by
-  /// withdrawal or payment; it never auto-expires).
-  /// @sensitivity:public
-  scholarshipDenialGraceDays Int?
+  /// Unused column awaiting its drop. Hidden from the client so no code reads or
+  /// writes it before the column goes. @sensitivity:public
+  scholarshipDenialGraceDays Int?      @ignore
   /// Library keys (lib/libraryRelease.ts) the board has released: their nav
   /// entries show to everyone with access, not just board members. UI-only.
   /// @sensitivity:public
@@ -1263,8 +1260,7 @@ model ProgramParticipant {
   /// Hold-ledger state: stamped when a board member denies a pending
   /// scholarship/payment-plan request (the seat stays held — see
   /// inventoryHeldAt — so the applicant may still pay normally). Cleared on
-  /// re-application. Drives the grace-period expiry sweep alongside
-  /// BoardSettings.scholarshipDenialGraceDays. A refusal says a request existed,
+  /// re-application. A refusal says a request existed,
   /// so it carries the request's tier.
   /// @sensitivity:hardship
   /// @financeMark
