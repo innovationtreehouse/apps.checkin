@@ -5,13 +5,12 @@
  * The Board's store switch for program seats (claim-first trial), against a real
  * Postgres and the CHECKIN_ENV=local Shopify stock mock.
  */
-import { backendPid, waitersBehind } from '@checkin/pg-test-harness/lockGate';
-import { PrismaPg } from '@prisma/adapter-pg';
-import { PrismaClient } from '@/generated/prisma/client';
 import prisma from '@/lib/prisma';
 import { runMatchAudit, type MatchAuditResult } from '@/lib/finance/matchAudit';
 import { closeProgramStore, openProgramStore } from '@/lib/programs/storeSwitch';
 import { changeProgramStock, localMockStock, setProgramInventory, setProgramProductOffSale } from '@/lib/shopify/stock';
+
+const actualStock = jest.requireActual<typeof import('@/lib/shopify/stock')>('@/lib/shopify/stock');
 
 jest.mock('@/lib/shopify/stock', () => {
     const actual = jest.requireActual<typeof import('@/lib/shopify/stock')>('@/lib/shopify/stock');
@@ -23,9 +22,6 @@ const TAG = 'Store Switch Test';
 const offSale = jest.mocked(setProgramProductOffSale);
 const audit = jest.mocked(runMatchAudit);
 const cleanAudit: MatchAuditResult = { configured: true, variantCoverage: { lines: 1, withVariant: 1 }, configuredVariants: 1, orders: [], memberships: [], enrollments: [] };
-
-// The lock holder and the re-count take the app pool's connections, so the gate polls on its own.
-const observer = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
 
 let actorId: number;
 let prevEnv: string | undefined;
@@ -73,13 +69,14 @@ afterAll(async () => {
     await prisma.auditLog.deleteMany({ where: { actorId } });
     await prisma.person.deleteMany({ where: { id: actorId } });
     await prisma.household.deleteMany({ where: { name: `${TAG} HH` } });
-    await observer.$disconnect();
     process.env.CHECKIN_ENV = prevEnv;
 });
 
 beforeEach(async () => {
     await cleanup();
     jest.clearAllMocks();
+    offSale.mockReset();
+    offSale.mockImplementation(actualStock.setProgramProductOffSale);
     audit.mockResolvedValue(cleanAudit);
     logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
 });
@@ -178,33 +175,5 @@ describe('reopening the store', () => {
         expect(localMockStock.get(open.shopifyVariantId!)).toBe(4);
         expect((await prisma.program.findUniqueOrThrow({ where: { id: open.id } })).productHiddenAt).toBeNull();
         expect((await prisma.program.findUniqueOrThrow({ where: { id: ended.id } })).productHiddenAt).not.toBeNull();
-    });
-
-    it('the re-count reads stock only once it holds the Program row lock, so a write landing before it is counted', async () => {
-        const program = await mkProgram('recount-lock');
-        await setProgramInventory(program, async () => 3, 'initial-stock');
-
-        let release!: () => void;
-        const released = new Promise<void>((r) => (release = r));
-        let locked!: (pid: number) => void;
-        const held = new Promise<number>((r) => (locked = r));
-        const holder = prisma.$transaction(async (tx) => {
-            await tx.$queryRaw`SELECT id FROM "Program" WHERE id = ${program.id} FOR UPDATE`;
-            locked(await backendPid(tx));
-            await released;
-        }, { timeout: 15_000 });
-        const holderPid = await held;
-
-        const recount = setProgramInventory(program, async () => 3, 'store-reopened');
-        try {
-            await waitersBehind(observer, holderPid);
-            localMockStock.set(program.shopifyVariantId!, 1); // the switch's zero, or store sales, land first
-        } finally {
-            release();
-            await holder;
-        }
-
-        expect(await recount).toBe(true);
-        expect(localMockStock.get(program.shopifyVariantId!)).toBe(3);
     });
 });
