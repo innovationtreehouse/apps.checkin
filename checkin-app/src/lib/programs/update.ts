@@ -9,7 +9,7 @@ import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { emailBoardMembers } from "@/lib/emailRecipients";
 import { config } from "@/lib/config";
 import { parseDateOnly } from "@/lib/time";
-import { isSaleEnded, saleStockDelta } from "@/lib/programs/saleState";
+import { classify, isSaleEnded, saleStockDelta } from "@/lib/programs/saleState";
 import { countStockTakenSeats } from "@/lib/program/capacity";
 import { membershipYearLabel, programYearsTouched } from "@/lib/programYear";
 import { ProgramPhase, EnrollmentStatus, type Program } from "@/generated/prisma/client";
@@ -281,6 +281,21 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         && !isSaleEnded({ startAt: newStartAt ?? currentProgram.startAt, offSaleAt: newOffSaleAt ?? null, saleEndedAt: null });
     if (enrollmentStatus === 'OPEN' && currentProgram.enrollmentStatus !== 'OPEN' && saleEndedNow && !rearmSale) {
         return refuse("conflict", "Sales for this program have ended. To reopen enrollment, move the off-sale date later.");
+    }
+    const effPhase = phase ?? currentProgram.phase;
+    if (rearmSale && effPhase === 'FINISHED') {
+        return refuse("conflict", "This program has ended, so its sale can't be reopened.");
+    }
+    // A program ends only once nothing is on sale: its sale has ended or enrollment is closed (saleState TRANSITIONS).
+    const saleAfterSave = classify({
+        phase: currentProgram.phase,
+        enrollmentStatus: enrollmentStatus ?? currentProgram.enrollmentStatus,
+        startAt: effStartAt,
+        offSaleAt: newOffSaleAt !== undefined ? newOffSaleAt : currentProgram.offSaleAt,
+        saleEndedAt: rearmSale ? null : currentProgram.saleEndedAt,
+    });
+    if (phase === 'FINISHED' && currentProgram.phase !== 'FINISHED' && saleAfterSave === 'ON_SALE') {
+        return refuse("conflict", "This program is still on sale. Close enrollment or end the sale before ending the program.");
     }
 
     // Variant⟺price invariant: a program has a Shopify variant iff it

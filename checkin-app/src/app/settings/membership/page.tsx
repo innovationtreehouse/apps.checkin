@@ -14,6 +14,7 @@ import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { useSession } from "next-auth/react";
 import { LibraryReleaseCard } from "@/components/admin/LibraryReleaseCard";
 import { KeyVolunteerAgreementCard } from "@/components/admin/KeyVolunteerAgreementCard";
+import { ProgramStoreCard } from "@/components/admin/ProgramStoreCard";
 import { liveMembershipYear, membershipYearLabel, variantSlotYears } from "@/lib/programYear";
 import { VariantPicker } from "./VariantPicker";
 
@@ -28,6 +29,7 @@ interface Settings {
   devSigningTarget: string | null;
   releasedLibraries: string[];
   keyVolunteerAgreementVersion: number;
+  programStoreClosedAt: string | null;
 }
 
 interface YearVariant {
@@ -381,6 +383,8 @@ export default function MembershipSettingsPage() {
           {isBoardMember && <LibraryReleaseCard key={releasedLibraries.join()} initial={releasedLibraries} />}
 
           {isBoardMember && <KeyVolunteerAgreementCard key={kvaVersion} initialVersion={kvaVersion} />}
+
+          {isBoardMember && settingsRow && <ProgramStoreCard initialClosedAt={settingsRow.programStoreClosedAt ?? null} />}
 
           <Card withBorder radius="md" padding="lg" style={{ borderColor: "var(--mantine-color-yellow-5)" }}>
             <Title order={3} mb="xs">Go-live: open renewals</Title>

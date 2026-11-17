@@ -5,6 +5,7 @@ import { emailBoardMembers } from "@/lib/emailRecipients";
 import { orgCalendarDay } from "@/lib/time";
 import { reportShopifyFailure } from "@/lib/shopify/client";
 import { setProgramProductOffSale } from "@/lib/shopify/stock";
+import { isProgramStoreClosed } from "@/lib/programs/storeClosed";
 
 // A week, less half a day so the daily run's start-time jitter can't push it to day 8.
 const NOTIFY_AFTER_MS = 6.5 * 24 * 60 * 60 * 1000;
@@ -46,14 +47,15 @@ async function endDueSales(now: Date): Promise<number> {
 }
 
 /**
- * Hides the public store product of every ended sale that has a reserved-seat
- * product and is not hidden yet. productHiddenAt is stamped only after Shopify
- * confirms, so a failed hide (already alerted) is retried on the next run.
- * A re-arm never re-lists the product.
+ * Hides the public store product of every ended sale, or of every program while
+ * the store is closed, that has a reserved-seat product and is not hidden yet.
+ * productHiddenAt is stamped only after Shopify confirms, so a failed hide
+ * (already alerted) is retried on the next run. A re-arm never re-lists the product.
  */
-async function hideEndedProducts(now: Date): Promise<number> {
+export async function hideEndedProducts(now: Date): Promise<number> {
+    const ended = await isProgramStoreClosed() ? {} : { saleEndedAt: { not: null } };
     const owed = await prisma.program.findMany({
-        where: { saleEndedAt: { not: null }, productHiddenAt: null, phase: { not: "FINISHED" }, shopifyProductId: { not: null }, claimantShopifyVariantId: { not: null } },
+        where: { ...ended, productHiddenAt: null, phase: { not: "FINISHED" }, shopifyProductId: { not: null }, claimantShopifyVariantId: { not: null } },
         select: { id: true, shopifyProductId: true },
     });
     let hidden = 0;
