@@ -122,7 +122,9 @@ admins" → tier the field `secret`; "admin-only by policy" is **not** opt-out �
 sensitive fields `internal`, and never grant `their_*:internal` on a route (`AuditLog` and
 `BackgroundCheckAttestation` are the test cases). What remains is one hand-maintained **work queue**,
 `OPT_OUT_PENDING_ROUTE`, that each future self-facing route drains by moving its model into a real
-binding in the same PR.
+binding in the same PR. Its one named exception is a model whose scopable field holds another
+system's id (the inventory logs' local `userId`), so it has no natural key to bind; each such entry is
+marked "not pending" in its comment.
 
 **Certifier — Option A (a first-class `Authorize` term).** The shop-certifier gate is a `toolStatus`
 (`MAY_CERTIFY_OTHERS`), not a global role. It is admitted as a first-class `certifier` `Authorize` term
