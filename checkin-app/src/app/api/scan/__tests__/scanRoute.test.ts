@@ -130,7 +130,7 @@ describe('POST /api/scan', () => {
         expect(res.status).toBe(400);
 
         const json = await res.json();
-        expect(json.error).toBe('A valid numeric participantId is required.');
+        expect(json.error).toBe('A valid numeric personId is required.');
     });
 
     it('should return 400 if participantId is not a number', async () => {
@@ -144,7 +144,7 @@ describe('POST /api/scan', () => {
         expect(res.status).toBe(400);
 
         const json = await res.json();
-        expect(json.error).toBe('A valid numeric participantId is required.');
+        expect(json.error).toBe('A valid numeric personId is required.');
     });
     // An id past Postgres int4 makes the lookup throw (a 500 the kiosk retries
     // forever at its queue head); a 400 dead-letters it instead.
@@ -158,6 +158,54 @@ describe('POST /api/scan', () => {
         const res = await POST(req);
         expect(res.status).toBe(400);
         expect(prisma.person.findUnique).not.toHaveBeenCalled();
+    });
+
+    // Kiosks send participantId until the client switches to personId.
+    describe('the badge id field', () => {
+        const scan = (body: Record<string, unknown>) => POST(new Request('http://localhost/api/scan', {
+            method: 'POST',
+            body: JSON.stringify(body),
+        }) as unknown as import('next/server').NextRequest);
+
+        beforeEach(() => {
+            (authenticateRequest as jest.Mock).mockResolvedValue({ type: 'kiosk' });
+            (prisma.person.findUnique as jest.Mock).mockResolvedValue({ id: 7 });
+            (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
+            (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
+            (prisma.visit.findFirst as jest.Mock).mockResolvedValue(null);
+            (processCheckin as jest.Mock).mockResolvedValue(checkedIn);
+        });
+
+        it.each([
+            ['personId alone', { personId: 7 }],
+            ['participantId alone', { participantId: 7 }],
+            ['both, equal', { personId: 7, participantId: 7 }],
+        ])('scans with %s', async (_label, body) => {
+            const res = await scan(body);
+            expect(res.status).toBe(200);
+            expect(prisma.person.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 7 } }));
+            expect(prisma.rawBadgeLog.create).toHaveBeenCalledWith({ data: { personId: 7, location: 'Main Entrance' } });
+        });
+
+        it('400s when personId and participantId disagree, without touching the DB', async () => {
+            const res = await scan({ personId: 7, participantId: 8 });
+            expect(res.status).toBe(400);
+            expect((await res.json()).error).toBe('personId and participantId disagree.');
+            expect(prisma.person.findUnique).not.toHaveBeenCalled();
+            expect(prisma.rawBadgeLog.create).not.toHaveBeenCalled();
+        });
+
+        it('parks a replay whose ids disagree instead of refusing it', async () => {
+            const res = await scan({
+                personId: 7, participantId: 8, replay: true,
+                clientEventId: 'evt-conflict', scannedAt: new Date().toISOString(),
+            });
+            expect(res.status).toBe(200);
+            expect(prisma.person.findUnique).not.toHaveBeenCalled();
+            expect(prisma.rawBadgeLog.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({ personId: null, scannedValue: '7', reviewReason: 'client_dead:unresolvable' }),
+            });
+        });
     });
 
     describe('check-in/out notifications', () => {
@@ -260,7 +308,7 @@ describe('POST /api/scan', () => {
 
             const res = await POST(scanReq(1));
             expect(res.status).toBe(404);
-            expect((await res.json()).error).toBe('Participant 1 not found.');
+            expect((await res.json()).error).toBe('Person 1 not found.');
             expect(prisma.household.count).toHaveBeenCalledWith({ where: { id: 3, archivedAt: null } });
             expect(prisma.rawBadgeLog.create).not.toHaveBeenCalled();
         });
