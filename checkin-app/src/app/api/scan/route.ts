@@ -63,7 +63,7 @@ const maxDate = (a: Date | null, b: Date | null): Date | null =>
 // (docs/rules/attendance-checkin.md, Opening and closing).
 export const POST = withKiosk(
     { rateLimit: { name: "scan", limit: 300 } },
-    async (_req, body: { participantId?: unknown; clientEventId?: unknown; scannedAt?: unknown; replay?: unknown; forceCloseToken?: unknown; forceCloseConfirmed?: unknown; dead?: unknown; deadStatus?: unknown; intent?: unknown; clockSuspect?: unknown; shownEmpty?: unknown; rosterAsOf?: unknown; protocolVersion?: unknown; close?: unknown; scanTimeUncertaintyMs?: unknown }, auth) => {
+    async (_req, body: { personId?: unknown; participantId?: unknown; clientEventId?: unknown; scannedAt?: unknown; replay?: unknown; forceCloseToken?: unknown; forceCloseConfirmed?: unknown; dead?: unknown; deadStatus?: unknown; intent?: unknown; clockSuspect?: unknown; shownEmpty?: unknown; rosterAsOf?: unknown; protocolVersion?: unknown; close?: unknown; scanTimeUncertaintyMs?: unknown }, auth) => {
     if (auth.type !== 'kiosk') return apiError("Check in at the kiosk.", 403);
 
     const startTime = Date.now();
@@ -71,12 +71,15 @@ export const POST = withKiosk(
     let seenVersion: number | null = null;
 
     try {
-        const participantId = isPersonId(body.participantId) ? body.participantId : null;
+        // Older kiosks name the badge participantId.
+        const rawId = body.personId ?? body.participantId;
+        const idConflict = body.personId != null && body.participantId != null && body.personId !== body.participantId;
+        const personId = !idConflict && isPersonId(rawId) ? rawId : null;
         // A queued row (dead-lettered or replayed) is the exception: it is
         // parked below whatever it carries, so a corrupt read reaches the
         // review queue instead of bouncing on the kiosk forever.
-        if (participantId === null && body.dead !== true && body.replay !== true) {
-            return apiError("A valid numeric participantId is required.", 400);
+        if (personId === null && body.dead !== true && body.replay !== true) {
+            return apiError(idConflict ? "personId and participantId disagree." : "A valid numeric personId is required.", 400);
         }
 
         // Optional replay fields from a queued kiosk scan. Absent → a live scan.
@@ -181,7 +184,7 @@ export const POST = withKiosk(
         const uncertaintyMs = isReplay && typeof body.scanTimeUncertaintyMs === 'number' ? body.scanTimeUncertaintyMs : 0;
         const slot = (isReplay || isDead) ? "replay" : "live";
         specTrace("ScanRequest", {
-            slot, p: body.participantId, cid: clientEventId, intent, close: closeKind,
+            slot, p: rawId, cid: clientEventId, intent, close: closeKind,
             t: eventTime.getTime(), scannedAt: scannedAt?.getTime() ?? null, rosterAsOf: rosterAsOf?.getTime() ?? null,
         });
 
@@ -212,8 +215,7 @@ export const POST = withKiosk(
         const respond = async (result: ScanResult, closeRefused = false): Promise<Response> =>
             toResponse(result, { signedRequest: true, closeRefused, lastNightlyCloseAt: await lastNightlyCloseAt() });
         const parkUnresolvable = async (): Promise<Response> => {
-            const raw = body.participantId;
-            const scannedValue = (typeof raw === 'string' ? raw : JSON.stringify(raw) ?? '').slice(0, 64);
+            const scannedValue = (typeof rawId === 'string' ? rawId : JSON.stringify(rawId) ?? '').slice(0, 64);
             try {
                 await prisma.rawBadgeLog.create({
                     data: {
@@ -227,13 +229,13 @@ export const POST = withKiosk(
                 });
             } catch (err) {
                 if (!uniqueViolationFields(err)?.includes("clientEventId")) throw err;
-                specTrace("ScanCommit", { slot, p: raw, cid: clientEventId, kind: "duplicate" });
+                specTrace("ScanCommit", { slot, p: rawId, cid: clientEventId, kind: "duplicate" });
                 return respond({ kind: "duplicate" });
             }
-            specTrace("ScanCommit", { slot, p: raw, cid: clientEventId, kind: "parked", reason: "unresolvable" });
+            specTrace("ScanCommit", { slot, p: rawId, cid: clientEventId, kind: "parked", reason: "unresolvable" });
             return respond({ kind: "parked", reason: "review" });
         };
-        if (participantId === null) {
+        if (personId === null) {
             return await parkUnresolvable();
         }
 
@@ -241,18 +243,18 @@ export const POST = withKiosk(
         // reject its owner at the door: it resolves to the surviving record, and a
         // broken chain asks the operator to reissue the badge. A member of an
         // archived household scans exactly as a badge that matches nobody.
-        const resolved = await resolveMergedPerson(participantId);
+        const resolved = await resolveMergedPerson(personId);
         if (resolved.kind !== "live" || !(await isLiveHousehold(resolved.person.householdId))) {
             if (isDead || isReplay) return await parkUnresolvable();
-            specTrace("ScanCommit", { slot, p: participantId, cid: clientEventId, kind: "rejected" });
+            specTrace("ScanCommit", { slot, p: personId, cid: clientEventId, kind: "rejected" });
             return resolved.kind === "broken"
-                ? apiError(`This badge belongs to a merged record; reissue it for participant ${resolved.lastId}.`, 409)
-                : apiError(`Participant ${participantId} not found.`, 404);
+                ? apiError(`This badge belongs to a merged record; reissue it for person ${resolved.lastId}.`, 409)
+                : apiError(`Person ${personId} not found.`, 404);
         }
         const { person: participant, hops: mergeHops } = resolved;
         if (mergeHops > 0) {
             logger.info("Scan forwarded from merged record", {
-                badgeId: participantId,
+                badgeId: personId,
                 survivorId: participant.id,
                 hops: mergeHops,
             });
@@ -266,7 +268,7 @@ export const POST = withKiosk(
         // a double check-out that 500s on Prisma P2025 when the second tries to
         // delete the already-deleted visit. We wrap the whole sequence in one
         // transaction and take a per-participant Postgres advisory xact lock at
-        // the top, so concurrent scans for the same participantId serialize: the
+        // the top, so concurrent scans for the same person serialize: the
         // second blocks until the first commits, then observes committed state
         // and branches correctly. The lock auto-releases on commit/rollback.
         let closeRefused = false;

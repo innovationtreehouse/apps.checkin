@@ -59,7 +59,7 @@ describe('participant exit and its audit commit together', () => {
     it('commits the removal and its DELETE audit together', async () => {
         await deleteAndReleaseHold(programId, personId, {}, undefined, {
             audit: (tx, row) => tx.auditLog.create({
-                data: { ...systemActor('cron:scholarship-grace-expiry'), action: 'DELETE', tableName: 'ProgramParticipant', affectedEntityId: personId, secondaryAffectedEntity: programId, oldData: row },
+                data: { ...systemActor('cron:nightly'), action: 'DELETE', tableName: 'ProgramParticipant', affectedEntityId: personId, secondaryAffectedEntity: programId, oldData: row },
             }),
         });
 

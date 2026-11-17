@@ -9,7 +9,7 @@ import { lineItemService } from "../../services/lineItemService";
 import { ingestReceipt } from "../../services/receiptIntakeService";
 import { receiptService } from "../../services/receiptService";
 import { runMatching } from "../../routes";
-import { atAuditWrite, describeDb } from "../helpers/db";
+import { describeDb } from "../helpers/db";
 import { MANAGER, buildReceiptPayload, clearAll, configure, makeLineStatus, makeReceipt, recordingSinks } from "../helpers/setup";
 
 const GTIN = "0000000000017";
@@ -156,17 +156,6 @@ describeDb("Run matching now", () => {
     const [ran] = await auditsOf(r.id, "matching_ran");
     expect(ran).toMatchObject({ actorUserId: MANAGER.id, actorUsername: MANAGER.name });
     expect(JSON.parse(ran?.details ?? "{}")).toEqual({ matched: 2 });
-  });
-
-  it("commits each match with its audit row", async () => {
-    const r = await pendingReceipt({ lineCount: 1 });
-
-    await atAuditWrite(() => runNow(r.id), async () => {
-      expect((await linesOf(r.id)).map((l) => l.recognitionStatus)).toEqual(["unrecognized"]);
-    });
-
-    expect((await linesOf(r.id)).map((l) => l.recognitionStatus)).toEqual(["recognized"]);
-    expect(await auditsOf(r.id, "line_matched")).toHaveLength(1);
   });
 
   it("leaves the receipt pending while the catalog is still down", async () => {

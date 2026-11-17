@@ -28,7 +28,6 @@ async function remapProvisional(
     },
   });
   for (const line of lines) {
-    // The audit row commits with the remap, so no remap lands unlogged.
     await db.$transaction(async (tx) => {
       const { count } = await tx.receivedReceiptLineStatus.updateMany({
         where: {

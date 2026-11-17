@@ -23,7 +23,7 @@ import { unsignedLines } from "./signoff-facts";
 import { SYSTEM_ACTOR } from "./system-actor";
 import type { ExpenseSettings } from "../contract";
 import { readExpenseSettings } from "../services/settingsService";
-import { checkOffHeldOnPost, raiseFlag, raiseStray } from "../services/flagService";
+import { checkOffOnLink, raiseFlag, raiseStray } from "../services/flagService";
 import { NEEDS_VOIDING } from "./flags";
 import { reimburseeVendorLink } from "./livePeople";
 
@@ -192,13 +192,13 @@ async function buildWrite(client: Db, orgId: string, expense: Expense, posting: 
   return getExpenseRuntime().outbound("quickbooks.create", rows, async (stripped) => composeWrite(stripped, posting));
 }
 
-type SettleData = { qbMatchState: string; qbTxnId?: string; qbTxnEntity?: string; qbVendorId?: string; qbMatchBaseline?: string | null };
+type SettleData = { qbMatchState: string; qbVendorId?: string; qbMatchBaseline?: string | null } & ({ qbTxnId?: undefined; qbTxnEntity?: undefined } | { qbTxnId: string; qbTxnEntity: string });
 
 /** Settles a post that did not fail. Any outcome but `waiting` leaves the posting step, so it clears a failure. */
 async function settle(tx: Db, before: Expense, outcome: PostOutcome, data: SettleData, notes?: string): Promise<PostOutcome> {
   const cleared = outcome === "waiting" ? {} : { qbFirstFailedAt: null, qbLastError: null };
   await tx.expense.update({ where: { id: before.id }, data: { ...cleared, ...data, qbClaimedAt: null } });
-  if (data.qbTxnId) await checkOffHeldOnPost(tx, before.id);
+  if (data.qbTxnId) await checkOffOnLink(tx, before.id, data.qbTxnEntity, data.qbTxnId);
   if (before.qbMatchState === data.qbMatchState && !data.qbTxnId) return outcome;
   await writeAudit(tx, SYSTEM_ACTOR, {
     expenseId: before.id,

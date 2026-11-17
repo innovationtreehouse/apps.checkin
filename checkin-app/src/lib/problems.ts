@@ -106,7 +106,7 @@ export async function getProblems(now = new Date()): Promise<{ items: Problem[];
             items.push(...result.value.items.map((item) => ({ ...item, library })));
             notices.push(...result.value.notices);
         } else {
-            logger.error(library === "email" ? "[problems] could not count failed email sends:" : `[problems] could not read ${library}'s stuck items:`, result.reason);
+            logger.error(library === "email" ? "[problems] could not count failed email sends:" : `[problems] could not read the stuck items in ${library}:`, result.reason);
             unread.push(library);
         }
     });

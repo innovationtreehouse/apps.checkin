@@ -40,6 +40,7 @@ jest.mock('@/lib/prisma', () => ({
     default: {
         $transaction: (fn: (t: unknown) => unknown) => fn(tx),
         auditLog: { create: jest.fn().mockResolvedValue({}) },
+        programParticipant: { findMany: jest.fn().mockResolvedValue([]) },
         person: { findUnique: jest.fn().mockResolvedValue({ dateOfBirth: null, isDeclaredAdult: true, householdId: 3 }) },
     },
 }));
@@ -91,5 +92,28 @@ describe('updateProgram audit', () => {
         await updateProgram(program, { leadMentorId: 9 }, actor);
         expect(lockLiveHouseholdsOf).toHaveBeenCalledWith(tx, [9]);
         expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(lockLiveHouseholdsOf.mock.invocationCallOrder[0]);
+    });
+});
+
+describe('updateProgram post-commit checks', () => {
+    // The caller's copy is stale: a concurrent edit already set the ages and opened the program.
+    const lockedRow = { ...program, phase: 'UPCOMING', enrollmentStatus: 'OPEN', minAge: 10 };
+
+    it('passes the locked row to the announce check as "before"', async () => {
+        tx.program.findUnique.mockResolvedValueOnce(lockedRow);
+        const { maybeAnnounceOnOpen } = jest.requireMock('@/lib/programAnnounce');
+        await updateProgram(program, { name: 'Woodshop' }, actor);
+        expect(maybeAnnounceOnOpen).toHaveBeenCalledWith(expect.objectContaining({ before: lockedRow }));
+    });
+
+    it('measures the age refit against the locked row', async () => {
+        tx.program.findUnique.mockResolvedValueOnce(lockedRow);
+        const prisma = jest.requireMock('@/lib/prisma').default;
+        prisma.programParticipant.findMany.mockResolvedValueOnce([
+            { status: 'ACTIVE', person: { name: 'Kid', dateOfBirth: new Date('2020-01-01'), isDeclaredAdult: false } },
+        ]);
+        const { emailBoardMembers } = jest.requireMock('@/lib/emailRecipients');
+        await updateProgram(program, { minAge: 10 }, actor);
+        expect(emailBoardMembers).not.toHaveBeenCalled();
     });
 });

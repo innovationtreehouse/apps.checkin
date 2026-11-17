@@ -44,8 +44,7 @@ export async function rerunMatching(row: PendingRow, actor: Actor): Promise<"ran
   for (const [receiptLineItemId, resolved] of matching.recognized) {
     const lineStatusId = lineIds.get(receiptLineItemId);
     if (lineStatusId === undefined) continue;
-    // The audit row commits with the match, so no match lands unlogged.
-    const wrote = await db.$transaction(async (tx) => {
+    const written = await db.$transaction(async (tx) => {
       const { count } = await tx.receivedReceiptLineStatus.updateMany({
         where: { id: lineStatusId, recognitionStatus: "unrecognized", receivedReceipt: EDITABLE_RECEIPT_WHERE },
         data: {
@@ -67,17 +66,19 @@ export async function rerunMatching(row: PendingRow, actor: Actor): Promise<"ran
       });
       return true;
     });
-    if (wrote) matched++;
+    if (written) matched++;
   }
 
-  await db.receivedReceipt.updateMany({ where: { id: row.id }, data: { matchingPendingSince: null } });
-  await insertAuditEvent(db, {
-    orgId: row.orgId,
-    actorUserId: actor.id,
-    actorUsername: actor.name,
-    eventType: "matching_ran",
-    receivedReceiptId: row.id,
-    details: JSON.stringify({ matched }),
+  await db.$transaction(async (tx) => {
+    await tx.receivedReceipt.updateMany({ where: { id: row.id }, data: { matchingPendingSince: null } });
+    await insertAuditEvent(tx, {
+      orgId: row.orgId,
+      actorUserId: actor.id,
+      actorUsername: actor.name,
+      eventType: "matching_ran",
+      receivedReceiptId: row.id,
+      details: JSON.stringify({ matched }),
+    });
   });
   await tryAutoProceedApply(row.id, row, actor);
   return "ran";
