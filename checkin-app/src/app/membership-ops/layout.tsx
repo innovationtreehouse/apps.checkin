@@ -38,7 +38,7 @@ export default function MembershipOpsLayout({ children }: { children: React.Reac
 
   // Right-aligned count badge for a tab: pending applications, or the member-family total.
   const badgeFor = (href: string): React.ReactNode => {
-    // Review and Applications show two badges each (see reviewBadges / applicationBadges),
+    // Review and Applications show several badges each (see reviewBadges / applicationBadges),
     // through the shared CountBadge so the tab count matches the left nav.
     const pair = href === "/membership-ops/review" ? reviewBadges(todoCounts)
       : href === "/membership-ops/applications" ? applicationBadges(todoCounts)
@@ -48,7 +48,7 @@ export default function MembershipOpsLayout({ children }: { children: React.Reac
       return (
         <Group gap={4} wrap="nowrap">
           {pair.map((b) => (
-            <CountBadge key={b.color} intent={badgeIntentFor(b.color) ?? "info"} aria-label={b.label}>
+            <CountBadge key={b.label} intent={badgeIntentFor(b.color) ?? "info"} aria-label={b.label}>
               {badgeText(b.count)}
             </CountBadge>
           ))}

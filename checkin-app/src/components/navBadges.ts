@@ -124,8 +124,9 @@ export function reviewBadges(counts: TodoCounts | null): NavBadge[] {
 }
 
 /**
- * Applications tab badges (0, 1, or 2): red = open applications still missing a
- * signature or a cleared check; gray = the rest of the open applications.
+ * Applications tab badges (0 to 3): red = paid applications of denied households
+ * awaiting a refund; red = open applications still missing a signature or a cleared
+ * check; gray = the rest of the open applications.
  */
 export function applicationBadges(counts: TodoCounts | null): NavBadge[] {
   const admin = counts?.admin;
@@ -133,11 +134,21 @@ export function applicationBadges(counts: TodoCounts | null): NavBadge[] {
   const incomplete = admin.applicationsIncomplete;
   const rest = admin.applicationsTotal - incomplete;
   const out: NavBadge[] = [];
+  const refund = refundOwedBadge(counts);
+  if (refund) out.push(refund);
   if (incomplete > 0)
     out.push({ count: incomplete, color: 'red', label: `${incomplete} application${plural(incomplete, '', 's')} missing a signature or background check` });
   if (rest > 0)
     out.push({ count: rest, color: 'gray', label: `${rest}${incomplete > 0 ? ' other' : ''} application${plural(rest, '', 's')}` });
   return out;
+}
+
+/** Red pill: paid applications of denied households with no refund recorded yet. */
+function refundOwedBadge(counts: TodoCounts | null): NavBadge | null {
+  const n = counts?.admin?.applicationsAwaitingRefund ?? 0;
+  return n > 0
+    ? { count: n, color: 'red', label: `${n} paid application${plural(n, '', 's')} of denied households awaiting a refund` }
+    : null;
 }
 
 /**
@@ -212,15 +223,17 @@ export function navBadgeFor(href: string, counts: TodoCounts | null): NavBadge[]
       const info = apps + awaiting;
       const infoLabel = `${apps} in-flight application${plural(apps, '', 's')}; ${awaiting} you approved awaiting a second reviewer`;
       // Red (blocking): people whose email bounced/complained (the Manage
-      // Memberships tab pill) plus applications missing a signature or a cleared
-      // check (the Applications tab's red pill).
+      // Memberships tab pill) plus the Applications tab's two red pills.
       const brokenEmails = counts.admin ? counts.admin.brokenEmails : 0;
+      const refund = refundOwedBadge(counts);
+      const redCount = brokenEmails + incomplete + (refund?.count ?? 0);
       const redParts = [
         brokenEmails > 0 ? `${brokenEmails} member${plural(brokenEmails, '', 's')} with an undeliverable email` : '',
         incomplete > 0 ? `${incomplete} application${plural(incomplete, '', 's')} missing a signature or background check` : '',
+        refund?.label ?? '',
       ].filter(Boolean);
-      const red = brokenEmails + incomplete > 0
-        ? [{ count: brokenEmails + incomplete, color: 'red', label: redParts.join('; ') }]
+      const red = redCount > 0
+        ? [{ count: redCount, color: 'red', label: redParts.join('; ') }]
         : [];
       return [
         ...red,
@@ -314,8 +327,8 @@ export function tabBadgeFor(href: string, counts: TodoCounts | null): NavBadge |
   switch (href) {
     case '/settings/membership':
       return settingsMisconfigBadge(counts);
-    // Applications: the red pill when any application is missing a signature or
-    // check, else the gray total. The tab itself shows both (applicationBadges).
+    // Applications: the first red pill, else the gray total. The tab itself shows
+    // all of them (applicationBadges).
     case '/membership-ops/applications':
       return applicationBadges(counts)[0] ?? null;
     // Manage Memberships (households). Red, blocking: members whose email Resend

@@ -105,6 +105,7 @@ const admin = (over: Partial<NonNullable<TodoCounts['admin']>> = {}): TodoCounts
     membership: 0,
     applicationsTotal: 0,
     applicationsIncomplete: 0,
+    applicationsAwaitingRefund: 0,
     paymentPlanPending: 0,
     membershipPaymentPlanPending: 0,
     trustedAdults: 0,
@@ -261,6 +262,27 @@ describe('tabBadgeFor', () => {
     expect(tabBadgeFor('/membership-ops/applications', counts)?.color).toBe('red');
     expect(applicationBadges(admin({ applicationsTotal: 1, applicationsIncomplete: 1 })))
       .toEqual([{ count: 1, color: 'red', label: '1 application missing a signature or background check' }]);
+  });
+
+  it('applications tab adds a red refund-owed pill beside the others, leaving them unchanged', () => {
+    const counts = admin({ applicationsTotal: 40, applicationsIncomplete: 3, applicationsAwaitingRefund: 2 });
+    expect(applicationBadges(counts)).toEqual([
+      { count: 2, color: 'red', label: '2 paid applications of denied households awaiting a refund' },
+      { count: 3, color: 'red', label: '3 applications missing a signature or background check' },
+      { count: 37, color: 'gray', label: '37 other applications' },
+    ]);
+    expect(applicationBadges(admin({ applicationsTotal: 1, applicationsAwaitingRefund: 1 })))
+      .toEqual([
+        { count: 1, color: 'red', label: '1 paid application of denied households awaiting a refund' },
+        { count: 1, color: 'gray', label: '1 application' },
+      ]);
+    expect(applicationBadges(admin({ applicationsTotal: 40, applicationsIncomplete: 3 }))).toHaveLength(2);
+  });
+
+  it('Membership Ops nav adds refund-owed applications to its red pill', () => {
+    expect(navBadgeFor('/membership-ops', admin({ applicationsTotal: 40, applicationsAwaitingRefund: 2 }))[0]).toEqual(
+      { count: 2, color: 'red', label: '2 paid applications of denied households awaiting a refund' },
+    );
   });
 
   it('Membership Ops nav folds incomplete applications into red and out of gray', () => {
