@@ -9,6 +9,7 @@
  *   applying ──PUSH_FAILED──────────────────► apply_failed
  *   applying ──RETRY────────────────────────► applying  (crash recovery)
  *   apply_failed ──RETRY────────────────────► applying
+ *   apply_failed ──CLOSE_OUT────────────────► closed_by_hand  (final)
  *
  * Initial state set at intake:
  *   - any unrecognized line item  → pending_review
@@ -48,9 +49,11 @@ export const workflowMappingMachine = setup({
     apply_failed: {
       on: {
         RETRY: "applying",
+        CLOSE_OUT: "closed_by_hand",
       },
     },
     resolved: { type: "final" },
+    closed_by_hand: { type: "final" },
   },
 });
 

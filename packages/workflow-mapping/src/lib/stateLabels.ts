@@ -4,6 +4,7 @@ export const STATE_LABEL: Record<string, string> = {
   applying: "Applying",
   apply_failed: "Apply failed",
   resolved: "Resolved",
+  closed_by_hand: "Closed by hand",
 };
 
 /** The state label, with a resolved receipt's lines still open on the receive queue counted. */

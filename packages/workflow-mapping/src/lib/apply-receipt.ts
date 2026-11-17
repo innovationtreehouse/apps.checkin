@@ -10,6 +10,7 @@ import type { Prisma } from "../generated/prisma/client";
 import { getOrgId, ports } from "../runtime";
 import { parseStoredReceipt } from "./parse-receipt";
 import { insertAuditEvent } from "./audit";
+import { isInventoryLine } from "./legs";
 
 export type ApplyResult =
   | { state: "resolved" }
@@ -155,12 +156,6 @@ async function recordFailure(
 ): Promise<void> {
   await client.receivedReceipt.update({ where: { id: receiptId }, data: { ...data, validationNotes: error } });
   await client.receivedReceipt.updateMany({ where: { id: receiptId, applyFirstFailedAt: null }, data: { applyFirstFailedAt: new Date() } });
-}
-
-/** A line the inventory leg carries. */
-function isInventoryLine(ls: LineStatusFields): boolean {
-  if (ls.recognitionStatus === "provisional") return !!ls.provisionalItemGtin13;
-  return ls.recognitionStatus === "recognized" && ls.assignedGtin13 != null;
 }
 
 async function pushAndSettle(
