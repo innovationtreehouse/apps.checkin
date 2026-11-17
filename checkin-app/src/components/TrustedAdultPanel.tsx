@@ -109,7 +109,7 @@ export default function TrustedAdultPanel() {
     // Open the modal to answer the board's question, pre-filled with the facts the review
     // carries (its proposed edits if any, else the adult's record).
     const startAnswer = useCallback((ta: TrustedAdult, review: Review) => {
-        const edited = review.proposedName !== null;
+        const edited = review.proposedName != null;
         setResubmitId(ta.id);
         setAnswering(true);
         setReply("");
@@ -223,6 +223,7 @@ export default function TrustedAdultPanel() {
                 const liveApproval = ta.reviews.find((r) => isAuthorizedApproval(r, new Date())) ?? null;
                 const latestPending = !!latest && (latest.status === "PENDING_BOARD_REVIEW" || latest.status === "PENDING_SUBJECT_ACTION");
                 const changePending = !!liveApproval && latestPending;
+                const needsAnswer = latest?.status === "PENDING_SUBJECT_ACTION";
                 const changeDeclined = !!liveApproval && latest?.status === "DENIED";
                 // An approval past its date reads as expired before the nightly sweep flips it.
                 const effectiveStatus = liveApproval ? "APPROVED" : latest?.status === "APPROVED" ? "EXPIRED" : (latest?.status ?? "PENDING_BOARD_REVIEW");
@@ -249,14 +250,19 @@ export default function TrustedAdultPanel() {
                                 <Text size="sm" mt={4}>{ta.familyContext}</Text>
                                 {latestPending && latest?.proposedName != null && (
                                     <Card withBorder radius="sm" padding="xs" mt={6} bg="var(--mantine-color-blue-light)">
-                                        <Text size="xs" fw={600} c="blue">Pending update — awaiting the board</Text>
+                                        <Text size="xs" fw={600} c="blue">
+                                            {needsAnswer ? "Pending update — the board needs more information" : "Pending update — awaiting the board"}
+                                        </Text>
                                         <Text size="sm">{latest.proposedName}</Text>
                                         <TrustedAdultContact phone={latest.proposedPhone} email={latest.proposedEmail} />
                                         <Text size="sm">{latest.proposedContext}</Text>
                                         {liveApproval && <Text size="xs" c="dimmed" mt={2}>Your existing approval stays in effect until the board reviews this.</Text>}
                                     </Card>
                                 )}
-                                {changePending && latest?.proposedName == null && (
+                                {needsAnswer && liveApproval && (
+                                    <Text size="xs" c="orange" mt={4}>The board needs more information about your recent request — see email. Your approval stays in effect meanwhile.</Text>
+                                )}
+                                {changePending && !needsAnswer && latest?.proposedName == null && (
                                     <Text size="xs" c="blue" mt={4}>Resubmission awaiting board review — your approval stays in effect meanwhile.</Text>
                                 )}
                                 {changeDeclined && (

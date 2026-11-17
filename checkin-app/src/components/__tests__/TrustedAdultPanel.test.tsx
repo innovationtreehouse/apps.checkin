@@ -23,6 +23,10 @@ const trustedAdult = (overrides: Partial<{ id: number; status: string; reviewBy:
       sharedNote: null,
       effectiveFrom: "2026-01-01T00:00:00.000Z",
       reviewBy: overrides.reviewBy ?? "2027-01-01T00:00:00.000Z",
+      proposedName: null,
+      proposedPhone: null,
+      proposedEmail: null,
+      proposedContext: null,
       createdAt: "2026-01-01T00:00:00.000Z",
     },
   ],
@@ -97,6 +101,37 @@ describe("TrustedAdultPanel", () => {
     );
     // Submitting closes the modal and reloads the list.
     await waitFor(() => expect(screen.queryByRole("button", { name: /Submit for board review/i })).not.toBeInTheDocument());
+  });
+
+  it("answers the board's request for more information and sends it back", async () => {
+    const fetchSpy = mockFetchJson({
+      "/api/trusted-adults/mine": { trustedAdults: [trustedAdult({ status: "PENDING_SUBJECT_ACTION" })] },
+      "/api/trusted-adults/1/resubmit": { reviewId: 1 },
+    });
+    renderWithProviders(<TrustedAdultPanel />);
+    await screen.findByText("Board needs more info — see email");
+
+    fireEvent.click(screen.getByRole("button", { name: "Answer the board" }));
+    expect(await screen.findByLabelText(/Trusted adult's name/i)).toHaveValue("Jane Doe");
+    fireEvent.change(screen.getByLabelText("Your reply to the board"), { target: { value: "Fridays only." } });
+    fireEvent.click(screen.getByRole("button", { name: "Send back to the Board" }));
+
+    await waitFor(() =>
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "/api/trusted-adults/1/resubmit",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            trustedAdultName: "Jane Doe",
+            trustedAdultPhone: "555-010-0000",
+            trustedAdultEmail: "",
+            familyContext: "Aunt, may pick up the kids.",
+            answer: true,
+            reply: "Fridays only.",
+          }),
+        }),
+      ),
+    );
   });
 
   it("withdraws an approved entry via the action endpoint", async () => {

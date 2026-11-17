@@ -291,7 +291,7 @@ export async function answerInfoRequest(id: number, actorId: number, input: Answ
             where: { id: latest.id },
             data: {
                 status: "PENDING_BOARD_REVIEW",
-                familyReply: reply,
+                ...(reply ? { familyReply: reply } : {}),
                 ...(changed
                     ? { proposedName: next.name, proposedPhone: next.phone, proposedEmail: next.email, proposedContext: next.context }
                     : {}),
