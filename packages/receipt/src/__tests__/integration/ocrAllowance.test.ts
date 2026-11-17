@@ -2,6 +2,7 @@ import { beforeEach, expect, it } from "vitest";
 import { db } from "../../db";
 import { receiptService } from "../../services/receiptService";
 import type { ReceiptLimits } from "../../lib/limits";
+import { inertReimbursees } from "../../runtime";
 import { describeDb } from "../helpers/db";
 import { ALICE, BOB, FINANCE, actAs, clearAll, configure, failingOcr, okOcr, recordingPorts, textFile } from "../helpers/setup";
 
@@ -14,6 +15,9 @@ const ONE_A_DAY: ReceiptLimits = {
   ocrCallsPerPersonPerDay: 1,
 };
 
+const known = new Set([ALICE.id, BOB.id]);
+const people = { ...inertReimbursees, byId: async (id: number) => (known.has(id) ? { id, name: "Someone", isAdult: true } : null) };
+
 const read = () => receiptService.upload(textFile(), "text/plain", {});
 
 async function reset(personId: number, reason = "a batch of conference receipts") {
@@ -25,7 +29,7 @@ async function reset(personId: number, reason = "a batch of conference receipts"
 
 beforeEach(async () => {
   await clearAll();
-  configure({ receiptSink: recordingPorts().receiptSink, ocr: okOcr(), limits: ONE_A_DAY });
+  configure({ receiptSink: recordingPorts().receiptSink, ocr: okOcr(), limits: ONE_A_DAY, reimbursees: people });
 });
 
 describeDb("resetting a person's reading allowance", () => {
@@ -44,7 +48,7 @@ describeDb("resetting a person's reading allowance", () => {
   });
 
   it("counts a failed reading after the reset", async () => {
-    configure({ receiptSink: recordingPorts().receiptSink, ocr: failingOcr("data"), limits: ONE_A_DAY });
+    configure({ receiptSink: recordingPorts().receiptSink, ocr: failingOcr("data"), limits: ONE_A_DAY, reimbursees: people });
     const failed = await read();
     await reset(ALICE.id);
     await receiptService.retryOcr(failed.id, "submitter");
@@ -65,6 +69,11 @@ describeDb("resetting a person's reading allowance", () => {
     expect(await db.receiptAuditLog.findMany({ where: { action: "ocr_allowance_reset" } })).toEqual([
       expect.objectContaining({ receiptId: null, userId: FINANCE.id, username: FINANCE.name, fieldChanged: "person", valueBefore: String(ALICE.id), valueAfter: "re-sent statements" }),
     ]);
+  });
+
+  it("refuses a person who does not exist, writing nothing", async () => {
+    await expect(reset(999_999)).rejects.toMatchObject({ status: 404 });
+    expect(await db.receiptAuditLog.count({ where: { action: "ocr_allowance_reset" } })).toBe(0);
   });
 
   it("needs a reason", async () => {

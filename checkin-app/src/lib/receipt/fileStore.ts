@@ -2,6 +2,7 @@
  * The receipt library's file store. Deployed instances use a private bucket
  * with the ECS task role, as the membership agreement does; a laptop uses a temp directory.
  */
+import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -59,7 +60,9 @@ export function receiptFileStore(): ReceiptFileStore {
 
 export function createTempDirFileStore(root = join(tmpdir(), "checkin-receipt-files")): ReceiptFileStore {
     return {
-        async put(key, bytes) {
+        // Refuses bytes that miss their hash, as S3 does with ChecksumSHA256.
+        async put(key, bytes, sha256) {
+            if (createHash("sha256").update(bytes).digest("hex") !== sha256) throw new Error(`File ${key} does not match its SHA-256`);
             const path = join(root, key);
             await mkdir(dirname(path), { recursive: true });
             await writeFile(path, bytes, { flag: "wx" });

@@ -272,7 +272,7 @@ flag is on in a given environment, is set outside this repo.
   takes no AWS dependency. `checkin-app/src/lib/receipt/fileStore.ts` binds S3 on
   every deployed instance and a temp directory under `CHECKIN_ENV=local`. The S3 put
   is write-once (`If-None-Match: *`) and carries a SHA-256 checksum. The temp-directory
-  store refuses a second write and does not check the hash.
+  store also refuses a second write, and refuses bytes that miss their SHA-256.
 - `file_key` and `file_size` exist on `receipts` and `receipt_mail_items`, and
   `receipts.file_blob` is nullable.
 - `RECEIPT_FILES_S3=true` sends new files to the bucket. The object goes first and
