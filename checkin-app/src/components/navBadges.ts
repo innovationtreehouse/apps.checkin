@@ -124,9 +124,9 @@ export function reviewBadges(counts: TodoCounts | null): NavBadge[] {
 }
 
 /**
- * Applications tab badges (0 to 3): red = paid applications of denied households
- * awaiting a refund; red = open applications still missing a signature or a cleared
- * check; gray = the rest of the open applications.
+ * Applications tab badges (0, 1, or 2): red = open applications still missing a
+ * signature or a cleared check, plus paid applications of denied households awaiting
+ * a refund; gray = the rest of the open applications.
  */
 export function applicationBadges(counts: TodoCounts | null): NavBadge[] {
   const admin = counts?.admin;
@@ -134,20 +134,20 @@ export function applicationBadges(counts: TodoCounts | null): NavBadge[] {
   const incomplete = admin.applicationsIncomplete;
   const rest = admin.applicationsTotal - incomplete;
   const out: NavBadge[] = [];
-  const refund = refundOwedBadge(counts);
-  if (refund) out.push(refund);
   if (incomplete > 0)
     out.push({ count: incomplete, color: 'red', label: `${incomplete} application${plural(incomplete, '', 's')} missing a signature or background check` });
+  const refund = refundOwedBadge(counts);
+  if (refund) out.push(refund);
   if (rest > 0)
     out.push({ count: rest, color: 'gray', label: `${rest}${incomplete > 0 ? ' other' : ''} application${plural(rest, '', 's')}` });
-  return out;
+  return foldBadges(out);
 }
 
 /** Red pill: paid applications of denied households with no refund recorded yet. */
 function refundOwedBadge(counts: TodoCounts | null): NavBadge | null {
   const n = counts?.admin?.applicationsAwaitingRefund ?? 0;
   return n > 0
-    ? { count: n, color: 'red', label: `${n} paid application${plural(n, '', 's')} of denied households awaiting a refund` }
+    ? { count: n, color: 'red', label: `${n} paid application${plural(n, ' of a denied household', 's of denied households')} awaiting a refund` }
     : null;
 }
 
@@ -327,8 +327,8 @@ export function tabBadgeFor(href: string, counts: TodoCounts | null): NavBadge |
   switch (href) {
     case '/settings/membership':
       return settingsMisconfigBadge(counts);
-    // Applications: the first red pill, else the gray total. The tab itself shows
-    // all of them (applicationBadges).
+    // Applications: the red pill when any application is missing a signature or
+    // check or awaits a refund, else the gray total. The tab itself shows both (applicationBadges).
     case '/membership-ops/applications':
       return applicationBadges(counts)[0] ?? null;
     // Manage Memberships (households). Red, blocking: members whose email Resend

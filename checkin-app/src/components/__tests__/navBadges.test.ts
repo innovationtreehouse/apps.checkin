@@ -264,19 +264,17 @@ describe('tabBadgeFor', () => {
       .toEqual([{ count: 1, color: 'red', label: '1 application missing a signature or background check' }]);
   });
 
-  it('applications tab adds a red refund-owed pill beside the others, leaving them unchanged', () => {
-    const counts = admin({ applicationsTotal: 40, applicationsIncomplete: 3, applicationsAwaitingRefund: 2 });
+  it('applications tab folds refund-owed applications into the one red pill', () => {
+    const counts = admin({ applicationsTotal: 40, applicationsIncomplete: 2, applicationsAwaitingRefund: 1 });
     expect(applicationBadges(counts)).toEqual([
-      { count: 2, color: 'red', label: '2 paid applications of denied households awaiting a refund' },
-      { count: 3, color: 'red', label: '3 applications missing a signature or background check' },
-      { count: 37, color: 'gray', label: '37 other applications' },
+      { count: 3, color: 'red', label: '2 applications missing a signature or background check; 1 paid application of a denied household awaiting a refund' },
+      { count: 38, color: 'gray', label: '38 other applications' },
     ]);
-    expect(applicationBadges(admin({ applicationsTotal: 1, applicationsAwaitingRefund: 1 })))
+    expect(applicationBadges(admin({ applicationsTotal: 2, applicationsAwaitingRefund: 2 })))
       .toEqual([
-        { count: 1, color: 'red', label: '1 paid application of denied households awaiting a refund' },
-        { count: 1, color: 'gray', label: '1 application' },
+        { count: 2, color: 'red', label: '2 paid applications of denied households awaiting a refund' },
+        { count: 2, color: 'gray', label: '2 applications' },
       ]);
-    expect(applicationBadges(admin({ applicationsTotal: 40, applicationsIncomplete: 3 }))).toHaveLength(2);
   });
 
   it('Membership Ops nav adds refund-owed applications to its red pill', () => {
