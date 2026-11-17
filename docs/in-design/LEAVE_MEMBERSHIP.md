@@ -69,7 +69,8 @@ No existing rule changes. The new rules are listed under
 ### 2. What it does
 
 The note is recorded against the coming membership year: the year after the one
-now in effect. It means "we won't be renewing into that year".
+now in effect. It means "we won't be renewing into that year". A lead may say it
+at any time of year, not only inside the renewal window.
 
 | Thing | Effect |
 |---|---|
@@ -232,13 +233,6 @@ Board's households list.
 - Flow: `checkin-app/flow-tests/not-renewing.flow.test.ts`: a seeded lead marks the
   household, the outreach audience no longer contains it, the lead undoes it and
   it returns.
-
-## Open questions for the owner
-
-| ID | Question | Default |
-|---|---|---|
-| L11 | The control's wording: "We won't be renewing", or other words? | "We won't be renewing", with the label "Not renewing" for the Board. |
-| L12 | Should the family be able to say it outside the renewal window, for example in March? | Yes, at any time; it applies to the coming year. |
 
 ## PR plan
 
