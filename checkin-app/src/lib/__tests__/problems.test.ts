@@ -205,7 +205,7 @@ describe("sendProblemsDigest", () => {
         await sendProblemsDigest(NOW);
 
         expect(jest.mocked(sendTemplated).mock.calls.map((c) => c[1])).toEqual(["alerts@example.org"]);
-        expect(digestCtx().items).toBe("Could not read gifts's stuck items.\nFailed email sends could not be counted.");
+        expect(digestCtx().items).toBe("Could not read the stuck items in gifts.\nFailed email sends could not be counted.");
     });
 
     it("copies the Board once anything has been stuck more than two weeks", async () => {
