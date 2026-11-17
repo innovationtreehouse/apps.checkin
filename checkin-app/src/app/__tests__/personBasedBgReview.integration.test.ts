@@ -466,7 +466,15 @@ describe('B27: the Board closes a review opened for the wrong person, and may re
         expect((await row(own)).status).toBe('ARCHIVED');
     });
 
-    it('refuses to reopen once another review has been opened for the person, even one closed since', async () => {
+    it('the daily sweep does not re-block after a close', async () => {
+        const { f, own } = await blockedFamily();
+        await close(own);
+        await settleApplicationsAwaitingCheck();
+        expect((await row(f.appId)).status).toBe('PENDING_EXTERNAL_ACTION');
+        expect((await row(own)).status).toBe('ARCHIVED');
+    });
+
+    it('refuses to reopen once another review has been opened for the person, as the sweep opens one, even one closed since', async () => {
         const { f, own } = await blockedFamily();
         await close(own);
         const fresh = await ownReview(f.adultId);
