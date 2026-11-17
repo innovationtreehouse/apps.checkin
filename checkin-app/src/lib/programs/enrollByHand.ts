@@ -20,7 +20,7 @@ export type HandProgram = {
     maxParticipants: number | null;
     shopifyVariantId: string | null;
     claimantShopifyVariantId: string | null;
-    startAt: Date | null;
+    startAt: Date;
     offSaleAt: Date | null;
     saleEndedAt: Date | null;
 };

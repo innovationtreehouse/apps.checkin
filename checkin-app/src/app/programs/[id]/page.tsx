@@ -40,7 +40,7 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
   );
 
   const user = session?.user;
-  const canManage = !!(session && (user?.isSysadmin || user?.isBoardMember || user?.id === program.leadMentorId));
+  const canManage = !!(session && (user?.isSysadmin || user?.isBoardMember || user?.isFinance || user?.id === program.leadMentorId));
 
   // My household's already-enrolled members — shown so a returning parent doesn't
   // re-attempt an enrollment that would 409. name/householdId are public tier, so

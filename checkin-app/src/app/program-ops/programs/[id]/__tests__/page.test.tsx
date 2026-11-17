@@ -327,7 +327,7 @@ describe("ProgramDetailsPage", () => {
     expect(screen.queryByRole("button", { name: "Change" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
-    expect(await screen.findByText(/Program Leads cannot manually enroll participants/)).toBeInTheDocument();
+    expect(await screen.findByText(/Only the Board or Finance enroll participants here/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Enroll" })).not.toBeInTheDocument();
   });
 
@@ -426,8 +426,8 @@ describe("ProgramDetailsPage", () => {
     expect(await screen.findByText("No events scheduled.")).toBeInTheDocument();
   });
 
-  it("enrolls a participant after the sysadmin confirms, shows the server's age warning, and shows a server error otherwise", async () => {
-    setSession({ id: 1, isSysadmin: true });
+  it("enrolls a picked participant once the Board says what it stands for, and shows a server error otherwise", async () => {
+    setSession({ id: 1, isBoardMember: true });
     const eligible = {
       members: [
         { id: 777, name: "Gerry Grownup", ageWarning: null },
@@ -454,30 +454,32 @@ describe("ProgramDetailsPage", () => {
     fireEvent.click(screen.getByText("Gerry Grownup"));
 
     fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
-    const declineModal = await screen.findByRole("dialog", { name: "Add Participant Manually" });
+    const declineModal = await screen.findByRole("dialog", { name: "Enroll Gerry Grownup" });
     fireEvent.click(within(declineModal).getByRole("button", { name: "Cancel" }));
     expect(fetchMock).not.toHaveBeenCalledWith("/api/programs/1/participants", expect.anything());
 
     fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
-    const failModal = await screen.findByRole("dialog", { name: "Add Participant Manually" });
-    fireEvent.click(within(failModal).getByRole("button", { name: "Add Participant" }));
+    const modal = await screen.findByRole("dialog", { name: "Enroll Gerry Grownup" });
+    expect(within(modal).getByRole("button", { name: "Enroll" })).toBeDisabled();
+    expect(within(modal).queryByText("This bypasses all payment.")).not.toBeInTheDocument();
+    fireEvent.click(within(modal).getByLabelText("No payment (comp)"));
+    expect(within(modal).getByText("This bypasses all payment.")).toBeInTheDocument();
+    fireEvent.click(within(modal).getByRole("button", { name: "Enroll" }));
     await waitFor(() =>
       expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Program is full.", autoClose: false })),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
-    const retryModal = await screen.findByRole("dialog", { name: "Add Participant Manually" });
-    fireEvent.click(within(retryModal).getByRole("button", { name: "Add Participant" }));
+    fireEvent.click(within(modal).getByRole("button", { name: "Enroll" }));
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/programs/1/participants",
-        expect.objectContaining({ method: "POST", body: JSON.stringify({ participantId: 777, override: true }) }),
+        expect.objectContaining({ method: "POST", body: JSON.stringify({ participantId: 777, basis: "COMP", override: true }) }),
       ),
     );
   });
 
   it("says so when an enrolment never reaches the server, and keeps the pick", async () => {
-    setSession({ id: 1, isSysadmin: true });
+    setSession({ id: 1, isBoardMember: true });
     routedFetch([
       { url: "/api/programs/1/eligible-participants", method: "GET", result: { ok: true, body: { members: [{ id: 777, name: "Gerry Grownup", ageWarning: null }] } } },
       { url: "/api/programs/1/participants", method: "POST", result: { throws: true } },
@@ -490,15 +492,59 @@ describe("ProgramDetailsPage", () => {
     fireEvent.change((await screen.findAllByPlaceholderText("Start typing to search..."))[1], { target: { value: "G" } });
     fireEvent.click(await screen.findByText("Gerry Grownup"));
     fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
-    fireEvent.click(within(await screen.findByRole("dialog", { name: "Add Participant Manually" })).getByRole("button", { name: "Add Participant" }));
+    const modal = await screen.findByRole("dialog", { name: "Enroll Gerry Grownup" });
+    fireEvent.click(within(modal).getByLabelText("Paid outside the store"));
+    fireEvent.click(within(modal).getByRole("button", { name: "Enroll" }));
 
     await waitFor(() =>
       expect(notifications.show).toHaveBeenCalledWith(
         expect.objectContaining({ color: "red", message: "Couldn't reach the server. Check your connection and try again.", autoClose: false }),
       ),
     );
-    expect(screen.getByRole("button", { name: "Enroll" })).toBeEnabled();
     expect(screen.getByDisplayValue("Gerry Grownup")).toBeInTheDocument();
+  });
+
+  it("gives a sysadmin no Enroll button", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({ "/api/programs/1": programData });
+    renderPage();
+    await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
+
+    expect(await screen.findByText(/Only the Board or Finance enroll participants here/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Enroll" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Actions for Charlie Kid" }));
+    expect(screen.queryByRole("menuitem", { name: "Enroll" })).not.toBeInTheDocument();
+  });
+
+  it("shows Finance only the roster, and enrolls an unpaid place paid by check from its row menu", async () => {
+    setSession({ id: 9, isFinance: true });
+    const fetchMock = routedFetch([
+      { url: "/api/programs/1/participants", method: "POST", result: { ok: true, body: {} } },
+      { url: "/api/programs/1", method: "GET", result: { ok: true, body: programData } },
+    ]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
+    expect(screen.queryByRole("tab", { name: "General" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Events" })).not.toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Actions for Charlie Kid" }));
+    expect(screen.queryByRole("menuitem", { name: "Remove" })).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Enroll" }));
+    const modal = await screen.findByRole("dialog", { name: "Enroll Charlie Kid" });
+    fireEvent.click(within(modal).getByLabelText("Store order matched by hand"));
+    fireEvent.change(within(modal).getByLabelText(/Store order id/), { target: { value: "#12" } });
+    expect(within(modal).getByRole("button", { name: "Enroll" })).toBeDisabled();
+    fireEvent.click(within(modal).getByLabelText("Paid outside the store"));
+    fireEvent.change(within(modal).getByLabelText(/Note/), { target: { value: "check 7" } });
+    fireEvent.click(within(modal).getByRole("button", { name: "Enroll" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/programs/1/participants",
+        expect.objectContaining({ method: "POST", body: JSON.stringify({ participantId: 102, basis: "OUTSIDE_PAYMENT", note: "check 7" }) }),
+      ),
+    );
   });
 
   it("renders the parents above the emergency contacts, skipping a participant who leads their own household", async () => {
