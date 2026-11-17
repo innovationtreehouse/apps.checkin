@@ -1,6 +1,6 @@
 /**
  * The global catalog in the browser. The catalog audience reads it; only inventory managers
- * write it (docs/rules/inventory.md → Access). Errors are red chips that stay until dismissed.
+ * write it. Errors are red chips that stay until dismissed.
  * Every page must show no error beyond the one a test provokes (support/pageErrors).
  */
 import { expect, test, type Page } from "@playwright/test";

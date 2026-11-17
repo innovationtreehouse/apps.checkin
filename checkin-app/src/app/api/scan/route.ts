@@ -18,7 +18,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { lastNightlyCloseAt } from "@/lib/attendance/nightlyClose";
 import { type ScanResult, toResponse } from "./scanResponse";
 
-// docs/rules/attendance-checkin.md (kiosk resilience): a replayed scan older
+// A replayed scan older
 // than this still applies, and is also flagged for human review — state may
 // have moved on while the kiosk was offline.
 const REPLAY_FRESHNESS_WINDOW_MS = 10 * 60 * 1000;
@@ -59,8 +59,7 @@ const maxDate = (a: Date | null, b: Date | null): Date | null =>
     !a ? b : !b ? a : (a > b ? a : b);
 
 // High cap: kiosks burst and a whole facility may share one NAT IP. withKiosk
-// reads the raw body and authenticates it; only a signed kiosk scans
-// (docs/rules/attendance-checkin.md, Opening and closing).
+// reads the raw body and authenticates it; only a signed kiosk scans.
 export const POST = withKiosk(
     { rateLimit: { name: "scan", limit: 300 } },
     async (_req, body: { participantId?: unknown; clientEventId?: unknown; scannedAt?: unknown; replay?: unknown; forceCloseToken?: unknown; forceCloseConfirmed?: unknown; dead?: unknown; deadStatus?: unknown; intent?: unknown; clockSuspect?: unknown; shownEmpty?: unknown; rosterAsOf?: unknown; protocolVersion?: unknown; close?: unknown; scanTimeUncertaintyMs?: unknown }, auth) => {
@@ -117,8 +116,7 @@ export const POST = withKiosk(
                 ? body.forceCloseToken
                 : null;
 
-        // A keyholder's close, decided at the kiosk (docs/rules/attendance-checkin.md,
-        // Opening and closing). An older kiosk's offline confirm flag, or a token it
+        // A keyholder's close, decided at the kiosk. An older kiosk's offline confirm flag, or a token it
         // echoes on the second scan of the same badge, is the same decision.
         const requestedClose: CloseKind | null = body.close === 'alone' || body.close === 'confirmed'
             ? body.close

@@ -1,6 +1,6 @@
 /**
- * The back-office list of extra addresses a person's receipt mail may come from
- * (docs/rules/people-households.md, Identity and age). Routes gate on finance-or-board. Audit rows carry no address.
+ * The back-office list of extra addresses a person's receipt mail may come from.
+ * Routes gate on finance-or-board. Audit rows carry no address.
  */
 import { mailQueueService } from "@checkin/receipt";
 import { ServiceError } from "@checkin/component-kit";

@@ -1,8 +1,8 @@
 /**
  * @jest-environment node
  */
-// Program staff and sysadmins see whether a place is paid, never how
-// (docs/rules/programs.md, Access to program information). View tokens come from
+// Program staff and sysadmins see whether a place is paid, never how.
+// View tokens come from
 // the live registry, so these pins track policy edits.
 import { stripValue } from '@/security/stripper';
 import { type CallerContext } from '@/security/access-resolvers';

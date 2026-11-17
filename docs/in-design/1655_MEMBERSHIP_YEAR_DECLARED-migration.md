@@ -258,7 +258,7 @@ variant, so a local instance with the Shopify mock active still opens renewals.
 - **Files:** `runRenewalSweep` in `checkin-app/src/lib/membership/renewal.ts`: a
   second early return when the coming year has no row, with a reason naming it.
 - **Rules:** applies the sweep line in the Destination, then confirms every block
-  there is in `docs/rules/membership.md`.
+  there is recorded.
 - **Tests:** unit (`renewal.test.ts`) and integration (`membershipBulkRenewalAPI`).
 - **Migration safety:** none.
 - **Blocked on:** PR 8.
@@ -291,7 +291,7 @@ which PR 4 moves to the recorded year.
 not equality between a settlement's year and the program's (design, "Program
 pricing needs nothing new").
 
-## Destination: `docs/rules/membership.md`
+## Destination
 
 **Replace** the Renewal line beginning "Settling inside the renewal window buys the
 coming membership year" with (PR 4):
@@ -326,5 +326,5 @@ into the rules file.
 
 ## Last step
 
-In PR 10: confirm every block above is in `docs/rules/membership.md`, then delete
+In PR 10: confirm every block above is recorded as a standing rule, then delete
 both files in this directory.

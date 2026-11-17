@@ -1,6 +1,6 @@
 /**
  * Which QuickBooks account types each books-map role and each per-item line
- * accepts (docs/rules/revenue.md). Every account save and picker, and System
+ * accepts. Every account save and picker, and System
  * Status, read these lists; values are QuickBooks' AccountType names.
  */
 import type { BooksMapRole } from "./booksMap";

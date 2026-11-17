@@ -117,6 +117,6 @@ In-transaction sites outside these files keep their hand-built payloads.
 
 ## Last step
 
-When PR 7 merges: extract the rule in `AUDIT_IN_TRANSACTION.md` → *Rules relied
-on or changed* into `docs/rules/principles.md` → *Accountability*, and delete both
+When PR 7 merges: record the rule in `AUDIT_IN_TRANSACTION.md` → *Rules relied
+on or changed* as a standing rule under *Accountability*, and delete both
 files.

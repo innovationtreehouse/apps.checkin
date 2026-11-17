@@ -376,8 +376,7 @@ describe('POST /api/scan', () => {
         });
     });
 
-    // Replayed-scan idempotency (docs/rules/attendance-checkin.md, kiosk
-    // resilience). `replay: true` marks a redelivery; the try-first rule puts
+    // Replayed-scan idempotency. `replay: true` marks a redelivery; the try-first rule puts
     // clientEventId on the live attempt too, so the id alone never implies a replay.
     describe('replayed scans (clientEventId/scannedAt)', () => {
         function replayReq(overrides: Record<string, unknown> = {}) {

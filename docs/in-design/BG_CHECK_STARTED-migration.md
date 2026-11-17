@@ -1,7 +1,7 @@
 # Cutover: "check started" moves off the household application
 
-Everything here expires once the change has run. The rules are in
-`docs/rules/membership.md` (*Background checks for individual adults*) and
+Everything here expires once the change has run. The rules are under
+*Background checks for individual adults*, and the terms in
 `docs/VOCABULARY.md` (**Consent**, **Check started**).
 
 ## Where it stands
@@ -53,7 +53,7 @@ merged.
      There is no boundary change: the route is on the legacy baseline.
    - The Board's button beside the wrong-person reset.
    - In the same PR: apply the amended B5/B25 line and its two procedure lines from
-     the draft amendment below to `docs/rules/membership.md`, with the Board's adoption noted
+     the draft amendment below as standing rules, with the Board's adoption noted
      in the PR body, not in the rule.
 
    In the same PR, delete the close section and the draft amendment below.
@@ -152,7 +152,7 @@ adopted the amendment below.
 
 Needs Board approval. Nothing here is a rule until the Board adopts it.
 
-Current text (`docs/rules/membership.md`, *Application and review*):
+Current text (*Application and review*):
 
 > - Nobody clears a blocked application on their own. After a rejection the check
 >   needs two approvals again, from two independent reviewers.  [Decision — Board ruling B5/B25]

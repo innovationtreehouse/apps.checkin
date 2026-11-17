@@ -1,7 +1,7 @@
 /**
  * Programs in the browser: the Board creating one, families claiming, paying and asking for a
- * scholarship, the leader's roster and attendance, and the Board's removals
- * (docs/rules/programs.md). Every test makes its own program and families, so a rerun on the same
+ * scholarship, the leader's roster and attendance, and the Board's removals.
+ * Every test makes its own program and families, so a rerun on the same
  * stack starts clean. The local dev mock pays the checkout in place of Shopify.
  */
 import { expect, test, type Locator, type Page } from "@playwright/test";

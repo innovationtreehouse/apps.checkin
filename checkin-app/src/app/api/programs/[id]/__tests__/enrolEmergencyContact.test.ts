@@ -2,7 +2,7 @@
  * @jest-environment node
  *
  * A family enrols only with a valid emergency contact on file; a staff roster
- * add is exempt (docs/rules/programs.md, Enrollment).
+ * add is exempt.
  */
 import type { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";

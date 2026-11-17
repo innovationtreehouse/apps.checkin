@@ -3,8 +3,8 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 /**
- * Fails on a reader of the copy of QuickBooks' lists that could offer an inactive entry
- * (docs/rules/revenue.md): every file that loads either list route filters on `.active`
+ * Fails on a reader of the copy of QuickBooks' lists that could offer an inactive entry:
+ * every file that loads either list route filters on `.active`
  * and shows a stored inactive pick with InactivePickWarning.
  *
  * ponytail: text match on the route paths. A reader that builds the path from parts, or

@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 // A scholarship or payment-plan request is the Board's and finance's alone; no
-// other staff role sees one by default (docs/rules/revenue.md, Ownership). The
+// other staff role sees one by default. The
 // `hardship` tier carries those fields, and only Board and finance views hold a
 // hardship token. View tokens and tiers come from the live registry and
 // classifications, so these pins track policy edits.

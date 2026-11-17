@@ -101,7 +101,7 @@ describe('Program payment-plan routes', () => {
 
         const self = await prisma.person.create({
             // Adult DOB: this persona requests its OWN payment plan, and only a
-            // known adult may (docs/rules/programs.md).
+            // known adult may.
             data: {
                 name: 'PP Self',
                 email: `self-${TAG}@example.com`,

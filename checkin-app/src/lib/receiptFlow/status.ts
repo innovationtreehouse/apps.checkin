@@ -1,7 +1,7 @@
 /**
  * The receipt flow status page's counts: how many records each library holds in each state.
- * FINANCE and BOARD get every section; an inventory manager gets receiving alone
- * (docs/rules/inventory.md, Access). A section is null when its library has no database here.
+ * FINANCE and BOARD get every section; an inventory manager gets receiving alone.
+ * A section is null when its library has no database here.
  */
 import { expenseStateCounts } from "@checkin/expense";
 import { receiptStateCounts } from "@checkin/receipt";

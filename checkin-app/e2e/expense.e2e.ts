@@ -1,8 +1,7 @@
 /**
  * Expenses in the browser: the expense list and detail for FINANCE, the Board and a bucket's
  * owner, and the exception path on a line. FINANCE or the Board reach Expense Ops; a bucket's
- * approvers reach their buckets' expenses (docs/rules/expenses.md → Who may see and do what,
- * Budget buckets). Every page must show no error (support/pageErrors).
+ * approvers reach their buckets' expenses. Every page must show no error (support/pageErrors).
  */
 import { expect, test } from "@playwright/test";
 import { loginAs } from "../flow-tests/helpers";

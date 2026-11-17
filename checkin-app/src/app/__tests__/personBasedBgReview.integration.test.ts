@@ -2,8 +2,8 @@
  * @jest-environment node
  */
 /**
- * Person-based background-check review against a real database
- * (docs/rules/membership.md, Application and review): an application carrying the
+ * Person-based background-check review against a real database:
+ * an application carrying the
  * legacy household flag (docs/in-design/BG_CHECK_STARTED-migration.md) opens a check
  * review with no person; its first decision, approve or reject, names the person;
  * every outcome settles the households it touches; the household application is
