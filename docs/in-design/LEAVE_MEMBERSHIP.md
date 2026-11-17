@@ -1,9 +1,6 @@
 # A family tells the Board it won't renew
 
-Design for issue #3446, applying Board question B28 ("A family that wants to
-leave the membership"), which the Board answered "add this" on 2026-11-17, and
-the owner's direction of the same day: a family that has paid for a year keeps
-that year, the Board is told, and nothing is revoked.
+Design for issue #3446 (Board question B28).
 
 ## Problem
 
@@ -31,11 +28,6 @@ change its mind at any time, with no penalty, by renewing as any member does.
 | **Changing their mind** | The family renews the normal way: the renewal the Board opens each year is still opened for them, and confirming it clears the note. No new application, no penalty. |
 | **At the end of the year** | The membership lapses, as for any family that does not renew. What happens after that is B26's question, not this design's. |
 | **Cost** | One nullable column, two registered routes, one narrowed query, one email, two small screens. |
-
-This is neither of B28's options 2 and 3 as written. Both ended the membership
-early, by the Board's revoke or by the family's own press, and ending it early
-sets up a refund expectation that *Membership Policy, Art. XII* does not meet.
-The owner's direction keeps the paid year whole instead.
 
 ## Rules this relies on
 
@@ -149,15 +141,12 @@ The register covers:
 - **Not renewing is not dismissal** (*Definitions Policy*, "Dismiss from
   Membership"; *Membership Policy, Art. IX*): the family may renew or apply again
   at any time.
+- **No resignation line in policy:** none is needed, because nothing ends before
+  the paid year does.
 
-The register is silent on:
-
-- **How long a departed family's records are kept.** *Records Policy,
-  Art. VI §VI.2* says records no longer needed should not be kept and names no
-  period. This design keeps everything, as for any lapsed family today. L5.
-- **Resignation.** The Membership Policy has no resignation line. This design
-  needs none, because nothing ends before the paid year does. L6 asks the owner
-  to confirm.
+How long a departed family's records are kept (*Records Policy,
+Art. VI §VI.2*) is out of scope: no record is yet old enough for that policy to
+apply.
 
 ### Register candidates
 
@@ -249,23 +238,12 @@ Board's households list.
 
 ## Open questions for the owner
 
-IDs are stable; the first version of this design asked L1 to L10, and the
-owner's direction of 2026-11-17 answered several.
-
-| ID | Question | Status or default |
+| ID | Question | Default |
 |---|---|---|
-| L1 | Option 2 or option 3? | Answered: neither. The family keeps its paid year; the Board is notified; nothing is revoked. |
-| L2 | Program places and roles at leaving? | Answered: unchanged; the family paid for the year. |
-| L3 | Trusted-adult approvals? | Answered: unchanged. |
-| L4 | Open background-check reviews? | Answered: unchanged. |
-| L5 | How long are a departed family's records kept? The Records Policy names no period. | Open. Default: kept, as for any lapsed family. |
-| L6 | Does the Membership Policy need a resignation line? | Open. Default: no, because nothing ends early. |
-| L7 | Close the household's open renewal? | Answered: no; it stays open as the way back. |
-| L8 | Which lists drop the household? | Answered: none. Only renewal emails stop. |
-| L9 | Can a lead remove one member from the household themselves? | Open. Default: no; stays a Board and sysadmin move, out of scope. |
-| L10 | Board notice: email and label only, or a count in the Board's menu too? | Open. Default: email and label; no count, since there is nothing to do. |
-| L11 | The control's wording: "We won't be renewing", or other words? | Open. Default: "We won't be renewing", with the label "Not renewing" for the Board. |
-| L12 | Should the family be able to say it outside the renewal window, for example in March? | Open. Default: yes, at any time; it applies to the coming year. |
+| L9 | Can a lead remove one member from the household themselves? | No; stays a Board and sysadmin move, out of scope. |
+| L10 | Board notice: email and label only, or a count in the Board's menu too? | Email and label; no count, since there is nothing to do. |
+| L11 | The control's wording: "We won't be renewing", or other words? | "We won't be renewing", with the label "Not renewing" for the Board. |
+| L12 | Should the family be able to say it outside the renewal window, for example in March? | Yes, at any time; it applies to the coming year. |
 
 ## PR plan
 
@@ -283,19 +261,11 @@ Each PR is based on `main`; none stacks on another.
    route handlers, the outreach audience, `beginRenewal` clearing the note, the
    Board email, the households list field, tests, and the register lines above.
 4. **UI.** The household page control, the lead's renewal banner, the Board's
-   households label and the Applications tab tag and filter. This last
-   implementation PR is the one that closes #3446; this design PR only
-   references it.
+   households label and the Applications tab tag and filter. This PR closes
+   #3446.
 
 ## Appendix: provenance
 
 - Issue #3446, "Self-service: a family can leave the membership".
-- Board question B28 in the Board questions doc, raised 2026-11-15, answered
-  "add this" on 2026-11-17. Its options were 1 keep as today; 2 a button with the
-  Board confirming by revoke; 3 a button that ends the membership at once.
-- Owner review of the first draft, 2026-11-17: the paid year is the family's to
-  keep; revoking at the family's word is wrong because it sets up refund
-  expectations; the family can come back without penalty; the Board is notified.
-  The first draft (option 2, with the household dropping off member lists at
-  once) is replaced by this one.
+- Board question B28 in the Board questions doc.
 - Related: B26, families that do not renew. This design ends where B26 begins.
