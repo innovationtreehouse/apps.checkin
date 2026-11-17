@@ -107,7 +107,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
 
         // Hold ledger: APPLICATION takes a seat out
         // of Shopify's pool (-1), stamping inventoryHeldAt so every later release
-        // path (withdrawal / payment / grace-expiry) or approval knows there's a
+        // path (withdrawal / payment) or approval knows there's a
         // hold to account for. Guard is on inventoryHeldAt, NOT isPaymentPlanRequested:
         // a denied re-applicant still holds the seat (refuse does not release
         // it — see the refuse route), so re-applying must NOT decrement twice.
