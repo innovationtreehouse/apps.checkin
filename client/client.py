@@ -1485,13 +1485,16 @@ def handle_scan(backend, state, outbox, participant_id):
     if close:
         state.clear_present()
 
+    # A queued banner carries the kiosk's own counts, so the screen stays lit
+    # while the kiosk shows someone inside, and sleeps after a close.
     def show_queued(queued):
+        counts = state.attendance_view()["counts"]
         if close:
-            state.push_event({"html": _closed_html(close, queued), "queued": queued})
+            state.push_event({"html": _closed_html(close, queued), "queued": queued, "counts": counts})
         elif others:
             prompt((state.known_people.get(int(participant_id)) or {}).get("name") or "Keyholder")
         else:
-            state.push_event({"html": _saved_banner_html(queued, intent), "queued": queued})
+            state.push_event({"html": _saved_banner_html(queued, intent), "queued": queued, "counts": counts})
 
     def prompt(who):
         banner_html = _close_prompt_html(who, state.others_shown(participant_id), state.offline_supervision_warning())

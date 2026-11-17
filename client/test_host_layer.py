@@ -370,6 +370,15 @@ class KioskctlTest(unittest.TestCase):
         proc.communicate(timeout=10)
         self.assertEqual(proc.returncode, 0)
 
+    def test_reboot_says_when_it_waits_without_the_gate(self):
+        self.use_real_flock()
+        self.hold("reboot-gate")
+        proc = self.start_reboot(flock_scale=0.1 / 60)
+        _, err = proc.communicate(timeout=10)
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("reboot gate busy after 60s; waiting without it", err)
+        self.assertEqual(self.reboot_steps()[-1], "systemctl reboot")
+
     def test_timer_checks_stand_aside_for_a_waiting_reboot(self):
         self.use_real_flock()
         self.hold("reboot-gate")

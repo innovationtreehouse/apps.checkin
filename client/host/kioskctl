@@ -179,7 +179,7 @@ case "$command" in
   reboot)
     # A reboot mid-swap leaves the new digest with no rollback. A swap takes
     # minutes, so a lock held for 30 is a hung pull, which the reboot clears.
-    flock -w 60 8
+    flock -w 60 8 || log "reboot gate busy after 60s; waiting without it" >&2
     flock -w 1800 9 || log "lock still held after 30 minutes; rebooting anyway" >&2
     systemctl reboot
     ;;

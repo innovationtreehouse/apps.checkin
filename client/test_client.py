@@ -547,6 +547,15 @@ class TestKioskClose(unittest.TestCase):
         self.assertEqual([r[8] for r in rows], [None, "confirmed"])
         self.assertIn("BUILDING CLOSED", events[-1]["html"])
         self.assertIn("will sync", events[-1]["html"])
+        self.assertEqual(events[-1]["counts"]["total"], 0, "the screen may sleep after a queued close")
+
+    def test_a_queued_check_in_counts_the_person_so_the_screen_stays_lit(self):
+        state = self._state(roster=dict(self.ROSTER, attendance=[], counts={"total": 0}))
+        events = []
+        state.push_event = events.append
+        handle_scan(self._backend({"type": "warming"}, 503), state, Outbox(":memory:"), 7)
+        self.assertIn("will sync", events[-1]["html"])
+        self.assertEqual(events[-1]["counts"]["total"], 1)
 
     def test_a_queued_close_empties_the_overlaid_view(self):
         state = self._state()
