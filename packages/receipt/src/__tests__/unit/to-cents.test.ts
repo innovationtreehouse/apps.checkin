@@ -31,7 +31,7 @@ describe("ManualDetailsSchema dollar fields", () => {
     expect(ManualDetailsSchema.safeParse(details(v)).success).toBe(true);
   });
 
-  it.each(["12abc", "abc", "", "1e3", "-1", "21474836.48", "0x10"])("refuses %j", (v) => {
+  it.each(["12abc", "abc", "", "1e3", "-1", "-0.001", "-0.004", "21474836.48", "0x10"])("refuses %j", (v) => {
     expect(ManualDetailsSchema.safeParse(details(v)).success).toBe(false);
   });
 });

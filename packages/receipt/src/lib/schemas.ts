@@ -21,7 +21,8 @@ const MAX_CENTS = 2 ** 31 - 1;
 const dollarString = z.string().refine(
   (v) => {
     const cents = dollarsToCentsOrNull(v);
-    return cents !== null && cents >= 0 && cents <= MAX_CENTS;
+    // Sign checked on the typed value: "-0.001" rounds to 0 cents.
+    return cents !== null && Number(v) >= 0 && cents <= MAX_CENTS;
   },
   { message: "must be a number from 0 to 21,474,836.47" },
 );
