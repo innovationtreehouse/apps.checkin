@@ -1,4 +1,4 @@
-// income library route policy (docs/rules/revenue.md, Income). Aggregated by ../registry.ts.
+// income library route policy. Aggregated by ../registry.ts.
 import { defineRoute, type FinanceViewModel, type OrderedViewEntry } from '../core';
 
 // A reconciliation row is a Shopify payout or a Benevity disbursement, by its `source`.
@@ -8,7 +8,7 @@ const PAYOUT_BY_SOURCE: FinanceViewModel = { field: 'source', map: { shopify: 'S
 // mapping and exclusion writes are FINANCE-only. The library, not the gate, lets
 // FINANCE only lower a settings cap; raising one takes BOARD. Every income field
 // except a row's `id` is `internal`, so both roles get the full internal view. No sysadmin view: Finance Ops
-// excludes sysadmins (docs/rules/revenue.md).
+// excludes sysadmins.
 //
 // QB exclusions are GET + POST only — an exclusion is permanent, so there is no
 // DELETE. No audit-log route: nothing reads the audit log yet.

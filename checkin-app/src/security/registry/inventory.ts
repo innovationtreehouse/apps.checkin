@@ -1,4 +1,4 @@
-// Local inventory route policy (docs/rules/inventory.md, Access). Aggregated by ../registry.ts.
+// Local inventory route policy. Aggregated by ../registry.ts.
 import { defineRoute, type Authorize, type OrderedViewEntry } from '../core';
 
 // Stock reads admit any inventory viewer through the reused `catalog-viewer`

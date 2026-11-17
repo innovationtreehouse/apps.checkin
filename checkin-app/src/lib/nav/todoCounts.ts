@@ -3,13 +3,14 @@ import type { OrgMembershipProcessStatus, TrustedAdultReviewStatus } from "@/gen
 import type { AuthenticatedUser } from "@/types/auth";
 import { countHouseholdsMissingValidContact } from "@/lib/emergencyContacts/service";
 import { canReviewBackgroundChecks, reviewQueueCounts } from "@/lib/membership/review";
-import { awaitingBgReview, openProcess, SETTLES_ON_SIGNATURE } from "@/lib/membership/lifecycle";
+import { awaitingBgReview, openProcess, refundableApplication, SETTLES_ON_SIGNATURE } from "@/lib/membership/lifecycle";
 import { getLeadConflicts } from "@/lib/attendanceConflicts";
 import { pickAddress, validateAddress } from "@/lib/address";
 import { alertAddressCheck, getConfigHealth, openConfigIssues } from "@/lib/configHealth";
 import { countUnhealthyCronJobs } from "@/lib/cronRuns";
 import { openIncidentSummary } from "@/lib/opsIncidentView";
-import { PROGRAM_CHECKOUT_BROKEN_WHERE } from "@/lib/programCheckout";
+import { programCheckoutBrokenWhere } from "@/lib/programCheckout";
+import { isProgramStoreClosed } from "@/lib/programs/storeClosed";
 import { BROKEN_HOUSEHOLD_WHERE, UNCLAIMED_OR_BROKEN_HOUSEHOLD_WHERE } from "@/lib/household/filters";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { seesHouseholdPaymentStatus } from "@/lib/programs/paymentVisibility";
@@ -78,7 +79,8 @@ export type TodoCounts = {
     // every open application, the gray count shown on the Applications tab —
     // mirrors what /api/membership-ops/applications lists. `applicationsIncomplete` =
     // the part of that total still missing a signature, or a cleared check for a
-    // check reviewer (red).
+    // check reviewer (red). `applicationsAwaitingRefund` = paid applications of DENIED
+    // households the board can still "Record refund" on (red).
     // `brokenEmails` = people whose email Resend has reported as undeliverable
     // (bounce/complaint) and no later delivery has cleared — see webhooks/resend.
     // Red pill on the Membership Ops nav item + the Manage Memberships (households) tab.
@@ -92,7 +94,7 @@ export type TodoCounts = {
     // `openPaymentExceptions` = reconciler-detected payment problems (OPEN or
     // ACKNOWLEDGED) awaiting board action — green pill on the Finance Ops Payment
     // problems tab. Same count as getMembershipNotifications.openPaymentExceptions.
-    admin?: { membership: number; applicationsTotal: number; applicationsIncomplete: number; paymentPlanPending: number; membershipPaymentPlanPending: number; trustedAdults: number; householdsMissingContact: number; unclaimedHouseholds: number; brokenHouseholds: number; brokenEmails: number; settingsMisconfig: number; programsMisconfig: number; openPaymentExceptions: number };
+    admin?: { membership: number; applicationsTotal: number; applicationsIncomplete: number; applicationsAwaitingRefund: number; paymentPlanPending: number; membershipPaymentPlanPending: number; trustedAdults: number; householdsMissingContact: number; unclaimedHouseholds: number; brokenHouseholds: number; brokenEmails: number; settingsMisconfig: number; programsMisconfig: number; openPaymentExceptions: number };
     // Infra-health gaps (admins + board only). Both halves drive the ONE red System
     // Status nav badge; the full detail lives at /api/system-status/config-health.
     // `openIssues` = failing system-config checks (e.g. Zoho e-sign unconfigured) —
@@ -465,7 +467,7 @@ export async function variantYearsUnset(boundary: Date | null | undefined, now: 
 async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoCounts, "admin" | "configHealth">>> {
     // Finance counts are Board/Finance reads; a sysadmin off the Board gets zeros.
     const seesFinance = !!user.isBoardMember || !!user.isFinance;
-    const [membership, applicationsTotal, applicationsIncomplete, paymentPlanPending, membershipPaymentPlanPending, trustedAdults, householdsMissingContact, unclaimedHouseholds, brokenHouseholds, brokenEmails, programsMisconfig, openPaymentExceptions, boardSettings, incidentHealth] = await Promise.all([
+    const [membership, applicationsTotal, applicationsIncomplete, applicationsAwaitingRefund, paymentPlanPending, membershipPaymentPlanPending, trustedAdults, householdsMissingContact, unclaimedHouseholds, brokenHouseholds, brokenEmails, programsMisconfig, openPaymentExceptions, boardSettings, incidentHealth] = await Promise.all([
         prisma.orgMembershipProcess.count({
             where: { status: { in: BOARD_ACTIONABLE_MEMBERSHIP } },
         }),
@@ -492,6 +494,10 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
                     },
                 ],
             },
+        }),
+        // The rows the Applications page offers "Record refund" on, for denied households.
+        prisma.orgMembershipProcess.count({
+            where: { AND: [refundableApplication.where, { orgMembership: { status: "DENIED" } }] },
         }),
         // Scholarship-queue count: mirror GET /api/finance-ops/payment-plans'
         // default filter exactly so the nav badge can't over-count. Excludes
@@ -528,8 +534,8 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
         }),
         // Programs priced on a tier with no matching Shopify variant — paid enrollment
         // silently can't check out. Same condition as the list/detail UI, shared via
-        // PROGRAM_CHECKOUT_BROKEN_WHERE (see lib/programCheckout.ts).
-        prisma.program.count({ where: PROGRAM_CHECKOUT_BROKEN_WHERE }),
+        // programCheckoutBrokenWhere (see lib/programCheckout.ts).
+        isProgramStoreClosed().then((closed) => prisma.program.count({ where: programCheckoutBrokenWhere(closed) })),
         // Reconciler-detected payment problems still needing board action
         // (OPEN or ACKNOWLEDGED). Green pill on the Finance Ops Payment problems tab.
         seesFinance ? prisma.paymentException.count({ where: { status: { in: ["OPEN", "ACKNOWLEDGED"] } } }) : 0,
@@ -556,7 +562,7 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
         (isRecheckPolicySet(boardSettings?.bgRecheckMonths) ? 0 : 1) +
         (boardSettings?.orgMembershipYearBoundary ? 0 : 1);
     return {
-        admin: { membership, applicationsTotal, applicationsIncomplete, paymentPlanPending, membershipPaymentPlanPending, trustedAdults, householdsMissingContact, unclaimedHouseholds, brokenHouseholds, brokenEmails, settingsMisconfig, programsMisconfig, openPaymentExceptions },
+        admin: { membership, applicationsTotal, applicationsIncomplete, applicationsAwaitingRefund, paymentPlanPending, membershipPaymentPlanPending, trustedAdults, householdsMissingContact, unclaimedHouseholds, brokenHouseholds, brokenEmails, settingsMisconfig, programsMisconfig, openPaymentExceptions },
         // Env-var/deploy gaps and the alert address (presence checks), cron sweeps that
         // stopped running or stopped working, and open incidents all fold into the single red
         // System Status pill.
