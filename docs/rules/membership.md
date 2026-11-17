@@ -220,7 +220,12 @@ Procedure below is built on them.
   written reason. It returns to where it was closed, and its rejection counts
   again. Reopening is refused when the person has had another check review opened
   or has cleared since the close, and under the same household bar as the
-  close.  [Decision — Board ruling B27]
+  close. The same holds for anyone a wrong-person reset cleared off the review
+  and, for a review that names nobody, for the leads of the household that asked
+  for it.  [Decision — Board ruling B27]
+
+- A rejection the Board reopens after the household became an active member
+  shows on the household's page. The membership stands until renewal.  [Decision — Board ruling B27]
 
 - A person's check is disputed while a review of theirs is blocked, or while its
   rejection has been reset by the Board or changed to approve and the review has
