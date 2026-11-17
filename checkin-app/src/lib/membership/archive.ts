@@ -1,7 +1,7 @@
 import type { Prisma, OrgMembershipProcess } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
-import { ReviewError, applicantHousehold, reviewHouseholds } from "@/lib/membership/review";
+import { ReviewError, applicantHousehold, reviewHouseholds, wrongPersonClosedAt } from "@/lib/membership/review";
 import { reviewHoldsRejection } from "@/lib/membership/checkStanding";
 import { CLOSABLE_STATUSES, RESTORABLE_STATUSES, RESTORE_CLOSABLE_STATUSES, fromWhere, openProcess } from "@/lib/membership/lifecycle";
 import { advanceExternalIfComplete, pickUpMissedSignature } from "@/lib/membership/external";
@@ -206,6 +206,9 @@ export async function unarchiveApplication(processId: number, actorId: number) {
     const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
     if (!process) throw new ReviewError("not_found", "Application not found.");
     if (process.status !== "ARCHIVED") throw new ReviewError("wrong_phase", "Only a closed application can be reopened.");
+    if (process.kind === "PERSON_BG" && await wrongPersonClosedAt(prisma, processId)) {
+        throw new ReviewError("wrong_phase", "The Board closed this check review as opened for the wrong person. Reopen it with a reason instead.");
+    }
     await assertNoConflict(process, actorId, "reopen");
 
     const target = process.archivedFromStatus ?? undefined;

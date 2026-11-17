@@ -12,13 +12,14 @@
 import type { OrgMembershipProcessStatus } from '@/generated/prisma/client';
 import prisma from '@/lib/prisma';
 import { advanceExternalIfComplete } from '@/lib/membership/external';
-import { attest, boardResetReview, eligibleReviewProcessIds, undoOwnApproval } from '@/lib/membership/review';
+import { attest, boardReopenWrongPersonClose, boardResetReview, eligibleReviewProcessIds, undoOwnApproval } from '@/lib/membership/review';
 import { activate } from '@/lib/membership/payment';
-import { archiveApplication, unarchiveApplication } from '@/lib/membership/archive';
-import { settleApplicationsAwaitingCheck, settleHouseholdBg } from '@/lib/membership/settleHouseholdBg';
+import { archiveApplication, closeForRestore, lockOpenApplications, unarchiveApplication } from '@/lib/membership/archive';
+import { releaseDepartedRejection, settleApplicationsAwaitingCheck, settleHouseholdBg } from '@/lib/membership/settleHouseholdBg';
 import { householdCheckStandings } from '@/lib/membership/checkStanding';
 import { notifyBoardCheckRejected, notifyBoardPaidReject } from '@/lib/membership/boardAlerts';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
+import { personActor } from '@/lib/auditActor';
 
 jest.mock('@/lib/email', () => ({ runPaced: (tasks: Array<() => Promise<unknown>>) => Promise.all(tasks.map((t) => t())), sendEmail: jest.fn().mockResolvedValue(true) }));
 jest.mock('@/lib/finance/reconcile/liveOrder', () => ({
@@ -363,6 +364,159 @@ describe('gap 2: a sent-back review is never closed', () => {
         await boardResetReview(own, board, { reason: 'recheck' });
         await expect(archiveApplication(own, board)).rejects.toMatchObject({ code: 'wrong_phase' });
         expect((await row(own)).status).toBe('PENDING_BG_REVIEW');
+    });
+});
+
+describe('B27: the Board closes a review opened for the wrong person, and may reopen it', () => {
+    const close = (id: number, actor = board, reason = 'the report is another person') => boardResetReview(id, actor, { reason, closeAsWrongPerson: true });
+    const reopen = (id: number, actor = board, reason = 'it was them after all') => boardReopenWrongPersonClose(id, actor, reason);
+
+    /** A family whose application is blocked by the other adult's rejected review. */
+    async function blockedFamily() {
+        const f = await family();
+        const own = await ownReview(f.adultId);
+        await attest(revA, own, { result: 'REJECT', note: 'concerning' });
+        expect((await row(f.appId)).status).toBe('BLOCKED');
+        return { f, own };
+    }
+
+    it('closes a blocked review: ARCHIVED, rejection kept, one audit row, the person no longer disputed and the application resumed', async () => {
+        const { f, own } = await blockedFamily();
+        const before = (await audits(own)).length;
+        await close(own);
+        expect(await row(own)).toMatchObject({ status: 'ARCHIVED', archivedFromStatus: 'BLOCKED', subjectPersonId: f.adultId });
+        expect(await prisma.backgroundCheckAttestation.findMany({ where: { processId: own } })).toEqual([expect.objectContaining({ result: 'REJECT', note: 'concerning' })]);
+        const rows = await audits(own);
+        expect(rows).toHaveLength(before + 1);
+        expect(rows.at(-1)).toMatchObject({ actorId: board, oldData: { status: 'BLOCKED' }, newData: { status: 'ARCHIVED', action: 'closed: opened for the wrong person', reason: 'the report is another person' } });
+        expect(await standingOf(f.householdId, f.adultId)).toBe('NONE');
+        expect((await row(f.appId)).status).toBe('PENDING_EXTERNAL_ACTION');
+    });
+
+    it('closes a review sent back after a rejection', async () => {
+        const { f, own } = await blockedFamily();
+        await boardResetReview(own, board, { reason: 'recheck' });
+        expect(await standingOf(f.householdId, f.adultId)).toBe('DISPUTED');
+        await close(own);
+        expect(await row(own)).toMatchObject({ status: 'ARCHIVED', archivedFromStatus: 'PENDING_BG_REVIEW' });
+        expect(await standingOf(f.householdId, f.adultId)).toBe('NONE');
+    });
+
+    it('closes an unnamed review still holding a rejection, so the household no longer waits on it', async () => {
+        const f = await family();
+        const reviewId = await consent(f);
+        await attest(revA, reviewId, { result: 'REJECT', note: 'concerning', subjectPersonIds: [f.leadId] });
+        await boardResetReview(reviewId, board, { reason: 'not this lead', wrongPerson: true });
+        expect((await householdCheckStandings(prisma, f.householdId, null)).awaitingNaming).toBe(true);
+        await close(reviewId);
+        expect(await row(reviewId)).toMatchObject({ status: 'ARCHIVED', subjectPersonId: null });
+        expect((await householdCheckStandings(prisma, f.householdId, null)).awaitingNaming).toBe(false);
+    });
+
+    it('requires a reason, and refuses an actor in the household and a denied household', async () => {
+        const { f, own } = await blockedFamily();
+        await expect(close(own, board, '  ')).rejects.toMatchObject({ code: 'invalid_input' });
+        await prisma.person.update({ where: { id: f.lead2Id }, data: { isBoardMember: true } });
+        await expect(close(own, f.lead2Id)).rejects.toMatchObject({ code: 'same_household_applicant' });
+        await prisma.orgMembership.update({ where: { id: f.orgMembershipId }, data: { status: 'DENIED' } });
+        await expect(close(own)).rejects.toMatchObject({ code: 'wrong_phase' });
+        expect((await row(own)).status).toBe('BLOCKED');
+    });
+
+    it('a new mark after the close opens a fresh review that needs two approvals', async () => {
+        const { f, own } = await blockedFamily();
+        await close(own);
+        const fresh = await ownReview(f.adultId);
+        await attest(revA, fresh, { result: 'APPROVE' });
+        expect((await row(fresh)).status).toBe('PENDING_BG_REVIEW');
+        expect(await standingOf(f.householdId, f.adultId)).toBe('PENDING');
+        await attest(revB, fresh, { result: 'APPROVE' });
+        expect((await row(fresh)).status).toBe('ACTIVE');
+    });
+
+    it('reopens with a reason: back to BLOCKED, the rejection counting and the application blocked again', async () => {
+        const { f, own } = await blockedFamily();
+        await close(own);
+        await expect(reopen(own, board, ' ')).rejects.toMatchObject({ code: 'invalid_input' });
+        await reopen(own);
+        expect(await row(own)).toMatchObject({ status: 'BLOCKED', archivedFromStatus: null });
+        expect((await audits(own)).at(-1)).toMatchObject({ actorId: board, newData: expect.objectContaining({ status: 'BLOCKED', action: 'reopened: closed as opened for the wrong person', reason: 'it was them after all' }) });
+        expect(await standingOf(f.householdId, f.adultId)).toBe('DISPUTED');
+        expect((await row(f.appId)).status).toBe('BLOCKED');
+    });
+
+    it('reopen refuses an actor in the household', async () => {
+        const { f, own } = await blockedFamily();
+        await close(own);
+        await prisma.person.update({ where: { id: f.lead2Id }, data: { isBoardMember: true } });
+        await expect(reopen(own, f.lead2Id)).rejects.toMatchObject({ code: 'same_household_applicant' });
+    });
+
+    it('reopens only a wrong-person close, and the plain Reopen refuses one', async () => {
+        const f = await family();
+        const mistaken = await ownReview(f.adultId);
+        await archiveApplication(mistaken, board);
+        await expect(reopen(mistaken)).rejects.toMatchObject({ code: 'wrong_phase' });
+
+        const g = await family();
+        const own = await ownReview(g.adultId);
+        await attest(revA, own, { result: 'REJECT', note: 'concerning' });
+        await close(own);
+        await expect(unarchiveApplication(own, board)).rejects.toMatchObject({ code: 'wrong_phase' });
+        expect((await row(own)).status).toBe('ARCHIVED');
+    });
+
+    it('refuses to reopen once another review has been opened for the person, even one closed since', async () => {
+        const { f, own } = await blockedFamily();
+        await close(own);
+        const fresh = await ownReview(f.adultId);
+        await expect(reopen(own)).rejects.toMatchObject({ code: 'wrong_phase' });
+        await prisma.orgMembershipProcess.update({ where: { id: fresh }, data: { status: 'ARCHIVED', archivedFromStatus: 'PENDING_BG_REVIEW' } });
+        await expect(reopen(own)).rejects.toMatchObject({ code: 'wrong_phase' });
+        expect((await row(own)).status).toBe('ARCHIVED');
+    });
+
+    it('refuses to reopen once the person has cleared since the close', async () => {
+        const { f, own } = await blockedFamily();
+        await close(own);
+        await prisma.person.update({ where: { id: f.adultId }, data: { lastBackgroundCheck: new Date(Date.now() + 1000) } });
+        await expect(reopen(own)).rejects.toMatchObject({ code: 'wrong_phase' });
+    });
+
+    it('a plain reset after a reopen sends the review back as any reset does', async () => {
+        const { f, own } = await blockedFamily();
+        await close(own);
+        await reopen(own);
+        await boardResetReview(own, board, { reason: 'recheck' });
+        expect(await row(own)).toMatchObject({ status: 'PENDING_BG_REVIEW' });
+        expect(await prisma.backgroundCheckAttestation.count({ where: { processId: own } })).toBe(0);
+        expect(await standingOf(f.householdId, f.adultId)).toBe('DISPUTED');
+        expect((await row(f.appId)).status).toBe('PENDING_EXTERNAL_ACTION');
+    });
+
+    it('release: a close lifts the block itself, and a reopen after a release leaves the released application where it is', async () => {
+        const { f, own } = await blockedFamily();
+        const elsewhere = await prisma.household.create({ data: { name: `${TAG} moved-to ${seq++}` } });
+        await prisma.person.update({ where: { id: f.adultId }, data: { householdId: elsewhere.id } });
+        await releaseDepartedRejection(f.appId, board, 'moved out');
+        const released = (await row(f.appId)).status;
+        expect(released).not.toBe('BLOCKED');
+        await close(own);
+        await reopen(own);
+        expect((await row(f.appId)).status).toBe(released);
+
+        const g = await blockedFamily();
+        await close(g.own);
+        await expect(releaseDepartedRejection(g.f.appId, board, 'moved out')).rejects.toMatchObject({ code: 'wrong_phase' });
+    });
+
+    it('#3509: an application closed and reopened while blocked still resumes when its review is closed as the wrong person', async () => {
+        const { f, own } = await blockedFamily();
+        await prisma.$transaction(async (tx) => closeForRestore(tx, await lockOpenApplications(tx, f.orgMembershipId), personActor(board)));
+        await unarchiveApplication(f.appId, board);
+        expect((await row(f.appId)).status).toBe('BLOCKED');
+        await close(own);
+        expect((await row(f.appId)).status).toBe('PENDING_EXTERNAL_ACTION');
     });
 });
 

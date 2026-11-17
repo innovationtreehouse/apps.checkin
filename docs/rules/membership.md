@@ -211,8 +211,16 @@ Procedure below is built on them.
   favour of the new one.  [Decision]
 
 - A reviewer who believes the named person is wrong asks the Board for a
-  wrong-person reset, which returns the review to no person. The person cleared
-  off it keeps any rejection it held, and naming them again brings it back.  [Decision]
+  wrong-person reset, which returns the review to no person, or closes it when it
+  was opened for the wrong person altogether. The person cleared off a returned
+  review keeps any rejection it held, and naming them again brings it back; a
+  closed review keeps its rejection on record and counts against nobody.  [Decision]
+
+- The Board may reopen a review it closed as opened for the wrong person, with a
+  written reason. It returns to where it was closed, and its rejection counts
+  again. Reopening is refused when the person has had another check review opened
+  or has cleared since the close, and under the same household bar as the
+  close.  [Decision — Board ruling B27]
 
 - A person's check is disputed while a review of theirs is blocked, or while its
   rejection has been reset by the Board or changed to approve and the review has
@@ -247,7 +255,8 @@ Procedure below is built on them.
   a rejection.  [Decision]
 
 - A check review that still carries a rejection cannot be closed; it needs a
-  decision from two new reviewers.  [Decision]
+  decision from two new reviewers, unless the Board closes it as opened for the
+  wrong person.  [Decision]
 
 - A household has one open application at a time, joining or renewing. An
   active household only renews; a revoked one continues the renewal it already
@@ -259,7 +268,13 @@ Procedure below is built on them.
   reset nor the rejector's change to approve, below, reopens it then.  [Decision — *Principle: people decide about people*]
 
 - Nobody clears a blocked application on their own. After a rejection the check
-  needs two approvals again, from two independent reviewers.  [Decision — Board ruling B5/B25]
+  needs two approvals again, from two independent reviewers, unless the Board
+  records, with a written reason, that the review was opened for the wrong person.
+  That review is then closed with its rejection kept on record against it; the
+  rejection no longer counts against the person it named, and any later check of
+  theirs is reviewed afresh and needs two approvals like any other. No one in the
+  household of the person named, or of the household that asked for the review,
+  may record it.  [Decision — Board ruling B5/B25, as amended by B27]
 
 - A person merge is refused while either record is disputed and the merge would
   carry in a newer check date or move a second check review onto that person.
