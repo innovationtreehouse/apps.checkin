@@ -50,7 +50,8 @@ describeDb("closeOut", () => {
     expect(await post(r.id, { note: "Entered the expense by hand", legs: { expense: "done_by_hand" } }))
       .toEqual({ ReceivedReceipt: { id: r.id, state: "closed_by_hand" } });
 
-    expect(await stateOf(r.id)).toBe("closed_by_hand");
+    expect(await db.receivedReceipt.findUniqueOrThrow({ where: { id: r.id } }))
+      .toMatchObject({ state: "closed_by_hand", validationNotes: null, applyFirstFailedAt: null });
     const [row] = await closeRows(r.id);
     expect(row).toMatchObject({ actorUserId: MANAGER.id, actorUsername: MANAGER.name, fromState: "apply_failed", toState: "closed_by_hand" });
     expect(JSON.parse(row.details ?? "")).toEqual({
@@ -112,9 +113,9 @@ describeDb("closeOut", () => {
   });
 
   it.each([
-    ["succeeds", false, "receipt_apply_succeeded"],
-    ["fails", true, "receipt_apply_failed"],
-  ])("a push that %s after a close-out leaves the receipt closed and writes no settle row", async (_name, failing, eventType) => {
+    ["succeeds", false, "receipt_apply_succeeded", [{ legs: ["expense"] }]],
+    ["fails", true, "receipt_apply_failed", []],
+  ])("a push that %s after a close-out leaves the receipt closed, writes no settle row, and logs any leg it applied", async (_name, failing, eventType, late) => {
     const r = await makeReceipt({ state: "applying" });
     // A person closes the receipt out while this push still waits on its sink.
     configure({
@@ -130,6 +131,9 @@ describeDb("closeOut", () => {
     const after = await db.receivedReceipt.findUniqueOrThrow({ where: { id: r.id } });
     expect(after).toMatchObject({ state: "closed_by_hand", applyFirstFailedAt: null, validationNotes: null });
     expect(await db.workflowAuditLog.count({ where: { receivedReceiptId: r.id, eventType } })).toBe(0);
+    const lateRows = await db.workflowAuditLog.findMany({ where: { receivedReceiptId: r.id, eventType: "receipt_applied_after_settle" } });
+    expect(lateRows.map((row) => JSON.parse(row.details ?? ""))).toEqual(late);
+    expect(lateRows.every((row) => row.fromState === "closed_by_hand" && row.toState === "closed_by_hand")).toBe(true);
   });
 
   it("401s without a signed-in caller and 404s another org's receipt", async () => {

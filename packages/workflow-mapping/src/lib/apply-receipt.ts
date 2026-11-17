@@ -10,6 +10,7 @@ import type { Prisma } from "../generated/prisma/client";
 import { getOrgId, ports } from "../runtime";
 import { parseStoredReceipt } from "./parse-receipt";
 import { insertAuditEvent } from "./audit";
+import { isInventoryLine } from "./legs";
 
 export type ApplyResult =
   | { state: "resolved" }
@@ -167,12 +168,6 @@ async function recordFailure(
   return true;
 }
 
-/** A line the inventory leg carries. */
-function isInventoryLine(ls: LineStatusFields): boolean {
-  if (ls.recognitionStatus === "provisional") return !!ls.provisionalItemGtin13;
-  return ls.recognitionStatus === "recognized" && ls.assignedGtin13 != null;
-}
-
 async function pushAndSettle(
   receiptId: number,
   received: Pick<ReceivedReceipt, "id" | "orgId" | "receiptJson">,
@@ -229,11 +224,13 @@ async function pushAndSettle(
     db.receivedReceipt.update({ where: { id: receiptId }, data });
 
   const pushes: Array<{ leg: string; push: () => Promise<void> }> = [];
+  const stampedLegs: string[] = [];
   let inventoryUnstamped = false;
   let moneyUnstamped = false;
   const stampMoney = async (data: { expenseAppliedAt?: Date; donationAppliedAt?: Date }) => {
     try {
       await stamp(data);
+      stampedLegs.push(data.donationAppliedAt ? "donation" : "expense");
     } catch (err) {
       moneyUnstamped = true;
       throw err;
@@ -264,6 +261,7 @@ async function pushAndSettle(
       );
       try {
         await stamp({ inventoryAppliedAt: new Date() });
+        stampedLegs.push("inventory");
       } catch (err) {
         inventoryUnstamped = true;
         throw err;
@@ -277,17 +275,38 @@ async function pushAndSettle(
   const failures = results.flatMap((r, i) =>
     r.status === "rejected" ? [`${pushes[i].leg}: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}`] : [],
   );
-  if (failures.length > 0) {
-    const error = failures.join("; ");
+  const error = failures.join("; ");
+  const result = failures.length === 0
+    ? await settleResolved(receiptId, received.orgId, actor)
     // A sink took its leg but the stamp was lost: stay applying so lines stay locked and a retry re-sends the same payload, which the sinks dedupe.
-    if (inventoryUnstamped || moneyUnstamped) return settleUnstamped(receiptId, received.orgId, actor, error, { inventoryUnstamped, moneyUnstamped });
-    return settleFailed(receiptId, received.orgId, actor, error);
-  }
+    : inventoryUnstamped || moneyUnstamped
+      ? await settleUnstamped(receiptId, received.orgId, actor, error, { inventoryUnstamped, moneyUnstamped })
+      : await settleFailed(receiptId, received.orgId, actor, error);
+  if (!result && stampedLegs.length > 0) await logLegsAppliedLate(receiptId, received.orgId, actor, stampedLegs);
+  return result;
+}
 
+/** Records legs a sink took after the receipt left `applying`, such as a push that outlived a close-out. */
+async function logLegsAppliedLate(receiptId: number, orgId: string, actor: Actor, legs: string[]): Promise<void> {
+  const { state } = await db.receivedReceipt.findUniqueOrThrow({ where: { id: receiptId }, select: { state: true } });
+  await insertAuditEvent(db, {
+    orgId,
+    ...actor,
+    eventType: "receipt_applied_after_settle",
+    receivedReceiptId: receiptId,
+    fromState: state,
+    toState: state,
+    details: JSON.stringify({ legs }),
+  });
+}
+
+type Actor = { actorUserId: number | null; actorUsername: string | null };
+
+async function settleResolved(receiptId: number, orgId: string, actor: Actor): Promise<ApplyResult | null> {
   const settled = await db.$transaction(async (tx) => {
     if (!(await settleIfApplying(tx, receiptId, { state: "resolved", validationNotes: null, applyFirstFailedAt: null }))) return false;
     await insertAuditEvent(tx, {
-      orgId: received.orgId,
+      orgId,
       ...actor,
       eventType: "receipt_apply_succeeded",
       receivedReceiptId: receiptId,

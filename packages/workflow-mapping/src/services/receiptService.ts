@@ -237,7 +237,7 @@ export const receiptService = {
       // Compare-and-set: a retry or another close-out that moved it first wins.
       const { count } = await tx.receivedReceipt.updateMany({
         where: { id: receiptId, state: received.state, updatedAt: received.updatedAt },
-        data: { state: nextState },
+        data: { state: nextState, validationNotes: null, applyFirstFailedAt: null },
       });
       if (count !== 1) throw httpError(409, "Receipt changed since it was loaded");
       await insertAuditEvent(tx, {
