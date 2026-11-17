@@ -458,7 +458,8 @@ describe("ProgramDetailsPage", () => {
     fireEvent.click(within(declineModal).getByRole("button", { name: "Cancel" }));
     expect(fetchMock).not.toHaveBeenCalledWith("/api/programs/1/participants", expect.anything());
 
-    fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
+    // The picker's button comes first; a closed dialog may linger in the DOM.
+    fireEvent.click(screen.getAllByRole("button", { name: "Enroll" })[0]);
     const modal = await screen.findByRole("dialog", { name: "Enroll Gerry Grownup" });
     expect(within(modal).getByRole("button", { name: "Enroll" })).toBeDisabled();
     expect(within(modal).queryByText("This bypasses all payment.")).not.toBeInTheDocument();
