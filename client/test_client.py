@@ -3,6 +3,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -44,6 +45,55 @@ def scan_banner(body, status=200):
     # handle_scan takes an outbox and delegates the markup to this helper;
     # calling it directly tests the same banner without faking a backend.
     return _scan_result_banner_html(body, status)[0]
+
+
+# Runs the wrapper page's blackout script with a stub screen and timers the test
+# fires by hand. Prints the screen state after each step.
+BLACKOUT_HARNESS = """
+const screen = {style: {display: "none"}};
+global.document = {getElementById: () => screen};
+let timers = [];
+global.setTimeout = (fn) => { timers.push(fn); return timers.length; };
+global.clearTimeout = () => { timers = []; };
+const fire = () => { const due = timers; timers = []; due.forEach((fn) => fn()); };
+%s
+const steps = [];
+for (const [data, initial] of JSON.parse(process.argv[1])) {
+  handleData(data, initial);
+  steps.push(screen.style.display);
+  fire();
+  steps.push(screen.style.display);
+}
+console.log(JSON.stringify(steps));
+"""
+
+
+@unittest.skipUnless(shutil.which("node"), "needs node to run the page script")
+class TestScreenBlackout(unittest.TestCase):
+    def page_script(self):
+        handler = KioskHandler.__new__(KioskHandler)
+        handler.wfile = io.BytesIO()
+        handler.send_response = handler.send_header = handler.end_headers = Mock()
+        handler._serve_wrapper()
+        page = handler.wfile.getvalue().decode()
+        script = page[page.index("<script>") + len("<script>"):page.index("</script>")]
+        return script[:script.index("function updateQueueBadge")]
+
+    def screen_after(self, *events):
+        out = subprocess.run(["node", "-e", BLACKOUT_HARNESS % self.page_script(), json.dumps(events)],
+                             capture_output=True, text=True, check=True).stdout
+        return json.loads(out)
+
+    def test_empty_building_sleeps(self):
+        self.assertEqual(self.screen_after([{"counts": {"total": 0}}, True]), ["none", "block"])
+
+    def test_an_event_without_counts_wakes_an_empty_building_then_sleeps_again(self):
+        steps = self.screen_after([{"counts": {"total": 0}}, True], [{"html": "", "queued": 0}, False])
+        self.assertEqual(steps[2:], ["none", "block"])
+
+    def test_an_occupied_building_stays_lit(self):
+        steps = self.screen_after([{"counts": {"total": 2}}, True], [{"html": "", "queued": 0}, False])
+        self.assertEqual(steps, ["none", "none", "none", "none"])
 
 
 class TestLocalClockReadout(unittest.TestCase):

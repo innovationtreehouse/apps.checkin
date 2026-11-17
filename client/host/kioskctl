@@ -152,13 +152,17 @@ esac
 [ "$command" = reboot ] || [ -n "$KIOSK_HEALTH_CMD" ] || die "KIOSK_HEALTH_CMD is not set in $KIOSK_CONF; nothing moves without a health check"
 
 exec 9>"$STATE/lock" || die "cannot open $STATE/lock; run as root"
+# A waiting reboot holds the gate, so the timers stop taking the update lock
+# ahead of it. The timers hold the gate only while they take the lock.
+exec 8>"$STATE/reboot-gate" || die "cannot open $STATE/reboot-gate; run as root"
+timer_lock() { flock -n 8 && flock -n 9 && flock -u 8; }
 case "$command" in
   check-release)
-    flock -n 9 || exit 0
+    timer_lock || exit 0
     check_release
     ;;
   check-urgent)
-    flock -n 9 || exit 0
+    timer_lock || exit 0
     check_urgent
     ;;
   deploy)
@@ -175,6 +179,7 @@ case "$command" in
   reboot)
     # A reboot mid-swap leaves the new digest with no rollback. A swap takes
     # minutes, so a lock held for 30 is a hung pull, which the reboot clears.
+    flock -w 60 8
     flock -w 1800 9 || log "lock still held after 30 minutes; rebooting anyway" >&2
     systemctl reboot
     ;;

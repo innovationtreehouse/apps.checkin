@@ -1,8 +1,10 @@
 """Decisions of client/host/kioskctl, driven through fakes on PATH."""
+import fcntl
 import os
 import stat
 import subprocess
 import tempfile
+import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -34,6 +36,29 @@ echo "systemctl $* urgent=$(cat "$KIOSK_STATE_DIR/urgent" 2>/dev/null)" >>"$FAKE
     "sleep": "",
     "flock": 'echo "flock $*" >>"$FAKE/log"\n[ ! -e "$FAKE/lock_held" ]\n',
 }
+
+
+# flock(1) over flock(2), so locks really contend. A wait of N seconds lasts
+# N * FLOCK_SCALE, so the reboot's 30 minutes fit in a test.
+REAL_FLOCK = r"""#!/usr/bin/env python3
+import fcntl, os, sys, time
+args = sys.argv[1:]
+with open(os.path.join(os.environ["FAKE"], "log"), "a") as log:
+    log.write("flock " + " ".join(args) + "\n")
+fd = int(args[-1])
+if args[0] == "-u":
+    fcntl.flock(fd, fcntl.LOCK_UN)
+    sys.exit(0)
+deadline = time.monotonic() + (float(args[1]) * float(os.environ["FLOCK_SCALE"]) if args[0] == "-w" else 0)
+while True:
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        sys.exit(0)
+    except BlockingIOError:
+        if time.monotonic() >= deadline:
+            sys.exit(1)
+        time.sleep(0.02)
+"""
 
 
 class KioskctlTest(unittest.TestCase):
@@ -79,10 +104,12 @@ class KioskctlTest(unittest.TestCase):
     def mark_bad(self, digest):
         self.write(self.fake, "bad", digest + "\n")
 
+    def env(self, flock_scale=1.0):
+        return dict(os.environ, FAKE=self.fake, KIOSK_CONF=self.conf, KIOSK_STATE_DIR=self.state,
+                    PATH=self.bin + os.pathsep + os.environ["PATH"], FLOCK_SCALE=str(flock_scale))
+
     def run_ctl(self, *args):
-        env = dict(os.environ, FAKE=self.fake, KIOSK_CONF=self.conf, KIOSK_STATE_DIR=self.state,
-                   PATH=self.bin + os.pathsep + os.environ["PATH"])
-        return subprocess.run([KIOSKCTL, *args], env=env, capture_output=True, text=True).returncode
+        return subprocess.run([KIOSKCTL, *args], env=self.env(), capture_output=True, text=True).returncode
 
     def state_of(self, name):
         try:
@@ -269,13 +296,89 @@ class KioskctlTest(unittest.TestCase):
 
     def test_reboot_waits_for_the_update_lock_first(self):
         self.assertEqual(self.run_ctl("reboot"), 0)
-        self.assertEqual(self.reboot_steps(), ["flock -w 1800 9", "systemctl reboot"])
+        self.assertEqual(self.reboot_steps(), ["flock -w 60 8", "flock -w 1800 9", "systemctl reboot"])
         self.assertTrue(os.path.exists(os.path.join(self.state, "lock")))
 
     def test_reboot_still_happens_when_the_lock_stays_held(self):
         self.write(self.fake, "lock_held", "")
         self.assertEqual(self.run_ctl("reboot"), 0)
-        self.assertEqual(self.reboot_steps(), ["flock -w 1800 9", "systemctl reboot"])
+        self.assertEqual(self.reboot_steps(), ["flock -w 60 8", "flock -w 1800 9", "systemctl reboot"])
+
+    def use_real_flock(self):
+        path = os.path.join(self.bin, "flock")
+        with open(path, "w") as f:
+            f.write(REAL_FLOCK)
+
+    def hold(self, name):
+        """Takes a kioskctl lock file from outside, as another kioskctl run would."""
+        f = open(os.path.join(self.state, name), "w")
+        self.addCleanup(f.close)
+        fcntl.flock(f, fcntl.LOCK_EX)
+        return f
+
+    def is_held(self, name):
+        with open(os.path.join(self.state, name), "w") as f:
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            fcntl.flock(f, fcntl.LOCK_UN)
+            return False
+
+    def start_reboot(self, flock_scale):
+        proc = subprocess.Popen([KIOSKCTL, "reboot"], env=self.env(flock_scale),
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.addCleanup(proc.kill)
+        return proc
+
+    def wait_until(self, condition, seconds=5):
+        deadline = time.monotonic() + seconds
+        while not condition():
+            self.assertLess(time.monotonic(), deadline, "timed out")
+            time.sleep(0.02)
+
+    def test_reboot_gives_up_on_a_lock_held_past_its_wait(self):
+        self.use_real_flock()
+        self.hold("lock")
+        started = time.monotonic()
+        proc = self.start_reboot(flock_scale=0.5 / 1800)
+        _, err = proc.communicate(timeout=10)
+        self.assertGreaterEqual(time.monotonic() - started, 0.5)
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("lock still held after 30 minutes; rebooting anyway", err)
+        self.assertEqual(self.reboot_steps(), ["flock -w 60 8", "flock -w 1800 9", "systemctl reboot"])
+
+    def test_reboot_waits_for_a_held_lock_to_be_released(self):
+        self.use_real_flock()
+        held = self.hold("lock")
+        proc = self.start_reboot(flock_scale=1.0)
+        self.wait_until(lambda: "flock -w 1800 9" in self.reboot_steps())
+        time.sleep(0.2)
+        self.assertNotIn("systemctl reboot", self.reboot_steps())
+        fcntl.flock(held, fcntl.LOCK_UN)
+        _, err = proc.communicate(timeout=10)
+        self.assertEqual(proc.returncode, 0)
+        self.assertNotIn("rebooting anyway", err)
+        self.assertEqual(self.reboot_steps()[-1], "systemctl reboot")
+
+    def test_a_waiting_reboot_holds_the_timers_off(self):
+        self.use_real_flock()
+        held = self.hold("lock")
+        proc = self.start_reboot(flock_scale=1.0)
+        self.wait_until(lambda: self.is_held("reboot-gate"))
+        fcntl.flock(held, fcntl.LOCK_UN)
+        proc.communicate(timeout=10)
+        self.assertEqual(proc.returncode, 0)
+
+    def test_timer_checks_stand_aside_for_a_waiting_reboot(self):
+        self.use_real_flock()
+        self.hold("reboot-gate")
+        self.set_tag("kiosk-release", B)
+        self.set_tag("kiosk-urgent", C)
+        self.assertEqual(self.run_ctl("check-release"), 0)
+        self.assertEqual(self.run_ctl("check-urgent"), 0)
+        self.assertEqual(self.current(), A)
+        self.assertFalse(any(line.startswith("docker") for line in self.log()))
 
     def test_reboot_does_not_need_a_health_command(self):
         self.write_conf(health="")

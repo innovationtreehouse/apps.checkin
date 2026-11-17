@@ -894,9 +894,14 @@ class KioskHandler(BaseHTTPRequestHandler):
     }}
   }}
 
+  // An event without counts (a drain ack, a banner) keeps the last known total,
+  // so waking an empty building's screen still lets it sleep again.
+  let lastTotal = -1;
+
   function handleData(data, isInitial) {{
     const counts = data.counts || {{}};
-    const total = counts.total ?? -1;
+    const total = counts.total ?? lastTotal;
+    lastTotal = total;
 
     // Wake up on any activity
     if (!isInitial) setBlackout(false);
@@ -1458,6 +1463,8 @@ def handle_scan(backend, state, outbox, participant_id):
     if clock_suspect:
         outbox.mark_clock_suspect()
         log.warning("Large clock step detected; marking queued scans clockSuspect")
+    # The trace records who the kiosk showed inside when the badge was read.
+    shown_present = sorted(state.present_ids) if spec_trace.on() else None
     # The kiosk decides a close from what it shows; the server records it as
     # given. A live prompt for THIS badge makes this scan the close; any scan
     # ends the prompt, so another badge is handled as an ordinary scan.
@@ -1511,7 +1518,7 @@ def handle_scan(backend, state, outbox, participant_id):
     if spec_trace.on():
         spec_trace.emit("KioskBadge", p=str(participant_id), cid=client_event_id, intent=intent, close=close,
                         prompt=bool(others), queued=queue_only, t=scanned_at, rosterAsOf=roster_as_of,
-                        present=sorted(state.present_ids))
+                        present=shown_present)
 
     if queue_only:
         show_queued(outbox.pending_count())
