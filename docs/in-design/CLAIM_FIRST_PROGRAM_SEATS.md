@@ -97,7 +97,7 @@ At the switch and after:
 | Enrolled and claimed families | Nothing changes. Their rows stand, and the app already checks out on the hidden item. |
 | Paid public orders, past and in flight | Still honored. `programVariantIds` keeps matching both variants, so `shopifyVariantId` and `shopifyProductId` stay for good, as do income mapping (`income/appItems.ts:22`) and the audit. A paid webhook arriving late for a claim activates normally; one with no claim goes to the Board. |
 | Refund on an old public order | Flagged only. Shopify may raise a draft item's stock, which nobody can buy. |
-| Stock in Shopify | Left alone. Zeroing it adds calls and helps nothing. |
+| Stock in Shopify | Each listed capped item is set to 0, one write per program under its row lock, before it is hidden (Inventory ruling, 2026-11-15). A store sale that lands before the hide is confirmed can then take no seat. |
 | Owed carry, pending and parked writes | Frozen, not settled. The re-count at turn-off resolves them; the contract step drops them. |
 | Scholarship rows, including failed holds | Stay as they are. The hold-failed queue stops growing. A person clears what is left before the contract step (see "Clearing rows before the state merge" below). |
 
@@ -172,14 +172,15 @@ The trial is all programs, in a narrow window with a set end date. A person turn
 
 - `BoardSettings.programStoreClosedAt`, nullable, set and cleared by the Board. Setting it is audited and hides the public items.
 - `hideEndedProducts` selects only programs with `saleEndedAt` set (`saleSweep.ts:56`). It also selects every program while the switch is set, and the switch calls it at once. It stamps `productHiddenAt` only after Shopify confirms, so a failed hide is retried on the next daily run.
-- A guard in the stock writer: while set, no carry is recorded and no push is made. `changeProgramStock`, `changeProgramStockWith` (its row change still commits) and `pushProgramStock` all check it. That one spot also covers heal, nudge and re-arm.
+- A guard in the stock writer: while set, it blocks only writes that raise public stock. A raise is not recorded in the carry, an owed raise is dropped, and a pending raise is parked instead of resent. Writes that lower stock, such as a take-back after a restocking refund, always go through (Inventory ruling, 2026-11-15). `changeProgramStock`, `changeProgramStockWith` (its row change still commits) and `pushProgramStock` all check it. That one spot also covers heal, nudge and re-arm. A lowering write held at 0 keeps its shortfall owed without the over-capacity alert.
+- The switch lives on the Board settings page (Membership settings), sent through the existing settings route; only a Board member may set or clear it. Setting it is refused while an unfinished program with a public item has no reserved-seat item.
 - Callers keep stamping `inventoryHeldAt` and `seatTakenWithoutSaleAt`. Those stamps are what makes the re-count and later seat returns exact.
 - New paid programs create the public item as draft, so `shopifyVariantId` stays filled and turn-off needs no new item.
 
 **Turning it off, in order:**
 
-1. A Board member clears the switch. Stock writes resume.
-2. The same action re-counts each program whose sale has not ended, using `setProgramInventory`: capacity minus seats taken. This path already exists; it settles any pending write and clears parked ones. It reports each program, and it clears `productHiddenAt` on that program so the later off-sale sweep hides the item again once it is re-listed. That clearing is new.
+1. A Board member clears the switch. Stock writes resume. The action is refused while any public item's hide is unconfirmed (it retries the hides first), and while the match audit lists a paid program order nothing claims, or cannot run (Inventory ruling, 2026-11-15; model gaps C4 and the skipped clearing). Clearing what the audit lists is the people step before turn-off.
+2. The same action re-counts each program whose sale has not ended, using `setProgramInventory`: capacity minus seats taken. This path already exists; it settles any pending write and clears parked ones. It reports each program, and it clears `productHiddenAt` on that program so the later off-sale sweep hides the item again once it is re-listed. That clearing is new, and it happens only when Shopify confirms the re-count. The re-count reads Shopify only after it holds the Program row lock, and the switch's zero write takes the same lock, so a stale read can't leave stock at 0 with seats free (model gap C6).
 3. Only after a program's re-count is confirmed, a person re-lists its public item in Shopify. Stock is right before the item can sell. The rules already make re-listing a hand step (`programs.md:346`).
 4. A person removes the menu link and any redirects.
 
@@ -235,9 +236,9 @@ Per `docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`. Each line is one PR unle
 |---|---|---|---|
 | 1 | Refund flags only, with the rule text | none | No schema |
 | 2 | Sign-in returns to the program | none | No schema |
-| 2a | Hold-failed deny fix with its own rule text (`programs.md:368-379`). Separate work already drafted; this design doesn't build it | none | Should land before the switch, so nobody clears the queue with the old deny |
+| 2a | Hold-failed deny fix with its own rule text (`programs.md:368-379`). Shipped as #2927 | none | Landed before the switch, so nobody clears the queue with the old deny |
 | 3 | Add `programStoreClosedAt` with its `@sensitivity` tag | 1, expand | Inert. If the settings route's grant must change, that goes first in its own boundary PR |
-| 4 | Guard, checkout predicate, draft on create, hide and re-count actions, sweep selecting programs while the switch is set | 2 | Off until the switch |
+| 4 | Guard, checkout predicate, draft on create, zero-then-hide and re-count actions, sweep selecting programs while the switch is set | 2 | Off until the switch. The dated rule notes go in at step 5, not here |
 | — | Dev-store checks; section 4's three steps on production | | People |
 | 5 | **Switch on for the window.** A short dated note goes in `programs.md` and `revenue.md`: which rules are paused and until when | | Board |
 | — | Window ends: turn off and re-count (section 6). Note removed | | Board and a person; expected |

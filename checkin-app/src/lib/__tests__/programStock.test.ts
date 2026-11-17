@@ -1,5 +1,5 @@
 import { resetTokenCache, SHOPIFY_INVENTORY_API_VERSION } from '../shopify/client';
-import { adjustProgramInventory, changeProgramStock, healProgramStock, listUnconfirmedStock, programStockTiming, setProgramInventory, settleUnconfirmedStock } from '../shopify/stock';
+import { adjustProgramInventory, changeProgramStock, changeProgramStockWith, healProgramStock, listUnconfirmedStock, programStockTiming, setProgramInventory, settleUnconfirmedStock } from '../shopify/stock';
 import { sendEmail } from '../email';
 import prisma from '../prisma';
 import crypto from 'crypto';
@@ -13,7 +13,7 @@ jest.mock('../logger', () => ({ logIntegrationError: jest.fn().mockResolvedValue
 // assert the bookkeeping the writer leaves behind rather than call shapes.
 jest.mock('../prisma', () => {
     type Row = Record<string, unknown>;
-    const mockState: { row: Row | null; locked: boolean } = { row: null, locked: false };
+    const mockState: { row: Row | null; locked: boolean; storeClosedAt: Date | null } = { row: null, locked: false, storeClosedAt: null };
     const apply = (row: Row, data: Row) => {
         for (const [k, v] of Object.entries(data)) {
             row[k] = v !== null && typeof v === 'object' && 'increment' in (v as Row)
@@ -54,6 +54,7 @@ jest.mock('../prisma', () => {
                 findMany: jest.fn(async () => (mockState.row ? [{ ...mockState.row, shopifyVariantId: '67890' }] : [])),
                 count: jest.fn(async () => (mockState.row ? 1 : 0)),
             },
+            boardSettings: { findUnique: jest.fn(async () => ({ programStoreClosedAt: mockState.storeClosedAt })) },
             person: { findMany: jest.fn(async () => [{ email: 'admin@test.com' }]) },
             integrationErrorLog: { findMany: jest.fn(async () => []) },
             auditLog: { create: jest.fn() },
@@ -61,7 +62,7 @@ jest.mock('../prisma', () => {
     return { __esModule: true, default: client };
 });
 
-const db = prisma as unknown as { __state: { row: Record<string, unknown> | null; locked: boolean }; person: { findMany: jest.Mock } };
+const db = prisma as unknown as { __state: { row: Record<string, unknown> | null; locked: boolean; storeClosedAt: Date | null }; person: { findMany: jest.Mock } };
 
 type Vars = Record<string, unknown> & { idempotencyKey?: string; input?: { changes: { delta: number; changeFromQuantity: null }[] } };
 type Reply = { status?: number; data?: unknown; errors?: unknown[]; unreadable?: boolean; delayMs?: number } | Error;
@@ -148,6 +149,7 @@ beforeEach(() => {
     process.env.SHOPIFY_CLIENT_SECRET = 'secret';
     jest.clearAllMocks();
     setRow();
+    db.__state.storeClosedAt = null;
     resetTokenCache();
     Object.assign(programStockTiming, { capMs: 10_000, requestCapMs: 10_000, maxBackoffMs: 1 });
     outboundLeak.inject = false;
@@ -531,6 +533,96 @@ describe('adjustProgramInventory (the one program-stock writer)', () => {
         expect(fetchMock).not.toHaveBeenCalled();
         expect(console.log).toHaveBeenCalledWith(expect.stringContaining('5 -> 4'));
         expect(after()).toEqual(clean);
+    });
+});
+
+describe('while the Board has closed the store to program seats', () => {
+    beforeEach(() => { db.__state.storeClosedAt = new Date(); });
+
+    it('a raise is not recorded and nothing is sent', async () => {
+        const s = shopify({});
+        expect(await changeProgramStock(program, 1, 'hold-release')).toEqual({ recorded: true, landed: true });
+        expect(s.calls).toHaveLength(0);
+        expect(after()).toEqual(clean);
+    });
+
+    it('changeProgramStockWith commits the row change and owes no raise', async () => {
+        const s = shopify({});
+        const change = jest.fn(async () => ({ result: 'row', delta: 1 }));
+        expect(await changeProgramStockWith(program, 'hold-release', change)).toEqual({ result: 'row', landed: true });
+        expect(change).toHaveBeenCalledTimes(1);
+        expect(s.calls).toHaveLength(0);
+        expect(after()).toEqual(clean);
+    });
+
+    it('a take-back lowers stock as usual', async () => {
+        const s = shopify({ ProgramStockRead: [readReply(1)], ProgramStockAdjust: [adjustOk] });
+        expect(await adjustProgramInventory(program, -1, 'restock-take-back')).toBe(true);
+        expect(s.adjusts()[0].variables.input!.changes[0]).toMatchObject({ delta: -1 });
+        expect(after()).toEqual(clean);
+    });
+
+    it('a lowering write held at 0 keeps its shortfall owed without the over-capacity alert', async () => {
+        shopify({ ProgramStockRead: [readReply(0)] });
+        expect(await adjustProgramInventory(program, -1, 'hold')).toBe(true);
+        expect(after()).toEqual({ ...clean, carry: -1, flagged: true });
+        expect(sendEmail).not.toHaveBeenCalled();
+    });
+
+    it('a raise owed from before the switch is dropped by heal, not sent', async () => {
+        setRow({ shopifyStockCarry: 2, shopifyStockPushNeededAt: new Date() });
+        const s = shopify({ ProgramStockRead: [readReply(0)] });
+        await healProgramStock();
+        expect(s.adjusts()).toHaveLength(0);
+        expect(after()).toEqual(clean);
+    });
+
+    it('a pending raise is parked, not resent', async () => {
+        setRow({ shopifyStockPendingWrite: pendingWrite({ key: 'program-42-release', delta: 1, owedPart: 1 }) });
+        const s = shopify({});
+        await healProgramStock();
+        expect(s.adjusts()).toHaveLength(0);
+        expect(after()).toMatchObject({ carry: 0, pending: null, parked: [['program-42-release', 1]] });
+        expect(sendEmail).not.toHaveBeenCalled();
+    });
+
+    it('a pending lowering write is still resent', async () => {
+        setRow({ shopifyStockPendingWrite: pendingWrite() });
+        const s = shopify({ ProgramStockAdjust: [adjustOk] });
+        await healProgramStock();
+        expect(s.adjusts()).toHaveLength(1);
+        expect(after()).toEqual(clean);
+    });
+
+    it('the switch zero takes stock to 0 and clears a parked raise', async () => {
+        setRow({ shopifyStockPendingWrite: pendingWrite({ key: 'program-42-release', delta: 1, owedPart: 1 }) });
+        const s = shopify({ ProgramStockRead: [readReply(3), readReply(3)], ProgramStockAdjust: [adjustOk] });
+        expect(await setProgramInventory(program, async () => 0, 'store-closed')).toBe(true);
+        expect(s.adjusts().map((c) => c.variables.input!.changes[0].delta)).toEqual([-3]);
+        expect(after()).toEqual(clean);
+    });
+
+    it('a target above what Shopify shows (a re-arm) is not sent', async () => {
+        const s = shopify({ ProgramStockRead: [readReply(0), readReply(0)] });
+        expect(await setProgramInventory(program, async () => 4, 're-arm')).toBe(true);
+        expect(s.adjusts()).toHaveLength(0);
+        expect(after()).toEqual(clean);
+    });
+});
+
+describe('an absolute target reads Shopify under the Program row lock', () => {
+    it('so a write booked before the lock is in what it counts from', async () => {
+        const reads: boolean[] = [];
+        const s = shopify({ ProgramStockRead: [readReply(1), readReply(1)], ProgramStockAdjust: [adjustOk] });
+        const fetchMock = global.fetch as jest.Mock;
+        const inner = fetchMock.getMockImplementation()!;
+        fetchMock.mockImplementation(async (url: string, init: RequestInit) => {
+            if (String(init.body).includes('ProgramStockRead')) reads.push(db.__state.locked);
+            return inner(url, init);
+        });
+        expect(await setProgramInventory(program, async () => 3, 'store-reopened')).toBe(true);
+        expect(reads[0]).toBe(true);
+        expect(s.adjusts()[0].variables.input!.changes[0]).toMatchObject({ delta: 2 });
     });
 });
 

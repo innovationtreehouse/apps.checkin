@@ -25,8 +25,7 @@
  *   'hardship' — whether a person or household asked for, holds, was granted
  *                or was refused help with a fee (a payment plan, a scholarship,
  *                a comp). Board and finance views only, plus the family's own
- *                rows; never a sysadmin or another staff role by default
- *                (docs/rules/revenue.md, Ownership).
+ *                rows; never a sysadmin or another staff role by default.
  *   scope = 'everyones'     — broad grant; held on every row by default, but a
  *                             row-scoped model missing its scope key fails
  *                             closed and does NOT hold it (see scopesHeld)
@@ -148,18 +147,18 @@ export type Authorize =
     | { anyRole: SessionFlagRole[] }
     // Catalog read admission: the single chokepoint for reading the global
     // catalog — the catalog audience (canSeeCatalog, lib/volunteer.ts), decided
-    // from session claims (docs/rules/inventory.md, Access). Broader than the ops
+    // from session claims. Broader than the ops
     // roles, deliberately: the catalog is non-pii reference data (writes stay
     // INVENTORY_MANAGER-only).
     | 'catalog-viewer'
     // Receipt submission: an adult whose household membership is
     // ACTIVE, or a Treehouse Volunteer (role holder or staff account) whatever
-    // their age or membership. No background check (docs/rules/expenses.md).
+    // their age or membership. No background check.
     | 'receipt-submitter'
     // Catalog write admission: INVENTORY_MANAGER only.
     | 'inventory-manager'
     // FINANCE only. No sysadmin auto-admit: Finance Ops excludes
-    // sysadmins (docs/rules/revenue.md).
+    // sysadmins.
     | 'finance'
     // FINANCE or BOARD: the board acts as finance's
     // superuser. No sysadmin auto-admit, as above.

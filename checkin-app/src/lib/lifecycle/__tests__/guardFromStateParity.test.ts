@@ -190,7 +190,6 @@ describe('CAS guard ↔ TRANSITIONS from-state parity', () => {
 const ENROLLMENT_WRITE_SITES: Record<Exclude<EnrollmentWriteName, 'reenrollPaid' | 'reenrollComp'>, string> = {
     requestFlag: 'app/api/programs/[id]/request-payment-plan/route.ts',
     takeHold: 'app/api/programs/[id]/request-payment-plan/route.ts',
-    reapply: 'app/api/programs/[id]/request-payment-plan/route.ts',
     requestWithoutHold: 'app/api/programs/[id]/request-payment-plan/route.ts',
     retryWithoutHold: 'app/api/programs/[id]/request-payment-plan/route.ts',
     manualHold: 'app/api/finance-ops/payment-plans/manual-hold/route.ts',

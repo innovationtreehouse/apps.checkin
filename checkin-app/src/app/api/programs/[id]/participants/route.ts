@@ -13,6 +13,7 @@ import { hasHouseholdConflict, sharesHousehold } from "@/lib/conflictOfInterest"
 import { householdLeadship } from "@/lib/household/leads";
 import { isMembershipFeeSettled } from "@/lib/orgMembership";
 import { isProgramCheckoutBroken } from "@/lib/programCheckout";
+import { isProgramStoreClosed } from "@/lib/programs/storeClosed";
 import { changeProgramStockWith } from "@/lib/shopify/stock";
 import { isSaleEnded } from "@/lib/programs/saleState";
 import { PROGRAM_ENDED_PAYMENT } from "@/lib/programs/checkoutSignature";
@@ -214,7 +215,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         // pay through — the seat would sit PENDING forever. A hand enrollment needs
         // no store payment, so it still goes through.
         // No requiresOverride: an override cannot make the program sellable.
-        if (initialStatus === 'PENDING' && !basis && isProgramCheckoutBroken(currentProgram)) {
+        if (initialStatus === 'PENDING' && !basis && isProgramCheckoutBroken(currentProgram, await isProgramStoreClosed())) {
             return apiError("This program has a price but no payment link set up, so enrollment can't be paid for. An admin must fix the Shopify link in program-ops before anyone can enroll.", 400);
         }
 

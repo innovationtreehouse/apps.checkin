@@ -50,8 +50,9 @@ export async function raiseReversalByOrderId(
     restocked: RestockedLine[] = [],
     refundId: string | null = null,
 ): Promise<boolean> {
-    await recordReversal(orderLegacyId, kind);
+    // Restock rows land before the ledger row: a gate that sees the reversal also sees what it restocked.
     if (kind === "REFUND" && refundId) await recordRestock(refundId, orderLegacyId, restocked);
+    await recordReversal(orderLegacyId, kind);
     let matched = false;
     const proc = await prisma.orgMembershipProcess.findFirst({ where: { shopifyOrderId: orderLegacyId }, select: { id: true, status: true, paidAt: true } });
     if (proc) {
@@ -176,8 +177,9 @@ async function claimOnce(tableName: string, actor: SystemActorName, key: string,
             select: { id: true },
         });
         if (seen) return false;
-        // ponytail: claimed before settling, so a crash mid-settlement leaves the rest to
-        // the board's REFUND flags rather than risking a second stock change.
+        // ponytail: claimed before settling, so a crash mid-settlement never changes stock
+        // twice but loses the settlement. A recorded enrollment still has its REFUND flag;
+        // an unrecorded order or a test order leaves no flag.
         await tx.auditLog.create({
             data: {
                 ...systemActor(actor),

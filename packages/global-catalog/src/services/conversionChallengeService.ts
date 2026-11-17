@@ -5,7 +5,6 @@ import type { Prisma } from "../generated/prisma/client";
 import type { ConversionChallenge, ConversionChallengeStatus } from "../db/schema";
 
 const challengeRepo = createConversionChallengeRepository(db);
-const itemRefRepo = createItemReferenceRepository(db);
 import { ServiceError } from "@checkin/component-kit";
 import { reviewTransitionError } from "./categoryService";
 import { assertConversionChallengeTransition } from "../workflows/conversion-challenge.machine";
@@ -71,10 +70,11 @@ export async function acceptChallenge(challengeId: number, userId: number): Prom
     throw reviewTransitionError(err, challenge.status !== "pending", ALREADY_REVIEWED);
   }
 
-  const ref = await itemRefRepo.findById(challenge.itemReferenceId);
-  if (!ref) throw new ServiceError(404, "Item reference not found");
-
   await transactionWithEvents(async (tx) => {
+    const ref = await createItemReferenceRepository(tx).findByIdForUpdate(challenge.itemReferenceId);
+    if (!ref) throw new ServiceError(404, "Item reference not found");
+    if (ref.archivedAt) throw new ServiceError(409, "This reference is archived");
+
     const { count } = await tx.conversionChallenge.updateMany({
       where: { id: challengeId, status: challenge.status },
       data: { status: acceptedStatus, reviewedByUserId: userId, reviewedAt: new Date() },

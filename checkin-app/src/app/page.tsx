@@ -54,6 +54,10 @@ export default function Home() {
   // A cached answer may be old, so the page says it is still checking until this visit's read answers.
   const { fresh, retry: retryAttendance } = useFreshRead(attendancePath, attendance.reload);
   const safety = attendance.data;
+  // An answer without both flags is unknown, never all-clear.
+  const safetyUnknown = safety != null && !(
+    typeof safety.safety?.isLastKeyholder === 'boolean' && typeof safety.safety?.isTwoDeepViolation === 'boolean'
+  );
   const lastKeyholder = Boolean(safety?.safety?.isLastKeyholder && session?.user?.isKeyholder);
   const twoDeep = Boolean(safety?.safety?.isTwoDeepViolation);
   const reachable = safety?.building?.reachable === true;
@@ -115,6 +119,13 @@ export default function Home() {
                 <LoadError
                   what="the building safety check"
                   message={`${attendance.error} Two-deep and last-keyholder warnings can't show until it loads.`}
+                  onRetry={retryAttendance}
+                />
+              )}
+              {safetyUnknown && !attendance.error && fresh && (
+                <LoadError
+                  what="the building safety check"
+                  message="The answer came back without the safety result. Two-deep and last-keyholder warnings can't show until it does."
                   onRetry={retryAttendance}
                 />
               )}

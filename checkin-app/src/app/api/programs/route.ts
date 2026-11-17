@@ -3,6 +3,7 @@ import { withAuth, getOptionalSessionUser } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { sendNotification } from "@/lib/notifications";
 import { createClaimantProduct, createShopifySingleVariantProgram } from "@/lib/shopify/products";
+import { isProgramStoreClosed } from "@/lib/programs/storeClosed";
 import { adjustProgramInventory } from "@/lib/shopify/stock";
 import { logBackendError, logger } from "@/lib/logger";
 import { isMembershipFeeSettled } from "@/lib/orgMembership";
@@ -264,7 +265,7 @@ export const POST = withAuth({ roles: ['isBoardMember'] }, async (req, auth) => 
         // price there is no store product (sync-shopify mints it once one is set).
         const basePriceCents = nmPrice;
         if (basePriceCents && basePriceCents > 0) {
-            shopifyData = await createShopifySingleVariantProgram(name, basePriceCents, maxPart);
+            shopifyData = await createShopifySingleVariantProgram(name, basePriceCents, maxPart, undefined, !(await isProgramStoreClosed()));
             // Without it checkout falls back to the public variant; the board can mint it later via sync-shopify.
             if (shopifyData) claimantData = await createClaimantProduct(name, basePriceCents);
         }

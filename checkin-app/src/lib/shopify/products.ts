@@ -147,12 +147,14 @@ async function findProductByHandle(
  * as every other stock change.
  *
  * With a `handle`, a product already carrying it is returned instead of creating another.
+ * With `listed` false (the Board has closed the store to program seats) it is created as a draft.
  */
 export async function createShopifySingleVariantProgram(
     name: string,
     basePriceCents: number | null,
     maxParticipants: number | null = null,
     handle?: string,
+    listed = true,
 ): Promise<{ shopifyProductId: string; shopifyVariantId: string } | null> {
     if (!basePriceCents || basePriceCents <= 0) return null; // free program: no Shopify object needed
 
@@ -209,7 +211,7 @@ export async function createShopifySingleVariantProgram(
                         product: {
                             title: `${program.name} Program Enrollment`,
                             ...(handle && { handle }),
-                            status: 'active',
+                            status: listed ? 'active' : 'draft',
                             product_type: "Educational Services",
                             variants: [{
                                 price: centsToDecimalString(program.nonOrgMemberPriceCents),

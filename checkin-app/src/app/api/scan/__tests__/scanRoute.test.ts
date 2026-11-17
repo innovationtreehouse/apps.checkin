@@ -10,6 +10,7 @@ import { processCloseRequest, executePendingCloses } from '@/lib/attendance/clos
 import { notifyScanOutcome } from '@/lib/attendance/scanNotify';
 import { KIOSK_DEBOUNCE_PROTOCOL_VERSION, SCAN_PROTOCOL_VERSION } from '@/lib/scanProtocol';
 import { recordKioskProtocolSeen } from '@/lib/kioskProtocolSeen';
+import { specTrace } from '@/lib/specTrace';
 
 jest.mock('@/lib/auth', () => ({
     authenticateRequest: jest.fn(),
@@ -59,6 +60,8 @@ jest.mock('@/lib/prisma', () => {
 jest.mock('@/lib/kioskProtocolSeen', () => ({
     recordKioskProtocolSeen: jest.fn().mockResolvedValue(undefined),
 }));
+
+jest.mock('@/lib/specTrace', () => ({ specTrace: jest.fn() }));
 
 jest.mock('@/lib/logger', () => ({
     logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
@@ -469,8 +472,6 @@ describe('POST /api/scan', () => {
         // server cannot apply parks as a dead letter instead, never toggling.
         it.each([
             ['without a clientEventId', { clientEventId: undefined }],
-            ['without a scannedAt', { scannedAt: undefined }],
-            ['with an unparseable scannedAt', { scannedAt: 'not-a-date' }],
             ['with an unknown intent', { intent: 'SIDEWAYS' }],
             ['with a malformed protocolVersion', { protocolVersion: '2' }],
         ])('parks a replay %s as client_dead:400 instead of refusing it', async (_label, overrides) => {
@@ -483,6 +484,61 @@ describe('POST /api/scan', () => {
             });
             expect(processCheckin).not.toHaveBeenCalled();
             expect(processCheckout).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            ['without a scannedAt', { scannedAt: undefined }],
+            ['with an unparseable scannedAt', { scannedAt: 'not-a-date' }],
+        ])('parks a replay %s as having no scan time, its server-now time marked suspect', async (_label, overrides) => {
+            (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
+            const res = await POST(replayReq({ intent: 'OUT', ...overrides }));
+            expect((await res.json()).type).toBe('parked');
+            expect(prisma.rawBadgeLog.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({ personId: 1, reviewReason: 'client_dead:no_scan_time' }),
+            });
+            expect(prisma.presenceEvent.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({ direction: 'OUT', clockSuspect: true }),
+            });
+            expect(processCheckout).not.toHaveBeenCalled();
+        });
+
+        it('treats a replay whose scan-time uncertainty is implausibly wide as a suspect clock, without a close lookup', async () => {
+            (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
+            const res = await POST(replayReq({ protocolVersion: SCAN_PROTOCOL_VERSION, scanTimeUncertaintyMs: 1e16 }));
+            expect(res.status).toBe(200);
+            expect((await res.json()).type).toBe('parked');
+            expect(prisma.rawBadgeLog.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({ personId: 1, reviewReason: 'clock_suspect' }),
+            });
+        });
+
+        it('keys a replay parked for having no clientEventId by its body, so a resend dedups', async () => {
+            (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
+            const body = { clientEventId: undefined, scannedAt: '2026-11-01T10:00:00.000Z', intent: 'IN' };
+
+            await POST(replayReq(body));
+            const key = (prisma.rawBadgeLog.create as jest.Mock).mock.calls[0][0].data.clientEventId;
+            expect(key).toMatch(/^body:[0-9a-f]{64}$/);
+
+            jest.clearAllMocks();
+            (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue({ id: 5, clientEventId: key });
+            const res = await POST(replayReq(body));
+            expect((await res.json()).type).toBe('duplicate_ignored');
+            expect(prisma.rawBadgeLog.findUnique).toHaveBeenCalledWith({ where: { clientEventId: key } });
+            expect(prisma.rawBadgeLog.create).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            ['a parked replay', 'dead', { clientEventId: undefined }],
+            ['a dead-lettered scan', 'dead', { replay: undefined, dead: true }],
+            ['a replay', 'replay', {}],
+        ])('traces %s in the %s slot', async (_label, slot, overrides) => {
+            (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
+            (prisma.visit.aggregate as jest.Mock).mockResolvedValue({ _max: { arrivedAt: null, departedAt: null } });
+            (prisma.visit.findFirst as jest.Mock).mockResolvedValue(null);
+            (processCheckin as jest.Mock).mockResolvedValue(checkedIn);
+            await POST(replayReq(overrides));
+            expect(specTrace).toHaveBeenCalledWith('ScanRequest', expect.objectContaining({ slot }));
         });
 
         it.each([
@@ -1029,7 +1085,7 @@ describe('POST /api/scan', () => {
             method: 'POST',
             body: JSON.stringify({ participantId: 1, ...fields }),
         }) as unknown as import('next/server').NextRequest;
-        // The upsert is fire-and-forget from the finally; let its promise settle.
+        // The kiosk-protocol-seen write is fire-and-forget from the finally; let its promise settle.
         const settle = () => new Promise(resolve => setImmediate(resolve));
 
         beforeEach(() => {

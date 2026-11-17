@@ -110,9 +110,9 @@ state: non-null means a hold is outstanding.
                                  │ deny (no Shopify op)
                                  ▼
                           ┌──────────────┐
-                          │  HELD +      │  re-apply (same seat, no 2nd -1)
-                          │  DENIED      │ ─────────────────────────────► back to HELD
-                          │ (paymentPlanDeniedAt set)   (deniedAt cleared)
+                          │  HELD +      │  a new request is refused (409);
+                          │  DENIED      │  the family follows up with finance
+                          │ (paymentPlanDeniedAt set)
                           └──────┬───────┘
                                  │
               ┌──────────────────┴───────┐
@@ -125,13 +125,13 @@ state: non-null means a hold is outstanding.
 
 ### Application (`POST /api/programs/[id]/request-payment-plan`)
 
-Stamps `inventoryHeldAt = now()` and clears `paymentPlanDeniedAt`, guarded so the `-1`
-only fires the moment `inventoryHeldAt` transitions **null → set**. A denied re-applicant
-already has `inventoryHeldAt` set (denial never clears it — see below), so re-applying
-just flips `isPaymentPlanRequested` back to `true` and clears the denial stamp — it does
-**not** decrement a second time for a seat it's already holding. On a genuine transition
-(fresh hold or re-request after denial) this now emails the Scholarship Review Team and
-sends the applicant household an acknowledgement — see §5.
+Stamps `inventoryHeldAt = now()`, guarded so the `-1` only fires the moment
+`inventoryHeldAt` transitions **null → set**; a re-POST on a row already holding writes
+nothing. A denied request cannot be sent again: the route answers 409 and names the
+`financeContactEmail` setting (or the Board, when it is unset) as where to follow up, and
+the request-flag write itself refuses a row with `paymentPlanDeniedAt` set. On a genuine
+transition (fresh hold) this emails the Scholarship Review Team and sends the applicant
+household an acknowledgement — see §5.
 
 ### Denial (`POST /api/finance-ops/payment-plans/refuse`)
 
@@ -214,7 +214,8 @@ against *failed calls* but not against *crashes between the two steps*:
 ## 4. A denied hold has no expiry
 
 No automated job removes a denied applicant. A denied hold stays until the applicant
-pays, re-applies or withdraws, or a board member removes them (release paths (a) and (b)).
+pays or withdraws, or a board member removes them (release paths (a) and (b)). The
+applicant cannot send the request again.
 
 ## 5. Notifications
 
@@ -240,7 +241,7 @@ still the applicant's only automatic email.
 
 | Event | Route | Review Team | Household |
 |---|---|---|---|
-| Program request (fresh hold or re-request-after-denial) | `POST /api/programs/[id]/request-payment-plan` | ✅ `scholarshipNotifyEmail` → else all board | ✅ ack (leads ∪ participant), ungated |
+| Program request (fresh hold) | `POST /api/programs/[id]/request-payment-plan` | ✅ `scholarshipNotifyEmail` → else all board | ✅ ack (leads ∪ participant), ungated |
 | Membership request | `POST /api/membership/request-payment-plan` | ✅ | ✅ ack (leads only), ungated |
 | Program approve | `POST /api/finance-ops/payment-plans` | — | **no automatic email** |
 | Program deny | `POST /api/finance-ops/payment-plans/refuse` | — | **no automatic email** |

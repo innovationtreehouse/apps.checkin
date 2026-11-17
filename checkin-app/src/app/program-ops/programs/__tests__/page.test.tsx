@@ -62,6 +62,34 @@ describe("AdminProgramsIndex", () => {
     expect(screen.getByText(expected)).toBeInTheDocument();
   });
 
+  describe("broken-checkout badge while the Board has closed the store to program seats", () => {
+    const priced = (id: number, name: string, claimantShopifyVariantId: string | null) => ({
+      ...programs[0], id, name, nonOrgMemberPriceCents: 1500, shopifyVariantId: `pub-${id}`, claimantShopifyVariantId,
+    });
+    const render = async (programStoreClosedAt: string | null) => {
+      setSession({ id: 1, isBoardMember: true });
+      mockFetchJson({
+        "/api/programs": [priced(10, "With reserved seat", "claim-10"), priced(11, "Public item only", null)],
+        "/api/settings/membership": { settings: { BoardSettings: { programStoreClosedAt } } },
+      });
+      renderWithProviders(<AdminProgramsIndex />);
+      await screen.findByText("With reserved seat");
+    };
+
+    it("flags only the program missing its reserved-seat variant", async () => {
+      await render("2026-11-17T00:00:00.000Z");
+      expect(await screen.findByText("⚠️ Broken checkout")).toBeInTheDocument();
+      expect(screen.getAllByText("⚠️ Broken checkout")).toHaveLength(1);
+      expect(screen.getByText("Public item only").closest("tr")).toHaveTextContent("Broken checkout");
+    });
+
+    it("flags neither while the store is open, since both have a public variant", async () => {
+      await render(null);
+      await settleAfter("/api/settings/membership");
+      expect(screen.queryByText("⚠️ Broken checkout")).not.toBeInTheDocument();
+    });
+  });
+
   it("hides create-program from a sysadmin off the Board", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson({ "/api/programs": programs });

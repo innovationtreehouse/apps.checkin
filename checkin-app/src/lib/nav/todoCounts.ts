@@ -9,7 +9,8 @@ import { pickAddress, validateAddress } from "@/lib/address";
 import { alertAddressCheck, getConfigHealth, openConfigIssues } from "@/lib/configHealth";
 import { countUnhealthyCronJobs } from "@/lib/cronRuns";
 import { openIncidentSummary } from "@/lib/opsIncidentView";
-import { PROGRAM_CHECKOUT_BROKEN_WHERE } from "@/lib/programCheckout";
+import { programCheckoutBrokenWhere } from "@/lib/programCheckout";
+import { isProgramStoreClosed } from "@/lib/programs/storeClosed";
 import { BROKEN_HOUSEHOLD_WHERE, UNCLAIMED_OR_BROKEN_HOUSEHOLD_WHERE } from "@/lib/household/filters";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { seesHouseholdPaymentStatus } from "@/lib/programs/paymentVisibility";
@@ -528,8 +529,8 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
         }),
         // Programs priced on a tier with no matching Shopify variant — paid enrollment
         // silently can't check out. Same condition as the list/detail UI, shared via
-        // PROGRAM_CHECKOUT_BROKEN_WHERE (see lib/programCheckout.ts).
-        prisma.program.count({ where: PROGRAM_CHECKOUT_BROKEN_WHERE }),
+        // programCheckoutBrokenWhere (see lib/programCheckout.ts).
+        isProgramStoreClosed().then((closed) => prisma.program.count({ where: programCheckoutBrokenWhere(closed) })),
         // Reconciler-detected payment problems still needing board action
         // (OPEN or ACKNOWLEDGED). Green pill on the Finance Ops Payment problems tab.
         seesFinance ? prisma.paymentException.count({ where: { status: { in: ["OPEN", "ACKNOWLEDGED"] } } }) : 0,
