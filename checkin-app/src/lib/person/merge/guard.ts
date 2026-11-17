@@ -100,7 +100,7 @@ export type CheckSide = {
 
 /**
  * Why this merge must be refused because it changes a disputed person's check facts,
- * or null (docs/rules/membership.md, Application and review). Either record disputed makes
+ * or null. Either record disputed makes
  * the person disputed. The facts change when the keeper takes the merged-away date, or
  * when a merged-away review lands on a keeper that already has a review or a dispute.
  */

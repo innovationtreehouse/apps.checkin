@@ -54,7 +54,6 @@ const TYPE_LABEL: Record<string, string> = {
 // `newData.type` names the ROUTE, not the actor relationship — a household lead
 // correcting a member still writes "self_correction". It's a label here, never
 // the self/proxy axis; see actorClass below for that.
-// Governing rules: docs/rules/attendance-checkin.md, "The visit record".
 function kindLabel(row: AuditRow): string {
   if (row.newData.type && TYPE_LABEL[row.newData.type]) return TYPE_LABEL[row.newData.type];
   switch (row.action) {
@@ -66,8 +65,8 @@ function kindLabel(row: AuditRow): string {
 }
 
 // The actor axis is a bare comparison: actorId vs the subject stored in
-// secondaryAffectedEntity, an invariant every visit audit write holds
-// (docs/rules/attendance-checkin.md). `null` is a row written before the
+// secondaryAffectedEntity, an invariant every visit audit write holds.
+// `null` is a row written before the
 // invariant held everywhere — shown as unknown, never guessed at. A system
 // write is on neither side of the axis: nobody edited anybody.
 function actorClass(row: AuditRow): "self" | "proxy" | "system" | "unknown" {

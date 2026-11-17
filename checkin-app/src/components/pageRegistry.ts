@@ -3,8 +3,8 @@
 // `visible` is read from its section descriptor (lib/nav/sections): the gate of
 // the section tab it is, or of the tab it sits under, or the section's own gate.
 // Over-listing here never grants access: every target re-enforces its own gate
-// on arrival, so a drifted predicate at worst shows a link that 403s. See
-// docs/rules/principles.md, "Reachability is not permission".
+// on arrival, so a drifted predicate at worst shows a link that 403s.
+// Reachability is not permission.
 
 import type { NavGate } from '@/lib/nav/types';
 import { anyRole, everyone, linkGate, signedIn } from '@/lib/nav/gates';

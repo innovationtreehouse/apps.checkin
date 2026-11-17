@@ -6,8 +6,7 @@ import { bgFreshThreshold, nextBoundary } from "@/lib/membership/renewal";
 
 /**
  * A person's background-check standing, derived from their own check reviews
- * (PERSON_BG rows naming them) and their `lastBackgroundCheck`
- * (docs/rules/membership.md, Application and review).
+ * (PERSON_BG rows naming them) and their `lastBackgroundCheck`.
  *
  * - DISPUTED: a review is BLOCKED, or its rejection was Board-reset or changed to
  *   approve and it has not cleared since. It beats CLEARED: an old clearance never

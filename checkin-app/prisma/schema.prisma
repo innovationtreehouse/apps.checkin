@@ -34,8 +34,7 @@ enum AuditAction {
   BECOME_ADMIN
 }
 
-/// How a visit arrival/departure was recorded. Five non-overlapping meanings
-/// (docs/rules/attendance-checkin.md, "The visit record"):
+/// How a visit arrival/departure was recorded. Five non-overlapping meanings:
 ///   SCANNER        = physical kiosk badge — measured, exact.
 ///   TYPED          = a clock typed into a form (manual/dashboard entry) —
 ///                    asserted, not measured.
@@ -84,8 +83,8 @@ enum ProgramParticipantStatus {
 /// the moment of the request, because the two asks need different conversations
 /// and the review team cannot tell them apart from the request alone — offering
 /// a comp to a family that only needed more time is the failure this prevents.
-/// The terms themselves are still settled by finance out of band
-/// (docs/rules/finance-payments.md); this is only which door they knocked on.
+/// The terms themselves are still settled by finance out of band;
+/// this is only which door they knocked on.
 enum ScholarshipRequestKind {
   // Asking for the amount itself to be reduced or waived (a board comp).
   SCHOLARSHIP
@@ -1107,7 +1106,7 @@ model Program {
   /// @sensitivity:public
   /// Hidden (UNLISTED, inventory-untracked) "reserved seat" product every app
   /// checkout links to, so a family holding a claim can pay when the public
-  /// variant shows 0. The app's seat count is its only gate. docs/rules/programs.md.
+  /// variant shows 0. The app's seat count is its only gate.
   claimantShopifyProductId  String?
   /// @sensitivity:public
   claimantShopifyVariantId  String?
@@ -1384,7 +1383,7 @@ enum PresenceDirection {
 }
 
 /// Every presence-affecting surface appends an intent-carrying event; Visits
-/// project from the ordered log (docs/rules/attendance-checkin.md, kiosk resilience).
+/// project from the ordered log.
 model PresenceEvent {
   /// @sensitivity:internal
   id             Int               @id @default(autoincrement())
@@ -1566,7 +1565,7 @@ model AuditLog {
   @@index([tableName, timestamp])
 }
 
-/// One view of finance records other than the viewer's own (docs/rules/revenue.md).
+/// One view of finance records other than the viewer's own.
 /// Records who looked at which records, on which page or through which API call,
 /// and which marked fields of each, never what the records said. Written by
 /// lib/finance/financeViewLog.ts; read only by the Board. Kept indefinitely.

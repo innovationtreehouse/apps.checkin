@@ -267,7 +267,7 @@ export async function createShopifySingleVariantProgram(
  * but inventory UNTRACKED and status UNLISTED — off store search, collections and
  * recommendations, payable by direct cart link. Every app checkout links here, so
  * a family that already holds a claim can pay when the public variant shows 0;
- * the app's seat count is the only gate. docs/rules/programs.md.
+ * the app's seat count is the only gate.
  *
  * REST creates it (published to the Online Store, as the public product is) as a
  * DRAFT; GraphQL `productUpdate` then sets UNLISTED, a status the REST Product

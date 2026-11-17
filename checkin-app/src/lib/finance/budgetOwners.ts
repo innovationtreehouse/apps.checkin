@@ -71,7 +71,7 @@ function readClassId(value: unknown): string | null {
     return id || null;
 }
 
-/** Refuses a Class the app's copy of QuickBooks' Class list lacks or shows as inactive (docs/rules/expenses.md). */
+/** Refuses a Class the app's copy of QuickBooks' Class list lacks or shows as inactive. */
 async function refuseUnusableClass(classId: string) {
     const klass = await findQuickBooksClass(classId);
     if (klass?.active) return;

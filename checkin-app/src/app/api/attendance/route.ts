@@ -36,8 +36,7 @@ export async function GET(req: NextRequest) {
 
         let isKiosk = false;
 
-        // Minimization keys on the DISPLAY, not the credential (see
-        // docs/rules/attendance-checkin.md, "The kiosk" — public-screen only).
+        // Minimization keys on the DISPLAY, not the credential (public-screen only).
         // A valid kiosk signature means this request is the public
         // kiosk screen — even when a keyholder has signed in on that same
         // browser. The staff grant (`keyholders:personal`) stays on a session
@@ -80,7 +79,7 @@ export async function GET(req: NextRequest) {
         const nightlyClose = isKiosk ? { lastNightlyCloseAt: await lastNightlyCloseAt() } : {};
         const { attendance, counts, safety } = await getFullAttendance({ kiosk: isKiosk });
         // Web surfaces state occupancy/open/supervision as fact only while the
-        // kiosk is reachable (docs/rules/attendance-checkin.md).
+        // kiosk is reachable.
         const building = buildingLink();
 
         // Determine access level

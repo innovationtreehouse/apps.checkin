@@ -1,7 +1,6 @@
 /**
  * Org inventory in the browser: a backordered receipt line waits in the receive queue until an
- * inventory manager receives it, which adds it to stock once (docs/rules/inventory.md → On-hand
- * stock). Finance and the Board see the queue; only inventory managers act on it (→ Access).
+ * inventory manager receives it, which adds it to stock once. Finance and the Board see the queue; only inventory managers act on it.
  */
 import { expect, test } from "@playwright/test";
 import { api, loginAs, type Session } from "../flow-tests/helpers";

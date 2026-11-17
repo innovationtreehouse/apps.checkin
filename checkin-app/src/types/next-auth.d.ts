@@ -23,8 +23,8 @@ declare module "next-auth" {
       householdId?: number | null;
       householdLead?: boolean;
       // adult / youth / unknown — the derived band only, never the date
-      // (dateOfBirth is @sensitivity:personal). Gates the youth surfaces in
-      // docs/rules/programs.md ("What a youth sees of money"); the routes are
+      // (dateOfBirth is @sensitivity:personal). Gates the youth surfaces (what a youth sees of money);
+      // the routes are
       // the boundary.
       ageBand?: AgeBand;
       // Program ids this user is the lead mentor of. Client-side row gate only

@@ -29,7 +29,7 @@ The refund change ships first and does not depend on the trial.
 **How a store shopper reaches the app:**
 
 - One store menu link, "Programs", goes to the app's `/programs`. A person adds it at the start of the window and removes it at the end.
-- A redirect is added only for an item the Board knows is linked from somewhere else, such as a newsletter, because every redirect is hand work at both ends of a short window. It goes from the old `/products/<handle>` path to the program's page, or `/programs` for a members-only program that is not publicly visible. An anonymous visitor to that hidden program's page is told it doesn't exist (`docs/rules/programs.md:389`), so it would be a dead end.
+- A redirect is added only for an item the Board knows is linked from somewhere else, such as a newsletter, because every redirect is hand work at both ends of a short window. It goes from the old `/products/<handle>` path to the program's page, or `/programs` for a members-only program that is not publicly visible. An anonymous visitor to that hidden program's page is told it doesn't exist, so it would be a dead end.
 - Items created after the switch are never public, so they need no redirect.
 
 Redirects by hand avoid a new Shopify permission, and the count of live programs is small.

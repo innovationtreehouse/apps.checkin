@@ -1,4 +1,4 @@
-// Finance's QuickBooks actions on an in-kind gift the drain handed over (docs/rules/revenue.md, Donations):
+// Finance's QuickBooks actions on an in-kind gift the drain handed over:
 // book it, skip it with a reason, or match it by id to entries finance booked by hand. Skip and
 // match look first for the app's own entry when a create may have landed. Clear answers a note.
 // Set-account names a held line's account by hand, which the next book uses over every rule.

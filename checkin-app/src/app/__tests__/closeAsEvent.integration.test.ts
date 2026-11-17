@@ -5,7 +5,7 @@
  * A close is one recorded event: the kiosk decides, the server records the
  * close with the keyholder's checkout and carries it out from that row. Each
  * case is one item of the check-in modeling brief (MC-*) or the intended
- * state machine (docs/rules/attendance-checkin.md, Opening and closing).
+ * state machine.
  */
 import { POST } from '@/app/api/scan/route';
 import prisma from '@/lib/prisma';

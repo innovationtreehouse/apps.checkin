@@ -2,8 +2,7 @@
  * @jest-environment node
  */
 /**
- * "Check started" on the person, against a real database
- * (docs/rules/membership.md, Background checks for individual adults):
+ * "Check started" on the person, against a real database:
  *   - the advance to payment passes on a lead's check started or a review the
  *     household asked for still waiting to be named, never on another adult's;
  *   - a lifted block resumes by the same derived input;

@@ -78,7 +78,7 @@ describe('Program Age Bounds Integration Tests', () => {
         testAdminId = admin.id;
 
         // Eligible-age youth live in a household with an adult lead: only a lead
-        // may enroll a participant under 18 (docs/rules/programs.md).
+        // may enroll a participant under 18.
         const guardianHousehold = await prisma.household.create({ data: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } });
         const guardian = await prisma.person.create({
             data: {

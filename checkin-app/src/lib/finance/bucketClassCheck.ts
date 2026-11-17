@@ -7,7 +7,7 @@ import { message, type ConfigCheck } from "@/lib/configHealth";
 import { logger } from "@/lib/logger";
 import type { SavedClass } from "@/lib/finance/quickBooksLists";
 
-// The bucket check after each refresh of the QuickBooks lists copy (docs/rules/revenue.md):
+// The bucket check after each refresh of the QuickBooks lists copy:
 // one alert per bucket and problem, recorded in the audit log, alerted again once cleared and back.
 
 const ACTOR = systemActor("system:bucket-class-check");

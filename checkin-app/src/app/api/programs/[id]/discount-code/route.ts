@@ -16,7 +16,7 @@ import { householdMayEnrol, NO_EMERGENCY_CONTACT_TO_ENROL } from "@/lib/emergenc
 // trusts a client-supplied "I'm a member" flag for a pricing decision.
 //
 // Only a household lead pays for the household (a youth is enrolled by their
-// lead — docs/rules/programs.md), so anyone else is refused with a 403.
+// lead), so anyone else is refused with a 403.
 // An ended program is refused with a 400: the Board settles its unpaid claims by hand.
 // One order pays for one household: `participantIds` (the children in this
 // checkout) must all be in the caller's household, or the checkout is refused

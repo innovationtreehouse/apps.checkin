@@ -54,7 +54,7 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
     }));
   const hasPrice = !!(program.orgMemberPriceCents || program.nonOrgMemberPriceCents);
   // A youth is shown no payment obligation, action, or status — their own or
-  // their household's (docs/rules/programs.md). An unverifiable age is NOT a
+  // their household's. An unverifiable age is NOT a
   // youth: they keep every affordance so they can reach the intake panel and
   // establish an age.
   const viewerIsYouth = user?.ageBand === 'youth';

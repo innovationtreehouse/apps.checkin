@@ -94,7 +94,7 @@ export function RolesEditModal({ target, me, noBoard = false, onClose, onSaved }
     return { disabled: true, reason: 'You do not have permission to edit roles' };
   };
 
-  // The Key Volunteer rules (docs/rules/membership.md), mirrored for the same UX reason.
+  // The Key Volunteer rules, mirrored for the same UX reason.
   const keyVolunteerSwitchState = (field: RoleFlag): { disabled: boolean; reason?: string } | null => {
     if (field === 'isKeyVolunteer') {
       if (!mayManageKeyVolunteers) return { disabled: true, reason: 'Only board members can grant or remove the Key Volunteer role' };
