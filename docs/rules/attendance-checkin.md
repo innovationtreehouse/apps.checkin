@@ -267,11 +267,12 @@ person in front of it.
   name recorded, what shows is the part of their address before the @, never the
   address itself.  [Decision — *Policy: Records Policy, Art. IV*]
 
-- The kiosk never shows a whole last name. It names people as the roster does —
-  the nickname, else the first name — and adds a shortened last name only to tell
-  two people apart: at most two letters of the name itself, with any particles
-  before them whole ("van der B."). A last name its script cannot shorten is left
-  off rather than shown whole. That applies to everything sent to the kiosk, not
+- The kiosk shows at most two letters of a last name. It names people as the
+  roster does — the nickname, else the first name — and adds a shortened last
+  name only to tell two people apart: at most two letters of the name itself,
+  with any particles before them whole ("van der B."), so a last name of two
+  letters can show whole ("Ann Le" beside "Ann Lo"). A last name its script
+  cannot shorten is left off rather than shown whole. That applies to everything sent to the kiosk, not
   only what it renders: the roster, the certification grid and every
   warning.  [Decision]
 

@@ -6,8 +6,8 @@ import { addHouseholdLead, removeHouseholdLead, HouseholdLeadLimitError, Househo
 import { reconcileAndWarn } from "@/lib/emergencyContacts/service";
 import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import { HOUSEHOLD_PEER_SELECT } from "@/lib/household/participantProjection";
-import { householdLeadship } from "@/lib/household/leads";
-import { normalizeAdultDob, replacesUnder18Date, UNDER_18_DECLARATION_REFUSAL } from "@/lib/person/adultDob";
+import { householdLeadship, setsHouseholdAges } from "@/lib/household/leads";
+import { AGE_LEAD_ONLY_REFUSAL, changesAge, normalizeAdultDob, replacesUnder18Date, UNDER_18_DECLARATION_REFUSAL } from "@/lib/person/adultDob";
 import { nameWrite, nicknameWrite, isNicknameWrite } from "@/lib/person/name";
 import { isYouth } from "@/lib/time";
 import { apiError } from "@/lib/api-response";
@@ -87,6 +87,11 @@ export const PATCH = withAuth(
                 return apiError(UNDER_18_DECLARATION_REFUSAL, 400);
             }
 
+            const age = normalizeAdultDob(dob, over25, targetHouseholdMember.dateOfBirth);
+            if (changesAge(age, targetHouseholdMember) && !(await setsHouseholdAges(prisma, userId, householdId))) {
+                return apiError(AGE_LEAD_ONLY_REFUSAL, 403);
+            }
+
             // A sysadmin manages their own household without leading it, so making
             // someone its lead that way is a grant to their own household.
             if (isLead === true && participantId !== userId && !targetHouseholdMember.isHouseholdLead) {
@@ -136,7 +141,7 @@ export const PATCH = withAuth(
                         nickname: nicknameWrite(nickname),
                         email: email !== undefined && !holdsGrant ? (email === "" ? null : normalizeEmail(email)) : undefined,
                         phone: phone !== undefined ? (phone === "" ? null : formatPhone(phone)) : undefined,
-                        ...normalizeAdultDob(dob, over25, targetHouseholdMember.dateOfBirth),
+                        ...age,
                         allergies: allergies !== undefined ? (allergies === "" ? null : allergies) : undefined,
                     },
                     select: HOUSEHOLD_PEER_SELECT,

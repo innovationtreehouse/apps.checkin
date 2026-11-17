@@ -3,6 +3,7 @@ import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { logBackendError } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
+import { personActor, recordAudit } from "@/lib/auditActor";
 import { invalidateKioskCertificationsCache } from "@/lib/getKioskCertifications";
 
 export const GET = withAuth({}, async (_req, auth) => {
@@ -51,21 +52,20 @@ export const POST = withAuth({}, async (req, auth) => {
             return apiError("Tool name is required", 400);
         }
 
-        const newTool = await prisma.tool.create({
-            data: {
-                name,
-                safetyGuide: safetyGuide || null
-            }
-        });
-
-        await prisma.auditLog.create({
-            data: {
-                actorId: session.user.id,
+        const newTool = await prisma.$transaction(async (tx) => {
+            const tool = await tx.tool.create({
+                data: {
+                    name,
+                    safetyGuide: safetyGuide || null
+                }
+            });
+            await recordAudit(tx, personActor(session.user.id), {
                 action: 'CREATE',
                 tableName: 'Tool',
-                affectedEntityId: newTool.id,
-                newData: newTool
-            }
+                affectedEntityId: tool.id,
+                newData: tool
+            });
+            return tool;
         });
 
         invalidateKioskCertificationsCache();

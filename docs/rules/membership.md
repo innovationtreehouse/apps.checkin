@@ -321,6 +321,10 @@ Procedure below is built on them.
   open application.  [Decision —
   *Principle: decisions are reversible*]
 
+- Reopening an application whose household was denied after it closed, or whose
+  close was the restore's, does not record a signature made while it was closed;
+  the family signs again.  [Decision — owner ruling]
+
 - Archiving a household closes its open initial and renewal applications, blocked
   ones included, in the same step, as a restore does. Per-person applications stay
   open. Unarchiving the household reopens none of them.  [Decision — owner]

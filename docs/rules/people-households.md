@@ -192,6 +192,10 @@ Things the app takes as true because they are handled outside it.
   both. The declaration stands in for a date nobody has, so a date on file
   displaces it. Neither present is a surfaced gap.  [Decision]
 
+- Once a household has a lead, only a lead of it sets or changes a member's date
+  of birth or over-25 declaration, the member's own included. The board and
+  sysadmin path into any household is separate.  [Decision — owner ruling]
+
 - A lead may declare a non-lead adult in their household as over 25. A save that
   blanks a date of birth showing someone is under 18 and declares them over 25 is
   refused.  [Decision — owner]
@@ -211,8 +215,9 @@ Things the app takes as true because they are handled outside it.
 - Date of birth is the only field with an ageing-out rule. Broader retention is
   not automated; the general obligation is met by hand.  [Decision — deliberate limit]
 
-- A youth cannot edit their own profile. As with leadership, an unknown date of
-  birth reads as adult.  [Decision — deliberate limit]
+- A youth cannot edit their own profile, and an unknown date of birth reads as
+  adult. On a non-lead's own profile in a household with a lead, the date of birth
+  and over-25 declaration are the lead's to set.  [Decision]
 
 - Self-service member add always creates a new person, never adopts an existing
   account by email. Where the address is already in use the add is refused
@@ -389,6 +394,10 @@ Things the app takes as true because they are handled outside it.
 
 - Withdrawing a trusted adult retires every approval they hold, not just the
   most recent, and drops them from the pickup list at once.  [Decision]
+
+- Approving a renewal or a change retires the approval it replaces, so a trusted
+  adult holds at most one live approval. Resetting that approval puts the
+  replaced one back.  [Decision]
 
 - A board denial of a change leaves the earlier approval standing.  [Decision]
 

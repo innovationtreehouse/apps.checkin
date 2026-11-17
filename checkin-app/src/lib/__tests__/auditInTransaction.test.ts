@@ -11,38 +11,10 @@ const SRC = join(__dirname, "..", "..");
 const SKIP_DIRS = new Set(["__tests__", "generated"]);
 const AUDIT_WRITE = /\b(?:prisma|db)\.auditLog\.create(?:Many)?\(/g;
 
-const TO_FIX = "to fix: move inside the change's transaction";
 const REFUSAL = "by design: refusal, must survive the refusal it records";
 const DB_PARAM = "by design: DbClient-param helper; callers pass their transaction client";
 
 const ALLOWLIST: Record<string, { count: number; reason: string }> = {
-    // Programs and volunteers
-    "app/api/programs/[id]/volunteers/route.ts": { count: 3, reason: TO_FIX },
-    "app/api/programs/[id]/participants/route.ts": { count: 1, reason: TO_FIX },
-    "app/api/programs/route.ts": { count: 1, reason: TO_FIX },
-    "lib/programs/update.ts": { count: 1, reason: TO_FIX },
-    "lib/programAnnounce.ts": { count: 1, reason: TO_FIX },
-    "app/api/events/route.ts": { count: 1, reason: TO_FIX },
-    "lib/lifecycleDrift.ts": { count: 1, reason: TO_FIX },
-    // Households and people
-    "app/api/household/lead/route.ts": { count: 2, reason: TO_FIX },
-    "app/api/household/emergency-contacts/route.ts": { count: 1, reason: TO_FIX },
-    "app/api/household/emergency-contacts/[contactId]/route.ts": { count: 2, reason: TO_FIX },
-    "app/api/membership-ops/participants/[id]/household/route.ts": { count: 1, reason: TO_FIX },
-    "app/api/membership-ops/contacts/route.ts": { count: 1, reason: TO_FIX },
-    "app/api/profile/route.ts": { count: 1, reason: TO_FIX },
-    // Membership
-    "lib/membership/external.ts": { count: 2, reason: TO_FIX },
-    "lib/membership/grant.ts": { count: 1, reason: TO_FIX },
-    // Finance and settings
-    "app/api/finance-ops/payments/[id]/route.ts": { count: 1, reason: TO_FIX },
-    "app/api/finance-ops/s-read/match-audit/track/route.ts": { count: 1, reason: TO_FIX },
-    "app/api/admin/settings/localization/route.ts": { count: 1, reason: TO_FIX },
-    "app/api/settings/email/route.ts": { count: 1, reason: TO_FIX },
-    "app/api/settings/outreach/route.ts": { count: 1, reason: TO_FIX },
-    // Shop
-    "app/api/shop/tools/route.ts": { count: 1, reason: TO_FIX },
-    "app/api/shop/tools/[id]/route.ts": { count: 1, reason: TO_FIX },
     "app/api/cron/nightly/route.ts": {
         count: 1,
         reason: "by design: close summary is a board notice, each closed visit has its own row",

@@ -79,8 +79,8 @@ const { notifyReviewers, applyVolunteerFamilyStatus } = require('@/lib/membershi
 // path that reaches the same prisma method. Reset drops implementations too, so
 // each test states the prisma responses it depends on and nothing else.
 //
-// The three factory-level defaults below are re-established here, since reset
-// clears those as well.
+// The factory-level defaults below are re-established here, since reset clears
+// those as well; $transaction runs its callback on the mock itself.
 beforeEach(() => {
     jest.resetAllMocks();
     prisma.boardSettings.findUnique.mockResolvedValue(null); // signingMockActive: no dev override
@@ -90,6 +90,7 @@ beforeEach(() => {
     config.zohoMockActive.mockReturnValue(true);
     config.isProd.mockReturnValue(false);
     config.baseUrl.mockReturnValue('https://checkin.example.org');
+    prisma.$transaction.mockImplementation(async (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma));
 });
 
 describe('setZohoEnvelope', () => {
@@ -589,6 +590,24 @@ describe('getOrCreateContractSigningUrl', () => {
             .mockResolvedValueOnce({ count: 1 });
 
         await expect(getOrCreateContractSigningUrl(1)).rejects.toThrow('db down');
+
+        expect(zohoSign.recallRequest).toHaveBeenCalledWith('token-1', 'req-1');
+        expect(prisma.orgMembershipProcess.updateMany).toHaveBeenLastCalledWith({
+            where: { id: 20, zohoSignerPersonId: 1, zohoClaimedAt: expect.any(Date), OR: [{ zohoEnvelopeId: null }, { zohoActionId: null }] },
+            data: { zohoSignerPersonId: null },
+        });
+        expect(zohoSign.getEmbeddedSignUrl).not.toHaveBeenCalled();
+    });
+
+    it('the audit row for the stored ids fails → recalls the new request and releases the claim', async () => {
+        prisma.person.findUnique.mockResolvedValue(leadUser);
+        zohoSign.getAccessToken.mockResolvedValue('token-1');
+        zohoSign.createRequest.mockResolvedValue({ requestId: 'req-1', actionId: 'act-1', documentId: 'doc-1' });
+        zohoSign.submitRequest.mockResolvedValue(undefined);
+        prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
+        prisma.auditLog.create.mockRejectedValue(new Error('audit write refused'));
+
+        await expect(getOrCreateContractSigningUrl(1)).rejects.toThrow('audit write refused');
 
         expect(zohoSign.recallRequest).toHaveBeenCalledWith('token-1', 'req-1');
         expect(prisma.orgMembershipProcess.updateMany).toHaveBeenLastCalledWith({

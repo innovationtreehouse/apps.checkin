@@ -28,6 +28,7 @@ jest.mock("@/lib/membership/householdStatus", () => ({ raiseDeniedHouseholdActiv
 jest.mock("@/lib/household/leads", () => ({
     ...jest.requireActual("@/lib/household/leads"),
     householdLeadship: jest.fn(),
+    setsHouseholdAges: jest.fn().mockResolvedValue(true),
     addHouseholdLead: jest.fn(),
 }));
 

@@ -16,6 +16,7 @@ jest.mock("@/lib/expense/configure", () => ({ expensePostingMissing }));
 const misTypedRoleAccounts = jest.fn();
 jest.mock("@/lib/finance/booksMap", () => ({ misTypedRoleAccounts }));
 jest.mock("@/lib/quickbooks/picksHealth", () => ({ quickBooksPicksCheck: async () => ({ id: "quickbooks-pick-types", label: "QuickBooks picks: account types", ok: true, detail: "" }) }));
+jest.mock("@/lib/finance/bucketClassCheck", () => ({ bucketClassesCheck: async () => ({ id: "budget-bucket-classes", label: "Budget buckets: QuickBooks Classes", ok: true, detail: "" }) }));
 const getOrg = jest.fn();
 jest.mock("@/lib/components/host", () => ({ getOrg }));
 const quickBooksListsStatus = jest.fn();

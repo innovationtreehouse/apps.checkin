@@ -98,6 +98,16 @@ Things the app takes as true because they are handled outside it.
   and finance or the Board may refresh it at any time. A stale copy is still
   used, and one two days without a refresh is flagged.  [Decision — owner]
 
+- Every QuickBooks Class and account picker lists only entries the app's copy
+  of QuickBooks' lists shows as active. A saved pick the copy shows as inactive
+  or no longer holds is shown as a warning, never offered as a choice.
+  [Decision — owner]
+
+- After each refresh of the copy, the app checks every live bucket's Class, and
+  every archived bucket that still has unfinished work. It alerts finance once
+  for each bucket and problem, shows them on System Status, and alerts again if
+  a problem comes back after it cleared.  [Decision — owner]
+
 - Each online-store sale, giving-platform gift and gift of goods books to the
   account finance mapped for its item. A line with no mapping, or whose account
   can't be used, waits for finance; nothing books it to a fallback account. A
@@ -106,10 +116,10 @@ Things the app takes as true because they are handled outside it.
 - Every account the app books to must be of a QuickBooks type listed for its
   line or role, and every save of an account refuses any other type. The type
   comes from the app's copy of QuickBooks' account list: a save whose account
-  the copy doesn't list, or lists under a type the save doesn't accept, is
-  refused until finance or the Board updates the copy. A stored account that
-  later reads as another type is flagged for finance to re-pick; the app never
-  rewrites it. Online-store fees take only an
+  the copy doesn't list, shows as inactive, or lists under a type the save
+  doesn't accept, is refused until finance or the Board updates the copy. A
+  stored account that later reads as inactive or as another type is flagged
+  for finance to re-pick; the app never rewrites it. Online-store fees take only an
   Expense or Other Expense account.  [Decision — owner]
 
 - A financial control flags something for a person to sign off, and the sign-off

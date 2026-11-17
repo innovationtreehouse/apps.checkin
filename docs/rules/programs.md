@@ -111,7 +111,7 @@ Things the app takes as true because they are handled outside it.
 - No program targets anyone over 25, and an age limit above that is refused.  [Decision]
 
 - A declared adult clears any youth minimum and fails any youth maximum. Nothing
-  verifies the claim, and no guardian is told.  [Decision — deliberate limit]
+  verifies the claim, and no guardian is told.  [Decision]
 
 - A program leader is 23 or older, the floor belonging to the role rather than to
   adulthood. A program volunteer has no age floor at all — youth volunteer too.  [Decision — *Policy: Sponsored Program Policy, Art. IV*]
@@ -125,6 +125,8 @@ Things the app takes as true because they are handled outside it.
 
 - Only the Board assigns or changes a program's leader, so only the Board creates a
   program, which names its leader. Leaders already in place stay.  [Decision — Board ruling B1/B2]
+
+- A program's name is saved trimmed, and a blank name or one over 250 characters is refused, on create and on edit.  [Decision]
 
 - Nobody sets themself or anyone in their own household as a program's leader.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 

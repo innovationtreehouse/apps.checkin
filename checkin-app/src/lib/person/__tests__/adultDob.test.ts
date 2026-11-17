@@ -1,4 +1,4 @@
-import { normalizeAdultDob } from "@/lib/person/adultDob";
+import { changesAge, mayDeclareAges, normalizeAdultDob } from "@/lib/person/adultDob";
 
 // No DoB above the program-age ceiling (25). The boundary is the whole point.
 describe("normalizeAdultDob", () => {
@@ -101,5 +101,45 @@ describe("normalizeAdultDob", () => {
     it("yields to an explicit blank date", () => {
       expect(normalizeAdultDob("", true, yearsAgo(14))).toEqual({ dateOfBirth: null, isDeclaredAdult: true });
     });
+  });
+});
+
+describe("mayDeclareAges", () => {
+  it("lets anyone set ages in a household with no lead", () => {
+    expect(mayDeclareAges(1, [])).toBe(true);
+  });
+  it("lets a lead set ages, their own included", () => {
+    expect(mayDeclareAges(1, [1, 2])).toBe(true);
+  });
+  it("refuses a non-lead once the household has a lead", () => {
+    expect(mayDeclareAges(3, [1])).toBe(false);
+  });
+});
+
+describe("changesAge", () => {
+  const dob = new Date("2012-05-01");
+  const onFile = { dateOfBirth: dob, isDeclaredAdult: false };
+
+  it("sees no change in the same date resubmitted", () => {
+    expect(changesAge(normalizeAdultDob("2012-05-01", false, dob), onFile)).toBe(false);
+  });
+  it("sees no change when nothing is submitted", () => {
+    expect(changesAge(normalizeAdultDob(undefined), onFile)).toBe(false);
+  });
+  it("sees a new date", () => {
+    expect(changesAge(normalizeAdultDob("2010-05-01", false, dob), onFile)).toBe(true);
+  });
+  it("sees a blanked date", () => {
+    expect(changesAge(normalizeAdultDob("", false, dob), onFile)).toBe(true);
+  });
+  it("sees a new over-25 declaration", () => {
+    expect(changesAge(normalizeAdultDob("", true), { dateOfBirth: null, isDeclaredAdult: false })).toBe(true);
+  });
+  it("sees no change in a declaration resubmitted", () => {
+    expect(changesAge(normalizeAdultDob("", true), { dateOfBirth: null, isDeclaredAdult: true })).toBe(false);
+  });
+  it("treats any age on a new person as a change, and none as no change", () => {
+    expect(changesAge(normalizeAdultDob("2012-05-01"), null)).toBe(true);
+    expect(changesAge(normalizeAdultDob(""), null)).toBe(false);
   });
 });

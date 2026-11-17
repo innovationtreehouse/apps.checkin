@@ -26,7 +26,6 @@ export const SYSTEM_ACTOR = 0;
  */
 export const SYSTEM_ACTORS = [
     "cron:nightly",
-    "cron:scholarship-grace-expiry",
     "cron:trusted-adult-expiry",
     "cron:lifecycle-reconcile",
     "system:google-sign-in",
@@ -39,6 +38,7 @@ export const SYSTEM_ACTORS = [
     "system:bootstrap-sysadmin",
     "system:dev-seed",
     "system:facility-close",
+    "system:bucket-class-check",
     "webhook:zoho-contract",
     "webhook:shopify-order",
     "webhook:shopify-receipt",

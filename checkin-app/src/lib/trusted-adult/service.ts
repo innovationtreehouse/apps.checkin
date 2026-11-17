@@ -53,7 +53,9 @@ async function lockLiveHousehold(tx: TxClient, householdId: number) {
  *   PENDING_BOARD_REVIEW ──► APPROVED | DENIED
  *                        └─► PENDING_SUBJECT_ACTION (board asked for info)
  *   APPROVED ──(reviewBy passes)──► EXPIRED ──(renew)──► new PENDING_BOARD_REVIEW
+ *   APPROVED ──(a later review on the adult is approved)──► SUPERSEDED
  *   APPROVED (in force) | DENIED ──(board reset)──► PENDING_BOARD_REVIEW
+ *   SUPERSEDED ──(the approval that replaced it is reset)──► APPROVED
  *   any non-terminal ──(household withdraws / board revoke)──► REVOKED
  */
 
@@ -240,6 +242,44 @@ export async function resubmitWithChanges(id: number, actorId: number, input: Re
     return review;
 }
 
+/**
+ * Retire every other approval on the adult when a review is approved, so the approved
+ * review alone speaks for them. Runs under the parent lock, before the approval is written.
+ */
+async function supersedeOtherApprovals(tx: TxClient, actor: AuditActor, taId: number, approvedReviewId: number) {
+    const others = await tx.trustedAdultReview.findMany({
+        where: { trustedAdultId: taId, status: "APPROVED", id: { not: approvedReviewId } },
+        select: { id: true },
+        orderBy: { id: "asc" },
+    });
+    if (others.length === 0) return;
+    await tx.trustedAdultReview.updateMany({ where: { id: { in: others.map((r) => r.id) } }, data: { status: "SUPERSEDED" } });
+    for (const r of others) {
+        await audit(tx, actor, taId, { status: "APPROVED", reviewId: r.id }, { status: "SUPERSEDED", reviewId: r.id, supersededBy: approvedReviewId });
+    }
+}
+
+/**
+ * Put back the approvals that a reset approval retired, so the adult keeps the approval
+ * they held before it. The audit rows written by supersedeOtherApprovals name them.
+ */
+async function restoreSupersededBy(tx: TxClient, actor: AuditActor, taId: number, resetReviewId: number) {
+    const retired = await tx.auditLog.findMany({
+        where: { tableName: "TrustedAdult", affectedEntityId: taId, newData: { path: ["supersededBy"], equals: resetReviewId } },
+        select: { newData: true },
+    });
+    const ids = retired.flatMap(({ newData: d }) =>
+        d && typeof d === "object" && !Array.isArray(d) && typeof d.reviewId === "number" ? [d.reviewId] : [],
+    );
+    if (ids.length === 0) return;
+    const live = await tx.trustedAdultReview.findMany({ where: { id: { in: ids }, status: "SUPERSEDED" }, select: { id: true }, orderBy: { id: "asc" } });
+    if (live.length === 0) return;
+    await tx.trustedAdultReview.updateMany({ where: { id: { in: live.map((r) => r.id) } }, data: { status: "APPROVED" } });
+    for (const r of live) {
+        await audit(tx, actor, taId, { status: "SUPERSEDED", reviewId: r.id }, { status: "APPROVED", reviewId: r.id, restoredByResetOf: resetReviewId });
+    }
+}
+
 /** A denial of the adult's own household, or of the household they belong to. */
 async function adultHouseholdDenied(tx: TxClient, ta: { householdId: number; trustedAdultPersonId: number | null }) {
     const person = ta.trustedAdultPersonId
@@ -347,7 +387,7 @@ export async function hideTrustedAdult(id: number, actorId: number) {
 /**
  * A household lead withdraws a Trusted Adult — REVOKES every review that isn't
  * already revoked, not just the latest. A renewal opens a new review while the
- * prior approval stays live, even once that review is approved, so revoking only the
+ * prior approval stays live until that review is approved, so revoking only the
  * latest would leave the adult on the pickup list after withdrawal.
  */
 export async function withdrawTrustedAdult(id: number, actorId: number, opts?: { latestReviewOnly?: boolean }) {
@@ -415,7 +455,7 @@ export interface DecideInput {
  */
 async function approvalEnd(tx: TxClient, review: { id: number; trustedAdultId: number; kind: string; createdAt: Date }) {
     const earlier = await tx.trustedAdultReview.aggregate({
-        where: { trustedAdultId: review.trustedAdultId, id: { lt: review.id }, status: { in: ["APPROVED", "EXPIRED"] } },
+        where: { trustedAdultId: review.trustedAdultId, id: { lt: review.id }, status: { in: ["APPROVED", "EXPIRED", "SUPERSEDED"] } },
         _max: { reviewBy: true },
     });
     const previousEnd = earlier._max.reviewBy;
@@ -490,15 +530,17 @@ export async function decideReview(reviewId: number, boardMemberId: number, inpu
         }
         data.status = status;
 
+        if (input.decision === "APPROVE") await supersedeOtherApprovals(tx, personActor(boardMemberId), review.trustedAdultId, reviewId);
         const updated = await tx.trustedAdultReview.update({ where: { id: reviewId }, data });
         // Approving a MODIFIED review is the moment its proposed edits become fact.
         if (input.decision === "APPROVE") await promoteProposal(tx, review);
         await audit(tx, personActor(boardMemberId), review.trustedAdultId, { status: review.status }, { status, decision: input.decision });
-        // "Deny & Revoke": reject the adult outright. Revoke every APPROVED row, lapsed
-        // ones included, so the sweep cannot later tell the family it merely expired.
+        // "Deny & Revoke": reject the adult outright. Revoke every approval, lapsed and retired
+        // ones included, so the sweep cannot later tell the family it merely expired and a
+        // later renewal cannot date itself from one.
         if (input.decision === "DENY" && input.revokePriorApprovals) {
             const live = await tx.trustedAdultReview.findMany({
-                where: { trustedAdultId: review.trustedAdultId, status: "APPROVED" },
+                where: { trustedAdultId: review.trustedAdultId, status: { in: ["APPROVED", "SUPERSEDED"] } },
                 orderBy: { id: "desc" },
             });
             if (live.length) {
@@ -577,19 +619,20 @@ export async function revokeReview(reviewId: number, actorId: number) {
         const review = await tx.trustedAdultReview.findUnique({ where: { id: reviewId } });
         if (!review) throw new TrustedAdultError("not_found", "Review not found.");
 
+        // Retired approvals go too, so a later renewal cannot date itself from one.
         const others = await tx.trustedAdultReview.findMany({
-            where: { trustedAdultId: review.trustedAdultId, status: "APPROVED", id: { not: reviewId } },
-            select: { id: true },
+            where: { trustedAdultId: review.trustedAdultId, status: { in: ["APPROVED", "SUPERSEDED"] }, id: { not: reviewId } },
+            select: { id: true, status: true },
             orderBy: { id: "asc" },
         });
-        const settled = review.status === "REVOKED" || review.status === "SUPERSEDED";
+        const settled = review.status === "REVOKED";
         if (settled && others.length === 0) {
             throw new TrustedAdultError("wrong_phase", "This review has already been settled — reload the page.");
         }
         if (others.length) {
             await tx.trustedAdultReview.updateMany({ where: { id: { in: others.map((r) => r.id) } }, data: { status: "REVOKED" } });
             for (const r of others) {
-                await audit(tx, actor, review.trustedAdultId, { status: "APPROVED", reviewId: r.id }, { status: "REVOKED", reviewId: r.id, override: "revoke", overrideOf: reviewId });
+                await audit(tx, actor, review.trustedAdultId, { status: r.status, reviewId: r.id }, { status: "REVOKED", reviewId: r.id, override: "revoke", overrideOf: reviewId });
             }
         }
         if (settled) return review;
@@ -646,6 +689,7 @@ export async function resetReview(reviewId: number, actorId: number, reason: str
         if (await adultHouseholdDenied(tx, head.trustedAdult)) {
             throw new TrustedAdultError("wrong_phase", "This household has been denied membership, so its trusted-adult review cannot be reset.");
         }
+        if (review.status === "APPROVED") await restoreSupersededBy(tx, personActor(actorId), review.trustedAdultId, reviewId);
         const updated = await tx.trustedAdultReview.update({
             where: { id: reviewId },
             data: {

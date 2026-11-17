@@ -17,7 +17,6 @@ const SETTINGS = {
   orgMembershipProductUrl: "https://test-store.myshopify.com/products/annual-membership",
   volunteerFamilyDiscountCode: "VOLUNTEER",
   bgRecheckMonths: 24,
-  scholarshipDenialGraceDays: 14,
 };
 
 type Row = { membershipYear: number; shopifyVariantId: string; productUrl: string | null };
@@ -241,34 +240,6 @@ describe("MembershipSettingsPage", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/settings/membership", expect.objectContaining({ method: "PUT" })));
     const [, putOpts] = fetchMock.mock.calls.find(([, opts]) => opts?.method === "PUT")!;
     expect(JSON.parse(putOpts!.body as string)).toEqual(expect.objectContaining({ orgMembershipVariantId: null, orgMembershipProductUrl: null }));
-  });
-
-  it("edits the scholarship grace period, blank clears it to null, and rejects a non-positive value", async () => {
-    setSession({ id: 1, isSysadmin: true });
-    const fetchMock = mockFetchJson({ "/api/settings/membership": body() });
-    renderWithProviders(<MembershipSettingsPage />);
-    const graceInput = await screen.findByDisplayValue("14");
-
-    // Blank -> null.
-    fireEvent.change(graceInput, { target: { value: "" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/settings/membership", expect.objectContaining({ method: "PUT" })));
-    let [, putOpts] = fetchMock.mock.calls.find(([, opts]) => opts?.method === "PUT")!;
-    expect(JSON.parse(putOpts!.body as string)).toEqual(expect.objectContaining({ scholarshipDenialGraceDays: null }));
-
-    // Non-positive -> client-side validation error, no PUT fires for it.
-    fetchMock.mockClear();
-    fireEvent.change(graceInput, { target: { value: "0" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
-    expect(await screen.findByText(/Enter a positive whole number of days/)).toBeInTheDocument();
-    expect(fetchMock).not.toHaveBeenCalledWith("/api/settings/membership", expect.objectContaining({ method: "PUT" }));
-
-    // A positive value saves cleanly.
-    fireEvent.change(graceInput, { target: { value: "30" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/settings/membership", expect.objectContaining({ method: "PUT" })));
-    [, putOpts] = fetchMock.mock.calls.find(([, opts]) => opts?.method === "PUT")!;
-    expect(JSON.parse(putOpts!.body as string)).toEqual(expect.objectContaining({ scholarshipDenialGraceDays: 30 }));
   });
 
   it("unlocks and edits the membership-year boundary, which is included on save", async () => {

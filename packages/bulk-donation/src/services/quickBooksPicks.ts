@@ -12,7 +12,7 @@ const withPlace = (place: string, refusal: string | null) => refusal && `${place
 type GiftLine = { id: number; donationId: number; quickBooksAccountId: string | null };
 
 /**
- * Each stored QuickBooks pick that `accounts` lacks or lists under a type it doesn't accept, one line per pick
+ * Each stored QuickBooks pick that `accounts` lacks, shows as inactive, or lists under a type it doesn't accept, one line per pick
  * naming the screen where finance re-picks it, for System Status. Stored values stay as they are.
  */
 export async function misTypedQuickBooksPicks(accounts: readonly QboAccountSummary[]): Promise<string[]> {

@@ -14,6 +14,7 @@ import {
     renewTrustedAdult,
     resetReview,
     resubmitWithChanges,
+    revokeReview,
     withdrawTrustedAdult,
 } from '@/lib/trusted-adult/service';
 import prisma from '@/lib/prisma';
@@ -200,6 +201,36 @@ describe('trusted-adult approval dates', () => {
     it('a revoked approval gives a later renewal nothing to build on', async () => {
         const { taId } = await discloseApprovedDaysAgo(100);
         await withdrawTrustedAdult(taId, leadId);
+        const renewal = await submittedDaysAgo((await renewTrustedAdult(taId, leadId)).id, 2);
+
+        const renewed = await approve(renewal.id);
+
+        expect(renewed.reviewBy).toEqual(plusYear(renewal.createdAt));
+    });
+
+    const approveChange = async (taId: number) =>
+        approve((await resubmitWithChanges(taId, leadId, {
+            trustedAdultName: 'Jane External',
+            trustedAdultEmail: 'jane.new@example.com',
+            familyContext: 'Our nanny; may collect the kids.',
+        })).id);
+
+    it('a board revoke also ends a retired approval, so a later renewal has nothing to build on', async () => {
+        const { taId } = await discloseApprovedDaysAgo(30);
+        const changed = await approveChange(taId);
+        await revokeReview(changed.id, boardId);
+        const renewal = await submittedDaysAgo((await renewTrustedAdult(taId, leadId)).id, 2);
+
+        const renewed = await approve(renewal.id);
+
+        expect(renewed.reviewBy).toEqual(plusYear(renewal.createdAt));
+    });
+
+    it('Deny & Revoke also ends a retired approval, so a later renewal has nothing to build on', async () => {
+        const { taId } = await discloseApprovedDaysAgo(30);
+        await approveChange(taId);
+        const second = await resubmitWithChanges(taId, leadId, { trustedAdultName: 'x', trustedAdultEmail: 'x@y.com', familyContext: 'x' });
+        await decideReview(second.id, boardId, { decision: 'DENY', revokePriorApprovals: true });
         const renewal = await submittedDaysAgo((await renewTrustedAdult(taId, leadId)).id, 2);
 
         const renewed = await approve(renewal.id);

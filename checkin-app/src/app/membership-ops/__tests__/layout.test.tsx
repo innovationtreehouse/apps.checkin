@@ -5,6 +5,7 @@ import MembershipOpsLayout from "../layout";
 const push = jest.fn();
 let mockPathname = "/membership-ops/participants";
 let mockSession: { data: unknown; status: string };
+let mockCounts: unknown = null;
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push }),
@@ -14,7 +15,7 @@ jest.mock("next-auth/react", () => ({
   useSession: () => mockSession,
 }));
 jest.mock("@/hooks/useTodoCounts", () => ({
-  useTodoCounts: () => null,
+  useTodoCounts: () => mockCounts,
 }));
 
 beforeAll(() => {
@@ -55,6 +56,7 @@ const renderLayout = (pathname: string, session: { data: unknown; status: string
 
 beforeEach(() => {
   push.mockClear();
+  mockCounts = null;
 });
 
 describe("MembershipOpsLayout role gate", () => {
@@ -91,5 +93,17 @@ describe("MembershipOpsLayout role gate", () => {
   it("redirects unauthenticated callers", () => {
     renderLayout("/membership-ops/participants", { data: null, status: "unauthenticated" });
     expect(push).toHaveBeenCalledWith("/");
+  });
+});
+
+describe("MembershipOpsLayout Applications tab pills", () => {
+  it("shows the red incomplete count beside the gray rest", () => {
+    mockCounts = { admin: { applicationsTotal: 5, applicationsIncomplete: 2, brokenEmails: 0 } };
+    renderLayout("/membership-ops/applications", {
+      data: { user: { id: 1, isBoardMember: true } },
+      status: "authenticated",
+    });
+    expect(screen.getByLabelText("2 applications missing a signature or background check")).toHaveTextContent("2");
+    expect(screen.getByLabelText("3 other applications")).toHaveTextContent("3");
   });
 });

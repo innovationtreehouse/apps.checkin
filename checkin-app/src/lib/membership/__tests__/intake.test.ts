@@ -649,6 +649,39 @@ describe('saveIntake', () => {
         expect(result.rejections).toEqual([{ section: 'secondaryParent', code: 'not_lead', message: expect.stringContaining('only a lead') }]);
     });
 
+    describe('ages when the caller does not lead the household', () => {
+        const ledByAnother = {
+            ...baseUser,
+            isHouseholdLead: false,
+            isSysadmin: true,
+            household: { ...baseUser.household, householdMembers: [{ id: 2, isHouseholdLead: true }, { id: 4, isHouseholdLead: false, dateOfBirth: null, isDeclaredAdult: false }] },
+        };
+
+        it.each([
+            ['an existing child\'s date of birth', { children: [{ id: 4, dob: '2015-01-01' }] }, 'children'],
+            ['a new child\'s date of birth', { children: [{ name: 'New Kid', dob: '2015-01-01' }] }, 'children'],
+            ['their own over-25 declaration', { primaryParent: { dob: '', over25: true } }, 'primaryParent'],
+        ])('refuses %s, saving nothing', async (_label, input, field) => {
+            prisma.person.findUnique.mockResolvedValueOnce(ledByAnother);
+            await expect(saveIntake(1, input)).rejects.toMatchObject({ code: 'age_lead_only', fields: [field] });
+        });
+
+        it('saves other fields while an unchanged age is resent', async () => {
+            prisma.person.findUnique.mockResolvedValueOnce(ledByAnother);
+            await saveIntake(1, { children: [{ id: 4, name: 'Kid', dob: '' }] });
+            expect(mockPerson.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 4 } }));
+        });
+
+        it('lets a sysadmin set ages in a household with no lead', async () => {
+            prisma.person.findUnique.mockResolvedValueOnce({
+                ...ledByAnother,
+                household: { ...baseUser.household, householdMembers: [{ id: 4, isHouseholdLead: false, dateOfBirth: null, isDeclaredAdult: false }] },
+            });
+            await saveIntake(1, { children: [{ id: 4, dob: '2015-01-01' }] });
+            expect(mockPerson.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 4 } }));
+        });
+    });
+
     it('a lead promotion in a DENIED household is a rejection raised to the board', async () => {
         addHouseholdLead.mockRejectedValue(new HouseholdLeadDeniedError(7, 4));
 
