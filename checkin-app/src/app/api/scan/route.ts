@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
@@ -26,6 +27,10 @@ const REPLAY_FRESHNESS_WINDOW_MS = 10 * 60 * 1000;
 // A replay stamped further ahead of server now than this came from a kiosk
 // whose clock is wrong; it applies at server now, flagged clock_suspect.
 const REPLAY_FUTURE_TOLERANCE_MS = 2 * 60 * 1000;
+
+// Far beyond any honest kiosk figure (about a second online, some seconds after
+// a night offline). A wider one means the kiosk does not know the time.
+const MAX_SCAN_TIME_UNCERTAINTY_MS = 60 * 60 * 1000;
 
 // Bounded to Postgres int4 (see lib/searchId.ts): a larger id makes the
 // lookup throw instead of matching nothing.
@@ -85,7 +90,7 @@ export const POST = withKiosk(
         // Optional replay fields from a queued kiosk scan. Absent → a live scan.
         // An unparseable scannedAt
         // normalizes to null, which parks a replay below.
-        const clientEventId = (typeof body.clientEventId === 'string' && body.clientEventId) || null;
+        const sentEventId = (typeof body.clientEventId === 'string' && body.clientEventId) || null;
         const parsedScannedAt = typeof body.scannedAt === 'string' ? new Date(body.scannedAt) : null;
         const scannedAt = parsedScannedAt && !isNaN(parsedScannedAt.getTime()) ? parsedScannedAt : null;
 
@@ -106,7 +111,7 @@ export const POST = withKiosk(
         if (body.dead === true && body.replay === true) {
             return apiError("dead and replay are mutually exclusive.", 400);
         }
-        if (body.dead === true && !clientEventId) {
+        if (body.dead === true && !sentEventId) {
             return apiError("A dead-lettered scan requires clientEventId.", 400);
         }
         if (body.dead === true && !scannedAt) {
@@ -140,7 +145,7 @@ export const POST = withKiosk(
         // should park. intent is the displayed direction; absent, a legacy
         // live-state toggle. protocolVersion is the contract bit.
         const invalid =
-            body.replay === true && !clientEventId ? "A replayed scan requires clientEventId." :
+            body.replay === true && !sentEventId ? "A replayed scan requires clientEventId." :
             body.replay === true && !scannedAt ? "A replayed scan requires a valid scannedAt." :
             body.intent !== undefined && body.intent !== 'IN' && body.intent !== 'OUT' ? "intent must be IN or OUT." :
             body.close !== undefined && body.close !== 'alone' && body.close !== 'confirmed' ? "close must be alone or confirmed." :
@@ -165,7 +170,13 @@ export const POST = withKiosk(
             : null;
         const isReplay = body.replay === true && !invalid;
         const isDead = body.dead === true || (body.replay === true && invalid !== null);
-        const deadStatus = invalid ? 400
+        // A parked replay that sent no id of its own is keyed by its body, so a resend dedups.
+        const clientEventId = sentEventId
+            ?? (isDead ? `body:${createHash("sha256").update(JSON.stringify(body)).digest("hex")}` : null);
+        // A replay with no usable scan time parks at server now, which only bounds it from above.
+        const noScanTime = body.replay === true && !scannedAt;
+        const deadStatus = noScanTime ? 'no_scan_time'
+            : invalid ? 400
             : typeof body.deadStatus === 'number' && Number.isFinite(body.deadStatus) ? body.deadStatus
             : 'unknown';
         const closeKind = invalid ? null : requestedClose;
@@ -180,9 +191,11 @@ export const POST = withKiosk(
         if (clockAhead) eventTime = new Date();
 
         const intent = body.intent === 'IN' || body.intent === 'OUT' ? body.intent : null;
-        const clockSuspect = body.clockSuspect === true;
-        const uncertaintyMs = isReplay && typeof body.scanTimeUncertaintyMs === 'number' ? body.scanTimeUncertaintyMs : 0;
-        const slot = (isReplay || isDead) ? "replay" : "live";
+        const sentUncertaintyMs = isReplay && typeof body.scanTimeUncertaintyMs === 'number' ? body.scanTimeUncertaintyMs : 0;
+        const uncertaintyTooWide = sentUncertaintyMs > MAX_SCAN_TIME_UNCERTAINTY_MS;
+        const clockSuspect = body.clockSuspect === true || uncertaintyTooWide || noScanTime;
+        const uncertaintyMs = uncertaintyTooWide ? 0 : sentUncertaintyMs;
+        const slot = isDead ? "dead" : isReplay ? "replay" : "live";
         specTrace("ScanRequest", {
             slot, p: rawId, cid: clientEventId, intent, close: closeKind,
             t: eventTime.getTime(), scannedAt: scannedAt?.getTime() ?? null, rosterAsOf: rosterAsOf?.getTime() ?? null,

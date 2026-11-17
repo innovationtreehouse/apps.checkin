@@ -36,4 +36,14 @@ describe('recordKioskProtocolSeen', () => {
         expect(after.protocolVersion).toBe(7);
         expect(after.lastSeenAt.getTime()).toBeGreaterThan(before.lastSeenAt.getTime());
     });
+
+    it('never moves lastSeenAt back', async () => {
+        const keyFingerprint = `${TAG}-back`;
+        await recordKioskProtocolSeen(keyFingerprint, 7);
+        const ahead = new Date(Date.now() + 60_000);
+        await prisma.kioskProtocolSeen.update({ where: { keyFingerprint }, data: { lastSeenAt: ahead } });
+        await recordKioskProtocolSeen(keyFingerprint, 7);
+        const row = await prisma.kioskProtocolSeen.findUniqueOrThrow({ where: { keyFingerprint } });
+        expect(row.lastSeenAt.getTime()).toBe(ahead.getTime());
+    });
 });
