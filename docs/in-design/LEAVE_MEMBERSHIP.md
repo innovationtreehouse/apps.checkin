@@ -119,8 +119,7 @@ penalty of a kind.
   state, and the tag is a filter like the state badges, with its own count. The
   tag shows only while the renewal is unconfirmed; confirming clears the note
   and so the tag.
-- No count in the Board's menu: there is nothing for the Board to do. L10 asks
-  whether the owner wants one anyway.
+- No count in the Board's menu: there is nothing for the Board to do.
 
 The family gets no email. The household page shows what it has said and how to
 undo it, and the renewal banner that reminds a lead to renew changes, for that
@@ -238,7 +237,6 @@ Board's households list.
 
 | ID | Question | Default |
 |---|---|---|
-| L10 | Board notice: email and label only, or a count in the Board's menu too? | Email and label; no count, since there is nothing to do. |
 | L11 | The control's wording: "We won't be renewing", or other words? | "We won't be renewing", with the label "Not renewing" for the Board. |
 | L12 | Should the family be able to say it outside the renewal window, for example in March? | Yes, at any time; it applies to the coming year. |
 
