@@ -25,6 +25,7 @@ jest.mock("@/lib/shopify/stock", () => ({ changeProgramStockWith: jest.fn(), Sto
 jest.mock("@/lib/scholarshipEmails", () => ({
     resolveScholarshipRecipients: jest.fn(), notifyReviewTeam: jest.fn(), sendScholarshipAck: jest.fn(),
 }));
+jest.mock("@/lib/emergencyContacts/service", () => ({ householdMayEnrol: jest.fn().mockResolvedValue(true), NO_EMERGENCY_CONTACT_TO_ENROL: "" }));
 
 const deniedRow = {
     programId: 10, personId: 3, status: "PENDING", isPaymentPlanRequested: false,
@@ -62,5 +63,17 @@ describe("request-payment-plan on a denied place", () => {
         if (!settings?.financeContactEmail?.trim()) expect(error).not.toMatch(/@/);
         expect(changeProgramStockWith).not.toHaveBeenCalled();
         expect(prisma.programParticipant.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("refuses with 409 when the denial commits after the route read the row", async () => {
+        jest.mocked(prisma.programParticipant.findUnique)
+            .mockResolvedValueOnce({ ...deniedRow, isPaymentPlanRequested: true, paymentPlanDeniedAt: null } as never)
+            .mockResolvedValueOnce({ paymentPlanDeniedAt: new Date() } as never);
+        jest.mocked(prisma.boardSettings.findUnique).mockResolvedValue({ financeContactEmail: "finance@example.org" } as never);
+        jest.mocked(changeProgramStockWith).mockResolvedValue(null as never); // both writes match nothing
+
+        const res = await post();
+        expect(res.status).toBe(409);
+        expect((await res.json()).error).toMatch(/was not approved/);
     });
 });

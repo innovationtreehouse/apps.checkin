@@ -166,6 +166,15 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         // hold-failed retry whose request was already recorded and for the losing half of a double-submit.
         const transitioned = outcome.flipped > 0 && (outcome.held > 0 || warning !== undefined);
 
+        // Nothing matched: a denial may have committed after the read above.
+        if (outcome.flipped === 0 && outcome.held === 0 && warning === undefined) {
+            const current = await prisma.programParticipant.findUnique({
+                where: { programId_personId: { programId, personId: participantId } },
+                select: { paymentPlanDeniedAt: true },
+            });
+            if (current?.paymentPlanDeniedAt) return apiError(await deniedRequestMessage(), 409);
+        }
+
         if (transitioned) {
             const base = config.baseUrl();
             const personName = participant.person?.name || 'A household member';

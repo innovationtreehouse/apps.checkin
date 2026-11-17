@@ -214,7 +214,8 @@ against *failed calls* but not against *crashes between the two steps*:
 ## 4. A denied hold has no expiry
 
 No automated job removes a denied applicant. A denied hold stays until the applicant
-pays, re-applies or withdraws, or a board member removes them (release paths (a) and (b)).
+pays or withdraws, or a board member removes them (release paths (a) and (b)). The
+applicant cannot send the request again.
 
 ## 5. Notifications
 
