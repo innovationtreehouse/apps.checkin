@@ -49,6 +49,7 @@ const ORACLES = [
     'file-route.test.ts',
     'hardship-tier-strip.test.ts',
     'hidden-relation-strip.test.ts',
+    'finance-program-roster.test.ts',
     'finance-view-marks.test.ts',
     'finance-views-route.test.ts',
     'household-archive-routes.test.ts',

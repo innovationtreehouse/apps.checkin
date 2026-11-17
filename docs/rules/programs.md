@@ -407,8 +407,9 @@ Things the app takes as true because they are handled outside it.
 ### Access to program information
 
 - A program's catalogue entry is public; its roster is visible only to the people
-  running it — its leader, its core volunteers, the board and sysadmins — and to
-  people enrolled in it. The catalogue filters rather than gates: an anonymous
+  running it — its leader, its core volunteers, the board and sysadmins — to
+  finance, which activates places paid outside the store from it (owner,
+  2026-11-17), and to people enrolled in it. The catalogue filters rather than gates: an anonymous
   caller reaches it and sees less, and is never told that a hidden members-only
   program exists.  [Decision — *Policy: Records Policy, Art. IV*]
 
