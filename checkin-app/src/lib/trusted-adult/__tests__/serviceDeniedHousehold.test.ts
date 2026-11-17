@@ -64,9 +64,10 @@ const deniedCheck = { where: { householdId: { in: [HOUSEHOLD, ADULT_HOUSEHOLD] }
 
 describe("trusted adult whose household's membership is denied", () => {
     it("createTrustedAdult refuses and creates nothing", async () => {
-        tx.orgMembership.count.mockResolvedValue(1);
+        tx.$queryRaw.mockResolvedValue([{ status: "DENIED" }]);
         await expect(createTrustedAdult(createInput)).rejects.toMatchObject({ code: "wrong_phase" });
-        expect(tx.orgMembership.count).toHaveBeenCalledWith(deniedCheck);
+        // A membership-row lock on each of the two households.
+        expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
         expect(tx.trustedAdult.create).not.toHaveBeenCalled();
     });
 
