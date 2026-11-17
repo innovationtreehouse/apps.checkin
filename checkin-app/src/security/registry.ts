@@ -174,9 +174,9 @@ defineRoute({
     orderedView: [
         ['isSysadmin',             ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
         ['isBoardMember',          ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
-        // Finance reads every roster to enroll places paid outside the store
-        // (docs/rules/programs.md): the Board's view less 'internal', which the
-        // roster does not show (Person.isDeclaredAdult is the only such field here).
+        // Finance reads every roster to enroll places paid outside the store: the
+        // Board's view less 'internal', which the roster does not show
+        // (Person.isDeclaredAdult is the only such field here).
         ['isFinance',              ['everyones:pii', 'everyones:personal', 'member', 'public']],
         // their_program_households delivers the household band leads operationally
         // need: the family's emergency contacts (personal) and the parents' own
