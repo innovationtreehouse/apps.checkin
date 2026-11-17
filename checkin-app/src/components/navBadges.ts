@@ -124,6 +124,23 @@ export function reviewBadges(counts: TodoCounts | null): NavBadge[] {
 }
 
 /**
+ * Applications tab badges (0, 1, or 2): red = open applications still missing a
+ * signature or a cleared check; gray = the rest of the open applications.
+ */
+export function applicationBadges(counts: TodoCounts | null): NavBadge[] {
+  const admin = counts?.admin;
+  if (!admin) return [];
+  const incomplete = admin.applicationsIncomplete;
+  const rest = admin.applicationsTotal - incomplete;
+  const out: NavBadge[] = [];
+  if (incomplete > 0)
+    out.push({ count: incomplete, color: 'red', label: `${incomplete} application${plural(incomplete, '', 's')} missing a signature or background check` });
+  if (rest > 0)
+    out.push({ count: rest, color: 'gray', label: `${rest} other application${plural(rest, '', 's')}` });
+  return out;
+}
+
+/**
  * Badges for a nav item (0, 1, or 2). Green = action the viewer must take, or
  * the viewer's own household; gray = live informational count (others'
  * occupancy, running programs). Attendance shows two: my household vs everyone
@@ -189,16 +206,21 @@ export function navBadgeFor(href: string, counts: TodoCounts | null): NavBadge[]
       const action = membership + canActOn;
       const actionLabel = `${membership} pending membership review${plural(membership, '', 's')}; ${canActOn} background check${plural(canActOn, '', 's')} you can review now`;
 
-      const apps = counts.admin ? counts.admin.applicationsTotal : 0;
+      const incomplete = counts.admin ? counts.admin.applicationsIncomplete : 0;
+      const apps = counts.admin ? counts.admin.applicationsTotal - incomplete : 0;
       const awaiting = counts.review?.approvedAwaitingSecond ?? 0;
       const info = apps + awaiting;
       const infoLabel = `${apps} in-flight application${plural(apps, '', 's')}; ${awaiting} you approved awaiting a second reviewer`;
-      // Red (blocking): people whose email bounced/complained — surfaced on the
-      // Manage Memberships (households) tab, where the board fixes the address.
-      // Mirrors the /membership-ops/households tab pill (tabBadgeFor below).
+      // Red (blocking): people whose email bounced/complained (the Manage
+      // Memberships tab pill) plus applications missing a signature or a cleared
+      // check (the Applications tab's red pill).
       const brokenEmails = counts.admin ? counts.admin.brokenEmails : 0;
-      const red = brokenEmails > 0
-        ? [{ count: brokenEmails, color: 'red', label: `${brokenEmails} member${plural(brokenEmails, '', 's')} with an undeliverable email` }]
+      const redParts = [
+        brokenEmails > 0 ? `${brokenEmails} member${plural(brokenEmails, '', 's')} with an undeliverable email` : '',
+        incomplete > 0 ? `${incomplete} application${plural(incomplete, '', 's')} missing a signature or background check` : '',
+      ].filter(Boolean);
+      const red = brokenEmails + incomplete > 0
+        ? [{ count: brokenEmails + incomplete, color: 'red', label: redParts.join('; ') }]
         : [];
       return [
         ...red,
@@ -292,11 +314,10 @@ export function tabBadgeFor(href: string, counts: TodoCounts | null): NavBadge |
   switch (href) {
     case '/settings/membership':
       return settingsMisconfigBadge(counts);
-    // Membership Ops. Gray, informational: every in-flight application the
-    // Applications page lists (status != ACTIVE). Distinct from the /membership-ops
-    // section badge, which is green board-actionable (BLOCKED) only.
+    // Applications: the red pill when any application is missing a signature or
+    // check, else the gray total. The tab itself shows both (applicationBadges).
     case '/membership-ops/applications':
-      return gray(admin.applicationsTotal, `${admin.applicationsTotal} application${plural(admin.applicationsTotal, '', 's')}`);
+      return applicationBadges(counts)[0] ?? null;
     // Manage Memberships (households). Red, blocking: members whose email Resend
     // reported undeliverable (bounce/complaint) — the board fixes the address on
     // this page. Same count as the /membership-ops section-nav red pill.

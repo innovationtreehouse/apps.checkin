@@ -1,4 +1,4 @@
-import { navBadgeFor, tabBadgeFor, sectionTabBadge, reviewBadges, settingsMisconfigBadge, programsMisconfigBadge, leadsAnyProgram, leadPendingCount, leadConflictCount } from '@/components/navBadges';
+import { navBadgeFor, tabBadgeFor, sectionTabBadge, reviewBadges, applicationBadges, settingsMisconfigBadge, programsMisconfigBadge, leadsAnyProgram, leadPendingCount, leadConflictCount } from '@/components/navBadges';
 import type { TodoCounts } from '@/lib/nav/todoCounts';
 import { FINANCE_NAV_LINKS, SHOPIFY_NAV_LINKS } from '@/lib/nav/sections/revenueOps';
 
@@ -104,6 +104,7 @@ const admin = (over: Partial<NonNullable<TodoCounts['admin']>> = {}): TodoCounts
   admin: {
     membership: 0,
     applicationsTotal: 0,
+    applicationsIncomplete: 0,
     paymentPlanPending: 0,
     membershipPaymentPlanPending: 0,
     trustedAdults: 0,
@@ -248,7 +249,25 @@ describe('tabBadgeFor', () => {
 
   it('applications tab shows every in-flight application (gray)', () => {
     expect(tabBadgeFor('/membership-ops/applications', admin({ applicationsTotal: 40 })))
-      .toEqual({ count: 40, color: 'gray', label: '40 applications' });
+      .toEqual({ count: 40, color: 'gray', label: '40 other applications' });
+  });
+
+  it('applications tab splits red (missing signature or check) from gray (the rest)', () => {
+    const counts = admin({ applicationsTotal: 40, applicationsIncomplete: 3 });
+    expect(applicationBadges(counts)).toEqual([
+      { count: 3, color: 'red', label: '3 applications missing a signature or background check' },
+      { count: 37, color: 'gray', label: '37 other applications' },
+    ]);
+    expect(tabBadgeFor('/membership-ops/applications', counts)?.color).toBe('red');
+    expect(applicationBadges(admin({ applicationsTotal: 1, applicationsIncomplete: 1 })))
+      .toEqual([{ count: 1, color: 'red', label: '1 application missing a signature or background check' }]);
+  });
+
+  it('Membership Ops nav folds incomplete applications into red and out of gray', () => {
+    expect(navBadgeFor('/membership-ops', admin({ brokenEmails: 1, applicationsTotal: 40, applicationsIncomplete: 3 }))).toEqual([
+      { count: 4, color: 'red', label: '1 member with an undeliverable email; 3 applications missing a signature or background check' },
+      { count: 37, color: 'gray', label: '37 in-flight applications; 0 you approved awaiting a second reviewer' },
+    ]);
   });
 
   it('broken-households tab is red (board action, blocking), the other audit tabs gray', () => {
