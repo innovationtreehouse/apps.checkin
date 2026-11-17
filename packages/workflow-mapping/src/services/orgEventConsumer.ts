@@ -28,33 +28,36 @@ async function remapProvisional(
     },
   });
   for (const line of lines) {
-    const { count } = await db.receivedReceiptLineStatus.updateMany({
-      where: {
-        id: line.id,
-        recognitionStatus: "provisional",
-        provisionalItemGtin13: ev.provisionalGtin13,
-        receivedReceipt: EDITABLE_RECEIPT_WHERE,
-      },
-      data: {
-        recognitionStatus: "recognized",
-        assignedGtin13: ev.realGtin13,
-        proposedName: null,
-        conversionFactor: ev.conversionFactor,
-        conversionVersion: ev.conversionVersion,
-      },
-    });
-    if (count === 0) continue;
-    await insertAuditEvent(db, {
-      orgId,
-      actorUserId: null,
-      eventType: "line_remapped",
-      receivedReceiptId: line.receivedReceiptId,
-      lineStatusId: line.id,
-      details: JSON.stringify({
-        eventType: ev.eventType,
-        provisionalGtin13: ev.provisionalGtin13,
-        realGtin13: ev.realGtin13,
-      }),
+    // The audit row commits with the remap, so no remap lands unlogged.
+    await db.$transaction(async (tx) => {
+      const { count } = await tx.receivedReceiptLineStatus.updateMany({
+        where: {
+          id: line.id,
+          recognitionStatus: "provisional",
+          provisionalItemGtin13: ev.provisionalGtin13,
+          receivedReceipt: EDITABLE_RECEIPT_WHERE,
+        },
+        data: {
+          recognitionStatus: "recognized",
+          assignedGtin13: ev.realGtin13,
+          proposedName: null,
+          conversionFactor: ev.conversionFactor,
+          conversionVersion: ev.conversionVersion,
+        },
+      });
+      if (count === 0) return;
+      await insertAuditEvent(tx, {
+        orgId,
+        actorUserId: null,
+        eventType: "line_remapped",
+        receivedReceiptId: line.receivedReceiptId,
+        lineStatusId: line.id,
+        details: JSON.stringify({
+          eventType: ev.eventType,
+          provisionalGtin13: ev.provisionalGtin13,
+          realGtin13: ev.realGtin13,
+        }),
+      });
     });
   }
 }

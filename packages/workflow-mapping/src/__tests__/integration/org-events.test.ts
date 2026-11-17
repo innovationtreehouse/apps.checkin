@@ -4,7 +4,7 @@ import { fixturesForSeam } from "@checkin/receipt-contract-fixtures";
 import { db } from "../../db";
 import type { OrgEventRecord } from "../../contract";
 import { catchUpOrgEvents, orgEventConsumer } from "../../services/orgEventConsumer";
-import { describeDb } from "../helpers/db";
+import { atAuditWrite, describeDb } from "../helpers/db";
 import { OTHER_ORG_ID, TEST_ORG_ID, clearAll, configure, makeLineStatus, makeReceipt } from "../helpers/setup";
 
 const PROV = "2000000000015";
@@ -66,6 +66,18 @@ describeDb("S5 remap", () => {
     }
     expect(await db.workflowAuditLog.count({ where: { eventType: "line_remapped" } })).toBe(1);
     expect(await applied()).toEqual([5]);
+  });
+
+  it("commits each remap with its audit row", async () => {
+    const line = await provisionalLine("pending_review");
+    const status = async () => (await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: line.id } })).recognitionStatus;
+
+    await atAuditWrite(() => orgEventConsumer.onOrgEvents([approved(5)]), async () => {
+      expect(await status()).toBe("provisional");
+    });
+
+    expect(await status()).toBe("recognized");
+    expect(await db.workflowAuditLog.count({ where: { eventType: "line_remapped", lineStatusId: line.id } })).toBe(1);
   });
 
   it("leaves a recognized line that still carries the provisional GTIN alone", async () => {

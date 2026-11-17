@@ -6,7 +6,7 @@ import type { Prisma } from "../../generated/prisma/client";
 import { configureCatalog } from "../../runtime";
 import { create, unarchive, update } from "../../routes/itemReferences";
 import { approveItemReferenceProposal, createItemReferenceProposal } from "../../services/proposalService";
-import { approveProvisionalProposal, createProvisionalItem, allocateNextProvisionalGtin } from "../../services/provisionalGtinService";
+import { approveProvisionalProposal, createProvisionalItem, allocateNextProvisionalGtin, mapProvisionalToExisting } from "../../services/provisionalGtinService";
 import { acceptChallenge, lockChallengeSubmission, submitChallenge } from "../../services/conversionChallengeService";
 import { resolveConflict } from "../../services/conflictResolutionService";
 import { checkReferences, lockReferenceKeys, lookupMany, type RefFields } from "../../services/referenceMatchingService";
@@ -235,6 +235,45 @@ describeDb("conversion challenges", () => {
     );
     expect(result).toMatchObject({ status: "rejected", reason: { status: 409 } });
     expect(await prisma.conversionChallenge.count({ where: { itemReferenceId: ref.id, status: "pending" } })).toBe(1);
+  });
+
+  it("accepting a challenge on an archived reference is a 409 and changes nothing", async () => {
+    const ref = await seedRef();
+    const pending = await challenge(ref.id, 2);
+    await prisma.itemReference.update({ where: { id: ref.id }, data: { archivedAt: new Date() } });
+
+    await expect(acceptChallenge(pending.id, 1)).rejects.toMatchObject({ status: 409, message: "This reference is archived" });
+
+    expect((await prisma.itemReference.findUniqueOrThrow({ where: { id: ref.id } })).conversionFactor).toBe(1);
+    expect((await prisma.conversionChallenge.findUnique({ where: { id: pending.id } }))?.status).toBe("pending");
+    expect(await prisma.orgEvent.count({ where: { eventType: "conversion_challenge_accepted" } })).toBe(0);
+  });
+
+  it("an accept racing an archive of its reference gets a 409", async () => {
+    const ref = await seedRef();
+    const pending = await challenge(ref.id, 2);
+    const result = await racing(
+      (tx) => tx.itemReference.update({ where: { id: ref.id }, data: { archivedAt: new Date() } }),
+      () => acceptChallenge(pending.id, 1),
+    );
+    expect(result).toMatchObject({ status: "rejected", reason: { status: 409 } });
+    expect((await prisma.itemReference.findUniqueOrThrow({ where: { id: ref.id } })).conversionFactor).toBe(1);
+  });
+
+  it("a map racing an accepted challenge publishes the accepted factor", async () => {
+    const ref = await seedRef();
+    const { gtin13 } = await allocateNextProvisionalGtin();
+    const provisional = await createProvisionalItem({
+      provisionalGtin13: gtin13, ...ORG, proposedName: "New", proposedCategoryId: categoryId,
+      proposedSubcategoryId: subcategoryId, proposedUsageBehavior: "Durable",
+    });
+    const result = await racing(
+      (tx) => tx.itemReference.update({ where: { id: ref.id }, data: { conversionFactor: 2, conversionVersion: { increment: 1 } } }),
+      () => mapProvisionalToExisting(provisional.id, 1, G1),
+    );
+    expect(result.status).toBe("fulfilled");
+    const event = await prisma.orgEvent.findFirstOrThrow({ where: { eventType: "provisional_mapped_to_existing" } });
+    expect(JSON.parse(event.payload)).toMatchObject({ conversionFactor: 2, conversionVersion: 2 });
   });
 
   it("another org's pending challenge does not block a submission", async () => {

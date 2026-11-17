@@ -3,6 +3,7 @@
  * sweep reads every catalog event not yet in the ledger, whatever ids have been received since.
  * Real Postgres; describeDb skips without one.
  */
+import { backendPid, waitersBehind } from "@checkin/pg-test-harness";
 import { beforeEach, expect, it, vi } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../lib/db/index";
@@ -73,6 +74,37 @@ describeDb("S5 handler", () => {
     }
 
     expect(await db.inventoryReceivedOrgEvent.findFirst({ where: { id: 9 } })).toMatchObject({ status: "processed", failureReason: null });
+  });
+});
+
+describeDb("S5 reject racing a reconcile", () => {
+  it("records the reject as processed when a reconcile claimed the provisional first", async () => {
+    await db.inventoryProvisionalItem.create({
+      data: { orgId: TEST_ORG_ID, provisionalGtin13: PROV_2, name: "Widget", usageBehavior: "Unknown" },
+    });
+
+    // The reconcile holds its claim uncommitted while the call-out reads the row as pending.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let claimed!: (pid: number) => void;
+    const isClaimed = new Promise<number>((r) => (claimed = r));
+    const reconcile = db.$transaction(async (tx) => {
+      await tx.inventoryProvisionalItem.updateMany({ where: { orgId: TEST_ORG_ID, provisionalGtin13: PROV_2, status: "pending" }, data: { status: "rejected" } });
+      claimed(await backendPid(tx));
+      await gate;
+    });
+    const reconcilePid = await isClaimed;
+    const callOut = orgEventConsumer.onOrgEvents([rejected(10)]);
+    try {
+      await waitersBehind(db, reconcilePid);
+    } finally {
+      release();
+      await reconcile;
+    }
+    await callOut;
+
+    expect(await db.inventoryReceivedOrgEvent.findFirst({ where: { id: 10 } })).toMatchObject({ status: "processed", failureReason: null });
+    expect(await db.provisionalItemLog.count({ where: { eventType: "rejected" } })).toBe(0);
   });
 });
 
