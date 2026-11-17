@@ -27,7 +27,7 @@ change its mind at any time, with no penalty, by renewing as any member does.
 | **The family** | A household lead chooses "We won't be renewing" on the household page. The page says the membership continues to the end of the paid year and that the family can renew at any time. Either lead can undo it. |
 | **What changes** | Renewal emails stop for the coming year. That is all. |
 | **What does not change** | Membership status, member pricing, the store's member list, people search, facility access, program places, roles, trusted adults and background-check records. The family paid for the year and keeps it. |
-| **The Board** | Gets one email and sees a "Not renewing" label on the household. It has nothing to approve. |
+| **The Board** | Gets one email, sees a "Not renewing" label on the household, and sees the same tag on the family's renewal in the Applications tab, so a "no" is distinct from "not yet". It has nothing to approve. |
 | **Changing their mind** | The family renews the normal way: the renewal the Board opens each year is still opened for them, and confirming it clears the note. No new application, no penalty. |
 | **At the end of the year** | The membership lapses, as for any family that does not renew. What happens after that is B26's question, not this design's. |
 | **Cost** | One nullable column, two registered routes, one narrowed query, one email, two small screens. |
@@ -121,11 +121,20 @@ penalty of a kind.
   the lead and the year. No email on undo.
 - **A "Not renewing" label** on the household in the Board's households list,
   with the year and the date it was said.
+- **A "Not renewing" tag on the renewal** in the Board's Applications tab. That
+  tab lists every open application with its state as a coloured badge, and a
+  renewal still waiting for the family to confirm it reads "Pending renewal".
+  Without a tag the Board cannot tell a family that hasn't got round to it from
+  one that has said no, so the not-renewing ones carry the tag beside their
+  state, and the tag is a filter like the state badges, with its own count. The
+  tag shows only while the renewal is unconfirmed; confirming clears the note
+  and so the tag.
 - No count in the Board's menu: there is nothing for the Board to do. L10 asks
   whether the owner wants one anyway.
 
-The family gets no email; the household page shows what it has said and how to
-undo it.
+The family gets no email. The household page shows what it has said and how to
+undo it, and the renewal banner that reminds a lead to renew changes, for that
+year, to say the family has said it won't renew and can still renew from here.
 
 ### 5. Legal and records
 
@@ -202,6 +211,13 @@ Board's households list.
   `OrgMembership`, under the same view as `GET /api/household`.
 - The Board's households list (`GET /api/membership-ops/households`) adds the
   column to what it reads. It is a `withAuth` route, so no registry change.
+- The Applications tab's list (`GET /api/membership-ops/applications`) adds a
+  `notRenewing` flag to each renewal row: true when the row is a renewal for the
+  household's noted year. That route is registered, so whatever the flag's
+  type needs in the registry ships in PR 1 with the new routes.
+- The renewal-status read behind the lead's renewal banner
+  (`GET /api/membership/renewal-status`) adds the same flag, so the banner can
+  change its wording.
 
 ### UI
 
@@ -211,6 +227,11 @@ Board's households list.
   family can renew at any time from this page. While the note stands the page
   shows it with an undo, and the renew control stays where it is.
 - Board households list: the "Not renewing" label with the year and date.
+- Board Applications tab: the "Not renewing" tag beside a renewal's state, and a
+  filter badge with its count. Another session is adding renewal status badges to
+  this tab; whichever lands second builds on the other.
+- The lead's renewal banner: for the noted year it reads "You've told the Board
+  you won't be renewing" with the renew control, instead of the reminder.
 
 ### Tests
 
@@ -247,15 +268,18 @@ owner's direction of 2026-11-17 answered several.
 Each PR is based on `main`; none stacks on another.
 
 1. **Registry entries (boundary, alone).** `POST` and
-   `DELETE /api/membership/not-renewing` in `src/security/registry.ts`, with
-   their tests. An unused `defineRoute` is inert, so this ships first.
+   `DELETE /api/membership/not-renewing` in `src/security/registry.ts`, and
+   whatever the `notRenewing` flag on `GET /api/membership-ops/applications`
+   rows needs there, with their tests. An unused `defineRoute` is inert, so this
+   ships first.
 2. **Migration (expand only).** Add `OrgMembership.notRenewingYear`, nullable,
    with its `@sensitivity` annotation. Old code ignores it, so it is safe against
    the old code still serving traffic. No contract step.
 3. **Service, routes and outreach.** `lib/membership/notRenewing.ts`, the two
    route handlers, the outreach audience, `beginRenewal` clearing the note, the
    Board email, the households list field, tests, and the register lines above.
-4. **UI.** The household page control and the Board's label. Closes #3446.
+4. **UI.** The household page control, the lead's renewal banner, the Board's
+   households label and the Applications tab tag and filter. Closes #3446.
 
 ## Appendix: provenance
 
