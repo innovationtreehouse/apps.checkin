@@ -117,6 +117,9 @@ export async function createTrustedAdult(input: CreateInput) {
 
     const ta = await prisma.$transaction(async (tx) => {
         await lockLiveHousehold(tx, input.householdId);
+        if (await adultHouseholdDenied(tx, { householdId: input.householdId, trustedAdultPersonId: input.trustedAdultPersonId ?? null })) {
+            throw new TrustedAdultError("wrong_phase", "This household has been denied membership, so this trusted adult cannot be added.");
+        }
         const created = await tx.trustedAdult.create({
             data: {
                 householdId: input.householdId,
@@ -511,6 +514,9 @@ export async function decideReview(reviewId: number, boardMemberId: number, inpu
         let status: string;
         switch (input.decision) {
             case "APPROVE": {
+                if (await adultHouseholdDenied(tx, head.trustedAdult)) {
+                    throw new TrustedAdultError("wrong_phase", "This household has been denied membership, so its trusted-adult review cannot be approved.");
+                }
                 const end = await approvalEnd(tx, review);
                 if (end <= now) {
                     throw new TrustedAdultError("wrong_phase", "This approval would already have lapsed — deny it and the family renews.");
