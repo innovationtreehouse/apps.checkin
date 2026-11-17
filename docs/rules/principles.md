@@ -430,7 +430,7 @@ believed it covered two.
   is not enough to answer the question that gets asked later.
 
 - **An audit row commits with the change it records.** A change and its row
-  are written together, so neither survives without the other. The exceptions
+  are written in one transaction, so neither survives without the other. The exceptions
   are rows that record something other than a committed change — a refusal, an
   attempt at an outside system, an inbound delivery — which are written on their
   own so they survive the failure they describe.  [Decision]
