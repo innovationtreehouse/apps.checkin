@@ -270,6 +270,22 @@ describe('a refunded order never activates', () => {
                 expect(global.fetch).not.toHaveBeenCalled();
             });
 
+            it('decides afresh when a new rejection lands while the order is read', async () => {
+                const { processId, orgMembershipId, householdId } = await blockThenLift(orderId('lifted-reblocked'));
+                const adult = await prisma.person.create({ data: { email: `late-${Math.random()}-${TAG}@example.com`, name: 'Late', householdId } });
+                resetTokenCache();
+                global.fetch = jest.fn(async (url: string | URL | Request) => {
+                    if (String(url).includes('access_token')) return new Response(JSON.stringify({ access_token: 't' }));
+                    await prisma.orgMembershipProcess.create({ data: { kind: 'PERSON_BG', subjectPersonId: adult.id, requestedForHouseholdId: householdId, status: 'BLOCKED', bgConsentAt: new Date() } });
+                    return unrefundedOrder();
+                }) as typeof fetch;
+
+                expect(await settleHouseholdBg(householdId)).toEqual([]);
+
+                expect((await processOf(processId))?.status).toBe('BLOCKED');
+                expect(await membershipStatusOf(orgMembershipId)).toBe('NONE');
+            });
+
             it('leaves it blocked when Shopify cannot answer', async () => {
                 const { processId, orgMembershipId, householdId } = await blockThenLift(orderId('lifted-outage'));
                 shopifyAnswers(() => new Response('down', { status: 503 }));
