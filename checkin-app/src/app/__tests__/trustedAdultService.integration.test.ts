@@ -683,6 +683,19 @@ describe('Trusted Adults service', () => {
         );
     });
 
+    it('a later answer without a reply keeps the earlier reply', async () => {
+        const ta = await discloseOne();
+        const reviewId = ta.reviews[0].id;
+        await decideReview(reviewId, boardId, { decision: 'REQUEST_INFO', note: 'Which days?' });
+        await answerInfoRequest(ta.id, leadId, { ...JANE, reply: 'Mondays.' });
+        await decideReview(reviewId, boardId, { decision: 'REQUEST_INFO', note: 'And a phone?' });
+
+        const out = await answerInfoRequest(ta.id, leadId, { ...JANE, trustedAdultPhone: '555-123-4567' });
+        expect(out.status).toBe('PENDING_BOARD_REVIEW');
+        expect(out.familyReply).toBe('Mondays.');
+        expect(out.proposedPhone).not.toBeNull();
+    });
+
     it('answering is refused for a non-lead, outside PENDING_SUBJECT_ACTION, and with nothing to say', async () => {
         const ta = await discloseOne();
         const reviewId = ta.reviews[0].id;
