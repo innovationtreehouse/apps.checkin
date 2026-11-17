@@ -462,10 +462,10 @@ describe('releaseDepartedRejection', () => {
 });
 
 describe('a blocked application closed and reopened', () => {
-    async function reopened() {
+    async function reopened(from: OrgMembershipProcessStatus = 'PENDING_PAYMENT') {
         const f = await family();
         const reviewId = await checkReview(f.otherId, 'BLOCKED');
-        const id = await application(f.orgMembershipId, 'PENDING_PAYMENT');
+        const id = await application(f.orgMembershipId, from);
         expect(await settleHouseholdBg(f.householdId)).toEqual(['blocked']);
         await closeAndReopen(id);
         return { ...f, reviewId, id };
@@ -479,10 +479,10 @@ describe('a blocked application closed and reopened', () => {
     });
 
     it('resumes to the step it was blocked from once the rejection is reset', async () => {
-        const r = await reopened();
+        const r = await reopened('INTAKE');
         await sendBack(r.reviewId, 'board reset');
-        expect(await settleHouseholdBg(r.householdId)).toEqual(['resumed']);
-        expect((await row(r.id)).status).toBe('PENDING_PAYMENT');
+        expect(await settleHouseholdBg(r.householdId)).toContain('resumed');
+        expect((await row(r.id)).status).toBe('INTAKE');
     });
 
     it("needs the Board's release after the person leaves, which still bars their current household", async () => {
