@@ -1,13 +1,14 @@
 import type { Prisma, OrgMembershipProcess } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
-import { ReviewError, applicantHousehold, reviewHouseholds } from "@/lib/membership/review";
+import { ReviewError, applicantHousehold, reviewHouseholds, wrongPersonClosedAt } from "@/lib/membership/review";
 import { reviewHoldsRejection } from "@/lib/membership/checkStanding";
 import { CLOSABLE_STATUSES, RESTORABLE_STATUSES, RESTORE_CLOSABLE_STATUSES, fromWhere, openProcess } from "@/lib/membership/lifecycle";
 import { advanceExternalIfComplete, pickUpMissedSignature } from "@/lib/membership/external";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { personActor, type AuditActor } from "@/lib/auditActor";
 import { type TxClient } from "@/lib/db-client";
+import { reopenYearRefusal } from "@/lib/programYear";
 
 // Loaded on use: settleHouseholdBg imports review.ts, and a static import closes that cycle at load.
 const settleModule = () => import("@/lib/membership/settleHouseholdBg");
@@ -138,9 +139,14 @@ export async function closeForRestore(
  * Why reopening would break a household rule, or null. A DENIED household starts
  * nothing; a household has one open application at a time (BLOCKED counts as open:
  * the board must resolve it first); an ACTIVE household gets renewals, never a
- * second joining application. Person-scoped kinds allow one open item per subject.
+ * second joining application; a household application is reopened only within its
+ * own membership year. Person-scoped kinds allow one open item per subject.
  */
 async function reopenRefusal(tx: Prisma.TransactionClient, process: OrgMembershipProcess, householdId: number | null): Promise<string | null> {
+    const settings = await tx.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
+    const yearRefusal = reopenYearRefusal(process.kind, process.createdAt, settings?.orgMembershipYearBoundary, new Date());
+    if (yearRefusal) return yearRefusal;
+
     const membership = householdId == null ? null : await tx.orgMembership.findUnique({ where: { householdId }, select: { status: true } });
     if (membership?.status === "DENIED") return "This household has been denied membership. Restore the household before reopening its application.";
     if (process.kind === "INITIAL" && membership?.status === "ACTIVE") return "This household is already an active member, so its joining application cannot be reopened.";
@@ -195,7 +201,8 @@ const FORGET_SIGNING_REQUEST = { zohoEnvelopeId: null, zohoActionId: null, zohoS
 /**
  * Board "Reopen": returns a closed application to the step it was closed from
  * (`archivedFromStatus`, captured by the close write). Refuses with the reason when
- * the household is DENIED or already has another open application, then picks up a
+ * the household is DENIED, already has another open application, or the next
+ * year's renewal window has opened since the application's own year, then picks up a
  * signature made while closed and re-runs the external advance so a gate met while
  * closed doesn't strand the application. When the household was denied since the
  * close, the unsigned signing request is forgotten in the reopen write instead, and
@@ -220,6 +227,9 @@ export async function unarchiveApplication(processId: number, actorId: number) {
             // Same lock startIntake/createRenewalProcess take, so a new application
             // can't open between the sibling check and the reopen.
             if (householdId != null) await tx.$queryRaw`SELECT id FROM "OrgMembership" WHERE "householdId" = ${householdId} FOR UPDATE`;
+            if (process.kind === "PERSON_BG" && await wrongPersonClosedAt(tx, processId)) {
+                throw new ReviewError("wrong_phase", "The Board closed this check review as opened for the wrong person. Reopen it with a reason instead.");
+            }
             const refusal = await reopenRefusal(tx, process, householdId);
             if (refusal) throw new ReviewError("wrong_phase", refusal);
             const forgotRequest = householdId != null && process.zohoEnvelopeId != null && process.contractSignedAt == null

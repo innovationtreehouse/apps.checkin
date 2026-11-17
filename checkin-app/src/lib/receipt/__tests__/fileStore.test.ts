@@ -66,11 +66,23 @@ describe("temp-directory file store", () => {
         const root = await mkdtemp(join(tmpdir(), "receipt-store-test-"));
         try {
             const store = createTempDirFileStore(root);
-            await store.put("mail-items/a", BYTES, "unused");
+            const hex = digest.copy().digest("hex");
+            await store.put("mail-items/a", BYTES, hex);
             expect(await store.get("mail-items/a")).toEqual(BYTES);
-            await expect(store.put("mail-items/a", BYTES, "unused")).rejects.toThrow();
+            await expect(store.put("mail-items/a", BYTES, hex)).rejects.toThrow();
             await store.delete("mail-items/a");
             expect(await store.get("mail-items/a")).toBeNull();
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it("refuses bytes that miss their hash and writes nothing", async () => {
+        const root = await mkdtemp(join(tmpdir(), "receipt-store-test-"));
+        try {
+            const store = createTempDirFileStore(root);
+            await expect(store.put("mail-items/b", BYTES, "00")).rejects.toThrow("SHA-256");
+            expect(await store.get("mail-items/b")).toBeNull();
         } finally {
             await rm(root, { recursive: true, force: true });
         }

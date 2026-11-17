@@ -178,6 +178,9 @@ export type Authorize =
     // predicate because 'certifier' is not a Person role boolean.
     | 'certifier'
     | 'program-lead-mentor'
+    // A program's roster staff: its lead mentor, admins, or FINANCE (who enrolls
+    // places paid outside the store). Program-scoped like 'program-lead-mentor'.
+    | 'program-roster-staff'
     | 'program-core-volunteer'
     | 'household-lead'
     | 'household-member'
@@ -377,6 +380,7 @@ function authorizeNeeds(authorize: Authorize): Partial<CtxNeeds> {
         case 'kiosk':
             return {};
         case 'program-lead-mentor':
+        case 'program-roster-staff':
         case 'program-core-volunteer':
             return { programs: true };
         default:

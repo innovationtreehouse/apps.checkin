@@ -1,6 +1,5 @@
 /**
- * What a household's denial does beyond its status, inside the deny's transaction
- * (docs/rules/membership.md, "Activation"):
+ * What a household's denial does beyond its status, inside the deny's transaction:
  *   - trusted-adult access is revoked at once, both directions;
  *   - program ties go to the board's payment-problems queue for removal by hand.
  *     Nothing in that group is removed here.

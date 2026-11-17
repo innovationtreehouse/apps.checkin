@@ -5,7 +5,7 @@ import { ageBand } from "@/lib/programAge";
  * Whether a non-staff viewer may see the payment status (paid / not paid yet) of
  * their own household's enrollments. Only a household lead who is not a known
  * youth; everyone else — a youth, a non-lead household member — sees none, and no
- * family ever sees another household's (docs/rules/programs.md, "Payment status").
+ * family ever sees another household's.
  *
  * Read from the DB, not the session claims: a lead change must take effect before
  * the session re-syncs.

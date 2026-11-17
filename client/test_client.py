@@ -76,8 +76,7 @@ class TestLocalClockReadout(unittest.TestCase):
 
 class TestScanBannerName(unittest.TestCase):
     """The banner names whoever scanned by the name they go by. It is an
-    unattended public screen, so it must never read out an email address
-    (checkin docs/rules/attendance-checkin.md, "The kiosk")."""
+    unattended public screen, so it must never read out an email address."""
 
     def test_banner_shows_the_name_the_server_resolved(self):
         html_out = scan_banner({
@@ -327,8 +326,7 @@ class TestExampleConfigMatchesDefaults(unittest.TestCase):
         self.assertEqual(cfg["kiosk_path"], DEFAULT_KIOSK_PATH)
 
 class TestKioskClose(unittest.TestCase):
-    """The kiosk decides a close from what it shows, online and offline alike
-    (docs/rules/attendance-checkin.md, Opening and closing); the server records
+    """The kiosk decides a close from what it shows, online and offline alike; the server records
     it as given."""
 
     def setUp(self):

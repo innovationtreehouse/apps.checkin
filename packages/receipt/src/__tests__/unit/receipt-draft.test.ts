@@ -204,6 +204,14 @@ describe("draftProblem", () => {
     expect(draftProblem(receipt, { ...EMPTY_DRAFT, lines: { 1: { quantity: "0" } } })).toMatch(/quantity/);
     expect(draftProblem(receipt, { ...EMPTY_DRAFT, lines: { 1: { total: "ten" } } })).toMatch(/line total/);
   });
+
+  it("refuses what the line routes refuse, so a save never stops partway", () => {
+    expect(draftProblem(receipt, { ...EMPTY_DRAFT, lines: { 1: { quantity: "100001" } } })).toMatch(/quantity can be at most 100,000/);
+    expect(draftProblem(receipt, { ...EMPTY_DRAFT, lines: { 1: { description: "x".repeat(501) } } })).toMatch(/at most 500/);
+    expect(draftProblem(receipt, { ...EMPTY_DRAFT, lines: { 1: { partNumber: "x".repeat(101) } } })).toMatch(/at most 100/);
+    expect(draftProblem(receipt, { ...EMPTY_DRAFT, added: [{ ...EMPTY_LINE, key: 1, description: "Glue", manufacturer: "x".repeat(101) }] })).toMatch(/at most 100/);
+    expect(draftProblem(receipt, { ...EMPTY_DRAFT, lines: { 1: { quantity: "100000", description: "x".repeat(500), partNumber: "x".repeat(100) } } })).toBeNull();
+  });
 });
 
 describe("hasTypedDetails", () => {

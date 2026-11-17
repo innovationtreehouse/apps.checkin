@@ -20,7 +20,7 @@ describe('programAuditOutcome', () => {
         expect(programAuditOutcome({ ...row, status: 'ACTIVE', wasOrgMemberAtApproval: false, reason: 'refund' })).toBeNull();
     });
 
-    it('ignores the grace-expiry sweep, which names the refusal it expires', () => {
+    it('ignores a past grace-expiry audit row, which names the refusal it expired', () => {
         expect(programAuditOutcome({ reason: 'scholarship_grace_expired', graceDays: 7, paymentPlanDeniedAt: '2026-03-01T00:00:00.000Z' })).toBeNull();
     });
 });

@@ -25,8 +25,7 @@ them into checkin in steps they can verify, using tools kept in this repo.
   QuickBooks again.
 
 Tracked on #2569. The rest of the receipt design has been built and is described
-in `docs/architecture/RECEIPT.md`, `docs/architecture/RECEIPT_PIPELINE.md` and
-`docs/rules/expenses.md`.
+in `docs/architecture/RECEIPT.md` and `docs/architecture/RECEIPT_PIPELINE.md`.
 
 ---
 
@@ -71,7 +70,7 @@ recorded on #1266.
 - The tools have run against a small real sample.
 
 At merge, delete this doc. It records no standing rules: the import rules are
-already in `docs/rules/expenses.md`.
+already recorded.
 
 ---
 

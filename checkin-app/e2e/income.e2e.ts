@@ -1,6 +1,6 @@
 /**
  * Income in the browser. Finance and the Board see income; only finance matches payouts and
- * settles problems, recording why (docs/rules/revenue.md → Income). The flow stack has no store
+ * settles problems, recording why. The flow stack has no store
  * mirror or QuickBooks, so the seed's one open reconciliation row is what the screens work on
  * (packages/income/prisma/seed.ts).
  */

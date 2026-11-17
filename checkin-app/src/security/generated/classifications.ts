@@ -164,7 +164,6 @@ export const classifications = {
         shopifyOrgMembershipProductId: 'internal',
         shopifyPriceSyncedAt: 'internal',
         shopifyReconcileCursorAt: 'internal',
-        scholarshipDenialGraceDays: 'public',
         releasedLibraries: 'public',
         programStoreClosedAt: 'internal',
         updatedAt: 'internal',

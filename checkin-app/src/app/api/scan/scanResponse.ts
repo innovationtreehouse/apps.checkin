@@ -34,7 +34,7 @@ export type WireContext = {
  * nickname-else-first-name label the kiosk roster shows. The kiosk renders this on
  * an unattended public screen and forwards it into an iframe with a wildcard
  * postMessage origin (client/client.py), so the raw Person — email, phone, date of
- * birth — never ships (docs/rules/attendance-checkin.md, "The kiosk").
+ * birth — never ships.
  */
 function scanParticipant(person: Person) {
     return { id: person.id, name: getKioskDisplayName(person) };
@@ -55,7 +55,7 @@ function departureWarning(remaining: number | undefined) {
  * The "others are here" list on a close offer, labelled as the kiosk roster
  * labels people: nickname, else first name, a last initial only to tell two
  * apart, else the email local-part. Never a last name or an address — it renders
- * on the public kiosk screen (docs/rules/attendance-checkin.md, "The kiosk").
+ * on the public kiosk screen.
  * Keyed by visit id, which is unique per row.
  */
 function presentLabels(visits: { id: number; person: Pick<Person, "name" | "nickname" | "email"> }[]): string[] {

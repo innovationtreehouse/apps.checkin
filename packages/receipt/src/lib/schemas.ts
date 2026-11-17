@@ -1,12 +1,15 @@
 // Inputs the services accept. Money in the upload and edit shapes is in dollars, as typed.
 import { z } from "zod";
-import { dollarsToCents } from "@checkin/money";
+import { dollarsToCents, dollarsToCentsOrNull } from "@checkin/money";
 import { CURRENCY_CODE, DEFAULT_CURRENCY, InKindDonorSchema, MAX_LINE_QUANTITY } from "@checkin/receipt-types";
 import { isIsoDate } from "./missingDetails";
 
 export { CURRENCY_CODE };
 
 export const MAX_LINE_ITEMS = 200;
+export const MAX_LINE_DESCRIPTION = 500;
+/** The longest part number or manufacturer a line holds. */
+export const MAX_LINE_LABEL = 100;
 export const MAX_IMPORT_BATCH = 50;
 /** Base64 length of a 10 MB file, the upload cap. */
 const MAX_FILE_BASE64 = Math.ceil((10 * 1024 * 1024) / 3) * 4;
@@ -16,18 +19,18 @@ const nonNegative = finite.nonnegative();
 const quantity = finite.positive().max(MAX_LINE_QUANTITY);
 const cents = z.number().int().nonnegative();
 const currencyCode = z.string().regex(CURRENCY_CODE, { message: "Currency must be a 3-letter code, like USD" });
-/** The most a money column holds: its integer cents limit, in dollars. */
-const MAX_DOLLARS = (2 ** 31 - 1) / 100;
+/** The most a money column holds: its integer cents limit. */
+const MAX_CENTS = 2 ** 31 - 1;
 const dollarString = z.string().refine(
   (v) => {
-    const dollars = parseFloat(v);
-    return Number.isFinite(dollars) && dollars >= 0 && dollars <= MAX_DOLLARS;
+    const cents = dollarsToCentsOrNull(v);
+    // Sign checked on the typed value: "-0.001" rounds to 0 cents.
+    return cents !== null && Number(v) >= 0 && cents <= MAX_CENTS;
   },
   { message: "must be a number from 0 to 21,474,836.47" },
 );
-/** A dollar input from these shapes in cents; a string that does not start with a number counts as 0. */
-export const toCents = (dollars: number | string | undefined): number =>
-  dollarsToCents(typeof dollars === "string" ? parseFloat(dollars) || 0 : (dollars ?? 0));
+/** A dollar input from these shapes in cents; missing counts as 0, and text that is not a plain decimal throws. */
+export const toCents = (dollars: number | string | undefined): number => dollarsToCents(dollars ?? 0);
 
 /** Text a receipt cannot be checked without; blank or spaces-only is refused. */
 const requiredText = (name: string, max: number) => z.string({ error: `${name} is required` }).trim().min(1, { message: `${name} is required` }).max(max);
@@ -35,9 +38,9 @@ const requiredText = (name: string, max: number) => z.string({ error: `${name} i
 const isoDate = requiredText("The date", 50).refine(isIsoDate, { message: "The date must be a real date written YYYY-MM-DD" });
 
 export const LineItemSchema = z.object({
-  description: z.string().min(1).max(500),
-  partNumber: z.string().max(100).nullable().optional(),
-  manufacturer: z.string().max(100).nullable().optional(),
+  description: z.string().min(1).max(MAX_LINE_DESCRIPTION),
+  partNumber: z.string().max(MAX_LINE_LABEL).nullable().optional(),
+  manufacturer: z.string().max(MAX_LINE_LABEL).nullable().optional(),
   quantity: z.coerce.number().finite().positive().max(MAX_LINE_QUANTITY),
   unitPrice: z.coerce.number().finite().nonnegative(),
   isDelayed: z.boolean().optional(),
@@ -106,9 +109,9 @@ export const InKindInputSchema = z
 export const RotationInputSchema = z.object({ rotation: z.literal([0, 90, 180, 270]) }).strict();
 
 export const AddLineItemSchema = z.object({
-  description: z.string().min(1).max(500),
-  partNumber: z.string().max(100).nullable().optional(),
-  manufacturer: z.string().max(100).nullable().optional(),
+  description: z.string().min(1).max(MAX_LINE_DESCRIPTION),
+  partNumber: z.string().max(MAX_LINE_LABEL).nullable().optional(),
+  manufacturer: z.string().max(MAX_LINE_LABEL).nullable().optional(),
   quantity: quantity.optional(),
   unitPrice: nonNegative.optional(),
   totalPrice: nonNegative.optional(),
@@ -129,9 +132,9 @@ export const EditReceiptSchema = z
 
 export const EditLineItemSchema = z
   .object({
-    description: z.string().min(1).max(500).optional(),
-    partNumber: z.string().max(100).nullable().optional(),
-    manufacturer: z.string().max(100).nullable().optional(),
+    description: z.string().min(1).max(MAX_LINE_DESCRIPTION).optional(),
+    partNumber: z.string().max(MAX_LINE_LABEL).nullable().optional(),
+    manufacturer: z.string().max(MAX_LINE_LABEL).nullable().optional(),
     quantity: quantity.optional(),
     unitPrice: nonNegative.optional(),
     totalPrice: nonNegative.optional(),
@@ -152,9 +155,9 @@ export const OcrSwitchSchema = z.object({ ocrEnabled: z.boolean() }).strict();
 
 export const ImportLineItemSchema = z.object({
   lineNumber: z.number().int().positive(),
-  description: z.string().min(1).max(500),
-  partNumber: z.string().max(100).nullable().optional(),
-  manufacturer: z.string().max(100).nullable().optional(),
+  description: z.string().min(1).max(MAX_LINE_DESCRIPTION),
+  partNumber: z.string().max(MAX_LINE_LABEL).nullable().optional(),
+  manufacturer: z.string().max(MAX_LINE_LABEL).nullable().optional(),
   // May be fractional for consumables bought by weight or volume.
   quantity,
   unitPriceCents: cents,

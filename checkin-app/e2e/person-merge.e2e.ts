@@ -1,6 +1,6 @@
 /**
- * A person merge carrying a valid background check onto a family whose application is in review
- * (docs/rules/membership.md, the person-merge ruling of 2026-10-30). The check comes from a second
+ * A person merge carrying a valid background check onto a family whose application is in review.
+ * The check comes from a second
  * family cleared by two reviewers; the Board merges that family's lead into the applicant's. The
  * carryover counts only under a set re-check interval, which the fresh seed leaves unset, so the
  * suite sets one and puts it back in afterAll. Every test mints its own families, so a rerun on the

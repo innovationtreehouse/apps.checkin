@@ -2,7 +2,7 @@ import { editSignificance, deleteSignificance } from "../significance";
 
 const at = (h: number, m = 0) => new Date(Date.UTC(2026, 6, 1, h, m));
 
-// The cases the significance rules call out (docs/rules/attendance-checkin.md).
+// The cases the significance rules call out.
 describe("editSignificance", () => {
     it("+5 min on own WEB arrival — noise, not flagged", () => {
         const r = editSignificance(
@@ -72,8 +72,7 @@ describe("editSignificance", () => {
         expect(r.flagged).toBe(true); // 120 × 3 = 360
     });
 
-    // A repeat correction (docs/rules/attendance-checkin.md, visit-record:
-    // "Correcting the same time twice is weighed the second time as overwriting a
+    // A repeat correction ("Correcting the same time twice is weighed the second time as overwriting a
     // self-report"). The route restamps arrivedVia to TYPED after the first
     // correction, so the SECOND correction is weighed against TYPED, not the
     // original SCANNER. Modelled here as the two pre-edit states the route feeds.

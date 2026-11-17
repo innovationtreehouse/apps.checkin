@@ -2,7 +2,7 @@
  * @jest-environment node
  *
  * The catalog review queues, and filing into them, are INVENTORY_MANAGER-only;
- * finished catalog data stays open to every catalog viewer (docs/rules/inventory.md, Access).
+ * finished catalog data stays open to every catalog viewer.
  */
 import { getRoute } from '@/security/core';
 import '@/security/registry';

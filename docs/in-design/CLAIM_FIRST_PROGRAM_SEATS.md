@@ -29,7 +29,7 @@ The refund change ships first and does not depend on the trial.
 **How a store shopper reaches the app:**
 
 - One store menu link, "Programs", goes to the app's `/programs`. A person adds it at the start of the window and removes it at the end.
-- A redirect is added only for an item the Board knows is linked from somewhere else, such as a newsletter, because every redirect is hand work at both ends of a short window. It goes from the old `/products/<handle>` path to the program's page, or `/programs` for a members-only program that is not publicly visible. An anonymous visitor to that hidden program's page is told it doesn't exist (`docs/rules/programs.md:389`), so it would be a dead end.
+- A redirect is added only for an item the Board knows is linked from somewhere else, such as a newsletter, because every redirect is hand work at both ends of a short window. It goes from the old `/products/<handle>` path to the program's page, or `/programs` for a members-only program that is not publicly visible. An anonymous visitor to that hidden program's page is told it doesn't exist, so it would be a dead end.
 - Items created after the switch are never public, so they need no redirect.
 
 Redirects by hand avoid a new Shopify permission, and the count of live programs is small.
@@ -108,7 +108,7 @@ Rollout step 6 stops looking at `inventoryHeldAt`, which changes how two kinds o
 | Row today | Who sees it today | After the merge | Risk |
 |---|---|---|---|
 | Hold failed: PENDING, no hold, request flag set, no denial | Holds queue | An ordinary request | None; it joins the payment-plan queue |
-| **Denied with no hold:** PENDING, no hold, no request flag, denial stamped (invariant I4 broken) | Only the nightly report; `classify()` returns null | "Denied" | **If a grace period were ever set, the grace sweep would delete the enrollment on its first run when the denial is older than that period.** Its filter requires a hold today (`cron/scholarship-grace-expiry/route.ts:38`). Production runs no grace period, so the risk is latent until the sweep is removed. Either way, these rows sit in no queue and nobody is reminded about them |
+| **Denied with no hold:** PENDING, no hold, no request flag, denial stamped (invariant I4 broken) | Only the nightly report; `classify()` returns null | "Denied" | These rows sit in no queue and nobody is reminded about them |
 
 The second kind is what the holds screen's deny-without-a-hold button writes today (proposal: "denying a scholarship request whose seat hold failed"). The fix is settled (owner ruling, 2026-11-01) but not shipped: denying a hold-failed request returns the row to unpaid and keeps the denial in the audit log, and the normal deny refuses a hold-failed row. A row denied after the fix stays unpaid through the state merge. Only rows written before the fix need the clearing step.
 
@@ -258,7 +258,6 @@ Per `docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`. Each line is one PR unle
 - **`program/capacity.ts`:** `countStockTakenSeats` and `seatReturnDelta`.
 - **`lifecycleDrift.ts`:** the repair for an active row with a hold.
 - **Program create:** the public item, for new programs.
-- **Grace sweep:** `cron/scholarship-grace-expiry`, its Board setting `scholarshipDenialGraceDays` and the grace rules. It could also be removed separately sooner; nothing here depends on it.
 - **Screens and routes:** Revenue Ops > Unconfirmed Shopify stock, Shopify Hold Reconciliation, `payment-plans/manual-hold`, the capped/uncapped warning.
 - **Enrollment states:** `PENDING_HELD` and `PENDING_HOLD_FAILED` become one "requested" state, and `PENDING_HELD_DENIED` becomes "denied", which no longer looks at a hold. Six states become five, and invariants I1 to I4 mostly fall away. This runs only after the section 4 gate.
 - **Columns:** `Program.shopifyStockCarry`, `PendingWrite`, `Unconfirmed`, `Parked`, `PushNeededAt`, `LeaseUntil`, `LeaseToken`; `ProgramParticipant.inventoryHeldAt`, `seatTakenWithoutSaleAt`. `productHiddenAt` and the switch column can go with them.

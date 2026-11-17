@@ -87,7 +87,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
 
         // A scholarship request IS a payment situation, so it is not a youth's to
         // make about themselves — a household lead does it. Same known-adult rule
-        // as the enroll route (docs/rules/programs.md).
+        // as the enroll route.
         if (isSelf && !isKnownAdult({
             dateOfBirth: participant.person?.dateOfBirth ?? null,
             isDeclaredAdult: participant.person?.isDeclaredAdult,
@@ -107,7 +107,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
 
         // Hold ledger: APPLICATION takes a seat out
         // of Shopify's pool (-1), stamping inventoryHeldAt so every later release
-        // path (withdrawal / payment / grace-expiry) or approval knows there's a
+        // path (withdrawal / payment) or approval knows there's a
         // hold to account for. Guard is on inventoryHeldAt, NOT isPaymentPlanRequested:
         // a denied re-applicant still holds the seat (refuse does not release
         // it — see the refuse route), so re-applying must NOT decrement twice.

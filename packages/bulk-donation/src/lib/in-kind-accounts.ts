@@ -1,4 +1,4 @@
-// Which QuickBooks account each gift-of-goods line debits (docs/rules/expenses.md): finance's hand-set
+// Which QuickBooks account each gift-of-goods line debits: finance's hand-set
 // account, else the expense account rule for its part. A line with neither, or whose account can't
 // be used, holds the gift for finance.
 import { LINE_ACCOUNT_TYPES, type QboAccount } from "@checkin/quickbooks";

@@ -387,7 +387,7 @@ export async function reconcileReversals(): Promise<number> {
         const o = byLegacy.get(proc.shopifyOrderId!);
         if (!o) continue; // pre-cutover / not yet mirrored — can't judge.
         let kind = classifyReversal(o, disputes.has(o.orderGid));
-        // Judged by item, never by total (docs/rules/revenue.md).
+        // Judged by item, never by total.
         if (!kind && droppedMembership.has(o.orderGid)) {
             logger.warn(`[reconcile] activated order ${proc.shopifyOrderId} no longer carries the membership item (process ${proc.id})`);
             kind = "AMOUNT_MISMATCH";
