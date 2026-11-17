@@ -4,32 +4,29 @@ import { db } from "./db";
 import { pushReceipt, runFullFlow } from "./lib/receipt-flow";
 import { DAY_MS } from "./lib/limits";
 import { getOrgId } from "./runtime";
+import { stuckSince, stuckUndelivered } from "./repositories/receipt";
 
 const FLOW = "flow";
 const PUSH = "push to mapping";
 
 const STUCK_IN = {
-  [FLOW]: { details: { state: "flow_error" } },
-  [PUSH]: { pushedAt: null, details: { state: "receipt_finalized" } },
-} satisfies Record<string, Prisma.ReceiptWhereInput>;
+  [FLOW]: () => ({ firstFailedAt: { not: null }, details: { state: "flow_error" } }),
+  [PUSH]: () => stuckUndelivered(),
+} satisfies Record<string, () => Prisma.ReceiptWhereInput>;
 
 /** What a retry that left the receipt stuck answers; the error itself stays on the receipt's page. */
 export const STILL_STUCK = "Retried, and it failed again; the receipt's page shows why";
 
-/** Receipts stuck in the flow (`flow_error`) or finalized and not delivered to mapping, timed by their first failure. */
+/** Receipts stuck in the flow (`flow_error`) or finalized and not delivered to mapping, timed by `stuckSince`. */
 export async function stuckItems(): Promise<StuckItem[]> {
-  const rows = await db.receipt.findMany({
-    where: { orgId: await getOrgId(), firstFailedAt: { not: null }, OR: [STUCK_IN[FLOW], STUCK_IN[PUSH]] },
-    select: { id: true, firstFailedAt: true, details: { select: { state: true } } },
-  });
-  return rows.flatMap((r) =>
-    r.firstFailedAt ? [{ id: r.id, step: r.details?.state === "flow_error" ? FLOW : PUSH, href: `/receipts/${r.id}`, failedAt: r.firstFailedAt }] : [],
-  );
+  const orgId = await getOrgId();
+  const steps = [FLOW, PUSH] as const;
+  const since = await Promise.all(steps.map((step) => stuckSince({ orgId, ...STUCK_IN[step]() })));
+  return steps.flatMap((step, i) => [...since[i]].map(([id, failedAt]) => ({ id, step, href: `/receipts/${id}`, failedAt })));
 }
 
 async function isStuck(id: string, step: keyof typeof STUCK_IN): Promise<boolean> {
-  const where = { id, orgId: await getOrgId(), firstFailedAt: { not: null }, ...STUCK_IN[step] };
-  return (await db.receipt.count({ where })) > 0;
+  return (await db.receipt.count({ where: { id, orgId: await getOrgId(), ...STUCK_IN[step]() } })) > 0;
 }
 
 /**
