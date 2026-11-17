@@ -35,7 +35,7 @@ const settleModule = () => import("@/lib/membership/settleHouseholdBg");
  *                   the rejector changing their answer to approve, and then needs
  *                   two approvals again.
  * A household application is never reviewed itself: after every outcome
- * settleHouseholdBg moves it on its people's standing (docs/rules/membership.md).
+ * settleHouseholdBg moves it on its people's standing.
  *
  * The system never sees the check itself — only the attestations.
  */

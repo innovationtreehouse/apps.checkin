@@ -589,6 +589,20 @@ describe("AdminMembershipPage", () => {
         await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Application reopened." })));
     });
 
+    it("disables Reopen on a closed application whose year the next renewal window has superseded", async () => {
+        mockFetchJson({
+            "/api/settings/membership": { settings: { BoardSettings: { orgMembershipYearBoundary: "2020-08-01T00:00:00.000Z" } } },
+            "/api/membership-ops/applications?archived=1": { processes: [{ ...archivedRows[0], kind: "INITIAL", createdAt: "2020-03-01T00:00:00.000Z" }] },
+            "/api/membership-ops/applications": { processes: rows },
+        });
+        renderPage();
+        await screen.findByText("Awaiting Family");
+
+        fireEvent.click(screen.getByLabelText("Show closed applications"));
+        expect(await screen.findByText(/This application is for 2019-2020\. The 2020-2021 renewal period has started/)).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Reopen" })).toBeDisabled();
+    });
+
     it("never shows the word archive for an application", async () => {
         mockFetchJson({ "/api/membership-ops/applications": { processes: rows } });
         renderPage();

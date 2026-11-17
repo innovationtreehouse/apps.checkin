@@ -6,8 +6,7 @@ import { config } from "@/lib/config";
  * NDJSON line per model action point (scan request and commit, visit open and
  * departure, close sweep, web check-in). A test turns it on with a file; nothing
  * else does. Off production it writes; in production it is a no-op whatever was
- * started, checked on every call (docs/rules/principles.md, a non-production
- * capability is absent in production).
+ * started, checked on every call.
  */
 let sink: string | null = null;
 

@@ -3,8 +3,7 @@
  */
 // The session page (GET /api/events/[id]) gives program staff the roster and the
 // two staff-only fields it renders, and nothing internal: a program leader sees
-// whether a place is paid, never how (docs/rules/programs.md, Access to program
-// information). View tokens come from the live registry, so these pins track
+// whether a place is paid, never how. View tokens come from the live registry, so these pins track
 // policy edits.
 import { stripValue } from '@/security/stripper';
 import { type CallerContext } from '@/security/access-resolvers';

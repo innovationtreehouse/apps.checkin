@@ -1,4 +1,4 @@
-// Gifts of goods book each part where the same purchase would (docs/rules/expenses.md): through expense's account rules.
+// Gifts of goods book each part where the same purchase would: through expense's account rules.
 import { isNotWired } from "@checkin/component-kit";
 import { db } from "../db";
 import { donatedPartAccount } from "../lib/account-rules";

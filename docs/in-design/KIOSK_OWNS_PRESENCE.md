@@ -109,7 +109,7 @@ else). Nobody closes from the web.
 
 ## Rules this relies on or changes
 
-Register lines in `docs/rules/attendance-checkin.md`, by fate. Lines kept as
+Register lines for attendance and check-in, by fate. Lines kept as
 they are are not listed.
 
 **Stay (the kiosk already behaves this way):** a close is one event; only a
@@ -729,6 +729,6 @@ variant before the kiosk release.
   and linked to the close (2026-10-25); the 3-second filter belongs on the
   kiosk (2026-10-11).
 - `docs/ops/checkin-state-machine.md` (owner-signed state machine) and
-  `docs/rules/attendance-checkin.md`, read at `main@39f1c6d19`.
+  the attendance and check-in rules, read at `main@39f1c6d19`.
 - The kiosk design and scope review (Claude Doc, 2026-10-13) for K3–K8.
 - The scope review's line counts are estimates; the PRs report real ones.

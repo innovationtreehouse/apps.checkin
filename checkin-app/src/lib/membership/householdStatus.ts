@@ -7,7 +7,7 @@
  * `ensureHouseholdMembership`. `noRawStatusWrites.test.ts` fails CI on any other
  * status write under src/.
  *
- * Rules (owner, 2026-10-12 — docs/rules/membership.md):
+ * Rules (owner, 2026-10-12):
  *   - only an application converging (paid + check cleared) makes a household ACTIVE;
  *   - ACTIVE stops only by REVOKED or DENIED; nothing returns ACTIVE/REVOKED to NONE;
  *   - DENIED never becomes ACTIVE; its only exit is the board's restore to NONE;

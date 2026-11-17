@@ -59,7 +59,7 @@ describe('Program Age Start-Date Basis (authenticated route)', () => {
         // Born 2012-04-01: age 13 as of 2026-01-01 (frozen now), turns 14 on
         // 2026-04-01 — BEFORE the 2026-09-01 start. Eligible as of startAt only.
         // The subject is 13 at enrollment time, so a household lead enrolls them —
-        // only a known adult may self-enroll (docs/rules/programs.md). The
+        // only a known adult may self-enroll. The
         // age-as-of-startAt rule under test is unaffected by who submits.
         const household = await prisma.household.create({ data: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } });
         const guardian = await prisma.person.create({

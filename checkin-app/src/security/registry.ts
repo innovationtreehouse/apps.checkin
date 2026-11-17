@@ -174,6 +174,10 @@ defineRoute({
     orderedView: [
         ['isSysadmin',             ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
         ['isBoardMember',          ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
+        // Finance reads every roster to enroll places paid outside the store:
+        // the Board's view less 'internal', which the
+        // roster does not show (Person.isDeclaredAdult is the only such field here).
+        ['isFinance',              ['everyones:pii', 'everyones:personal', 'member', 'public']],
         // their_program_households delivers the household band leads operationally
         // need: the family's emergency contacts (personal) and the parents' own
         // contact details (pii). Person binds this scope ONLY on isHouseholdLead
@@ -243,20 +247,21 @@ defineRoute({
 });
 
 // Staff directory SEARCH for un-enrolled participants to add to a program.
-// Admission ('program-lead-mentor'; resolveAccess also admits sysadmin/board)
-// is the real boundary. The search returns names only (owner ruling)
+// Admission ('program-roster-staff': the program's lead mentor, sysadmin, board,
+// or finance, which enrolls from the roster) is the real boundary. The search returns names only (owner ruling)
 // as EligibleCandidate rows: id, name and a computed
 // age-fit label, all public. Person is not in the bag, so no email or date of
 // birth can leave even if the query over-selects.
 defineRoute({
     endpoint: 'GET /api/programs/[id]/eligible-participants',
-    authorize: 'program-lead-mentor',
+    authorize: 'program-roster-staff',
     envelope: 'members',
     // Bag: { EligibleCandidate }.
     returns: ['EligibleCandidate'],
     orderedView: [
         ['isSysadmin',        ['public']],
         ['isBoardMember',     ['public']],
+        ['isFinance',         ['public']],
         ['programLeadMentor', ['public']],
     ],
 });

@@ -83,8 +83,7 @@ function KioskDisplayInner() {
   // safety flag below is only meaningful while `data` is non-null, so each one is
   // rendered behind that check.
   const counts = data?.counts || { keyholders: 0, volunteers: 0, youth: 0, total: 0 };
-  // Missing OR malformed `safety` is UNKNOWN, never all-clear (see
-  // docs/rules/attendance-checkin.md, kiosk resilience). Both flags must be
+  // Missing OR malformed `safety` is UNKNOWN, never all-clear. Both flags must be
   // actual booleans — a partial object like `{}` must not read as compliant.
   const rawSafety = data?.safety;
   const safety =
