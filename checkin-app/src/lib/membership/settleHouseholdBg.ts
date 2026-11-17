@@ -55,7 +55,7 @@ export async function settleHouseholdBg(householdId: number, opts: { reviewJustC
         select: { id: true, status: true },
     });
     if (!app) return [];
-    if (CONVERGES.includes(app.status)) await recordUnreportedReversalOnProcess(app.id);
+    if (READS_ORDER.includes(app.status)) await recordUnreportedReversalOnProcess(app.id);
     const threshold = await liveBgThreshold();
 
     const result = await prisma.$transaction((tx) => settleInTx(tx, app.id, householdId, threshold, opts.trigger));
@@ -110,6 +110,8 @@ const RETURNS_AS_WAS: readonly ProcessStatus[] = ["INTAKE", "PENDING_RENEWAL", "
 const STAMPS: readonly ProcessStatus[] = ["PENDING_EXTERNAL_ACTION", "PENDING_PAYMENT"];
 /** Held steps that nothing but a clearance moves: they converge on payment here. */
 const CONVERGES: readonly ProcessStatus[] = ["PENDING_BG_REVIEW", "PENDING_BG_CLEARANCE"];
+/** Steps that can converge in this settle: a lifted block resumes and converges in the same pass. */
+const READS_ORDER: readonly ProcessStatus[] = [...CONVERGES, "BLOCKED"];
 
 async function settleInTx(tx: TxClient, processId: number, householdId: number, threshold: Date | null, trigger?: SettleTrigger): Promise<Settled> {
     const record = (oldData: Prisma.InputJsonObject, newData: Prisma.InputJsonObject) => audit(tx, processId, householdId, oldData, withTrigger(newData, trigger));
