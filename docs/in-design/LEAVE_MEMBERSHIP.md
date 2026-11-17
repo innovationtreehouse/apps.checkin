@@ -22,7 +22,7 @@ change its mind at any time, with no penalty, by renewing as any member does.
 | | |
 |---|---|
 | **The family** | A household lead chooses "We won't be renewing" on the household page. The page says the membership continues to the end of the paid year and that the family can renew at any time. Either lead can undo it. |
-| **What changes** | Renewal emails stop for the coming year. That is all. |
+| **What changes** | Renewal emails stop for the year the next renewal run opens. That is all. |
 | **What does not change** | Membership status, member pricing, the store's member list, people search, facility access, program places, roles, trusted adults and background-check records. The family paid for the year and keeps it. |
 | **The Board** | Gets one email, sees a "Not renewing" label on the household, and sees the same tag on the family's renewal in the Applications tab, so a "no" is distinct from "not yet". It has nothing to approve. |
 | **Changing their mind** | The family renews the normal way: the renewal the Board opens each year is still opened for them, and confirming it clears the note. No new application, no penalty. |
@@ -31,25 +31,27 @@ change its mind at any time, with no penalty, by renewing as any member does.
 
 ## Rules this relies on
 
-From `docs/rules/membership.md`, `programs.md`, `revenue.md` and `principles.md`:
-
 - The fee is per family per membership year, and a payment buys one membership
-  year. (*Membership Policy, Art. III §III.1; Art. XI*)
+  year. (*Membership Policy, Art. III §III.1; Art. XI*; {#MEM-106})
 - No refund once membership is approved, absent an extreme circumstance the
   board approves. (*Membership Policy, Art. XII*) Refunds happen outside the app.
 - Coverage is what was bought: a household settled for the year in effect is
   covered to the boundary that closes it. Lapsing changes what the membership
-  covers and nothing else; only a person revokes.
-- Renewal outreach goes only to household leads of active households; the
-  opening message to every lead, the reminder to those not yet renewed.
+  covers and nothing else; only a person revokes. ({#MEM-105})
 - Renewals start only from the Board's own actions; the family confirms the
-  renewal the Board opened.
+  renewal the Board opened. ({#MEM-102})
+- A renewal a household doesn't complete stays open until a Board member
+  closes it. ({#MEM-160})
+- Renewal outreach goes only to household leads of active households. ({#MEM-103})
 - A paid program place is removed only by the Board, with a written reason.
+  ({#PRG-028})
 - Automation classifies, warns and escalates; it does not act on a person.
-  (*Principle: people decide about people*)
+  ({#PRI-034})
 
-No existing rule changes. The new rules are listed under
-[Register candidates](#register-candidates).
+One existing rule changes: {#MEM-104}, which sends the opening message to every
+lead of an active household, gains an exception for a household that has said
+it won't renew. The change and the new rules are under
+[Rule changes](#rule-changes).
 
 ## Decisions
 
@@ -63,14 +65,17 @@ No existing rule changes. The new rules are listed under
 - **The whole household.** Membership belongs to the family
   (*Membership Policy, Art. III §III.1*), so the note covers the household.
 - **Only an ACTIVE household, not archived,** and only while the family has not
-  already paid for the coming year. A family that has renewed has nothing left to
+  already paid for the noted year (below). A family that has renewed has nothing left to
   decline; talking to the Board is the way out of a renewal already paid.
 
 ### 2. What it does
 
-The note is recorded against the coming membership year: the year after the one
-now in effect. It means "we won't be renewing into that year". A lead may say it
-at any time of year, not only inside the renewal window.
+The note is recorded against one membership year, the noted year: the year the
+next renewal run opens renewals for. Inside the renewal window that is the year
+renewals are buying now, because the app's live year moves to the coming year
+on the day the window opens. Outside the window it is the year after the live
+one. The note means "we won't be renewing into that year". A lead may say it at
+any time of year, not only inside the renewal window.
 
 | Thing | Effect |
 |---|---|
@@ -86,8 +91,8 @@ at any time of year, not only inside the renewal window.
 | Audit | One row when the note is made, one when it is undone or cleared. Nothing is deleted. |
 
 **Why only the emails.** Everything else the family has, it bought with the
-year's fee. Taking any of it away early is ending the membership early, which is
-what the owner ruled out. The emails are the one thing the family is asking to
+year's fee. Taking any of it away early is ending the membership early, and
+that sets up a refund expectation *Membership Policy, Art. XII* does not meet. The emails are the one thing the family is asking to
 stop, and stopping them takes nothing from anyone.
 
 **Why the renewal is still opened.** An open, unconfirmed renewal costs the
@@ -128,7 +133,7 @@ year, to say the family has said it won't renew and can still renew from here.
 
 ### 5. Legal and records
 
-The register covers:
+Policy and the rules cover:
 
 - **Refunds:** none once membership is approved, absent an extreme circumstance
   the board approves (*Membership Policy, Art. XII*). This design ends nothing
@@ -146,14 +151,21 @@ How long a departed family's records are kept (*Records Policy,
 Art. VI §VI.2*) is out of scope: no record is yet old enough for that policy to
 apply.
 
-### Register candidates
+### Rule changes
 
-For `docs/rules/membership.md`, Procedure > Renewal, if the design is agreed:
+Landed with PR 3. {#MEM-104} becomes:
 
-- A household lead may say the household won't renew into the coming membership
-  year. It stops that year's renewal outreach to the household and changes
-  nothing else: the year already paid for runs to its end, and the renewal is
-  still opened.  [Decision — *Policy: Membership Policy, Art. XI; Art. XII*]
+- The opening message goes to every such lead, except a household that has
+  said it won't renew into the year being opened; the reminder goes only to
+  those whose household has not completed renewal for the coming year and has
+  not said so.  [Decision] {#MEM-104}
+
+New rules, in the renewal section, each taking the next unused name:
+
+- A household lead may say the household won't renew into the year the next
+  renewal run opens. It stops that year's renewal outreach to the household and
+  changes nothing else: the year already paid for runs to its end, and the
+  renewal is still opened.  [Decision — *Policy: Membership Policy, Art. XI; Art. XII*]
 - Either lead may undo it, and confirming the renewal undoes it.  [Decision — *Principle: decisions are reversible*]
 - The Board is told and has nothing to approve; the family's choice is not a
   decision about anyone.  [Decision]
@@ -167,18 +179,22 @@ column, no service, no routes, and no change to any existing writer.
 
 One nullable column on the household's membership:
 `OrgMembership.notRenewingYear` (`Int?`, `@sensitivity:internal`), the
-membership year the family won't renew into. Null means no note. A value for a
-year that is no longer the coming year is ignored, so nothing has to clear it at
-the boundary. Who said it lives in the audit row; no person foreign key, so the
+membership year the family won't renew into. Null means no note. A value that
+is no longer the noted year is ignored, so nothing has to clear it at the
+boundary. Who said it lives in the audit row; no person foreign key, so the
 person-merge drift guard is not touched.
 
 ### Service
 
-`checkin-app/src/lib/membership/notRenewing.ts`, each function a compare-and-set with its audit
-row in one transaction:
+`checkin-app/src/lib/membership/notRenewing.ts`. One helper,
+`notRenewingTargetYear(boundary, now)`, gives the noted year: the live
+membership year (`liveMembershipYear`) inside the renewal window, and the live
+year plus one outside it. `markNotRenewing`, the outreach skip, and both
+`notRenewing` flags call it, so they always agree on the year. Each write is a
+compare-and-set with its audit row in one transaction:
 
 - `markNotRenewing(personId)`: the caller is a lead of an ACTIVE, live household
-  that has not settled the coming year; sets the column to the coming year.
+  that has not settled the noted year; sets the column to the noted year.
   Sends the Board email after commit.
 - `clearNotRenewing(personId)`: the caller is a lead of that household; sets it
   to null.
@@ -191,7 +207,7 @@ forward. A repeat of either call is a no-op success
 ### Query narrowed
 
 The outreach audience (`checkin-app/src/lib/outreach/recipients.ts`) skips a household whose
-`notRenewingYear` is the coming year, for both the opening message and the
+`notRenewingYear` is the noted year, for both the opening message and the
 reminder. Nothing else reads the column apart from the household page and the
 Board's households list.
 
@@ -226,8 +242,9 @@ Board's households list.
 
 ### Tests
 
-- Unit: mark and clear (lead, non-lead, youth, non-ACTIVE, archived, coming year
-  already paid, repeat); the outreach audience skipping only the noted year;
+- Unit: mark and clear (lead, non-lead, youth, non-ACTIVE, archived, noted year
+  already paid, repeat); `notRenewingTargetYear` the day before and the day
+  the renewal window opens; the outreach audience skipping only the noted year;
   `beginRenewal` clearing the note.
 - Integration: mark, then confirm the renewal, against a real database.
 - Flow: `checkin-app/flow-tests/not-renewing.flow.test.ts`: a seeded lead marks the
@@ -248,7 +265,7 @@ Each PR is based on `main`; none stacks on another.
    the old code still serving traffic. No contract step.
 3. **Service, routes and outreach.** `checkin-app/src/lib/membership/notRenewing.ts`, the two
    route handlers, the outreach audience, `beginRenewal` clearing the note, the
-   Board email, the households list field, tests, and the register lines above.
+   Board email, the households list field, tests, and the rule changes above.
 4. **UI.** The household page control, the lead's renewal banner, the Board's
    households label and the Applications tab tag and filter. This PR closes
    #3446.
