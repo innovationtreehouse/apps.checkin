@@ -6,9 +6,7 @@ account. The app looks for a matching entry first and creates one only when noth
 matches and the books allow it. It tries right after the expense commits, and the
 daily `GET /api/cron/qbo-posting` run catches up whatever is left.
 
-This file describes the shape of the code. The rules a change must not violate are
-in `docs/rules/expenses.md` and under *The books are finance's* in
-`docs/rules/principles.md`. The package pattern this lane follows (host injection,
+This file describes the shape of the code. The package pattern this lane follows (host injection,
 own database, in-process crossings, no hosted machine route) is in
 `docs/architecture/COMPONENT_ARCHITECTURE.md`. Operator steps for consent and the
 per-environment deploy checklist are in `packages/quickbooks/README.md`.

@@ -44,7 +44,7 @@ variables go in `checkin-app/.env` — the setup guides list them.
 - **[AGENTS.md](AGENTS.md)** — orientation for contributors and agents: test commands, repo conventions, editing rules.
 - **[CONSTITUTION.md](CONSTITUTION.md)** — purpose and core principles (security, privacy, auditability); what must never be weakened.
 - **[Canonical Vocabulary](docs/VOCABULARY.md)** — what every domain word means (people, roles, money, tools, attendance).
-- **[Domain rules](docs/rules/)** — the register of board and operations decisions, one file per domain; read the relevant file before changing behaviour in that domain. How the corpus is organised and retired: **[Documentation Standard](docs/DOCUMENTATION_STANDARD.md)**.
+- **[Documentation Standard](docs/DOCUMENTATION_STANDARD.md)** — how the docs are organised and retired.
 - **[Critical User Journeys](docs/backlog/CUJS.md)** — every user-facing flow, per step, tagged with what exists and what does not.
 - **[Backlog](docs/backlog/INDEX.md)** — open work by area, from features to architecture clean-up; design work in progress lives in [`docs/in-design/`](docs/in-design/).
 

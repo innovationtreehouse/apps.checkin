@@ -1,8 +1,7 @@
 # @checkin/quickbooks
 
 QuickBooks Online client: windowed reads plus one closed-enum, create-only writer. How the
-expense lane uses it is in `docs/architecture/EXPENSE_QB.md`; the rules it keeps are under
-*The books are finance's* in `docs/rules/principles.md`.
+expense lane uses it is in `docs/architecture/EXPENSE_QB.md`.
 No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, refresh).
 
 ## Public API
@@ -65,8 +64,8 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
   for the gift, and a crash after QuickBooks accepts is found by key next run. Finance's own booking of a
   gift, a Deposit into and a Purchase out of the in-kind clearing account, is matched by the in-kind lane
   (`packages/bulk-donation`) before it calls this.
-- `findOrCreate(client, request)` (`write.ts`, stateless): the closed-books gate
-  (*Finance's books come first* in `docs/rules/principles.md`). It reads the record's window, runs `findMatch`, and answers
+- `findOrCreate(client, request)` (`write.ts`, stateless): the closed-books gate.
+  It reads the record's window, runs `findMatch`, and answers
   `found` / `ambiguous` (post nothing, closed period included), `closed` (not found and dated on or
   before `closedThrough`), `needs-finance` (not found and `mayCreate` false), `created`, or `failed`
   (any error; nothing is retried here). Before a create it re-reads `bookCloseDate()` and gates on the

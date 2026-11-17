@@ -56,8 +56,7 @@ already in QuickBooks travels the same path with `backfill` set, and expense end
 Boot order and the binding itself are in `checkin-app/src/instrumentation.ts`, which only binds and
 touches no database. Reads also run backwards along this path: `lib/receipt/configure.ts` imports
 expense, workflow-mapping and bulk-donation to show the uploader what became of the purchase
-(`purchaseOutcomes`), the reimbursement's status, and its confirmations. The rules these steps
-enforce are in [expenses.md](../rules/expenses.md) and [revenue.md](../rules/revenue.md); the
+(`purchaseOutcomes`), the reimbursement's status, and its confirmations. The
 injection seam is described in [COMPONENT_ARCHITECTURE.md](COMPONENT_ARCHITECTURE.md).
 
 ## Where to look when

@@ -1,11 +1,10 @@
 # Engineering conventions
 
 How we build, as distinct from what the domain requires. Nothing here is a
-statement about membership, programs, or people — those live in `docs/rules/`,
-and a reviewer checking a domain change does not need this file.
+statement about membership, programs, or people, and a reviewer checking a
+domain change does not need this file.
 
-A convention earns a place here the same way a rule does: a change could violate
-it, and you can picture the change that does.
+A convention earns a place here when a change could violate it, and you can picture the change that does.
 
 ---
 

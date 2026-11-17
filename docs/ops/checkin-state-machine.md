@@ -8,8 +8,7 @@ assembled from the owner's rulings and signed off by the owner on 2026-10-11
 and 2026-10-12; copied here 2026-10-12 from revision 12. That doc also lists
 where the code differed at `main@1f2b2c826`; those gaps are tracked as work,
 not here. Updated for Board ruling B7/B14, 2026-10-27: nobody closes from the web, which
-replaces the 2026-10-11 sign-off on a web close. Where this file and `docs/rules/attendance-checkin.md` disagree,
-raise it with the owner.
+replaces the 2026-10-11 sign-off on a web close.
 
 ## Principles
 
@@ -90,8 +89,7 @@ flowchart TD
    at t"; the server applies it whenever it arrives, with departures at t. A
    late close is not held for review.
 4. **The server never second-guesses a close:** no freshness window, no
-   server-issued token, and a comparison against its own records and clock only
-   as `docs/rules/attendance-checkin.md` states.
+   server-issued token, and a comparison against its own records and clock only.
 5. **The web cannot stop a kiosk close.** No web action (correcting a visit,
    changing roles) prevents or undoes a close confirmed at the kiosk, live or queued.
 6. **Arrivals after a close** start a new visit. A close never departs a visit

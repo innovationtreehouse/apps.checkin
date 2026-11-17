@@ -67,7 +67,7 @@ Program roles (all Treehouse Volunteers):
 | Role | Meaning | Code | Notes |
 |---|---|---|---|
 | **Program Leader** | the person responsible for a program | `leadMentorId`, `leadMentor` | policy term; **retire "lead mentor"** in anything people read. The code name `leadMentor` means Program Leader and is kept deliberately, because renaming it would change a security-boundary file together with app code |
-| **Program Volunteer** | program helper; **Core Volunteer** = the authorized subset who can run it | `ProgramVolunteer.isCore` | Core's authority is set by the organisation ([../../docs/rules/programs.md](rules/programs.md), Assumptions) |
+| **Program Volunteer** | program helper; **Core Volunteer** = the authorized subset who can run it | `ProgramVolunteer.isCore` | Core's authority is set by the organisation |
 | **Program Treasurer** | keeps a program's money; a program may have several. The app records treasurers on a budget bucket, not on the program: with the bucket's owner, they approve its lines | `BudgetOwnerTreasurer` | policy term (*Sponsored Program Policy, Art. III §III.7*); the Board names them on Budgets |
 
 **Retired words (do not use):** `staff` / "program staff" (→ Treehouse Volunteers), `mentor` and `lead mentor` (→ Program Leader / Program Volunteer; program-specific "mentor" language is external), "program instructor" (→ `instructor` is **tool-only**, see Shop & Certification), "dues" (→ **membership fee**; Treehouse is not a membership organization under the law, so what a household pays is a fee, the word used outside the software too).
@@ -97,7 +97,7 @@ Rules:
 - **Canonical top label = "Tool Certifier"** *(retire "Shop Certifier")*.
 - **`instructor` is tool-only** — "program instructor" is banned.
 - **Enum rank ≠ declaration order** — real rank is `BASIC < CERTIFIED < DOF < INSTRUCTOR < MAY_CERTIFY_OTHERS`; make it explicit in the enum *(pending)*.
-- **Tool Certifier is per-tool for granting** — a certifier changes levels only on a tool they certify. Holding the level on any tool opens the certification surfaces for all tools. The rules are in [../../docs/rules/tools-certification.md](rules/tools-certification.md).
+- **Tool Certifier is per-tool for granting** — a certifier changes levels only on a tool they certify. Holding the level on any tool opens the certification surfaces for all tools.
 
 ## Money
 
@@ -110,8 +110,7 @@ Rules:
 - **`isPaymentPlanRequested` is the umbrella flag**, not the payment-plan half: it means
   "this household asked for help with a fee" and is set by a scholarship request too.
   Which ask it was lives in `scholarshipRequestKind` (`SCHOLARSHIP` / `PAYMENT_PLAN` /
-  `UNSURE`, null on requests predating the column). Granted terms stay out of the app —
-  see `docs/rules/revenue.md`.
+  `UNSURE`, null on requests predating the column). Granted terms stay out of the app.
 - **Scholarship Review Team** — the board-designated recipients of scholarship / payment-plan
   request notifications (`BoardSettings.scholarshipNotifyEmail`; falls back to all board members
   when unset). The canonical UI/copy term — **retire "Finance Committee"** for this concept.
@@ -144,9 +143,7 @@ Rules:
 1. **A reviewer attests; two attestations clear the check.** One word per sense —
    never "approve" for the act, never "attest" for the outcome.
 2. **Never "clean," never "passed."** The app never holds the report or its
-   result, only that a reviewer read it and what they judged
-   ([../../docs/rules/membership.md](rules/membership.md), Procedure ›
-   Application and review). Both words state an outcome of the report; "I approve
+   result, only that a reviewer read it and what they judged. Both words state an outcome of the report; "I approve
    this person" states the judgement, which is what is stored. Policy's own
    outcome vocabulary is approval, restriction, or denial — a pass/fail framing
    has nowhere to put the middle one.
@@ -179,7 +176,7 @@ One activity, a pipeline of distinct stages — name each; keep the scoped verbs
 ## Supervision terms (safety vocabulary)
 
 - **Tripod** — the presence of **3 Members, each ≥ 9 years old**, in an area that is **Observable and Interruptible**; lets a Certified (Green) work solo. *(policy term; not modeled in code)*
-- **Two Deep** — two unrelated, non-Student adult Treehouse Volunteers from different households. *(the supervising-adult test implements this, not the attendance count buckets — see [../../docs/rules/attendance-checkin.md](rules/attendance-checkin.md), Procedure › Supervision)*
+- **Two Deep** — two unrelated, non-Student adult Treehouse Volunteers from different households. *(the supervising-adult test implements this, not the attendance count buckets)*
 - **Observable and Interruptible** — no locked doors; another adult can see or hear and could enter. *(not modeled)*
 - **"dedicated" (DOF/Instructor)** — "actively watching you use the tool" (not wandering). **Not software-enforceable — ignore in code.**
 
@@ -232,6 +229,6 @@ Product-owner decision — **design to these; do not relitigate the names or sha
 
 ## Reference terms
 
-- **Membership Year** = **Sept 1 – Aug 31**, one boundary for the whole organisation. The rule is in [../../docs/rules/membership.md](rules/membership.md).
+- **Membership Year** = **Sept 1 – Aug 31**, one boundary for the whole organisation.
 - **Treehouse Card** — any corporate/business/debit/credit card opened on the Treehouse EIN (reserved for future financial rules).
 - **Part ID** — the name every screen gives a catalog item's GTIN, shown in short form (`02B0011` minted, `P000002` provisional, 13 digits for a real barcode). A store's or manufacturer's number for the part is a **part #** (store part #, mfr part #), never a Part ID. The rule is in [rules/inventory.md](rules/inventory.md).

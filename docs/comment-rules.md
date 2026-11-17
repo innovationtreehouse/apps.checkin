@@ -60,16 +60,8 @@ When a rule does survive, route it:
 | Already impossible to violate, because a type, a Prisma or DB constraint, or `handler()` enforces it | Nowhere; the compiler won (C27) | None |
 | A cross-file rule a guard could catch | A named guard test, same PR (C26) | One line naming the test (C21) |
 | A choice inside this one file | Stays here | One line, present tense; a prohibition if someone might undo it (C14) |
-| A standing **domain** rule, about who may do what or what the organisation decided | `docs/rules/<domain>.md` | One line stating the constraint, or none |
 | **How we build**, carrying no domain content | `docs/conventions.md` | One line, or none |
 | A wish nothing enforces, that puts no reader at risk | Nowhere (C26) | None |
-
-**The register has its own rules; follow them rather than improvising.**
-`DOCUMENTATION_STANDARD.md` §3 governs `docs/rules/`. A rule lands in **Procedure** unless you
-can name the policy that adopted it, it is written so a reviewer recognises a violation from
-the sentence alone, and it carries no PR number, no issue number, no date and no line-number
-citation, which is also what a comment may not carry (see the Comments section of
-`AGENTS.md`).
 
 **What does not belong in this file.** A rule about the *code*, such as who may edit a program
 or how a seat is released, is never a comment rule however it was found. This file grows a rule
@@ -155,11 +147,6 @@ The comment that stops someone "fixing" a thing that is correct. Highest value p
 participant merge route explains why it leaves the row rather than inventing a `departedAt`,
 when four sibling paths do the other thing; without the note a tidy-up unifies them and changes
 the data model by accident.
-
-**Where the absence is what was chosen, the register carries it and the comment stays thin.**
-`DOCUMENTATION_STANDARD.md` §3.6 has a tag for this, `[Decision — deliberate limit]`, described
-there as the one most likely to be "fixed" by someone helpful. If the limit has a domain
-dimension, tag it there and keep the comment to one line.
 
 **Say that the limit is intentional; never write the way in.** A comment on an accepted limit
 states what the code does and that the absence is deliberate. It does not carry the sequence
@@ -266,11 +253,10 @@ constant cannot drift from the code the way a sentence can.
 ### C18 · One canonical home per fact
 
 Restating a fact at four call sites is the drift problem of duplicated code. Every kind of fact
-already has a register: domain rules in `docs/rules/<domain>.md`, cross-cutting rules in
-`docs/rules/principles.md`, how-we-build in `docs/conventions.md`, word meanings in
+already has a register: how-we-build in `docs/conventions.md`, word meanings in
 `docs/VOCABULARY.md`, deploy and migration ordering in `docs/ops/`. Source comments point at
-those; they do not restate them. `DOCUMENTATION_STANDARD.md` §2 has the full class list, and §6
-rule 15 puts the cost plainly: a rule restated in a second file is one that will be updated in
+those; they do not restate them. `DOCUMENTATION_STANDARD.md` §2 has the full class list, and §4
+rule 4 puts the cost plainly: a fact restated in a second file is one that will be updated in
 only one of them.
 
 **The exception is real:** a single line at the *point of temptation*, repeated at each place
@@ -290,8 +276,7 @@ intent and a pointer. Concurrency notes are the exception (C38).
 
 ### C21 · Point at the rule, or the test, not the location
 
-Paths move and line numbers rot on the next edit; `DOCUMENTATION_STANDARD.md` §3.5 bans both in
-the register for the same reason, and the reason holds in source. Name the exported function,
+Paths move and line numbers rot on the next edit. Name the exported function,
 the type, or the guard test, which survive a move and which grep will find.
 
 **Point at the test.** Several files already do this; `auth-options.ts` names
