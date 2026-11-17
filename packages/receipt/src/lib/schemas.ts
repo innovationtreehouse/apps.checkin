@@ -7,6 +7,9 @@ import { isIsoDate } from "./missingDetails";
 export { CURRENCY_CODE };
 
 export const MAX_LINE_ITEMS = 200;
+export const MAX_LINE_DESCRIPTION = 500;
+/** The longest part number or manufacturer a line holds. */
+export const MAX_LINE_LABEL = 100;
 export const MAX_IMPORT_BATCH = 50;
 /** Base64 length of a 10 MB file, the upload cap. */
 const MAX_FILE_BASE64 = Math.ceil((10 * 1024 * 1024) / 3) * 4;
@@ -35,9 +38,9 @@ const requiredText = (name: string, max: number) => z.string({ error: `${name} i
 const isoDate = requiredText("The date", 50).refine(isIsoDate, { message: "The date must be a real date written YYYY-MM-DD" });
 
 export const LineItemSchema = z.object({
-  description: z.string().min(1).max(500),
-  partNumber: z.string().max(100).nullable().optional(),
-  manufacturer: z.string().max(100).nullable().optional(),
+  description: z.string().min(1).max(MAX_LINE_DESCRIPTION),
+  partNumber: z.string().max(MAX_LINE_LABEL).nullable().optional(),
+  manufacturer: z.string().max(MAX_LINE_LABEL).nullable().optional(),
   quantity: z.coerce.number().finite().positive().max(MAX_LINE_QUANTITY),
   unitPrice: z.coerce.number().finite().nonnegative(),
   isDelayed: z.boolean().optional(),
@@ -106,9 +109,9 @@ export const InKindInputSchema = z
 export const RotationInputSchema = z.object({ rotation: z.literal([0, 90, 180, 270]) }).strict();
 
 export const AddLineItemSchema = z.object({
-  description: z.string().min(1).max(500),
-  partNumber: z.string().max(100).nullable().optional(),
-  manufacturer: z.string().max(100).nullable().optional(),
+  description: z.string().min(1).max(MAX_LINE_DESCRIPTION),
+  partNumber: z.string().max(MAX_LINE_LABEL).nullable().optional(),
+  manufacturer: z.string().max(MAX_LINE_LABEL).nullable().optional(),
   quantity: quantity.optional(),
   unitPrice: nonNegative.optional(),
   totalPrice: nonNegative.optional(),
@@ -129,9 +132,9 @@ export const EditReceiptSchema = z
 
 export const EditLineItemSchema = z
   .object({
-    description: z.string().min(1).max(500).optional(),
-    partNumber: z.string().max(100).nullable().optional(),
-    manufacturer: z.string().max(100).nullable().optional(),
+    description: z.string().min(1).max(MAX_LINE_DESCRIPTION).optional(),
+    partNumber: z.string().max(MAX_LINE_LABEL).nullable().optional(),
+    manufacturer: z.string().max(MAX_LINE_LABEL).nullable().optional(),
     quantity: quantity.optional(),
     unitPrice: nonNegative.optional(),
     totalPrice: nonNegative.optional(),
@@ -152,9 +155,9 @@ export const OcrSwitchSchema = z.object({ ocrEnabled: z.boolean() }).strict();
 
 export const ImportLineItemSchema = z.object({
   lineNumber: z.number().int().positive(),
-  description: z.string().min(1).max(500),
-  partNumber: z.string().max(100).nullable().optional(),
-  manufacturer: z.string().max(100).nullable().optional(),
+  description: z.string().min(1).max(MAX_LINE_DESCRIPTION),
+  partNumber: z.string().max(MAX_LINE_LABEL).nullable().optional(),
+  manufacturer: z.string().max(MAX_LINE_LABEL).nullable().optional(),
   // May be fractional for consumables bought by weight or volume.
   quantity,
   unitPriceCents: cents,
