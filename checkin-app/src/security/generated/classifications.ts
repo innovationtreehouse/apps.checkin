@@ -213,6 +213,7 @@ export const classifications = {
         proposedPhone: 'personal',
         proposedEmail: 'personal',
         proposedContext: 'internal',
+        familyReply: 'internal',
         createdAt: 'public',
         updatedAt: 'internal',
     },
