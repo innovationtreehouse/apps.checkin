@@ -87,8 +87,9 @@ function planAuthorize(authorize: Authorize): { gate: Gate; requiredRoles: Sessi
         return { gate: 'anyRole', requiredRoles: [...authorize.anyRole] };
     }
     // Program-scoped gates: resolveAccess admits a lead/core-vol of THIS program
-    // OR a sysadmin/board. A plain authenticated user holds neither → 403.
-    if (authorize === 'program-lead-mentor' || authorize === 'program-core-volunteer') {
+    // OR a sysadmin/board ('program-roster-staff' also Finance). A plain
+    // authenticated user holds none of these → 403.
+    if (authorize === 'program-lead-mentor' || authorize === 'program-core-volunteer' || authorize === 'program-roster-staff') {
         return { gate: 'program-scoped', requiredRoles: null };
     }
     // Catalog: 'catalog-viewer' admits any staff relationship (a plain
