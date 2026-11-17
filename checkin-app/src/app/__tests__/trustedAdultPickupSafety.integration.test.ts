@@ -258,6 +258,99 @@ describe('trusted-adult pickup list safety', () => {
 
     });
 
+    describe('denied household', () => {
+        it('naming a trusted adult is refused when the household is denied', async () => {
+            await prisma.orgMembership.create({ data: { householdId, status: 'DENIED' } });
+
+            await expect(disclose()).rejects.toMatchObject({ code: 'wrong_phase' });
+
+            expect(await prisma.trustedAdult.count({ where: { householdId } })).toBe(0);
+        });
+
+        it("naming a trusted adult is refused when the adult's own household is denied", async () => {
+            const adultHh = await prisma.household.create({ data: { name: `Adult HH ${TAG}` } });
+            const adult = await prisma.person.create({ data: { name: 'Denied Gran', householdId: adultHh.id } });
+            await prisma.orgMembership.create({ data: { householdId: adultHh.id, status: 'DENIED' } });
+
+            await expect(createTrustedAdult({
+                householdId,
+                trustedAdultPersonId: adult.id,
+                trustedAdultName: 'Denied Gran',
+                trustedAdultEmail: 'gran@example.com',
+                familyContext: 'May collect the kids.',
+                disclosedById: leadId,
+            })).rejects.toMatchObject({ code: 'wrong_phase' });
+
+            expect(await prisma.trustedAdult.count({ where: { householdId } })).toBe(0);
+        });
+
+        it('the Board cannot approve a review once the household is denied', async () => {
+            const ta = await disclose();
+            await prisma.orgMembership.create({ data: { householdId, status: 'DENIED' } });
+
+            await expect(decideReview(ta.reviews[0].id, boardId, { decision: 'APPROVE', sharedNote: SHARED }))
+                .rejects.toMatchObject({ code: 'wrong_phase' });
+
+            expect(await statuses(ta.id)).toEqual(['PENDING_BOARD_REVIEW']);
+            expect(await onPickupList(ta.id)).toBe(false);
+        });
+
+        it("the Board cannot approve a review once the adult's own household is denied", async () => {
+            const adultHh = await prisma.household.create({ data: { name: `Adult HH ${TAG}` } });
+            const adult = await prisma.person.create({ data: { name: 'Gran Later Denied', householdId: adultHh.id } });
+            const ta = await createTrustedAdult({
+                householdId,
+                trustedAdultPersonId: adult.id,
+                trustedAdultName: 'Gran Later Denied',
+                trustedAdultEmail: 'gran-later@example.com',
+                familyContext: 'May collect the kids.',
+                disclosedById: leadId,
+            });
+            await prisma.orgMembership.create({ data: { householdId: adultHh.id, status: 'DENIED' } });
+
+            await expect(decideReview(ta.reviews[0].id, boardId, { decision: 'APPROVE', sharedNote: SHARED }))
+                .rejects.toMatchObject({ code: 'wrong_phase' });
+
+            expect(await statuses(ta.id)).toEqual(['PENDING_BOARD_REVIEW']);
+        });
+
+        it('the Board cannot approve a renewal once the household is denied', async () => {
+            const { taId } = await discloseApproved();
+            await intoRenewalWindow(taId);
+            const renewal = await renewTrustedAdult(taId, leadId);
+            await prisma.orgMembership.create({ data: { householdId, status: 'DENIED' } });
+
+            await expect(decideReview(renewal.id, boardId, { decision: 'APPROVE', sharedNote: SHARED }))
+                .rejects.toMatchObject({ code: 'wrong_phase' });
+
+            expect(await statuses(taId)).toEqual(['APPROVED', 'PENDING_BOARD_REVIEW']);
+        });
+
+        it('the Board cannot approve a change once the household is denied', async () => {
+            const { taId } = await discloseApproved();
+            const change = await resubmitWithChanges(taId, leadId, {
+                trustedAdultName: 'Jane Renamed',
+                trustedAdultEmail: 'jane@example.com',
+                familyContext: 'Our nanny; may collect the kids.',
+            });
+            await prisma.orgMembership.create({ data: { householdId, status: 'DENIED' } });
+
+            await expect(decideReview(change.id, boardId, { decision: 'APPROVE', sharedNote: SHARED }))
+                .rejects.toMatchObject({ code: 'wrong_phase' });
+
+            expect(await statuses(taId)).toEqual(['APPROVED', 'PENDING_BOARD_REVIEW']);
+            expect((await prisma.trustedAdult.findUniqueOrThrow({ where: { id: taId } })).trustedAdultName).toBe('Jane External');
+        });
+
+        it('a household with an active membership names and gets approval as before', async () => {
+            await prisma.orgMembership.create({ data: { householdId, status: 'ACTIVE' } });
+
+            const { taId } = await discloseApproved();
+
+            expect(await statuses(taId)).toEqual(['APPROVED']);
+        });
+    });
+
     describe('expiry counts without the sweep', () => {
         it('a lapsed approval leaves the pickup list before any sweep runs', async () => {
             const { taId, firstReviewId } = await discloseApproved();
