@@ -153,25 +153,6 @@ describe('Membership settings + volunteer designations API', () => {
         await prisma.membershipYearVariant.deleteMany({});
     });
 
-    it('accepts a positive scholarshipDenialGraceDays and clears it back to null', async () => {
-        asBoard(boardId);
-        const res = await SETTINGS_PUT(jsonReq('PUT', { perYearVariantClient: true, scholarshipDenialGraceDays: 14 }));
-        expect(res.status).toBe(200);
-        expect((await res.json()).settings.scholarshipDenialGraceDays).toBe(14);
-
-        const cleared = await SETTINGS_PUT(jsonReq('PUT', { perYearVariantClient: true, scholarshipDenialGraceDays: null }));
-        expect(cleared.status).toBe(200);
-        expect((await cleared.json()).settings.scholarshipDenialGraceDays).toBeNull();
-    });
-
-    it('rejects a non-positive or fractional scholarshipDenialGraceDays', async () => {
-        asBoard(boardId);
-        for (const bad of [0, -1, 1.5]) {
-            const res = await SETTINGS_PUT(jsonReq('PUT', { perYearVariantClient: true, scholarshipDenialGraceDays: bad }));
-            expect(res.status).toBe(400);
-        }
-    });
-
     it('board releases a library, audit-logs the delta, and clears it again', async () => {
         asBoard(boardId);
         const release = (library: string, released: boolean) =>

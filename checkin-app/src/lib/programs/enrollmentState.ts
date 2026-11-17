@@ -90,7 +90,7 @@ export const STATES = {
         flags: { inventoryHeldAt: true, paymentPlanDeniedAt: false },
         equals: { isPaymentPlanRequested: true },
     }),
-    /** PENDING, held=set, req=FALSE, den=set. Denied, seat still held, grace clock. */
+    /** PENDING, held=set, req=FALSE, den=set. Denied, seat still held. */
     PENDING_HELD_DENIED: mk({
         statuses: ['PENDING'] as const,
         flags: { inventoryHeldAt: true, paymentPlanDeniedAt: true },
@@ -346,7 +346,6 @@ export const TRANSITIONS: readonly (Transition<LifecycleState> & { readonly guar
     { event: 'T6 deny', from: 'PENDING_HELD', to: 'PENDING_HELD_DENIED', actor: 'admin', guardSite: 'finance-ops/payment-plans/refuse/route.ts — CAS req:true,status:PENDING; stamp den; COI guard', guard: 'denyHeld' },
     { event: 'T6f deny(no hold)', from: 'PENDING_HOLD_FAILED', to: 'PENDING_UNPAID', actor: 'admin', guardSite: 'finance-ops/payment-plans/refuse/route.ts — CAS req:true,held:null,status:PENDING; clears req, stamps nothing, denial kept in the audit row; COI guard', guard: 'denyUnheld' },
     { event: 'T7 remove(unpaid)', from: 'PENDING_UNPAID', to: 'UNENROLLED', actor: 'user/admin', guardSite: 'participants/route.ts DELETE → capacity.ts deleteAndReleaseHold — delete(); cron/pending-participants only reports overdue rows' },
-    { event: 'T8 grace expiry', from: 'PENDING_HELD_DENIED', to: 'UNENROLLED', actor: 'cron', guardSite: 'cron/scholarship-grace-expiry/route.ts — delete(); NULL graceDays = off' },
     { event: 'T9 remove', from: 'PENDING_HELD', to: 'UNENROLLED', actor: 'user/admin', guardSite: 'capacity.ts deleteAndReleaseHold — delete() = atomicity boundary; +1 iff held' },
     { event: 'T9 remove(hold failed)', from: 'PENDING_HOLD_FAILED', to: 'UNENROLLED', actor: 'user/admin', guardSite: 'participants/route.ts DELETE → capacity.ts deleteAndReleaseHold — delete(); nothing held, no +1' },
     { event: 'T9 remove(denied)', from: 'PENDING_HELD_DENIED', to: 'UNENROLLED', actor: 'user/admin', guardSite: 'participants/route.ts DELETE → capacity.ts deleteAndReleaseHold — delete(); +1 iff held' },
