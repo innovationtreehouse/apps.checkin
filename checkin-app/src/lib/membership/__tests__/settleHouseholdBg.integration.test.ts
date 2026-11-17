@@ -7,7 +7,8 @@
  */
 import type { OrgMembershipProcessStatus } from '@/generated/prisma/client';
 import prisma from '@/lib/prisma';
-import { releaseDepartedRejection, settleHouseholdBg } from '@/lib/membership/settleHouseholdBg';
+import { blockedByCheckReview, releaseDepartedRejection, settleHouseholdBg } from '@/lib/membership/settleHouseholdBg';
+import { boardResetReview } from '@/lib/membership/review';
 import { SELF_GRANT_REFUSAL_TABLE } from '@/lib/membership/selfGrantGuard';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { notifyBoardPaidReject } from '@/lib/membership/boardAlerts';
@@ -60,6 +61,14 @@ async function renameSubject(reviewId: number, personId: number) {
     await prisma.orgMembershipProcess.update({ where: { id: reviewId }, data: { status: 'PENDING_BG_REVIEW', subjectPersonId: null } });
     await prisma.auditLog.create({ data: { actorId: 0, action: 'EDIT', tableName: 'OrgMembershipProcess', affectedEntityId: reviewId, oldData: { status: 'BLOCKED' }, newData: { status: 'PENDING_BG_REVIEW', action: 'board reset', subjectPersonId: null } } });
     await prisma.orgMembershipProcess.update({ where: { id: reviewId }, data: { subjectPersonId: personId } });
+}
+
+/** A restore's close and the Board's Reopen of a BLOCKED application, with the audit rows archive.ts writes. */
+async function closeAndReopen(id: number) {
+    await prisma.orgMembershipProcess.update({ where: { id }, data: { status: 'ARCHIVED', archivedFromStatus: 'BLOCKED' } });
+    await prisma.auditLog.create({ data: { actorId: 0, action: 'EDIT', tableName: 'OrgMembershipProcess', affectedEntityId: id, oldData: { status: 'BLOCKED' }, newData: { status: 'ARCHIVED', reason: 'household archived' } } });
+    await prisma.orgMembershipProcess.update({ where: { id }, data: { status: 'BLOCKED', archivedFromStatus: null } });
+    await prisma.auditLog.create({ data: { actorId: 0, action: 'EDIT', tableName: 'OrgMembershipProcess', affectedEntityId: id, oldData: { status: 'ARCHIVED' }, newData: { status: 'BLOCKED', unarchived: true } } });
 }
 
 const row = (id: number) => prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id } });
@@ -449,5 +458,57 @@ describe('releaseDepartedRejection', () => {
         const g = await family();
         const open = await application(g.orgMembershipId, 'PENDING_PAYMENT');
         await expect(releaseDepartedRejection(open, board.leadId, 'moved out')).rejects.toMatchObject({ code: 'wrong_phase' });
+    });
+});
+
+describe('a blocked application closed and reopened', () => {
+    async function reopened() {
+        const f = await family();
+        const reviewId = await checkReview(f.otherId, 'BLOCKED');
+        const id = await application(f.orgMembershipId, 'PENDING_PAYMENT');
+        expect(await settleHouseholdBg(f.householdId)).toEqual(['blocked']);
+        await closeAndReopen(id);
+        return { ...f, reviewId, id };
+    }
+
+    it('stays blocked by the same rejection while the person is in the household', async () => {
+        const r = await reopened();
+        expect(await blockedByCheckReview(prisma, r.id)).toBe(true);
+        expect(await settleHouseholdBg(r.householdId)).toEqual([]);
+        expect((await row(r.id)).status).toBe('BLOCKED');
+    });
+
+    it('resumes to the step it was blocked from once the rejection is reset', async () => {
+        const r = await reopened();
+        await sendBack(r.reviewId, 'board reset');
+        expect(await settleHouseholdBg(r.householdId)).toEqual(['resumed']);
+        expect((await row(r.id)).status).toBe('PENDING_PAYMENT');
+    });
+
+    it("needs the Board's release after the person leaves, which still bars their current household", async () => {
+        const r = await reopened();
+        const elsewhere = await prisma.household.create({ data: { name: `${TAG} elsewhere ${seq++}` } });
+        await prisma.person.update({ where: { id: r.otherId }, data: { householdId: elsewhere.id } });
+        expect(await settleHouseholdBg(r.householdId)).toEqual([]);
+        const partner = await prisma.person.create({ data: { name: 'New partner', email: `partner-${seq++}-${TAG}@example.com`, householdId: elsewhere.id } });
+        await expect(releaseDepartedRejection(r.id, partner.id, 'moved out')).rejects.toMatchObject({ code: 'same_household_applicant' });
+        const board = await family();
+        expect((await releaseDepartedRejection(r.id, board.leadId, 'moved out')).status).toBe('PENDING_PAYMENT');
+    });
+
+    it('cannot be reset as a household application', async () => {
+        const r = await reopened();
+        const board = await family();
+        await expect(boardResetReview(r.id, board.leadId, { reason: 'reset' })).rejects.toMatchObject({ code: 'wrong_phase' });
+        expect((await row(r.id)).status).toBe('BLOCKED');
+    });
+
+    it('leaves one blocked by a household attestation as it was', async () => {
+        const f = await family();
+        const id = await application(f.orgMembershipId, 'BLOCKED');
+        await prisma.auditLog.create({ data: { actorId: 0, action: 'EDIT', tableName: 'OrgMembershipProcess', affectedEntityId: id, oldData: { status: 'PENDING_BG_REVIEW' }, newData: { status: 'BLOCKED' } } });
+        await closeAndReopen(id);
+        expect(await blockedByCheckReview(prisma, id)).toBe(false);
+        expect(await settleHouseholdBg(f.householdId)).toEqual([]);
     });
 });
