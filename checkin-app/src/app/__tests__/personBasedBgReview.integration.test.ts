@@ -410,7 +410,11 @@ describe('B27: the Board closes a review opened for the wrong person, and may re
         expect((await householdCheckStandings(prisma, f.householdId, null)).awaitingNaming).toBe(true);
         await close(reviewId);
         expect(await row(reviewId)).toMatchObject({ status: 'ARCHIVED', subjectPersonId: null });
-        expect((await householdCheckStandings(prisma, f.householdId, null)).awaitingNaming).toBe(false);
+        // The legacy clause opens a fresh review for the household; the closed one no longer holds it.
+        const open = (await requested(f.householdId)).filter((r) => r.status === 'PENDING_BG_REVIEW');
+        expect(open.map((r) => r.id)).not.toContain(reviewId);
+        expect(await prisma.backgroundCheckAttestation.count({ where: { processId: { in: open.map((r) => r.id) } } })).toBe(0);
+        expect((await row(f.appId)).status).not.toBe('BLOCKED');
     });
 
     it('requires a reason, and refuses an actor in the household and a denied household', async () => {
@@ -487,7 +491,7 @@ describe('B27: the Board closes a review opened for the wrong person, and may re
     it('refuses to reopen once the person has cleared since the close', async () => {
         const { f, own } = await blockedFamily();
         await close(own);
-        await prisma.person.update({ where: { id: f.adultId }, data: { lastBackgroundCheck: new Date(Date.now() + 1000) } });
+        await prisma.person.update({ where: { id: f.adultId }, data: { lastBackgroundCheck: new Date() } });
         await expect(reopen(own)).rejects.toMatchObject({ code: 'wrong_phase' });
     });
 

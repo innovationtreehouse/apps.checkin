@@ -206,9 +206,6 @@ export async function unarchiveApplication(processId: number, actorId: number) {
     const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
     if (!process) throw new ReviewError("not_found", "Application not found.");
     if (process.status !== "ARCHIVED") throw new ReviewError("wrong_phase", "Only a closed application can be reopened.");
-    if (process.kind === "PERSON_BG" && await wrongPersonClosedAt(prisma, processId)) {
-        throw new ReviewError("wrong_phase", "The Board closed this check review as opened for the wrong person. Reopen it with a reason instead.");
-    }
     await assertNoConflict(process, actorId, "reopen");
 
     const target = process.archivedFromStatus ?? undefined;
@@ -223,6 +220,9 @@ export async function unarchiveApplication(processId: number, actorId: number) {
             // Same lock startIntake/createRenewalProcess take, so a new application
             // can't open between the sibling check and the reopen.
             if (householdId != null) await tx.$queryRaw`SELECT id FROM "OrgMembership" WHERE "householdId" = ${householdId} FOR UPDATE`;
+            if (process.kind === "PERSON_BG" && await wrongPersonClosedAt(tx, processId)) {
+                throw new ReviewError("wrong_phase", "The Board closed this check review as opened for the wrong person. Reopen it with a reason instead.");
+            }
             const refusal = await reopenRefusal(tx, process, householdId);
             if (refusal) throw new ReviewError("wrong_phase", refusal);
             const forgotRequest = householdId != null && process.zohoEnvelopeId != null && process.contractSignedAt == null

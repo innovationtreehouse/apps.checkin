@@ -811,8 +811,9 @@ async function closeAsWrongPerson(process: OrgMembershipProcess, actorId: number
     const households = await boardReviewHouseholds(process, actorId, "close");
     await prisma.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
-        const fresh = await tx.orgMembershipProcess.findUnique({ where: { id: processId }, select: { status: true } });
+        const fresh = await tx.orgMembershipProcess.findUnique({ where: { id: processId }, select: { status: true, orgMembershipId: true, subjectPersonId: true, requestedForHouseholdId: true } });
         if (!fresh) throw new ReviewError("not_found", "Application not found.");
+        await throwIfHouseholdsMoved(tx, fresh, households);
         await throwIfDenied(tx, households, "closed");
         if (!personBgOpen.has({ status: fresh.status })) throw new ReviewError("wrong_phase", "Only an open check review can be closed as opened for the wrong person.");
         const { count } = await tx.orgMembershipProcess.updateMany({
@@ -840,8 +841,9 @@ export async function wrongPersonClosedAt(db: DbClient, processId: number): Prom
  * B27: the Board reopens a review it closed as opened for the wrong person, with a
  * written reason. It returns to the status it was closed from, its rejection counting
  * again. Refused when its person, or for an unnamed review the household that asked
- * for it, has had another check review opened since the close or holds an open one,
- * or the person has cleared since: that check has settled what this one was for.
+ * for it, has had another check review opened or cleared since the close or holds an
+ * open one, or the person's check date is on or after the close's day (the date has no
+ * time): that check has settled what this one was for.
  */
 export async function boardReopenWrongPersonClose(processId: number, actorId: number, rawReason: string) {
     const reason = rawReason.trim();
@@ -851,27 +853,33 @@ export async function boardReopenWrongPersonClose(processId: number, actorId: nu
     const households = await boardReviewHouseholds(process, actorId, "reopen");
 
     const status = await prisma.$transaction(async (tx) => {
-        // The person's row lock is the one openPersonBg takes, so no new review opens for them meanwhile.
-        if (process.subjectPersonId !== null) await tx.$queryRaw`SELECT id FROM "Person" WHERE id = ${process.subjectPersonId} FOR UPDATE`;
+        // Process, then person: the order attest() locks in. The person's lock is the one
+        // openPersonBg takes, so no new review opens for them meanwhile.
         await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
-        const fresh = await tx.orgMembershipProcess.findUnique({ where: { id: processId }, select: { status: true, archivedFromStatus: true } });
+        const fresh = await tx.orgMembershipProcess.findUnique({
+            where: { id: processId },
+            select: { status: true, archivedFromStatus: true, orgMembershipId: true, subjectPersonId: true, requestedForHouseholdId: true },
+        });
         const closedAt = fresh?.status === "ARCHIVED" ? await wrongPersonClosedAt(tx, processId) : null;
         const target = fresh?.archivedFromStatus;
-        if (!closedAt || !target || !personBgOpen.has({ status: target })) {
+        if (!fresh || !closedAt || !target || !personBgOpen.has({ status: target })) {
             throw new ReviewError("wrong_phase", "Only a check review the Board closed as opened for the wrong person can be reopened here.");
         }
+        const subjectPersonId = fresh.subjectPersonId;
+        if (subjectPersonId !== null) await tx.$queryRaw`SELECT id FROM "Person" WHERE id = ${subjectPersonId} FOR UPDATE`;
+        await throwIfHouseholdsMoved(tx, fresh, households);
         await throwIfDenied(tx, households, "reopened");
-        const sameSubject: Prisma.OrgMembershipProcessWhereInput = process.subjectPersonId !== null
-            ? { subjectPersonId: process.subjectPersonId }
-            : { subjectPersonId: null, requestedForHouseholdId: process.requestedForHouseholdId };
+        const sameSubject: Prisma.OrgMembershipProcessWhereInput = subjectPersonId !== null
+            ? { subjectPersonId }
+            : { subjectPersonId: null, requestedForHouseholdId: fresh.requestedForHouseholdId };
         const later = await tx.orgMembershipProcess.findFirst({
-            where: { kind: "PERSON_BG", id: { not: processId }, ...sameSubject, OR: [personBgOpen.where, { createdAt: { gt: closedAt } }] },
+            where: { kind: "PERSON_BG", id: { not: processId }, ...sameSubject, OR: [personBgOpen.where, { createdAt: { gt: closedAt } }, { bgClearedAt: { gt: closedAt } }] },
             select: { id: true },
         });
         if (later) throw new ReviewError("wrong_phase", `Another check review (#${later.id}) has been opened for this person since, so this one cannot be reopened.`);
-        if (process.subjectPersonId !== null) {
-            const person = await tx.person.findUnique({ where: { id: process.subjectPersonId }, select: { lastBackgroundCheck: true } });
-            if (person?.lastBackgroundCheck && person.lastBackgroundCheck > closedAt) {
+        if (subjectPersonId !== null) {
+            const person = await tx.person.findUnique({ where: { id: subjectPersonId }, select: { lastBackgroundCheck: true } });
+            if (person?.lastBackgroundCheck && isoDay(person.lastBackgroundCheck) >= isoDay(closedAt)) {
                 throw new ReviewError("wrong_phase", "This person's check has cleared since the review was closed, so it cannot be reopened.");
             }
         }
@@ -885,6 +893,14 @@ export async function boardReopenWrongPersonClose(processId: number, actorId: nu
     });
     await settleAfterReview(households);
     return { status };
+}
+
+const isoDay = (d: Date) => d.toISOString().slice(0, 10);
+
+/** The household bar ran before the lock; refuse if the review's households have changed since. */
+async function throwIfHouseholdsMoved(tx: TxClient, fresh: ReviewTarget, checked: number[]) {
+    const now = await reviewHouseholds(tx, fresh);
+    if (now.length !== checked.length || now.some((id) => !checked.includes(id))) throw movedOn();
 }
 
 type BlockedResetRow = {
