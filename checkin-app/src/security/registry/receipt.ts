@@ -1,8 +1,8 @@
 // Receipt library route policy. Aggregated by ../registry.ts.
 import { defineFileRoute, defineRoute, type OrderedViewEntry } from '../core';
 
-// Submitters are adult members or Treehouse Volunteers (`receipt-submitter`,
-// docs/rules/expenses.md) and read only their own receipts: `their_own` resolves on the row's uploadedByUserId against
+// Submitters are adult members or Treehouse Volunteers (`receipt-submitter`)
+// and read only their own receipts: `their_own` resolves on the row's uploadedByUserId against
 // the session id, and grants no pii, so donor and reimbursee names
 // never come back to the uploader. Both views carry a bare `public` token for the receipt ids, which admits every `public`
 // field on every returned row with no row gate; receipt ids are the only such fields today
@@ -111,7 +111,7 @@ defineRoute({ endpoint: 'POST /api/receipts/mail-items/[id]/discard', authorize:
 defineRoute({ endpoint: 'GET /api/receipts/mail-items/catch-up', authorize: 'finance', envelope: null, returns: ['ReceiptMailCatchUp'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/mail-items/catch-up', authorize: 'finance', envelope: null, returns: ['ReceiptMailCatchUp'], orderedView: FINANCE_VIEW });
 
-// Mail aliases (docs/rules/people-households.md): the extra addresses a person's
+// Mail aliases: the extra addresses a person's
 // receipt mail may come from. FINANCE and the BOARD list, add, remove and
 // approve them, and nobody else reads them, so no `their_own` view. The address
 // is `pii`, like Person.email.
