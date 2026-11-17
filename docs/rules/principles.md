@@ -429,6 +429,12 @@ believed it covered two.
   followed a rule — an override, a comp, a certification, a denial — who and when
   is not enough to answer the question that gets asked later.
 
+- **An audit row commits with the change it records.** A change and its row
+  are written together, so neither survives without the other. The exceptions
+  are rows that record something other than a committed change — a refusal, an
+  attempt at an outside system, an inbound delivery — which are written on their
+  own so they survive the failure they describe.  [Decision]
+
 - **A system actor names itself.** A cron sweep, a webhook, or a migration writes
   its own identity, never an anonymous or borrowed one. "The system did it" is
   only an answer if the trail says which part of it.
