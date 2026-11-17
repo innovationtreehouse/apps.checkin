@@ -55,10 +55,15 @@ export async function settleHouseholdBg(householdId: number, opts: { reviewJustC
         select: { id: true, status: true },
     });
     if (!app) return [];
-    if (READS_ORDER.includes(app.status)) await recordUnreportedReversalOnProcess(app.id);
+    if (CONVERGES.includes(app.status)) await recordUnreportedReversalOnProcess(app.id);
     const threshold = await liveBgThreshold();
 
-    const result = await prisma.$transaction((tx) => settleInTx(tx, app.id, householdId, threshold, opts.trigger));
+    let result = await prisma.$transaction((tx) => settleInTx(tx, app.id, householdId, threshold, opts.trigger, false));
+    if (result.needsOrderRead) {
+        // A lifted block on a paid application converges in the same pass, so Shopify is asked first, outside the transaction.
+        await recordUnreportedReversalOnProcess(app.id);
+        result = await prisma.$transaction((tx) => settleInTx(tx, app.id, householdId, threshold, opts.trigger, true));
+    }
 
     if (result.steps.includes("opened")) await notifyReviewers();
     if (result.steps.includes("paidReject")) await notifyBoardPaidReject(app.id);
@@ -98,7 +103,7 @@ export type SettleStep = "denied" | "blocked" | "paidReject" | "resumed" | "clea
 /** What prompted a settle, recorded on its audit rows so a reader can see why the household moved. */
 export type SettleTrigger = { kind: "merge"; personMergeId: number };
 
-type Settled = { steps: SettleStep[]; advanceExternal?: boolean; clearance?: ClearanceOutcome };
+type Settled = { steps: SettleStep[]; advanceExternal?: boolean; clearance?: ClearanceOutcome; needsOrderRead?: boolean };
 
 const ACTOR = systemActor("system:membership-bg-settle");
 const BLOCK_REASON = "check review rejected";
@@ -110,10 +115,8 @@ const RETURNS_AS_WAS: readonly ProcessStatus[] = ["INTAKE", "PENDING_RENEWAL", "
 const STAMPS: readonly ProcessStatus[] = ["PENDING_EXTERNAL_ACTION", "PENDING_PAYMENT"];
 /** Held steps that nothing but a clearance moves: they converge on payment here. */
 const CONVERGES: readonly ProcessStatus[] = ["PENDING_BG_REVIEW", "PENDING_BG_CLEARANCE"];
-/** Steps that can converge in this settle: a lifted block resumes and converges in the same pass. */
-const READS_ORDER: readonly ProcessStatus[] = [...CONVERGES, "BLOCKED"];
 
-async function settleInTx(tx: TxClient, processId: number, householdId: number, threshold: Date | null, trigger?: SettleTrigger): Promise<Settled> {
+async function settleInTx(tx: TxClient, processId: number, householdId: number, threshold: Date | null, trigger: SettleTrigger | undefined, orderRead: boolean): Promise<Settled> {
     const record = (oldData: Prisma.InputJsonObject, newData: Prisma.InputJsonObject) => audit(tx, processId, householdId, oldData, withTrigger(newData, trigger));
     // Process, then household: the order clearBackgroundCheck locks in.
     await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
@@ -138,6 +141,7 @@ async function settleInTx(tx: TxClient, processId: number, householdId: number, 
         const unrecorded = blockingNow.filter((id) => !recorded.includes(id));
         if (unrecorded.length) await record({ status }, { action: BLOCK_REASON, blockingReviewIds: unrecorded });
         if (unrecorded.length || await tx.orgMembershipProcess.count({ where: { id: { in: recorded }, status: "BLOCKED" } })) return { steps };
+        if (!orderRead && process.paidAt && process.shopifyOrderId) return { steps, needsOrderRead: true };
         const to = resumeStatus(block.from, process, await householdCheckStarted(tx, householdId, process));
         const { count } = await tx.orgMembershipProcess.updateMany({ where: { id: processId, ...fromWhere("BLOCKED") }, data: { status: to, bgClearedAt: null, stageEnteredAt: new Date() } });
         if (!count) return { steps };
