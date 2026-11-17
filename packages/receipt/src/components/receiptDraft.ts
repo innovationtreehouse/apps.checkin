@@ -4,7 +4,8 @@
  */
 import { centsToDecimalString, dollarsToCents } from "@checkin/money";
 import { disagreementText, lineTotalAfterEdit, receiptMath, type ReceiptMath, type StoredLine } from "../lib/lineMath";
-import { MAX_LINE_ITEMS } from "../lib/schemas";
+import { MAX_LINE_QUANTITY } from "@checkin/receipt-types";
+import { MAX_LINE_DESCRIPTION, MAX_LINE_ITEMS, MAX_LINE_LABEL } from "../lib/schemas";
 
 export interface ServerLine {
   id: number;
@@ -198,7 +199,12 @@ export function draftProblem(r: ServerReceipt, draft: Draft): string | null {
   if (lines.length === 0) return "A receipt keeps at least one line.";
   if (r.lineItems.length + draft.added.length > MAX_LINE_ITEMS) return `A receipt holds at most ${MAX_LINE_ITEMS} lines; save the removals first.`;
   if (lines.some((l) => !l.description.trim())) return "Every line needs a description.";
+  if (lines.some((l) => l.description.trim().length > MAX_LINE_DESCRIPTION)) return `A description holds at most ${MAX_LINE_DESCRIPTION} characters.`;
+  if (lines.some((l) => l.partNumber.trim().length > MAX_LINE_LABEL || l.manufacturer.trim().length > MAX_LINE_LABEL)) {
+    return `A part number or manufacturer holds at most ${MAX_LINE_LABEL} characters.`;
+  }
   if (lines.some((l) => parseQuantity(l.quantity) === null)) return "Every quantity must be a positive number.";
+  if (lines.some((l) => (parseQuantity(l.quantity) ?? 0) > MAX_LINE_QUANTITY)) return `A quantity can be at most ${MAX_LINE_QUANTITY.toLocaleString("en-US")}.`;
   if (lines.some((l) => parseCents(l.unitPrice) === null)) return "Every unit price must be a dollar amount.";
   if (lines.some((l) => l.total.trim() !== "" && parseCents(l.total) === null)) return "Every line total must be a dollar amount.";
   return null;

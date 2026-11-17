@@ -4,8 +4,9 @@ import {
   type CompletedReceipt,
   type CompletedReceiptLineItem,
 } from "@checkin/receipt-types";
-import { db } from "../db";
+import { db, type Db } from "../db";
 import type { ReceivedReceipt, ReceivedReceiptLineStatusRow } from "../db/schema";
+import type { Prisma } from "../generated/prisma/client";
 import { getOrgId, ports } from "../runtime";
 import { parseStoredReceipt } from "./parse-receipt";
 import { insertAuditEvent } from "./audit";
@@ -146,9 +147,14 @@ export async function sweepStuckApplying(): Promise<{
 }
 
 /** Records a push's latest error, and its first failure time while none is set. */
-async function recordFailure(receiptId: number, error: string, data: { state?: "apply_failed"; inventoryUnconfirmedAt?: Date } = {}): Promise<void> {
-  await db.receivedReceipt.update({ where: { id: receiptId }, data: { ...data, validationNotes: error } });
-  await db.receivedReceipt.updateMany({ where: { id: receiptId, applyFirstFailedAt: null }, data: { applyFirstFailedAt: new Date() } });
+async function recordFailure(
+  receiptId: number,
+  error: string,
+  data: { state?: "apply_failed"; inventoryUnconfirmedAt?: Date } = {},
+  client: Db | Prisma.TransactionClient = db,
+): Promise<void> {
+  await client.receivedReceipt.update({ where: { id: receiptId }, data: { ...data, validationNotes: error } });
+  await client.receivedReceipt.updateMany({ where: { id: receiptId, applyFirstFailedAt: null }, data: { applyFirstFailedAt: new Date() } });
 }
 
 /** A line the inventory leg carries. */
@@ -268,17 +274,19 @@ async function pushAndSettle(
     return settleFailed(receiptId, received.orgId, actor, error);
   }
 
-  await db.receivedReceipt.update({
-    where: { id: receiptId },
-    data: { state: "resolved", validationNotes: null, applyFirstFailedAt: null },
-  });
-  await insertAuditEvent(db, {
-    orgId: received.orgId,
-    ...actor,
-    eventType: "receipt_apply_succeeded",
-    receivedReceiptId: receiptId,
-    fromState: "applying",
-    toState: "resolved",
+  await db.$transaction(async (tx) => {
+    await tx.receivedReceipt.update({
+      where: { id: receiptId },
+      data: { state: "resolved", validationNotes: null, applyFirstFailedAt: null },
+    });
+    await insertAuditEvent(tx, {
+      orgId: received.orgId,
+      ...actor,
+      eventType: "receipt_apply_succeeded",
+      receivedReceiptId: receiptId,
+      fromState: "applying",
+      toState: "resolved",
+    });
   });
   return { state: "resolved" };
 }
@@ -290,15 +298,17 @@ async function settleUnstamped(
   error: string,
   unstamped: { inventoryUnstamped: boolean; moneyUnstamped: boolean },
 ): Promise<ApplyResult> {
-  await recordFailure(receiptId, error, unstamped.inventoryUnstamped ? { inventoryUnconfirmedAt: new Date() } : {});
-  await insertAuditEvent(db, {
-    orgId,
-    ...actor,
-    eventType: "receipt_apply_failed",
-    receivedReceiptId: receiptId,
-    fromState: "applying",
-    toState: "applying",
-    details: JSON.stringify({ error, ...unstamped }),
+  await db.$transaction(async (tx) => {
+    await recordFailure(receiptId, error, unstamped.inventoryUnstamped ? { inventoryUnconfirmedAt: new Date() } : {}, tx);
+    await insertAuditEvent(tx, {
+      orgId,
+      ...actor,
+      eventType: "receipt_apply_failed",
+      receivedReceiptId: receiptId,
+      fromState: "applying",
+      toState: "applying",
+      details: JSON.stringify({ error, ...unstamped }),
+    });
   });
   return { state: "applying", error };
 }
@@ -309,15 +319,17 @@ async function settleFailed(
   actor: { actorUserId: number | null; actorUsername: string | null },
   error: string,
 ): Promise<ApplyResult> {
-  await recordFailure(receiptId, error, { state: "apply_failed" });
-  await insertAuditEvent(db, {
-    orgId,
-    ...actor,
-    eventType: "receipt_apply_failed",
-    receivedReceiptId: receiptId,
-    fromState: "applying",
-    toState: "apply_failed",
-    details: JSON.stringify({ error }),
+  await db.$transaction(async (tx) => {
+    await recordFailure(receiptId, error, { state: "apply_failed" }, tx);
+    await insertAuditEvent(tx, {
+      orgId,
+      ...actor,
+      eventType: "receipt_apply_failed",
+      receivedReceiptId: receiptId,
+      fromState: "applying",
+      toState: "apply_failed",
+      details: JSON.stringify({ error }),
+    });
   });
   return { state: "apply_failed", error };
 }

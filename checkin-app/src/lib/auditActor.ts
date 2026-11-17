@@ -26,7 +26,6 @@ export const SYSTEM_ACTOR = 0;
  */
 export const SYSTEM_ACTORS = [
     "cron:nightly",
-    "cron:scholarship-grace-expiry",
     "cron:trusted-adult-expiry",
     "cron:lifecycle-reconcile",
     "system:google-sign-in",

@@ -2,7 +2,7 @@
 
 import { use, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Badge, Button, Card, Group, Stack, Text, Title } from "@mantine/core";
+import { Alert, Badge, Button, Card, Group, Stack, Text, Title } from "@mantine/core";
 import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { api, useLoad } from "@/lib/api";
@@ -22,6 +22,7 @@ type Member = {
   email?: string | null;
   programParticipants?: Enrollment[] | null;
   bgValidUntil?: string | null;
+  disputed?: boolean;
 };
 type Household = {
   id: number;
@@ -130,6 +131,7 @@ export default function HouseholdDetailPage({ params }: { params: Promise<{ id: 
 
   const status = household.orgMembership?.status;
   const members = household.householdMembers ?? [];
+  const disputed = members.filter((m) => m.disputed);
 
   return (
     <Stack>
@@ -157,6 +159,15 @@ export default function HouseholdDetailPage({ params }: { params: Promise<{ id: 
         <Text size="sm" c="dimmed">Valid until: {fmtDate(validUntil)}</Text>
         <Text size="sm" c="dimmed">BG valid until: {fmtDate(household.bgValidUntil)}</Text>
       </Group>
+
+      {disputed.length > 0 && (
+        <Alert color="red" variant="light" title="A background-check rejection counts against this household">
+          <Text size="sm">
+            {disputed.map((m) => m.name || m.email).join(", ")}: a rejection on their check review counts until two
+            new reviewers approve it.{status === "ACTIVE" ? " The membership stands until renewal." : ""}
+          </Text>
+        </Alert>
+      )}
 
       {user?.isBoardMember && <ArchiveControl household={household} />}
 

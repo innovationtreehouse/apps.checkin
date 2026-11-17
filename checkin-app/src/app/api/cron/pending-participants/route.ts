@@ -54,7 +54,7 @@ export const GET = withCron(async () => {
                 // The 7-day non-payment clock owns exactly PENDING_UNPAID
                 // (enrollmentState §3). Its `where` carries isPaymentPlanRequested:false,
                 // which is what keeps HOLD_FAILED (req=true) and denied applicants
-                // (den≠null, governed by the grace-expiry cron) out of this sweep —
+                // (den≠null, settled by the board) out of this sweep —
                 // a denial never resets pendingSince, so without that they'd be
                 // flagged the night after denial.
                 ...STATES.PENDING_UNPAID.where,

@@ -144,7 +144,7 @@ describe('withCron run ledger', () => {
 
     it('records a clean success when the body reports zero failed rows', async () => {
         const handler = jest.fn().mockResolvedValue(NextResponse.json({ success: true, failed: 0, released: 2 }));
-        await withCron(handler)(authed('http://localhost/api/cron/scholarship-grace-expiry'));
+        await withCron(handler)(authed('http://localhost/api/cron/reconcile-shopify'));
 
         expect(create.mock.calls[0][0].data).toMatchObject({ success: true, error: null });
     });

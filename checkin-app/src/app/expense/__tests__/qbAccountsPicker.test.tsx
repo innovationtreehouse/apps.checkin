@@ -78,7 +78,7 @@ describe("QuickBooks accounts page", () => {
 
   it("warns on a saved row whose QuickBooks account is inactive", () => {
     renderPage({ data: liveAccounts, error: null }, [{ id: 3, name: "Old", qbAccount: "8009" }]);
-    const warning = screen.getByText("Old supplies is inactive in QuickBooks. Pick an active one.").closest<HTMLElement>("[role=alert]")!;
+    const warning = screen.getByText("Old supplies is inactive in QuickBooks. Delete it and add an active account.").closest<HTMLElement>("[role=alert]")!;
     expect(within(warning).getByRole("button", { name: "Update now" })).toBeInTheDocument();
     expect(screen.queryByText(/\(inactive\)/)).not.toBeInTheDocument();
   });
