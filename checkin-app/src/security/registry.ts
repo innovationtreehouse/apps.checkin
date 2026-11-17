@@ -358,9 +358,6 @@ defineRoute({
 // is derived from OrgMembershipProcess.status, so a blocked or in-flight
 // application is observable in the response even though the column itself
 // never reaches the wire.
-//
-// Registered ahead of its handler() conversion; inert until the route
-// serves it.
 defineRoute({
     endpoint: 'GET /api/membership-ops/volunteer-memberships',
     authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
