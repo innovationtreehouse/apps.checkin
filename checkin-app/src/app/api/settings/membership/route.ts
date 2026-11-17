@@ -51,7 +51,6 @@ function parseYearVariants(raw: unknown, boundary: Date | null | undefined): Yea
  * perYearVariantClient (true — required; any other body is refused with nothing changed),
  * membershipYearVariants ([{ membershipYear, shopifyVariantId, productUrl }] — replaced by year; 409 when
  * another year already holds the variant, and nothing in the save is kept),
- * scholarshipDenialGraceDays (positive int|null — null disables the grace-period expiry cron),
  * releaseLibrary ({ library: LibraryKey, released: boolean } — board members only; the nav's UI-only
  * release gate, merged into the stored list in one statement so concurrent toggles don't clobber).
  * Membership fees must be finite and >= 0; an invalid value rejects the whole update (400) so the
@@ -72,7 +71,6 @@ export const PUT = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
         volunteerFamilyDiscountCode?: string | null;
         bgRecheckMonths?: number;
         devSigningTarget?: string | null;
-        scholarshipDenialGraceDays?: number | null;
         releasedLibraries?: unknown;
         releaseLibrary?: { library?: unknown; released?: unknown } | null;
         membershipYearVariants?: unknown;
@@ -122,15 +120,6 @@ export const PUT = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
             return apiError("devSigningTarget must be 'zoho', 'debug', or null", 400);
         }
         data.devSigningTarget = body.devSigningTarget;
-    }
-    // scholarshipDenialGraceDays: null = feature off (never guess a default); otherwise a positive integer.
-    if (body.scholarshipDenialGraceDays !== undefined) {
-        if (body.scholarshipDenialGraceDays !== null) {
-            if (!Number.isFinite(body.scholarshipDenialGraceDays) || !Number.isInteger(body.scholarshipDenialGraceDays) || body.scholarshipDenialGraceDays <= 0) {
-                return apiError("scholarshipDenialGraceDays must be a positive whole number of days, or null", 400);
-            }
-        }
-        data.scholarshipDenialGraceDays = body.scholarshipDenialGraceDays;
     }
 
     if (body.releasedLibraries !== undefined) {

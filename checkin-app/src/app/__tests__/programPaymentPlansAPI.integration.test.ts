@@ -1186,7 +1186,7 @@ describe('Program payment-plan routes', () => {
             expect(__getSentEmails()).toHaveLength(0);
         });
 
-        it('deny sends no automatic email (the grace-expiry clock, if configured, now starts silently)', async () => {
+        it('deny sends no automatic email', async () => {
             const householdId = await makeHousehold('deny');
             await makePerson('deny-lead', householdId, { isHouseholdLead: true });
             const participant = await makePerson('deny-participant', householdId);

@@ -371,9 +371,10 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
     };
 
     const newLeader = leadMentorId !== undefined && leadMentorId !== currentProgram.leadMentorId ? leadMentorId : null;
+    let lockedBefore: Program | null;
     let updatedProgram: Program;
     try {
-        updatedProgram = await prisma.$transaction(async (tx) => {
+        ({ before: lockedBefore, after: updatedProgram } = await prisma.$transaction(async (tx) => {
             // Locked so the audit's "before" is the row this update replaces. Program before
             // households, the order enrollment takes them in (changeProgramStockWith).
             await tx.$queryRaw`SELECT id FROM "Program" WHERE id = ${programId} FOR UPDATE`;
@@ -387,22 +388,24 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
                 oldData: before ?? undefined,
                 newData: after,
             });
-            return after;
-        });
+            return { before, after };
+        }));
     } catch (e) {
         if (e instanceof ServiceError) return refuse("conflict", e.message);
         throw e;
     }
 
+    // The post-commit checks compare against the row the update replaced, not the caller's earlier read.
+    const before = lockedBefore ?? currentProgram;
     // The edit has landed; a failed re-check is logged, not reported as a failed save.
-    await flagEnrollmentsNoLongerFitting(currentProgram, updatedProgram)
+    await flagEnrollmentsNoLongerFitting(before, updatedProgram)
         .catch(e => logger.error("Program age re-check failed:", e));
 
     // Announce trigger — transition rule, once-per-lifetime claim, audit row,
     // and fire-without-await all live in the helper. Never throws.
     await maybeAnnounceOnOpen({
         programId: updatedProgram.id,
-        before: currentProgram,
+        before,
         after: updatedProgram,
         actorId: actor.id,
     });

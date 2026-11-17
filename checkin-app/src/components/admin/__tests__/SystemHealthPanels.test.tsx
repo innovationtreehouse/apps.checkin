@@ -326,7 +326,7 @@ describe("ProblemsBox", () => {
     expect(screen.getByText("7").closest("a")).toBeNull();
     expect(screen.getByText("qbo-posting")).toBeInTheDocument();
     expect(screen.queryByText("nightly")).not.toBeInTheDocument();
-    expect(screen.getByText(/Could not read gifts/)).toBeInTheDocument();
+    expect(screen.getByText(/Could not read the stuck items in gifts/)).toBeInTheDocument();
     expect(screen.getByText("Receipt reading failed 3 times in the last day").closest("a")).toBeNull();
     expect(screen.getByText("Emails failed to send: 2 in the last day").closest("a")).toHaveAttribute("href", "/system-status/links");
     expect(screen.getByText("6")).toBeInTheDocument();

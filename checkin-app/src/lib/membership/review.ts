@@ -1,4 +1,4 @@
-import { Prisma, type OrgMembershipProcessStatus } from "@/generated/prisma/client";
+import { Prisma, type OrgMembershipProcess, type OrgMembershipProcessStatus } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import { ServiceError } from "@checkin/component-kit";
 import { REVIEW_ERROR_STATUS } from "@/lib/domainErrorResponse";
@@ -718,14 +718,16 @@ export async function applyVolunteerFamilyStatus(db: DbClient, orgMembershipId: 
  *
  * The person the review names stays named, except on the wrong-person reset
  * (`wrongPerson`), which only a review requested by a household takes: it returns to
- * no person, and the next first decision names again.
+ * no person, and the next first decision names again. `closeAsWrongPerson` closes
+ * the review instead (closeAsWrongPerson below).
  *
  * A household application blocked by a household attestation before cutover is still
  * reset here; one in review is not, because nothing reviews it now.
  */
-export async function boardResetReview(processId: number, actorId: number, opts: { reason: string; wrongPerson?: boolean }) {
+export async function boardResetReview(processId: number, actorId: number, opts: { reason: string; wrongPerson?: boolean; closeAsWrongPerson?: boolean }) {
     const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
     if (!process) throw new ReviewError("not_found", "Application not found.");
+    if (opts.closeAsWrongPerson) return closeAsWrongPerson(process, actorId, opts.reason);
     const isReview = process.kind === "PERSON_BG";
     if (!isReview && (process.status !== "BLOCKED" || await (await settleModule()).blockedByCheckReview(prisma, processId))) {
         throw new ReviewError("wrong_phase", "This application is decided by its people's check reviews. Reset the person's check review instead.");
@@ -734,15 +736,7 @@ export async function boardResetReview(processId: number, actorId: number, opts:
         throw new ReviewError("invalid_input", "Only a check review a household asked for, with a person named, can be reset as the wrong person.");
     }
 
-    // Conflict of interest: no actor may reset a review about their own household, or
-    // the household it was requested for — else they could wipe their family's failed
-    // background check, the very thing attest()'s same-household gate forbids.
-    const households = await reviewHouseholds(prisma, process);
-    for (const householdId of households) {
-        if (await refuseSelfGrant(prisma, actorId, { householdId }, { table: "Person", attempted: { override: "reset" } })) {
-            throw new ReviewError("same_household_applicant", "You cannot reset your own household's review — someone outside your household must.");
-        }
-    }
+    const households = await boardReviewHouseholds(process, actorId, "reset");
 
     const status = await prisma.$transaction(async (tx) => {
         // FOR UPDATE per attest()'s contract: without it a concurrent second
@@ -751,9 +745,7 @@ export async function boardResetReview(processId: number, actorId: number, opts:
         await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
         const fresh = await tx.orgMembershipProcess.findUnique({ where: { id: processId }, select: { status: true, kind: true, paidAt: true, bgConsentAt: true, bgClearedAt: true, contractSignedAt: true, subjectPersonId: true } });
         if (!fresh) throw new ReviewError("not_found", "Application not found.");
-        if (await lockAndFindDeniedHousehold(tx, households) !== null) {
-            throw new ReviewError("wrong_phase", "This household has been denied membership, so its background-check review cannot be reset.");
-        }
+        await throwIfDenied(tx, households, "reset");
         const blocked = fresh.status === "BLOCKED";
         if (!blocked && !awaitingBgReview.has({ kind: fresh.kind, status: fresh.status, bgConsentAt: !!fresh.bgConsentAt, bgClearedAt: !!fresh.bgClearedAt })) {
             throw new ReviewError("wrong_phase", "This background-check review is neither blocked nor still in progress.");
@@ -780,6 +772,151 @@ export async function boardResetReview(processId: number, actorId: number, opts:
     await notifyReviewers();
     await settleAfterReview(households);
     return { status };
+}
+
+/**
+ * The households a Board act on a review touches, refusing an actor in any of them:
+ * else they could wipe their family's failed background check, the very thing
+ * attest()'s same-household gate forbids.
+ */
+async function boardReviewHouseholds(process: ReviewTarget, actorId: number, override: "reset" | "close" | "reopen"): Promise<number[]> {
+    const households = await reviewHouseholds(prisma, process);
+    for (const householdId of households) {
+        if (await refuseSelfGrant(prisma, actorId, { householdId }, { table: "Person", attempted: { override } })) {
+            throw new ReviewError("same_household_applicant", `You cannot ${override} your own household's review — someone outside your household must.`);
+        }
+    }
+    return households;
+}
+
+async function throwIfDenied(tx: TxClient, households: number[], verb: string) {
+    if (await lockAndFindDeniedHousehold(tx, households) !== null) {
+        throw new ReviewError("wrong_phase", `This household has been denied membership, so its background-check review cannot be ${verb}.`);
+    }
+}
+
+export const WRONG_PERSON_CLOSE = "closed: opened for the wrong person";
+const WRONG_PERSON_REOPEN = "reopened: closed as opened for the wrong person";
+
+/**
+ * B27: the Board closes an open check review opened for the wrong person. It goes to
+ * ARCHIVED from where it stands, its attestations and person kept, so its rejection
+ * stays on record but no longer counts: standing reads only open reviews.
+ */
+async function closeAsWrongPerson(process: OrgMembershipProcess, actorId: number, rawReason: string) {
+    const reason = rawReason.trim();
+    if (!reason) throw new ReviewError("invalid_input", "A reason is required.");
+    if (process.kind !== "PERSON_BG") throw new ReviewError("invalid_input", "Only a check review can be closed as opened for the wrong person.");
+    const processId = process.id;
+    const households = await boardReviewHouseholds(process, actorId, "close");
+    await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
+        const fresh = await tx.orgMembershipProcess.findUnique({ where: { id: processId }, select: { status: true, orgMembershipId: true, subjectPersonId: true, requestedForHouseholdId: true } });
+        if (!fresh) throw new ReviewError("not_found", "Application not found.");
+        await throwIfHouseholdsMoved(tx, fresh, households);
+        await throwIfDenied(tx, households, "closed");
+        if (!personBgOpen.has({ status: fresh.status })) throw new ReviewError("wrong_phase", "Only an open check review can be closed as opened for the wrong person.");
+        const { count } = await tx.orgMembershipProcess.updateMany({
+            where: { id: processId, ...fromWhere(fresh.status) },
+            data: { status: "ARCHIVED", archivedFromStatus: fresh.status, stageEnteredAt: new Date() },
+        });
+        if (!count) throw movedOn();
+        await audit(tx, personActor(actorId), processId, { status: fresh.status }, { status: "ARCHIVED", action: WRONG_PERSON_CLOSE, reason });
+    });
+    await settleAfterReview(households);
+    return { status: "ARCHIVED" as const };
+}
+
+/** When the review was last closed, if that close was the Board's wrong-person close; else null. */
+export async function wrongPersonClosedAt(db: DbClient, processId: number): Promise<Date | null> {
+    const close = await db.auditLog.findFirst({
+        where: { tableName: "OrgMembershipProcess", affectedEntityId: processId, newData: { path: ["status"], equals: "ARCHIVED" } },
+        orderBy: { id: "desc" },
+        select: { timestamp: true, newData: true },
+    });
+    return close && jsonField(close.newData, "action") === WRONG_PERSON_CLOSE ? close.timestamp : null;
+}
+
+/**
+ * B27: the Board reopens a review it closed as opened for the wrong person, with a
+ * written reason. It returns to the status it was closed from, its rejection counting
+ * again. Refused when anyone it would count against (`reopenPeople`), or for an
+ * unnamed review the household that asked for it, has had another check review opened
+ * or cleared since the close or holds an open one, or holds a check date on or after
+ * the close's day (the date has no time): that check has settled what this one was for.
+ */
+export async function boardReopenWrongPersonClose(processId: number, actorId: number, rawReason: string) {
+    const reason = rawReason.trim();
+    if (!reason) throw new ReviewError("invalid_input", "A reason is required.");
+    const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
+    if (!process || process.kind !== "PERSON_BG") throw new ReviewError("not_found", "Check review not found.");
+    const households = await boardReviewHouseholds(process, actorId, "reopen");
+
+    const status = await prisma.$transaction(async (tx) => {
+        // Process, then person: the order attest() locks in. The person's lock is the one
+        // openPersonBg takes, so no new review opens for them meanwhile.
+        await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
+        const fresh = await tx.orgMembershipProcess.findUnique({
+            where: { id: processId },
+            select: { status: true, archivedFromStatus: true, orgMembershipId: true, subjectPersonId: true, requestedForHouseholdId: true },
+        });
+        const closedAt = fresh?.status === "ARCHIVED" ? await wrongPersonClosedAt(tx, processId) : null;
+        const target = fresh?.archivedFromStatus;
+        if (!fresh || !closedAt || !target || !personBgOpen.has({ status: target })) {
+            throw new ReviewError("wrong_phase", "Only a check review the Board closed as opened for the wrong person can be reopened here.");
+        }
+        const unnamedFor = fresh.subjectPersonId === null ? fresh.requestedForHouseholdId : null;
+        const people = await reopenPeople(tx, processId, fresh.subjectPersonId, unnamedFor);
+        for (const id of people) await tx.$queryRaw`SELECT id FROM "Person" WHERE id = ${id} FOR UPDATE`;
+        await throwIfHouseholdsMoved(tx, fresh, households);
+        await throwIfDenied(tx, households, "reopened");
+        const later = await tx.orgMembershipProcess.findFirst({
+            where: {
+                kind: "PERSON_BG",
+                id: { not: processId },
+                AND: [
+                    { OR: [{ subjectPersonId: { in: people } }, ...(unnamedFor !== null ? [{ requestedForHouseholdId: unnamedFor }] : [])] },
+                    { OR: [personBgOpen.where, { createdAt: { gt: closedAt } }, { bgClearedAt: { gt: closedAt } }] },
+                ],
+            },
+            select: { id: true },
+        });
+        if (later) throw new ReviewError("wrong_phase", `Another check review (#${later.id}) has been opened since, so this one cannot be reopened.`);
+        const cleared = await tx.person.findMany({ where: { id: { in: people }, lastBackgroundCheck: { not: null } }, select: { lastBackgroundCheck: true } });
+        if (cleared.some((p) => isoDay(p.lastBackgroundCheck!) >= isoDay(closedAt))) {
+            throw new ReviewError("wrong_phase", "A check this review was for has cleared since it was closed, so it cannot be reopened.");
+        }
+        const { count } = await tx.orgMembershipProcess.updateMany({
+            where: { id: processId, ...fromWhere("ARCHIVED") },
+            data: { status: target, archivedFromStatus: null, stageEnteredAt: new Date() },
+        });
+        if (!count) throw movedOn();
+        await audit(tx, personActor(actorId), processId, { status: "ARCHIVED" }, { status: target, unarchived: true, action: WRONG_PERSON_REOPEN, reason });
+        return target;
+    });
+    await settleAfterReview(households);
+    return { status };
+}
+
+const isoDay = (d: Date) => d.toISOString().slice(0, 10);
+
+/**
+ * Whoever a reopened review would count against: its person, anyone a wrong-person
+ * reset cleared off it (they keep its rejection), and for an unnamed review the leads
+ * of the household that asked for it. Sorted, so their row locks are taken in one order.
+ */
+async function reopenPeople(tx: TxClient, processId: number, subjectPersonId: number | null, unnamedFor: number | null): Promise<number[]> {
+    const rows = await tx.auditLog.findMany({ where: { tableName: "OrgMembershipProcess", affectedEntityId: processId }, select: { oldData: true, newData: true } });
+    const held = rows.filter((r) => jsonField(r.newData, "subjectPersonId") === null).map((r) => jsonField(r.oldData, "subjectPersonId"));
+    const leads = unnamedFor === null ? [] : await liveHouseholdLeadIds(tx, unnamedFor);
+    const ids = [subjectPersonId, ...held, ...leads].filter((id): id is number => typeof id === "number");
+    return [...new Set(ids)].sort((a, b) => a - b);
+}
+
+/** The household bar ran before the lock; refuse if the review's households have changed since. */
+async function throwIfHouseholdsMoved(tx: TxClient, fresh: ReviewTarget, checked: number[]) {
+    const now = await reviewHouseholds(tx, fresh);
+    if (now.length !== checked.length || now.some((id) => !checked.includes(id))) throw movedOn();
 }
 
 type BlockedResetRow = {

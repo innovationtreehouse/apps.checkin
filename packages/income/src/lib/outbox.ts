@@ -318,6 +318,10 @@ export async function ownEntry(
 
 type PostResult = FindOrCreateResult | { kind: "own"; deposit: QbDeposit } | { kind: "conflict"; note: string };
 
+/** Whether two reads of a row carry the same deposit: its date, net and expected lines. */
+const sameDeposit = (a: PayoutReconciliation, b: PayoutReconciliation) =>
+  a.payoutDate === b.payoutDate && a.payoutNetCents === b.payoutNetCents && JSON.stringify(expectedOf(a)) === JSON.stringify(expectedOf(b));
+
 /** A deposit the post saw, held as created (its key) or matched. */
 function holdingData(d: QbDeposit, origin: string): RowData {
   return {
@@ -335,7 +339,8 @@ function holdingData(d: QbDeposit, origin: string): RowData {
 
 /**
  * One payout's turn through the outbox, in three steps. Claim: a short transaction marks the
- * payout as being posted and, when the gate lets it create, stamps its first attempt. Call, outside any transaction: an
+ * payout as being posted, unless its deposit changed since the write was built, and, when the gate
+ * lets it create, stamps its first attempt. Call, outside any transaction: an
  * attempted payout first looks for its own deposit by key; otherwise findOrCreate matches,
  * then creates when `gate` allows. Settle: a new transaction saves the result only while the
  * claim is still this post's. found → link (POSTED when it carries the payout's key);
@@ -399,6 +404,8 @@ export async function postPayout(
     if (!(await lockReconciliation(tx, orgId, wait))) return null;
     const current = await tx.payoutReconciliation.findUniqueOrThrow({ where: { id } });
     if (!postable(current) || isClaimed(current, claimedAt.getTime())) return { row: current, attempted: undefined };
+    // The write was built from `row`; a deposit handed over again since then waits for the next turn to rebuild it.
+    if (!sameDeposit(current, row)) return { row: current, attempted: undefined };
     // Only a post that may create marks the attempt: one that can only match leaves nothing to find later.
     const mayLand = gate.mayCreate && current.payoutDate > gate.closedThrough;
     const claimed = await tx.payoutReconciliation.update({

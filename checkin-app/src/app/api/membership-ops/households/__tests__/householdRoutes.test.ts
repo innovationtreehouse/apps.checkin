@@ -14,6 +14,7 @@ import { PATCH as householdPATCH } from "@/app/api/membership-ops/households/[id
 import { PUT as participantPUT } from "@/app/api/membership-ops/participants/[id]/route";
 import { POST as reassignPOST } from "@/app/api/membership-ops/participants/[id]/household/route";
 import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
+import { householdCheckStandings } from "@/lib/membership/checkStanding";
 
 // The archived-household guard has its own tests; here every household is live.
 jest.mock("@/lib/household/archiveGuard", () => ({
@@ -35,6 +36,10 @@ jest.mock("@/lib/membership/householdStatus", () => ({
 jest.mock("@/lib/emergencyContacts/service", () => ({
     ...jest.requireActual("@/lib/emergencyContacts/service"),
     getPrimaryValidContact: jest.fn().mockResolvedValue(null),
+}));
+jest.mock("@/lib/membership/checkStanding", () => ({
+    ...jest.requireActual("@/lib/membership/checkStanding"),
+    householdCheckStandings: jest.fn().mockResolvedValue({ members: [], awaitingNaming: false }),
 }));
 jest.mock("@/lib/prisma", () => {
     const household = { findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn() };
@@ -91,6 +96,19 @@ describe("GET /api/membership-ops/households", () => {
             ["archivedAt", "city", "emergencyContacts", "householdMembers", "id", "line1", "line2", "name", "orgMembership", "postalCode", "state"],
         );
         expect(args.select.orgMembership).toEqual({ select: { id: true, status: true, memberSince: true, isVolunteerFamily: true } });
+    });
+
+    it("flags only a disputed member, and sends nothing about the review", async () => {
+        signIn({ isBoardMember: true });
+        const member = (id: number) => ({ id, name: `P${id}`, email: null, isHouseholdLead: true, lastBackgroundCheck: null, dateOfBirth: null, programParticipants: [] });
+        db.household.findUnique.mockResolvedValue({ ...HOUSEHOLD, archivedAt: null, householdMembers: [member(1), member(2)], orgMembership: null, emergencyContacts: [] });
+        (householdCheckStandings as jest.Mock).mockResolvedValueOnce({
+            members: [{ personId: 1, isHouseholdLead: true, standing: "DISPUTED", disputing: [{ id: 7 }] }, { personId: 2, isHouseholdLead: true, standing: "NONE", disputing: [] }],
+            awaitingNaming: false,
+        });
+        const body = await (await GET(request("http://localhost/api/membership-ops/households?id=10"))).json();
+        expect(body.household.householdMembers.map((m: { id: number; disputed: boolean }) => [m.id, m.disputed])).toEqual([[1, true], [2, false]]);
+        expect(JSON.stringify(body)).not.toMatch(/disputing|standing/);
     });
 
     it("selects only the list columns the households page and pickers read", async () => {

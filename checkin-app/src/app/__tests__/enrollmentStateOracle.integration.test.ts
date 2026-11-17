@@ -4,7 +4,7 @@
 /**
  * Validator-oracle integration tests.
  *
- * Drives each real transition (T3, T3f, T3m, T4, T5, T6, T7/T8/T9) against a real
+ * Drives each real transition (T3, T3f, T3m, T4, T5, T6, T7/T9) against a real
  * DB through its OWNING code — the route handler / shared mutator that carries the
  * guard — then asserts the resulting row `classify`es to the expected state and
  * `validate`s clean. A simulated crash window (activate's first updateMany, skip
@@ -236,21 +236,13 @@ describe('enrollment state — validator oracle over real transitions', () => {
         await assertState('PENDING_UNPAID');
     });
 
-    // T7/T8/T9 all funnel through the one shared exit (deleteAndReleaseHold);
+    // T7/T9 all funnel through the one shared exit (deleteAndReleaseHold);
     // their end-state is UNENROLLED (row deleted), with +1 iff the row still held.
     it('T7 remove(unpaid): PENDING_UNPAID → ∅ (no hold, no +1)', async () => {
         await seed({ req: false, held: false, den: false }); // PENDING_UNPAID
         const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
         const { released } = await deleteAndReleaseHold(programId, selfId, program);
         expect(released).toBe(false);
-        await assertGone();
-    });
-
-    it('T8 grace expiry: PENDING_HELD_DENIED → ∅ (held → +1)', async () => {
-        await seed({ req: false, held: true, den: true }); // PENDING_HELD_DENIED
-        const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
-        const { released } = await deleteAndReleaseHold(programId, selfId, program);
-        expect(released).toBe(true);
         await assertGone();
     });
 
