@@ -4,7 +4,6 @@
 import prisma from '@/lib/prisma';
 import { grantMembership, refuseGrantIfDenied } from '@/lib/membership/grant';
 import { raiseDeniedHouseholdActivity } from '@/lib/membership/householdStatus';
-import { PaymentError } from '@/lib/membership/payment';
 import { createRenewalProcess } from '@/lib/membership/renewal';
 
 jest.mock('@/lib/prisma', () => {
@@ -33,21 +32,21 @@ const raise = jest.mocked(raiseDeniedHouseholdActivity);
 describe('refuseGrantIfDenied', () => {
     beforeEach(() => jest.clearAllMocks());
 
-    it('refuses a DENIED household and raises it to the board', async () => {
+    it('refuses a DENIED household without raising it to the board', async () => {
         findUnique.mockResolvedValue({ status: 'DENIED' } as Awaited<ReturnType<typeof prisma.orgMembership.findUnique>>);
-        await expect(refuseGrantIfDenied(7, 99)).rejects.toBeInstanceOf(PaymentError);
-        expect(raise).toHaveBeenCalledWith(expect.objectContaining({ householdId: 7 }));
+        await expect(refuseGrantIfDenied(7)).rejects.toThrow('This household is denied. Restore it before granting membership.');
+        expect(raise).not.toHaveBeenCalled();
     });
 
     it.each(['NONE', 'ACTIVE', 'REVOKED'] as const)('lets a %s household through', async (status) => {
         findUnique.mockResolvedValue({ status } as Awaited<ReturnType<typeof prisma.orgMembership.findUnique>>);
-        await expect(refuseGrantIfDenied(7, 99)).resolves.toBeUndefined();
+        await expect(refuseGrantIfDenied(7)).resolves.toBeUndefined();
         expect(raise).not.toHaveBeenCalled();
     });
 
     it('lets a household with no membership row through', async () => {
         findUnique.mockResolvedValue(null);
-        await expect(refuseGrantIfDenied(7, 99)).resolves.toBeUndefined();
+        await expect(refuseGrantIfDenied(7)).resolves.toBeUndefined();
     });
 });
 
@@ -60,9 +59,9 @@ describe('grantMembership opening an application', () => {
         jest.mocked(prisma.orgMembershipProcess.findFirst).mockResolvedValue(null);
         jest.mocked(prisma.$queryRaw).mockResolvedValue([{ status: 'DENIED' }]);
 
-        await expect(grantMembership(7, { actorId: 99, reason: 'comp' }, 2026)).rejects.toBeInstanceOf(PaymentError);
+        await expect(grantMembership(7, { actorId: 99, reason: 'comp' }, 2026)).rejects.toThrow('This household is denied. Restore it before granting membership.');
         expect(prisma.orgMembershipProcess.create).not.toHaveBeenCalled();
-        expect(raise).toHaveBeenCalledWith(expect.objectContaining({ householdId: 7 }));
+        expect(raise).not.toHaveBeenCalled();
     });
 
     it('refuses when the household has a BLOCKED application, without opening a new one', async () => {
