@@ -370,7 +370,7 @@ export async function reconcileReversals(): Promise<number> {
 
     const settings = await prisma.boardSettings.findUnique({
         where: { id: 1 },
-        select: { orgMembershipVariantId: true, orgMembershipYearBoundary: true, volunteerFamilyDiscountCode: true },
+        select: { orgMembershipYearBoundary: true, volunteerFamilyDiscountCode: true },
     });
     const memberIds = procs.map((p) => p.orgMembershipId).filter((v): v is number => v != null);
     const members = memberIds.length

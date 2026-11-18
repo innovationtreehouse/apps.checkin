@@ -435,6 +435,25 @@ describe("attendance/current page", () => {
     expect(fetchMock.mock.calls.length).toBe(callsBefore);
   });
 
+  it.each([
+    ["counts", { type: "refresh-attendance", attendance: [], safety: attendanceData.safety }],
+    ["safety", { type: "refresh-attendance", attendance: [], counts: { keyholders: 0, volunteers: 0, youth: 0, total: 0 } }],
+  ])("reloads instead of applying a pushed snapshot missing %s", async (_missing, partial) => {
+    setAdminSession();
+    const fetchMock = mockRoutes();
+    renderWithProviders(<KioskDisplay />);
+    await screen.findByText("People Present: 3");
+    const callsBefore = fetchMock.mock.calls.filter(([u]) => u === "/api/attendance").length;
+
+    postFromWrapper(partial);
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.filter(([u]) => u === "/api/attendance").length).toBeGreaterThan(callsBefore),
+    );
+    expect(screen.getByText("People Present: 3")).toBeInTheDocument();
+    expect(screen.queryByText("The facility is currently empty.")).not.toBeInTheDocument();
+  });
+
   it("re-fetches attendance on a string postMessage refresh signal", async () => {
     setAdminSession();
     const fetchMock = mockRoutes();

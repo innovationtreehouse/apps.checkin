@@ -264,9 +264,8 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     'MembershipPaymentPlanDecision',
     'PaymentQueueRow',
     'MatchAuditEnrollmentRow',
-    // Expense audit log. Its `userId` is the acting checkin Person.id, read
-    // only by FINANCE/BOARD (everyones:pii). A "my expense history" view is the
-    // plausible future reader; that is when it earns `their_own` on `userId`.
+    // Finance-marked: a `their_own` binding on `userId` (the acting Person.id)
+    // would make isOwnRow drop staff views of their own rows from the finance view log.
     'ExpenseAuditLog',
 ]);
 

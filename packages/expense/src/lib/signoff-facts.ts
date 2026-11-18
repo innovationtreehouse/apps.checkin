@@ -1,7 +1,7 @@
 import type { Expense, Prisma } from "../generated/prisma/client";
 import type { Db } from "../db";
 import { getExpenseRuntime } from "../runtime";
-import { isEveryday, lineKind, withinEverydayLimits, missingSeats, needsBoardApproval, needsBoardSeat, type FilledSeat, type Seat, type SignoffFacts, type StepSigner } from "./signoff";
+import { isEveryday, lineKind, reimburseeUnknown, withinEverydayLimits, missingSeats, needsBoardApproval, needsBoardSeat, type FilledSeat, type Seat, type SignoffFacts, type StepSigner } from "./signoff";
 import type { ExpenseSettings } from "../contract";
 import { readExpenseSettings } from "../services/settingsService";
 import { writeAudit } from "./audit";
@@ -9,6 +9,7 @@ import { dropHandSetAccount } from "./account-types";
 import { advanceWorkflowInTx, type Actor } from "./workflow-engine";
 import { ServiceError } from "@checkin/component-kit";
 import { liveIds } from "./livePeople";
+import { taxWaitsOnFinance } from "./reasons";
 
 type SignoffExpense = Pick<
   Expense,
@@ -262,6 +263,41 @@ export async function boardApprovalNeeded(db: Db, expense: Pick<SignoffExpense, 
 /** What still holds a line: its unfilled seats, then the Board's approval when the expense needs it. */
 export function lineHolds(approvalNeeded: boolean, facts: SignoffFacts, filled: FilledSeat[]): LineHold[] {
   return [...missingSeats(facts, filled), ...(approvalNeeded ? (["BOARD_APPROVAL"] as const) : [])];
+}
+
+/** Whether the stored expense's tax waits on finance; while it does, the expense neither closes nor posts. */
+export async function storedTaxWaits(db: Db, expenseId: string): Promise<boolean> {
+  const { taxCents, receiptReview, taxApproval } = await db.expense.findUniqueOrThrow({
+    where: { id: expenseId },
+    select: {
+      taxCents: true,
+      receiptReview: { select: { taxReviewRequired: true, reasons: true, approvedTaxCents: true } },
+      taxApproval: { select: { taxCents: true } },
+    },
+  });
+  return taxWaitsOnFinance(taxCents, receiptReview, taxApproval?.taxCents ?? null);
+}
+
+/**
+ * The expenses the QB outbox holds back: tax waiting on finance, or, outside a backfill, an
+ * unknown reimbursee or a line with an unfilled sign-off. Each clears when the missing step is done.
+ */
+export async function outboxHeldIds(db: Db, expenses: (SignoffExpense & Pick<Expense, "state" | "backfill">)[]): Promise<Set<string>> {
+  if (expenses.length === 0) return new Set();
+  const taxes = await db.expense.findMany({
+    where: { id: { in: expenses.map((e) => e.id) } },
+    select: {
+      id: true,
+      taxCents: true,
+      receiptReview: { select: { taxReviewRequired: true, reasons: true, approvedTaxCents: true } },
+      taxApproval: { select: { taxCents: true } },
+    },
+  });
+  const held = new Set(taxes.filter((t) => taxWaitsOnFinance(t.taxCents, t.receiptReview, t.taxApproval?.taxCents ?? null)).map((t) => t.id));
+  const signed = expenses.filter((e) => !e.backfill);
+  const unsigned = await unsignedLinesForExpenses(db, signed);
+  for (const e of signed) if (reimburseeUnknown(e) || unsigned.get(e.id)!.size > 0) held.add(e.id);
+  return held;
 }
 
 /**

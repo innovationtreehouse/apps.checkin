@@ -1,4 +1,7 @@
-import { inAgreementAgeBand, hasKnownAdultAge, agreementCycleFloor } from "@/lib/membership/personAgreementTriggers";
+import prisma from "@/lib/prisma";
+import { inAgreementAgeBand, hasKnownAdultAge, agreementCycleFloor, openPersonAgreement } from "@/lib/membership/personAgreementTriggers";
+
+jest.mock("@/lib/prisma", () => ({ __esModule: true, default: { $transaction: jest.fn() } }));
 
 /**
  * The two pure rules behind PERSON_AGREEMENT: who the automatic pass picks, and
@@ -97,5 +100,16 @@ describe("agreementCycleFloor — one agreement per cycle, no double-ask", () =>
         expect(after.getUTCFullYear() - before.getUTCFullYear()).toBe(1);
         expect(after.getUTCMonth()).toBe(before.getUTCMonth());
         expect(after.getUTCDate()).toBe(before.getUTCDate());
+    });
+});
+
+describe("openPersonAgreement — the per-person transaction", () => {
+    it("runs with the explicit 15-second timeout", async () => {
+        const transaction = jest.mocked(prisma.$transaction);
+        transaction.mockResolvedValue(null as never);
+
+        await openPersonAgreement(1, NOW, NOW);
+
+        expect(transaction.mock.calls[0]?.[1]).toEqual({ maxWait: 5_000, timeout: 15_000 });
     });
 });

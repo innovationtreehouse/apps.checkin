@@ -146,7 +146,7 @@ export default function ItemsPage() {
                         disabled={busy === item.variantId || item.decision === "undecided"}
                       />
                     ) : item.quickBooksAccountId ? accountLabel(accounts.data, item.quickBooksAccountId) : "Not set"}
-                    {isFinance && <InactivePickWarning saved={item.quickBooksAccountId} options={accounts.data} />}
+                    {isFinance && <InactivePickWarning saved={item.quickBooksAccountId} options={accounts.data} advice="Pick an active one." />}
                     {item.decision !== "undecided" && !item.quickBooksAccountId && <Text size="xs" c="red">No account; its payouts wait</Text>}
                   </Table.Td>
                 </Table.Tr>

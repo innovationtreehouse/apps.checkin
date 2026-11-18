@@ -216,7 +216,7 @@ describe('POST /api/membership-ops/households — grant/revoke audit logging', (
         expect((await prisma.orgMembership.findUniqueOrThrow({ where: { id: m.id } })).status).toBe('ACTIVE');
     });
 
-    it('grant on a DENIED household changes nothing and raises a board exception', async () => {
+    it('grant on a DENIED household changes nothing and raises no board exception', async () => {
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
         const householdId = await makeHousehold('grantdenied');
         const m = await prisma.orgMembership.create({ data: { householdId, status: 'DENIED' } });
@@ -226,11 +226,10 @@ describe('POST /api/membership-ops/households — grant/revoke audit logging', (
         expect((await prisma.orgMembership.findUniqueOrThrow({ where: { id: m.id } })).status).toBe('DENIED');
         expect(await prisma.orgMembershipProcess.count({ where: { orgMembershipId: m.id } })).toBe(0);
         const person = await prisma.person.findFirstOrThrow({ where: { householdId } });
-        const exception = await prisma.paymentException.findFirst({ where: { kind: 'DENIED_HOUSEHOLD_ACTIVITY', personId: person.id } });
-        expect(exception).toMatchObject({ status: 'OPEN', severity: 'CRITICAL' });
+        expect(await prisma.paymentException.count({ where: { kind: 'DENIED_HOUSEHOLD_ACTIVITY', personId: person.id } })).toBe(0);
     });
 
-    it('grant on a DENIED household with a payable renewal changes nothing and raises a board exception', async () => {
+    it('grant on a DENIED household with a payable renewal changes nothing and raises no board exception', async () => {
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
         const householdId = await makeHousehold('comingyeardenied');
         const m = await prisma.orgMembership.create({ data: { householdId, status: 'DENIED' } });
@@ -241,7 +240,9 @@ describe('POST /api/membership-ops/households — grant/revoke audit logging', (
         expect((await prisma.orgMembership.findUniqueOrThrow({ where: { id: m.id } })).status).toBe('DENIED');
         expect(await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: p.id } })).toMatchObject({ status: 'PENDING_PAYMENT', paidAt: null });
         const person = await prisma.person.findFirstOrThrow({ where: { householdId } });
-        expect(await prisma.paymentException.findFirst({ where: { kind: 'DENIED_HOUSEHOLD_ACTIVITY', personId: person.id } })).not.toBeNull();
+        expect(await prisma.paymentException.count({
+            where: { kind: 'DENIED_HOUSEHOLD_ACTIVITY', OR: [{ personId: person.id }, { processId: p.id }] },
+        })).toBe(0);
     });
 
     it('grant on a lapsed ACTIVE household with nothing in flight opens its renewal, in or out of season', async () => {

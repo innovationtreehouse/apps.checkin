@@ -90,7 +90,7 @@ export const GET = withCron(() => duringNightlyRun(async () => {
                         }] : []);
                         await logCloseDepartures(tx, closeId, systemActor("cron:nightly"), departures, "NIGHTLY_SWEEP");
                         return segments;
-                    }));
+                    }, { maxWait: 5_000, timeout: 15_000 }));
                     if (segments.length > 0) forceClosed.push(visit);
                 } catch (err) {
                     failed += 1;

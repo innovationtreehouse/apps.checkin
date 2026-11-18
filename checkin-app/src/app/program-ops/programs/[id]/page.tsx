@@ -287,8 +287,8 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
 
   // Ownership gate stays inline — it needs the loaded program (lead-mentor id)
   // to decide, which useRequireRole (a static role gate) can't express.
-  const user = sessionUser as unknown as { id: number; isSysadmin?: boolean; isBoardMember?: boolean };
-  const isAuthorized = program.leadMentorId === user?.id || user?.isSysadmin || user?.isBoardMember;
+  const user = sessionUser as unknown as { id: number; isSysadmin?: boolean; isBoardMember?: boolean; isFinance?: boolean };
+  const isAuthorized = program.leadMentorId === user?.id || user?.isSysadmin || user?.isBoardMember || user?.isFinance;
 
   if (!isAuthorized) {
     return (
@@ -302,6 +302,9 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
   }
 
   const isSysAdminOrBoard = user?.isSysadmin || user?.isBoardMember;
+  // Finance reaches only the roster, to enroll places paid outside the store.
+  const rosterOnly = !isSysAdminOrBoard && program.leadMentorId !== user?.id;
+  const tab = rosterOnly ? 'roster' : activeTab;
   const phaseBadge = PHASE_BADGE[program.phase];
   // Pricing is fixed at creation; derive rather than track as state.
   const isFree = program.orgMemberPriceCents === null && program.nonOrgMemberPriceCents === null;
@@ -331,15 +334,15 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
 
         {loadError && <LoadError what="the program" message={loadError} onRetry={reload} />}
 
-        <Tabs value={activeTab} onChange={(v) => setActiveTab((v as typeof activeTab) ?? 'general')}>
+        <Tabs value={tab} onChange={(v) => setActiveTab((v as typeof activeTab) ?? 'general')}>
           <ScrollableTabsList mb="lg">
-            <Tabs.Tab value="general">General</Tabs.Tab>
+            {!rosterOnly && <Tabs.Tab value="general">General</Tabs.Tab>}
             <Tabs.Tab value="roster">Roster</Tabs.Tab>
-            <Tabs.Tab value="events">Events</Tabs.Tab>
+            {!rosterOnly && <Tabs.Tab value="events">Events</Tabs.Tab>}
           </ScrollableTabsList>
 
           {/* GENERAL */}
-          <Tabs.Panel value="general">
+          {!rosterOnly && <Tabs.Panel value="general">
             <form onSubmit={handleSaveGeneral}>
               <Stack mb="lg">
                 <Group wrap="wrap">
@@ -515,7 +518,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
                 </Group>
               </Stack>
             </form>
-          </Tabs.Panel>
+          </Tabs.Panel>}
 
           {/* ROSTER */}
           <Tabs.Panel value="roster">
@@ -524,15 +527,16 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
               program={program}
               isSysAdminOrBoard={!!isSysAdminOrBoard}
               isBoardMember={!!user?.isBoardMember}
+              canEnrollByHand={!!(user?.isBoardMember || user?.isFinance)}
               viewerHouseholdId={sessionUser?.householdId ?? null}
               fetchProgram={reload}
             />
           </Tabs.Panel>
 
           {/* EVENTS */}
-          <Tabs.Panel value="events">
+          {!rosterOnly && <Tabs.Panel value="events">
             <ProgramEventsTab programId={program.id} events={program.events} />
-          </Tabs.Panel>
+          </Tabs.Panel>}
         </Tabs>
       </Card>
     </Container>

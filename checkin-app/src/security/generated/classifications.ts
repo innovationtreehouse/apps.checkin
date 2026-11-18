@@ -85,6 +85,7 @@ export const classifications = {
         memberSince: 'public',
         status: 'public',
         isVolunteerFamily: 'public',
+        notRenewingYear: 'internal',
         householdId: 'public',
     },
     OrgMembershipProcess: {
@@ -142,8 +143,6 @@ export const classifications = {
         standardMembershipFeeCents: 'public',
         volunteerMembershipFeeCents: 'public',
         orgMembershipYearBoundary: 'public',
-        orgMembershipVariantId: 'internal',
-        orgMembershipProductUrl: 'internal',
         volunteerFamilyDiscountCode: 'internal',
         bgRecheckMonths: 'public',
         keyVolunteerAgreementVersion: 'public',
@@ -304,6 +303,7 @@ export const classifications = {
         paymentPlanDeniedAt: 'hardship',
         shopifyOrderId: 'internal',
         seatTakenWithoutSaleAt: 'hardship',
+        enrollmentBasis: 'hardship',
         endedAt: 'personal',
     },
     Event: {
@@ -801,7 +801,7 @@ export const relations = {
 
 export const marks = {
     OrgMembershipProcess: ['isPaymentPlanRequested', 'scholarshipRequestKind'],
-    ProgramParticipant: ['isPaymentPlanRequested', 'scholarshipRequestKind', 'inventoryHeldAt', 'paymentPlanDeniedAt', 'seatTakenWithoutSaleAt'],
+    ProgramParticipant: ['isPaymentPlanRequested', 'scholarshipRequestKind', 'inventoryHeldAt', 'paymentPlanDeniedAt', 'seatTakenWithoutSaleAt', 'enrollmentBasis'],
 } as const;
 
 export type Models = keyof typeof classifications;

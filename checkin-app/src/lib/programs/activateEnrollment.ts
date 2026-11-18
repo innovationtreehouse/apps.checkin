@@ -1,10 +1,13 @@
 import prisma from "@/lib/prisma";
+import type { DbClient } from "@/lib/db-client";
 import { logger } from "@/lib/logger";
 import { changeProgramStockWith } from "@/lib/shopify/stock";
 import { ENROLLMENT_WRITES, fromWhere } from "@/lib/programs/enrollmentState";
 import { saleStockDelta } from "@/lib/programs/saleState";
 import { isOrderReversed, raisePaymentException, recordReversal } from "@/lib/finance/reconcile/exceptions";
 import { takeBackRestockedSeats } from "@/lib/finance/reconcile/reversals";
+import { peopleSpentBy } from "@/lib/finance/reconcile/program";
+import { programVariantIds } from "@/lib/programs/variants";
 
 /**
  * Activate paid program enrollments — the single choke point the Shopify
@@ -20,6 +23,8 @@ import { takeBackRestockedSeats } from "@/lib/finance/reconcile/reversals";
  * Callers must first establish the order pays for these people
  * (orderEntitlesEnrollment in lib/finance/reconcile/program.ts); this function does not.
  * A reversed order activates nobody (see {@link refuseReversedActivation}).
+ * Under the order's lock it activates no more people than the order has unspent seats,
+ * and raises the rest for the Board (see {@link unspentSeats}).
  */
 export interface ActivateEnrollmentInput {
     programId: number;
@@ -27,8 +32,8 @@ export interface ActivateEnrollmentInput {
     personIds: number[];
     /** Numeric Shopify order id, stored on each activated participant for reversal joins. */
     shopifyOrderId: string;
-    /** The paying order's lines; seats on the claimant variant never touched public stock. Omitted = all public. */
-    lines?: { variantId: string; quantity: number }[];
+    /** The paying order's lines; seats on the claimant variant never touched public stock. Omitted = all public, uncounted. */
+    lines?: { variantId: string; quantity: number; currentQuantity?: number }[];
 }
 
 export interface ActivateEnrollmentResult {
@@ -37,6 +42,28 @@ export interface ActivateEnrollmentResult {
     claimantSeatCount: number;
     /** True when the order was reversed, so nobody was activated. */
     reversed?: boolean;
+    /** People left pending because the order's seats were already spent. */
+    refusedPersonIds?: number[];
+}
+
+/**
+ * Seats on this program's variants the order still has to give, and the people it
+ * already seated, counted under the order's lock, so two activations of one order
+ * cannot both spend its last seat and nobody is seated twice by it.
+ * Null when the caller gave no lines: there is nothing to count against.
+ */
+export async function unspentSeats(
+    db: DbClient,
+    program: { shopifyVariantId: string | null; claimantShopifyVariantId: string | null },
+    programId: number,
+    shopifyOrderId: string,
+    lines: ActivateEnrollmentInput["lines"],
+): Promise<{ unspent: number; spentOn: Set<number> } | null> {
+    if (!lines?.length || !shopifyOrderId) return null;
+    const variantIds = new Set(programVariantIds(program));
+    const seats = lines.filter((l) => variantIds.has(l.variantId)).reduce((n, l) => n + (l.currentQuantity ?? l.quantity), 0);
+    const spentOn = await peopleSpentBy(db, shopifyOrderId, programId);
+    return { unspent: Math.max(0, seats - spentOn.size), spentOn };
 }
 
 /**
@@ -90,11 +117,18 @@ export async function activateProgramEnrollment(input: ActivateEnrollmentInput):
     const { result, landed } = await changeProgramStockWith({ id: programId, shopifyVariantId: program?.shopifyVariantId ?? null }, "activation", async (tx) => {
         // Holds the order's reversal lock to commit: a refund is either seen here, or waits and then finds the flipped rows.
         if (shopifyOrderId && (await isOrderReversed(tx, shopifyOrderId))) {
-            return { result: { activatedCount: 0, releasedHoldCount: 0, claimantSeatCount: 0, delta: 0, reversed: true }, delta: 0 };
+            return { result: { activatedCount: 0, releasedHoldCount: 0, claimantSeatCount: 0, delta: 0, reversed: true, refusedPersonIds: [] }, delta: 0 };
         }
+        const cap = program ? await unspentSeats(tx, program, programId, shopifyOrderId, lines) : null;
         let activatedCount = 0;
         let releasedHoldCount = 0;
+        const refusedPersonIds: number[] = [];
         for (const personId of personIds) {
+            // A person the order already seated, who left and came back, is not seated by it again.
+            if (cap !== null && (activatedCount >= cap.unspent || cap.spentOn.has(personId))) {
+                refusedPersonIds.push(personId);
+                continue;
+            }
             // Guarded PENDING → ACTIVE: status flip and hold release in one write (invariant I1),
             // idempotent for a redelivery (the row is already ACTIVE → 0 rows). Whether a hold
             // was released is read off which guarded write matched, never off a pre-read.
@@ -119,16 +153,24 @@ export async function activateProgramEnrollment(input: ActivateEnrollmentInput):
         const claimantSeatCount = program?.maxParticipants != null ? Math.min(claimantPaid, activatedCount) : 0;
         // Once the sale has ended only a reduction goes through, so no seat goes back on sale.
         const delta = program ? saleStockDelta(program, publicStockDelta(releasedHoldCount, claimantSeatCount)) : 0;
-        return { result: { activatedCount, releasedHoldCount, claimantSeatCount, delta, reversed: false }, delta };
+        return { result: { activatedCount, releasedHoldCount, claimantSeatCount, delta, reversed: false, refusedPersonIds }, delta };
     }, { deferred: true });
 
-    const { activatedCount, releasedHoldCount, claimantSeatCount, delta, reversed } = result;
+    const { activatedCount, releasedHoldCount, claimantSeatCount, delta, reversed, refusedPersonIds } = result;
     // After commit: the refusal records the reversal on its own connection, which needs the order's lock released.
     if (reversed) {
         await refuseReversedActivation(programId, personIds, shopifyOrderId);
         return { activatedCount: 0, releasedHoldCount: 0, claimantSeatCount: 0, reversed: true };
     }
+    // The same exception the order check raises for a shortfall; only a child still pending is raised.
+    for (const personId of refusedPersonIds) {
+        const pending = await prisma.programParticipant.findUnique({
+            where: { programId_personId: { programId, personId }, ...fromWhere("PENDING_UNPAID") },
+            select: { personId: true },
+        });
+        if (pending) await raisePaymentException("AMOUNT_MISMATCH", { shopifyOrderId, programId, personId });
+    }
     if (!landed) logger.error(`[enroll] Failed to adjust public stock by ${delta} for program ${programId} (${releasedHoldCount} hold(s) released, ${claimantSeatCount} claimant seat(s)) — capacity may be out of sync.`);
 
-    return { activatedCount, releasedHoldCount, claimantSeatCount };
+    return { activatedCount, releasedHoldCount, claimantSeatCount, ...(refusedPersonIds.length > 0 && { refusedPersonIds }) };
 }

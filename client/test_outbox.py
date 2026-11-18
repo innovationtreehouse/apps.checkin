@@ -47,10 +47,13 @@ class FakeState:
     def take_local_close(self, participant_id):
         return False
 
-    def arm_local_close(self, participant_id, seconds):
+    def arm_local_close(self, participant_id, seconds, banner_html=None, wait_html=None):
         return
 
     def is_repeat_read(self, participant_id):
+        return False
+
+    def in_close_wait(self, participant_id):
         return False
 
     def close_decision(self, participant_id):

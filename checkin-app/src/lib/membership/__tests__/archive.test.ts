@@ -5,6 +5,7 @@ import prisma from '@/lib/prisma';
 import { archiveApplication, unarchiveApplication } from '@/lib/membership/archive';
 import type { OrgMembershipProcess } from '@/generated/prisma/client';
 import { settleHouseholdBg } from '@/lib/membership/settleHouseholdBg';
+import { logBackendError } from '@/lib/logger';
 import { pickUpMissedSignature } from '@/lib/membership/external';
 
 const tx = {
@@ -28,6 +29,7 @@ jest.mock('@/lib/membership/review', () => ({
     reviewHouseholds: jest.fn().mockResolvedValue([5]),
 }));
 jest.mock('@/lib/membership/settleHouseholdBg', () => ({ settleHouseholdBg: jest.fn().mockResolvedValue([]) }));
+jest.mock('@/lib/logger', () => ({ ...jest.requireActual('@/lib/logger'), logBackendError: jest.fn() }));
 jest.mock('@/lib/conflictOfInterest', () => ({ hasHouseholdConflict: jest.fn().mockResolvedValue(false) }));
 jest.mock('@/lib/membership/external', () => ({
     advanceExternalIfComplete: jest.fn().mockResolvedValue(null),
@@ -91,6 +93,17 @@ describe('unarchiveApplication (Reopen)', () => {
         await expect(unarchiveApplication(1, 2)).resolves.toEqual({ status: 'PENDING_RENEWAL' });
         // Reopen settles the household on its people's check standing.
         expect(settleHouseholdBg).toHaveBeenCalledWith(5);
+    });
+
+    it('a failed settle is logged and the reopen still succeeds', async () => {
+        findUnique.mockResolvedValue(row({ kind: 'RENEWAL', status: 'ARCHIVED', archivedFromStatus: 'PENDING_RENEWAL' }));
+        tx.orgMembership.findUnique.mockResolvedValue({ status: 'ACTIVE' });
+        tx.orgMembershipProcess.findFirst.mockResolvedValue(null);
+        tx.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
+        const failure = new Error('Shopify unavailable');
+        jest.mocked(settleHouseholdBg).mockRejectedValueOnce(failure);
+        await expect(unarchiveApplication(1, 2)).resolves.toEqual({ status: 'PENDING_RENEWAL' });
+        expect(logBackendError).toHaveBeenCalledWith(failure, expect.any(String), { householdId: 5, processId: 1 });
     });
 
     describe('signing request across a denial', () => {

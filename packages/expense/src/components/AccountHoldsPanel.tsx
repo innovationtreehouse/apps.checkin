@@ -182,7 +182,7 @@ export default function AccountHoldsPanel({ expenseId, holds, lines, currency, i
                           if (await send(`${base}/line-items/${h.lineItemId}/account`, "PUT", { qbAccount: picked[h.id] }, "Account set")) onChanged();
                         }}
                       >Set account</Button>
-                      {!picked[h.id] && <InactivePickWarning saved={line?.manualQbAccount} options={live.data} />}
+                      {!picked[h.id] && <InactivePickWarning saved={line?.manualQbAccount} options={live.data} advice="Pick an active one." />}
                     </Group>
                   ) : (line?.manualQbAccount ? accountLabel(line.manualQbAccount) : "—")}
                 </Table.Td>

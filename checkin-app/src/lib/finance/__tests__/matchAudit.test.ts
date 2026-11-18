@@ -72,10 +72,8 @@ beforeEach(() => {
     mirrorMock.lineVariantStats.mockResolvedValue({ lines: 10, withVariant: 10 });
     mirrorMock.ordersForVariants.mockResolvedValue([]);
     mirrorMock.orderLegacyIdsPresent.mockResolvedValue(new Set());
-    prismaMock.membershipYearVariant.findMany.mockResolvedValue([]);
-    prismaMock.boardSettings.findUnique.mockResolvedValue({
-        orgMembershipVariantId: '111',
-    });
+    prismaMock.membershipYearVariant.findMany.mockResolvedValue([{ shopifyVariantId: '111', membershipYear: 2026 }]);
+    prismaMock.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: null });
     prismaMock.program.findMany.mockResolvedValue([
         { id: 7, name: 'Robotics', shopifyVariantId: '222' },
     ]);
@@ -354,6 +352,22 @@ describe('enrollment buckets', () => {
             const r = await runMatchAudit();
             expect(r.enrollments[0].bucket).toBe('ADMIN_COMPED');
             expect(r.enrollments[0].compedByName).toBe('Admin Amy');
+        });
+
+        it.each([
+            ['OUTSIDE_PAYMENT', 'PAID_OUTSIDE_STORE'],
+            ['COMP', 'ADMIN_COMPED'],
+        ])('a claim enrolled by hand as %s is %s, not a gap', async (enrollmentBasis, bucket) => {
+            prismaMock.programParticipant.findMany
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([enroll(3, { enrollmentBasis })]);
+            prismaMock.auditLog.findMany.mockResolvedValue([
+                { affectedEntityId: 3, secondaryAffectedEntity: 7, actorId: 42, newData: { status: 'PENDING' } },
+            ]);
+
+            const r = await runMatchAudit();
+            expect(r.enrollments[0].bucket).toBe(bucket);
+            expect(r.enrollments[0].compedByName).toBeNull();
         });
 
         it('created PENDING (later flipped some other way) stays NO_PAYMENT_BASIS — proves the inference', async () => {

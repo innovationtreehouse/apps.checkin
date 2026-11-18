@@ -170,7 +170,7 @@ test("a receipt goes from upload to an approved line in finance review", async (
     const base = `/api/expense/expenses/${encodeURIComponent(receiptId)}`;
     const signoffs = await api<Array<{ missing: string[] }>>(finance.session, `${base}/signoffs`);
     expect(signoffs.json.map((s) => s.missing)).toEqual([[]]);
-    // A fresh seed leaves the capital thresholds unset, so every expense waits at capital review before posting (docs/rules/expenses.md).
+    // A fresh seed leaves the capital thresholds unset, so every expense waits at capital review before posting.
     const expense = await api<{ Expense: { state: string } }>(finance.session, base);
     expect(expense.json.Expense.state).toBe("capital_review");
     await noProblems(watch, "the signed expense");

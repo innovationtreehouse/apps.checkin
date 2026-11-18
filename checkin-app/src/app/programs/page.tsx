@@ -98,7 +98,7 @@ export default function PublicProgramsDirectory() {
         <SimpleGrid cols={{ base: 1, sm: 2, md: 3 }}>
           {programs.map((program) => {
             const isOwner = session && session.user?.id === program.leadMentorId;
-            const canManage = session && (session.user?.isSysadmin || session.user?.isBoardMember || isOwner);
+            const canManage = session && (session.user?.isSysadmin || session.user?.isBoardMember || session.user?.isFinance || isOwner);
             return (
               <Card key={program.id} withBorder radius="md" padding="lg">
                 <Group justify="space-between" align="flex-start" mb="sm">

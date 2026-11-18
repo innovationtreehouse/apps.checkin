@@ -79,6 +79,28 @@ describe("failed safety check", () => {
     });
 });
 
+describe("safety answer without its flags", () => {
+    it("says the safety result is missing instead of reading it as all-clear, and Retry shows the warning", async () => {
+        setSession({ id: 1, name: "Kay Keyholder", isKeyholder: true });
+        mockFetchJson({
+            "/api/attendance": { access: "full", attendance: [], safety: {}, building: { reachable: true, lastSeenAt: null } },
+            "/api/membership": { membershipStatus: "ACTIVE" },
+        });
+        renderWithProviders(<Home />);
+
+        expect(await screen.findByText(/came back without the safety result/)).toBeInTheDocument();
+        expect(screen.getByText("Couldn't load the building safety check")).toBeInTheDocument();
+
+        mockFetchJson({
+            "/api/attendance": { access: "full", attendance: [], safety: violating, building: { reachable: true, lastSeenAt: null } },
+            "/api/membership": { membershipStatus: "ACTIVE" },
+        });
+        fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+        expect(await screen.findByText(/Two-Deep Compliance is failing/)).toBeInTheDocument();
+        expect(screen.queryByText(/came back without the safety result/)).not.toBeInTheDocument();
+    });
+});
+
 describe("failed membership read", () => {
     it("says the membership status could not load instead of hiding the join banner, and Retry shows it", async () => {
         setSession({ id: 1, name: "Val Visitor" });

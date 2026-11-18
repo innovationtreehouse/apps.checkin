@@ -113,7 +113,7 @@ export default function BooksMapPage() {
                       disabled={!isFinance}
                       onChange={(v) => void save(`/api/books-map/accounts/${r.role}`, { quickBooksAccountId: v }, "Account not saved")}
                     />
-                    <InactivePickWarning saved={r.quickBooksAccountId} options={accounts.data} />
+                    <InactivePickWarning saved={r.quickBooksAccountId} options={accounts.data} advice="Pick an active one." />
                   </Table.Td>
                 </Table.Tr>
               ))}
@@ -137,7 +137,7 @@ export default function BooksMapPage() {
                       disabled={!isFinance}
                       onChange={(v) => void save(`/api/books-map/classes/${r.budgetOwnerId}`, { quickBooksClassId: v }, "Class not saved")}
                     />
-                    <InactivePickWarning saved={r.quickBooksClassId} options={classes.data} />
+                    <InactivePickWarning saved={r.quickBooksClassId} options={classes.data} advice="Pick an active one." />
                   </Table.Td>
                 </Table.Tr>
               ))}

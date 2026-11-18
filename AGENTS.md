@@ -334,9 +334,10 @@ means say nothing, or approve.
 
 Read these before changing the relevant area — start here, then follow links.
 
-**Domain rules — read first** (`docs/rules/`)
-- The register of board and operations decisions, and the invariants a change must not violate: `membership.md`, `programs.md`, `people-households.md`, `revenue.md`, `expenses.md`, `attendance-checkin.md`, `tools-certification.md`, plus `principles.md` for the cross-cutting ones. **Before changing behaviour in a domain, read its file.** If a change contradicts a rule there, raise it — do not quietly proceed. A **Policy**-tier rule is not negotiable in a PR at all: stop and escalate.
-- `docs/DOCUMENTATION_STANDARD.md` — how documentation is organised, written, and retired: the document classes, what belongs in the register and what does not, the citation and format rules, and the working-doc lifecycle (write it in `docs/in-design/`, extract standing rules and delete it at merge). Read before writing or moving any doc.
+When a change would conflict with an organisational policy, stop and escalate to the owner.
+
+**Docs and conventions**
+- `docs/DOCUMENTATION_STANDARD.md` — how documentation is organised, written, and retired: the document classes and the working-doc lifecycle (write it in `docs/in-design/`, delete it at merge). Read before writing or moving any doc.
 - `docs/conventions.md` — how we build, independent of any domain.
 - `docs/comment-rules.md` — which comments to keep and which to delete, as numbered rules a reviewer can cite, plus a checklist for any PR that adds comments. Read before a comment sweep; the Comments section above is the policy it applies. Its `docs/comment-rules-rationale.md` carries the arguments behind the contested rules, for changing one rather than following it.
 

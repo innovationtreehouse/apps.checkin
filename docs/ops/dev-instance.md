@@ -4,10 +4,9 @@ How the app behaves off production: the environment flag, the org-login gate on
 the shared cloud dev instance, impersonation, and the dev dashboard's macros,
 reset, and ledger.
 
-Read this before adding anything that must not exist in production. The rule it
-has to satisfy is
-`docs/rules/principles.md` — *a non-production capability is absent in
-production*; what follows is how this app satisfies it.
+Read this before adding anything that must not exist in production. A
+non-production capability is absent in production; what follows is how this app
+satisfies that.
 
 ---
 

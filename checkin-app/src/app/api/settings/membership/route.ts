@@ -47,8 +47,7 @@ function parseYearVariants(raw: unknown, boundary: Date | null | undefined): Yea
 /**
  * PUT /api/settings/membership — update board settings.
  * Body may include: standardMembershipFeeCents, volunteerMembershipFeeCents, orgMembershipYearBoundary (ISO|null),
- * orgMembershipVariantId (string|null),
- * orgMembershipProductUrl (string|null), volunteerFamilyDiscountCode (string|null),
+ * volunteerFamilyDiscountCode (string|null),
  * perYearVariantClient (true — required; any other body is refused with nothing changed),
  * membershipYearVariants ([{ membershipYear, shopifyVariantId, productUrl }] — replaced by year; 409 when
  * another year already holds the variant, and nothing in the save is kept),
@@ -69,8 +68,6 @@ export const PUT = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
         standardMembershipFeeCents?: number;
         volunteerMembershipFeeCents?: number;
         orgMembershipYearBoundary?: string | null;
-        orgMembershipVariantId?: string | null;
-        orgMembershipProductUrl?: string | null;
         volunteerFamilyDiscountCode?: string | null;
         bgRecheckMonths?: number;
         devSigningTarget?: string | null;
@@ -107,16 +104,6 @@ export const PUT = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
     }
     if (body.orgMembershipYearBoundary !== undefined) {
         data.orgMembershipYearBoundary = body.orgMembershipYearBoundary ? new Date(body.orgMembershipYearBoundary) : null;
-    }
-    if (body.orgMembershipVariantId !== undefined) {
-        const variantId = body.orgMembershipVariantId?.trim();
-        if (variantId && !/^\d+$/.test(variantId)) return apiError("orgMembershipVariantId must be a numeric Shopify variant ID", 400);
-        data.orgMembershipVariantId = variantId || null;
-    }
-    // Reference only — the checkout link is built from the variant ID, never this
-    // URL; /extract-variant uses only its /products/<handle> part.
-    if (body.orgMembershipProductUrl !== undefined) {
-        data.orgMembershipProductUrl = body.orgMembershipProductUrl?.trim() || null;
     }
     if (body.volunteerFamilyDiscountCode !== undefined) {
         data.volunteerFamilyDiscountCode = body.volunteerFamilyDiscountCode?.trim() || null;

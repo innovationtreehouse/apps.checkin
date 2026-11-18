@@ -52,9 +52,27 @@ const SOURCES: { library: string; env: string; read: () => Promise<StuckItem[]>;
         library: "local inventory",
         env: "LOCAL_INVENTORY_DATABASE_URL",
         read: async () => (await import("@checkin/local-inventory")).stuckItems(),
-        retry: async (item) => (await import("@checkin/local-inventory")).retryStuckItem(item),
+        retry: async (item) => {
+            await (await import("@checkin/local-inventory")).retryStuckItem(item);
+            await markGiftLoaded(item.id);
+        },
     },
 ];
+
+/**
+ * After a retried `donation:<id>` load applies, bulk-donation's own load replays it (a no-op) and
+ * records the gift as loaded. Never fails the retry: the gift page's "Load again" does the same.
+ */
+async function markGiftLoaded(id: string): Promise<void> {
+    const giftId = /^donation:(\d+)$/.exec(id)?.[1];
+    if (!giftId || !process.env.BULK_DONATION_DATABASE_URL) return;
+    try {
+        const gifts = await import("@checkin/bulk-donation");
+        await gifts.manualInKindService.loadInventory(await gifts.getOrgId(), Number(giftId));
+    } catch (err) {
+        logger.error(`[problems] ${id} loaded, but the gift could not be marked loaded:`, err);
+    }
+}
 
 /** The database env var of each library the Problems list reads. */
 export const LIBRARY_DB_VARS = SOURCES.map((s) => s.env);

@@ -186,7 +186,8 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
     const isSysAdminOrBoard = !!(sessionUser?.isSysadmin || sessionUser?.isBoardMember);
     const isLeadMentor = !!sessionUser && sessionUser.id === program.leadMentorId;
     const isCoreVolunteer = !!sessionUser && program.volunteers.some(v => v.personId === sessionUser.id && v.isCore);
-    const isPrivileged = isSysAdminOrBoard || isLeadMentor || isCoreVolunteer;
+    // Finance reads the roster to enroll places paid outside the store.
+    const isPrivileged = isSysAdminOrBoard || !!sessionUser?.isFinance || isLeadMentor || isCoreVolunteer;
     const viewerIsLeader = (isLeadMentor || isCoreVolunteer) && !isSysAdminOrBoard;
     const emailWithheldFrom = emailWithheldParticipants(program.participants, viewerIsLeader);
     const ages = program.participants.map(p => ({
@@ -220,7 +221,7 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
     // because the catalog metadata (name/price/dates/spots) drives the public
     // registration page; only the roster is gated.
     //
-    // Staff (admin/board/lead/core-vol) or a member of an enrolled household see
+    // Staff (admin/board/finance/lead/core-vol) or a member of an enrolled household see
     // the rows; everyone else (anonymous, plain authenticated non-enrolled) gets
     // metadata + counts only. The public details/enroll page needs spots-remaining
     // (_count.participants), not names — a count is fine, the names are the leak.

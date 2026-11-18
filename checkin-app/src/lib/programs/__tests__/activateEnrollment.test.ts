@@ -10,11 +10,15 @@ type Row = { personId: number; status: "PENDING" | "ACTIVE"; inventoryHeldAt: Da
 const mockRows = new Map<number, Row>();
 const mockSnapshots = new Map<number, Row>();
 const mockStock: number[] = [];
+// People an earlier activation of the order seated: what seatsSpentBy reads back.
+const mockSpent: { personId: number }[] = [];
 
 jest.mock("@/lib/prisma", () => {
     const client = {
         program: { findUnique: jest.fn() },
+        auditLog: { findMany: jest.fn(async () => []) },
         programParticipant: {
+            findMany: jest.fn(async () => mockSpent),
             findUnique: jest.fn(async ({ where }: { where: { programId_personId: { personId: number } } }) => {
                 const id = where.programId_personId.personId;
                 return mockSnapshots.get(id) ?? mockRows.get(id) ?? null;
@@ -77,6 +81,7 @@ describe("activateProgramEnrollment public stock", () => {
         mockRows.clear();
         mockSnapshots.clear();
         mockStock.length = 0;
+        mockSpent.length = 0;
         (prisma.program.findUnique as jest.Mock).mockResolvedValue(program);
     });
 
@@ -144,5 +149,39 @@ describe("activateProgramEnrollment public stock", () => {
         expect(takeBackRestockedSeats).toHaveBeenCalledWith("9", { id: 7, shopifyVariantId: "pub" });
         expect(recordReversal).toHaveBeenCalledWith("9", "REVERSED_BEFORE_ACTIVATION");
         expect(adjustProgramInventory).not.toHaveBeenCalled();
+    });
+
+    it("activates no more people than the order has unspent seats, and raises the rest for the Board", async () => {
+        seat(1, false);
+        seat(2, false);
+        const res = await activateProgramEnrollment({ programId: 7, personIds: [1, 2], shopifyOrderId: "5", lines: [{ variantId: "pub", quantity: 1 }] });
+        expect(res).toMatchObject({ activatedCount: 1, refusedPersonIds: [2] });
+        expect(mockRows.get(2)).toMatchObject({ status: "PENDING" });
+        expect(raisePaymentException).toHaveBeenCalledWith("AMOUNT_MISMATCH", { shopifyOrderId: "5", programId: 7, personId: 2 });
+    });
+
+    it("an order whose seat another activation already spent seats nobody", async () => {
+        mockSpent.push({ personId: 9 });
+        seat(1, false);
+        const res = await activateProgramEnrollment({ programId: 7, personIds: [1], shopifyOrderId: "5", lines: [{ variantId: "pub", quantity: 1 }] });
+        expect(res).toMatchObject({ activatedCount: 0, refusedPersonIds: [1] });
+        expect(mockRows.get(1)).toMatchObject({ status: "PENDING" });
+    });
+
+    it("does not re-seat a person the order already paid for, who left and came back", async () => {
+        mockSpent.push({ personId: 1 });
+        seat(1, false);
+        seat(2, false);
+        const res = await activateProgramEnrollment({ programId: 7, personIds: [1, 2], shopifyOrderId: "5", lines: [{ variantId: "pub", quantity: 2 }] });
+        expect(res).toMatchObject({ activatedCount: 1, refusedPersonIds: [1] });
+        expect(mockRows.get(1)).toMatchObject({ status: "PENDING" });
+        expect(mockRows.get(2)).toMatchObject({ status: "ACTIVE" });
+    });
+
+    it("counts the order's current quantity, not the units an edit took off", async () => {
+        seat(1, false);
+        seat(2, false);
+        const res = await activateProgramEnrollment({ programId: 7, personIds: [1, 2], shopifyOrderId: "5", lines: [{ variantId: "pub", quantity: 2, currentQuantity: 1 }] });
+        expect(res.activatedCount).toBe(1);
     });
 });

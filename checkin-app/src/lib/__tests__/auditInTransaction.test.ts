@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
 /**
- * An audit row commits with the change it records (docs/rules/principles.md, Accountability).
+ * An audit row commits with the change it records.
  * Every audit write on the root client (`prisma.`) or through a `DbClient` parameter
  * (`db.`) is listed here with its reason. The list may only shrink: a new site fails,
  * and a file with fewer sites than its entry fails until the entry is updated.

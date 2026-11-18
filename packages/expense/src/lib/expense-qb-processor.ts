@@ -9,8 +9,7 @@ import { lookupItems, getItem, listCategories, listSubcategories } from "./catal
 import { matchingRules, type CatalogInfo } from "./account-rules";
 import { StaleStateError, advanceWorkflow, advanceWorkflowInTx, unlessRaceLost, type Actor } from "./workflow-engine";
 import { writeAudit } from "./audit";
-import { lockExpense, unsignedLines } from "./signoff-facts";
-import { reimburseeUnknown } from "./signoff";
+import { lockExpense, outboxHeldIds } from "./signoff-facts";
 import { postExpenseToQb, type PostOutcome } from "./expense-qb-poster";
 import { getExpenseRuntime } from "../runtime";
 import { sendOutcomeNotices } from "./outcome-notices";
@@ -299,7 +298,7 @@ async function commitQbProcessing(
   return db.$transaction(async (tx) => {
     await lockExpense(tx, expenseId);
     const current = await tx.expense.findUniqueOrThrow({ where: { id: expenseId } });
-    if (reimburseeUnknown(current) || (await unsignedLines(tx, current)).size > 0) return false;
+    if ((await outboxHeldIds(tx, [current])).size > 0) return false;
     if (resubmittedBy) await recordLiveRead(tx, resubmittedBy, expenseId, lineItems, rules, resolution);
     else await saveCatalogSnapshots(resolution.snapshots, tx);
 
@@ -368,6 +367,9 @@ export async function checkAndProcessExpense(orgId: string, expenseId: string, r
     if (!expense) return;
   }
 
+  // A held expense stays out of the outbox; the step that clears the hold drains it. The outbox commit re-checks under the lock.
+  if ((await outboxHeldIds(db, [expense])).size > 0) return;
+
   // Historical backfill: already booked in QuickBooks. Skip the QB post entirely and land terminal.
   // Everything upstream (owner approval auto-resolved, capital review + depreciation) has already run.
   if (expense.backfill && expense.state === "qb_pending") {
@@ -388,10 +390,6 @@ export async function checkAndProcessExpense(orgId: string, expenseId: string, r
     where: { orgId, expenseId },
   });
   if (existing) return;
-
-  // An unknown reimbursee or a line with an unfilled sign-off seat holds the expense out of the
-  // outbox; setting the reimbursee or the last sign-off drains it. The outbox commit re-checks under the lock.
-  if (reimburseeUnknown(expense) || (await unsignedLines(db, expense)).size > 0) return;
 
   try {
     await processExpenseForQb(orgId, expenseId, expense, resubmittedBy);
@@ -490,13 +488,12 @@ async function processExpenseForQb(orgId: string, expenseId: string, expense: Ex
 
 // ── Stranded recovery (catch-up sweep) ────────────────────────────────────────
 // Re-runs expenses left in qb_pending without an outbox row (a crash between the state advance and
-// QB processing). A qb_error expense waits for a person's retry. The host's daily cron step calls
-// it; checkAndProcessExpense is idempotent. Capped; returns counts only.
+// QB processing). A held expense or a qb_error one waits for a person, so neither takes a slot. The
+// host's daily cron step calls it; checkAndProcessExpense is idempotent. Capped; returns counts only.
 
 export async function recoverStrandedQbExpenses(limit = 50): Promise<{ checked: number; failed: number }> {
   const candidates = await db.expense.findMany({
     where: { state: "qb_pending" },
-    select: { id: true, orgId: true },
     orderBy: { submittedAt: "asc" },
   });
 
@@ -509,7 +506,9 @@ export async function recoverStrandedQbExpenses(limit = 50): Promise<{ checked: 
 
   let checked = 0;
   let failed = 0;
-  for (const { id, orgId } of candidates.filter((c) => !processedIds.has(c.id)).slice(0, limit)) {
+  const unprocessed = candidates.filter((c) => !processedIds.has(c.id));
+  const held = await outboxHeldIds(db, unprocessed);
+  for (const { id, orgId } of unprocessed.filter((c) => !held.has(c.id)).slice(0, limit)) {
     checked++;
     try {
       await checkAndProcessExpense(orgId, id);

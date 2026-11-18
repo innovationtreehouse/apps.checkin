@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import type { DbClient } from "@/lib/db-client";
 import { logger } from "@/lib/logger";
 import { unentitledMemberCodeUse } from "@/lib/programs/memberDiscountCode";
 import { fromWhere } from "@/lib/programs/enrollmentState";
@@ -60,7 +61,7 @@ export async function orderEntitlesEnrollment(order: EntitlementOrder, programId
     const program = await prisma.program.findUnique({ where: { id: programId }, select: { shopifyVariantId: true, claimantShopifyVariantId: true } });
     const variantIds = new Set(program ? programVariantIds(program) : []);
     const seats = order.lines.filter((l) => variantIds.has(l.variantId)).reduce((n, l) => n + l.currentQuantity, 0);
-    const unspent = Math.max(0, seats - await seatsSpentBy(order, programId));
+    const unspent = Math.max(0, seats - (order.legacyId ? await seatsSpentBy(prisma, order.legacyId, programId) : 0));
     if (awaiting === 0) {
         const surplus = await surplusSeats(order, programId, personIds, unspent);
         return { ok: false, kind: surplus?.kind ?? null, personId: surplus?.personId, nothingAwaiting: true };
@@ -100,31 +101,35 @@ async function surplusSeats(order: EntitlementOrder, programId: number, personId
  * and those who have since left (removed or withdrawn). Each spent one of its seats.
  * Scoped by order, not by the people a caller names, because the seats belong to the order.
  */
-async function seatsSpentBy(order: EntitlementOrder, programId: number): Promise<number> {
-    if (!order.legacyId) return 0;
+export async function seatsSpentBy(db: DbClient, shopifyOrderId: string, programId: number): Promise<number> {
+    return (await peopleSpentBy(db, shopifyOrderId, programId)).size;
+}
+
+/** The people behind {@link seatsSpentBy}: each already took one of the order's seats. */
+export async function peopleSpentBy(db: DbClient, shopifyOrderId: string, programId: number): Promise<Set<number>> {
     // A withdrawn row still carries the order until a re-enrolment clears it; the audit keeps it after.
-    const holders = await prisma.programParticipant.findMany({
-        where: { programId, shopifyOrderId: order.legacyId, OR: [fromWhere("ACTIVE"), fromWhere("WITHDRAWN")] },
+    const holders = await db.programParticipant.findMany({
+        where: { programId, shopifyOrderId, OR: [fromWhere("ACTIVE"), fromWhere("WITHDRAWN")] },
         select: { personId: true },
     });
-    const left = await prisma.auditLog.findMany({
+    const left = await db.auditLog.findMany({
         where: {
             tableName: "ProgramParticipant",
             secondaryAffectedEntity: programId,
             OR: [
-                { action: "DELETE", oldData: { path: ["shopifyOrderId"], equals: order.legacyId } },
+                { action: "DELETE", oldData: { path: ["shopifyOrderId"], equals: shopifyOrderId } },
                 {
                     action: "EDIT",
                     AND: [
                         { newData: { path: ["status"], equals: "WITHDRAWN" } },
-                        { newData: { path: ["shopifyOrderId"], equals: order.legacyId } },
+                        { newData: { path: ["shopifyOrderId"], equals: shopifyOrderId } },
                     ],
                 },
             ],
         },
         select: { affectedEntityId: true },
     });
-    return new Set([...holders.map((h) => h.personId), ...left.map((d) => d.affectedEntityId)]).size;
+    return new Set([...holders.map((h) => h.personId), ...left.map((d) => d.affectedEntityId)]);
 }
 
 /**
@@ -135,7 +140,16 @@ async function seatsSpentBy(order: EntitlementOrder, programId: number): Promise
 export async function reconcileForwardProgram(order: MirrorOrder): Promise<boolean> {
     if (order.legacyId) {
         const known = await prisma.programParticipant.findFirst({ where: { shopifyOrderId: order.legacyId }, select: { programId: true } });
-        if (known) return true;
+        if (known) {
+            if ((await unspentOn(order, known.programId)) <= 0) return true;
+            // A hand match spent part of an order no checkout tied to anyone: nobody the app can
+            // name holds the rest, so the Board places its seats.
+            if (!mirror.orderAttr(order, "Program_ID")) {
+                await raisePaymentException("UNCLAIMED_SEATS", { shopifyOrderId: order.legacyId, programId: known.programId });
+                return true;
+            }
+            // A checkout order with seats left is judged like any other.
+        }
     }
 
     // Preferred: the cart attributes the enroll flow's checkout link set — the same
@@ -183,6 +197,14 @@ export async function reconcileForwardProgram(order: MirrorOrder): Promise<boole
     return activateProgramFromOrder(order, programs[0], matched.map((p) => p.personId));
 }
 
+/** Seats on this program's variants the order carries that nobody has spent yet. */
+async function unspentOn(order: MirrorOrder, programId: number): Promise<number> {
+    const program = await prisma.program.findUnique({ where: { id: programId }, select: { shopifyVariantId: true, claimantShopifyVariantId: true } });
+    const variantIds = new Set(program ? programVariantIds(program) : []);
+    const seats = (await mirror.orderLines(order.orderGid)).filter((l) => variantIds.has(l.variantId)).reduce((n, l) => n + l.currentQuantity, 0);
+    return seats - (order.legacyId ? await seatsSpentBy(prisma, order.legacyId, programId) : 0);
+}
+
 /** Shared tail for both program-matching paths: judge, then activate through the one choke point. */
 async function activateProgramFromOrder(order: MirrorOrder, programId: number, personIds: number[]): Promise<boolean> {
     const lines = await mirror.orderLines(order.orderGid);
@@ -198,7 +220,14 @@ async function activateProgramFromOrder(order: MirrorOrder, programId: number, p
             logger.info(`[reconcile] program order ${order.legacyId} (program ${programId}): order already spent on earlier enrollments — not activated`);
         } else if (entitlement.kind) {
             logger.warn(`[reconcile] program order ${order.legacyId} not entitled (${entitlement.kind}, program ${programId}) — NOT activated`);
-            await raisePaymentException(entitlement.kind, { shopifyOrderId: order.legacyId, programId, personId: entitlement.personId ?? personIds[0] ?? null });
+            // Every candidate child is raised, so none is left pending unnamed, and none reads as the answer.
+            const named = entitlement.personId != null ? [entitlement.personId] : personIds.length ? personIds : [null];
+            const evidence = named.length > 1
+                ? `The order could be for any of ${named.length} children (${named.join(", ")}); which one it pays for is unknown.`
+                : undefined;
+            for (const personId of named) {
+                await raisePaymentException(entitlement.kind, { shopifyOrderId: order.legacyId, programId, personId, ...(evidence && { evidence }) });
+            }
         }
         return true;
     }

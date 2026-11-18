@@ -238,6 +238,20 @@ describeDb("QB-3 drift", () => {
     expect(await db.expenseFlag.findFirst({ where: { expenseId: id, kind: "QB_POST_HELD" } })).toMatchObject({ checkedOffAt: null });
   });
 
+  it("leaves a matched entry's checked-off drift closed, and reopens on different drift", async () => {
+    const { id, entry } = await matched("2026-09-10");
+    entry.TotalAmt = 12;
+    await checkQbDrift();
+    await checkOff(id);
+
+    await checkQbDrift();
+    expect((await driftFlag(id))?.checkedOffAt).not.toBeNull();
+
+    entry.Line = [line(7, "60"), line(5, "62")];
+    await checkQbDrift();
+    expect(await driftFlag(id)).toMatchObject({ detail: "amount, accounts", checkedOffAt: null });
+  });
+
   it("raises nothing for a matched entry still as it was at match", async () => {
     const { id } = await matched("2026-09-10");
 

@@ -48,7 +48,7 @@ Status: **ALL 7 chips folded (V1–V7).** Every step tagged vs live code at base
 5. ✅ View membership status
 6. 🟡 BLOCKED recovery (`M16` — left-rail alert only, no right-column card)
 7. n/a household-merge (doesn't exist; M18 is the **person/record merge** #1103, confirmed)
-8. ✅ Archive family — a Board act, not the lead's (`docs/rules/people-households.md` § Archived households)
+8. ✅ Archive family — a Board act, not the lead's
 9. ❌ Set/maintain each person's t-shirt size (+staleness re-confirm, `P21`)
 10. ❌ See own family's tool certs (`SA9`)
 11. ❌ Re-read the membership agreement PDF (`M20`)

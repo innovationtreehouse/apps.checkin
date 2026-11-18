@@ -25,7 +25,7 @@ ROSTER = {
     "safety": {"isTwoDeepViolation": True},
     "rosterAsOf": "2026-10-31T18:00:00Z",
 }
-EMPTY_ROSTER = {"access": "full", "counts": {"total": 0}, "attendance": [], "safety": {}}
+EMPTY_ROSTER = {"access": "full", "counts": {"total": 0}, "attendance": [], "safety": {"isTwoDeepViolation": False}}
 
 
 def offline_backend():
@@ -122,6 +122,15 @@ class TestRestart(SavedViewCase):
         self.assertFalse(state.last_two_deep_violation)
         state, _ = self.start()
         self.assertEqual(state.present_ids, set())
+
+    def test_roster_without_a_verdict_keeps_the_caution(self):
+        self.started_with_roster()
+        state, outbox = self.started_with_roster(dict(ROSTER, safety=None))
+        self.assertTrue(state.last_two_deep_violation)
+        state, outbox = self.start()
+        read = self.banners(state)
+        handle_scan(offline_backend(), state, outbox, KEYHOLDER)
+        self.assertIn(TWO_DEEP_CLOSE_WARNING, read()[0])
 
     def test_unknown_version_is_ignored(self):
         _, outbox = self.started_with_roster()
@@ -294,6 +303,37 @@ class TestOlderCodeAgainstNewerFile(SavedViewCase):
         self.assertIsNone(outbox.load_snapshot())
         self.assertEqual(state.present_ids, set())
         self.assertFalse(state.counts_known)
+
+
+class TestTwoDeepVerdict(unittest.TestCase):
+    """A roster changes the remembered two-deep verdict only when it carries one."""
+
+    def after(self, safety):
+        state = AttendanceState()
+        state.last_two_deep_violation = True
+        state.seed_from_attendance(dict(EMPTY_ROSTER, safety=safety))
+        return state.last_two_deep_violation
+
+    def test_no_safety_block_keeps_it(self):
+        state = AttendanceState()
+        state.last_two_deep_violation = True
+        state.seed_from_attendance({k: v for k, v in EMPTY_ROSTER.items() if k != "safety"})
+        self.assertTrue(state.last_two_deep_violation)
+
+    def test_safety_without_the_flag_keeps_it(self):
+        self.assertTrue(self.after({"isLastKeyholder": True}))
+
+    def test_non_bool_flag_keeps_it(self):
+        for value in (None, 0, "false", "true"):
+            self.assertTrue(self.after({"isTwoDeepViolation": value}), value)
+
+    def test_explicit_false_clears_it(self):
+        self.assertFalse(self.after({"isTwoDeepViolation": False}))
+
+    def test_explicit_true_sets_it(self):
+        state = AttendanceState()
+        state.seed_from_attendance(dict(EMPTY_ROSTER, safety={"isTwoDeepViolation": True}))
+        self.assertTrue(state.last_two_deep_violation)
 
 
 if __name__ == "__main__":

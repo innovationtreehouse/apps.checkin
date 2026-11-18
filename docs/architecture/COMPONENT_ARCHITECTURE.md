@@ -14,9 +14,8 @@ way. So nothing here is inventory-specific: it is the shared architecture every
 component inherits, and it survives the per-app working docs, which are deleted
 as each lands.
 
-Each component's **domain rules** (its access, identity, and invariants) live in
-that domain's `docs/rules/` file — the catalog's are in `docs/rules/inventory.md`.
-This file is the architecture those rules sit on, and it uses the catalog as the
+This file is the architecture each component's domain rules (its access,
+identity, and invariants) sit on, and it uses the catalog as the
 worked example because it is the first component built.
 
 ## One process, many component packages
@@ -182,8 +181,8 @@ unchanged as each component is built.
 Each component's read/write admission is expressed against the checkin session —
 a write role plus a read gate, wired through the injected auth, never a
 component-local auth system. The catalog uses `INVENTORY_MANAGER` for writes and
-a broad viewer gate (the shared catalog audience, `canSeeCatalog`) for reads; those specific roles are domain rules in
-`docs/rules/inventory.md`, not architecture. The pattern — gate at the component
+a broad viewer gate (the shared catalog audience, `canSeeCatalog`) for reads; those specific roles are domain rules,
+not architecture. The pattern — gate at the component
 boundary against checkin's session — is what is universal.
 
 ## Deploy — the prod image is not free
