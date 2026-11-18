@@ -45,6 +45,7 @@ export const GET = handler("GET /api/safety/trusted-adults", async () => {
                     proposedPhone: true,
                     proposedEmail: true,
                     proposedContext: true,
+                    familyReply: true,
                     createdAt: true,
                 },
             },

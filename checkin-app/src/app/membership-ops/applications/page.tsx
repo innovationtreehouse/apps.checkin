@@ -12,7 +12,9 @@ import { sharesHousehold } from "@/lib/conflictOfInterest";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { ReasonConfirm } from "@/components/ReasonConfirm";
 import { StatusFilterBadge, ActiveFilterNotice, useStatusFilter } from "@/components/StatusFilter";
-import { CLOSABLE_STATUSES, awaitingBgReview, refundLandsIn, type ProcessKind, type ProcessStatus } from "@/lib/membership/lifecycle";
+import { reopenYearRefusal } from "@/lib/programYear";
+import { useMembershipYearBoundary } from "@/app/program-ops/ProgramYearField";
+import { CLOSABLE_STATUSES, awaitingBgReview, refundableApplication, type ProcessKind, type ProcessStatus } from "@/lib/membership/lifecycle";
 
 interface Person {
   id: number;
@@ -133,7 +135,7 @@ const waitingOnCheckReview = (r: ProcessRow, rows: readonly ProcessRow[]) =>
 
 // Mirror archiveApplication's and recordRefund's gates; the server re-checks.
 const closable = (r: ProcessRow) => !r.paidAt && (CLOSABLE_STATUSES as readonly string[]).includes(r.status);
-const refundable = (r: ProcessRow) => !!r.paidAt && refundLandsIn(r.status as ProcessStatus) != null;
+const refundable = (r: ProcessRow) => refundableApplication.has({ status: r.status, paidAt: !!r.paidAt });
 
 export default function AdminMembershipPage() {
   return (
@@ -158,6 +160,9 @@ function ApplicationsBoard() {
   const [pendingCertify, setPendingCertify] = useState<number | null>(null);
   const [certifyReason, setCertifyReason] = useState("");
   const [showArchived, setShowArchived] = useState(false);
+  // Mirrors the server's same-year Reopen refusal; the server stays the enforcement.
+  const { boundary } = useMembershipYearBoundary(showArchived);
+  const yearRefusal = (r: ProcessRow) => reopenYearRefusal(r.kind, new Date(r.createdAt), boundary, new Date());
   const [refundOpened, { open: openRefund, close: closeRefund }] = useDisclosure(false);
   const [pendingRefund, setPendingRefund] = useState<number | null>(null);
   const [refundReason, setRefundReason] = useState("");
@@ -640,16 +645,17 @@ function ApplicationsBoard() {
 
               <Group justify="flex-end" mt="md">
                 {showArchived ? (
-                  <>
+                  <Group gap="md" wrap="wrap" align="center">
+                    {yearRefusal(r) && <Text size="xs" c="dimmed">{yearRefusal(r)}</Text>}
                     {me?.isBoardMember && r.kind === "PERSON_BG" && (
                       <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => confirmReopenWrongPerson(r)}>
                         Reopen: closed as wrong person
                       </Button>
                     )}
-                    <Button size="xs" fz={15} disabled={busyId === r.id || ownHousehold(r)} onClick={() => unarchive(r.id)}>
+                    <Button size="xs" fz={15} disabled={busyId === r.id || ownHousehold(r) || !!yearRefusal(r)} onClick={() => unarchive(r.id)}>
                       Reopen
                     </Button>
-                  </>
+                  </Group>
                 ) : closable(r) && (
                   <Button size="xs" fz={15} variant="subtle" color="red" disabled={busyId === r.id || ownHousehold(r)} onClick={() => confirmArchive(r)}>
                     Close application

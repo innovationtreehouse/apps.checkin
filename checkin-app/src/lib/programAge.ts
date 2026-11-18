@@ -6,7 +6,7 @@ import { calculateAge, isYouth, orgCalendarDay } from "@/lib/time";
  * self-enrollment gate, where "can't prove adult" must refuse rather than admit.
  *
  * A declared adult is trusted whoever set the flag, including the member
- * themselves: docs/rules/programs.md takes an unverified self-declaration as a
+ * themselves: the rules take an unverified self-declaration as a
  * risk knowingly accepted.
  */
 export function isKnownAdult(person: { dateOfBirth: Date | string | null; isDeclaredAdult?: boolean | null }): boolean {

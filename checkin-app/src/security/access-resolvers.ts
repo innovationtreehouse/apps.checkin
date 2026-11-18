@@ -380,6 +380,12 @@ export async function resolveAccess(
                 if (isNaN(id)) return { allowed: false };
                 return { allowed: callerContext.programsLed.has(id) || isAdmin };
             }
+            case 'program-roster-staff': {
+                const id = parseInt(params.id ?? '', 10);
+                if (isNaN(id)) return { allowed: false };
+                const isFinance = auth.type === 'session' && auth.user.isFinance === true;
+                return { allowed: callerContext.programsLed.has(id) || isAdmin || isFinance };
+            }
             case 'program-core-volunteer': {
                 const id = parseInt(params.id ?? '', 10);
                 if (isNaN(id)) return { allowed: false };

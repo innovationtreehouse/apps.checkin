@@ -8,6 +8,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import type { TxClient } from "@/lib/db-client";
 import { config } from "@/lib/config";
 import { isSaleEnded, saleStockDelta } from "@/lib/programs/saleState";
+import { isProgramStoreClosed } from "@/lib/programs/storeClosed";
 import { programVariantIds } from "@/lib/programs/variants";
 import { getAccessToken, reportShopifyFailure, shopifyFetch, SHOPIFY_API_VERSION, SHOPIFY_INVENTORY_API_VERSION } from "@/lib/shopify/client";
 import { outboundCall } from "@/security/outbound";
@@ -117,6 +118,12 @@ function shopifyGraphql(storeDomain: string, accessToken: string): Gql {
 const mockStockByItem = new Map<string, number>();
 const mockAppliedKeys = new Set<string>();
 const MOCK_LOCATION_ID = "gid://shopify/Location/dev-mock";
+const mockItemOf = (variantId: string) => `gid://shopify/InventoryItem/for-gid://shopify/ProductVariant/${variantId}`;
+/** @internal Tests read and set the local mock's stock for a variant, as a store sale would. */
+export const localMockStock = {
+    get: (variantId: string): number | undefined => mockStockByItem.get(mockItemOf(variantId)),
+    set: (variantId: string, available: number): void => { mockStockByItem.set(mockItemOf(variantId), available); },
+};
 const mockShopifyGraphql: Gql = async (query, variables) => {
     const reply = (data: unknown) => ({ status: 200, body: { data } });
     if (query.includes("ProgramStockRead")) {
@@ -331,6 +338,30 @@ async function landedAfterSale(programId: number, write: PendingStockWrite): Pro
     return write.delta;
 }
 
+/** Park a pending write as unconfirmed: it is never resent, and what it owed goes back into the carry. */
+async function parkPending(programId: number, token: string, pending: PendingStockWrite, parkedColumnBefore: string | null): Promise<void> {
+    const earlier = parkedWrites(parkedColumnBefore);
+    const parked = [...earlier, { key: pending.key, delta: pending.delta, parkedAt: uniqueParkedAt(earlier) }];
+    await bookStock(programId, token, {
+        shopifyStockCarry: { increment: pending.owedPart - pending.delta },
+        shopifyStockParked: parkedColumn(parked),
+        shopifyStockPendingWrite: null,
+    });
+}
+
+/** Read the variant's stock, first stocking it at 0 at the location when it is not stocked yet (a freshly created variant). */
+async function readActiveStock(gql: Gql, programId: number, variantId: string, deadline: number) {
+    const stock = await readStock(gql, variantId, deadline);
+    if (stock.available !== null) return { ...stock, available: stock.available };
+    await outboundCall('shopify.inventory.activate', { Program: { id: programId } }, (stripped) =>
+        untilSettled(gql, ACTIVATE_STOCK, {
+            inventoryItemId: stock.inventoryItemId,
+            locationId: stock.locationId,
+            idempotencyKey: `program-${(stripped.Program as { id: number }).id}-activate-${crypto.randomUUID()}`,
+        }, deadline));
+    return { ...stock, available: 0 };
+}
+
 interface DrainResult {
     error: unknown;
     expiredKey: string | null;
@@ -370,13 +401,11 @@ async function drainStock(
                     // Shopify may have forgotten the key, so a resend could apply twice: a person settles it.
                     // Kept as its own entry: writes of opposite sign must not cancel before anyone settles them.
                     result.expiredKey = pending.key;
-                    const earlier = parkedWrites(row.shopifyStockParked);
-                    const parked = [...earlier, { key: pending.key, delta: pending.delta, parkedAt: uniqueParkedAt(earlier) }];
-                    await bookStock(programId, token, {
-                        shopifyStockCarry: { increment: pending.owedPart - pending.delta },
-                        shopifyStockParked: parkedColumn(parked),
-                        shopifyStockPendingWrite: null,
-                    });
+                    await parkPending(programId, token, pending, row.shopifyStockParked);
+                } else if (pending.delta > 0 && await isProgramStoreClosed()) {
+                    // The store is closed: a raising write is not resent. The turn-off re-count resolves it.
+                    await parkPending(programId, token, pending, row.shopifyStockParked);
+                    console.log(`[SHOPIFY] Program ${programId} store closed: parked +${pending.delta} (${pending.key}) instead of resending it`);
                 } else {
                     // ponytail: the resend settles whether the +1 landed; if it did, it sits on sale until the -1 right after.
                     await sendBooked(gql, programId, token, pending, deadline);
@@ -386,46 +415,39 @@ async function drainStock(
             }
 
             if (target === undefined && row.shopifyStockCarry === 0) break;
-            const stock = await readStock(gql, variantId, deadline);
-            let available = stock.available;
-            if (available === null) {
-                await outboundCall('shopify.inventory.activate', { Program: { id: programId } }, (stripped) =>
-                    untilSettled(gql, ACTIVATE_STOCK, {
-                        inventoryItemId: stock.inventoryItemId,
-                        locationId: stock.locationId,
-                        idempotencyKey: `program-${(stripped.Program as { id: number }).id}-activate-${crypto.randomUUID()}`,
-                    }, deadline));
-                available = 0;
-            }
             if (target !== undefined) {
                 // An absolute target replaces whatever was owed before it, as the delta from what Shopify shows now.
-                // Counted under the lease and under the Program row lock that every seat change takes with its
-                // carry change (changeProgramStockWith), so each change is counted with its delta in the carry or
-                // not at all. `available` already shows whether each parked write landed, so the target resolves
-                // them: settling one later would count it twice.
+                // Shopify is read and the seats counted under the lease and under the Program row lock that every
+                // seat change takes with its carry change (changeProgramStockWith), so each change is counted with
+                // its delta in the carry or not at all, and no stock write booked before the lock is missed.
+                // `available` already shows whether each parked write landed, so the target resolves them:
+                // settling one later would count it twice.
                 if (row.shopifyStockParked) {
                     console.log(`[SHOPIFY] Program ${programId} stock set from scratch (${reason}): cleared parked writes ${parkedWrites(row.shopifyStockParked).map((w) => w.key).join(", ")}`);
                 }
                 const quantity = target;
-                const shown = available;
                 await prisma.$transaction(async (tx) => {
                     await lockProgramRow(tx, programId);
-                    const carry = (await quantity(tx)) - shown;
+                    const { available } = await readActiveStock(gql, programId, variantId, deadline);
+                    const carry = (await quantity(tx)) - available;
                     const { count } = await tx.program.updateMany({
                         where: { id: programId, shopifyStockLeaseToken: token },
                         data: { shopifyStockCarry: carry, shopifyStockParked: null, shopifyStockUnconfirmed: 0 },
                     });
                     if (count !== 1) throw new StockLeaseLostError(`lost the Shopify stock lease for program ${programId}`);
-                });
+                }, { timeout: Math.max(5_000, deadline - Date.now()) });
                 result.expiredKey = null;
                 target = undefined;
                 continue;
             }
+            const stock = await readActiveStock(gql, programId, variantId, deadline);
+            const available = stock.available;
 
-            // After the sale has ended, owed stock may only come off sale, never go back on.
-            const total = saleStockDelta(row, row.shopifyStockCarry);
+            // After the sale has ended, or while the store is closed, owed stock may only come off sale, never go back on.
+            const afterSale = saleStockDelta(row, row.shopifyStockCarry);
+            const total = afterSale > 0 && await isProgramStoreClosed() ? 0 : afterSale;
             if (total !== row.shopifyStockCarry) {
-                console.log(`[SHOPIFY] Program ${programId} sale has ended: dropping ${row.shopifyStockCarry - total} owed seat(s) instead of putting them back on sale`);
+                console.log(`[SHOPIFY] Program ${programId} ${total === afterSale ? "sale has ended" : "store is closed"}: dropping ${row.shopifyStockCarry - total} owed seat(s) instead of putting them back on sale`);
                 await bookStock(programId, token, { shopifyStockCarry: { increment: total - row.shopifyStockCarry } });
             }
             if (total === 0) break;
@@ -527,7 +549,8 @@ async function pushProgramStock(
         if (result.error) {
             console.error(`[Shopify Error] Failed to push stock for program ${programId}:`, result.error);
             await alertStockPush(programId, variantId, reason, result.error);
-        } else if (carryAfter < Math.min(0, carryBefore)) {
+        } else if (carryAfter < Math.min(0, carryBefore) && !(await isProgramStoreClosed())) {
+            // While the store is closed public stock is held at 0, so a lowering write owing a shortfall is expected.
             const over = -carryAfter;
             await reportShopifyFailure(
                 "adjustProgramInventory",
@@ -617,6 +640,8 @@ export async function changeProgramStock(
 ): Promise<StockChange> {
     const variantId = program.shopifyVariantId;
     if (!variantId || delta === 0) return { recorded: true, landed: true };
+    // While the store is closed a raise is never owed: the turn-off re-count sets stock from the seats.
+    if (delta > 0 && await isProgramStoreClosed()) return { recorded: true, landed: true };
     if (config.shopifyMockActive()) console.log(`[SHOPIFY] (mock) Would adjust inventory by ${delta} for variant: ${variantId}`);
 
     let carryBefore: number;
@@ -666,6 +691,8 @@ export async function changeProgramStockWith<T>(
         await lockProgramRow(tx, program.id);
         const { result, delta } = await change(tx);
         if (!variantId || delta === 0) return { result, delta: 0, carryBefore: 0 };
+        // While the store is closed the row change commits and a raise is not owed.
+        if (delta > 0 && await isProgramStoreClosed(tx)) return { result, delta: 0, carryBefore: 0 };
         try {
             const { shopifyStockCarry } = await tx.program.update({
                 where: { id: program.id },

@@ -1,6 +1,6 @@
 /**
  * Membership renewal in the browser: the Board's renewal window, a member family renewing, and a
- * family already paid for the coming year left alone (docs/rules/membership.md, Renewal). Time
+ * family already paid for the coming year left alone. Time
  * moves by the Board's membership-year boundary, put back in afterAll. Every test mints its own
  * family, so a rerun on the same stack starts clean. The dev mocks stand in for signing, the
  * background-check tool and payment.

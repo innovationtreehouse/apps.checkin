@@ -1,6 +1,6 @@
 /**
- * A household lead running a household on /my-household, and what the people added to it may do
- * (docs/rules/people-households.md). Every test mints its own family.
+ * A household lead running a household on /my-household, and what the people added to it may do.
+ * Every test mints its own family.
  */
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { loginAs } from "../flow-tests/helpers";

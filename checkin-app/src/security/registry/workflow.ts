@@ -1,4 +1,4 @@
-// Workflow-mapping route policy (docs/rules/inventory.md, Access). Aggregated by ../registry.ts.
+// Workflow-mapping route policy. Aggregated by ../registry.ts.
 import { defineRoute, type Authorize, type OrderedViewEntry } from '../core';
 
 // Reads admit INVENTORY_MANAGER, FINANCE or BOARD — finance and the board oversee

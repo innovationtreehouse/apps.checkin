@@ -22,8 +22,7 @@ import {
 import { refuseSelfGrant, type GrantSubject } from "@/lib/membership/selfGrantGuard";
 
 /**
- * Moves a household's open application to match its people's check standing
- * (docs/rules/membership.md, Application and review):
+ * Moves a household's open application to match its people's check standing:
  *
  * - someone in the household has a BLOCKED check review → the application is
  *   BLOCKED, its audit row naming the review and the step it was blocked from;

@@ -1,4 +1,4 @@
-// Which QuickBooks account types expense books to (docs/rules/expenses.md): a capital rule or
+// Which QuickBooks account types expense books to: a capital rule or
 // line takes Fixed Asset, every other rule or line an expense type. Saves read the app's copy of QuickBooks' accounts.
 import { ServiceError } from "@checkin/component-kit";
 import { LINE_ACCOUNT_TYPES, QUICKBOOKS_LIST_STALE, staleListRefusal } from "@checkin/quickbooks";

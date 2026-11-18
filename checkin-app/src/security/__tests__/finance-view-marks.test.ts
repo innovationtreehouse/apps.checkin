@@ -1,7 +1,7 @@
 /**
  * @jest-environment node
  *
- * Finance view log contract (the finance-view rule in docs/rules/revenue.md): a GET response
+ * Finance view log contract (the finance-view rule): a GET response
  * is logged when the stripped bag carries a marked field on a row that is not the
  * viewer's own. The log names each record as `Model:id` with the marked field names it
  * was sent. The writer (merging, windows, repeats) is covered by its own tests.

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
@@ -18,7 +19,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { lastNightlyCloseAt } from "@/lib/attendance/nightlyClose";
 import { type ScanResult, toResponse } from "./scanResponse";
 
-// docs/rules/attendance-checkin.md (kiosk resilience): a replayed scan older
+// A replayed scan older
 // than this still applies, and is also flagged for human review — state may
 // have moved on while the kiosk was offline.
 const REPLAY_FRESHNESS_WINDOW_MS = 10 * 60 * 1000;
@@ -26,6 +27,10 @@ const REPLAY_FRESHNESS_WINDOW_MS = 10 * 60 * 1000;
 // A replay stamped further ahead of server now than this came from a kiosk
 // whose clock is wrong; it applies at server now, flagged clock_suspect.
 const REPLAY_FUTURE_TOLERANCE_MS = 2 * 60 * 1000;
+
+// Far beyond any honest kiosk figure (about a second online, some seconds after
+// a night offline). A wider one means the kiosk does not know the time.
+const MAX_SCAN_TIME_UNCERTAINTY_MS = 60 * 60 * 1000;
 
 // Bounded to Postgres int4 (see lib/searchId.ts): a larger id makes the
 // lookup throw instead of matching nothing.
@@ -59,8 +64,7 @@ const maxDate = (a: Date | null, b: Date | null): Date | null =>
     !a ? b : !b ? a : (a > b ? a : b);
 
 // High cap: kiosks burst and a whole facility may share one NAT IP. withKiosk
-// reads the raw body and authenticates it; only a signed kiosk scans
-// (docs/rules/attendance-checkin.md, Opening and closing).
+// reads the raw body and authenticates it; only a signed kiosk scans.
 export const POST = withKiosk(
     { rateLimit: { name: "scan", limit: 300 } },
     async (_req, body: { personId?: unknown; participantId?: unknown; clientEventId?: unknown; scannedAt?: unknown; replay?: unknown; forceCloseToken?: unknown; forceCloseConfirmed?: unknown; dead?: unknown; deadStatus?: unknown; intent?: unknown; clockSuspect?: unknown; shownEmpty?: unknown; rosterAsOf?: unknown; protocolVersion?: unknown; close?: unknown; scanTimeUncertaintyMs?: unknown }, auth) => {
@@ -85,7 +89,7 @@ export const POST = withKiosk(
         // Optional replay fields from a queued kiosk scan. Absent → a live scan.
         // An unparseable scannedAt
         // normalizes to null, which parks a replay below.
-        const clientEventId = (typeof body.clientEventId === 'string' && body.clientEventId) || null;
+        const sentEventId = (typeof body.clientEventId === 'string' && body.clientEventId) || null;
         const parsedScannedAt = typeof body.scannedAt === 'string' ? new Date(body.scannedAt) : null;
         const scannedAt = parsedScannedAt && !isNaN(parsedScannedAt.getTime()) ? parsedScannedAt : null;
 
@@ -106,7 +110,7 @@ export const POST = withKiosk(
         if (body.dead === true && body.replay === true) {
             return apiError("dead and replay are mutually exclusive.", 400);
         }
-        if (body.dead === true && !clientEventId) {
+        if (body.dead === true && !sentEventId) {
             return apiError("A dead-lettered scan requires clientEventId.", 400);
         }
         if (body.dead === true && !scannedAt) {
@@ -120,8 +124,7 @@ export const POST = withKiosk(
                 ? body.forceCloseToken
                 : null;
 
-        // A keyholder's close, decided at the kiosk (docs/rules/attendance-checkin.md,
-        // Opening and closing). An older kiosk's offline confirm flag, or a token it
+        // A keyholder's close, decided at the kiosk. An older kiosk's offline confirm flag, or a token it
         // echoes on the second scan of the same badge, is the same decision.
         const requestedClose: CloseKind | null = body.close === 'alone' || body.close === 'confirmed'
             ? body.close
@@ -140,7 +143,7 @@ export const POST = withKiosk(
         // should park. intent is the displayed direction; absent, a legacy
         // live-state toggle. protocolVersion is the contract bit.
         const invalid =
-            body.replay === true && !clientEventId ? "A replayed scan requires clientEventId." :
+            body.replay === true && !sentEventId ? "A replayed scan requires clientEventId." :
             body.replay === true && !scannedAt ? "A replayed scan requires a valid scannedAt." :
             body.intent !== undefined && body.intent !== 'IN' && body.intent !== 'OUT' ? "intent must be IN or OUT." :
             body.close !== undefined && body.close !== 'alone' && body.close !== 'confirmed' ? "close must be alone or confirmed." :
@@ -165,7 +168,13 @@ export const POST = withKiosk(
             : null;
         const isReplay = body.replay === true && !invalid;
         const isDead = body.dead === true || (body.replay === true && invalid !== null);
-        const deadStatus = invalid ? 400
+        // A parked replay that sent no id of its own is keyed by its body, so a resend dedups.
+        const clientEventId = sentEventId
+            ?? (isDead ? `body:${createHash("sha256").update(JSON.stringify(body)).digest("hex")}` : null);
+        // A replay with no usable scan time parks at server now, which only bounds it from above.
+        const noScanTime = body.replay === true && !scannedAt;
+        const deadStatus = noScanTime ? 'no_scan_time'
+            : invalid ? 400
             : typeof body.deadStatus === 'number' && Number.isFinite(body.deadStatus) ? body.deadStatus
             : 'unknown';
         const closeKind = invalid ? null : requestedClose;
@@ -180,9 +189,11 @@ export const POST = withKiosk(
         if (clockAhead) eventTime = new Date();
 
         const intent = body.intent === 'IN' || body.intent === 'OUT' ? body.intent : null;
-        const clockSuspect = body.clockSuspect === true;
-        const uncertaintyMs = isReplay && typeof body.scanTimeUncertaintyMs === 'number' ? body.scanTimeUncertaintyMs : 0;
-        const slot = (isReplay || isDead) ? "replay" : "live";
+        const sentUncertaintyMs = isReplay && typeof body.scanTimeUncertaintyMs === 'number' ? body.scanTimeUncertaintyMs : 0;
+        const uncertaintyTooWide = sentUncertaintyMs > MAX_SCAN_TIME_UNCERTAINTY_MS;
+        const clockSuspect = body.clockSuspect === true || uncertaintyTooWide || noScanTime;
+        const uncertaintyMs = uncertaintyTooWide ? 0 : sentUncertaintyMs;
+        const slot = isDead ? "dead" : isReplay ? "replay" : "live";
         specTrace("ScanRequest", {
             slot, p: rawId, cid: clientEventId, intent, close: closeKind,
             t: eventTime.getTime(), scannedAt: scannedAt?.getTime() ?? null, rosterAsOf: rosterAsOf?.getTime() ?? null,

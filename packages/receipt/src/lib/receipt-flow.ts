@@ -3,7 +3,7 @@ import { CompletedReceiptSchema, type FinancialReviewReason } from "@checkin/rec
 import { db, type Db } from "../db";
 import type { Prisma, ReceiptOrgSettings } from "../generated/prisma/client";
 import { ingestResultSchema } from "../contract";
-import { audit, CLEARED, ReceiptStateConflictError, receiptRepo, recordFailure, type Actor, type ReceiptRow } from "../repositories/receipt";
+import { audit, CLEARED, logUnrecorded, ReceiptStateConflictError, receiptRepo, recordFailure, type Actor, type ReceiptRow } from "../repositories/receipt";
 import { getOrgId, ports } from "../runtime";
 import { sendDonorSync } from "./donor-sync";
 import { duplicateGroup } from "./duplicateGroup";
@@ -214,7 +214,7 @@ export async function pushReceipt(receiptId: string, actor: Actor | null): Promi
     const kind = kindOf(err);
     const valueAfter = err instanceof Error ? err.message : String(err);
     await audit(db, receiptId, actor, { action: "push_failed", valueBefore: kind, valueAfter }).catch(() => undefined);
-    await recordFailure(db, receiptId, err).catch(() => undefined);
+    await recordFailure(db, receiptId, err).catch(logUnrecorded(receiptId));
     return false;
   }
 }

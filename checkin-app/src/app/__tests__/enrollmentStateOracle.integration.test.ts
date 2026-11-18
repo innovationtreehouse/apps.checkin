@@ -162,22 +162,24 @@ describe('enrollment state — validator oracle over real transitions', () => {
         }
     });
 
-    it.each([
-        ['a failed -1', () => new shopify.StockNotRecordedError('stock carry could not be written')],
-        ['any other transaction error', () => new Error('lock timeout')],
-    ])('T3 re-apply that fails on %s leaves a denied row PENDING_HELD_DENIED, with no warning', async (_label, error) => {
-        jest.mocked(shopify.changeProgramStockWith).mockRejectedValueOnce(error());
-        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {}); // the route logs its 500
-        try {
-            await seed({ req: false, held: true, den: true }); // PENDING_HELD_DENIED
-            mockSession.mockResolvedValue({ user: { id: selfId } });
-            const res = await RequestPost(reqReq('SCHOLARSHIP'), params());
-            expect(res.status).toBe(500);
-            expect((await res.json()).warning).toBeUndefined();
-            await assertState('PENDING_HELD_DENIED');
-        } finally {
-            errorSpy.mockRestore();
-        }
+    it('a request on a denied place is refused and the row stays PENDING_HELD_DENIED', async () => {
+        await seed({ req: false, held: true, den: true }); // PENDING_HELD_DENIED
+        mockSession.mockResolvedValue({ user: { id: selfId } });
+        const res = await RequestPost(reqReq('SCHOLARSHIP'), params());
+        expect(res.status).toBe(409);
+        expect((await res.json()).error).toMatch(/was not approved/);
+        expect(shopify.changeProgramStockWith).not.toHaveBeenCalled();
+        await assertState('PENDING_HELD_DENIED');
+    });
+
+    it('T4 activate (payment) from PENDING_HELD_DENIED → ACTIVE: a denied family can still pay', async () => {
+        await seed({ req: false, held: true, den: true }); // PENDING_HELD_DENIED
+        const { activatedCount, releasedHoldCount } = await activateProgramEnrollment({
+            programId, personIds: [selfId], shopifyOrderId: 'order-oracle-denied',
+        });
+        expect(activatedCount).toBe(1);
+        expect(releasedHoldCount).toBe(1);
+        await assertState('ACTIVE');
     });
 
     it('T3m manual-hold: PENDING_HOLD_FAILED → PENDING_HELD', async () => {

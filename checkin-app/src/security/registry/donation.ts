@@ -1,4 +1,4 @@
-// Bulk donation route policy (docs/rules/revenue.md, Donations). Aggregated by ../registry.ts.
+// Bulk donation route policy. Aggregated by ../registry.ts.
 import { defineFileRoute, defineRoute, type FinanceViewModel, type OrderedViewEntry } from '../core';
 
 // An in-kind row is a receipt-sourced gift or a hand-entered one, by its `source`.
@@ -11,7 +11,7 @@ const IN_KIND_BY_SOURCE: FinanceViewModel = { field: 'source', map: { receipt: '
 // and settings routes, whose responses carry no donor.
 // Ops (OPERATIONS or INVENTORY_MANAGER) is admitted only to the no-receipt
 // in-kind routes, with no `pii`: it records donors but never reads them back.
-// No sysadmin view: Finance Ops excludes sysadmins (docs/rules/revenue.md). No
+// No sysadmin view: Finance Ops excludes sysadmins. No
 // view grants a scoped token, so `everyones:` is the only scope.
 //
 // UploadedFile.fileBlob (the raw Benevity CSV) leaves only through the file

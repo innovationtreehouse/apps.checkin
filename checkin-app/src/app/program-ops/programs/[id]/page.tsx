@@ -14,6 +14,7 @@ import { ProgramRosterTab } from './ProgramRosterTab';
 import { notifications } from '@mantine/notifications';
 import { ProgramEventsTab } from './ProgramEventsTab';
 import { isProgramCheckoutBroken } from '@/lib/programCheckout';
+import { useProgramStoreClosed } from '../../useProgramStoreClosed';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
 
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -178,6 +179,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
 
   const canStateYear = !!sessionUser?.isBoardMember;
   const yearBoundary = useMembershipYearBoundary(!!(sessionUser?.isSysadmin || sessionUser?.isBoardMember));
+  const storeClosed = useProgramStoreClosed(!!(sessionUser?.isSysadmin || sessionUser?.isBoardMember));
   const { boundary } = yearBoundary;
   const years = formYearsTouched(boundary, startAt, endAt);
   const crossing = years.length > 1;
@@ -355,7 +357,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
                   </Group>
                 </Card>
 
-                {isProgramCheckoutBroken(program) ? (
+                {isProgramCheckoutBroken(program, storeClosed) ? (
                   <Alert color="red" variant="light" title="⚠️ Broken checkout">
                     <Stack gap="xs" align="flex-start">
                       <Text size="sm">
@@ -397,7 +399,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
                     <Text size="xs" c="dimmed">
                       A hidden (unlisted, untracked) product the app&apos;s checkout links to, so a family holding a seat can pay even when the store shows the program sold out.
                     </Text>
-                    {!program.claimantShopifyVariantId && !isProgramCheckoutBroken(program)
+                    {!program.claimantShopifyVariantId && !isProgramCheckoutBroken(program, storeClosed)
                       && ((program.nonOrgMemberPriceCents ?? program.orgMemberPriceCents ?? 0) > 0) && (
                       <Group mt="xs">
                         <Button type="button" variant="light" size="xs" loading={syncing} onClick={handleSyncShopify}>

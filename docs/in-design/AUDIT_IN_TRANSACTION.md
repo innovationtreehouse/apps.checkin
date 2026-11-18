@@ -35,7 +35,7 @@ fails the build when it does.
 
 ## Rules relied on or changed
 
-- `docs/rules/principles.md` → *Accountability*: "Anything that changes
+- *Accountability*: "Anything that changes
   standing, money, or access is attributable", and "A system actor names
   itself". This work makes the first true under failure, not just on the happy
   path.

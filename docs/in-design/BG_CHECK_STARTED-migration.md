@@ -1,7 +1,7 @@
 # Cutover: "check started" moves off the household application
 
-Everything here expires once the change has run. The rules are in
-`docs/rules/membership.md` (*Background checks for individual adults*) and
+Everything here expires once the change has run. The rules are under
+*Background checks for individual adults*, and the terms in
 `docs/VOCABULARY.md` (**Consent**, **Check started**).
 
 ## Where it stands

@@ -82,7 +82,7 @@ undoes it.
 
 ## Rules this relies on
 
-From `docs/rules/expenses.md`:
+Expenses:
 
 - Donated equipment goes through the same capital thresholds, review and
   register as purchased equipment. *(Receipts)*
@@ -101,7 +101,7 @@ From `docs/rules/expenses.md`:
   be fixed-asset; a rule marked capital takes only a fixed-asset account, any
   other rule an expense or cost-of-goods account. *(Accounts)*
 
-From `docs/rules/revenue.md`:
+Revenue:
 
 - A gift of goods is both a donation and an expense of the same value, from one
   record, in one bucket.
@@ -581,7 +581,7 @@ can hold in their head, and the bugs live in the transitions nobody traced.
 
 ## 6. Rules this design would establish
 
-Each is settled and goes into `docs/rules/expenses.md` when the work lands. The
+Each is settled and is recorded as a standing rule when the work lands. The
 two conventions in 5.2 go into `docs/conventions.md`.
 
 One existing rule changes. The Spending sign-off rule "When an expense goes

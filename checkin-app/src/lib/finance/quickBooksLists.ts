@@ -4,7 +4,7 @@ import { config } from "@/lib/config";
 import { quickBooks } from "@/lib/components/ports";
 import { logger } from "@/lib/logger";
 
-// The app's read-only copy of QuickBooks' account and Class lists (docs/rules/revenue.md).
+// The app's read-only copy of QuickBooks' account and Class lists.
 // Pickers and save-time checks read only this copy; posting and System Status read QuickBooks live.
 
 export type SavedAccount = { id: string; name: string; accountType: string; active: boolean };

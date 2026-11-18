@@ -11,7 +11,7 @@ import { settleHouseholdBg } from "@/lib/membership/settleHouseholdBg";
 /**
  * "Check started": someone marks that a person's background check was started in
  * the outside tool, which puts that person's own check review in the reviewers'
- * queue (docs/rules/membership.md, Background checks for individual adults). It is
+ * queue. It is
  * recorded only on the person's PERSON_BG review, never on a household application,
  * and it approves nothing.
  */

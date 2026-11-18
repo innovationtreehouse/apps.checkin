@@ -30,7 +30,7 @@ const trustedAdults = [
     createdAt: "2026-01-01T00:00:00.000Z",
     household: { id: 5, name: "Guardian House", householdMembers: [] },
     trustedAdultPerson: null,
-    reviews: [{ id: 9, kind: "SELF_DISCLOSED", status: "PENDING_BOARD_REVIEW", decision: null, decisionNote: null, sharedNote: null, effectiveFrom: null, reviewBy: null, createdAt: "2026-01-01T00:00:00.000Z" }],
+    reviews: [{ id: 9, kind: "SELF_DISCLOSED", status: "PENDING_BOARD_REVIEW", decision: null, decisionNote: null, sharedNote: null, effectiveFrom: null, reviewBy: null, proposedName: null as string | null, proposedPhone: null, proposedEmail: null, proposedContext: null, familyReply: null as string | null, createdAt: "2026-01-01T00:00:00.000Z" }],
   },
 ];
 
@@ -390,7 +390,8 @@ describe("safety/trusted-adults page", () => {
     ["an approval past its review date", "APPROVED", "RENEWAL", new Date(Date.now() - 86400000).toISOString()],
     ["an approved change", "APPROVED", "MODIFIED", new Date(Date.now() + 86400000).toISOString()],
   ])("hides Reset on %s, keeping Revoke", async (_label, status, kind, reviewBy) => {
-    const shown = [{ ...trustedAdults[0], reviews: [{ ...trustedAdults[0].reviews[0], status, kind, reviewBy }] }];
+    const proposedName = kind === "MODIFIED" ? "Gary G." : null;
+    const shown = [{ ...trustedAdults[0], reviews: [{ ...trustedAdults[0].reviews[0], status, kind, reviewBy, proposedName }] }];
     setSession({ id: 1, isBoardMember: true, householdId: 1 });
     mockFetchJson({ "/api/safety/trusted-adults": { trustedAdults: shown } });
     renderWithProviders(<AdminTrustedAdultsPage />);
@@ -399,6 +400,21 @@ describe("safety/trusted-adults page", () => {
     expect(screen.getByText("Override:")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Reset" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Revoke" })).toBeInTheDocument();
+  });
+
+  it("shows the family's reply and the details they changed when answering the board", async () => {
+    const answered = [{
+      ...trustedAdults[0],
+      reviews: [{ ...trustedAdults[0].reviews[0], kind: "INITIAL", proposedName: "Gary G. Guardian", familyReply: "Weekdays only, 3 to 6." }],
+    }];
+    setSession({ id: 1, isBoardMember: true, householdId: 1 });
+    mockFetchJson({ "/api/safety/trusted-adults": { trustedAdults: answered } });
+    renderWithProviders(<AdminTrustedAdultsPage />);
+    await screen.findByText("Guardian House");
+
+    expect(screen.getByText("Weekdays only, 3 to 6.")).toBeInTheDocument();
+    expect(screen.getByText("Proposed changes — not in effect until you approve")).toBeInTheDocument();
+    expect(screen.getByText("Name: Gary G. Guardian")).toBeInTheDocument();
   });
 
   it("offers Reset on a denied review", async () => {

@@ -4,7 +4,7 @@
 /**
  * A keyholder's close from the kiosk applies whenever it reaches the server,
  * past the replay freshness window, and departs everyone at the keyholder's
- * scan time (docs/rules/attendance-checkin.md, Opening and closing) — but never
+ * scan time — but never
  * anyone who arrived after it. A plain keyholder OUT is not a close. A close
  * fences a late check-in scanned before it.
  */

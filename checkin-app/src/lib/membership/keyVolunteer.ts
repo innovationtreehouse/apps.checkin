@@ -12,7 +12,6 @@ import { archiveOpenKvas, createKva, currentKvaVersion, findOpenKva } from "@/li
 /**
  * The Key Volunteer Agreement's self-service signing and the Board's version
  * bump. Granting and removing the role is `setRoleFlag` (lib/roles.ts).
- * Rules: docs/rules/membership.md, "Key Volunteers".
  */
 
 const KVA_DOCUMENT: SigningDocument = {
