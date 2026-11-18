@@ -2111,7 +2111,7 @@ model BulkSendItem {
   /// "renew"; older rows may hold "join" from before outreach was renewal-only.
   /// @sensitivity:internal
   variant    String
-  /// "queued" | "sending" | "sent" | "failed" | "skipped_denied" | "skipped_not_member"
+  /// "queued" | "sending" | "sent" | "failed" | "skipped_denied" | "skipped_not_member" | "skipped_not_audience"
   /// @sensitivity:internal
   status     String
   /// @sensitivity:internal
