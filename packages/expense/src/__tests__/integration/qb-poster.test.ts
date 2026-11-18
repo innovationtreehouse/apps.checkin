@@ -1634,6 +1634,21 @@ describeDb("QB closed books — a create that may have landed", () => {
       expect((await expenseRow(id)).qbMatchState).toBe("UNBOOKED");
     });
 
+    it("refuses without linking the app's own entry while the expense's tax waits on finance", async () => {
+      const { id } = await outboxed("2026-09-10");
+      await db.expense.update({ where: { id }, data: { taxCents: 100 } });
+      await db.expenseTaxApproval.create({ data: { expenseId: id, taxCents: 100, approvedByUserId: 3 } });
+      qbo.mode = "accept-then-drop";
+      await postExpenseToQb(ORG, id);
+      qbo.mode = "ok";
+      await db.expense.update({ where: { id }, data: { qbMatchState: "UNBOOKED" } });
+      await db.expenseTaxApproval.delete({ where: { expenseId: id } });
+
+      await expect(skipExpenseQb(finance, id, "why")).rejects.toMatchObject({ status: 409, message: "The expense's tax waits on finance; approve the tax first" });
+      expect(await expenseRow(id)).toMatchObject({ qbMatchState: "UNBOOKED", qbTxnId: null });
+      expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "qb_skipped" } })).toBe(0);
+    });
+
     it("refuses when a create attempt moved the expense while finance's lookup ran", async () => {
       const id = await attempted("NEEDS_FINANCE");
       qbo.purchases = [];
