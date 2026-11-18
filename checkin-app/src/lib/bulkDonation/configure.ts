@@ -44,12 +44,10 @@ const incomeDeposits: IncomeDeposits = {
   },
   async handOverFailing(failures) {
     const { emailAlert } = await import("@/lib/emailRecipients");
-    const sent = await emailAlert("finance.donationDepositHandOver", {
+    return emailAlert("finance.donationDepositHandOver", {
       batches: failures.map((f) => `${f.disbursementId}: ${f.reason}`).join("; "),
       actionLink: `${config.baseUrl()}/donations/events`,
     });
-    // Throwing leaves the failures unraised, so the next run alerts again.
-    if (!sent) throw new Error("Donation hand-over alert was not sent");
   },
 };
 

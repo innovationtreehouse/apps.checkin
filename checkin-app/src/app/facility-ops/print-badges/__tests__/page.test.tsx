@@ -3,7 +3,7 @@ jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories run hoisted, before imports exist
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 jest.mock("qrcode", () => ({ toDataURL: jest.fn(async () => "data:image/png;base64,QR") }));
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn() } }));
 // @react-pdf/renderer is pure ESM/non-DOM (see BadgeDocument.test.tsx); swap its
 // primitives for DOM stand-ins and stub `pdf().toBlob()` so the "Generate" flow
 // (which renders BadgeDocument/StickerDocument through it) runs under RTL/jsdom.

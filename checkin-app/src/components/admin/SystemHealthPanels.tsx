@@ -139,75 +139,6 @@ export function ConfigHealthBox() {
   );
 }
 
-// Mirrors ActiveIncident in lib/opsIncidentView.ts (firstSeenAt arrives JSON-serialized).
-type Incident = {
-  key: string;
-  status: 'watching' | 'open';
-  kind: string;
-  cause: string;
-  lanes: string[];
-  firstSeenAt: string;
-  runsSeen: number;
-  itemsAffected: number;
-};
-
-/**
- * Incidents the engine has not closed, from GET /api/system-status/config-health
- * (admins + board only). "Open" incidents have sent their notice and count toward the
- * red System Status pill; "watching" ones were seen below the alert threshold.
- * What each kind means and what to do: docs/ops/production-runbook.md § Alerts.
- */
-export function OpenProblemsBox() {
-  const [incidents, setIncidents] = useState<Incident[] | null>(null);
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    fetch('/api/system-status/config-health')
-      .then((res) => (res.ok ? res.json() : Promise.reject()))
-      .then((data: { incidents?: unknown }) => (Array.isArray(data.incidents) ? setIncidents(data.incidents as Incident[]) : setFailed(true)))
-      .catch(() => setFailed(true));
-  }, []);
-
-  const openCount = incidents?.filter((i) => i.status === 'open').length ?? 0;
-
-  return (
-    <Card withBorder radius="md" padding="lg">
-      <Group gap="sm" mb="md">
-        <Title order={4}>Open problems</Title>
-        {openCount > 0 && <Badge color="red" circle title={`${openCount} open problem(s)`} />}
-      </Group>
-
-      {failed ? (
-        <Text c="yellow">Unable to load open problems.</Text>
-      ) : !incidents ? (
-        <Text c="dimmed">Checking for open problems…</Text>
-      ) : incidents.length === 0 ? (
-        <Text c="dimmed">No open problems.</Text>
-      ) : (
-        <List spacing="sm" listStyleType="none">
-          {incidents.map((i) => (
-            <List.Item key={i.key}>
-              <Group justify="space-between" wrap="nowrap" align="flex-start">
-                <Group gap="xs">
-                  <Badge variant="light">{i.kind}</Badge>
-                  <Code>{i.cause}</Code>
-                  <span>{i.lanes.join(', ')}</span>
-                </Group>
-                <Text c={i.status === 'open' ? 'red' : 'yellow'} fw={i.status === 'open' ? 700 : undefined} ta="right">
-                  ● {i.status === 'open' ? 'Open' : 'Watching'}
-                </Text>
-              </Group>
-              <Text size="xs" c="dimmed" title={i.firstSeenAt}>
-                First seen {timeAgo(i.firstSeenAt)} · {i.runsSeen} run{i.runsSeen === 1 ? '' : 's'}, {i.itemsAffected} item{i.itemsAffected === 1 ? '' : 's'}
-              </Text>
-            </List.Item>
-          ))}
-        </List>
-      )}
-    </Card>
-  );
-}
-
 // Mirrors Problem in lib/problems.ts (failedAt arrives JSON-serialized).
 type StuckItem = { library: string; id: string; step: string; href: string | null; failedAt: string };
 // Mirrors Notice in lib/problems.ts.
@@ -328,7 +259,7 @@ export function ProblemsBox() {
                 <Badge variant="light" color="orange">scheduled job</Badge>
                 <Code>{j.job}</Code>
               </Group>
-              <Text size="xs" c="dimmed" title={j.lastSuccessAt}>Has not run on time; last ran {timeAgo(j.lastSuccessAt)}</Text>
+              <Text size="xs" c="dimmed" title={j.lastSuccessAt ?? undefined}>Has not run on time; last ran {lastRan(j.lastSuccessAt)}</Text>
             </List.Item>
           ))}
           {data.failingJobs.map((j) => (
@@ -337,7 +268,7 @@ export function ProblemsBox() {
                 <Badge variant="light" color="orange">scheduled job</Badge>
                 <Code>{j.job}</Code>
               </Group>
-              <Text size="xs" c="dimmed" title={j.lastErrorAt}>Last run reported failures {timeAgo(j.lastErrorAt ?? j.lastSuccessAt)}</Text>
+              <Text size="xs" c="dimmed" title={j.lastErrorAt}>Last run reported failures {lastRan(j.lastErrorAt ?? j.lastSuccessAt)}</Text>
             </List.Item>
           ))}
         </List>
@@ -348,7 +279,7 @@ export function ProblemsBox() {
 }
 
 // Mirrors CronJobStatus in lib/cronRuns.ts (its dates arrive JSON-serialized).
-type CronJob = { job: string; lastSuccessAt: string; stale: boolean; lastError?: string; lastErrorAt?: string };
+type CronJob = { job: string; lastSuccessAt: string | null; stale: boolean; lastError?: string; lastErrorAt?: string };
 
 /** "3 hours ago" / "2 days ago" — coarse on purpose; the exact stamp is the title text. */
 function timeAgo(iso: string): string {
@@ -359,6 +290,9 @@ function timeAgo(iso: string): string {
   const days = Math.round(hours / 24);
   return `${days} days ago`;
 }
+
+/** When a job last ran, or "never" for one that has not completed a run. */
+const lastRan = (iso: string | null | undefined): string => (iso ? timeAgo(iso) : 'never');
 
 /**
  * Last successful run of each cron sweep, from GET /api/system-status/config-health
@@ -407,8 +341,8 @@ export function CronRunsBox() {
             <List.Item key={j.job}>
               <Group justify="space-between" wrap="nowrap" align="flex-start">
                 <Code>{j.job}</Code>
-                <Text c={j.stale ? 'red' : 'green'} fw={j.stale ? 700 : undefined} ta="right" title={j.lastSuccessAt}>
-                  ● {timeAgo(j.lastSuccessAt)}
+                <Text c={j.stale || !j.lastSuccessAt ? 'red' : 'green'} fw={j.stale || !j.lastSuccessAt ? 700 : undefined} ta="right" title={j.lastSuccessAt ?? undefined}>
+                  ● {lastRan(j.lastSuccessAt)}
                 </Text>
               </Group>
               {j.lastError && (

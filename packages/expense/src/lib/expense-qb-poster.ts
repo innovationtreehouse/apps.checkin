@@ -18,8 +18,7 @@ import type { Actor } from "./workflow-engine";
 import { matchedBaseline } from "./expense-qb-drift";
 import { composeWrite, type Built } from "../qb-write";
 import { logError, logWarn } from "./logger";
-import { reimburseeUnknown } from "./signoff";
-import { storedTaxWaits, unsignedLines } from "./signoff-facts";
+import { outboxHolds } from "./signoff-facts";
 import { SYSTEM_ACTOR } from "./system-actor";
 import type { ExpenseSettings } from "../contract";
 import { readExpenseSettings } from "../services/settingsService";
@@ -275,9 +274,10 @@ type ClaimInputs = { close: CloseRead; onAt: Date | null; book: boolean; setting
  * Board approval, or a line not approved. The approval is the program approver's sign-off.
  */
 async function postingHold(tx: Db, e: Expense): Promise<string | null> {
-  if (reimburseeUnknown(e)) return "the reimbursee is unknown";
-  if (await storedTaxWaits(tx, e.id)) return "the expense's tax waits on finance";
-  const holds = new Set([...(await unsignedLines(tx, e)).values()].flat());
+  const hold = (await outboxHolds(tx, [e])).get(e.id)!;
+  if (hold.reimburseeUnknown) return "the reimbursee is unknown";
+  if (hold.taxWaits) return "the expense's tax waits on finance";
+  const holds = new Set(hold.lines);
   const approval = holds.delete("BOARD_APPROVAL");
   const reasons = [...(holds.size > 0 ? ["a line is missing a sign-off seat"] : []), ...(approval ? ["the Board's approval of a purchase at or over the Board-review total is not recorded"] : [])];
   if (reasons.length > 0) return reasons.join(", and ");

@@ -119,6 +119,33 @@ describe("OnboardingGate", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("puts a server refusal on the input it names and clears it on change", async () => {
+    setSession({ id: 1 });
+    const reply = (status: number, body: unknown) =>
+      ({ ok: status < 400, status, headers: new Headers(), json: async () => body, text: async () => JSON.stringify(body) }) as Response;
+    global.fetch = jest.fn(async (input: RequestInfo | URL) =>
+      String(input).includes("onboarding-status")
+        ? reply(200, { needsPhone: false, needsEmergencyContact: true })
+        : reply(400, { error: "A server phone message.", fields: ["emergencyContactPhone"] }),
+    ) as unknown as typeof fetch;
+    renderGate();
+
+    await screen.findByText("Action Required");
+    fireEvent.change(screen.getByLabelText(/Contact Name/i), { target: { value: "Jane Doe" } });
+    const phone = screen.getByLabelText(/Contact Phone/i);
+    fireEvent.change(phone, { target: { value: "5559876543" } });
+    fireEvent.click(screen.getByRole("button", { name: /Save & Continue/i }));
+
+    expect(await screen.findByText("A server phone message.")).toBeInTheDocument();
+    expect(phone).toHaveAttribute("aria-invalid", "true");
+    expect(phone).toHaveFocus();
+    expect(screen.getByLabelText(/Contact Name/i)).not.toHaveAttribute("aria-invalid", "true");
+
+    fireEvent.change(phone, { target: { value: "5559876544" } });
+    expect(phone).not.toHaveAttribute("aria-invalid", "true");
+    expect(screen.queryByText("A server phone message.")).not.toBeInTheDocument();
+  });
+
   it("'Ask me next time' dismisses the modal and remembers the skip in sessionStorage", async () => {
     setSession({ id: 1 });
     mockFetchJson({ "/api/profile/onboarding-status": { needsPhone: true, needsEmergencyContact: false } });

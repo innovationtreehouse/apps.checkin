@@ -309,13 +309,13 @@ describe('certifyPaymentPlan checks under the row lock', () => {
         expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
     });
 
-    it('reads the household status with FOR UPDATE, after the process lock', async () => {
+    it('reads the household status with FOR UPDATE, before the process lock', async () => {
         prisma.orgMembershipProcess.findUnique.mockResolvedValue({ id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, orgMembershipId: MEMBERSHIP_ID, orgMembership: { householdId: 3 } });
         await certifyPaymentPlan(PROCESS_ID, 1);
         const sqls = prisma.$queryRaw.mock.calls.map(([sql]: [TemplateStringsArray]) => sql.join('?'));
         expect(sqls).toEqual([
-            expect.stringMatching(/FROM "OrgMembershipProcess" WHERE id = \? FOR UPDATE/),
             expect.stringMatching(/FROM "OrgMembership" WHERE id = \? FOR UPDATE/),
+            expect.stringMatching(/FROM "OrgMembershipProcess" WHERE id = \? FOR UPDATE/),
         ]);
     });
 

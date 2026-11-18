@@ -175,15 +175,20 @@ export function findRegistryFirstMarkerErrors(
 const SERVED_CALL_RE = /\b(?:file[hH]andler|handler)\s*(?:<[^()]*>)?\s*\(\s*(?:(['"`])([^'"`]+)\1|([A-Za-z_$][\w$]*))/g;
 const ENDPOINT_CONST_RE = /\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*(['"])((?:GET|POST|PUT|PATCH|DELETE) \/api[^'"]*)\2/g;
 
-/** Endpoints a file serves through handler()/fileHandler(), wherever the call sits —
- *  the first argument is a literal or a file-level `const X = 'VERB /api/…'`. */
-export function extractHandlerServedEndpoints(source: string): Set<string> {
+/** Endpoints each exported verb serves through handler()/fileHandler(): a call belongs to the
+ *  `export const|function VERB` it sits under. The first argument is a literal or a file-level
+ *  `const X = 'VERB /api/…'`. */
+export function extractHandlerServedEndpoints(source: string): Map<string, Set<string>> {
     const content = blankComments(source);
     const consts = new Map(Array.from(content.matchAll(ENDPOINT_CONST_RE), m => [m[1], m[3]]));
-    const served = new Set<string>();
+    const exports = Array.from(content.matchAll(VERB_EXPORT_RE));
+    const served = new Map<string, Set<string>>();
     for (const m of content.matchAll(SERVED_CALL_RE)) {
         const endpoint = m[2] ?? consts.get(m[3]);
-        if (endpoint) served.add(endpoint);
+        const owner = exports.filter(e => e.index! < m.index!).pop()?.[1];
+        if (!endpoint || !owner) continue;
+        if (!served.has(owner)) served.set(owner, new Set());
+        served.get(owner)!.add(endpoint);
     }
     return served;
 }
@@ -197,7 +202,7 @@ export function findRegisteredNotHandlerServed(
     const served = extractHandlerServedEndpoints(source);
     return verbs.flatMap(verb => {
         const key = `${verb} ${endpointPath}`;
-        if (!registered.has(key) || served.has(key)) return [];
+        if (!registered.has(key) || served.get(verb)?.has(key)) return [];
         const pending = legacyAuthz.has(key);
         return [{
             severity: pending ? ('warn' as const) : ('error' as const),

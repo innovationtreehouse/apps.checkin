@@ -17,6 +17,7 @@ jest.mock("@/lib/prisma", () => ({
 
 const db = prisma as unknown as {
     person: { findUnique: jest.Mock; findMany: jest.Mock };
+    orgMembershipProcess: { findUnique: jest.Mock };
     auditLog: { create: jest.Mock };
     $transaction: jest.Mock;
 };
@@ -91,6 +92,7 @@ describe("attest on a PERSON_BG", () => {
     function attestAs(reviewerId: number, subjectPersonId: number, householdStatus = "NONE") {
         db.person.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) =>
             where.id in people ? { id: where.id, householdId: people[where.id], isBackgroundCheckReviewer: true, isBoardMember: false } : null);
+        db.orgMembershipProcess.findUnique.mockResolvedValue({ orgMembershipId: null, subjectPersonId, requestedForHouseholdId: null });
         const attestation = jest.fn();
         const tx = {
             $queryRaw: jest.fn(async () => [{ status: householdStatus }]),

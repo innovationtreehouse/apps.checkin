@@ -188,7 +188,7 @@ describe("finance-ops/payments — sync status", () => {
     });
 
     it("only ever speaks the kit's red/green notification vocabulary", async () => {
-        // The kit has no warning tier: a message is showError (red) or showSuccess (green).
+        // Payment problems speak only showError (red) or showSuccess (green).
         jest.useFakeTimers();
         try {
             mockSync([{ status: 500, body: {} }]);

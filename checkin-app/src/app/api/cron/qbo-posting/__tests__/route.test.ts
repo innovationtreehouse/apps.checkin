@@ -12,13 +12,10 @@ import { drainIncomeOutbox, runIncomeOrphanSweep } from '@checkin/income';
 import { authenticateRequest } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { reportTo } from '@/lib/finishRun';
-import { evaluateRun } from '@/lib/runIncidents';
 import { refreshQuickBooksLists } from '@/lib/finance/quickBooksLists';
 import { GET } from '../route';
 
 jest.mock('@/lib/auth', () => ({ authenticateRequest: jest.fn() }));
-// The incident engine has its own tests; here a run only reaches it.
-jest.mock('@/lib/runIncidents', () => ({ evaluateRun: jest.fn() }));
 jest.mock('@checkin/expense', () => ({ runExpenseQbPosting: jest.fn() }));
 jest.mock('@checkin/bulk-donation', () => ({ runDonationDepositHandOver: jest.fn(), runInKindQbPosting: jest.fn() }));
 jest.mock('@checkin/income', () => ({ drainIncomeOutbox: jest.fn(), runIncomeOrphanSweep: jest.fn() }));
@@ -83,7 +80,7 @@ describe('GET /api/cron/qbo-posting', () => {
         expect(create.mock.calls[0][0].data).toMatchObject({ job: 'qbo-posting', success: true, error: null });
     });
 
-    it("hands the lanes' reports to the engine and counts them by kind; expense's drain never stops its lane", async () => {
+    it("records the lanes' reports counted by kind; expense's drain never stops its lane", async () => {
         jest.mocked(runExpenseQbPosting).mockImplementation(async () => {
             reportTo('expense')({ lane: 'posting', kind: 'system', status: 503, detail: 'expense 1' });
             return expensePosting(EXPENSE_DRAIN);
@@ -91,74 +88,18 @@ describe('GET /api/cron/qbo-posting', () => {
 
         await GET(req());
 
-        expect(jest.mocked(evaluateRun).mock.calls[0][0]).toEqual({
-            lanes: ['qbo-posting', 'expense posting'],
-            failures: [{ lane: 'expense posting', cause: 'quickbooks', kind: 'system', code: 'HTTP 503', count: 1 }],
-        });
-        expect(create.mock.calls[0][0].data).toMatchObject({ failuresByKind: { system: 1 } });
+        expect(create.mock.calls[0][0].data).toMatchObject({ success: true, error: null, failuresByKind: { system: 1 } });
     });
 
-    it("leaves expense posting uncovered when its drain could not run, so an open QuickBooks incident stays open", async () => {
-        jest.mocked(runExpenseQbPosting).mockResolvedValue(expensePosting({ error: true }));
-
-        await GET(req());
-
-        expect(jest.mocked(evaluateRun).mock.calls[0][0].lanes).toEqual(['qbo-posting']);
-    });
-
-    it('covers in-kind and income only when their drains ran', async () => {
-        jest.mocked(runInKindQbPosting).mockResolvedValue(IN_KIND_DRAIN);
-        jest.mocked(drainIncomeOutbox).mockResolvedValue({ reconcile: { status: 'unbound' }, post: { posted: 0, matched: 0, queued: 0, failed: 0, throttled: 0, waiting: 0, over_cap: 0, held: 0, capped: null } });
-
-        await GET(req());
-
-        expect(jest.mocked(evaluateRun).mock.calls[0][0].lanes).toEqual(['qbo-posting', 'bulk-donation in-kind-posting', 'income deposit-build']);
-    });
-
-    it('covers the lists refresh when it ran', async () => {
-        jest.mocked(refreshQuickBooksLists).mockResolvedValue({ refreshedAt: new Date(), accounts: 3, classes: 2 });
-
-        await GET(req());
-
-        expect(jest.mocked(evaluateRun).mock.calls[0][0].lanes).toEqual(['qbo-posting', 'quickbooks lists-refresh']);
-    });
-
-    it('files a failed lists refresh under its lane and the QuickBooks cause, and still runs every posting step', async () => {
+    it('records a failed lists refresh as a bug, and still runs every posting step', async () => {
         jest.mocked(refreshQuickBooksLists).mockRejectedValue(new Error('QuickBooks down'));
         const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
 
         await GET(req());
 
-        const run = jest.mocked(evaluateRun).mock.calls[0][0];
-        expect(run.lanes).toEqual(['qbo-posting']);
-        expect(run.failures).toEqual([{ lane: 'quickbooks lists-refresh', cause: 'quickbooks', kind: 'bug', code: 'lists crashed', count: 1 }]);
         expect(runExpenseQbPosting).toHaveBeenCalledTimes(1);
         expect(runIncomeOrphanSweep).toHaveBeenCalledTimes(1);
-        expect(create.mock.calls[0][0].data).toMatchObject({ success: true, error: 'failed: lists' });
-        logged.mockRestore();
-    });
-
-    it('files a crashed drain under its lane and cause, leaving the lane uncovered', async () => {
-        jest.mocked(runExpenseQbPosting).mockRejectedValue(Object.assign(new Error('QuickBooks down'), { status: 503 }));
-        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
-
-        await GET(req());
-
-        const run = jest.mocked(evaluateRun).mock.calls[0][0];
-        expect(run.lanes).toEqual(['qbo-posting']);
-        expect(run.failures).toEqual([{ lane: 'expense posting', cause: 'quickbooks', kind: 'bug', code: 'expense crashed', count: 1 }]);
-        logged.mockRestore();
-    });
-
-    it('reports a throwing step to the engine as a failure of the job', async () => {
-        jest.mocked(runIncomeOrphanSweep).mockRejectedValue(new Error('income db down'));
-        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
-
-        await GET(req());
-
-        expect(jest.mocked(evaluateRun).mock.calls[0][0].failures).toEqual([
-            { lane: 'qbo-posting', cause: 'qbo-posting', kind: 'bug', code: 'income sweep crashed', count: 1 },
-        ]);
+        expect(create.mock.calls[0][0].data).toMatchObject({ success: true, error: 'failed: lists', failuresByKind: { bug: 1 } });
         logged.mockRestore();
     });
 

@@ -3,7 +3,7 @@ import type { OrgMembershipProcess } from "@/generated/prisma/client";
 import { ServiceError } from "@checkin/component-kit";
 import { EXTERNAL_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { config } from "@/lib/config";
-import { logger } from "@/lib/logger";
+import { logBackendError, logger } from "@/lib/logger";
 import { backgroundCheckProvider } from "@/lib/membership/background-check/manual-adapter";
 import { applyVolunteerFamilyStatus } from "@/lib/membership/review";
 import { householdCheckStarted } from "@/lib/membership/checkStanding";
@@ -20,7 +20,8 @@ import { systemActor, personActor, personOrSystemActor, recordAudit } from "@/li
  * EXTERNAL-phase service — the actions an applicant completes after intake:
  * signing the Zoho contract and starting a lead's background check. Once the
  * contract is signed AND the check is handled (`householdCheckStarted`, or a
- * still-valid prior check detected), the application advances to PENDING_PAYMENT.
+ * still-valid prior check detected), the application advances to PENDING_PAYMENT,
+ * or to PENDING_BG_CLEARANCE when it is already paid.
  * The background check is NOT a gate on payment — it reviews in parallel and only
  * the final ACTIVE transition waits on it.
  *
@@ -98,12 +99,16 @@ async function applicationCheckStarted(process: { orgMembershipId: number | null
 /**
  * Once the contract is signed AND the background check is handled — either a
  * still-valid prior check (bgClearedAt) or the check started
- * (`householdCheckStarted`) — advance from EXTERNAL straight to PENDING_PAYMENT. RENEWAL processes take
+ * (`householdCheckStarted`) — advance from EXTERNAL to PENDING_PAYMENT. RENEWAL processes take
  * this gate too: a fresh agreement is signed every cycle (beginRenewal), and a
  * still-valid background check arrives here pre-cleared so only the signature
  * is pending. The background check does not gate payment: when it still needs
  * a human review (no still-valid prior background check), it runs in PARALLEL
  * while the applicant pays, and only the final ACTIVE flip waits on it.
+ *
+ * An application already paid (an order recorded while it was BLOCKED) owes no
+ * payment, so it goes to PENDING_BG_CLEARANCE instead, and `settleHouseholdBg`
+ * converges it: activates it, or holds it and raises a refunded order.
  *
  * The conditional updateMany (status guard) is the atomic gate: two concurrent
  * callers (Zoho webhook + a check marked started) both reach here, but only the
@@ -111,12 +116,18 @@ async function applicationCheckStarted(process: { orgMembershipId: number | null
  * audit row is written exactly once, and a later status is never regressed. Mirrors review.ts `attest`.
  */
 export async function advanceExternalIfComplete(processId: number) {
+    return advanceExternal(processId, true);
+}
+
+async function advanceExternal(processId: number, retryOnLoss: boolean): Promise<OrgMembershipProcess | null> {
     const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
     if (!process) return process;
     if (process.status !== "PENDING_EXTERNAL_ACTION") return process;
     if (!process.contractSignedAt) return process;
     const started = !process.bgClearedAt && (await applicationCheckStarted(process));
     if (!process.bgClearedAt && !started) return process;
+    const paid = !!process.paidAt;
+    const to = paid ? "PENDING_BG_CLEARANCE" : "PENDING_PAYMENT";
 
     const { orgMembershipId } = asHouseholdProcess(process);
     const advanced = await prisma.$transaction(async (tx) => {
@@ -127,12 +138,14 @@ export async function advanceExternalIfComplete(processId: number) {
         const { count } = await tx.orgMembershipProcess.updateMany({
             where: {
                 id: processId,
-                // Advance CAS from-state from the definition; the contract/BG narrowing stays literal.
+                // Advance CAS from-state from the definition; the contract/BG/paid narrowing stays literal.
                 ...fromWhere("PENDING_EXTERNAL_ACTION"),
                 contractSignedAt: { not: null },
+                paidAt: paid ? { not: null } : null,
                 ...(started ? {} : { bgClearedAt: { not: null } }),
             },
-            data: { status: "PENDING_PAYMENT", stageEnteredAt: new Date() },
+            // Settle converges only an uncleared row; it re-reads the household's standing and stamps it again.
+            data: { status: to, stageEnteredAt: new Date(), ...(paid ? { bgClearedAt: null } : {}) },
         });
         if (count !== 1) return null; // lost the race or no longer eligible — no audit, no notify
         // The membership fee is read at PENDING_PAYMENT (ensurePaymentLink), normally BEFORE the
@@ -147,13 +160,25 @@ export async function advanceExternalIfComplete(processId: number) {
                 tableName: "OrgMembershipProcess",
                 affectedEntityId: processId,
                 oldData: { status: "PENDING_EXTERNAL_ACTION" },
-                newData: { status: "PENDING_PAYMENT" },
+                newData: { status: to, ...(paid ? { paid: true, bgCleared: false } : {}) },
             },
         });
-        return tx.orgMembershipProcess.findUnique({ where: { id: processId } });
+        return { householdId: membership?.householdId ?? null };
     });
+    // A refund between the read and the CAS clears paidAt and fails the CAS; read again once.
+    if (!advanced && retryOnLoss) return advanceExternal(processId, false);
+    const householdId = advanced?.householdId ?? null;
+    if (paid && householdId !== null) {
+        // Lazy: settleHouseholdBg imports this module.
+        const { settleHouseholdBg } = await import("@/lib/membership/settleHouseholdBg");
+        try {
+            await settleHouseholdBg(householdId);
+        } catch (error) {
+            await logBackendError(error, "household background-check settle after a paid application's advance", { householdId, processId });
+        }
+    }
     // Reviewers are pinged when the household's check review opens, not here.
-    return advanced ?? prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
+    return prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
 }
 
 /**

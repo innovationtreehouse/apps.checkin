@@ -11,6 +11,7 @@ import { backendPid, waitersBehind } from "@checkin/pg-test-harness";
 import { quickBooksDepositSource } from "../../lib/qb-deposits";
 import { reconciliationService } from "../../services/reconciliationService";
 import { itemCategoryService } from "../../services/itemCategoryService";
+import { openBucketIssues } from "../../lib/buckets";
 import type { MirrorBalanceTxn, MirrorOrderLine, MirrorOrderSubtotal, MirrorPayout, OwnerInfo, PayoutMirror } from "../../contract";
 import { clearAll, ORG_A } from "../helpers/fixtures";
 import { depositStatus, expectDeposit, type ExpectedDeposit } from "../../lib/intake";
@@ -144,7 +145,7 @@ function bind(over: Partial<IncomeConfig> = {}) {
     savedClasses: { activeClassIds: async () => activeClasses },
     alerts: {
       postCapReached: async (e) => void alerts.push(e),
-      bucketUnusable: async (e) => void bucketAlerts.push(e),
+      bucketUnusable: async (e) => bucketAlerts.push(e) > 0,
       sweepIncomplete: async (e) => void sweepAlerts.push(e),
     },
     ...over,
@@ -1343,16 +1344,27 @@ describeDb("drainIncomeOutbox — deposit lines", () => {
     expect(await rowFor(held)).toMatchObject({ status: "POSTED" });
   });
 
-  it("an alert send that fails is not retried: the bucket stays recorded", async () => {
+  it("an alert that is not sent is sent again by the next run, and stops once sent", async () => {
     owners = [{ ...camp, quickBooksClassId: null }];
+    const outcomes: (boolean | Error)[] = [new Error("SES down"), false, true];
     let sends = 0;
-    bind({ alerts: { postCapReached: async () => {}, bucketUnusable: async () => { sends++; throw new Error("SES down"); }, sweepIncomplete: async () => {} } });
+    bind({
+      alerts: {
+        postCapReached: async () => {},
+        bucketUnusable: async () => {
+          const o = outcomes[sends++];
+          if (o instanceof Error) throw o;
+          return o;
+        },
+        sweepIncomplete: async () => {},
+      },
+    });
     await db.incomeItemCategory.create({ data: { orgId: ORG_A, variantId: "V1", budgetOwnerId: 7, quickBooksAccountId: "82" } });
 
-    await drain();
-    await drain();
-    expect(sends).toBe(1);
-    expect(await db.incomeAuditLog.count({ where: { action: "bucket.unusable" } })).toBe(1);
+    for (let i = 0; i < 4; i++) await drain();
+    expect(sends).toBe(3);
+    expect(await db.incomeAuditLog.count({ where: { action: "bucket.unusable" } })).toBe(3);
+    expect(await openBucketIssues(ORG_A)).toEqual(new Map([[7, "has no QuickBooks Class"]]));
   });
 
   it("reassigning a broken bucket's items releases the payout without touching the bucket", async () => {

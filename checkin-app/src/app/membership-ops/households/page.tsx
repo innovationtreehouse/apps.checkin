@@ -6,8 +6,7 @@ import { useRequireRole } from '@/hooks/useRequireRole';
 import { MEMBERSHIP_OPS_ADMIN_ROLES } from '@/lib/nav/sections/membershipOps';
 import { Badge, Button, Group, List, Modal, Stack, Table, Text, Textarea, TextInput, Tooltip } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { notifications } from '@mantine/notifications';
-import { LoadError, showSuccess } from '@checkin/component-ui';
+import { clearError, LoadError, showError, showSuccess } from '@checkin/component-ui';
 import { useLoad } from '@/lib/api';
 import { AdminEditHouseholdModal } from '@/components/admin/AdminEditHouseholdModal';
 import { sharesHousehold } from '@/lib/conflictOfInterest';
@@ -64,6 +63,7 @@ export default function AdminHouseholdsPage() {
   const [pendingGrantYear, setPendingGrantYear] = useState<GrantYear | null>(null);
 
   const revokeMembership = async (householdId: number) => {
+    clearError('revoke-membership');
     try {
       const res = await fetch('/api/membership-ops/households', {
         method: 'POST',
@@ -76,16 +76,17 @@ export default function AdminHouseholdsPage() {
         showSuccess('Membership revoked.');
       } else {
         const data = await res.json().catch(() => ({}));
-        notifications.show({ color: 'red', message: data.error || 'Failed to update membership.', autoClose: false });
+        showError(data.error || 'Failed to update membership.', { key: 'revoke-membership' });
       }
     } catch {
-      notifications.show({ color: 'red', message: 'Network error.', autoClose: false });
+      showError('Network error.', { key: 'revoke-membership' });
     }
   };
 
   // A grant pays an application (money only) and records the year on its button. The
   // background check still applies, and the server rejects a board member's own household.
   const grant = async (householdId: number, reason: string, grantYear: GrantYear) => {
+    clearError('grant-membership');
     try {
       const res = await fetch('/api/membership-ops/households', {
         method: 'POST',
@@ -99,10 +100,10 @@ export default function AdminHouseholdsPage() {
         showSuccess(data.message || `Granted ${grantYear.label}.`);
       } else {
         const data = await res.json().catch(() => ({}));
-        notifications.show({ color: 'red', message: data.error || 'Failed to grant membership.', autoClose: false });
+        showError(data.error || 'Failed to grant membership.', { key: 'grant-membership' });
       }
     } catch {
-      notifications.show({ color: 'red', message: 'Network error.', autoClose: false });
+      showError('Network error.', { key: 'grant-membership' });
     }
   };
 
@@ -134,6 +135,7 @@ export default function AdminHouseholdsPage() {
   };
 
   const doSetDenied = async (householdId: number, deny: boolean) => {
+    clearError('deny-membership');
     try {
       const res = await fetch('/api/membership-ops/households', {
         method: 'POST',
@@ -146,10 +148,10 @@ export default function AdminHouseholdsPage() {
         showSuccess(deny ? 'Membership denied — members can no longer log in.' : 'Membership restored.');
       } else {
         const data = await res.json().catch(() => ({}));
-        notifications.show({ color: 'red', message: data.error || 'Failed to update membership.', autoClose: false });
+        showError(data.error || 'Failed to update membership.', { key: 'deny-membership' });
       }
     } catch {
-      notifications.show({ color: 'red', message: 'Network error.', autoClose: false });
+      showError('Network error.', { key: 'deny-membership' });
     }
   };
 

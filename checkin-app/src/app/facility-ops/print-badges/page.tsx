@@ -4,8 +4,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import QRCode from "qrcode";
 import { pdf } from "@react-pdf/renderer";
 import { Badge, Button, Checkbox, Group, Select, Stack, Text, TextInput } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
-import { errorMessage, FAILURE_TEXT, HttpError, LoadError } from "@checkin/component-ui";
+import { errorMessage, FAILURE_TEXT, HttpError, LoadError, showError } from "@checkin/component-ui";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { FACILITY_AGGREGATE_ROLES } from "@/lib/nav/sections/facilityOps";
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -120,7 +119,7 @@ export default function PrintBadgesPage() {
         if (!current) return;
         console.error("Failed to load the active-member roster for badge names:", e);
         setRoster(null);
-        notifications.show({ color: 'red', message: 'Could not load the active member roster, so badge names cannot be resolved. Reload to retry.', autoClose: false });
+        showError('Could not load the active member roster, so badge names cannot be resolved. Reload to retry.');
       });
     return () => { current = false; };
   }, [ready, selectedYear]);
@@ -173,7 +172,7 @@ export default function PrintBadgesPage() {
       return { id, nickname };
     } catch (e) {
       console.error("Failed to save nickname:", e);
-      notifications.show({ color: 'red', message: 'Could not save that nickname — it is not on the badge. Edit the box to retry.', autoClose: false });
+      showError('Could not save that nickname — it is not on the badge. Edit the box to retry.');
       return null;
     }
   }, [applyNickname, dropSavedDraft]);
@@ -305,7 +304,7 @@ export default function PrintBadgesPage() {
       URL.revokeObjectURL(url);
     } catch (e) {
       console.error(`Failed to generate ${kind} PDF`, e);
-      notifications.show({ color: 'red', message: `Failed to generate ${kind} PDF. Please try again.`, autoClose: false });
+      showError(`Failed to generate ${kind} PDF. Please try again.`);
     } finally {
       setIsGenerating(false);
     }

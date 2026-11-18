@@ -1,6 +1,6 @@
 import prisma from "@/lib/prisma";
-import { liveMembershipYear } from "@/lib/membership/renewal";
 import { settledThisCycleWhere } from "@/lib/membership/lifecycle";
+import { notRenewingTargetYear } from "@/lib/membership/notRenewing";
 import type { Prisma } from "@/generated/prisma/client";
 import type { EmailType } from "@/lib/outreach/render";
 
@@ -16,37 +16,42 @@ export interface RecipientSnapshot {
 }
 
 /**
- * Renewal outreach goes only to leads of live households whose membership is ACTIVE,
- * which also rules out a DENIED household, and skips a household that has said it
- * won't renew into the live year, the one renewals buy. `archivedAt` is checked here because row
- * security hides an archived household only from queries that reach Household.
+ * Who a renewal email sent at `now` may go to: a lead of a live, ACTIVE household with no
+ * not-renewing note for the year the email is about. The reminder also skips a household
+ * that has completed renewal for that year; a paid renewal waiting on its background check
+ * has not. `archivedAt` is checked here because row security hides an archived household
+ * only from queries that reach Household.
  */
-function audienceWhere(emailType: EmailType, liveYear: number | null): Prisma.PersonWhereInput {
+export function outreachAudienceWhere(emailType: EmailType, boundary: Date | null | undefined, now: Date): Prisma.PersonWhereInput {
+    const year = notRenewingTargetYear(boundary, now);
     const where: Prisma.PersonWhereInput = {
         isHouseholdLead: true,
         household: {
             archivedAt: null,
             orgMembership: {
                 status: "ACTIVE",
-                ...(liveYear !== null && { OR: [{ notRenewingYear: null }, { notRenewingYear: { not: liveYear } }] }),
+                ...(year !== null && { OR: [{ notRenewingYear: null }, { notRenewingYear: { not: year } }] }),
             },
         },
     };
     if (emailType === "opening") return where;
-    // The reminder skips a household that has completed renewal for the year a renewal
-    // buys now. A paid renewal still waiting on its background check is not complete.
     return {
         AND: [
             where,
-            { NOT: { household: { orgMembership: { processes: { some: { AND: [settledThisCycleWhere(liveYear), { status: "ACTIVE" }] } } } } } },
+            { NOT: { household: { orgMembership: { processes: { some: { AND: [settledThisCycleWhere(year), { status: "ACTIVE" }] } } } } } },
         ],
     };
 }
 
+/** {@link outreachAudienceWhere} for the Board's configured membership-year boundary. */
+export async function outreachAudienceAt(emailType: EmailType, now: Date): Promise<Prisma.PersonWhereInput> {
+    const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
+    return outreachAudienceWhere(emailType, settings?.orgMembershipYearBoundary, now);
+}
+
 /** The recipients of one campaign send: the audience its email type implies. */
 export async function computeRecipientSnapshot(emailType: EmailType, now = new Date()): Promise<RecipientSnapshot> {
-    const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
-    const where = audienceWhere(emailType, liveMembershipYear(settings?.orgMembershipYearBoundary, now));
+    const where = await outreachAudienceAt(emailType, now);
 
     const [leadsWithoutEmail, leads] = await Promise.all([
         prisma.person.count({ where: { ...where, email: null } }),

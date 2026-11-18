@@ -116,8 +116,8 @@ export interface IncomeDeposits {
   expectDeposit(orgId: string, disbursementId: string, expected: DonationExpectedDeposit): Promise<unknown>;
   /** Per disbursement id; an id income has no row for is absent. */
   depositStatus(orgId: string, disbursementIds: string[]): Promise<Record<string, DonationDepositStatus>>;
-  /** Tells finance about completed disbursements the daily job could not hand over. */
-  handOverFailing(failures: DepositHandOverFailure[]): Promise<void>;
+  /** Tells finance about completed disbursements the daily job could not hand over; false when the alert was not sent. */
+  handOverFailing(failures: DepositHandOverFailure[]): Promise<boolean>;
   prod: boolean;
 }
 

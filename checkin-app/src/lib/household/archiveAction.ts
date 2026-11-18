@@ -48,7 +48,7 @@ export async function archiveHousehold(householdId: number, actorId: number) {
         if (!household) throw notFound();
         if (household.archivedAt) throw refuse("This household is already archived.");
 
-        // Applications before the membership row, the order restore, payment and reset lock in.
+        // Membership, household, then applications: the order lib/lockOrder.ts states.
         const found = await tx.orgMembership.findUnique({ where: { householdId }, select: { id: true } });
         const openApplications = found ? await lockOpenApplications(tx, found.id) : [];
         const [membership] = found

@@ -9,7 +9,8 @@
  *     the already-claimed-ids short-circuit.
  *   - advanceExternalIfComplete: the volunteer-designation allowlist is matched
  *     at the PENDING_PAYMENT transition — and only by the race winner; the gate
- *     reads the household's check started from its people's reviews.
+ *     reads the household's check started from its people's reviews; a paid row
+ *     goes to PENDING_BG_CLEARANCE and is handed to the household settle.
  */
 import { setZohoEnvelope, findProcessByEnvelope, getOrCreateContractSigningUrl, advanceExternalIfComplete, markContractSigned, resetSigning, ExternalError } from '@/lib/membership/external';
 import { SIGN_FIELDS } from '@/lib/membership/contract/signFields';
@@ -31,6 +32,13 @@ jest.mock('@/lib/membership/review', () => ({
     notifyReviewers: jest.fn().mockResolvedValue(undefined),
     applyVolunteerFamilyStatus: jest.fn().mockResolvedValue(undefined),
 }));
+
+jest.mock('@/lib/membership/settleHouseholdBg', () => ({ settleHouseholdBg: jest.fn() }));
+
+jest.mock('@/lib/logger', () => {
+    const actual = jest.requireActual('@/lib/logger');
+    return { ...actual, logBackendError: jest.fn() };
+});
 
 jest.mock('@/lib/config', () => {
     const actual = jest.requireActual('@/lib/config');
@@ -72,6 +80,10 @@ const { zohoSign } = require('@/lib/membership/contract/zohoProvider');
 const { loadAgreementPdf, stampWatermark, AgreementUnavailableError } = require('@/lib/membership/contract/agreementDocument');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { notifyReviewers, applyVolunteerFamilyStatus } = require('@/lib/membership/review');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { settleHouseholdBg } = require('@/lib/membership/settleHouseholdBg');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { logBackendError } = require('@/lib/logger');
 
 // resetAllMocks, NOT clearAllMocks: clear wipes recorded calls but KEEPS
 // implementations, so a `mockResolvedValue` set in one test silently answers every
@@ -244,6 +256,84 @@ describe('advanceExternalIfComplete', () => {
             expect(prisma.orgMembershipProcess.count).not.toHaveBeenCalled();
             expect(prisma.orgMembershipProcess.updateMany).toHaveBeenCalledTimes(1);
         });
+    });
+
+    describe('a row already paid (an order recorded while it was blocked)', () => {
+        const paidProcess = { ...readyProcess, paidAt: new Date() };
+
+        it('goes to PENDING_BG_CLEARANCE uncleared, audits the paid advance and hands the household to settle', async () => {
+            prisma.orgMembershipProcess.findUnique.mockResolvedValueOnce(paidProcess).mockResolvedValueOnce({ ...paidProcess, status: 'ACTIVE' });
+            prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
+
+            const result = await advanceExternalIfComplete(20);
+
+            const call = prisma.orgMembershipProcess.updateMany.mock.calls[0][0];
+            expect(call.where.paidAt).toEqual({ not: null });
+            expect(call.data).toEqual({ status: 'PENDING_BG_CLEARANCE', stageEnteredAt: expect.any(Date), bgClearedAt: null });
+            expect(prisma.auditLog.create.mock.calls[0][0].data.newData).toEqual({ status: 'PENDING_BG_CLEARANCE', paid: true, bgCleared: false });
+            expect(settleHouseholdBg).toHaveBeenCalledWith(7);
+            expect(result).toEqual({ ...paidProcess, status: 'ACTIVE' });
+        });
+
+        it('a cleared paid row drops its stamp for settle to set again, and the audit row says so', async () => {
+            const cleared = { ...paidProcess, bgConsentAt: null, bgClearedAt: new Date() };
+            prisma.orgMembershipProcess.findUnique.mockResolvedValueOnce(cleared).mockResolvedValueOnce(cleared);
+            prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
+
+            await advanceExternalIfComplete(20);
+
+            expect(prisma.orgMembershipProcess.updateMany.mock.calls[0][0].data.bgClearedAt).toBeNull();
+            expect(prisma.auditLog.create.mock.calls[0][0].data.newData).toEqual({ status: 'PENDING_BG_CLEARANCE', paid: true, bgCleared: false });
+            expect(settleHouseholdBg).toHaveBeenCalledWith(7);
+        });
+
+        it('loser of the race: reads again once, then no audit and no settle', async () => {
+            prisma.orgMembershipProcess.findUnique.mockResolvedValueOnce(paidProcess).mockResolvedValueOnce(paidProcess).mockResolvedValueOnce(paidProcess);
+            prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 0 });
+
+            await advanceExternalIfComplete(20);
+
+            expect(prisma.orgMembershipProcess.updateMany).toHaveBeenCalledTimes(2);
+            expect(prisma.auditLog.create).not.toHaveBeenCalled();
+            expect(settleHouseholdBg).not.toHaveBeenCalled();
+        });
+
+        it('a refund between the read and the CAS: the second read sends the row to PENDING_PAYMENT', async () => {
+            const refunded = { ...paidProcess, paidAt: null };
+            prisma.orgMembershipProcess.findUnique.mockResolvedValueOnce(paidProcess).mockResolvedValueOnce(refunded).mockResolvedValueOnce({ ...refunded, status: 'PENDING_PAYMENT' });
+            prisma.orgMembershipProcess.updateMany.mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 1 });
+
+            const result = await advanceExternalIfComplete(20);
+
+            const retry = prisma.orgMembershipProcess.updateMany.mock.calls[1][0];
+            expect(retry.where.paidAt).toBeNull();
+            expect(retry.data.status).toBe('PENDING_PAYMENT');
+            expect(settleHouseholdBg).not.toHaveBeenCalled();
+            expect(result).toEqual({ ...refunded, status: 'PENDING_PAYMENT' });
+        });
+
+        it('a failed settle is logged and the advance still stands', async () => {
+            prisma.orgMembershipProcess.findUnique.mockResolvedValueOnce(paidProcess).mockResolvedValueOnce({ ...paidProcess, status: 'PENDING_BG_CLEARANCE' });
+            prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
+            settleHouseholdBg.mockRejectedValue(new Error('shopify down'));
+
+            const result = await advanceExternalIfComplete(20);
+
+            expect(logBackendError).toHaveBeenCalledTimes(1);
+            expect(result).toEqual({ ...paidProcess, status: 'PENDING_BG_CLEARANCE' });
+        });
+    });
+
+    it('an unpaid row goes to PENDING_PAYMENT, its CAS requires it still unpaid, and settle is not called', async () => {
+        prisma.orgMembershipProcess.findUnique.mockResolvedValueOnce({ ...readyProcess, paidAt: null }).mockResolvedValueOnce({ ...readyProcess, status: 'PENDING_PAYMENT' });
+        prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
+
+        await advanceExternalIfComplete(20);
+
+        const call = prisma.orgMembershipProcess.updateMany.mock.calls[0][0];
+        expect(call.where.paidAt).toBeNull();
+        expect(call.data).toEqual({ status: 'PENDING_PAYMENT', stageEnteredAt: expect.any(Date) });
+        expect(settleHouseholdBg).not.toHaveBeenCalled();
     });
 
     it('RENEWAL: the contract gate applies too — an unsigned renewal does not advance on its check alone', async () => {

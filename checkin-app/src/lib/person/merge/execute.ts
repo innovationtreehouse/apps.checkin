@@ -261,19 +261,13 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
 }
 
 /**
- * Lock order: BOARD roles, then the application rows this merge writes, then both
- * households' membership rows, then both Household rows (an archived one refuses the
- * merge), then both Person rows in id order. BOARD first is the order a role
- * change takes. Application before membership is the order payment, clearance
- * and reset take, so a merge never holds a household row while it waits on an
- * application. The membership rows serialize a deny with the merge even when
- * there are no BOARD rows to lock.
+ * Locks, in the order lib/lockOrder.ts states: BOARD roles, both households'
+ * membership rows, both Household rows (an archived one refuses the merge), both
+ * Person rows, then the application rows this merge writes. The membership rows
+ * serialize a deny with the merge even when there are no BOARD rows to lock.
  */
 async function lockMergeRows(tx: TxClient, keepId: number, mergeId: number, householdIds: number[]): Promise<void> {
     await lockBoardRoles(tx);
-    await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess"
-        WHERE "subjectPersonId" IN (${keepId}, ${mergeId}) OR "zohoSignerPersonId" = ${mergeId}
-        ORDER BY id FOR UPDATE`;
     await lockAndFindDeniedHousehold(tx, householdIds);
     try {
         await lockLiveHouseholds(tx, householdIds);
@@ -282,6 +276,9 @@ async function lockMergeRows(tx: TxClient, keepId: number, mergeId: number, hous
         throw e;
     }
     await lockBothSubjects(tx, keepId, mergeId);
+    await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess"
+        WHERE "subjectPersonId" IN (${keepId}, ${mergeId}) OR "zohoSignerPersonId" = ${mergeId}
+        ORDER BY id FOR UPDATE`;
 }
 
 /**

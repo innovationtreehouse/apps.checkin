@@ -270,7 +270,7 @@ describe("Merge Participants API", () => {
         await expectNotMerged(pMergeId);
     });
 
-    it("takes an application row before the household row, so a payment holding the application does not deadlock it", async () => {
+    it("takes the household's membership row before its application row, so a payment holding the membership does not deadlock it", async () => {
         const otherHh = await makeHousehold("Merge Test Payment In Flight Household", "NONE");
         await prisma.person.update({ where: { id: pMergeId }, data: { householdId: otherHh } });
         const membership = await prisma.orgMembership.findUniqueOrThrow({ where: { householdId: otherHh } });
@@ -282,12 +282,12 @@ describe("Merge Participants API", () => {
         const released = new Promise<void>((r) => (release = r));
         let lockHeld!: (pid: number) => void;
         const locked = new Promise<number>((r) => (lockHeld = r));
-        // Stands in for settle(): the application row, then the household row.
+        // Stands in for settle(): the membership row, then the application row.
         const payment = prisma.$transaction(async (tx) => {
-            await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${process.id} FOR UPDATE`;
+            await tx.$queryRaw`SELECT id FROM "OrgMembership" WHERE id = ${membership.id} FOR UPDATE`;
             lockHeld(await backendPid(tx));
             await released;
-            await tx.$queryRaw`SELECT id FROM "OrgMembership" WHERE id = ${membership.id} FOR UPDATE`;
+            await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${process.id} FOR UPDATE`;
         }, { timeout: 20_000 });
         const holderPid = await locked;
 

@@ -254,9 +254,9 @@ describe("ProgramDetailsPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
     await waitFor(() =>
-      expect(notifications.show).toHaveBeenCalledWith({ color: "yellow", message: warning, autoClose: false }),
+      expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "yellow", message: warning, autoClose: false })),
     );
-    expect(notifications.show).toHaveBeenCalledWith({ color: "yellow", message: notice, autoClose: false });
+    expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "yellow", message: notice, autoClose: false }));
     expect(notifications.show).not.toHaveBeenCalledWith(expect.objectContaining({ message: "Saved." }));
   });
 
@@ -887,14 +887,14 @@ describe("ProgramDetailsPage", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
     await screen.findByText(/Alice Kid/);
 
-    // 1st remove -> notice (blue)
+    // 1st remove -> notice
     await openRemove("Alice Kid");
     fireEvent.click(within(await screen.findByRole("dialog", { name: "Remove Participant" })).getByRole("button", { name: "Never took part: remove" }));
     await waitFor(() =>
-      expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "blue", message: "Seat freed. Add +1 in Shopify." })),
+      expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "yellow", message: "Seat freed. Add +1 in Shopify." })),
     );
 
-    // 2nd remove -> warning (yellow)
+    // 2nd remove -> warning
     await openRemove("Alice Kid");
     fireEvent.click(within(await screen.findByRole("dialog", { name: "Remove Participant" })).getByRole("button", { name: "Never took part: remove" }));
     await waitFor(() =>
