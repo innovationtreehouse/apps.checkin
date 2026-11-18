@@ -6,7 +6,7 @@ import { personActor } from "@/lib/auditActor";
 import { emailBoardMembers } from "@/lib/emailRecipients";
 import { isYouth } from "@/lib/time";
 import { lockLiveHouseholds } from "@/lib/household/archiveGuard";
-import { IN_FLIGHT_RENEWAL, settledThisCycleWhere } from "@/lib/membership/lifecycle";
+import { RENEWAL_UNDERWAY, settledThisCycleWhere } from "@/lib/membership/lifecycle";
 import { liveMembershipYear, membershipYearLabel, renewalWindow } from "@/lib/programYear";
 
 /**
@@ -16,7 +16,7 @@ import { liveMembershipYear, membershipYearLabel, renewalWindow } from "@/lib/pr
  * clears it ({@link clearNotRenewingInTx}).
  */
 export class NotRenewingError extends ServiceError {
-    constructor(status: number, message: string, code: "not_lead" | "not_active" | "already_renewed" | "renewal_underway" | "no_boundary") {
+    constructor(status: number, message: string, code: "not_lead" | "not_active" | "no_membership" | "already_renewed" | "renewal_underway" | "no_boundary") {
         super(status, message, code);
         this.name = "NotRenewingError";
     }
@@ -86,7 +86,7 @@ export async function markNotRenewing(personId: number, now = new Date()) {
         }
         await lockAsLead(tx, personId, lead.householdId);
         const underway = await tx.orgMembershipProcess.findFirst({
-            where: { orgMembershipId: locked.id, kind: "RENEWAL", status: { in: IN_FLIGHT_RENEWAL.filter((s) => s !== "PENDING_RENEWAL") } },
+            where: { orgMembershipId: locked.id, kind: "RENEWAL", status: { in: [...RENEWAL_UNDERWAY] } },
             select: { id: true },
         });
         if (underway) {
@@ -128,7 +128,7 @@ export async function clearNotRenewing(personId: number) {
     const lead = await leadOf(personId);
     return prisma.$transaction(async (tx) => {
         const [membership] = await tx.$queryRaw<{ id: number }[]>`SELECT id FROM "OrgMembership" WHERE "householdId" = ${lead.householdId} FOR UPDATE`;
-        if (!membership) throw new NotRenewingError(409, "Only an active membership can say it won't renew.", "not_active");
+        if (!membership) throw new NotRenewingError(409, "Your household has no membership to change.", "no_membership");
         await lockAsLead(tx, personId, lead.householdId);
         await clearNotRenewingInTx(tx, membership.id, personId);
         return tx.orgMembership.findUniqueOrThrow({ where: { id: membership.id } });

@@ -190,6 +190,11 @@ describe('clearNotRenewing', () => {
         await expect(clearNotRenewing(42)).rejects.toMatchObject({ code: 'not_lead' });
     });
 
+    it('refuses a household with no membership, in its own words', async () => {
+        mockTx.$queryRaw.mockResolvedValueOnce([]);
+        await expect(clearNotRenewing(42)).rejects.toMatchObject({ status: 409, code: 'no_membership', message: 'Your household has no membership to change.' });
+    });
+
     it('refuses an archived household', async () => {
         lockLiveHouseholds.mockRejectedValueOnce(new ArchivedHouseholdError());
         await expect(clearNotRenewing(42)).rejects.toBeInstanceOf(ArchivedHouseholdError);
