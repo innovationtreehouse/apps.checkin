@@ -1001,6 +1001,17 @@ MAX_ANSWERS = 5
 ANSWER_BUDGET = 300  # seconds; no new question starts after this
 
 
+def thread_roots(comments):
+    """Review comment id -> thread root id, following reply chains so a nested reply still groups."""
+    parent, roots = {c["id"]: c.get("in_reply_to_id") for c in comments}, {}
+    for i in parent:
+        r, hops = i, 0
+        while parent.get(r) and hops < len(parent):  # hop cap guards a malformed cycle
+            r, hops = parent[r], hops + 1
+        roots[i] = r
+    return roots
+
+
 def is_question(body):
     return re.sub(r"<!--.*?-->", "", body or "", flags=re.S).strip().rstrip("`* \n").endswith("?")
 
@@ -1013,7 +1024,7 @@ def pending_questions(review_comments, issue_comments):
             for m in re.findall(r"<!-- ai-answer:(\w+:\d+) -->", c.get("body") or "")}
     bot_roots = {c["id"] for c in review_comments
                  if (c.get("user") or {}).get("login") == BOT and not c.get("in_reply_to_id")}
-    found = []
+    roots, found = thread_roots(review_comments), []
     # A question followed by a trusted reply from someone else is treated as settled by people.
     for kind, comments in (("r", review_comments), ("i", issue_comments)):
         for pos, c in enumerate(comments):
@@ -1021,9 +1032,9 @@ def pending_questions(review_comments, issue_comments):
             if (c.get("user") or {}).get("login") == BOT or not _trusted(c) or not is_question(body) \
                     or f"{kind}:{c['id']}" in done:
                 continue
-            root = c.get("in_reply_to_id") or c["id"]
+            root = roots.get(c["id"], c["id"]) if kind == "r" else c["id"]
             who = (c.get("user") or {}).get("login")
-            if kind == "r" and any((x.get("in_reply_to_id") or x["id"]) == root and _trusted(x)
+            if kind == "r" and any(roots[x["id"]] == root and _trusted(x)
                                    and (x.get("user") or {}).get("login") not in (BOT, who) for x in comments[pos + 1:]):
                 continue
             if ASKS_AI.search(body) or (kind == "r" and root in bot_roots and not ASKS_OTHER.search(body)):
@@ -1075,6 +1086,7 @@ def answer():
         print(f"answer: {len(todo)} question(s), model {model or 'none'}; nothing to do")
         return
     diff = pr_diff(pr, repo, os.environ.get("BASE_SHA", ""), os.environ.get("HEAD_SHA", ""))
+    roots = thread_roots(rc)
     start = time.monotonic()
     for kind, cid, root, c in todo:
         left = ANSWER_BUDGET - (time.monotonic() - start)
@@ -1083,7 +1095,7 @@ def answer():
             break
         try:
             thread = "\n".join(f"{(x.get('user') or {}).get('login')}: {_clean(x.get('body'), 1500)}"
-                               for x in rc if (x.get("in_reply_to_id") or x["id"]) == root) if kind == "r" else ""
+                               for x in rc if roots[x["id"]] == root) if kind == "r" else ""
             line = c.get("line") if c.get("side") == "RIGHT" else None  # LEFT or outdated: no head-file excerpt
             text = ask_model(model, diff, {"path": c.get("path") if kind == "r" else "", "line": line,
                                            "hunk": c.get("diff_hunk", ""), "thread": thread, "question": _clean(c["body"], 4000)},
@@ -1146,6 +1158,8 @@ def answer_selftest():
           {"id": 2, "user": u("ann"), "author_association": "MEMBER", "body": "@bob, keep this?", "in_reply_to_id": 1},
           {"id": 3, "user": u("ann"), "author_association": "MEMBER", "body": "@bob @github-actions why?", "in_reply_to_id": 1}]
     assert [i for _, i, _, _ in pending_questions(c4, [])] == [3]
+    c5 = c3[:2] + [{"id": 3, "user": u("bob"), "author_association": "MEMBER", "body": "because x", "in_reply_to_id": 2}]
+    assert pending_questions(c5, []) == [] and thread_roots(c5)[3] == 1  # a nested reply settles it
     print("answer selftest ok")
 
 
