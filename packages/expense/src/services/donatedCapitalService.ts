@@ -106,7 +106,7 @@ export async function reviewDonatedLine(
       const { depreciationYears } = input;
       const units = unitCosts(line.costCents, unitsOf(line.quantity)).map((costCents) => ({ costCents, acquisitionDate: line.acquisitionDate, depreciationYears, description: line.description }));
       const { giftSource } = line;
-      if (giftSource !== "receipt" && giftSource !== "manual") throw new Error(`Unknown gift source ${giftSource}`);
+      if (giftSource !== "receipt" && giftSource !== "manual") throw new ServiceError(409, `Donated line ${line.id} names an unknown gift source, ${giftSource}`);
       await registerAssets(tx, actor, orgId, { kind: "gift_line", giftSource, giftId: line.giftId, giftLineId: line.giftLineId, donatedLineId: line.id }, units);
     }
     await writeOrgAudit(tx, orgId, actor, {

@@ -456,6 +456,24 @@ describeDb("capital register", () => {
     expect(await mint(await expenseLine())).toEqual(["ITFA21"]);
   });
 
+  it("a seed before an org's first mint starts the mark at the seeded number", async () => {
+    await seedCapitalAssets(FINANCE, [{ assetNumber: "ITFA20", description: "Old saw" }]);
+    expect(await db.capitalAssetSequence.findUnique({ where: { orgId: ORG } })).toMatchObject({ highestIssued: 20 });
+    expect(await mint(await expenseLine())).toEqual(["ITFA21"]);
+  });
+
+  it("a mark behind the register mints past the register's highest number", async () => {
+    await db.capitalAssetSequence.create({ data: { orgId: ORG, highestIssued: 5 } });
+    await db.capitalAsset.create({ data: { orgId: ORG, assetNumber: "ITFA20", description: "Old saw", seeded: true } });
+    expect(await mint(await expenseLine())).toEqual(["ITFA21"]);
+  });
+
+  it("after a seed and an org's first mint run together, the next mint still finds a free number", async () => {
+    const source = await expenseLine();
+    await Promise.all([mint(source, 3), seedCapitalAssets(FINANCE, [{ assetNumber: "ITFA02", description: "Old saw" }])]);
+    await expect(mint(await expenseLine())).resolves.toHaveLength(1);
+  });
+
   it("two concurrent mints get different numbers", async () => {
     const [a, b] = await Promise.all([mint(await expenseLine(), 2), mint(await expenseLine(), 2)]);
     expect(new Set([...a, ...b]).size).toBe(4);

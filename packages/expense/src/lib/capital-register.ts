@@ -56,19 +56,19 @@ async function registerMax(db: Db, orgId: string): Promise<number> {
 }
 
 /**
- * Locks the org's high-water mark for the rest of the transaction and returns it. The first call
- * for an org starts the mark at the register's highest number. The lock serialises mints.
+ * Locks the org's high-water mark for the rest of the transaction and returns it, never below the
+ * register's highest number, which is read under the lock. The lock serialises mints and seeds.
  */
 async function lockHighestIssued(tx: Prisma.TransactionClient, orgId: string): Promise<number> {
-  const start = await registerMax(tx, orgId);
-  await tx.$executeRaw`INSERT INTO capital_asset_sequences (org_id, highest_issued) VALUES (${orgId}, ${start}) ON CONFLICT (org_id) DO NOTHING`;
+  await tx.$executeRaw`INSERT INTO capital_asset_sequences (org_id, highest_issued) VALUES (${orgId}, 0) ON CONFLICT (org_id) DO NOTHING`;
   const [row] = await tx.$queryRaw<{ highest_issued: number }[]>`SELECT highest_issued FROM capital_asset_sequences WHERE org_id = ${orgId} FOR UPDATE`;
-  return row.highest_issued;
+  return Math.max(row.highest_issued, await registerMax(tx, orgId));
 }
 
-/** Raises the org's high-water mark to a seeded number above it; a mark not yet started is left to start from the register. */
+/** Raises the org's high-water mark to a seeded number, creating the mark if needed; it holds the mark's lock until commit. */
 export async function raiseHighestIssued(tx: Prisma.TransactionClient, orgId: string, seq: number): Promise<void> {
-  await tx.$executeRaw`UPDATE capital_asset_sequences SET highest_issued = GREATEST(highest_issued, ${seq}) WHERE org_id = ${orgId}`;
+  await tx.$executeRaw`INSERT INTO capital_asset_sequences (org_id, highest_issued) VALUES (${orgId}, ${seq})
+    ON CONFLICT (org_id) DO UPDATE SET highest_issued = GREATEST(capital_asset_sequences.highest_issued, ${seq})`;
 }
 
 export type AssetSource =
@@ -165,7 +165,13 @@ export async function linkAssets(
       if (asset.sourceLineItemId === source.lineItemId && asset.unitIndex === unitIndex) continue;
       throw new ServiceError(409, `${assetNumber} is already linked to another line`);
     }
-    await tx.capitalAsset.update({ where: { id: asset.id }, data: { ...columns, unitIndex } });
+    // Conditional, so of two backfills linking the same asset at once only one wins.
+    const linked = await tx.capitalAsset.updateMany({ where: { id: asset.id, sourceKind: null }, data: { ...columns, unitIndex } });
+    if (linked.count === 0) {
+      const now = await tx.capitalAsset.findUniqueOrThrow({ where: { id: asset.id } });
+      if (now.sourceLineItemId === source.lineItemId && now.unitIndex === unitIndex) continue;
+      throw new ServiceError(409, `${assetNumber} is already linked to another line`);
+    }
     await writeOrgAudit(tx, orgId, actor, {
       entityType: "capital_asset",
       entityId: assetNumber,
