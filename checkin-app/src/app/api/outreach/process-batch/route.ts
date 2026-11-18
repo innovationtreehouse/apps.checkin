@@ -4,6 +4,7 @@ import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
 import { sendTemplated } from "@/lib/email-templates/send";
 import { outreachCtx, OUTREACH_KEY, resolveBoundary, BoundaryNotSetError, type EmailType } from "@/lib/outreach/render";
+import { outreachAudienceAt } from "@/lib/outreach/recipients";
 import type { BusinessRole } from "@/types/auth";
 
 export const dynamic = "force-dynamic";
@@ -22,7 +23,7 @@ const BATCH_SIZE = 40; // within the spec's ~25-50/round
  * another in-flight process-batch call for the same item) is simply skipped.
  *
  * ponytail: the claim writes a transient "sending" status, outside the ledger's
- * queued/sent/failed/skipped_denied/skipped_not_member set, as the atomic marker, since Prisma's
+ * queued/sent/failed/skipped_* set, as the atomic marker, since Prisma's
  * updateMany can't return which rows it touched. A crash in the narrow window between claim
  * and finalize could strand a single item in "sending" (not resumable by count-of-queued or
  * retry-failed); add a stale-"sending" reaper if that's ever observed in practice.
@@ -40,14 +41,16 @@ export const POST = withAuth({ roles: ROLES }, async (req) => {
         : await prisma.bulkSend.findFirst({ where: { completedAt: null }, orderBy: { id: "desc" } });
     if (!bulkSend || bulkSend.completedAt) return apiError("No in-flight send.", 404);
 
+    const now = new Date();
     let boundary;
     try {
-        boundary = await resolveBoundary(new Date());
+        boundary = await resolveBoundary(now);
     } catch (e) {
         if (e instanceof BoundaryNotSetError) return apiError(e.message, 400);
         throw e;
     }
     const key = OUTREACH_KEY[bulkSend.emailType as EmailType];
+    const audience = await outreachAudienceAt(bulkSend.emailType as EmailType, now);
 
     const candidates = await prisma.bulkSendItem.findMany({
         where: { bulkSendId: bulkSend.id, status: "queued" },
@@ -73,6 +76,11 @@ export const POST = withAuth({ roles: ROLES }, async (req) => {
         }
         if (membershipStatus !== "ACTIVE") {
             await prisma.bulkSendItem.update({ where: { id: item.id }, data: { status: "skipped_not_member" } });
+            continue;
+        }
+        // The snapshot may predate a note, a renewal, or a change of lead.
+        if ((await prisma.person.count({ where: { AND: [{ id: item.personId }, audience] } })) === 0) {
+            await prisma.bulkSendItem.update({ where: { id: item.id }, data: { status: "skipped_not_audience" } });
             continue;
         }
         const ok = await sendTemplated(key, item.email, outreachCtx(person.name, boundary));

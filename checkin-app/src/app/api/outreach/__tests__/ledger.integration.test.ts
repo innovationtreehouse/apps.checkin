@@ -16,6 +16,7 @@ import prisma from '@/lib/prisma';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { getServerSession } from 'next-auth/next';
 import { sendEmail } from '@/lib/email';
+import { notRenewingTargetYear } from '@/lib/membership/notRenewing';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 jest.mock('@/lib/email', () => ({ runPaced: (tasks: Array<() => Promise<unknown>>) => Promise.all(tasks.map((t) => t())), sendEmail: jest.fn() }));
@@ -68,6 +69,7 @@ async function wipeHouseholds() {
     const hhs = await prisma.household.findMany({ where: { name: { contains: TAG } }, select: { id: true } });
     const ids = hhs.map((h) => h.id);
     if (ids.length) {
+        await prisma.orgMembershipProcess.deleteMany({ where: { orgMembership: { householdId: { in: ids } } } });
         await prisma.orgMembership.deleteMany({ where: { householdId: { in: ids } } });
         await prisma.person.deleteMany({ where: { householdId: { in: ids } } });
         await prisma.household.deleteMany({ where: { id: { in: ids } } });
@@ -350,6 +352,51 @@ describe('outreach ledger (send / process-batch / status)', () => {
         const sentTo = (sendEmail as jest.Mock).mock.calls.map(([to]) => to);
         expect(sentTo).not.toContain(`laterevoke-${TAG}@example.com`);
         expect(sentTo).not.toContain(`legacyjoin-${TAG}@example.com`);
+    });
+
+    async function drainAll(bulkSendId: number, queued: number) {
+        let remaining = queued;
+        let guard = 0;
+        while (remaining > 0 && guard++ < 5) {
+            remaining = (await (await PROCESS_BATCH(req('POST', { bulkSendId }))).json()).remaining;
+        }
+    }
+
+    it('drain skips a household that leaves the audience after the snapshot: a note, a renewal, a lead removed', async () => {
+        const year = notRenewingTargetYear(BOUNDARY, new Date());
+        const noted = await makeMemberLead('LateNote', `latenote-${TAG}@example.com`);
+        const renewed = await makeMemberLead('LateRenew', `laterenew-${TAG}@example.com`);
+        const unled = await makeMemberLead('LateUnlead', `lateunlead-${TAG}@example.com`);
+        const kept = await makeMemberLead('StillIn', `stillin-${TAG}@example.com`);
+        asBoard(boardId);
+
+        const created = await (await SEND(req('POST', { emailType: 'reminder' }))).json();
+        const bulkSendId = created.bulkSend.id;
+        const itemOf = async (householdId: number) => {
+            const person = await prisma.person.findFirstOrThrow({ where: { householdId } });
+            return prisma.bulkSendItem.findFirstOrThrow({ where: { bulkSendId, personId: person.id } });
+        };
+        const items = { noted: await itemOf(noted.id), renewed: await itemOf(renewed.id), unled: await itemOf(unled.id), kept: await itemOf(kept.id) };
+
+        await prisma.orgMembership.update({ where: { householdId: noted.id }, data: { notRenewingYear: year } });
+        const renewedMembership = await prisma.orgMembership.findUniqueOrThrow({ where: { householdId: renewed.id } });
+        await prisma.orgMembershipProcess.create({
+            data: { orgMembershipId: renewedMembership.id, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: new Date(), appliesToYear: year },
+        });
+        await prisma.person.updateMany({ where: { householdId: unled.id }, data: { isHouseholdLead: false } });
+
+        await drainAll(bulkSendId, created.counts.queued);
+
+        for (const item of [items.noted, items.renewed, items.unled]) {
+            expect((await prisma.bulkSendItem.findUniqueOrThrow({ where: { id: item.id } })).status).toBe('skipped_not_audience');
+        }
+        expect((await prisma.bulkSendItem.findUniqueOrThrow({ where: { id: items.kept.id } })).status).toBe('sent');
+        const sentTo = (sendEmail as jest.Mock).mock.calls.map(([to]) => to);
+        expect(sentTo).toEqual(expect.not.arrayContaining([`latenote-${TAG}@example.com`, `laterenew-${TAG}@example.com`, `lateunlead-${TAG}@example.com`]));
+        expect(sentTo).toContain(`stillin-${TAG}@example.com`);
+
+        const status = await (await STATUS_GET(req('GET'))).json();
+        expect(status.lastCompleted.counts.skipped_not_audience).toBe(3);
     });
 
     it('drain sends the renewal email for a legacy join item to an ACTIVE household lead', async () => {
