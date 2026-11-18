@@ -19,7 +19,7 @@ function bind(taken: string[]) {
   const deposits: IncomeDeposits = {
     prod: false,
     expectDeposit: async () => "recorded",
-    handOverFailing: async () => {},
+    handOverFailing: async () => true,
     depositStatus: async (_orgId, ids) =>
       Object.fromEntries(ids.filter((id) => taken.includes(id)).map((id): [string, DonationDepositStatus] => [id, { state: "waiting" }])),
   };
