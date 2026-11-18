@@ -3,6 +3,7 @@ import { db } from "../../db";
 import { ServiceError } from "@checkin/component-kit";
 import type { ReceiptPeople } from "../../contract";
 import { CANNOT_ASSIGN, CANNOT_REMEMBER, mailQueueService } from "../../services/mailQueueService";
+import { REFUSAL_NOTE_KEY } from "../../services/mailIntake";
 import { intakeMailedReceipt, receiptService } from "../../services/receiptService";
 import type { ReceiptLimits } from "../../lib/limits";
 import { describeDb } from "../helpers/db";
@@ -288,6 +289,16 @@ describeDb("mailbox ignore list", () => {
     const entry = await mailQueueService.ignoreReceiptFile(r.id, { reason: "logo" });
     const { fileHash } = await db.receipt.findUniqueOrThrow({ where: { id: r.id } });
     expect(entry).toMatchObject({ fileHash, reason: "logo", addedByUserId: FINANCE.id });
+  });
+
+  it("refuses to ignore a refusal note, leaving it and every other note held", async () => {
+    const id = await holdItem("held", "a@elsewhere.test", REFUSAL_NOTE_KEY);
+    const other = await holdItem("held", "b@elsewhere.test", REFUSAL_NOTE_KEY);
+    await expect(mailQueueService.discard(id, { reason: "junk", ignoreFile: true })).rejects.toMatchObject({ status: 409 });
+    expect(await db.receiptMailItem.count({ where: { id: { in: [id, other] }, status: "held" } })).toBe(2);
+    expect(await mailQueueService.listIgnored()).toEqual([]);
+    expect(await mailQueueService.discard(id, { reason: "junk" })).toMatchObject({ id, status: "discarded" });
+    expect(await db.receiptMailItem.findUniqueOrThrow({ where: { id: other } })).toMatchObject({ status: "held" });
   });
 
   it("removes an entry, audited like an add", async () => {
