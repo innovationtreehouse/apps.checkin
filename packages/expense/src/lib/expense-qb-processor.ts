@@ -317,7 +317,7 @@ async function commitQbProcessing(orgId: string, expenseId: string, resubmittedB
       action: "qb_event_emitted",
     });
     return true;
-  });
+  }, { timeout: 15_000 });
 }
 
 // ── Orchestrator ──────────────────────────────────────────────────────────────

@@ -55,11 +55,11 @@ export async function setBooksMapAccount(actorId: number, role: string, body: Re
     if (!isBooksMapRole(role)) throw badRequest(`Unknown books-map role "${role}"`);
     if (body.quickBooksAccountId === undefined) throw badRequest("quickBooksAccountId is required");
     const quickBooksAccountId = readQuickBooksId(body.quickBooksAccountId, "quickBooksAccountId");
-    if (quickBooksAccountId !== null) await refuseWrongType(role, quickBooksAccountId);
     return prisma.$transaction(async (tx) => {
         const before = await tx.booksMapRoleAccount.findUnique({ where: { role }, select: { quickBooksAccountId: true } });
         const oldId = before?.quickBooksAccountId ?? null;
         if (oldId === quickBooksAccountId) return { role, quickBooksAccountId };
+        if (quickBooksAccountId !== null) await refuseWrongType(role, quickBooksAccountId);
         if (quickBooksAccountId === null) {
             // A concurrent clear may have removed the row first; the loser writes nothing.
             const { count } = await tx.booksMapRoleAccount.deleteMany({ where: { role } });

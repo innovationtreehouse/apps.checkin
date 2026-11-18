@@ -112,6 +112,8 @@ export async function excludeQbTxn(principal: ExpensePrincipal, qbTxnEntity: QbM
   const actor = actorOf(principal);
   if (!reason.trim()) throw new ServiceError(400, "A reason is required");
   const orgId = await getOrgId();
+  // A row without a type does not trip the unique index, so it is checked here.
+  if ((await excludedQbTxnIds(orgId, qbTxnEntity)).includes(qbTxnId)) throw new ServiceError(409, "Already excluded");
   try {
     await db.$transaction(async (tx) => {
       await tx.expenseQbMatchExclusion.create({
