@@ -7,6 +7,7 @@ import { advanceWorkflow, advanceWorkflowInTx, unlessRaceLost, type Actor } from
 import { SYSTEM_ACTOR } from "./system-actor";
 import { logError } from "./logger";
 import { lockBucketLines } from "./signoff-facts";
+import { reimburseeUnknown } from "./signoff";
 import { readExpenseSettings } from "../services/settingsService";
 
 const partOwners = createPartOwnerRepository(db);
@@ -107,6 +108,8 @@ export async function checkApprovalAutoTransition(expenseId: string, actor: Acto
 
   const hasCapital = classifyCapital(expense.receiptTotalCents, lineItems, settings);
   const rejected = anyRejected(approvals);
+  // Capital review opens only once nothing can send the expense back, and naming the reimbursee can.
+  if (hasCapital && !rejected && reimburseeUnknown(expense)) return;
   const event = { type: "ALL_APPROVALS_TERMINAL" as const, hasCapital, anyRejected: rejected };
   const context = { hasCapital };
 

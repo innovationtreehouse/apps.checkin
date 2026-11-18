@@ -8,7 +8,8 @@ import { writeAudit, writeOrgAudit } from "../lib/audit";
 import { dropHandSetAccount } from "../lib/account-types";
 import { drainExpense } from "../lib/financial-flow";
 import { advanceWorkflowInTx } from "../lib/workflow-engine";
-import { formatItfa, fullyDepreciatedDate, nextItfaSeq, parseItfa } from "../lib/capital-register";
+import { formatItfa, fullyDepreciatedDate, parseItfa, raiseHighestIssued, registerAssets } from "../lib/capital-register";
+import { reimburseeUnknown } from "../lib/signoff";
 import { assertExpectedState, isLegalTransition } from "../workflows/expense.invariants";
 import { NEUTRAL_CONTEXT } from "../workflows/expense.guards";
 import { createExpenseRepository } from "../repositories/expense";
@@ -57,6 +58,7 @@ async function loadExpense(expenseId: string, eventType: string, stateName: stri
   const expense = await expenseRepo.findExpenseById(expenseId, await getOrgId());
   if (!expense) throw new ServiceError(404, "Expense not found");
   if (!isLegalTransition(expense.state, eventType)) throw new ServiceError(400, `Expense is not in ${stateName} state`);
+  if (reimburseeUnknown(expense)) throw new ServiceError(409, "The reimbursee is unknown; FINANCE sets it before capital review");
   return expense;
 }
 
@@ -151,31 +153,9 @@ export async function setDepreciationCycle(
         valueAfter: `${item.depreciationYears}y/owner:${item.ownerId}`,
       });
 
-      // Idempotent: a line that already has assets (a resubmit) mints none.
       const line = capLineById.get(item.lineItemId)!;
-      if ((await tx.capitalAsset.count({ where: { sourceLineItemId: line.id } })) === 0) {
-        const units = Math.max(1, Math.round(line.quantity));
-        const fdd = fullyDepreciatedDate(expense.receiptDate, item.depreciationYears);
-        let seq = await nextItfaSeq(tx, expense.orgId);
-        for (let u = 0; u < units; u++) {
-          await tx.capitalAsset.create({
-            data: {
-              orgId: expense.orgId,
-              assetNumber: formatItfa(seq++),
-              description: line.description,
-              acquisitionDate: expense.receiptDate,
-              costCents: line.unitPriceCents,
-              depreciationYears: item.depreciationYears,
-              fullyDepreciatedDate: fdd,
-              status: "tracked",
-              sourceExpenseId: expenseId,
-              sourceLineItemId: line.id,
-              sourceReceiptId: expenseId,
-              seeded: false,
-            },
-          });
-        }
-      }
+      const unit = { costCents: line.unitPriceCents, acquisitionDate: expense.receiptDate, depreciationYears: item.depreciationYears, description: line.description };
+      await registerAssets(tx, actor, expense.orgId, { kind: "expense_line", expenseId, lineItemId: line.id }, Array.from({ length: Math.max(1, Math.round(line.quantity)) }, () => unit));
     }
     await advanceWorkflowInTx(tx, {
       expenseId,
@@ -211,6 +191,8 @@ export async function seedCapitalAssets(
     const assetNumber = formatItfa(seq); // canonicalize (no space/dash, zero-padded)
     const parentSeq = r.parentAssetNumber ? parseItfa(r.parentAssetNumber) : null;
     const created = await db.$transaction(async (tx) => {
+      // Raising the mark first waits out a mint in flight, so the seed sees any number it took.
+      await raiseHighestIssued(tx, orgId, seq);
       const result = await tx.capitalAsset.createMany({
         data: [{
           orgId,

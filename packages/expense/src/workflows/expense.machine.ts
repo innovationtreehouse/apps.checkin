@@ -52,6 +52,7 @@ export const expenseMachine = setup({
     },
 
     // ── Capital review ──────────────────────────────────────────────────────
+    // Opens only once the reimbursee is known, so nothing sends the expense back from here on.
 
     capital_review: {
       on: {
@@ -59,7 +60,6 @@ export const expenseMachine = setup({
           { guard: 'hasCapitalItems', target: 'set_depreciation_cycle' },
           {                           target: 'qb_pending'             },
         ],
-        APPROVAL_REOPENED: { target: 'owner_approval' },
       },
     },
 
@@ -68,7 +68,6 @@ export const expenseMachine = setup({
     set_depreciation_cycle: {
       on: {
         DEPRECIATION_SET: { target: 'qb_pending' },
-        APPROVAL_REOPENED: { target: 'owner_approval' },
       },
     },
 

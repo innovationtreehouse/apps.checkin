@@ -9,7 +9,6 @@ import { db } from "../../db";
 import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, seedOrgSettings, seedSubmitterSeat, ORG } from "../helpers/seed";
 import { signLine } from "../../services/signoffService";
 import { approveLine } from "../../services/approvalService";
-import { setDepreciationCycle, submitCapitalReview } from "../../services/capitalService";
 import { clearFrom, type ClearedStep } from "../../lib/signoff-facts";
 
 const FINANCE = principal(3, { isFinance: true });
@@ -144,19 +143,21 @@ describeDb("clearing a step clears every later one", () => {
 });
 
 describeDb("going back clears every later step of the expense", () => {
-  // A capital card charge past depreciation: the line is designated, its asset minted, a hold
-  // was raised and an outbox row written; owner 2 approved, 1 and 3 signed.
-  async function capitalExpense(qbMatchState = "POST_FAILED") {
+  // A card charge in the QuickBooks step: a hold was raised and an outbox row written; owner 2
+  // approved, 1 and 3 signed. With `capital`, its line was designated and its asset minted.
+  async function postedExpense(qbMatchState = "POST_FAILED", capital = false) {
     bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5] }) });
-    await seedOrgSettings();
+    await db.expenseOrgSettings.deleteMany();
+    await seedOrgSettings({ capitalReviewEnabled: false });
     const id = await seedExpense({ state: "qb_pending", receiptTotalCents: 9000 });
     await db.expense.update({ where: { id }, data: { receiptDate: "2026-09-10", qbMatchState, qbFirstFailedAt: new Date(), qbLastError: "timeout" } });
-    const li = await seedLineItem(id, { unitPriceCents: 9000, totalPriceCents: 9000, isCapital: true, partNumber: null, manualQbAccount: "5000" });
-    await db.expenseLineItem.update({ where: { id: li }, data: { capitalOwnerId: 100, depreciationYears: 5 } });
+    const li = await seedLineItem(id, { unitPriceCents: 9000, totalPriceCents: 9000, isCapital: capital, partNumber: null, manualQbAccount: "5000" });
     const approvalId = await seedApproval(id, li, { ownerId: 100, status: "approved", decidedByUserId: 2 });
     await db.expenseLineSignoff.createMany({ data: [["SUBMITTER", 1], ["TREASURER", 3]].map(([seat, signerUserId]) => ({ expenseId: id, lineItemId: li, seat: seat as string, signerUserId: signerUserId as number })) });
-    await db.capitalAsset.create({ data: { orgId: ORG, assetNumber: "ITFA90", description: "Lathe", status: "tracked", sourceExpenseId: id, sourceLineItemId: li, seeded: false } });
-    await db.capitalAsset.create({ data: { orgId: ORG, assetNumber: "ITFA01", description: "Historical drill", status: "tracked", seeded: true } });
+    if (capital) {
+      await db.expenseLineItem.update({ where: { id: li }, data: { capitalOwnerId: 100, depreciationYears: 5 } });
+      await db.capitalAsset.create({ data: { orgId: ORG, assetNumber: "ITFA90", description: "Lathe", status: "tracked", sourceExpenseId: id, sourceLineItemId: li, seeded: false } });
+    }
     await db.expenseHold.create({ data: { orgId: ORG, expenseId: id, lineItemId: li, reason: "NO_MATCH", matchedRows: "[]" } });
     await db.expenseEvent.create({ data: { orgId: ORG, expenseId: id } });
     return { id, li, approvalId };
@@ -165,7 +166,7 @@ describeDb("going back clears every later step of the expense", () => {
     db.$transaction((tx) => clearFrom(tx, { userId: 3 }, id, [li], "APPROVAL", "finance changed the receipt"));
 
   it("a qb_error expense, which has no outbox row, leaves its failed step when it goes back", async () => {
-    const { id, li } = await capitalExpense();
+    const { id, li } = await postedExpense();
     await db.expenseEvent.deleteMany({ where: { expenseId: id } });
     await db.expense.update({ where: { id }, data: { state: "qb_error", qbMatchState: "UNMATCHED" } });
     await reopen(id, li);
@@ -173,44 +174,40 @@ describeDb("going back clears every later step of the expense", () => {
   });
 
   it("a skipped expense stays skipped when it goes back", async () => {
-    const { id, li } = await capitalExpense("SKIPPED");
+    const { id, li } = await postedExpense("SKIPPED");
     await reopen(id, li);
     expect(await db.expense.findUniqueOrThrow({ where: { id } })).toMatchObject({ state: "owner_approval", qbMatchState: "SKIPPED" });
     expect(await db.expenseEvent.count({ where: { expenseId: id } })).toBe(0);
   });
 
-  it("clears the capital review, depreciation, holds and outbox, audited, and the expense repeats capital review and depreciation", async () => {
-    const { id, li, approvalId } = await capitalExpense();
+  it("clears the holds and outbox, audited, and the expense is approved and drains again", async () => {
+    const { id, li, approvalId } = await postedExpense();
     await reopen(id, li);
 
     expect(await db.expense.findUniqueOrThrow({ where: { id } })).toMatchObject({ state: "owner_approval", qbMatchState: "UNMATCHED", qbFirstFailedAt: null, qbLastError: null });
-    // The hand-set account was checked against the capital designation, so it goes with it.
-    expect(await db.expenseLineItem.findUniqueOrThrow({ where: { id: li } })).toMatchObject({ isCapital: false, capitalOwnerId: null, depreciationYears: null, manualQbAccount: null });
-    expect(await db.capitalAsset.count({ where: { sourceExpenseId: id } })).toBe(0);
-    expect(await db.capitalAsset.count({ where: { assetNumber: "ITFA01" } })).toBe(1);
     expect(await db.expenseHold.count({ where: { expenseId: id } })).toBe(0);
     expect(await db.expenseEvent.count({ where: { expenseId: id } })).toBe(0);
     const audit = await db.expenseAuditLog.findMany({ where: { expenseId: id }, orderBy: { id: "asc" } });
-    expect(audit.map((a) => a.action)).toEqual([
-      "approval_cleared", "signoff_voided",
-      "capital_designation_cleared", "hold_account_cleared", "capital_asset_cleared", "hold_cleared", "qb_outbox_cleared",
-      "state_transition",
-    ]);
-    expect(audit.find((a) => a.action === "capital_asset_cleared")).toMatchObject({ lineItemId: li, valueBefore: "ITFA90", notes: "finance changed the receipt" });
-    expect(audit.find((a) => a.action === "hold_account_cleared")).toMatchObject({ lineItemId: li, fieldChanged: "manualQbAccount", valueBefore: "5000", valueAfter: null });
+    expect(audit.map((a) => a.action)).toEqual(["approval_cleared", "signoff_voided", "hold_cleared", "qb_outbox_cleared", "state_transition"]);
 
-    // Done again in order, with the same amounts: approval, capital review, depreciation.
     await approveLine(principal(2), id, approvalId);
-    expect((await db.expense.findUniqueOrThrow({ where: { id } })).state).toBe("capital_review");
-    await submitCapitalReview(FINANCE, id, { lineItems: [{ lineItemId: li, isCapital: true, capitalOwnerId: 100 }] });
-    expect((await db.expense.findUniqueOrThrow({ where: { id } })).state).toBe("set_depreciation_cycle");
-    await setDepreciationCycle(FINANCE, id, { items: [{ lineItemId: li, depreciationYears: 5, ownerId: 100 }] });
     expect((await db.expense.findUniqueOrThrow({ where: { id } })).state).toBe("qb_pending");
-    expect(await db.capitalAsset.count({ where: { sourceExpenseId: id } })).toBe(1);
+  });
+
+  it("an expense whose capital review has opened does not go back, and its assets stay", async () => {
+    for (const state of ["capital_review", "set_depreciation_cycle", "qb_pending"]) {
+      const { id, li } = await postedExpense("POST_FAILED", true);
+      await db.expense.update({ where: { id }, data: { state } });
+      await expect(reopen(id, li)).rejects.toMatchObject({ status: 409 });
+      expect((await db.expense.findUniqueOrThrow({ where: { id } })).state).toBe(state);
+      expect(await db.lineItemOwnerApproval.findFirstOrThrow({ where: { lineItemId: li } })).toMatchObject({ status: "approved" });
+      expect(await db.capitalAsset.count({ where: { sourceExpenseId: id } })).toBe(1);
+      await db.capitalAsset.deleteMany();
+    }
   });
 
   it("an expense already in QuickBooks does not go back, and nothing is cleared", async () => {
-    const { id, li } = await capitalExpense("CREATED");
+    const { id, li } = await postedExpense("CREATED", true);
     await expect(reopen(id, li)).rejects.toMatchObject({ status: 409 });
 
     expect((await db.expense.findUniqueOrThrow({ where: { id } })).state).toBe("qb_pending");

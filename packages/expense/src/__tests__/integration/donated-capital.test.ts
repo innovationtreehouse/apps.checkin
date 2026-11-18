@@ -107,6 +107,11 @@ describeDb("donated capital", () => {
       acquisitionDate: "2026-05-01",
       fullyDepreciatedDate: "2031-05-01",
       sourceDonatedLineId: row.id,
+      sourceKind: "gift_line",
+      sourceGiftSource: row.giftSource,
+      sourceGiftId: row.giftId,
+      sourceGiftLineId: row.giftLineId,
+      unitIndex: 0,
       sourceExpenseId: null,
     });
     expect(new Set(assets.map((a) => a.assetNumber)).size).toBe(2);

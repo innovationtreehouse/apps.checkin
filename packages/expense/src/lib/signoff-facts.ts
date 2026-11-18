@@ -5,7 +5,6 @@ import { isEveryday, lineKind, withinEverydayLimits, missingSeats, needsBoardApp
 import type { ExpenseSettings } from "../contract";
 import { readExpenseSettings } from "../services/settingsService";
 import { writeAudit } from "./audit";
-import { dropHandSetAccount } from "./account-types";
 import { advanceWorkflowInTx, type Actor } from "./workflow-engine";
 import { ServiceError } from "@checkin/component-kit";
 import { liveIds } from "./livePeople";
@@ -331,41 +330,24 @@ export type ClearedStep = "SUBMITTER" | "APPROVAL" | "TREASURER";
 /** Open states past owner approval; an expense in one returns to owner approval when an approval reopens. */
 const PAST_OWNER_APPROVAL = new Set(["capital_review", "set_depreciation_cycle", "qb_pending", "qb_on_hold", "qb_error"]);
 
+/** The capital steps, which never go back: a capital decision is final once its review opens. */
+const CAPITAL_STEPS = new Set(["capital_review", "set_depreciation_cycle"]);
+
 /** QuickBooks match states once the entry is (or is being) booked; nothing before it reopens then. */
 const IN_QUICKBOOKS = new Set(["POSTING", "CREATED", "MATCHED"]);
 
 /**
  * Clears what every step after owner approval decided, so each is done again in order: the
- * capital review's designations, the depreciation cycles and the assets they minted, the
- * QuickBooks step's open holds and its unposted outbox row. Each clearing is audited. An entry
- * already in QuickBooks is corrected there, so the expense cannot go back.
+ * QuickBooks step's open holds and its unposted outbox row. Each clearing is audited. An expense
+ * whose capital review has opened, or whose entry is already in QuickBooks, cannot go back.
  */
-async function clearStepsAfterOwnerApproval(tx: Prisma.TransactionClient, actor: Actor, expenseId: string, reason: string): Promise<void> {
+async function clearStepsAfterOwnerApproval(tx: Prisma.TransactionClient, actor: Actor, expenseId: string, state: string, reason: string): Promise<void> {
   const expense = (await tx.expense.findUnique({ where: { id: expenseId }, select: { qbMatchState: true, qbTxnId: true } }))!;
   if (IN_QUICKBOOKS.has(expense.qbMatchState) || expense.qbTxnId !== null) {
     throw new ServiceError(409, "The expense is already in QuickBooks; correct it there");
   }
-
-  const designated = await tx.expenseLineItem.findMany({
-    where: { expenseId, OR: [{ isCapital: true }, { capitalOwnerId: { not: null } }, { depreciationYears: { not: null } }] },
-    orderBy: { id: "asc" },
-  });
-  await tx.expenseLineItem.updateMany({ where: { id: { in: designated.map((l) => l.id) } }, data: { isCapital: false, capitalOwnerId: null, depreciationYears: null } });
-  for (const l of designated) {
-    await writeAudit(tx, actor, {
-      expenseId,
-      action: "capital_designation_cleared",
-      lineItemId: l.id,
-      valueBefore: `${l.isCapital ? "capital" : "non_capital"}/owner:${l.capitalOwnerId ?? "none"}/${l.depreciationYears ?? "none"}y`,
-      notes: reason,
-    });
-    if (l.isCapital) await dropHandSetAccount(tx, actor, expenseId, l, reason);
-  }
-
-  const assets = await tx.capitalAsset.findMany({ where: { sourceExpenseId: expenseId, seeded: false }, orderBy: { id: "asc" } });
-  await tx.capitalAsset.deleteMany({ where: { id: { in: assets.map((a) => a.id) } } });
-  for (const a of assets) {
-    await writeAudit(tx, actor, { expenseId, action: "capital_asset_cleared", lineItemId: a.sourceLineItemId, valueBefore: a.assetNumber, notes: reason });
+  if (CAPITAL_STEPS.has(state) || (await tx.expenseLineItem.count({ where: { expenseId, isCapital: true } })) > 0) {
+    throw new ServiceError(409, "The expense's capital review has opened; it cannot go back");
   }
 
   const holds = await tx.expenseHold.findMany({ where: { expenseId, status: "PENDING" }, orderBy: { id: "asc" } });
@@ -440,7 +422,7 @@ export async function clearFrom(
 
   const { state } = (await tx.expense.findUnique({ where: { id: expenseId }, select: { state: true } }))!;
   if (reopened.length > 0 && PAST_OWNER_APPROVAL.has(state)) {
-    await clearStepsAfterOwnerApproval(tx, actor, expenseId, reason);
+    await clearStepsAfterOwnerApproval(tx, actor, expenseId, state, reason);
     await advanceWorkflowInTx(tx, { expenseId, currentState: state, event: { type: "APPROVAL_REOPENED" }, actor, action: "state_transition", auditNotes: reason });
   }
 }

@@ -7,7 +7,7 @@ import { assertOrg, getOrgId } from "../runtime";
 import { actorOf, callerId } from "../lib/caller";
 import { writeOrgAudit } from "../lib/audit";
 import { classifyCapital } from "../lib/expense-rules";
-import { formatItfa, fullyDepreciatedDate, nextItfaSeq } from "../lib/capital-register";
+import { registerAssets } from "../lib/capital-register";
 import { requireFinance, requireLiveBuckets } from "./approvalService";
 import { readExpenseSettings } from "./settingsService";
 import { ServiceError } from "@checkin/component-kit";
@@ -111,25 +111,11 @@ export async function reviewDonatedLine(
     if (reviewed.count === 0) throw new ServiceError(409, "This line is already reviewed");
 
     if (input.isCapital) {
-      const costs = unitCosts(line.costCents, unitsOf(line.quantity));
-      const fdd = fullyDepreciatedDate(line.acquisitionDate, input.depreciationYears);
-      let seq = await nextItfaSeq(tx, orgId);
-      for (const costCents of costs) {
-        await tx.capitalAsset.create({
-          data: {
-            orgId,
-            assetNumber: formatItfa(seq++),
-            description: line.description,
-            acquisitionDate: line.acquisitionDate,
-            costCents,
-            depreciationYears: input.depreciationYears,
-            fullyDepreciatedDate: fdd,
-            status: "tracked",
-            sourceDonatedLineId: line.id,
-            seeded: false,
-          },
-        });
-      }
+      const { depreciationYears } = input;
+      const units = unitCosts(line.costCents, unitsOf(line.quantity)).map((costCents) => ({ costCents, acquisitionDate: line.acquisitionDate, depreciationYears, description: line.description }));
+      const { giftSource } = line;
+      if (giftSource !== "receipt" && giftSource !== "manual") throw new Error(`Unknown gift source ${giftSource}`);
+      await registerAssets(tx, actor, orgId, { kind: "gift_line", giftSource, giftId: line.giftId, giftLineId: line.giftLineId, donatedLineId: line.id }, units);
     }
     await writeOrgAudit(tx, orgId, actor, {
       entityType: "donated_capital_line",

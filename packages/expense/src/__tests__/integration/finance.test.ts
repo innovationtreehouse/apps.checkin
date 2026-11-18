@@ -10,6 +10,7 @@ import { reimburseeOptions, setReimbursee, signLine, signoffStatus } from "../..
 import { checkAndProcessExpense } from "../../lib/expense-qb-processor";
 import { checkApprovalAutoTransition } from "../../lib/financial-flow";
 import { setDepreciationCycle, seedCapitalAssets, submitCapitalReview } from "../../services/capitalService";
+import { registerAssets, type AssetSource } from "../../lib/capital-register";
 import { checkOffFlag, listOpenFlags, raiseFlag } from "../../services/flagService";
 import { financeQueueRows } from "../../services/financeQueueService";
 import { approveLine } from "../../services/approvalService";
@@ -426,6 +427,58 @@ describeDb("capital register", () => {
     await submitCapitalReview(FINANCE, id, { lineItems: [{ lineItemId: li, isCapital: true, capitalOwnerId: 100 }] });
     await expect(setDepreciationCycle(FINANCE, id, { items: [{ lineItemId: li, depreciationYears: 5, ownerId: 12345 }] })).rejects.toMatchObject({ status: 400 });
     expect(await db.capitalAsset.count({ where: { sourceLineItemId: li } })).toBe(0);
+  });
+
+  const lathe = { costCents: 90000, acquisitionDate: "2026-09-10", depreciationYears: 5, description: "Lathe" };
+  async function mint(source: AssetSource, units = 1) {
+    return db.$transaction((tx) => registerAssets(tx, { userId: 3 }, ORG, source, Array.from({ length: units }, () => lathe)));
+  }
+  async function expenseLine() {
+    const id = await seedExpense({ state: "set_depreciation_cycle" });
+    return { kind: "expense_line" as const, expenseId: id, lineItemId: await seedLineItem(id) };
+  }
+
+  it("registering a line again returns the same numbers and audits each asset once", async () => {
+    const source = await expenseLine();
+    expect(await mint(source, 2)).toEqual(["ITFA01", "ITFA02"]);
+    expect(await mint(source, 2)).toEqual(["ITFA01", "ITFA02"]);
+    expect(await db.capitalAsset.findMany({ select: { sourceKind: true, unitIndex: true }, orderBy: { unitIndex: "asc" } }))
+      .toEqual([{ sourceKind: "expense_line", unitIndex: 0 }, { sourceKind: "expense_line", unitIndex: 1 }]);
+    const audit = await db.expenseOrgAuditLog.findMany({ where: { action: "capital_asset_registered" }, orderBy: { id: "asc" } });
+    expect(audit.map((a) => a.entityId)).toEqual(["ITFA01", "ITFA02"]);
+  });
+
+  it("never issues a number twice: a removed asset's number stays used, and a higher seeded number raises the mark", async () => {
+    await mint(await expenseLine());
+    await db.capitalAsset.deleteMany();
+    expect(await mint(await expenseLine())).toEqual(["ITFA02"]);
+    await seedCapitalAssets(FINANCE, [{ assetNumber: "ITFA20", description: "Old saw" }]);
+    expect(await mint(await expenseLine())).toEqual(["ITFA21"]);
+  });
+
+  it("two concurrent mints get different numbers", async () => {
+    const [a, b] = await Promise.all([mint(await expenseLine(), 2), mint(await expenseLine(), 2)]);
+    expect(new Set([...a, ...b]).size).toBe(4);
+  });
+
+  it("the capital steps do not open while the reimbursee is unknown; naming the reimbursee opens them", async () => {
+    await db.expenseOrgSettings.updateMany({ where: { orgId: ORG }, data: { capitalReviewEnabled: true } });
+    bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5] }) });
+    const id = await seedExpense({ state: "owner_approval", needsReimbursement: true, receiptTotalCents: 9000 });
+    const li = await seedLineItem(id, { unitPriceCents: 9000, totalPriceCents: 9000 });
+    await seedApproval(id, li, { ownerId: 100, status: "approved", decidedByUserId: 2 });
+
+    await checkApprovalAutoTransition(id, { userId: 3 });
+    expect((await db.expense.findUniqueOrThrow({ where: { id } })).state).toBe("owner_approval");
+
+    await setReimbursee(ORG, id, { personId: 1 }, FINANCE);
+    expect((await db.expense.findUniqueOrThrow({ where: { id } })).state).toBe("capital_review");
+  });
+
+  it("capital review refuses an expense whose reimbursee is unknown", async () => {
+    const id = await seedExpense({ state: "capital_review", needsReimbursement: true });
+    const li = await seedLineItem(id);
+    await expect(submitCapitalReview(FINANCE, id, { lineItems: [{ lineItemId: li, isCapital: true, capitalOwnerId: 100 }] })).rejects.toMatchObject({ status: 409 });
   });
 
   it("seeding is idempotent per asset number and canonicalizes it", async () => {
