@@ -1214,3 +1214,45 @@ describeDb("in-kind QuickBooks drift", () => {
     await expect(resolve(id, { action: "match", depositId: "700", purchaseId: "7001" })).resolves.toMatchObject({ qbState: "MATCHED" });
   });
 });
+
+describeDb("in-kind drain — a QuickBooks throttle", () => {
+  it("ends the run at the first throttle and leaves every gift unstuck; the next run books them", async () => {
+    await switchOn();
+    const gifts = [await acceptedGift(), await acceptedGift()];
+    qbo.createAnswer = () => ({ status: 429 });
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ throttled: 1, failed: 0, posted: 0 });
+    for (const id of gifts) expect((await posting(id).catch(() => null))?.qbFirstFailedAt ?? null).toBeNull();
+    expect(failures).toEqual([]);
+    expect(await stuckItems()).toEqual([]);
+
+    qbo.createAnswer = null;
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 2, throttled: 0 });
+  });
+
+  it("a throttled book answers 503 and leaves the gift where finance had it", async () => {
+    await switchOn();
+    const id = await acceptedGift();
+    rulesThrow = new Error("rules exploded");
+    await runInKindQbPosting(orgId);
+    const { qbFirstFailedAt, qbNote } = await posting(id);
+    rulesThrow = null;
+    qbo.createAnswer = () => ({ status: 429 });
+
+    await expect(resolve(id, { action: "book" })).rejects.toMatchObject({ status: 503, message: expect.stringContaining("slow down") });
+    expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbFirstFailedAt, qbNote, claimedAt: null });
+  });
+
+  it("a throttled read for the gift's own earlier entry leaves it as it was, not stuck", async () => {
+    await switchOn();
+    const id = await acceptedGift();
+    qbo.dropAfterCreate = true;
+    await runInKindQbPosting(orgId);
+    qbo.dropAfterCreate = false;
+    const before = await posting(id);
+    qbo.sinceReadStatus = 429;
+
+    await expect(retryStuckItem({ id: `receipt ${id}`, step: "QuickBooks posting" })).rejects.toMatchObject({ status: 503 });
+    expect(await posting(id)).toMatchObject({ matchState: before.matchState, qbFirstFailedAt: before.qbFirstFailedAt, claimedAt: null });
+  });
+});

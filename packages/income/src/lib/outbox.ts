@@ -1,4 +1,4 @@
-import { SWEEP_DAYS, appKeyOf, findOrCreate, postFailure, postFailureError, type BooksMapRole, type PostFailure, type FindOrCreateResult, type QuickBooksClient, type TxnWrite, type WriteLine } from "@checkin/quickbooks";
+import { SWEEP_DAYS, appKeyOf, findOrCreate, isThrottled, postFailure, postFailureError, type BooksMapRole, type PostFailure, type FindOrCreateResult, type QuickBooksClient, type TxnWrite, type WriteLine } from "@checkin/quickbooks";
 import { db, isUniqueConstraintError } from "../db";
 import type { PayoutReconciliation } from "../generated/prisma/client";
 import type { MirrorBalanceTxn, MirrorOrderLine, MirrorPayout, PayoutMirror, QbDeposit } from "../contract";
@@ -39,8 +39,8 @@ import {
   type ReconcileResult,
 } from "./reconcile";
 
-/** What one payout's turn through the outbox did. */
-export type PostOutcome = "posted" | "matched" | "queued" | "failed" | "waiting" | "over_cap" | "held";
+/** What one payout's turn through the outbox did; `throttled`: QuickBooks throttled it and the payout is as it was. */
+export type PostOutcome = "posted" | "matched" | "queued" | "failed" | "throttled" | "waiting" | "over_cap" | "held";
 
 export type PostCounts = Record<PostOutcome, number> & {
   /** The cap that stopped this drain with payouts still due, if one did. */
@@ -316,7 +316,7 @@ export async function ownEntry(
   return { kind: "found", deposit: toQbDeposit(keyed[0]) };
 }
 
-type PostResult = FindOrCreateResult | { kind: "own"; deposit: QbDeposit } | { kind: "conflict"; note: string };
+type PostResult = FindOrCreateResult | { kind: "own"; deposit: QbDeposit } | { kind: "conflict"; note: string } | { kind: "throttled" };
 
 /** Whether two reads of a row carry the same deposit: its date, net and expected lines. */
 const sameDeposit = (a: PayoutReconciliation, b: PayoutReconciliation) =>
@@ -422,15 +422,17 @@ export async function postPayout(
   if (!write) {
     result = { kind: "failed", ...postFailure(buildErr) };
   } else {
-    let own: OwnEntry = { kind: "none" };
+    let own: OwnEntry | "throttled" = { kind: "none" };
     if (claim.attempted) {
       try {
         own = await ownEntry(posting.client, orgId, claimed, claim.attempted);
       } catch (e) {
-        own = { kind: "unsure", note: `the app may already have booked this payout; the lookup failed: ${e instanceof Error ? e.message : String(e)}` };
+        own = isThrottled(e) ? "throttled" : { kind: "unsure", note: `the app may already have booked this payout; the lookup failed: ${e instanceof Error ? e.message : String(e)}` };
       }
     }
-    if (own.kind === "found") {
+    if (own === "throttled") {
+      result = { kind: "throttled" };
+    } else if (own.kind === "found") {
       result = { kind: "own", deposit: own.deposit };
     } else if (own.kind !== "none") {
       result = { kind: "conflict", note: own.note };
@@ -452,11 +454,17 @@ export async function postPayout(
   }
 
   // The window read for a found deposit runs before the settle transaction opens.
+  if (result.kind === "failed" && result.throttled) result = { kind: "throttled" };
   let found: QbDeposit | null = null;
   if (result.kind === "found") {
     const foundId = result.id;
-    [found] = (await posting.client.depositsBetween(window.from, window.to)).filter((x) => x.Id === foundId).map(toQbDeposit);
-    if (!found) result = { kind: "failed", error: `deposit ${foundId} is not in the payout's window`, failure: "bug" };
+    try {
+      [found] = (await posting.client.depositsBetween(window.from, window.to)).filter((x) => x.Id === foundId).map(toQbDeposit);
+      if (!found) result = { kind: "failed", error: `deposit ${foundId} is not in the payout's window`, failure: "bug" };
+    } catch (e) {
+      if (!isThrottled(e)) throw e;
+      result = { kind: "throttled" };
+    }
   }
 
   // Reported only once the claim holds, so a post that lost the payout to another stays quiet.
@@ -513,6 +521,8 @@ export async function postPayout(
         return toQueue(RECON_KIND.NO_DEPOSIT, closedNote(current, gate.mayCreate));
       case "needs-finance":
         return toQueue(RECON_KIND.NO_DEPOSIT, null);
+      case "throttled":
+        return { outcome: "throttled" as const, row: await tx.payoutReconciliation.update({ where: { id }, data: { postClaimedAt: null } }) };
       case "failed":
         // The post failed whether or not this update commits, so the report stands either way.
         reportFailed(result);
@@ -624,7 +634,7 @@ export async function drainIncomeOutbox(orgId: string, now: Date = new Date()): 
     })
   ).filter((r) => isHeld(r) || r.createdAt > onAtOf(r.source) || today <= addDays(r.payoutDate, windowDays(r.source, caps.benevityMatchWindowDays)));
 
-  const post: PostCounts = { posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, over_cap: 0, held: 0, capped: null };
+  const post: PostCounts = { posted: 0, matched: 0, queued: 0, failed: 0, throttled: 0, waiting: 0, over_cap: 0, held: 0, capped: null };
   // The count cap is the org's across sources; each source has its own cents cap.
   const createdCents: Record<string, number> = {};
   const centsCap = (source: string) => (source === DEPOSIT_SOURCE.BENEVITY ? caps.benevityMaxCreateCentsPerRun : caps.maxCreateCentsPerRun);
@@ -671,6 +681,8 @@ export async function drainIncomeOutbox(orgId: string, now: Date = new Date()): 
     const turn = await postPayout(orgId, r.id, { closedThrough, mayCreate }, false, { problem, sales, accounts, benevityWindowDays: caps.benevityMatchWindowDays });
     if (!turn) return { reconcile, post: "busy" };
     post[turn.outcome]++;
+    // A throttle would refuse the rest of the run's posts too; they wait for the next run.
+    if (turn.outcome === "throttled") break;
     if (turn.outcome === "posted") createdCents[r.source] = sofar + cents;
   }
   return { reconcile, post };

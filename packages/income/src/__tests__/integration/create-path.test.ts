@@ -1962,3 +1962,42 @@ describeDb("a second source: Benevity deposits handed over through expectDeposit
     expect(await rowFor("D1")).toMatchObject({ status: "OPEN", kind: "NEEDS_MAPPING", reason: expect.stringMatching(/book it by hand or dismiss it/) });
   });
 });
+
+describeDb("drainIncomeOutbox — a QuickBooks throttle", () => {
+  beforeEach(switchOn);
+
+  /** QuickBooks answers every create with 429, even after the client's own retry. */
+  const throttleCreates = () =>
+    vi.mocked(fetch).mockImplementation(async (input, init) =>
+      init?.method === "POST" ? new Response("", { status: 429, headers: { "Retry-After": "0" } }) : qbo.handle(input, init),
+    );
+
+  it("ends the run at the first throttle and leaves every payout waiting, never POST_FAILED; the next run posts them", async () => {
+    const reports: FailureReport[] = [];
+    bind({ onFailure: (r) => void reports.push(r) });
+    const p = payout(2, "2026-06-28", 500);
+    const q = payout(3, "2026-06-29", 700);
+    throttleCreates();
+
+    expect(await drain()).toMatchObject({ post: { throttled: 1, failed: 0, posted: 0 } });
+    for (const g of [p, q]) expect(await rowFor(g)).toMatchObject({ status: "WAITING", postClaimedAt: null });
+    expect(await db.incomeAuditLog.count({ where: { action: "reconciliation.post_failed" } })).toBe(0);
+    expect(reports).toEqual([]);
+
+    vi.mocked(fetch).mockImplementation(qbo.handle);
+    expect(await drain()).toMatchObject({ post: { posted: 2, throttled: 0 } });
+  });
+
+  it("a throttled retry answers 503 and leaves the payout POST_FAILED for finance to retry", async () => {
+    const p = payout(2, "2026-06-28", 500);
+    qbo.mode = "reject";
+    await drain();
+    qbo.mode = "ok";
+    throttleCreates();
+
+    await expect(reconciliationService.resolve(ORG_A, (await rowFor(p)).id, { action: "retry" }, { userId: 9 })).rejects.toMatchObject({
+      status: 503, message: expect.stringContaining("slow down"),
+    });
+    expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "POST_FAILED", postClaimedAt: null });
+  });
+});

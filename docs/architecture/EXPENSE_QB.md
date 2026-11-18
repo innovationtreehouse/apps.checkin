@@ -243,7 +243,12 @@ events), runs from `/api/cron/reconcile-shopify` instead.
 
 ### A failed post
 
-Any failed post, whatever its cause, leaves the expense at `NEEDS_FINANCE`, stuck.
+A QuickBooks throttle (HTTP 429, after the client's one retry) is not a failure: the
+post releases its claim and leaves the expense as it was, nothing is recorded or
+reported, and the drain run ends there; the rest wait for the next run. A throttled
+"book it" or retry answers 503 and asks finance to try again in a minute.
+
+Any other failed post, whatever its cause, leaves the expense at `NEEDS_FINANCE`, stuck.
 `qbFirstFailedAt` keeps the first failure's time and `qbLastError` the latest error;
 a refusal's error is "QuickBooks refused: code N (request R)", never the fault text.
 The drain never retries a stuck expense and never stops on a failure: an outage

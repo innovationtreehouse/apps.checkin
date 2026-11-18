@@ -61,6 +61,14 @@ export class QboRequestError extends KindedError {
   }
 }
 
+/** QuickBooks refused the call for its rate limit (429), after the client's own retry. */
+export function isThrottled(e: unknown): boolean {
+  return e instanceof QboRequestError && e.status === 429;
+}
+
+/** What finance reads when a post it asked for was throttled. */
+export const THROTTLED_MESSAGE = "QuickBooks asked the app to slow down, so nothing was changed; try again in a minute";
+
 function apiBase(env: QboEnv): string {
   return env === "production"
     ? "https://quickbooks.api.intuit.com"

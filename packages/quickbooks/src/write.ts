@@ -1,6 +1,6 @@
 import { KindedError, kindOf, type FailureKind } from "@checkin/component-kit";
 import { sumCents } from "@checkin/money";
-import { QboRequestError, appKeyOf, assertAppKey, qboDate, type JournalEntryFields, type JournalLine, type QuickBooksClient, type TxnWrite } from "./client";
+import { QboRequestError, appKeyOf, isThrottled, assertAppKey, qboDate, type JournalEntryFields, type JournalLine, type QuickBooksClient, type TxnWrite } from "./client";
 import { billCandidate, depositCandidate, findMatch, journalCandidate, purchaseCandidate, type MatchCandidate, type MatchRequest } from "./match";
 import { CREATE, CREATE_JOURNAL } from "./internal";
 import { BOOKS_MAP_ROLES, type BooksMapRole } from "./booksMap";
@@ -26,11 +26,14 @@ export type PostFailure = {
   requestId?: string | null;
   /** QuickBooks answered an earlier read in the same call, so it was up when this step failed. */
   answered?: boolean;
+  /** QuickBooks throttled the call (429): the record is left as it was and tried again later, never failed. */
+  throttled?: true;
 };
 
 export function postFailure(e: unknown): PostFailure {
   const base = { error: e instanceof Error ? e.message : String(e), failure: kindOf(e) };
-  return e instanceof QboRequestError ? { ...base, codes: e.codes, requestId: e.requestId } : base;
+  if (!(e instanceof QboRequestError)) return base;
+  return { ...base, codes: e.codes, requestId: e.requestId, ...(isThrottled(e) && { throttled: true as const }) };
 }
 
 /** A returned failure as an error a library runtime's `failed` reads: its kind, fault codes and request id. */

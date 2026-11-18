@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { kindOf } from "@checkin/component-kit";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { QboRequestError, QuickBooksClient, WRITABLE_ENTITIES, appKeyOf, assertAppKey, qbKey, type TxnWrite, type WriteRequest } from "../client";
+import { QboRequestError, QuickBooksClient, WRITABLE_ENTITIES, appKeyOf, assertAppKey, isThrottled, qbKey, type TxnWrite, type WriteRequest } from "../client";
 import { createVendor, findOrCreate, findOrCreateInKindJournal, postFailure, postFailureError, type FindOrCreateRequest, type InKindJournalRequest } from "../write";
 import type { AccessTokenSource, QboDeposit } from "../types";
 import { CREATE } from "../internal";
@@ -221,6 +221,15 @@ describe("request limits", () => {
     expect(String(err)).toMatch(/failed 429/);
     expect(kindOf(err)).toBe("system");
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("findOrCreate marks a create throttled twice as a throttled failure; no other failure is", async () => {
+    const throttled = new Response("", { status: 429, headers: { "Retry-After": "0" } });
+    fetchMock.mockResolvedValueOnce(rows("Deposit", [])).mockResolvedValueOnce(prefs()).mockResolvedValueOnce(throttled).mockResolvedValueOnce(throttled.clone());
+    expect(await findOrCreate(client(), req())).toMatchObject({ kind: "failed", throttled: true, onCreate: true });
+    expect(isThrottled(new QboRequestError("QBO query failed 429", 429, null, []))).toBe(true);
+    expect(isThrottled(new QboRequestError("QBO query failed 503", 503, null, []))).toBe(false);
+    expect(postFailure(new QboRequestError("QBO create failed 503", 503, null, []))).not.toHaveProperty("throttled");
   });
 
   it("logs each refusal once with its lane, operation, status, codes and request id, never the fault text", async () => {
