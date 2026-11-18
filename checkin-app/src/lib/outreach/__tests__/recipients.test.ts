@@ -28,14 +28,14 @@ beforeEach(() => {
 });
 
 describe('renewal outreach audience', () => {
-    it.each(['opening', 'reminder'] as const)('the %s skips a household that said it won\'t renew into the noted year', async (type) => {
+    it.each(['opening', 'reminder'] as const)('the %s skips a household that said it won\'t renew into the live year', async (type) => {
         await computeRecipientSnapshot(type, IN_WINDOW);
         expect(JSON.stringify(where())).toContain(JSON.stringify(skipNoted(2026)).slice(1, -1));
     });
 
-    it('skips only the noted year: off season the note is for the year after the live one', async () => {
+    it('skips only a note for the live year, the one renewals buy, after the boundary too', async () => {
         await computeRecipientSnapshot('opening', new Date(Date.UTC(2026, 9, 1)));
-        expect(where()).toMatchObject({ household: { orgMembership: skipNoted(2027) } });
+        expect(where()).toMatchObject({ household: { orgMembership: skipNoted(2026) } });
     });
 
     it('skips nothing with no membership year set', async () => {

@@ -1,7 +1,7 @@
 import prisma from "@/lib/prisma";
 import { handler } from "@/security/handler";
 import { openProcess } from "@/lib/membership/lifecycle";
-import { isNotRenewingRenewal, notRenewingTargetYear } from "@/lib/membership/notRenewing";
+import { isNotRenewingRenewal } from "@/lib/membership/notRenewing";
 
 export const dynamic = "force-dynamic";
 
@@ -55,20 +55,17 @@ export const GET = handler("GET /api/membership-ops/applications", async ({ req 
         },
     });
 
-    const now = new Date();
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
-    const boundary = settings?.orgMembershipYearBoundary;
-    const notedYear = notRenewingTargetYear(boundary, now);
-    const noted = notedYear === null ? [] : await prisma.orgMembership.findMany({
-        where: { notRenewingYear: notedYear },
-        select: { householdId: true },
+    const noted = await prisma.orgMembership.findMany({
+        where: { notRenewingYear: { not: null } },
+        select: { householdId: true, notRenewingYear: true },
     });
-    const notedHouseholds = new Set(noted.map((m) => m.householdId));
+    const notedYearOf = new Map(noted.map((m) => [m.householdId, m.notRenewingYear]));
 
     const rows = processes.map((p) => ({
         ...p,
-        notRenewing: !!p.orgMembership && notedHouseholds.has(p.orgMembership.householdId)
-            && isNotRenewingRenewal(p, notedYear, boundary, now),
+        notRenewing: !!p.orgMembership
+            && isNotRenewingRenewal(p, notedYearOf.get(p.orgMembership.householdId) ?? null, settings?.orgMembershipYearBoundary),
     }));
     return { MembershipApplicationRow: rows };
 });

@@ -34,7 +34,7 @@ export const GET = withAuth({}, async (_req, auth) => {
     // Due at the boundary the renewal was opened for, which stays put once it passes.
     const boundary = settings?.orgMembershipYearBoundary;
     const dueDate = boundary ? nextBoundary(boundary, open.createdAt).toISOString().slice(0, 10) : null;
-    const notRenewing = isNotRenewingRenewal(open, open.orgMembership?.notRenewingYear ?? null, boundary, new Date());
+    const notRenewing = isNotRenewingRenewal(open, open.orgMembership?.notRenewingYear ?? null, boundary);
 
     return NextResponse.json({ renewalDue: true, dueDate, notRenewing });
 });

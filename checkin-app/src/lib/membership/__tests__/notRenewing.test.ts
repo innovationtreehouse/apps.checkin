@@ -1,11 +1,12 @@
 /**
  * @jest-environment node
  */
-import { clearNotRenewing, isNotRenewingRenewal, markNotRenewing, notRenewingTargetYear } from '@/lib/membership/notRenewing';
+import { clearNotRenewing, isNotRenewingRenewal, markNotRenewing, noteStands, notRenewingTargetYear } from '@/lib/membership/notRenewing';
 import { ArchivedHouseholdError } from '@/lib/household/archiveGuard';
 
 const mockTx = {
     $queryRaw: jest.fn(),
+    person: { findUnique: jest.fn() },
     orgMembershipProcess: { findFirst: jest.fn() },
     orgMembership: { updateMany: jest.fn(), findUnique: jest.fn(), findUniqueOrThrow: jest.fn() },
     auditLog: { create: jest.fn() },
@@ -42,6 +43,7 @@ const LEAD = { name: 'Alex Rivera', householdId: 7, isHouseholdLead: true, dateO
 beforeEach(() => {
     jest.clearAllMocks();
     prisma.person.findUnique.mockResolvedValue(LEAD);
+    mockTx.person.findUnique.mockResolvedValue(LEAD);
     prisma.household.findUnique.mockResolvedValue({ name: 'Rivera' });
     prisma.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: BOUNDARY });
     mockTx.$queryRaw.mockResolvedValue([{ id: 9, status: 'ACTIVE' }]);
@@ -69,15 +71,26 @@ describe('notRenewingTargetYear', () => {
 describe('isNotRenewingRenewal', () => {
     const renewal = { kind: 'RENEWAL', createdAt: new Date(Date.UTC(2026, 6, 2)) };
 
-    it('flags a renewal opened for the noted year', () => {
-        expect(isNotRenewingRenewal(renewal, 2026, BOUNDARY, WINDOW_OPENS)).toBe(true);
+    it('flags a renewal opened for the noted year, before or after the boundary passes', () => {
+        expect(isNotRenewingRenewal(renewal, 2026, BOUNDARY)).toBe(true);
     });
 
     it('ignores a note for another year, an old renewal, and a non-renewal', () => {
-        expect(isNotRenewingRenewal(renewal, 2025, BOUNDARY, WINDOW_OPENS)).toBe(false);
-        expect(isNotRenewingRenewal({ ...renewal, createdAt: new Date(Date.UTC(2025, 6, 2)) }, 2026, BOUNDARY, WINDOW_OPENS)).toBe(false);
-        expect(isNotRenewingRenewal({ ...renewal, kind: 'INITIAL' }, 2026, BOUNDARY, WINDOW_OPENS)).toBe(false);
-        expect(isNotRenewingRenewal(renewal, null, BOUNDARY, WINDOW_OPENS)).toBe(false);
+        expect(isNotRenewingRenewal(renewal, 2025, BOUNDARY)).toBe(false);
+        expect(isNotRenewingRenewal({ ...renewal, createdAt: new Date(Date.UTC(2025, 6, 2)) }, 2026, BOUNDARY)).toBe(false);
+        expect(isNotRenewingRenewal({ ...renewal, kind: 'INITIAL' }, 2026, BOUNDARY)).toBe(false);
+        expect(isNotRenewingRenewal(renewal, null, BOUNDARY)).toBe(false);
+    });
+});
+
+describe('noteStands', () => {
+    it('holds for the live year and later, and lapses once its year has passed', () => {
+        const afterBoundary = new Date(Date.UTC(2026, 8, 2)); // live year 2026
+        expect(noteStands(2026, BOUNDARY, afterBoundary)).toBe(true);
+        expect(noteStands(2027, BOUNDARY, afterBoundary)).toBe(true);
+        expect(noteStands(2025, BOUNDARY, afterBoundary)).toBe(false);
+        expect(noteStands(null, BOUNDARY, afterBoundary)).toBe(false);
+        expect(noteStands(2026, null, afterBoundary)).toBe(false);
     });
 });
 
@@ -124,8 +137,23 @@ describe('markNotRenewing', () => {
         expect(mockTx.orgMembership.updateMany).not.toHaveBeenCalled();
     });
 
+    it('refuses a household whose renewal is past PENDING_RENEWAL', async () => {
+        mockTx.orgMembershipProcess.findFirst.mockResolvedValueOnce({ id: 3 });
+        await expect(markNotRenewing(42, WINDOW_OPENS)).rejects.toMatchObject({ status: 409, code: 'renewal_underway' });
+        expect(mockTx.orgMembershipProcess.findFirst.mock.calls[0][0].where.status.in).not.toContain('PENDING_RENEWAL');
+        expect(mockTx.orgMembership.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('refuses a lead demoted or moved after the first read', async () => {
+        mockTx.person.findUnique.mockResolvedValueOnce({ ...LEAD, isHouseholdLead: false });
+        await expect(markNotRenewing(42, WINDOW_OPENS)).rejects.toMatchObject({ code: 'not_lead' });
+        mockTx.person.findUnique.mockResolvedValueOnce({ ...LEAD, householdId: 8 });
+        await expect(markNotRenewing(42, WINDOW_OPENS)).rejects.toMatchObject({ code: 'not_lead' });
+        expect(mockTx.orgMembership.updateMany).not.toHaveBeenCalled();
+    });
+
     it('refuses a household that has already paid for the noted year', async () => {
-        mockTx.orgMembershipProcess.findFirst.mockResolvedValue({ id: 3 });
+        mockTx.orgMembershipProcess.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 3 });
         await expect(markNotRenewing(42, WINDOW_OPENS)).rejects.toMatchObject({ status: 409, code: 'already_renewed' });
         expect(mockTx.orgMembership.updateMany).not.toHaveBeenCalled();
         expect(emailBoardMembers).not.toHaveBeenCalled();
@@ -160,5 +188,11 @@ describe('clearNotRenewing', () => {
     it('refuses a non-lead', async () => {
         prisma.person.findUnique.mockResolvedValue({ ...LEAD, isHouseholdLead: false });
         await expect(clearNotRenewing(42)).rejects.toMatchObject({ code: 'not_lead' });
+    });
+
+    it('refuses an archived household', async () => {
+        lockLiveHouseholds.mockRejectedValueOnce(new ArchivedHouseholdError());
+        await expect(clearNotRenewing(42)).rejects.toBeInstanceOf(ArchivedHouseholdError);
+        expect(mockTx.orgMembership.updateMany).not.toHaveBeenCalled();
     });
 });

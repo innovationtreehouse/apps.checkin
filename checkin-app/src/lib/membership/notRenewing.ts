@@ -6,7 +6,7 @@ import { personActor } from "@/lib/auditActor";
 import { emailBoardMembers } from "@/lib/emailRecipients";
 import { isYouth } from "@/lib/time";
 import { lockLiveHouseholds } from "@/lib/household/archiveGuard";
-import { settledThisCycleWhere } from "@/lib/membership/lifecycle";
+import { IN_FLIGHT_RENEWAL, settledThisCycleWhere } from "@/lib/membership/lifecycle";
 import { liveMembershipYear, membershipYearLabel, renewalWindow } from "@/lib/programYear";
 
 /**
@@ -16,7 +16,7 @@ import { liveMembershipYear, membershipYearLabel, renewalWindow } from "@/lib/pr
  * clears it ({@link clearNotRenewingInTx}).
  */
 export class NotRenewingError extends ServiceError {
-    constructor(status: number, message: string, code: "not_lead" | "not_active" | "already_renewed" | "no_boundary") {
+    constructor(status: number, message: string, code: "not_lead" | "not_active" | "already_renewed" | "renewal_underway" | "no_boundary") {
         super(status, message, code);
         this.name = "NotRenewingError";
     }
@@ -29,9 +29,10 @@ export function notRenewingTargetYear(boundary: Date | null | undefined, now: Da
     return renewalWindow(boundary, now).inSeason ? live : live + 1;
 }
 
-/** The household's noted year when it is still current, else null. */
-export function currentNotRenewingYear(notRenewingYear: number | null, boundary: Date | null | undefined, now: Date): number | null {
-    return notRenewingYear !== null && notRenewingYear === notRenewingTargetYear(boundary, now) ? notRenewingYear : null;
+/** True while the note's year has not passed: it is the live year or a later one. */
+export function noteStands(notRenewingYear: number | null, boundary: Date | null | undefined, now: Date): notRenewingYear is number {
+    const live = liveMembershipYear(boundary, now);
+    return notRenewingYear !== null && live !== null && notRenewingYear >= live;
 }
 
 /** True when a RENEWAL application was opened for the year its household has said it won't renew into. */
@@ -39,21 +40,32 @@ export function isNotRenewingRenewal(
     row: { kind: string; createdAt: Date },
     notRenewingYear: number | null,
     boundary: Date | null | undefined,
-    now: Date,
 ): boolean {
-    const year = currentNotRenewingYear(notRenewingYear, boundary, now);
-    return row.kind === "RENEWAL" && year !== null && liveMembershipYear(boundary, row.createdAt) === year;
+    return row.kind === "RENEWAL" && notRenewingYear !== null && liveMembershipYear(boundary, row.createdAt) === notRenewingYear;
 }
 
-async function leadOf(personId: number) {
-    const person = await prisma.person.findUnique({
-        where: { id: personId },
-        select: { name: true, householdId: true, isHouseholdLead: true, dateOfBirth: true },
-    });
+const LEAD_SELECT = { name: true, householdId: true, isHouseholdLead: true, dateOfBirth: true } as const;
+
+function refuseNonLead(person: { isHouseholdLead: boolean; dateOfBirth: Date | null } | null): asserts person {
     if (!person?.isHouseholdLead || isYouth(person.dateOfBirth)) {
         throw new NotRenewingError(403, "Only an adult household lead can say whether the household will renew.", "not_lead");
     }
+}
+
+async function leadOf(personId: number) {
+    const person = await prisma.person.findUnique({ where: { id: personId }, select: LEAD_SELECT });
+    refuseNonLead(person);
     return person;
+}
+
+/** Locks the live household, then confirms the caller is still an adult lead of it. */
+async function lockAsLead(tx: TxClient, personId: number, householdId: number): Promise<void> {
+    await lockLiveHouseholds(tx, [householdId]);
+    const person = await tx.person.findUnique({ where: { id: personId }, select: LEAD_SELECT });
+    refuseNonLead(person);
+    if (person.householdId !== householdId) {
+        throw new NotRenewingError(403, "Only an adult household lead can say whether the household will renew.", "not_lead");
+    }
 }
 
 async function boundaryNow() {
@@ -72,7 +84,14 @@ export async function markNotRenewing(personId: number, now = new Date()) {
         if (locked?.status !== "ACTIVE") {
             throw new NotRenewingError(409, "Only an active membership can say it won't renew.", "not_active");
         }
-        await lockLiveHouseholds(tx, [lead.householdId]);
+        await lockAsLead(tx, personId, lead.householdId);
+        const underway = await tx.orgMembershipProcess.findFirst({
+            where: { orgMembershipId: locked.id, kind: "RENEWAL", status: { in: IN_FLIGHT_RENEWAL.filter((s) => s !== "PENDING_RENEWAL") } },
+            select: { id: true },
+        });
+        if (underway) {
+            throw new NotRenewingError(409, "Your household's renewal is already under way. Please talk to the Board.", "renewal_underway");
+        }
         const paid = await tx.orgMembershipProcess.findFirst({
             where: { orgMembershipId: locked.id, ...settledThisCycleWhere(year) },
             select: { id: true },
@@ -108,8 +127,9 @@ export async function markNotRenewing(personId: number, now = new Date()) {
 export async function clearNotRenewing(personId: number) {
     const lead = await leadOf(personId);
     return prisma.$transaction(async (tx) => {
-        const membership = await tx.orgMembership.findUnique({ where: { householdId: lead.householdId }, select: { id: true } });
+        const [membership] = await tx.$queryRaw<{ id: number }[]>`SELECT id FROM "OrgMembership" WHERE "householdId" = ${lead.householdId} FOR UPDATE`;
         if (!membership) throw new NotRenewingError(409, "Only an active membership can say it won't renew.", "not_active");
+        await lockAsLead(tx, personId, lead.householdId);
         await clearNotRenewingInTx(tx, membership.id, personId);
         return tx.orgMembership.findUniqueOrThrow({ where: { id: membership.id } });
     });

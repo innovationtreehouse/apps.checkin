@@ -135,7 +135,11 @@ describe("GET /api/membership-ops/households", () => {
         try {
             db.boardSettings.findUnique.mockResolvedValueOnce({ orgMembershipYearBoundary: new Date(Date.UTC(2020, 8, 1)), bgRecheckMonths: 0 });
             const said = new Date(Date.UTC(2026, 6, 3));
-            db.auditLog.findMany.mockResolvedValueOnce([{ affectedEntityId: 9, timestamp: said }]);
+            db.auditLog.findMany.mockResolvedValueOnce([
+                { affectedEntityId: 9, timestamp: new Date(Date.UTC(2025, 6, 3)), newData: { notRenewingYear: 2025 } },
+                { affectedEntityId: 9, timestamp: said, newData: { notRenewingYear: 2026 } },
+                { affectedEntityId: 9, timestamp: new Date(Date.UTC(2026, 6, 4)), newData: { status: "ACTIVE" } },
+            ]);
             db.household.findMany.mockResolvedValue([
                 { id: 10, name: "Noted", householdMembers: [], orgMembership: { id: 9, status: "ACTIVE", memberSince: null, notRenewingYear: 2026, processes: [] } },
                 { id: 11, name: "Old note", householdMembers: [], orgMembership: { id: 8, status: "ACTIVE", memberSince: null, notRenewingYear: 2025, processes: [] } },
@@ -145,7 +149,7 @@ describe("GET /api/membership-ops/households", () => {
             expect(noted.notRenewing).toEqual({ year: 2026, since: said.toISOString() });
             expect(noted.orgMembership).toEqual({ status: "ACTIVE", memberSince: null });
             expect(old.notRenewing).toBeNull();
-            expect(db.auditLog.findMany.mock.calls[0][0].where).toMatchObject({ affectedEntityId: { in: [9] }, newData: { path: ["notRenewingYear"], equals: 2026 } });
+            expect(db.auditLog.findMany.mock.calls[0][0].where).toMatchObject({ tableName: "OrgMembership", affectedEntityId: { in: [9] } });
         } finally {
             jest.useRealTimers();
         }
