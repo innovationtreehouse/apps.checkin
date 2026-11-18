@@ -135,7 +135,8 @@ export function reopenYearRefusal(kind: string, createdAt: Date, boundary: Date 
 
 /**
  * Why a payment-plan request for `year` can't be approved, or null: its year has
- * ended by `now`. No boundary set, or no year: null.
+ * reached its cutoff, the configured boundary date in the following calendar year,
+ * by `now`. No boundary set, or no year: null.
  */
 export function endedPaymentPlanYearRefusal(year: number | null, boundary: Date | null | undefined, now: Date): string | null {
     if (year == null || !boundary || membershipYearOf(boundary, now) <= year) return null;

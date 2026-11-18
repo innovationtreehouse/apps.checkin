@@ -405,9 +405,16 @@ describe('a payment-plan approval certifies the request year', () => {
         expect(recordedYear()).toBe(2026);
     });
 
-    it('refuses a request whose year has ended, writing nothing', async () => {
+    it('approves the stored year on the day before its cutoff', async () => {
         prisma.orgMembershipProcess.findUnique.mockResolvedValue({ ...request, paymentPlanYear: 2026, stageEnteredAt: request.createdAt });
-        at(new Date(Date.UTC(2027, 8, 2)));
+        at(new Date(Date.UTC(2027, 7, 31, 23, 59)));
+        await certifyPaymentPlan(PROCESS_ID, 1, { reason: 'Plan agreed', requireRequested: true });
+        expect(recordedYear()).toBe(2026);
+    });
+
+    it("refuses a request on its year's cutoff date, writing nothing", async () => {
+        prisma.orgMembershipProcess.findUnique.mockResolvedValue({ ...request, paymentPlanYear: 2026, stageEnteredAt: request.createdAt });
+        at(new Date(Date.UTC(2027, 8, 1)));
         await expect(certifyPaymentPlan(PROCESS_ID, 1, { reason: 'Plan agreed', requireRequested: true }))
             .rejects.toMatchObject({ code: 'wrong_phase', message: expect.stringContaining('2026-2027, which has ended') });
         expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
