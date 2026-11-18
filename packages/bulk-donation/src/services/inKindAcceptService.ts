@@ -156,6 +156,7 @@ async function loadGift(handle: DbOrTx, orgId: string, source: InKindSource, id:
  * discount) across them by value, so they sum to the total exactly.
  */
 export function spreadToTotal(values: number[], totalCents: number): number[] {
+  if (values.length === 0) return [];
   const extra = allocateCents(totalCents - values.reduce((a, b) => a + b, 0), values);
   return values.map((v, i) => v + extra[i]);
 }

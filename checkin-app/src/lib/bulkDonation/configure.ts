@@ -72,10 +72,11 @@ function inKindQbPosting(): InKindQbPosting | undefined {
     booksMap,
     async sweepIncomplete({ since }) {
       const { emailAlert } = await import("@/lib/emailRecipients");
-      await emailAlert("finance.inKindSweepIncomplete", {
+      const sent = await emailAlert("finance.inKindSweepIncomplete", {
         since: since.toISOString().slice(0, 10),
         actionLink: `${config.baseUrl()}/donations/in-kind`,
       });
+      if (!sent) throw new Error("In-kind sweep alert was not sent");
     },
   };
 }
