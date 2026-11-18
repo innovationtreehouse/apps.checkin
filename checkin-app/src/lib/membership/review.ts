@@ -743,8 +743,9 @@ export async function boardResetReview(processId: number, actorId: number, opts:
         // attestation could clear the check between the phase test and the delete,
         // leaving a cleared process with no attestations behind it.
         await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
-        const fresh = await tx.orgMembershipProcess.findUnique({ where: { id: processId }, select: { status: true, kind: true, paidAt: true, bgConsentAt: true, bgClearedAt: true, contractSignedAt: true, subjectPersonId: true } });
+        const fresh = await tx.orgMembershipProcess.findUnique({ where: { id: processId }, select: { status: true, kind: true, paidAt: true, bgConsentAt: true, bgClearedAt: true, contractSignedAt: true, subjectPersonId: true, orgMembershipId: true, requestedForHouseholdId: true } });
         if (!fresh) throw new ReviewError("not_found", "Application not found.");
+        await throwIfHouseholdsMoved(tx, fresh, households);
         await throwIfDenied(tx, households, "reset");
         const blocked = fresh.status === "BLOCKED";
         if (!blocked && !awaitingBgReview.has({ kind: fresh.kind, status: fresh.status, bgConsentAt: !!fresh.bgConsentAt, bgClearedAt: !!fresh.bgClearedAt })) {
