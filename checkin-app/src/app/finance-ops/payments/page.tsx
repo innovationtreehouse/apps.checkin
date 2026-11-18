@@ -30,6 +30,7 @@ type PaymentException = {
   familyName: string | null;
   familyEmail: string | null;
   programName: string | null;
+  detail: string | null;
   live: {
     financialStatus: string | null;
     totalCents: number;
@@ -235,6 +236,7 @@ export default function PaymentProblemsPage() {
         <>
           <Text fw={500}>{row.kind.replace(/_/g, ' ')}</Text>
           {row.programName && <Text size="sm" c="dimmed">{row.programName}</Text>}
+          {row.detail && <Text size="sm" c="dimmed">{row.detail}</Text>}
         </>
       ),
     },
