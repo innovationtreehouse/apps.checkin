@@ -1654,7 +1654,7 @@ describe("a resolved exception and the next day's pass", () => {
     });
 });
 
-describe("a store refund on a denied household's paid application records itself", () => {
+describe("a full store refund on a denied household's paid application records itself", () => {
     const proc = (id: number) => prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id }, select: { status: true, paidAt: true } });
     /** The red refund-owed count's predicate, for this one application. */
     const owed = (id: number) => prisma.orgMembershipProcess.count({ where: { AND: [refundableApplication.where, { id, orgMembership: { status: "DENIED" } }] } });
@@ -1663,11 +1663,16 @@ describe("a store refund on a denied household's paid application records itself
     const settled = [{ kind: "REFUND", status: "RESOLVED", resolvedById: null, resolutionNote: expect.stringContaining("denied") }];
     const refundAudits = (id: number) =>
         prisma.auditLog.count({ where: { tableName: "OrgMembershipProcess", affectedEntityId: id, actorSystem: "webhook:shopify-refund", newData: { path: ["refundRecorded"], equals: true } } });
+    const FULL = { financialStatus: "REFUNDED", totalRefundedCents: 5000 } as const;
+    const PARTIAL = { financialStatus: "PARTIALLY_REFUNDED", totalRefundedCents: 1000 } as const;
+    const deniedPaid = (n: string, status: "PENDING_BG_CLEARANCE" | "PENDING_BG_REVIEW" | "BLOCKED" = "PENDING_BG_CLEARANCE") =>
+        makeApplicant({ email: `dr${n}-${TAG}@ex.com`, status, household: "DENIED", paid: true, shopifyOrderId: `${TAG}-${n}` });
 
-    it("the refunds webhook clears the payment and leaves nothing for the Board", async () => {
+    it("the refunds webhook clears the payment on a full refund and leaves nothing for the Board", async () => {
         const oid = `${TAG}-900`;
-        const { processId } = await makeApplicant({ email: `dr900-${TAG}@ex.com`, status: "PENDING_BG_CLEARANCE", household: "DENIED", paid: true, shopifyOrderId: oid });
+        const { processId } = await deniedPaid("900");
         expect(await owed(processId)).toBe(1);
+        ordersByLegacyIds.mockResolvedValue([order({ legacyId: oid, ...FULL })]);
 
         expect(await raiseReversalByOrderId(oid, "REFUND", [], `${oid}-r1`)).toBe(true);
         expect(await proc(processId)).toEqual({ status: "PENDING_PAYMENT", paidAt: null });
@@ -1681,15 +1686,40 @@ describe("a store refund on a denied household's paid application records itself
         expect(await refundAudits(processId)).toBe(1);
     });
 
+    it("the refunds webhook keeps the payment on a partial refund and raises it for the Board", async () => {
+        const oid = `${TAG}-907`;
+        const { processId } = await deniedPaid("907");
+        ordersByLegacyIds.mockResolvedValue([order({ legacyId: oid, ...PARTIAL })]);
+
+        await raiseReversalByOrderId(oid, "REFUND", [], `${oid}-r1`);
+        expect((await proc(processId)).paidAt).not.toBeNull();
+        expect(await owed(processId)).toBe(1);
+        expect(await problems(processId)).toEqual([{ kind: "REFUND", status: "OPEN", resolvedById: null, resolutionNote: null }]);
+        expect(await refundAudits(processId)).toBe(0);
+    });
+
+    it("a full refund the mirror does not show yet is raised, then the daily pass records it and resolves the problem", async () => {
+        const oid = `${TAG}-908`;
+        const { processId } = await deniedPaid("908");
+        ordersByLegacyIds.mockResolvedValue([]);
+
+        await raiseReversalByOrderId(oid, "REFUND", [], `${oid}-r1`);
+        expect((await proc(processId)).paidAt).not.toBeNull();
+        expect(await prisma.paymentException.count({ where: { processId, status: "OPEN" } })).toBe(1);
+
+        ordersByLegacyIds.mockResolvedValue([order({ legacyId: oid, ...FULL })]);
+        await runReconcile();
+        expect(await proc(processId)).toEqual({ status: "PENDING_PAYMENT", paidAt: null });
+        expect(await problems(processId)).toEqual(settled);
+    });
+
     it.each([
-        ["a full refund", "901", "PENDING_BG_CLEARANCE", { financialStatus: "REFUNDED", totalRefundedCents: 5000 }, "PENDING_PAYMENT"],
-        ["a partial refund", "902", "PENDING_BG_CLEARANCE", { financialStatus: "PARTIALLY_REFUNDED", totalRefundedCents: 1000 }, "PENDING_PAYMENT"],
-        ["a partial refund on a BLOCKED application", "903", "BLOCKED", { financialStatus: "PARTIALLY_REFUNDED", totalRefundedCents: 1000 }, "BLOCKED"],
-        ["a full refund while the check is in review", "906", "PENDING_BG_REVIEW", { financialStatus: "REFUNDED", totalRefundedCents: 5000 }, "PENDING_BG_REVIEW"],
-    ] as const)("the daily pass records %s the webhook never delivered", async (_label, n, status, refund, landsIn) => {
-        const oid = `${TAG}-${n}`;
-        const { processId } = await makeApplicant({ email: `dr${n}-${TAG}@ex.com`, status, household: "DENIED", paid: true, shopifyOrderId: oid });
-        ordersByLegacyIds.mockResolvedValue([order({ legacyId: oid, ...refund })]);
+        ["", "901", "PENDING_BG_CLEARANCE", "PENDING_PAYMENT"],
+        [" on a BLOCKED application", "903", "BLOCKED", "BLOCKED"],
+        [" while the check is in review", "906", "PENDING_BG_REVIEW", "PENDING_BG_REVIEW"],
+    ] as const)("the daily pass records a full refund%s the webhook never delivered", async (_label, n, status, landsIn) => {
+        const { processId } = await deniedPaid(n, status);
+        ordersByLegacyIds.mockResolvedValue([order({ legacyId: `${TAG}-${n}`, ...FULL })]);
 
         await runReconcile();
         expect(await proc(processId)).toEqual({ status: landsIn, paidAt: null });
@@ -1701,16 +1731,27 @@ describe("a store refund on a denied household's paid application records itself
         expect(await refundAudits(processId)).toBe(1);
     });
 
+    it("the daily pass keeps the payment on a partial refund and raises it for the Board", async () => {
+        const { processId } = await deniedPaid("902");
+        ordersByLegacyIds.mockResolvedValue([order({ legacyId: `${TAG}-902`, ...PARTIAL })]);
+
+        await runReconcile();
+        expect((await proc(processId)).paidAt).not.toBeNull();
+        expect(await owed(processId)).toBe(1);
+        expect(await problems(processId)).toEqual([{ kind: "REFUND", status: "OPEN", resolvedById: null, resolutionNote: null }]);
+        expect(await refundAudits(processId)).toBe(0);
+    });
+
     it("a refund on a household that is not denied keeps the payment and is raised for the Board", async () => {
         const oid = `${TAG}-904`;
         const { processId } = await makeApplicant({ email: `dr904-${TAG}@ex.com`, status: "PENDING_BG_CLEARANCE", paid: true, shopifyOrderId: oid });
+        ordersByLegacyIds.mockResolvedValue([order({ legacyId: oid, ...FULL })]);
 
         await raiseReversalByOrderId(oid, "REFUND", [], `${oid}-r1`);
         expect((await proc(processId)).paidAt).not.toBeNull();
         expect(await prisma.paymentException.findMany({ where: { processId }, select: { kind: true, status: true, severity: true } }))
             .toEqual([{ kind: "REFUND", status: "OPEN", severity: "CRITICAL" }]);
 
-        ordersByLegacyIds.mockResolvedValue([order({ legacyId: oid, financialStatus: "PARTIALLY_REFUNDED", totalRefundedCents: 1000 })]);
         await runReconcile();
         expect((await proc(processId)).paidAt).not.toBeNull();
         expect(await prisma.paymentException.count({ where: { processId, status: "OPEN" } })).toBe(1);
@@ -1719,7 +1760,7 @@ describe("a store refund on a denied household's paid application records itself
 
     it("a cancellation on a denied household stays with the Board", async () => {
         const oid = `${TAG}-905`;
-        const { processId } = await makeApplicant({ email: `dr905-${TAG}@ex.com`, status: "PENDING_BG_CLEARANCE", household: "DENIED", paid: true, shopifyOrderId: oid });
+        const { processId } = await deniedPaid("905");
 
         await raiseReversalByOrderId(oid, "CANCELLED");
         expect((await proc(processId)).paidAt).not.toBeNull();

@@ -10,7 +10,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { recordDeniedStoreRefund } from "@/lib/membership/refund";
 import { refundableApplication } from "@/lib/membership/lifecycle";
 import { raisePaymentException, recordReversal, recordSettledPaymentException, type PaymentExceptionKind } from "./exceptions";
-import { isReversed } from "./orderStatus";
+import { isFullyRefunded, isReversed } from "./orderStatus";
 import { membershipVariantYears, usesVolunteerCodeUnentitled } from "./membership";
 
 function classifyReversal(o: MirrorOrder, disputed: boolean): PaymentExceptionKind | null {
@@ -59,7 +59,7 @@ export async function raiseReversalByOrderId(
     await recordReversal(orderLegacyId, kind);
     let matched = false;
     const proc = await prisma.orgMembershipProcess.findFirst({ where: { shopifyOrderId: orderLegacyId }, select: { id: true, status: true, paidAt: true } });
-    if (proc && kind === "REFUND" && (await recordDeniedStoreRefund(proc.id, orderLegacyId))) {
+    if (proc && kind === "REFUND" && (await mirrorShowsFullRefund(orderLegacyId)) && (await recordDeniedStoreRefund(proc.id, orderLegacyId))) {
         await recordSettledPaymentException("REFUND", { shopifyOrderId: orderLegacyId, processId: proc.id }, DENIED_REFUND_NOTE);
         matched = true;
     } else if (proc) {
@@ -353,8 +353,18 @@ async function keepRefundedEnrollment(programId: number, personId: number, order
 }
 
 /**
- * A store refund on a DENIED household's paid application records itself. The daily
- * pass for a refund whose webhook never arrived, or one that arrived before the denial.
+ * Whether the mirror already shows the order fully refunded. The mirror can lag the
+ * webhook; a refund it does not show yet is raised, and the daily pass records it.
+ */
+async function mirrorShowsFullRefund(orderLegacyId: string): Promise<boolean> {
+    const [o] = await mirror.ordersByLegacyIds([orderLegacyId]);
+    return !!o && isFullyRefunded(o);
+}
+
+/**
+ * A full store refund on a DENIED household's paid application records itself; a
+ * partial one stays with the Board. The daily pass for a refund whose webhook never
+ * arrived, one the mirror did not yet show, or one that arrived before the denial.
  */
 async function recordDeniedStoreRefunds(): Promise<void> {
     const procs = await prisma.orgMembershipProcess.findMany({
@@ -367,7 +377,7 @@ async function recordDeniedStoreRefunds(): Promise<void> {
     const disputes = await mirror.orderDisputeCounts(orders.map((o) => o.orderGid));
     for (const proc of procs) {
         const o = byLegacy.get(proc.shopifyOrderId!);
-        if (!o || classifyReversal(o, disputes.has(o.orderGid)) !== "REFUND") continue;
+        if (!o || classifyReversal(o, disputes.has(o.orderGid)) !== "REFUND" || !isFullyRefunded(o)) continue;
         await recordReversal(proc.shopifyOrderId!, "REFUND");
         if (!(await recordDeniedStoreRefund(proc.id, proc.shopifyOrderId!))) continue;
         const evidence = reversalEvidence(o, disputes.get(o.orderGid) ?? 0);

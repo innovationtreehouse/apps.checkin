@@ -24,8 +24,9 @@ export async function recordRefund(processId: number, actorId: number, reason: s
 }
 
 /**
- * A store refund on a DENIED household's paid application records itself, as
- * "Record refund" would. Returns true when it recorded one; false when the order is
+ * A full store refund on a DENIED household's paid application records itself, as
+ * "Record refund" would; the caller has checked the refund is full. Returns true
+ * when it recorded one; false when the order is
  * not this application's payment, the household is not DENIED, or nothing is left
  * to refund.
  */
