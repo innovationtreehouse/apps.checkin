@@ -82,6 +82,7 @@ async function main(): Promise<void> {
       });
       const line = await tx.expenseLineItem.create({
         data: {
+          orgId: ORG_ID,
           expenseId: e.id,
           receiptLineItemId: i + 1,
           lineNumber: 1,

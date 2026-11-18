@@ -87,8 +87,10 @@ export async function seedLineItem(
     nonInventory?: boolean;
   },
 ): Promise<number> {
+  const { orgId } = await db.expense.findUniqueOrThrow({ where: { id: expenseId }, select: { orgId: true } });
   const row = await db.expenseLineItem.create({
     data: {
+      orgId,
       expenseId,
       receiptLineItemId: 1,
       lineNumber: 1,

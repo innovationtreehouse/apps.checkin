@@ -226,7 +226,7 @@ model Expense {
   receiptReview      ExpenseReceiptReview?
   taxApproval        ExpenseTaxApproval?
 
-  @@unique([qbTxnEntity, qbTxnId])
+  @@unique([orgId, qbTxnEntity, qbTxnId])
   @@index([orgId, state, submittedAt(sort: Desc)])
   @@map("expenses")
 }
@@ -281,6 +281,8 @@ model ExpenseTaxApproval {
 model ExpenseLineItem {
   /// @sensitivity:internal
   id                Int      @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId             String?  @map("org_id")
   /// @sensitivity:internal
   expenseId         String   @map("expense_id")
   /// @sensitivity:internal
@@ -497,6 +499,8 @@ model ExpenseAuditLog {
   /// @sensitivity:internal
   id           Int       @id @default(autoincrement())
   /// @sensitivity:internal
+  orgId        String?   @map("org_id")
+  /// @sensitivity:internal
   expenseId    String    @map("expense_id")
   /// @sensitivity:pii
   userId       Int       @map("user_id")
@@ -523,6 +527,7 @@ model ExpenseAuditLog {
   lineItem     ExpenseLineItem? @relation(fields: [lineItemId], references: [id])
 
   @@index([expenseId, action])
+  @@index([orgId, action, changedAt])
   @@map("expense_audit_log")
 }
 

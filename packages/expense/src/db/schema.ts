@@ -46,8 +46,8 @@ export type {
 import type { Prisma } from "../generated/prisma/client";
 
 export type NewExpense = Prisma.ExpenseUncheckedCreateInput;
-export type NewExpenseLineItem = Prisma.ExpenseLineItemUncheckedCreateInput;
-export type NewExpenseAuditLog = Prisma.ExpenseAuditLogUncheckedCreateInput;
+export type NewExpenseLineItem = Prisma.ExpenseLineItemUncheckedCreateInput & { orgId: string };
+export type NewExpenseAuditLog = Prisma.ExpenseAuditLogUncheckedCreateInput & { orgId: string };
 export type NewAccountMapping = Prisma.AccountMappingCreateInput;
 export type NewExpenseQbAccount = Prisma.ExpenseQbAccountCreateInput;
 export type NewProvisionalItemMap = Prisma.ProvisionalItemMapCreateInput;

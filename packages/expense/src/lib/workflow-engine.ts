@@ -5,6 +5,7 @@ import type { ExpenseMachineContext } from "../workflows/expense.guards";
 import { NEUTRAL_CONTEXT } from "../workflows/expense.guards";
 import { ServiceError } from "@checkin/component-kit";
 import { oweOutcomeNotice, owesOutcome, sendOutcomeNotices } from "./outcome-notices";
+import { getOrgId } from "../runtime";
 
 type Db = PrismaClient;
 
@@ -73,6 +74,7 @@ export async function advanceWorkflowInTx(
   if (moved.count === 0) throw new StaleStateError(expenseId, currentState);
   await tx.expenseAuditLog.create({
     data: {
+      orgId: await getOrgId(),
       expenseId,
       userId: actor.userId,
       username: actor.username ?? null,

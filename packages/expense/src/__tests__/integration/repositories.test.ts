@@ -165,7 +165,7 @@ describeDb("expenseRepository.insertAuditLog", () => {
   it("inserts a single audit log entry", async () => {
     const id = await seedExpense();
     await expenseRepo.insertAuditLog({
-      expenseId: id, userId: 1, username: "tester", changedAt: new Date(),
+      orgId: ORG, expenseId: id, userId: 1, username: "tester", changedAt: new Date(),
       action: "test_action", valueBefore: "a", valueAfter: "b",
     });
     const expense = await expenseRepo.findExpenseById(id, ORG);
@@ -175,8 +175,8 @@ describeDb("expenseRepository.insertAuditLog", () => {
   it("inserts multiple audit log entries in one call", async () => {
     const id = await seedExpense();
     await expenseRepo.insertAuditLog([
-      { expenseId: id, userId: 1, username: "tester", changedAt: new Date(), action: "action_one" },
-      { expenseId: id, userId: 1, username: "tester", changedAt: new Date(), action: "action_two" },
+      { orgId: ORG, expenseId: id, userId: 1, username: "tester", changedAt: new Date(), action: "action_one" },
+      { orgId: ORG, expenseId: id, userId: 1, username: "tester", changedAt: new Date(), action: "action_two" },
     ]);
   });
 });

@@ -14,7 +14,7 @@ import { updateExpenseSettings } from "../../services/settingsService";
 import { checkAndProcessExpense, retryQbPost } from "../../lib/expense-qb-processor";
 import { expenseReasons } from "../../services/reasonService";
 import {
-  drainExpenseOutbox, postExpenseToQb, sweepExpenseQbStrays,
+  drainExpenseOutbox, postExpenseToQb, qbCreatesToday, sweepExpenseQbStrays,
 } from "../../lib/expense-qb-poster";
 import { matchExpenseToQb, skipExpenseQb } from "../../services/qbMatchService";
 import { POSTED_CHECK_OFF, SKIPPED_CHECK_OFF, raiseStray } from "../../services/flagService";
@@ -789,10 +789,10 @@ describeDb("QB-2 posting — no dollar cap", () => {
 
 describeDb("QB-2 posting — daily ceiling", () => {
   /** Audit rows for `n` QuickBooks creates at `changedAt`, as settle() writes them. */
-  async function createdAt(n: number, changedAt: Date) {
-    const id = await seedExpense({ state: "qb_complete" });
+  async function createdAt(n: number, changedAt: Date, orgId = ORG) {
+    const id = await seedExpense({ state: "qb_complete", orgId });
     await db.expenseAuditLog.createMany({
-      data: Array.from({ length: n }, () => ({ expenseId: id, userId: 0, action: "qb_created", fieldChanged: "qbMatchState", changedAt })),
+      data: Array.from({ length: n }, () => ({ orgId, expenseId: id, userId: 0, action: "qb_created", fieldChanged: "qbMatchState", changedAt })),
     });
   }
 
@@ -833,6 +833,15 @@ describeDb("QB-2 posting — daily ceiling", () => {
     const logged = warn.mock.calls.map(([m]) => JSON.parse(String(m))).filter((m) => m.event === "qb_daily_cap");
     expect(logged).toEqual([expect.objectContaining({ cap: 2 })]);
     warn.mockRestore();
+  });
+
+  it("another org's creates do not count toward the org's ceiling", async () => {
+    await createdAt(MAX_CREATES_PER_DAY, new Date(), "org-other");
+    const { id } = await outboxed("2026-09-10");
+
+    expect(await qbCreatesToday("org-other")).toBe(MAX_CREATES_PER_DAY);
+    expect(await qbCreatesToday(ORG)).toBe(0);
+    expect(await postExpenseToQb(ORG, id)).toBe("posted");
   });
 
   it("takes the org's per-run limit from settings", async () => {
@@ -1670,7 +1679,7 @@ describeDb("QB closed books — a create that may have landed", () => {
       await untilFetched();
 
       // A failed post meanwhile writes its audit row and leaves the state as it was.
-      await db.expenseAuditLog.create({ data: { expenseId: id, userId: 0, action: "qb_needs_finance", notes: "timeout" } });
+      await db.expenseAuditLog.create({ data: { orgId: ORG, expenseId: id, userId: 0, action: "qb_needs_finance", notes: "timeout" } });
       release();
 
       await expect(skipping).rejects.toMatchObject({ status: 409 });

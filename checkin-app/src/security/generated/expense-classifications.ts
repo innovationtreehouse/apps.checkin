@@ -95,6 +95,7 @@ export const classifications = {
     },
     ExpenseLineItem: {
         id: 'internal',
+        orgId: 'internal',
         expenseId: 'internal',
         receiptLineItemId: 'internal',
         lineNumber: 'internal',
@@ -181,6 +182,7 @@ export const classifications = {
     },
     ExpenseAuditLog: {
         id: 'internal',
+        orgId: 'internal',
         expenseId: 'internal',
         userId: 'pii',
         username: 'pii',

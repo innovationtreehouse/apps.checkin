@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
-import { seedApproval, seedExpense, seedLineItem } from "../helpers/seed";
+import { ORG, seedApproval, seedExpense, seedLineItem } from "../helpers/seed";
 
 const SQL = readFileSync(join(__dirname, "../../../prisma/migrations/20261024150000_drop_program_approver_seat/migration.sql"), "utf8");
 
@@ -22,7 +22,7 @@ describeDb("drop the program-approver seat", () => {
     await db.expenseLineSignoff.createMany({
       data: [["SUBMITTER", 1], ["PROGRAM_APPROVER", 2], ["TREASURER", 3]].map(([seat, signerUserId]) => ({ expenseId: id, lineItemId: li, seat: seat as string, signerUserId: signerUserId as number })),
     });
-    await db.expenseAuditLog.create({ data: { expenseId: id, lineItemId: li, userId: 2, changedAt: new Date(), action: "signoff", fieldChanged: "seat", valueAfter: "PROGRAM_APPROVER" } });
+    await db.expenseAuditLog.create({ data: { orgId: ORG, expenseId: id, lineItemId: li, userId: 2, changedAt: new Date(), action: "signoff", fieldChanged: "seat", valueAfter: "PROGRAM_APPROVER" } });
 
     await migrate();
     await migrate();

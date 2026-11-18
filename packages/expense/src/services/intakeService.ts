@@ -194,6 +194,7 @@ async function createExpense(receipt: CompletedReceipt): Promise<void> {
     for (const li of receipt.lineItems) {
       const { id } = await tx.expenseLineItem.create({
         data: {
+          orgId: receipt.orgId,
           expenseId: receipt.receiptId,
           receiptLineItemId: li.receiptLineItemId,
           lineNumber: li.lineNumber,

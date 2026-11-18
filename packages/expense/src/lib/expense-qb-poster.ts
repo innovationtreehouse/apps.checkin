@@ -81,11 +81,11 @@ export async function switchQbPostingOn(orgId: string, now = new Date()): Promis
 /** How one post runs: `book` is finance's "book it"; `close` and `settings` are what the run already read. */
 export type PostOptions = { book?: boolean; close?: CloseRead; settings?: ExpenseSettings };
 
-/** QuickBooks entries created since UTC midnight, counted from the audit rows settle() writes. */
-export async function qbCreatesToday(client: Db = db): Promise<number> {
+/** The org's QuickBooks entries created since UTC midnight, counted from the audit rows settle() writes. */
+export async function qbCreatesToday(orgId: string, client: Db = db): Promise<number> {
   const midnight = new Date();
   midnight.setUTCHours(0, 0, 0, 0);
-  return client.expenseAuditLog.count({ where: { action: "qb_created", changedAt: { gte: midnight } } });
+  return client.expenseAuditLog.count({ where: { orgId, action: "qb_created", changedAt: { gte: midnight } } });
 }
 
 /** QuickBooks ids are unique per entity type only, so claims are read for the entity being posted. */
@@ -329,7 +329,7 @@ async function claimForPost(orgId: string, expenseId: string, posting: ExpensePo
     if ("noClass" in built) return "no_class";
 
     // ponytail: concurrent posts can each see the count under the ceiling, so a day may overshoot by the in-flight posts.
-    if ((await qbCreatesToday(tx)) >= inputs.settings.qbMaxCreatesPerDay) return "waiting";
+    if ((await qbCreatesToday(orgId, tx)) >= inputs.settings.qbMaxCreatesPerDay) return "waiting";
 
     const date = built.write.fields.txnDate;
     const gate = qbGate(date, inputs.close, inputs.onAt, current.submittedAt, inputs.book);
@@ -565,10 +565,10 @@ export async function drainExpenseOutbox(now = new Date()): Promise<DrainCounts 
   const settings = await readExpenseSettings(db, orgId);
   const close = await readCloseDate(posting.client);
   if (!close.ok) logWarn("qb_drain_close_date_unread", { orgId, error: close.error.slice(0, 200) });
-  const outboxed = new Set((await db.expenseEvent.findMany({ select: { expenseId: true } })).map((e) => e.expenseId));
+  const outboxed = new Set((await db.expenseEvent.findMany({ where: { orgId }, select: { expenseId: true } })).map((e) => e.expenseId));
   const due = (
     await db.expense.findMany({
-      where: { backfill: false, qbTxnId: null, qbMatchState: { in: [...POSTABLE_QB_STATES, POSTING] } },
+      where: { orgId, backfill: false, qbTxnId: null, qbMatchState: { in: [...POSTABLE_QB_STATES, POSTING] } },
       orderBy: [{ receiptDate: "asc" }, { submittedAt: "asc" }],
     })
   ).filter((e) => outboxed.has(e.id) && isPostable(e, now.getTime()));
@@ -581,7 +581,7 @@ export async function drainExpenseOutbox(now = new Date()): Promise<DrainCounts 
     counts,
     maxCreatesPerRun: settings.qbMaxCreatesPerRun,
     maxCreatesPerDay: settings.qbMaxCreatesPerDay,
-    createdToday: await qbCreatesToday(),
+    createdToday: await qbCreatesToday(orgId),
     failures: [],
     post: async (e) => {
       try {
