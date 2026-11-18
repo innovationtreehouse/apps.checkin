@@ -406,8 +406,9 @@ def route_selftest():
     def api(reviews, cmp=None):
         def stub(*args):
             calls.append(args)
-            if isinstance(reviews, Exception):
-                raise reviews
+            err = reviews if "/reviews" in args[-1] else cmp
+            if isinstance(err, Exception):
+                raise err
             return json.dumps([reviews]) if "/reviews" in args[-1] else json.dumps(cmp)
         pr_reviews.cache_clear()
         return stub
@@ -436,6 +437,10 @@ def route_selftest():
         for cmp in (dict(ahead(), total_commits=300), dict(ahead(), status="diverged"), dict(ahead(), commits=[{"parents": [1, 2]}])):
             gh = api([rv("a")], cmp)
             assert later_round("1", "o/r", "h", prof)[1][2] is None, cmp
+        gh = api([rv("a")], subprocess.CalledProcessError(1, "gh"))  # a failed compare keeps the ledger
+        assert later_round("1", "o/r", "h", prof) == (1, (False, True, None, False), True)
+        gh = api([rv("a"), rv("b", "error")], ahead())  # an errored round is not a round
+        assert later_round("1", "o/r", "h", prof)[0] == 1
     finally:
         gh = real
         pr_reviews.cache_clear()
@@ -630,21 +635,26 @@ def resume_plan(event, has_ledger):
 def later_round(pr, repo, head_sha, profiles):
     """(rounds, (same_commit, prior_ok, delta_lines, delta_high), has_ledger) since the last bot review; None on
     the first round. The delta runs from the last good review on high or above, so capped rounds add up instead
-    of chaining. delta_lines is None without such a review, or when the range is a rebase or a base merge."""
+    of chaining. delta_lines is None without such a review, when the range is a rebase, a base merge or a
+    truncated compare, or when the compare fails. rounds counts only commits with a clean or issues verdict."""
     try:
         last = [r for r in pr_reviews(repo, pr) if r["user"]["login"] == BOT and r.get("commit_id")]
         if not last:
             return None
         has_ledger = any("openrouter-review-ledger:" in (r.get("body") or "") for r in last)
-        rounds = len({r["commit_id"] for r in last} - {head_sha}) if has_ledger else 0
         good = lambda r: re.search(r"\*\*Verdict:\*\*\s*`(clean|issues)`", r.get("body") or "") is not None
+        rounds = len({r["commit_id"] for r in last if good(r)} - {head_sha}) if has_ledger else 0
         prior_ok = good(last[-1])
         if last[-1]["commit_id"] == head_sha:
             return rounds, (True, prior_ok, 0, False), has_ledger
         base = next((r for r in reversed(last) if good(r) and lane_rung(r.get("body")) >= ORDER.index("high")), None)
         if base is None:
             return rounds, (False, prior_ok, None, False), has_ledger
-        cmp = json.loads(gh("api", f"repos/{repo}/compare/{base['commit_id']}...{head_sha}"))
+        try:
+            cmp = json.loads(gh("api", f"repos/{repo}/compare/{base['commit_id']}...{head_sha}"))
+        except Exception as e:
+            print(f"::warning::could not compare with the last review ({e}); routing uncapped", file=sys.stderr)
+            return rounds, (False, prior_ok, None, False), has_ledger
         # A truncated compare (over 250 commits or 300 files) can hide a risky path, so it gets no cap.
         truncated = cmp.get("total_commits", 0) > len(cmp.get("commits", [])) or len(cmp.get("files", [])) >= 300
         if truncated or cmp.get("status") != "ahead" or any(len(c.get("parents", [])) > 1 for c in cmp.get("commits", [])):
