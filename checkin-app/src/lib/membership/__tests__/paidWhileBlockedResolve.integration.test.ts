@@ -31,7 +31,7 @@ let restorePolicy: () => Promise<void> = async () => {};
  * store order. With `leadCleared` false the lead's own review is still open, so the
  * household does not qualify when the block lifts.
  */
-async function paidWhileBlocked(from: OrgMembershipProcessStatus, leadCleared = true) {
+async function paidWhileBlocked(from: OrgMembershipProcessStatus, leadCleared = true, raise = true) {
     const n = seq++;
     const now = new Date();
     const shopifyOrderId = `${TAG}-${n}-${Math.random().toString(36).slice(2)}`;
@@ -40,7 +40,7 @@ async function paidWhileBlocked(from: OrgMembershipProcessStatus, leadCleared = 
     const other = await prisma.person.create({ data: { name: `Adult ${n}`, email: `adult-${n}-${TAG}@example.com`, householdId: household.id } });
     const membership = await prisma.orgMembership.create({ data: { householdId: household.id, status: 'NONE' } });
     const app = await prisma.orgMembershipProcess.create({
-        data: { orgMembershipId: membership.id, kind: 'INITIAL', status: from, bgConsentAt: now, contractSignedAt: from === 'PENDING_EXTERNAL_ACTION' ? null : now },
+        data: { orgMembershipId: membership.id, kind: 'INITIAL', status: from, bgConsentAt: now, contractSignedAt: now },
     });
     if (!leadCleared) {
         await prisma.orgMembershipProcess.create({ data: { kind: 'PERSON_BG', subjectPersonId: lead.id, requestedForHouseholdId: household.id, status: 'PENDING_BG_REVIEW', bgConsentAt: now } });
@@ -52,8 +52,10 @@ async function paidWhileBlocked(from: OrgMembershipProcessStatus, leadCleared = 
 
     const { outcome } = await activateByProcessId(app.id, shopifyOrderId, { appliesToYear: null });
     expect(outcome).toBe('paid_while_blocked');
-    await raiseMembershipPaymentOutcome(outcome, { shopifyOrderId, processId: app.id });
-    expect((await problem(app.id, shopifyOrderId)).status).toBe('OPEN');
+    if (raise) {
+        await raiseMembershipPaymentOutcome(outcome, { shopifyOrderId, processId: app.id });
+        expect((await problem(app.id, shopifyOrderId)).status).toBe('OPEN');
+    }
     return { householdId: household.id, otherId: other.id, orgMembershipId: membership.id, appId: app.id, otherReviewId: otherReview.id, shopifyOrderId };
 }
 
@@ -132,6 +134,15 @@ describe('PAID_WHILE_BLOCKED when the block lifts', () => {
         expect((await row(f.appId)).status).toBe('PENDING_BG_CLEARANCE');
         expect(await membershipStatus(f.orgMembershipId)).toBe('NONE');
         expect((await problem(f.appId, f.shopifyOrderId)).status).toBe('OPEN');
+    });
+});
+
+describe('a PAID_WHILE_BLOCKED raise that arrives after the household activated', () => {
+    it('raises nothing on the order the application activated on', async () => {
+        const f = await paidWhileBlocked('PENDING_PAYMENT', true, false);
+        expect(await liftBlock(f)).toEqual(['resumed', 'cleared']);
+        await raiseMembershipPaymentOutcome('paid_while_blocked', { shopifyOrderId: f.shopifyOrderId, processId: f.appId });
+        expect(await prisma.paymentException.count({ where: { kind: 'PAID_WHILE_BLOCKED', processId: f.appId } })).toBe(0);
     });
 });
 
