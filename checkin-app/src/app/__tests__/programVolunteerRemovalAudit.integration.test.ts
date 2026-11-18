@@ -2,10 +2,9 @@
  * @jest-environment node
  */
 /**
- * Removing a program volunteer and its audit row commit together
- * (docs/rules/principles.md, Accountability). A trigger makes Postgres refuse the
- * audit row for one volunteer, whichever client writes it, so that removal must
- * roll back with the refused row.
+ * Removing a program volunteer and its audit row commit together.
+ * A trigger makes Postgres refuse the audit row for one volunteer, whichever
+ * client writes it, so that removal must roll back with the refused row.
  */
 import { DELETE } from '@/app/api/programs/[id]/volunteers/route';
 import prisma from '@/lib/prisma';
