@@ -209,7 +209,7 @@ export async function ordersByLegacyIds(legacyIds: string[]): Promise<MirrorOrde
 
 /**
  * Distinct variant legacy ids on one order's lines — the join key checkin owns
- * (BoardSettings/Program shopify*VariantId), mirrored onto shop_order_line.
+ * (MembershipYearVariant/Program shopify*VariantId), mirrored onto shop_order_line.
  * This is the reconciler's replica of the webhook's membership/program-item
  * check ("lines whose variant is one of checkin's known ids"). Lines with a null
  * variant_legacy_id (custom/deleted product, or a row synced before variant mirroring and not
