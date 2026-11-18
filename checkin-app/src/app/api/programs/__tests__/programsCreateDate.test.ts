@@ -32,6 +32,8 @@ jest.mock('@/lib/notifications', () => ({
 }));
 
 jest.mock('@/lib/shopify/products', () => ({
+    createShopifySingleVariantProgram: jest.fn(),
+    createClaimantProduct: jest.fn(),
 }));
 jest.mock('@/lib/shopify/stock', () => ({
 }));
@@ -98,6 +100,25 @@ describe('POST /api/programs — name', () => {
     it('saves the trimmed name', async () => {
         expect((await post('  Woodshop  ')).status).toBe(200);
         expect(mockProgramCreate.mock.calls[0][0].data.name).toBe('Woodshop');
+    });
+
+    it('writes the name key with the name', async () => {
+        await post('  WoodShop  ');
+        expect(mockProgramCreate.mock.calls[0][0].data).toMatchObject({ name: 'WoodShop', nameKey: 'woodshop' });
+    });
+
+    it('refuses a name its membership year already has with 409, before any store product', async () => {
+        mockProgramCreate.mockRejectedValueOnce({ code: 'P2002', meta: { driverAdapterError: { cause: { constraint: { fields: ['"nameKey"', '"appliesToYear"'] } } } } });
+        const res = await POST(new Request('http://localhost/api/programs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: 'Woodshop', leadMentorId: 7, startAt: '2024-09-01', endAt: '2024-12-15', maxParticipants: 5, nonMemberPrice: '50' }),
+        }) as unknown as import('next/server').NextRequest);
+        expect(res.status).toBe(409);
+        expect((await res.json()).error).toBe('A program with this name already exists for that membership year.');
+        const { createShopifySingleVariantProgram, createClaimantProduct } = jest.requireMock('@/lib/shopify/products');
+        expect(createShopifySingleVariantProgram).not.toHaveBeenCalled();
+        expect(createClaimantProduct).not.toHaveBeenCalled();
     });
 });
 

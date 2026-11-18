@@ -72,6 +72,18 @@ describe('updateProgram name', () => {
         await updateProgram(program, { name: '  Woodshop  ' }, actor);
         expect(tx.program.update.mock.calls[0][0].data.name).toBe('Woodshop');
     });
+
+    it('writes the name key with the name', async () => {
+        await updateProgram(program, { name: '  WoodShop  ' }, actor);
+        expect(tx.program.update.mock.calls[0][0].data).toMatchObject({ name: 'WoodShop', nameKey: 'woodshop' });
+    });
+
+    it('refuses a rename into a name its membership year already has as a conflict', async () => {
+        const taken = { code: 'P2002', meta: { driverAdapterError: { cause: { constraint: { fields: ['"nameKey"', '"appliesToYear"'] } } } } };
+        tx.program.update.mockRejectedValueOnce(taken);
+        const result = await updateProgram(program, { name: 'Woodshop' }, actor);
+        expect(result).toEqual({ ok: false, refusal: 'conflict', message: 'A program with this name already exists for that membership year.' });
+    });
 });
 
 describe('updateProgram audit', () => {

@@ -128,6 +128,7 @@ describe('Full Program Signup Integration Flow', () => {
         mockGetSession.mockResolvedValue({ user: { id: sysAdminId, isSysadmin: true, isBoardMember: true } });
         (prisma.person.findUnique as jest.Mock).mockResolvedValue({ dateOfBirth: null, isDeclaredAdult: true });
         (prisma.program.create as jest.Mock).mockResolvedValue({ id: programId, name: 'Integration Test Program' });
+        (prisma.program.update as jest.Mock).mockResolvedValueOnce({ id: programId, name: 'Integration Test Program', shopifyProductId: 'mock-product-id', shopifyVariantId: 'mock-variant-id' });
         (prisma.auditLog.create as jest.Mock).mockResolvedValue({});
 
         const createProgramReq = new Request('http://localhost/api/programs', {

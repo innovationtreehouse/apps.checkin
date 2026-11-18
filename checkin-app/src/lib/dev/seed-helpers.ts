@@ -2,6 +2,7 @@ import type { PrismaClient } from "@/generated/prisma/client";
 import { addHouseholdLead } from "@/lib/household/leads";
 import { KEY_VOLUNTEER_GATED_FLAGS, setRoleFlag, type RoleFlag } from "@/lib/roles";
 import { systemActor } from "@/lib/auditActor";
+import { programNameFields } from "@/lib/programs/nameKey";
 import { createKva, currentKvaVersion, findOpenKva, hasSignedCurrentKva } from "@/lib/membership/keyVolunteerProcess";
 import { mintPersonId } from "@/lib/person/mintId";
 import { withTx } from "@/lib/db-client";
@@ -389,7 +390,7 @@ export async function seedBaseline(prisma: Db): Promise<void> {
         const endAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
         await prisma.program.create({
             data: {
-                name: "Woodworking 101",
+                ...programNameFields("Woodworking 101"),
                 leadMentorId: isBoardMember.id,
                 startAt,
                 endAt,
@@ -483,6 +484,7 @@ async function seedProgramSpread(prisma: Db): Promise<void> {
         const program = await prisma.program.create({
             data: {
                 ...fields,
+                ...programNameFields(fields.name),
                 leadMentorId: leadId,
                 appliesToYear: await seedProgramYear(prisma, spec.startAt, spec.endAt),
                 maxParticipants: spec.maxParticipants ?? 20,
@@ -612,7 +614,7 @@ export async function createProgram(prisma: Db): Promise<string> {
     const endAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
     const program = await prisma.program.create({
         data: {
-            name: `Test Program ${tag}`,
+            ...programNameFields(`Test Program ${tag}`),
             startAt,
             endAt,
             appliesToYear: await seedProgramYear(prisma, startAt, endAt),

@@ -15,6 +15,7 @@ import { membershipYearLabel, programYearsTouched } from "@/lib/programYear";
 import { ProgramPhase, EnrollmentStatus, type Program } from "@/generated/prisma/client";
 import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
 import { ServiceError } from "@checkin/component-kit";
+import { isProgramNameTaken, PROGRAM_NAME_TAKEN, programNameFields } from "@/lib/programs/nameKey";
 import { personActor, recordAudit } from "@/lib/auditActor";
 
 export interface ProgramEditor {
@@ -349,7 +350,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
     }
 
     const updateData: Record<string, unknown> = {
-        ...(newName !== undefined && { name: newName }),
+        ...(newName !== undefined && programNameFields(newName)),
         ...(leadMentorId !== undefined && { leadMentorId }),
         ...(newStartAt !== undefined && { startAt: newStartAt }),
         ...(newEndAt !== undefined && { endAt: newEndAt }),
@@ -407,6 +408,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         }));
     } catch (e) {
         if (e instanceof ServiceError) return refuse("conflict", e.message);
+        if (isProgramNameTaken(e)) return refuse("conflict", PROGRAM_NAME_TAKEN);
         throw e;
     }
 

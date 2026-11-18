@@ -1048,6 +1048,9 @@ model Program {
   id                             Int              @id @default(autoincrement())
   /// @sensitivity:public
   name                           String
+  /// Trimmed, lower-cased name; unique per appliesToYear. Written by lib/programs/nameKey.ts.
+  /// @sensitivity:internal
+  nameKey                        String?
   /// @sensitivity:public
   leadMentorId                   Int?
   leadMentor                     Person?     @relation("ProgramLeadMentor", fields: [leadMentorId], references: [id])
@@ -1159,6 +1162,8 @@ model Program {
   participants ProgramParticipant[]
   events       Event[]
   instances    ProgramInstance[]
+
+  @@unique([nameKey, appliesToYear])
 }
 
 // Program → Instance → Event: an additive tier with a 1:1 id-aliased backfill that
