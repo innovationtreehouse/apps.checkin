@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "../../db";
 import { receiptRepo } from "../../repositories/receipt";
+import { LINE_COST_MESSAGE } from "../../lib/schemas";
 import { receiptService } from "../../services/receiptService";
 
 const tx = { $queryRaw: vi.fn(), receiptLineItem: { findFirst: vi.fn(), update: vi.fn() } };
@@ -38,5 +39,17 @@ describe("editing a line keeps its total inside the money column", () => {
 
   it("saves an edit whose total fits", async () => {
     await expect(receiptService.editLine("r-1", "submitter", 5, { quantity: 2 })).resolves.toMatchObject({ totalPriceCents: 200_000 });
+  });
+
+  it("saves a total of exactly 2,147,483,647 cents", async () => {
+    await expect(receiptService.editLine("r-1", "submitter", 5, { unitPrice: 21474836.47 })).resolves.toMatchObject({ totalPriceCents: 2_147_483_647 });
+  });
+
+  it("refuses a total one cent over 2,147,483,647 cents", async () => {
+    await expect(receiptService.editLine("r-1", "submitter", 5, { quantity: 2, unitPrice: 10737418.24 })).rejects.toMatchObject({
+      status: 400,
+      message: LINE_COST_MESSAGE,
+    });
+    expect(tx.receiptLineItem.update).not.toHaveBeenCalled();
   });
 });
