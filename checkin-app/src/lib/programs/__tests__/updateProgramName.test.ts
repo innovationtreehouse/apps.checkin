@@ -108,8 +108,8 @@ describe('updateProgram audit', () => {
 });
 
 describe('updateProgram post-commit checks', () => {
-    // The caller's copy is stale: a concurrent edit already set the ages and opened the program.
-    const lockedRow = { ...program, phase: 'UPCOMING', enrollmentStatus: 'OPEN', minAge: 10 };
+    // The caller's copy is stale: a concurrent edit already set the ages.
+    const lockedRow = { ...program, minAge: 10 };
 
     it('passes the locked row to the announce check as "before"', async () => {
         tx.program.findUnique.mockResolvedValueOnce(lockedRow);

@@ -98,3 +98,22 @@ describe('re-arming after a concurrent change to the sale', () => {
         expect(result).toMatchObject({ ok: true, notice: expect.stringContaining('stays hidden') });
     });
 });
+
+describe('re-arming after a concurrent end of the program', () => {
+    it('refuses when the locked row has finished', async () => {
+        const running = { ...ended, phase: 'RUNNING' } as Program;
+        rowAtWrite = { ...ended, phase: 'FINISHED' } as Program;
+        const result = await updateProgram(running, { offSaleAt: '2099-06-01' }, actor);
+        expect(result).toMatchObject({ ok: false, refusal: 'conflict' });
+        expect(tx.program.update).not.toHaveBeenCalled();
+    });
+});
+
+describe('a save after a concurrent change of Shopify variant', () => {
+    it('refuses instead of writing the old variant back', async () => {
+        rowAtWrite = { ...program, shopifyVariantId: 'gid://variant/2' } as Program;
+        const result = await updateProgram(program, { shopifyVariantId: 'gid://variant/1' }, actor);
+        expect(result).toMatchObject({ ok: false, refusal: 'conflict' });
+        expect(tx.program.update).not.toHaveBeenCalled();
+    });
+});

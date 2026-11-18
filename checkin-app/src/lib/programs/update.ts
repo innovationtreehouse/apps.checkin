@@ -396,9 +396,9 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
             await tx.$queryRaw`SELECT id FROM "Program" WHERE id = ${programId} FOR UPDATE`;
             if (newLeader !== null) await lockLiveHouseholdsOf(tx, [newLeader]);
             const before = await tx.program.findUnique({ where: { id: programId } });
-            // The re-arm decision above was made on the caller's read of the sale.
-            if (before && isSaleEnded(before) !== saleEndedNow) {
-                throw new ServiceError(409, "This program's sale changed while you were editing. Reload and try again.");
+            // The refusals, re-arm and variant reset above were decided on the caller's read.
+            if (before && decisionInputsDrifted(currentProgram, before)) {
+                throw new ServiceError(409, "This program changed while you were editing. Reload and try again.");
             }
             const after = await tx.program.update({ where: { id: programId }, data: updateData });
             await recordAudit(tx, personActor(actor.id), {
@@ -480,6 +480,17 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         ? "Sale reopened. The public store product stays hidden: re-list it in Shopify by hand if it should sell again."
         : undefined;
     return { ok: true, program: updatedProgram, warning, notice };
+}
+
+/** Whether a field the pre-lock refusals, re-arm or variant reset read differs between two reads of a program. */
+function decisionInputsDrifted(read: Program, locked: Program): boolean {
+    const time = (d: Date | null) => d?.getTime() ?? null;
+    return read.phase !== locked.phase
+        || read.enrollmentStatus !== locked.enrollmentStatus
+        || read.shopifyVariantId !== locked.shopifyVariantId
+        || time(read.startAt) !== time(locked.startAt)
+        || time(read.offSaleAt) !== time(locked.offSaleAt)
+        || time(read.saleEndedAt) !== time(locked.saleEndedAt);
 }
 
 // A start-date or age-bound edit can leave enrolled people outside the program's
