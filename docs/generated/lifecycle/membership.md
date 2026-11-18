@@ -50,6 +50,7 @@ stateDiagram-v2
     PENDING_EXTERNAL_ACTION --> ACTIVE: markContractSigned · PERSON_AGREEMENT
     PENDING_EXTERNAL_ACTION --> ARCHIVED: archiveApplication
     PENDING_EXTERNAL_ACTION --> BLOCKED: settleHouseholdBg
+    PENDING_EXTERNAL_ACTION --> PENDING_BG_CLEARANCE: advanceExternalIfComplete
     PENDING_EXTERNAL_ACTION --> PENDING_PAYMENT: advanceExternalIfComplete
     PENDING_PAYMENT --> ACTIVE: activate
     PENDING_PAYMENT --> ACTIVE: grantMembership
@@ -79,7 +80,7 @@ A blank (`—`) cell is a **deliberate** absent edge — a decision to ratify, n
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | ∅ | — | — | — | — | — | — | — | — | — | — | PENDING_RENEWAL | — | — | PENDING_BG_REVIEW | PENDING_BG_REVIEW | — | PENDING_EXTERNAL_ACTION | PENDING_EXTERNAL_ACTION | PENDING_BG_REVIEW | — | — | — | INTAKE | — | — |
 | INTAKE | — | — | ARCHIVED | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | BLOCKED | — | — | PENDING_EXTERNAL_ACTION | — |
-| PENDING_EXTERNAL_ACTION | — | PENDING_PAYMENT | ARCHIVED | — | — | — | — | — | — | — | — | — | — | — | — | ACTIVE | — | — | — | — | BLOCKED | — | — | — | — |
+| PENDING_EXTERNAL_ACTION | — | PENDING_BG_CLEARANCE, PENDING_PAYMENT | ARCHIVED | — | — | — | — | — | — | — | — | — | — | — | — | ACTIVE | — | — | — | — | BLOCKED | — | — | — | — |
 | PENDING_BG_REVIEW | — | — | ARCHIVED | BLOCKED | — | ARCHIVED | — | — | ACTIVE | — | — | ARCHIVED | — | — | — | — | — | — | — | — | ACTIVE, BLOCKED, PENDING_BG_CLEARANCE, PENDING_PAYMENT | ARCHIVED | — | — | — |
 | PENDING_PAYMENT | ACTIVE, PENDING_BG_CLEARANCE | — | ARCHIVED | — | — | — | — | — | — | — | — | — | ACTIVE | — | — | — | — | — | — | — | BLOCKED | — | — | — | — |
 | PENDING_BG_CLEARANCE | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | PENDING_PAYMENT | ACTIVE, BLOCKED | — | — | — | — |
