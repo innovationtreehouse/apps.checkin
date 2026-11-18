@@ -6,9 +6,10 @@ import type { TxClient } from "@/lib/db-client";
  *
  *   BOARD role rows → OrgMembership → Household → Person → OrgMembershipProcess / TrustedAdult
  *
- * Each set is locked by ascending id. A path that starts from a process reads it
- * without a lock, takes the locks in this order, then re-reads and refuses if what it
- * read has changed.
+ * Each set is locked by ascending id. A path that already holds the OrgMembership
+ * or Person rows a process belongs to may lock that process after its own, in any
+ * order. A path that starts from a process reads it without a lock, takes the locks
+ * in this order, then re-reads and refuses if what it read has changed.
  */
 
 /** Person rows FOR UPDATE, by ascending id. */
