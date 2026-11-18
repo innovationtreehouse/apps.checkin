@@ -22,7 +22,7 @@ import { personNamesById } from "@/lib/person/archivedPeople";
  *     scholarships) that an auditor must see separated, not buried.
  *
  * "Should reconcile" is decided by VARIANT ID, the same key the storefront
- * links are built from: BoardSettings holds the membership variants, Program
+ * links are built from: MembershipYearVariant rows hold the membership variants, Program
  * rows hold the program variants. An order with none of those variants on any
  * line (donation, t-shirt) is out of scope by design and never reported.
  *

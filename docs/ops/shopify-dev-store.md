@@ -75,8 +75,9 @@ products/orders/inventory/discounts. Wire the four values
 external infra repo; this app repo needs no change — the getters already read
 `process.env`). Register the `orders/paid` subscription once, against
 `https://ops-dev.innovationtreehouse.org/api/webhooks/shopify` (store-admin path,
-mirroring prod — see secret-pairing above). Leave the dev store's `BoardSettings`
-variant and discount empty until someone sets them by hand (O4). Local laptops that want the *real*
+mirroring prod — see secret-pairing above). Leave the dev store's per-year
+membership variants (`MembershipYearVariant`) and its `BoardSettings` discount
+empty until someone sets them by hand (O4). Local laptops that want the *real*
 checkout UI put a tunnel in front of `localhost:4000` (URL churns each restart →
 re-register with `shopify:webhook`); most local work just needs "a paid webhook
 lands and activates," which the mock delivers with zero infra.
@@ -92,8 +93,9 @@ out of scope.
 - **O1.** Decided: a dev store exists, so no Partner-org work blocks this.
 - **O2.** Decided: cloud-dev's address, `ops-dev.innovationtreehouse.org`, is
   stable across redeploys, so there is no re-register on deploy.
-- **O4.** Decided: leave the dev store's `BoardSettings` variant and discount
-  empty, as prod is configured.
+- **O4.** Decided: leave the dev store's per-year membership variants
+  (`MembershipYearVariant`) and its `BoardSettings` discount empty, as prod is
+  configured.
 - **O5.** A dev store lets us *test* the checkout flow but doesn't change who can
   redeem the volunteer code (#278) or which process a payment credits (#2694).
   Both are out of scope here.

@@ -285,7 +285,8 @@ expense's state.
 | Set an account on a held line | `setHeldLineAccount` | Clears the hold on resubmit |
 
 Match and skip first look for the app's own entry when a create may have landed. If
-it is there, the expense links to it as `CREATED` in place of the action.
+it is there, the expense links to it as `CREATED` in place of the action, unless
+the expense's tax waits on finance; then the action is refused and nothing links.
 
 Three questions have nothing else to record their answer, so they are flags closed
 with a required note: `QB_DUPLICATE_TO_VOID`, `QB_DRIFT` and `QB_POST_HELD`.

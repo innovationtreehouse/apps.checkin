@@ -299,7 +299,8 @@ async function refuseConflictedSkip(principal: ExpensePrincipal, expense: { subm
 /**
  * Finance skips an expense with a reason: it leaves the queue for good, and the drain never posts or
  * matches it again. An expense whose create may have landed looks for the app's own entry first;
- * found, it is linked in place of the skip and the refusal names the entry. Every post writes an
+ * found, it is linked in place of the skip and the refusal names the entry, unless the expense's tax
+ * waits on finance, when the skip is refused with nothing linked. Every post writes an
  * audit row, so a new one, a changed state or a moved attempt stamp since the read means a create
  * may have landed meanwhile, and the skip is refused.
  */
