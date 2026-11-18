@@ -59,7 +59,7 @@ describe("EmailSettingsPage", () => {
     expect(replyTo).not.toBeDisabled();
   });
 
-  it("already set: saves an alert address without unlocking, sending the From unchanged", async () => {
+  it("already set: saves an alert address without unlocking, sending no sender fields", async () => {
     setSession({ id: 1, isSysadmin: true });
     const fetchMock = mockFetchJson({ "/api/settings/email": { settings: { emailFromAddress: "Org <no-reply@org.test>", emailReplyToAddress: null } } });
     renderWithProviders(<EmailSettingsPage />);
@@ -70,10 +70,32 @@ describe("EmailSettingsPage", () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/settings/email", expect.objectContaining({ method: "PUT" })));
     const [, putOpts] = fetchMock.mock.calls.find(([, opts]) => opts?.method === "PUT")!;
-    expect(JSON.parse(putOpts!.body as string)).toMatchObject({
-      emailFromAddress: "Org <no-reply@org.test>",
-      alertEmailAddress: "alerts@org.test",
-    });
+    const body = JSON.parse(putOpts!.body as string);
+    expect(body).toMatchObject({ alertEmailAddress: "alerts@org.test" });
+    expect(body).not.toHaveProperty("emailFromAddress");
+    expect(body).not.toHaveProperty("emailReplyToAddress");
+  });
+
+  it("already set: a From edited then re-locked is not sent, and the field shows the saved From again", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const fetchMock = mockFetchJson({ "/api/settings/email": { settings: { emailFromAddress: "Org <no-reply@org.test>", emailReplyToAddress: null } } });
+    renderWithProviders(<EmailSettingsPage />);
+
+    const from = await screen.findByLabelText(/From address/i);
+    const unlock = screen.getByLabelText(/let me edit the sender addresses/i);
+    fireEvent.click(unlock);
+    fireEvent.change(from, { target: { value: "half-edited" } });
+    fireEvent.click(unlock);
+    fireEvent.change(screen.getByLabelText(/Alert address/i), { target: { value: "alerts@org.test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/settings/email", expect.objectContaining({ method: "PUT" })));
+    const [, putOpts] = fetchMock.mock.calls.find(([, opts]) => opts?.method === "PUT")!;
+    const body = JSON.parse(putOpts!.body as string);
+    expect(body).toMatchObject({ alertEmailAddress: "alerts@org.test" });
+    expect(body).not.toHaveProperty("emailFromAddress");
+    expect(body).not.toHaveProperty("emailReplyToAddress");
+    await waitFor(() => expect(from).toHaveValue("Org <no-reply@org.test>"));
   });
 
   it("accepts a comma-separated Reply-To list: no inline error, PUT fires", async () => {
