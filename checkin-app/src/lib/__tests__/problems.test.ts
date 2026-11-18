@@ -87,15 +87,21 @@ describe("retryProblem", () => {
         });
 
         it("still succeeds when the gift cannot be marked loaded", async () => {
-            jest.spyOn(console, "error").mockImplementation(() => {});
+            const logged = jest.spyOn(console, "error").mockImplementation(() => {});
             gifts.manualInKindService.loadInventory.mockRejectedValue(new Error("gifts db down"));
 
             await expect(retryProblem(DELTA, BY)).resolves.toBeUndefined();
+            expect(logged).toHaveBeenCalledWith(expect.stringContaining("donation:12"), expect.any(Error));
         });
 
-        it("does not touch gifts for a receipt's delta", async () => {
-            await retryProblem({ ...DELTA, id: "rcpt-1" }, BY);
+        it.each([
+            ["a receipt's delta", { ...DELTA, id: "rcpt-1" }],
+            ["a catalog event", { ...DELTA, step: "catalog event", id: "8" }],
+            ["a provisional item", { ...DELTA, step: "provisional item", id: "2000000000015" }],
+        ])("does not touch gifts for %s", async (_what, item) => {
+            await retryProblem(item, BY);
 
+            expect(inventory.retryStuckItem).toHaveBeenCalledWith({ id: item.id, step: item.step });
             expect(gifts.manualInKindService.loadInventory).not.toHaveBeenCalled();
         });
     });
