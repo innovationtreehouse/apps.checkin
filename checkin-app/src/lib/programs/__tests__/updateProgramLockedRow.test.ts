@@ -41,6 +41,7 @@ const tx = {
         update: jest.fn(({ data }: { data: Partial<Program> }) => Promise.resolve({ ...rowAtWrite, ...data })),
     },
     auditLog: { create: jest.fn().mockResolvedValue({}) },
+    programParticipant: { count: jest.fn().mockResolvedValue(0) },
 };
 
 jest.mock('@/lib/prisma', () => ({
