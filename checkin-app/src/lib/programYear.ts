@@ -132,3 +132,12 @@ export function reopenYearRefusal(kind: string, createdAt: Date, boundary: Date 
     const instead = kind === "RENEWAL" ? "use the new renewal" : "start a new application";
     return `This application is for ${membershipYearLabel(year)}. The ${membershipYearLabel(year + 1)} renewal period has started, so it can't be reopened; ${instead}.`;
 }
+
+/**
+ * Why a payment-plan request for `year` can't be approved, or null: its year has
+ * ended by `now`. No boundary set, or no year: null.
+ */
+export function endedPaymentPlanYearRefusal(year: number | null, boundary: Date | null | undefined, now: Date): string | null {
+    if (year == null || !boundary || membershipYearOf(boundary, now) <= year) return null;
+    return `This request is for ${membershipYearLabel(year)}, which has ended. Deny it; the family can ask again for the current year.`;
+}

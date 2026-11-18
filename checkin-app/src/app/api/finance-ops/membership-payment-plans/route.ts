@@ -5,7 +5,7 @@ import { withAuth } from "@/lib/auth";
 import { handler } from "@/security/handler";
 import { apiError } from "@/lib/api-response";
 import { PAYMENT_ERROR_STATUS } from "@/lib/domainErrorResponse";
-import { certifyPaymentPlan, PaymentError } from "@/lib/membership/payment";
+import { certifyPaymentPlan, paymentPlanRequestYear, PaymentError } from "@/lib/membership/payment";
 import { fromWhere } from "@/lib/membership/lifecycle";
 
 export const GET = handler('GET /api/finance-ops/membership-payment-plans', async () => {
@@ -21,7 +21,9 @@ export const GET = handler('GET /api/finance-ops/membership-payment-plans', asyn
         select: {
             id: true,
             stageEnteredAt: true,
+            createdAt: true,
             scholarshipRequestKind: true,
+            paymentPlanYear: true,
             orgMembership: {
                 select: {
                     id: true,
@@ -44,7 +46,9 @@ export const GET = handler('GET /api/finance-ops/membership-payment-plans', asyn
         },
     });
 
-    return { OrgMembershipProcess: requests };
+    const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
+    const boundary = settings?.orgMembershipYearBoundary;
+    return { OrgMembershipProcess: requests.map((r) => ({ ...r, paymentPlanYear: paymentPlanRequestYear(r, boundary) })) };
 });
 
 export const POST = withAuth(

@@ -14,6 +14,7 @@ import { setHouseholdStatus, raiseDeniedHouseholdActivity, type HouseholdStatus 
 import { isOrderReversed } from "@/lib/finance/reconcile/exceptions";
 import { recordUnreportedReversal } from "@/lib/finance/reconcile/liveOrder";
 import { liveMembershipYear } from "@/lib/membership/renewal";
+import { endedPaymentPlanYearRefusal } from "@/lib/programYear";
 import { householdHasDisputedCheck } from "@/lib/membership/checkStanding";
 import type { Prisma } from "@/generated/prisma/client";
 
@@ -113,6 +114,20 @@ export async function ensurePaymentLinkForUser(userId: number) {
  * every other non-settling outcome is money that landed on nothing awaiting it,
  * which the webhook and the reconciler raise for the board.
  */
+/**
+ * `boundary` goes with `requireRequested`: the request's own year is then read
+ * under the row lock and certified in place of `appliesToYear`.
+ */
+type SettleOpts = { via: "payment" | "manual"; actorId?: number; shopifyOrderId?: string; hasMembershipItem?: boolean; reason?: string; appliesToYear?: number | null; grantedYear?: number; requireRequested?: boolean; boundary?: Date | null };
+
+/** The membership year a payment-plan request is for. A request with no stored year takes the year its application entered payment. */
+export function paymentPlanRequestYear(
+    row: { paymentPlanYear: number | null; stageEnteredAt: Date | null; createdAt: Date },
+    boundary: Date | null | undefined,
+): number | null {
+    return row.paymentPlanYear ?? liveMembershipYear(boundary, row.stageEnteredAt ?? row.createdAt);
+}
+
 export type ActivateOutcome =
     | "active"
     | "held"
@@ -150,7 +165,7 @@ export type ActivateOutcome =
  */
 async function settle(
     processId: number,
-    opts: { via: "payment" | "manual"; actorId?: number; shopifyOrderId?: string; hasMembershipItem?: boolean; reason?: string; appliesToYear?: number | null; grantedYear?: number; requireRequested?: boolean },
+    opts: SettleOpts,
 ): Promise<{ outcome: ActivateOutcome; householdId?: number; disputed?: boolean }> {
     if (opts.shopifyOrderId) await recordUnreportedReversal(opts.shopifyOrderId);
     const result = await prisma.$transaction(async (tx) => {
@@ -163,9 +178,15 @@ async function settle(
         const [membership] = await tx.$queryRaw<{ householdId: number; status: HouseholdStatus }[]>`SELECT "householdId", status FROM "OrgMembership" WHERE id = ${process.orgMembershipId} FOR UPDATE`;
         if (!membership) throw new PaymentError("not_found", "Membership not found.");
 
+        let appliesToYear = opts.appliesToYear ?? null;
         if (opts.via === "manual") {
             if (opts.requireRequested && !(process.isPaymentPlanRequested && process.status === "PENDING_PAYMENT")) {
                 throw new PaymentError("wrong_phase", "No pending payment-plan request");
+            }
+            if (opts.requireRequested) {
+                appliesToYear = paymentPlanRequestYear(process, opts.boundary);
+                const ended = endedPaymentPlanYearRefusal(appliesToYear, opts.boundary, new Date());
+                if (ended) throw new PaymentError("wrong_phase", ended);
             }
             if (process.paidAt) throw new PaymentError("wrong_phase", "This application is already paid.");
             if (process.status !== "PENDING_PAYMENT") {
@@ -206,7 +227,7 @@ async function settle(
             // Stays BLOCKED (stageEnteredAt untouched); refund needed.
             const { count } = await tx.orgMembershipProcess.updateMany({
                 where: { id: processId, ...fromWhere("BLOCKED"), paidAt: null },
-                data: { paidAt: now, appliesToYear: opts.appliesToYear ?? null, ...payMeta },
+                data: { paidAt: now, appliesToYear, ...payMeta },
             });
             if (count === 0) return { outcome: "nothing_due" as const };
             await tx.auditLog.create({
@@ -249,7 +270,7 @@ async function settle(
         const { count } = await tx.orgMembershipProcess.updateMany({
             where: { id: processId, ...fromWhere("PENDING_PAYMENT"), paidAt: null, ...(closesRequest ? { isPaymentPlanRequested: true } : {}) },
             // Leaving PENDING_PAYMENT ends any payment-plan request, approved or not.
-            data: { paidAt: now, stageEnteredAt: now, appliesToYear: opts.appliesToYear ?? null, ...payMeta, status: activating ? "ACTIVE" : "PENDING_BG_CLEARANCE", isPaymentPlanRequested: false, ...(disputed ? { bgClearedAt: null } : {}) },
+            data: { paidAt: now, stageEnteredAt: now, appliesToYear, ...payMeta, status: activating ? "ACTIVE" : "PENDING_BG_CLEARANCE", isPaymentPlanRequested: false, ...(disputed ? { bgClearedAt: null } : {}) },
         });
         // Under the row lock the status can't have moved; if it did, roll the household write back.
         if (count === 0) throw new PaymentError("wrong_phase", "This application is not awaiting payment.");
@@ -329,7 +350,7 @@ async function auditNoItem(tx: Prisma.TransactionClient, processId: number, stat
 /** Record a payment against a process (see settle). Returns the process row. */
 export async function activate(
     processId: number,
-    opts: { via: "payment" | "manual"; actorId?: number; shopifyOrderId?: string; hasMembershipItem?: boolean; reason?: string; appliesToYear?: number | null; grantedYear?: number; requireRequested?: boolean },
+    opts: SettleOpts,
 ) {
     await settle(processId, opts);
     return prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
@@ -340,7 +361,8 @@ export async function activate(
  * Rejects (403) an actor who is not a Board member (a sysadmin is not enough) and
  * the actor's own household; activate() rejects (409) under the row lock unless
  * the process is awaiting payment. Records `year`, or with none the live year.
- * `requireRequested` makes this the decision on an open payment-plan request (see settle).
+ * `requireRequested` makes this the decision on an open payment-plan request (see
+ * settle), which records the request's own year and refuses one that has ended.
  */
 export async function certifyPaymentPlan(processId: number, actorId: number, opts?: { reason?: string; year?: number; requireRequested?: boolean }) {
     // Only the Board certifies a payment (owner ruling 10-15). Checked here so every
@@ -356,8 +378,9 @@ export async function certifyPaymentPlan(processId: number, actorId: number, opt
         throw new PaymentError("forbidden", "You cannot certify your own household's membership — someone outside your household must.");
     }
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
-    const appliesToYear = opts?.year ?? liveMembershipYear(settings?.orgMembershipYearBoundary, new Date());
-    return activate(processId, { via: "manual", actorId, reason: opts?.reason, appliesToYear, grantedYear: opts?.year, requireRequested: opts?.requireRequested });
+    const boundary = settings?.orgMembershipYearBoundary;
+    const appliesToYear = opts?.year ?? liveMembershipYear(boundary, new Date());
+    return activate(processId, { via: "manual", actorId, reason: opts?.reason, appliesToYear, grantedYear: opts?.year, requireRequested: opts?.requireRequested, boundary });
 }
 
 /** An order's membership line and the year it buys; the year is null when no boundary is set. */
