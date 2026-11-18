@@ -354,16 +354,19 @@ async function settle(run: Run, gift: GiftToBook, claimedAt: Date, s: Settlement
 /**
  * Claims the settlement's entries for the gift (the unique index refuses one another gift holds),
  * saves its state and audits it. A failure keeps the first failure's time and the latest error; a
- * post the run could not finish leaves them; any other settlement clears them.
+ * post the run could not finish leaves them; any other settlement clears them. The note keeps its
+ * stray-entry lines except those the settlement links or answers; `answersEveryStray` (finance's
+ * skip) answers them all. Answered entries are audited, so the sweep never notes them again.
  */
 export async function writeSettlement(
   tx: DbOrTx,
   orgId: string,
   gift: Pick<GiftToBook, "source" | "id" | "entityType" | "entityId">,
-  posting: { id: number; qbFirstFailedAt: Date | null },
+  posting: { id: number; qbFirstFailedAt: Date | null; qbNote: string | null },
   s: Settlement,
   actor: AuditContext,
   payload: Record<string, unknown>,
+  answersEveryStray = false,
 ): Promise<void> {
   for (const e of s.entries) {
     await tx.inKindBooking.create({ data: { orgId, source: gift.source, giftId: gift.id, side: e.side, matchState: s.state, qbEntity: e.entity, qbTxnId: e.id, bookedTxnDate: e.txnDate } });
@@ -371,9 +374,13 @@ export async function writeSettlement(
   const stuck = s.failure
     ? { qbFirstFailedAt: posting.qbFirstFailedAt ?? new Date(), qbLastError: s.note }
     : s.state === QB_MATCH_STATE.POST_FAILED ? {} : { qbFirstFailedAt: null, qbLastError: null };
+  const linked = new Set(s.entries.flatMap((e) => (e.entity === "JournalEntry" ? [e.id] : [])));
+  const answered = strayEntriesOf(posting.qbNote).filter((id) => answersEveryStray || linked.has(id));
+  const kept = strayLinesOf(posting.qbNote).filter((line) => !strayEntriesOf(line).some((id) => answered.includes(id)));
+  const qbNote = [s.note, ...kept].filter(Boolean).join("\n") || null;
   await tx.inKindPosting.update({
     where: { id: posting.id },
-    data: { matchState: s.state, claimedAt: null, qbNote: s.note, bookedTotalCents: s.booked?.totalCents ?? null, bookedTxnDate: s.booked?.txnDate ?? null, ...stuck },
+    data: { matchState: s.state, claimedAt: null, qbNote, bookedTotalCents: s.booked?.totalCents ?? null, bookedTxnDate: s.booked?.txnDate ?? null, ...stuck },
   });
   await recordEvent(tx, {
     orgId,
@@ -381,7 +388,14 @@ export async function writeSettlement(
     entityId: gift.entityId,
     eventType: IN_KIND_SETTLED,
     ...actor,
-    payload: { ...payload, to: s.state, entries: s.entries, note: s.note, ...(s.failure ? { failure: s.failure } : {}) },
+    payload: {
+      ...payload,
+      to: s.state,
+      entries: s.entries,
+      note: s.note,
+      ...(s.failure ? { failure: s.failure } : {}),
+      ...(answered.length ? { answeredEntries: answered.map(answeredEntryRef) } : {}),
+    },
   });
 }
 
@@ -428,7 +442,7 @@ function outcomeOf(saved: Settlement): InKindPostOutcome {
 
 /** The audit event of finance clearing a gift's note; its `answeredEntries` name the stray entries it answered. */
 export const IN_KIND_NOTE_CLEARED = "IN_KIND_QB_NOTE_CLEARED";
-/** The audit event of a settlement; finance's skip or match names the stray entries it answered in `answeredEntries`. */
+/** The audit event of a settlement; finance's skip, or a match linking a stray entry, names the entries it answered in `answeredEntries`. */
 export const IN_KIND_SETTLED = "IN_KIND_QB_SETTLED";
 /** How a cleared note's audit names a stray app entry it answered. */
 export const answeredEntryRef = (entryId: string) => `JournalEntry:${entryId}`;
@@ -452,7 +466,7 @@ export function strayLinesOf(note: string | null): string[] {
   return noteLines(note).filter((line) => strayEntriesOf(line).length > 0);
 }
 
-/** Whether finance already answered this stray entry by clearing, skipping or matching a gift whose note named it. */
+/** Whether finance already answered this stray entry: cleared or skipped a gift whose note named it, or matched the gift to it. */
 async function answeredStray(orgId: string, entryId: string): Promise<boolean> {
   const answer = await db.workflowEvent.findFirst({
     where: { orgId, eventType: { in: [IN_KIND_NOTE_CLEARED, IN_KIND_SETTLED] }, actorUserId: { not: null }, payload: { contains: JSON.stringify(answeredEntryRef(entryId)) } },
