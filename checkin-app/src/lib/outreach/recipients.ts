@@ -25,8 +25,13 @@ export interface RecipientSnapshot {
 function audienceWhere(emailType: EmailType, liveYear: number | null, notRenewingYear: number | null): Prisma.PersonWhereInput {
     const where: Prisma.PersonWhereInput = {
         isHouseholdLead: true,
-        household: { archivedAt: null, orgMembership: { status: "ACTIVE" } },
-        ...(notRenewingYear !== null && { NOT: { household: { orgMembership: { notRenewingYear } } } }),
+        household: {
+            archivedAt: null,
+            orgMembership: {
+                status: "ACTIVE",
+                ...(notRenewingYear !== null && { OR: [{ notRenewingYear: null }, { notRenewingYear: { not: notRenewingYear } }] }),
+            },
+        },
     };
     if (emailType === "opening") return where;
     // The reminder skips a household that has completed renewal for the year a renewal

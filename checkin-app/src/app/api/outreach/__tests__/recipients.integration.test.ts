@@ -90,6 +90,20 @@ describe('outreach recipient snapshot', () => {
         }
     });
 
+    it("skips a household that said it won't renew into the noted year, for both email types", async () => {
+        await setBoundary(BOUNDARY);
+        const notedId = await makeMember('Noted', `noted-${TAG}@example.com`);
+        await prisma.orgMembership.update({ where: { id: notedId }, data: { notRenewingYear: 2026 } });
+        const staleId = await makeMember('StaleNote', `stale-note-${TAG}@example.com`);
+        await prisma.orgMembership.update({ where: { id: staleId }, data: { notRenewingYear: 2025 } });
+
+        for (const type of ['opening', 'reminder'] as const) {
+            const got = emails(await computeRecipientSnapshot(type, IN_SEASON_NOW));
+            expect(got).not.toContain(`noted-${TAG}@example.com`);
+            expect(got).toContain(`stale-note-${TAG}@example.com`);
+        }
+    });
+
     it('opening goes to every member-household lead, renewed or not; a non-lead member gets nothing', async () => {
         await setBoundary(BOUNDARY);
         await makeMember('OpenUnrenewed', `open-unrenewed-${TAG}@example.com`);
