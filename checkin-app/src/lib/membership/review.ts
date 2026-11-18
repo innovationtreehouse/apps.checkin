@@ -6,7 +6,7 @@ import { sendTemplated } from "@/lib/email-templates/send";
 import { emailHouseholdLeads } from "@/lib/emailRecipients";
 import { logBackendError, logger } from "@/lib/logger";
 import { sendCongrats } from "@/lib/membership/payment";
-import { notifyBoardCheckRejected, notifyBoardPaymentException } from "@/lib/membership/boardAlerts";
+import { notifyBoardCheckRejected } from "@/lib/membership/boardAlerts";
 import type { SettleStep } from "@/lib/membership/settleHouseholdBg";
 import { config } from "@/lib/config";
 import { canonicalizeEmail } from "@/lib/emailNormalize";
@@ -17,7 +17,7 @@ import { sharesHousehold } from "@/lib/conflictOfInterest";
 import { type DbClient, type TxClient } from "@/lib/db-client";
 import { awaitingBgReview, fromWhere, personBgOpen } from "@/lib/membership/lifecycle";
 import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
-import { raisePaymentException, recordPaymentException, type PaymentExceptionNotice } from "@/lib/finance/reconcile/exceptions";
+import { raisePaymentException } from "@/lib/finance/reconcile/exceptions";
 import { SIGN_IN_VERIFIED_PERSON } from "@/lib/person/filters";
 import { householdCheckStarted, jsonField, reviewHoldsRejection } from "@/lib/membership/checkStanding";
 import { findSelfGrantRefusal, recordSelfGrantRefusal, refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE, type GrantSubject, type SelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
@@ -292,6 +292,10 @@ export async function attest(reviewerId: number, processId: number, input: Attes
         if (naming) await nameSubject(tx, reviewerId, processId, subjectPersonId);
         if (input.isMarkedVolunteerFamily) await markVolunteerFamily(tx, reviewerId, process.requestedForHouseholdId, processId, subjectPersonId);
         const households = await reviewHouseholds(tx, target);
+        // A check outcome follows the person, so a rejection still lands; an approval would clear into a denied household.
+        if (input.result === "APPROVE" && await lockAndFindDeniedHousehold(tx, households) !== null) {
+            throw new ReviewError("wrong_phase", "This household has been denied membership, so its background check cannot be approved.");
+        }
 
         await tx.backgroundCheckAttestation.create({
             data: { processId, reviewerId, subjectPersonId, result: input.result, isMarkedVolunteerFamily: false, note: input.note ?? null },
@@ -562,9 +566,8 @@ export async function dismissCheckStarted(processId: number, actorId: number, ra
 
 /**
  * A check review's second approval: stamps its person's lastBackgroundCheck and
- * resolves the review. settleHouseholdBg moves the households after commit. A subject
- * in a DENIED household converges nowhere: nothing is written, and the outcome
- * carries `denied` so the caller raises it to the board after commit.
+ * resolves the review. settleHouseholdBg moves the households after commit. The
+ * caller has already refused an approval on a DENIED household.
  * Must run inside a tx holding a FOR UPDATE lock on the process row; `expected` is the
  * state the caller expects the process to still be in, re-checked here.
  */
@@ -584,23 +587,11 @@ export async function clearBackgroundCheck(
     const now = new Date();
     const subject = { personId: process.subjectPersonId, householdId: await applicantHousehold(tx, process) };
     await throwIfOwnHousehold(tx, actorId, subject, { lastBackgroundCheck: now.toISOString() });
-    if (subject.householdId !== null) {
-        const [subjectMembership] = await tx.$queryRaw<{ status: string }[]>`SELECT status FROM "OrgMembership" WHERE "householdId" = ${subject.householdId} FOR UPDATE`;
-        if (subjectMembership?.status === "DENIED") {
-            return deniedClearance(tx, process.status, subject.householdId, processId);
-        }
-    }
     await tx.person.update({ where: { id: process.subjectPersonId }, data: { lastBackgroundCheck: now } });
     const { count } = await tx.orgMembershipProcess.updateMany({ where: { id: processId, ...expected.where }, data: { bgClearedAt: now, status: "ACTIVE", stageEnteredAt: now } });
     if (!count) throw movedOn();
     await audit(tx, personActor(actorId), processId, { status: process.status }, { status: "ACTIVE", bgCleared: true, subjectPersonId: process.subjectPersonId });
     return { status: "ACTIVE", activated: false, householdId: null, isInitial: false };
-}
-
-/** A clearance reaching a DENIED household. The board item commits with the clearance's transaction, because no sweep finds it later. */
-async function deniedClearance(tx: TxClient, status: OrgMembershipProcessStatus, householdId: number, processId: number): Promise<ClearanceOutcome> {
-    const notice = await recordPaymentException(tx, "DENIED_HOUSEHOLD_ACTIVITY", { processId, severity: "CRITICAL" });
-    return { status, activated: false, householdId: null, isInitial: false, denied: { householdId, processId, notice } };
 }
 
 /** An unlocked writer (archive) can still move the row between the locked read and the write. */
@@ -620,8 +611,6 @@ export type ClearanceOutcome = {
     activated: boolean;
     householdId: number | null;
     isInitial: boolean;
-    /** Set when the household is DENIED: nothing converged, the board item is written, and `notice` is the email it owes. */
-    denied?: { householdId: number; processId: number; notice: PaymentExceptionNotice | null };
     /** Set when the paid order was refunded: held unactivated, and the board is owed an item. */
     refunded?: { processId: number; shopifyOrderId: string };
 };
@@ -635,27 +624,21 @@ async function afterClearanceCommitted(step: string, outcome: ClearanceOutcome, 
     try {
         await run();
     } catch (error) {
-        const context = { householdId: outcome.householdId ?? outcome.denied?.householdId, processId: outcome.denied?.processId ?? outcome.refunded?.processId };
+        const context = { householdId: outcome.householdId, processId: outcome.refunded?.processId };
         logger.error(`clearance ${step} failed:`, context, error);
         await logBackendError(error, `clearance ${step}`, context);
     }
 }
 
 /**
- * The sends every clearance owes after it commits: the email for a DENIED household's
- * board item, the board item for a refunded order, congrats + the new-member triggers
+ * The sends every clearance owes after it commits: the board item for a refunded
+ * order, congrats + the new-member triggers
  * on activation, else the payment-open notice. Never throws. What a failed step leaves
  * behind is picked up later: the daily reconcile raises a refunded order, and the
  * nightly and annual sweeps open what the triggers missed.
  */
 export async function notifyClearanceOutcome(outcome: ClearanceOutcome, opts?: { paymentOpenNotice?: (householdId: number) => Promise<void> }) {
-    const { denied, refunded, householdId } = outcome;
-    if (denied) {
-        logger.warn(`[membership] activity on DENIED household ${denied.householdId}: background check cleared`);
-        const { notice } = denied;
-        if (notice) await afterClearanceCommitted("denied household email", outcome, () => notifyBoardPaymentException(notice.kind, notice.severity, notice.exceptionId));
-        return;
-    }
+    const { refunded, householdId } = outcome;
     if (refunded) {
         await afterClearanceCommitted("refunded order raise", outcome, () => raisePaymentException("REVERSED_BEFORE_ACTIVATION", { ...refunded, severity: "CRITICAL" }));
         return;
@@ -738,7 +721,7 @@ export async function boardResetReview(processId: number, actorId: number, opts:
 
     const households = await boardReviewHouseholds(process, actorId, "reset");
 
-    const status = await prisma.$transaction(async (tx) => {
+    const status = await reviewTransaction(async (tx) => {
         // FOR UPDATE per attest()'s contract: without it a concurrent second
         // attestation could clear the check between the phase test and the delete,
         // leaving a cleared process with no attestations behind it.
@@ -746,6 +729,7 @@ export async function boardResetReview(processId: number, actorId: number, opts:
         const fresh = await tx.orgMembershipProcess.findUnique({ where: { id: processId }, select: { status: true, kind: true, paidAt: true, bgConsentAt: true, bgClearedAt: true, contractSignedAt: true, subjectPersonId: true, orgMembershipId: true, requestedForHouseholdId: true } });
         if (!fresh) throw new ReviewError("not_found", "Application not found.");
         await throwIfHouseholdsMoved(tx, fresh, households);
+        await throwIfActorJoined(tx, actorId, households, "reset");
         await throwIfDenied(tx, households, "reset");
         const blocked = fresh.status === "BLOCKED";
         if (!blocked && !awaitingBgReview.has({ kind: fresh.kind, status: fresh.status, bgConsentAt: !!fresh.bgConsentAt, bgClearedAt: !!fresh.bgClearedAt })) {
@@ -780,14 +764,26 @@ export async function boardResetReview(processId: number, actorId: number, opts:
  * else they could wipe their family's failed background check, the very thing
  * attest()'s same-household gate forbids.
  */
-async function boardReviewHouseholds(process: ReviewTarget, actorId: number, override: "reset" | "close" | "reopen"): Promise<number[]> {
+async function boardReviewHouseholds(process: ReviewTarget, actorId: number, override: BoardOverride): Promise<number[]> {
     const households = await reviewHouseholds(prisma, process);
     for (const householdId of households) {
         if (await refuseSelfGrant(prisma, actorId, { householdId }, { table: "Person", attempted: { override } })) {
-            throw new ReviewError("same_household_applicant", `You cannot ${override} your own household's review — someone outside your household must.`);
+            throw new ReviewError("same_household_applicant", boardOverrideRefusal(override));
         }
     }
     return households;
+}
+
+type BoardOverride = "reset" | "close" | "reopen";
+
+const boardOverrideRefusal = (override: BoardOverride) => `You cannot ${override} your own household's review — someone outside your household must.`;
+
+/** boardReviewHouseholds' bar ran before the lock; re-run it on the actor as they stand now. */
+async function throwIfActorJoined(tx: TxClient, actorId: number, households: number[], override: BoardOverride) {
+    for (const householdId of households) {
+        const refusal = await findSelfGrantRefusal(tx, actorId, { householdId }, { table: "Person", attempted: { override } });
+        if (refusal) throw new SelfGrantRefusedError(refusal, boardOverrideRefusal(override));
+    }
 }
 
 async function throwIfDenied(tx: TxClient, households: number[], verb: string) {
@@ -810,11 +806,12 @@ async function closeAsWrongPerson(process: OrgMembershipProcess, actorId: number
     if (process.kind !== "PERSON_BG") throw new ReviewError("invalid_input", "Only a check review can be closed as opened for the wrong person.");
     const processId = process.id;
     const households = await boardReviewHouseholds(process, actorId, "close");
-    await prisma.$transaction(async (tx) => {
+    await reviewTransaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
         const fresh = await tx.orgMembershipProcess.findUnique({ where: { id: processId }, select: { status: true, orgMembershipId: true, subjectPersonId: true, requestedForHouseholdId: true } });
         if (!fresh) throw new ReviewError("not_found", "Application not found.");
         await throwIfHouseholdsMoved(tx, fresh, households);
+        await throwIfActorJoined(tx, actorId, households, "close");
         await throwIfDenied(tx, households, "closed");
         if (!personBgOpen.has({ status: fresh.status })) throw new ReviewError("wrong_phase", "Only an open check review can be closed as opened for the wrong person.");
         const { count } = await tx.orgMembershipProcess.updateMany({
@@ -853,7 +850,7 @@ export async function boardReopenWrongPersonClose(processId: number, actorId: nu
     if (!process || process.kind !== "PERSON_BG") throw new ReviewError("not_found", "Check review not found.");
     const households = await boardReviewHouseholds(process, actorId, "reopen");
 
-    const status = await prisma.$transaction(async (tx) => {
+    const status = await reviewTransaction(async (tx) => {
         // Process, then person: the order attest() locks in. The person's lock is the one
         // openPersonBg takes, so no new review opens for them meanwhile.
         await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
@@ -870,6 +867,7 @@ export async function boardReopenWrongPersonClose(processId: number, actorId: nu
         const people = await reopenPeople(tx, processId, fresh.subjectPersonId, unnamedFor);
         for (const id of people) await tx.$queryRaw`SELECT id FROM "Person" WHERE id = ${id} FOR UPDATE`;
         await throwIfHouseholdsMoved(tx, fresh, households);
+        await throwIfActorJoined(tx, actorId, households, "reopen");
         await throwIfDenied(tx, households, "reopened");
         const later = await tx.orgMembershipProcess.findFirst({
             where: {

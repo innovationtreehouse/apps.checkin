@@ -43,7 +43,6 @@ function fakeTx(process: { subjectPersonId: number | null; householdId: number }
         },
         volunteerDesignation: { findMany: async () => [] },
         auditLog: { create: jest.fn() },
-        paymentException: { findFirst: async () => null, create: jest.fn(async () => ({ id: 99 })) },
     };
     return tx;
 }
@@ -85,25 +84,16 @@ describe("clearBackgroundCheck self-grant guard", () => {
         expect(tx.person.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 3 } }));
         expect(tx.auditLog.create).not.toHaveBeenCalledWith({ data: expect.objectContaining({ tableName: SELF_GRANT_REFUSAL_TABLE }) });
     });
-
-    it("leaves a PERSON_BG in a DENIED household uncleared and carries the household out for the board", async () => {
-        const tx = fakeTx({ subjectPersonId: 3, householdId: 20 }, "DENIED");
-        const outcome = await clearBackgroundCheck(tx as unknown as TxClient, 7, 1, anyState);
-        expect(outcome.denied).toEqual({ householdId: 20, processId: 7, notice: { kind: "DENIED_HOUSEHOLD_ACTIVITY", severity: "CRITICAL", exceptionId: 99 } });
-        expect(tx.paymentException.create).toHaveBeenCalled();
-        expect(tx.person.update).not.toHaveBeenCalled();
-        expect(tx.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
-    });
 });
 
 describe("attest on a PERSON_BG", () => {
     /** Runs attest with reviewer `reviewerId` against a PERSON_BG whose subject is `subjectPersonId`. */
-    function attestAs(reviewerId: number, subjectPersonId: number) {
+    function attestAs(reviewerId: number, subjectPersonId: number, householdStatus = "NONE") {
         db.person.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) =>
             where.id in people ? { id: where.id, householdId: people[where.id], isBackgroundCheckReviewer: true, isBoardMember: false } : null);
         const attestation = jest.fn();
         const tx = {
-            $queryRaw: jest.fn(),
+            $queryRaw: jest.fn(async () => [{ status: householdStatus }]),
             orgMembershipProcess: {
                 findUnique: async () => ({ id: 7, kind: "PERSON_BG", status: "PENDING_BG_REVIEW", bgConsentAt: new Date(), bgClearedAt: null, orgMembershipId: null, subjectPersonId, requestedForHouseholdId: null, attestations: [] }),
                 update: jest.fn(),
@@ -131,5 +121,11 @@ describe("attest on a PERSON_BG", () => {
         const { result, attestation } = attestAs(1, 3);
         await expect(result).resolves.toMatchObject({ approvals: 1 });
         expect(attestation).toHaveBeenCalled();
+    });
+
+    it("refuses an approval while the person's household is denied, saving nothing", async () => {
+        const { result, attestation } = attestAs(1, 3, "DENIED");
+        await expect(result).rejects.toMatchObject({ code: "wrong_phase", message: expect.stringMatching(/denied/) });
+        expect(attestation).not.toHaveBeenCalled();
     });
 });

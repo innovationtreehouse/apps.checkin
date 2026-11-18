@@ -87,4 +87,28 @@ describe('self-grant refusal audit rows', () => {
 
         expect(await refusalSubjects(leadId, 'override', 'reset')).toEqual([householdId]);
     });
+
+    it('refuses a board reset when the actor joins the household while it waits on the review lock', async () => {
+        const { processId, householdId } = await makeOwnHouseholdReview('BLOCKED');
+        const boardHh = await prisma.household.create({ data: { name: `Board ${TAG}` } });
+        const board = await prisma.person.create({ data: { name: `Board ${TAG}`, householdId: boardHh.id, isBoardMember: true } });
+
+        // The holder takes the review lock, waits for the reset to queue on it (its bar
+        // has passed), then moves the board member into the review's household.
+        const holder = prisma.$transaction(async (tx) => {
+            await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
+            for (let i = 0; i < 100; i++) {
+                const [{ waiting }] = await tx.$queryRaw<{ waiting: number }[]>`SELECT count(*)::int AS waiting FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`;
+                if (waiting > 0) break;
+                await new Promise((r) => setTimeout(r, 50));
+            }
+            await tx.person.update({ where: { id: board.id }, data: { householdId } });
+        }, { timeout: 15_000 });
+        const reset = boardResetReview(processId, board.id, { reason: 'x' });
+
+        const [, outcome] = await Promise.allSettled([holder, reset]);
+        expect(outcome).toMatchObject({ status: 'rejected', reason: { code: 'same_household_applicant' } });
+        expect(await refusalSubjects(board.id, 'override', 'reset')).toEqual([householdId]);
+        expect((await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: processId } })).status).toBe('BLOCKED');
+    });
 });
