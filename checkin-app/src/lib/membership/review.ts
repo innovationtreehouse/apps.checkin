@@ -971,11 +971,6 @@ export function blockedResetStatus(process: BlockedResetRow, checkStarted: boole
 }
 
 /**
- * The check cleared but the membership fee isn't paid — the process just (re)entered
- * PENDING_PAYMENT. The status cards/banner promise an email at clearance.
- * Best-effort (send failures log).
- */
-/**
  * Payment opened because a check the household already held was recognised, not
  * because anyone reviewed one. The notice above would tell a family a review
  * completed when no reviewer read anything.

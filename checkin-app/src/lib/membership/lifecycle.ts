@@ -455,6 +455,8 @@ export const TRANSITIONS: readonly Transition<TState, string, ProcessKind>[] = [
     { from: "PENDING_BG_REVIEW", to: "ACTIVE", event: "settleHouseholdBg", actor: "system", guardSite: "settleHouseholdBg.ts: process FOR UPDATE + denied lock (paid legacy row)", legacy: true },
     { from: "PENDING_BG_REVIEW", to: "PENDING_BG_CLEARANCE", event: "settleHouseholdBg", actor: "system", guardSite: "settleHouseholdBg.ts: process FOR UPDATE (paid on a refunded order)", legacy: true },
     { from: "PENDING_BG_CLEARANCE", to: "ACTIVE", event: "settleHouseholdBg", actor: "system", guardSite: "settleHouseholdBg.ts: process FOR UPDATE + denied lock" },
+    { from: "PENDING_BG_CLEARANCE", to: "PENDING_EXTERNAL_ACTION", event: "settleHouseholdBg", actor: "system", guardSite: "settleHouseholdBg.ts: process FOR UPDATE + denied lock (paid, agreement unsigned)" },
+    { from: "PENDING_BG_REVIEW", to: "PENDING_EXTERNAL_ACTION", event: "settleHouseholdBg", actor: "system", guardSite: "settleHouseholdBg.ts: process FOR UPDATE + denied lock (paid legacy row, agreement unsigned)", legacy: true },
     ...SETTLE_BLOCKABLE_STATUSES.flatMap((from): Transition<TState, string, ProcessKind>[] => [
         { from, to: "BLOCKED", event: "settleHouseholdBg", actor: "system", guardSite: "settleHouseholdBg.ts: process FOR UPDATE, a person in the household has a BLOCKED check review" },
         { from: "BLOCKED", to: from, event: "settleHouseholdBg", actor: "system", guardSite: "settleHouseholdBg.ts resumeStatus: process FOR UPDATE, every recorded blocking review no longer BLOCKED" },

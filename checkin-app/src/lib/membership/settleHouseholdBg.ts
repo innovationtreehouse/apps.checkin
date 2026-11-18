@@ -188,8 +188,17 @@ async function settleInTx(tx: TxClient, processId: number, householdId: number, 
     if (!CONVERGES.includes(status)) return { steps };
 
     const paid = !!process.paidAt;
-    // A paid row activates only once signed; the agreement step's advance brings it back here.
-    if (paid && !process.contractSignedAt) return { steps };
+    if (paid && !process.contractSignedAt) {
+        // A paid row activates only once signed: it waits, cleared, at the agreement step, whose advance brings it back here.
+        const { count } = await tx.orgMembershipProcess.updateMany({
+            where: { id: processId, bgClearedAt: null, contractSignedAt: null, ...fromWhere(status) },
+            data: { bgClearedAt: now, status: "PENDING_EXTERNAL_ACTION", stageEnteredAt: now },
+        });
+        if (!count) return { steps };
+        await applyVolunteerFamilyStatus(tx, orgMembershipId, householdId, false);
+        await record({ status }, { status: "PENDING_EXTERNAL_ACTION", bgCleared: true, reason: "household qualifies on its people's checks; paid but the agreement is unsigned" });
+        return { steps: [...steps, "cleared"] };
+    }
     const refunded = paid && !!process.shopifyOrderId && (await isOrderReversed(tx, process.shopifyOrderId));
     const to: OrgMembershipProcessStatus = refunded ? "PENDING_BG_CLEARANCE" : paid ? "ACTIVE" : "PENDING_PAYMENT";
     const { count } = await tx.orgMembershipProcess.updateMany({
