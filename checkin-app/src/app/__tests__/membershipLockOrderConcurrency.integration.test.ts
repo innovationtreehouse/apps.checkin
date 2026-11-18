@@ -15,10 +15,11 @@ import { archiveHousehold } from '@/lib/household/archiveAction';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
+import { Client } from 'pg';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 jest.mock('@/lib/email', () => ({ runPaced: (tasks: Array<() => Promise<unknown>>) => Promise.all(tasks.map((t) => t())), sendEmail: jest.fn().mockResolvedValue(true) }));
-jest.mock('@/lib/membership/boardAlerts', () => ({ notifyBoardPaidReject: jest.fn().mockResolvedValue(undefined), notifyBoardCheckRejected: jest.fn().mockResolvedValue(undefined), notifyBoardPaymentException: jest.fn().mockResolvedValue(undefined) }));
+jest.mock('@/lib/membership/boardAlerts', () => ({ notifyBoardPaidReject: jest.fn().mockResolvedValue(undefined), notifyBoardCheckRejected: jest.fn().mockResolvedValue(undefined), notifyBoardPaymentException: jest.fn().mockResolvedValue(undefined), notifyBoardOfYouthLeads: jest.fn().mockResolvedValue(undefined) }));
 
 const TAG = 'review-lock-order-test';
 let seq = 0;
@@ -27,40 +28,55 @@ let board: number;
 let sysadmin: number;
 let reviewer: number;
 
-type Holder = Pick<typeof prisma, '$queryRaw'>;
+/** The holder: a transaction on its own connection, outside the app's pool. */
+type Holder = Client;
 
 /** Waits until `count` other backends of this database are waiting on a row lock. */
 async function waitForBlocked(holder: Holder, count: number) {
     for (let i = 0; i < 200; i++) {
         // Postgres caches pg_stat_activity for the transaction unless the snapshot is cleared.
-        await holder.$queryRaw`SELECT pg_stat_clear_snapshot()::text`;
-        const [{ blocked }] = await holder.$queryRaw<{ blocked: number }[]>`
-            SELECT count(*)::int AS blocked FROM pg_stat_activity
-            WHERE datname = current_database() AND pid <> pg_backend_pid() AND wait_event_type = 'Lock'`;
-        if (blocked >= count) return;
+        await holder.query('SELECT pg_stat_clear_snapshot()');
+        const { rows } = await holder.query<{ blocked: number }>(
+            `SELECT count(*)::int AS blocked FROM pg_stat_activity
+             WHERE datname = current_database() AND pid <> pg_backend_pid() AND wait_event_type = 'Lock'`,
+        );
+        if (rows[0].blocked >= count) return;
         await new Promise((r) => setTimeout(r, 50));
     }
     throw new Error(`Never saw ${count} backends waiting on a lock.`);
 }
 
+/** Runs `body` in a transaction on an outside connection, committing when it returns. */
+async function holding(body: (holder: Holder) => Promise<void>) {
+    const holder = new Client({ connectionString: process.env.DATABASE_URL });
+    await holder.connect();
+    try {
+        await holder.query('BEGIN');
+        await body(holder);
+        await holder.query('COMMIT');
+    } finally {
+        await holder.end();
+    }
+}
+
 /** Holds `hold`'s lock while `first` and then `second` queue behind it, then lets both run. */
-async function race<A, B>(hold: (tx: Holder) => Promise<unknown>, first: () => Promise<A>, second: () => Promise<B>): Promise<[A, B]> {
+async function race<A, B>(hold: (holder: Holder) => Promise<unknown>, first: () => Promise<A>, second: () => Promise<B>): Promise<[A, B]> {
     let a!: Promise<A>;
     let b!: Promise<B>;
-    await prisma.$transaction(async (tx) => {
-        await hold(tx);
+    await holding(async (holder) => {
+        await hold(holder);
         a = first();
         a.catch(() => {});
-        await waitForBlocked(tx, 1);
+        await waitForBlocked(holder, 1);
         b = second();
         b.catch(() => {});
-        await waitForBlocked(tx, 2);
-    }, { timeout: 15000 });
+        await waitForBlocked(holder, 2);
+    });
     return [await a, await b];
 }
 
-const holdMembership = (householdId: number) => (tx: Holder) => tx.$queryRaw`SELECT id FROM "OrgMembership" WHERE "householdId" = ${householdId} FOR UPDATE`;
-const holdPerson = (personId: number) => (tx: Holder) => tx.$queryRaw`SELECT id FROM "Person" WHERE id = ${personId} FOR UPDATE`;
+const holdMembership = (householdId: number) => (holder: Holder) => holder.query('SELECT id FROM "OrgMembership" WHERE "householdId" = $1 FOR UPDATE', [householdId]);
+const holdPerson = (personId: number) => (holder: Holder) => holder.query('SELECT id FROM "Person" WHERE id = $1 FOR UPDATE', [personId]);
 
 async function staff(label: string, flags: { isBoardMember?: boolean; isSysadmin?: boolean; isBackgroundCheckReviewer?: boolean }) {
     const household = await prisma.household.create({ data: { name: `${TAG} ${label} HH` } });
@@ -136,13 +152,13 @@ describe('Board acts on a check review against a household move', () => {
         let reset!: Promise<unknown>;
 
         // The holder is the move: it holds the source household's row and has moved the person, uncommitted.
-        await prisma.$transaction(async (tx) => {
-            await tx.$queryRaw`SELECT id FROM "Household" WHERE id = ${f.homeId} FOR UPDATE`;
-            await tx.person.update({ where: { id: f.subjectId }, data: { householdId: f.awayId } });
+        await holding(async (holder) => {
+            await holder.query('SELECT id FROM "Household" WHERE id = $1 FOR UPDATE', [f.homeId]);
+            await holder.query('UPDATE "Person" SET "householdId" = $1 WHERE id = $2', [f.awayId, f.subjectId]);
             reset = boardResetReview(f.reviewId, board, { reason: 'start over' });
             reset.catch(() => {});
-            await waitForBlocked(tx, 1);
-        }, { timeout: 15000 });
+            await waitForBlocked(holder, 1);
+        });
 
         await expect(reset).rejects.toMatchObject({ code: 'wrong_phase', message: expect.stringContaining('changed while it was being reviewed') });
         const review = await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: f.reviewId } });
@@ -225,7 +241,7 @@ describe('A person merge against a Board act on a review of a merged person', ()
         );
 
         expect(reset).toEqual({ status: 'PENDING_BG_REVIEW' });
-        expect(merged.status).toBe(200);
+        expect({ status: merged.status, body: await merged.json() }).toMatchObject({ status: 200 });
         expect(await prisma.person.findUnique({ where: { id: f.subjectId } })).toBeNull();
     });
 });
