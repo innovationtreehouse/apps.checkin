@@ -79,6 +79,8 @@ const delivery = (now: Date, over: Partial<Delivery> = {}): Delivery => ({
 });
 
 const qbSystem = (lane: string, extra: Partial<RunFailure> = {}): RunFailure => ({ lane, cause: "quickbooks", kind: "system", code: "QB_TIMEOUT", count: 2, ...extra });
+// A failure that opens its incident on the first run.
+const qbSettings = (lane: string, extra: Partial<RunFailure> = {}): RunFailure => ({ lane, cause: "quickbooks", kind: "settings", code: "LANE_UNCONFIGURED", count: 2, ...extra });
 const run = (failures: RunFailure[], lanes = ["expense", "gift", "income"], extra: Partial<RunReport> = {}): RunReport => ({ lanes, failures, ...extra });
 
 beforeEach(() => {
@@ -116,14 +118,8 @@ describe("evaluateIncidents", () => {
         expect(sent[0].ctx).toMatchObject({ kind: "system", cause: "QuickBooks", lanes: "expense", status: "needs attention", runsSeen: "2" });
     });
 
-    it("opens a system incident at once when a lane stopped", async () => {
-        await evaluateIncidents(run([qbSystem("gift", { stopped: true })]), delivery(at(0)));
-        expect(rows[0].notifiedAt).toEqual(at(0));
-        expect(sent).toHaveLength(1);
-    });
-
     it("groups lanes failing on the same cause and kind into one incident", async () => {
-        await evaluateIncidents(run([qbSystem("expense"), qbSystem("gift", { count: 3 }), qbSystem("income", { stopped: true })]), delivery(at(0)));
+        await evaluateIncidents(run([qbSettings("expense"), qbSettings("gift", { count: 3 }), qbSettings("income")]), delivery(at(0)));
         expect(rows).toHaveLength(1);
         expect(rows[0]).toMatchObject({ lanes: ["expense", "gift", "income"], itemsAffected: 7 });
         expect(sent).toHaveLength(1);
@@ -171,15 +167,15 @@ describe("evaluateIncidents", () => {
     });
 
     it("leaves an incident open while a run covers none of its lanes", async () => {
-        await evaluateIncidents(run([qbSystem("expense", { stopped: true })]), delivery(at(0)));
+        await evaluateIncidents(run([qbSettings("expense")]), delivery(at(0)));
         await evaluateIncidents(run([], ["receipt"]), delivery(at(1)));
         expect(rows[0].closedAt).toBeNull();
     });
 
     it("does not close a cross-lane incident on a run that covers only some of its lanes", async () => {
-        await evaluateIncidents(run([qbSystem("expense", { stopped: true }), qbSystem("gift")]), delivery(at(0)));
+        await evaluateIncidents(run([qbSettings("expense"), qbSettings("gift")]), delivery(at(0)));
         await evaluateIncidents(run([], ["expense"]), delivery(at(0, 6)));
-        await evaluateIncidents(run([qbSystem("gift")], ["gift"]), delivery(at(1)));
+        await evaluateIncidents(run([qbSettings("gift")], ["gift"]), delivery(at(1)));
         expect(rows).toHaveLength(1);
         expect(rows[0]).toMatchObject({ closedAt: null, lanes: ["expense", "gift"] });
         expect(sent.map((s) => s.template)).toEqual(["ops.incidentOpened"]);
@@ -192,18 +188,18 @@ describe("evaluateIncidents", () => {
     describe("a failed send", () => {
         it("does not mark the incident notified and retries on the next run", async () => {
             sendOk = false;
-            const events = await evaluateIncidents(run([qbSystem("gift", { stopped: true })]), delivery(at(0)));
-            expect(events).toEqual([{ key: "quickbooks:system", event: "opened", sent: false }]);
+            const events = await evaluateIncidents(run([qbSettings("gift")]), delivery(at(0)));
+            expect(events).toEqual([{ key: "quickbooks:settings", event: "opened", sent: false }]);
             expect(rows[0].notifiedAt).toBeNull();
             sendOk = true;
-            await evaluateIncidents(run([qbSystem("gift")]), delivery(at(1)));
+            await evaluateIncidents(run([qbSettings("gift")]), delivery(at(1)));
             expect(rows[0].notifiedAt).toEqual(at(1));
             expect(sent).toHaveLength(1);
         });
 
         it("counts as sent when one of several addresses is reached", async () => {
             send.mockImplementationOnce(async () => false);
-            await evaluateIncidents(run([qbSystem("gift", { stopped: true })]), delivery(at(0), { alertTo: ["a@example.org", "b@example.org"] }));
+            await evaluateIncidents(run([qbSettings("gift")]), delivery(at(0), { alertTo: ["a@example.org", "b@example.org"] }));
             expect(rows[0].notifiedAt).toEqual(at(0));
         });
 
@@ -211,7 +207,7 @@ describe("evaluateIncidents", () => {
             send.mockImplementationOnce(async () => {
                 throw new Error("mail service down");
             });
-            await evaluateIncidents(run([qbSystem("gift", { stopped: true })]), delivery(at(0), { alertTo: ["a@example.org", "b@example.org"] }));
+            await evaluateIncidents(run([qbSettings("gift")]), delivery(at(0), { alertTo: ["a@example.org", "b@example.org"] }));
             expect(sent.map((s) => s.to)).toEqual(["b@example.org"]);
             expect(rows[0].notifiedAt).toEqual(at(0));
         });
@@ -219,24 +215,24 @@ describe("evaluateIncidents", () => {
         it("keeps evaluating when every send rejects, and retries on the next run", async () => {
             const qbAuth: RunFailure = { lane: "expense", cause: "quickbooks", kind: "connection", code: "QB_AUTH", count: 1 };
             sendRejects = true;
-            const events = await evaluateIncidents(run([qbSystem("gift", { stopped: true }), qbAuth]), delivery(at(0)));
+            const events = await evaluateIncidents(run([qbSettings("gift"), qbAuth]), delivery(at(0)));
             expect(events.map((e) => e.sent)).toEqual([false, false]);
             expect(rows.map((r) => r.notifiedAt)).toEqual([null, null]);
             sendRejects = false;
-            await evaluateIncidents(run([qbSystem("gift"), qbAuth]), delivery(at(1)));
+            await evaluateIncidents(run([qbSettings("gift"), qbAuth]), delivery(at(1)));
             expect(rows.map((r) => r.notifiedAt)).toEqual([at(1), at(1)]);
         });
 
         it("records not sent when no address is passed", async () => {
-            const events = await evaluateIncidents(run([qbSystem("gift", { stopped: true })]), delivery(at(0), { alertTo: [] }));
-            expect(events).toEqual([{ key: "quickbooks:system", event: "opened", sent: false }]);
+            const events = await evaluateIncidents(run([qbSettings("gift")]), delivery(at(0), { alertTo: [] }));
+            expect(events).toEqual([{ key: "quickbooks:settings", event: "opened", sent: false }]);
             expect(send).not.toHaveBeenCalled();
             expect(rows[0].notifiedAt).toBeNull();
         });
     });
 
     describe("reminders and escalation", () => {
-        const failing = run([qbSystem("gift", { stopped: true })]);
+        const failing = run([qbSettings("gift")]);
 
         it("reminds on day 3, then weekly, with the running count", async () => {
             for (let d = 0; d <= 17; d++) await evaluateIncidents(failing, delivery(at(d)));
@@ -313,16 +309,16 @@ describe("evaluateIncidents", () => {
 
     describe("recovery", () => {
         it("sends a recovery email when an opening notice went out", async () => {
-            await evaluateIncidents(run([qbSystem("gift", { stopped: true })]), delivery(at(0)));
+            await evaluateIncidents(run([qbSettings("gift")]), delivery(at(0)));
             const events = await evaluateIncidents(run([]), delivery(at(1)));
-            expect(events).toEqual([{ key: "quickbooks:system", event: "recovered", sent: true }]);
+            expect(events).toEqual([{ key: "quickbooks:settings", event: "recovered", sent: true }]);
             expect(rows[0]).toMatchObject({ closedAt: at(1), recoveryNotifiedAt: at(1), openKey: null });
             expect(sent[1]).toMatchObject({ template: "ops.incidentRecovered", ctx: expect.objectContaining({ status: "recovered" }) });
         });
 
         it("sends no recovery email when the opening notice never went out", async () => {
             sendOk = false;
-            await evaluateIncidents(run([qbSystem("gift", { stopped: true })]), delivery(at(0)));
+            await evaluateIncidents(run([qbSettings("gift")]), delivery(at(0)));
             sendOk = true;
             await evaluateIncidents(run([]), delivery(at(1)));
             expect(rows[0].closedAt).toEqual(at(1));
@@ -330,7 +326,7 @@ describe("evaluateIncidents", () => {
         });
 
         it("retries a failed recovery email on the next run", async () => {
-            await evaluateIncidents(run([qbSystem("gift", { stopped: true })]), delivery(at(0)));
+            await evaluateIncidents(run([qbSettings("gift")]), delivery(at(0)));
             sendOk = false;
             await evaluateIncidents(run([]), delivery(at(1)));
             sendOk = true;
@@ -340,7 +336,7 @@ describe("evaluateIncidents", () => {
         });
 
         it("stops retrying a failed recovery email 24 hours after closing", async () => {
-            await evaluateIncidents(run([qbSystem("gift", { stopped: true })]), delivery(at(0)));
+            await evaluateIncidents(run([qbSettings("gift")]), delivery(at(0)));
             sendOk = false;
             await evaluateIncidents(run([]), delivery(at(1)));
             sendOk = true;
@@ -352,18 +348,18 @@ describe("evaluateIncidents", () => {
 
     describe("back again", () => {
         it("reopens the same incident within 24 hours of closing and says it is back", async () => {
-            await evaluateIncidents(run([qbSystem("gift", { stopped: true })]), delivery(at(0)));
+            await evaluateIncidents(run([qbSettings("gift")]), delivery(at(0)));
             await evaluateIncidents(run([]), delivery(at(1)));
-            await evaluateIncidents(run([qbSystem("gift")]), delivery(at(1, 20)));
+            await evaluateIncidents(run([qbSettings("gift")]), delivery(at(1, 20)));
             expect(rows).toHaveLength(1);
-            expect(rows[0]).toMatchObject({ openKey: "quickbooks:system", closedAt: null, firstSeenAt: at(0), runsSeen: 2 });
+            expect(rows[0]).toMatchObject({ openKey: "quickbooks:settings", closedAt: null, firstSeenAt: at(0), runsSeen: 2 });
             expect(sent.map((s) => s.ctx.status)).toEqual(["needs attention", "recovered", "back again"]);
         });
 
         it("starts a new incident when the key returns more than 24 hours after closing", async () => {
-            await evaluateIncidents(run([qbSystem("gift", { stopped: true })]), delivery(at(0)));
+            await evaluateIncidents(run([qbSettings("gift")]), delivery(at(0)));
             await evaluateIncidents(run([]), delivery(at(1)));
-            await evaluateIncidents(run([qbSystem("gift", { stopped: true })]), delivery(at(3)));
+            await evaluateIncidents(run([qbSettings("gift")]), delivery(at(3)));
             expect(rows).toHaveLength(2);
             expect(sent.at(-1)?.ctx.status).toBe("needs attention");
         });
@@ -407,15 +403,15 @@ describe("evaluateIncidents", () => {
         });
 
         it("send the recovery notice once", async () => {
-            await evaluateIncidents(run([qbSystem("gift", { stopped: true })]), delivery(at(0)));
+            await evaluateIncidents(run([qbSettings("gift")]), delivery(at(0)));
             await twice(run([]), at(1));
             expect(sent.map((s) => s.template)).toEqual(["ops.incidentOpened", "ops.incidentRecovered"]);
         });
 
         it("reopen a recent incident once and send one back-again notice", async () => {
-            await evaluateIncidents(run([qbSystem("gift", { stopped: true })]), delivery(at(0)));
+            await evaluateIncidents(run([qbSettings("gift")]), delivery(at(0)));
             await evaluateIncidents(run([]), delivery(at(1)));
-            await twice(run([qbSystem("gift", { stopped: true })]), at(1, 6));
+            await twice(run([qbSettings("gift")]), at(1, 6));
             expect(rows).toHaveLength(1);
             expect(sent.map((s) => s.ctx.status)).toEqual(["needs attention", "recovered", "back again"]);
         });

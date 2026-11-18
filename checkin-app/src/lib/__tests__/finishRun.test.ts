@@ -4,7 +4,7 @@
 import { recordCronRun } from "@/lib/cronRuns";
 import { recordFaultCodes } from "@/lib/qboFaultCodes";
 import { evaluateRun } from "@/lib/runIncidents";
-import { finishRun, inRun, laneReached, laneStopped, newRun, reportTo, runCrashed, stepCrashed } from "../finishRun";
+import { finishRun, inRun, laneReached, newRun, reportTo, runCrashed, stepCrashed } from "../finishRun";
 
 jest.mock("@/lib/cronRuns", () => ({ recordCronRun: jest.fn() }));
 jest.mock("@/lib/runIncidents", () => ({ evaluateRun: jest.fn() }));
@@ -27,8 +27,8 @@ describe("finishRun", () => {
         await finishRun("qbo-posting", STARTED, true, undefined, run);
 
         expect(report().failures).toEqual([
-            { lane: "expense posting", cause: "quickbooks", kind: "connection", code: "connection", count: 1, stopped: false },
-            { lane: "income deposit-build", cause: "quickbooks", kind: "system", code: "HTTP 503", count: 1, stopped: false },
+            { lane: "expense posting", cause: "quickbooks", kind: "connection", code: "connection", count: 1 },
+            { lane: "income deposit-build", cause: "quickbooks", kind: "system", code: "HTTP 503", count: 1 },
         ]);
         expect(report().lanes).toEqual(["qbo-posting", "expense posting", "income deposit-build"]);
     });
@@ -44,7 +44,7 @@ describe("finishRun", () => {
 
         await finishRun("reconcile-shopify", STARTED, true, undefined, run);
 
-        expect(report().failures).toEqual([{ lane: "expense intake-replay", cause: "intake", kind: "settings", code: "settings", count: 2, stopped: false }]);
+        expect(report().failures).toEqual([{ lane: "expense intake-replay", cause: "intake", kind: "settings", code: "settings", count: 2 }]);
         expect(recordCronRun).toHaveBeenCalledWith("reconcile-shopify", STARTED, true, undefined, { settings: 2 });
     });
 
@@ -57,25 +57,13 @@ describe("finishRun", () => {
         expect(report().failures).toEqual([expect.objectContaining({ lane: "bulk-donation in-kind-posting", kind: "bug", code: "6000+610" })]);
     });
 
-    it("marks a stopped lane's failures stopped", async () => {
-        const run = newRun();
-        await inRun(run, async () => {
-            reportTo("expense")({ lane: "posting", kind: "system", detail: "expense 1" });
-            laneStopped("expense posting");
-        });
-
-        await finishRun("qbo-posting", STARTED, true, undefined, run);
-
-        expect(report().failures).toEqual([expect.objectContaining({ lane: "expense posting", stopped: true })]);
-    });
-
     it("reports a crashed step on the job's own lane, a bug unless its error has a kind", async () => {
         const run = newRun();
         await inRun(run, async () => stepCrashed("reconcile-shopify", "income", new Error("boom")));
 
         await finishRun("reconcile-shopify", STARTED, true, undefined, run);
 
-        expect(report().failures).toEqual([{ lane: "reconcile-shopify", cause: "reconcile-shopify", kind: "bug", code: "income crashed", count: 1, stopped: false }]);
+        expect(report().failures).toEqual([{ lane: "reconcile-shopify", cause: "reconcile-shopify", kind: "bug", code: "income crashed", count: 1 }]);
         expect(report().lanes).toContain("reconcile-shopify");
     });
 
@@ -96,7 +84,7 @@ describe("finishRun", () => {
 
         expect(report()).toEqual({
             lanes: ["qbo-posting"],
-            failures: [{ lane: "expense posting", cause: "quickbooks", kind: "bug", code: "expense crashed", count: 1, stopped: false }],
+            failures: [{ lane: "expense posting", cause: "quickbooks", kind: "bug", code: "expense crashed", count: 1 }],
         });
     });
 
