@@ -354,9 +354,10 @@ async function settle(run: Run, gift: GiftToBook, claimedAt: Date, s: Settlement
 /**
  * Claims the settlement's entries for the gift (the unique index refuses one another gift holds),
  * saves its state and audits it. A failure keeps the first failure's time and the latest error; a
- * post the run could not finish leaves them; any other settlement clears them. The note keeps its
- * stray-entry lines except those the settlement links or answers; `answersEveryStray` (finance's
- * skip) answers them all. Answered entries are audited, so the sweep never notes them again.
+ * post the run could not finish leaves them; any other settlement clears them. The settlement's
+ * note replaces the old one; the sweep notes again any stray entry still unlinked and unanswered.
+ * A stray entry the settlement links is answered, and `answersEveryStray` (finance's skip) answers
+ * every one the note named. Answered entries are audited, so the sweep never notes them again.
  */
 export async function writeSettlement(
   tx: DbOrTx,
@@ -376,11 +377,9 @@ export async function writeSettlement(
     : s.state === QB_MATCH_STATE.POST_FAILED ? {} : { qbFirstFailedAt: null, qbLastError: null };
   const linked = new Set(s.entries.flatMap((e) => (e.entity === "JournalEntry" ? [e.id] : [])));
   const answered = strayEntriesOf(posting.qbNote).filter((id) => answersEveryStray || linked.has(id));
-  const kept = strayLinesOf(posting.qbNote).filter((line) => !strayEntriesOf(line).some((id) => answered.includes(id)));
-  const qbNote = [s.note, ...kept].filter(Boolean).join("\n") || null;
   await tx.inKindPosting.update({
     where: { id: posting.id },
-    data: { matchState: s.state, claimedAt: null, qbNote, bookedTotalCents: s.booked?.totalCents ?? null, bookedTxnDate: s.booked?.txnDate ?? null, ...stuck },
+    data: { matchState: s.state, claimedAt: null, qbNote: s.note, bookedTotalCents: s.booked?.totalCents ?? null, bookedTxnDate: s.booked?.txnDate ?? null, ...stuck },
   });
   await recordEvent(tx, {
     orgId,
