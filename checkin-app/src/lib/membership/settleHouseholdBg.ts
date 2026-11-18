@@ -1,7 +1,7 @@
 import type { OrgMembershipProcessStatus, Prisma } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import type { DbClient, TxClient } from "@/lib/db-client";
-import { personActor, systemActor } from "@/lib/auditActor";
+import { personActor, recordAudit, SYSTEM_ACTOR, systemActor } from "@/lib/auditActor";
 import { logBackendError } from "@/lib/logger";
 import { isOrderReversed } from "@/lib/finance/reconcile/exceptions";
 import { recordUnreportedReversalOnProcess } from "@/lib/finance/reconcile/liveOrder";
@@ -27,10 +27,10 @@ import { refuseSelfGrant, type GrantSubject } from "@/lib/membership/selfGrantGu
  * - someone in the household has a BLOCKED check review → the application is
  *   BLOCKED, its audit row naming the review and the step it was blocked from;
  * - every review that blocked it is no longer BLOCKED (reset or changed to approve)
- *   and nobody in the household holds one → it resumes at the step it was blocked
- *   from (`resumeStatus`);
+ *   and nobody in the household holds one → it resumes where `resumeStatus` sends it;
  * - the household qualifies and the application is waiting on its check → its
- *   check is stamped cleared and it converges on payment;
+ *   check is stamped cleared and it converges on payment; activating on a paid order
+ *   resolves that order's open paid-while-blocked problems;
  * - a lead is cleared and only a review naming nobody holds the household → that
  *   review is closed as unneeded and the application clears;
  * - otherwise, the application carries the legacy household flag
@@ -109,7 +109,7 @@ const ACTOR = systemActor("system:membership-bg-settle");
 const BLOCK_REASON = "check review rejected";
 
 const BLOCKABLE: readonly ProcessStatus[] = SETTLE_BLOCKABLE_STATUSES;
-/** Steps before the review and payment track: a lifted block returns to them as they were. */
+/** Steps before the review and payment track: a lifted block on an unpaid application returns to them as they were. */
 const RETURNS_AS_WAS: readonly ProcessStatus[] = ["INTAKE", "PENDING_RENEWAL", "PENDING_EXTERNAL_ACTION"];
 /** Waiting steps where only a stamp is owed; the step's own event moves the status on. */
 const STAMPS: readonly ProcessStatus[] = ["PENDING_EXTERNAL_ACTION", "PENDING_PAYMENT"];
@@ -195,6 +195,7 @@ async function settleInTx(tx: TxClient, processId: number, householdId: number, 
     if (!count) return { steps };
     if (to === "ACTIVE") {
         await setHouseholdStatus(tx, orgMembershipId, { from: ["NONE", "REVOKED", "ACTIVE"], to: "ACTIVE", actor: ACTOR, reason: "background check settled on a paid application" });
+        if (process.shopifyOrderId) await resolvePaidWhileBlocked(tx, processId, process.shopifyOrderId);
     }
     await applyVolunteerFamilyStatus(tx, orgMembershipId, householdId, false);
     await record({ status }, { status: to, bgCleared: true, reason: "household qualifies on its people's checks", ...(refunded ? { refundedOrder: true } : {}) });
@@ -309,13 +310,29 @@ async function departedRejections(db: DbClient, processId: number, householdId: 
 }
 
 /**
- * Where a lifted block returns the application: a step before review and payment as
- * it was; a review or payment step by `blockedResetStatus`, which sends it back to
- * the external step when the check is not started or the agreement is missing.
+ * Where a lifted block returns the application. A paid one goes to
+ * PENDING_BG_CLEARANCE whatever step it was blocked from. An unpaid one returns to a
+ * step before review and payment as it was, and otherwise goes where
+ * `blockedResetStatus` sends it.
  */
-function resumeStatus(from: Prisma.JsonValue | undefined, process: Parameters<typeof blockedResetStatus>[0], checkStarted: boolean): OrgMembershipProcessStatus {
-    const step = RETURNS_AS_WAS.find((s) => s === from);
+export function resumeStatus(from: Prisma.JsonValue | undefined, process: Parameters<typeof blockedResetStatus>[0], checkStarted: boolean): OrgMembershipProcessStatus {
+    const step = process.paidAt ? undefined : RETURNS_AS_WAS.find((s) => s === from);
     return step ?? blockedResetStatus(process, checkStarted);
+}
+
+const OPEN_EXCEPTION = ["OPEN", "ACKNOWLEDGED"] as const;
+
+/** The application activated on the order it was paid with while blocked, so the refund those problems flag is not owed. */
+async function resolvePaidWhileBlocked(tx: TxClient, processId: number, shopifyOrderId: string) {
+    const open = await tx.paymentException.findMany({
+        where: { kind: "PAID_WHILE_BLOCKED", processId, shopifyOrderId, status: { in: [...OPEN_EXCEPTION] } },
+        select: { id: true },
+    });
+    for (const { id } of open) {
+        const data = { status: "RESOLVED" as const, resolvedById: SYSTEM_ACTOR, resolvedAt: new Date(), resolutionNote: "household activated on this payment; no refund needed" };
+        const { count } = await tx.paymentException.updateMany({ where: { id, status: { in: [...OPEN_EXCEPTION] } }, data });
+        if (count) await recordAudit(tx, ACTOR, { action: "EDIT", tableName: "PaymentException", affectedEntityId: id, newData: { ...data, resolvedAt: data.resolvedAt.toISOString(), processId } });
+    }
 }
 
 /**
