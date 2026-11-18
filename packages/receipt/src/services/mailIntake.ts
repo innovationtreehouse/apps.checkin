@@ -359,7 +359,7 @@ export const bodyText = (text: string, html: boolean): string =>
  * A message's candidate files, read in this order: each attachment of an accepted type, each inline
  * part of an accepted non-text type at or over the floor, then the body, stored as text. The body
  * counts only at BODY_MIN_BYTES or more, and is a file only when it holds a money amount. A
- * significant body without one, in a message with no other file, is returned as `unpriced` for the
+ * significant body without one, in a message with no other file, read or refused, is returned as `unpriced` for the
  * caller to bounce or hold. `ignored` counts the inline parts under the floor, a body that is no
  * file, and each message attached whole. `refused` names the attachments never read: an
  * unaccepted type or a message attached whole.
@@ -394,7 +394,7 @@ export function mailFiles(msg: MailMessage, reader: MailboxReader): { files: Mai
   const bodyFile: MailFile = { ...file(body, "text/plain"), body: true };
   const significant = Buffer.byteLength(text) >= BODY_MIN_BYTES;
   if (significant && MONEY_AMOUNT.test(text)) files.push(bodyFile);
-  else if (significant && files.length === 0) return { files, ignored, refused, unpriced: bodyFile };
+  else if (significant && files.length === 0 && refused.length === 0) return { files, ignored, refused, unpriced: bodyFile };
   else ignored++;
   return { files, ignored, refused };
 }

@@ -898,8 +898,13 @@ describeDb("mail intake sender authentication", () => {
         },
       ],
     });
-    await heldAs("stranger@example.org");
-    expect(Buffer.from((await db.receiptMailItem.findFirstOrThrow()).fileBlob ?? []).toString()).toBe(textReceipt("fwd total 9.99"));
+    expect(await readMailbox()).toMatchObject({ receipts: 0, held: 2 });
+    const items = await db.receiptMailItem.findMany({ orderBy: { id: "asc" } });
+    expect(items.map((i) => [i.senderAddress, i.refusal])).toEqual([
+      ["stranger@example.org", null],
+      ["stranger@example.org", { file: "an attached email", reason: "forwarded" }],
+    ]);
+    expect(Buffer.from(items[0].fileBlob ?? []).toString()).toBe(textReceipt("fwd total 9.99"));
   });
 
   it("never opens a message forwarded as an attachment, and counts it ignored", async () => {

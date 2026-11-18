@@ -76,6 +76,11 @@ describe("mailFiles — the body", () => {
     expect([ignored, unpriced]).toEqual([1, undefined]);
   });
 
+  it("ignores a long body with no amount beside a refused attachment", () => {
+    const doc: MailPart = { mimeType: "application/msword", filename: "r.doc", body: { attachmentId: "d", size: 40 } };
+    expect(read("text/plain", PAD, [doc])).toEqual({ files: [], ignored: 1, refused: [{ file: "r.doc", reason: "wrong_type" }] });
+  });
+
   it("returns a long body with no amount and no attachment as unpriced", () => {
     const { files, ignored, unpriced } = read("text/plain", PAD);
     expect([files, ignored]).toEqual([[], 0]);
