@@ -13,7 +13,8 @@ interface SeedResult {
 /**
  * /expense/capital-seed — FINANCE seeds the capital register from historical QuickBooks asset
  * numbers. Paste a JSON array of { assetNumber, description, acquisitionDate?, costCents?,
- * depreciationYears?, parentAssetNumber?, sourceQbTxnId? }; re-running skips existing assets.
+ * depreciationYears?, parentAssetNumber?, sourceQbTxnId?, sourceQbTxnEntity? ("Bill" | "Purchase") };
+ * re-running skips existing assets.
  */
 export default function CapitalSeedPage() {
   const [text, setText] = useState("");

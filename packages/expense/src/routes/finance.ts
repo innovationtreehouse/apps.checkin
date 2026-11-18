@@ -317,9 +317,12 @@ export const qbExclusions: ExpenseRouteHandler = async ({ req }) => ({
 });
 
 export const createQbExclusion: ExpenseRouteHandler = async ({ req, principal }) => {
-  const { qbTxnId, reason } = await parseBody(req, z.object({ qbTxnId: z.string().trim().min(1), reason: z.string() }));
-  await mapServiceErrors(() => excludeQbTxn(principal, qbTxnId, reason));
-  return { ExpenseQbMatchExclusion: await db.expenseQbMatchExclusion.findFirst({ where: { orgId: await getOrgId(), qbTxnId } }) };
+  const { qbTxnEntity, qbTxnId, reason } = await parseBody(
+    req,
+    z.object({ qbTxnEntity: z.enum(["Bill", "Purchase"]), qbTxnId: z.string().trim().min(1), reason: z.string() }),
+  );
+  await mapServiceErrors(() => excludeQbTxn(principal, qbTxnEntity, qbTxnId, reason));
+  return { ExpenseQbMatchExclusion: await db.expenseQbMatchExclusion.findFirst({ where: { orgId: await getOrgId(), qbTxnEntity, qbTxnId } }) };
 };
 
 // ── Settings and flags ────────────────────────────────────────────────────────

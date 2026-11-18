@@ -153,17 +153,17 @@ describeDb("FINANCE writes are audited", () => {
   });
 
   it("excluding a QuickBooks entry records its id and reason; a repeat answers 409 and writes nothing", async () => {
-    const row = await auditOf(() => excludeQbTxn(FINANCE, "qb-9", "  hand-booked, no receipt "));
-    expect(row).toMatchObject({ entityType: "qb_txn", entityId: "qb-9", action: "excluded", before: null });
+    const row = await auditOf(() => excludeQbTxn(FINANCE, "Purchase", "qb-9", "  hand-booked, no receipt "));
+    expect(row).toMatchObject({ entityType: "qb_txn", entityId: "Purchase:qb-9", action: "excluded", before: null });
     expect(JSON.parse(row.after!)).toEqual({ reason: "hand-booked, no receipt" });
 
-    await expect(excludeQbTxn(FINANCE, "qb-9", "again")).rejects.toMatchObject({ status: 409 });
+    await expect(excludeQbTxn(FINANCE, "Purchase", "qb-9", "again")).rejects.toMatchObject({ status: 409 });
     expect(await db.expenseOrgAuditLog.count()).toBe(1);
   });
 
   it("excluding a QuickBooks entry answers 400 for a blank reason and 403 for a non-FINANCE caller, writing nothing", async () => {
-    await expect(excludeQbTxn(FINANCE, "qb-9", "   ")).rejects.toMatchObject({ status: 400 });
-    await expect(excludeQbTxn(principal(4, { isBoard: true }), "qb-9", "hand-booked")).rejects.toMatchObject({ status: 403 });
+    await expect(excludeQbTxn(FINANCE, "Purchase", "qb-9", "   ")).rejects.toMatchObject({ status: 400 });
+    await expect(excludeQbTxn(principal(4, { isBoard: true }), "Purchase", "qb-9", "hand-booked")).rejects.toMatchObject({ status: 403 });
 
     expect(await db.expenseQbMatchExclusion.count()).toBe(0);
     expect(await db.expenseOrgAuditLog.count()).toBe(0);

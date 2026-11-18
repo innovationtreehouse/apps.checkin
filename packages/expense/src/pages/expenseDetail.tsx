@@ -405,7 +405,7 @@ function SkipButton({ base, onDecided, onRefused }: { base: string; onDecided: (
 }
 
 /** QuickBooks entries the expense may match: pick one, or exclude one that belongs to nothing, with a reason. */
-function MatchPicker({ base, currency, onDecided }: { base: string; currency: string; onDecided: () => void }) {
+function MatchPicker({ base, currency, entity, onDecided }: { base: string; currency: string; entity: "Bill" | "Purchase"; onDecided: () => void }) {
   const candidates = useLoad<Candidate[]>(`${base}/qb-candidates`);
   const [excluding, setExcluding] = useState<string | null>(null);
   const [why, setWhy] = useState("");
@@ -428,7 +428,7 @@ function MatchPicker({ base, currency, onDecided }: { base: string; currency: st
                 size="xs"
                 disabled={!why.trim()}
                 onClick={async () => {
-                  if (await send("/qb-exclusions", "POST", { qbTxnId: c.id, reason: why }, "Entry excluded from matching")) {
+                  if (await send("/qb-exclusions", "POST", { qbTxnEntity: entity, qbTxnId: c.id, reason: why }, "Entry excluded from matching")) {
                     setExcluding(null);
                     candidates.reload();
                   }
@@ -591,13 +591,13 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
               >
                 Book it
               </Button>
-              <MatchPicker base={base} currency={e.currency} onDecided={() => void decided()} />
+              <MatchPicker base={base} currency={e.currency} entity={e.needsReimbursement ? "Bill" : "Purchase"} onDecided={() => void decided()} />
             </Stack>
           )}
           {open("QB_AWAITING_MATCH") && (
             <Stack gap="xs">
               <Text size="sm">Several QuickBooks entries match; pick one.</Text>
-              <MatchPicker base={base} currency={e.currency} onDecided={() => void decided()} />
+              <MatchPicker base={base} currency={e.currency} entity={e.needsReimbursement ? "Bill" : "Purchase"} onDecided={() => void decided()} />
             </Stack>
           )}
           {open("QB_VENDOR_MISSING") && (

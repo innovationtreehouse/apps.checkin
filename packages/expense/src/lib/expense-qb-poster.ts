@@ -11,7 +11,7 @@ import type { ExpensePosting, OutboundBag } from "../contract";
 import type { Expense } from "../db/schema";
 import { assertOrg, expenseRuntime, getExpenseRuntime, getOrgId } from "../runtime";
 import {
-  appKeysOf, claimQbTxn, claimedQbTxnIds, lookupOwnEntry, type OwnEntry, type QbMatchEntity,
+  appKeysOf, claimQbTxn, claimedQbTxnIds, excludedQbTxnIds, lookupOwnEntry, type OwnEntry, type QbMatchEntity,
 } from "../services/qbMatchService";
 import { writeAudit } from "./audit";
 import type { Actor } from "./workflow-engine";
@@ -90,14 +90,8 @@ export async function qbCreatesToday(client: Db = db): Promise<number> {
 
 /** QuickBooks ids are unique per entity type only, so claims are read for the entity being posted. */
 async function claimedAndExcluded(orgId: string, entity: "Purchase" | "Bill") {
-  const [claimed, excluded] = await Promise.all([
-    claimedQbTxnIds(orgId, entity),
-    db.expenseQbMatchExclusion.findMany({ where: { orgId }, select: { qbTxnId: true } }),
-  ]);
-  return {
-    claimedIds: new Set(claimed),
-    excludedIds: new Set(excluded.map((e) => e.qbTxnId)),
-  };
+  const [claimed, excluded] = await Promise.all([claimedQbTxnIds(orgId, entity), excludedQbTxnIds(orgId, entity)]);
+  return { claimedIds: new Set(claimed), excludedIds: new Set(excluded) };
 }
 
 /** What finance reads on a failed post: a refusal's fault codes and request id, never the fault text; else the error. */

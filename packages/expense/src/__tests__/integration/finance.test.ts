@@ -491,11 +491,25 @@ describeDb("QuickBooks match inputs", () => {
       ],
     });
 
-    await excludeQbTxn(FINANCE, "qb-9", "hand-booked, no receipt");
-    await expect(excludeQbTxn(FINANCE, "qb-9", "again")).rejects.toMatchObject({ status: 409 });
+    await excludeQbTxn(FINANCE, "Purchase", "qb-9", "hand-booked, no receipt");
+    await expect(excludeQbTxn(FINANCE, "Purchase", "qb-9", "again")).rejects.toMatchObject({ status: 409 });
 
     expect((await qbMatchInputs("Purchase")).skipIds.sort()).toEqual(["qb-1", "qb-2", "qb-9"]);
-    expect((await qbMatchInputs("Bill")).skipIds.sort()).toEqual(["qb-3", "qb-9"]);
+    expect((await qbMatchInputs("Bill")).skipIds.sort()).toEqual(["qb-3"]);
+  });
+
+  it("excluding Bill N leaves Purchase N a candidate", async () => {
+    await excludeQbTxn(FINANCE, "Bill", "qb-5", "hand-booked bill");
+    expect((await qbMatchInputs("Bill")).skipIds).toEqual(["qb-5"]);
+    expect((await qbMatchInputs("Purchase")).skipIds).toEqual([]);
+    await excludeQbTxn(FINANCE, "Purchase", "qb-5", "hand-booked purchase");
+    expect((await qbMatchInputs("Purchase")).skipIds).toEqual(["qb-5"]);
+  });
+
+  it("an exclusion with no type skips the id for both types", async () => {
+    await db.expenseQbMatchExclusion.create({ data: { orgId: ORG, qbTxnId: "qb-6", reason: "untyped", excludedByUserId: 3 } });
+    expect((await qbMatchInputs("Bill")).skipIds).toEqual(["qb-6"]);
+    expect((await qbMatchInputs("Purchase")).skipIds).toEqual(["qb-6"]);
   });
 
   it("with nothing claimed or excluded there is nothing to skip", async () => {
@@ -506,8 +520,24 @@ describeDb("QuickBooks match inputs", () => {
     const id = await seedExpense();
     const a = await seedLineItem(id);
     const b = await seedLineItem(id);
-    await db.expenseLineItem.update({ where: { id: a }, data: { qbTxnId: "qb-1" } });
-    await expect(db.expenseLineItem.update({ where: { id: b }, data: { qbTxnId: "qb-1" } })).rejects.toThrow();
+    await db.expenseLineItem.update({ where: { id: a }, data: { qbTxnEntity: "Purchase", qbTxnId: "qb-1" } });
+    await expect(db.expenseLineItem.update({ where: { id: b }, data: { qbTxnEntity: "Purchase", qbTxnId: "qb-1" } })).rejects.toThrow();
+  });
+
+  it("a Bill and a Purchase sharing an id are each linked to their own line", async () => {
+    const id = await seedExpense();
+    const a = await seedLineItem(id);
+    const b = await seedLineItem(id);
+    await db.$transaction(async (tx) => {
+      expect(await claimQbTxn(tx, ORG, "Bill", "qb-8")).toBe(true);
+      await tx.expenseLineItem.update({ where: { id: a }, data: { qbMatchState: "MATCHED", qbTxnEntity: "Bill", qbTxnId: "qb-8" } });
+    });
+    await db.$transaction(async (tx) => {
+      expect(await claimQbTxn(tx, ORG, "Purchase", "qb-8")).toBe(true);
+      await tx.expenseLineItem.update({ where: { id: b }, data: { qbMatchState: "MATCHED", qbTxnEntity: "Purchase", qbTxnId: "qb-8" } });
+    });
+    const linked = await db.expenseLineItem.findMany({ where: { qbTxnId: "qb-8" }, select: { id: true, qbTxnEntity: true }, orderBy: { id: "asc" } });
+    expect(linked).toEqual([{ id: a, qbTxnEntity: "Bill" }, { id: b, qbTxnEntity: "Purchase" }]);
   });
 
   it("two concurrent claims of one entry: exactly one wins", async () => {
