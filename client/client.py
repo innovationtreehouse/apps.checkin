@@ -332,8 +332,9 @@ class AttendanceState:
         # a second scan of the same badge before the deadline closes the
         # building. Online and offline alike; the server keeps no prompt state.
         self.local_close_participant = None
+        self.local_close_wait_until = 0.0  # monotonic clock, end of the wait before the countdown
         self.local_close_deadline = 0.0  # monotonic clock, end of that countdown
-        self.local_close_banner = None   # (html, seconds) re-shown when that window slides
+        self.local_close_banner = None   # (html, seconds, wait_html) re-shown when that window slides
         self.last_read = {}          # participant id -> monotonic time of its last read
         self.scan_protocol = 1       # server-advertised scan generation; drain holds below ours
         self.last_browser_seen = time.monotonic()
@@ -430,34 +431,49 @@ class AttendanceState:
             if _view_content(view) != _view_content(self.snapshot_store.load_snapshot()):
                 self.snapshot_store.save_snapshot(view)
 
-    def arm_local_close(self, participant_id, seconds, banner_html=None):
-        """Arm the close prompt for this keyholder. The next scan of the SAME
-        badge within the window closes the building."""
+    def arm_local_close(self, participant_id, seconds, banner_html=None, wait_html=None):
+        """Arm the close prompt for this keyholder: a wait of REPEAT_READ_SECONDS,
+        then the countdown. A scan of the SAME badge after the wait and within
+        the countdown closes the building. Returns the banner event to show."""
         try:
             pid = int(participant_id)
         except (TypeError, ValueError):
-            return
+            return None
         with self.lock:
             self.local_close_participant = pid
-            self.local_close_deadline = time.monotonic() + seconds
-            self.local_close_banner = (banner_html, seconds)
+            self.local_close_banner = (banner_html, seconds, wait_html)
+            return self._restart_close_window(time.monotonic())
+
+    def _restart_close_window(self, now):
+        """Caller holds the lock. Starts the wait, then the countdown, from now."""
+        banner_html, seconds, wait_html = self.local_close_banner
+        self.local_close_wait_until = now + REPEAT_READ_SECONDS
+        self.local_close_deadline = self.local_close_wait_until + seconds
+        if not banner_html:
+            return None
+        if wait_html and REPEAT_READ_SECONDS:
+            return {"html": wait_html, "wait": REPEAT_READ_SECONDS, "then": banner_html, "countdown": seconds}
+        return {"html": banner_html, "countdown": seconds}
+
+    def in_close_wait(self, participant_id):
+        """True while this badge's close prompt is still in its wait: a read now
+        is the badge still on the reader, never the second badge."""
+        pid = int(participant_id)
+        with self.lock:
+            return self.local_close_participant == pid and time.monotonic() < self.local_close_wait_until
 
     def slide_close(self, participant_id):
-        """A held badge's repeat read: restart its live close window from this
-        read. Returns the banner event that restarts the on-screen countdown, or
-        None when no close is armed for this badge."""
+        """A held badge's read: restart its live close prompt, wait first, from
+        this read. Returns the banner event that restarts it on screen, or None
+        when no close is armed for this badge."""
         pid = int(participant_id)
         now = time.monotonic()
         with self.lock:
             if now >= self.local_close_deadline:
                 self.local_close_banner = None
-            banner = self.local_close_banner
-            if self.local_close_participant != pid or banner is None:
+            if self.local_close_participant != pid or self.local_close_banner is None:
                 return None
-            self.local_close_deadline = now + banner[1]
-            if not banner[0]:
-                return None
-            return {"html": banner[0], "countdown": banner[1]}
+            return self._restart_close_window(now)
 
     def take_local_close(self, participant_id):
         """True iff the close prompt is live for THIS badge. Any scan ends the
@@ -471,6 +487,7 @@ class AttendanceState:
             live = time.monotonic() < self.local_close_deadline
             mine = live and pid is not None and self.local_close_participant == pid
             self.local_close_participant = None
+            self.local_close_wait_until = 0.0
             self.local_close_deadline = 0.0
             self.local_close_banner = None
             return mine
@@ -841,6 +858,12 @@ class KioskHandler(BaseHTTPRequestHandler):
        for the force-close warning is its countdown. */
     animation: none;
   }}
+  .banner-wait {{
+    background: rgba(71,85,105,0.95);
+    border: 2px solid #94a3b8;
+    color: #fff;
+    animation: none;
+  }}
   .banner-saved {{
     background: rgba(37,99,235,0.95);
     border: 2px solid #60a5fa;
@@ -936,7 +959,8 @@ class KioskHandler(BaseHTTPRequestHandler):
   let countdownTimer = null;
   let bannerTimer = null;
 
-  function startCountdown(seconds) {{
+  // `then` runs when it reaches zero instead of clearing the banner.
+  function startCountdown(seconds, then) {{
     clearInterval(countdownTimer);
     const el = document.getElementById("fc-countdown");
     if (!el) return;
@@ -945,7 +969,8 @@ class KioskHandler(BaseHTTPRequestHandler):
       left -= 1;
       if (left <= 0) {{
         clearInterval(countdownTimer);
-        document.getElementById("flash-container").innerHTML = '';
+        if (then) then();
+        else document.getElementById("flash-container").innerHTML = '';
         return;
       }}
       el.textContent = left;
@@ -989,10 +1014,14 @@ class KioskHandler(BaseHTTPRequestHandler):
           banner.style.animation = null;
         }}
         const secs = data.countdown || 0;
+        const wait = data.wait || 0;
         clearInterval(countdownTimer);
         clearTimeout(bannerTimer);
-        bannerTimer = setTimeout(() => {{ container.innerHTML = ''; }}, (secs || 12) * 1000);
-        if (secs) startCountdown(secs);
+        bannerTimer = setTimeout(() => {{ container.innerHTML = ''; }}, ((wait + secs) || 12) * 1000);
+        if (wait) {{
+          // The close prompt's wait, then its confirm banner and countdown.
+          startCountdown(wait, () => {{ container.innerHTML = data.then; startCountdown(secs); }});
+        }} else if (secs) startCountdown(secs);
       }}
       // Tell iframe to refresh attendance display with inline data
       const iframe = document.querySelector("iframe");
@@ -1354,32 +1383,40 @@ def stdin_scanner_listener(backend, state, outbox):
 # this long to scan the same badge again and close the building.
 FORCE_CLOSE_CONFIRM_SECONDS = 15
 # Reads of one badge this close together are one scan (a scanner double-read).
-# A close confirm is therefore a second badge after this, inside the countdown.
-REPEAT_READ_SECONDS = 3.0
+# The close prompt shows this as a wait before its countdown starts.
+REPEAT_READ_SECONDS = 2.0
 CLOSING_ALONE_COPY = "You are closing the building. The building should be empty."
 # Yellow, never red: the kiosk can't re-verify two-deep itself, so it warns
 # and trusts the keyholder to clear the room (attendance-checkin.md).
 TWO_DEEP_CLOSE_WARNING = "Two-deep supervision may not be met -- make sure everyone is out before you close."
 
 
-def _close_prompt_html(who, others, supervision=None):
+def _close_banner(lines, waiting):
+    """A close prompt's banner: its wait (grey, lift the badge) or its confirm
+    (amber, countdown)."""
+    if waiting:
+        return ('<div class="banner banner-wait">' + "<br>".join(lines)
+                + f'<br>Lift your badge — wait <span id="fc-countdown">{REPEAT_READ_SECONDS:g}</span>s</div>')
+    return ('<div class="banner banner-warning">' + "<br>".join(lines)
+            + f'<br><span id="fc-countdown">{FORCE_CLOSE_CONFIRM_SECONDS}</span>s to confirm</div>')
+
+
+def _close_prompt_html(who, others, supervision=None, waiting=False):
     """A keyholder left while others are shown inside: list them and offer the
     close. Names are server-supplied labels, so every one is escaped."""
-    parts = [f"✓ {html.escape(who)} — CHECKED OUT",
-             "Still inside: " + html.escape(", ".join(others)),
-             "Scan again to close the building."]
+    lines = [f"✓ {html.escape(who)} — CHECKED OUT",
+             "Still inside: " + html.escape(", ".join(others))]
+    if not waiting:
+        lines.append("Scan again to close the building.")
     if supervision:
-        parts.append("⚠️ " + html.escape(supervision))
-    parts.append(f'<span id="fc-countdown">{FORCE_CLOSE_CONFIRM_SECONDS}</span>s to confirm')
-    return '<div class="banner banner-warning">' + "<br>".join(parts) + '</div>'
+        lines.append("⚠️ " + html.escape(supervision))
+    return _close_banner(lines, waiting)
 
 
-def _held_close_html(who, prompt):
+def _held_close_html(who, prompt, waiting=False):
     """The server held a one-badge close: it knows of a check-in this kiosk's
     roster missed. Its prompt names them; every value is escaped."""
-    return ('<div class="banner banner-warning">'
-            f"✓ {html.escape(who)} — CHECKED OUT<br>⚠️ {html.escape(prompt)}"
-            f'<br><span id="fc-countdown">{FORCE_CLOSE_CONFIRM_SECONDS}</span>s to confirm</div>')
+    return _close_banner([f"✓ {html.escape(who)} — CHECKED OUT", f"⚠️ {html.escape(prompt)}"], waiting)
 
 
 def _closed_html(kind, queued=None):
@@ -1450,10 +1487,10 @@ def handle_scan(backend, state, outbox, participant_id):
         log.warning(f"Rejected malformed scan: {participant_id!r}")
         state.push_event({"html": '<div class="banner banner-error">✗ Badge not read — please scan again</div>'})
         return
-    if state.is_repeat_read(participant_id):
+    if state.is_repeat_read(participant_id) or state.in_close_wait(participant_id):
         # One scan, filtered before it is queued or sent, so online and offline
         # agree: a double-read never toggles back nor confirms a close. A held
-        # badge keeps its own close window open, measured from its last read.
+        # badge restarts its own close prompt, wait first, from its last read.
         log.info(f"Ignored repeat read of {participant_id}")
         slid = state.slide_close(participant_id)
         if slid:
@@ -1499,9 +1536,9 @@ def handle_scan(backend, state, outbox, participant_id):
             state.push_event({"html": _saved_banner_html(queued, intent), "queued": queued, "counts": counts})
 
     def prompt(who):
-        banner_html = _close_prompt_html(who, state.others_shown(participant_id), state.offline_supervision_warning())
-        state.arm_local_close(participant_id, FORCE_CLOSE_CONFIRM_SECONDS, banner_html)
-        state.push_event({"html": banner_html, "countdown": FORCE_CLOSE_CONFIRM_SECONDS})
+        shown = (who, state.others_shown(participant_id), state.offline_supervision_warning())
+        state.push_event(state.arm_local_close(participant_id, FORCE_CLOSE_CONFIRM_SECONDS,
+                                               _close_prompt_html(*shown), _close_prompt_html(*shown, waiting=True)))
 
     # A fresh scan must not jump its own predecessor, and nothing goes live
     # until the server speaks this client's protocol (it would drop `close`).
@@ -1564,10 +1601,9 @@ def handle_scan(backend, state, outbox, participant_id):
     if outcome == "ack" and close and body.get("facilityClosed") is False and body.get("closePrompt"):
         # Someone checked in after this kiosk's roster was taken: the keyholder
         # left, the building did not close, and the same badge again closes it.
-        banner_html = _held_close_html(str(body.get("participant", {}).get("name") or "Keyholder"),
-                                       str(body["closePrompt"]))
-        state.arm_local_close(participant_id, FORCE_CLOSE_CONFIRM_SECONDS, banner_html)
-        state.push_event({"html": banner_html, "countdown": FORCE_CLOSE_CONFIRM_SECONDS})
+        held = (str(body.get("participant", {}).get("name") or "Keyholder"), str(body["closePrompt"]))
+        state.push_event(state.arm_local_close(participant_id, FORCE_CLOSE_CONFIRM_SECONDS,
+                                               _held_close_html(*held), _held_close_html(*held, waiting=True)))
     elif outcome == "ack" and close and body.get("facilityClosed"):
         state.push_event({"html": _closed_html(close)})
     elif outcome == "ack" and close and body.get("closeRefused"):

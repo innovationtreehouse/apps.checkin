@@ -19,9 +19,13 @@ from client import (
     DEFAULT_KIOSK_PATH,
     CLOSING_ALONE_COPY,
     FORCE_CLOSE_CONFIRM_SECONDS,
+    REPEAT_READ_SECONDS,
     SCAN_PROTOCOL_VERSION,
     UNKNOWN_PERSON_NAME,
     KioskHandler,
+    TWO_DEEP_CLOSE_WARNING,
+    _close_prompt_html,
+    _held_close_html,
     _saved_banner_html,
     _scan_result_banner_html,
     attendance_poller,
@@ -997,7 +1001,7 @@ class TestRepeatReadFilter(unittest.TestCase):
     def test_online_double_read_is_one_scan(self):
         backend = self._online()
         handle_scan(backend, self.state, self.outbox, 7)
-        self.now += 2.9
+        self.now += 1.9
         handle_scan(backend, self.state, self.outbox, 7)
         self.assertEqual(backend.post_scan.call_count, 1)
         self.assertEqual(self.outbox.pending_rows(), [])
@@ -1014,8 +1018,8 @@ class TestRepeatReadFilter(unittest.TestCase):
     def test_the_window_slides_while_the_badge_is_held(self):
         backend = self._offline()
         handle_scan(backend, self.state, self.outbox, 7)
-        for _ in range(4):                                 # held 8 s, read every 2 s
-            self.now += 2.0
+        for _ in range(4):                                 # held 6 s, read every 1.5 s
+            self.now += 1.5
             handle_scan(backend, self.state, self.outbox, 7)
         self.assertEqual([r[5] for r in self.outbox.pending_rows()], ["IN"], "a held badge never toggles")
         self.now += 3.0                                    # lifted, then badged again
@@ -1043,7 +1047,7 @@ class TestRepeatReadFilter(unittest.TestCase):
         handle_scan(backend, self.state, self.outbox, 8)
         self.assertEqual(backend.post_scan.call_count, 2)
 
-    def test_online_close_confirm_after_three_seconds_closes(self):
+    def test_online_close_confirm_after_the_wait_closes(self):
         backend = Mock(attendance_path=None)
         backend.post_scan.return_value = ({"type": "checkout", "participant": {"id": 9}}, 200, None)
         self.state.known_keyholders = {9}
@@ -1057,7 +1061,7 @@ class TestRepeatReadFilter(unittest.TestCase):
         confirm = backend.post_scan.call_args.kwargs
         self.assertEqual((confirm["close"], confirm["intent"]), ("confirmed", "OUT"))
 
-    def test_offline_close_confirm_after_three_seconds_closes(self):
+    def test_offline_close_confirm_after_the_wait_closes(self):
         backend = self._offline()
         self.state.known_keyholders = {9}
         self.state.present_ids = {9, 5}
@@ -1080,12 +1084,12 @@ class TestRepeatReadFilter(unittest.TestCase):
         self.state.present_ids = {9, 5}
         handle_scan(backend, self.state, self.outbox, 9)    # OUT, close prompt armed
         prompt = events[-1]
-        for _ in range(7):                                  # held 14 s
-            self.now += 2
+        for _ in range(10):                                 # held 15 s
+            self.now += 1.5
             handle_scan(backend, self.state, self.outbox, 9)
-        self.assertEqual(events[-1], prompt, "each held read restarts the on-screen countdown")
-        self.assertEqual(self.state.local_close_deadline, self.now + 15)
-        self.now += 14                                      # 28 s after the prompt, 14 after the last read
+        self.assertEqual(events[-1], prompt, "each held read restarts the on-screen wait")
+        self.assertEqual(self.state.local_close_deadline, self.now + REPEAT_READ_SECONDS + 15)
+        self.now += 14                                      # 29 s after the prompt, 14 after the last read
         handle_scan(backend, self.state, self.outbox, 9)
         self.assertEqual(backend.post_scan.call_args.kwargs["close"], "confirmed")
 
@@ -1097,11 +1101,11 @@ class TestRepeatReadFilter(unittest.TestCase):
         self.state.present_ids = {9, 5}
         handle_scan(backend, self.state, self.outbox, 9)    # OUT, close prompt armed
         prompt = events[-1]
-        self.now += 2
+        self.now += 1.5
         handle_scan(backend, self.state, self.outbox, 9)
         self.assertEqual(events[-1], prompt)
-        self.assertEqual(self.state.local_close_deadline, self.now + 15)
-        self.now += 14                                      # 16 s after the prompt
+        self.assertEqual(self.state.local_close_deadline, self.now + REPEAT_READ_SECONDS + 15)
+        self.now += 14                                      # 15.5 s after the prompt
         handle_scan(backend, self.state, self.outbox, 9)
         self.assertEqual([(r[5], r[8]) for r in self.outbox.pending_rows()], [("OUT", None), ("OUT", "confirmed")])
 
@@ -1119,7 +1123,7 @@ class TestRepeatReadFilter(unittest.TestCase):
         self.state.is_repeat_read(5)
         self.now += 1
         self.assertIsNone(self.state.slide_close(5))
-        self.assertEqual(self.state.local_close_deadline, 1015.0)
+        self.assertEqual(self.state.local_close_deadline, 1000.0 + REPEAT_READ_SECONDS + 15)
 
     def test_banner_cleared_after_close_completes(self):
         self.state.arm_local_close(9, 15, "<div>prompt</div>")
@@ -1129,9 +1133,124 @@ class TestRepeatReadFilter(unittest.TestCase):
 
     def test_banner_cleared_after_expiry(self):
         self.state.arm_local_close(9, 15, "<div>prompt</div>")
-        self.now += 16
+        self.now += REPEAT_READ_SECONDS + 16
         self.assertIsNone(self.state.slide_close(9))
         self.assertIsNone(self.state.local_close_banner)
+
+
+class TestCloseWait(unittest.TestCase):
+    """A close prompt opens with a visible wait while the badge may still be on
+    the reader; its countdown starts only when the wait ends."""
+
+    def setUp(self):
+        self.now = 1000.0
+        patcher = patch("client.time.monotonic", lambda: self.now)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.state = AttendanceState()
+        self.state.scan_protocol = SCAN_PROTOCOL_VERSION
+        self.state.known_keyholders = {9}
+        self.state.present_ids = {9, 5}
+        self.events = []
+        self.state.push_event = self.events.append
+        self.outbox = Outbox(":memory:")
+
+    def _offline(self):
+        backend = Mock(attendance_path=None)
+        backend.post_scan.return_value = ({"error": "Connection refused"}, 0, None)
+        return backend
+
+    def _closes(self):
+        return [r[8] for r in self.outbox.pending_rows()]
+
+    def test_the_prompt_shows_the_wait_then_the_confirm(self):
+        handle_scan(self._offline(), self.state, self.outbox, 9)
+        event = self.events[-1]
+        self.assertEqual(event["wait"], REPEAT_READ_SECONDS)
+        self.assertEqual(event["countdown"], FORCE_CLOSE_CONFIRM_SECONDS)
+        self.assertIn("banner-wait", event["html"])
+        self.assertIn("Lift your badge", event["html"])
+        self.assertIn("Still inside", event["html"])
+        self.assertNotIn("Scan again", event["html"])
+        self.assertIn("banner-warning", event["then"])
+        self.assertIn("Scan again to close", event["then"])
+
+    def test_a_held_badge_never_confirms(self):
+        handle_scan(self._offline(), self.state, self.outbox, 9)
+        prompt = self.events[-1]
+        for _ in range(40):                                 # held a minute
+            self.now += 1.5
+            handle_scan(self._offline(), self.state, self.outbox, 9)
+        self.assertEqual(self._closes(), [None])
+        self.assertEqual(self.events[-1], prompt, "the wait restarts on screen")
+
+    def test_a_twist_re_read_a_second_later_neither_confirms_nor_toggles(self):
+        # The door reader re-reads a held badge only when it is twisted, under 2 s.
+        handle_scan(self._offline(), self.state, self.outbox, 9)
+        self.now += 1.0
+        handle_scan(self._offline(), self.state, self.outbox, 9)
+        handle_scan(self._offline(), self.state, self.outbox, 5)
+        self.now += 1.0
+        handle_scan(self._offline(), self.state, self.outbox, 5)
+        rows = self.outbox.pending_rows()
+        self.assertEqual([(str(r.participant_id), r.intent, r.close) for r in rows], [("9", "OUT", None), ("5", "OUT", None)])
+
+    def test_a_second_badge_after_the_wait_confirms(self):
+        handle_scan(self._offline(), self.state, self.outbox, 9)
+        self.now += REPEAT_READ_SECONDS + 5
+        handle_scan(self._offline(), self.state, self.outbox, 9)
+        self.assertEqual(self._closes(), [None, "confirmed"])
+
+    def test_a_badge_during_the_wait_restarts_it_and_does_not_confirm(self):
+        backend = Mock(attendance_path=None)
+
+        def slow_post(*args, **kwargs):
+            self.now += 1.5                                 # the prompt arms after the server answers
+            return {"type": "checkout", "participant": {"id": 9}}, 200, None
+        backend.post_scan.side_effect = slow_post
+        handle_scan(backend, self.state, self.outbox, 9)
+        self.now += 1.0                                     # past the repeat filter, inside the wait
+        handle_scan(backend, self.state, self.outbox, 9)
+        self.assertEqual(backend.post_scan.call_count, 1)
+        self.assertEqual(self.state.local_close_wait_until, self.now + REPEAT_READ_SECONDS)
+        self.assertIn("wait", self.events[-1])
+        self.now += REPEAT_READ_SECONDS
+        handle_scan(backend, self.state, self.outbox, 9)
+        self.assertEqual(backend.post_scan.call_args.kwargs["close"], "confirmed")
+
+    def test_another_badge_during_the_wait_ends_the_prompt(self):
+        handle_scan(self._offline(), self.state, self.outbox, 9)
+        self.now += 0.5
+        handle_scan(self._offline(), self.state, self.outbox, 5)
+        self.now += REPEAT_READ_SECONDS + 1
+        handle_scan(self._offline(), self.state, self.outbox, 9)
+        rows = self.outbox.pending_rows()
+        self.assertEqual([(r[5], r[8]) for r in rows], [("OUT", None), ("OUT", None), ("IN", None)])
+
+    def test_a_held_close_gets_the_wait_too(self):
+        self.state.present_ids = {9}
+        backend = Mock(attendance_path=None)
+        backend.post_scan.return_value = ({"type": "checkout", "facilityClosed": False,
+                                           "participant": {"id": 9, "name": "Kim"},
+                                           "closePrompt": "Sam checked in at 8:58 PM."}, 200, None)
+        handle_scan(backend, self.state, self.outbox, 9)
+        event = self.events[-1]
+        self.assertIn("banner-wait", event["html"])
+        self.assertIn("Sam checked in at 8:58 PM.", event["html"])
+        self.assertIn("Sam checked in at 8:58 PM.", event["then"])
+        self.now += 1                                       # still on the reader
+        handle_scan(backend, self.state, self.outbox, 9)
+        self.assertEqual(backend.post_scan.call_count, 1)
+        self.now += REPEAT_READ_SECONDS + 1
+        handle_scan(backend, self.state, self.outbox, 9)
+        self.assertEqual(backend.post_scan.call_args.kwargs["close"], "confirmed")
+
+    def test_the_wait_banner_carries_the_two_deep_warning_and_escapes_names(self):
+        wait = _close_prompt_html("<b>Kim</b>", ["<i>Sam</i>"], TWO_DEEP_CLOSE_WARNING, waiting=True)
+        self.assertIn(TWO_DEEP_CLOSE_WARNING, wait)
+        self.assertNotIn("<b>", wait)
+        self.assertNotIn("<i>", wait)
+        self.assertNotIn("<script>", _held_close_html("Kim", "<script>x</script>", waiting=True))
 
 
 class TestKioskOwnView(unittest.TestCase):
