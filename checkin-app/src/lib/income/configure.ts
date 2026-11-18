@@ -29,7 +29,8 @@
  *   read when finance assigns an item to a bucket.
  * - alerts: each goes to the alert address (emailAlert). A drain that stops at
  *   a cap alerts, so the payouts it left waiting reach a person. A bucket that
- *   becomes unusable alerts once, so the payouts it holds reach a person. An
+ *   becomes unusable alerts once, and again each run until the alert is sent,
+ *   so the payouts it holds reach a person. An
  *   orphan sweep that cannot read every new deposit alerts.
  */
 import {
@@ -108,7 +109,7 @@ const alerts: IncomeAlerts = {
   },
   async bucketUnusable({ budgetOwnerId, bucketName, issue, itemCount }) {
     const { emailAlert } = await import("@/lib/emailRecipients");
-    await emailAlert("finance.incomeBucketUnusable", {
+    return emailAlert("finance.incomeBucketUnusable", {
       bucketName: bucketName ?? `#${budgetOwnerId}`,
       issue,
       itemCount: String(itemCount),
