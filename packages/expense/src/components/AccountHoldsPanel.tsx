@@ -114,6 +114,7 @@ export default function AccountHoldsPanel({ expenseId, holds, lines, currency, i
     return (accounts.data ?? []).filter((a) => allowed.includes(typeOf.get(a.qbAccount) ?? "")).map((a) => ({ value: a.qbAccount, label: `${a.name} (${a.qbAccount})` }));
   };
   const withoutAccount = pending.filter((h) => !lineOf.get(h.lineItemId)?.manualQbAccount).length;
+  const accountsError = accounts.error ?? live.error;
 
   return (
     <Paper withBorder p="sm">
@@ -136,6 +137,7 @@ export default function AccountHoldsPanel({ expenseId, holds, lines, currency, i
           </Group>
         )}
       </Group>
+      {accountsError && <Text size="xs" c="red" mb="xs">Couldn&apos;t read the QuickBooks accounts: {accountsError}</Text>}
       <Table>
         <Table.Tbody>
           {pending.map((h) => {

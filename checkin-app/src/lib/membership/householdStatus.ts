@@ -12,7 +12,7 @@
  *   - ACTIVE stops only by REVOKED or DENIED; nothing returns ACTIVE/REVOKED to NONE;
  *   - DENIED never becomes ACTIVE; its only exit is the board's restore to NONE;
  *   - activity that reaches a DENIED household changes nothing and goes to the board
- *     (`raiseDeniedHouseholdActivity`);
+ *     (`raiseDeniedHouseholdActivity`); a board grant is only refused;
  *   - entering DENIED revokes trusted-adult access and lists program ties for the
  *     board (`applyHouseholdDenial`); entering REVOKED does neither.
  *
