@@ -2,8 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Button, Card, Text, Title } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
-import { showSuccess } from "@checkin/component-ui";
+import { showError, showSuccess, showWarning } from "@checkin/component-ui";
 
 type SelfStatus = { owesSignature: boolean; agreementVersion: number; requestStarted: boolean; documentConfigured: boolean };
 
@@ -38,7 +37,7 @@ export default function KeyVolunteerAgreementPanel() {
             ? "Thanks — your Key Volunteer Agreement signature was received."
             : "Signature received — finalizing. Reload the page shortly to see it.");
         } else if (kvaReturn === "declined") {
-          notifications.show({ color: "red", autoClose: false, message: "You declined the Key Volunteer Agreement. You can sign it when you're ready." });
+          showWarning("You declined the Key Volunteer Agreement. You can sign it when you're ready.");
         }
       })
       .catch(() => setStatus(null));
@@ -55,9 +54,9 @@ export default function KeyVolunteerAgreementPanel() {
         window.location.href = data.signUrl;
         return;
       }
-      notifications.show({ color: "red", autoClose: false, message: data.error ?? "Couldn't open the signing form. Please try again." });
+      showError(data.error ?? "Couldn't open the signing form. Please try again.");
     } catch {
-      notifications.show({ color: "red", autoClose: false, message: "Network error opening the signing form." });
+      showError("Network error opening the signing form.");
     }
     setSigning(false);
   };

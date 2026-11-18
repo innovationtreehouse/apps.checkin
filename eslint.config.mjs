@@ -57,6 +57,24 @@ const literalRoleGateRules = [
   },
 ];
 
+// Pages tell a person what happened through the kit's showSuccess / showWarning /
+// showError, so every message looks and behaves the same.
+const rawNotificationImport = [
+  {
+    name: "@mantine/notifications",
+    message: "Use showSuccess, showWarning or showError from @checkin/component-ui.",
+  },
+];
+
+// Files still on raw notifications: background-check pages wait for that process's
+// redesign; the rest are edited by an open PR (attendance/current #2375, useMembershipPage #3486).
+const rawNotificationExemptions = [
+  "checkin-app/src/app/membership-ops/review/page.tsx",
+  "checkin-app/src/app/membership/BackgroundChecksPanel.tsx",
+  "checkin-app/src/app/attendance/current/page.tsx",
+  "checkin-app/src/app/membership/useMembershipPage.ts",
+];
+
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
@@ -90,6 +108,19 @@ const eslintConfig = defineConfig([
         ...nodeEnvRules,
         ...literalRoleGateRules,
       ],
+    },
+  },
+  {
+    // The root layout mounts the Notifications provider; tests render it to read messages.
+    files: ["checkin-app/src/**/*.{ts,tsx}"],
+    ignores: [
+      "checkin-app/src/app/layout.tsx",
+      "**/__tests__/**",
+      "**/*.test.{ts,tsx}",
+      ...rawNotificationExemptions,
+    ],
+    rules: {
+      "no-restricted-imports": ["error", { paths: rawNotificationImport }],
     },
   },
   // API routes must log through @/lib/logger (console sink + logBackendError),

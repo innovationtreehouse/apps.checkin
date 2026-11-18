@@ -1,7 +1,7 @@
 type Rtl = typeof import("@/test-helpers/rtl");
 jest.mock("next/navigation", () => jest.requireActual<Rtl>("@/test-helpers/rtl").navMock());
 jest.mock("next-auth/react", () => jest.requireActual<Rtl>("@/test-helpers/rtl").authMock());
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), hide: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
 
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { notifications } from "@mantine/notifications";

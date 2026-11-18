@@ -4,14 +4,13 @@ import { use, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useRequireRole } from '@/hooks/useRequireRole';
 import { Alert, Badge, Box, Button, Card, Checkbox, Container, Divider, Group, NumberInput, Select, SimpleGrid, Stack, Tabs, Text, TextInput, Title } from '@mantine/core';
-import { errorMessage, LoadError, showError, showSuccess } from '@checkin/component-ui';
+import { errorMessage, LoadError, showError, showSuccess, showWarning } from '@checkin/component-ui';
 import { shallowEqual } from '@/components/UnsavedChangesProvider';
 import { useSeedForm } from '@/hooks/useSeedForm';
 import { api, useLoad } from '@/lib/api';
 import { EntityPicker } from '@/components/admin/EntityPicker';
 import { ScrollableTabsList } from '@/components/ui/ScrollableTabsList';
 import { ProgramRosterTab } from './ProgramRosterTab';
-import { notifications } from '@mantine/notifications';
 import { ProgramEventsTab } from './ProgramEventsTab';
 import { isProgramCheckoutBroken } from '@/lib/programCheckout';
 import { useProgramStoreClosed } from '../../useProgramStoreClosed';
@@ -217,7 +216,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
         })
       });
       const followUps = [saved?.warning, saved?.notice].filter((m): m is string => !!m);
-      for (const message of followUps) notifications.show({ color: "yellow", message, autoClose: false });
+      for (const message of followUps) showWarning(message);
       if (followUps.length === 0) showSuccess("Saved.");
       notifyNavRefresh();
       setSeededGeneral(generalForm);
@@ -254,7 +253,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
     setSyncing(true);
     try {
       const data = await api<{ warning?: string }>(`/api/programs/${id}/sync-shopify`, { method: 'POST' });
-      if (data?.warning) notifications.show({ color: "yellow", message: data.warning, autoClose: false });
+      if (data?.warning) showWarning(data.warning);
       else showSuccess("Shopify checkout configured.");
       notifyNavRefresh();
       await reload();

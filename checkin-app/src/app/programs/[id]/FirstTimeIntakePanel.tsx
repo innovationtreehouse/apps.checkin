@@ -2,8 +2,7 @@
 
 import { useState } from "react";
 import { Button, Center, Checkbox, Loader, Stack, Text, TextInput, Title } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
-import { errorMessage, HttpError, LoadError, showError } from "@checkin/component-ui";
+import { errorMessage, HttpError, LoadError, showError, showWarning } from "@checkin/component-ui";
 import { api, useLoad } from "@/lib/api";
 import { useSeedForm } from "@/hooks/useSeedForm";
 import { mapServerFields, type IntakePrefill } from "@/app/membership/membershipForm";
@@ -135,7 +134,7 @@ export default function FirstTimeIntakePanel({ ageGated, onSaved }: { ageGated: 
         }),
       });
       // A part the save could not apply stays for the person to read.
-      for (const r of rejections ?? []) notifications.show({ color: "yellow", message: r.message, autoClose: false });
+      for (const r of rejections ?? []) showWarning(r.message);
       onSaved();
     } catch (e) {
       if (e instanceof HttpError) setFieldErrors(mapServerFields([...e.fields]));

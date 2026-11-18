@@ -3,8 +3,7 @@
 import { useState } from "react";
 import { Badge, Button, Card, Group, Text, Title } from "@mantine/core";
 import { modals } from "@mantine/modals";
-import { notifications } from "@mantine/notifications";
-import { LoadError } from "@checkin/component-ui";
+import { LoadError, showError, showSuccess } from "@checkin/component-ui";
 import { useLoad } from "@/lib/api";
 
 /**
@@ -27,16 +26,13 @@ export function KeyVolunteerAgreementCard({ initialVersion }: { initialVersion: 
       const res = await fetch("/api/settings/membership/key-volunteer-version", { method: "POST" });
       const data = (await res.json().catch(() => ({}))) as { agreementVersion?: number; agreementsOpened?: number; error?: string };
       if (!res.ok || data.agreementVersion === undefined) {
-        notifications.show({ color: "red", autoClose: false, message: data.error ?? "Failed to start a new agreement version" });
+        showError(data.error ?? "Failed to start a new agreement version");
         return;
       }
       setVersion(data.agreementVersion);
-      notifications.show({
-        color: "green",
-        message: `Version ${data.agreementVersion} is current. ${data.agreementsOpened ?? 0} Key Volunteer(s) asked to sign it.`,
-      });
+      showSuccess(`Version ${data.agreementVersion} is current. ${data.agreementsOpened ?? 0} Key Volunteer(s) asked to sign it.`);
     } catch {
-      notifications.show({ color: "red", autoClose: false, message: "Network error starting a new agreement version" });
+      showError("Network error starting a new agreement version");
     } finally {
       setBumping(false);
     }
