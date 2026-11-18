@@ -329,6 +329,8 @@ export const POST = withAuth({ roles: ['isBoardMember'] }, async (req, auth) => 
         const responseObj: Record<string, unknown> = { success: true, program: newProgram };
         if (((mPrice && mPrice > 0) || (nmPrice && nmPrice > 0)) && !shopifyData) {
             responseObj.warning = "Program created, but Shopify integration failed or is not configured. Payment links will not work.";
+        } else if (shopifyData && !claimantData) {
+            responseObj.warning = "Program created, but its Shopify reserved-seat product failed, so payment links will not work. Run Sync to Shopify to retry.";
         } else if (!stockOk) {
             responseObj.warning = "Program created, but setting its Shopify stock failed, so it may show as sold out. Check System Status > Link Status.";
         }
