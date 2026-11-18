@@ -1,7 +1,7 @@
 "use client";
 
 import { Card, Group, List, SimpleGrid, Stack, Text, Title } from "@mantine/core";
-import { BadgeScanChart, ConfigHealthBox, CronRunsBox, KioskHeartbeatBox, OpenProblemsBox, ProblemsBox, SReadDiagnosticsBox, SystemVersionBox } from "@/components/admin/SystemHealthPanels";
+import { BadgeScanChart, ConfigHealthBox, CronRunsBox, KioskHeartbeatBox, ProblemsBox, SReadDiagnosticsBox, SystemVersionBox } from "@/components/admin/SystemHealthPanels";
 
 export default function SystemStatusHealthPage() {
   return (
@@ -50,8 +50,6 @@ export default function SystemStatusHealthPage() {
       </SimpleGrid>
 
       <ProblemsBox />
-
-      <OpenProblemsBox />
 
       <ConfigHealthBox />
 

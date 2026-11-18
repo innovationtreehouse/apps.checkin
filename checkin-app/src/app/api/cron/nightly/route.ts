@@ -18,6 +18,7 @@ import { traceOnCommit } from "@/lib/specTrace";
 const SAME_NIGHT_MS = 12 * 60 * 60 * 1000;
 
 export const GET = withCron(() => duringNightlyRun(async () => {
+    try {
         // A keyholder's recorded close whose sweep never ran departs people at
         // the keyholder's time, so it runs before this sweep stamps them at now.
         await executePendingCloses();
@@ -178,9 +179,6 @@ export const GET = withCron(() => duringNightlyRun(async () => {
             logger.info(`Nightly cron: opened ${personAgreements.opened} individual membership agreement(s).`);
         }
 
-        // 5. The receipt flow's daily Problems email.
-        await sendProblemsDigest(now);
-
         return NextResponse.json({
             success: true,
             // Checkouts and agreement opens this run swallowed. withCron reads it and records the run
@@ -195,4 +193,8 @@ export const GET = withCron(() => duringNightlyRun(async () => {
             adultDobPurged,
             personAgreements
         });
+    } finally {
+        // The daily Problems email goes out even when a step above throws.
+        await sendProblemsDigest();
+    }
 }));

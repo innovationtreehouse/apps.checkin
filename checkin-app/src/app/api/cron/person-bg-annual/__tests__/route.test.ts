@@ -10,8 +10,6 @@ import { runPersonBgAnnualSweep } from '@/lib/membership/personBgTriggers';
 import { settleApplicationsAwaitingCheck } from '@/lib/membership/settleHouseholdBg';
 import { GET } from '../route';
 
-// The incident engine has its own tests; here a run only reaches it.
-jest.mock('@/lib/runIncidents', () => ({ evaluateRun: jest.fn() }));
 jest.mock('@/lib/membership/personBgTriggers', () => ({ runPersonBgAnnualSweep: jest.fn() }));
 jest.mock('@/lib/membership/settleHouseholdBg', () => ({ settleApplicationsAwaitingCheck: jest.fn() }));
 

@@ -20,23 +20,9 @@ const text: TokenSpec = { kind: "text" };
 const link = (label?: string): TokenSpec => (label ? { kind: "link", label } : { kind: "link" });
 const SAMPLE_URL = "https://checkin.example.org/";
 
-const OPS_TOKENS = {
-    kind: text, cause: text, lanes: text, status: text, summary: text, firstSeen: text,
-    runsSeen: text, items: text, todo: text, actionLink: link("Open System Status"),
-};
-const OPS_SAMPLE = {
-    kind: "connection", cause: "QuickBooks", lanes: "expense, gift", status: "needs reconnecting",
-    summary: "The app's connection to QuickBooks is broken, for example an expired or revoked login, so expense, gift are paused.",
-    firstSeen: "Nov 7, 2026, 2:00 AM", runsSeen: "1", items: "12",
-    todo: "Finance repeats step 3 of the QuickBooks go-live runbook with the infra operator and reseeds the secret (docs/ops/quickbooks-go-live.md).",
-    actionLink: SAMPLE_URL,
-};
 const ACK_SUBJECT = "We received your scholarship / payment-plan request";
 const OUTREACH_TOKENS = { name: text, deadline: text, actionLink: link() };
 const OUTREACH_SAMPLE = { name: "Jordan Rivera", deadline: "2027-01-01", actionLink: SAMPLE_URL };
-
-const OPS_SUBJECT = "[{{kind}}] {{cause}}: {{lanes}} — {{status}}";
-const OPS_BODY = "{{summary}}\n\nLanes: {{lanes}}\nFirst seen: {{firstSeen}}\nRuns seen: {{runsSeen}}\nItems waiting: {{items}}\n\nWhat to do: {{todo}}\n\n{{actionLink}}";
 
 export const REGISTRY = {
     // ── checkin (attendance) ────────────────────────────────────────────────
@@ -196,33 +182,6 @@ export const REGISTRY = {
         sampleCtx: { householdName: "Rivera", personName: "Alex Rivera", year: "2027-2028", actionLink: SAMPLE_URL },
         defaultSubject: "Not renewing: {{householdName}} for {{year}}",
         defaultBody: "{{personName}}, a lead of {{householdName}}, says the household won't renew for {{year}}. Its membership continues to the end of the paid year, and renewal emails for {{year}} stop. There is nothing to approve; the family can still renew. {{actionLink}}",
-    },
-
-    // ── ops incidents (lib/opsIncidents.ts) ─────────────────────────────────
-    // Codes, counts and dates only: no amounts, donor or vendor names, or memo text.
-    "ops.incidentOpened": {
-        allowedTokens: OPS_TOKENS,
-        sampleCtx: OPS_SAMPLE,
-        defaultSubject: OPS_SUBJECT,
-        defaultBody: OPS_BODY,
-    },
-    "ops.incidentReminder": {
-        allowedTokens: OPS_TOKENS,
-        sampleCtx: { ...OPS_SAMPLE, status: "still open after 3 days", runsSeen: "4" },
-        defaultSubject: OPS_SUBJECT,
-        defaultBody: `Still open. ${OPS_BODY}`,
-    },
-    "ops.incidentEscalated": {
-        allowedTokens: OPS_TOKENS,
-        sampleCtx: { ...OPS_SAMPLE, status: "open for 2 weeks", runsSeen: "15" },
-        defaultSubject: OPS_SUBJECT,
-        defaultBody: `This problem has been open for two weeks, and the alert address has been told. ${OPS_BODY}`,
-    },
-    "ops.incidentRecovered": {
-        allowedTokens: OPS_TOKENS,
-        sampleCtx: { ...OPS_SAMPLE, status: "recovered", summary: "expense, gift ran again without this failure, so the incident is closed.", todo: "Nothing, unless items are still waiting on System Status." },
-        defaultSubject: OPS_SUBJECT,
-        defaultBody: OPS_BODY,
     },
 
     // ── Problems list (lib/problems.ts) ─────────────────────────────────────
