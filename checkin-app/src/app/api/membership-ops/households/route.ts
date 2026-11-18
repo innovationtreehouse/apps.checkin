@@ -20,6 +20,7 @@ import { searchId } from "@/lib/searchId";
 import { withArchivedHouseholds } from "@/lib/household/archived";
 import { ArchivedHouseholdError } from "@/lib/household/archiveGuard";
 import { householdCheckStandings } from "@/lib/membership/checkStanding";
+import { noteStands } from "@/lib/membership/notRenewing";
 
 export const dynamic = 'force-dynamic';
 
@@ -171,8 +172,9 @@ export const GET = withAuth(
 
             // The live cycle drives the settled arm of the process include below (no boundary ⇒ matches nothing).
             const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
+            const now = new Date();
             const cycle = settings?.orgMembershipYearBoundary
-                ? membershipYearCycle(settings.orgMembershipYearBoundary, new Date())
+                ? membershipYearCycle(settings.orgMembershipYearBoundary, now)
                 : null;
 
             const households = await prisma.household.findMany({
@@ -192,8 +194,10 @@ export const GET = withAuth(
                     // matches no row, keeping one query shape.
                     orgMembership: {
                         select: {
+                            id: true,
                             status: true,
                             memberSince: true,
+                            notRenewingYear: true,
                             processes: {
                                 where: {
                                     OR: [
@@ -215,10 +219,16 @@ export const GET = withAuth(
             const recheckMonths = settings?.bgRecheckMonths ?? 0;
             const bgSettings = { orgMembershipYearBoundary: settings?.orgMembershipYearBoundary ?? null, bgRecheckMonths: recheckMonths };
 
+            const notRenewingSince = await notRenewingNotedAt(households.flatMap((h) => {
+                const m = h.orgMembership;
+                return m && noteStands(m.notRenewingYear, settings?.orgMembershipYearBoundary, now) ? [{ id: m.id, year: m.notRenewingYear }] : [];
+            }));
+
             const withGrantable = households.map((h) => {
                 // Split the single OR probe by status: PENDING_PAYMENT awaits a grant;
                 // any other row is a fee-paid process, so the live year is settled.
-                const { processes = [], ...orgMembership } = h.orgMembership ?? {};
+                const { processes = [], id: membershipId, notRenewingYear, ...orgMembership } = h.orgMembership ?? {};
+                const notRenewingAt = membershipId === undefined ? undefined : notRenewingSince.get(membershipId);
                 const awaitingPayment = processes.some((p) => p.status === "PENDING_PAYMENT");
                 const settledForComingYear = processes.some((p) => p.status !== "PENDING_PAYMENT");
                 // Household-level BG "valid until" — later lastBackgroundCheck among leads
@@ -233,13 +243,14 @@ export const GET = withAuth(
                     awaitingPayment,
                     settledForComingYear,
                     bgValidUntil,
+                    notRenewing: notRenewingYear != null && notRenewingAt ? { year: notRenewingYear, since: notRenewingAt } : null,
                     validUntil: h.orgMembership?.status === "ACTIVE" && cycle ? coveredThrough(cycle, settledForComingYear) : null,
                 };
             });
 
             return NextResponse.json({
                 households: withGrantable,
-                grantYears: grantableYears(settings?.orgMembershipYearBoundary, new Date()),
+                grantYears: grantableYears(settings?.orgMembershipYearBoundary, now),
             });
         } catch (error) {
             logger.error("Failed to fetch households:", error);
@@ -247,6 +258,22 @@ export const GET = withAuth(
         }
     }
 );
+
+/** When each membership's current "won't renew" note was made, from its audit row. */
+async function notRenewingNotedAt(noted: { id: number; year: number }[]): Promise<Map<number, Date>> {
+    if (noted.length === 0) return new Map();
+    const yearOf = new Map(noted.map((n) => [n.id, n.year]));
+    const rows = await prisma.auditLog.findMany({
+        where: { tableName: "OrgMembership", affectedEntityId: { in: noted.map((n) => n.id) } },
+        orderBy: { timestamp: "asc" },
+        select: { affectedEntityId: true, timestamp: true, newData: true },
+    });
+    const notedAt = rows.filter((r) => {
+        const data = r.newData;
+        return typeof data === "object" && data !== null && !Array.isArray(data) && data.notRenewingYear === yearOf.get(r.affectedEntityId);
+    });
+    return new Map(notedAt.map((r) => [r.affectedEntityId, r.timestamp]));
+}
 
 export const POST = withAuth(
     { roles: ['isSysadmin', 'isBoardMember'] },

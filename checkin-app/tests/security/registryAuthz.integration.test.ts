@@ -142,6 +142,7 @@ function routeFileExists(routePath: string): boolean {
 
 describe('Registry route admission gates', () => {
     let plainUser: AuthenticatedUser;
+    let leadUser: AuthenticatedUser;
     let programId: number;
     let eventId: number;
     let bucketId: number;
@@ -180,6 +181,19 @@ describe('Registry route admission gates', () => {
             isOperations: false,
             isInventoryManager: false,
         };
+
+        // The not-renewing routes act only for an adult household lead; any other caller is refused 403.
+        const lead = await prisma.person.create({
+            data: {
+                name: 'Authz Lead',
+                email: `lead-${TAG}@example.com`,
+                isHouseholdLead: true,
+                household: { create: { name: `Lead ${TAG}` } },
+            },
+        });
+        participantIds.push(lead.id);
+        householdIds.push(lead.householdId);
+        leadUser = { ...plainUser, id: lead.id, email: lead.email ?? '', householdId: lead.householdId };
 
         // [personId] target outside the caller and their household, so
         // self/own-household edit guards never decide the case.
@@ -401,6 +415,8 @@ describe('Registry route admission gates', () => {
                     // handler fn adds an inline staff-only roster gate the registry grammar
                     // can't express ([id] is an event id). An admin clears that inline gate.
                     mockSession.mockResolvedValue({ user: { ...plainUser, isSysadmin: true } });
+                } else if (plan.routePath === '/api/membership/not-renewing') {
+                    mockSession.mockResolvedValue({ user: leadUser });
                 } else {
                     // session / household-member: any real authenticated user.
                     mockSession.mockResolvedValue({ user: plainUser });

@@ -130,6 +130,9 @@ export const IN_FLIGHT_RENEWAL: readonly ProcessStatus[] = [
     "RENEWAL_PENDING_BG",
 ];
 
+/** An in-flight RENEWAL the household has already confirmed: past PENDING_RENEWAL. */
+export const RENEWAL_UNDERWAY: readonly ProcessStatus[] = IN_FLIGHT_RENEWAL.filter((s) => s !== "PENDING_RENEWAL");
+
 /**
  * A PERSON_BG obligation still outstanding for its subject: awaiting review, or
  * BLOCKED (a manual follow-up the board owns, never auto-reopened). NOT a
