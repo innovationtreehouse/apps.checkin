@@ -139,7 +139,7 @@ export async function openPersonAgreement(
             },
         });
         return created;
-    });
+    }, { maxWait: 5_000, timeout: 15_000 });
 }
 
 /** The caller's own open agreement, if any — the process they sign on /membership. */
