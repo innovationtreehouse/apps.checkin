@@ -225,7 +225,7 @@ describe('enroll by hand', () => {
         as(financeId, { isFinance: true });
         const { status, data } = await post({ participantId: b.id, basis: 'MATCHED_ORDER', shopifyOrderId: oid });
         expect(status).toBe(409);
-        expect(data.error).toMatch(/other people/);
+        expect(data.error).toMatch(/someone besides this person/);
         expect((await rowOf(b.id)).status).toBe('PENDING');
     });
 
