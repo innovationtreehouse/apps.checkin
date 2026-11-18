@@ -110,11 +110,6 @@ export async function ensurePaymentLinkForUser(userId: number) {
 }
 
 /**
- * What a payment did. `noop` is a redelivery of the order already recorded;
- * every other non-settling outcome is money that landed on nothing awaiting it,
- * which the webhook and the reconciler raise for the board.
- */
-/**
  * `boundary` goes with `requireRequested`: the request's own year is then read
  * under the row lock and certified in place of `appliesToYear`.
  */
@@ -128,6 +123,11 @@ export function paymentPlanRequestYear(
     return row.paymentPlanYear ?? liveMembershipYear(boundary, row.stageEnteredAt ?? row.createdAt);
 }
 
+/**
+ * What a payment did. `noop` is a redelivery of the order already recorded;
+ * every other non-settling outcome is money that landed on nothing awaiting it,
+ * which the webhook and the reconciler raise for the board.
+ */
 export type ActivateOutcome =
     | "active"
     | "held"
