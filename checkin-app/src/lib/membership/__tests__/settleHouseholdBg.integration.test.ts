@@ -9,6 +9,7 @@ import type { OrgMembershipProcessStatus } from '@/generated/prisma/client';
 import prisma from '@/lib/prisma';
 import { blockedByCheckReview, releaseDepartedRejection, settleHouseholdBg } from '@/lib/membership/settleHouseholdBg';
 import { boardResetReview } from '@/lib/membership/review';
+import { markContractSigned } from '@/lib/membership/external';
 import { SELF_GRANT_REFUSAL_TABLE } from '@/lib/membership/selfGrantGuard';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { notifyBoardPaidReject } from '@/lib/membership/boardAlerts';
@@ -510,5 +511,41 @@ describe('a blocked application closed and reopened', () => {
         await closeAndReopen(id);
         expect(await blockedByCheckReview(prisma, id)).toBe(false);
         expect(await settleHouseholdBg(f.householdId)).toEqual([]);
+    });
+});
+
+describe('a paid application its household never signed for', () => {
+    async function paidUnsignedBlocked() {
+        const f = await family({ leadCheck: null });
+        const leadReviewId = await checkReview(f.leadId, 'PENDING_BG_REVIEW');
+        const id = await application(f.orgMembershipId, 'BLOCKED', { paidAt: new Date() });
+        await prisma.orgMembershipProcess.update({ where: { id }, data: { contractSignedAt: null } });
+        await prisma.auditLog.create({ data: { actorId: 0, action: 'EDIT', tableName: 'OrgMembershipProcess', affectedEntityId: id, oldData: { status: 'PENDING_EXTERNAL_ACTION' }, newData: { status: 'BLOCKED' } } });
+        return { ...f, id, leadReviewId };
+    }
+
+    it('resets to the agreement step, and activates only once signed and cleared', async () => {
+        const f = await paidUnsignedBlocked();
+        const board = await family();
+        expect(await boardResetReview(f.id, board.leadId, { reason: 'reset' })).toEqual({ status: 'PENDING_EXTERNAL_ACTION' });
+        expect((await row(f.id)).status).toBe('PENDING_EXTERNAL_ACTION');
+
+        await markContractSigned(f.id);
+        expect((await row(f.id)).status).toBe('PENDING_BG_CLEARANCE');
+
+        await prisma.orgMembershipProcess.update({ where: { id: f.leadReviewId }, data: { status: 'ACTIVE', bgClearedAt: FRESH } });
+        await prisma.person.update({ where: { id: f.leadId }, data: { lastBackgroundCheck: FRESH } });
+        expect(await settleHouseholdBg(f.householdId)).toEqual(['cleared']);
+        expect((await row(f.id)).status).toBe('ACTIVE');
+        expect((await prisma.orgMembership.findUniqueOrThrow({ where: { id: f.orgMembershipId } })).status).toBe('ACTIVE');
+    });
+
+    it('is never activated at PENDING_BG_CLEARANCE while unsigned', async () => {
+        const f = await family();
+        const id = await application(f.orgMembershipId, 'PENDING_BG_CLEARANCE', { paidAt: new Date() });
+        await prisma.orgMembershipProcess.update({ where: { id }, data: { contractSignedAt: null } });
+        expect(await settleHouseholdBg(f.householdId)).toEqual([]);
+        expect(await row(id)).toMatchObject({ status: 'PENDING_BG_CLEARANCE', bgClearedAt: null });
+        expect((await prisma.orgMembership.findUniqueOrThrow({ where: { id: f.orgMembershipId } })).status).toBe('NONE');
     });
 });
