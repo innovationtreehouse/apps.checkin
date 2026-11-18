@@ -62,6 +62,7 @@ describe('ending a program', () => {
     });
 
     it('allows it once the sale has ended', async () => {
+        tx.program.findUnique.mockResolvedValueOnce(ended);
         expect((await updateProgram(ended, { phase: 'FINISHED' }, actor)).ok).toBe(true);
     });
 });
@@ -75,6 +76,7 @@ describe('re-arming an ended sale', () => {
     });
 
     it('allows it for a program that has not ended', async () => {
+        tx.program.findUnique.mockResolvedValueOnce(ended);
         const result = await updateProgram(ended, { offSaleAt: '2099-06-01' }, actor);
         expect(result.ok).toBe(true);
         expect(tx.program.update.mock.calls[0][0].data).toMatchObject({ saleEndedAt: null });
