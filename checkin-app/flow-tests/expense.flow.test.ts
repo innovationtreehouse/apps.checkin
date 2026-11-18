@@ -285,7 +285,7 @@ describe("expense — FINANCE journey", () => {
     const seed = await send(f, "POST", "/api/expense/capital-assets/seed", [{ assetNumber: `ITFA${String(stamp).slice(-4)}`, description: "Seed saw" }]);
     expect(seed.status).toBe(200);
     expect(seed.json).toMatchObject({ created: 1, errors: 0 });
-    expect((await send(f, "POST", "/api/expense/qb-exclusions", { qbTxnId: `qb-${stamp}`, reason: "hand-booked" })).status).toBe(200);
+    expect((await send(f, "POST", "/api/expense/qb-exclusions", { qbTxnEntity: "Purchase", qbTxnId: `qb-${stamp}`, reason: "hand-booked" })).status).toBe(200);
     const candidates = await send(f, "GET", `/api/expense/expenses/${HELD_EXPENSE}/qb-candidates`);
     expect(candidates.status).toBe(503);
     expect(JSON.stringify(candidates.json)).toContain("QuickBooks is not connected");

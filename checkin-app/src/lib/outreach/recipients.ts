@@ -17,20 +17,29 @@ export interface RecipientSnapshot {
 
 /**
  * Renewal outreach goes only to leads of live households whose membership is ACTIVE,
- * which also rules out a DENIED household. `archivedAt` is checked here because row
+ * which also rules out a DENIED household, and skips a household that has said it
+ * won't renew into the live year, the one renewals buy. `archivedAt` is checked here because row
  * security hides an archived household only from queries that reach Household.
  */
 function audienceWhere(emailType: EmailType, liveYear: number | null): Prisma.PersonWhereInput {
     const where: Prisma.PersonWhereInput = {
         isHouseholdLead: true,
-        household: { archivedAt: null, orgMembership: { status: "ACTIVE" } },
+        household: {
+            archivedAt: null,
+            orgMembership: {
+                status: "ACTIVE",
+                ...(liveYear !== null && { OR: [{ notRenewingYear: null }, { notRenewingYear: { not: liveYear } }] }),
+            },
+        },
     };
     if (emailType === "opening") return where;
     // The reminder skips a household that has completed renewal for the year a renewal
     // buys now. A paid renewal still waiting on its background check is not complete.
     return {
-        ...where,
-        NOT: { household: { orgMembership: { processes: { some: { AND: [settledThisCycleWhere(liveYear), { status: "ACTIVE" }] } } } } },
+        AND: [
+            where,
+            { NOT: { household: { orgMembership: { processes: { some: { AND: [settledThisCycleWhere(liveYear), { status: "ACTIVE" }] } } } } } },
+        ],
     };
 }
 

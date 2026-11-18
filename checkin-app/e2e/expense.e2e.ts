@@ -144,6 +144,7 @@ test.describe("expenses in the browser", () => {
     if (before) {
       await unitThreshold.fill(before);
       await save.click();
+      await expect(page.locator(".mantine-Notification-root").filter({ hasText: "Settings saved" })).toBeVisible();
       await page.reload();
       await expect(unitThreshold).toHaveValue(before);
     }

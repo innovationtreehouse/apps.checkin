@@ -9,6 +9,7 @@ beforeEach(() => resetRtl());
 
 let mockLoads: Record<string, unknown> = {};
 let mockErrors: Record<string, string> = {};
+let mockIsFinance = true;
 const mockSend = jest.fn();
 
 jest.mock("@checkin/expense/components/api", () => ({
@@ -17,7 +18,7 @@ jest.mock("@checkin/expense/components/api", () => ({
     error: path ? mockErrors[path] ?? null : null,
     reload: () => {},
   }),
-  useRoles: () => ({ isFinance: true, isBoard: false }),
+  useRoles: () => ({ isFinance: mockIsFinance, isBoard: !mockIsFinance }),
   paged: jest.requireActual("@checkin/component-ui").paged,
   send: (...args: unknown[]) => mockSend(...args),
 }));
@@ -164,7 +165,11 @@ describe("Account mapping catalog load failure", () => {
 });
 
 describe("Account mapping inactive QuickBooks accounts", () => {
-  it("offers no inactive account, and warns beside a rule that books to one", () => {
+  afterEach(() => {
+    mockIsFinance = true;
+  });
+
+  function renderInactiveRule() {
     cleanup();
     mockLoads = {
       ...mockLoads,
@@ -176,8 +181,18 @@ describe("Account mapping inactive QuickBooks accounts", () => {
       ],
     };
     render(<MantineProvider><AccountMappingPage /></MantineProvider>);
-    const warning = screen.getByText("Old supplies is inactive in QuickBooks. Delete it and add an active account.").closest<HTMLElement>("[role=alert]")!;
+  }
+
+  it("offers no inactive account, and warns beside a rule that books to one", () => {
+    renderInactiveRule();
+    const warning = screen.getByText("Old supplies is inactive in QuickBooks. Delete this rule and add one with an active account.").closest<HTMLElement>("[role=alert]")!;
     expect(within(warning).getByRole("button", { name: "Update now" })).toBeInTheDocument();
     expect(offered()).toEqual(["Supplies"]);
+  });
+
+  it("tells Board, who cannot delete a rule, that Finance fixes it", () => {
+    mockIsFinance = false;
+    renderInactiveRule();
+    expect(screen.getByText("Old supplies is inactive in QuickBooks. Finance can fix this.")).toBeInTheDocument();
   });
 });

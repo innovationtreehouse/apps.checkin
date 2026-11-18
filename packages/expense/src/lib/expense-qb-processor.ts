@@ -1,5 +1,4 @@
 import { catalogSettingsMessage, isNotWired, kindOf, ServiceError } from "@checkin/component-kit";
-import { allocateCents } from "@checkin/money";
 import { db, isUniqueConstraintError, type Db } from "../db";
 import type { AccountMapping, ExpenseLineItem } from "../db/schema";
 import { HoldReason, type HoldReason as HoldReasonType } from "./expense-rules";
@@ -9,11 +8,11 @@ import { lookupItems, getItem, listCategories, listSubcategories } from "./catal
 import { matchingRules, type CatalogInfo } from "./account-rules";
 import { StaleStateError, advanceWorkflow, advanceWorkflowInTx, unlessRaceLost, type Actor } from "./workflow-engine";
 import { writeAudit } from "./audit";
-import { lockExpense, storedTaxWaits, unsignedLines } from "./signoff-facts";
-import { reimburseeUnknown } from "./signoff";
+import { lockExpense, outboxHeldIds } from "./signoff-facts";
 import { postExpenseToQb, type PostOutcome } from "./expense-qb-poster";
 import { getExpenseRuntime } from "../runtime";
 import { sendOutcomeNotices } from "./outcome-notices";
+import { allocationsFor } from "../qb-write";
 import type { Expense } from "../generated/prisma/client";
 
 // ── Translation lookup ────────────────────────────────────────────────────────
@@ -257,52 +256,28 @@ async function persistConflicts(
   }
 }
 
-// ── Stage 3 (pure): allocate tax, shipping and discount over the lines ────────
-
-// Lines in id order, so a tie in the allocator goes to the earlier line.
-function allocationsFor(expense: Expense, lineItems: ExpenseLineItem[]) {
-  const lines = [...lineItems].sort((a, b) => a.id - b.id);
-  const weights = lines.map((li) => li.totalPriceCents);
-  const allocate = (totalCents: number) => {
-    const parts = allocateCents(totalCents, weights);
-    return new Map(lines.map((li, i) => [li.id, parts[i]]));
-  };
-  return {
-    taxAlloc: allocate(expense.taxCents),
-    shippingAlloc: allocate(expense.shippingCents),
-    discountAlloc: allocate(expense.discountCents),
-  };
-}
-
 // ── Stage 4 (atomic): commit QB processing ───────────────────────────────────
 // All domain writes (holds, allocations, resolved accounts, event) and the state transition are
 // committed in a single interactive transaction so the expense can never be
 // observed in qb_pending after the event has been persisted, nor vice-versa.
-// The sign-off holds are re-read under the expense lock before anything is written,
-// catalog snapshots included, so a seat void either lands first and holds the
-// expense, or finds it closed.
+// The sign-off holds, lines, rules and accounts are re-read under the expense lock before anything
+// is written, catalog snapshots included, so a seat void or an account change either lands first
+// and is used, or finds the expense closed. A line that no longer resolves leaves the expense in
+// qb_pending for the stranded sweep, which holds it.
 
-async function commitQbProcessing(
-  orgId: string,
-  expenseId: string,
-  lineItems: ExpenseLineItem[],
-  resolved: ResolvedItem[],
-  taxAlloc: Map<number, number>,
-  shippingAlloc: Map<number, number>,
-  discountAlloc: Map<number, number>,
-  rules: AccountMapping[],
-  resolution: Resolution,
-  resubmittedBy: Actor | undefined,
-): Promise<boolean> {
-  const resolvedLineItemIds = resolved.map((r) => r.id);
-
+async function commitQbProcessing(orgId: string, expenseId: string, resubmittedBy: Actor | undefined): Promise<boolean> {
   return db.$transaction(async (tx) => {
     await lockExpense(tx, expenseId);
     const current = await tx.expense.findUniqueOrThrow({ where: { id: expenseId } });
-    if (reimburseeUnknown(current) || (await unsignedLines(tx, current)).size > 0 || (await storedTaxWaits(tx, expenseId))) return false;
+    if ((await outboxHeldIds(tx, [current])).size > 0) return false;
+    const lineItems = await tx.expenseLineItem.findMany({ where: { expenseId } });
+    const rules = await tx.accountMapping.findMany({ where: { orgId } });
+    const resolution = await resolveAccountsForExpense(lineItems, rules, current.vendorName ?? "", !!resubmittedBy);
+    if (resolution.conflicts.length > 0) return false;
     if (resubmittedBy) await recordLiveRead(tx, resubmittedBy, expenseId, lineItems, rules, resolution);
     else await saveCatalogSnapshots(resolution.snapshots, tx);
 
+    const resolvedLineItemIds = resolution.resolved.map((r) => r.id);
     if (resolvedLineItemIds.length > 0) {
       await tx.expenseHold.updateMany({
         where: {
@@ -315,10 +290,8 @@ async function commitQbProcessing(
       });
     }
 
-    const accountByLine = new Map(resolved.map((r) => [r.id, r.account]));
-    // Finance can set a line's account until this lock is taken, and that account wins over the earlier read.
-    const manualAccounts = await tx.expenseLineItem.findMany({ where: { expenseId, manualQbAccount: { not: null } }, select: { id: true, manualQbAccount: true } });
-    for (const { id, manualQbAccount } of manualAccounts) accountByLine.set(id, manualQbAccount!);
+    const accountByLine = new Map(resolution.resolved.map((r) => [r.id, r.account]));
+    const { taxAlloc, shippingAlloc, discountAlloc } = allocationsFor(current, lineItems);
     for (const li of lineItems) {
       await tx.expenseLineItem.update({
         where: { id: li.id },
@@ -368,8 +341,8 @@ export async function checkAndProcessExpense(orgId: string, expenseId: string, r
     if (!expense) return;
   }
 
-  // Tax waiting on finance holds the expense open; approving the tax drains it.
-  if (await storedTaxWaits(db, expenseId)) return;
+  // A held expense stays out of the outbox; the step that clears the hold drains it. The outbox commit re-checks under the lock.
+  if ((await outboxHeldIds(db, [expense])).size > 0) return;
 
   // Historical backfill: already booked in QuickBooks. Skip the QB post entirely and land terminal.
   // Everything upstream (owner approval auto-resolved, capital review + depreciation) has already run.
@@ -391,10 +364,6 @@ export async function checkAndProcessExpense(orgId: string, expenseId: string, r
     where: { orgId, expenseId },
   });
   if (existing) return;
-
-  // An unknown reimbursee or a line with an unfilled sign-off seat holds the expense out of the
-  // outbox; setting the reimbursee or the last sign-off drains it. The outbox commit re-checks under the lock.
-  if (reimburseeUnknown(expense) || (await unsignedLines(db, expense)).size > 0) return;
 
   try {
     await processExpenseForQb(orgId, expenseId, expense, resubmittedBy);
@@ -471,15 +440,8 @@ async function processExpenseForQb(orgId: string, expenseId: string, expense: Ex
     });
   }
 
-  const { taxAlloc, shippingAlloc, discountAlloc } = allocationsFor(expense, lineItems);
-
   try {
-    const committed = await commitQbProcessing(
-      orgId, expenseId,
-      lineItems, resolution.resolved,
-      taxAlloc, shippingAlloc, discountAlloc,
-      rules, resolution, resubmittedBy,
-    );
+    const committed = await commitQbProcessing(orgId, expenseId, resubmittedBy);
     if (!committed) return;
     await sendOutcomeNotices([expenseId]);
   } catch (err) {
@@ -493,13 +455,12 @@ async function processExpenseForQb(orgId: string, expenseId: string, expense: Ex
 
 // ── Stranded recovery (catch-up sweep) ────────────────────────────────────────
 // Re-runs expenses left in qb_pending without an outbox row (a crash between the state advance and
-// QB processing). A qb_error expense waits for a person's retry. The host's daily cron step calls
-// it; checkAndProcessExpense is idempotent. Capped; returns counts only.
+// QB processing). A held expense or a qb_error one waits for a person, so neither takes a slot. The
+// host's daily cron step calls it; checkAndProcessExpense is idempotent. Capped; returns counts only.
 
 export async function recoverStrandedQbExpenses(limit = 50): Promise<{ checked: number; failed: number }> {
   const candidates = await db.expense.findMany({
     where: { state: "qb_pending" },
-    select: { id: true, orgId: true },
     orderBy: { submittedAt: "asc" },
   });
 
@@ -512,7 +473,9 @@ export async function recoverStrandedQbExpenses(limit = 50): Promise<{ checked: 
 
   let checked = 0;
   let failed = 0;
-  for (const { id, orgId } of candidates.filter((c) => !processedIds.has(c.id)).slice(0, limit)) {
+  const unprocessed = candidates.filter((c) => !processedIds.has(c.id));
+  const held = await outboxHeldIds(db, unprocessed);
+  for (const { id, orgId } of unprocessed.filter((c) => !held.has(c.id)).slice(0, limit)) {
     checked++;
     try {
       await checkAndProcessExpense(orgId, id);

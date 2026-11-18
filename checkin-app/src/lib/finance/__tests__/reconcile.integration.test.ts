@@ -1258,6 +1258,42 @@ describe("fast-path reversal webhook helper", () => {
         expect(takenBack()).toEqual([1, -1]);
     });
 
+    // The stock writer drops a raise owed after the sale ends (programStock.test.ts); here the give-back is still claimed once.
+    it("a test order on a program whose sale has ended claims its give-back once, and a later restocked refund takes the seats back", async () => {
+        const e = await makeOnSaleEnrollment({ email: `rs19c-${TAG}@ex.com`, status: "ACTIVE" });
+        await prisma.program.update({ where: { id: e.programId }, data: { saleEndedAt: new Date() } });
+        const oid = `${TAG}-329c`;
+        await returnTestOrderStock(oid, [{ variantId: e.variantId, quantity: 2 }]);
+        await returnTestOrderStock(oid, [{ variantId: e.variantId, quantity: 2 }]);
+        expect(adjustInventory.mock.calls.map(([, delta, , opts]) => [delta, opts])).toEqual([[2, { deferred: true }]]);
+        expect(await prisma.auditLog.count({ where: { tableName: "ShopifyTestOrderStock", secondaryAffectedEntity: e.programId } })).toBe(1);
+        await refund(oid, [{ variantId: e.variantId, quantity: 2, lineQuantity: 2 }]);
+        await refund(oid, [{ variantId: e.variantId, quantity: 2, lineQuantity: 2 }]);
+        expect(takenBack()).toEqual([2, -2]);
+    });
+
+    it("one refund restocking a recorded and an unrecorded program settles each once, on its own program", async () => {
+        const oid = `${TAG}-329d`;
+        const recorded = await makeOnSaleEnrollment({ email: `rs19d-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
+        const unrecorded = await makeOnSaleEnrollment({ email: `rs19e-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: `${TAG}-329e-paid` });
+        await prisma.program.update({ where: { id: unrecorded.programId }, data: { saleEndedAt: new Date() } });
+        orderLines.mockResolvedValue([
+            { variantId: recorded.variantId, quantity: 1, currentQuantity: 1 },
+            { variantId: unrecorded.variantId, quantity: 1, currentQuantity: 1 },
+        ]);
+        const lines = [
+            { variantId: recorded.variantId, quantity: 1, lineQuantity: 1 },
+            { variantId: unrecorded.variantId, quantity: 1, lineQuantity: 1 },
+        ];
+        expect(await refund(oid, lines)).toBe(true);
+        await refund(oid, lines);
+        const byProgram = adjustInventory.mock.calls.map(([program, delta]) => [program.id, delta]);
+        expect(byProgram).toHaveLength(2);
+        expect(byProgram).toEqual(expect.arrayContaining([[recorded.programId, -1], [unrecorded.programId, -1]]));
+        expect(await statusOf(recorded.programId, recorded.personId)).toBe("ACTIVE");
+        expect(await enrolled(unrecorded.programId)).toBe(1);
+    });
+
     it("a redelivered refund naming a sibling keeps both and takes the seat back once", async () => {
         const oid = `${TAG}-323`;
         const e = await makeOnSaleEnrollment({ email: `rs13-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });

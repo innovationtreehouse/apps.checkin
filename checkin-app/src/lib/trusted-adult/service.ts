@@ -172,7 +172,7 @@ export async function createTrustedAdult(input: CreateInput) {
  * approval is inside its expiry warning window. Callable by a lead of the household.
  */
 export async function renewTrustedAdult(id: number, actorId: number) {
-    const ta = await prisma.trustedAdult.findUnique({ where: { id }, select: { id: true, householdId: true } });
+    const ta = await prisma.trustedAdult.findUnique({ where: { id }, select: { id: true, householdId: true, trustedAdultPersonId: true } });
     if (!ta) throw new TrustedAdultError("not_found", "Trusted adult not found.");
     await assertHouseholdLead(ta.householdId, actorId);
 
@@ -184,6 +184,9 @@ export async function renewTrustedAdult(id: number, actorId: number) {
         const latest = await tx.trustedAdultReview.findFirst({ where: { trustedAdultId: ta.id }, orderBy: { id: "desc" } });
         if (latest && (latest.status === "PENDING_BOARD_REVIEW" || latest.status === "PENDING_SUBJECT_ACTION")) {
             throw new TrustedAdultError("already_open", "A review for this trusted adult is already in progress.");
+        }
+        if (await adultHouseholdDenied(tx, ta)) {
+            throw new TrustedAdultError("wrong_phase", "This household has been denied membership, so this trusted adult cannot be renewed.");
         }
         // A renewal adds a year to the current end, so it opens only once the expiry warning window does.
         const now = new Date();
@@ -237,7 +240,7 @@ export async function resubmitWithChanges(id: number, actorId: number, input: Re
         throw new TrustedAdultError("bad_input", "Tell the board what this adult may or may not do.");
     }
 
-    const ta = await prisma.trustedAdult.findUnique({ where: { id }, select: { id: true, householdId: true } });
+    const ta = await prisma.trustedAdult.findUnique({ where: { id }, select: { id: true, householdId: true, trustedAdultPersonId: true } });
     if (!ta) throw new TrustedAdultError("not_found", "Trusted adult not found.");
     await assertHouseholdLead(ta.householdId, actorId);
 
@@ -247,6 +250,9 @@ export async function resubmitWithChanges(id: number, actorId: number, input: Re
         const latest = await tx.trustedAdultReview.findFirst({ where: { trustedAdultId: ta.id }, orderBy: { id: "desc" } });
         if (latest && (latest.status === "PENDING_BOARD_REVIEW" || latest.status === "PENDING_SUBJECT_ACTION")) {
             throw new TrustedAdultError("already_open", "A review for this trusted adult is already in progress.");
+        }
+        if (await adultHouseholdDenied(tx, ta)) {
+            throw new TrustedAdultError("wrong_phase", "This household has been denied membership, so changes to this trusted adult cannot be submitted.");
         }
         const created = await tx.trustedAdultReview.create({
             data: {
@@ -291,7 +297,7 @@ export async function answerInfoRequest(id: number, actorId: number, input: Answ
     }
     const reply = input.reply?.trim() || null;
 
-    const ta = await prisma.trustedAdult.findUnique({ where: { id }, select: { id: true, householdId: true } });
+    const ta = await prisma.trustedAdult.findUnique({ where: { id }, select: { id: true, householdId: true, trustedAdultPersonId: true } });
     if (!ta) throw new TrustedAdultError("not_found", "Trusted adult not found.");
     await assertHouseholdLead(ta.householdId, actorId);
 
@@ -301,6 +307,9 @@ export async function answerInfoRequest(id: number, actorId: number, input: Answ
         const latest = await tx.trustedAdultReview.findFirst({ where: { trustedAdultId: ta.id }, orderBy: { id: "desc" } });
         if (!latest || latest.status !== "PENDING_SUBJECT_ACTION") {
             throw new TrustedAdultError("wrong_phase", "The board hasn't asked for more information on this trusted adult.");
+        }
+        if (await adultHouseholdDenied(tx, ta)) {
+            throw new TrustedAdultError("wrong_phase", "This household has been denied membership, so this answer cannot be sent to the board.");
         }
         const parent = await tx.trustedAdult.findUniqueOrThrow({ where: { id: ta.id } });
         const current = latest.proposedName == null

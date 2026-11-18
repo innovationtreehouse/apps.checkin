@@ -191,6 +191,13 @@ export const REGISTRY = {
         defaultBody: "A date of birth saved for {{personName}}, a lead of {{householdName}}, shows they are under 18. They are still its lead; nothing was changed. Please decide with the household. {{actionLink}}",
     },
 
+    "board.notRenewing": {
+        allowedTokens: { householdName: text, personName: text, year: text, actionLink: link("Open the household") },
+        sampleCtx: { householdName: "Rivera", personName: "Alex Rivera", year: "2027-2028", actionLink: SAMPLE_URL },
+        defaultSubject: "Not renewing: {{householdName}} for {{year}}",
+        defaultBody: "{{personName}}, a lead of {{householdName}}, says the household won't renew for {{year}}. Its membership continues to the end of the paid year, and renewal emails for {{year}} stop. There is nothing to approve; the family can still renew. {{actionLink}}",
+    },
+
     // ── ops incidents (lib/opsIncidents.ts) ─────────────────────────────────
     // Codes, counts and dates only: no amounts, donor or vendor names, or memo text.
     "ops.incidentOpened": {

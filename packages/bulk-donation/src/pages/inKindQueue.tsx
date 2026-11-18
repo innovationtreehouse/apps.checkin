@@ -243,7 +243,7 @@ function QbPanel({ item, onDone }: { item: QueueItem; onDone: () => void }) {
                 >
                   Set account
                 </Button>
-                {!lineAccount[l.id] && <InactivePickWarning saved={l.quickBooksAccountId} options={live.data} />}
+                {!lineAccount[l.id] && <InactivePickWarning saved={l.quickBooksAccountId} options={live.data} advice="Pick an active one." />}
               </Group>
             ))}
           </>

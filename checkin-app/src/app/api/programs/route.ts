@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { withAuth, getOptionalSessionUser } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { sendNotification } from "@/lib/notifications";
-import { createClaimantProduct, createShopifySingleVariantProgram } from "@/lib/shopify/products";
+import { createClaimantProduct, createShopifySingleVariantProgram, programProductHandle } from "@/lib/shopify/products";
 import { isProgramStoreClosed } from "@/lib/programs/storeClosed";
 import { adjustProgramInventory } from "@/lib/shopify/stock";
 import { logBackendError, logger } from "@/lib/logger";
@@ -15,6 +15,7 @@ import { staleWhileRevalidate } from "@/lib/staleCache";
 import { validateProgramAgeBounds, isLeaderAgeEligible } from "@/lib/programAge";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { parseProgramName, resolveProgramYear } from "@/lib/programs/update";
+import { isProgramNameTaken, PROGRAM_NAME_TAKEN, programNameFields } from "@/lib/programs/nameKey";
 import { enrollmentClosedBy } from "@/lib/programs/saleState";
 import { isLiveHousehold } from "@/lib/household/archived";
 import { ARCHIVED_HOUSEHOLD_REFUSAL, lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
@@ -186,7 +187,7 @@ function withClosedBy<P extends Omit<Parameters<typeof enrollmentClosedBy>[0], '
 export const POST = withAuth({ roles: ['isBoardMember'] }, async (req, auth) => {
     if (auth.type !== 'session') return apiError("Unauthorized", 401);
 
-    // Hoisted so the catch can name an orphaned Shopify product (created, but DB write failed) for manual cleanup.
+    // Hoisted so the catch can name an orphaned Shopify product (created, but its ids not saved) for manual cleanup.
     let shopifyData: { shopifyProductId: string, shopifyVariantId: string } | null = null;
     let claimantData: { claimantShopifyProductId: string, claimantShopifyVariantId: string } | null = null;
 
@@ -264,17 +265,13 @@ export const POST = withAuth({ roles: ['isBoardMember'] }, async (req, auth) => 
         // variant. The member price is never sent to the store: with no full
         // price there is no store product (sync-shopify mints it once one is set).
         const basePriceCents = nmPrice;
-        if (basePriceCents && basePriceCents > 0) {
-            shopifyData = await createShopifySingleVariantProgram(name, basePriceCents, maxPart, undefined, !(await isProgramStoreClosed()));
-            // Without it checkout falls back to the public variant; the board can mint it later via sync-shopify.
-            if (shopifyData) claimantData = await createClaimantProduct(name, basePriceCents);
-        }
 
-        const newProgram = await prisma.$transaction(async (tx) => {
+        // The row commits before any store product exists, so a create refused as a duplicate name leaves nothing in Shopify.
+        const createdProgram = await prisma.$transaction(async (tx) => {
             await lockLiveHouseholdsOf(tx, [mentorId]);
             const created = await tx.program.create({
                 data: {
-                    name,
+                    ...programNameFields(name),
                     leadMentorId: mentorId,
                     startAt: startDate,
                     endAt: endDate,
@@ -289,10 +286,6 @@ export const POST = withAuth({ roles: ['isBoardMember'] }, async (req, auth) => 
                     orgMemberPriceCents: mPrice,
                     nonOrgMemberPriceCents: nmPrice,
                     maxParticipants: maxPart,
-                    shopifyProductId: shopifyData?.shopifyProductId || null,
-                    shopifyVariantId: shopifyData?.shopifyVariantId || null,
-                    claimantShopifyProductId: claimantData?.claimantShopifyProductId || null,
-                    claimantShopifyVariantId: claimantData?.claimantShopifyVariantId || null,
                 }
             });
             await recordAudit(tx, personActor(auth.user.id), {
@@ -304,6 +297,28 @@ export const POST = withAuth({ roles: ['isBoardMember'] }, async (req, auth) => 
             return created;
         });
 
+        // Stable handles, so a Sync to Shopify run after a failure here finds these products instead of minting twice.
+        let newProgram = createdProgram;
+        if (basePriceCents && basePriceCents > 0) {
+            shopifyData = await createShopifySingleVariantProgram(name, basePriceCents, maxPart, programProductHandle(createdProgram, "public"), !(await isProgramStoreClosed()));
+            // Without it checkout falls back to the public variant; the board can mint it later via sync-shopify.
+            if (shopifyData) claimantData = await createClaimantProduct(name, basePriceCents, programProductHandle(createdProgram, "claimant"));
+            if (shopifyData) {
+                const ids = { ...shopifyData, ...claimantData };
+                newProgram = await prisma.$transaction(async (tx) => {
+                    const updated = await tx.program.update({ where: { id: createdProgram.id }, data: ids });
+                    await recordAudit(tx, personActor(auth.user.id), {
+                        action: 'EDIT',
+                        tableName: 'Program',
+                        affectedEntityId: updated.id,
+                        oldData: createdProgram,
+                        newData: updated,
+                    });
+                    return updated;
+                });
+            }
+        }
+
         if (newProgram.leadMentorId) {
             await sendNotification(newProgram.leadMentorId, 'PROGRAM_ASSIGNMENT', { programName: newProgram.name, programId: newProgram.id });
         }
@@ -314,12 +329,15 @@ export const POST = withAuth({ roles: ['isBoardMember'] }, async (req, auth) => 
         const responseObj: Record<string, unknown> = { success: true, program: newProgram };
         if (((mPrice && mPrice > 0) || (nmPrice && nmPrice > 0)) && !shopifyData) {
             responseObj.warning = "Program created, but Shopify integration failed or is not configured. Payment links will not work.";
+        } else if (shopifyData && !claimantData) {
+            responseObj.warning = "Program created, but its Shopify reserved-seat product failed, so payment links will not work. Run Sync to Shopify to retry.";
         } else if (!stockOk) {
             responseObj.warning = "Program created, but setting its Shopify stock failed, so it may show as sold out. Check System Status > Link Status.";
         }
 
         return NextResponse.json(responseObj);
     } catch (error: unknown) {
+        if (isProgramNameTaken(error)) return apiError(PROGRAM_NAME_TAKEN, 409);
         if (shopifyData?.shopifyProductId) {
             logger.error("[Shopify] Orphaned product after program DB write failed, manual cleanup needed:", shopifyData.shopifyProductId);
         }

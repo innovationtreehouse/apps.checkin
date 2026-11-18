@@ -233,8 +233,6 @@ export const classifications = {
         matchState: 'internal',
         claimedAt: 'internal',
         qbCreateAttemptedAt: 'internal',
-        qbPostAttempts: 'internal',
-        qbFailureKind: 'internal',
         qbFirstFailedAt: 'internal',
         qbLastError: 'internal',
         qbNote: 'internal',

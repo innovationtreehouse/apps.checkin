@@ -6,7 +6,8 @@ import { liveMembershipYear } from "@/lib/membership/renewal";
 import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import * as mirror from "@/lib/shopifyRead/client";
 import type { MirrorOrder } from "@/lib/shopifyRead/client";
-import { raisePaymentException, recordReversal, type PaymentExceptionKind } from "./exceptions";
+import { notifyBoardPaymentException } from "@/lib/membership/boardAlerts";
+import { raisePaymentException, recordPaymentException, recordReversal, type PaymentExceptionKind } from "./exceptions";
 import { isPaid, isReversed } from "./orderStatus";
 
 /**
@@ -18,14 +19,28 @@ export async function raiseMembershipPaymentOutcome(
     outcome: ActivateOutcome,
     ref: { shopifyOrderId: string | null; processId: number },
 ): Promise<void> {
+    if (outcome === "paid_while_blocked") return raisePaidWhileBlocked(ref);
     const kind: PaymentExceptionKind | null =
-        outcome === "paid_while_blocked" ? "PAID_WHILE_BLOCKED"
-        : outcome === "no_item" ? "NO_ITEM"
+        outcome === "no_item" ? "NO_ITEM"
         // Duplicate order, both leads paying, payment after close or certify.
         : outcome === "nothing_due" ? "UNMATCHED_ORDER"
         : outcome === "refunded" ? "REVERSED_BEFORE_ACTIVATION"
         : null;
     if (kind) await raisePaymentException(kind, { ...ref, ...(outcome === "refunded" ? { severity: "CRITICAL" as const } : {}) });
+}
+
+/**
+ * Raised under the process lock settleHouseholdBg takes, so an application that has
+ * since activated on this order, and owes no refund, never gets the problem.
+ */
+async function raisePaidWhileBlocked(ref: { shopifyOrderId: string | null; processId: number }): Promise<void> {
+    const notice = await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${ref.processId} FOR UPDATE`;
+        const process = await tx.orgMembershipProcess.findUnique({ where: { id: ref.processId }, select: { status: true, shopifyOrderId: true } });
+        if (process?.status === "ACTIVE" && !!ref.shopifyOrderId && process.shopifyOrderId === ref.shopifyOrderId) return null;
+        return recordPaymentException(tx, "PAID_WHILE_BLOCKED", ref);
+    });
+    if (notice) await notifyBoardPaymentException(notice.kind, notice.severity, notice.exceptionId);
 }
 
 /**

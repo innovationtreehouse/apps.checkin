@@ -57,7 +57,7 @@ jest.mock("@/lib/prisma", () => {
             household,
             boardSettings: { findUnique: jest.fn().mockResolvedValue(null) },
             person: { findUnique: jest.fn() },
-            auditLog: { create: jest.fn() },
+            auditLog: { create: jest.fn(), findMany: jest.fn() },
             $transaction: jest.fn((fn: (t: typeof tx) => unknown) => fn(tx)),
             tx,
         },
@@ -70,6 +70,8 @@ const mockSession = getServerSession as jest.Mock;
 const db = prisma as unknown as {
     household: { findUnique: jest.Mock; findMany: jest.Mock; update: jest.Mock };
     person: { findUnique: jest.Mock };
+    boardSettings: { findUnique: jest.Mock };
+    auditLog: { findMany: jest.Mock };
     tx: { person: { update: jest.Mock; updateMany: jest.Mock; findUnique: jest.Mock; findUniqueOrThrow: jest.Mock; count: jest.Mock } };
 };
 
@@ -120,10 +122,37 @@ describe("GET /api/membership-ops/households", () => {
         const args = db.household.findMany.mock.calls[0][0];
         expect(args).not.toHaveProperty("include");
         expect(Object.keys(args.select).sort()).toEqual(["householdMembers", "id", "name", "orgMembership"]);
-        expect(Object.keys(args.select.orgMembership.select).sort()).toEqual(["memberSince", "processes", "status"]);
+        expect(Object.keys(args.select.orgMembership.select).sort()).toEqual(["id", "memberSince", "notRenewingYear", "processes", "status"]);
         const [row] = (await res.json()).households;
-        expect(Object.keys(row).sort()).toEqual(["awaitingPayment", "bgValidUntil", "householdMembers", "id", "name", "orgMembership", "settledForComingYear", "validUntil"]);
+        expect(Object.keys(row).sort()).toEqual(["awaitingPayment", "bgValidUntil", "householdMembers", "id", "name", "notRenewing", "orgMembership", "settledForComingYear", "validUntil"]);
         expect(row.orgMembership).toEqual({ status: "ACTIVE", memberSince: null });
+        expect(row.notRenewing).toBeNull();
+    });
+
+    it("labels a household that said it won't renew into the noted year, with the date it said so", async () => {
+        signIn({ isBoardMember: true });
+        jest.useFakeTimers({ now: new Date(Date.UTC(2026, 6, 15)), doNotFake: ["nextTick", "setImmediate"] });
+        try {
+            db.boardSettings.findUnique.mockResolvedValueOnce({ orgMembershipYearBoundary: new Date(Date.UTC(2020, 8, 1)), bgRecheckMonths: 0 });
+            const said = new Date(Date.UTC(2026, 6, 3));
+            db.auditLog.findMany.mockResolvedValueOnce([
+                { affectedEntityId: 9, timestamp: new Date(Date.UTC(2025, 6, 3)), newData: { notRenewingYear: 2025 } },
+                { affectedEntityId: 9, timestamp: said, newData: { notRenewingYear: 2026 } },
+                { affectedEntityId: 9, timestamp: new Date(Date.UTC(2026, 6, 4)), newData: { status: "ACTIVE" } },
+            ]);
+            db.household.findMany.mockResolvedValue([
+                { id: 10, name: "Noted", householdMembers: [], orgMembership: { id: 9, status: "ACTIVE", memberSince: null, notRenewingYear: 2026, processes: [] } },
+                { id: 11, name: "Old note", householdMembers: [], orgMembership: { id: 8, status: "ACTIVE", memberSince: null, notRenewingYear: 2025, processes: [] } },
+            ]);
+            const res = await GET(request("http://localhost/api/membership-ops/households"));
+            const [noted, old] = (await res.json()).households;
+            expect(noted.notRenewing).toEqual({ year: 2026, since: said.toISOString() });
+            expect(noted.orgMembership).toEqual({ status: "ACTIVE", memberSince: null });
+            expect(old.notRenewing).toBeNull();
+            expect(db.auditLog.findMany.mock.calls[0][0].where).toMatchObject({ tableName: "OrgMembership", affectedEntityId: { in: [9] } });
+        } finally {
+            jest.useRealTimers();
+        }
     });
 });
 

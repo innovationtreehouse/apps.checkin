@@ -15,6 +15,7 @@ import { membershipYearLabel, programYearsTouched } from "@/lib/programYear";
 import { ProgramPhase, EnrollmentStatus, type Program } from "@/generated/prisma/client";
 import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
 import { ServiceError } from "@checkin/component-kit";
+import { isProgramNameTaken, PROGRAM_NAME_TAKEN, programNameFields } from "@/lib/programs/nameKey";
 import { personActor, recordAudit } from "@/lib/auditActor";
 
 export interface ProgramEditor {
@@ -349,7 +350,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
     }
 
     const updateData: Record<string, unknown> = {
-        ...(newName !== undefined && { name: newName }),
+        ...(newName !== undefined && programNameFields(newName)),
         ...(leadMentorId !== undefined && { leadMentorId }),
         ...(newStartAt !== undefined && { startAt: newStartAt }),
         ...(newEndAt !== undefined && { endAt: newEndAt }),
@@ -395,6 +396,10 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
             await tx.$queryRaw`SELECT id FROM "Program" WHERE id = ${programId} FOR UPDATE`;
             if (newLeader !== null) await lockLiveHouseholdsOf(tx, [newLeader]);
             const before = await tx.program.findUnique({ where: { id: programId } });
+            // The re-arm decision above was made on the caller's read of the sale.
+            if (before && isSaleEnded(before) !== saleEndedNow) {
+                throw new ServiceError(409, "This program's sale changed while you were editing. Reload and try again.");
+            }
             const after = await tx.program.update({ where: { id: programId }, data: updateData });
             await recordAudit(tx, personActor(actor.id), {
                 action: 'EDIT',
@@ -407,6 +412,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         }));
     } catch (e) {
         if (e instanceof ServiceError) return refuse("conflict", e.message);
+        if (isProgramNameTaken(e)) return refuse("conflict", PROGRAM_NAME_TAKEN);
         throw e;
     }
 
@@ -429,7 +435,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
     // Only fires when the program already has Shopify checkout wired up;
     // creation and sync-shopify set the initial stock themselves.
     let warning: string | undefined;
-    const oldMax = currentProgram.maxParticipants;
+    const oldMax = before.maxParticipants;
     const newMax = updatedProgram.maxParticipants;
     const hasShopifyVariant = !!updatedProgram.shopifyVariantId;
 
@@ -461,7 +467,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
     // store: a cleared or $0 full price is reported to admins and Shopify keeps its
     // old price. Only admin/board can change prices.
     const newBase = updatedProgram.nonOrgMemberPriceCents;
-    if (newBase !== currentProgram.nonOrgMemberPriceCents) {
+    if (newBase !== before.nonOrgMemberPriceCents) {
         const ok = await syncProgramPrice(updatedProgram, newBase);
         if (!ok) {
             const priceWarning = "Program saved, but the Shopify price is out of date — admins have been emailed. Set the price by hand in Shopify on both the public and reserved-seat products.";
@@ -470,7 +476,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
     }
 
     // The sweep hid the public product; reopening never re-lists it (automatic changes only reduce visibility).
-    const notice = rearmSale && currentProgram.productHiddenAt
+    const notice = rearmSale && before.productHiddenAt
         ? "Sale reopened. The public store product stays hidden: re-list it in Shopify by hand if it should sell again."
         : undefined;
     return { ok: true, program: updatedProgram, warning, notice };

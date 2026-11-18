@@ -26,6 +26,7 @@ jest.mock('@/lib/notifications', () => ({
 }));
 // Avoid hitting the real Shopify API; the route tolerates a null result.
 jest.mock('@/lib/shopify/products', () => ({
+    programProductHandle: jest.requireActual('@/lib/shopify/products').programProductHandle,
     createShopifySingleVariantProgram: jest.fn().mockResolvedValue(null),
 }));
 jest.mock('@/lib/shopify/stock', () => ({

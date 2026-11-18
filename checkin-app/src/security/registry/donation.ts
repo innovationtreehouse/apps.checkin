@@ -7,8 +7,8 @@ const IN_KIND_BY_SOURCE: FinanceViewModel = { field: 'source', map: { receipt: '
 // Reads admit FINANCE or BOARD (the board acts as finance's superuser); writes
 // admit FINANCE only, except the in-kind decision and the settings PATCH, which
 // also admit BOARD. Both see donor identity (`pii`) and the amounts and plumbing
-// (`internal`), except on the in-kind decision, settle, QuickBooks-resolve, bucket
-// and settings routes, whose responses carry no donor.
+// (`internal`), except on the in-kind decision, settle, QuickBooks-resolve,
+// capital, bucket and settings routes, whose responses carry no donor.
 // Ops (OPERATIONS or INVENTORY_MANAGER) is admitted only to the no-receipt
 // in-kind routes, with no `pii`: it records donors but never reads them back.
 // No sysadmin view: Finance Ops excludes sysadmins. No
@@ -98,6 +98,13 @@ defineRoute({ endpoint: 'POST /api/donations/in-kind/receipt/[id]/settle', autho
 // FINANCE only. The reply is the gift's queue item, which carries no donor.
 defineRoute({ endpoint: 'POST /api/donations/in-kind/receipt/[id]/qb-resolve', authorize: 'finance', envelope: null, returns: ['InKindQueueItemView'], orderedView: FINANCE_NO_PII_VIEW });
 defineRoute({ endpoint: 'POST /api/donations/in-kind/manual/[id]/qb-resolve', authorize: 'finance', envelope: null, returns: ['InKindQueueItemView'], orderedView: FINANCE_NO_PII_VIEW });
+
+// A gift's capital review: designate each line, then set each capital line's
+// period and owner — FINANCE only. The reply is the gift's lines, no donor.
+defineRoute({ endpoint: 'POST /api/donations/in-kind/receipt/[id]/capital-review', authorize: 'finance', envelope: null, returns: ['InKindDonationLine'], orderedView: FINANCE_NO_PII_VIEW });
+defineRoute({ endpoint: 'POST /api/donations/in-kind/manual/[id]/capital-review', authorize: 'finance', envelope: null, returns: ['ManualInKindDonationLine'], orderedView: FINANCE_NO_PII_VIEW });
+defineRoute({ endpoint: 'POST /api/donations/in-kind/receipt/[id]/set-depreciation-cycle', authorize: 'finance', envelope: null, returns: ['InKindDonationLine'], orderedView: FINANCE_NO_PII_VIEW });
+defineRoute({ endpoint: 'POST /api/donations/in-kind/manual/[id]/set-depreciation-cycle', authorize: 'finance', envelope: null, returns: ['ManualInKindDonationLine'], orderedView: FINANCE_NO_PII_VIEW });
 
 // In-kind gifts in the caller's buckets — FINANCE, BOARD or a bucket approver,
 // who sees them and does not decide them.

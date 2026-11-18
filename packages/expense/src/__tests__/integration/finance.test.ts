@@ -10,11 +10,13 @@ import { reimburseeOptions, setReimbursee, signLine, signoffStatus } from "../..
 import { checkAndProcessExpense } from "../../lib/expense-qb-processor";
 import { checkApprovalAutoTransition } from "../../lib/financial-flow";
 import { setDepreciationCycle, seedCapitalAssets, submitCapitalReview } from "../../services/capitalService";
+import { registerAssets, type AssetSource } from "../../lib/capital-register";
 import { checkOffFlag, listOpenFlags, raiseFlag } from "../../services/flagService";
 import { financeQueueRows } from "../../services/financeQueueService";
 import { approveLine } from "../../services/approvalService";
 import { claimQbTxn, excludeQbTxn, matchExpenseToQb, qbCandidates, qbMatchInputs } from "../../services/qbMatchService";
 import { inertQbReader, type QbTxn } from "../../contract";
+import { expenses } from "../../routes";
 
 const FINANCE = principal(3, { isFinance: true });
 const BOARD = principal(5, { isBoard: true });
@@ -337,6 +339,22 @@ describeDb("sign-off seats", () => {
       expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBeNull();
     });
 
+    it("the route adds nobody unless the adder says the new person is an adult", async () => {
+      const { id } = await unknownReimbursee();
+      const added: string[] = [];
+      bindPorts({ signoff: directory({ finance: [3], nonMembers: [900], added }) });
+      const put = (newPerson: Record<string, unknown>) =>
+        expenses.reimbursee({ req: new Request("http://test/api/expense", { method: "PUT", body: JSON.stringify({ newPerson }) }), params: { id }, principal: FINANCE });
+
+      await expect(put({ name: "Dana Field", isAdult: false })).rejects.toMatchObject({ status: 400 });
+      await expect(put({ name: "Dana Field" })).rejects.toMatchObject({ status: 400 });
+      expect(added).toEqual([]);
+      expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBeNull();
+
+      await put({ name: "Dana Field", isAdult: true });
+      expect(added).toEqual(["Dana Field"]);
+    });
+
     it("FINANCE cannot name a minor as reimbursee", async () => {
       const { id } = await unknownReimbursee();
       bindPorts({ signoff: directory({ finance: [3], minors: [7] }) });
@@ -428,6 +446,128 @@ describeDb("capital register", () => {
     expect(await db.capitalAsset.count({ where: { sourceLineItemId: li } })).toBe(0);
   });
 
+  const lathe = { costCents: 90000, acquisitionDate: "2026-09-10", depreciationYears: 5, description: "Lathe" };
+  async function mint(source: AssetSource, units = 1) {
+    return db.$transaction((tx) => registerAssets(tx, { userId: 3 }, ORG, source, Array.from({ length: units }, () => lathe)));
+  }
+  async function expenseLine() {
+    const id = await seedExpense({ state: "set_depreciation_cycle" });
+    return { kind: "expense_line" as const, expenseId: id, lineItemId: await seedLineItem(id) };
+  }
+
+  it("registering a line again returns the same numbers and audits each asset once", async () => {
+    const source = await expenseLine();
+    expect(await mint(source, 2)).toEqual(["ITFA01", "ITFA02"]);
+    expect(await mint(source, 2)).toEqual(["ITFA01", "ITFA02"]);
+    expect(await db.capitalAsset.findMany({ select: { sourceKind: true, unitIndex: true }, orderBy: { unitIndex: "asc" } }))
+      .toEqual([{ sourceKind: "expense_line", unitIndex: 0 }, { sourceKind: "expense_line", unitIndex: 1 }]);
+    const audit = await db.expenseOrgAuditLog.findMany({ where: { action: "capital_asset_registered" }, orderBy: { id: "asc" } });
+    expect(audit.map((a) => a.entityId)).toEqual(["ITFA01", "ITFA02"]);
+  });
+
+  it("never issues a number twice: a removed asset's number stays used, and a higher seeded number raises the mark", async () => {
+    await mint(await expenseLine());
+    await db.capitalAsset.deleteMany();
+    expect(await mint(await expenseLine())).toEqual(["ITFA02"]);
+    await seedCapitalAssets(FINANCE, [{ assetNumber: "ITFA20", description: "Old saw" }]);
+    expect(await mint(await expenseLine())).toEqual(["ITFA21"]);
+  });
+
+  it("a seed before an org's first mint starts the mark at the seeded number", async () => {
+    await seedCapitalAssets(FINANCE, [{ assetNumber: "ITFA20", description: "Old saw" }]);
+    expect(await db.capitalAssetSequence.findUnique({ where: { orgId: ORG } })).toMatchObject({ highestIssued: 20 });
+    expect(await mint(await expenseLine())).toEqual(["ITFA21"]);
+  });
+
+  it("a mark behind the register mints past the register's highest number", async () => {
+    await db.capitalAssetSequence.create({ data: { orgId: ORG, highestIssued: 5 } });
+    await db.capitalAsset.create({ data: { orgId: ORG, assetNumber: "ITFA20", description: "Old saw", seeded: true } });
+    expect(await mint(await expenseLine())).toEqual(["ITFA21"]);
+  });
+
+  it("after a seed and an org's first mint run together, the next mint still finds a free number", async () => {
+    const source = await expenseLine();
+    await Promise.all([mint(source, 3), seedCapitalAssets(FINANCE, [{ assetNumber: "ITFA02", description: "Old saw" }])]);
+    await expect(mint(await expenseLine())).resolves.toHaveLength(1);
+  });
+
+  it("two concurrent mints get different numbers", async () => {
+    const [a, b] = await Promise.all([mint(await expenseLine(), 2), mint(await expenseLine(), 2)]);
+    expect(new Set([...a, ...b]).size).toBe(4);
+  });
+
+  it("the capital steps do not open while the reimbursee is unknown; naming the reimbursee opens them", async () => {
+    await db.expenseOrgSettings.updateMany({ where: { orgId: ORG }, data: { capitalReviewEnabled: true } });
+    bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5] }) });
+    const id = await seedExpense({ state: "owner_approval", needsReimbursement: true, receiptTotalCents: 9000 });
+    const li = await seedLineItem(id, { unitPriceCents: 9000, totalPriceCents: 9000 });
+    await seedApproval(id, li, { ownerId: 100, status: "approved", decidedByUserId: 2 });
+
+    await checkApprovalAutoTransition(id, { userId: 3 });
+    expect((await db.expense.findUniqueOrThrow({ where: { id } })).state).toBe("owner_approval");
+
+    await setReimbursee(ORG, id, { personId: 1 }, FINANCE);
+    expect((await db.expense.findUniqueOrThrow({ where: { id } })).state).toBe("capital_review");
+  });
+
+  it("capital review refuses an expense whose reimbursee is unknown", async () => {
+    const id = await seedExpense({ state: "capital_review", needsReimbursement: true });
+    const li = await seedLineItem(id);
+    await expect(submitCapitalReview(FINANCE, id, { lineItems: [{ lineItemId: li, isCapital: true, capitalOwnerId: 100 }] })).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("a purchased asset is registered at its share of what its line books at", async () => {
+    const id = await seedExpense({ state: "set_depreciation_cycle", taxCents: 8_001, shippingCents: 5_000, discountCents: 10_000 });
+    const li = await seedLineItem(id, { quantity: 2, unitPriceCents: 50_000, totalPriceCents: 100_000, isCapital: true, description: "Table" });
+    await setDepreciationCycle(FINANCE, id, { items: [{ lineItemId: li, depreciationYears: 5, ownerId: 100 }] });
+    const assets = await db.capitalAsset.findMany({ where: { sourceLineItemId: li }, orderBy: { unitIndex: "asc" } });
+    expect(assets.map((a) => a.costCents)).toEqual([51_501, 51_500]);
+  });
+
+  describe("a backfilled expense", () => {
+    async function backfilled(quantity = 2) {
+      await seedCapitalAssets(FINANCE, [{ assetNumber: "ITFA05", description: "Lathe" }, { assetNumber: "ITFA06", description: "Lathe" }]);
+      const id = await seedExpense({ state: "set_depreciation_cycle", backfill: true });
+      const li = await seedLineItem(id, { quantity, isCapital: true, description: "Lathe" });
+      return { id, li };
+    }
+
+    it("links each unit to its seeded asset and mints nothing", async () => {
+      const { id, li } = await backfilled();
+      await setDepreciationCycle(FINANCE, id, { items: [{ lineItemId: li, depreciationYears: 5, ownerId: 100, seededAssetNumbers: ["itfa5", "ITFA06"] }] });
+      expect(await db.capitalAsset.findMany({ select: { assetNumber: true, sourceKind: true, sourceLineItemId: true, unitIndex: true, seeded: true }, orderBy: { assetNumber: "asc" } })).toEqual([
+        { assetNumber: "ITFA05", sourceKind: "expense_line", sourceLineItemId: li, unitIndex: 0, seeded: true },
+        { assetNumber: "ITFA06", sourceKind: "expense_line", sourceLineItemId: li, unitIndex: 1, seeded: true },
+      ]);
+      expect(await db.expenseOrgAuditLog.count({ where: { action: "capital_asset_linked" } })).toBe(2);
+      expect(await db.expenseOrgAuditLog.count({ where: { action: "capital_asset_registered" } })).toBe(0);
+    });
+
+    it("refuses without a seeded number for every unit, or with a number that is not seeded", async () => {
+      const { id, li } = await backfilled();
+      await expect(setDepreciationCycle(FINANCE, id, { items: [{ lineItemId: li, depreciationYears: 5, ownerId: 100 }] })).rejects.toMatchObject({ status: 400 });
+      await expect(setDepreciationCycle(FINANCE, id, { items: [{ lineItemId: li, depreciationYears: 5, ownerId: 100, seededAssetNumbers: ["ITFA05"] }] })).rejects.toMatchObject({ status: 400 });
+      await expect(setDepreciationCycle(FINANCE, id, { items: [{ lineItemId: li, depreciationYears: 5, ownerId: 100, seededAssetNumbers: ["ITFA05", "ITFA09"] }] })).rejects.toMatchObject({ status: 400 });
+      expect(await db.capitalAsset.count({ where: { sourceKind: { not: null } } })).toBe(0);
+      expect((await db.expense.findUniqueOrThrow({ where: { id } })).state).toBe("set_depreciation_cycle");
+    });
+
+    it("refuses a seeded asset already linked to another line", async () => {
+      const first = await backfilled(1);
+      await setDepreciationCycle(FINANCE, first.id, { items: [{ lineItemId: first.li, depreciationYears: 5, ownerId: 100, seededAssetNumbers: ["ITFA05"] }] });
+      const id = await seedExpense({ state: "set_depreciation_cycle", backfill: true });
+      const li = await seedLineItem(id, { quantity: 1, isCapital: true });
+      await expect(setDepreciationCycle(FINANCE, id, { items: [{ lineItemId: li, depreciationYears: 5, ownerId: 100, seededAssetNumbers: ["ITFA05"] }] })).rejects.toMatchObject({ status: 409 });
+    });
+
+    it("an expense that is not backfilled takes no seeded numbers", async () => {
+      await seedCapitalAssets(FINANCE, [{ assetNumber: "ITFA05", description: "Lathe" }]);
+      const id = await seedExpense({ state: "set_depreciation_cycle" });
+      const li = await seedLineItem(id, { quantity: 1, isCapital: true });
+      await expect(setDepreciationCycle(FINANCE, id, { items: [{ lineItemId: li, depreciationYears: 5, ownerId: 100, seededAssetNumbers: ["ITFA05"] }] })).rejects.toMatchObject({ status: 400 });
+    });
+  });
+
   it("seeding is idempotent per asset number and canonicalizes it", async () => {
     const rows = [{ assetNumber: "itfa3", description: "Saw" }, { assetNumber: "BAD", description: "x" }];
     expect(await seedCapitalAssets(FINANCE, rows)).toMatchObject({ created: 1, skipped: 0, errors: 1 });
@@ -474,11 +614,25 @@ describeDb("QuickBooks match inputs", () => {
       ],
     });
 
-    await excludeQbTxn(FINANCE, "qb-9", "hand-booked, no receipt");
-    await expect(excludeQbTxn(FINANCE, "qb-9", "again")).rejects.toMatchObject({ status: 409 });
+    await excludeQbTxn(FINANCE, "Purchase", "qb-9", "hand-booked, no receipt");
+    await expect(excludeQbTxn(FINANCE, "Purchase", "qb-9", "again")).rejects.toMatchObject({ status: 409 });
 
     expect((await qbMatchInputs("Purchase")).skipIds.sort()).toEqual(["qb-1", "qb-2", "qb-9"]);
-    expect((await qbMatchInputs("Bill")).skipIds.sort()).toEqual(["qb-3", "qb-9"]);
+    expect((await qbMatchInputs("Bill")).skipIds.sort()).toEqual(["qb-3"]);
+  });
+
+  it("excluding Bill N leaves Purchase N a candidate", async () => {
+    await excludeQbTxn(FINANCE, "Bill", "qb-5", "hand-booked bill");
+    expect((await qbMatchInputs("Bill")).skipIds).toEqual(["qb-5"]);
+    expect((await qbMatchInputs("Purchase")).skipIds).toEqual([]);
+    await excludeQbTxn(FINANCE, "Purchase", "qb-5", "hand-booked purchase");
+    expect((await qbMatchInputs("Purchase")).skipIds).toEqual(["qb-5"]);
+  });
+
+  it("an exclusion with no type skips the id for both types", async () => {
+    await db.expenseQbMatchExclusion.create({ data: { orgId: ORG, qbTxnId: "qb-6", reason: "untyped", excludedByUserId: 3 } });
+    expect((await qbMatchInputs("Bill")).skipIds).toEqual(["qb-6"]);
+    expect((await qbMatchInputs("Purchase")).skipIds).toEqual(["qb-6"]);
   });
 
   it("with nothing claimed or excluded there is nothing to skip", async () => {
@@ -489,8 +643,24 @@ describeDb("QuickBooks match inputs", () => {
     const id = await seedExpense();
     const a = await seedLineItem(id);
     const b = await seedLineItem(id);
-    await db.expenseLineItem.update({ where: { id: a }, data: { qbTxnId: "qb-1" } });
-    await expect(db.expenseLineItem.update({ where: { id: b }, data: { qbTxnId: "qb-1" } })).rejects.toThrow();
+    await db.expenseLineItem.update({ where: { id: a }, data: { qbTxnEntity: "Purchase", qbTxnId: "qb-1" } });
+    await expect(db.expenseLineItem.update({ where: { id: b }, data: { qbTxnEntity: "Purchase", qbTxnId: "qb-1" } })).rejects.toThrow();
+  });
+
+  it("a Bill and a Purchase sharing an id are each linked to their own line", async () => {
+    const id = await seedExpense();
+    const a = await seedLineItem(id);
+    const b = await seedLineItem(id);
+    await db.$transaction(async (tx) => {
+      expect(await claimQbTxn(tx, ORG, "Bill", "qb-8")).toBe(true);
+      await tx.expenseLineItem.update({ where: { id: a }, data: { qbMatchState: "MATCHED", qbTxnEntity: "Bill", qbTxnId: "qb-8" } });
+    });
+    await db.$transaction(async (tx) => {
+      expect(await claimQbTxn(tx, ORG, "Purchase", "qb-8")).toBe(true);
+      await tx.expenseLineItem.update({ where: { id: b }, data: { qbMatchState: "MATCHED", qbTxnEntity: "Purchase", qbTxnId: "qb-8" } });
+    });
+    const linked = await db.expenseLineItem.findMany({ where: { qbTxnId: "qb-8" }, select: { id: true, qbTxnEntity: true }, orderBy: { id: "asc" } });
+    expect(linked).toEqual([{ id: a, qbTxnEntity: "Bill" }, { id: b, qbTxnEntity: "Purchase" }]);
   });
 
   it("two concurrent claims of one entry: exactly one wins", async () => {
@@ -620,6 +790,18 @@ describeDb("QuickBooks match", () => {
     expect(await linked(id)).toEqual({ qbTxnId: null, qbTxnEntity: null });
   });
 
+  it("refuses an expense whose tax waits on finance, and matches once finance approves the tax", async () => {
+    const id = await qbExpense({ purchases: [{ id: "42", totalCents: 200 }] });
+    await db.expense.update({ where: { id }, data: { taxCents: 100 } });
+
+    await expect(matchExpenseToQb(FINANCE, id, "42")).rejects.toMatchObject({ status: 409 });
+    expect(await linked(id)).toEqual({ qbTxnId: null, qbTxnEntity: null });
+
+    await db.expenseTaxApproval.create({ data: { expenseId: id, taxCents: 100, approvedByUserId: 3 } });
+    await matchExpenseToQb(FINANCE, id, "42");
+    expect(await linked(id)).toEqual({ qbTxnId: "42", qbTxnEntity: "Purchase" });
+  });
+
   it("refuses the same id under another entity type", async () => {
     const id = await qbExpense({ bills: ["42"] });
     await expect(matchExpenseToQb(FINANCE, id, "42")).rejects.toMatchObject({ status: 409 });
@@ -669,6 +851,7 @@ describeDb("QuickBooks match", () => {
     await db.expense.update({ where: { id }, data: { state: "qb_on_hold", taxCents: 15, discountCents: 5 } });
     await seedLineItem(id, { totalPriceCents: 50 });
     await signAllLines(id);
+    await db.expenseTaxApproval.create({ data: { expenseId: id, taxCents: 15, approvedByUserId: 3 } });
     expect(await db.expenseLineItem.count({ where: { expenseId: id, allocatedTaxCents: { not: null } } })).toBe(0);
     expect((await qbCandidates(FINANCE, id)).map((t) => t.id)).toEqual(["43"]);
     await matchExpenseToQb(FINANCE, id, "43");

@@ -8,7 +8,9 @@ import { writeAudit, writeOrgAudit } from "../lib/audit";
 import { dropHandSetAccount } from "../lib/account-types";
 import { drainExpense } from "../lib/financial-flow";
 import { advanceWorkflowInTx } from "../lib/workflow-engine";
-import { formatItfa, fullyDepreciatedDate, nextItfaSeq, parseItfa } from "../lib/capital-register";
+import { formatItfa, fullyDepreciatedDate, linkAssets, parseItfa, raiseHighestIssued, registerAssets, unitCosts, unitsOf } from "../lib/capital-register";
+import { bookedLineCents } from "../qb-write";
+import { reimburseeUnknown } from "../lib/signoff";
 import { assertExpectedState, isLegalTransition } from "../workflows/expense.invariants";
 import { NEUTRAL_CONTEXT } from "../workflows/expense.guards";
 import { createExpenseRepository } from "../repositories/expense";
@@ -37,6 +39,8 @@ export const SetDepreciationCycleSchema = z.object({
         lineItemId: z.number().int().positive(),
         depreciationYears: z.number().int().positive(),
         ownerId: z.number().int().positive(),
+        // A backfilled expense's historical labels, one per unit in unit order.
+        seededAssetNumbers: z.array(z.string().min(1).max(20)).min(1).max(1000).optional(),
       }),
     )
     .min(1),
@@ -51,12 +55,14 @@ export const CapitalSeedSchema = z.array(z.object({
   depreciationYears: z.number().int().positive().nullable().optional(),
   parentAssetNumber: z.string().max(20).nullable().optional(),
   sourceQbTxnId: z.string().max(100).nullable().optional(),
+  sourceQbTxnEntity: z.enum(["Bill", "Purchase"]).nullable().optional(),
 })).min(1).max(2000);
 
 async function loadExpense(expenseId: string, eventType: string, stateName: string) {
   const expense = await expenseRepo.findExpenseById(expenseId, await getOrgId());
   if (!expense) throw new ServiceError(404, "Expense not found");
   if (!isLegalTransition(expense.state, eventType)) throw new ServiceError(400, `Expense is not in ${stateName} state`);
+  if (reimburseeUnknown(expense)) throw new ServiceError(409, "The reimbursee is unknown; FINANCE sets it before capital review");
   return expense;
 }
 
@@ -114,7 +120,7 @@ export async function submitCapitalReview(
   if (nextState === "qb_pending") await drainExpense(expense.orgId, expenseId);
 }
 
-/** Sets each capital line's cycle and mints one ITFA asset per unit into the register. */
+/** Sets each capital line's cycle and registers one ITFA asset per unit; a backfilled line links its seeded assets instead. */
 export async function setDepreciationCycle(
   principal: ExpensePrincipal,
   expenseId: string,
@@ -125,14 +131,21 @@ export async function setDepreciationCycle(
   const expense = await loadExpense(expenseId, "DEPRECIATION_SET", "set_depreciation_cycle");
   const { items } = input;
 
-  const capitalLines = await db.expenseLineItem.findMany({ where: { expenseId, isCapital: true } });
+  const lines = await db.expenseLineItem.findMany({ where: { expenseId } });
+  const capitalLines = lines.filter((li) => li.isCapital);
   const capLineById = new Map(capitalLines.map((li) => [li.id, li]));
+  const booked = bookedLineCents(expense, lines);
   const submittedIds = new Set(items.map((i) => i.lineItemId));
   for (const { id } of capitalLines) {
     if (!submittedIds.has(id)) throw new ServiceError(400, `Missing depreciation for capital line item ${id}`);
   }
   for (const item of items) {
-    if (!capLineById.has(item.lineItemId)) throw new ServiceError(400, `Line item ${item.lineItemId} is not a capital item`);
+    const line = capLineById.get(item.lineItemId);
+    if (!line) throw new ServiceError(400, `Line item ${item.lineItemId} is not a capital item`);
+    if (!expense.backfill && item.seededAssetNumbers) throw new ServiceError(400, "Only a backfilled expense links seeded asset numbers");
+    if (expense.backfill && item.seededAssetNumbers?.length !== unitsOf(line.quantity)) {
+      throw new ServiceError(400, `Line item ${line.id} needs a seeded asset number for each of its ${unitsOf(line.quantity)} units`);
+    }
   }
   await requireLiveBuckets(items.map((i) => i.ownerId));
 
@@ -151,30 +164,15 @@ export async function setDepreciationCycle(
         valueAfter: `${item.depreciationYears}y/owner:${item.ownerId}`,
       });
 
-      // Idempotent: a line that already has assets (a resubmit) mints none.
       const line = capLineById.get(item.lineItemId)!;
-      if ((await tx.capitalAsset.count({ where: { sourceLineItemId: line.id } })) === 0) {
-        const units = Math.max(1, Math.round(line.quantity));
-        const fdd = fullyDepreciatedDate(expense.receiptDate, item.depreciationYears);
-        let seq = await nextItfaSeq(tx, expense.orgId);
-        for (let u = 0; u < units; u++) {
-          await tx.capitalAsset.create({
-            data: {
-              orgId: expense.orgId,
-              assetNumber: formatItfa(seq++),
-              description: line.description,
-              acquisitionDate: expense.receiptDate,
-              costCents: line.unitPriceCents,
-              depreciationYears: item.depreciationYears,
-              fullyDepreciatedDate: fdd,
-              status: "tracked",
-              sourceExpenseId: expenseId,
-              sourceLineItemId: line.id,
-              sourceReceiptId: expenseId,
-              seeded: false,
-            },
-          });
-        }
+      const source = { kind: "expense_line" as const, expenseId, lineItemId: line.id };
+      if (item.seededAssetNumbers) {
+        await linkAssets(tx, actor, expense.orgId, source, item.seededAssetNumbers);
+      } else {
+        const units = unitCosts(booked.get(line.id)!, unitsOf(line.quantity)).map((costCents) => ({
+          costCents, acquisitionDate: expense.receiptDate, depreciationYears: item.depreciationYears, description: line.description,
+        }));
+        await registerAssets(tx, actor, expense.orgId, source, units);
       }
     }
     await advanceWorkflowInTx(tx, {
@@ -211,6 +209,8 @@ export async function seedCapitalAssets(
     const assetNumber = formatItfa(seq); // canonicalize (no space/dash, zero-padded)
     const parentSeq = r.parentAssetNumber ? parseItfa(r.parentAssetNumber) : null;
     const created = await db.$transaction(async (tx) => {
+      // Raising the mark first waits out a mint in flight, so the seed sees any number it took.
+      await raiseHighestIssued(tx, orgId, seq);
       const result = await tx.capitalAsset.createMany({
         data: [{
           orgId,
@@ -223,6 +223,7 @@ export async function seedCapitalAssets(
           fullyDepreciatedDate: fullyDepreciatedDate(r.acquisitionDate, r.depreciationYears),
           status: "tracked",
           sourceQbTxnId: r.sourceQbTxnId ?? null,
+          sourceQbTxnEntity: r.sourceQbTxnEntity ?? null,
           seeded: true,
         }],
         skipDuplicates: true,

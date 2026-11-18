@@ -390,6 +390,17 @@ describe('adjustProgramInventory (the one program-stock writer)', () => {
         expect(after()).toEqual(clean);
     });
 
+    it('after the sale has ended, a deferred test-order give-back is dropped instead of going back on sale', async () => {
+        setRow({ saleEndedAt: new Date() });
+        const s = shopify({ ProgramStockRead: [readReply(0)] });
+
+        expect(await adjustProgramInventory(program, 2, 'test-order', { deferred: true })).toBe(true);
+
+        await new Promise((r) => setTimeout(r, 50));
+        expect(s.adjusts()).toHaveLength(0);
+        expect(after()).toEqual(clean);
+    });
+
     it('a pending +1 resent after the sale has ended lands, then goes straight back off sale', async () => {
         setRow({ saleEndedAt: new Date(), shopifyStockPendingWrite: pendingWrite({ key: 'program-42-hold-release-old', reason: 'hold-release', delta: 1, owedPart: 1 }) });
         const s = shopify({ ProgramStockAdjust: [adjustOk, adjustOk], ProgramStockRead: [readReply(1)] });

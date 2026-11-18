@@ -250,7 +250,7 @@ export default function BudgetsPage() {
             value={editClassId}
             onChange={setEditClassId}
           />
-          {editClassId === editing?.quickBooksClassId && <InactivePickWarning saved={editClassId} options={classes} />}
+          {editClassId === editing?.quickBooksClassId && <InactivePickWarning saved={editClassId} options={classes} advice="Pick an active one." />}
           <QuickBooksListsRefresh />
           <Checkbox
             label="Org-level"
