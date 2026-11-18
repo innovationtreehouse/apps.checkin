@@ -24,11 +24,13 @@ const REFUSED_FILES: Record<string, string> = {
   forwarded: "An email attached as a file, which we don't open",
   too_large: "A file over the 10 MB limit",
   empty: "An empty file",
+  no_amount: "Text that names no amount",
 };
 
 const HOLD_REASONS: Record<string, string> = {
   unverified_sender: "Sender could not be verified: the mail may not be from this address",
   not_a_submitter: "Verified sender, but no one who may submit receipts uses this address",
+  side_copy: "A submitter's reply to one of our notices, or a copy with the receipt mailbox only in Cc: the sender was not replied to",
 };
 
 const DMARC_VERDICTS: Record<string, string> = {

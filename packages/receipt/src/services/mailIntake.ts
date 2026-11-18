@@ -401,8 +401,11 @@ export function mailFiles(msg: MailMessage, reader: MailboxReader): { files: Mai
 
 const isStatus = (err: unknown, code: number) => isServiceError(err) && err.status === code;
 
-/** Why a file was held for finance: no sender passed the sender check, or the verified sender may not submit receipts. */
-export type HoldReason = "unverified_sender" | "not_a_submitter";
+/**
+ * Why a file was held for finance: no sender passed the sender check, the verified sender may not submit receipts, or a
+ * submitter's reply to a notice or Cc-only copy held text with no amount, which gets no reply.
+ */
+export type HoldReason = "unverified_sender" | "not_a_submitter" | "side_copy";
 
 /** Refused files finance is told about, as a held item with no file, when no submitter sent the mail. */
 const HELD_REFUSALS = new Set<MailRefusalReason>(["wrong_type", "forwarded", "too_large", "empty"]);
@@ -589,23 +592,26 @@ async function readLeased(reader: MailboxReader, orgId: string, started: number,
     const verdict = dmarcVerdict(headers, address);
     const aligned = verdict === "pass";
     const submitter = () => (address && aligned ? ports().people.submitterByEmail(address) : Promise.resolve(null));
-    // A significant body with no amount: a submitter is told, unless it is a side copy; a submitter's automated mail
-    // keeps it as their receipt, since no notice reaches them; anyone else's is held for finance.
+    // A significant body with no amount: a submitter is told, or, on a side copy, finance holds a note of it with no
+    // reply; a submitter's automated mail keeps it as their receipt unless it is a side copy; anyone else's is held.
     const known = unpriced ? await submitter() : undefined;
+    const sideCopy = isSideCopy(headers, reader.address);
+    let sideCopyNote = false;
     if (unpriced) {
-      if (known && !isAutomated(msg.payload, address)) {
-        if (!isSideCopy(headers, reader.address)) refused.push({ file: "your email", reason: "no_amount" });
-      } else files.push(unpriced);
+      const automated = isAutomated(msg.payload, address);
+      if (known && sideCopy) sideCopyNote = !automated;
+      else if (known && !automated) refused.push({ file: "your email", reason: "no_amount" });
+      else files.push(unpriced);
     }
     // Nothing to read and nothing refused: the sender is told no receipt was found, unless the mail was a reply or side copy.
-    if (files.length === 0 && refused.length === 0 && !isSideCopy(headers, reader.address)) {
+    if (files.length === 0 && refused.length === 0 && !sideCopy) {
       refused.push({ file: "your email", reason: "no_receipt" });
     }
     // Every file already in the ledger: nothing to download.
     const rows = await db.receiptMailItem.findMany({ where: { gmailMessageId: msg.id }, select: { status: true, refusal: true } });
     const ledgered = files.length > 0 && rows.filter((r) => !isHeldRefusal(r)).length >= files.length;
     // A file refused on an earlier pass is never read again, so its row carries it into the notice.
-    refused.push(...rows.flatMap((r) => (r.refusal ? [r.refusal as unknown as MailRefusal] : [])));
+    refused.push(...rows.flatMap((r) => (r.refusal && !isHeldRefusal(r) ? [r.refusal as unknown as MailRefusal] : [])));
     const sender: ReceiptPrincipal | null = known !== undefined ? known : !ledgered || refused.length > 0 ? await submitter() : null;
     const holdReason: HoldReason = aligned ? "not_a_submitter" : "unverified_sender";
     // Owed in the same transaction as each stored file, so a reply is owed exactly when the message has one.
@@ -625,20 +631,22 @@ async function readLeased(reader: MailboxReader, orgId: string, started: number,
       });
     };
     /**
-     * Without a submitter to tell, each refused file becomes a held item with no file, so finance hears of it.
-     * Past the held ceiling none is written, and the message stays open for a later run.
+     * Without a submitter to tell, each refused file becomes a held item with no file, so finance hears of it, and so
+     * does a submitter's side copy with no amount. Past the held ceiling none is written, and the message stays open.
      */
     const holdRefusals = async () => {
-      if (sender) return;
+      const notes: [MailRefusal, string][] = sender
+        ? sideCopyNote ? [[{ file: "your email", reason: "no_amount" }, "side_copy" satisfies HoldReason]] : []
+        : refused.filter((r) => HELD_REFUSALS.has(r.reason)).map((r) => [r, holdReason]);
       const held = new Set(rows.flatMap((r) => (isHeldRefusal(r) ? [refusalKey(r.refusal as unknown as MailRefusal)] : [])));
-      const toHold = [...new Map(refused.filter((r) => HELD_REFUSALS.has(r.reason)).map((r) => [refusalKey(r), r])).entries()].filter(([key]) => !held.has(key));
+      const toHold = [...new Map(notes.map(([r, reason]) => [refusalKey(r), { r, reason }])).entries()].filter(([key]) => !held.has(key));
       if (toHold.length === 0) return;
       if (stored() >= MAIL_HELD_CEILING) {
         counts.overCeiling += toHold.length;
         return;
       }
       const { count } = await db.receiptMailItem.createMany({
-        data: toHold.map(([key, r]) => ({
+        data: toHold.map(([key, { r, reason }]) => ({
           orgId,
           gmailMessageId: msg.id,
           attachmentHash: key,
@@ -646,7 +654,7 @@ async function readLeased(reader: MailboxReader, orgId: string, started: number,
           senderAddress: address ?? "",
           dmarcVerdict: verdict,
           status: "held",
-          holdReason,
+          holdReason: reason,
           refusal: { file: r.file, reason: r.reason },
         })),
         skipDuplicates: true,

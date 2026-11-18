@@ -295,6 +295,39 @@ describeDb("mailed receipt acknowledgements", () => {
     await sendMailReplies();
     expect(sent).toEqual([]);
     expect(await db.receiptMailReply.count()).toBe(0);
+    expect(await db.receiptMailItem.count()).toBe(0);
+  });
+
+  it("holds a submitter's long reply to its notice with no amount for finance, telling nobody, once", async () => {
+    const reply = `Yes, that was a receipt, it was forty bucks for the lathe belts. ${LONG_NOTE}`;
+    mailWith("reply", [{ mimeType: "text/plain", body: { data: b64(reply) } }], { headers: [{ name: "To", value: "receipts@example.org" }, { name: "In-Reply-To", value: noticeMessageId("a1.refusalSentAt", "receipts@example.org") }] });
+    expect(await readMailbox()).toMatchObject({ held: 1 });
+    await db.receiptMailAtRisk.create({ data: { orgId: TEST_ORG_ID, gmailMessageId: "reply", receivedAt: new Date() } });
+    expect(await readMailbox()).toMatchObject({ held: 0 });
+    await sendMailReplies();
+    expect(sent).toEqual([]);
+    expect(await db.receiptMailReply.count()).toBe(0);
+    expect(await db.receiptMailItem.findMany({ select: { status: true, holdReason: true, fileBlob: true, refusal: true } })).toEqual([
+      { status: "held", holdReason: "side_copy", fileBlob: null, refusal: { file: "your email", reason: "no_amount" } },
+    ]);
+  });
+
+  it("holds a submitter's long Cc-only copy with no amount for finance, telling nobody", async () => {
+    mailWith("cc", [{ mimeType: "text/plain", body: { data: b64(LONG_NOTE) } }], { headers: [{ name: "To", value: "bob@example.org" }, { name: "Cc", value: "receipts@example.org" }] });
+    await readMailbox();
+    await sendMailReplies();
+    expect(sent).toEqual([]);
+    expect(await db.receiptMailItem.findFirstOrThrow()).toMatchObject({ status: "held", holdReason: "side_copy" });
+  });
+
+  it("drops a submitter's automated reply to its notice", async () => {
+    mailWith("ooo", [{ mimeType: "text/plain", body: { data: b64(LONG_NOTE) } }], {
+      headers: [{ name: "Auto-Submitted", value: "auto-replied" }, { name: "In-Reply-To", value: noticeMessageId("a1.refusalSentAt", "receipts@example.org") }],
+    });
+    await readMailbox();
+    expect(sent).toEqual([]);
+    expect(await db.receiptMailItem.count()).toBe(0);
+    expect(await db.receipt.count()).toBe(0);
   });
 
   it("tells a sender who forwards a message with no receipt, though the forward keeps its In-Reply-To", async () => {
