@@ -31,11 +31,9 @@
    "packages/receipt/**",
    "packages/bulk-donation/**",
    "packages/quickbooks/**",
-   "checkin-app/src/lib/finance/**",
-   "docs/rules/revenue.md",
-   "docs/rules/expenses.md"
+   "checkin-app/src/lib/finance/**"
   ],
-  "instructions": "The app never changes or deletes entries in QuickBooks; drift goes back to finance as a flag. Check amounts in integer cents, idempotency of anything a cron or webhook can repeat, and that a refund or reversal path matches docs/rules/revenue.md exactly. Who may approve or authorize is set by docs/rules; compare the code to the rule."
+  "instructions": "The app never changes or deletes entries in QuickBooks; drift goes back to finance as a flag. Check amounts in integer cents and idempotency of anything a cron or webhook can repeat."
  },
  {
   "name": "kiosk-and-scan",
@@ -60,10 +58,9 @@
  {
   "name": "rules-docs",
   "paths": [
-   "docs/rules/**",
    "docs/in-design/**"
   ],
-  "instructions": "Every claim about current behaviour must match the code on main; read it. A tag change such as [Unsettled] to [Decision] needs an owner ruling recorded in the PR. Retiring a doc must not drop an open question or follow-up without a new home."
+  "instructions": "Every claim about current behaviour must match the code on main; read it. Retiring a doc must not drop an open question or follow-up without a new home."
  },
  {
   "name": "review-pipeline",

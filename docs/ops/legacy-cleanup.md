@@ -2,7 +2,7 @@
 
 States that exist because of how data arrived, not because the domain wants
 them. They are expected to trend to zero. **None of this is a rule** — it is not
-read while changing behaviour, and it does not belong in `docs/rules/`.
+read while changing behaviour.
 
 Every entry names how it is surfaced, what "done" looks like, and whether code
 still has to tolerate it. **When an entry's count reaches zero, delete the entry.

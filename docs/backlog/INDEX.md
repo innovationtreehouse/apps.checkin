@@ -156,7 +156,7 @@ Legend of drops: see [§ Dropped — confirmed built](#dropped--confirmed-built-
 
 | id | item | origin | readiness | size | Workaround | src | GH |
 |----|------|--------|-----------|------|----|-----|-----|
-| CI1 | **Global catalog**: GTIN items, categories, vendor-alias references, 3-pass matcher, proposals/supersession, provisional allocation, conversion challenges | PORT | IN-DESIGN | XL | ? | A,B | #1286 (closed); design distilled → `docs/rules/inventory.md` + `docs/architecture/COMPONENT_ARCHITECTURE.md` (#1814) |
+| CI1 | **Global catalog**: GTIN items, categories, vendor-alias references, 3-pass matcher, proposals/supersession, provisional allocation, conversion challenges | PORT | IN-DESIGN | XL | ? | A,B | #1286 (closed); design distilled → `docs/architecture/COMPONENT_ARCHITECTURE.md` (#1814) |
 | CI2 | **Org inventory**: locations, receive queue, delta apply, merge-conflict resolution, provisional resolution | PORT | NEEDS-DESIGN | L | ? | A,B | #1287 (open) |
 | CI3 | Receipt line-item → **part association** (auto + manual exceptions); UoM conversion/quantity challenge | PORT | NEEDS-DESIGN | L | ? | A,B | #1288 (open) |
 | CI4 | **workflow-mapping** orchestrator (receipt→catalog→inventory→expense glue; collapses in monolith) | PORT | NEEDS-DESIGN | M | ? | A | #1289 (open) |
@@ -228,7 +228,7 @@ _Note: FR+FE+CI (+CI4 glue) are ONE dependency-chained pipeline — little value
 | PL24 | **Response caching for the remaining read-heavy, low-churn routes** (tools, past events) — the active-programs list already uses `staleWhileRevalidate` (`api/programs/route.ts`, via `lib/staleCache.ts`) and current attendance uses `invalidatableCache` (`lib/getFullAttendance.ts`), so this row covers only the uncached routes; extend one of those rather than adding a third mechanism. Build when load says so | ENHANCE | COND | S | none needed yet | arch-ideas | none |
 | PL25 | **Role rejection in middleware** — `src/middleware.ts` gates the dev and staging instances and caps body size; it does no per-section role check before the route runs. A boundary file: any change ships in its own PR | ENHANCE | DECISION | M | route-level `withAuth`/`handler()` gates | arch-ideas | none |
 | PL26 | **Push `"use client"` down to interactive leaves** — 76 of 140 pages are client components at the page root, so whole views ship to the browser and fetch after load | CHORE | NEEDS-DESIGN | L | none | arch-ideas | none |
-| PL27 | **Audit rows in four library packages are not checked to commit with their change** — the app guard (`auditInTransaction.test.ts`) scans `checkin-app/src` only; receipt and workflow-mapping have their own audit-in-transaction tests, but `packages/expense`, `packages/income`, `packages/bulk-donation` and `packages/global-catalog` (`orgEvent`) write audit rows with no such test. Add one per package, fixing any row written outside its change's transaction (`docs/rules/principles.md` → Accountability) | CHORE | NEEDS-DESIGN | M | none | arch-ideas | none |
+| PL27 | **Audit rows in four library packages are not checked to commit with their change** — the app guard (`auditInTransaction.test.ts`) scans `checkin-app/src` only; receipt and workflow-mapping have their own audit-in-transaction tests, but `packages/expense`, `packages/income`, `packages/bulk-donation` and `packages/global-catalog` (`orgEvent`) write audit rows with no such test. Add one per package, fixing any row written outside its change's transaction | CHORE | NEEDS-DESIGN | M | none | arch-ideas | none |
 
 ## 12. Auth, RBAC & Security  (prefix RB)  — one item per proposed role (Q3)
 
@@ -320,7 +320,7 @@ Not dropped (they're valid), not backlog (no plan to build). Revisit only if pri
 
 ## Dropped — confirmed built (not backlog)
 
-**RB5** — Key Volunteer role → BUILT (#1317): `KEY_VOLUNTEER` is Board-granted, opens the Key Volunteer Agreement, and gates the grant of Board, BG reviewer and Finance. Rules in `docs/rules/membership.md` § Key Volunteers.
+**RB5** — Key Volunteer role → BUILT (#1317): `KEY_VOLUNTEER` is Board-granted, opens the Key Volunteer Agreement, and gates the grant of Board, BG reviewer and Finance.
 
 **RB19** — pentest email-enumeration oracle: verified **already closed / not exploitable** (fix-chip made no code change, 2026-07-21). Dropped.
 
@@ -330,16 +330,15 @@ Not dropped (they're valid), not backlog (no plan to build). Revisit only if pri
 
 **SA1 blanket-stamp→per-adult BG subjects — SHIPPED (#1470, 2026-08-07):** a household
 clearance now stamps only the adult the reviewers named, and the board gets a worklist for the
-stamps the old blanket write left behind. Rules live in `docs/rules/membership.md` § background
-checks.
+stamps the old blanket write left behind.
 
 **Verified built during triage (2026-07-21), removed from buckets:** M10 volunteer-household pre-designation (`/membership-ops/volunteer-memberships`) · M11 intake-notes → surfaced to reviewer (`membership-ops/review`, `Household.intakeNotes`) · SA5 BG posture (29mo, enforced at renewal) · SA8 dual-relationship = Trusted Adults · RB10 dual-email = 2-account model (#286 closed) · FD5 banker = board (no role).
 
 **Merged to main (verified via rebase 2026-07-25), removed from buckets:** **AT10** unknown-DOB fails-open in two-deep → FIXED, now fails closed (#1353/#300) · **AT13** visit-edit UI/API mismatch → FIXED, board reaches the visit-edit UI (#1350/#1259) · **M18** person-merge orphaned/non-controlled email → FIXED via 3 merge-fixes: emailSuppressed carry (#1332), login-identity unit (#1329), tombstone `.invalid` domain (#1331); #1225 closed · **SA6** delete-DoB for adults → BUILT (#1326 "delete DoB for all adults (26+)"; #1356 declared-adults-still-supervise follow-up); #1165 closed · **P17** staff-household enrollment ban server-side → BUILT (#1009 "disable Add Participant & Grant Membership for staff households").
 
-**Attendance correction surface — SHIPPED, removed from buckets:** **AT3** staff visit management (#1478/#1254) · **AT5** self-correction of own hours (#1357/#1256) · **AT12** correction-review screen (#1560/#1258) · the legacy `SYSTEM` visit source dropped (#1256 contract stage). Residuals are AT15–AT17; rules live in `docs/rules/attendance-checkin.md` § The visit record.
+**Attendance correction surface — SHIPPED, removed from buckets:** **AT3** staff visit management (#1478/#1254) · **AT5** self-correction of own hours (#1357/#1256) · **AT12** correction-review screen (#1560/#1258) · the legacy `SYSTEM` visit source dropped (#1256 contract stage). Residuals are AT15–AT17.
 
-**Household archive — SHIPPED, removed from buckets:** **M4** archive family (#1228) · **M19** archived households hidden from active views (#1232). The Board archives and unarchives a household; archiving is refused while anything still ties it to the organisation, and an archived household refuses every change. The owner's rulings superseded the interview's two-state model (invalid/duplicate vs idle/aged-out, self-reactivation) and list unsubscribe on archive. Rules live in `docs/rules/people-households.md` § Archived households.
+**Household archive — SHIPPED, removed from buckets:** **M4** archive family (#1228) · **M19** archived households hidden from active views (#1232). The Board archives and unarchives a household; archiving is refused while anything still ties it to the organisation, and an archived household refuses every change. The owner's rulings superseded the interview's two-state model (invalid/duplicate vs idle/aged-out, self-reactivation) and list unsubscribe on archive.
 
 **Merged/resolved (2026-08-01):** **RB16** boundary-isolation required-check → DONE — #1132 (CODEOWNERS gate) + #1133 (isolation job now a required status check on main) both closed. Was Q38.
 

@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * A tool change and its audit row commit together (docs/rules/principles.md, Accountability).
+ * A tool change and its audit row commit together.
  * A trigger makes Postgres refuse the refused actor's audit rows, whichever client
  * writes them, so that actor's tool change must roll back with the refused row.
  */

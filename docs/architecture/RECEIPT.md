@@ -8,8 +8,7 @@ purchasing pipeline. It runs in the checkin process against its own database,
 private S3 bucket is partly built, and [File storage](#file-storage) says exactly
 how far it has got.
 
-This file describes the shape of the code. The rules a change must not violate,
-such as who may approve or discard a receipt, are in `docs/rules/expenses.md`.
+This file describes the shape of the code.
 
 ---
 
@@ -109,8 +108,7 @@ reimbursee, the vendor or `needsReimbursement`.
 lines in one transaction with the move to `uploaded`. Any failure moves the receipt
 to `ocr_failed` with the reason in `validationNotes` and writes nothing from the
 reading. A reading with lines but no retailer, date or total counts as good; the
-pipeline sends it to `submitter_review` to be filled in. The rule is in
-`docs/rules/expenses.md`.
+pipeline sends it to `submitter_review` to be filled in.
 
 From `ocr_failed` a person can type the details and resubmit, retry the reading,
 discard the receipt or reject it. A good reading replaces whatever was typed, so the
