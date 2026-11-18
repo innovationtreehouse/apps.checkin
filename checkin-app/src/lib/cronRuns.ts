@@ -19,9 +19,9 @@ export const CRON_STALE_AFTER_MS = 48 * 60 * 60 * 1000;
  * different questions and one boolean cannot answer both:
  *   - `lastSuccessAt`/`stale` — did the sweep RUN. Only a run that never completed
  *     (a throw, or the route's own error envelope) holds this back.
- *   - `lastError` — was the latest run CLEAN. Set from that run's error, so a sweep
- *     that ran last night and failed 4 rows reads as fresh-but-unhealthy rather
- *     than as stopped. A failure the job has since recovered from is history, not
+ *   - `lastError` — was the latest run CLEAN. Set from that run's error, or from its
+ *     failures by kind other than `data`, so a sweep that ran last night and failed
+ *     4 rows reads as fresh-but-unhealthy rather than as stopped. A failure the job has since recovered from is history, not
  *     a status: the next clean run clears it.
  */
 export type CronJobStatus = { job: string; lastSuccessAt: Date; stale: boolean; lastError?: string; lastErrorAt?: Date };
@@ -101,9 +101,23 @@ async function lastRunByJob() {
     const rows = await prisma.cronRunLog.findMany({
         orderBy: [{ job: "asc" }, { finishedAt: "desc" }],
         distinct: ["job"],
-        select: { job: true, success: true, error: true, finishedAt: true },
+        select: { job: true, success: true, error: true, failuresByKind: true, finishedAt: true },
     });
     return new Map(rows.map((r) => [r.job, r]));
+}
+
+/**
+ * The latest run's failures by kind as an error, e.g. "3 item(s) failed: connection 2, system 1",
+ * or null when it has none. `data` failures wait in finance's queue, so they do not count.
+ */
+export function failuresError(failuresByKind: unknown): string | null {
+    if (!failuresByKind || typeof failuresByKind !== "object" || Array.isArray(failuresByKind)) return null;
+    const counts = Object.entries(failuresByKind).filter(
+        (entry): entry is [string, number] => entry[0] !== "data" && typeof entry[1] === "number" && entry[1] > 0,
+    );
+    if (counts.length === 0) return null;
+    const total = counts.reduce((sum, [, n]) => sum + n, 0);
+    return `${total} item(s) failed: ${counts.map(([kind, n]) => `${kind} ${n}`).join(", ")}`;
 }
 
 /**
@@ -122,12 +136,13 @@ export async function getCronJobStatuses(now: Date = new Date()): Promise<CronJo
         .map(([job, lastSuccessAt]) => {
             // Only the LATEST run's error is a status; the next clean run clears it.
             const latest = latestRuns.get(job);
-            const unclean = latest && (latest.error !== null || !latest.success);
+            const failures = latest ? failuresError(latest.failuresByKind) : null;
+            const unclean = latest && (latest.error !== null || !latest.success || failures !== null);
             return {
                 job,
                 lastSuccessAt,
                 stale: now.getTime() - lastSuccessAt.getTime() > CRON_STALE_AFTER_MS,
-                ...(unclean ? { lastError: latest.error ?? "unknown error", lastErrorAt: latest.finishedAt } : {}),
+                ...(unclean ? { lastError: latest.error ?? failures ?? "unknown error", lastErrorAt: latest.finishedAt } : {}),
             };
         })
         .sort((a, b) => a.lastSuccessAt.getTime() - b.lastSuccessAt.getTime());
@@ -141,8 +156,7 @@ export async function getCronJobStatuses(now: Date = new Date()): Promise<CronJo
  * ponytail: shares getCronJobStatuses' two reads rather than keeping a leaner
  * aggregate for the nav-poll path — the panel's "failure detail" IS half the badge,
  * so a second query shape would only be the same reads spelled twice.
- * `skipJobs` are jobs the badge already counts through their open incident.
  */
-export async function countUnhealthyCronJobs(now: Date = new Date(), skipJobs: ReadonlySet<string> = new Set()): Promise<number> {
-    return (await getCronJobStatuses(now)).filter((j) => (j.stale || j.lastError) && !skipJobs.has(j.job)).length;
+export async function countUnhealthyCronJobs(now: Date = new Date()): Promise<number> {
+    return (await getCronJobStatuses(now)).filter((j) => j.stale || j.lastError).length;
 }

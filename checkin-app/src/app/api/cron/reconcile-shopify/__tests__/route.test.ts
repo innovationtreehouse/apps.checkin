@@ -15,12 +15,9 @@ import { runSaleSweep } from '@/lib/programs/saleSweep';
 import { healProgramStock } from '@/lib/shopify/stock';
 import prisma from '@/lib/prisma';
 import { reportTo } from '@/lib/finishRun';
-import { evaluateRun } from '@/lib/runIncidents';
 import { GET } from '../route';
 
 jest.mock('@/lib/finance/reconcile', () => ({ runReconcile: jest.fn() }));
-// The incident engine has its own tests; here a run only reaches it.
-jest.mock('@/lib/runIncidents', () => ({ evaluateRun: jest.fn() }));
 jest.mock('@checkin/expense', () => ({ runExpenseCatchUp: jest.fn() }));
 jest.mock('@checkin/income', () => ({ runReconcile: jest.fn() }));
 jest.mock('@checkin/local-inventory', () => ({ catchUpOrgEvents: jest.fn() }));
@@ -86,7 +83,7 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
         expect(Object.keys(body.expense).sort()).toEqual(['catalogEvents', 'intake']);
     });
 
-    it("hands a held receipt's connection failure and a crashed step to the engine", async () => {
+    it("records a held receipt's connection failure and a crashed step by kind", async () => {
         jest.mocked(runExpenseCatchUp).mockImplementation(async () => {
             reportTo('expense')({ lane: 'intake', kind: 'connection', detail: 'receipt 5' });
             return EXPENSE;
@@ -96,27 +93,17 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
 
         await GET(req());
 
-        const run = jest.mocked(evaluateRun).mock.calls[0][0];
-        expect(run.lanes).toEqual(['reconcile-shopify', 'expense intake', 'expense intake-replay']);
-        expect(run.failures).toEqual([
-            { lane: 'expense intake', cause: 'intake', kind: 'connection', code: 'connection', count: 1 },
-            { lane: 'reconcile-shopify', cause: 'reconcile-shopify', kind: 'bug', code: 'program stock crashed', count: 1 },
-        ]);
+        expect(prisma.cronRunLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ failuresByKind: { connection: 1, bug: 1 } }) });
         logged.mockRestore();
     });
 
-    it('files a crashed step under the lane it runs and leaves that lane uncovered, so its incident stays open', async () => {
+    it('records a crashed step once per lane it runs', async () => {
         jest.mocked(runExpenseCatchUp).mockRejectedValue(new Error('expense db down'));
         const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
 
         await GET(req());
 
-        const run = jest.mocked(evaluateRun).mock.calls[0][0];
-        expect(run.lanes).toEqual(['reconcile-shopify']);
-        expect(run.failures).toEqual([
-            { lane: 'expense intake', cause: 'intake', kind: 'bug', code: 'expense crashed', count: 1 },
-            { lane: 'expense intake-replay', cause: 'intake', kind: 'bug', code: 'expense crashed', count: 1 },
-        ]);
+        expect(prisma.cronRunLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ failuresByKind: { bug: 2 } }) });
         logged.mockRestore();
     });
 

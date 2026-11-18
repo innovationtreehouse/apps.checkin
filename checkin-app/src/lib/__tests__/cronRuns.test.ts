@@ -21,7 +21,7 @@ const HOUR = 60 * 60 * 1000;
  */
 function stubGroupBy(
     rows: { job: string; finishedAt: Date | null }[],
-    latest?: { job: string; success: boolean; error: string | null; finishedAt?: Date | null }[],
+    latest?: { job: string; success: boolean; error: string | null; finishedAt?: Date | null; failuresByKind?: Record<string, number> | null }[],
 ) {
     prisma.cronRunLog.groupBy = jest.fn().mockResolvedValue(
         rows.map((r) => ({ job: r.job, _max: { finishedAt: r.finishedAt } })),
@@ -163,5 +163,20 @@ describe('a run that completed but could not do all of its work', () => {
         );
 
         expect(await countUnhealthyCronJobs(NOW)).toBe(1);
+    });
+
+    it('is failing when its lanes reported failures other than data, even with no error', async () => {
+        const run = (failuresByKind: Record<string, number>) => stubGroupBy(
+            [{ job: 'qbo-posting', finishedAt: ago(2 * HOUR) }],
+            [{ job: 'qbo-posting', success: true, error: null, finishedAt: ago(2 * HOUR), failuresByKind }],
+        );
+
+        run({ connection: 2, system: 1, data: 5 });
+        expect((await getCronJobStatuses(NOW))[0].lastError).toBe('3 item(s) failed: connection 2, system 1');
+        expect(await countUnhealthyCronJobs(NOW)).toBe(1);
+
+        run({ data: 5 });
+        expect((await getCronJobStatuses(NOW))[0].lastError).toBeUndefined();
+        expect(await countUnhealthyCronJobs(NOW)).toBe(0);
     });
 });

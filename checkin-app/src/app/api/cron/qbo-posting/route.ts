@@ -1,5 +1,5 @@
 import { logger } from "@/lib/logger";
-import { finishRun, inRun, laneReached, newRun, stepCrashed } from "@/lib/finishRun";
+import { finishRun, inRun, newRun, stepCrashed } from "@/lib/finishRun";
 import { getOrg } from "@/lib/components/host";
 import { handler } from "@/security/handler";
 import { runExpenseQbPosting } from "@checkin/expense";
@@ -13,9 +13,7 @@ const JOB = "qbo-posting";
 /** The counts of a drain that ran: whether its duplicate check could read QuickBooks. No drain stops on failures. */
 type DrainRun = { sweep: { full: boolean } | { failed: true } };
 
-/** `lane` is the drain's lane as the run names it: the drain ran, so the run reached it. */
-function drainProblems(label: string, lane: string, drain: DrainRun): string[] {
-    laneReached(lane);
+function drainProblems(label: string, drain: DrainRun): string[] {
     return "failed" in drain.sweep ? [`${label} duplicate check`] : [];
 }
 
@@ -26,8 +24,8 @@ function drainProblems(label: string, lane: string, drain: DrainRun): string[] {
  *
  * Each step is isolated, so one failing never stops the other; a failed step is recorded on the
  * run as its error. So is a duplicate check that could not read QuickBooks, and an in-kind lane
- * missing a books-map role while gifts wait. The run ends in finishRun, which
- * hands the lanes' kinded failures to the incident engine. Counts go to the log only; the
+ * missing a books-map role while gifts wait. The run ends in finishRun, which records it
+ * with the lanes' failures by kind. Counts go to the log only; the
  * response body is `{}`.
  */
 /** Every step, each isolated; returns what failed. */
@@ -37,7 +35,6 @@ async function postAll(): Promise<string[]> {
     try {
         const lists = await refreshQuickBooksLists();
         logger.info(`[qbo-posting] lists ${JSON.stringify(lists ?? "unbound")}`);
-        if (lists) laneReached("quickbooks lists-refresh");
     } catch (err) {
         logger.error("[qbo-posting] QuickBooks list refresh failed:", err);
         stepCrashed(JOB, "lists", err, ["quickbooks lists-refresh"]);
@@ -47,7 +44,7 @@ async function postAll(): Promise<string[]> {
         const expense = await runExpenseQbPosting();
         logger.info(`[qbo-posting] expense ${JSON.stringify(expense)}`);
         failed.push(...expense.failedParts.map((part) => `expense ${part}`));
-        if (typeof expense.qbPost === "object" && !("error" in expense.qbPost)) failed.push(...drainProblems("expense", "expense posting", expense.qbPost));
+        if (typeof expense.qbPost === "object" && !("error" in expense.qbPost)) failed.push(...drainProblems("expense", expense.qbPost));
     } catch (err) {
         logger.error("[qbo-posting] expense QuickBooks posting failed:", err);
         stepCrashed(JOB, "expense", err, ["expense posting"]);
@@ -66,7 +63,7 @@ async function postAll(): Promise<string[]> {
         if (typeof inKind === "object") {
             if ("unconfigured" in inKind) {
                 if (inKind.waiting > 0) failed.push("in-kind unconfigured");
-            } else failed.push(...drainProblems("in-kind", "bulk-donation in-kind-posting", inKind));
+            } else failed.push(...drainProblems("in-kind", inKind));
         }
     } catch (err) {
         logger.error("[qbo-posting] in-kind QuickBooks posting failed:", err);
@@ -74,9 +71,7 @@ async function postAll(): Promise<string[]> {
         failed.push("in-kind");
     }
     try {
-        const income = await drainIncomeOutbox((await getOrg()).id);
-        logger.info(`[qbo-posting] income ${JSON.stringify(income)}`);
-        if (typeof income.post === "object") laneReached("income deposit-build");
+        logger.info(`[qbo-posting] income ${JSON.stringify(await drainIncomeOutbox((await getOrg()).id))}`);
     } catch (err) {
         logger.error("[qbo-posting] income QuickBooks posting failed:", err);
         stepCrashed(JOB, "income", err, ["income deposit-build"]);
