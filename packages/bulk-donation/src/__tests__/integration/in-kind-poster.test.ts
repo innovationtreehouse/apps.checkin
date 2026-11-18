@@ -1238,6 +1238,28 @@ describeDb("in-kind QuickBooks drift", () => {
     expect((await posting(id)).qbNote).toBe("QuickBooks JournalEntry 9100 carries this gift's key but is not linked to it; void it or link it");
   });
 
+  it("match answers no stray entry, so an entry a re-match lets go of is noted again", async () => {
+    const id = await booked();
+    const [own] = qbo.journals;
+    const value = own.TotalAmt;
+    const credit = [{ JournalEntryLineDetail: { PostingType: "Credit" as const, AccountRef: { value: "400" } } }];
+    own.TotalAmt = 30;
+    strayEntry(id, "9100");
+    const stray = qbo.journals[1];
+    Object.assign(stray, { TotalAmt: value, Line: credit });
+    await runInKindQbPosting(orgId);
+    await expect(resolve(id, { action: "match", journalEntryId: "9100" })).resolves.toMatchObject({ qbState: "CREATED", qbNote: null });
+    expect(JSON.parse((await events("IN_KIND_QB_SETTLED")).at(-1)?.payload ?? "{}")).not.toHaveProperty("answeredEntries");
+
+    Object.assign(own, { TotalAmt: value, Line: credit });
+    stray.TotalAmt = 30;
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ drift: { drifted: 1 } });
+    await expect(resolve(id, { action: "match", journalEntryId: own.Id })).resolves.toMatchObject({ qbState: "CREATED" });
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ sweep: { flagged: 1 } });
+    expect((await posting(id)).qbNote).toMatch(/JournalEntry 9100 carries this gift's key but is not linked/);
+  });
+
   it("match relinks a drifted gift to its own re-dated entry, with the new date as the baseline", async () => {
     const id = await booked();
     qbo.journals[0].TxnDate = "2026-10-25";
