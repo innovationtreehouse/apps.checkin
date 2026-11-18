@@ -131,4 +131,33 @@ describe('trusted-adult mutation concurrency', () => {
         expect(decisions).toHaveLength(1);
         expect(JSON.stringify(normalizeAuditData(decisions[0].newData))).toContain(`"status":"${review!.status}"`);
     });
+
+    it('a board member who joins the household while the decision waits on the lock is refused', async () => {
+        const ta = await disclose();
+        const reviewId = ta.reviews[0].id;
+        const boardHouseholdId = (await prisma.person.findUniqueOrThrow({ where: { id: boardId } })).householdId;
+
+        // The holder takes the parent lock, waits for the decision to queue on it (its
+        // conflict bar has passed), then moves the board member into the family.
+        const holder = prisma.$transaction(async (tx) => {
+            await tx.$queryRaw`SELECT id FROM "TrustedAdult" WHERE id = ${ta.id} FOR UPDATE`;
+            for (let i = 0; i < 100; i++) {
+                const [{ waiting }] = await tx.$queryRaw<{ waiting: number }[]>`SELECT count(*)::int AS waiting FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`;
+                if (waiting > 0) break;
+                await new Promise((r) => setTimeout(r, 50));
+            }
+            await tx.person.update({ where: { id: boardId }, data: { householdId } });
+        }, { timeout: 15_000 });
+        const decision = decideReview(reviewId, boardId, { decision: 'APPROVE', sharedNote: SHARED });
+
+        const [, decided] = await Promise.allSettled([holder, decision]);
+        try {
+            expect(code(decided)).toBe('forbidden');
+            expect((await prisma.trustedAdultReview.findUnique({ where: { id: reviewId } }))!.status).toBe('PENDING_BOARD_REVIEW');
+            expect(await prisma.auditLog.count({ where: { tableName: 'SelfGrantRefusal', actorId: boardId, affectedEntityId: reviewId } })).toBe(1);
+        } finally {
+            await prisma.auditLog.deleteMany({ where: { tableName: 'SelfGrantRefusal', actorId: boardId } });
+            await prisma.person.update({ where: { id: boardId }, data: { householdId: boardHouseholdId } });
+        }
+    });
 });

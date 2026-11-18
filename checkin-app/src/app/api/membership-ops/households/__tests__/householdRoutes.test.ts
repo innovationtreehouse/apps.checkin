@@ -45,7 +45,7 @@ jest.mock("@/lib/prisma", () => {
     const household = { findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn() };
     const tx = {
         household,
-        person: { update: jest.fn(), updateMany: jest.fn(), findUniqueOrThrow: jest.fn() },
+        person: { update: jest.fn(), updateMany: jest.fn(), findUnique: jest.fn(), findUniqueOrThrow: jest.fn(), count: jest.fn() },
         auditLog: { create: jest.fn() },
         account: { deleteMany: jest.fn() },
         $executeRaw: jest.fn(),
@@ -70,7 +70,7 @@ const mockSession = getServerSession as jest.Mock;
 const db = prisma as unknown as {
     household: { findUnique: jest.Mock; findMany: jest.Mock; update: jest.Mock };
     person: { findUnique: jest.Mock };
-    tx: { person: { update: jest.Mock; updateMany: jest.Mock; findUniqueOrThrow: jest.Mock } };
+    tx: { person: { update: jest.Mock; updateMany: jest.Mock; findUnique: jest.Mock; findUniqueOrThrow: jest.Mock; count: jest.Mock } };
 };
 
 function signIn(user: Record<string, unknown>) {
@@ -161,12 +161,25 @@ describe("admin routes returning a Household row", () => {
         signIn(SYSADMIN_ONLY);
         db.person.findUnique.mockResolvedValue({ id: 5, name: "Mover", householdId: 20 });
         db.household.findUnique.mockResolvedValue(HOUSEHOLD);
+        db.tx.person.findUnique.mockResolvedValue({ householdId: 20, isHouseholdLead: false });
         db.tx.person.updateMany.mockResolvedValue({ count: 1 });
         db.tx.person.findUniqueOrThrow.mockResolvedValue({ id: 5, name: "Mover", householdId: 10, isHouseholdLead: false, household: HOUSEHOLD });
         const res = await reassignPOST(request("http://localhost/api/membership-ops/participants/5/household", "POST", { householdId: 10 }), { params: Promise.resolve({ id: "5" }) });
         expect(res.status).toBe(200);
         const { participant } = await res.json();
         expect(participant.household.id).toBe(10);
+    });
+
+    it("POST /api/membership-ops/participants/[id]/household refuses moving the household's only lead", async () => {
+        signIn(SYSADMIN_ONLY);
+        db.person.findUnique.mockResolvedValue({ id: 5, name: "Mover", householdId: 20 });
+        db.household.findUnique.mockResolvedValue(HOUSEHOLD);
+        db.tx.person.findUnique.mockResolvedValue({ householdId: 20, isHouseholdLead: true });
+        db.tx.person.count.mockResolvedValue(1);
+        const res = await reassignPOST(request("http://localhost/api/membership-ops/participants/5/household", "POST", { householdId: 10 }), { params: Promise.resolve({ id: "5" }) });
+        expect(res.status).toBe(409);
+        expect(db.tx.person.updateMany).not.toHaveBeenCalled();
+        expect(db.tx.person.update).not.toHaveBeenCalled();
     });
 });
 

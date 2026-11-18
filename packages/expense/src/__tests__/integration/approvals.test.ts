@@ -478,6 +478,30 @@ describeDb("the submitter's and reimbursee's households approve, raise and rejec
     await untouched(approvalId, "exception_raised");
   });
 
+  it("rejecting an exception, when the reimbursee becomes a housemate while the reject waits on the lock", async () => {
+    bindPorts({ signoff: directory({ households: [[4, 7]] }) });
+    const { id, approvalId } = await lineInApproval(100, "exception_raised");
+
+    let commit!: () => void;
+    const gate = new Promise<void>((r) => (commit = r));
+    let moved!: (pid: number) => void;
+    const rowHeld = new Promise<number>((r) => (moved = r));
+    const rival = db.$transaction(async (tx) => {
+      await tx.expense.update({ where: { id }, data: { needsReimbursement: true, reimburseePersonId: 4 } });
+      moved(await backendPid(tx));
+      await gate;
+    }, { timeout: 20_000 });
+    const holderPid = await rowHeld;
+
+    const outcome = rejectException(principal(7, { isFinance: true }), id, approvalId, "no").then(() => "committed", (err: unknown) => err);
+    await waitersBehind(db, holderPid);
+    commit();
+    await rival;
+
+    expect(await outcome).toMatchObject({ status: 403 });
+    await untouched(approvalId, "exception_raised");
+  });
+
   it("approving, as the bucket's approver or a Board member", async () => {
     bindPorts({ signoff: directory({ approvers: { 100: [6] }, board: [1], households: [[1, 6]] }) });
     const { id, approvalId } = await lineInApproval();

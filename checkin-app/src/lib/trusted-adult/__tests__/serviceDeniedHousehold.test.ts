@@ -47,10 +47,12 @@ const head = {
 beforeEach(() => {
     jest.clearAllMocks();
     tx.$queryRaw.mockResolvedValue([{ archivedAt: null }]);
-    tx.person.findUnique.mockResolvedValue({ householdId: ADULT_HOUSEHOLD });
+    tx.person.findUnique.mockImplementation(({ where }: { where: { id: number } }) => Promise.resolve(
+        where.id === ADULT_PERSON ? { householdId: ADULT_HOUSEHOLD } : { householdId: 99, household: { householdMembers: [] } },
+    ));
     tx.trustedAdult.create.mockResolvedValue({ id: 3, reviews: [] });
     tx.trustedAdultReview.findUnique.mockResolvedValue({
-        id: 9, trustedAdultId: 3, householdId: HOUSEHOLD, kind: "INITIAL", status: "PENDING_BOARD_REVIEW", createdAt: new Date(),
+        ...head, id: 9, householdId: HOUSEHOLD, kind: "INITIAL", status: "PENDING_BOARD_REVIEW", createdAt: new Date(),
     });
     tx.trustedAdultReview.aggregate.mockResolvedValue({ _max: { reviewBy: null } });
     tx.trustedAdultReview.findMany.mockResolvedValue([]);

@@ -55,6 +55,15 @@ describe('Admin Participant Household API Integration Tests', () => {
         });
     });
 
+    /** A second lead in the subject's household, so moving the subject out leaves it a lead. */
+    async function addCoLead(): Promise<number> {
+        const subject = await prisma.person.findUniqueOrThrow({ where: { id: testParticipantId } });
+        const coLead = await prisma.person.create({
+            data: { email: 'colead-household-api-test@example.com', name: 'Subject Test', isDeclaredAdult: true, isHouseholdLead: true, householdId: subject.householdId }
+        });
+        return coLead.id;
+    }
+
     beforeEach(async () => {
         const participant = await prisma.person.create({
             data: { email: 'subject-household-api-test@example.com', name: 'Subject Test', household: { create: { name: "Test HH" } } }
@@ -209,8 +218,9 @@ describe('Admin Participant Household API Integration Tests', () => {
                 user: { id: testAdminId, isSysadmin: true, isBoardMember: false }
             });
 
-            // Make the subject a lead of their OWN (beforeEach-created) household.
+            // Make the subject a lead of their OWN (beforeEach-created) household, beside a co-lead who stays.
             await prisma.person.update({ where: { id: testParticipantId }, data: { isHouseholdLead: true } });
+            await addCoLead();
 
             const req = new Request(`http://localhost:4000/api/membership-ops/participants/${testParticipantId}/household`, {
                 method: 'POST',
@@ -264,6 +274,7 @@ describe('Admin Participant Household API Integration Tests', () => {
             const subjectBefore = await prisma.person.findUnique({ where: { id: testParticipantId } });
             const priorHouseholdId = subjectBefore!.householdId!;
             await prisma.person.update({ where: { id: testParticipantId }, data: { isHouseholdLead: true } });
+            const coLeadId = await addCoLead();
 
             const req = new Request(`http://localhost:4000/api/membership-ops/participants/${testParticipantId}/household`, {
                 method: 'POST',
@@ -275,12 +286,32 @@ describe('Admin Participant Household API Integration Tests', () => {
             const data = await res.json();
             expect(data.participant.householdId).not.toBe(priorHouseholdId);
 
-            // They lead the NEW household, and the old one is left leadless.
+            // They lead the NEW household, and the old one keeps its other lead.
             const moved = await prisma.person.findUnique({ where: { id: testParticipantId } });
             expect(moved?.isHouseholdLead).toBe(true);
             expect(moved?.householdId).toBe(data.participant.householdId);
-            const oldLeads = await prisma.person.count({ where: { householdId: priorHouseholdId, isHouseholdLead: true } });
-            expect(oldLeads).toBe(0);
+            const oldLeads = await prisma.person.findMany({ where: { householdId: priorHouseholdId, isHouseholdLead: true }, select: { id: true } });
+            expect(oldLeads.map((l) => l.id)).toEqual([coLeadId]);
+        });
+
+        it.each([
+            ['to another household', () => ({ householdId: testHouseholdId })],
+            ['to a new household', () => ({ createNew: true })],
+        ])('refuses moving a household\'s only lead %s -> 409, unchanged', async (_label, body) => {
+            (getServerSession as jest.Mock).mockResolvedValue({
+                user: { id: testAdminId, isSysadmin: true, isBoardMember: false }
+            });
+            const before = await prisma.person.update({ where: { id: testParticipantId }, data: { isHouseholdLead: true } });
+
+            const req = new Request(`http://localhost:4000/api/membership-ops/participants/${testParticipantId}/household`, {
+                method: 'POST',
+                body: JSON.stringify(body())
+            });
+            const res = await POST(req as unknown as import("next/server").NextRequest, { params: Promise.resolve({ id: String(testParticipantId) }) });
+            expect(res.status).toBe(409);
+
+            const unmoved = await prisma.person.findUnique({ where: { id: testParticipantId } });
+            expect(unmoved).toMatchObject({ householdId: before.householdId, isHouseholdLead: true });
         });
 
         // A youth cannot be a household lead (addHouseholdLead's youth exclusion),
@@ -324,6 +355,7 @@ describe('Admin Participant Household API Integration Tests', () => {
                 where: { id: testParticipantId },
                 data: { dateOfBirth: twelveYearsAgo, isHouseholdLead: true }
             });
+            await addCoLead();
 
             const req = new Request(`http://localhost:4000/api/membership-ops/participants/${testParticipantId}/household`, {
                 method: 'POST',
