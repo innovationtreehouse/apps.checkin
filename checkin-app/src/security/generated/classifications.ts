@@ -235,6 +235,7 @@ export const classifications = {
     Program: {
         id: 'public',
         name: 'public',
+        nameKey: 'internal',
         leadMentorId: 'public',
         startAt: 'public',
         endAt: 'public',
