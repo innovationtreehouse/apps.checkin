@@ -201,9 +201,9 @@ describeDb("checkApprovalAutoTransition", () => {
     expect(checkAndProcessExpense).not.toHaveBeenCalled();
   });
 
-  it("routes to capital_review when a single line item's unit price is at the line threshold", async () => {
+  it("routes to capital_review when a single line item's unit cost is at the line threshold", async () => {
     const id = await seedExpense({ state: "owner_approval", receiptTotalCents: 100 });
-    const li = await seedLineItem(id, { unitPriceCents: 2500 });
+    const li = await seedLineItem(id, { unitPriceCents: 2500, totalPriceCents: 2500 });
     await seedApproval(id, li, { ownerId: 5, status: "approved" });
 
     await checkApprovalAutoTransition(id, ACTOR);
