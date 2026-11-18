@@ -681,6 +681,7 @@ describeDb("QuickBooks match", () => {
     await db.expense.update({ where: { id }, data: { state: "qb_on_hold", taxCents: 15, discountCents: 5 } });
     await seedLineItem(id, { totalPriceCents: 50 });
     await signAllLines(id);
+    await db.expenseTaxApproval.create({ data: { expenseId: id, taxCents: 15, approvedByUserId: 3 } });
     expect(await db.expenseLineItem.count({ where: { expenseId: id, allocatedTaxCents: { not: null } } })).toBe(0);
     expect((await qbCandidates(FINANCE, id)).map((t) => t.id)).toEqual(["43"]);
     await matchExpenseToQb(FINANCE, id, "43");
