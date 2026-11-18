@@ -1184,6 +1184,17 @@ class TestCloseWait(unittest.TestCase):
         self.assertEqual(self._closes(), [None])
         self.assertEqual(self.events[-1], prompt, "the wait restarts on screen")
 
+    def test_a_twist_re_read_a_second_later_neither_confirms_nor_toggles(self):
+        # The door reader re-reads a held badge only when it is twisted, under 2 s.
+        handle_scan(self._offline(), self.state, self.outbox, 9)
+        self.now += 1.0
+        handle_scan(self._offline(), self.state, self.outbox, 9)
+        handle_scan(self._offline(), self.state, self.outbox, 5)
+        self.now += 1.0
+        handle_scan(self._offline(), self.state, self.outbox, 5)
+        rows = self.outbox.pending_rows()
+        self.assertEqual([(str(r.participant_id), r.intent, r.close) for r in rows], [("9", "OUT", None), ("5", "OUT", None)])
+
     def test_a_second_badge_after_the_wait_confirms(self):
         handle_scan(self._offline(), self.state, self.outbox, 9)
         self.now += REPEAT_READ_SECONDS + 5

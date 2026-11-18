@@ -137,7 +137,7 @@ person in front of it.
   and offers the close: the same badge again within fifteen seconds closes the
   building. No second badge, or a badge of anyone else, ends the offer; that
   other badge is handled as an ordinary scan. A read of the same badge within
-  two seconds of the offer is the same touch read twice, never the second
+  three seconds of the offer is the same touch read twice, never the second
   badge. The
   kiosk decides the same way online and offline, from the same view of who is
   inside.  [Decision]
@@ -312,13 +312,11 @@ hours at a time — is a normal operating mode here, not an incident.
   direction from its own live state at delivery, which would flip a replayed
   check-in into a check-out.  [Decision]
 
-- Repeat reads of the same badge within two seconds are one scan: the scanner
+- Repeat reads of the same badge within three seconds are one scan: the scanner
   can read one touch twice. The rule is the same online and offline, and a
   double-read never records an in and an out. A keyholder's second badge to
-  confirm a close therefore comes more than two seconds after the first: the
-  close offer first shows a wait, in its own colour and words, that restarts
-  while the badge is still read, and its fifteen seconds start when the wait
-  ends. The same scan delivered twice is applied once.  [Decision]
+  confirm a close therefore comes more than three seconds after the first. The
+  same scan delivered twice is applied once.  [Decision]
 
 - A replayed scan applies at the time the badge was read, not the time it was
   delivered, however late it arrives: a scan is trusted by default. A replay

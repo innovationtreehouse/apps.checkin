@@ -325,7 +325,7 @@ The mechanism exists and stays. It is named here so nothing in the cleanup
 cuts it.
 
 1. **Write before send.** The badge read is filtered for a repeat of the same
-   badge within 3 seconds, then written to the kiosk's local SQLite queue
+   badge within 2 seconds, then written to the kiosk's local SQLite queue
    (`client/outbox.py`, WAL with full sync) with a fresh scan id
    (`clientEventId`, a UUID), the scan time, the direction the screen showed,
    and the close decision if any. Only then is it sent.
@@ -368,7 +368,7 @@ queue and the 11 PM close, both of which the fence and pull-back rules already
 handle. The hold stays for closed records a member inserted (they still may,
 decision Q1), and gets rarer.
 
-**Duplicate badge reads** are one scan by the kiosk's 3-second filter; the
+**Duplicate badge reads** are one scan by the kiosk's 2-second filter; the
 server keeps only exact-duplicate dedup by scan id.
 
 ### Scan times

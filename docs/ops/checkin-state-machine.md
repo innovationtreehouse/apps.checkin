@@ -43,7 +43,7 @@ stateDiagram-v2
    in within 10 minutes.
 3. **A scan that doesn't fit** (IN while IN, OUT while OUT) is recorded and
    flagged; the person's state does not change.
-4. **Repeat reads of the same badge within 3 seconds are one scan.** The kiosk
+4. **Repeat reads of the same badge within 2 seconds are one scan.** The kiosk
    filters them when the badge is read, before queueing or sending, so it works
    the same offline. The server only ignores exact duplicates (the same scan
    sent twice).
@@ -74,7 +74,7 @@ flowchart TD
     A[Keyholder scans OUT at the kiosk] --> B{Does the kiosk show anyone else IN?}
     B -- No --> N[Kiosk warns: you are closing; the building should be empty] --> C[Close at the scan time]
     B -- Yes, keyholder or not --> D[Kiosk: scan again within 15 s to close]
-    D -- Same badge again, after 3 s --> C
+    D -- Same badge again, after 2 s --> C
     D -- No second scan, or another badge --> E[Only this keyholder leaves; the other scan is processed normally]
 ```
 
