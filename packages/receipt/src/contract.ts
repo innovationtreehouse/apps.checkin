@@ -278,8 +278,11 @@ export interface MailAgingOutEvent {
 }
 
 /** One acknowledgement of a mailed receipt, to one recipient. */
-/** Why a mailed file was not accepted; `no_receipt` stands for a whole message that held nothing to read. */
-export type MailRefusalReason = "too_large" | "wrong_type" | "empty" | "forwarded" | "ceiling" | "no_receipt";
+/**
+ * Why a mailed file was not accepted. `no_receipt` stands for a whole message that held nothing to
+ * read, `no_amount` for a message whose only candidate was its text, which named no amount.
+ */
+export type MailRefusalReason = "too_large" | "wrong_type" | "empty" | "forwarded" | "ceiling" | "no_receipt" | "no_amount";
 
 export interface MailRefusal {
   file: string;

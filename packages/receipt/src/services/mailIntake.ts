@@ -6,7 +6,7 @@ import { z } from "zod";
 import { isServiceError, kindOf, ServiceError } from "@checkin/component-kit";
 import { isUniqueConstraintError } from "@checkin/pg-kit";
 import { db } from "../db";
-import { isNoticeMessageId, type MailboxReader, type MailMessage, type MailPart, type MailRefusal, type ReceiptPrincipal } from "../contract";
+import { isNoticeMessageId, type MailboxReader, type MailMessage, type MailPart, type MailRefusal, type MailRefusalReason, type ReceiptPrincipal } from "../contract";
 import type { Prisma } from "../generated/prisma/client";
 import { ACCEPTED_TYPES, checkReceiptFile, MAX_FILE_BYTES } from "../lib/file-type";
 import { deleteStoredFiles, newMailItemFileKey, readStoredFile } from "../lib/fileStorage";
@@ -339,21 +339,35 @@ const fileName = (p: MailPart, fallback: string) => (p.filename || fallback).sli
 /** Inline images under this declared size (tracking pixels, icons, small logos) are skipped without a download. */
 export const INLINE_FLOOR_BYTES = 5 * 1024;
 
-// ponytail: a body printing its total without cents reads as trivial; widen the pattern if one is found.
-/** A money amount: a number with two decimal places. A body without one is trivial. */
-const MONEY_AMOUNT = /\d\.\d{2}(?!\d)/;
+/** A body under this many bytes, as `bodyText` measures it, is never a receipt. */
+export const BODY_MIN_BYTES = 100;
+
+/** A money amount: `$` before a digit, or a number with two decimal places. */
+export const MONEY_AMOUNT = /\$\s?\d|\d\.\d{2}(?!\d)/;
+
+/**
+ * A signature separator or a mail client's trailer line holding no digit, so a line naming an amount stays. Only the
+ * line goes: a forwarded receipt often sits below it.
+ */
+const TRAILER_LINE = /^(?:-- |sent from (?:my |yahoo mail|mail for windows)[^\d\r\n]*)\r?$/gim;
 
 /** An HTML body's visible text: its style blocks and tags (with their style attributes) hold CSS numbers, never amounts. */
 const visibleText = (html: string) => html.replace(/<style\b[\s\S]*?<\/style\s*>/gi, " ").replace(/<[^>]*>/g, " ");
 
+/** The body's visible text without trailer lines, its whitespace collapsed: what the size and money checks read. */
+export const bodyText = (text: string, html: boolean): string =>
+  (html ? visibleText(text) : text).replace(TRAILER_LINE, "").replace(/[ \t]+/g, " ").replace(/\s*\n\s*/g, "\n").trim();
+
 /**
  * A message's candidate files, read in this order: each attachment of an accepted type, each inline
- * part of an accepted non-text type at or over the floor, then the body, stored as text, unless it
- * holds no money amount. `ignored` counts the inline parts under the floor, a trivial body and
- * each message attached whole. `refused` names the attachments never read: an unaccepted type or
- * a message attached whole.
+ * part of an accepted non-text type at or over the floor, then the body, stored as text. The body
+ * counts only at BODY_MIN_BYTES or more, and is a file only when it holds a money amount. A
+ * significant body without one, in a message with no other file, read or refused, is returned as `unpriced` for the
+ * caller to bounce or hold. `ignored` counts the inline parts under the floor, a body that is no
+ * file, and each message attached whole. `refused` names the attachments never read: an
+ * unaccepted type or a message attached whole.
  */
-export function mailFiles(msg: MailMessage, reader: MailboxReader): { files: MailFile[]; ignored: number; refused: MailRefusal[] } {
+export function mailFiles(msg: MailMessage, reader: MailboxReader): { files: MailFile[]; ignored: number; refused: MailRefusal[]; unpriced?: MailFile } {
   const parts = ownParts(msg.payload);
   const typeOf = (p: MailPart) => p.mimeType.toLowerCase();
   const read = (p: MailPart) => async () =>
@@ -378,18 +392,34 @@ export function mailFiles(msg: MailMessage, reader: MailboxReader): { files: Mai
   // HTML is stored as its source text: a receipt file is never served as a page.
   const body = bodyPart("text/plain") ?? bodyPart("text/html");
   const files = [...attachments, ...sized].map((p) => file(p));
-  if (body) {
-    const text = Buffer.from(body.body?.data ?? "", "base64url").toString();
-    if (MONEY_AMOUNT.test(typeOf(body) === "text/html" ? visibleText(text) : text)) files.push({ ...file(body, "text/plain"), body: true });
-    else ignored++;
-  }
+  if (!body) return { files, ignored, refused };
+  const text = bodyText(Buffer.from(body.body?.data ?? "", "base64url").toString(), typeOf(body) === "text/html");
+  const bodyFile: MailFile = { ...file(body, "text/plain"), body: true };
+  const significant = Buffer.byteLength(text) >= BODY_MIN_BYTES;
+  if (significant && MONEY_AMOUNT.test(text)) files.push(bodyFile);
+  else if (significant && files.length === 0 && refused.length === 0) return { files, ignored, refused, unpriced: bodyFile };
+  else ignored++;
   return { files, ignored, refused };
 }
 
 const isStatus = (err: unknown, code: number) => isServiceError(err) && err.status === code;
 
-/** Why a file was held for finance: no sender passed the sender check, or the verified sender may not submit receipts. */
-export type HoldReason = "unverified_sender" | "not_a_submitter";
+/**
+ * Why a file was held for finance: no sender passed the sender check, the verified sender may not submit receipts, or a
+ * submitter's reply to a notice or Cc-only copy held text with no amount, which gets no reply.
+ */
+export type HoldReason = "unverified_sender" | "not_a_submitter" | "side_copy";
+
+/** Refused files finance is told about, in a held note with no file, when no submitter sent the mail. */
+const HELD_REFUSALS = new Set<MailRefusalReason>(["wrong_type", "forwarded", "too_large", "empty"]);
+
+/** The ledger key of a message's one refusal note, which names what finance should hear of and keeps no file. */
+export const REFUSAL_NOTE_KEY = createHash("sha256").update("receipt mail refusal note").digest("hex");
+
+/** A message's refusal note, held or since discarded: never the ledger row of a file. */
+export const isRefusalNote = (row: { attachmentHash: string }) => row.attachmentHash === REFUSAL_NOTE_KEY;
+
+const sameRefusal = (a: MailRefusal) => (b: MailRefusal) => a.file === b.file && a.reason === b.reason;
 
 /** The statuses whose items keep their file in the ledger, awaiting finance or a later run. */
 export const STORED_STATUSES = ["held", "deferred"];
@@ -561,21 +591,34 @@ async function readLeased(reader: MailboxReader, orgId: string, started: number,
   }
 
   async function readMessage(msg: MailMessage, reader: MailboxReader): Promise<void> {
-    const { files, ignored, refused } = mailFiles(msg, reader);
-    // Nothing to read and nothing refused: the sender is told no receipt was found, unless the mail was a reply or side copy.
-    if (files.length === 0 && refused.length === 0 && !isSideCopy(msg.payload.headers, reader.address)) {
-      refused.push({ file: "your email", reason: "no_receipt" });
-    }
-    // Every file already in the ledger: nothing to download.
-    const rows = await db.receiptMailItem.findMany({ where: { gmailMessageId: msg.id }, select: { refusal: true } });
-    const ledgered = files.length > 0 && rows.length >= files.length;
-    // A file refused on an earlier pass is never read again, so its row carries it into the notice.
-    refused.push(...rows.flatMap((r) => (r.refusal ? [r.refusal as unknown as MailRefusal] : [])));
+    const { files, ignored, refused, unpriced } = mailFiles(msg, reader);
     const headers = msg.payload.headers;
     const address = fromAddress(headers);
     const verdict = dmarcVerdict(headers, address);
     const aligned = verdict === "pass";
-    const sender: ReceiptPrincipal | null = address && aligned && (!ledgered || refused.length > 0) ? await ports().people.submitterByEmail(address) : null;
+    const submitter = () => (address && aligned ? ports().people.submitterByEmail(address) : Promise.resolve(null));
+    // A significant body with no amount: a submitter is told, or, on a side copy, finance holds a note of it with no
+    // reply; a submitter's automated mail keeps it as their receipt unless it is a side copy; anyone else's is held.
+    const known = unpriced ? await submitter() : undefined;
+    const sideCopy = isSideCopy(headers, reader.address);
+    let sideCopyNote = false;
+    if (unpriced) {
+      const automated = isAutomated(msg.payload, address);
+      if (known && sideCopy) sideCopyNote = !automated;
+      else if (known && !automated) refused.push({ file: "your email", reason: "no_amount" });
+      else files.push(unpriced);
+    }
+    // Nothing to read and nothing refused: the sender is told no receipt was found, unless the mail was a reply or side copy.
+    if (files.length === 0 && refused.length === 0 && !sideCopy) {
+      refused.push({ file: "your email", reason: "no_receipt" });
+    }
+    // Every file already in the ledger: nothing to download.
+    const rows = await db.receiptMailItem.findMany({ where: { gmailMessageId: msg.id }, select: { id: true, attachmentHash: true, status: true, refusal: true } });
+    const note = rows.find(isRefusalNote);
+    const ledgered = files.length > 0 && rows.length - (note ? 1 : 0) >= files.length;
+    // A file refused on an earlier pass is never read again, so its row carries it into the notice.
+    refused.push(...rows.flatMap((r) => (r.refusal && !isRefusalNote(r) ? [r.refusal as unknown as MailRefusal] : [])));
+    const sender: ReceiptPrincipal | null = known !== undefined ? known : !ledgered || refused.length > 0 ? await submitter() : null;
     const holdReason: HoldReason = aligned ? "not_a_submitter" : "unverified_sender";
     // Owed in the same transaction as each stored file, so a reply is owed exactly when the message has one.
     const reply = { orgId, gmailMessageId: msg.id, senderAddress: address ?? "", receivedAt: new Date(Number(msg.internalDate)), replyToSender: aligned && !isAutomated(msg.payload, address) };
@@ -593,8 +636,44 @@ async function readLeased(reader: MailboxReader, orgId: string, started: number,
         data: { refusals, doneAt: null, claimedAt: null, attempts: 0 },
       });
     };
+    /**
+     * Without a submitter to tell, the message's refused files go to finance as one held note that keeps no file, and so
+     * does a submitter's side copy with no amount. The note is charged one held file against the run's budget and the
+     * ceiling; with no room, the message stays open for a later run. A discarded note is never reopened.
+     */
+    const holdRefusals = async () => {
+      const toNote: MailRefusal[] = sender
+        ? sideCopyNote ? [{ file: "your email", reason: "no_amount" }] : []
+        : refused.filter((r) => HELD_REFUSALS.has(r.reason));
+      const noted = (note?.refusal ?? []) as unknown as MailRefusal[];
+      const fresh = toNote.filter((r, i) => !noted.some(sameRefusal(r)) && toNote.findIndex(sameRefusal(r)) === i);
+      if (fresh.length === 0 || (note && note.status !== "held")) return;
+      const refusal = [...noted, ...fresh] as unknown as Prisma.InputJsonValue;
+      if (note) {
+        await db.receiptMailItem.update({ where: { id: note.id }, data: { refusal } });
+        return;
+      }
+      if (!roomToHold(0)) return;
+      heldFiles++;
+      const { count } = await db.receiptMailItem.createMany({
+        data: [{
+          orgId,
+          gmailMessageId: msg.id,
+          attachmentHash: REFUSAL_NOTE_KEY,
+          receivedAt: new Date(Number(msg.internalDate)),
+          senderAddress: address ?? "",
+          dmarcVerdict: verdict,
+          status: "held",
+          holdReason: sender ? ("side_copy" satisfies HoldReason) : holdReason,
+          refusal,
+        }],
+        skipDuplicates: true,
+      });
+      counts.held += count;
+    };
     if (ledgered) {
       counts.skipped += files.length;
+      await holdRefusals();
       await oweRefusals();
       return;
     }
@@ -681,6 +760,7 @@ async function readLeased(reader: MailboxReader, orgId: string, started: number,
         counts.skipped++;
       }
     }
+    await holdRefusals();
     // A put-off file may be refused yet, so the one notice waits for the pass that finishes the message.
     if (!putOff) await oweRefusals();
   }

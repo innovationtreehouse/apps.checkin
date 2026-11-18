@@ -166,8 +166,12 @@ up to 30 days without losing mail.
 
 **Files in a message**, in reading order: each attachment of an accepted type, each
 inline part of an accepted non-text type at 5 KB or more, then the body stored as
-text. A body with no amount written to two decimals is skipped. A message attached
-whole is never opened, only counted. Finance's ignore list, which finance adds to from
+text. The body is measured as its visible text with trailer lines (`-- `, "Sent from
+my …") deleted, never cut below them. Under 100 bytes it is skipped. Otherwise it is
+read when it holds an amount (`$` before a digit, or a number with two decimals). A
+long body with no amount is skipped beside any other file, accepted or refused; alone,
+it gets a "no amount" notice for a resolved sender and is held for anyone else. A
+message attached whole is never opened, only counted. Finance's ignore list, which finance adds to from
 a discarded or rejected receipt, skips a file by exact hash, and upload never consults that list.
 
 **Sender.** The address counts only when the message has one `From` with one
@@ -182,6 +186,7 @@ shows a DMARC pass for that domain and a DKIM pass signed by exactly that domain
 | Resolved sender, within limits | a receipt, at `auto_upload`, with its ledger row in the same insert |
 | Resolved sender, over their daily limit | `deferred`: stored, retried first on later runs, and finance may release it early |
 | Anyone else | `held`, with a reason, until finance assigns or discards it |
+| Anyone else, file refused | `held` with no file, naming the file and why, until finance discards it |
 
 **Per-run budgets.**
 

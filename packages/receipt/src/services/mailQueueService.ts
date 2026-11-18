@@ -8,13 +8,13 @@ import { db } from "../db";
 import type { Prisma } from "../generated/prisma/client";
 import type { ReceiptPrincipal } from "../contract";
 import { getOrgId, ports, requireActor } from "../runtime";
-import { intakeDeferred, MAIL_CATCH_UP_BUDGET_MS, MAIL_CATCH_UP_CAP, mailRunState, startMailRun, STORED_STATUSES, type DmarcVerdict } from "./mailIntake";
+import { intakeDeferred, isRefusalNote, MAIL_CATCH_UP_BUDGET_MS, MAIL_CATCH_UP_CAP, mailRunState, startMailRun, STORED_STATUSES, type DmarcVerdict } from "./mailIntake";
 import { intakeMailedReceipt } from "./receiptService";
 import { closeUnreplyable } from "./mailReplies";
 import { deleteStoredFiles, readStoredFile } from "../lib/fileStorage";
 import { ServiceError } from "@checkin/component-kit";
 
-const ITEM_FIELDS = { id: true, receivedAt: true, senderAddress: true, status: true, holdReason: true, dmarcVerdict: true, mimeType: true, receiptId: true } as const;
+const ITEM_FIELDS = { id: true, receivedAt: true, senderAddress: true, status: true, holdReason: true, dmarcVerdict: true, mimeType: true, receiptId: true, refusal: true } as const;
 
 const AssignSchema = z.union([
   z.object({ email: z.string().trim().min(1).max(320), remember: z.literal(true).optional() }).strict(),
@@ -174,7 +174,8 @@ export const mailQueueService = {
   /**
    * Discard a stored item with a reason. With `ignoreFile`, the same transaction lists its file
    * and discards every other stored item with that file, each audited with the same reason.
-   * A discarded row keeps its fileKey, naming the deleted object for an admin restore.
+   * A discarded row keeps its fileKey, naming the deleted object for an admin restore. A refusal note keeps no file, so
+   * it cannot be ignored: its ledger key is shared by every note.
    */
   async discard(id: number, rawInput: unknown) {
     const actor = await requireActor();
@@ -188,6 +189,7 @@ export const mailQueueService = {
         where: { id },
         select: { ...ITEM_FIELDS, attachmentHash: true, gmailMessageId: true, fileKey: true },
       });
+      if (ignoreFile && isRefusalNote({ attachmentHash })) throw new ServiceError(409, "This item keeps no file to ignore");
       const messages = [gmailMessageId];
       const fileKeys = [fileKey];
       if (ignoreFile) {

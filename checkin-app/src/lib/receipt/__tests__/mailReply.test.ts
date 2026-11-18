@@ -62,6 +62,13 @@ describe('a message with no receipt', () => {
         expect(html).toContain('https://app.example.org/receipts/upload');
         expect(html).not.toContain('We could not accept these files');
     });
+
+    it('says a text with no amount was not taken as a receipt', async () => {
+        const html = await htmlFor({ receiptId: null, mine: false, creditedName: null, refused: [{ file: 'your email', reason: 'no_amount' }] });
+        expect(html).toContain('We found text in it but no amount, so we did not take it as a receipt.');
+        expect(html).toContain('https://app.example.org/receipts/upload');
+        expect(html).not.toContain('We could not accept these files');
+    });
 });
 
 describe('the acknowledgement body', () => {
