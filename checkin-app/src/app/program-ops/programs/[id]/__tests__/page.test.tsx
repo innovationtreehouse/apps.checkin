@@ -441,7 +441,7 @@ describe("ProgramDetailsPage", () => {
         url: "/api/programs/1/participants", method: "POST",
         result: () => (attempt++ === 0 ? { ok: false, status: 400, body: { error: "Program is full." } } : { ok: true, body: {} }),
       },
-      { url: "/api/programs/1", method: "GET", result: { ok: true, body: programData } },
+      { url: "/api/programs/1", method: "GET", result: { ok: true, body: pricedProgram } },
     ]);
     renderPage();
     await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
@@ -484,7 +484,7 @@ describe("ProgramDetailsPage", () => {
     routedFetch([
       { url: "/api/programs/1/eligible-participants", method: "GET", result: { ok: true, body: { members: [{ id: 777, name: "Gerry Grownup", ageWarning: null }] } } },
       { url: "/api/programs/1/participants", method: "POST", result: { throws: true } },
-      { url: "/api/programs/1", method: "GET", result: { ok: true, body: programData } },
+      { url: "/api/programs/1", method: "GET", result: { ok: true, body: pricedProgram } },
     ]);
     renderPage();
     await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
@@ -505,9 +505,9 @@ describe("ProgramDetailsPage", () => {
     expect(screen.getByDisplayValue("Gerry Grownup")).toBeInTheDocument();
   });
 
-  it("gives a sysadmin no Enroll button", async () => {
+  it("gives a sysadmin no Enroll button on a priced program", async () => {
     setSession({ id: 1, isSysadmin: true });
-    mockFetchJson({ "/api/programs/1": programData });
+    mockFetchJson({ "/api/programs/1": pricedProgram });
     renderPage();
     await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
     fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
@@ -522,7 +522,7 @@ describe("ProgramDetailsPage", () => {
     setSession({ id: 9, isFinance: true });
     const fetchMock = routedFetch([
       { url: "/api/programs/1/participants", method: "POST", result: { ok: true, body: {} } },
-      { url: "/api/programs/1", method: "GET", result: { ok: true, body: programData } },
+      { url: "/api/programs/1", method: "GET", result: { ok: true, body: pricedProgram } },
     ]);
     renderPage();
     await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
@@ -546,6 +546,30 @@ describe("ProgramDetailsPage", () => {
         expect.objectContaining({ method: "POST", body: JSON.stringify({ participantId: 102, basis: "OUTSIDE_PAYMENT", note: "check 7" }) }),
       ),
     );
+  });
+
+  it("lets a sysadmin add someone to a free program directly, with no payment to account for", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const fetchMock = routedFetch([
+      { url: "/api/programs/1/eligible-participants", method: "GET", result: { ok: true, body: { members: [{ id: 777, name: "Gerry Grownup", ageWarning: null }] } } },
+      { url: "/api/programs/1/participants", method: "POST", result: { ok: true, body: {} } },
+      { url: "/api/programs/1", method: "GET", result: { ok: true, body: programData } },
+    ]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
+
+    fireEvent.change((await screen.findAllByPlaceholderText("Start typing to search..."))[1], { target: { value: "G" } });
+    fireEvent.click(await screen.findByText("Gerry Grownup"));
+    fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/programs/1/participants",
+        expect.objectContaining({ method: "POST", body: JSON.stringify({ participantId: 777, override: true }) }),
+      ),
+    );
+    expect(screen.queryByRole("dialog", { name: "Enroll Gerry Grownup" })).not.toBeInTheDocument();
   });
 
   it("renders the parents above the emergency contacts, skipping a participant who leads their own household", async () => {

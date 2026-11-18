@@ -6,7 +6,7 @@
  * payment, recording what the place stands for. Real app DB; the store mirror and
  * the stock push are mocked so each seat change is visible.
  */
-import { POST } from '@/app/api/programs/[id]/participants/route';
+import { DELETE, POST } from '@/app/api/programs/[id]/participants/route';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
 import { orderEntitlesEnrollment, type EntitlementOrder } from '@/lib/finance/reconcile/program';
@@ -248,6 +248,45 @@ describe('enroll by hand', () => {
         expect(replay.activatedCount).toBe(0);
         expect((await post({ participantId: b.id, basis: 'MATCHED_ORDER', shopifyOrderId: oid })).status).toBe(200);
         expect((await rowOf(a.id)).status).toBe('PENDING');
+    });
+
+    it('refuses to enroll by hand a claim whose household was archived', async () => {
+        const c = await child();
+        await claim(c.id);
+        await prisma.household.update({ where: { id: c.householdId }, data: { archivedAt: new Date() } });
+        as(financeId, { isFinance: true });
+        expect((await post({ participantId: c.id, basis: 'OUTSIDE_PAYMENT' })).status).toBe(409);
+        expect((await rowOf(c.id)).status).toBe('PENDING');
+    });
+
+    it('refuses a basis on a free program', async () => {
+        const c = await child();
+        await prisma.program.update({ where: { id: programId }, data: { orgMemberPriceCents: null, nonOrgMemberPriceCents: null } });
+        try {
+            as(boardId, { isBoardMember: true });
+            expect((await post({ participantId: c.id, basis: 'COMP' })).status).toBe(400);
+        } finally {
+            await prisma.program.update({ where: { id: programId }, data: { orgMemberPriceCents: 1000, nonOrgMemberPriceCents: 1000 } });
+        }
+    });
+
+    it('keeps a place paid outside the store paid when the price is later zeroed', async () => {
+        const c = await child();
+        await claim(c.id);
+        as(financeId, { isFinance: true });
+        expect((await post({ participantId: c.id, basis: 'OUTSIDE_PAYMENT' })).status).toBe(200);
+        await prisma.program.update({ where: { id: programId }, data: { orgMemberPriceCents: null, nonOrgMemberPriceCents: null } });
+        try {
+            as(sysadminId, { isSysadmin: true });
+            const res = await DELETE(
+                new Request(`http://localhost:4000/api/programs/${programId}/participants`, { method: 'DELETE', body: JSON.stringify({ participantId: c.id }) }) as unknown as import('next/server').NextRequest,
+                { params: Promise.resolve({ id: String(programId) }) } as unknown as never,
+            );
+            expect(res.status).toBe(403);
+            expect((await rowOf(c.id)).status).toBe('ACTIVE');
+        } finally {
+            await prisma.program.update({ where: { id: programId }, data: { orgMemberPriceCents: 1000, nonOrgMemberPriceCents: 1000 } });
+        }
     });
 
     describe.each([

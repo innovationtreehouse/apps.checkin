@@ -158,26 +158,33 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
     setBasis(null); setOrderId(""); setEnrollNote("");
   };
 
+  // A free program has no payment to account for: staff add from the roster directly.
+  const canAdd = isPriced ? canEnrollByHand : isSysAdminOrBoard;
+
   const handleAddParticipant = (e: React.FormEvent) => {
     e.preventDefault();
-    if (newPartId) openEnroll({ personId: parseInt(newPartId), name: partLabel });
+    if (!newPartId) return;
+    if (isPriced) openEnroll({ personId: parseInt(newPartId), name: partLabel });
+    else enroll(parseInt(newPartId), { override: true });
   };
 
-  const doEnroll = async () => {
+  const doEnroll = () => {
     if (!enrollTarget || !basis) return;
-    const { personId } = enrollTarget;
+    enroll(enrollTarget.personId, {
+      basis,
+      ...(basis === 'MATCHED_ORDER' && { shopifyOrderId: orderId.trim() }),
+      ...(enrollNote.trim() && { note: enrollNote.trim() }),
+      // The Board may also waive the program's limits (age, capacity, closed enrollment).
+      ...(isBoardMember && { override: true }),
+    });
+  };
+
+  const enroll = async (personId: number, fields: Record<string, unknown>) => {
     setSaving(true);
     try {
       const data = await api<ApiFeedback>(`/api/programs/${programId}/participants`, {
         method: 'POST',
-        body: JSON.stringify({
-          participantId: personId,
-          basis,
-          ...(basis === 'MATCHED_ORDER' && { shopifyOrderId: orderId.trim() }),
-          ...(enrollNote.trim() && { note: enrollNote.trim() }),
-          // The Board may also waive the program's limits (age, capacity, closed enrollment).
-          ...(isBoardMember && { override: true }),
-        }),
+        body: JSON.stringify({ participantId: personId, ...fields }),
       });
       if (data?.warning) notifications.show({ color: 'yellow', message: data.warning, autoClose: false });
       setEnrollTarget(null);
@@ -260,8 +267,8 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
         <form onSubmit={handleAddParticipant}>
           {/* On a phone the Program Lead notice stacks above the picker instead of squeezing beside it. */}
           <Flex
-            direction={{ base: canEnrollByHand ? 'row' : 'column-reverse', sm: 'row' }}
-            align={{ base: canEnrollByHand ? 'flex-end' : 'stretch', sm: 'flex-end' }}
+            direction={{ base: canAdd ? 'row' : 'column-reverse', sm: 'row' }}
+            align={{ base: canAdd ? 'flex-end' : 'stretch', sm: 'flex-end' }}
             gap="md"
             mb="lg"
             wrap="wrap"
@@ -279,7 +286,7 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
                 onClear={() => { setNewPartId(""); setPartLabel(""); }}
               />
             </Box>
-            {!canEnrollByHand ? (
+            {!canAdd ? (
               <Alert color="yellow" variant="light" style={{ flex: 1 }}>
                 ⚠️ Only the Board or Finance enroll participants here. Participants enroll themselves and pay via Shopify.
               </Alert>

@@ -118,6 +118,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             if (basis) {
                 const { result: enrollment, landed } = await changeProgramStockWith(currentProgram, "enroll-by-hand",
                     async (tx) => {
+                        await lockLiveHouseholdsOf(tx, [participantId]);
                         const { row, delta } = await enrollByHandIn(tx, currentProgram, participantId, basis, order, currentUserId, note);
                         return { result: row, delta };
                     }, { inRequest: true });
@@ -203,7 +204,10 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         // (api/programs POST), so a zero-priced program has nothing to charge
         // through and must not wait on a payment.
         const isFree = (currentProgram.orgMemberPriceCents ?? 0) === 0 && (currentProgram.nonOrgMemberPriceCents ?? 0) === 0;
-        
+        if (basis && isFree) {
+            return apiError("A free program takes no payment, so enroll without saying what it stands for.", 400);
+        }
+
         // PENDING (awaits payment) unless the program is free. A hand enrollment
         // writes the claim and activates it in the same transaction. A board parent
         // overriding a soft limit for their own household still pays — the override
@@ -388,7 +392,7 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
         const unpaidOnly = !(isBoardRemoval && reason);
         const unpaidWhere: Prisma.ProgramParticipantWhereInput = isHouseholdLeadPath || !isFree
             ? { status: 'PENDING' }
-            : { OR: [{ status: 'PENDING' }, { shopifyOrderId: null, wasOrgMemberAtApproval: null }] };
+            : { OR: [{ status: 'PENDING' }, { shopifyOrderId: null, wasOrgMemberAtApproval: null, OR: [{ enrollmentBasis: null }, { enrollmentBasis: 'COMP' }] }] };
         if (isHouseholdLeadPath && !(await isLeadOfParticipant(currentUserId, participantId))) {
             return apiError("Forbidden: Not authorized to remove this participant", 403);
         }

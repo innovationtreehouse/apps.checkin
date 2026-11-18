@@ -79,7 +79,7 @@ export async function enrollByHandIn(
         // webhook and reconciler activate those, so a hand match must not spend it on someone else.
         if ((order.cartProgramId !== null && order.cartProgramId !== program.id)
             || (order.cartPersonIds !== null && order.cartPersonIds.some((id) => id !== personId))) {
-            throw new ServiceError(409, "That order's checkout was for another program or other people; it pays for them, not for this person.");
+            throw new ServiceError(409, "That order's checkout was for another program, or named someone besides this person; the store's own record activates it.");
         }
         if (await isOrderReversed(tx, order.shopifyOrderId)) throw new ServiceError(409, "That order was refunded or cancelled.");
         const cap = await unspentSeats(tx, program, program.id, order.shopifyOrderId, order.lines);

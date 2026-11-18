@@ -356,6 +356,22 @@ describe('enrollment buckets', () => {
             expect(r.enrollments[0].compedByName).toBe('Admin Amy');
         });
 
+        it.each([
+            ['OUTSIDE_PAYMENT', 'PAID_OUTSIDE_STORE'],
+            ['COMP', 'ADMIN_COMPED'],
+        ])('a claim enrolled by hand as %s is %s, not a gap', async (enrollmentBasis, bucket) => {
+            prismaMock.programParticipant.findMany
+                .mockResolvedValueOnce([])
+                .mockResolvedValueOnce([enroll(3, { enrollmentBasis })]);
+            prismaMock.auditLog.findMany.mockResolvedValue([
+                { affectedEntityId: 3, secondaryAffectedEntity: 7, actorId: 42, newData: { status: 'PENDING' } },
+            ]);
+
+            const r = await runMatchAudit();
+            expect(r.enrollments[0].bucket).toBe(bucket);
+            expect(r.enrollments[0].compedByName).toBeNull();
+        });
+
         it('created PENDING (later flipped some other way) stays NO_PAYMENT_BASIS — proves the inference', async () => {
             prismaMock.programParticipant.findMany
                 .mockResolvedValueOnce([])
