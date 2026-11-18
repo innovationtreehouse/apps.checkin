@@ -209,6 +209,21 @@ describe("membership-ops/households page", () => {
     expect(screen.getAllByText("✉ Broken email")).toHaveLength(1);
   });
 
+  it("labels a household that said it won't renew with the year and the date it said so", async () => {
+    setSession({ id: 1, isBoardMember: true });
+    mockFetchJson({
+      "/api/membership-ops/households": {
+        ...households,
+        households: [{ ...households.households[0], notRenewing: { year: 2026, since: "2026-07-03T15:00:00.000Z" } }, households.households[1]],
+      },
+    });
+    renderWithProviders(<AdminHouseholdsPage />);
+    await screen.findByText("The Smiths");
+
+    expect(screen.getByText(/Not renewing 2026-2027 · said .*2026/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Not renewing/)).toHaveLength(1);
+  });
+
   it("navigates to the add-participant page for a household", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson({ "/api/membership-ops/households": households });

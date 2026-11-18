@@ -158,6 +158,15 @@ describe('GET /api/household', () => {
         });
     });
 
+    it("keeps the household's not-renewing note for the caller's household only", () => {
+        const noted = { ...ORG_MEMBERSHIP, householdId: HH, notRenewingYear: 2026 };
+        const bag = () => ({ HouseholdPage: { ...page([]), household: { ...HOUSEHOLD_ROW, householdMembers: [], orgMembership: noted } } });
+        const own = payload(GET, bag(), ctx()) as { household: { orgMembership: unknown } };
+        expect(own.household.orgMembership).toEqual(noted);
+        const stranger = payload(GET, bag(), ctx({ selfId: 50, householdId: 77 })) as { household: { orgMembership: unknown } };
+        expect(stranger.household.orgMembership).toEqual({ ...ORG_MEMBERSHIP, householdId: HH });
+    });
+
     it('ships a caller with no household as household null', () => {
         const empty = { household: null, boardReplyTo: null, validUntil: null };
         expect(payload(GET, { HouseholdPage: empty }, ctx({ householdId: undefined }))).toEqual(empty);
