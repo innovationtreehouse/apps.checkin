@@ -379,3 +379,44 @@ describe('the year a settlement records', () => {
         expect(recordedYear()).toBeNull();
     });
 });
+
+describe('a payment-plan approval certifies the request year', () => {
+    // Boundary 1 Sep: the renewal window opens 1 Jul, so 15 Jul 2027 is live year 2027 inside 2026-2027.
+    const request = { id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, bgClearedAt: null, orgMembershipId: MEMBERSHIP_ID, isPaymentPlanRequested: true, createdAt: new Date(Date.UTC(2027, 0, 10)) };
+    const recordedYear = () => prisma.orgMembershipProcess.updateMany.mock.calls[0][0].data.appliesToYear;
+    const at = (date: Date) => jest.useFakeTimers({ now: date, doNotFake: ['nextTick', 'queueMicrotask', 'setImmediate', 'setTimeout'] });
+
+    beforeEach(() => {
+        prisma.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: new Date(Date.UTC(2000, 8, 1)) });
+    });
+    afterEach(() => jest.useRealTimers());
+
+    it('keeps the year it was requested for when approved after the live year moves on', async () => {
+        prisma.orgMembershipProcess.findUnique.mockResolvedValue({ ...request, paymentPlanYear: 2026, stageEnteredAt: request.createdAt });
+        at(new Date(Date.UTC(2027, 6, 15)));
+        await certifyPaymentPlan(PROCESS_ID, 1, { reason: 'Plan agreed', requireRequested: true });
+        expect(recordedYear()).toBe(2026);
+    });
+
+    it('a request with no stored year is certified for the live year, never refused', async () => {
+        prisma.orgMembershipProcess.findUnique.mockResolvedValue({ ...request, paymentPlanYear: null, stageEnteredAt: new Date(Date.UTC(2025, 5, 1)) });
+        at(new Date(Date.UTC(2027, 8, 2)));
+        await certifyPaymentPlan(PROCESS_ID, 1, { reason: 'Plan agreed', requireRequested: true });
+        expect(recordedYear()).toBe(2027);
+    });
+
+    it('approves the stored year on the day before its cutoff', async () => {
+        prisma.orgMembershipProcess.findUnique.mockResolvedValue({ ...request, paymentPlanYear: 2026, stageEnteredAt: request.createdAt });
+        at(new Date(Date.UTC(2027, 7, 31, 23, 59)));
+        await certifyPaymentPlan(PROCESS_ID, 1, { reason: 'Plan agreed', requireRequested: true });
+        expect(recordedYear()).toBe(2026);
+    });
+
+    it("refuses a request on its year's cutoff date, writing nothing", async () => {
+        prisma.orgMembershipProcess.findUnique.mockResolvedValue({ ...request, paymentPlanYear: 2026, stageEnteredAt: request.createdAt });
+        at(new Date(Date.UTC(2027, 8, 1)));
+        await expect(certifyPaymentPlan(PROCESS_ID, 1, { reason: 'Plan agreed', requireRequested: true }))
+            .rejects.toMatchObject({ code: 'wrong_phase', message: expect.stringContaining('2026-2027, which has ended') });
+        expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
+    });
+});

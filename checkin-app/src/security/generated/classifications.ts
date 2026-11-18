@@ -116,6 +116,7 @@ export const classifications = {
         renewalReminderSentAt: 'internal',
         isPaymentPlanRequested: 'hardship',
         scholarshipRequestKind: 'hardship',
+        paymentPlanYear: 'hardship',
     },
     MembershipYearVariant: {
         membershipYear: 'public',
@@ -801,7 +802,7 @@ export const relations = {
 } as const;
 
 export const marks = {
-    OrgMembershipProcess: ['isPaymentPlanRequested', 'scholarshipRequestKind'],
+    OrgMembershipProcess: ['isPaymentPlanRequested', 'scholarshipRequestKind', 'paymentPlanYear'],
     ProgramParticipant: ['isPaymentPlanRequested', 'scholarshipRequestKind', 'inventoryHeldAt', 'paymentPlanDeniedAt', 'seatTakenWithoutSaleAt', 'enrollmentBasis'],
 } as const;
 

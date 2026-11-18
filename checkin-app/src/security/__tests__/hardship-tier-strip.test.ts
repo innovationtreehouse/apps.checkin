@@ -45,7 +45,7 @@ function tokensFor(endpoint: string, role: Role): readonly Token[] {
 }
 
 const HARDSHIP_FIELDS = {
-    OrgMembershipProcess: ['isPaymentPlanRequested', 'scholarshipRequestKind'],
+    OrgMembershipProcess: ['isPaymentPlanRequested', 'scholarshipRequestKind', 'paymentPlanYear'],
     ProgramParticipant: [
         'isPaymentPlanRequested',
         'scholarshipRequestKind',
@@ -91,6 +91,7 @@ const processRow = {
     paidAt: null,
     isPaymentPlanRequested: true,
     scholarshipRequestKind: 'PAYMENT_PLAN',
+    paymentPlanYear: 2026,
 };
 
 describe('hardship tier: which fields carry it', () => {
