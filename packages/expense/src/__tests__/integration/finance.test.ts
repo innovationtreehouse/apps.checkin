@@ -620,6 +620,18 @@ describeDb("QuickBooks match", () => {
     expect(await linked(id)).toEqual({ qbTxnId: null, qbTxnEntity: null });
   });
 
+  it("refuses an expense whose tax waits on finance, and matches once finance approves the tax", async () => {
+    const id = await qbExpense({ purchases: [{ id: "42", totalCents: 200 }] });
+    await db.expense.update({ where: { id }, data: { taxCents: 100 } });
+
+    await expect(matchExpenseToQb(FINANCE, id, "42")).rejects.toMatchObject({ status: 409 });
+    expect(await linked(id)).toEqual({ qbTxnId: null, qbTxnEntity: null });
+
+    await db.expenseTaxApproval.create({ data: { expenseId: id, taxCents: 100, approvedByUserId: 3 } });
+    await matchExpenseToQb(FINANCE, id, "42");
+    expect(await linked(id)).toEqual({ qbTxnId: "42", qbTxnEntity: "Purchase" });
+  });
+
   it("refuses the same id under another entity type", async () => {
     const id = await qbExpense({ bills: ["42"] });
     await expect(matchExpenseToQb(FINANCE, id, "42")).rejects.toMatchObject({ status: 409 });

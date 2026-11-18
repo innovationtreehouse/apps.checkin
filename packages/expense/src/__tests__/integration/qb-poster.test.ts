@@ -1521,6 +1521,24 @@ describeDb("QB closed books — a create that may have landed", () => {
     expect(await db.expenseQbClaim.count({ where: { orgId: ORG } })).toBe(0);
   });
 
+  it("finance's match does not link the app's own entry while the expense's tax waits on finance", async () => {
+    const { id } = await outboxed("2026-09-10");
+    await db.expense.update({ where: { id }, data: { taxCents: 100 } });
+    await db.expenseTaxApproval.create({ data: { expenseId: id, taxCents: 100, approvedByUserId: 3 } });
+    qbo.mode = "accept-then-drop";
+    await postExpenseToQb(ORG, id);
+    await db.expense.update({ where: { id }, data: { qbMatchState: "UNBOOKED" } });
+    await db.expenseTaxApproval.delete({ where: { expenseId: id } });
+
+    await expect(matchExpenseToQb(principal(500, { isFinance: true }), id, "hand-1")).rejects.toMatchObject({ status: 409 });
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "UNBOOKED", qbTxnId: null });
+    expect(await db.expenseQbClaim.count({ where: { orgId: ORG } })).toBe(0);
+
+    await db.expenseTaxApproval.create({ data: { expenseId: id, taxCents: 100, approvedByUserId: 3 } });
+    await matchExpenseToQb(principal(500, { isFinance: true }), id, "hand-1");
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "CREATED", qbTxnId: qbo.purchases[0].Id });
+  });
+
   it("finance's match is refused while the app's own entry is held by another expense", async () => {
     const { id } = await outboxed("2026-09-10");
     qbo.mode = "accept-then-drop";
