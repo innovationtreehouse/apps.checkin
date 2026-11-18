@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Alert, Box, Button, Card, Group, Modal, Paper, Stack, Switch, Table, Text, Textarea, TextInput, UnstyledButton } from "@mantine/core";
 import { useDebouncedValue } from "@mantine/hooks";
-import { LoadError, showError, showSuccess } from "@checkin/component-ui";
+import { clearError, LoadError, showError, showSuccess } from "@checkin/component-ui";
 import { IconChevronDown, IconChevronUp, IconSelector } from "@tabler/icons-react";
 import { EntityPicker } from "@/components/admin/EntityPicker";
 import { AdminEditHouseholdModal } from "@/components/admin/AdminEditHouseholdModal";
@@ -138,6 +138,7 @@ export default function AdminParticipantsIndex() {
     }
 
     setAssigning(true);
+    clearError("assign-household");
     try {
       const res = await fetch(`/api/membership-ops/participants/${selectedParticipant.id}/household`, {
         method: 'POST',
@@ -153,11 +154,11 @@ export default function AdminParticipantsIndex() {
         showSuccess("Household assigned successfully!");
       } else {
         const data = await res.json().catch(() => ({}));
-        showError(data.error || "Failed to assign household");
+        showError(data.error || "Failed to assign household", { key: "assign-household" });
       }
     } catch (err) {
       console.error("Participants page action failed:", err);
-      showError("Network error");
+      showError("Network error", { key: "assign-household" });
     } finally {
       setAssigning(false);
     }
@@ -174,6 +175,7 @@ export default function AdminParticipantsIndex() {
   const saveParticipant = async () => {
     if (!editingParticipant) return;
     setSavingDetails(true);
+    clearError("save-person");
     try {
       const res = await fetch(`/api/membership-ops/participants/${editingParticipant.id}`, {
         method: 'PUT',
@@ -187,11 +189,11 @@ export default function AdminParticipantsIndex() {
         showSuccess("Person updated successfully!");
       } else {
         const data = await res.json().catch(() => ({}));
-        showError(data.error || "Failed to update person");
+        showError(data.error || "Failed to update person", { key: "save-person" });
       }
     } catch (err) {
       console.error("Participants page action failed:", err);
-      showError("Network error");
+      showError("Network error", { key: "save-person" });
     } finally {
       setSavingDetails(false);
     }
@@ -208,6 +210,7 @@ export default function AdminParticipantsIndex() {
     e.preventDefault();
     setAddContactSaving(true);
     setAddContactFieldErrors({});
+    clearError("add-contact");
     try {
       const res = await fetch('/api/membership-ops/contacts', {
         method: 'POST',
@@ -222,11 +225,11 @@ export default function AdminParticipantsIndex() {
       } else if (data.fields?.includes("email")) {
         setAddContactFieldErrors({ email: data.error });
       } else {
-        showError(data.error || "Failed to add contact");
+        showError(data.error || "Failed to add contact", { key: "add-contact" });
       }
     } catch (err) {
       console.error("Participants page action failed:", err);
-      showError("Network error");
+      showError("Network error", { key: "add-contact" });
     } finally {
       setAddContactSaving(false);
     }
