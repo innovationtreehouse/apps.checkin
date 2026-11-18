@@ -73,6 +73,8 @@ export type EnrollmentBucket =
     | "ORDER_MATCHED"
     | "SCHOLARSHIP_APPROVED"
     | "ADMIN_COMPED"
+    // Enrolled by hand by the Board or Finance for a payment made outside the store.
+    | "PAID_OUTSIDE_STORE"
     | "ORDER_NOT_IN_MIRROR"
     | "PRE_MIRROR"
     | "ORDER_REVERSED"
@@ -286,6 +288,7 @@ export async function runMatchAudit(): Promise<MatchAuditResult> {
                 personId: true,
                 shopifyOrderId: true,
                 wasOrgMemberAtApproval: true,
+                enrollmentBasis: true,
                 program: { select: { name: true } },
                 person: { select: { name: true } },
             },
@@ -441,7 +444,9 @@ export async function runMatchAudit(): Promise<MatchAuditResult> {
                     : "ORDER_MATCHED"
             : e.wasOrgMemberAtApproval != null
                 ? "SCHOLARSHIP_APPROVED"
-                : createdActive(e)
+                : e.enrollmentBasis === "OUTSIDE_PAYMENT"
+                    ? "PAID_OUTSIDE_STORE"
+                    : e.enrollmentBasis === "COMP" || createdActive(e)
                     ? "ADMIN_COMPED"
                     : "NO_PAYMENT_BASIS";
         const bucket: EnrollmentBucket =

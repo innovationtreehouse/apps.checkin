@@ -303,6 +303,7 @@ export const classifications = {
         paymentPlanDeniedAt: 'hardship',
         shopifyOrderId: 'internal',
         seatTakenWithoutSaleAt: 'hardship',
+        enrollmentBasis: 'hardship',
         endedAt: 'personal',
     },
     Event: {
@@ -800,7 +801,7 @@ export const relations = {
 
 export const marks = {
     OrgMembershipProcess: ['isPaymentPlanRequested', 'scholarshipRequestKind'],
-    ProgramParticipant: ['isPaymentPlanRequested', 'scholarshipRequestKind', 'inventoryHeldAt', 'paymentPlanDeniedAt', 'seatTakenWithoutSaleAt'],
+    ProgramParticipant: ['isPaymentPlanRequested', 'scholarshipRequestKind', 'inventoryHeldAt', 'paymentPlanDeniedAt', 'seatTakenWithoutSaleAt', 'enrollmentBasis'],
 } as const;
 
 export type Models = keyof typeof classifications;

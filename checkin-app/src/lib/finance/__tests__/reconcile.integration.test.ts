@@ -757,7 +757,9 @@ describe("program order entitlement (same check as the webhook)", () => {
         await runReconcile();
         expect(await statusOf(programId, personId)).toBe("PENDING");
         expect(await statusOf(programId, sibId)).toBe("PENDING");
-        expect(await kinds(oid)).toEqual(["AMOUNT_MISMATCH"]);
+        // One per child the order names: which one it pays for is unknown.
+        const raised = await prisma.paymentException.findMany({ where: { shopifyOrderId: oid }, orderBy: { personId: "asc" } });
+        expect(raised.map((e) => [e.kind, e.personId])).toEqual([["AMOUNT_MISMATCH", Math.min(personId, sibId)], ["AMOUNT_MISMATCH", Math.max(personId, sibId)]]);
     });
 
     it("activates nobody and raises MIXED_HOUSEHOLDS when the order names children of two households", async () => {
@@ -773,7 +775,8 @@ describe("program order entitlement (same check as the webhook)", () => {
         await runReconcile();
         expect(await statusOf(programId, personId)).toBe("PENDING");
         expect(await statusOf(programId, other.id)).toBe("PENDING");
-        expect(await kinds(oid)).toEqual(["MIXED_HOUSEHOLDS"]);
+        const raised = await prisma.paymentException.findMany({ where: { shopifyOrderId: oid }, orderBy: { personId: "asc" } });
+        expect(raised.map((e) => [e.kind, e.personId])).toEqual([["MIXED_HOUSEHOLDS", Math.min(personId, other.id)], ["MIXED_HOUSEHOLDS", Math.max(personId, other.id)]]);
     });
 
     it("activates everyone when the order buys a seat per person", async () => {

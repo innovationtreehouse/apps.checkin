@@ -53,6 +53,7 @@ const HARDSHIP_FIELDS = {
         'inventoryHeldAt',
         'paymentPlanDeniedAt',
         'seatTakenWithoutSaleAt',
+        'enrollmentBasis',
     ],
     ProgramPaymentPlanDecision: ['outcome', 'decidedAt'],
     MembershipPaymentPlanDecision: ['outcome', 'decidedAt'],
@@ -78,6 +79,7 @@ const participantRow = {
     inventoryHeldAt: '2026-01-06T00:00:00.000Z',
     paymentPlanDeniedAt: '2026-01-08T00:00:00.000Z',
     seatTakenWithoutSaleAt: '2026-01-09T00:00:00.000Z',
+    enrollmentBasis: 'OUTSIDE_PAYMENT',
     shopifyOrderId: '1001',
 };
 
