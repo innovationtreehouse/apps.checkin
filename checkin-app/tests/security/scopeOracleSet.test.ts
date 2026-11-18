@@ -63,6 +63,7 @@ const ORACLES = [
     'led-households-roster.test.ts',
     'mail-alias-routes.test.ts',
     'member-tier.test.ts',
+    'membership-application-strip.test.ts',
     'payment-plans-strip.test.ts',
     'problems-retry-route.test.ts',
     'program-participant-payment-method-strip.test.ts',
