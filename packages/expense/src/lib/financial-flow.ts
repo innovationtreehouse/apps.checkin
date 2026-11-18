@@ -8,6 +8,8 @@ import { SYSTEM_ACTOR } from "./system-actor";
 import { logError } from "./logger";
 import { lockBucketLines } from "./signoff-facts";
 import { reimburseeUnknown } from "./signoff";
+import { unitCosts, unitsOf } from "./capital-register";
+import { bookedLineCents } from "../qb-write";
 import { readExpenseSettings } from "../services/settingsService";
 
 const partOwners = createPartOwnerRepository(db);
@@ -106,7 +108,8 @@ export async function checkApprovalAutoTransition(expenseId: string, actor: Acto
 
   const lineItems = await db.expenseLineItem.findMany({ where: { expenseId } });
 
-  const hasCapital = classifyCapital(expense.receiptTotalCents, lineItems, settings);
+  const booked = bookedLineCents(expense, lineItems);
+  const hasCapital = classifyCapital(expense.receiptTotalCents, lineItems.map((li) => unitCosts(booked.get(li.id)!, unitsOf(li.quantity))[0]), settings);
   const rejected = anyRejected(approvals);
   // Capital review opens only once nothing can send the expense back, and naming the reimbursee can.
   if (hasCapital && !rejected && reimburseeUnknown(expense)) return;

@@ -8,7 +8,8 @@ import { writeAudit, writeOrgAudit } from "../lib/audit";
 import { dropHandSetAccount } from "../lib/account-types";
 import { drainExpense } from "../lib/financial-flow";
 import { advanceWorkflowInTx } from "../lib/workflow-engine";
-import { formatItfa, fullyDepreciatedDate, parseItfa, raiseHighestIssued, registerAssets } from "../lib/capital-register";
+import { formatItfa, fullyDepreciatedDate, linkAssets, parseItfa, raiseHighestIssued, registerAssets, unitCosts, unitsOf } from "../lib/capital-register";
+import { bookedLineCents } from "../qb-write";
 import { reimburseeUnknown } from "../lib/signoff";
 import { assertExpectedState, isLegalTransition } from "../workflows/expense.invariants";
 import { NEUTRAL_CONTEXT } from "../workflows/expense.guards";
@@ -38,6 +39,8 @@ export const SetDepreciationCycleSchema = z.object({
         lineItemId: z.number().int().positive(),
         depreciationYears: z.number().int().positive(),
         ownerId: z.number().int().positive(),
+        // A backfilled expense's historical labels, one per unit in unit order.
+        seededAssetNumbers: z.array(z.string().min(1).max(20)).min(1).max(1000).optional(),
       }),
     )
     .min(1),
@@ -116,7 +119,7 @@ export async function submitCapitalReview(
   if (nextState === "qb_pending") await drainExpense(expense.orgId, expenseId);
 }
 
-/** Sets each capital line's cycle and mints one ITFA asset per unit into the register. */
+/** Sets each capital line's cycle and registers one ITFA asset per unit; a backfilled line links its seeded assets instead. */
 export async function setDepreciationCycle(
   principal: ExpensePrincipal,
   expenseId: string,
@@ -127,14 +130,21 @@ export async function setDepreciationCycle(
   const expense = await loadExpense(expenseId, "DEPRECIATION_SET", "set_depreciation_cycle");
   const { items } = input;
 
-  const capitalLines = await db.expenseLineItem.findMany({ where: { expenseId, isCapital: true } });
+  const lines = await db.expenseLineItem.findMany({ where: { expenseId } });
+  const capitalLines = lines.filter((li) => li.isCapital);
   const capLineById = new Map(capitalLines.map((li) => [li.id, li]));
+  const booked = bookedLineCents(expense, lines);
   const submittedIds = new Set(items.map((i) => i.lineItemId));
   for (const { id } of capitalLines) {
     if (!submittedIds.has(id)) throw new ServiceError(400, `Missing depreciation for capital line item ${id}`);
   }
   for (const item of items) {
-    if (!capLineById.has(item.lineItemId)) throw new ServiceError(400, `Line item ${item.lineItemId} is not a capital item`);
+    const line = capLineById.get(item.lineItemId);
+    if (!line) throw new ServiceError(400, `Line item ${item.lineItemId} is not a capital item`);
+    if (!expense.backfill && item.seededAssetNumbers) throw new ServiceError(400, "Only a backfilled expense links seeded asset numbers");
+    if (expense.backfill && item.seededAssetNumbers?.length !== unitsOf(line.quantity)) {
+      throw new ServiceError(400, `Line item ${line.id} needs a seeded asset number for each of its ${unitsOf(line.quantity)} units`);
+    }
   }
   await requireLiveBuckets(items.map((i) => i.ownerId));
 
@@ -154,8 +164,15 @@ export async function setDepreciationCycle(
       });
 
       const line = capLineById.get(item.lineItemId)!;
-      const unit = { costCents: line.unitPriceCents, acquisitionDate: expense.receiptDate, depreciationYears: item.depreciationYears, description: line.description };
-      await registerAssets(tx, actor, expense.orgId, { kind: "expense_line", expenseId, lineItemId: line.id }, Array.from({ length: Math.max(1, Math.round(line.quantity)) }, () => unit));
+      const source = { kind: "expense_line" as const, expenseId, lineItemId: line.id };
+      if (item.seededAssetNumbers) {
+        await linkAssets(tx, actor, expense.orgId, source, item.seededAssetNumbers);
+      } else {
+        const units = unitCosts(booked.get(line.id)!, unitsOf(line.quantity)).map((costCents) => ({
+          costCents, acquisitionDate: expense.receiptDate, depreciationYears: item.depreciationYears, description: line.description,
+        }));
+        await registerAssets(tx, actor, expense.orgId, source, units);
+      }
     }
     await advanceWorkflowInTx(tx, {
       expenseId,

@@ -481,6 +481,58 @@ describeDb("capital register", () => {
     await expect(submitCapitalReview(FINANCE, id, { lineItems: [{ lineItemId: li, isCapital: true, capitalOwnerId: 100 }] })).rejects.toMatchObject({ status: 409 });
   });
 
+  it("a purchased asset is registered at its share of what its line books at", async () => {
+    const id = await seedExpense({ state: "set_depreciation_cycle", taxCents: 8_001, shippingCents: 5_000, discountCents: 10_000 });
+    const li = await seedLineItem(id, { quantity: 2, unitPriceCents: 50_000, totalPriceCents: 100_000, isCapital: true, description: "Table" });
+    await setDepreciationCycle(FINANCE, id, { items: [{ lineItemId: li, depreciationYears: 5, ownerId: 100 }] });
+    const assets = await db.capitalAsset.findMany({ where: { sourceLineItemId: li }, orderBy: { unitIndex: "asc" } });
+    expect(assets.map((a) => a.costCents)).toEqual([51_501, 51_500]);
+  });
+
+  describe("a backfilled expense", () => {
+    async function backfilled(quantity = 2) {
+      await seedCapitalAssets(FINANCE, [{ assetNumber: "ITFA05", description: "Lathe" }, { assetNumber: "ITFA06", description: "Lathe" }]);
+      const id = await seedExpense({ state: "set_depreciation_cycle", backfill: true });
+      const li = await seedLineItem(id, { quantity, isCapital: true, description: "Lathe" });
+      return { id, li };
+    }
+
+    it("links each unit to its seeded asset and mints nothing", async () => {
+      const { id, li } = await backfilled();
+      await setDepreciationCycle(FINANCE, id, { items: [{ lineItemId: li, depreciationYears: 5, ownerId: 100, seededAssetNumbers: ["itfa5", "ITFA06"] }] });
+      expect(await db.capitalAsset.findMany({ select: { assetNumber: true, sourceKind: true, sourceLineItemId: true, unitIndex: true, seeded: true }, orderBy: { assetNumber: "asc" } })).toEqual([
+        { assetNumber: "ITFA05", sourceKind: "expense_line", sourceLineItemId: li, unitIndex: 0, seeded: true },
+        { assetNumber: "ITFA06", sourceKind: "expense_line", sourceLineItemId: li, unitIndex: 1, seeded: true },
+      ]);
+      expect(await db.expenseOrgAuditLog.count({ where: { action: "capital_asset_linked" } })).toBe(2);
+      expect(await db.expenseOrgAuditLog.count({ where: { action: "capital_asset_registered" } })).toBe(0);
+    });
+
+    it("refuses without a seeded number for every unit, or with a number that is not seeded", async () => {
+      const { id, li } = await backfilled();
+      await expect(setDepreciationCycle(FINANCE, id, { items: [{ lineItemId: li, depreciationYears: 5, ownerId: 100 }] })).rejects.toMatchObject({ status: 400 });
+      await expect(setDepreciationCycle(FINANCE, id, { items: [{ lineItemId: li, depreciationYears: 5, ownerId: 100, seededAssetNumbers: ["ITFA05"] }] })).rejects.toMatchObject({ status: 400 });
+      await expect(setDepreciationCycle(FINANCE, id, { items: [{ lineItemId: li, depreciationYears: 5, ownerId: 100, seededAssetNumbers: ["ITFA05", "ITFA09"] }] })).rejects.toMatchObject({ status: 400 });
+      expect(await db.capitalAsset.count({ where: { sourceKind: { not: null } } })).toBe(0);
+      expect((await db.expense.findUniqueOrThrow({ where: { id } })).state).toBe("set_depreciation_cycle");
+    });
+
+    it("refuses a seeded asset already linked to another line", async () => {
+      const first = await backfilled(1);
+      await setDepreciationCycle(FINANCE, first.id, { items: [{ lineItemId: first.li, depreciationYears: 5, ownerId: 100, seededAssetNumbers: ["ITFA05"] }] });
+      const id = await seedExpense({ state: "set_depreciation_cycle", backfill: true });
+      const li = await seedLineItem(id, { quantity: 1, isCapital: true });
+      await expect(setDepreciationCycle(FINANCE, id, { items: [{ lineItemId: li, depreciationYears: 5, ownerId: 100, seededAssetNumbers: ["ITFA05"] }] })).rejects.toMatchObject({ status: 409 });
+    });
+
+    it("an expense that is not backfilled takes no seeded numbers", async () => {
+      await seedCapitalAssets(FINANCE, [{ assetNumber: "ITFA05", description: "Lathe" }]);
+      const id = await seedExpense({ state: "set_depreciation_cycle" });
+      const li = await seedLineItem(id, { quantity: 1, isCapital: true });
+      await expect(setDepreciationCycle(FINANCE, id, { items: [{ lineItemId: li, depreciationYears: 5, ownerId: 100, seededAssetNumbers: ["ITFA05"] }] })).rejects.toMatchObject({ status: 400 });
+    });
+  });
+
   it("seeding is idempotent per asset number and canonicalizes it", async () => {
     const rows = [{ assetNumber: "itfa3", description: "Saw" }, { assetNumber: "BAD", description: "x" }];
     expect(await seedCapitalAssets(FINANCE, rows)).toMatchObject({ created: 1, skipped: 0, errors: 1 });

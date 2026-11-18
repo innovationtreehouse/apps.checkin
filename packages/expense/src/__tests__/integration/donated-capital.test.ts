@@ -9,9 +9,9 @@ import {
   listDonatedCapital,
   reviewDonatedLine,
   submitDonatedLines,
-  unitCosts,
 } from "../../services/donatedCapitalService";
 import type { DonatedCapitalLine } from "@checkin/receipt-types";
+import { unitCosts } from "../../lib/capital-register";
 
 const FINANCE = principal(3, { isFinance: true });
 const BOARD = principal(5, { isBoard: true });

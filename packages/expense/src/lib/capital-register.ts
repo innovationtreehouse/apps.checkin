@@ -5,6 +5,8 @@
 import type { PrismaClient, Prisma } from "../generated/prisma/client";
 import type { Actor } from "./workflow-engine";
 import { writeOrgAudit } from "./audit";
+import { allocateCents } from "@checkin/money";
+import { ServiceError } from "@checkin/component-kit";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -32,6 +34,14 @@ export function fullyDepreciatedDate(acquisitionDate: string | null | undefined,
   if (Number.isNaN(d.getTime())) return null;
   d.setFullYear(d.getFullYear() + years);
   return d.toISOString().slice(0, 10);
+}
+
+/** How many physical assets a line of this quantity is: at least one. */
+export const unitsOf = (quantity: number) => Math.max(1, Math.round(quantity));
+
+/** Each unit's share of the line's cost; the shares sum to the cost exactly, the first units taking the odd cents. */
+export function unitCosts(costCents: number, units: number): number[] {
+  return allocateCents(costCents, Array.from({ length: units }, () => 1));
 }
 
 /** Highest ITFA sequence on the register for an org, seeded numbers included; 0 when none. */
@@ -127,4 +137,40 @@ export async function registerAssets(
   }
   await tx.$executeRaw`UPDATE capital_asset_sequences SET highest_issued = ${highest} WHERE org_id = ${orgId}`;
   return units.map((_, unitIndex) => numbers.get(unitIndex)!);
+}
+
+/**
+ * Links a backfilled line to its historical assets, one seeded number per unit in unit order, and
+ * audits each. Mints nothing and leaves the high-water mark alone. A repeat for the same line and
+ * units does nothing; a number that is not seeded, or is linked elsewhere, is refused.
+ */
+export async function linkAssets(
+  tx: Prisma.TransactionClient,
+  actor: Actor,
+  orgId: string,
+  source: Extract<AssetSource, { kind: "expense_line" }>,
+  seededAssetNumbers: string[],
+): Promise<void> {
+  const numbers = seededAssetNumbers.map((raw) => {
+    const seq = parseItfa(raw);
+    if (seq === null) throw new ServiceError(400, `${raw} is not an ITFA number`);
+    return formatItfa(seq);
+  });
+  if (new Set(numbers).size !== numbers.length) throw new ServiceError(400, "Each unit needs its own seeded asset number");
+  const columns = sourceColumns(source);
+  for (const [unitIndex, assetNumber] of numbers.entries()) {
+    const asset = await tx.capitalAsset.findUnique({ where: { capital_assets_org_number_unique: { orgId, assetNumber } } });
+    if (!asset || !asset.seeded) throw new ServiceError(400, `${assetNumber} is not a seeded asset; seed it first`);
+    if (asset.sourceKind !== null) {
+      if (asset.sourceLineItemId === source.lineItemId && asset.unitIndex === unitIndex) continue;
+      throw new ServiceError(409, `${assetNumber} is already linked to another line`);
+    }
+    await tx.capitalAsset.update({ where: { id: asset.id }, data: { ...columns, unitIndex } });
+    await writeOrgAudit(tx, orgId, actor, {
+      entityType: "capital_asset",
+      entityId: assetNumber,
+      action: "capital_asset_linked",
+      after: { source, unitIndex },
+    });
+  }
 }
