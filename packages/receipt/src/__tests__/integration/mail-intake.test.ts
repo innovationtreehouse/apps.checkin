@@ -422,8 +422,10 @@ describeDb("mail intake flood limits", () => {
   it("charges an unknown sender's rejected files to the held budget, so junk cannot crowd out a receipt", async () => {
     for (let i = 0; i < MAIL_HELD_CAP + 5; i++) send(`junk${i}`, { from: [`junk${i}@example.org`], parts: [attachment(`att-junk${i}`, "not a pdf")] });
     send("member");
-    expect(await readMailbox()).toMatchObject({ receipts: 1, held: 0, rejected: MAIL_HELD_CAP, deferred: 5 });
+    expect(await readMailbox()).toMatchObject({ receipts: 1, held: MAIL_HELD_CAP, rejected: MAIL_HELD_CAP, deferred: 5 });
     expect(mail.downloads).toHaveLength(MAIL_HELD_CAP + 1);
+    const items = await db.receiptMailItem.findMany({ where: { status: "held" }, select: { fileBlob: true, refusal: true } });
+    expect(items.filter((i) => i.fileBlob === null && i.refusal !== null)).toHaveLength(MAIL_HELD_CAP);
   });
 
   it("charges a rejected file's stated size to the byte budget", async () => {
@@ -450,6 +452,16 @@ describeDb("mail intake flood limits", () => {
     expect(await readMailbox()).toMatchObject({ receipts: 1, held: 0, overCeiling: 1 });
     expect(mail.downloads).toEqual(["att-member"]);
     expect(alerts).toEqual([{ orgId: TEST_ORG_ID, unresolved: MAIL_HELD_CEILING, refused: 1 }]);
+  });
+
+  it("past the held ceiling, holds no refused file, and reads the message again later", async () => {
+    await db.receiptMailItem.createMany({
+      data: Array.from({ length: MAIL_HELD_CEILING }, (_, i) => ({ orgId: TEST_ORG_ID, gmailMessageId: `old${i}`, attachmentHash: `h${i}`, receivedAt: new Date(), senderAddress: "old@example.org" })),
+    });
+    send("s1", { from: ["stranger@example.org"], parts: [{ mimeType: "application/msword", filename: "r.doc", body: { data: b64("PK"), size: 2 } }] });
+    expect(await readMailbox()).toMatchObject({ held: 0, overCeiling: 1 });
+    expect(await db.receiptMailItem.count({ where: { gmailMessageId: "s1" } })).toBe(0);
+    expect(await db.receiptMailAtRisk.count({ where: { gmailMessageId: "s1" } })).toBe(1);
   });
 
   it("refuses an attachment over the upload size limit without downloading it", async () => {

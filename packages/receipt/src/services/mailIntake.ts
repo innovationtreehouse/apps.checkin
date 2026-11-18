@@ -624,14 +624,24 @@ async function readLeased(reader: MailboxReader, orgId: string, started: number,
         data: { refusals, doneAt: null, claimedAt: null, attempts: 0 },
       });
     };
-    /** Without a submitter to tell, each refused file becomes a held item with no file, so finance hears of it. */
+    /**
+     * Without a submitter to tell, each refused file becomes a held item with no file, so finance hears of it.
+     * Past the held ceiling none is written, and the message stays open for a later run.
+     */
     const holdRefusals = async () => {
       if (sender) return;
+      const held = new Set(rows.flatMap((r) => (isHeldRefusal(r) ? [refusalKey(r.refusal as unknown as MailRefusal)] : [])));
+      const toHold = [...new Map(refused.filter((r) => HELD_REFUSALS.has(r.reason)).map((r) => [refusalKey(r), r])).entries()].filter(([key]) => !held.has(key));
+      if (toHold.length === 0) return;
+      if (stored() >= MAIL_HELD_CEILING) {
+        counts.overCeiling += toHold.length;
+        return;
+      }
       const { count } = await db.receiptMailItem.createMany({
-        data: refused.filter((r) => HELD_REFUSALS.has(r.reason)).map((r) => ({
+        data: toHold.map(([key, r]) => ({
           orgId,
           gmailMessageId: msg.id,
-          attachmentHash: refusalKey(r),
+          attachmentHash: key,
           receivedAt: new Date(Number(msg.internalDate)),
           senderAddress: address ?? "",
           dmarcVerdict: verdict,
