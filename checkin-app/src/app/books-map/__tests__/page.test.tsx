@@ -199,6 +199,14 @@ describe("books map page", () => {
       fireEvent.click(picker);
       expect((await screen.findAllByRole("option")).map((o) => o.textContent)).toEqual(["Checking"]);
     });
+
+    it("tells the board Finance fixes an inactive pick", async () => {
+      setSession({ id: 1, isBoardMember: true });
+      renderWithProviders(<BooksMapPage />);
+      expect(await screen.findByText("Retired is inactive in QuickBooks. Finance can fix this.")).toBeInTheDocument();
+      expect(screen.getByText("Old savings is inactive in QuickBooks. Finance can fix this.")).toBeInTheDocument();
+      expect(screen.queryByText(/Pick an active one/)).not.toBeInTheDocument();
+    });
   });
 
   it("matches the client kit's stale-list code to the one saves throw", () => {

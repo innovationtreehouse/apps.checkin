@@ -277,12 +277,35 @@ export async function storedTaxWaits(db: Db, expenseId: string): Promise<boolean
   return taxWaitsOnFinance(taxCents, receiptReview, taxApproval?.taxCents ?? null);
 }
 
+/** The expense fields `outboxHolds` reads. */
+export const OUTBOX_HOLD_FIELDS = {
+  id: true,
+  orgId: true,
+  state: true,
+  submitterId: true,
+  reimburseePersonId: true,
+  needsReimbursement: true,
+  backfill: true,
+  receiptTotalCents: true,
+  boardAuthorization: true,
+  everydayWithinLimits: true,
+} as const;
+
+type OutboxExpense = SignoffExpense & Pick<Expense, "state" | "backfill">;
+
+/** What holds one expense out of the QB outbox; nothing holds it when every field is false or empty. */
+export interface OutboxHold {
+  reimburseeUnknown: boolean;
+  taxWaits: boolean;
+  lines: LineHold[];
+}
+
 /**
- * The expenses the QB outbox holds back: tax waiting on finance, or, outside a backfill, an
- * unknown reimbursee or a line with an unfilled sign-off. Each clears when the missing step is done.
+ * Each expense's outbox holds: tax waiting on finance, or, outside a backfill, an unknown
+ * reimbursee or a line with an unfilled sign-off. Each clears when the missing step is done.
  */
-export async function outboxHeldIds(db: Db, expenses: (SignoffExpense & Pick<Expense, "state" | "backfill">)[]): Promise<Set<string>> {
-  if (expenses.length === 0) return new Set();
+export async function outboxHolds(db: Db, expenses: OutboxExpense[]): Promise<Map<string, OutboxHold>> {
+  if (expenses.length === 0) return new Map();
   const taxes = await db.expense.findMany({
     where: { id: { in: expenses.map((e) => e.id) } },
     select: {
@@ -292,11 +315,25 @@ export async function outboxHeldIds(db: Db, expenses: (SignoffExpense & Pick<Exp
       taxApproval: { select: { taxCents: true } },
     },
   });
-  const held = new Set(taxes.filter((t) => taxWaitsOnFinance(t.taxCents, t.receiptReview, t.taxApproval?.taxCents ?? null)).map((t) => t.id));
+  const taxWaits = new Set(taxes.filter((t) => taxWaitsOnFinance(t.taxCents, t.receiptReview, t.taxApproval?.taxCents ?? null)).map((t) => t.id));
   const signed = expenses.filter((e) => !e.backfill);
   const unsigned = await unsignedLinesForExpenses(db, signed);
-  for (const e of signed) if (reimburseeUnknown(e) || unsigned.get(e.id)!.size > 0) held.add(e.id);
-  return held;
+  return new Map(
+    expenses.map((e) => [
+      e.id,
+      {
+        reimburseeUnknown: !e.backfill && reimburseeUnknown(e),
+        taxWaits: taxWaits.has(e.id),
+        lines: [...(unsigned.get(e.id)?.values() ?? [])].flat(),
+      },
+    ]),
+  );
+}
+
+/** The expenses the QB outbox holds back, by `outboxHolds`. */
+export async function outboxHeldIds(db: Db, expenses: OutboxExpense[]): Promise<Set<string>> {
+  const holds = await outboxHolds(db, expenses);
+  return new Set([...holds].filter(([, h]) => h.reimburseeUnknown || h.taxWaits || h.lines.length > 0).map(([id]) => id));
 }
 
 /**

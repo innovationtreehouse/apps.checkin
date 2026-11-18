@@ -17,7 +17,7 @@ jest.mock('@/lib/attendanceTransitions', () => ({ processVisitCheckout: jest.fn(
 jest.mock('@/lib/specTrace', () => ({ traceOnCommit: (run: () => unknown) => run() }));
 jest.mock('@/lib/postEventEmails', () => ({ processPostEventEmails: jest.fn().mockResolvedValue({}) }));
 jest.mock('@/lib/membership/personAgreementTriggers', () => ({
-    runPersonAgreementSweep: jest.fn().mockResolvedValue({ opened: 0 }),
+    runPersonAgreementSweep: jest.fn().mockResolvedValue({ opened: 0, failed: 0 }),
 }));
 jest.mock('@/lib/problems', () => ({ sendProblemsDigest: jest.fn() }));
 jest.mock('@/lib/facilityLock', () => ({ lockFacility: jest.fn() }));
