@@ -101,7 +101,6 @@ describe('Membership payment API', () => {
         const settingsData = {
             standardMembershipFeeCents: 10000,
             volunteerMembershipFeeCents: 2500,
-            orgMembershipVariantId: VARIANT_ID,
             orgMembershipYearBoundary: BOUNDARY,
             volunteerFamilyDiscountCode: DISCOUNT_CODE,
         };
@@ -158,7 +157,7 @@ describe('Membership payment API', () => {
         expect(res.checkoutUrl).toBe(`https://${STORE_DOMAIN}/cart/${VARIANT_ID}:1?discount=${DISCOUNT_CODE}&attributes[Membership_Process_ID]=${volProc}`);
     });
 
-    it("builds no link when the live year has no row, even with the single variant set", async () => {
+    it("builds no link when the live year has no row", async () => {
         await prisma.membershipYearVariant.delete({ where: { membershipYear: liveYear } });
         try {
             const res = await ensurePaymentLink(normalProc);
@@ -216,7 +215,7 @@ describe('Membership payment API', () => {
     });
 
     it('orders/paid webhook activates the membership (and is idempotent)', async () => {
-        // line_items must contain the configured orgMembershipVariantId or the variant check rejects it (no membership item).
+        // line_items must contain a membership year's variant or the variant check rejects it (no membership item).
         const payload = { id: 555, line_items: [{ variant_id: VARIANT_ID }], note_attributes: [{ name: 'Membership_Process_ID', value: String(normalProc) }] };
         const res = await SHOPIFY_WEBHOOK(shopifyReq(payload, WEBHOOK_SECRET) as never);
         expect(res.status).toBe(200);

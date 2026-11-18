@@ -700,22 +700,12 @@ model BoardSettings {
   volunteerMembershipFeeCents Int      @default(0) @map("volunteerDuesCents")
   /// @sensitivity:public
   orgMembershipYearBoundary  DateTime? @db.Date
-  /// Shopify variant ID of the membership product everyone checks out through.
-  /// The "Pay with Shopify" link is built from it SERVER-SIDE (ensurePaymentLink
-  /// in lib/membership/payment.ts) as
-  /// https://<SHOPIFY_STORE_DOMAIN>/cart/<orgMembershipVariantId>:1; the client only
-  /// receives the derived checkoutUrl, never this raw field — hence internal, not
-  /// public (contrast Program.shopify*VariantId, which the browser builds from).
-  /// @sensitivity:internal
-  orgMembershipVariantId     String?
-  /// Storefront URL of the membership product ("https://<store>/products/<handle>"),
-  /// pasted by the board in membership settings. "Extract variant from URL" resolves
-  /// orgMembershipVariantId from it server-side (lib/shopify/products.ts) — the Shopify admin
-  /// UI hides the lone variant of a single-variant product, so the variant ID is not
-  /// visible anywhere an admin could copy it from. The checkout link is always built
-  /// from the variant ID above, never from this URL.
-  /// @sensitivity:internal
-  orgMembershipProductUrl    String?
+  /// Unused column awaiting its drop. Hidden from the client so no code reads or
+  /// writes it before the column goes. @sensitivity:internal
+  orgMembershipVariantId     String? @ignore
+  /// Unused column awaiting its drop. Hidden from the client so no code reads or
+  /// writes it before the column goes. @sensitivity:internal
+  orgMembershipProductUrl    String? @ignore
   /// Discount code (created in Shopify by the board) appended to the checkout
   /// link for Volunteer Family households so Shopify applies their discount.
   /// @sensitivity:internal

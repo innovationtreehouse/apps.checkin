@@ -84,19 +84,6 @@ describe('Membership settings + volunteer designations API', () => {
         expect(settings.volunteerMembershipFeeCents).toBe(3000);
     });
 
-    it('saves and clears the membership product URL', async () => {
-        asBoard(boardId);
-        const url = 'https://test-store.myshopify.com/products/annual-membership';
-        const putRes = await SETTINGS_PUT(jsonReq('PUT', { perYearVariantClient: true, orgMembershipProductUrl: `  ${url}  ` }));
-        expect(putRes.status).toBe(200);
-        expect((await putRes.json()).settings.orgMembershipProductUrl).toBe(url); // trimmed
-
-        const cleared = await SETTINGS_PUT(jsonReq('PUT', { perYearVariantClient: true, orgMembershipProductUrl: null }));
-        expect(cleared.status).toBe(200);
-        expect((await cleared.json()).settings.orgMembershipProductUrl).toBeNull();
-    });
-
-
     it('rejects a negative membership fee and keeps the previous value', async () => {
         asBoard(boardId);
         // Establish a known good value.
@@ -116,7 +103,7 @@ describe('Membership settings + volunteer designations API', () => {
     it('refuses a save with no client marker and changes nothing', async () => {
         asBoard(boardId);
         await SETTINGS_PUT(jsonReq('PUT', { perYearVariantClient: true, standardMembershipFeeCents: 12000 }));
-        const res = await SETTINGS_PUT(jsonReq('PUT', { standardMembershipFeeCents: 0, orgMembershipYearBoundary: null, orgMembershipVariantId: null }));
+        const res = await SETTINGS_PUT(jsonReq('PUT', { standardMembershipFeeCents: 0, orgMembershipYearBoundary: null }));
         expect(res.status).toBe(400);
         expect((await res.json()).error).toMatch(/reload/i);
         const stored = await prisma.boardSettings.findUniqueOrThrow({ where: { id: 1 } });

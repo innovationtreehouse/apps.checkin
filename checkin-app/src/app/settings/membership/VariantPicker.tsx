@@ -17,7 +17,7 @@ interface ExtractedProduct {
 }
 
 interface Props {
-  /** Names the group, e.g. "Membership product" or "2026-2027". */
+  /** Names the group, e.g. "2026-2027". */
   name: string;
   urlLabel: string;
   idLabel: string;

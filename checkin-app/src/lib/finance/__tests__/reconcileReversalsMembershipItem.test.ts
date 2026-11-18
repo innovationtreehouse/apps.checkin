@@ -19,9 +19,9 @@ jest.mock("@/lib/prisma", () => ({
         orgMembershipProcess: { findMany: (...a: unknown[]) => findProcesses(...a) },
         programParticipant: { findMany: async () => [] },
         orgMembership: { findMany: (...a: unknown[]) => findMemberships(...a) },
-        membershipYearVariant: { findMany: async () => [] },
+        membershipYearVariant: { findMany: async () => [{ shopifyVariantId: "variant-membership", membershipYear: 2026 }] },
         boardSettings: {
-            findUnique: async () => ({ orgMembershipVariantId: "variant-membership", orgMembershipYearBoundary: null, volunteerFamilyDiscountCode: "VOLFAM" }),
+            findUnique: async () => ({ orgMembershipYearBoundary: null, volunteerFamilyDiscountCode: "VOLFAM" }),
         },
     },
 }));

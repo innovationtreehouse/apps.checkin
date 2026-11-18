@@ -18,12 +18,10 @@ const db = jest.mocked(prisma, { shallow: false });
 function hold(data: {
   programs?: { name: string; shopifyVariantId: string | null; claimantShopifyVariantId: string | null }[];
   years?: { shopifyVariantId: string; membershipYear: number }[];
-  orgVariant?: string | null;
 }) {
   (db.program.findMany as jest.Mock).mockResolvedValue(data.programs ?? []);
   (db.membershipYearVariant.findMany as jest.Mock).mockResolvedValue(data.years ?? []);
   (db.boardSettings.findUnique as jest.Mock).mockResolvedValue({
-    orgMembershipVariantId: data.orgVariant ?? null,
     orgMembershipYearBoundary: new Date("2026-07-01T00:00:00Z"),
   });
 }
@@ -41,12 +39,6 @@ describe("withAppItems", () => {
     const items = await withAppItems([]);
     expect(titles(items)).toMatchObject({ "11": "Robotics", "12": "Robotics (reserved seat)", "21": "Membership 2026-2027" });
     expect(items.every((i) => i.sku === null)).toBe(true);
-  });
-
-  it("names the org membership variant setting by its live year", async () => {
-    hold({ orgVariant: "31" });
-    const items = await withAppItems([]);
-    expect(titles(items)["31"]).toMatch(/^Membership \d{4}-\d{4}$/);
   });
 
   it("skips a program with no variant", async () => {

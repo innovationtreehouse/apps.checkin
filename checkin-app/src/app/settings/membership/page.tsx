@@ -22,8 +22,6 @@ interface Settings {
   standardMembershipFeeCents: number;
   volunteerMembershipFeeCents: number;
   orgMembershipYearBoundary: string | null;
-  orgMembershipVariantId: string | null;
-  orgMembershipProductUrl: string | null;
   volunteerFamilyDiscountCode: string | null;
   bgRecheckMonths: number;
   devSigningTarget: string | null;
@@ -69,8 +67,6 @@ export default function MembershipSettingsPage() {
   const [bgRecheckMonths, setBgRecheckMonths] = useState("0");
   const [boundary, setBoundary] = useState("");
   const [boundaryUnlocked, setBoundaryUnlocked] = useState(false);
-  const [variantId, setVariantId] = useState("");
-  const [productUrl, setProductUrl] = useState("");
   const [slots, setSlots] = useState<YearSlot[]>([]);
   const [savedSlots, setSavedSlots] = useState<YearSlot[]>([]);
   const [slotErrors, setSlotErrors] = useState<Record<number, string>>({});
@@ -94,7 +90,7 @@ export default function MembershipSettingsPage() {
   const [confirmOpenRenewalsOpened, { open: openConfirmOpenRenewals, close: closeConfirmOpenRenewals }] = useDisclosure(false);
 
   const [saving, setSaving] = useState(false);
-  const [fieldErrors, setFieldErrors] = useState<{ standardFee?: string; volunteerFee?: string; variantId?: string }>({});
+  const [fieldErrors, setFieldErrors] = useState<{ standardFee?: string; volunteerFee?: string }>({});
   const isBoardMember = !!useSession().data?.user?.isBoardMember;
 
   const { data, error, reload } = useLoad<{ settings: SettingsBody }>("/api/settings/membership");
@@ -103,7 +99,7 @@ export default function MembershipSettingsPage() {
   const releasedLibraries = settingsRow?.releasedLibraries ?? [];
   const kvaVersion = settingsRow?.keyVolunteerAgreementVersion ?? 1;
 
-  const current = { standardFee, volunteerFee, bgRecheckMonths, boundary, variantId, productUrl, discountCode, signingTarget, slots: JSON.stringify(slots) };
+  const current = { standardFee, volunteerFee, bgRecheckMonths, boundary, discountCode, signingTarget, slots: JSON.stringify(slots) };
 
   // Confirm-checkbox gate only matters when a boundary already exists — changing
   // it shifts every household's cycle. First-time set has nothing to shift.
@@ -112,12 +108,11 @@ export default function MembershipSettingsPage() {
 
   const saveSettings = async () => {
     setFieldErrors({});
-    const fe: { standardFee?: string; volunteerFee?: string; variantId?: string } = {};
+    const fe: { standardFee?: string; volunteerFee?: string } = {};
     const standardCents = typedDollarsToCents(standardFee);
     if (standardCents === null || standardCents < 0) fe.standardFee = "Enter a dollar amount of 0 or more.";
     const volunteerCents = typedDollarsToCents(volunteerFee);
     if (volunteerCents === null || volunteerCents < 0) fe.volunteerFee = "Enter a dollar amount of 0 or more.";
-    if (variantId.trim() !== "" && !/^\d+$/.test(variantId.trim())) fe.variantId = "Must be a numeric Shopify variant ID.";
     const slotFe: Record<number, string> = {};
     slots.forEach((slot, i) => {
       const id = slot.variantId.trim();
@@ -125,7 +120,7 @@ export default function MembershipSettingsPage() {
       else if (id !== "" && !/^\d+$/.test(id)) slotFe[slot.year] = "Must be a numeric Shopify variant ID.";
     });
     setSlotErrors(slotFe);
-    if (fe.standardFee || fe.volunteerFee || fe.variantId || Object.keys(slotFe).length) { setFieldErrors(fe); return; }
+    if (fe.standardFee || fe.volunteerFee || Object.keys(slotFe).length) { setFieldErrors(fe); return; }
     const changedSlots = slots.filter((slot, i) =>
       slot.variantId.trim() !== "" &&
       (slot.variantId.trim() !== savedSlots[i]?.variantId || slot.productUrl.trim() !== savedSlots[i]?.productUrl));
@@ -137,8 +132,6 @@ export default function MembershipSettingsPage() {
           perYearVariantClient: true,
           standardMembershipFeeCents: standardCents,
           volunteerMembershipFeeCents: volunteerCents,
-          orgMembershipVariantId: variantId.trim() || null,
-          orgMembershipProductUrl: productUrl.trim() || null,
           ...(changedSlots.length ? {
             membershipYearVariants: changedSlots.map((slot) => ({
               membershipYear: slot.year,
@@ -195,8 +188,6 @@ export default function MembershipSettingsPage() {
       volunteerFee: centsToDecimalString(settings.volunteerMembershipFeeCents),
       bgRecheckMonths: String(settings.bgRecheckMonths ?? 0),
       boundary: settings.orgMembershipYearBoundary ? settings.orgMembershipYearBoundary.slice(0, 10) : "",
-      variantId: settings.orgMembershipVariantId ?? "",
-      productUrl: settings.orgMembershipProductUrl ?? "",
       discountCode: settings.volunteerFamilyDiscountCode ?? "",
       signingTarget: settings.devSigningTarget ?? "zoho",
       slots: JSON.stringify(loadedSlots),
@@ -205,8 +196,6 @@ export default function MembershipSettingsPage() {
     setVolunteerFee(snap.volunteerFee);
     setBgRecheckMonths(snap.bgRecheckMonths);
     setBoundary(snap.boundary);
-    setVariantId(snap.variantId);
-    setProductUrl(snap.productUrl);
     setDiscountCode(snap.discountCode);
     setSigningTarget(snap.signingTarget);
     setSlots(loadedSlots);
@@ -273,19 +262,6 @@ export default function MembershipSettingsPage() {
 
             <Title order={4} mt="lg" mb="sm">Shopify checkout</Title>
             <Stack gap="md">
-              <VariantPicker
-                name="Membership product"
-                urlLabel="Membership product URL"
-                idLabel="Membership product variant ID"
-                value={{ variantId, productUrl }}
-                onChange={(next) => { setVariantId(next.variantId); setProductUrl(next.productUrl); setFieldErrors((f) => ({ ...f, variantId: undefined })); }}
-                editableId={typedVariantIds}
-                canClear
-                error={fieldErrors.variantId}
-              />
-              <Text size="sm" c="dimmed">
-                Checkout sells the year slots below. This variant only matches orders paid through checkout links issued before them.
-              </Text>
               <TextInput
                 label="Volunteer discount code"
                 description="Create this discount in Shopify, then paste the code here. It is appended to the checkout link for volunteer households only."

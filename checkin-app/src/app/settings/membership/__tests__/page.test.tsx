@@ -13,8 +13,6 @@ const SETTINGS = {
   standardMembershipFeeCents: 15000,
   volunteerMembershipFeeCents: 5000,
   orgMembershipYearBoundary: "2025-09-01T00:00:00.000Z",
-  orgMembershipVariantId: "123456",
-  orgMembershipProductUrl: "https://test-store.myshopify.com/products/annual-membership",
   volunteerFamilyDiscountCode: "VOLUNTEER",
   bgRecheckMonths: 24,
 };
@@ -47,7 +45,6 @@ describe("MembershipSettingsPage", () => {
 
     expect(await screen.findByDisplayValue("150.00")).toBeInTheDocument();
     expect(screen.getByDisplayValue("50.00")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("123456")).toBeInTheDocument();
     expect(screen.getByDisplayValue("VOLUNTEER")).toBeInTheDocument();
   });
 
@@ -112,134 +109,6 @@ describe("MembershipSettingsPage", () => {
     fireEvent.change(screen.getByDisplayValue("VOLUNTEER"), { target: { value: "" } });
     fireEvent.change(screen.getByLabelText("Background check valid for"), { target: { value: "12" } });
     expect(screen.queryByText(/Background-check interval is/)).not.toBeInTheDocument();
-  });
-
-  it("shows the saved variant read-only when Shopify is configured, with no typed-ID field", async () => {
-    setShopifyStoreDomain(STORE);
-    setSession({ id: 1, isSysadmin: true });
-    mockFetchJson({ "/api/settings/membership": body() });
-    renderWithProviders(<MembershipSettingsPage />);
-    await screen.findByDisplayValue("150.00");
-
-    const group = screen.getByRole("group", { name: "Membership product" });
-    expect(within(group).getByText(`Variant 123456 from https://${STORE}/products/annual-membership`)).toBeInTheDocument();
-    expect(within(group).queryByRole("textbox", { name: "Membership product variant ID" })).not.toBeInTheDocument();
-  });
-
-  it("keeps the typed variant-ID field on a local mock instance", async () => {
-    setShopifyStoreDomain(STORE);
-    setDevMocks({ shopify: true, bgConsent: false });
-    setSession({ id: 1, isSysadmin: true });
-    mockFetchJson({ "/api/settings/membership": body() });
-    renderWithProviders(<MembershipSettingsPage />);
-    expect(await screen.findByLabelText("Membership product variant ID")).toHaveValue("123456");
-  });
-
-  it("saves a typed URL and a typed variant ID together on a local mock instance", async () => {
-    setDevMocks({ shopify: true, bgConsent: false });
-    setSession({ id: 1, isSysadmin: true });
-    const fetchMock = mockFetchJson({ "/api/settings/membership": body() });
-    renderWithProviders(<MembershipSettingsPage />);
-    await screen.findByDisplayValue("150.00");
-
-    fireEvent.change(screen.getByLabelText("Membership product variant ID"), { target: { value: "424242" } });
-    fireEvent.change(screen.getByLabelText("Membership product URL"), { target: { value: "https://shop.example.org/products/mock" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/settings/membership", expect.objectContaining({ method: "PUT" })));
-    const [, putOpts] = fetchMock.mock.calls.find(([, opts]) => opts?.method === "PUT")!;
-    expect(JSON.parse(putOpts!.body as string)).toEqual(
-      expect.objectContaining({ orgMembershipVariantId: "424242", orgMembershipProductUrl: "https://shop.example.org/products/mock" }),
-    );
-  });
-
-  it("extracts a single-variant product, shows it for confirmation, and saves the variant with its URL", async () => {
-    setShopifyStoreDomain(STORE);
-    setSession({ id: 1, isSysadmin: true });
-    const fetchMock = mockFetchJson({
-      // Listed first: mockFetchJson matches by substring in insertion order, and
-      // the extract-variant URL also contains "/api/settings/membership".
-      "/api/settings/membership/extract-variant": oneVariant("789789"),
-      "/api/settings/membership": body(),
-    });
-    renderWithProviders(<MembershipSettingsPage />);
-    await screen.findByDisplayValue("150.00");
-
-    const url = `https://${STORE}/products/new-membership`;
-    fireEvent.change(screen.getByLabelText("Membership product URL"), { target: { value: url } });
-    fireEvent.click(screen.getByRole("button", { name: "Extract variant from URL" }));
-
-    expect(await screen.findByText("Annual Membership — Default Title — $150.00 (variant 789789)")).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/settings/membership/extract-variant",
-      expect.objectContaining({ method: "POST", body: JSON.stringify({ productUrl: url }) }),
-    );
-    expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringMatching(/789789.*Save settings/) }));
-
-    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/settings/membership", expect.objectContaining({ method: "PUT" })));
-    const [, putOpts] = fetchMock.mock.calls.find(([, opts]) => opts?.method === "PUT")!;
-    expect(JSON.parse(putOpts!.body as string)).toEqual(expect.objectContaining({ orgMembershipVariantId: "789789", orgMembershipProductUrl: url }));
-  });
-
-  it("lists a multi-variant product's variants to pick from, and saves the picked one", async () => {
-    setShopifyStoreDomain(STORE);
-    setSession({ id: 1, isSysadmin: true });
-    const fetchMock = mockFetchJson({
-      "/api/settings/membership/extract-variant": twoVariants,
-      "/api/settings/membership": body(),
-    });
-    renderWithProviders(<MembershipSettingsPage />);
-    await screen.findByDisplayValue("150.00");
-
-    fireEvent.click(screen.getByRole("button", { name: "Extract variant from URL" }));
-    const nonMember = await screen.findByRole("radio", { name: "Non-Member — $250.00 (variant 222)" });
-    expect(screen.getByRole("radio", { name: "Member — $150.00 (variant 111)" })).toBeInTheDocument();
-    // Nothing is chosen until the Board picks one.
-    expect(screen.getByText(/^Variant 123456/)).toBeInTheDocument();
-
-    fireEvent.click(nonMember);
-    expect(await screen.findByText("Annual Membership — Non-Member — $250.00 (variant 222)")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/settings/membership", expect.objectContaining({ method: "PUT" })));
-    const [, putOpts] = fetchMock.mock.calls.find(([, opts]) => opts?.method === "PUT")!;
-    expect(JSON.parse(putOpts!.body as string)).toEqual(expect.objectContaining({ orgMembershipVariantId: "222" }));
-  });
-
-  it("shows the server's message when extraction fails, keeping the chosen variant", async () => {
-    setShopifyStoreDomain(STORE);
-    setSession({ id: 1, isSysadmin: true });
-    mockFetchJson({ "/api/settings/membership": body() });
-    renderWithProviders(<MembershipSettingsPage />);
-    await screen.findByDisplayValue("150.00");
-
-    global.fetch = jest.fn(async () => ({
-      ok: false,
-      status: 404,
-      text: async () => JSON.stringify({ error: 'Shopify has no product with the handle "annual-membership" — check the link.' }),
-    })) as unknown as typeof fetch;
-    fireEvent.click(screen.getByRole("button", { name: "Extract variant from URL" }));
-
-    await waitFor(() =>
-      expect(notifications.show).toHaveBeenCalledWith(
-        expect.objectContaining({ color: "red", message: expect.stringMatching(/^Shopify has no product/), autoClose: false }),
-      ),
-    );
-    expect(screen.getByText(/^Variant 123456/)).toBeInTheDocument();
-  });
-
-  it("clears the single variant, saving null", async () => {
-    setShopifyStoreDomain(STORE);
-    setSession({ id: 1, isSysadmin: true });
-    const fetchMock = mockFetchJson({ "/api/settings/membership": body() });
-    renderWithProviders(<MembershipSettingsPage />);
-    await screen.findByDisplayValue("150.00");
-
-    fireEvent.click(screen.getByRole("button", { name: "Clear Membership product variant ID" }));
-    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/settings/membership", expect.objectContaining({ method: "PUT" })));
-    const [, putOpts] = fetchMock.mock.calls.find(([, opts]) => opts?.method === "PUT")!;
-    expect(JSON.parse(putOpts!.body as string)).toEqual(expect.objectContaining({ orgMembershipVariantId: null, orgMembershipProductUrl: null }));
   });
 
   it("unlocks and edits the membership-year boundary, which is included on save", async () => {
@@ -438,8 +307,8 @@ describe("MembershipSettingsPage", () => {
       expect(screen.queryByText("needs variant")).not.toBeInTheDocument();
     });
 
-    it("off season, marks the empty year in progress required for checkout, and never the single variant", async () => {
-      await open([{ membershipYear: 2027, shopifyVariantId: "222", productUrl: null }], { orgMembershipVariantId: null });
+    it("off season, marks the empty year in progress required for checkout", async () => {
+      await open([{ membershipYear: 2027, shopifyVariantId: "222", productUrl: null }]);
       expect(screen.getAllByText("Required for checkout — not configured.")).toHaveLength(1);
     });
 
@@ -505,6 +374,60 @@ describe("MembershipSettingsPage", () => {
       fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
       await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/settings/membership", expect.objectContaining({ method: "PUT" })));
       expect(putBody(fetchMock).membershipYearVariants).toEqual([{ membershipYear: 2027, shopifyVariantId: "555", productUrl: url }]);
+    });
+
+    it("keeps the typed variant-ID field on a local mock instance with a store configured", async () => {
+      setShopifyStoreDomain(STORE);
+      setDevMocks({ shopify: true, bgConsent: false });
+      await open([{ membershipYear: 2026, shopifyVariantId: "111", productUrl: null }]);
+      expect(screen.getByLabelText("2026-2027 variant ID")).toHaveValue("111");
+    });
+
+    it("lists a multi-variant product's variants to pick from, and saves the picked one", async () => {
+      jest.useFakeTimers({ advanceTimers: true, now: new Date("2026-11-01T12:00:00.000Z") });
+      setShopifyStoreDomain(STORE);
+      setSession({ id: 1, isSysadmin: true });
+      const fetchMock = mockFetchJson({
+        "/api/settings/membership/extract-variant": twoVariants,
+        "/api/settings/membership": body({}, [{ membershipYear: 2026, shopifyVariantId: "111", productUrl: null }]),
+      });
+      renderWithProviders(<MembershipSettingsPage />);
+      await screen.findByDisplayValue("150.00");
+      const coming = screen.getByRole("group", { name: "2027-2028" });
+      const url = `https://${STORE}/products/membership-2027`;
+
+      fireEvent.change(within(coming).getByLabelText("2027-2028 product URL"), { target: { value: url } });
+      fireEvent.click(within(coming).getByRole("button", { name: "Extract variant from URL for 2027-2028" }));
+      const nonMember = await within(coming).findByRole("radio", { name: "Non-Member — $250.00 (variant 222)" });
+      expect(within(coming).getByRole("radio", { name: "Member — $150.00 (variant 111)" })).toBeInTheDocument();
+      // Nothing is chosen until the Board picks one.
+      expect(within(coming).getByText("No variant chosen.")).toBeInTheDocument();
+
+      fireEvent.click(nonMember);
+      expect(await within(coming).findByText("Annual Membership — Non-Member — $250.00 (variant 222)")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/settings/membership", expect.objectContaining({ method: "PUT" })));
+      expect(putBody(fetchMock).membershipYearVariants).toEqual([{ membershipYear: 2027, shopifyVariantId: "222", productUrl: url }]);
+    });
+
+    it("shows the server's message when extraction fails, keeping the saved variant", async () => {
+      setShopifyStoreDomain(STORE);
+      await open([{ membershipYear: 2026, shopifyVariantId: "111", productUrl: `https://${STORE}/products/annual-membership` }]);
+      global.fetch = jest.fn(async () => ({
+        ok: false,
+        status: 404,
+        text: async () => JSON.stringify({ error: 'Shopify has no product with the handle "annual-membership" — check the link.' }),
+      })) as unknown as typeof fetch;
+      const inProgress = screen.getByRole("group", { name: "2026-2027" });
+      fireEvent.click(within(inProgress).getByRole("button", { name: "Extract variant from URL for 2026-2027" }));
+
+      await waitFor(() =>
+        expect(notifications.show).toHaveBeenCalledWith(
+          expect.objectContaining({ color: "red", message: expect.stringMatching(/^Shopify has no product/), autoClose: false }),
+        ),
+      );
+      expect(within(inProgress).getByText(/^Variant 111/)).toBeInTheDocument();
     });
 
     it("still loads from a task on the previous release, which returns the row directly", async () => {

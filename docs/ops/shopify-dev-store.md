@@ -41,13 +41,14 @@ when unset (→ handler 500) for the real path — no `config.ts` fallback there
 leave it.
 
 **Variant id is configuration, never hardcoded.** The recurring review question
-"how can variant ids in our code align with a real store's?" is moot: the id
-lives in `BoardSettings.orgMembershipVariantId`, set once per environment via
-`settings/membership`. For the mock it's just a correlation token the handler
-echoes and re-matches against the *same* `BoardSettings` — any string works, a
-closed loop. **We deliberately don't seed a placeholder, and the dev store's
-settings stay empty** (O4): a seeded id lands on shared cloud-dev via
-dev-dashboard reset and silently fails the real store's variant-match guard.
+"how can variant ids in our code align with a real store's?" is moot: the ids
+live in the per-year rows (`MembershipYearVariant`), entered per environment in
+`settings/membership`. With no row for the live year, the mock sells
+`DEV_MOCK_MEMBERSHIP_VARIANT_ID`, a correlation token the handler echoes and
+re-matches against the same rule — a closed loop. **We deliberately don't seed
+a placeholder, and the dev store's settings stay empty** (O4): a seeded id lands
+on shared cloud-dev via dev-dashboard reset and silently fails the real store's
+variant-match guard.
 
 **One shared team dev store, owned by cloud-dev** — not per-developer. A store
 has one `orders/paid` URL, so two devs tunnelling at once clobber each other;
