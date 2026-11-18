@@ -372,6 +372,9 @@ model InKindDonation {
   // The latest failed capital review send's error, kept while the gift is stuck.
   /// @sensitivity:personal
   capitalLastError           String?    @map("capital_last_error")
+  // Whether the gift met a capital threshold, tested once at accept; null until then.
+  /// @sensitivity:internal
+  capitalReviewNeeded        Boolean?   @map("capital_review_needed")
   lines                      InKindDonationLine[]
 
   @@unique([orgId, receiptId])
@@ -445,6 +448,9 @@ model ManualInKindDonation {
   // The latest failed capital review send's error, kept while the gift is stuck.
   /// @sensitivity:personal
   capitalLastError           String?    @map("capital_last_error")
+  // Whether the gift met a capital threshold, tested once at accept; null until then.
+  /// @sensitivity:internal
+  capitalReviewNeeded        Boolean?   @map("capital_review_needed")
   lines              ManualInKindDonationLine[]
 
   @@index([orgId, recordedAt])
@@ -474,6 +480,21 @@ model ManualInKindDonationLine {
   /// The QuickBooks account finance set by hand on a held line; null until then. It wins over every account rule.
   /// @sensitivity:internal
   quickBooksAccountId String?      @map("quick_books_account_id")
+  // Finance's capital decision on this line: null until designated.
+  /// @sensitivity:internal
+  isCapital              Boolean?  @map("is_capital")
+  /// @sensitivity:internal
+  depreciationYears      Int?      @map("depreciation_years")
+  // The owning bucket (checkin BudgetOwner id), set with the period.
+  /// @sensitivity:internal
+  capitalBucketId        Int?      @map("capital_bucket_id")
+  /// @sensitivity:internal
+  capitalDecidedByUserId Int?      @map("capital_decided_by_user_id")
+  /// @sensitivity:internal
+  capitalDecidedAt       DateTime? @map("capital_decided_at")
+  // When the expense register issued this capital line's asset numbers.
+  /// @sensitivity:internal
+  registeredAt           DateTime? @map("registered_at")
   donation    ManualInKindDonation @relation(fields: [donationId], references: [id], onDelete: Cascade)
 
   @@index([donationId])
@@ -503,6 +524,21 @@ model InKindDonationLine {
   /// The QuickBooks account finance set by hand on a held line; null until then. It wins over every account rule.
   /// @sensitivity:internal
   quickBooksAccountId String?      @map("quick_books_account_id")
+  // Finance's capital decision on this line: null until designated.
+  /// @sensitivity:internal
+  isCapital              Boolean?  @map("is_capital")
+  /// @sensitivity:internal
+  depreciationYears      Int?      @map("depreciation_years")
+  // The owning bucket (checkin BudgetOwner id), set with the period.
+  /// @sensitivity:internal
+  capitalBucketId        Int?      @map("capital_bucket_id")
+  /// @sensitivity:internal
+  capitalDecidedByUserId Int?      @map("capital_decided_by_user_id")
+  /// @sensitivity:internal
+  capitalDecidedAt       DateTime? @map("capital_decided_at")
+  // When the expense register issued this capital line's asset numbers.
+  /// @sensitivity:internal
+  registeredAt           DateTime? @map("registered_at")
   donation          InKindDonation @relation(fields: [donationId], references: [id], onDelete: Cascade)
 
   @@unique([donationId, receiptLineItemId])
