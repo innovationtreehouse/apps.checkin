@@ -220,7 +220,14 @@ async function activateProgramFromOrder(order: MirrorOrder, programId: number, p
             logger.info(`[reconcile] program order ${order.legacyId} (program ${programId}): order already spent on earlier enrollments — not activated`);
         } else if (entitlement.kind) {
             logger.warn(`[reconcile] program order ${order.legacyId} not entitled (${entitlement.kind}, program ${programId}) — NOT activated`);
-            await raisePaymentException(entitlement.kind, { shopifyOrderId: order.legacyId, programId, personId: entitlement.personId ?? personIds[0] ?? null });
+            // Every candidate child is raised, so none is left pending unnamed, and none reads as the answer.
+            const named = entitlement.personId != null ? [entitlement.personId] : personIds.length ? personIds : [null];
+            const evidence = named.length > 1
+                ? `The order could be for any of ${named.length} children (${named.join(", ")}); which one it pays for is unknown.`
+                : undefined;
+            for (const personId of named) {
+                await raisePaymentException(entitlement.kind, { shopifyOrderId: order.legacyId, programId, personId, ...(evidence && { evidence }) });
+            }
         }
         return true;
     }

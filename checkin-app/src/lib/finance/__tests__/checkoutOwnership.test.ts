@@ -100,6 +100,27 @@ describe("runReconcile — program checkout ownership", () => {
         expect(raisedKinds()).toEqual(["UNMATCHED_ORDER"]);
     });
 
+    it("names every child an unmatched order names", async () => {
+        const twoChildren = { ...order(null), noteAttributes: [{ key: "CheckMeIn_Account_ID", value: `${CHILD},42` }, { key: "Program_ID", value: String(PROGRAM) }] };
+        await reconcile(twoChildren, OWN_HOUSEHOLD);
+        expect(activate).not.toHaveBeenCalled();
+        expect(exceptionCreate.mock.calls.map((c) => [c[0].data.kind, c[0].data.personId])).toEqual([
+            ["UNMATCHED_ORDER", CHILD],
+            ["UNMATCHED_ORDER", 42],
+        ]);
+    });
+
+    it("says which child an unmatched order pays for is unknown when it could be any of several", async () => {
+        const twoChildren = { ...order(null), noteAttributes: [{ key: "CheckMeIn_Account_ID", value: `${CHILD},42` }, { key: "Program_ID", value: String(PROGRAM) }] };
+        await reconcile(twoChildren, OWN_HOUSEHOLD);
+        for (const [call] of exceptionCreate.mock.calls) expect(call.data.evidence).toMatch(/which one it pays for is unknown/);
+    });
+
+    it("adds no such note when the order names one child", async () => {
+        await reconcile(order(null), OWN_HOUSEHOLD);
+        expect(exceptionCreate.mock.calls[0][0].data.evidence ?? null).toBeNull();
+    });
+
     describe("an order someone already holds", () => {
         const held = (lines: number) => {
             (prisma.programParticipant.findFirst as jest.Mock).mockResolvedValue({ programId: PROGRAM });
