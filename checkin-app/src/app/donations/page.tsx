@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
+import { Text } from "@mantine/core";
 import { DONATIONS } from "@/lib/nav/sections/donations";
 import { useTodoCounts } from "@/hooks/useTodoCounts";
 
@@ -13,9 +14,11 @@ export default function DonationsIndex() {
   const router = useRouter();
   const user = session?.user;
 
-  useEffect(() => {
-    if (user && counts) router.replace(DONATIONS.hrefFor?.(user, counts) ?? DONATIONS.href);
-  }, [user, counts, router]);
+  const target = user && counts ? (DONATIONS.hrefFor?.(user, counts) ?? DONATIONS.href) : null;
 
-  return null;
+  useEffect(() => {
+    if (target && target !== DONATIONS.href) router.replace(target);
+  }, [target, router]);
+
+  return target === DONATIONS.href ? <Text>No Donations screen is open to you yet.</Text> : null;
 }

@@ -93,7 +93,7 @@ export async function runAccountDetermination(handle: DbOrTx, orgId: string, dis
     return { type: "ACCOUNT_UNRESOLVED", conflicts };
   }
 
-  const firstTx = resolved[0]?.tx;
+  const firstTx = txs[0];
   const disbursementDate = firstTx?.disbursementDate ?? null;
   const disbursementFrom = firstTx?.disbursementFrom ?? null;
 
