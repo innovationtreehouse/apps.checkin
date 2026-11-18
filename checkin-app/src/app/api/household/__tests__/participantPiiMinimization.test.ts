@@ -53,7 +53,7 @@ beforeEach(() => {
 
 describe("Participant PII minimization (M1, M2)", () => {
     it("GET /api/household does not leak a peer's internal-tier fields", async () => {
-        mockSession.mockResolvedValue({ user: { id: 1 } });
+        mockSession.mockResolvedValue({ user: { id: 1, householdId: 10 } });
 
         // Full raw row as it exists in the DB, including everything a household
         // peer must never see. The mock applies whatever `select` the route
@@ -111,6 +111,7 @@ describe("Participant PII minimization (M1, M2)", () => {
         // Safe fields survive.
         expect(peer.name).toBe("Kid Two");
         expect(peer.email).toBe("kid2@example.com");
+        expect(peer.householdId).toBe(10);
 
         // INTERNAL-tier fields do not.
         expect(peer.isSysadmin).toBeUndefined();
@@ -137,7 +138,7 @@ describe("Participant PII minimization (M1, M2)", () => {
             ["city", "householdMembers", "id", "line1", "line2", "name", "orgMembership", "postalCode", "state"],
         );
         expect(callArgs.select.household.select.orgMembership).toEqual({ select: { status: true, memberSince: true, isVolunteerFamily: true, householdId: true, notRenewingYear: true } });
-        expect(callArgs.select.household.select.householdMembers).toEqual({ select: HOUSEHOLD_PEER_WITH_EMAIL_LOCK_SELECT });
+        expect(callArgs.select.household.select.householdMembers).toEqual({ select: { ...HOUSEHOLD_PEER_WITH_EMAIL_LOCK_SELECT, householdId: true } });
     });
 
     it("GET /api/attendance (full access) does not leak email/googleId", async () => {

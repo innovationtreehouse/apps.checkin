@@ -182,7 +182,7 @@ describe('Registry route admission gates', () => {
             isInventoryManager: false,
         };
 
-        // The not-renewing routes act only for an adult household lead; any other caller is refused 403.
+        // The not-renewing routes and adding a household member act only for a household lead; any other caller is refused 403.
         const lead = await prisma.person.create({
             data: {
                 name: 'Authz Lead',
@@ -415,7 +415,7 @@ describe('Registry route admission gates', () => {
                     // handler fn adds an inline staff-only roster gate the registry grammar
                     // can't express ([id] is an event id). An admin clears that inline gate.
                     mockSession.mockResolvedValue({ user: { ...plainUser, isSysadmin: true } });
-                } else if (plan.routePath === '/api/membership/not-renewing') {
+                } else if (plan.routePath === '/api/membership/not-renewing' || plan.endpoint === 'PATCH /api/household') {
                     mockSession.mockResolvedValue({ user: leadUser });
                 } else {
                     // session / household-member: any real authenticated user.

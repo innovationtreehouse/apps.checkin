@@ -133,7 +133,7 @@ describe('while the question is open', () => {
     it('refuses every other route', async () => {
         const { added } = await addedAdult();
         signedInAs(added.id, { householdJoinPending: true });
-        expect((await householdGET(new Request('http://localhost/api/household'))).status).toBe(401);
+        expect((await householdGET(request('http://localhost/api/household'))).status).toBe(401);
         expect((await profileGET(request('http://localhost/api/profile'))).status).toBe(401);
     });
 

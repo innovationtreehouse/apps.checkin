@@ -24,7 +24,7 @@ const BOUNDARY = new Date(Date.UTC(2020, 8, 1));
 const NOW = new Date(Date.UTC(2026, 2, 15));
 
 async function noteSeen(notRenewingYear: number | null) {
-    (getServerSession as jest.Mock).mockResolvedValue({ user: { id: 1 } });
+    (getServerSession as jest.Mock).mockResolvedValue({ user: { id: 1, householdId: 10 } });
     (prisma.person.findUnique as jest.Mock).mockResolvedValue({
         household: { id: 10, householdMembers: [], orgMembership: { status: "ACTIVE", householdId: 10, notRenewingYear } },
     });
