@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import type { ReceiptPrincipal } from "../../contract";
 import { db } from "../../db";
 import { checkDuplicate } from "../../lib/receipt-flow";
+import { receiptStateLabel } from "../../lib/stateLabels";
 import { receiptRepo } from "../../repositories/receipt";
 import { getOrgId } from "../../runtime";
 import { receiptService } from "../../services/receiptService";
@@ -154,6 +155,34 @@ describeDb("duplicate detection", () => {
       const decided = await db.receiptAuditLog.findFirst({ where: { receiptId, action: "duplicate_pair_different" } });
       expect(decided).toMatchObject({ userId: FINANCE.id, valueAfter: other });
     }
+  });
+
+  it("a clear empties the flag stamp, a fresh flag sets it again, and that discard reads as a duplicate", async () => {
+    const flaggedAt = async (id: string) => (await db.receiptDetail.findUniqueOrThrow({ where: { id } })).duplicateFlaggedAt;
+    actAs(ALICE);
+    const earlier = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Echo" }) });
+    const file = textFile();
+    const original = await receiptService.upload(file, "text/plain", { details: manualDetails({ retailer: "A", receiptDate: "2999-01-01" }) });
+    actAs(BOB);
+    const copy = await receiptService.upload(file, "text/plain", { details: manualDetails({ retailer: "B", receiptTotal: "25.00" }) });
+    expect([earlier.state, original.state, copy.state]).toEqual(["receipt_finalized", "financial_review", "duplicate_flagged"]);
+    expect(await flaggedAt(copy.id)).not.toBeNull();
+
+    actAs(ALICE);
+    await receiptService.discard(original.id, "submitter");
+    expect(await stateOf(copy.id)).toBe("validation_failed");
+    expect(await flaggedAt(copy.id)).toBeNull();
+
+    actAs(BOB);
+    await receiptService.edit(copy.id, "submitter", { retailer: "Echo", receiptTotal: 20 });
+    await receiptService.resubmit(copy.id, "submitter");
+    expect(await stateOf(copy.id)).toBe("duplicate_flagged");
+    expect(await heldAgainst(copy.id)).toBe(earlier.id);
+    expect(await flaggedAt(copy.id)).not.toBeNull();
+
+    await receiptService.discard(copy.id, "submitter");
+    const row = await db.receiptDetail.findUniqueOrThrow({ where: { id: copy.id } });
+    expect(receiptStateLabel(row)).toBe("Discarded as a duplicate");
   });
 });
 
