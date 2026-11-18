@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { Alert, Anchor, Button, Group, Select, Stack, Text, Title } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
 import {
   NOT_PUSHED,
   OTHER_QUEUES,
@@ -18,7 +17,7 @@ import {
   type QueueBadge,
 } from "@checkin/receipt/pages/financeQueue";
 import { FINANCE_QUEUE_TABS, FinanceQueueList, financeQueueTab, loadFailure, useFinanceQueueCounts } from "@checkin/expense/pages/financeQueue";
-import { LoadError } from "@checkin/component-ui";
+import { LoadError, showError } from "@checkin/component-ui";
 import { useLoad } from "@/lib/api";
 import { FINANCE_REVIEW_PATH } from "@/lib/nav/sections/finance";
 
@@ -65,7 +64,7 @@ export default function FinanceReview() {
   const receipts = useQueueCounts();
   useEffect(() => {
     if (receipts.error) {
-      notifications.show({ id: "receipt-queue-counts", title: "Couldn't load the receipt tab counts", message: loadFailure("/api/receipts/queue-counts", receipts.error, receipts.status), color: "red", autoClose: false });
+      showError(loadFailure("/api/receipts/queue-counts", receipts.error, receipts.status), { key: "receipt-queue-counts", title: "Couldn't load the receipt tab counts" });
     }
   }, [receipts.error, receipts.status]);
   const expenses = useFinanceQueueCounts();

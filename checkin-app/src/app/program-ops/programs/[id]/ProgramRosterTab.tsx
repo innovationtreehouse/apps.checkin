@@ -4,8 +4,7 @@ import { useCallback, useState } from 'react';
 import { ActionIcon, Alert, Badge, Box, Button, Card, Checkbox, Flex, Group, Menu, Modal, Radio, SimpleGrid, Stack, Text, Textarea, TextInput, Title } from '@mantine/core';
 import { IconDotsVertical } from '@tabler/icons-react';
 import { useDisclosure } from '@mantine/hooks';
-import { notifications } from '@mantine/notifications';
-import { errorMessage, HttpError, showError } from '@checkin/component-ui';
+import { errorMessage, HttpError, showError, showWarning } from '@checkin/component-ui';
 import { api } from '@/lib/api';
 import { EntityPicker } from '@/components/admin/EntityPicker';
 import { useOrgTime } from '@/components/TimezoneProvider';
@@ -186,7 +185,7 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
         method: 'POST',
         body: JSON.stringify({ participantId: personId, ...fields }),
       });
-      if (data?.warning) notifications.show({ color: 'yellow', message: data.warning, autoClose: false });
+      if (data?.warning) showWarning(data.warning);
       setEnrollTarget(null);
       if (String(personId) === newPartId) { setNewPartId(""); setPartLabel(""); }
       await fetchProgram();
@@ -216,8 +215,8 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
     const body = pendingRemoveNeedsReason ? { participantId, mode, reason } : { participantId, mode };
     const result = await mutate(`/api/programs/${programId}/participants`, { method: 'DELETE', body: JSON.stringify(body) });
     if (result) {
-      if (result.data?.notice) notifications.show({ color: 'blue', message: result.data.notice, autoClose: false });
-      if (result.data?.warning) notifications.show({ color: 'yellow', message: result.data.warning, autoClose: false });
+      if (result.data?.notice) showWarning(result.data.notice);
+      if (result.data?.warning) showWarning(result.data.warning);
       await fetchProgram();
     }
   };

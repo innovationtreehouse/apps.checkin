@@ -4,9 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Alert, Box, Button, Card, Group, Modal, Paper, Stack, Switch, Table, Text, Textarea, TextInput, UnstyledButton } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
 import { useDebouncedValue } from "@mantine/hooks";
-import { LoadError } from "@checkin/component-ui";
+import { LoadError, showError, showSuccess } from "@checkin/component-ui";
 import { IconChevronDown, IconChevronUp, IconSelector } from "@tabler/icons-react";
 import { EntityPicker } from "@/components/admin/EntityPicker";
 import { AdminEditHouseholdModal } from "@/components/admin/AdminEditHouseholdModal";
@@ -120,10 +119,6 @@ export default function AdminParticipantsIndex() {
   const [addContactSaving, setAddContactSaving] = useState(false);
   const [addContactFieldErrors, setAddContactFieldErrors] = useState<{ email?: string }>({});
 
-  const showNotification = (message: string, type: 'success' | 'error' = 'success') => {
-    notifications.show({ message, color: type === 'error' ? 'red' : 'green', autoClose: type === 'error' ? false : 4000 });
-  };
-
   const closeAssign = () => {
     setAssignModalOpen(false);
     setSelectedParticipant(null);
@@ -155,14 +150,14 @@ export default function AdminParticipantsIndex() {
       if (res.ok) {
         void search.reload();
         closeAssign();
-        showNotification("Household assigned successfully!");
+        showSuccess("Household assigned successfully!");
       } else {
         const data = await res.json().catch(() => ({}));
-        showNotification(data.error || "Failed to assign household", "error");
+        showError(data.error || "Failed to assign household");
       }
     } catch (err) {
       console.error("Participants page action failed:", err);
-      showNotification("Network error", "error");
+      showError("Network error");
     } finally {
       setAssigning(false);
     }
@@ -189,14 +184,14 @@ export default function AdminParticipantsIndex() {
         void search.reload();
         setEditModalOpen(false);
         setEditingParticipant(null);
-        showNotification("Person updated successfully!");
+        showSuccess("Person updated successfully!");
       } else {
         const data = await res.json().catch(() => ({}));
-        showNotification(data.error || "Failed to update person", "error");
+        showError(data.error || "Failed to update person");
       }
     } catch (err) {
       console.error("Participants page action failed:", err);
-      showNotification("Network error", "error");
+      showError("Network error");
     } finally {
       setSavingDetails(false);
     }
@@ -222,16 +217,16 @@ export default function AdminParticipantsIndex() {
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         setAdded((a) => [data.participant, ...a]);
-        showNotification("Contact added.");
+        showSuccess("Contact added.");
         closeAddContact();
       } else if (data.fields?.includes("email")) {
         setAddContactFieldErrors({ email: data.error });
       } else {
-        showNotification(data.error || "Failed to add contact", "error");
+        showError(data.error || "Failed to add contact");
       }
     } catch (err) {
       console.error("Participants page action failed:", err);
-      showNotification("Network error", "error");
+      showError("Network error");
     } finally {
       setAddContactSaving(false);
     }

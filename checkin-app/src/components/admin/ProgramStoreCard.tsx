@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Badge, Button, Card, Group, List, Text, Title } from "@mantine/core";
 import { modals } from "@mantine/modals";
-import { notifications } from "@mantine/notifications";
+import { showError, showSuccess } from "@checkin/component-ui";
 
 interface StockResult { name: string; ok: boolean }
 interface SwitchReply {
@@ -30,16 +30,16 @@ export function ProgramStoreCard({ initialClosedAt }: { initialClosedAt: string 
       });
       const data = (await res.json().catch(() => ({}))) as SwitchReply;
       if (!res.ok || !data.programStore) {
-        notifications.show({ color: "red", autoClose: false, message: data.error ?? "The store switch failed" });
+        showError(data.error ?? "The store switch failed");
         return;
       }
       const { zeroed = [], unhidden = [], recounted = [] } = data.programStore;
       const failed = [...zeroed, ...recounted].filter((r) => !r.ok).map((r) => `Stock not confirmed in Shopify: ${r.name}`);
       setReport([...failed, ...unhidden.map((name) => `Hide not confirmed yet (the daily run retries): ${name}`)]);
       setClosedAt(programStore === "close" ? new Date().toISOString() : null);
-      notifications.show({ color: "green", message: programStore === "close" ? "Store closed to program seats." : "Store reopened. Re-list each program's item in Shopify by hand." });
+      showSuccess(programStore === "close" ? "Store closed to program seats." : "Store reopened. Re-list each program's item in Shopify by hand.");
     } catch {
-      notifications.show({ color: "red", autoClose: false, message: "Network error on the store switch" });
+      showError("Network error on the store switch");
     } finally {
       setBusy(false);
     }
