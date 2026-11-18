@@ -277,31 +277,24 @@ function allocationsFor(expense: Expense, lineItems: ExpenseLineItem[]) {
 // All domain writes (holds, allocations, resolved accounts, event) and the state transition are
 // committed in a single interactive transaction so the expense can never be
 // observed in qb_pending after the event has been persisted, nor vice-versa.
-// The sign-off holds are re-read under the expense lock before anything is written,
-// catalog snapshots included, so a seat void either lands first and holds the
-// expense, or finds it closed.
+// The sign-off holds, lines, rules and accounts are re-read under the expense lock before anything
+// is written, catalog snapshots included, so a seat void or an account change either lands first
+// and is used, or finds the expense closed. A line that no longer resolves leaves the expense in
+// qb_pending for the stranded sweep, which holds it.
 
-async function commitQbProcessing(
-  orgId: string,
-  expenseId: string,
-  lineItems: ExpenseLineItem[],
-  resolved: ResolvedItem[],
-  taxAlloc: Map<number, number>,
-  shippingAlloc: Map<number, number>,
-  discountAlloc: Map<number, number>,
-  rules: AccountMapping[],
-  resolution: Resolution,
-  resubmittedBy: Actor | undefined,
-): Promise<boolean> {
-  const resolvedLineItemIds = resolved.map((r) => r.id);
-
+async function commitQbProcessing(orgId: string, expenseId: string, resubmittedBy: Actor | undefined): Promise<boolean> {
   return db.$transaction(async (tx) => {
     await lockExpense(tx, expenseId);
     const current = await tx.expense.findUniqueOrThrow({ where: { id: expenseId } });
     if ((await outboxHeldIds(tx, [current])).size > 0) return false;
+    const lineItems = await tx.expenseLineItem.findMany({ where: { expenseId } });
+    const rules = await tx.accountMapping.findMany({ where: { orgId } });
+    const resolution = await resolveAccountsForExpense(lineItems, rules, current.vendorName ?? "", !!resubmittedBy);
+    if (resolution.conflicts.length > 0) return false;
     if (resubmittedBy) await recordLiveRead(tx, resubmittedBy, expenseId, lineItems, rules, resolution);
     else await saveCatalogSnapshots(resolution.snapshots, tx);
 
+    const resolvedLineItemIds = resolution.resolved.map((r) => r.id);
     if (resolvedLineItemIds.length > 0) {
       await tx.expenseHold.updateMany({
         where: {
@@ -314,10 +307,8 @@ async function commitQbProcessing(
       });
     }
 
-    const accountByLine = new Map(resolved.map((r) => [r.id, r.account]));
-    // Finance can set a line's account until this lock is taken, and that account wins over the earlier read.
-    const manualAccounts = await tx.expenseLineItem.findMany({ where: { expenseId, manualQbAccount: { not: null } }, select: { id: true, manualQbAccount: true } });
-    for (const { id, manualQbAccount } of manualAccounts) accountByLine.set(id, manualQbAccount!);
+    const accountByLine = new Map(resolution.resolved.map((r) => [r.id, r.account]));
+    const { taxAlloc, shippingAlloc, discountAlloc } = allocationsFor(current, lineItems);
     for (const li of lineItems) {
       await tx.expenseLineItem.update({
         where: { id: li.id },
@@ -466,15 +457,8 @@ async function processExpenseForQb(orgId: string, expenseId: string, expense: Ex
     });
   }
 
-  const { taxAlloc, shippingAlloc, discountAlloc } = allocationsFor(expense, lineItems);
-
   try {
-    const committed = await commitQbProcessing(
-      orgId, expenseId,
-      lineItems, resolution.resolved,
-      taxAlloc, shippingAlloc, discountAlloc,
-      rules, resolution, resubmittedBy,
-    );
+    const committed = await commitQbProcessing(orgId, expenseId, resubmittedBy);
     if (!committed) return;
     await sendOutcomeNotices([expenseId]);
   } catch (err) {

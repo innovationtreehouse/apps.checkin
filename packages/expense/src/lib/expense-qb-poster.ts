@@ -222,7 +222,8 @@ async function settle(tx: Db, before: Expense, outcome: PostOutcome, data: Settl
  * (recordFailure); an expense the test-data gate stops → NOT_TEST_DATA / TEST_DATA_REFUSED, re-checked each run. An expense whose
  * own data cannot make an entry (no receipt date, no lines, a line with no account) → NEEDS_FINANCE
  * at once with the reason, no attempt counted. A line whose bucket
- * has no QuickBooks Class → no_class, state unchanged, re-checked each run. At the daily create limit the
+ * has no QuickBooks Class → no_class, state unchanged (a stale claim goes back to POST_FAILED),
+ * re-checked each run. At the daily create limit the
  * expense waits for the next UTC day, nothing recorded. With the closing date unread nothing is
  * created, and a miss leaves the expense as it is.
  *
@@ -325,8 +326,11 @@ async function claimForPost(orgId: string, expenseId: string, posting: ExpensePo
     // Retrying cannot fix the expense's own data, so it waits for finance.
     if ("unpostable" in built) return settle(tx, current, "unpostable", { qbMatchState: "NEEDS_FINANCE" }, built.unpostable);
     if ("queue" in built) return settle(tx, current, "queued", { qbMatchState: "AMBIGUOUS" }, built.queue);
-    // State stays postable, so the next drain posts it once the bucket has a Class.
-    if ("noClass" in built) return "no_class";
+    // State stays postable, so the next drain posts it once the bucket has a Class; a stale claim is released.
+    if ("noClass" in built) {
+      if (locked.qbMatchState === POSTING) await settle(tx, locked, "waiting", { qbMatchState: current.qbMatchState }, "a line's bucket has no QuickBooks Class");
+      return "no_class";
+    }
 
     // ponytail: concurrent posts can each see the count under the ceiling, so a day may overshoot by the in-flight posts.
     if ((await qbCreatesToday(tx)) >= inputs.settings.qbMaxCreatesPerDay) return "waiting";
