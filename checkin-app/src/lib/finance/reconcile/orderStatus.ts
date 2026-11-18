@@ -16,7 +16,10 @@ export function isReversed(o: Pick<MirrorOrder, "financialStatus" | "cancelledAt
     return !!o.cancelledAt || o.totalRefundedCents > 0 || s === "REFUNDED" || s === "PARTIALLY_REFUNDED" || s === "VOIDED";
 }
 
-/** The whole order total went back: a partial refund is not one. */
-export function isFullyRefunded(o: Pick<MirrorOrder, "financialStatus" | "totalCents" | "totalRefundedCents">): boolean {
-    return (o.financialStatus ?? "").toUpperCase() === "REFUNDED" || (o.totalCents > 0 && o.totalRefundedCents >= o.totalCents);
+/**
+ * Shopify reports the whole order refunded. Amounts cannot say so: the mirror's
+ * total is after returns, so a partial return can refund more than it shows.
+ */
+export function isFullyRefunded(o: Pick<MirrorOrder, "financialStatus">): boolean {
+    return (o.financialStatus ?? "").toUpperCase() === "REFUNDED";
 }

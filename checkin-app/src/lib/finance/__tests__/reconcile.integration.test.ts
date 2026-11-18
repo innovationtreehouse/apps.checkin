@@ -1731,15 +1731,31 @@ describe("a full store refund on a denied household's paid application records i
         expect(await refundAudits(processId)).toBe(1);
     });
 
-    it("the daily pass keeps the payment on a partial refund and raises it for the Board", async () => {
-        const { processId } = await deniedPaid("902");
-        ordersByLegacyIds.mockResolvedValue([order({ legacyId: `${TAG}-902`, ...PARTIAL })]);
+    it.each([
+        ["", "902", "PENDING_BG_CLEARANCE"],
+        [" while the check is in review", "909", "PENDING_BG_REVIEW"],
+        [" on a BLOCKED application", "910", "BLOCKED"],
+    ] as const)("the daily pass keeps the payment on a partial refund%s and raises it for the Board", async (_label, n, status) => {
+        const { processId } = await deniedPaid(n, status);
+        ordersByLegacyIds.mockResolvedValue([order({ legacyId: `${TAG}-${n}`, ...PARTIAL })]);
 
         await runReconcile();
         expect((await proc(processId)).paidAt).not.toBeNull();
         expect(await owed(processId)).toBe(1);
         expect(await problems(processId)).toEqual([{ kind: "REFUND", status: "OPEN", resolvedById: null, resolutionNote: null }]);
         expect(await refundAudits(processId)).toBe(0);
+
+        await runReconcile();
+        expect(await prisma.paymentException.count({ where: { processId } })).toBe(1);
+    });
+
+    it("a partial return the mirror shows refunding more than its after-returns total keeps the payment", async () => {
+        const { processId } = await deniedPaid("911");
+        ordersByLegacyIds.mockResolvedValue([order({ legacyId: `${TAG}-911`, financialStatus: "PARTIALLY_REFUNDED", totalCents: 2000, totalRefundedCents: 2500 })]);
+
+        await runReconcile();
+        expect((await proc(processId)).paidAt).not.toBeNull();
+        expect(await owed(processId)).toBe(1);
     });
 
     it("a refund on a household that is not denied keeps the payment and is raised for the Board", async () => {

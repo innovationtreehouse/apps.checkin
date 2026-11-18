@@ -6,7 +6,7 @@ import { adjustProgramInventory } from "@/lib/shopify/stock";
 import { isSaleEnded, type SaleRow } from "@/lib/programs/saleState";
 import * as mirror from "@/lib/shopifyRead/client";
 import type { MirrorOrder } from "@/lib/shopifyRead/client";
-import type { Prisma } from "@/generated/prisma/client";
+import type { OrgMembershipProcessStatus, Prisma } from "@/generated/prisma/client";
 import { recordDeniedStoreRefund } from "@/lib/membership/refund";
 import { refundableApplication } from "@/lib/membership/lifecycle";
 import { raisePaymentException, recordReversal, recordSettledPaymentException, type PaymentExceptionKind } from "./exceptions";
@@ -366,31 +366,41 @@ async function mirrorShowsFullRefund(orderLegacyId: string): Promise<boolean> {
  * partial one stays with the Board. The daily pass for a refund whose webhook never
  * arrived, one the mirror did not yet show, or one that arrived before the denial.
  */
-async function recordDeniedStoreRefunds(): Promise<void> {
+async function recordDeniedStoreRefunds(): Promise<number> {
     const procs = await prisma.orgMembershipProcess.findMany({
         where: { AND: [refundableApplication.where, { shopifyOrderId: { not: null }, orgMembership: { status: "DENIED" } }] },
-        select: { id: true, shopifyOrderId: true },
+        select: { id: true, shopifyOrderId: true, status: true },
     });
-    if (procs.length === 0) return;
+    if (procs.length === 0) return 0;
     const orders = await mirror.ordersByLegacyIds([...new Set(procs.map((p) => p.shopifyOrderId!))]);
     const byLegacy = new Map(orders.map((o) => [o.legacyId ?? "", o]));
     const disputes = await mirror.orderDisputeCounts(orders.map((o) => o.orderGid));
+    let raised = 0;
     for (const proc of procs) {
         const o = byLegacy.get(proc.shopifyOrderId!);
-        if (!o || classifyReversal(o, disputes.has(o.orderGid)) !== "REFUND" || !isFullyRefunded(o)) continue;
+        if (!o || classifyReversal(o, disputes.has(o.orderGid)) !== "REFUND") continue;
+        const ref = { shopifyOrderId: proc.shopifyOrderId!, processId: proc.id, evidence: reversalEvidence(o, disputes.get(o.orderGid) ?? 0) };
         await recordReversal(proc.shopifyOrderId!, "REFUND");
-        if (!(await recordDeniedStoreRefund(proc.id, proc.shopifyOrderId!))) continue;
-        const evidence = reversalEvidence(o, disputes.get(o.orderGid) ?? 0);
-        await recordSettledPaymentException("REFUND", { shopifyOrderId: proc.shopifyOrderId!, processId: proc.id, evidence }, DENIED_REFUND_NOTE);
+        if (isFullyRefunded(o) && (await recordDeniedStoreRefund(proc.id, proc.shopifyOrderId!))) {
+            await recordSettledPaymentException("REFUND", ref, DENIED_REFUND_NOTE);
+        } else if (!ACTIVATED_STATUSES.includes(proc.status)) {
+            // A partial refund the main pass below does not see goes to the Board here.
+            await raisePaymentException("REFUND", { ...ref, ...(proc.status === "PENDING_BG_REVIEW" ? { severity: "CRITICAL" as const } : {}) });
+            raised++;
+        }
     }
+    return raised;
 }
 
+/** The steps the main reversal pass reads: money recorded on an activated order. */
+const ACTIVATED_STATUSES: OrgMembershipProcessStatus[] = ["ACTIVE", "PENDING_BG_CLEARANCE"];
+
 export async function reconcileReversals(): Promise<number> {
-    await recordDeniedStoreRefunds();
+    const deniedRaised = await recordDeniedStoreRefunds();
     // App-side activated orders: money recorded (paidAt) with an order id. BLOCKED
     // stays out — a refund on a paid-while-blocked application is the expected fix.
     const procs = await prisma.orgMembershipProcess.findMany({
-        where: { shopifyOrderId: { not: null }, paidAt: { not: null }, status: { in: ["ACTIVE", "PENDING_BG_CLEARANCE"] } },
+        where: { shopifyOrderId: { not: null }, paidAt: { not: null }, status: { in: ACTIVATED_STATUSES } },
         select: { id: true, shopifyOrderId: true, orgMembershipId: true, status: true },
     });
     // A withdrawn row keeps its order, so a late reversal is raised against it.
@@ -425,7 +435,7 @@ export async function reconcileReversals(): Promise<number> {
     const membershipVariants = new Set((await membershipVariantYears(settings ?? null, new Date())).keys());
     const droppedMembership = await ordersDroppingMembershipLine([...new Set(unreversedMembershipGids)], membershipVariants);
 
-    let raised = 0;
+    let raised = deniedRaised;
     for (const proc of procs) {
         const o = byLegacy.get(proc.shopifyOrderId!);
         if (!o) continue; // pre-cutover / not yet mirrored — can't judge.
