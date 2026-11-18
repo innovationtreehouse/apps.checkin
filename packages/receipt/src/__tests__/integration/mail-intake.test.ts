@@ -582,7 +582,7 @@ describeDb("mail intake call deadlines", () => {
     expect(atRisk[1].receivedAt).not.toBeNull();
   });
 
-  it("counts a hung acknowledgement as failed, releases the lease, and sends it on the next run", async () => {
+  it("counts a hung acknowledgement as failed, releases the lease, and never sends it again", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.spyOn(console, "error").mockImplementation(() => {});
     send("m1");
@@ -610,8 +610,9 @@ describeDb("mail intake call deadlines", () => {
     expect(await readMailbox()).toMatchObject({ status: "ok", receipts: 1, replied: 0, replyFailed: 1 });
     expect((await mailRunState()).running).toBe(false);
     hang = false;
-    expect(await readMailbox()).toMatchObject({ replied: 1 });
-    expect(sent).toEqual(["alice@example.org"]);
+    expect(await readMailbox()).toMatchObject({ replied: 0, replyFailed: 0 });
+    expect(sent).toEqual([]);
+    expect((await db.receiptMailReply.findFirstOrThrow()).claimedAt).not.toBeNull();
   });
 });
 

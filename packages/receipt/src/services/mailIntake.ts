@@ -39,7 +39,10 @@ export const MAIL_CATCH_UP_BUDGET_MS = 10 * 60_000;
 const LEASE_SLACK_MS = 10 * 60_000;
 /** Reading calls (listing, fetches, downloads, OCR, the file store) end this long before the lease, leaving the run's end its time. */
 const READ_MARGIN_MS = 3 * 60_000;
-/** The run's end-of-run calls (dating mail, alerts, acknowledgements) end this long before the lease, leaving its release time. */
+/**
+ * The run's end-of-run calls (dating mail, alerts, acknowledgements) end this long before the lease, leaving its release time.
+ * A timed-out alert is sent again next run, so finance may see it twice; a timed-out acknowledgement is never sent again.
+ */
 const END_MARGIN_MS = 60_000;
 const DAY_MS = 24 * 60 * 60_000;
 
