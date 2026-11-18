@@ -441,10 +441,11 @@ async function refuseConflictedActor(actorId: number, reviewId: number, review: 
 }
 
 /**
- * The conflict bar ran before the lock; re-run it on the review as it stands, under the
- * locks a household move takes on the actor's and the adult's households.
+ * Takes the parent lock and re-runs the conflict bar, which ran before it, on the review
+ * as it stands. The actor's and the adult's household rows are locked first, as a
+ * household move and a deny take them, and before the parent, as a deny does.
  */
-async function throwIfConflictedUnderLock(tx: TxClient, actorId: number, reviewId: number, message: string) {
+async function lockAndRecheckConflict(tx: TxClient, taId: number, actorId: number, reviewId: number, message: string) {
     const readReview = () => tx.trustedAdultReview.findUnique({
         where: { id: reviewId },
         select: { proposedEmail: true, proposedPhone: true, trustedAdult: { select: CONFLICT_TA_SELECT } },
@@ -454,6 +455,7 @@ async function throwIfConflictedUnderLock(tx: TxClient, actorId: number, reviewI
     const actor = await tx.person.findUnique({ where: { id: actorId }, select: { householdId: true } });
     const ta = before.trustedAdult;
     await lockHouseholdRows(tx, [ta.householdId, ta.trustedAdultPerson?.householdId, actor?.householdId].filter((id): id is number => id != null));
+    await lockTrustedAdult(tx, taId);
     const review = await readReview();
     if (!review) throw new TrustedAdultError("not_found", "Review not found.");
     const refusal = await findConflictRefusal(tx, actorId, reviewId, review);
@@ -618,8 +620,7 @@ export async function decideReview(reviewId: number, boardMemberId: number, inpu
     // Without this two board members both read PENDING_BOARD_REVIEW, both update, and
     // both write an audit row — the loser leaving an orphan audit that contradicts state.
     const result = await conflictCheckedTransaction(async (tx) => {
-        await lockTrustedAdult(tx, head.trustedAdultId);
-        await throwIfConflictedUnderLock(tx, boardMemberId, reviewId, conflictMessage);
+        await lockAndRecheckConflict(tx, head.trustedAdultId, boardMemberId, reviewId, conflictMessage);
         const review = await tx.trustedAdultReview.findUnique({ where: { id: reviewId } });
         if (!review) throw new TrustedAdultError("not_found", "Review not found.");
         if (review.status !== "PENDING_BOARD_REVIEW") {
@@ -744,8 +745,7 @@ export async function revokeReview(reviewId: number, actorId: number) {
     const head = await overrideHead(reviewId, actorId);
     const actor = personActor(actorId);
     const updated = await conflictCheckedTransaction(async (tx) => {
-        await lockTrustedAdult(tx, head.trustedAdultId);
-        await throwIfConflictedUnderLock(tx, actorId, reviewId, OVERRIDE_CONFLICT_MESSAGE);
+        await lockAndRecheckConflict(tx, head.trustedAdultId, actorId, reviewId, OVERRIDE_CONFLICT_MESSAGE);
         const review = await tx.trustedAdultReview.findUnique({ where: { id: reviewId } });
         if (!review) throw new TrustedAdultError("not_found", "Review not found.");
 
@@ -796,8 +796,7 @@ export async function resetReview(reviewId: number, actorId: number, reason: str
     const head = await overrideHead(reviewId, actorId);
 
     const reset = await conflictCheckedTransaction(async (tx) => {
-        await lockTrustedAdult(tx, head.trustedAdultId);
-        await throwIfConflictedUnderLock(tx, actorId, reviewId, OVERRIDE_CONFLICT_MESSAGE);
+        await lockAndRecheckConflict(tx, head.trustedAdultId, actorId, reviewId, OVERRIDE_CONFLICT_MESSAGE);
         const review = await tx.trustedAdultReview.findUnique({ where: { id: reviewId } });
         if (!review) throw new TrustedAdultError("not_found", "Review not found.");
         const latest = await tx.trustedAdultReview.findFirst({ where: { trustedAdultId: review.trustedAdultId }, orderBy: { id: "desc" } });
