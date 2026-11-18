@@ -16,6 +16,7 @@ import { createClaimantProduct, createShopifySingleVariantProgram } from '@/lib/
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 jest.mock('@/lib/notifications', () => ({ sendNotification: jest.fn() }));
 jest.mock('@/lib/shopify/products', () => ({
+    programProductHandle: jest.requireActual('@/lib/shopify/products').programProductHandle,
     createShopifySingleVariantProgram: jest.fn(),
     createClaimantProduct: jest.fn(),
 }));
@@ -78,6 +79,8 @@ describe('program name is unique per membership year', () => {
         const { program } = await first.json();
         expect(await prisma.program.findUniqueOrThrow({ where: { id: program.id } })).toMatchObject({ name: `${TAG} Robotics`, nameKey: `${TAG} robotics`, appliesToYear: 2026 });
         expect(createShopifySingleVariantProgram).toHaveBeenCalledTimes(1);
+        const idsAudit = await prisma.auditLog.findFirst({ where: { tableName: 'Program', affectedEntityId: program.id, action: 'EDIT' } });
+        expect(idsAudit?.newData).toMatchObject({ shopifyProductId: `p-${TAG}` });
 
         jest.clearAllMocks();
         const second = await create(`  ${TAG.toUpperCase()} ROBOTICS `);

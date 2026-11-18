@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { withAuth, getOptionalSessionUser } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { sendNotification } from "@/lib/notifications";
-import { createClaimantProduct, createShopifySingleVariantProgram } from "@/lib/shopify/products";
+import { createClaimantProduct, createShopifySingleVariantProgram, programProductHandle } from "@/lib/shopify/products";
 import { isProgramStoreClosed } from "@/lib/programs/storeClosed";
 import { adjustProgramInventory } from "@/lib/shopify/stock";
 import { logBackendError, logger } from "@/lib/logger";
@@ -297,15 +297,24 @@ export const POST = withAuth({ roles: ['isBoardMember'] }, async (req, auth) => 
             return created;
         });
 
+        // Stable handles, so a Sync to Shopify run after a failure here finds these products instead of minting twice.
         let newProgram = createdProgram;
         if (basePriceCents && basePriceCents > 0) {
-            shopifyData = await createShopifySingleVariantProgram(name, basePriceCents, maxPart, undefined, !(await isProgramStoreClosed()));
+            shopifyData = await createShopifySingleVariantProgram(name, basePriceCents, maxPart, programProductHandle(createdProgram, "public"), !(await isProgramStoreClosed()));
             // Without it checkout falls back to the public variant; the board can mint it later via sync-shopify.
-            if (shopifyData) claimantData = await createClaimantProduct(name, basePriceCents);
+            if (shopifyData) claimantData = await createClaimantProduct(name, basePriceCents, programProductHandle(createdProgram, "claimant"));
             if (shopifyData) {
-                newProgram = await prisma.program.update({
-                    where: { id: createdProgram.id },
-                    data: { ...shopifyData, ...claimantData },
+                const ids = { ...shopifyData, ...claimantData };
+                newProgram = await prisma.$transaction(async (tx) => {
+                    const updated = await tx.program.update({ where: { id: createdProgram.id }, data: ids });
+                    await recordAudit(tx, personActor(auth.user.id), {
+                        action: 'EDIT',
+                        tableName: 'Program',
+                        affectedEntityId: updated.id,
+                        oldData: createdProgram,
+                        newData: updated,
+                    });
+                    return updated;
                 });
             }
         }

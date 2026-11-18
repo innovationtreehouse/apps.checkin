@@ -32,6 +32,7 @@ jest.mock('@/lib/notifications', () => ({
 }));
 
 jest.mock('@/lib/shopify/products', () => ({
+    programProductHandle: jest.requireActual('@/lib/shopify/products').programProductHandle,
     createShopifySingleVariantProgram: jest.fn(),
     createClaimantProduct: jest.fn(),
 }));

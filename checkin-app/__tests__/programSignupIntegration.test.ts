@@ -32,6 +32,7 @@ jest.mock('@/lib/shopify/stock', () => ({
     syncProgramPrice: jest.fn().mockResolvedValue(true),
 }));
 jest.mock('@/lib/shopify/products', () => ({
+    programProductHandle: jest.requireActual('@/lib/shopify/products').programProductHandle,
     createShopifySingleVariantProgram: jest.fn().mockResolvedValue({
         shopifyProductId: 'mock-product-id',
         shopifyVariantId: 'mock-variant-id',
