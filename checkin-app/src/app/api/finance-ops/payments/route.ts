@@ -93,6 +93,8 @@ export const GET = handler(
                 familyName: person?.name ?? household?.name ?? null,
                 familyEmail: person?.email ?? lead?.email ?? null,
                 programName: program?.name ?? null,
+                // Only this kind stores Board-facing wording; other kinds' evidence is a reopen key.
+                detail: e.kind === "DUPLICATE_MEMBERSHIP_PAYMENT" ? e.evidence : null,
                 live: order
                     ? {
                           financialStatus: order.financialStatus,
