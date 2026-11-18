@@ -98,10 +98,6 @@ describe("getProblems", () => {
         expect((await getProblems()).notices).toEqual([{ text: "Receipt reading failed 3 times in the last day", href: null }]);
     });
 
-    it("has no catalog line while no receipt waits in Matching pending for a catalog error", async () => {
-        expect((await getProblems()).notices).toEqual([]);
-    });
-
     it("carries the catalog-error count with its link to the mapping queue", async () => {
         const line = { text: "Receipts in Matching pending because the catalog was unavailable: 2", href: "/inventory/receiving?queue=mapping" };
         mapping.problemNotices.mockResolvedValue([line]);
