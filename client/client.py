@@ -604,7 +604,8 @@ class AttendanceState:
                 present_non_keyholders.add(int(pid))
         arrivals = {}
         _overlay_pending(present, pending, arrivals)
-        safety = att_data.get("safety") or {}
+        # A roster without a bool verdict keeps the last one: the server drops it when it cannot confirm the building.
+        two_deep = (att_data.get("safety") or {}).get("isTwoDeepViolation")
         with self.lock:
             if since_seq is not None and since_seq != self.presence_seq:
                 return False
@@ -618,7 +619,8 @@ class AttendanceState:
             self.known_keyholders -= present_non_keyholders
             if att_data.get("rosterAsOf"):
                 self.roster_as_of = att_data["rosterAsOf"]
-            self.last_two_deep_violation = bool(safety.get("isTwoDeepViolation"))
+            if isinstance(two_deep, bool):
+                self.last_two_deep_violation = two_deep
             self.counts_known = True
             self.roster_generation += 1
             self.last_roster_body = json.dumps(att_data)
