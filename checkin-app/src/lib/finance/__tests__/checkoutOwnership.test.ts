@@ -116,6 +116,14 @@ describe("runReconcile — program checkout ownership", () => {
             expect(raisedKinds()).toEqual([]);
         });
 
+        it("raises the seats left on an order no checkout tied to anyone, for the Board to place", async () => {
+            held(2);
+            const noCart = { ...order(null), noteAttributes: null };
+            expect(await reconcileForwardProgram(noCart)).toBe(true);
+            expect(activate).not.toHaveBeenCalled();
+            expect(raisedKinds()).toEqual(["UNCLAIMED_SEATS"]);
+        });
+
         it("is judged again while a seat it carries is unspent, so the rest of it is not lost", async () => {
             held(2);
             childHouseholds.mockResolvedValue([{ householdId: OWN_HOUSEHOLD }]);

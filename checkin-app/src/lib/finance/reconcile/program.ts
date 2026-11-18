@@ -140,8 +140,16 @@ export async function peopleSpentBy(db: DbClient, shopifyOrderId: string, progra
 export async function reconcileForwardProgram(order: MirrorOrder): Promise<boolean> {
     if (order.legacyId) {
         const known = await prisma.programParticipant.findFirst({ where: { shopifyOrderId: order.legacyId }, select: { programId: true } });
-        // A hand match can spend part of an order; one with seats left is judged like any other.
-        if (known && (await unspentOn(order, known.programId)) <= 0) return true;
+        if (known) {
+            if ((await unspentOn(order, known.programId)) <= 0) return true;
+            // A hand match spent part of an order no checkout tied to anyone: nobody the app can
+            // name holds the rest, so the Board places its seats.
+            if (!mirror.orderAttr(order, "Program_ID")) {
+                await raisePaymentException("UNCLAIMED_SEATS", { shopifyOrderId: order.legacyId, programId: known.programId });
+                return true;
+            }
+            // A checkout order with seats left is judged like any other.
+        }
     }
 
     // Preferred: the cart attributes the enroll flow's checkout link set — the same
