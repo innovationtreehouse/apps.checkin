@@ -31,7 +31,7 @@ let restorePolicy: () => Promise<void> = async () => {};
  * store order. With `leadCleared` false the lead's own review is still open, so the
  * household does not qualify when the block lifts.
  */
-async function paidWhileBlocked(from: OrgMembershipProcessStatus, leadCleared = true, raise = true) {
+async function paidWhileBlocked(from: OrgMembershipProcessStatus, leadCleared = true, raise = true, signed = true) {
     const n = seq++;
     const now = new Date();
     const shopifyOrderId = `${TAG}-${n}-${Math.random().toString(36).slice(2)}`;
@@ -40,7 +40,7 @@ async function paidWhileBlocked(from: OrgMembershipProcessStatus, leadCleared = 
     const other = await prisma.person.create({ data: { name: `Adult ${n}`, email: `adult-${n}-${TAG}@example.com`, householdId: household.id } });
     const membership = await prisma.orgMembership.create({ data: { householdId: household.id, status: 'NONE' } });
     const app = await prisma.orgMembershipProcess.create({
-        data: { orgMembershipId: membership.id, kind: 'INITIAL', status: from, bgConsentAt: now, contractSignedAt: now },
+        data: { orgMembershipId: membership.id, kind: 'INITIAL', status: from, bgConsentAt: now, contractSignedAt: signed ? now : null },
     });
     if (!leadCleared) {
         await prisma.orgMembershipProcess.create({ data: { kind: 'PERSON_BG', subjectPersonId: lead.id, requestedForHouseholdId: household.id, status: 'PENDING_BG_REVIEW', bgConsentAt: now } });
@@ -114,7 +114,7 @@ describe('PAID_WHILE_BLOCKED when the block lifts', () => {
         expect(await membershipStatus(f.orgMembershipId)).toBe('ACTIVE');
 
         const resolved = await problem(f.appId, f.shopifyOrderId);
-        expect(resolved).toMatchObject({ status: 'RESOLVED', resolvedById: 0, resolutionNote: 'household activated on this payment; no refund needed' });
+        expect(resolved).toMatchObject({ status: 'RESOLVED', resolvedById: null, resolutionNote: 'household activated on this payment; no refund needed' });
         expect(resolved.resolvedAt).not.toBeNull();
         const audit = await prisma.auditLog.findFirst({ where: { tableName: 'PaymentException', affectedEntityId: resolved.id } });
         expect(audit).toMatchObject({ actorId: 0, actorSystem: 'system:membership-bg-settle', action: 'EDIT' });
@@ -151,6 +151,15 @@ describe('a paid application blocked from PENDING_EXTERNAL_ACTION', () => {
         const f = await paidWhileBlocked('PENDING_EXTERNAL_ACTION', false);
         expect(await liftBlock(f)).toEqual(['resumed']);
         expect((await row(f.appId)).status).toBe('PENDING_BG_CLEARANCE');
+        expect((await problem(f.appId, f.shopifyOrderId)).status).toBe('OPEN');
+    });
+
+    it('returns to PENDING_EXTERNAL_ACTION when its agreement is unsigned, keeping the item open', async () => {
+        const f = await paidWhileBlocked('PENDING_EXTERNAL_ACTION', true, true, false);
+        expect(await liftBlock(f)).toEqual(['resumed', 'cleared']);
+        const app = await row(f.appId);
+        expect(app.status).toBe('PENDING_EXTERNAL_ACTION');
+        expect(await membershipStatus(f.orgMembershipId)).toBe('NONE');
         expect((await problem(f.appId, f.shopifyOrderId)).status).toBe('OPEN');
     });
 });

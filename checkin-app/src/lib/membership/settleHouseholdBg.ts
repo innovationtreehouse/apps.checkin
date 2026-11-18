@@ -1,7 +1,7 @@
 import type { OrgMembershipProcessStatus, Prisma } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import type { DbClient, TxClient } from "@/lib/db-client";
-import { personActor, recordAudit, SYSTEM_ACTOR, systemActor } from "@/lib/auditActor";
+import { personActor, recordAudit, systemActor } from "@/lib/auditActor";
 import { logBackendError } from "@/lib/logger";
 import { isOrderReversed } from "@/lib/finance/reconcile/exceptions";
 import { recordUnreportedReversalOnProcess } from "@/lib/finance/reconcile/liveOrder";
@@ -109,7 +109,7 @@ const ACTOR = systemActor("system:membership-bg-settle");
 const BLOCK_REASON = "check review rejected";
 
 const BLOCKABLE: readonly ProcessStatus[] = SETTLE_BLOCKABLE_STATUSES;
-/** Steps before the review and payment track: a lifted block on an unpaid application returns to them as they were. */
+/** Steps before the review and payment track: a lifted block returns to them as they were unless the application is paid and signed. */
 const RETURNS_AS_WAS: readonly ProcessStatus[] = ["INTAKE", "PENDING_RENEWAL", "PENDING_EXTERNAL_ACTION"];
 /** Waiting steps where only a stamp is owed; the step's own event moves the status on. */
 const STAMPS: readonly ProcessStatus[] = ["PENDING_EXTERNAL_ACTION", "PENDING_PAYMENT"];
@@ -310,13 +310,13 @@ async function departedRejections(db: DbClient, processId: number, householdId: 
 }
 
 /**
- * Where a lifted block returns the application. A paid one goes to
- * PENDING_BG_CLEARANCE whatever step it was blocked from. An unpaid one returns to a
- * step before review and payment as it was, and otherwise goes where
- * `blockedResetStatus` sends it.
+ * Where a lifted block returns the application. A paid, signed one goes to
+ * PENDING_BG_CLEARANCE whatever step it was blocked from. Any other returns to a step
+ * before review and payment as it was, so an unsigned row keeps its agreement step,
+ * and otherwise goes where `blockedResetStatus` sends it.
  */
 export function resumeStatus(from: Prisma.JsonValue | undefined, process: Parameters<typeof blockedResetStatus>[0], checkStarted: boolean): OrgMembershipProcessStatus {
-    const step = process.paidAt ? undefined : RETURNS_AS_WAS.find((s) => s === from);
+    const step = process.paidAt && process.contractSignedAt ? undefined : RETURNS_AS_WAS.find((s) => s === from);
     return step ?? blockedResetStatus(process, checkStarted);
 }
 
@@ -329,7 +329,7 @@ async function resolvePaidWhileBlocked(tx: TxClient, processId: number, shopifyO
         select: { id: true },
     });
     for (const { id } of open) {
-        const data = { status: "RESOLVED" as const, resolvedById: SYSTEM_ACTOR, resolvedAt: new Date(), resolutionNote: "household activated on this payment; no refund needed" };
+        const data = { status: "RESOLVED" as const, resolvedById: null, resolvedAt: new Date(), resolutionNote: "household activated on this payment; no refund needed" };
         const { count } = await tx.paymentException.updateMany({ where: { id, status: { in: [...OPEN_EXCEPTION] } }, data });
         if (count) await recordAudit(tx, ACTOR, { action: "EDIT", tableName: "PaymentException", affectedEntityId: id, newData: { ...data, resolvedAt: data.resolvedAt.toISOString(), processId } });
     }
