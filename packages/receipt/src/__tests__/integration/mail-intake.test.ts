@@ -169,6 +169,42 @@ describeDb("mail intake", () => {
     expect(await db.receiptMailItem.findFirstOrThrow()).toMatchObject({ status: "held", holdReason: "unverified_sender" });
   });
 
+  it("holds a file-less item naming each file refused from an unknown sender, once", async () => {
+    const docx = { mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", filename: "invoice.docx", body: { data: b64("PK"), size: 2 } };
+    const eml = { mimeType: "message/rfc822", filename: "receipt.eml", parts: [{ mimeType: "text/plain", body: { data: b64("Order total 12.00") } }] };
+    send("m1", { from: ["stranger@example.org"], parts: [{ mimeType: "text/plain", body: { data: b64("see attached") } }, docx, eml] });
+    expect(await readMailbox()).toMatchObject({ receipts: 0, held: 2 });
+    const items = await db.receiptMailItem.findMany({ orderBy: { id: "asc" } });
+    expect(items).toEqual([
+      expect.objectContaining({ status: "held", holdReason: "not_a_submitter", senderAddress: "stranger@example.org", fileBlob: null, fileKey: null, mimeType: null, refusal: { file: "invoice.docx", reason: "wrong_type" } }),
+      expect.objectContaining({ status: "held", fileBlob: null, refusal: { file: "receipt.eml", reason: "forwarded" } }),
+    ]);
+
+    await db.receiptMailAtRisk.create({ data: { orgId: TEST_ORG_ID, gmailMessageId: "m1", receivedAt: new Date() } });
+    expect(await readMailbox()).toMatchObject({ held: 0 });
+    expect(await db.receiptMailItem.count()).toBe(2);
+  });
+
+  it("holds a refused file beside an unknown sender's held file, and holds neither twice", async () => {
+    const bad = { mimeType: "application/pdf", filename: "scan.pdf", body: { data: b64("not a pdf"), size: 9 } };
+    send("m1", { from: ["stranger@example.org"], parts: [attachment("a", pdf("a")), bad] });
+    expect(await readMailbox()).toMatchObject({ held: 2 });
+    await db.receiptMailAtRisk.create({ data: { orgId: TEST_ORG_ID, gmailMessageId: "m1", receivedAt: new Date() } });
+    expect(await readMailbox()).toMatchObject({ held: 0 });
+    const items = await db.receiptMailItem.findMany({ orderBy: { id: "asc" }, select: { mimeType: true, refusal: true } });
+    expect(items).toEqual([{ mimeType: "application/pdf", refusal: null }, { mimeType: null, refusal: { file: "scan.pdf", reason: "wrong_type" } }]);
+  });
+
+  it("holds an unverified sender's refused file, and none of a submitter's", async () => {
+    const docx = { mimeType: "application/msword", filename: "r.doc", body: { data: b64("PK"), size: 2 } };
+    send("forged", { auth: [], parts: [docx] });
+    send("alice", { parts: [docx] });
+    await readMailbox();
+    expect(await db.receiptMailItem.findMany({ select: { gmailMessageId: true, holdReason: true, refusal: true } })).toEqual([
+      { gmailMessageId: "forged", holdReason: "unverified_sender", refusal: { file: "r.doc", reason: "wrong_type" } },
+    ]);
+  });
+
   it("stores no item for a submitter's long body with no amount", async () => {
     send("m1", { parts: [{ mimeType: "text/plain", body: { data: b64(PAD) } }] });
     expect(await readMailbox()).toMatchObject({ receipts: 0, held: 0 });

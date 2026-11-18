@@ -6,7 +6,7 @@ import { z } from "zod";
 import { isServiceError, kindOf, ServiceError } from "@checkin/component-kit";
 import { isUniqueConstraintError } from "@checkin/pg-kit";
 import { db } from "../db";
-import { isNoticeMessageId, type MailboxReader, type MailMessage, type MailPart, type MailRefusal, type ReceiptPrincipal } from "../contract";
+import { isNoticeMessageId, type MailboxReader, type MailMessage, type MailPart, type MailRefusal, type MailRefusalReason, type ReceiptPrincipal } from "../contract";
 import type { Prisma } from "../generated/prisma/client";
 import { ACCEPTED_TYPES, checkReceiptFile, MAX_FILE_BYTES } from "../lib/file-type";
 import { deleteStoredFiles, newMailItemFileKey, readStoredFile } from "../lib/fileStorage";
@@ -404,6 +404,15 @@ const isStatus = (err: unknown, code: number) => isServiceError(err) && err.stat
 /** Why a file was held for finance: no sender passed the sender check, or the verified sender may not submit receipts. */
 export type HoldReason = "unverified_sender" | "not_a_submitter";
 
+/** Refused files finance is told about, as a held item with no file, when no submitter sent the mail. */
+const HELD_REFUSALS = new Set<MailRefusalReason>(["wrong_type", "forwarded", "too_large", "empty"]);
+
+/** A held refusal's ledger key: one per file name and reason, so a later run never writes it again. */
+const refusalKey = (r: MailRefusal) => createHash("sha256").update(`refused\0${r.reason}\0${r.file}`).digest("hex");
+
+/** A held item that names a refused file and keeps none. */
+export const isHeldRefusal = (row: { status: string; refusal: unknown }) => row.status === "held" && row.refusal !== null;
+
 /** The statuses whose items keep their file in the ledger, awaiting finance or a later run. */
 export const STORED_STATUSES = ["held", "deferred"];
 
@@ -593,8 +602,8 @@ async function readLeased(reader: MailboxReader, orgId: string, started: number,
       refused.push({ file: "your email", reason: "no_receipt" });
     }
     // Every file already in the ledger: nothing to download.
-    const rows = await db.receiptMailItem.findMany({ where: { gmailMessageId: msg.id }, select: { refusal: true } });
-    const ledgered = files.length > 0 && rows.length >= files.length;
+    const rows = await db.receiptMailItem.findMany({ where: { gmailMessageId: msg.id }, select: { status: true, refusal: true } });
+    const ledgered = files.length > 0 && rows.filter((r) => !isHeldRefusal(r)).length >= files.length;
     // A file refused on an earlier pass is never read again, so its row carries it into the notice.
     refused.push(...rows.flatMap((r) => (r.refusal ? [r.refusal as unknown as MailRefusal] : [])));
     const sender: ReceiptPrincipal | null = known !== undefined ? known : !ledgered || refused.length > 0 ? await submitter() : null;
@@ -615,8 +624,28 @@ async function readLeased(reader: MailboxReader, orgId: string, started: number,
         data: { refusals, doneAt: null, claimedAt: null, attempts: 0 },
       });
     };
+    /** Without a submitter to tell, each refused file becomes a held item with no file, so finance hears of it. */
+    const holdRefusals = async () => {
+      if (sender) return;
+      const { count } = await db.receiptMailItem.createMany({
+        data: refused.filter((r) => HELD_REFUSALS.has(r.reason)).map((r) => ({
+          orgId,
+          gmailMessageId: msg.id,
+          attachmentHash: refusalKey(r),
+          receivedAt: new Date(Number(msg.internalDate)),
+          senderAddress: address ?? "",
+          dmarcVerdict: verdict,
+          status: "held",
+          holdReason,
+          refusal: { file: r.file, reason: r.reason },
+        })),
+        skipDuplicates: true,
+      });
+      counts.held += count;
+    };
     if (ledgered) {
       counts.skipped += files.length;
+      await holdRefusals();
       await oweRefusals();
       return;
     }
@@ -703,6 +732,7 @@ async function readLeased(reader: MailboxReader, orgId: string, started: number,
         counts.skipped++;
       }
     }
+    await holdRefusals();
     // A put-off file may be refused yet, so the one notice waits for the pass that finishes the message.
     if (!putOff) await oweRefusals();
   }

@@ -56,6 +56,7 @@ const ITEM = {
   dmarcVerdict: "fail",
   mimeType: "application/pdf",
   receiptId: null,
+  refusal: null,
 };
 
 beforeEach(() => {
@@ -97,6 +98,14 @@ describe("mail queue routes admit FINANCE only", () => {
     const res = await list(req(""), noParams);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([ITEM]);
+  });
+
+  it("shows FINANCE the refused file a file-less held item names", async () => {
+    signIn({ isFinance: true });
+    const refused = { ...ITEM, mimeType: null, refusal: { file: "invoice.docx", reason: "wrong_type" } };
+    service.listHeld.mockResolvedValue([{ ...refused, receivedAt: new Date(ITEM.receivedAt) }]);
+    const res = await list(req(""), noParams);
+    expect(await res.json()).toEqual([refused]);
   });
 });
 

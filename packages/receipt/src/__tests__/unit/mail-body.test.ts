@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MailboxReader, MailMessage, MailPart } from "../../contract";
-import { BODY_MIN_BYTES, bodyText, mailFiles } from "../../services/mailIntake";
+import { BODY_MIN_BYTES, bodyText, isHeldRefusal, mailFiles } from "../../services/mailIntake";
 
 const reader: MailboxReader = { address: "receipts@example.org", listRecent: async () => [], getMessage: async () => { throw new Error("unused"); }, getAttachment: async () => Buffer.alloc(0) };
 const b64 = (s: string) => Buffer.from(s).toString("base64url");
@@ -84,5 +84,13 @@ describe("mailFiles — the body", () => {
 
   it("ignores a short body with no attachment", () => {
     expect(read("text/plain", "For the lathe, total $5")).toEqual({ files: [], ignored: 1, refused: [] });
+  });
+});
+
+describe("isHeldRefusal", () => {
+  it("is a held item naming a refused file", () => {
+    expect(isHeldRefusal({ status: "held", refusal: { file: "r.doc", reason: "wrong_type" } })).toBe(true);
+    expect(isHeldRefusal({ status: "held", refusal: null })).toBe(false);
+    expect(isHeldRefusal({ status: "refused", refusal: { file: "r.pdf", reason: "ceiling" } })).toBe(false);
   });
 });
