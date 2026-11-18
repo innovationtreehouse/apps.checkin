@@ -37,7 +37,14 @@ function topLevelParts(text) {
 }
 
 /** One plain model call or response-body read, which needs no second connection to be right. */
-const isPlain = (expr) => /^(await\s+)?(prisma\.[a-z]\w*\.\w+\(|[\w.[\]]+\.json\(\)$)/.test(expr.trim())
+function isPlain(expr) {
+    const text = expr.trim()
+    if (/^(await\s+)?[\w.[\]]+\.json\(\)$/.test(text)) return true
+    const call = /^(await\s+)?prisma\.[a-z]\w*\.\w+\(/.exec(text)
+    if (!call) return false
+    const open = call[0].length - 1
+    return open + callArgument(text, open).length + 2 === text.length
+}
 
 /** True when every promise a Promise.all argument starts is a plain model call or body read. */
 function startsOnlyPlainWork(arg) {
@@ -82,6 +89,7 @@ describe('racing integration suites', () => {
         expect(concurrentWork('const [a, b] = await Promise.all([r1.json(), r2.json()]);')).toEqual([])
         expect(concurrentWork("await Promise.all(['a', 'b'].map((e) => prisma.person.create({ data: { e } })));")).toEqual([])
         expect(concurrentWork('await Promise.all([withdraw(a), prisma.person.findMany()]);')).toEqual([1])
+        expect(concurrentWork('await Promise.all([prisma.person.create(x).then(() => withdraw(a)), prisma.person.create(y)]);')).toEqual([1])
         expect(concurrentWork('await prisma.$transaction(async (tx) => {\n  run = certify(p);\n  await new Promise((r) => setTimeout(r, 500));\n});')).toEqual([1])
         expect(concurrentWork('await prisma.$transaction(async (tx) => { await tx.person.update(u); });')).toEqual([])
     })

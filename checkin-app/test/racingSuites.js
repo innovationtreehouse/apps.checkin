@@ -16,7 +16,6 @@ const RACING_SUITES = [
     'checkStarted',
     'closeAsEvent',
     'enrollmentStateOracle',
-    'householdArchiveWrites',
     'householdQuestion',
     'householdsMembershipAuditAPI',
     'membershipContractSignAPI',
@@ -32,9 +31,6 @@ const RACING_SUITES = [
     'receipt/__tests__/mailAliases',
     'lib/__tests__/opsIncidents',
     'lib/__tests__/postEventEmailClaim',
-    'facilityCloseRecord',
-    'householdsDenyAPI',
-    'membershipBgNonBlocking',
 ]
 
 const RACING_SUITE = new RegExp(`(Concurrency|${RACING_SUITES.join('|')})\\.integration\\.test\\.[jt]sx?$`)
