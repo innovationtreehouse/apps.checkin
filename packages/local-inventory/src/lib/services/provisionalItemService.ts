@@ -28,8 +28,8 @@ export async function lockOrgItemPair(tx: Prisma.TransactionClient, orgId: strin
 }
 
 /**
- * Lock the provisional's own row and read it under the lock. Merges and fulfils take it before
- * the org-item pair, so they serialize even when neither GTIN has an org-item row yet.
+ * Lock the provisional's own row and read it under the lock. Merges, conflict resolves and stock
+ * adds take it before the org-item pair, so they serialize even when neither GTIN has an org-item row yet.
  */
 export async function lockProvisional(tx: Prisma.TransactionClient, orgId: string, provisionalGtin13: string) {
   await tx.$queryRaw`SELECT id FROM provisional_items WHERE org_id = ${orgId} AND provisional_gtin13 = ${provisionalGtin13} FOR UPDATE`;
@@ -277,13 +277,13 @@ export function createProvisionalItemService({
 
       const now = new Date();
       await db.$transaction(async (tx) => {
-        // The status was read outside this transaction; a concurrent approve or map that
-        // already moved the provisional's stock wins.
+        // The status was read outside this transaction; a concurrent resolution that already
+        // claimed the provisional wins, and this one does nothing.
         const claimed = await tx.inventoryProvisionalItem.updateMany({
           where: { id: provisional.id, status: "pending" },
           data: { status: nextStatus, rejectionReason: rejectionReason ?? null, reviewedAt: now },
         });
-        if (claimed.count === 0) throw new ServiceError(409, "Provisional item was already resolved");
+        if (claimed.count === 0) return;
         await tx.provisionalItemLog.create({
           data: {
             orgId, provisionalItemId: provisional.id, gtin13: provisionalGtin13,
@@ -353,6 +353,7 @@ export function createProvisionalItemService({
 
       const now = new Date();
       const resolutionJson = await db.$transaction(async (tx) => {
+        await lockProvisional(tx, orgId, conflict.provisionalGtin13);
         const { provisionalRow, existingRow: realRow } = await lockOrgItemPair(
           tx, orgId, conflict.provisionalGtin13, conflict.realGtin13,
         );

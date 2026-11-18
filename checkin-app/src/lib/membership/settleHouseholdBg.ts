@@ -22,8 +22,7 @@ import {
 import { refuseSelfGrant, type GrantSubject } from "@/lib/membership/selfGrantGuard";
 
 /**
- * Moves a household's open application to match its people's check standing
- * (docs/rules/membership.md, Application and review):
+ * Moves a household's open application to match its people's check standing:
  *
  * - someone in the household has a BLOCKED check review → the application is
  *   BLOCKED, its audit row naming the review and the step it was blocked from;
@@ -201,8 +200,9 @@ async function settleInTx(tx: TxClient, processId: number, householdId: number, 
 
 /**
  * The check reviews recorded as blocking this application since it last entered
- * BLOCKED and the step it was blocked from, or null when it was blocked by something
- * other than this function (a household attestation), which this never moves.
+ * BLOCKED (a Reopen does not count as entering) and the step it was blocked from, or
+ * null when it was blocked by something other than this function (a household
+ * attestation), which this never moves.
  */
 async function recordedBlock(tx: DbClient, processId: number): Promise<{ reviewIds: number[]; from: Prisma.JsonValue | undefined } | null> {
     const rows = await tx.auditLog.findMany({
@@ -214,7 +214,9 @@ async function recordedBlock(tx: DbClient, processId: number): Promise<{ reviewI
     for (const row of rows) {
         const recorded = jsonField(row.newData, "blockingReviewIds");
         if (Array.isArray(recorded)) ids.push(...recorded.filter((v): v is number => typeof v === "number"));
-        if (jsonField(row.newData, "status") === "BLOCKED" && jsonField(row.oldData, "status") !== "BLOCKED") {
+        const entered = jsonField(row.newData, "status") === "BLOCKED" && jsonField(row.oldData, "status") !== "BLOCKED";
+        // A Reopen returns to the block the application was closed from, so the reason is that block's.
+        if (entered && jsonField(row.newData, "unarchived") !== true) {
             return jsonField(row.newData, "reason") === BLOCK_REASON ? { reviewIds: ids, from: jsonField(row.oldData, "status") } : null;
         }
     }

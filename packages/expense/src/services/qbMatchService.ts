@@ -11,7 +11,7 @@ import { actorOf, callerId } from "../lib/caller";
 import { isConflicted, lockExpense, unsignedLines } from "../lib/signoff-facts";
 import { reimburseeUnknown } from "../lib/signoff";
 import { requireFinance } from "./approvalService";
-import { SKIPPED_CHECK_OFF, checkOffHeldOnPost } from "./flagService";
+import { SKIPPED_CHECK_OFF, checkOffHeldOnPost, checkOffOnLink } from "./flagService";
 import { ServiceError } from "@checkin/component-kit";
 
 /** A reimbursement matches a Bill; every other line matches a Purchase. */
@@ -206,7 +206,7 @@ async function linkOwnFirst(expense: Awaited<ReturnType<typeof loadExpense>>, en
       });
       if (linked.count === 0) throw new ServiceError(409, "Expense is already linked to QuickBooks");
       if (!(await claimQbTxn(tx, expense.orgId, entity, qbTxnId))) throw new ServiceError(409, "That QuickBooks entry is already claimed");
-      await checkOffHeldOnPost(tx, expense.id);
+      await checkOffOnLink(tx, expense.id, entity, qbTxnId);
       await writeAudit(tx, actorOf(principal), {
         expenseId: expense.id,
         action: "qb_created",
@@ -257,7 +257,7 @@ export async function matchExpenseToQb(principal: ExpensePrincipal, expenseId: s
       });
       if (linked.count === 0) throw new ServiceError(409, "Expense is already linked to QuickBooks");
       if (!(await claimQbTxn(tx, current.orgId, entity, qbTxnId))) throw new ServiceError(409, "That QuickBooks entry is already claimed");
-      await checkOffHeldOnPost(tx, expenseId);
+      await checkOffOnLink(tx, expenseId, entity, qbTxnId);
       await writeAudit(tx, actor, {
         expenseId,
         action: "qb_matched",

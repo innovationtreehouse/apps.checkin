@@ -291,7 +291,7 @@ export default function PendingParticipantsPage() {
         centered
       >
         <Text mb="lg">
-          Refuse this request? The participant stays enrolled and can pay normally, withdraw, or re-request later.
+          Refuse this request? The participant stays enrolled and can pay normally or withdraw.
         </Text>
         <Group justify="flex-end">
           <Button variant="default" onClick={closeConfirmRefuse}>Cancel</Button>

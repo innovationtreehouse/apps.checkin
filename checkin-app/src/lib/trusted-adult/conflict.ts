@@ -63,7 +63,7 @@ export type TrustedAdultConflictReason =
  * Conflict-of-interest rule for trusted-adult reviews. A board member may not decide
  * a review for their own household, one where they are the trusted adult, or one
  * whose trusted adult is in their household (their spouse, say), whichever family
- * asked. Pure, so the server (decideReview, overrideReview) and the board review
+ * asked. Pure, so the server (decideReview, resetReview, revokeReview) and the board review
  * page gate off the same rule. Ids are person ids. Null when nothing bars the actor.
  */
 export function trustedAdultConflictReason(args: TrustedAdultConflictArgs): TrustedAdultConflictReason | null {

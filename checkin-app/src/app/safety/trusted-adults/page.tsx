@@ -38,6 +38,7 @@ interface Review {
     proposedPhone: string | null;
     proposedEmail: string | null;
     proposedContext: string | null;
+    familyReply: string | null;
     createdAt: string;
 }
 interface PersonRef {
@@ -211,7 +212,9 @@ export default function AdminTrustedAdultsPage() {
                 const latest = ta.reviews[0];
                 const status = latest?.status ?? "PENDING_BOARD_REVIEW";
                 const pending = status === "PENDING_BOARD_REVIEW";
-                const expired = status === "EXPIRED" || (latest?.status === "APPROVED" && !isAuthorizedApproval(latest, new Date()));
+                // Mirrors resetReview: a denial, or an approval in force that is not an approved change.
+                const resettable = status === "DENIED"
+                    || (latest?.status === "APPROVED" && latest.proposedName == null && isAuthorizedApproval(latest, new Date()));
                 const sharedVal = latest ? shared[latest.id] ?? "" : "";
                 const prior = priorDecisionReview(ta.reviews);
                 const priorMeta = prior?.decision ? PRIOR_DECISION_META[prior.decision] : null;
@@ -279,7 +282,7 @@ export default function AdminTrustedAdultsPage() {
                             </Text>
                         )}
                         <Text size="sm" mt={6}><b>Family context (board only):</b> {ta.familyContext}</Text>
-                        {latest?.kind === "MODIFIED" && (
+                        {latest?.proposedName != null && (
                             <Card withBorder radius="sm" padding="xs" mt={6} bg="var(--mantine-color-blue-light)">
                                 <Text size="sm" fw={600} c="blue">Proposed changes — not in effect until you approve</Text>
                                 <Text size="sm">Name: {latest.proposedName}</Text>
@@ -287,6 +290,9 @@ export default function AdminTrustedAdultsPage() {
                                 <Text size="sm">Context: {latest.proposedContext}</Text>
                                 <Text size="xs" c="dimmed" mt={2}>The facts above are the family&apos;s current record; these replace them on approval.</Text>
                             </Card>
+                        )}
+                        {latest?.familyReply && (
+                            <Text size="sm" mt={6}><b>Family&apos;s reply to your question:</b> {latest.familyReply}</Text>
                         )}
                         {latest?.sharedNote && (
                             <Text size="sm" c="teal" mt={2}>Shared note (keyholders/program leads): {latest.sharedNote}</Text>
@@ -394,24 +400,19 @@ export default function AdminTrustedAdultsPage() {
                         {latest && !pending && status !== "REVOKED" && (
                             <Group gap="xs" mt="md">
                                 <Text size="xs" c="dimmed">Override:</Text>
-                                {!expired && (
+                                {resettable && (
                                 <Button
                                     size="xs" fz={15}
                                     variant="subtle"
                                     disabled={isSelf}
                                     loading={busyId === latest.id}
                                     onClick={() => openPrompt({
-                                        title: "Shared note (required to force-approve)",
-                                        onSubmit: (note) => override(latest.id, "approve", { sharedNote: note }),
+                                        title: "Reason for the reset (the review goes back to the board)",
+                                        onSubmit: (reason) => override(latest.id, "reset", { reason }),
                                     })}
                                 >
-                                    Force approve
+                                    Reset
                                 </Button>
-                                )}
-                                {status !== "DENIED" && (
-                                    <Button size="xs" fz={15} variant="subtle" color="red" disabled={isSelf} loading={busyId === latest.id} onClick={() => override(latest.id, "deny")}>
-                                        Force deny
-                                    </Button>
                                 )}
                                 <Button size="xs" fz={15} variant="subtle" color="gray" disabled={isSelf} loading={busyId === latest.id} onClick={() => override(latest.id, "revoke")}>
                                     {status === "DENIED" && hasLivePriorApproval ? "Revoke approval" : "Revoke"}

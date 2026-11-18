@@ -6,7 +6,7 @@ import { visibleLinks } from "@/lib/nav/gates";
 import { MEMBERSHIP_OPS, MEMBERSHIP_OPS_ROLES, isMembershipOpsAdmin, canReviewMembership } from "@/lib/nav/sections/membershipOps";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { useTodoCounts } from "@/hooks/useTodoCounts";
-import { badgeText, tabBadgeFor, reviewBadges } from "@/components/navBadges";
+import { badgeText, tabBadgeFor, reviewBadges, applicationBadges } from "@/components/navBadges";
 import { CountBadge, badgeIntentFor } from "@/components/ui/CountBadge";
 import { SectionTabs } from "@/components/ui/SectionTabs";
 import { PageContainer } from "@/components/ui/PageContainer";
@@ -38,17 +38,17 @@ export default function MembershipOpsLayout({ children }: { children: React.Reac
 
   // Right-aligned count badge for a tab: pending applications, or the member-family total.
   const badgeFor = (href: string): React.ReactNode => {
-    // Review tab shows two viewer-scoped badges: green (can act on now), gray
-    // (approved, awaiting a second reviewer). Colors match the left-nav badges.
-    if (href === "/membership-ops/review") {
-      const badges = reviewBadges(todoCounts);
-      if (badges.length === 0) return undefined;
-      // Same mapping as the left-nav (AppFrame): green = action, gray = info,
-      // both through the shared CountBadge so the tab count matches everywhere.
+    // Review and Applications show two badges each (see reviewBadges / applicationBadges),
+    // through the shared CountBadge so the tab count matches the left nav.
+    const pair = href === "/membership-ops/review" ? reviewBadges(todoCounts)
+      : href === "/membership-ops/applications" ? applicationBadges(todoCounts)
+      : null;
+    if (pair) {
+      if (pair.length === 0) return undefined;
       return (
         <Group gap={4} wrap="nowrap">
-          {badges.map((b) => (
-            <CountBadge key={b.color} intent={b.color === "gray" ? "info" : "action"} aria-label={b.label}>
+          {pair.map((b) => (
+            <CountBadge key={b.color} intent={badgeIntentFor(b.color) ?? "info"} aria-label={b.label}>
               {badgeText(b.count)}
             </CountBadge>
           ))}

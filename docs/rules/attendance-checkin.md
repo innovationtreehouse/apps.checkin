@@ -147,9 +147,9 @@ person in front of it.
   the roster, a live one-badge close does not close: the keyholder is checked
   out, told who checked in and when, and the same badge again closes. A close
   that reaches the server late is applied as the keyholder meant, and raised for
-  review naming whoever checked in after the kiosk's roster. A held close whose
-  reply never reached the kiosk is resent from its queue, and that resend is such
-  a late close: applied and raised for review.  [Decision]
+  review naming whoever checked in after the kiosk's roster. A close the kiosk
+  sends again because no reply reached it is such a late close: applied and
+  raised for review.  [Decision]
 
 - Nothing on the web stops or undoes a close made at the kiosk, live or queued:
   not correcting the keyholder's visit, nor changing their roles. A kiosk close needs no visit of the
@@ -177,8 +177,8 @@ person in front of it.
   scanning inside the building got in somehow, and the screen shows who is
   there. With no keyholder in the building the visit is marked *no keyholder*,
   and a keyholder checking in within ten minutes of that arrival clears the
-  mark. The mark is read from the visit record, so correcting a keyholder's
-  visit re-decides it. The review panel records a parked scan as a closed visit.  [Decision — Board ruling B7/B14]
+  mark. Correcting a keyholder's visit re-decides the mark. Reviewing a parked
+  scan records it as a closed visit.  [Decision — Board ruling B7/B14]
 
 ### Supervision
 
@@ -240,12 +240,9 @@ person in front of it.
   itself, so it leaves the call to the keyholder at the reader.  [Decision — *Policy: Event, Location and Keyholder Policy, §VIII.4*]
 
 - Every facility close is recorded: who closed, when, and through which path
-  (kiosk, offline kiosk, or the nightly sweep, which no person makes; closes made
-  before the website stopped closing name their web path). The record commits
-  with the closer's own checkout, and
-  the departures are carried out from it, so a close is never lost between the
-  two: one whose departures were cut off is carried out at the next scan or
-  nightly sweep, the sweep's own stamps coming after it. Every departure
+  (kiosk, offline kiosk, or the nightly sweep, which no person makes). A close is
+  never lost: departures it did not finish are carried out at the next scan or
+  nightly sweep, before the sweep's own. Every departure
   a close sets is logged against that record with the visit's departure before
   and after. These logs are an audit trail and are never deleted.  [Decision — *Principle: accountability*]
 
@@ -270,11 +267,12 @@ person in front of it.
   name recorded, what shows is the part of their address before the @, never the
   address itself.  [Decision — *Policy: Records Policy, Art. IV*]
 
-- The kiosk never shows a whole last name. It names people as the roster does —
-  the nickname, else the first name — and adds a shortened last name only to tell
-  two people apart: at most two letters of the name itself, with any particles
-  before them whole ("van der B."). A last name its script cannot shorten is left
-  off rather than shown whole. That applies to everything sent to the kiosk, not
+- The kiosk shows at most two letters of a last name. It names people as the
+  roster does — the nickname, else the first name — and adds a shortened last
+  name only to tell two people apart: at most two letters of the name itself,
+  with any particles before them whole ("van der B."), so a last name of two
+  letters can show whole ("Ann Le" beside "Ann Lo"). A last name its script
+  cannot shorten is left off rather than shown whole. That applies to everything sent to the kiosk, not
   only what it renders: the roster, the certification grid and every
   warning.  [Decision]
 
@@ -296,7 +294,7 @@ hours at a time — is a normal operating mode here, not an incident.
 
 - A raw badge read is never edited or deleted, by anyone, a sysadmin included.
   Its time, place and person stay as the kiosk read them, and a wrong time is
-  corrected on the visit. Only its review markings and replay key change, and a
+  corrected on the visit. Only its review markings change, and a
   merge moves it to the surviving person.  [Decision]
 
 - A read that cannot name anyone — not a badge number at all, or, scanned live,
@@ -315,14 +313,10 @@ hours at a time — is a normal operating mode here, not an incident.
   check-in into a check-out.  [Decision]
 
 - Repeat reads of the same badge within three seconds are one scan: the scanner
-  can read one touch twice. The kiosk filters them at the moment the badge is
-  read, before the scan is queued or sent, so the rule is the same online and
-  offline and a double-read never queues an in and an out. A keyholder's second
-  badge to confirm a close therefore comes more than three seconds after the
-  first. For a current kiosk the server drops only exact duplicates — the same
-  scan sent twice, by its event id — and applies everything else it is sent;
-  it keeps its own three-second check only for callers that do not filter
-  (older kiosk builds).  [Decision]
+  can read one touch twice. The rule is the same online and offline, and a
+  double-read never records an in and an out. A keyholder's second badge to
+  confirm a close therefore comes more than three seconds after the first. The
+  same scan delivered twice is applied once.  [Decision]
 
 - A replayed scan applies at the time the badge was read, not the time it was
   delivered, however late it arrives: a scan is trusted by default. A replay
@@ -339,12 +333,10 @@ hours at a time — is a normal operating mode here, not an incident.
 - A kiosk scan's time is the server's clock as the kiosk last measured it, plus
   the time elapsed since, sent with how uncertain that makes it. A queued scan
   with a close inside that uncertainty can't be placed on one side of the close,
-  so it applies at its time and is flagged. A kiosk keeps one server-time sample,
-  for its scan times, its signatures, its clock warning and its own 23:00 clear.
-  That clear changes only the kiosk's view and sends the server nothing; the
-  server's 23:00 run stays the one close of record. The roster and each scan
-  acknowledgement name the latest nightly close whose run has ended, so the kiosk
-  can tell a reply from before tonight's close from one after it.  [Decision — Board ruling B7/B14]
+  so it applies at its time and is flagged. The kiosk's own 23:00 clear changes
+  only its view and sends the server nothing; the server's 23:00 run stays the
+  one close of record, and the kiosk can tell a reply from before tonight's close
+  from one after it.  [Decision — Board ruling B7/B14]
 
 - A replay that lands behind later activity belongs to the visit the person was
   in at its own time — their latest arrival at or before it — and never touches a
@@ -364,8 +356,8 @@ hours at a time — is a normal operating mode here, not an incident.
   departing at that close, as the close would have departed it, and is flagged.
   A check-in scanned after the close, beyond the two-minute clock allowance,
   opens a visit as usual; a close from the kiosk's own queue was stamped by the
-  same clock, so it gets no allowance. The fence is read at the moment the
-  check-in is written, so a close that commits while it waits still fences it. The same person's queued check-out from before the
+  same clock, so it gets no allowance. A close that lands while the
+  check-in is being recorded still fences it. The same person's queued check-out from before the
   close then pulls that departure back to their own scan.  [Decision]
 
 - A close queued at the kiosk is applied whenever it reaches the server, however
@@ -390,9 +382,8 @@ hours at a time — is a normal operating mode here, not an incident.
   holds as inside, no-keyholder visits included, and its offline presence view
   treats them as present.  [Decision]
 
-- The kiosk and attendance safety display reads a missing or incomplete safety
-  payload as *unknown*, never as an empty, compliant room: a failed fetch or a
-  half-populated object must not render as "no violation".  [Decision — *Principle: fail closed*]
+- The kiosk and attendance safety display reads missing or incomplete safety
+  information as *unknown*, never as an empty, compliant room.  [Decision — *Principle: fail closed*]
 
 - The web states the building's state — who is inside, whether it is open,
   whether it is two deep — as fact only while the server has heard from the
@@ -418,10 +409,9 @@ hours at a time — is a normal operating mode here, not an incident.
 - Youth and two-deep math stay server-side, never computed on the kiosk. Resolving
   a parked scan runs the same fail-closed safety math the live path does.  [Decision — *Principle: fail closed*]
 
-- The server keeps, for each kiosk signing key, the scan protocol version it
-  last received and when. Recording it never delays, fails or changes a scan.
-  Sysadmins and Board members see it on System Status. It is the evidence for
-  retiring server code kept for older kiosk builds.  [Decision — owner]
+- The server records which scan protocol each kiosk last used, and when.
+  Sysadmins and Board members can read it. Recording it never delays, fails or
+  changes a scan.  [Decision — owner]
 
 ### The visit record
 
@@ -437,11 +427,9 @@ hours at a time — is a normal operating mode here, not an incident.
   unseen. Times that only touch do not overlap. This covers members' and household
   leads' corrections, the board's, and roster marks.  [Decision — Board ruling B7/B14]
 
-- Which close ended a visit is the visit's own link to that close, and the visits
-  screen's "closed out by a close" list reads it. The close log is the history of
-  every change and is never edited, so the 11 PM run's log rows still list visits
-  a later-arriving kiosk close pulled back; the pull-back's own row names the close
-  it replaced.  [Decision — Board ruling B7/B14]
+- A visit records which close ended it. The close log is the history of every
+  change and is never edited: a later-arriving kiosk close that pulls a departure
+  back adds its own entry naming the close it replaced.  [Decision — Board ruling B7/B14]
 
 - A member inserts their own past visit, with a departure, backdated as far as
   they need — there is no limit on how far, and the audit trail stands in for one.  [Decision]
@@ -452,7 +440,7 @@ hours at a time — is a normal operating mode here, not an incident.
   hours, and it stays closed — and whose record it is. Integrity is after the fact rather than a
   gate: every change is audited, and a significant one is flagged to the board.  [Decision — *Principle: self-scope and repair*]
 
-- A visit correction and its audit record commit together; there is never a correction without its record.  [Decision]
+- There is never a visit correction without its audit record.  [Decision]
 
 - An audited change to a visit records two people: who made the change, and whose
   attendance it was. The second is always the person, never the event they
@@ -493,9 +481,9 @@ hours at a time — is a normal operating mode here, not an incident.
 
 - A departure that the building closing or the overnight sweep stamped is a
   placeholder the member is meant to fix, so correcting one adds nothing to the
-  score however large the correction. The suppression keys on where the value
-  came from, not on its size: the sweep stamps at its own run time, so the least
-  trustworthy guess is exactly the one producing the largest correction.  [Decision]
+  score however large the correction. This turns on where the value came from,
+  not its size, because the sweep's guess is the least trustworthy and produces
+  the largest corrections.  [Decision]
 
 - A visit records whether the building closing or the overnight sweep ended it,
   and the two stay distinct. Neither close is audited, so the visit is the only

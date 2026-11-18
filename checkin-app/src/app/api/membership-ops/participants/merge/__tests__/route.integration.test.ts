@@ -5,6 +5,9 @@
  * agreementDocument), and jsdom resolves the SDK's `browser` export condition to an
  * ESM build jest cannot transform. Every SDK-touching suite here runs on node.
  */
+import { backendPid, waitersBehind } from "@checkin/pg-test-harness/lockGate";
+import { PrismaPg } from "@prisma/adapter-pg";
+import { PrismaClient } from "@/generated/prisma/client";
 import { POST } from "../route";
 import { GET as analyzeGET } from "../analyze/route";
 import prisma from "@/lib/prisma";
@@ -54,6 +57,10 @@ function mergeReq(keepId: number, mergeId: number, fieldChoices: Record<string, 
 function analyzeReq(a: number, b: number) {
     return new Request(`http://localhost/api/membership-ops/participants/merge/analyze?a=${a}&b=${b}`) as unknown as import("next/server").NextRequest;
 }
+
+// The holder and the merge take both of the app pool's connections, so the gate polls on its own.
+const observer = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
+afterAll(() => observer.$disconnect());
 
 /** The merge was refused: the Person row is still there and no archive row names it. */
 async function expectNotMerged(id: number): Promise<void> {
@@ -238,22 +245,23 @@ describe("Merge Participants API", () => {
         await prisma.person.update({ where: { id: pMergeId }, data: { householdId: otherHh } });
         let release!: () => void;
         const released = new Promise<void>((r) => (release = r));
-        let lockHeld!: () => void;
-        const locked = new Promise<void>((r) => (lockHeld = r));
+        let lockHeld!: (pid: number) => void;
+        const locked = new Promise<number>((r) => (lockHeld = r));
         // Stands in for a deny with no BOARD rows to lock: it holds only the membership row.
         const deny = prisma.$transaction(async (tx) => {
             await tx.$queryRaw`SELECT id FROM "OrgMembership" WHERE "householdId" = ${otherHh} FOR UPDATE`;
-            lockHeld();
+            lockHeld(await backendPid(tx));
             await released;
             await tx.orgMembership.update({ where: { householdId: otherHh }, data: { status: "DENIED" } });
         }, { timeout: 20_000 });
-        await locked;
+        const holderPid = await locked;
 
-        let finished = false;
-        const merge = POST(mergeReq(pKeepId, pMergeId)).then((res) => { finished = true; return res; });
-        await new Promise((r) => setTimeout(r, 1_000));
-        expect(finished).toBe(false);
-        release();
+        const merge = POST(mergeReq(pKeepId, pMergeId));
+        try {
+            await waitersBehind(observer, holderPid);
+        } finally {
+            release();
+        }
         await deny;
 
         const res = await merge;
@@ -272,22 +280,23 @@ describe("Merge Participants API", () => {
         createdProcessIds.push(process.id);
         let release!: () => void;
         const released = new Promise<void>((r) => (release = r));
-        let lockHeld!: () => void;
-        const locked = new Promise<void>((r) => (lockHeld = r));
+        let lockHeld!: (pid: number) => void;
+        const locked = new Promise<number>((r) => (lockHeld = r));
         // Stands in for settle(): the application row, then the household row.
         const payment = prisma.$transaction(async (tx) => {
             await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${process.id} FOR UPDATE`;
-            lockHeld();
+            lockHeld(await backendPid(tx));
             await released;
             await tx.$queryRaw`SELECT id FROM "OrgMembership" WHERE id = ${membership.id} FOR UPDATE`;
         }, { timeout: 20_000 });
-        await locked;
+        const holderPid = await locked;
 
-        let finished = false;
-        const merge = POST(mergeReq(pKeepId, pMergeId)).then((res) => { finished = true; return res; });
-        await new Promise((r) => setTimeout(r, 1_000));
-        expect(finished).toBe(false);
-        release();
+        const merge = POST(mergeReq(pKeepId, pMergeId));
+        try {
+            await waitersBehind(observer, holderPid);
+        } finally {
+            release();
+        }
         await expect(payment).resolves.toBeUndefined();
 
         expect((await merge).status).toBe(200);
@@ -1830,7 +1839,7 @@ describe("Merge Participants API", () => {
         });
     });
 
-    // docs/rules/membership.md: a merge that would change a
+    // A merge that would change a
     // disputed person's check facts waits for the Board to settle the dispute.
     describe("a disputed background check", () => {
         const NEWER = new Date("2026-03-01T00:00:00Z");

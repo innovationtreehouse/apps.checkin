@@ -111,7 +111,7 @@ Things the app takes as true because they are handled outside it.
 - No program targets anyone over 25, and an age limit above that is refused.  [Decision]
 
 - A declared adult clears any youth minimum and fails any youth maximum. Nothing
-  verifies the claim, and no guardian is told.  [Decision — deliberate limit]
+  verifies the claim, and no guardian is told.  [Decision]
 
 - A program leader is 23 or older, the floor belonging to the role rather than to
   adulthood. A program volunteer has no age floor at all — youth volunteer too.  [Decision — *Policy: Sponsored Program Policy, Art. IV*]
@@ -125,6 +125,8 @@ Things the app takes as true because they are handled outside it.
 
 - Only the Board assigns or changes a program's leader, so only the Board creates a
   program, which names its leader. Leaders already in place stay.  [Decision — Board ruling B1/B2]
+
+- A program's name is saved trimmed, and a blank name or one over 250 characters is refused, on create and on edit.  [Decision]
 
 - Nobody sets themself or anyone in their own household as a program's leader.  [Decision — *Policy: Ethics Policy, Art. III §III.5*]
 
@@ -243,9 +245,9 @@ Things the app takes as true because they are handled outside it.
 
 ### Pricing
 
-- A program sells at its full price only. The member price comes from a discount
-  code the server mints, never from the buyer picking a cheaper store item, so
-  nobody can choose the member price for themselves.  [Decision]
+- A program sells at its full price only. The member price is applied only for a
+  household entitled to it, never chosen by the buyer, so nobody can choose the
+  member price for themselves.  [Decision]
 
 - A failed discount degrades to undiscounted checkout, never an error.  [Decision — deliberate limit]
 
@@ -290,7 +292,7 @@ Things the app takes as true because they are handled outside it.
 
 - A request whose seat was never taken off sale is its own state, not an unpaid
   applicant — the family did nothing wrong when the store call failed. It waits
-  in its own queue until a board member removes the seat by hand and confirms it,
+  until a board member removes the seat by hand and confirms it,
   which records the hold and returns the request to the normal decision.  [Decision]
 
 - The self-approval bar covers deciding a request, not repairing one. Confirming
@@ -298,8 +300,7 @@ Things the app takes as true because they are handled outside it.
 
 - A family that holds a place can pay for it until the program ends. Each paid
   program has a second, hidden "reserved seat" item in the store besides its
-  public one, and every checkout the app sends a family to uses it — in the app
-  a checkout only ever follows a claim. It does not count stock, so it never sells out: the
+  public one, and every checkout the app sends a family to uses it. It never sells out: the
   family's place is already counted by the app, and the app's own count is the
   only gate. A program without one falls back to the public item.  [Decision]
 
@@ -342,13 +343,13 @@ Things the app takes as true because they are handled outside it.
 
 - Each program has an off-sale date, set by the board, defaulting to its start
   date; it may fall before or after the start. On that date new claims stop, and
-  the next daily run closes enrollment and hides the public item, retrying each
+  within a day enrollment closes and the public item is hidden, tried again each
   day until the store confirms. Moving only the start date never reopens an
   ended sale.  [Decision]
 
 - A family whose unpaid claim was made in time can still pay it through the
-  reserved-seat item until the program ends, whether enrollment was closed by the off-sale date's daily
-  run or by the Board by hand. It may also still request a scholarship or payment
+  reserved-seat item until the program ends, whether enrollment was closed at the off-sale date or by
+  the Board by hand. It may also still request a scholarship or payment
   plan after the off-sale date, and the request takes its seat as any request
   does.  [Decision]
 
@@ -363,15 +364,15 @@ Things the app takes as true because they are handled outside it.
 
 - Automatic changes only reduce visibility. Nothing opens enrollment, re-lists a
   product or reopens a sale on its own; the board reopens a sale by moving its
-  off-sale date later, which resets the store stock, and re-lists the public item
+  off-sale date later, and re-lists the public item
   by hand.  [Decision]
 
 - One week after the off-sale date the board is emailed the claims still unpaid,
   once per program.  [Decision]
 
 - An ended program offers no payment. The app signs no checkout for it and sends
-  its families no reminder to pay, and the next daily run takes both store items
-  off sale, retrying each day until the store confirms. The Board settles a
+  its families no reminder to pay, and within a day both store items come
+  off sale, tried again each day until the store confirms. The Board settles a
   claim still unpaid by hand. A payment that arrives anyway, from a checkout
   opened before the end, still activates the claim it pays for.  [Decision]
 
@@ -384,8 +385,8 @@ Things the app takes as true because they are handled outside it.
   mid-transition.  [Decision]
 
 - A place granted while its seat is still held is the one drift repaired without
-  a person: a sweep releases the seat and leaves the place. Every other
-  off-diagram enrollment is reported and left alone, because repairing it would
+  a person: the app releases the seat on its own and leaves the place. Every
+  other enrollment in a state the rules don't allow is reported and left alone, because repairing it would
   mean guessing which of two states the family is actually in.  [Decision — deliberate limit;
   *Principle: people decide about people*]
 
@@ -397,9 +398,8 @@ Things the app takes as true because they are handled outside it.
 - The grace period is a board setting. Unset means the feature is off.  [Decision — *Principle: fail closed*]
 
 - A request whose seat hold failed waits for a board member to take the seat off
-  sale by hand. It can still be approved or denied without one, deliberately: the
-  queue offers each as a named action behind a confirmation that states the
-  oversell risk.  [Decision — deliberate limit]
+  sale by hand. It can still be approved or denied without one, deliberately, once
+  the person deciding confirms the oversell risk.  [Decision — deliberate limit]
 
 - Denying a request whose seat hold failed returns the enrollment to unpaid. The
   family goes back to paying normally, and the denial is kept in the audit log.  [Decision]
@@ -407,18 +407,19 @@ Things the app takes as true because they are handled outside it.
 ### Access to program information
 
 - A program's catalogue entry is public; its roster is visible only to the people
-  running it — its leader, its core volunteers, the board and sysadmins — and to
-  people enrolled in it. The catalogue filters rather than gates: an anonymous
+  running it — its leader, its core volunteers, the board and sysadmins — to
+  finance, which activates places paid outside the store from it, and to people
+  enrolled in it. The catalogue filters rather than gates: an anonymous
   caller reaches it and sees less, and is never told that a hidden members-only
-  program exists.  [Decision — *Policy: Records Policy, Art. IV*]
+  program exists.  [Decision — owner: Finance reaches the roster to activate places paid outside the store; *Policy: Records Policy, Art. IV*]
 
 - A members-only program is hidden by default and keeps that silence on its own
   page: an anonymous caller is told there is no such program; a signed-in caller
   who is not a member is told it exists and that it is members only. Signing in is
   what earns the reason for being turned away.  [Decision — *Principle: no existence oracle*]
 
-- A program's leader may opt a members-only program into the public catalogue
-  (publiclyVisible). Such a program is listed and its detail page shown to everyone,
+- A program's leader may opt a members-only program into the public catalogue.
+  Such a program is listed and its detail page shown to everyone,
   non-members included, so the offering can be understood; its roster stays hidden
   from non-enrolled callers, and enrollment is still refused to anyone whose
   membership is unsettled. Visibility and the right to join are separate.  [Decision]
@@ -459,8 +460,8 @@ Things the app takes as true because they are handled outside it.
 - The search a program leader uses to add volunteers and participants returns
   names only, and matches a name or an id, never an email. Contact details and
   dates of birth of people outside the program, youth above all, are not theirs.
-  The server checks each name against the program's age limits and sends only
-  the verdict ("Too young", "Too old", "DOB missing"), so the picker still warns.  [Decision — *Principle: least privilege*]
+  For each name the leader sees only whether it fits the program's ages, never
+  the date of birth.  [Decision — *Principle: least privilege*]
 
 - A program's detail page shows which of the household is already enrolled and
   what the program limits, and hides the non-member price where the program is

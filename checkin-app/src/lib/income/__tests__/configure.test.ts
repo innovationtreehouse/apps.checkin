@@ -152,7 +152,7 @@ describe("Benevity posting readiness", () => {
 
 describe("income QuickBooks account list binding", () => {
   it("reads the books map's account list", async () => {
-    const accounts = [{ id: "4001", name: "Sales", accountType: "Income" }];
+    const accounts = [{ id: "4001", name: "Sales", accountType: "Income", active: true }];
     listQuickBooksAccounts.mockResolvedValue(accounts);
     await expect((await config()).quickBooksAccounts!()).resolves.toEqual(accounts);
   });

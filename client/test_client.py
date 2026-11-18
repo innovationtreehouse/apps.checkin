@@ -3,6 +3,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -46,6 +47,55 @@ def scan_banner(body, status=200):
     return _scan_result_banner_html(body, status)[0]
 
 
+# Runs the wrapper page's blackout script with a stub screen and timers the test
+# fires by hand. Prints the screen state after each step.
+BLACKOUT_HARNESS = """
+const screen = {style: {display: "none"}};
+global.document = {getElementById: () => screen};
+let timers = [];
+global.setTimeout = (fn) => { timers.push(fn); return timers.length; };
+global.clearTimeout = () => { timers = []; };
+const fire = () => { const due = timers; timers = []; due.forEach((fn) => fn()); };
+%s
+const steps = [];
+for (const [data, initial] of JSON.parse(process.argv[1])) {
+  handleData(data, initial);
+  steps.push(screen.style.display);
+  fire();
+  steps.push(screen.style.display);
+}
+console.log(JSON.stringify(steps));
+"""
+
+
+@unittest.skipUnless(shutil.which("node"), "needs node to run the page script")
+class TestScreenBlackout(unittest.TestCase):
+    def page_script(self):
+        handler = KioskHandler.__new__(KioskHandler)
+        handler.wfile = io.BytesIO()
+        handler.send_response = handler.send_header = handler.end_headers = Mock()
+        handler._serve_wrapper()
+        page = handler.wfile.getvalue().decode()
+        script = page[page.index("<script>") + len("<script>"):page.index("</script>")]
+        return script[:script.index("function updateQueueBadge")]
+
+    def screen_after(self, *events):
+        out = subprocess.run(["node", "-e", BLACKOUT_HARNESS % self.page_script(), json.dumps(events)],
+                             capture_output=True, text=True, check=True).stdout
+        return json.loads(out)
+
+    def test_empty_building_sleeps(self):
+        self.assertEqual(self.screen_after([{"counts": {"total": 0}}, True]), ["none", "block"])
+
+    def test_an_event_without_counts_wakes_an_empty_building_then_sleeps_again(self):
+        steps = self.screen_after([{"counts": {"total": 0}}, True], [{"html": "", "queued": 0}, False])
+        self.assertEqual(steps[2:], ["none", "block"])
+
+    def test_an_occupied_building_stays_lit(self):
+        steps = self.screen_after([{"counts": {"total": 2}}, True], [{"html": "", "queued": 0}, False])
+        self.assertEqual(steps, ["none", "none", "none", "none"])
+
+
 class TestLocalClockReadout(unittest.TestCase):
     """The door screen shows the Pi's clock as Python sees it, so a Pi on the
     wrong timezone (which shifts in_closed_window) is visible at a glance."""
@@ -76,8 +126,7 @@ class TestLocalClockReadout(unittest.TestCase):
 
 class TestScanBannerName(unittest.TestCase):
     """The banner names whoever scanned by the name they go by. It is an
-    unattended public screen, so it must never read out an email address
-    (checkin docs/rules/attendance-checkin.md, "The kiosk")."""
+    unattended public screen, so it must never read out an email address."""
 
     def test_banner_shows_the_name_the_server_resolved(self):
         html_out = scan_banner({
@@ -327,8 +376,7 @@ class TestExampleConfigMatchesDefaults(unittest.TestCase):
         self.assertEqual(cfg["kiosk_path"], DEFAULT_KIOSK_PATH)
 
 class TestKioskClose(unittest.TestCase):
-    """The kiosk decides a close from what it shows, online and offline alike
-    (docs/rules/attendance-checkin.md, Opening and closing); the server records
+    """The kiosk decides a close from what it shows, online and offline alike; the server records
     it as given."""
 
     def setUp(self):
@@ -497,6 +545,15 @@ class TestKioskClose(unittest.TestCase):
         self.assertEqual([r[8] for r in rows], [None, "confirmed"])
         self.assertIn("BUILDING CLOSED", events[-1]["html"])
         self.assertIn("will sync", events[-1]["html"])
+        self.assertEqual(events[-1]["counts"]["total"], 0, "the screen may sleep after a queued close")
+
+    def test_a_queued_check_in_counts_the_person_so_the_screen_stays_lit(self):
+        state = self._state(roster=dict(self.ROSTER, attendance=[], counts={"total": 0}))
+        events = []
+        state.push_event = events.append
+        handle_scan(self._backend({"type": "warming"}, 503), state, Outbox(":memory:"), 7)
+        self.assertIn("will sync", events[-1]["html"])
+        self.assertEqual(events[-1]["counts"]["total"], 1)
 
     def test_a_queued_close_empties_the_overlaid_view(self):
         state = self._state()

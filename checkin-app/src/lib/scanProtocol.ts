@@ -2,8 +2,7 @@
 // 2 = the replay/dead/intent/clockSuspect fields (KIOSK_RESILIENCE §2);
 // 3 = the kiosk filters repeat reads itself, so the server skips its debounce;
 // 5 = shownEmpty; late replays apply and are flagged instead of parking;
-// 6 = the kiosk's `close` request (docs/rules/attendance-checkin.md, Opening and
-// closing); 7 = a replay the server cannot apply parks for review instead of a
+// 6 = the kiosk's `close` request; 7 = a replay the server cannot apply parks for review instead of a
 // 4xx, so the kiosk drain only ever acks or retries; 8 = scanTimeUncertaintyMs,
 // the scan time rebased on the server's `Date` header. The kiosk enables a
 // generation's behavior only when /api/system-status/kiosk-version advertises

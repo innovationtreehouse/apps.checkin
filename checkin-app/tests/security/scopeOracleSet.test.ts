@@ -49,10 +49,12 @@ const ORACLES = [
     'file-route.test.ts',
     'hardship-tier-strip.test.ts',
     'hidden-relation-strip.test.ts',
+    'finance-program-roster.test.ts',
     'finance-view-marks.test.ts',
     'finance-views-route.test.ts',
     'household-archive-routes.test.ts',
     'household-lead-program-scope.test.ts',
+    'household-route-strip.test.ts',
     'impersonatedBy-inertness.test.ts',
     'income-strip.test.ts',
     'inventory-strip.test.ts',
@@ -86,6 +88,7 @@ const ORACLES = [
     'unconfirmed-stock-strip.test.ts',
     'visit-household-lead-scope.test.ts',
     'visit-program-scope.test.ts',
+    'volunteer-roster-strip.test.ts',
     'workflow-strip.test.ts',
 ] as const;
 

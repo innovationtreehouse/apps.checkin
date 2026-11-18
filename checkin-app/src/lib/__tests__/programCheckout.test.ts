@@ -1,4 +1,4 @@
-import { isProgramCheckoutBroken, PROGRAM_CHECKOUT_BROKEN_WHERE } from "@/lib/programCheckout";
+import { isProgramCheckoutBroken, programCheckoutBrokenWhere } from "@/lib/programCheckout";
 
 describe("isProgramCheckoutBroken", () => {
   it("free program (no prices) is never broken", () => {
@@ -39,8 +39,28 @@ describe("isProgramCheckoutBroken", () => {
   });
 });
 
+// With the store closed the public item is a draft nobody can buy, so a family
+// holding a claim pays on the reserved-seat variant.
+describe("isProgramCheckoutBroken while the store is closed", () => {
+  it("is not broken with a reserved-seat variant, so a claim holder can pay", () => {
+    expect(isProgramCheckoutBroken({
+      nonOrgMemberPriceCents: 8000, shopifyVariantId: "gid-1", claimantShopifyVariantId: "gid-2",
+    }, true)).toBe(false);
+  });
+
+  it("is broken with only the public variant", () => {
+    expect(isProgramCheckoutBroken({
+      nonOrgMemberPriceCents: 8000, shopifyVariantId: "gid-1", claimantShopifyVariantId: null,
+    }, true)).toBe(true);
+  });
+
+  it("a free program is never broken", () => {
+    expect(isProgramCheckoutBroken({ nonOrgMemberPriceCents: 0, claimantShopifyVariantId: null }, true)).toBe(false);
+  });
+});
+
 // ── predicate ≡ WHERE ────────────────────────────────────────────────────────
-// The count query (nav todo-counts) runs PROGRAM_CHECKOUT_BROKEN_WHERE in
+// The count query (nav todo-counts) runs programCheckoutBrokenWhere in
 // Postgres; the list/detail UI runs isProgramCheckoutBroken in JS. If they
 // disagree the badge count contradicts the list it links to, so assert them
 // equal over the whole matrix rather than trusting the two to be edited together.
@@ -49,6 +69,7 @@ type Row = {
   orgMemberPriceCents: number | null;
   nonOrgMemberPriceCents: number | null;
   shopifyVariantId: string | null;
+  claimantShopifyVariantId: string | null;
 };
 
 /**
@@ -75,20 +96,19 @@ function whereMatches(where: Record<string, unknown>, row: Row): boolean {
   return true;
 }
 
-describe("PROGRAM_CHECKOUT_BROKEN_WHERE agrees with isProgramCheckoutBroken", () => {
+describe("programCheckoutBrokenWhere agrees with isProgramCheckoutBroken", () => {
   const PRICES = [null, 0, 5000];
   const VARIANTS = [null, "gid-1"];
 
-  it("matches the predicate on every price × variant combination", () => {
+  it.each([false, true])("matches the predicate on every price × variant combination (store closed: %s)", (storeClosed) => {
     for (const orgMemberPriceCents of PRICES) {
       for (const nonOrgMemberPriceCents of PRICES) {
         for (const shopifyVariantId of VARIANTS) {
-          const row: Row = { orgMemberPriceCents, nonOrgMemberPriceCents, shopifyVariantId };
-          const query = whereMatches(
-            PROGRAM_CHECKOUT_BROKEN_WHERE as Record<string, unknown>,
-            row,
-          );
-          expect({ row, broken: query }).toEqual({ row, broken: isProgramCheckoutBroken(row) });
+          for (const claimantShopifyVariantId of VARIANTS) {
+            const row: Row = { orgMemberPriceCents, nonOrgMemberPriceCents, shopifyVariantId, claimantShopifyVariantId };
+            const query = whereMatches(programCheckoutBrokenWhere(storeClosed) as Record<string, unknown>, row);
+            expect({ row, broken: query }).toEqual({ row, broken: isProgramCheckoutBroken(row, storeClosed) });
+          }
         }
       }
     }

@@ -96,8 +96,7 @@ before, not an approximation of it.
   What is still open is where those lines sit, and whether capturing a whole
   record into the audit trail counts as capturing it or merely defers the same
   dependency. People and visits are kept today, each marked rather than removed,
-  and each with a filter every listing surface must pass through and a guard that
-  fails the build when a new one forgets. Enrollments are removed, with the row
+  and no listing shows a marked one. Enrollments are removed, with the row
   written to the audit trail.
 
 The tell is a status that swallows its predecessor — a row that goes to ARCHIVED
@@ -386,7 +385,7 @@ consistency follows risk*, and no double booking follows *apply once*.
   never corrects it or matches it again on its own.
 
 - **Finance is told at the alert address.** Finance and QuickBooks alerts go
-  to the alert address, a group address set in app settings. It is not a
+  to the alert address, a group address. It is not a
   person's address, so personal email opt-outs do not apply. With no address
   set, no alert is sent and System Status shows the gap; no one else is sent
   it instead.
@@ -429,6 +428,12 @@ believed it covered two.
 - **A discretionary decision records why.** Where someone chose rather than
   followed a rule — an override, a comp, a certification, a denial — who and when
   is not enough to answer the question that gets asked later.
+
+- **An audit row commits with the change it records.** A change and its row
+  are written in one transaction, so neither survives without the other. The exceptions
+  are rows that record something other than a committed change — a refusal, an
+  attempt at an outside system, an inbound delivery — which are written on their
+  own so they survive the failure they describe.  [Decision]
 
 - **A system actor names itself.** A cron sweep, a webhook, or a migration writes
   its own identity, never an anonymous or borrowed one. "The system did it" is

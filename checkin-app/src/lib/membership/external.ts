@@ -14,7 +14,7 @@ import { loadAgreementPdf, stampWatermark, AGREEMENT_FILENAME, AgreementUnavaila
 import { latestPendingExternal } from "@/lib/membership/phases";
 import { findOpenPersonAgreement } from "@/lib/membership/personAgreementTriggers";
 import { asHouseholdProcess, fromWhere, openProcess, zohoWebhookMatchable } from "@/lib/membership/lifecycle";
-import { systemActor, personOrSystemActor } from "@/lib/auditActor";
+import { systemActor, personActor, personOrSystemActor, recordAudit } from "@/lib/auditActor";
 
 /**
  * EXTERNAL-phase service — the actions an applicant completes after intake:
@@ -233,13 +233,18 @@ export async function setZohoEnvelope(processId: number, requestId: string, acto
     const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
     if (!process) throw new ExternalError("not_found", "Application not found.");
     // A signed process keeps its envelope and signer: re-pointing it would erase who signed.
-    const { count } = await prisma.orgMembershipProcess.updateMany({ where: { id: processId, contractSignedAt: null, ...openProcess.where }, data: { zohoEnvelopeId: requestId, zohoActionId: null, zohoSignerPersonId: null } });
-    if (!count) throw new ExternalError("wrong_phase", "This application is closed or already signed; its signing request can't be changed.");
-    const updated = await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: processId } });
-    await prisma.auditLog.create({
-        data: { actorId, action: "EDIT", tableName: "OrgMembershipProcess", affectedEntityId: processId, newData: { zohoEnvelopeId: requestId, zohoActionId: null, zohoSignerPersonId: null } },
+    return prisma.$transaction(async (tx) => {
+        const { count } = await tx.orgMembershipProcess.updateMany({ where: { id: processId, contractSignedAt: null, ...openProcess.where }, data: { zohoEnvelopeId: requestId, zohoActionId: null, zohoSignerPersonId: null } });
+        if (!count) throw new ExternalError("wrong_phase", "This application is closed or already signed; its signing request can't be changed.");
+        const updated = await tx.orgMembershipProcess.findUniqueOrThrow({ where: { id: processId } });
+        await recordAudit(tx, personActor(actorId), {
+            action: "EDIT",
+            tableName: "OrgMembershipProcess",
+            affectedEntityId: processId,
+            newData: { zohoEnvelopeId: requestId, zohoActionId: null, zohoSignerPersonId: null },
+        });
+        return updated;
     });
-    return updated;
 }
 
 /** Find the process tied to a Zoho request id (for webhook matching); archived processes never match. */
@@ -584,11 +589,23 @@ async function claimAndCreateRequest(
         throw e;
     }
 
-    let stored: { count: number };
+    const { requestId, actionId } = created;
+    let stored: number;
     try {
-        stored = await prisma.orgMembershipProcess.updateMany({
-            where: ownClaim,
-            data: { zohoEnvelopeId: created.requestId, zohoActionId: created.actionId },
+        stored = await prisma.$transaction(async (tx) => {
+            const { count } = await tx.orgMembershipProcess.updateMany({
+                where: ownClaim,
+                data: { zohoEnvelopeId: requestId, zohoActionId: actionId },
+            });
+            if (count) {
+                await recordAudit(tx, personActor(userId), {
+                    action: "EDIT",
+                    tableName: "OrgMembershipProcess",
+                    affectedEntityId: process.id,
+                    newData: { zohoEnvelopeId: requestId, zohoActionId: actionId, zohoSignerPersonId: userId },
+                });
+            }
+            return count;
         });
     } catch (e) {
         await recallUnstoredRequest(token, created.requestId, process.id);
@@ -596,20 +613,10 @@ async function claimAndCreateRequest(
         await releaseClaim().catch((releaseError) => logger.error(`Could not release signing claim for membership process ${process.id}: ${releaseError instanceof Error ? releaseError.message : String(releaseError)}`));
         throw e;
     }
-    if (stored.count === 0) {
-        await recallUnstoredRequest(token, created.requestId, process.id);
+    if (stored === 0) {
+        await recallUnstoredRequest(token, requestId, process.id);
         throw new ExternalError("wrong_phase", "Signing was reset while your request was being prepared. Please try again.");
     }
-    const { requestId, actionId } = created;
-    await prisma.auditLog.create({
-        data: {
-            actorId: userId,
-            action: "EDIT",
-            tableName: "OrgMembershipProcess",
-            affectedEntityId: process.id,
-            newData: { zohoEnvelopeId: requestId, zohoActionId: actionId, zohoSignerPersonId: userId },
-        },
-    });
     logger.info(`Created Zoho signing request ${requestId} for membership process ${process.id}.`);
     return { requestId, actionId };
 }

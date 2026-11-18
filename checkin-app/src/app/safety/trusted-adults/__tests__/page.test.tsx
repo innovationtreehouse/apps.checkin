@@ -30,7 +30,7 @@ const trustedAdults = [
     createdAt: "2026-01-01T00:00:00.000Z",
     household: { id: 5, name: "Guardian House", householdMembers: [] },
     trustedAdultPerson: null,
-    reviews: [{ id: 9, kind: "SELF_DISCLOSED", status: "PENDING_BOARD_REVIEW", decision: null, decisionNote: null, sharedNote: null, effectiveFrom: null, reviewBy: null, createdAt: "2026-01-01T00:00:00.000Z" }],
+    reviews: [{ id: 9, kind: "SELF_DISCLOSED", status: "PENDING_BOARD_REVIEW", decision: null, decisionNote: null, sharedNote: null, effectiveFrom: null, reviewBy: null, proposedName: null as string | null, proposedPhone: null, proposedEmail: null, proposedContext: null, familyReply: null as string | null, createdAt: "2026-01-01T00:00:00.000Z" }],
   },
 ];
 
@@ -308,7 +308,7 @@ describe("safety/trusted-adults page", () => {
     expect(await screen.findByText(/your household didn't load/)).toBeInTheDocument();
   });
 
-  it("on a declined change over a live approval, offers Revoke approval and no Force deny", async () => {
+  it("on a declined change over a live approval, offers Reset and Revoke approval", async () => {
     const declined = [
       {
         ...trustedAdults[0],
@@ -323,11 +323,11 @@ describe("safety/trusted-adults page", () => {
     renderWithProviders(<AdminTrustedAdultsPage />);
     await screen.findByText("Guardian House");
 
+    expect(screen.getByRole("button", { name: "Reset" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Revoke approval" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Force deny" })).not.toBeInTheDocument();
   });
 
-  it("shows override actions for a decided-but-not-revoked review, and force-approves only with a note", async () => {
+  it("shows Reset and Revoke for an approval in force, and resets only with a reason", async () => {
     const decided = [
       {
         ...trustedAdults[0],
@@ -336,7 +336,7 @@ describe("safety/trusted-adults page", () => {
     ];
     setSession({ id: 1, isBoardMember: true, householdId: 1 });
     const fetchMock = mockFetchJson({
-      "/api/safety/trusted-adults/override": { status: "APPROVED" },
+      "/api/safety/trusted-adults/override": { status: "PENDING_BOARD_REVIEW" },
       "/api/safety/trusted-adults": { trustedAdults: decided },
     });
     renderWithProviders(<AdminTrustedAdultsPage />);
@@ -344,30 +344,24 @@ describe("safety/trusted-adults page", () => {
 
     expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
     expect(screen.getByText("Override:")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Force approve" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Force deny" })).not.toBeInTheDocument();
 
-    // Empty note: Submit stays disabled, so force-approve can't fire.
-    fireEvent.click(screen.getByRole("button", { name: "Force approve" }));
-    const forceDialog = await screen.findByRole("dialog");
-    expect(within(forceDialog).getByRole("button", { name: "Submit" })).toBeDisabled();
+    // Empty reason: Submit stays disabled, so reset can't fire.
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    const resetDialog = await screen.findByRole("dialog");
+    expect(within(resetDialog).getByRole("button", { name: "Submit" })).toBeDisabled();
     expect(fetchMock).not.toHaveBeenCalledWith("/api/safety/trusted-adults/override", expect.anything());
 
-    fireEvent.change(within(forceDialog).getByRole("textbox"), { target: { value: "Confirmed with family." } });
-    fireEvent.click(within(forceDialog).getByRole("button", { name: "Submit" }));
+    fireEvent.change(within(resetDialog).getByRole("textbox"), { target: { value: "Approved too soon." } });
+    fireEvent.click(within(resetDialog).getByRole("button", { name: "Submit" }));
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/safety/trusted-adults/override",
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ reviewId: 9, action: "approve", sharedNote: "Confirmed with family." }),
+          body: JSON.stringify({ reviewId: 9, action: "reset", reason: "Approved too soon." }),
         }),
-      ),
-    );
-
-    fireEvent.click(await enabledButton("Force deny"));
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/safety/trusted-adults/override",
-        expect.objectContaining({ body: JSON.stringify({ reviewId: 9, action: "deny" }) }),
       ),
     );
 
@@ -378,7 +372,7 @@ describe("safety/trusted-adults page", () => {
         expect.objectContaining({ body: JSON.stringify({ reviewId: 9, action: "revoke" }) }),
       ),
     );
-  }, 10000); // heaviest test in file: full page + modal + 3 sequential override round-trips; guards the full-suite serial flake
+  }, 10000); // heaviest test in file: full page + modal + 2 sequential override round-trips; guards the full-suite serial flake
 
   it("hides override actions for a revoked review, and shows an override failure message", async () => {
     const revoked = [{ ...trustedAdults[0], reviews: [{ ...trustedAdults[0].reviews[0], status: "REVOKED" }] }];
@@ -392,29 +386,45 @@ describe("safety/trusted-adults page", () => {
   });
 
   it.each([
-    ["an expired review", "EXPIRED", null],
-    ["an approval past its review date", "APPROVED", new Date(Date.now() - 86400000).toISOString()],
-  ])("hides Force approve on %s, keeping Force deny and Revoke", async (_label, status, reviewBy) => {
-    const expired = [{ ...trustedAdults[0], reviews: [{ ...trustedAdults[0].reviews[0], status, reviewBy }] }];
+    ["an expired review", "EXPIRED", "RENEWAL", null],
+    ["an approval past its review date", "APPROVED", "RENEWAL", new Date(Date.now() - 86400000).toISOString()],
+    ["an approved change", "APPROVED", "MODIFIED", new Date(Date.now() + 86400000).toISOString()],
+  ])("hides Reset on %s, keeping Revoke", async (_label, status, kind, reviewBy) => {
+    const proposedName = kind === "MODIFIED" ? "Gary G." : null;
+    const shown = [{ ...trustedAdults[0], reviews: [{ ...trustedAdults[0].reviews[0], status, kind, reviewBy, proposedName }] }];
     setSession({ id: 1, isBoardMember: true, householdId: 1 });
-    mockFetchJson({ "/api/safety/trusted-adults": { trustedAdults: expired } });
+    mockFetchJson({ "/api/safety/trusted-adults": { trustedAdults: shown } });
     renderWithProviders(<AdminTrustedAdultsPage />);
     await screen.findByText("Guardian House");
 
     expect(screen.getByText("Override:")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Force approve" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Force deny" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reset" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Revoke" })).toBeInTheDocument();
   });
 
-  it("keeps Force approve on a denied review", async () => {
+  it("shows the family's reply and the details they changed when answering the board", async () => {
+    const answered = [{
+      ...trustedAdults[0],
+      reviews: [{ ...trustedAdults[0].reviews[0], kind: "INITIAL", proposedName: "Gary G. Guardian", familyReply: "Weekdays only, 3 to 6." }],
+    }];
+    setSession({ id: 1, isBoardMember: true, householdId: 1 });
+    mockFetchJson({ "/api/safety/trusted-adults": { trustedAdults: answered } });
+    renderWithProviders(<AdminTrustedAdultsPage />);
+    await screen.findByText("Guardian House");
+
+    expect(screen.getByText("Weekdays only, 3 to 6.")).toBeInTheDocument();
+    expect(screen.getByText("Proposed changes — not in effect until you approve")).toBeInTheDocument();
+    expect(screen.getByText("Name: Gary G. Guardian")).toBeInTheDocument();
+  });
+
+  it("offers Reset on a denied review", async () => {
     const denied = [{ ...trustedAdults[0], reviews: [{ ...trustedAdults[0].reviews[0], status: "DENIED" }] }];
     setSession({ id: 1, isBoardMember: true, householdId: 1 });
     mockFetchJson({ "/api/safety/trusted-adults": { trustedAdults: denied } });
     renderWithProviders(<AdminTrustedAdultsPage />);
     await screen.findByText("Guardian House");
 
-    expect(screen.getByRole("button", { name: "Force approve" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reset" })).toBeInTheDocument();
   });
 
   it("shows an override failure message", async () => {

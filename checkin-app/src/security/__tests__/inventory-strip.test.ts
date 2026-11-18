@@ -57,7 +57,7 @@ const READ_ENDPOINTS = [
     'GET /api/inventory/org-items/count',
 ];
 
-// Receipts show spending (docs/rules/inventory.md, Access).
+// Receipts show spending.
 const RECEIVING_ENDPOINTS = [
     'GET /api/inventory/receive-queue',
     'GET /api/inventory/inventory-log',

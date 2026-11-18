@@ -125,7 +125,15 @@ describe("MatchAuditPanel", () => {
     })) as unknown as typeof fetch;
     renderWithProviders(<MatchAuditPanel />);
     fireEvent.click(screen.getByRole("button", { name: /Run match audit/ }));
-    expect(await screen.findByText("The Shopify mirror is not wired in this environment.")).toBeInTheDocument();
+    expect(await screen.findByText("The Shopify mirror is not wired in this environment")).toBeInTheDocument();
+  });
+
+  it("says a sleeping instance is waking up, not that the mirror is unwired", async () => {
+    global.fetch = jest.fn(async () => new Response("<html>Starting up</html>", { status: 503, headers: { "Retry-After": "30" } }));
+    renderWithProviders(<MatchAuditPanel />);
+    fireEvent.click(screen.getByRole("button", { name: /Run match audit/ }));
+    expect(await screen.findByText("The app was asleep and is starting up. Try again in a minute.")).toBeInTheDocument();
+    expect(screen.queryByText(/not wired/)).not.toBeInTheDocument();
   });
 
   it("shows the generic failure message on any other error", async () => {

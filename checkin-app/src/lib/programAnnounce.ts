@@ -1,6 +1,7 @@
 import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
 import { notifyNewProgramAnnounced } from "@/lib/notifications";
+import { personActor, recordAudit } from "@/lib/auditActor";
 import type { EnrollmentStatus, ProgramPhase } from "@/generated/prisma/client";
 
 // Deliberately NOT in @/lib/notifications: the announce suites mock that module
@@ -51,27 +52,27 @@ export async function maybeAnnounceOnOpen({ programId, before, after, actorId }:
         // Once-per-lifetime claim. The conditional write wins races: two callers
         // that both read a stale "never announced" row land here, but only one
         // gets count === 1.
-        const announcedAt = new Date();
-        const claim = await prisma.program.updateMany({
-            where: { id: programId, announcedAt: null },
-            data: { announcedAt },
-        });
-        if (claim.count !== 1) {
-            logger.info(`[announce] Program ${programId} was already announced — skipping.`);
-            return;
-        }
-
         // The routes' own audit rows record the field edit; this one records that
         // a full-membership email blast was triggered, by whom, when.
-        await prisma.auditLog.create({
-            data: {
-                actorId,
+        const announcedAt = new Date();
+        const claimed = await prisma.$transaction(async (tx) => {
+            const claim = await tx.program.updateMany({
+                where: { id: programId, announcedAt: null },
+                data: { announcedAt },
+            });
+            if (claim.count !== 1) return false;
+            await recordAudit(tx, personActor(actorId), {
                 action: 'EDIT',
                 tableName: 'Program',
                 affectedEntityId: programId,
                 newData: { event: 'PROGRAM_ANNOUNCE_BLAST', announcedAt: announcedAt.toISOString() },
-            },
+            });
+            return true;
         });
+        if (!claimed) {
+            logger.info(`[announce] Program ${programId} was already announced — skipping.`);
+            return;
+        }
 
         // Fire-without-await: paced send is ~(recipients/5) seconds — must not
         // block the PATCH response. notifyNewProgramAnnounced swallows its own

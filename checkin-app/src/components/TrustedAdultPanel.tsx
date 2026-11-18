@@ -70,16 +70,21 @@ export default function TrustedAdultPanel() {
     // Set while resubmitting an EXISTING trusted adult with edited info; null for a
     // fresh add. Drives the endpoint and the modal's copy.
     const [resubmitId, setResubmitId] = useState<number | null>(null);
+    // Set with resubmitId while answering the board's request for more information.
+    const [answering, setAnswering] = useState(false);
+    const [reply, setReply] = useState("");
 
     const closeModal = useCallback(() => {
         setAttempted(false);
         setResubmitId(null);
+        setAnswering(false);
         close();
     }, [close]);
 
     // Open the modal blank for a new disclosure.
     const startAdd = useCallback(() => {
         setResubmitId(null);
+        setAnswering(false);
         setTrustedAdultName("");
         setTrustedAdultPhone("");
         setTrustedAdultEmail("");
@@ -92,10 +97,26 @@ export default function TrustedAdultPanel() {
     // with changes. The prior approval (if any) stays live until the board approves.
     const startResubmit = useCallback((ta: TrustedAdult) => {
         setResubmitId(ta.id);
+        setAnswering(false);
         setTrustedAdultName(ta.trustedAdultName ?? "");
         setTrustedAdultPhone(ta.trustedAdultPhone ?? "");
         setTrustedAdultEmail(ta.trustedAdultEmail ?? "");
         setFamilyContext(ta.familyContext ?? "");
+        setAttempted(false);
+        open();
+    }, [open]);
+
+    // Open the modal to answer the board's question, pre-filled with the facts the review
+    // carries (its proposed edits if any, else the adult's record).
+    const startAnswer = useCallback((ta: TrustedAdult, review: Review) => {
+        const edited = review.proposedName != null;
+        setResubmitId(ta.id);
+        setAnswering(true);
+        setReply("");
+        setTrustedAdultName((edited ? review.proposedName : ta.trustedAdultName) ?? "");
+        setTrustedAdultPhone((edited ? review.proposedPhone : ta.trustedAdultPhone) ?? "");
+        setTrustedAdultEmail((edited ? review.proposedEmail : ta.trustedAdultEmail) ?? "");
+        setFamilyContext((edited ? review.proposedContext : ta.familyContext) ?? "");
         setAttempted(false);
         open();
     }, [open]);
@@ -106,11 +127,16 @@ export default function TrustedAdultPanel() {
             const url = resubmitId ? `/api/trusted-adults/${resubmitId}/resubmit` : "/api/trusted-adults";
             await api(url, {
                 method: "POST",
-                body: JSON.stringify({ trustedAdultName, trustedAdultPhone, trustedAdultEmail, familyContext }),
+                body: JSON.stringify({
+                    trustedAdultName, trustedAdultPhone, trustedAdultEmail, familyContext,
+                    ...(answering ? { answer: true, reply } : {}),
+                }),
             });
             showSuccess("Sent to the board for review.");
             close();
             setResubmitId(null);
+            setAnswering(false);
+            setReply("");
             setTrustedAdultName("");
             setTrustedAdultPhone("");
             setTrustedAdultEmail("");
@@ -197,6 +223,7 @@ export default function TrustedAdultPanel() {
                 const liveApproval = ta.reviews.find((r) => isAuthorizedApproval(r, new Date())) ?? null;
                 const latestPending = !!latest && (latest.status === "PENDING_BOARD_REVIEW" || latest.status === "PENDING_SUBJECT_ACTION");
                 const changePending = !!liveApproval && latestPending;
+                const needsAnswer = latest?.status === "PENDING_SUBJECT_ACTION";
                 const changeDeclined = !!liveApproval && latest?.status === "DENIED";
                 // An approval past its date reads as expired before the nightly sweep flips it.
                 const effectiveStatus = liveApproval ? "APPROVED" : latest?.status === "APPROVED" ? "EXPIRED" : (latest?.status ?? "PENDING_BOARD_REVIEW");
@@ -208,6 +235,8 @@ export default function TrustedAdultPanel() {
                 const expiringSoon =
                     reviewBy && effectiveStatus === "APPROVED" && reviewBy.getTime() - now < EXPIRING_SOON_DAYS * 86400000;
                 const canResubmit = !changePending && (!!liveApproval || ["EXPIRED", "DENIED", "REVOKED"].includes(effectiveStatus));
+                // Mirrors renewTrustedAdult: a live approval renews only inside the expiry warning window.
+                const canRenew = canResubmit && (!liveApproval || !!expiringSoon);
 
                 return (
                     <Card key={ta.id} withBorder radius="md" padding="sm">
@@ -219,16 +248,21 @@ export default function TrustedAdultPanel() {
                                 </Group>
                                 <TrustedAdultContact phone={ta.trustedAdultPhone} email={ta.trustedAdultEmail} />
                                 <Text size="sm" mt={4}>{ta.familyContext}</Text>
-                                {changePending && latest?.kind === "MODIFIED" && (
+                                {latestPending && latest?.proposedName != null && (
                                     <Card withBorder radius="sm" padding="xs" mt={6} bg="var(--mantine-color-blue-light)">
-                                        <Text size="xs" fw={600} c="blue">Pending update — awaiting board review</Text>
+                                        <Text size="xs" fw={600} c="blue">
+                                            {needsAnswer ? "Pending update — the board needs more information" : "Pending update — awaiting the board"}
+                                        </Text>
                                         <Text size="sm">{latest.proposedName}</Text>
                                         <TrustedAdultContact phone={latest.proposedPhone} email={latest.proposedEmail} />
                                         <Text size="sm">{latest.proposedContext}</Text>
-                                        <Text size="xs" c="dimmed" mt={2}>Your existing approval stays in effect until the board reviews this.</Text>
+                                        {liveApproval && <Text size="xs" c="dimmed" mt={2}>Your existing approval stays in effect until the board reviews this.</Text>}
                                     </Card>
                                 )}
-                                {changePending && latest?.kind !== "MODIFIED" && (
+                                {needsAnswer && liveApproval && (
+                                    <Text size="xs" c="orange" mt={4}>The board needs more information about your recent request — see email. Your approval stays in effect meanwhile.</Text>
+                                )}
+                                {changePending && !needsAnswer && latest?.proposedName == null && (
                                     <Text size="xs" c="blue" mt={4}>Resubmission awaiting board review — your approval stays in effect meanwhile.</Text>
                                 )}
                                 {changeDeclined && (
@@ -247,11 +281,18 @@ export default function TrustedAdultPanel() {
                                 )}
                             </div>
                             <Group gap="xs" style={{ flexShrink: 0 }}>
+                                {latest?.status === "PENDING_SUBJECT_ACTION" && (
+                                    <Button size="xs" fz={15} variant="light" color="orange" onClick={() => startAnswer(ta, latest)}>
+                                        Answer the board
+                                    </Button>
+                                )}
                                 {canResubmit && (
                                     <>
-                                        <Button size="xs" fz={15} variant="light" onClick={() => act(ta.id, "renew", "Sent to the board for review.")}>
-                                            Resubmit (same info)
-                                        </Button>
+                                        {canRenew && (
+                                            <Button size="xs" fz={15} variant="light" onClick={() => act(ta.id, "renew", "Sent to the board for review.")}>
+                                                Resubmit (same info)
+                                            </Button>
+                                        )}
                                         <Button size="xs" fz={15} variant="light" color="blue" onClick={() => startResubmit(ta)}>
                                             Submit with new info
                                         </Button>
@@ -277,9 +318,25 @@ export default function TrustedAdultPanel() {
                 );
             })}
 
-            <Modal opened={opened} onClose={closeModal} title={resubmitId ? "Resubmit with updated info" : "Add a trusted adult"} size="lg">
+            <Modal opened={opened} onClose={closeModal} title={answering ? "Answer the board" : resubmitId ? "Resubmit with updated info" : "Add a trusted adult"} size="lg">
                 <Stack>
-                    {resubmitId && (
+                    {answering && (
+                        <>
+                            <Text size="sm" c="dimmed">
+                                The board asked for more information (see their email). Reply below and change any
+                                details they asked about; this goes back to the board. Any current approval stays in
+                                effect until the board decides.
+                            </Text>
+                            <Textarea
+                                label="Your reply to the board"
+                                minRows={3}
+                                autosize
+                                value={reply}
+                                onChange={(e) => setReply(e.currentTarget.value)}
+                            />
+                        </>
+                    )}
+                    {resubmitId && !answering && (
                         <Text size="sm" c="dimmed">
                             This goes to the board as a changed record. Any current approval stays in
                             effect for the front desk until the board reviews these changes.
@@ -329,7 +386,7 @@ export default function TrustedAdultPanel() {
                             }}
                             loading={submitting}
                         >
-                            {resubmitId ? "Resubmit for board review" : "Submit for board review"}
+                            {answering ? "Send back to the Board" : resubmitId ? "Resubmit for board review" : "Submit for board review"}
                         </Button>
                     </Group>
                 </Stack>

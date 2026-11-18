@@ -1,7 +1,7 @@
 import { kindOf } from "@checkin/component-kit";
 import { db } from "../db";
 import { InKindDonorSchema } from "../contract";
-import { audit, CLEARED, recordFailure, type Actor } from "../repositories/receipt";
+import { audit, CLEARED, logUnrecorded, recordFailure, type Actor } from "../repositories/receipt";
 import { getOrgId, ports } from "../runtime";
 
 const MAX_SENDS = 3;
@@ -61,7 +61,7 @@ export async function sendDonorSync(receiptId: string, actor: Actor | null): Pro
       valueBefore: kindOf(err),
       valueAfter: err instanceof Error ? err.message : String(err),
     }).catch(() => undefined);
-    await recordFailure(db, receiptId, err).catch(() => undefined);
+    await recordFailure(db, receiptId, err).catch(logUnrecorded(receiptId));
     return false;
   }
 }

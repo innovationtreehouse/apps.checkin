@@ -25,6 +25,7 @@ import { getRoute, type Role, type Token } from '@/security/core';
 import type { CallerContext } from '@/security/access-resolvers';
 import * as receiptGenerated from '@/security/generated/receipt-classifications';
 import * as receiptSynthetic from '@/security/receiptSyntheticClassifications';
+import type { receiptService } from '@checkin/receipt';
 
 function ctx(): CallerContext {
     return {
@@ -200,7 +201,14 @@ describe('ReceiptQueueCounts', () => {
     });
 
     it('classifies exactly the fields queueCounts sends', () => {
-        expect(Object.keys(receiptSynthetic.classifications.ReceiptQueueCounts).sort()).toEqual(['actionableByState', 'byState', 'failedPushes', 'notPushed']);
+        // tsc fails here when queueCounts' return type gains or loses a key.
+        const sent: Record<keyof Awaited<ReturnType<typeof receiptService.queueCounts>>, true> = {
+            actionableByState: true,
+            byState: true,
+            failedPushes: true,
+            notPushed: true,
+        };
+        expect(Object.keys(receiptSynthetic.classifications.ReceiptQueueCounts).sort()).toEqual(Object.keys(sent).sort());
     });
 });
 

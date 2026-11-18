@@ -61,6 +61,31 @@ export async function checkOffHeldOnPost(tx: Db, expenseId: string, notes = POST
   if (count > 0) await writeAudit(tx, SYSTEM_ACTOR, { expenseId, action: "flag_checked_off", valueAfter: "QB_POST_HELD", notes });
 }
 
+/**
+ * An expense linked to a QuickBooks entry no longer waits on finance for it: its open QB_POST_HELD
+ * is checked off, and an open QB_DUPLICATE_TO_VOID naming that entry stops asking for it to be
+ * voided. A row that named only that entry is checked off; one that names others too stays open,
+ * saying the entry is the expense's booking. Call it under the expense's lock.
+ */
+export async function checkOffOnLink(tx: Db, expenseId: string, entity: string, qbTxnId: string): Promise<void> {
+  await checkOffHeldOnPost(tx, expenseId);
+  const entry = `${entity}:${qbTxnId}`;
+  const flag = await tx.expenseFlag.findFirst({ where: { expenseId, kind: "QB_DUPLICATE_TO_VOID", checkedOffAt: null } });
+  const raised = strayEntriesOf(flag?.observed ?? null);
+  if (!flag || !raised.includes(entry)) return;
+  const notes = `QuickBooks ${entity} ${qbTxnId} is this expense's booking; do not void it`;
+  if (raised.length === 1) {
+    await tx.expenseFlag.update({
+      where: { id: flag.id },
+      data: { checkedOffAt: new Date(), checkedOffByUserId: SYSTEM_ACTOR.userId, checkedOffByUsername: SYSTEM_ACTOR.username, notes },
+    });
+    await writeAudit(tx, SYSTEM_ACTOR, { expenseId, action: "flag_checked_off", valueAfter: "QB_DUPLICATE_TO_VOID", notes });
+    return;
+  }
+  await tx.expenseFlag.update({ where: { id: flag.id }, data: { detail: [flag.detail, notes].filter(Boolean).join("; ") } });
+  await writeAudit(tx, SYSTEM_ACTOR, { expenseId, action: "flag_updated", valueAfter: "QB_DUPLICATE_TO_VOID", notes });
+}
+
 /** Whether the stored expense's tax still waits on finance, from its stored receipt review. */
 export async function storedTaxNeedsFinance(expenseId: string, client: Db = db): Promise<boolean> {
   const { taxCents, receiptReview } = await client.expense.findUniqueOrThrow({

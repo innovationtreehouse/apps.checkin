@@ -5,11 +5,13 @@ import { withAuth } from "@/lib/auth";
 import { handler, notFound, unauthorized } from "@/security/handler";
 import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import { isYouth } from "@/lib/time";
-import { normalizeAdultDob } from "@/lib/person/adultDob";
+import { AGE_LEAD_ONLY_REFUSAL, changesAge, normalizeAdultDob } from "@/lib/person/adultDob";
+import { setsHouseholdAges } from "@/lib/household/leads";
 import { nameWrite, nicknameWrite, isNicknameWrite } from "@/lib/person/name";
 import { apiError } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { notifyBoardOfYouthLeads } from "@/lib/membership/boardAlerts";
+import { personActor, recordAudit } from "@/lib/auditActor";
 
 export const GET = handler('GET /api/profile', async ({ auth }) => {
     if (auth.type !== 'session') throw unauthorized();
@@ -37,7 +39,7 @@ export const PATCH = withAuth(
 
             const me = await prisma.person.findUnique({
                 where: { id: userId },
-                select: { dateOfBirth: true },
+                select: { dateOfBirth: true, isDeclaredAdult: true, householdId: true },
             });
             if (isYouth(me?.dateOfBirth)) {
                 return apiError("Youth profiles are read-only.", 403);
@@ -59,39 +61,41 @@ export const PATCH = withAuth(
                 return apiError("Invalid nickname", 400);
             }
 
-            const updatedProfile = await prisma.person.update({
-                where: { id: userId },
-                data: {
-                    name: nameWrite(name),
-                    nickname: nicknameWrite(nickname),
-                    phone: phone !== undefined ? (phone === "" ? null : formatPhone(phone)) : undefined,
-                    // The profile form always submits both age fields, so either one
-                    // stands for both; notification-only PATCHes leave them unchanged.
-                    ...(dob !== undefined || over25 !== undefined
-                        ? normalizeAdultDob(dob || null, !!over25)
-                        : {}),
-                    notificationSettings: notificationSettings !== undefined ? notificationSettings : undefined,
-                },
-                select: {
-                    name: true,
-                    nickname: true,
-                    email: true,
-                    phone: true,
-                    dateOfBirth: true,
-                    notificationSettings: true,
-                }
-            });
-            invalidateAttendanceCache();
+            // The profile form always submits both age fields, so either one
+            // stands for both; notification-only PATCHes leave them unchanged.
+            const age = dob !== undefined || over25 !== undefined ? normalizeAdultDob(dob || null, !!over25) : {};
+            if (me?.householdId && changesAge(age, me) && !(await setsHouseholdAges(prisma, userId, me.householdId))) {
+                return apiError(AGE_LEAD_ONLY_REFUSAL, 403);
+            }
 
-            await prisma.auditLog.create({
-                data: {
-                    actorId: userId,
+            const updatedProfile = await prisma.$transaction(async (tx) => {
+                const updatedProfile = await tx.person.update({
+                    where: { id: userId },
+                    data: {
+                        name: nameWrite(name),
+                        nickname: nicknameWrite(nickname),
+                        phone: phone !== undefined ? (phone === "" ? null : formatPhone(phone)) : undefined,
+                        ...age,
+                        notificationSettings: notificationSettings !== undefined ? notificationSettings : undefined,
+                    },
+                    select: {
+                        name: true,
+                        nickname: true,
+                        email: true,
+                        phone: true,
+                        dateOfBirth: true,
+                        notificationSettings: true,
+                    }
+                });
+                await recordAudit(tx, personActor(userId), {
                     action: "EDIT",
                     tableName: "Person",
                     affectedEntityId: userId,
                     newData: updatedProfile,
-                }
+                });
+                return updatedProfile;
             });
+            invalidateAttendanceCache();
             if (dob !== undefined) await notifyBoardOfYouthLeads([{ id: userId, dateOfBirth: me?.dateOfBirth ?? null }]);
 
             return NextResponse.json({ profile: updatedProfile }, { status: 200 });

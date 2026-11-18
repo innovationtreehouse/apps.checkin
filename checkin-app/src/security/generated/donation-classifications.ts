@@ -147,6 +147,8 @@ export const classifications = {
         bucketAssignedByUserId: 'internal',
         bucketAssignedAt: 'internal',
         capitalSubmittedAt: 'internal',
+        capitalFirstFailedAt: 'internal',
+        capitalLastError: 'personal',
     },
     InKindSyncMark: {
         orgId: 'internal',
@@ -172,6 +174,8 @@ export const classifications = {
         bucketAssignedByUserId: 'internal',
         bucketAssignedAt: 'internal',
         capitalSubmittedAt: 'internal',
+        capitalFirstFailedAt: 'internal',
+        capitalLastError: 'personal',
     },
     ManualInKindDonationLine: {
         id: 'internal',

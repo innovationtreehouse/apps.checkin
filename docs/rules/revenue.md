@@ -86,9 +86,8 @@ Things the app takes as true because they are handled outside it.
 
 - The books map says which QuickBooks Class each budget bucket books to and which
   account each named role books to, such as a bank or a gift-of-goods account.
-  Only finance edits it, and each edit is recorded. Expenses, income and gifts of
-  goods read it when they book and keep no copy of their own, so one edit reaches
-  every area.  [Decision — *Principle: least privilege*]
+  Only finance edits it, and each edit is recorded. One edit reaches expenses,
+  income and gifts of goods alike.  [Decision — *Principle: least privilege*]
 
 - The books map holds one account each only for what is one account by nature:
   the bank accounts, card remainder, adjustments, online-store fees, custom
@@ -96,8 +95,18 @@ Things the app takes as true because they are handled outside it.
   account.  [Decision — owner]
 
 - The app's copy of QuickBooks' account and Class lists refreshes once a day,
-  and finance or the Board may refresh it at any time. It is used at any age;
-  System Status flags it after two days without a refresh.  [Decision — owner]
+  and finance or the Board may refresh it at any time. A stale copy is still
+  used, and one two days without a refresh is flagged.  [Decision — owner]
+
+- Every QuickBooks Class and account picker lists only entries the app's copy
+  of QuickBooks' lists shows as active. A saved pick the copy shows as inactive
+  or no longer holds is shown as a warning, never offered as a choice.
+  [Decision — owner]
+
+- After each refresh of the copy, the app checks every live bucket's Class, and
+  every archived bucket that still has unfinished work. It alerts finance once
+  for each bucket and problem, shows them on System Status, and alerts again if
+  a problem comes back after it cleared.  [Decision — owner]
 
 - Each online-store sale, giving-platform gift and gift of goods books to the
   account finance mapped for its item. A line with no mapping, or whose account
@@ -105,16 +114,12 @@ Things the app takes as true because they are handled outside it.
   catch-all exists only as a `*` rule finance writes.  [Decision — owner]
 
 - Every account the app books to must be of a QuickBooks type listed for its
-  line or role. The books map, the giving-platform account rules, expense's
-  QuickBooks accounts and account rules, the account finance sets on a held
-  expense line, the one finance sets on a gift-of-goods line and online-store
-  items' accounts refuse any other type on save, reading the type from the
-  app's copy of QuickBooks' account list. A save whose account the copy
-  doesn't list, or lists under a type the save doesn't accept, is refused until
-  finance or the Board updates the copy; the save itself never reads
-  QuickBooks. A stored
-  account that later reads as another type is flagged on System Status for
-  finance to re-pick; the app never rewrites it. Online-store fees take only an
+  line or role, and every save of an account refuses any other type. The type
+  comes from the app's copy of QuickBooks' account list: a save whose account
+  the copy doesn't list, shows as inactive, or lists under a type the save
+  doesn't accept, is refused until finance or the Board updates the copy. A
+  stored account that later reads as inactive or as another type is flagged
+  for finance to re-pick; the app never rewrites it. Online-store fees take only an
   Expense or Other Expense account.  [Decision — owner]
 
 - A financial control flags something for a person to sign off, and the sign-off
@@ -281,10 +286,9 @@ Income checks each online-store payout against the deposits in the books.
 - Until income's posting is switched on, the app only matches. A payout it cannot
   match goes to finance, which has the app book it or skips it with a reason.  [Decision — owner]
 
-- Posting switches on the first time the daily step posts, once and for good.
-  Online-store payouts and giving-platform deposits each have their own switch-on.
-  A payout the app first sees after that books on its own, matching first, however
-  late it arrived.  [Decision — owner]
+- Posting, once switched on, stays on. Online-store payouts and giving-platform
+  deposits each have their own switch-on. A payout the app first sees after
+  that books on its own, matching first, however late it arrived.  [Decision — owner]
 
 - The app never changes or deletes anything already in the books.  [Decision — deliberate limit]
 
@@ -311,11 +315,10 @@ Income checks each online-store payout against the deposits in the books.
   until the copy is updated. Choosing general income needs no check.  [Decision — owner]
 
 - When a run finds an assigned bucket archived or without an active Class, it alerts
-  finance once for that bucket and marks its items. A payout with a sale of those
+  finance once for that bucket. A payout with a sale of those
   items waits, in whole, until finance restores the bucket or reassigns the items.
   The app never reassigns them. While Classes can't be read, a payout with a sale
-  assigned to any bucket waits. This check is part of booking, so it doesn't run
-  while posting is off or the closing date can't be read.  [Decision — owner]
+  assigned to any bucket waits.  [Decision — owner]
 
 - A payout with a sale whose items the app can't see waits too, and never books
   itself as general income. It books once the order's items arrive. The same goes
@@ -331,10 +334,7 @@ Income checks each online-store payout against the deposits in the books.
   stays linked to that payout because it is that payout's own booking. An exclusion
   carries a reason and is not undone.  [Decision — *Principle: apply once*]
 
-- Income's matching runs only in the daily jobs or on finance's request, never at
-  app start.  [Decision]
-
-- Store history reaches the app only through the mirror of the store's data. The
+- Store history reaches the app only from the store itself. The
   app has no upload of store exports.  [Decision — deliberate limit]
 
 - A change to an item's mapping applies to deposits created afterwards. It never
@@ -369,7 +369,7 @@ employer matches, paid in batches) and gifts of goods (in-kind).
 - A view whose record cannot be written is refused, not served unrecorded.  [Decision — owner; *Principle: fail closed*]
 
 - Looks at a donor from before the finance-view record began are not in it. They
-  stay in the bulk-donation library's own event history, which keeps them, and
+  stay in the donation records' own history, which keeps them, and
   are not copied across.  [Decision — owner]
 
 - Donors are not linked to people or households in the app.  [Decision — deliberate limit]
@@ -464,7 +464,7 @@ employer matches, paid in batches) and gifts of goods (in-kind).
   [Decision — owner]
 
 - A gift of goods that fails to book goes to finance at once and waits there,
-  stuck, until finance books it or a person retries it from the Problems list.
+  stuck, until finance books it or a person retries it.
   The app never retries it by itself, and it never holds back newer gifts.
   [Decision]
 

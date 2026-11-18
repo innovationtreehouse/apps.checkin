@@ -6,6 +6,7 @@ import { createClaimantProduct, createShopifySingleVariantProgram, programProduc
 import { setProgramInventory, STOCK_BOOKKEEPING_RESET } from "@/lib/shopify/stock";
 import { countStockTakenSeats } from "@/lib/program/capacity";
 import { isProgramCheckoutBroken } from "@/lib/programCheckout";
+import { isProgramStoreClosed } from "@/lib/programs/storeClosed";
 import { logBackendError } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
 
@@ -57,7 +58,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
         }
 
         const publicData = needsPublic && basePriceCents
-            ? await createShopifySingleVariantProgram(program.name, basePriceCents, program.maxParticipants, programProductHandle(program, "public"))
+            ? await createShopifySingleVariantProgram(program.name, basePriceCents, program.maxParticipants, programProductHandle(program, "public"), !(await isProgramStoreClosed()))
             : null;
         if (needsPublic && !publicData) {
             return apiError("Shopify sync failed or is not configured. Check Shopify credentials.", 502);

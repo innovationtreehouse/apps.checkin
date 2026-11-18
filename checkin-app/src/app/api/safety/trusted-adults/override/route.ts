@@ -1,29 +1,31 @@
 import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/auth";
-import { overrideReview, TrustedAdultError } from "@/lib/trusted-adult/service";
+import { resetReview, revokeReview, TrustedAdultError } from "@/lib/trusted-adult/service";
 import { apiError } from "@/lib/api-response";
 import { trustedAdultErrorResponse } from "@/lib/domainErrorResponse";
 
 export const dynamic = "force-dynamic";
 
 /**
- * POST /api/safety/trusted-adults/override — board/isSysadmin force a review to a
- * terminal state regardless of phase. Body: { reviewId, action: approve|deny|revoke }.
+ * POST /api/safety/trusted-adults/override — board/isSysadmin reset a decided review
+ * back to board review, or revoke the adult. Body: { reviewId, action: reset|revoke, reason }.
  */
 export const POST = withAuth({ roles: ["isBoardMember", "isSysadmin"] }, async (req, auth) => {
     if (auth.type !== "session") return apiError("Unauthorized", 401);
-    let body: { reviewId?: number; action?: "approve" | "deny" | "revoke"; sharedNote?: string };
+    let body: { reviewId?: number; action?: "reset" | "revoke"; reason?: string };
     try {
         body = await req.json();
     } catch {
         return apiError("Invalid JSON", 400);
     }
-    if (!body.reviewId || !["approve", "deny", "revoke"].includes(body.action ?? "")) {
-        return apiError("reviewId and action (approve|deny|revoke) are required", 400);
+    if (!body.reviewId || !["reset", "revoke"].includes(body.action ?? "")) {
+        return apiError("reviewId and action (reset|revoke) are required", 400);
     }
     try {
-        const outcome = await overrideReview(body.reviewId, auth.user.id, body.action!, body.sharedNote);
+        const outcome = body.action === "reset"
+            ? await resetReview(body.reviewId, auth.user.id, body.reason ?? "")
+            : await revokeReview(body.reviewId, auth.user.id);
         return NextResponse.json({ status: outcome.status });
     } catch (error) {
         if (error instanceof TrustedAdultError) {

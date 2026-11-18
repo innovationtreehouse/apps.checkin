@@ -9,6 +9,7 @@
 import { POST, DELETE } from '@/app/api/programs/[id]/participants/route';
 import prisma from '@/lib/prisma';
 import { deleteAndReleaseHold } from '@/lib/program/capacity';
+import { checkoutVariantId } from '@/lib/programs/variants';
 import { getServerSession } from 'next-auth/next';
 import { WITH_EMERGENCY_CONTACT } from '@/test-helpers/emergencyContact';
 // Mock NextAuth
@@ -304,6 +305,49 @@ describe('Program Participants API Integration Tests', () => {
              expect(data.success).toBe(true);
              expect(data.enrollment.personId).toBe(commonId);
              expect(data.enrollment.status).toBe('PENDING');
+        });
+
+        describe('while the Board has closed the store to program seats', () => {
+            const programIds: number[] = [];
+            const mkPriced = async (name: string, claimantShopifyVariantId: string | null) => {
+                const p = await prisma.program.create({
+                    data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `${name} Partic API Test`, phase: 'RUNNING', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), orgMemberPriceCents: 1000, nonOrgMemberPriceCents: 1500, shopifyVariantId: `dev-mock-variant-${name}`, claimantShopifyVariantId },
+                });
+                programIds.push(p.id);
+                return p.id;
+            };
+            const enrol = (programId: number) => POST(new Request(`http://localhost:4000/api/programs/${programId}/participants`, {
+                method: 'POST',
+                body: JSON.stringify({ participantId: commonId }),
+            }) as unknown as import("next/server").NextRequest, createParams(programId) as unknown as never);
+
+            beforeEach(async () => {
+                (getServerSession as jest.Mock).mockResolvedValue({ user: { id: commonId } });
+                await prisma.boardSettings.upsert({ where: { id: 1 }, create: { id: 1, programStoreClosedAt: new Date() }, update: { programStoreClosedAt: new Date() } });
+            });
+            afterEach(async () => {
+                await prisma.boardSettings.update({ where: { id: 1 }, data: { programStoreClosedAt: null } });
+            });
+            afterAll(async () => {
+                await prisma.programParticipant.deleteMany({ where: { programId: { in: programIds } } });
+                await prisma.program.deleteMany({ where: { id: { in: programIds } } });
+            });
+
+            it('a family claims and pays on the reserved-seat item', async () => {
+                const programId = await mkPriced('closed-claimant', 'dev-mock-claimant-closed');
+                const res = await enrol(programId);
+                expect(res.status).toBe(200);
+                expect((await res.json()).enrollment.status).toBe('PENDING');
+                const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
+                expect(checkoutVariantId(program)).toBe('dev-mock-claimant-closed');
+            });
+
+            it('refuses a claim on a program with only the hidden public item, which nobody can pay', async () => {
+                const programId = await mkPriced('closed-public-only', null);
+                const res = await enrol(programId);
+                expect(res.status).toBe(400);
+                expect(await prisma.programParticipant.count({ where: { programId } })).toBe(0);
+            });
         });
 
         it('should allow a common user to self-enroll into a free program as ACTIVE', async () => {

@@ -2,7 +2,7 @@
  * The scan response feeds the kiosk banner on an unattended public screen, which
  * forwards it into an iframe with a wildcard postMessage origin (client/client.py).
  * So `participant` is a display DTO — id plus the nickname-else-first-name label —
- * and never the raw Person (docs/rules/attendance-checkin.md, "The kiosk").
+ * and never the raw Person.
  */
 import type { Person } from "@/generated/prisma/client";
 import type { DbClient } from "@/lib/db-client";

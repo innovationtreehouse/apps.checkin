@@ -7,7 +7,7 @@ import { LATE_CLOSE_SKEW_MS, MAX_VISIT_MS } from "@/lib/visitTimes";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { logBackendError } from "@/lib/logger";
 import { type AuditActor, personActor, systemActor } from "@/lib/auditActor";
-import { specTrace } from "@/lib/specTrace";
+import { specTrace, traceOnCommit } from "@/lib/specTrace";
 import type { ScanOutcome } from "@/lib/attendance/scan";
 
 /** The last recorded keyholder's kiosk leave; the kiosk has no pick-list, so the
@@ -345,7 +345,7 @@ function kickPostEventEmails() {
  *  Locks follow the order every visit path uses: the person lock of everyone the
  *  sweep may depart (ascending, so executors never cross), then the facility. */
 async function executeClose(id: number): Promise<boolean> {
-    return prisma.$transaction(async (tx) => {
+    return traceOnCommit(() => prisma.$transaction(async (tx) => {
         const pending = await tx.facilityClose.findFirst({ where: { id, executedAt: null }, select: { closedAt: true } });
         if (!pending) return false;
         // A superset of sweepForClose's rows: a check-in that lands after this read
@@ -365,7 +365,7 @@ async function executeClose(id: number): Promise<boolean> {
         await sweepForClose(tx, close);
         await tx.facilityClose.update({ where: { id }, data: { executedAt: new Date() } });
         return true;
-    }, { maxWait: 5_000, timeout: 15_000 });
+    }, { maxWait: 5_000, timeout: 15_000 }));
 }
 
 /** How long a close whose sweep failed waits before this instance retries it,

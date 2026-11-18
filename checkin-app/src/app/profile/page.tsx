@@ -9,6 +9,7 @@ import { errorMessage, LoadError, showError, showSuccess } from '@checkin/compon
 import { useSeedForm } from '@/hooks/useSeedForm';
 import { api, useLoad } from '@/lib/api';
 import { isYouth } from '@/lib/time';
+import { AGE_LEAD_ONLY_REFUSAL, mayDeclareAges } from '@/lib/person/adultDob';
 import { signInEmailHelp } from '@/lib/person/signInEmail';
 
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -28,9 +29,12 @@ export default function ProfilePage() {
 
   const signedIn = status === "authenticated";
   const { data, error, reload } = useLoad<{ profile: Profile }>(signedIn ? '/api/profile' : null);
-  // The household read only supplies the sign-in email help text, so its failure leaves the default text.
-  const { data: household } = useLoad<{ boardReplyTo?: string | null }>(signedIn ? '/api/household' : null);
+  // The household read supplies the sign-in email help text and who leads the household; its failure leaves the defaults.
+  const { data: household } = useLoad<{ boardReplyTo?: string | null; household?: { householdMembers?: { id: number; isHouseholdLead?: boolean }[] } | null }>(signedIn ? '/api/household' : null);
   const boardReplyTo = household?.boardReplyTo ?? null;
+  const userId = session?.user?.id;
+  const agesLocked = userId !== undefined
+    && !mayDeclareAges(userId, (household?.household?.householdMembers ?? []).filter((m) => m.isHouseholdLead).map((m) => m.id));
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
 
@@ -67,8 +71,7 @@ export default function ProfilePage() {
           name: form.name,
           nickname: form.nickname,
           phone: form.phone,
-          dob: form.over25 ? null : (form.dob || null),
-          over25: form.over25
+          ...(!agesLocked && { dob: form.over25 ? null : (form.dob || null), over25: form.over25 })
         })
       });
       showSuccess("Profile updated successfully!");
@@ -114,11 +117,12 @@ export default function ProfilePage() {
               <Checkbox
                 label="I am over 25"
                 checked={form.over25}
-                disabled={readOnly}
+                disabled={readOnly || agesLocked}
+                description={agesLocked ? AGE_LEAD_ONLY_REFUSAL : undefined}
                 onChange={(e) => edit({ ...form, over25: e.currentTarget.checked, dob: e.currentTarget.checked ? "" : form.dob })}
               />
               {!form.over25 && (
-                <TextInput type="date" label="Date of Birth" value={form.dob} onChange={(e) => edit({ ...form, dob: e.currentTarget.value })} disabled={readOnly} />
+                <TextInput type="date" label="Date of Birth" value={form.dob} onChange={(e) => edit({ ...form, dob: e.currentTarget.value })} disabled={readOnly || agesLocked} />
               )}
 
               <Text size="sm" c="dimmed">

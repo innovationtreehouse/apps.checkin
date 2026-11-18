@@ -152,7 +152,7 @@ describe("tab badge sources", () => {
     buildingReachable: true,
     activePrograms: 0,
     admin: {
-      membership: 1, applicationsTotal: 1, paymentPlanPending: 1, membershipPaymentPlanPending: 1, trustedAdults: 1, householdsMissingContact: 1,
+      membership: 1, applicationsTotal: 1, applicationsIncomplete: 0, applicationsAwaitingRefund: 1, paymentPlanPending: 1, membershipPaymentPlanPending: 1, trustedAdults: 1, householdsMissingContact: 1,
       unclaimedHouseholds: 1, brokenHouseholds: 1, brokenEmails: 1, settingsMisconfig: 1, programsMisconfig: 1, openPaymentExceptions: 1,
     },
   };

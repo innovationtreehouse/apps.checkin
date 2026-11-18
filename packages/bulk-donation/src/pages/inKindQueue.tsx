@@ -6,7 +6,7 @@ import { act, api, useLoad, when } from "../components/api";
 import { formatGtinDisplay } from "@checkin/gtin";
 import { dollarsToCents, formatCents } from "@checkin/money";
 import { LINE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
-import { LoadError, QuickBooksListsRefresh } from "@checkin/component-ui";
+import { InactivePickWarning, LoadError, QuickBooksListsRefresh } from "@checkin/component-ui";
 import { IN_KIND_STATE as STATE, type InKindSource, type WaitingOn } from "../components/inKindState";
 
 interface QueueLine {
@@ -243,6 +243,7 @@ function QbPanel({ item, onDone }: { item: QueueItem; onDone: () => void }) {
                 >
                   Set account
                 </Button>
+                {!lineAccount[l.id] && <InactivePickWarning saved={l.quickBooksAccountId} options={live.data} />}
               </Group>
             ))}
           </>

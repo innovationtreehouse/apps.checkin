@@ -32,10 +32,9 @@ The page reads live rows, so a code seen this morning is on it this morning.
 ## Rules this relies on
 
 - Finance holds QuickBooks. A QuickBooks refusal the app can't settle goes to
-  finance (`docs/architecture/RECEIPT_PIPELINE.md`, posting lanes;
-  `docs/rules/revenue.md`, gifts of goods).
+  finance (`docs/architecture/RECEIPT_PIPELINE.md`, posting lanes).
 - QuickBooks fault text is never logged or stored; codes and request ids are.
-- Least privilege (`docs/rules/principles.md`): a surface grants nothing its gate
+- Least privilege: a surface grants nothing its gate
   does not already grant.
 
 ## Design

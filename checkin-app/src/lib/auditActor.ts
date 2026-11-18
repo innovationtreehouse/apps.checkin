@@ -1,7 +1,10 @@
+import type { AuditAction, Prisma } from "@/generated/prisma/client";
+import { type TxClient, isRootClient } from "@/lib/db-client";
+
 /**
  * Who an AuditLog row is attributed to.
  *
- * Two rules from `docs/rules/principles.md` are enforced here rather than at 85
+ * Two rules are enforced here rather than at 85
  * scattered `auditLog.create` call sites:
  *
  * - *Accountability — a system actor names itself.* `actorId: 0` alone cannot
@@ -23,7 +26,6 @@ export const SYSTEM_ACTOR = 0;
  */
 export const SYSTEM_ACTORS = [
     "cron:nightly",
-    "cron:scholarship-grace-expiry",
     "cron:trusted-adult-expiry",
     "cron:lifecycle-reconcile",
     "system:google-sign-in",
@@ -36,6 +38,7 @@ export const SYSTEM_ACTORS = [
     "system:bootstrap-sysadmin",
     "system:dev-seed",
     "system:facility-close",
+    "system:bucket-class-check",
     "webhook:zoho-contract",
     "webhook:shopify-order",
     "webhook:shopify-receipt",
@@ -69,4 +72,24 @@ export function personActor(actorId: number): AuditActor {
 /** For paths a person OR an automated path can take (e.g. board certify vs. Shopify webhook). */
 export function personOrSystemActor(actorId: number | null | undefined, name: SystemActorName): AuditActor {
     return actorId ? personActor(actorId) : systemActor(name);
+}
+
+/** The change half of an `auditLog.create` payload. */
+export type AuditEntry = {
+    action: AuditAction;
+    tableName: string;
+    affectedEntityId: number;
+    secondaryAffectedEntity?: number | null;
+    oldData?: Prisma.InputJsonValue;
+    newData?: Prisma.InputJsonValue;
+};
+
+/**
+ * Write an audit row with the transaction client that made the change, so the
+ * two commit together. Opens no transaction of its own. Refuses the root client,
+ * which the `TxClient` type accepts but which would commit the row on its own.
+ */
+export function recordAudit(tx: TxClient, actor: AuditActor, entry: AuditEntry) {
+    if (isRootClient(tx)) throw new Error("recordAudit must run inside the change's transaction.");
+    return tx.auditLog.create({ data: { ...actor, ...entry } });
 }

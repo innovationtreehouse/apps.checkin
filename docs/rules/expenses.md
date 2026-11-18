@@ -61,8 +61,9 @@ Things the app takes as true because they are handled outside it.
   band is adult and whose household membership is ACTIVE. A role holder or a
   Treehouse staff account is admitted whatever their recorded age or membership.
   A signed-in adult with no ACTIVE membership is refused, and so is a youth or a
-  person of unknown age without a role, because a self-declared age alone is not
-  proof of adulthood. No background check is needed. The submitter sees only
+  person of unknown age without a role. Unknown age means no date of birth and no
+  over-25 declaration on file; an over-25 declaration with no date of birth
+  counts as adult. No background check is needed. The submitter sees only
   their own receipts, without donor or reimbursee names, and approval stays with
   FINANCE, so the audience exposes no other person's data and moves no money on
   its own. The same audience may reach an expense sign-off for the submitter
@@ -91,12 +92,11 @@ Things the app takes as true because they are handled outside it.
   open state; mail intake also discards a mailed body that copies an attachment
   of the same message. Finance refuses a receipt by rejecting it, with a reason,
   from any open state. The Board neither discards nor rejects. An open receipt
-  is one not yet finalized, discarded or rejected. Finance may add a discarded
-  or rejected receipt's file to the mailbox ignore list.
+  is one not yet finalized, discarded or rejected.
   [Decision — owner]
 
-- A receipt finance rejected counts in its uploader's My receipts pill, with
-  finance's reason, until the uploader acknowledges it on the receipt.
+- A receipt finance rejected stays in front of its uploader, with finance's
+  reason, until the uploader acknowledges it on the receipt.
   [Decision — owner]
 
 - Hiding completed receipts in My receipts never hides one that is owed and
@@ -115,8 +115,7 @@ Things the app takes as true because they are handled outside it.
   reimbursements" or all email. Anyone else's copy is dropped, not held: it is
   not sent if they later sign in or turn email back on. A skipped uploader
   still sees the rejection and the reason in My receipts. A send that fails
-  gets three tries in all, the later ones in the daily sweep, and is then
-  given up.
+  gets three tries in all and is then given up.
   [Decision]
 
 - Once a receipt is finalized, its uploader sees in the receipt pages what
@@ -284,8 +283,8 @@ Things the app takes as true because they are handled outside it.
   refused automatically.
   [Decision — deliberate limit]
 
-- A receipt's file hash is deliberately not unique, so two receipts may hold the
-  same file: the second is stored and flagged for finance. Reading the same file
+- Two receipts may hold the same file: the second is stored and flagged for
+  finance. Reading the same file
   from the same mailed message again makes no second receipt.
   [Decision — deliberate limit]
 
@@ -350,9 +349,8 @@ Things the app takes as true because they are handled outside it.
   the audit log.
   [Decision]
 
-- Three or more failed readings within a day put one line on the Problems
-  list, "Receipt reading failed N times in the last day", with no error text or
-  names, and that line sends the daily problems email to the alert address.
+- Three or more failed readings within a day alert finance at the alert
+  address, with no error text or names.
   [Decision]
 
 - Sysadmins, finance and the Board may turn automatic reading of receipts off
@@ -379,19 +377,32 @@ Things the app takes as true because they are handled outside it.
 
 ### Budget buckets
 
-- A budget bucket is an accounting bucket, not a person. Finance creates,
-  renames and archives buckets and maps each to a class in the accounting
-  system. Archiving keeps the row, because finance records point at it.
-  [Decision]
+- A budget bucket is an accounting bucket, not a person. Finance creates and
+  renames buckets and maps each to a class in the accounting system.
+  Archiving never deletes a bucket.  [Decision]
+
+- Finance archives a bucket only when nothing unfinished points at it: an open
+  expense line, a giving-platform gift not yet deposited, a gift of goods not
+  yet booked, a donated line waiting for capital review, a store item mapped to
+  it, or a part mapped to it for future receipts. The refusal names each kind,
+  how many, and where finance moves them.  [Decision — owner]
 
 - A bucket is created with its class. Finance may change a bucket's class but
   not clear it, and no two buckets share a class. A bucket that has no class
   still saves without one, and its lines wait until finance picks one.
   [Decision — owner]
 
+- A bucket is created with, or changed to, only a class the app's copy of
+  QuickBooks' lists shows as active. A class the copy shows as inactive is
+  refused the same way as one the copy lacks, until finance or the Board
+  updates the copy. A save that keeps the bucket's class is not checked, so a
+  bucket whose class went inactive can still be renamed.  [Decision — owner]
+
 - Finance may restore an archived bucket. It comes back with its class, owner
   and treasurers. An archived bucket keeps its class, so no other bucket can
-  hold that class when it returns. Each restore is recorded.
+  hold that class when it returns. Its class must be active in the app's copy
+  of QuickBooks' lists, or the same save must pick an active one. Each restore
+  is recorded.
   [Decision]
 
 - A bucket's approvers are its owner and its treasurers, stored on the bucket
@@ -479,14 +490,13 @@ Things the app takes as true because they are handled outside it.
   retry each close the question they answer.
   [Decision — owner]
 
-- Three questions are recorded as reviews, because no fix records their
-  answer: a duplicate QuickBooks entry to void, an entry changed in QuickBooks
+- Three questions need finance's note to close: a duplicate QuickBooks entry to void, an entry changed in QuickBooks
   after posting, and a closed expense that never posted. Finance closes each
   with a note saying what it did, and a blank note is refused. A closed
   expense's review closes on its own once the expense posts.
   [Decision — owner]
 
-- A drift fixed in QuickBooks closes its open review on the next daily run,
+- A drift fixed in QuickBooks closes its open review on its own within a day,
   recorded as closed by the system. A drift finance already checked off stays
   checked off.
   [Decision — owner]
@@ -729,9 +739,8 @@ the parts specific to expenses.
   shipping and discount. Nothing splits a line across accounts or categories. A
   line the mappings do not resolve to exactly one account waits for finance to
   set it. A line whose account couldn't be looked up because the catalog was
-  unavailable is not a mapping hold: the expense goes to `qb_error`, stuck with
-  its first failure time and latest error until a person retries it from the
-  Problems list. No posting run retries it.
+  unavailable is not a mapping hold: the expense waits, with its first failure
+  time and latest error, until a person retries it. No posting run retries it.
   [Decision — owner]
 
 - A signed line's account reads its part's catalog category as it stood when the
@@ -742,9 +751,9 @@ the parts specific to expenses.
   expense is in QuickBooks its accounts are never re-read from the catalog.
   [Decision — owner]
 
-- An account rule names its part by the part's GTIN-13, or `*` for any part. A
-  new or changed part must be one of these; a rule stored with any other value
-  is kept, and its page shows that it never matches.
+- An account rule names one catalog part, or every part. A new or changed rule
+  must name one of these; a rule stored naming neither is kept and shown as
+  never matching.
   [Decision]
 
 - A gift of goods' line books to the account the expense account rules give its
@@ -764,8 +773,7 @@ the parts specific to expenses.
   capital, and then only a fixed-asset account; any other rule takes an expense
   or cost of goods sold account. A held line's account follows the same rule by
   whether the line is capital, and finance's hand-set account is dropped when
-  the line's capital designation changes. Expense's QuickBooks account list
-  admits all of these types. A rule already stored with another type is kept.
+  the line's capital designation changes. A rule already stored with another type is kept.
   [Decision]
 
 - A reimbursement counts as paid only when the accounting system shows it fully
@@ -783,18 +791,14 @@ the parts specific to expenses.
   dollar limit per run applies to expenses.
   [Decision — owner]
 
-- An expense line's account comes from finance's own mapping rules and account
-  list, which finance keeps by hand. Finance picks the accounts on that list,
-  Classes and the books map's accounts one at a time. The app keeps a
-  read-only copy of QuickBooks' account and Class lists to offer and check
-  those picks, and never creates a mapping from it. It never copies the vendor
-  list, and never matches vendor names on its own.
+- Finance sets every expense line's account, its Class and the books map's
+  accounts by hand, from finance's own mapping rules. The app never creates a
+  mapping from QuickBooks' lists, and never matches vendor names on its own.
   [Decision — deliberate limit]
 
-- Expense posting switches on the first time the daily catch-up runs with
-  QuickBooks connected, once and for good. An expense submitted after that books
-  on its own, matching first. One submitted before it only matches, and goes to finance to book or
-  skip when nothing matches.
+- Expense posting, once switched on, stays on. An expense submitted after that
+  books on its own, matching first. One submitted before it only matches, and
+  goes to finance to book or skip when nothing matches.
   [Decision — owner]
 
 - Finance may skip an expense that waits on it to reach the books, giving a

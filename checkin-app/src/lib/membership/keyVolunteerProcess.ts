@@ -7,8 +7,6 @@ import { fromWhere } from "@/lib/membership/lifecycle";
  * whether a person has signed it, and opening or closing a person's agreement.
  * Database-only, so `lib/roles.ts` can call it inside a role write. The signing
  * flow and the version bump live in `keyVolunteer.ts`.
- *
- * Rules: docs/rules/membership.md, "Key Volunteers".
  */
 
 export const KVA_KIND = "KEY_VOLUNTEER_AGREEMENT" as const;

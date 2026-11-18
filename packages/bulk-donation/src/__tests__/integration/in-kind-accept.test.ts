@@ -12,6 +12,7 @@ import { ingestInKind, recordInKindDonor, recordInKindWithoutReceipt } from "../
 import { inKindAcceptService, InKindDecisionInputSchema, type InKindDecisionInput } from "../../services/inKindAcceptService";
 import type { CapitalReviewLine, InKindCapital, InKindDirectory, OwnerInfo } from "../../contract";
 import { TEST_ORG_ID } from "../helpers/factories";
+import { retryStuckItem, stuckItems } from "../../stuckItems";
 import { ServiceError } from "@checkin/component-kit";
 
 const orgId = TEST_ORG_ID;
@@ -123,6 +124,7 @@ beforeEach(async () => {
   await db.inKindSyncMark.deleteMany({});
   await db.manualInKindDonation.deleteMany({});
   await db.inKindBooking.deleteMany({});
+  await db.inKindPosting.deleteMany({});
   buckets = BUCKETS;
   finance = [FINANCE, FINANCE_IN_UPLOADER_HOUSEHOLD];
   largeValueCents = 50_000;
@@ -551,62 +553,91 @@ describeDb("capital review", () => {
     expect(sent).toEqual([]);
   });
 
-  it("a failed send keeps the accept, waits on capital review, and accepting again resends", async () => {
-    const id = await receiptGift();
-    capital = { submit: async () => { throw new ServiceError(503, "expense down"); }, awaitingReview: async () => [], assetLineIds: async () => [] };
-    configure();
-    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
-    const failed = await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE)).catch((e: unknown) => e);
-    expect(failed).toMatchObject({ status: 502, message: expect.stringMatching(/accept it again/), cause: expect.objectContaining({ message: "expense down" }) });
-    expect(logged).toHaveBeenCalledWith(expect.stringContaining(`gift ${id}`), expect.objectContaining({ message: "expense down" }));
-    logged.mockRestore();
-    const row = await db.inKindDonation.findUniqueOrThrow({ where: { id } });
-    expect(row).toMatchObject({ decisionOutcome: "ACCEPTED", capitalSubmittedAt: null });
-    expect((await queueFor(FINANCE))[0]).toMatchObject({ state: "capital", waitingOn: ["capital", "booking"] });
-
-    const sent = captureCapital();
-    await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
-    expect(sent).toHaveLength(1);
-    expect((await db.inKindDonation.findUniqueOrThrow({ where: { id } })).capitalSubmittedAt).not.toBeNull();
-    expect((await queueFor(FINANCE))[0]).toMatchObject({ state: "booking", waitingOn: ["booking"] });
-  });
-
-  it("a send capital review refuses keeps the accept and says why, not to accept again", async () => {
-    const id = await receiptGift();
-    capital = { submit: async () => { throw new ServiceError(404, "Organization not found"); }, awaitingReview: async () => [], assetLineIds: async () => [] };
-    configure();
-    const failed = await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE)).catch((e: unknown) => e);
-    expect(failed).toMatchObject({ status: 404, message: expect.stringMatching(/refused.*Organization not found/) });
-    expect((failed as Error).message).not.toMatch(/accept it again/);
-    expect(await db.inKindDonation.findUniqueOrThrow({ where: { id } })).toMatchObject({ decisionOutcome: "ACCEPTED", capitalSubmittedAt: null });
-  });
-
-  it.each([
-    ["a 401", new ServiceError(401, "Unauthorized")],
-    ["a 403", new ServiceError(403, "Forbidden")],
-    ["an unbranded error", new Error("Forbidden")],
-  ])("%s from capital review is our bug, not the accepting person's permission", async (_, thrown) => {
-    const id = await receiptGift();
+  const failingCapital = (thrown: unknown) => {
     capital = { submit: async () => { throw thrown; }, awaitingReview: async () => [], assetLineIds: async () => [] };
     configure();
+  };
+
+  it.each([
+    ["an outage", new ServiceError(503, "expense down")],
+    ["a refusal", new ServiceError(404, "Organization not found")],
+    ["a 401", new ServiceError(401, "Unauthorized")],
+    ["an unbranded error", new Error("Forbidden")],
+  ])("%s from capital review keeps the accept successful and leaves the gift stuck", async (_, thrown) => {
+    const id = await receiptGift();
+    failingCapital(thrown);
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
-    const failed = await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE)).catch((e: unknown) => e);
+    const view = await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
+    expect(view).toMatchObject({ outcome: "ACCEPTED" });
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining(`gift ${id}`));
+    expect(JSON.stringify(logged.mock.calls)).not.toContain(thrown.message);
     logged.mockRestore();
-    expect(failed).toMatchObject({ status: 500, message: expect.stringMatching(/accepted.*fault in our software/) });
-    expect((failed as Error).message).not.toMatch(/Unauthorized|Forbidden|accept it again/);
-    expect(await db.inKindDonation.findUniqueOrThrow({ where: { id } })).toMatchObject({ decisionOutcome: "ACCEPTED", capitalSubmittedAt: null });
+    const row = await db.inKindDonation.findUniqueOrThrow({ where: { id } });
+    expect(row).toMatchObject({ decisionOutcome: "ACCEPTED", capitalSubmittedAt: null, capitalFirstFailedAt: expect.any(Date), capitalLastError: thrown.message });
+    expect((await queueFor(FINANCE))[0]).toMatchObject({ state: "capital", waitingOn: ["capital", "booking"] });
   });
 
-  it("lines our own schema rejects are our bug, not a capital review refusal", async () => {
+  it("lines our own schema rejects are never sent, and the accept still succeeds", async () => {
     const id = await receiptGift();
     await db.inKindDonationLine.updateMany({ where: { donationId: id }, data: { quantity: 100001 } });
     const sent = captureCapital();
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
-    const failed = await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE)).catch((e: unknown) => e);
+    await expect(inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE))).resolves.toMatchObject({ outcome: "ACCEPTED" });
     logged.mockRestore();
-    expect(failed).toMatchObject({ status: 500, message: expect.stringMatching(/accepted.*fault in our software/) });
-    expect((failed as Error).message).not.toMatch(/refused/);
     expect(sent).toHaveLength(0);
+    expect(await db.inKindDonation.findUniqueOrThrow({ where: { id } })).toMatchObject({ capitalSubmittedAt: null, capitalFirstFailedAt: expect.any(Date) });
+  });
+
+  it("accepting again does not resend", async () => {
+    const id = await receiptGift();
+    failingCapital(new ServiceError(503, "expense down"));
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
+    logged.mockRestore();
+    const sent = captureCapital();
+    await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
+    expect(sent).toHaveLength(0);
+    expect(await db.inKindDonation.findUniqueOrThrow({ where: { id } })).toMatchObject({ capitalSubmittedAt: null });
+  });
+
+  it("an accepted gift left unsent with no failure recorded is stuck an hour after its decision", async () => {
+    const id = await receiptGift();
+    const sent = captureCapital();
+    await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
+    const recent = new Date(Date.now() - 30 * 60 * 1000);
+    await db.inKindDonation.update({ where: { id }, data: { capitalSubmittedAt: null, decidedAt: recent } });
+    expect(await stuckItems()).toEqual([]);
+
+    const decidedAt = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    await db.inKindDonation.update({ where: { id }, data: { decidedAt } });
+    expect(await stuckItems()).toEqual([{ id: `receipt ${id}`, step: "capital review send", href: `/donations/in-kind/receipt/${id}`, failedAt: decidedAt }]);
+    await retryStuckItem({ id: `receipt ${id}`, step: "capital review send" });
+    expect(sent).toHaveLength(2);
+    expect(await stuckItems()).toEqual([]);
+  });
+
+  it("a failed send is stuck on the Problems list until a retry sends it, which clears it", async () => {
+    const id = await receiptGift();
+    const item = { id: `receipt ${id}`, step: "capital review send" };
+    failingCapital(new ServiceError(503, "expense down"));
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
+    const { capitalFirstFailedAt } = await db.inKindDonation.findUniqueOrThrow({ where: { id } });
+    expect(await stuckItems()).toEqual([{ ...item, href: `/donations/in-kind/receipt/${id}`, failedAt: capitalFirstFailedAt }]);
+
+    failingCapital(new ServiceError(503, "still down"));
+    const again = await retryStuckItem(item).catch((e: unknown) => e);
+    expect(again).toMatchObject({ status: 503 });
+    expect((again as Error).message).not.toContain("still down");
+    expect(await db.inKindDonation.findUniqueOrThrow({ where: { id } })).toMatchObject({ capitalFirstFailedAt, capitalLastError: "still down" });
+    logged.mockRestore();
+
+    const sent = captureCapital();
+    await expect(retryStuckItem(item)).resolves.toBeUndefined();
+    expect(sent).toHaveLength(1);
+    expect(await db.inKindDonation.findUniqueOrThrow({ where: { id } })).toMatchObject({ capitalSubmittedAt: expect.any(Date), capitalFirstFailedAt: null, capitalLastError: null });
+    expect(await stuckItems()).toEqual([]);
+    await expect(retryStuckItem(item)).rejects.toMatchObject({ status: 404 });
   });
 
   it("a gift with a line in capital review waits on it before booking", async () => {

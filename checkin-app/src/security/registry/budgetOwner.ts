@@ -4,7 +4,7 @@ import { defineRoute, type OrderedViewEntry } from '../core';
 
 // Every BudgetOwner field is `internal` except the owner's person id; an
 // approver's id and name are `public`, as on Person. No view grants pii or personal, and no view lists
-// isSysadmin: Finance Ops excludes sysadmins (docs/rules/revenue.md).
+// isSysadmin: Finance Ops excludes sysadmins.
 // FINANCE creates, renames and archives buckets and sets their QuickBooks Class;
 // the BOARD alone sets a bucket's owner and treasurers, because they come from
 // the Board-approved budget. There is no DELETE on a bucket: archive

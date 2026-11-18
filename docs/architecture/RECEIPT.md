@@ -169,8 +169,8 @@ up to 30 days without losing mail.
 **Files in a message**, in reading order: each attachment of an accepted type, each
 inline part of an accepted non-text type at 5 KB or more, then the body stored as
 text. A body with no amount written to two decimals is skipped. A message attached
-whole is never opened, only counted. Finance's ignore list skips a file by exact
-hash, and upload never consults that list.
+whole is never opened, only counted. Finance's ignore list, which finance adds to from
+a discarded or rejected receipt, skips a file by exact hash, and upload never consults that list.
 
 **Sender.** The address counts only when the message has one `From` with one
 address, and the topmost `Authentication-Results`, written by `mx.google.com`,
@@ -217,8 +217,11 @@ each in its own `try/catch` and each returning counts only. None retries a faile
 
 After input, a receipt that fails a step is stuck in it: `flow_error`, or finalized with
 `pushedAt` null. `firstFailedAt` keeps when the step first failed, and `lastError` the latest
-failure's error; a step that succeeds clears both. `stuckItems()` lists stuck receipts for
-the Problems list, timed by `firstFailedAt`, with no error text. `retryStuckItem({ id, step })`
+failure's error; a step that succeeds clears both. A finalized receipt with `pushedAt` null
+counts as stuck by its state alone once `PUSH_GRACE_MS` (ten minutes) has passed since its
+finalize, so a push that crashed or could not record its failure is still found. A failure that
+cannot be recorded is logged with the receipt id. `stuckItems()` lists stuck receipts for the
+Problems list with no error text, timed by `firstFailedAt`, or failing that by the finalize. `retryStuckItem({ id, step })`
 runs the step once ("flow" or "push to mapping"), and nothing retries by itself. It answers 404
 for a receipt not stuck in that step and 409 when the receipt is still stuck afterwards. Finance sees
 `lastError` on the receipt's own page.
@@ -272,7 +275,7 @@ flag is on in a given environment, is set outside this repo.
   takes no AWS dependency. `checkin-app/src/lib/receipt/fileStore.ts` binds S3 on
   every deployed instance and a temp directory under `CHECKIN_ENV=local`. The S3 put
   is write-once (`If-None-Match: *`) and carries a SHA-256 checksum. The temp-directory
-  store refuses a second write and does not check the hash.
+  store also refuses a second write, and refuses bytes that miss their SHA-256.
 - `file_key` and `file_size` exist on `receipts` and `receipt_mail_items`, and
   `receipts.file_blob` is nullable.
 - `RECEIPT_FILES_S3=true` sends new files to the bucket. The object goes first and

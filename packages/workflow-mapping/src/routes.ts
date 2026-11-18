@@ -1,5 +1,5 @@
 /**
- * Route factories for the 11 registered /api/workflow-mapping/* endpoints. The host mounts each
+ * Route factories for the 12 registered /api/workflow-mapping/* endpoints. The host mounts each
  * under its handler(), which admits the caller and strips the returned model bag; bag keys are
  * the registry's `returns` model names.
  */
@@ -8,6 +8,7 @@ import { requireActor } from "./runtime";
 import { rerunMatching } from "./services/pendingMatching";
 import { assertEditable, loadReceipt } from "./services/receiptLookup";
 import { receiptService } from "./services/receiptService";
+import { CloseOutBodySchema } from "./lib/legs";
 import { AssociateBodySchema, ProposeBodySchema, lineItemService } from "./services/lineItemService";
 
 export interface WorkflowRouteCtx {
@@ -76,6 +77,14 @@ export const apply: WorkflowRouteHandler = async ({ params }) => {
 export const retryApply: WorkflowRouteHandler = async ({ params }) => {
   const id = receiptId(params);
   const { state } = await receiptService.retryApply(id);
+  return { ReceivedReceipt: { id, state } };
+};
+
+/** Closes an apply_failed receipt as handled by hand; it is never pushed again. */
+export const closeOut: WorkflowRouteHandler = async ({ req, params }) => {
+  const body = await parseBody(req, CloseOutBodySchema);
+  const id = receiptId(params);
+  const { state } = await receiptService.closeOut(id, body);
   return { ReceivedReceipt: { id, state } };
 };
 

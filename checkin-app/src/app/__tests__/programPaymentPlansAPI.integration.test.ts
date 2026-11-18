@@ -101,7 +101,7 @@ describe('Program payment-plan routes', () => {
 
         const self = await prisma.person.create({
             // Adult DOB: this persona requests its OWN payment plan, and only a
-            // known adult may (docs/rules/programs.md).
+            // known adult may.
             data: {
                 name: 'PP Self',
                 email: `self-${TAG}@example.com`,
@@ -698,7 +698,7 @@ describe('Program payment-plan routes', () => {
             }
         });
 
-        it('re-applies while holding after a denial: no second -1, denial stamp clears', async () => {
+        it('refuses a re-request after a denial: no -1, denial and hold kept', async () => {
             const prevCheckinEnv = process.env.CHECKIN_ENV;
             process.env.CHECKIN_ENV = 'local';
             const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
@@ -725,9 +725,7 @@ describe('Program payment-plan routes', () => {
                 expect(row?.inventoryHeldAt).not.toBeNull();
                 expect(row?.paymentPlanDeniedAt).not.toBeNull();
 
-                // Re-apply while still holding -> flips the request flag + clears the
-                // denial stamp, but does NOT fire a second -1 (inventoryHeldAt was
-                // already set, so the apply-time guard's branch-1 never runs).
+                // A re-request after the denial is refused; the family follows up with finance.
                 logSpy.mockClear();
                 mockSession.mockResolvedValue({ user: { id: selfId } });
                 const reapplyRes = await RequestPost(
@@ -738,14 +736,14 @@ describe('Program payment-plan routes', () => {
                     }) as unknown as import('next/server').NextRequest,
                     reqParams(shopifyProgram.id),
                 );
-                expect(reapplyRes.status).toBe(200);
+                expect(reapplyRes.status).toBe(409);
                 expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('Would adjust inventory'));
 
                 row = await prisma.programParticipant.findUnique({
                     where: { programId_personId: { programId: shopifyProgram.id, personId: selfId } },
                 });
-                expect(row?.isPaymentPlanRequested).toBe(true);
-                expect(row?.paymentPlanDeniedAt).toBeNull(); // denial stamp cleared
+                expect(row?.isPaymentPlanRequested).toBe(false);
+                expect(row?.paymentPlanDeniedAt).not.toBeNull(); // denial kept
                 expect(row?.inventoryHeldAt).not.toBeNull(); // still held throughout
             } finally {
                 logSpy.mockRestore();
@@ -1143,7 +1141,7 @@ describe('Program payment-plan routes', () => {
             expect(__getSentEmails()).toHaveLength(0);
         });
 
-        it('a re-request after denial (PENDING_HELD_DENIED → HELD) sends the review-team notify and the household ack', async () => {
+        it('a refused re-request after denial sends zero emails', async () => {
             const householdId = await makeHousehold('redeny');
             const participant = await makePerson('redeny-participant', householdId);
             await prisma.programParticipant.create({
@@ -1156,11 +1154,8 @@ describe('Program payment-plan routes', () => {
             mockSession.mockResolvedValue({ user: { id: participant.id } });
 
             const res = await RequestPost(requestReq({ participantId: participant.id }), params(emailProgramId));
-            expect(res.status).toBe(200);
-
-            const sent = __getSentEmails();
-            expect(sent.filter((e) => e.subject.startsWith('New scholarship / payment-plan request'))).toHaveLength(REVIEW_TEAM_EMAILS.length);
-            expect(sent.filter((e) => e.subject === 'We received your scholarship / payment-plan request')).toHaveLength(1);
+            expect(res.status).toBe(409);
+            expect(__getSentEmails()).toHaveLength(0);
         });
 
         // User decision: an applicant receives EXACTLY ONE automatic email (the
@@ -1186,7 +1181,7 @@ describe('Program payment-plan routes', () => {
             expect(__getSentEmails()).toHaveLength(0);
         });
 
-        it('deny sends no automatic email (the grace-expiry clock, if configured, now starts silently)', async () => {
+        it('deny sends no automatic email', async () => {
             const householdId = await makeHousehold('deny');
             await makePerson('deny-lead', householdId, { isHouseholdLead: true });
             const participant = await makePerson('deny-participant', householdId);

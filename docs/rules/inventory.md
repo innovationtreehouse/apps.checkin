@@ -43,15 +43,13 @@ How the pieces are built is described in
 - A GTIN shown to a person is its **Part ID**, under that name on every screen:
   `P000123` for a provisional GTIN, `03B0042` for one minted from the catalog's
   category and sequence, and the 13 digits for a manufacturer's GTIN. A store's or
-  manufacturer's own number for a part is a part #, never a Part ID. CSV exports,
-  URLs and API values keep the raw digits. `[Decision — owner]`
+  manufacturer's own number for a part is a part #, never a Part ID. `[Decision — owner]`
 
 - A person picks a part from the catalog rather than typing its GTIN. A new org
-  item or part-bucket mapping takes only a GTIN-13 with a valid check digit that
-  names an active catalog item or a pending provisional part of the org. A
+  item or part-bucket mapping names only an active catalog item or a pending
+  provisional part of the org. A
   provisional part the catalog approved or mapped is refused, naming the real
-  part that replaced it; a rejected one is refused. Rows stored before this
-  check are kept as they are. `[Decision]`
+  part that replaced it; a rejected one is refused. `[Decision]`
 
 - A category is keyed by a letter, and a subcategory by a number within its
   category; each item carries a category, a subcategory and a sequence number.
@@ -97,8 +95,7 @@ How the pieces are built is described in
 - An open reference conflict shows the item its part is on now, and says so when
   that is no longer the item it was raised against. The reviewer then acts as
   normal: "keep existing" keeps the current item. A resolve is refused only if
-  the part moved between the page loading and the click, and the page reloads
-  with the updated question. If the part is already on the proposed item, nothing
+  the part moved while the reviewer decided, and the reviewer is asked again. If the part is already on the proposed item, nothing
   is left to decide and the conflict is closed as resolved. A resolved conflict
   records the item it was decided against; its audit entry keeps the item raised.
   This screen offers no way back to the original item; that is fixed by hand in
@@ -130,8 +127,8 @@ How the pieces are built is described in
 
 - A provisional item's stock merges into its real GTIN only when both counts use
   the same conversion factor. Otherwise the merge records a unit-mismatch
-  conflict for a person to resolve. The factor used is the one the catalog event
-  carried, even when the event arrives before the provisional item.
+  conflict for a person to resolve. The factor used is the one the catalog
+  decided.
   `[Decision]`
 
 - When provisional stock lands on a real item the organisation holds none of,
@@ -141,8 +138,7 @@ How the pieces are built is described in
 
 - A receipt's or donation's stock change, or a catalog decision, that fails
   to apply stays failed with its error and the time it first failed. Nothing
-  retries it automatically: a person retries it from the Problems list on
-  System Status. The error shows only on the item's own inventory page.
+  retries it automatically: a person retries it.
   `[Decision — owner]`
 
 ### Receiving
@@ -158,21 +154,23 @@ How the pieces are built is described in
   changes a receipt whose goods are already in stock.
   `[Decision — deliberate limit]`
 
-- When a receipt arrives while the catalog is unavailable, its lines are not
-  matched and the receipt shows "Matching pending" while it waits for review.
-  An inventory manager runs matching from the receipt, or maps the lines by
-  hand; matching never re-runs by itself. Matching fills only lines nobody has
-  decided, and a receipt whose every line is then decided is sent to apply, as
-  on arrival.
+- When catalog matching fails as a receipt arrives, whatever the error, the
+  receipt is still saved: its lines are not matched and it shows "Matching
+  pending" with the reason (catalog unavailable, catalog settings error, or
+  unexpected error) while it waits for review. The failure never sends the
+  receipt back to the receipt pipeline. An inventory manager runs matching from
+  the receipt, or maps the lines by hand; matching never re-runs by itself.
+  Matching fills only lines nobody has decided, and a receipt whose every line
+  is then decided is sent to apply, as on arrival.
   `[Decision — owner]`
 
 - A receipt's lines can be edited only while it waits for review. Once it is
   sent to apply, its lines can't be edited, even when the apply fails. A failed
-  apply is never retried automatically: the receipt waits in Apply failed, and
-  on the Problems list, for a person, who either retries it with the same lines
+  apply is never retried automatically: the receipt waits in Apply failed for a
+  person, who either retries it with the same lines
   or corrects it by hand outside receiving and closes it as handled by hand. A
-  receipt whose part was taken but not confirmed stays applying, on the
-  Problems list, until a person retries it. A close-out names, for each part not applied, whether it
+  receipt whose part was taken but not confirmed stays applying until a
+  person retries it. A close-out names, for each part not applied, whether it
   was done by hand or isn't needed, and carries a note; a blank note is
   refused. A closed receipt can't be reopened. `[Decision — owner]`
 
@@ -231,16 +229,12 @@ How the pieces are built is described in
 - Inventory managers file conversion challenges, and the manager who filed one
   may accept it. `[Decision — owner]`
 
-- One inventory-manager role covers all catalog writes. Splitting it into
-  separate catalog-manager and org-manager roles is planned.
+- One inventory-manager role covers all catalog writes.
   `[Decision — deliberate limit]`
 
 ### Org stamping
 
-- Every org-scoped catalog row (proposals, provisional items, conversion
-  challenges, org events, and the provisional mapping log) carries its org's id
-  and a snapshot of its name. A change must not leave such a row unstamped or
-  let it carry an org the caller was not acting as. The name is kept as it was
-  when written, because exported rows reach consumers that cannot look the org
-  up.
+- Every org-scoped catalog record names the org it was written for, and never
+  one the caller was not acting as. It keeps the org's name as it was when
+  written, because exported records reach readers that cannot look the org up.
   `[Decision]`

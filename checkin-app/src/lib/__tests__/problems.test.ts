@@ -13,13 +13,13 @@ jest.mock("@/lib/email-templates/send", () => ({ sendTemplated: jest.fn() }));
 jest.mock("@checkin/receipt", () => ({ stuckItems: jest.fn(), problemNotices: jest.fn(), retryStuckItem: jest.fn() }));
 jest.mock("@checkin/expense", () => ({ stuckItems: jest.fn(), retryStuckItem: jest.fn() }));
 jest.mock("@checkin/bulk-donation", () => ({ stuckItems: jest.fn(), retryStuckItem: jest.fn() }));
-jest.mock("@checkin/workflow-mapping", () => ({ stuckItems: jest.fn(), retryStuckItem: jest.fn() }));
+jest.mock("@checkin/workflow-mapping", () => ({ stuckItems: jest.fn(), problemNotices: jest.fn(), retryStuckItem: jest.fn() }));
 jest.mock("@checkin/local-inventory", () => ({ stuckItems: jest.fn(), retryStuckItem: jest.fn() }));
 
 const receipt = jest.requireMock<{ stuckItems: jest.Mock; problemNotices: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/receipt");
 const expense = jest.requireMock<{ stuckItems: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/expense");
 const gifts = jest.requireMock<{ stuckItems: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/bulk-donation");
-const mapping = jest.requireMock<{ stuckItems: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/workflow-mapping");
+const mapping = jest.requireMock<{ stuckItems: jest.Mock; problemNotices: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/workflow-mapping");
 const inventory = jest.requireMock<{ stuckItems: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/local-inventory");
 
 const NOW = new Date("2026-11-08T08:00:00Z");
@@ -34,6 +34,7 @@ beforeEach(() => {
     for (const name of LIBRARY_DB_VARS) process.env[name] = "postgres://test";
     for (const lib of [receipt, expense, gifts, mapping, inventory]) lib.stuckItems.mockResolvedValue([]);
     receipt.problemNotices.mockResolvedValue([]);
+    mapping.problemNotices.mockResolvedValue([]);
     prisma.boardSettings.findUnique = findSettings;
     prisma.integrationErrorLog.count = countEmailFailures;
     countEmailFailures.mockResolvedValue(0);
@@ -95,6 +96,16 @@ describe("getProblems", () => {
     it("carries a library's own lines, such as repeated reading failures", async () => {
         receipt.problemNotices.mockResolvedValue(["Receipt reading failed 3 times in the last day"]);
         expect((await getProblems()).notices).toEqual([{ text: "Receipt reading failed 3 times in the last day", href: null }]);
+    });
+
+    it("has no catalog line while no receipt waits in Matching pending for a catalog error", async () => {
+        expect((await getProblems()).notices).toEqual([]);
+    });
+
+    it("carries the catalog-error count with its link to the mapping queue", async () => {
+        const line = { text: "Receipts in Matching pending because the catalog was unavailable: 2", href: "/inventory/receiving?queue=mapping" };
+        mapping.problemNotices.mockResolvedValue([line]);
+        expect((await getProblems()).notices).toEqual([line]);
     });
 
     it("has no email line while no email failed to send in the last day", async () => {
@@ -194,7 +205,7 @@ describe("sendProblemsDigest", () => {
         await sendProblemsDigest(NOW);
 
         expect(jest.mocked(sendTemplated).mock.calls.map((c) => c[1])).toEqual(["alerts@example.org"]);
-        expect(digestCtx().items).toBe("Could not read gifts's stuck items.\nFailed email sends could not be counted.");
+        expect(digestCtx().items).toBe("Could not read the stuck items in gifts.\nFailed email sends could not be counted.");
     });
 
     it("copies the Board once anything has been stuck more than two weeks", async () => {

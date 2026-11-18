@@ -217,6 +217,7 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
     const keepId = keep.id;
     const mergeId = merge.id;
 
+    // The timeout also covers the waits in lockMergeRows.
     const { personMergeId, lockedKeeper } = await prisma.$transaction(async (tx) => {
         await lockMergeRows(tx, keepId, mergeId, [keep.householdId, merge.householdId]);
         const live = await recheckSubjects(tx, plan, actor);
@@ -242,7 +243,7 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
         await deleteMergedPerson(tx, mergeId);
         await auditMerge(tx, plan, live, actor, moved);
         return { personMergeId: archiveId, lockedKeeper: live.keep };
-    });
+    }, { maxWait: 5_000, timeout: 15_000 });
 
     // The keeper may now carry a newer check date or another person's review, and the
     // merged-away record has left its household: settle both on their people's checks.

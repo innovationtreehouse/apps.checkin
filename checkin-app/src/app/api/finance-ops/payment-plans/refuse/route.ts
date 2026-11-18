@@ -83,8 +83,6 @@ export const POST = withAuth(
             // Denial is deliberately silent — no automatic applicant email: the ack
             // at request time is the only automatic applicant email; the board
             // communicates decisions, including this one, manually.
-            // That means the scholarshipDenialGraceDays clock (§4), which runs only
-            // on a held seat, starts without any notice to the applicant.
 
             return NextResponse.json({ success: true });
         } catch (error) {
