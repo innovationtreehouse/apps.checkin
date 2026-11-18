@@ -875,13 +875,19 @@ async function readLeased(
     for (const files of finished.values()) counts.skipped += files;
     const ids = listed.filter((id) => !finished.has(id));
     const readClean: string[] = [];
+    /** Stores the messages from `from` on as unread and at risk, for the next run and the ageing alert. */
+    const leaveRestUnread = async (from: number) => {
+      const unread = ids.slice(from);
+      counts.unread = unread.length;
+      if (unread.length === 0) return;
+      // Oldest first, so the first unread message dates them all.
+      const receivedAt = await endReader.getMessage(unread[0]).then((m) => new Date(Number(m.internalDate)), () => null);
+      await db.receiptMailAtRisk.createMany({ data: unread.map((gmailMessageId) => ({ orgId, gmailMessageId, receivedAt })), skipDuplicates: true });
+    };
+    let timedOut = false;
     for (const [i, id] of ids.entries()) {
       if ((capped() && holdsSpent()) || outOfTime()) {
-        const unread = ids.slice(i);
-        counts.unread = unread.length;
-        // Oldest first, so the first unread message dates them all.
-        const receivedAt = await endReader.getMessage(id).then((m) => new Date(Number(m.internalDate)), () => null);
-        await db.receiptMailAtRisk.createMany({ data: unread.map((gmailMessageId) => ({ orgId, gmailMessageId, receivedAt })), skipDuplicates: true });
+        await leaveRestUnread(i);
         break;
       }
       counts.messages++;
@@ -897,9 +903,10 @@ async function readLeased(
         console.error("[receipt] mail intake failed for one message:", err);
         await leftUnread(id, msg && new Date(Number(msg.internalDate)));
         if (err instanceof DeadlineError) {
-          // An outside call is not answering; the rest are listed again next run.
-          counts.unread = ids.length - i - 1;
-          return false;
+          // An outside call is not answering, so the reading ends here.
+          timedOut = true;
+          await leaveRestUnread(i + 1);
+          break;
         }
         continue;
       }
@@ -908,7 +915,7 @@ async function readLeased(
     await db.receiptMailAtRisk.deleteMany({
       where: { orgId, OR: [{ gmailMessageId: { in: readClean } }, { alertedAt: { not: null }, gmailMessageId: { notIn: listed } }] },
     });
-    return true;
+    return !timedOut;
   }
 
   /**

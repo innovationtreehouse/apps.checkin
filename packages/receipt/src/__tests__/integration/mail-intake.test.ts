@@ -567,6 +567,21 @@ describeDb("mail intake call deadlines", () => {
     expect(await db.receipt.count()).toBe(0);
   });
 
+  it("after a hung fetch, clears the messages read clean and stores the rest as at risk", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    send("m1", { ageMs: 3 * 60_000 });
+    send("m2", { ageMs: 2 * 60_000 });
+    send("m3", { ageMs: 60_000 });
+    const { getMessage } = mail.reader;
+    mail.reader.getMessage = async (id) => (id === "m2" && !(await db.receiptMailAtRisk.findUnique({ where: { gmailMessageId: "m2" } })) ? hangPastReadingDeadline() : getMessage(id));
+
+    expect(await readMailbox()).toMatchObject({ status: "listing_failed", messages: 2, receipts: 1, failed: 1, unread: 1 });
+    const atRisk = await db.receiptMailAtRisk.findMany({ orderBy: { gmailMessageId: "asc" } });
+    expect(atRisk.map((r) => r.gmailMessageId)).toEqual(["m2", "m3"]);
+    expect(atRisk[1].receivedAt).not.toBeNull();
+  });
+
   it("counts a hung acknowledgement as failed, releases the lease, and sends it on the next run", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.spyOn(console, "error").mockImplementation(() => {});
