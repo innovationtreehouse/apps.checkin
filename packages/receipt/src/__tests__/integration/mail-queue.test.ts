@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { db } from "../../db";
-import { CANNOT_ASSIGN, mailQueueService } from "../../services/mailQueueService";
+import { ServiceError } from "@checkin/component-kit";
+import type { ReceiptPeople } from "../../contract";
+import { CANNOT_ASSIGN, CANNOT_REMEMBER, mailQueueService } from "../../services/mailQueueService";
 import { intakeMailedReceipt, receiptService } from "../../services/receiptService";
 import type { ReceiptLimits } from "../../lib/limits";
 import { describeDb } from "../helpers/db";
@@ -9,7 +11,7 @@ import { actAs, ALICE, BOB, clearAll, configure, FINANCE, okOcr, stateOf, TEST_O
 const PEOPLE: Record<string, typeof ALICE> = { "alice@example.org": ALICE, "bob@example.org": BOB, "finn@example.org": FINANCE };
 
 let seq = 0;
-async function holdItem(status = "held", senderAddress = "stranger@elsewhere.test", attachmentHash?: string): Promise<number> {
+async function holdItem(status = "held", senderAddress = "stranger@elsewhere.test", attachmentHash?: string, dmarcVerdict: string | null = null): Promise<number> {
   const n = ++seq;
   const item = await db.receiptMailItem.create({
     data: {
@@ -19,6 +21,7 @@ async function holdItem(status = "held", senderAddress = "stranger@elsewhere.tes
       receivedAt: new Date(),
       senderAddress,
       status,
+      dmarcVerdict,
       fileBlob: new Uint8Array(Buffer.from(`%PDF-1.4 held ${n} ${Date.now()}`)),
       mimeType: "application/pdf",
     },
@@ -98,6 +101,81 @@ describeDb("finance mail queue", () => {
     }
     await expect(mailQueueService.assign(id, {})).rejects.toMatchObject({ status: 400 });
     expect(await db.receipt.count()).toBe(0);
+  });
+
+  describe("assign and remember", () => {
+    const people = { submitterByEmail: async (address: string) => PEOPLE[address] ?? null };
+    const rememberWith = (rememberMailAlias: NonNullable<ReceiptPeople["rememberMailAlias"]>) => {
+      configure({ ocr: okOcr(), people: { ...people, rememberMailAlias } });
+      actAs(FINANCE);
+    };
+
+    it("runs the receipt insert inside the host's alias approval for a passing sender", async () => {
+      const id = await holdItem("held", "pat.work@elsewhere.test", undefined, "pass");
+      const calls: unknown[] = [];
+      rememberWith(async (input, assign) => {
+        calls.push(input);
+        expect(await db.receipt.count()).toBe(0);
+        return assign();
+      });
+      const out = await mailQueueService.assign(id, { email: "alice@example.org", remember: true });
+      expect(calls).toEqual([{ actorId: FINANCE.id, personId: ALICE.id, address: "pat.work@elsewhere.test", mailItemId: id }]);
+      expect(out).toMatchObject({ id, status: "assigned" });
+      expect(await db.receipt.count()).toBe(1);
+      expect(await db.receiptAuditLog.count({ where: { action: "mail_assigned", valueBefore: String(id) } })).toBe(1);
+    });
+
+    it.each([["fail"], ["none"], [null]])("refuses to remember a %s sender check and assigns nothing", async (verdict) => {
+      const id = await holdItem("held", "stranger@elsewhere.test", undefined, verdict);
+      let called = false;
+      rememberWith(async (_input, assign) => {
+        called = true;
+        return assign();
+      });
+      await expect(mailQueueService.assign(id, { email: "alice@example.org", remember: true })).rejects.toMatchObject({ status: 409, message: CANNOT_REMEMBER });
+      expect(called).toBe(false);
+      expect(await db.receipt.count()).toBe(0);
+      expect(await db.receiptMailItem.findUniqueOrThrow({ where: { id } })).toMatchObject({ status: "held" });
+    });
+
+    it("assigns nothing when the host refuses the alias", async () => {
+      const id = await holdItem("held", "pat.work@elsewhere.test", undefined, "pass");
+      rememberWith(async () => {
+        throw new ServiceError(409, "That address is already an alias.");
+      });
+      await expect(mailQueueService.assign(id, { email: "alice@example.org", remember: true })).rejects.toMatchObject({ status: 409 });
+      expect(await db.receipt.count()).toBe(0);
+      expect(await db.receiptMailItem.findUniqueOrThrow({ where: { id } })).toMatchObject({ status: "held" });
+    });
+
+    it("hands the host the insert's failure, so its alias rolls back", async () => {
+      const id = await holdItem("held", "pat.work@elsewhere.test", undefined, "pass");
+      let seen: unknown = null;
+      rememberWith(async (_input, assign) => {
+        // Another action handles the item first, so the receipt's claim fails inside the host's callback.
+        await db.receiptMailItem.update({ where: { id }, data: { status: "discarded" } });
+        try {
+          return await assign();
+        } catch (err) {
+          seen = err;
+          throw err;
+        }
+      });
+      await expect(mailQueueService.assign(id, { email: "alice@example.org", remember: true })).rejects.toMatchObject({ status: 409 });
+      expect(seen).toMatchObject({ status: 409 });
+      expect(await db.receipt.count()).toBe(0);
+    });
+
+    it("refuses remember when the host binds no alias port", async () => {
+      const id = await holdItem("held", "pat.work@elsewhere.test", undefined, "pass");
+      await expect(mailQueueService.assign(id, { email: "alice@example.org", remember: true })).rejects.toMatchObject({ status: 409 });
+      expect(await db.receipt.count()).toBe(0);
+    });
+
+    it("rejects remember alongside release", async () => {
+      const id = await holdItem("deferred", "alice@example.org", undefined, "pass");
+      await expect(mailQueueService.assign(id, { release: true, remember: true })).rejects.toMatchObject({ status: 400 });
+    });
   });
 
   it("discards only with a reason, clears the file and audits the reason", async () => {

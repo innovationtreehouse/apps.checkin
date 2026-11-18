@@ -1,5 +1,6 @@
 import { ServiceError, type StuckItem } from "@checkin/component-kit";
 import { db } from "./db";
+import { MATCHING_PENDING_REASON, type MatchingPendingReason } from "./db/schema";
 import { executePushAndSettle } from "./lib/apply-receipt";
 import { getOrgId, requireActor } from "./runtime";
 import { retryFailedOrgEvent } from "./services/orgEventConsumer";
@@ -24,6 +25,28 @@ export async function stuckItems(): Promise<StuckItem[]> {
     ...receipts.map((r) => ({ id: r.receiptId, step: APPLY, href: `/inventory/receiving/${r.receiptId}`, failedAt: r.applyFirstFailedAt ?? r.updatedAt })),
     ...events.map((e) => ({ id: String(e.id), step: CATALOG_EVENT, href: null, failedAt: e.failedAt })),
   ];
+}
+
+const MAPPING_QUEUE = "/inventory/receiving?queue=mapping";
+const CATALOG_REASONS: MatchingPendingReason[] = ["catalog_unavailable", "catalog_settings"];
+
+/** Receipts in Matching pending because of a catalog error, one line per reason, each linking to the mapping queue. */
+export async function problemNotices(): Promise<{ text: string; href: string }[]> {
+  const groups = await db.receivedReceipt.groupBy({
+    by: ["matchingPendingReason"],
+    where: { orgId: await getOrgId(), matchingPendingSince: { not: null } },
+    _count: { _all: true },
+  });
+  const counts = new Map<string, number>();
+  for (const g of groups) {
+    // The receipt page reads a pending receipt with no reason as a catalog outage.
+    const reason = g.matchingPendingReason ?? "catalog_unavailable";
+    counts.set(reason, (counts.get(reason) ?? 0) + g._count._all);
+  }
+  return CATALOG_REASONS.filter((r) => counts.get(r)).map((r) => ({
+    text: `Receipts in Matching pending because ${MATCHING_PENDING_REASON[r]}: ${counts.get(r)}`,
+    href: MAPPING_QUEUE,
+  }));
 }
 
 /**

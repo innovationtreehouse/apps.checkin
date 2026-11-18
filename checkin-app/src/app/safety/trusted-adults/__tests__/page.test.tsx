@@ -2,7 +2,7 @@
 jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories run hoisted, before imports exist
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
 
 import { screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { notifications } from "@mantine/notifications";
@@ -30,7 +30,7 @@ const trustedAdults = [
     createdAt: "2026-01-01T00:00:00.000Z",
     household: { id: 5, name: "Guardian House", householdMembers: [] },
     trustedAdultPerson: null,
-    reviews: [{ id: 9, kind: "SELF_DISCLOSED", status: "PENDING_BOARD_REVIEW", decision: null, decisionNote: null, sharedNote: null, effectiveFrom: null, reviewBy: null, createdAt: "2026-01-01T00:00:00.000Z" }],
+    reviews: [{ id: 9, kind: "SELF_DISCLOSED", status: "PENDING_BOARD_REVIEW", decision: null, decisionNote: null, sharedNote: null, effectiveFrom: null, reviewBy: null, proposedName: null as string | null, proposedPhone: null, proposedEmail: null, proposedContext: null, familyReply: null as string | null, createdAt: "2026-01-01T00:00:00.000Z" }],
   },
 ];
 
@@ -126,11 +126,14 @@ describe("safety/trusted-adults page", () => {
     );
   }, 10000); // heavy: full page + modal opened twice + two decision round-trips
 
-  it("leaves an empty queue when the initial load fails", async () => {
+  it("shows the load failure with a retry, not an empty queue, when the load fails", async () => {
     setSession({ id: 1, isBoardMember: true, householdId: 1 });
-    global.fetch = jest.fn(async () => ({ ok: false, status: 500, json: async () => ({}) })) as unknown as typeof fetch;
+    mockFetchJson({});
     renderWithProviders(<AdminTrustedAdultsPage />);
-    expect(await screen.findByText("Nothing in the queue.")).toBeInTheDocument();
+
+    expect(await screen.findByText("Couldn't load the trusted-adult queue")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Retry/i })).toBeInTheDocument();
+    expect(screen.queryByText("Nothing in the queue.")).not.toBeInTheDocument();
   });
 
   it("badges the last real decision on a resubmit, seeing past an interim withdrawal", async () => {
@@ -154,58 +157,96 @@ describe("safety/trusted-adults page", () => {
     expect(screen.queryByText("Renewal")).not.toBeInTheDocument();
   });
 
-  it("shows no prior-decision badge on a plain withdraw-and-resubmit, but 'Renewal' after an approval", async () => {
+  const renderQueue = async (reviews: unknown[]) => {
     setSession({ id: 1, isBoardMember: true, householdId: 1 });
-    const cases = [
-      // Withdrawn while never decided (decision=null) → nothing.
-      [
-        { id: 42, kind: "RENEWAL", status: "PENDING_BOARD_REVIEW", decision: null, decisionNote: null, sharedNote: null, effectiveFrom: null, reviewBy: null, createdAt: "2026-03-01T00:00:00.000Z" },
-        { id: 41, kind: "INITIAL", status: "REVOKED", decision: null, decisionNote: null, sharedNote: null, effectiveFrom: null, reviewBy: null, createdAt: "2026-02-01T00:00:00.000Z" },
-      ],
-    ];
-    mockFetchJson({ "/api/safety/trusted-adults": { trustedAdults: [{ ...trustedAdults[0], reviews: cases[0] }] } });
-    const { unmount } = renderWithProviders(<AdminTrustedAdultsPage />);
-    await screen.findByText("Guardian House");
-    expect(screen.queryByText("Previously denied")).not.toBeInTheDocument();
-    expect(screen.queryByText("Renewal")).not.toBeInTheDocument();
-    unmount();
-
-    // Approved → expired 2026-01-01 → renewed 2026-03-01: "Renewal" + 59-day lapse.
-    const renewed = [
-      { id: 52, kind: "RENEWAL", status: "PENDING_BOARD_REVIEW", decision: null, decisionNote: null, sharedNote: null, effectiveFrom: null, reviewBy: null, createdAt: "2026-03-01T00:00:00.000Z" },
-      { id: 51, kind: "INITIAL", status: "EXPIRED", decision: "APPROVE", decisionNote: null, sharedNote: "Grandma picks up.", effectiveFrom: "2025-01-01T00:00:00.000Z", reviewBy: "2026-01-01T00:00:00.000Z", createdAt: "2025-01-01T00:00:00.000Z" },
-    ];
-    mockFetchJson({ "/api/safety/trusted-adults": { trustedAdults: [{ ...trustedAdults[0], reviews: renewed }] } });
-    const { unmount: unmount2 } = renderWithProviders(<AdminTrustedAdultsPage />);
-    await screen.findByText("Guardian House");
-    expect(screen.getByText("Renewal")).toBeInTheDocument();
-    expect(screen.getByText(/expired 2026-01-01 · lapsed 59 days/)).toBeInTheDocument();
-    unmount2();
-
-    // Resubmitted 2025-06-01 while still approved (reviewBy 2026-01-01, future): no lapse line.
-    const early = [
-      { id: 62, kind: "RENEWAL", status: "PENDING_BOARD_REVIEW", decision: null, decisionNote: null, sharedNote: null, effectiveFrom: null, reviewBy: null, createdAt: "2025-06-01T00:00:00.000Z" },
-      { id: 61, kind: "INITIAL", status: "APPROVED", decision: "APPROVE", decisionNote: null, sharedNote: "Grandma picks up.", effectiveFrom: "2025-01-01T00:00:00.000Z", reviewBy: "2026-01-01T00:00:00.000Z", createdAt: "2025-01-01T00:00:00.000Z" },
-    ];
-    mockFetchJson({ "/api/safety/trusted-adults": { trustedAdults: [{ ...trustedAdults[0], reviews: early }] } });
+    mockFetchJson({ "/api/safety/trusted-adults": { trustedAdults: [{ ...trustedAdults[0], reviews }] } });
     renderWithProviders(<AdminTrustedAdultsPage />);
     await screen.findByText("Guardian House");
+  };
+
+  it("shows no prior-decision badge on a plain withdraw-and-resubmit", async () => {
+    await renderQueue([
+      { id: 42, kind: "RENEWAL", status: "PENDING_BOARD_REVIEW", decision: null, decisionNote: null, sharedNote: null, effectiveFrom: null, reviewBy: null, createdAt: "2026-03-01T00:00:00.000Z" },
+      { id: 41, kind: "INITIAL", status: "REVOKED", decision: null, decisionNote: null, sharedNote: null, effectiveFrom: null, reviewBy: null, createdAt: "2026-02-01T00:00:00.000Z" },
+    ]);
+    expect(screen.queryByText("Previously denied")).not.toBeInTheDocument();
+    expect(screen.queryByText("Renewal")).not.toBeInTheDocument();
+  });
+
+  it("badges a renewal after a lapsed approval with the lapse", async () => {
+    await renderQueue([
+      { id: 52, kind: "RENEWAL", status: "PENDING_BOARD_REVIEW", decision: null, decisionNote: null, sharedNote: null, effectiveFrom: null, reviewBy: null, createdAt: "2026-03-01T00:00:00.000Z" },
+      { id: 51, kind: "INITIAL", status: "EXPIRED", decision: "APPROVE", decisionNote: null, sharedNote: "Grandma picks up.", effectiveFrom: "2025-01-01T00:00:00.000Z", reviewBy: "2026-01-01T00:00:00.000Z", createdAt: "2025-01-01T00:00:00.000Z" },
+    ]);
+    expect(screen.getByText("Renewal")).toBeInTheDocument();
+    expect(screen.getByText(/expired 2026-01-01 · lapsed 59 days/)).toBeInTheDocument();
+  });
+
+  it("badges a renewal sent while still approved with no lapse line", async () => {
+    await renderQueue([
+      { id: 62, kind: "RENEWAL", status: "PENDING_BOARD_REVIEW", decision: null, decisionNote: null, sharedNote: null, effectiveFrom: null, reviewBy: null, createdAt: "2025-06-01T00:00:00.000Z" },
+      { id: 61, kind: "INITIAL", status: "APPROVED", decision: "APPROVE", decisionNote: null, sharedNote: "Grandma picks up.", effectiveFrom: "2025-01-01T00:00:00.000Z", reviewBy: "2026-01-01T00:00:00.000Z", createdAt: "2025-01-01T00:00:00.000Z" },
+    ]);
     expect(screen.getByText("Renewal")).toBeInTheDocument();
     expect(screen.queryByText(/lapsed/)).not.toBeInTheDocument();
-  }, 10000); // heavy: renders the full page three times (mount/unmount ×3)
+  });
 
-  it("shows the fallback failure message on a decision error, and dismisses the alert", async () => {
+  it("shows a refused decision in the lower right, titled with the household", async () => {
     setSession({ id: 1, isBoardMember: true, householdId: 1 });
     mockFetchJson({ "/api/safety/trusted-adults": { trustedAdults } });
-    const { container } = renderWithProviders(<AdminTrustedAdultsPage />);
+    renderWithProviders(<AdminTrustedAdultsPage />);
     await screen.findByText("Guardian House");
 
-    global.fetch = jest.fn(async () => ({ ok: false, status: 400, json: async () => ({}) })) as unknown as typeof fetch;
+    global.fetch = jest.fn(async () =>
+      new Response(JSON.stringify({ error: "Not allowed." }), { status: 403 }),
+    ) as unknown as typeof fetch;
     fireEvent.click(screen.getByRole("button", { name: "Deny" }));
-    expect(await screen.findByText("Decision failed.")).toBeInTheDocument();
 
-    fireEvent.click(container.querySelector(".mantine-CloseButton-root")!);
-    expect(screen.queryByText("Decision failed.")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "trusted-adult-review-9", color: "red", title: "Guardian House", message: "Not allowed.", autoClose: false }),
+      ),
+    );
+    expect(await enabledButton("Deny")).toBeInTheDocument();
+  });
+
+  it("shows fixed text when a decision never answers, instead of nothing", async () => {
+    setSession({ id: 1, isBoardMember: true, householdId: 1 });
+    mockFetchJson({ "/api/safety/trusted-adults": { trustedAdults } });
+    renderWithProviders(<AdminTrustedAdultsPage />);
+    await screen.findByText("Guardian House");
+
+    global.fetch = jest.fn(async () => { throw new TypeError("fetch failed: ECONNRESET"); }) as unknown as typeof fetch;
+    fireEvent.click(screen.getByRole("button", { name: "Deny" }));
+
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ color: "red", message: "Couldn't reach the server. Check your connection and try again.", autoClose: false }),
+      ),
+    );
+    expect(await enabledButton("Deny")).toBeInTheDocument();
+  });
+
+  it("re-reads the queue when a decision finds the review has moved on", async () => {
+    setSession({ id: 1, isBoardMember: true, householdId: 1 });
+    const list = mockFetchJson({ "/api/safety/trusted-adults": { trustedAdults } });
+    renderWithProviders(<AdminTrustedAdultsPage />);
+    await screen.findByText("Guardian House");
+
+    const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+      init?.method === "POST"
+        ? new Response(JSON.stringify({ error: "This review has already been settled — reload the page." }), { status: 409 })
+        : list(input, init),
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+    fireEvent.click(screen.getByRole("button", { name: "Deny" }));
+
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ color: "red", message: "This review has already been settled — reload the page." }),
+      ),
+    );
+    await waitFor(() => expect(fetchMock.mock.calls.filter((c) => !c[1]?.method)).toHaveLength(1));
   });
 
   it("renders a shared note, lead names, review-by date, and disables actions on a conflict of interest", async () => {
@@ -229,7 +270,45 @@ describe("safety/trusted-adults page", () => {
     expect(screen.getByRole("button", { name: "Request info" })).toBeDisabled();
   });
 
-  it("on a declined change over a live approval, offers Revoke approval and no Force deny", async () => {
+  it("disables actions when another family's trusted adult shares an email with the viewer's household", async () => {
+    const spouseOfViewer = [{ ...trustedAdults[0], trustedAdultEmail: "spouse@example.com" }];
+    setSession({ id: 1, isBoardMember: true, householdId: 1 });
+    mockFetchJson({
+      "/api/safety/trusted-adults": { trustedAdults: spouseOfViewer },
+      "/api/household": { household: { householdMembers: [{ email: "Spouse@Example.com", phone: null }] } },
+    });
+    renderWithProviders(<AdminTrustedAdultsPage />);
+    await screen.findByText("Guardian House");
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled());
+    expect(screen.getByRole("button", { name: "Deny" })).toBeDisabled();
+    expect(screen.queryByText(/Can't confirm no conflict/)).not.toBeInTheDocument();
+  });
+
+  it("warns, without blocking, when only a name identifies the trusted adult", async () => {
+    setSession({ id: 1, isBoardMember: true, householdId: 1 });
+    mockFetchJson({
+      "/api/safety/trusted-adults": { trustedAdults },
+      "/api/household": { household: { householdMembers: [{ email: "me@example.com", phone: null }] } },
+    });
+    renderWithProviders(<AdminTrustedAdultsPage />);
+    await screen.findByText("Guardian House");
+
+    expect(screen.getByText(/Can't confirm no conflict/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Deny" })).toBeEnabled();
+  });
+
+  it("warns on every card when the viewer's household fails to load", async () => {
+    const withEmail = [{ ...trustedAdults[0], trustedAdultEmail: "friend@example.com" }];
+    setSession({ id: 1, isBoardMember: true, householdId: 1 });
+    mockFetchJson({ "/api/safety/trusted-adults": { trustedAdults: withEmail } });
+    renderWithProviders(<AdminTrustedAdultsPage />);
+    await screen.findByText("Guardian House");
+
+    expect(await screen.findByText(/your household didn't load/)).toBeInTheDocument();
+  });
+
+  it("on a declined change over a live approval, offers Reset and Revoke approval", async () => {
     const declined = [
       {
         ...trustedAdults[0],
@@ -244,20 +323,20 @@ describe("safety/trusted-adults page", () => {
     renderWithProviders(<AdminTrustedAdultsPage />);
     await screen.findByText("Guardian House");
 
+    expect(screen.getByRole("button", { name: "Reset" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Revoke approval" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Force deny" })).not.toBeInTheDocument();
   });
 
-  it("shows override actions for a decided-but-not-revoked review, and force-approves only with a note", async () => {
+  it("shows Reset and Revoke for an approval in force, and resets only with a reason", async () => {
     const decided = [
       {
         ...trustedAdults[0],
-        reviews: [{ ...trustedAdults[0].reviews[0], status: "APPROVED" }],
+        reviews: [{ ...trustedAdults[0].reviews[0], status: "APPROVED", reviewBy: new Date(Date.now() + 86400000).toISOString() }],
       },
     ];
     setSession({ id: 1, isBoardMember: true, householdId: 1 });
     const fetchMock = mockFetchJson({
-      "/api/safety/trusted-adults/override": { status: "APPROVED" },
+      "/api/safety/trusted-adults/override": { status: "PENDING_BOARD_REVIEW" },
       "/api/safety/trusted-adults": { trustedAdults: decided },
     });
     renderWithProviders(<AdminTrustedAdultsPage />);
@@ -265,30 +344,24 @@ describe("safety/trusted-adults page", () => {
 
     expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
     expect(screen.getByText("Override:")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Force approve" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Force deny" })).not.toBeInTheDocument();
 
-    // Empty note: Submit stays disabled, so force-approve can't fire.
-    fireEvent.click(screen.getByRole("button", { name: "Force approve" }));
-    const forceDialog = await screen.findByRole("dialog");
-    expect(within(forceDialog).getByRole("button", { name: "Submit" })).toBeDisabled();
+    // Empty reason: Submit stays disabled, so reset can't fire.
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    const resetDialog = await screen.findByRole("dialog");
+    expect(within(resetDialog).getByRole("button", { name: "Submit" })).toBeDisabled();
     expect(fetchMock).not.toHaveBeenCalledWith("/api/safety/trusted-adults/override", expect.anything());
 
-    fireEvent.change(within(forceDialog).getByRole("textbox"), { target: { value: "Confirmed with family." } });
-    fireEvent.click(within(forceDialog).getByRole("button", { name: "Submit" }));
+    fireEvent.change(within(resetDialog).getByRole("textbox"), { target: { value: "Approved too soon." } });
+    fireEvent.click(within(resetDialog).getByRole("button", { name: "Submit" }));
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         "/api/safety/trusted-adults/override",
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ reviewId: 9, action: "approve", sharedNote: "Confirmed with family." }),
+          body: JSON.stringify({ reviewId: 9, action: "reset", reason: "Approved too soon." }),
         }),
-      ),
-    );
-
-    fireEvent.click(await enabledButton("Force deny"));
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/safety/trusted-adults/override",
-        expect.objectContaining({ body: JSON.stringify({ reviewId: 9, action: "deny" }) }),
       ),
     );
 
@@ -299,7 +372,7 @@ describe("safety/trusted-adults page", () => {
         expect.objectContaining({ body: JSON.stringify({ reviewId: 9, action: "revoke" }) }),
       ),
     );
-  }, 10000); // heaviest test in file: full page + modal + 3 sequential override round-trips; guards the full-suite serial flake
+  }, 10000); // heaviest test in file: full page + modal + 2 sequential override round-trips; guards the full-suite serial flake
 
   it("hides override actions for a revoked review, and shows an override failure message", async () => {
     const revoked = [{ ...trustedAdults[0], reviews: [{ ...trustedAdults[0].reviews[0], status: "REVOKED" }] }];
@@ -312,6 +385,48 @@ describe("safety/trusted-adults page", () => {
     expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
   });
 
+  it.each([
+    ["an expired review", "EXPIRED", "RENEWAL", null],
+    ["an approval past its review date", "APPROVED", "RENEWAL", new Date(Date.now() - 86400000).toISOString()],
+    ["an approved change", "APPROVED", "MODIFIED", new Date(Date.now() + 86400000).toISOString()],
+  ])("hides Reset on %s, keeping Revoke", async (_label, status, kind, reviewBy) => {
+    const proposedName = kind === "MODIFIED" ? "Gary G." : null;
+    const shown = [{ ...trustedAdults[0], reviews: [{ ...trustedAdults[0].reviews[0], status, kind, reviewBy, proposedName }] }];
+    setSession({ id: 1, isBoardMember: true, householdId: 1 });
+    mockFetchJson({ "/api/safety/trusted-adults": { trustedAdults: shown } });
+    renderWithProviders(<AdminTrustedAdultsPage />);
+    await screen.findByText("Guardian House");
+
+    expect(screen.getByText("Override:")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reset" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Revoke" })).toBeInTheDocument();
+  });
+
+  it("shows the family's reply and the details they changed when answering the board", async () => {
+    const answered = [{
+      ...trustedAdults[0],
+      reviews: [{ ...trustedAdults[0].reviews[0], kind: "INITIAL", proposedName: "Gary G. Guardian", familyReply: "Weekdays only, 3 to 6." }],
+    }];
+    setSession({ id: 1, isBoardMember: true, householdId: 1 });
+    mockFetchJson({ "/api/safety/trusted-adults": { trustedAdults: answered } });
+    renderWithProviders(<AdminTrustedAdultsPage />);
+    await screen.findByText("Guardian House");
+
+    expect(screen.getByText("Weekdays only, 3 to 6.")).toBeInTheDocument();
+    expect(screen.getByText("Proposed changes — not in effect until you approve")).toBeInTheDocument();
+    expect(screen.getByText("Name: Gary G. Guardian")).toBeInTheDocument();
+  });
+
+  it("offers Reset on a denied review", async () => {
+    const denied = [{ ...trustedAdults[0], reviews: [{ ...trustedAdults[0].reviews[0], status: "DENIED" }] }];
+    setSession({ id: 1, isBoardMember: true, householdId: 1 });
+    mockFetchJson({ "/api/safety/trusted-adults": { trustedAdults: denied } });
+    renderWithProviders(<AdminTrustedAdultsPage />);
+    await screen.findByText("Guardian House");
+
+    expect(screen.getByRole("button", { name: "Reset" })).toBeInTheDocument();
+  });
+
   it("shows an override failure message", async () => {
     const decided = [{ ...trustedAdults[0], reviews: [{ ...trustedAdults[0].reviews[0], status: "APPROVED" }] }];
     setSession({ id: 1, isBoardMember: true, householdId: 1 });
@@ -319,8 +434,14 @@ describe("safety/trusted-adults page", () => {
     renderWithProviders(<AdminTrustedAdultsPage />);
     await screen.findByText("Guardian House");
 
-    global.fetch = jest.fn(async () => ({ ok: false, status: 400, json: async () => ({ error: "Cannot revoke." }) })) as unknown as typeof fetch;
+    global.fetch = jest.fn(async () =>
+      new Response(JSON.stringify({ error: "Cannot revoke." }), { status: 400 }),
+    ) as unknown as typeof fetch;
     fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
-    expect(await screen.findByText("Cannot revoke.")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ color: "red", title: "Guardian House", message: "Cannot revoke.", autoClose: false }),
+      ),
+    );
   });
 });

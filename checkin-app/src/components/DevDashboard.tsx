@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { useSession, signIn, signOut } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import { useDebouncedValue } from "@mantine/hooks";
+import { errorMessage, LoadError } from "@checkin/component-ui";
 import { useIsDevInstance } from "@/components/EnvProvider";
 import {
     macroFamily,
@@ -13,6 +15,7 @@ import {
     getRecentActivity,
     type ActionResult,
 } from "@/lib/dev/actions";
+import { useLoad } from "@/lib/api";
 import { relTime } from "@/lib/time";
 
 /**
@@ -63,8 +66,9 @@ export default function DevDashboard() {
     const [confirmingReset, setConfirmingReset] = useState(false);
     const [toast, setToast] = useState<string | null>(null);
     const [activity, setActivity] = useState<Entry[]>([]);
-    const [personas, setPersonas] = useState<PersonaOption[]>([]);
+    const [activityError, setActivityError] = useState<string | null>(null);
     const [query, setQuery] = useState("");
+    const [debouncedQuery] = useDebouncedValue(query.trim(), 200);
     const [switching, setSwitching] = useState(false);
     const [pending, startTransition] = useTransition();
 
@@ -72,8 +76,8 @@ export default function DevDashboard() {
 
     const loadActivity = useCallback(() => {
         getRecentActivity(5)
-            .then(setActivity)
-            .catch(() => {});
+            .then((entries) => { setActivity(entries); setActivityError(null); })
+            .catch((e: unknown) => setActivityError(errorMessage(e)));
     }, []);
 
     useEffect(() => {
@@ -82,20 +86,13 @@ export default function DevDashboard() {
     }, [isDevInstance, signedIn, open, loadActivity]);
 
     // Search the seeded @example.com personas (debounced). The server applies the suffix filter +
-    // cap and narrows by `q`; we just re-fetch as the query changes. Personas render by name, so
-    // searching by email is the reliable way to reach one (e.g. "bg.reviewer" → "BG Reviewer").
-    useEffect(() => {
-        if (!isDevInstance || !signedIn || !open) return;
-        const handle = setTimeout(() => {
-            const q = query.trim();
-            const url = q ? `/api/auth/dev-personas?q=${encodeURIComponent(q)}` : "/api/auth/dev-personas";
-            fetch(url, { cache: "no-store" })
-                .then((res) => (res.ok ? res.json() : { personas: [] }))
-                .then((data) => setPersonas(data.personas || []))
-                .catch(() => setPersonas([]));
-        }, 200);
-        return () => clearTimeout(handle);
-    }, [isDevInstance, signedIn, open, query]);
+    // cap and narrows by `q`. Personas render by name, so searching by email is the reliable way
+    // to reach one (e.g. "bg.reviewer" → "BG Reviewer"). Mounted on every page, so a 401 must not sign anyone out.
+    const personasPath = isDevInstance && signedIn && open
+        ? (debouncedQuery ? `/api/auth/dev-personas?q=${encodeURIComponent(debouncedQuery)}` : "/api/auth/dev-personas")
+        : null;
+    const personasLoad = useLoad<{ personas?: PersonaOption[] }>(personasPath, { keepPrevious: true, expireOn401: false });
+    const personas = personasLoad.data?.personas ?? [];
 
     if (!isDevInstance || !signedIn) return null;
 
@@ -238,8 +235,9 @@ export default function DevDashboard() {
                     transition: "max-height 0.25s ease",
                     borderRadius: "12px 12px 0 0",
                     background: "rgba(17, 24, 39, 0.97)",
-                    border: open ? "1px solid rgba(255,255,255,0.12)" : "none",
-                    borderBottom: "none",
+                    borderTop: open ? panelEdge : "none",
+                    borderLeft: open ? panelEdge : "none",
+                    borderRight: open ? panelEdge : "none",
                     color: "white",
                     boxShadow: open ? "0 -8px 32px rgba(0,0,0,0.4)" : "none",
                 }}
@@ -292,7 +290,10 @@ export default function DevDashboard() {
                             }}
                         />
                         <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem", maxHeight: "15rem", overflowY: "auto" }}>
-                            {personas.length === 0 && (
+                            {personasLoad.error && (
+                                <LoadError what="the test personas" message={personasLoad.error} onRetry={personasLoad.reload} />
+                            )}
+                            {personasLoad.data && personas.length === 0 && (
                                 <span style={{ fontSize: "0.78rem", color: "#9ca3af" }}>
                                     {query.trim()
                                         ? `No personas match “${query.trim()}”.`
@@ -346,7 +347,9 @@ export default function DevDashboard() {
                         </div>
 
                         <div style={{ fontSize: "0.72rem", color: "#9ca3af", marginBottom: "0.75rem", minHeight: "1rem" }}>
-                            {lastActivity
+                            {activityError ? (
+                                <LoadError what="the recent activity" message={activityError} onRetry={loadActivity} />
+                            ) : lastActivity
                                 ? `Last activity: ${describe(lastActivity)} ${relTime(lastActivity.createdAt)}`
                                 : "No recorded activity yet"}
                         </div>
@@ -354,7 +357,9 @@ export default function DevDashboard() {
                         {confirmingReset ? (
                             <div style={{ background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.4)", borderRadius: 8, padding: "0.6rem" }}>
                                 <div style={{ fontSize: "0.78rem", marginBottom: "0.5rem" }}>
-                                    {lastActivity
+                                    {activityError
+                                        ? "Recent activity couldn't be checked, so someone may be using this instance. Reset anyway?"
+                                        : lastActivity
                                         ? `${describe(lastActivity)} ${relTime(lastActivity.createdAt)}. Reset anyway?`
                                         : "Truncate all data and reseed the baseline?"}
                                 </div>
@@ -378,6 +383,8 @@ export default function DevDashboard() {
         </div>
     );
 }
+
+const panelEdge = "1px solid rgba(255,255,255,0.12)";
 
 const sectionTitle: React.CSSProperties = {
     fontSize: "0.7rem",

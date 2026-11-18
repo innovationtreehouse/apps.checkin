@@ -1,4 +1,4 @@
-// The in-kind accept step (docs/rules/revenue.md, Donations): every gift, with or without a receipt, is accepted,
+// The in-kind accept step: every gift, with or without a receipt, is accepted,
 // refused or returned by a finance holder who is outside the uploader's or recorder's household,
 // or by a Board member when every finance holder is conflicted. The screen's warnings never block.
 import { z } from "zod";
@@ -272,12 +272,14 @@ async function readBookings(handle: DbOrTx, orgId: string, where: { source?: InK
 interface Posting {
   matchState: string;
   qbNote: string | null;
+  qbFirstFailedAt: Date | null;
+  qbLastError: string | null;
 }
 
-/** Each gift's way to QuickBooks: its match state and finance's note. */
+/** Each gift's way to QuickBooks: its match state, finance's note, and when its post first failed and why it last failed. */
 async function readPostings(handle: DbOrTx, orgId: string, where: { source?: InKindSource; giftId?: number } = {}): Promise<Map<string, Posting>> {
-  const rows = await handle.inKindPosting.findMany({ where: { orgId, ...where }, select: { source: true, giftId: true, matchState: true, qbNote: true } });
-  return new Map(rows.map((r) => [bookingKey(r.source, r.giftId), { matchState: r.matchState, qbNote: r.qbNote }]));
+  const rows = await handle.inKindPosting.findMany({ where: { orgId, ...where }, select: { source: true, giftId: true, matchState: true, qbNote: true, qbFirstFailedAt: true, qbLastError: true } });
+  return new Map(rows.map(({ source, giftId, ...posting }) => [bookingKey(source, giftId), posting]));
 }
 
 const sideState = (sides: { side: string; matchState: string }[], side: "revenue" | "expense" | "journal") => sides.find((s) => s.side === side)?.matchState ?? null;
@@ -295,9 +297,27 @@ function waitingOn(g: Gift, buckets: Map<number, Bucket>, sides: { side: string;
   if (!g.decisionOutcome) out.push("decision");
   else if (g.budgetOwnerId === null || buckets.get(g.budgetOwnerId)?.held !== false) out.push("bucket");
   if (g.decisionOutcome === "ACCEPTED" && (g.capitalSubmittedAt === null || inCapitalReview.has(bookingKey(g.source, g.id)))) out.push("capital");
-  const booked = (["revenue", "expense"] as const).every((side) => BOOKED_STATES.includes(bookedSide(sides, side) ?? ""));
-  if (!booked && posting?.matchState !== QB_MATCH_STATE.DISMISSED) out.push("booking");
+  if (!isBooked(sides, posting)) out.push("booking");
   return out;
+}
+
+/** Both sides are in QuickBooks, or finance skipped the gift. */
+const isBooked = (sides: { side: string; matchState: string }[], posting: Posting | undefined) =>
+  (["revenue", "expense"] as const).every((side) => BOOKED_STATES.includes(bookedSide(sides, side) ?? "")) || posting?.matchState === QB_MATCH_STATE.DISMISSED;
+
+/** How many gifts of goods in bucket `bucketId` are not yet booked, refused or returned. */
+export async function unbookedGiftsIn(bucketId: number): Promise<number> {
+  const orgId = await getOrgId();
+  const where = { orgId, budgetOwnerId: bucketId, OR: [{ decisionOutcome: null }, { decisionOutcome: { notIn: ["REFUSED", "RETURNED"] } }] };
+  const select = { id: true } as const;
+  const [receipts, manuals, bookings, postings] = await Promise.all([
+    db.inKindDonation.findMany({ where, select }),
+    db.manualInKindDonation.findMany({ where, select }),
+    readBookings(db, orgId),
+    readPostings(db, orgId),
+  ]);
+  const keys = [...receipts.map((g) => bookingKey("receipt", g.id)), ...manuals.map((g) => bookingKey("manual", g.id))];
+  return keys.filter((key) => !isBooked(bookings.get(key) ?? [], postings.get(key))).length;
 }
 
 /**
@@ -651,7 +671,8 @@ async function getGift(orgId: string, source: InKindSource, id: number) {
     getInKindCapital().awaitingReview(orgId),
   ]);
   const sides = bookings.get(bookingKey(source, id)) ?? [];
-  const waits = waitingOn(gift, buckets, sides, new Set(awaiting.map((w) => bookingKey(w.giftSource, w.giftId))), postings.get(bookingKey(source, id)));
+  const posting = postings.get(bookingKey(source, id));
+  const waits = waitingOn(gift, buckets, sides, new Set(awaiting.map((w) => bookingKey(w.giftSource, w.giftId))), posting);
   const bucket = gift.budgetOwnerId === null ? undefined : buckets.get(gift.budgetOwnerId);
   return {
     id,
@@ -680,6 +701,8 @@ async function getGift(orgId: string, source: InKindSource, id: number) {
     waitingOn: waits,
     revenueBooking: bookedSide(sides, "revenue"),
     expenseBooking: bookedSide(sides, "expense"),
+    qbFirstFailedAt: posting?.qbFirstFailedAt ?? null,
+    qbLastError: posting?.qbLastError ?? null,
     inventorySourceKey: source === "manual" ? inventorySourceKey(id) : null,
     inventoryLoadedAt: extras.inventoryLoadedAt,
     inventoryLoadFailureReason: extras.inventoryLoadFailureReason,

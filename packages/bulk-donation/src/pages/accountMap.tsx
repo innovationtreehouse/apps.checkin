@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { Button, Group, Modal, Select, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { act, api, paged, useCanWrite, useLoad } from "../components/api";
-import { LoadError, Pager, useUrlPage } from "@checkin/component-ui";
+import { InactivePickWarning, LoadError, Pager, QuickBooksListsRefresh, useUrlPage } from "@checkin/component-ui";
 import { LINE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
 
 interface RuleRow {
@@ -37,11 +37,17 @@ const ACCOUNT_FIELDS: Array<["donationAccountId" | "matchAccountId", string]> = 
   ["matchAccountId", "Match account"],
 ];
 
-/** Picker choices: active accounts of a type a gift books to, plus the saved one even when inactive, mistyped or gone from QuickBooks. */
+/** Picker choices: active accounts of a type a gift books to, plus the saved one when active but mistyped; a saved inactive one shows as a warning. */
 function choices(options: AccountOption[] | null, saved: string | null) {
-  const list = (options ?? []).filter((o) => (o.active && GIFT_TYPES.includes(o.accountType)) || o.id === saved).map((o) => ({ value: o.id, label: o.active ? o.name : `${o.name} (inactive)` }));
-  if (saved && !list.some((o) => o.value === saved)) list.push({ value: saved, label: `QuickBooks id ${saved}` });
-  return list;
+  return (options ?? []).filter((o) => o.active && (GIFT_TYPES.includes(o.accountType) || o.id === saved)).map((o) => ({ value: o.id, label: o.name }));
+}
+
+/** A rule's account as the table shows it: its QuickBooks name, marked when inactive. */
+function accountLabel(options: AccountOption[] | null, id: string | null) {
+  if (!id) return "Not set";
+  const account = options?.find((o) => o.id === id);
+  if (!account) return id;
+  return account.active ? account.name : `${account.name} (inactive)`;
 }
 
 /** What finance typed as account names before rules named QuickBooks accounts. */
@@ -59,7 +65,6 @@ export default function AccountMapPage() {
   const rules = useLoad<RuleRow[]>(paged("/account-map", page), { keepPrevious: true });
   const accounts = useLoad<AccountOption[]>("/api/books-map/quickbooks-accounts");
   const [editing, setEditing] = useState<{ id: number | null; form: Form } | null>(null);
-  const accountName = (id: string | null) => (id ? (choices(accounts.data, id).find((o) => o.value === id)?.label ?? id) : "Not set");
 
   async function save() {
     if (!editing) return;
@@ -97,7 +102,7 @@ export default function AccountMapPage() {
           {(rules.data ?? []).map((r) => (
             <Table.Tr key={r.id}>
               {MATCH_FIELDS.map(([k]) => <Table.Td key={k}>{r[k] ?? "—"}</Table.Td>)}
-              {ACCOUNT_FIELDS.map(([k]) => <Table.Td key={k}>{accountName(r[k])}</Table.Td>)}
+              {ACCOUNT_FIELDS.map(([k]) => <Table.Td key={k}>{accountLabel(accounts.data, r[k])}</Table.Td>)}
               <Table.Td>{earlierNames(r)}</Table.Td>
               <Table.Td>
                 {canWrite && (
@@ -130,10 +135,14 @@ export default function AccountMapPage() {
                 onChange={(e) => setEditing({ ...editing, form: { ...editing.form, [k]: e.currentTarget.value } })} />
             ))}
             {ACCOUNT_FIELDS.map(([k, label]) => (
-              <Select key={k} label={label} placeholder="Not set" searchable clearable
-                data={choices(accounts.data, editing.form[k])} value={editing.form[k]}
-                onChange={(v) => setEditing({ ...editing, form: { ...editing.form, [k]: v } })} />
+              <Stack key={k} gap={4}>
+                <Select label={label} placeholder="Not set" searchable clearable
+                  data={choices(accounts.data, editing.form[k])} value={editing.form[k]}
+                  onChange={(v) => setEditing({ ...editing, form: { ...editing.form, [k]: v } })} />
+                <InactivePickWarning saved={editing.form[k]} options={accounts.data} />
+              </Stack>
             ))}
+            <QuickBooksListsRefresh />
             <Button onClick={save}>Save</Button>
           </Stack>
         )}

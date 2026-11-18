@@ -15,6 +15,7 @@ export function reasonText(r: QueueReason, currency: string): string {
     case "BUCKET_UNKNOWN": return "Bucket unknown";
     case "OWNER_EXCEPTION": return "Exception raised by a budget owner";
     case "CAPITAL_REVIEW": return "Capital review";
+    case "CAPITAL_THRESHOLDS_UNSET": return "The capital review thresholds are not set, so every expense waits here; set them or turn capital review off";
     case "DEPRECIATION_CYCLE": return "Depreciation cycle";
     case "REIMBURSEE_TO_NAME": return "Reimbursee to name";
     case "TAX_NOT_REVIEWED": return `Tax ${money(r.amountCents)} not reviewed on the receipt`;
@@ -42,6 +43,7 @@ export const REASON_PLACE: Record<ReasonCode, string> = {
   BUCKET_UNKNOWN: "Resolve bucket, in the lines",
   OWNER_EXCEPTION: "Reject exception or Assign bucket, in the lines",
   CAPITAL_REVIEW: "Capital review panel",
+  CAPITAL_THRESHOLDS_UNSET: "Expense settings",
   DEPRECIATION_CYCLE: "Depreciation cycle panel",
   REIMBURSEE_TO_NAME: "Reimbursee panel",
   TAX_NOT_REVIEWED: "Approve tax, beside the tax",

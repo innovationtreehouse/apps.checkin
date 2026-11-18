@@ -1,10 +1,14 @@
 import type { PrismaClient } from "@/generated/prisma/client";
 import { addHouseholdLead } from "@/lib/household/leads";
-import { setRoleFlag, type RoleFlag } from "@/lib/roles";
+import { KEY_VOLUNTEER_GATED_FLAGS, setRoleFlag, type RoleFlag } from "@/lib/roles";
+import { systemActor } from "@/lib/auditActor";
+import { createKva, currentKvaVersion, findOpenKva, hasSignedCurrentKva } from "@/lib/membership/keyVolunteerProcess";
 import { mintPersonId } from "@/lib/person/mintId";
 import { withTx } from "@/lib/db-client";
 import { nextBoundary, programYearsTouched } from "@/lib/programYear";
 import { orgCalendarDay } from "@/lib/time";
+import { normalizePhone } from "@/lib/phone";
+import { householdHasValidContact } from "@/lib/emergencyContacts/valid";
 
 /**
  * Dev seed + macro helpers (docs/ops/dev-instance.md, "Macros") — the ONE source of truth for creating
@@ -34,8 +38,33 @@ function yearsAgo(years: number): Date {
 // System bypass: dev seed fixtures are the trusted source of their own grants — there is
 // no requesting user's authority to check, so this always passes a system actor (the
 // last-board-member guard still applies inside setRoleFlag; only the matrix is skipped).
+// A role only a Key Volunteer can hold makes the person a signed Key Volunteer first.
 async function seedRole(prisma: Db, personId: number, flag: RoleFlag): Promise<void> {
+    if (KEY_VOLUNTEER_GATED_FLAGS.includes(flag)) await seedSignedKeyVolunteer(prisma, personId);
     await setRoleFlag(prisma, personId, flag, true, { system: "system:dev-seed" });
+}
+
+/**
+ * Gives a person KEY_VOLUNTEER and a Key Volunteer Agreement signed at the current
+ * version, recorded with no Zoho request. Idempotent.
+ */
+export async function seedSignedKeyVolunteer(prisma: Db, personId: number): Promise<void> {
+    await setRoleFlag(prisma, personId, "isKeyVolunteer", true, { system: "system:dev-seed" });
+    if (await hasSignedCurrentKva(prisma, personId)) return;
+    const open = (await findOpenKva(prisma, personId))
+        ?? (await createKva(prisma, personId, await currentKvaVersion(prisma), systemActor("system:dev-seed")));
+    const signedAt = new Date();
+    await prisma.orgMembershipProcess.update({
+        where: { id: open.id },
+        data: { status: "ACTIVE", contractSignedAt: signedAt, stageEnteredAt: signedAt },
+    });
+}
+
+// A family enrols only with a valid emergency contact on file.
+async function seedEmergencyContact(prisma: Db, householdId: number): Promise<void> {
+    if (await householdHasValidContact(prisma, householdId)) return;
+    const phone = "555-555-0090";
+    await prisma.emergencyContact.create({ data: { householdId, name: "Sam Outside", phone, phoneDigits: normalizePhone(phone) } });
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -69,9 +98,8 @@ export async function seedBaseline(prisma: Db): Promise<void> {
         });
     }
 
-    // A third non-member household. Family and Family2 are each already claimed by
-    // a membership flow test as their applicant; this one keeps the intake-notes
-    // flow test's applicant disjoint on the shared serial DB.
+    // A third non-member household, disjoint from Family and Family2, which
+    // membership flow tests each claim as their applicant.
     let household3 = await prisma.household.findFirst({ where: { name: "Family3" } });
     if (!household3) {
         household3 = await prisma.household.create({
@@ -191,6 +219,7 @@ export async function seedBaseline(prisma: Db): Promise<void> {
     });
     // A solo adult is their own household's lead, as sign-up makes every new adult.
     await addHouseholdLead(prisma, certifiedAdult.householdId, certifiedAdult.id);
+    await seedEmergencyContact(prisma, certifiedAdult.householdId);
 
     // No carte-blanche "may certify others" role exists. This persona is a plain
     // member who holds the MAY_CERTIFY_OTHERS certification on a single tool (granted
@@ -278,6 +307,7 @@ export async function seedBaseline(prisma: Db): Promise<void> {
     await addHouseholdLead(prisma, household3.id, parentFamily3.id);
 
     await addHouseholdLead(prisma, memberPricingLead.householdId, memberPricingLead.id);
+    await seedEmergencyContact(prisma, memberPricingLead.householdId);
     await prisma.orgMembership.upsert({
         where: { householdId: memberPricingLead.householdId },
         update: { status: "ACTIVE" },

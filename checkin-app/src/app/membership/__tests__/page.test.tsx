@@ -3,8 +3,16 @@ jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories run hoisted, before imports exist
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+// Renders the real panel and records its props, so a test can call onSave/onSubmit past disabled buttons.
+jest.mock("../IntakePanel", () => {
+  const { createElement } = jest.requireActual<typeof import("react")>("react");
+  const actual = jest.requireActual<typeof import("../IntakePanel")>("../IntakePanel");
+  return { __esModule: true, default: jest.fn((props: Parameters<typeof actual.default>[0]) => createElement(actual.default, props)) };
+});
 
 import { act, screen, fireEvent, waitFor } from "@testing-library/react";
+import IntakePanel from "../IntakePanel";
+import { UnsavedChangesProvider } from "@/components/UnsavedChangesProvider";
 import { notifications } from "@mantine/notifications";
 import { renderWithProviders, mockFetchJson, setSession, setCheckinEnv, resetRtl } from "@/test-helpers/rtl";
 import { jsonBody } from "@/test-helpers/jsonBody";
@@ -101,7 +109,7 @@ describe("membership page", () => {
   it("submits the intake form and advances to the next step", async () => {
     setSession({ id: 1 });
     const fetchMock = mockFetchJson({
-      "/api/membership/intake/submit": { state: state({ process: { id: 1, kind: "INITIAL", status: "PENDING_EXTERNAL_ACTION" }, external: { contractSigned: false, contractStarted: false, bgConsented: false, bgCleared: false, deepLinkUrl: null } }) },
+      "/api/membership/intake/submit": { state: state({ process: { id: 1, kind: "INITIAL", status: "PENDING_EXTERNAL_ACTION" }, external: { contractSigned: false, contractStarted: false, checkStarted: false, bgCleared: false, deepLinkUrl: null } }) },
       "/api/membership/intake": { state: state({ process: { id: 1, kind: "INITIAL", status: "INTAKE" } }), rejections: [] },
       "/api/membership": state({ process: { id: 1, kind: "INITIAL", status: "INTAKE" } }),
     });
@@ -130,13 +138,15 @@ describe("membership page", () => {
       "/api/membership/contract/sign": { url: "https://sign.example/doc" },
       "/api/membership": state({
         process: { id: 1, kind: "INITIAL", status: "PENDING_EXTERNAL_ACTION" },
-        external: { contractSigned: false, contractStarted: false, bgConsented: false, bgCleared: false, deepLinkUrl: "https://averity.example/consent" },
+        external: { contractSigned: false, contractStarted: false, checkStarted: false, bgCleared: false, deepLinkUrl: "https://averity.example/consent" },
       }),
     });
     renderWithProviders(<MembershipPage />);
     await screen.findByText("Sign & start your background check", { exact: false });
 
-    expect(screen.getByRole("link", { name: /Consent on Averity/ })).toHaveAttribute("href", "https://averity.example/consent");
+    expect(screen.getByText("Background check started")).toBeInTheDocument();
+    expect(screen.getByText(/Not yet\. Start a household lead/)).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /Sign your membership agreement/ }));
 
@@ -145,29 +155,17 @@ describe("membership page", () => {
     );
   });
 
-  it("gates the consent self-attest checkbox behind the Averity link, then records consent", async () => {
+  it("shows the agreement step's check as started once a lead's check is", async () => {
     setSession({ id: 1 });
-    const fetchMock = mockFetchJson({
-      "/api/membership/bg-consent": { status: { contractSigned: false, contractStarted: false, bgConsented: true, bgCleared: false, deepLinkUrl: "https://averity.example/consent" } },
+    mockFetchJson({
       "/api/membership": state({
         process: { id: 1, kind: "INITIAL", status: "PENDING_EXTERNAL_ACTION" },
-        external: { contractSigned: false, contractStarted: false, bgConsented: false, bgCleared: false, deepLinkUrl: "https://averity.example/consent" },
+        external: { contractSigned: false, contractStarted: false, checkStarted: true, bgCleared: false, deepLinkUrl: "https://averity.example/consent" },
       }),
     });
     renderWithProviders(<MembershipPage />);
-    await screen.findByText("Sign & start your background check", { exact: false });
 
-    // Locked until the applicant has actually opened the Averity form.
-    const checkbox = screen.getByRole("checkbox", { name: /I submitted my consent on Averity/ });
-    expect(checkbox).toBeDisabled();
-
-    fireEvent.click(screen.getByRole("link", { name: /Consent on Averity/ }));
-    expect(checkbox).toBeEnabled();
-
-    fireEvent.click(checkbox);
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith("/api/membership/bg-consent", expect.objectContaining({ method: "POST" })),
-    );
+    expect(await screen.findByText(/Background check started — we/)).toBeInTheDocument();
   });
 
   it("renders PENDING_EXTERNAL_ACTION with a cleared background check", async () => {
@@ -177,7 +175,7 @@ describe("membership page", () => {
         process: { id: 1, kind: "INITIAL", status: "PENDING_EXTERNAL_ACTION" },
         // deepLinkUrl still set (the server keeps returning it) to prove the reopen
         // link is hidden because the household is cleared, not because it's absent.
-        external: { contractSigned: true, contractStarted: true, bgConsented: false, bgCleared: true, deepLinkUrl: "https://averity.example/consent" },
+        external: { contractSigned: true, contractStarted: true, checkStarted: false, bgCleared: true, deepLinkUrl: "https://averity.example/consent" },
       }),
     });
     renderWithProviders(<MembershipPage />);
@@ -191,7 +189,7 @@ describe("membership page", () => {
     setSession({ id: 1 });
     mockFetchJson({
       "/api/membership/payment": { amountCents: 12500, checkoutUrl: "https://shop.example/checkout" },
-      "/api/membership": state({ process: { id: 1, kind: "INITIAL", status: "PENDING_PAYMENT" }, external: { contractSigned: true, contractStarted: true, bgConsented: true, bgCleared: false, deepLinkUrl: null } }),
+      "/api/membership": state({ process: { id: 1, kind: "INITIAL", status: "PENDING_PAYMENT" }, external: { contractSigned: true, contractStarted: true, checkStarted: true, bgCleared: false, deepLinkUrl: null } }),
     });
     renderWithProviders(<MembershipPage />);
 
@@ -211,21 +209,20 @@ describe("membership page", () => {
     expect(screen.queryByRole("button", { name: "Submit & continue" })).not.toBeInTheDocument();
   });
 
-  it("hides contract signing and background-check consent from a non-lead household member", async () => {
+  it("hides contract signing from a non-lead household member", async () => {
     setSession({ id: 2 });
     mockFetchJson({
       "/api/membership": state({
         isLead: false,
         process: { id: 1, kind: "INITIAL", status: "PENDING_EXTERNAL_ACTION" },
-        external: { contractSigned: false, contractStarted: false, bgConsented: false, bgCleared: false, deepLinkUrl: "https://averity.example/consent" },
+        external: { contractSigned: false, contractStarted: false, checkStarted: false, bgCleared: false, deepLinkUrl: "https://averity.example/consent" },
       }),
     });
     renderWithProviders(<MembershipPage />);
 
     expect(await screen.findByText("Membership application in progress")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Sign your membership agreement/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /Consent on Averity/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("checkbox", { name: /I submitted my consent on Averity/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
   });
 
   it("hides the renewal confirmation from a non-lead household member", async () => {
@@ -244,7 +241,7 @@ describe("membership page", () => {
       "/api/membership": state({
         isLead: false,
         process: { id: 1, kind: "INITIAL", status: "PENDING_PAYMENT" },
-        external: { contractSigned: true, contractStarted: true, bgConsented: true, bgCleared: true, deepLinkUrl: null },
+        external: { contractSigned: true, contractStarted: true, checkStarted: true, bgCleared: true, deepLinkUrl: null },
       }),
     });
     renderWithProviders(<MembershipPage />);
@@ -298,15 +295,17 @@ describe("membership page", () => {
 
   describe("the read after a save that returned no state", () => {
     const intake = { process: { id: 1, kind: "INITIAL", status: "INTAKE" } };
-    const household = { name: null, notes: null, emergencyContactName: "From server", emergencyContactPhone: null, emergencyContactEmail: null };
+    const household = { name: null, emergencyContactName: "From server", emergencyContactPhone: null, emergencyContactEmail: null };
     const secondaryParent = { id: 7, name: "Sam Second", email: null, dob: null, over25: true, allergies: null };
     const saved = state({ ...intake, prefill: { ...emptyPrefill, household, secondaryParent } });
 
-    /** Every save answers no state; reads of /api/membership answer `reads` in turn, the last one repeating. "offline" throws. */
+    /** Every save answers no state; reads of /api/membership answer `reads` in turn, the last one repeating. "offline" throws.
+     *  The Key Volunteer panel's status read answers nothing owed and is not counted. */
     function mockReads(reads: Array<[ok: boolean, body: unknown, status?: number] | "offline">) {
       let n = 0;
       const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         void init;
+        if (String(input).includes("/key-volunteer")) return { ok: true, status: 200, ...jsonBody({ owesSignature: false }) } as Response;
         const read = String(input).includes("/intake") ? [true, { state: null, rejections: [] }] as const : reads[Math.min(n++, reads.length - 1)];
         if (read === "offline") throw new TypeError("Failed to fetch");
         const [ok, body, status = ok ? 200 : 403] = read;
@@ -362,6 +361,43 @@ describe("membership page", () => {
       expect(mock.reads()).toBe(4);
     });
 
+    it("locks Save and Submit until a successful read hydrates the form, once every read fails", async () => {
+      setSession({ id: 1 });
+      const mock = mockReads([[true, state(intake)], [false, { error: "down" }, 503], [false, { error: "down" }, 503], [false, { error: "down" }, 503], [true, saved]]);
+      renderWithProviders(<MembershipPage />);
+      await screen.findByText("Your household");
+      jest.useFakeTimers();
+
+      fireEvent.change(emName(), { target: { value: "Aunt Jo" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save progress" }));
+      await waitFor(() => expect(mock.reads()).toBe(2));
+      await act(() => jest.advanceTimersByTimeAsync(2000));
+      await act(() => jest.advanceTimersByTimeAsync(4000));
+      await waitFor(() => expect(mock.reads()).toBe(4));
+
+      expect(await screen.findByText(reloadWarning)).toBeInTheDocument();
+      const saveButton = screen.getByRole("button", { name: "Save progress" });
+      const submitButton = screen.getByRole("button", { name: "Submit & continue" });
+      await waitFor(() => expect(saveButton).toBeDisabled());
+      expect(submitButton).toBeDisabled();
+      fireEvent.click(saveButton);
+      fireEvent.click(submitButton);
+      await act(() => jest.advanceTimersByTimeAsync(60000));
+      expect(intakeCalls(mock)).toHaveLength(1);
+      expect(screen.getByText(reloadWarning)).toBeInTheDocument();
+      expect(emName().value).toBe("Aunt Jo");
+
+      invalidateLoads();
+      await waitFor(() => expect(emName().value).toBe("From server"));
+      expect(saveButton).toBeEnabled();
+      expect(submitButton).toBeEnabled();
+      expect(screen.queryByText(reloadWarning)).not.toBeInTheDocument();
+
+      fireEvent.click(saveButton);
+      await waitFor(() => expect(intakeCalls(mock)).toHaveLength(2));
+      expect(JSON.parse(String(intakeCalls(mock)[1][1]?.body)).secondaryParent).toMatchObject({ id: 7, name: "Sam Second" });
+    });
+
     it("keeps unsaved input on a later reload when that read fails", async () => {
       setSession({ id: 1 });
       const mock = mockReads([[true, state(intake)], [false, { error: "denied" }], [true, saved]]);
@@ -378,6 +414,67 @@ describe("membership page", () => {
       await waitFor(() => expect(mock.reads()).toBe(3));
       await settleAfter("/api/membership");
       expect(emName().value).toBe("Uncle Bo");
+      expect(screen.getByRole("button", { name: "Save progress" })).toBeDisabled();
+    });
+
+    describe("once the save is locked", () => {
+      const complete = state({
+        ...intake,
+        prefill: {
+          ...emptyPrefill,
+          household: { name: null, emergencyContactName: "From server", emergencyContactPhone: "512-555-1234", emergencyContactEmail: null, line1: "1 Treehouse Ln", line2: null, city: "Austin", state: "TX", postalCode: "78701" },
+          primaryParent: { id: 1, name: "Pat Parent", email: "pat@example.com", dob: "1980-01-01", allergies: null },
+        },
+      });
+      /** True when the unsaved-changes guard would block a reload. */
+      const reloadBlocked = () => {
+        const e = new Event("beforeunload", { cancelable: true });
+        window.dispatchEvent(e);
+        return e.defaultPrevented;
+      };
+      const panel = () => {
+        const props = jest.mocked(IntakePanel).mock.lastCall?.[0];
+        if (!props) throw new Error("IntakePanel has not rendered");
+        return props;
+      };
+
+      async function lockAfterSave() {
+        setSession({ id: 1 });
+        const mock = mockReads([[true, complete], [false, { error: "down" }, 503]]);
+        renderWithProviders(<UnsavedChangesProvider><MembershipPage /></UnsavedChangesProvider>);
+        await screen.findByText("Your household");
+        jest.useFakeTimers();
+
+        fireEvent.change(emName(), { target: { value: "Aunt Jo" } });
+        fireEvent.click(screen.getByRole("button", { name: "Save progress" }));
+        await waitFor(() => expect(mock.reads()).toBe(2));
+        await act(() => jest.advanceTimersByTimeAsync(2000));
+        await act(() => jest.advanceTimersByTimeAsync(4000));
+        await waitFor(() => expect(mock.reads()).toBe(4));
+        expect(await screen.findByText(reloadWarning)).toBeInTheDocument();
+        return mock;
+      }
+
+      it("lets the reload it asks for through, while the form still holds the saved input", async () => {
+        await lockAfterSave();
+        expect(emName().value).toBe("Aunt Jo");
+        expect(reloadBlocked()).toBe(false);
+      });
+
+      it("guards a reload again once the user edits", async () => {
+        await lockAfterSave();
+        fireEvent.change(emName(), { target: { value: "Uncle Bo" } });
+        expect(reloadBlocked()).toBe(true);
+      });
+
+      it("sends no request when save or submit is called", async () => {
+        const mock = await lockAfterSave();
+        const calls = mock.fetchMock.mock.calls.length;
+        await act(async () => { panel().onSave(); });
+        await act(async () => { panel().onSubmit(); });
+        await act(() => jest.advanceTimersByTimeAsync(60000));
+        expect(mock.fetchMock.mock.calls.length).toBe(calls);
+      });
     });
 
     it("fills in the saved people's ids, so a second save updates them", async () => {
@@ -426,7 +523,7 @@ describe("membership page", () => {
       "/api/membership/contract/sync": { status: { contractSigned: true } },
       "/api/membership": state({
         process: { id: 1, kind: "INITIAL", status: "PENDING_EXTERNAL_ACTION" },
-        external: { contractSigned: true, contractStarted: true, bgConsented: false, bgCleared: false, deepLinkUrl: null },
+        external: { contractSigned: true, contractStarted: true, checkStarted: false, bgCleared: false, deepLinkUrl: null },
       }),
     });
     renderWithProviders(<MembershipPage />);
@@ -442,7 +539,7 @@ describe("membership page", () => {
       "/api/membership/contract/sync": { status: { contractSigned: false } },
       "/api/membership": state({
         process: { id: 1, kind: "INITIAL", status: "PENDING_EXTERNAL_ACTION" },
-        external: { contractSigned: false, contractStarted: true, bgConsented: false, bgCleared: false, deepLinkUrl: null },
+        external: { contractSigned: false, contractStarted: true, checkStarted: false, bgCleared: false, deepLinkUrl: null },
       }),
     });
     renderWithProviders(<MembershipPage />);
@@ -459,7 +556,7 @@ describe("membership page", () => {
         ok: true,
         ...jsonBody(state({
           process: { id: 1, kind: "INITIAL", status: "PENDING_EXTERNAL_ACTION" },
-          external: { contractSigned: false, contractStarted: false, bgConsented: false, bgCleared: false, deepLinkUrl: null },
+          external: { contractSigned: false, contractStarted: false, checkStarted: false, bgCleared: false, deepLinkUrl: null },
         })),
       } as Response;
     });
@@ -476,7 +573,7 @@ describe("membership page", () => {
       "/api/membership/payment": { amountCents: 9900, checkoutUrl: null },
       "/api/membership": state({
         process: { id: 1, kind: "INITIAL", status: "PENDING_PAYMENT" },
-        external: { contractSigned: true, contractStarted: true, bgConsented: true, bgCleared: true, deepLinkUrl: null },
+        external: { contractSigned: true, contractStarted: true, checkStarted: true, bgCleared: true, deepLinkUrl: null },
       }),
     });
     renderWithProviders(<MembershipPage />);
@@ -486,22 +583,35 @@ describe("membership page", () => {
     expect(screen.queryByText("Your background check is being reviewed", { exact: false })).not.toBeInTheDocument();
   });
 
-  it("keeps the preparing-invoice placeholder when the membership fee request fails", async () => {
+  it("says the membership fee could not load, and Retry shows the fee", async () => {
     setSession({ id: 1 });
+    let feeFails = true;
     const fetchMock = jest.fn(async (input: RequestInfo | URL) => {
-      if (String(input).includes("/api/membership/payment")) return { ok: false, ...jsonBody(({})) } as Response;
+      if (String(input).includes("/api/membership/payment")) {
+        return feeFails
+          ? { ok: false, status: 409, ...jsonBody({ error: "The membership fee isn't set yet." }) } as Response
+          : { ok: true, status: 200, ...jsonBody({ amountCents: 12500, checkoutUrl: "https://shop.example/checkout" }) } as Response;
+      }
       return {
         ok: true,
-        ...jsonBody(state({ process: { id: 1, kind: "INITIAL", status: "PENDING_PAYMENT" }, external: { contractSigned: true, contractStarted: true, bgConsented: true, bgCleared: false, deepLinkUrl: null } })),
+        status: 200,
+        ...jsonBody(state({ process: { id: 1, kind: "INITIAL", status: "PENDING_PAYMENT" }, external: { contractSigned: true, contractStarted: true, checkStarted: true, bgCleared: false, deepLinkUrl: null } })),
       } as Response;
     });
     global.fetch = fetchMock as unknown as typeof fetch;
     renderWithProviders(<MembershipPage />);
 
-    expect(await screen.findByText("Preparing your invoice…")).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load your membership fee")).toBeInTheDocument();
+    expect(screen.getByText("The membership fee isn't set yet.")).toBeInTheDocument();
+    expect(screen.queryByText("Preparing your invoice…")).not.toBeInTheDocument();
+
+    feeFails = false;
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("$125.00", { exact: false })).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't load your membership fee")).not.toBeInTheDocument();
   });
 
-  it("keeps the preparing-invoice placeholder when the membership fee request throws", async () => {
+  it("keeps the preparing-invoice placeholder while a network failure on the membership fee retries", async () => {
     setSession({ id: 1 });
     const fetchMock = jest.fn(async (input: RequestInfo | URL) => {
       if (String(input).includes("/api/membership/payment")) throw new Error("boom");
@@ -522,7 +632,7 @@ describe("membership page", () => {
       "/api/membership/payment": { amountCents: 12500, checkoutUrl: "https://shop.example/checkout" },
       "/api/membership": state({
         process: { id: 1, kind: "INITIAL", status: "PENDING_PAYMENT" },
-        external: { contractSigned: true, contractStarted: true, bgConsented: true, bgCleared: true, deepLinkUrl: null },
+        external: { contractSigned: true, contractStarted: true, checkStarted: true, bgCleared: true, deepLinkUrl: null },
       }),
     });
     renderWithProviders(<MembershipPage />);
@@ -540,7 +650,7 @@ describe("membership page", () => {
       "/api/membership/payment": { amountCents: 12500, checkoutUrl: "https://shop.example/checkout" },
       "/api/membership": state({
         process: { id: 1, kind: "INITIAL", status: "PENDING_PAYMENT" },
-        external: { contractSigned: true, contractStarted: true, bgConsented: true, bgCleared: true, deepLinkUrl: null },
+        external: { contractSigned: true, contractStarted: true, checkStarted: true, bgCleared: true, deepLinkUrl: null },
       }),
     });
     const first = renderWithProviders(<MembershipPage />);
@@ -592,7 +702,7 @@ describe("membership page", () => {
       "/api/dev/shopify/orders-paid": {},
       "/api/membership": state({
         process: { id: 1, kind: "INITIAL", status: "PENDING_PAYMENT" },
-        external: { contractSigned: true, contractStarted: true, bgConsented: true, bgCleared: true, deepLinkUrl: null },
+        external: { contractSigned: true, contractStarted: true, checkStarted: true, bgCleared: true, deepLinkUrl: null },
       }),
     });
     renderWithProviders(<MembershipPage />);
@@ -610,28 +720,25 @@ describe("membership page", () => {
     mockFetchJson({
       "/api/membership": state({
         process: { id: 1, kind: "INITIAL", status: "PENDING_EXTERNAL_ACTION" },
-        external: { contractSigned: false, contractStarted: true, bgConsented: true, bgCleared: false, deepLinkUrl: "https://averity.example/consent" },
+        external: { contractSigned: false, contractStarted: true, checkStarted: true, bgCleared: false, deepLinkUrl: "https://averity.example/consent" },
       }),
     });
     renderWithProviders(<MembershipPage />);
 
     expect(await screen.findByRole("button", { name: "Resume signing →" })).toBeInTheDocument();
-    expect(screen.getByText("Background check started", { exact: false })).toBeInTheDocument();
-    // Consented (honor-system) but not yet reviewer-cleared: the Averity link stays
-    // reachable so a mis-click or an unfinished form isn't a dead end.
-    expect(screen.getByRole("link", { name: /Reopen the Averity consent form/ })).toHaveAttribute("href", "https://averity.example/consent");
+    expect(screen.getByText(/Background check started — we/)).toBeInTheDocument();
   });
 
-  it("shows a not-yet-available background-check link and refreshes status on demand", async () => {
+  it("points to the Background checks panel while no lead's check is started, and refreshes status on demand", async () => {
     setSession({ id: 1 });
     const fetchMock = mockFetchJson({
       "/api/membership": state({
         process: { id: 1, kind: "INITIAL", status: "PENDING_EXTERNAL_ACTION" },
-        external: { contractSigned: false, contractStarted: false, bgConsented: false, bgCleared: false, deepLinkUrl: null },
+        external: { contractSigned: false, contractStarted: false, checkStarted: false, bgCleared: false, deepLinkUrl: null },
       }),
     });
     renderWithProviders(<MembershipPage />);
-    await screen.findByText("The background-check link isn't available yet. Please check back shortly.");
+    await screen.findByText(/mark it\s+started in the Background checks panel/);
 
     fireEvent.click(screen.getByRole("button", { name: "Refresh status" }));
 
@@ -646,7 +753,7 @@ describe("membership page", () => {
       "/api/membership/contract/sign": {},
       "/api/membership": state({
         process: { id: 1, kind: "INITIAL", status: "PENDING_EXTERNAL_ACTION" },
-        external: { contractSigned: false, contractStarted: false, bgConsented: false, bgCleared: false, deepLinkUrl: null },
+        external: { contractSigned: false, contractStarted: false, checkStarted: false, bgCleared: false, deepLinkUrl: null },
       }),
     });
     renderWithProviders(<MembershipPage />);
@@ -663,7 +770,7 @@ describe("membership page", () => {
       "/api/membership/contract/sign": { error: "This agreement has already been signed." },
       "/api/membership": state({
         process: { id: 1, kind: "INITIAL", status: "PENDING_EXTERNAL_ACTION" },
-        external: { contractSigned: false, contractStarted: true, bgConsented: false, bgCleared: false, deepLinkUrl: null },
+        external: { contractSigned: false, contractStarted: true, checkStarted: false, bgCleared: false, deepLinkUrl: null },
       }),
     });
     renderWithProviders(<MembershipPage />);
@@ -685,7 +792,7 @@ describe("membership page", () => {
         ok: true,
         ...jsonBody(state({
           process: { id: 1, kind: "INITIAL", status: "PENDING_EXTERNAL_ACTION" },
-          external: { contractSigned: false, contractStarted: false, bgConsented: false, bgCleared: false, deepLinkUrl: null },
+          external: { contractSigned: false, contractStarted: false, checkStarted: false, bgCleared: false, deepLinkUrl: null },
         })),
       } as Response;
     });
@@ -706,7 +813,7 @@ describe("membership page", () => {
         ok: true,
         ...jsonBody(state({
           process: { id: 1, kind: "INITIAL", status: "PENDING_EXTERNAL_ACTION" },
-          external: { contractSigned: false, contractStarted: false, bgConsented: false, bgCleared: false, deepLinkUrl: null },
+          external: { contractSigned: false, contractStarted: false, checkStarted: false, bgCleared: false, deepLinkUrl: null },
         })),
       } as Response;
     });
@@ -1176,7 +1283,7 @@ describe("payment holdoff visibility refetch", () => {
       "/api/membership/payment": { amountCents: 12500, checkoutUrl: "https://shop.example/checkout" },
       "/api/membership": state({
         process: { id: 1, kind: "INITIAL", status: "PENDING_PAYMENT" },
-        external: { contractSigned: true, contractStarted: true, bgConsented: true, bgCleared: true, deepLinkUrl: null },
+        external: { contractSigned: true, contractStarted: true, checkStarted: true, bgCleared: true, deepLinkUrl: null },
       }),
     });
     renderWithProviders(<MembershipPage />);
@@ -1195,7 +1302,7 @@ describe("scholarship / payment-plan request", () => {
     "/api/membership/payment": { amountCents: 12500, checkoutUrl: "https://shop.example/checkout" },
     "/api/membership": state({
       process: { id: 1, kind: "INITIAL", status: "PENDING_PAYMENT", ...extra },
-      external: { contractSigned: true, contractStarted: true, bgConsented: true, bgCleared: true, deepLinkUrl: null },
+      external: { contractSigned: true, contractStarted: true, checkStarted: true, bgCleared: true, deepLinkUrl: null },
     }),
   });
 
@@ -1249,7 +1356,7 @@ describe("scholarship / payment-plan request", () => {
       "/api/membership/payment": { amountCents: 12500, checkoutUrl: "https://shop.example/checkout" },
       "/api/membership": () => state({
         process: { id: 1, kind: "INITIAL", status: "PENDING_PAYMENT", isPaymentPlanRequested: requested },
-        external: { contractSigned: true, contractStarted: true, bgConsented: true, bgCleared: true, deepLinkUrl: null },
+        external: { contractSigned: true, contractStarted: true, checkStarted: true, bgCleared: true, deepLinkUrl: null },
       }),
     });
     renderWithProviders(<MembershipPage />);
@@ -1263,114 +1370,85 @@ describe("scholarship / payment-plan request", () => {
   });
 });
 
-describe("own background check", () => {
-  const ownCheck = { consented: false, deepLinkUrl: "https://averity.example/consent" };
+describe("Background checks panel", () => {
+  const ownCheck = { checkStarted: false, deepLinkUrl: "https://averity.example/consent" };
   const memberState = (ownBackgroundCheck: unknown) =>
-    state({ isLead: false, hasHousehold: true, membershipStatus: "ACTIVE", ownBackgroundCheck });
+    state({ isLead: true, hasHousehold: true, membershipStatus: "ACTIVE", ownBackgroundCheck });
+  const rows = [
+    { personId: 2, name: "Me", state: "NEEDS_MARKING" },
+    { personId: 3, name: "Adult Child", state: "NOTHING_TO_DO" },
+  ];
 
-  it("offers consent to someone with a pending check of their own", async () => {
+  it("lists the caller and the household's other adults, offering the tool link only where a check needs marking", async () => {
     setSession({ id: 2 });
-    mockFetchJson({ "/api/membership": memberState(ownCheck) });
+    mockFetchJson({ "/api/membership/check-started": { rows }, "/api/membership": memberState(ownCheck) });
     renderWithProviders(<MembershipPage />);
 
-    expect(await screen.findByRole("heading", { name: "Your background check" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Consent on Averity/ })).toHaveAttribute("href", "https://averity.example/consent");
-    expect(screen.getByRole("checkbox", { name: /I submitted my consent on Averity/ })).toBeDisabled();
-    expect(screen.getByText("You're a member 🎉", { exact: false })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Background checks" })).toBeInTheDocument();
+    expect(await screen.findByText("You")).toBeInTheDocument();
+    expect(screen.getByText("Adult Child")).toBeInTheDocument();
+    expect(screen.getByText("Nothing to do.")).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: /Open the background-check tool/ })).toHaveLength(1);
+    expect(screen.getByRole("link", { name: /Open the background-check tool/ })).toHaveAttribute("href", "https://averity.example/consent");
+    expect(screen.getByRole("button", { name: "Mark check started" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /Dismiss/ })).not.toBeInTheDocument();
   });
 
-  it("is hidden without a pending check", async () => {
+  it("is hidden when the caller's state carries no check", async () => {
     setSession({ id: 2 });
-    mockFetchJson({ "/api/membership": memberState(null) });
+    mockFetchJson({ "/api/membership/check-started": { rows }, "/api/membership": memberState(null) });
     renderWithProviders(<MembershipPage />);
 
     await screen.findByText("You're a member 🎉", { exact: false });
-    expect(screen.queryByRole("heading", { name: "Your background check" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Background checks" })).not.toBeInTheDocument();
   });
 
-  it("shows consent already on file instead of the form", async () => {
+  it("shows the caller's own check as marked started", async () => {
     setSession({ id: 2 });
-    mockFetchJson({ "/api/membership": memberState({ ...ownCheck, consented: true }) });
+    mockFetchJson({
+      "/api/membership/check-started": { rows: [{ personId: 2, name: "Me", state: "NOTHING_TO_DO" }] },
+      "/api/membership": memberState({ ...ownCheck, checkStarted: true }),
+    });
     renderWithProviders(<MembershipPage />);
 
-    expect(await screen.findByText(/Your consent is recorded/)).toBeInTheDocument();
-    expect(screen.queryByRole("checkbox", { name: /I submitted my consent on Averity/ })).not.toBeInTheDocument();
+    expect(await screen.findByText(/Your check is marked started/)).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
   });
 
-  it("records consent and shows it confirmed", async () => {
+  it("marks another adult's check started once the box is ticked", async () => {
     setSession({ id: 2 });
     const fetchMock = mockFetchJson({
-      "/api/membership/bg-consent": { status: { contractSigned: false, contractStarted: false, bgConsented: true, bgCleared: false, deepLinkUrl: ownCheck.deepLinkUrl } },
+      "/api/membership/check-started": { rows: [{ personId: 2, name: "Me", state: "NOTHING_TO_DO" }, { personId: 3, name: "Adult Child", state: "NEEDS_MARKING" }] },
       "/api/membership": memberState(ownCheck),
     });
     renderWithProviders(<MembershipPage />);
-    await screen.findByRole("heading", { name: "Your background check" });
 
-    fireEvent.click(screen.getByRole("link", { name: /Consent on Averity/ }));
-    fireEvent.click(screen.getByRole("checkbox", { name: /I submitted my consent on Averity/ }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: /I've started this check in the background-check tool/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Mark check started" }));
 
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith("/api/membership/bg-consent", expect.objectContaining({ method: "POST" })),
+      expect(fetchMock).toHaveBeenCalledWith("/api/membership/check-started", expect.objectContaining({ method: "POST", body: JSON.stringify({ personId: 3 }) })),
     );
-    expect(await screen.findByText(/Your consent is recorded/)).toBeInTheDocument();
     expect(notifications.show).not.toHaveBeenCalled();
   });
 
-  it("shows the server's refusal in a red chip that stays open, and lets them retry", async () => {
+  it("shows the server's refusal in a red chip that stays open", async () => {
     setSession({ id: 2 });
-    global.fetch = jest.fn(async (url: RequestInfo | URL) => {
-      if (String(url).includes("/api/membership/bg-consent")) {
-        return { ok: false, status: 409, ...jsonBody(({ error: "No application is awaiting background-check consent." })) } as Response;
+    global.fetch = jest.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url).includes("/api/membership/check-started")) {
+        if (init?.method === "POST") return { ok: false, status: 403, ...jsonBody({ error: "Only a household lead can mark another person's check started." }) } as Response;
+        return { ok: true, status: 200, ...jsonBody({ rows }) } as Response;
       }
-      return { ok: true, ...jsonBody(memberState(ownCheck)) } as Response;
+      return { ok: true, status: 200, ...jsonBody(memberState(ownCheck)) } as Response;
     }) as unknown as typeof fetch;
     renderWithProviders(<MembershipPage />);
-    await screen.findByRole("heading", { name: "Your background check" });
 
-    fireEvent.click(screen.getByRole("link", { name: /Consent on Averity/ }));
-    const checkbox = screen.getByRole("checkbox", { name: /I submitted my consent on Averity/ });
-    fireEvent.click(checkbox);
+    fireEvent.click(await screen.findByRole("checkbox", { name: /I've started my check in the background-check tool/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Mark check started" }));
 
     await waitFor(() =>
-      expect(notifications.show).toHaveBeenCalledWith({ color: "red", message: "No application is awaiting background-check consent.", autoClose: false }),
+      expect(notifications.show).toHaveBeenCalledWith({ color: "red", message: "Only a household lead can mark another person's check started.", autoClose: false }),
     );
-    expect(checkbox).not.toBeChecked();
-    expect(checkbox).toBeEnabled();
-    expect(screen.queryByText(/Your consent is recorded/)).not.toBeInTheDocument();
-  });
-
-  it("shows a red chip that stays open when the request fails to send", async () => {
-    setSession({ id: 2 });
-    global.fetch = jest.fn(async (url: RequestInfo | URL) => {
-      if (String(url).includes("/api/membership/bg-consent")) throw new Error("offline");
-      return { ok: true, ...jsonBody(memberState(ownCheck)) } as Response;
-    }) as unknown as typeof fetch;
-    renderWithProviders(<MembershipPage />);
-    await screen.findByRole("heading", { name: "Your background check" });
-
-    fireEvent.click(screen.getByRole("link", { name: /Consent on Averity/ }));
-    fireEvent.click(screen.getByRole("checkbox", { name: /I submitted my consent on Averity/ }));
-
-    await waitFor(() =>
-      expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", autoClose: false, message: expect.stringMatching(/consent was not recorded/) })),
-    );
-  });
-
-  it("leaves a lead's household consent panel as it is", async () => {
-    setSession({ id: 1 });
-    mockFetchJson({
-      "/api/membership": state({
-        process: { id: 1, kind: "INITIAL", status: "PENDING_EXTERNAL_ACTION" },
-        external: { contractSigned: false, contractStarted: false, bgConsented: false, bgCleared: false, deepLinkUrl: "https://averity.example/consent" },
-        ownBackgroundCheck: null,
-      }),
-    });
-    renderWithProviders(<MembershipPage />);
-
-    expect(await screen.findByText("Sign & start your background check", { exact: false })).toBeInTheDocument();
-    expect(screen.getByText("Start your background check")).toBeInTheDocument();
-    expect(screen.getAllByRole("checkbox", { name: /I submitted my consent on Averity/ })).toHaveLength(1);
-    expect(screen.queryByRole("heading", { name: "Your background check" })).not.toBeInTheDocument();
   });
 });
 

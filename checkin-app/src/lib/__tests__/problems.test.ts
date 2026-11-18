@@ -1,46 +1,83 @@
 /**
  * @jest-environment node
  */
+import { ServiceError } from "@checkin/component-kit";
 import { getCronJobStatuses } from "@/lib/cronRuns";
 import type { TemplateCtx } from "@/lib/email-templates/registry";
 import { sendTemplated } from "@/lib/email-templates/send";
 import prisma from "@/lib/prisma";
-import { getProblems, sendProblemsDigest } from "../problems";
+import { getProblems, LIBRARY_DB_VARS, retryProblem, sendProblemsDigest } from "../problems";
 
 jest.mock("@/lib/cronRuns", () => ({ getCronJobStatuses: jest.fn() }));
 jest.mock("@/lib/email-templates/send", () => ({ sendTemplated: jest.fn() }));
-jest.mock("@checkin/receipt", () => ({ stuckItems: jest.fn(), problemNotices: jest.fn() }));
-jest.mock("@checkin/expense", () => ({ stuckItems: jest.fn() }));
-jest.mock("@checkin/bulk-donation", () => ({ stuckItems: jest.fn() }));
-jest.mock("@checkin/workflow-mapping", () => ({ stuckItems: jest.fn() }));
-jest.mock("@checkin/local-inventory", () => ({ stuckItems: jest.fn() }));
+jest.mock("@checkin/receipt", () => ({ stuckItems: jest.fn(), problemNotices: jest.fn(), retryStuckItem: jest.fn() }));
+jest.mock("@checkin/expense", () => ({ stuckItems: jest.fn(), retryStuckItem: jest.fn() }));
+jest.mock("@checkin/bulk-donation", () => ({ stuckItems: jest.fn(), retryStuckItem: jest.fn() }));
+jest.mock("@checkin/workflow-mapping", () => ({ stuckItems: jest.fn(), problemNotices: jest.fn(), retryStuckItem: jest.fn() }));
+jest.mock("@checkin/local-inventory", () => ({ stuckItems: jest.fn(), retryStuckItem: jest.fn() }));
 
-const receipt = jest.requireMock<{ stuckItems: jest.Mock; problemNotices: jest.Mock }>("@checkin/receipt");
-const expense = jest.requireMock<{ stuckItems: jest.Mock }>("@checkin/expense");
-const gifts = jest.requireMock<{ stuckItems: jest.Mock }>("@checkin/bulk-donation");
-const mapping = jest.requireMock<{ stuckItems: jest.Mock }>("@checkin/workflow-mapping");
-const inventory = jest.requireMock<{ stuckItems: jest.Mock }>("@checkin/local-inventory");
+const receipt = jest.requireMock<{ stuckItems: jest.Mock; problemNotices: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/receipt");
+const expense = jest.requireMock<{ stuckItems: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/expense");
+const gifts = jest.requireMock<{ stuckItems: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/bulk-donation");
+const mapping = jest.requireMock<{ stuckItems: jest.Mock; problemNotices: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/workflow-mapping");
+const inventory = jest.requireMock<{ stuckItems: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/local-inventory");
 
 const NOW = new Date("2026-11-08T08:00:00Z");
 const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3600_000);
 const findSettings = jest.fn();
+const countEmailFailures = jest.fn();
 const digestCtx = () => jest.mocked(sendTemplated).mock.calls[0][2] as TemplateCtx<"ops.problemsDigest">;
-const ENV = ["RECEIPT_DATABASE_URL", "EXPENSE_DATABASE_URL", "BULK_DONATION_DATABASE_URL", "WORKFLOW_MAPPING_DATABASE_URL", "LOCAL_INVENTORY_DATABASE_URL"];
 
 beforeEach(() => {
     jest.restoreAllMocks();
     jest.clearAllMocks();
-    for (const name of ENV) process.env[name] = "postgres://test";
+    for (const name of LIBRARY_DB_VARS) process.env[name] = "postgres://test";
     for (const lib of [receipt, expense, gifts, mapping, inventory]) lib.stuckItems.mockResolvedValue([]);
     receipt.problemNotices.mockResolvedValue([]);
+    mapping.problemNotices.mockResolvedValue([]);
     prisma.boardSettings.findUnique = findSettings;
+    prisma.integrationErrorLog.count = countEmailFailures;
+    countEmailFailures.mockResolvedValue(0);
     findSettings.mockResolvedValue({ alertEmailAddress: "alerts@example.org", boardEmailAddress: "board@example.org" });
     jest.mocked(getCronJobStatuses).mockResolvedValue([{ job: "nightly", lastSuccessAt: hoursAgo(1), stale: false }]);
     jest.mocked(sendTemplated).mockResolvedValue(true);
 });
 
 afterAll(() => {
-    for (const name of ENV) delete process.env[name];
+    for (const name of LIBRARY_DB_VARS) delete process.env[name];
+});
+
+describe("retryProblem", () => {
+    const BY = { userId: 5, username: "Pat" };
+
+    it("hands the expense library the person who pressed Retry", async () => {
+        await retryProblem({ library: "expense", step: "QuickBooks posting", id: "e1" }, BY);
+
+        expect(expense.retryStuckItem).toHaveBeenCalledWith({ id: "e1", step: "QuickBooks posting" }, BY);
+    });
+
+    it("runs the step through the library the item is listed under", async () => {
+        await retryProblem({ library: "gifts", step: "QuickBooks posting", id: "receipt 4" }, BY);
+
+        expect(gifts.retryStuckItem).toHaveBeenCalledWith({ id: "receipt 4", step: "QuickBooks posting" });
+        expect(expense.retryStuckItem).not.toHaveBeenCalled();
+    });
+
+    it("passes the library's refusal through", async () => {
+        receipt.retryStuckItem.mockRejectedValue(new ServiceError(409, "failed again"));
+
+        await expect(retryProblem({ library: "receipt", step: "flow", id: "r1" }, BY)).rejects.toMatchObject({ status: 409 });
+    });
+
+    it.each([
+        ["a library not on the list", "inventory"],
+        ["a library with no database", "expense"],
+    ])("answers 404 for %s", async (_what, library) => {
+        delete process.env.EXPENSE_DATABASE_URL;
+
+        await expect(retryProblem({ library, step: "intake", id: "e1" }, BY)).rejects.toMatchObject({ status: 404 });
+        expect(expense.retryStuckItem).not.toHaveBeenCalled();
+    });
 });
 
 describe("getProblems", () => {
@@ -58,7 +95,37 @@ describe("getProblems", () => {
 
     it("carries a library's own lines, such as repeated reading failures", async () => {
         receipt.problemNotices.mockResolvedValue(["Receipt reading failed 3 times in the last day"]);
-        expect((await getProblems()).notices).toEqual(["Receipt reading failed 3 times in the last day"]);
+        expect((await getProblems()).notices).toEqual([{ text: "Receipt reading failed 3 times in the last day", href: null }]);
+    });
+
+    it("has no catalog line while no receipt waits in Matching pending for a catalog error", async () => {
+        expect((await getProblems()).notices).toEqual([]);
+    });
+
+    it("carries the catalog-error count with its link to the mapping queue", async () => {
+        const line = { text: "Receipts in Matching pending because the catalog was unavailable: 2", href: "/inventory/receiving?queue=mapping" };
+        mapping.problemNotices.mockResolvedValue([line]);
+        expect((await getProblems()).notices).toEqual([line]);
+    });
+
+    it("has no email line while no email failed to send in the last day", async () => {
+        expect((await getProblems(NOW)).notices).toEqual([]);
+    });
+
+    it("counts email sends that failed in the last day, linking to Link Status", async () => {
+        countEmailFailures.mockResolvedValue(1);
+
+        const { notices } = await getProblems(NOW);
+
+        expect(countEmailFailures).toHaveBeenCalledWith({ where: { source: "email", timestamp: { gt: hoursAgo(24), lte: NOW } } });
+        expect(notices).toEqual([{ text: "Emails failed to send: 1 in the last day", href: "/system-status/links" }]);
+        expect(JSON.stringify(notices)).not.toMatch(/@|subject/i);
+    });
+
+    it("names email as unread when its failures cannot be counted", async () => {
+        jest.spyOn(console, "error").mockImplementation(() => undefined);
+        countEmailFailures.mockRejectedValue(new Error("db down"));
+        expect(await getProblems(NOW)).toMatchObject({ unread: ["email"], notices: [] });
     });
 
     it("names a library whose lines cannot be read", async () => {
@@ -118,6 +185,27 @@ describe("sendProblemsDigest", () => {
 
         expect(jest.mocked(sendTemplated).mock.calls.map((c) => c[1])).toEqual(["alerts@example.org"]);
         expect(digestCtx().items).toBe("Receipt reading failed 3 times in the last day");
+        expect(jest.mocked(sendTemplated).mock.calls).toHaveLength(1);
+    });
+
+    it("emails the alert address a failed email send on its own, as a count with no recipient or subject", async () => {
+        countEmailFailures.mockResolvedValue(1);
+
+        await sendProblemsDigest(NOW);
+
+        expect(jest.mocked(sendTemplated).mock.calls.map((c) => c[1])).toEqual(["alerts@example.org"]);
+        expect(digestCtx().items).toBe("Emails failed to send: 1 in the last day");
+    });
+
+    it("emails the alert address the sources that could not be read, without the error text", async () => {
+        jest.spyOn(console, "error").mockImplementation(() => undefined);
+        countEmailFailures.mockRejectedValue(new Error("db down"));
+        gifts.stuckItems.mockRejectedValue(new Error("db down"));
+
+        await sendProblemsDigest(NOW);
+
+        expect(jest.mocked(sendTemplated).mock.calls.map((c) => c[1])).toEqual(["alerts@example.org"]);
+        expect(digestCtx().items).toBe("Could not read the stuck items in gifts.\nFailed email sends could not be counted.");
     });
 
     it("copies the Board once anything has been stuck more than two weeks", async () => {
@@ -135,6 +223,35 @@ describe("sendProblemsDigest", () => {
 
         const ctx = digestCtx();
         expect(ctx.items).toContain("qbo-posting");
+    });
+
+    it("sends a job whose latest run reported failures, without its error text", async () => {
+        jest.mocked(getCronJobStatuses).mockResolvedValue([
+            { job: "reconcile-shopify", lastSuccessAt: hoursAgo(2), stale: false, lastError: "1 item(s) failed", lastErrorAt: hoursAgo(2) },
+        ]);
+
+        await sendProblemsDigest(NOW);
+
+        expect(jest.mocked(sendTemplated).mock.calls.map((c) => c[1])).toEqual(["alerts@example.org"]);
+        expect(digestCtx().items).toMatch(/^Scheduled job reconcile-shopify: last run reported failures, /);
+        expect(digestCtx().items).not.toContain("item(s) failed");
+    });
+
+    it("sends nothing for a job once a later run is clean", async () => {
+        jest.mocked(getCronJobStatuses).mockResolvedValue([{ job: "reconcile-shopify", lastSuccessAt: hoursAgo(1), stale: false }]);
+        await sendProblemsDigest(NOW);
+        expect(sendTemplated).not.toHaveBeenCalled();
+    });
+
+    it("lists a job that is late and failing once, as late", async () => {
+        jest.mocked(getCronJobStatuses).mockResolvedValue([
+            { job: "nightly", lastSuccessAt: hoursAgo(72), stale: true, lastError: "boom", lastErrorAt: hoursAgo(1) },
+        ]);
+
+        await sendProblemsDigest(NOW);
+
+        expect(digestCtx().count).toBe("1");
+        expect(digestCtx().items).toMatch(/^Scheduled job nightly: last ran /);
     });
 
     it("an unset address sends nothing, with no fallback", async () => {

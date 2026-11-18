@@ -88,7 +88,7 @@ defineRoute({
 // the sibling GET/PATCH/DELETE on /api/facility/visits carry and the same set
 // facility-ops/visits gates the page on, which must stay equal. Not
 // isOperations: operations' reach into attendance is aggregate only (the
-// trends, printing ID badges; docs/rules/attendance-checkin.md), so one
+// trends, printing ID badges), so one
 // person's visit record stays outside it.
 //
 // Its own endpoint rather than a POST on /api/facility/visits: adding a verb to
@@ -168,11 +168,16 @@ defineRoute({
     envelope: null,
     // Bag: { Program } with volunteers (ProgramVolunteer → participant Person),
     // participants (ProgramParticipant → participant Person → household Household
-    // → emergencyContacts EmergencyContact), events (Event), leadMentor (Person).
-    returns: ['Program', 'ProgramParticipant', 'ProgramVolunteer', 'Person', 'Household', 'EmergencyContact', 'Event'],
+    // → emergencyContacts EmergencyContact), events (Event), leadMentor (Person);
+    // and { ProgramRosterAge }, each roster person's age at the program's start.
+    returns: ['Program', 'ProgramParticipant', 'ProgramVolunteer', 'Person', 'Household', 'EmergencyContact', 'Event', 'ProgramRosterAge'],
     orderedView: [
         ['isSysadmin',             ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
         ['isBoardMember',          ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
+        // Finance reads every roster to enroll places paid outside the store:
+        // the Board's view less 'internal', which the
+        // roster does not show (Person.isDeclaredAdult is the only such field here).
+        ['isFinance',              ['everyones:pii', 'everyones:personal', 'member', 'public']],
         // their_program_households delivers the household band leads operationally
         // need: the family's emergency contacts (personal) and the parents' own
         // contact details (pii). Person binds this scope ONLY on isHouseholdLead
@@ -207,8 +212,9 @@ defineRoute({
 // personal-tier data (dob, incl. youth) for everyone enrolled in / RSVP'd to
 // the program. This route is FAIL-CLOSED,
 // staff-only: the handler fn (events/[id]/route.ts) does an inline event->program
-// lead/core-vol/admin gate and throws 403 for everyone else, so non-staff never
-// receive the roster at all. That gate is NOT here in `authorize` because the
+// lead/core-vol/admin gate and answers 404 to everyone else, the same answer as a
+// missing event, so non-staff never receive the roster nor learn the event
+// exists. That gate is NOT here in `authorize` because the
 // roster's identities (name/id, and the existence of each enrollment/RSVP/Visit
 // row) are tier 'public', so per-field stripping cannot hide the "who attends"
 // association — only admission can; and the event->program check can't be
@@ -220,7 +226,7 @@ defineRoute({
 // personal: the two staff-only fields the session page renders
 // (Event.attendanceConfirmedAt, ProgramVolunteer.isCore) are personal, and every
 // internal ProgramParticipant field says how a family pays, which is not a
-// program leader's (docs/rules/programs.md).
+// program leader's.
 defineRoute({
     endpoint: 'GET /api/events/[id]',
     authorize: 'authenticated',
@@ -241,20 +247,21 @@ defineRoute({
 });
 
 // Staff directory SEARCH for un-enrolled participants to add to a program.
-// Admission ('program-lead-mentor'; resolveAccess also admits sysadmin/board)
-// is the real boundary. The search returns names only (owner ruling,
-// docs/rules/programs.md) as EligibleCandidate rows: id, name and a computed
+// Admission ('program-roster-staff': the program's lead mentor, sysadmin, board,
+// or finance, which enrolls from the roster) is the real boundary. The search returns names only (owner ruling)
+// as EligibleCandidate rows: id, name and a computed
 // age-fit label, all public. Person is not in the bag, so no email or date of
 // birth can leave even if the query over-selects.
 defineRoute({
     endpoint: 'GET /api/programs/[id]/eligible-participants',
-    authorize: 'program-lead-mentor',
+    authorize: 'program-roster-staff',
     envelope: 'members',
     // Bag: { EligibleCandidate }.
     returns: ['EligibleCandidate'],
     orderedView: [
         ['isSysadmin',        ['public']],
         ['isBoardMember',     ['public']],
+        ['isFinance',         ['public']],
         ['programLeadMentor', ['public']],
     ],
 });
@@ -341,12 +348,12 @@ defineRoute({
 
 // Board's volunteer roster: households on volunteer dues + the emails designated
 // ahead of signup. Exposes household leads' addresses and the designated
-// addresses (Person.email and VolunteerDesignation.email are both 'pii'), so
-// only isSysadmin/board may see it.
+// addresses (VolunteerRosterRow.email and VolunteerRosterDesignation.email are
+// 'pii'), so only isSysadmin/board may see it.
 //
 // The grant deliberately stops short of 'personal'. The roster is standing +
-// contact data — household name, lead names, one lead email, memberSince, the
-// designated address — and no personal-tier field (dateOfBirth, allergies,
+// contact data — household name, lead names, one email, memberSince, the
+// designations — and no personal-tier field (dateOfBirth, allergies,
 // notificationSettings) belongs in it. 'internal' IS granted: a row's status
 // is derived from OrgMembershipProcess.status, so a blocked or in-flight
 // application is observable in the response even though the column itself
@@ -358,10 +365,10 @@ defineRoute({
     endpoint: 'GET /api/membership-ops/volunteer-memberships',
     authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
     envelope: 'rows',
-    // Bag: { OrgMembership } with household (Household → householdMembers Person,
-    // leads flagged isHouseholdLead) and processes (OrgMembershipProcess), plus
-    // { VolunteerDesignation } for the pre-designated emails.
-    returns: ['OrgMembership', 'Household', 'Person', 'OrgMembershipProcess', 'VolunteerDesignation'],
+    // Bag: { VolunteerRosterRow } with designations (VolunteerRosterDesignation),
+    // assembled by the route from OrgMembership, Household, Person,
+    // OrgMembershipProcess and VolunteerDesignation.
+    returns: ['VolunteerRosterRow'],
     orderedView: [
         ['isSysadmin',    ['everyones:pii', 'everyones:internal', 'member', 'public']],
         ['isBoardMember', ['everyones:pii', 'everyones:internal', 'member', 'public']],
@@ -372,7 +379,7 @@ defineRoute({
 // merge refuses to carry forward: its collision check ("Both attested the
 // same background check") means the same human reviewed
 // under two Person identities. Board-only, NOT sysadmin — removing a review
-// is a membership decision (docs/rules/membership.md). No bag: the response
+// is a membership decision. No bag: the response
 // is { success: true }, no model data.
 defineRoute({
     endpoint: 'DELETE /api/membership-ops/bg-attestations/[id]',
@@ -383,7 +390,7 @@ defineRoute({
     ],
 });
 
-// Board archives or unarchives a household (docs/in-design/HOUSEHOLD_ARCHIVE.md).
+// Board archives or unarchives a household.
 // Board only, NOT sysadmin: archival is a membership decision. The bag is
 // { Household }, the updated row; the view keeps id, name and archivedAt and
 // drops the address and intake note, which the action's caller does not need.
@@ -414,6 +421,42 @@ defineRoute({
     authorize: { anyRole: ['isBackgroundCheckReviewer', 'isBoardMember'] },
     envelope: null,
     orderedView: [],
+});
+
+// A reviewer or Board member dismisses a check review opened by mistake: it
+// undoes a "check started" mark and decides nothing about anyone. Same
+// admission band as undo; a sysadmin who is neither cannot dismiss. No bag.
+defineRoute({
+    endpoint: 'POST /api/membership/reviews/dismiss',
+    authorize: { anyRole: ['isBackgroundCheckReviewer', 'isBoardMember'] },
+    envelope: null,
+    orderedView: [],
+});
+
+// The family path for marking a background check started: GET lists the rows
+// the caller may mark, POST marks one and returns the refreshed rows. Any
+// signed-in person is admitted; the handler narrows the subject to the caller
+// and, for a household lead, the other adults of the household they lead. The
+// row's `state` reaches only those two scopes, so a non-lead sibling or anyone
+// else keeps personId and name alone.
+const CHECK_STARTED_VIEW: readonly OrderedViewEntry[] = [
+    ['authenticated', ['their_own:internal', 'led_households:internal', 'public']],
+];
+
+defineRoute({
+    endpoint: 'GET /api/membership/check-started',
+    authorize: 'authenticated',
+    envelope: 'rows',
+    returns: ['CheckStartedRow'],
+    orderedView: CHECK_STARTED_VIEW,
+});
+
+defineRoute({
+    endpoint: 'POST /api/membership/check-started',
+    authorize: 'authenticated',
+    envelope: 'rows',
+    returns: ['CheckStartedRow'],
+    orderedView: CHECK_STARTED_VIEW,
 });
 
 // The caller's own Key Volunteer Agreement: its status, the embedded sign URL
@@ -560,7 +603,7 @@ defineRoute({
         ['isFinance',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
         ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
     ],
-    financeView: { records: [{ key: 'ProgramPaymentPlanDecision', id: ['programId', 'personId'], model: 'ProgramParticipant' }], query: ['page'] },
+    financeView: { records: [{ key: 'ProgramPaymentPlanDecision', id: ['programId', 'personId'], model: 'ProgramParticipant' }], query: ['page', 'archived'] },
 });
 
 // The "who is 18 as of the member-year start" roster (Membership Audit). Ships
@@ -635,7 +678,7 @@ defineRoute({
         ['isFinance',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
         ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
     ],
-    financeView: { records: [{ key: 'MembershipPaymentPlanDecision', id: 'processId', model: 'OrgMembershipProcess' }], query: ['page'] },
+    financeView: { records: [{ key: 'MembershipPaymentPlanDecision', id: 'processId', model: 'OrgMembershipProcess' }], query: ['page', 'archived'] },
 });
 
 // Board's unconfirmed Shopify stock screen: programs whose stock write could not
@@ -728,8 +771,10 @@ defineRoute({
     endpoint: 'GET /api/facility/visits',
     authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
     envelope: 'visits',
-    // Bag: { Visit } with person (Person).
-    returns: ['Visit', 'Person'],
+    // Bag: { Visit } with person (Person), event (Event) naming the session
+    // attended, and facilityClose (FacilityClose, whose closedBy is a Person)
+    // naming who closed and when.
+    returns: ['Visit', 'Person', 'Event', 'FacilityClose'],
     orderedView: [
         ['isSysadmin',    ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
         ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
@@ -797,7 +842,7 @@ defineRoute({
     ],
 });
 
-// Parked kiosk scans awaiting review (docs/rules/attendance-checkin.md, kiosk
+// Parked kiosk scans awaiting review (kiosk
 // resilience) — the
 // RawBadgeLog rows a replay parked instead of toggling (reviewReason set,
 // reviewedAt still null).
@@ -867,16 +912,25 @@ defineRoute({
     orderedView: [],
 });
 
-// In-memory kiosk last-seen. No DB row: the stamp
-// lives on the task, so the bag is a synthesized SystemMetricLog (metric
-// `kiosk_last_seen`, timestamp = last verified kiosk request, value = age
-// in seconds). Empty array means never seen since this task started (or
-// overnight after scale-to-zero).
+// Daily household background-check catch-up (opens a check review where one is
+// due, settles applications waiting on their check). It writes membership state,
+// so it answers only to its own secret. Admission gate only: counts, no rows.
+defineRoute({
+    endpoint: 'GET /api/cron/bg-settle',
+    authorize: { cronSecret: 'bg-settle' },
+    envelope: null,
+    orderedView: [],
+});
+
+// Kiosk readings. SystemMetricLog rows are synthesized from in-memory task
+// state (`kiosk_last_seen`, `kiosk_clock_skew`), so they vanish when the task
+// restarts. KioskProtocolSeen rows are stored: one per kiosk key fingerprint,
+// with the scan protocol version it last spoke and when.
 defineRoute({
     endpoint: 'GET /api/system-status/kiosk-heartbeat',
     authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
     envelope: 'heartbeat',
-    returns: ['SystemMetricLog'],
+    returns: ['SystemMetricLog', 'KioskProtocolSeen'],
     orderedView: [
         ['isSysadmin',    ['everyones:internal', 'member', 'public']],
         ['isBoardMember', ['everyones:internal', 'member', 'public']],
@@ -937,6 +991,36 @@ defineRoute({
     ],
 });
 
+// My Household: the caller's household, its members and its membership status.
+// Any session is admitted, a caller with no household included (household null);
+// every sensitive field is gated to the caller's own household.
+defineRoute({
+    endpoint: 'GET /api/household',
+    authorize: 'authenticated',
+    envelope: null,
+    // Bag: { HouseholdPage } with household (HouseholdPageHousehold →
+    // householdMembers HouseholdPeer, orgMembership OrgMembership).
+    returns: ['HouseholdPage', 'HouseholdPageHousehold', 'HouseholdPeer', 'OrgMembership'],
+    orderedView: [
+        ['authenticated', ['their_households:pii', 'their_households:personal', 'their_households:internal', 'member', 'public']],
+    ],
+});
+
+// A household lead adds a member. The route refuses staff accounts, a caller
+// with no household and a non-lead; the view gates the new member and the
+// emergency-contact warning to the caller's own household.
+defineRoute({
+    endpoint: 'PATCH /api/household',
+    authorize: 'authenticated',
+    envelope: null,
+    // Bag: { HouseholdMemberAdded } with member (HouseholdPeer) and warning
+    // (EmergencyContactWarning, or null).
+    returns: ['HouseholdMemberAdded', 'HouseholdPeer', 'EmergencyContactWarning'],
+    orderedView: [
+        ['authenticated', ['their_households:pii', 'their_households:personal', 'their_households:internal', 'member', 'public']],
+    ],
+});
+
 // App-localization singleton (timezone/locale) — sysadmin-only surface,
 // wholly public-tier data; the gate is about who may see admin settings
 // screens, not the fields. Declared public-only ON PURPOSE: AppSettings is the
@@ -991,6 +1075,42 @@ defineRoute({
     orderedView: [
         ['isBoardMember', ['everyones:internal', 'public']],
     ],
+});
+
+// Email Templates tab: the Board's saved subject/body overrides. The list
+// returns every saved row; a key with no row sends its registry default.
+// Subject, body and the saver's Person id are internal; no person record leaves.
+defineRoute({
+    endpoint: 'GET /api/settings/templates',
+    authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
+    envelope: 'templates',
+    returns: ['EmailTemplate'],
+    orderedView: [
+        ['isSysadmin',    ['everyones:internal', 'public']],
+        ['isBoardMember', ['everyones:internal', 'public']],
+    ],
+});
+
+// Save one key's subject/body after token validation; `[key]` is a registry key.
+// Returns the saved row, or null once a blank save removes it.
+defineRoute({
+    endpoint: 'PUT /api/settings/templates/[key]',
+    authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
+    envelope: 'template',
+    returns: ['EmailTemplate'],
+    orderedView: [
+        ['isSysadmin',    ['everyones:internal', 'public']],
+        ['isBoardMember', ['everyones:internal', 'public']],
+    ],
+});
+
+// Send the editor's unsaved subject/body, filled from the key's sample values,
+// to the caller's own address. Admission gate only: the response carries no rows.
+defineRoute({
+    endpoint: 'POST /api/settings/templates/[key]/test-send',
+    authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
+    envelope: null,
+    orderedView: [],
 });
 
 // ─── Outbound surfaces ─────────────────────────────────────────────────────

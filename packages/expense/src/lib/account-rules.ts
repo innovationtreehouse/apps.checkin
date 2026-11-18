@@ -1,4 +1,4 @@
-// The account-mapping rule matcher (docs/rules/expenses.md): expense lines and gifts of goods resolve their account through it.
+// The account-mapping rule matcher: expense lines and gifts of goods resolve their account through it.
 import type { AccountMapping } from "../db/schema";
 
 /** A line's catalog inputs: its GTIN-13 and the catalog's category and subcategory names. */

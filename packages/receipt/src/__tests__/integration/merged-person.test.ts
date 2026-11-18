@@ -85,6 +85,14 @@ describeDb("after merging A into B", () => {
     expect((await db.receipt.findUniqueOrThrow({ where: { id } })).uploadedByUserId).toBe(ALICE.id);
   });
 
+  it("B's copy of A's receipt names A's copy, stamped with B as its uploader", async () => {
+    const original = await aliceUploads();
+    afterMerge();
+    actAs(SURVIVOR);
+    const copy = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    expect((await receiptService.get(copy.id, "submitter")).duplicateNotice).toMatchObject({ matchId: original, uploadedByUserId: SURVIVOR.id });
+  });
+
   it("an unrelated caller still does not see it", async () => {
     const id = await aliceUploads();
     afterMerge();

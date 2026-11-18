@@ -1,14 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import {
   Badge, Button, Card, Center, Checkbox, Group, Loader, Modal, Select, Stack, Table, Text, TextInput, Title,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { errorMessage } from "@checkin/component-ui";
+import { errorMessage, InactivePickWarning, LoadError, QuickBooksListsRefresh } from "@checkin/component-ui";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { useRequireRole } from "@/hooks/useRequireRole";
-import { api } from "@/lib/api";
+import { api, useLoad } from "@/lib/api";
 import { FINANCE_ROLES } from "@/lib/nav/sections/finance";
 
 interface Bucket {
@@ -57,11 +57,12 @@ export default function BudgetsPage() {
   const isFinance = !!user?.isFinance;
   const isBoard = !!user?.isBoardMember;
 
-  const [allBuckets, setAllBuckets] = useState<Bucket[]>([]);
-  const [classes, setClasses] = useState<ClassOption[] | null>(null);
-  const [classesFailed, setClassesFailed] = useState(false);
+  // Archived buckets are always loaded: their Classes stay taken, so the picker must not offer them.
+  const bucketsLoad = useLoad<Bucket[]>(ready ? "/api/budget-owners?includeArchived=1" : null);
+  const classesLoad = useLoad<ClassOption[]>(ready ? "/api/budget-owners/quickbooks-classes" : null);
+  const allBuckets = bucketsLoad.data ?? [];
+  const classes = classesLoad.data;
   const [showArchived, setShowArchived] = useState(false);
-  const [loading, setLoading] = useState(true);
 
   const [newName, setNewName] = useState("");
   const [newOrgLevel, setNewOrgLevel] = useState(false);
@@ -75,19 +76,7 @@ export default function BudgetsPage() {
 
   const [approverBucket, setApproverBucket] = useState<Bucket | null>(null);
 
-  // Archived buckets are always loaded: their Classes stay taken, so the picker must not offer them.
-  const load = useCallback(() => Promise.allSettled([
-    api<Bucket[]>("/api/budget-owners?includeArchived=1"),
-    api<ClassOption[]>("/api/budget-owners/quickbooks-classes"),
-  ]).then(([b, c]) => {
-    if (b.status === "fulfilled") { setAllBuckets(b.value); clearError("Buckets not loaded"); } else showError("Buckets not loaded", errorMessage(b.reason));
-    setClassesFailed(c.status === "rejected");
-    if (c.status === "fulfilled") { setClasses(c.value); clearError("QuickBooks Classes unavailable"); } else showError("QuickBooks Classes unavailable", errorMessage(c.reason));
-    setLoading(false);
-  }), []);
-
-  useEffect(() => { if (ready) load(); }, [ready, load]);
-
+  // A successful write re-reads both lists, so a write needs no reload of its own.
   const run = async (url: string, method: string, body: unknown, done: string, failed: string) => {
     clearError(failed);
     try {
@@ -97,8 +86,6 @@ export default function BudgetsPage() {
       return false;
     }
     notifications.show({ message: done });
-    setLoading(true);
-    await load();
     return true;
   };
 
@@ -140,17 +127,11 @@ export default function BudgetsPage() {
   const classNames = new Map((classes ?? []).map((c) => [c.id, c.active ? c.name : `${c.name} (inactive)`]));
   const takenBy = new Map(allBuckets.filter((b) => b.quickBooksClassId).map((b) => [b.quickBooksClassId, b.id]));
   const className = (id: string) => classNames.get(id) ?? `QuickBooks id ${id}`;
-  // Active Classes no other bucket holds, plus `keep` (the bucket's saved Class and the current pick)
-  // even when inactive or missing from the list, so the picker never drops a Class it is showing.
-  const classChoices = (bucketId: number | null, keep: (string | null)[]) => {
-    const kept = new Set(keep.filter((id): id is string => id !== null));
-    const options = (classes ?? [])
-      .filter((c) => kept.has(c.id) || (c.active && (takenBy.get(c.id) ?? bucketId) === bucketId))
-      .map((c) => ({ value: c.id, label: classNames.get(c.id) ?? c.name }));
-    for (const id of kept) if (!options.some((o) => o.value === id)) options.push({ value: id, label: className(id) });
-    return options;
-  };
-  const classPlaceholder = (empty: string) => (classes ? empty : classesFailed ? "Classes unavailable" : "Loading…");
+  // Active Classes no other bucket holds; a saved inactive or missing Class shows as a warning instead.
+  const classChoices = (bucketId: number | null) => (classes ?? [])
+    .filter((c) => c.active && (takenBy.get(c.id) ?? bucketId) === bucketId)
+    .map((c) => ({ value: c.id, label: c.name }));
+  const classPlaceholder = (empty: string) => (classes ? empty : classesLoad.error ? "Classes unavailable" : "Loading…");
 
   if (authLoading) return <PageLoader />;
   if (!ready) return null;
@@ -180,17 +161,17 @@ export default function BudgetsPage() {
               />
               <Select
                 label="QuickBooks Class"
-                description="Expenses in this bucket post to QuickBooks only once it is set"
-                placeholder={classPlaceholder("None yet")}
-                clearable
+                description="Every bucket books to a Class"
+                placeholder={classPlaceholder("Pick a Class")}
                 searchable
-                data={classChoices(null, [newClassId])}
+                data={classChoices(null)}
                 value={newClassId}
                 onChange={setNewClassId}
                 w={280}
               />
-              <Button onClick={create} disabled={creating || !newName.trim()} loading={creating}>Create</Button>
+              <Button onClick={create} disabled={creating || !newName.trim() || !newClassId} loading={creating}>Create</Button>
             </Group>
+            <QuickBooksListsRefresh />
           </Card>
         )}
 
@@ -200,7 +181,11 @@ export default function BudgetsPage() {
           onChange={(e) => setShowArchived(e.currentTarget.checked)}
         />
 
-        {loading ? (
+        {classesLoad.error && <LoadError what="QuickBooks Classes" message={classesLoad.error} onRetry={classesLoad.reload} />}
+
+        {bucketsLoad.error ? (
+          <LoadError what="buckets" message={bucketsLoad.error} onRetry={bucketsLoad.reload} />
+        ) : !bucketsLoad.data ? (
           <Center py="xl"><Loader /></Center>
         ) : (
           <Table striped withTableBorder>
@@ -260,12 +245,13 @@ export default function BudgetsPage() {
           <Select
             label="QuickBooks Class"
             placeholder={classPlaceholder("None")}
-            clearable
             searchable
-            data={editing ? classChoices(editing.id, [editing.quickBooksClassId, editClassId]) : []}
+            data={editing ? classChoices(editing.id) : []}
             value={editClassId}
             onChange={setEditClassId}
           />
+          {editClassId === editing?.quickBooksClassId && <InactivePickWarning saved={editClassId} options={classes} />}
+          <QuickBooksListsRefresh />
           <Checkbox
             label="Org-level"
             description="No approvers. The Board removes any owner and treasurers first, and a change back waits for Board signatures open expenses here still need."
@@ -293,40 +279,23 @@ function ApproversModal({ bucket, canEdit, onClose }: {
   canEdit: boolean;
   onClose: () => void;
 }) {
-  const [approvers, setApprovers] = useState<Approver[] | null>(null);
-  const [loadFailed, setLoadFailed] = useState(false);
-  const [people, setPeople] = useState<PersonOption[]>([]);
+  // The write answers with the new list, so a write here does not re-read it.
+  const loaded = useLoad<Approver[]>(`/api/budget-owners/${bucket.id}/approvers`, { skipWriteReload: true });
+  const people = useLoad<PersonOption[]>(canEdit ? "/api/budget-owners/approver-options" : null);
+  const [answer, setAnswer] = useState<Approver[] | null>(null);
+  const approvers = answer ?? loaded.data;
+  // Undefined follows the saved owner; a pick holds until a change lands.
+  const [pick, setPick] = useState<string | null | undefined>(undefined);
   const [newTreasurer, setNewTreasurer] = useState<string | null>(null);
-  const [ownerPick, setOwnerPick] = useState<string | null>(null);
   const [savingOwner, setSavingOwner] = useState(false);
   const [changing, setChanging] = useState(false);
-
-  const applyApprovers = useCallback((data: Approver[]) => {
-    setApprovers(data);
-    const saved = data.find((a) => a.role === "OWNER");
-    setOwnerPick(saved ? String(saved.personId) : null);
-  }, []);
-
-  useEffect(() => {
-    let live = true;
-    api<Approver[]>(`/api/budget-owners/${bucket.id}/approvers`).then(
-      (data) => { if (live) { applyApprovers(data); setLoadFailed(false); clearError("Approvers not loaded"); } },
-      (e: unknown) => { if (live) { showError("Approvers not loaded", errorMessage(e)); setLoadFailed(true); } },
-    );
-    if (canEdit) {
-      api<PersonOption[]>("/api/budget-owners/approver-options").then(
-        (data) => { if (live) { setPeople(data); clearError("People not loaded"); } },
-        (e: unknown) => { if (live) showError("People not loaded", errorMessage(e)); },
-      );
-    }
-    return () => { live = false; };
-  }, [bucket.id, canEdit, applyApprovers]);
 
   const change = async (url: string, method: string, body?: unknown) => {
     setChanging(true);
     clearError("Approvers not changed");
     try {
-      applyApprovers(await write<Approver[]>(url, method, body));
+      setAnswer(await write<Approver[]>(url, method, body));
+      setPick(undefined);
     } catch (e) {
       showError("Approvers not changed", errorMessage(e));
     } finally {
@@ -342,8 +311,9 @@ function ApproversModal({ bucket, canEdit, onClose }: {
 
   const owner = approvers?.find((a) => a.role === "OWNER") ?? null;
   const savedOwner = owner ? String(owner.personId) : null;
+  const ownerPick = pick === undefined ? savedOwner : pick;
   const treasurers = approvers?.filter((a) => a.role === "TREASURER") ?? [];
-  const options = people.map((p) => ({ value: String(p.id), label: p.name }));
+  const options = (people.data ?? []).map((p) => ({ value: String(p.id), label: p.name }));
 
   return (
     <Modal opened onClose={onClose} title={`Approvers — ${bucket.name}`}>
@@ -352,9 +322,10 @@ function ApproversModal({ bucket, canEdit, onClose }: {
           The owner and treasurers approve this bucket&apos;s lines. They come from the Board-approved budget; only
           the Board sets them. Nobody may set themself or anyone in their own household.
         </Text>
-        {approvers === null && loadFailed ? (
-          <Text c="dimmed">Approvers couldn&apos;t be loaded.</Text>
-        ) : approvers === null ? (
+        {people.error && <LoadError what="people for the pickers" message={people.error} onRetry={people.reload} />}
+        {loaded.error && !approvers ? (
+          <LoadError what="approvers" message={loaded.error} onRetry={loaded.reload} />
+        ) : !approvers ? (
           <Center><Loader size="sm" /></Center>
         ) : (
           <>
@@ -368,7 +339,7 @@ function ApproversModal({ bucket, canEdit, onClose }: {
                   data={options}
                   clearButtonProps={{ "aria-label": "Clear owner" }}
                   value={ownerPick}
-                  onChange={setOwnerPick}
+                  onChange={setPick}
                   disabled={changing}
                   style={{ flex: 1 }}
                 />

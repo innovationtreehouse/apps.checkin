@@ -27,7 +27,7 @@ export const GET = handler("GET /api/safety/trusted-adults", async () => {
             origin: true,
             createdAt: true,
             household: { select: { id: true, name: true, householdMembers: { where: { isHouseholdLead: true }, select: { id: true, name: true, email: true } } } },
-            trustedAdultPerson: { select: { id: true, name: true, email: true } },
+            trustedAdultPerson: { select: { id: true, name: true, email: true, householdId: true } },
             reviews: {
                 orderBy: { id: "desc" },
                 select: {
@@ -45,6 +45,7 @@ export const GET = handler("GET /api/safety/trusted-adults", async () => {
                     proposedPhone: true,
                     proposedEmail: true,
                     proposedContext: true,
+                    familyReply: true,
                     createdAt: true,
                 },
             },

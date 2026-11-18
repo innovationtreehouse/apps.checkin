@@ -34,6 +34,7 @@ import { handler } from '@/security/handler';
 import { fileHandler, type FileResult } from '@/security/fileHandler';
 import { buildCallerContext, resolveAccess, scopesHeld, type CallerContext } from '@/security/access-resolvers';
 import { stripValue } from '@/security/stripper';
+import { ageBand } from '@/lib/programAge';
 
 const { NextRequest } = jest.requireActual<{ NextRequest: typeof NextRequestType }>('next/server');
 jest.mock('@/lib/finance/financeViewLog', () => ({
@@ -90,6 +91,9 @@ function request(endpoint: string) {
     const [method, path] = endpoint.split(' ');
     return new NextRequest(`http://localhost${path.replace(/\[[^\]]+\]/g, '1')}`, { method });
 }
+const declaredAdult = ageBand({ dateOfBirth: null, isDeclaredAdult: true });
+const noAgeOnFile = ageBand({ dateOfBirth: null });
+const youthByBirthDate = ageBand({ dateOfBirth: new Date(Date.now() - 10 * 365 * 86_400_000) });
 const params = { params: Promise.resolve({ id: '1', lineItemId: '1', otherId: '1' }) };
 
 beforeEach(() => mockSession.mockReset());
@@ -296,6 +300,9 @@ describe('receipt submitter admission', () => {
         ['an adult with an ACTIVE membership and no role', { ageBand: 'adult', isActiveOrgMember: true }],
         ['a role holder of unknown age with no membership', { isKeyholder: true }],
         ['a staff account with no membership', { email: 'staff@innovationtreehouse.org', hd: 'innovationtreehouse.org', emailVerified: true }],
+        ['a staff account of unknown age with no membership', { ageBand: noAgeOnFile, email: 'staff@innovationtreehouse.org', hd: 'innovationtreehouse.org', emailVerified: true }],
+        ['an over-25 declared adult with an ACTIVE membership', { ageBand: declaredAdult, isActiveOrgMember: true }],
+        ['a Board member who is a youth by date of birth', { ageBand: youthByBirthDate, isBoardMember: true }],
     ] as [string, Flags][])('admits %s', async (_who, flags) => {
         for (const endpoint of SUBMITTER_ROUTES) {
             expect({ endpoint, status: await status(endpoint, flags) }).toEqual({ endpoint, status: 200 });
@@ -309,6 +316,7 @@ describe('receipt submitter admission', () => {
         ['a youth with an ACTIVE membership', { ageBand: 'youth', isActiveOrgMember: true }],
         ['a program-volunteer youth with an ACTIVE membership', { ageBand: 'youth', isProgramVolunteer: true, isActiveOrgMember: true }],
         ['a caller of unknown age', { ageBand: 'unknown' }],
+        ['a caller with no age on file and an ACTIVE membership', { ageBand: noAgeOnFile, isActiveOrgMember: true }],
         ['a caller with no age band', {}],
     ] as [string, Flags][])('refuses %s', async (_who, flags) => {
         for (const endpoint of SUBMITTER_ROUTES) {
@@ -358,7 +366,7 @@ describe('the confirmation that signs a reimbursement', () => {
 
     it('returns nothing to anyone else, the uploader included', () => {
         const own = views(CONFIRMATION_ROUTES[0]).get('authenticated')!;
-        expect(stripValue('ReceiptConfirmationView', row, own, { selfId: 7 } as CallerContext)).toEqual({ lineItems: [{}] });
+        expect(stripValue('ReceiptConfirmationView', row, own, { selfId: 7 } as CallerContext)).toEqual({ lineItems: [] });
     });
 
     it('returns a Board member the receipt they confirm on the reimbursee\'s behalf', () => {
@@ -422,12 +430,12 @@ describe('the discard route', () => {
     it.each([
         ['FINANCE', { isFinance: true }],
         ['the Board', { isBoardMember: true }],
-    ] as [string, Flags][])("returns %s nothing of another person's receipt", async (_who, flags) => {
+    ] as [string, Flags][])("returns %s only the public id of another person's receipt", async (_who, flags) => {
         signIn(5, { ...flags, ageBand: 'adult', isActiveOrgMember: true });
         const other = { id: 'r-1', uploadedByUserId: 8, receiptTotalCents: 6989, donorFirstName: 'Pat' };
         const res = await handler(DISCARD, async () => ({ ReceiptView: other }))(request(DISCARD), params);
         expect(res.status).toBe(200);
-        expect(await res.json()).toEqual({});
+        expect(await res.json()).toEqual({ id: 'r-1' });
     });
 });
 
@@ -457,9 +465,9 @@ describe('the submitter view', () => {
         }
     });
 
-    it("returns nothing of another person's receipt", () => {
+    it("returns only the public id of another person's receipt", () => {
         const out = stripValue('ReceiptView', row, own, { selfId: 8 } as CallerContext);
-        expect(out).toEqual({ lineItems: [{}] });
+        expect(out).toEqual({ id: 'r-1', lineItems: [] });
     });
 
     it("returns the uploader the duplicate flag's time on every receipt route", () => {
@@ -473,14 +481,27 @@ describe('the submitter view', () => {
         }
     });
 
-    it("strips the kept receipt from the uploader on every receipt route, and keeps the notice of their own copy", () => {
-        const copy = { ...row, copyOfId: 'r-kept', copyOfLabel: 'Acme, uploaded 3 Oct', duplicateNotice: { matchId: 'r-mine', uploadedAt: '2026-10-03T00:00:00.000Z' } };
+    it("gives the uploader the kept receipt's id but not its label on every receipt route, and keeps the notice of their own copy", () => {
+        const copy = { ...row, copyOfId: 'r-kept', copyOfLabel: 'receipt r-kept', duplicateNotice: { matchId: 'r-mine', uploadedAt: '2026-10-03T00:00:00.000Z', uploadedByUserId: 7 } };
         for (const endpoint of jsonRoutes) {
             const submitter = new Map(getRoute(endpoint)!.orderedView).get('authenticated');
             if (!submitter || !getRoute(endpoint)!.returns?.includes('ReceiptView')) continue;
             const out = stripValue('ReceiptView', copy, submitter, ctx) as Record<string, unknown>;
-            expect({ endpoint, leaked: 'copyOfId' in out || 'copyOfLabel' in out }).toEqual({ endpoint, leaked: false });
+            expect({ endpoint, id: out.id, copyOfId: out.copyOfId, leaked: 'copyOfLabel' in out }).toEqual({ endpoint, id: copy.id, copyOfId: 'r-kept', leaked: false });
             expect(out.duplicateNotice).toEqual(copy.duplicateNotice);
+        }
+    });
+
+    it.each([
+        ["another person's", 8],
+        ['an unstamped', undefined],
+    ])("drops the notice of %s copy on every receipt route", (_whose, uploadedByUserId) => {
+        const notice = { matchId: 'r-other', uploadedAt: '2026-10-03T00:00:00.000Z', uploadedByUserId };
+        for (const endpoint of jsonRoutes) {
+            const submitter = new Map(getRoute(endpoint)!.orderedView).get('authenticated');
+            if (!submitter || !getRoute(endpoint)!.returns?.includes('ReceiptView')) continue;
+            const out = stripValue('ReceiptView', { ...row, duplicateNotice: notice }, submitter, ctx) as Record<string, unknown>;
+            expect({ endpoint, notice: out.duplicateNotice }).toEqual({ endpoint, notice: null });
         }
     });
 

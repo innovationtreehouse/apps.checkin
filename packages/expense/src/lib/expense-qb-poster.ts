@@ -23,7 +23,7 @@ import { unsignedLines } from "./signoff-facts";
 import { SYSTEM_ACTOR } from "./system-actor";
 import type { ExpenseSettings } from "../contract";
 import { readExpenseSettings } from "../services/settingsService";
-import { checkOffHeldOnPost, raiseFlag, raiseStray } from "../services/flagService";
+import { checkOffOnLink, raiseFlag, raiseStray } from "../services/flagService";
 import { NEEDS_VOIDING } from "./flags";
 import { reimburseeVendorLink } from "./livePeople";
 
@@ -192,13 +192,13 @@ async function buildWrite(client: Db, orgId: string, expense: Expense, posting: 
   return getExpenseRuntime().outbound("quickbooks.create", rows, async (stripped) => composeWrite(stripped, posting));
 }
 
-type SettleData = { qbMatchState: string; qbTxnId?: string; qbTxnEntity?: string; qbVendorId?: string; qbMatchBaseline?: string | null };
+type SettleData = { qbMatchState: string; qbVendorId?: string; qbMatchBaseline?: string | null } & ({ qbTxnId?: undefined; qbTxnEntity?: undefined } | { qbTxnId: string; qbTxnEntity: string });
 
 /** Settles a post that did not fail. Any outcome but `waiting` leaves the posting step, so it clears a failure. */
 async function settle(tx: Db, before: Expense, outcome: PostOutcome, data: SettleData, notes?: string): Promise<PostOutcome> {
   const cleared = outcome === "waiting" ? {} : { qbFirstFailedAt: null, qbLastError: null };
   await tx.expense.update({ where: { id: before.id }, data: { ...cleared, ...data, qbClaimedAt: null } });
-  if (data.qbTxnId) await checkOffHeldOnPost(tx, before.id);
+  if (data.qbTxnId) await checkOffOnLink(tx, before.id, data.qbTxnEntity, data.qbTxnId);
   if (before.qbMatchState === data.qbMatchState && !data.qbTxnId) return outcome;
   await writeAudit(tx, SYSTEM_ACTOR, {
     expenseId: before.id,
@@ -252,23 +252,6 @@ export async function postExpenseToQb(orgId: string, expenseId: string, opts: Po
       ? withClaim(orgId, expenseId, held, (tx) => recordFailure(tx, held.before, failure))
       : withPostable(orgId, expenseId, (tx, current) => recordFailure(tx, current, failure), book);
   }
-}
-
-/**
- * Retry of a stuck post: re-arms it (NEEDS_FINANCE → POST_FAILED, keeping its first failure time)
- * and posts once. The lines keep the accounts they were outboxed with. "waiting" when the expense
- * is not a stuck post.
- */
-export async function retryFailedPost(orgId: string, expenseId: string): Promise<PostOutcome | "unbound"> {
-  if (!(await getExpenseRuntime().quickbooks.posting())) return "unbound";
-  const rearmed = await db.$transaction(async (tx) => {
-    const current = await lockedExpense(tx, orgId, expenseId);
-    if (current.qbMatchState !== "NEEDS_FINANCE" || !current.qbFirstFailedAt) return false;
-    await tx.expense.update({ where: { id: expenseId }, data: { qbMatchState: "POST_FAILED" } });
-    await writeAudit(tx, SYSTEM_ACTOR, { expenseId, action: "qb_post_retried", fieldChanged: "qbMatchState", valueBefore: "NEEDS_FINANCE", valueAfter: "POST_FAILED" });
-    return true;
-  });
-  return rearmed ? postExpenseToQb(orgId, expenseId) : "waiting";
 }
 
 type Claimed = {

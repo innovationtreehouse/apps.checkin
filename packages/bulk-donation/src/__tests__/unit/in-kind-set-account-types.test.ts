@@ -42,13 +42,13 @@ describe("in-kind set-account", () => {
 
   it("refuses a Fixed Asset account on a donated item", async () => {
     configure([], async () => ACCOUNTS);
-    await expect(setAccount("150")).rejects.toMatchObject({ status: 400, message: "A donated item takes an Expense, Other Expense, or Cost of Goods Sold account; Equipment is Fixed Asset" });
+    await expect(setAccount("150")).rejects.toMatchObject({ status: 400, code: "quickbooks-list-stale", message: "A donated item takes an Expense, Other Expense, or Cost of Goods Sold account; QuickBooks' list in the app shows Equipment as Fixed Asset. If you changed it in QuickBooks, press Update now, then save again." });
     expect(db.$transaction).not.toHaveBeenCalled();
   });
 
   it("refuses an expense account on donated equipment", async () => {
     configure([LATHE], async () => ACCOUNTS);
-    await expect(setAccount("600")).rejects.toMatchObject({ status: 400, message: "Donated equipment takes a Fixed Asset account; Supplies is Expense" });
+    await expect(setAccount("600")).rejects.toMatchObject({ status: 400, code: "quickbooks-list-stale", message: "Donated equipment takes a Fixed Asset account; QuickBooks' list in the app shows Supplies as Expense. If you changed it in QuickBooks, press Update now, then save again." });
     expect(db.$transaction).not.toHaveBeenCalled();
   });
 

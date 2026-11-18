@@ -3,11 +3,11 @@ import { createContext, useCallback, useContext, useEffect, useLayoutEffect, use
 import { Alert, Button, Group, Pagination, Text } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import useSWR from "swr";
-import { clearLoads, countFailure, endRetryChain, forgetFailures, invalidateLoads, loadGeneration, scheduleRetry } from "./loadCache";
-import { errorMessage, HttpError, request, type RequestOptions } from "./http";
+import { clearLoads, countFailure, endRetryChain, forgetFailures, holdFromInvalidation, invalidateLoads, loadGeneration, scheduleRetry } from "./loadCache";
+import { errorMessage, FAILURE_TEXT, HttpError, request, type RequestOptions } from "./http";
 
 export { invalidateLoads };
-export { errorMessage, HttpError, request, type RequestOptions };
+export { errorMessage, FAILURE_TEXT, HttpError, request, type RequestOptions };
 
 /** The signed-in person as package UIs see them. The host maps its session onto this once. */
 export interface Viewer {
@@ -96,10 +96,16 @@ export function createClient(base: string) {
    * is for a pager or search box, whose rows each act on their own id; it never keeps an empty list.
    * `expireOn401: false` is for a read mounted on every page: routes also answer 401 to a session
    * next-auth reports as signed in, such as a denied household, so it must not move anyone.
+   * `reconnect: false` and `skipWriteReload: true` are for a read that logs a view or wakes a sleeping
+   * database: no re-read on reconnect, and none after another page's write; `reload()` still re-reads.
    */
-  function useLoad<T>(path: string | null, { retry = true, keepPrevious = false, expireOn401 = true }: { retry?: boolean; keepPrevious?: boolean; expireOn401?: boolean } = {}): Loaded<T> {
+  function useLoad<T>(
+    path: string | null,
+    { retry = true, keepPrevious = false, expireOn401 = true, reconnect = true, skipWriteReload = false }: { retry?: boolean; keepPrevious?: boolean; expireOn401?: boolean; reconnect?: boolean; skipWriteReload?: boolean } = {},
+  ): Loaded<T> {
     const url = path === null ? null : resolve(path);
     useEffect(() => () => { if (url !== null) forgetFailures(url); }, [url]);
+    useEffect(() => (url !== null && skipWriteReload ? holdFromInvalidation(url) : undefined), [url, skipWriteReload]);
     const swr = useSWR<T, LoadFailure>(
       url,
       (key: string) =>
@@ -109,7 +115,7 @@ export function createClient(base: string) {
         ),
       {
         revalidateOnFocus: false,
-        revalidateOnReconnect: true,
+        revalidateOnReconnect: reconnect,
         dedupingInterval: 5000,
         onErrorRetry: (failure, key, _config, revalidate, options) => {
           if (failure.retrying) scheduleRetry(key, 2000 * 2 ** (failure.attempt - 1), () => revalidate(options));
@@ -139,6 +145,90 @@ export function createClient(base: string) {
   }
 
   return { api, useLoad };
+}
+
+/** The error code of a save refused because the app's copy of QuickBooks' lists lacks the pick; `@checkin/quickbooks` sets it. */
+export const QUICKBOOKS_LIST_STALE = "quickbooks-list-stale";
+
+/** One saved QuickBooks list, as GET /api/books-map/quickbooks-lists returns it. */
+interface QuickBooksListStatus {
+  list: string;
+  refreshedAt: string;
+  entries: number;
+}
+
+const hostRoutes = createClient("/api");
+
+const asOf = (iso: string) => new Date(iso).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" });
+
+/**
+ * When the app last copied QuickBooks' account and Class lists, and an "Update now" control that copies them again.
+ * A successful update re-reads every cached load, so pickers fed by `useLoad` refresh themselves; `onRefreshed`
+ * is for a page that loads its options another way.
+ */
+export function QuickBooksListsRefresh({ onRefreshed }: { onRefreshed?: () => void }) {
+  const status = hostRoutes.useLoad<QuickBooksListStatus[]>("/api/books-map/quickbooks-lists", { retry: false });
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+  const lists = Array.isArray(status.data) ? status.data : [];
+  const oldest = lists.map((s) => s.refreshedAt).sort()[0];
+
+  async function update() {
+    setBusy(true);
+    setFailed(null);
+    try {
+      await request("/api/books-map/quickbooks-lists/refresh", { method: "POST" });
+      onRefreshed?.();
+    } catch (e) {
+      setFailed(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Group gap="xs" wrap="wrap">
+      <Text size="sm" c="dimmed">
+        {status.data === null ? "QuickBooks lists" : oldest ? `QuickBooks lists as of ${asOf(oldest)}` : "QuickBooks lists not copied yet"}
+      </Text>
+      <Button size="xs" variant="light" loading={busy} onClick={() => void update()}>Update now</Button>
+      {failed && <Text size="sm" c="red">{failed}</Text>}
+    </Group>
+  );
+}
+
+/**
+ * A saved QuickBooks pick the app's copy shows as inactive or no longer holds, as a warning beside its picker
+ * with "Update now"; the picker never offers it. Nothing while the pick is active, unset, or the list isn't loaded.
+ */
+export function InactivePickWarning({ saved, options, onRefreshed, advice = "Pick an active one." }: {
+  saved: string | null | undefined;
+  options: readonly { id: string; name: string; active: boolean }[] | null | undefined;
+  onRefreshed?: () => void;
+  /** What to do about it; rows with no picker say so here. */
+  advice?: string;
+}) {
+  if (!saved || !options?.length) return null;
+  const entry = options.find((o) => o.id === saved);
+  if (entry?.active) return null;
+  return (
+    <Alert color="yellow" variant="light" p="xs">
+      <Text size="sm">{entry ? `${entry.name} is inactive in QuickBooks.` : `QuickBooks id ${saved} is not in QuickBooks' list in the app.`} {advice}</Text>
+      <QuickBooksListsRefresh onRefreshed={onRefreshed} />
+    </Alert>
+  );
+}
+
+/** A refusal's words for a toast or alert; a save refused against an out-of-date QuickBooks list also offers "Update now". */
+export function refusalMessage(e: unknown, { onRefreshed }: { onRefreshed?: () => void } = {}): ReactNode {
+  const message = errorMessage(e);
+  if (!(e instanceof HttpError) || e.code !== QUICKBOOKS_LIST_STALE) return message;
+  return (
+    <>
+      {message}
+      <QuickBooksListsRefresh onRefreshed={onRefreshed} />
+    </>
+  );
 }
 
 /** Tells the host nav to refetch its count pills after a write that changes them. */

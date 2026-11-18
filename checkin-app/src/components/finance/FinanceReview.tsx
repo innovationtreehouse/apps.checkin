@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
@@ -18,6 +18,8 @@ import {
   type QueueBadge,
 } from "@checkin/receipt/pages/financeQueue";
 import { FINANCE_QUEUE_TABS, FinanceQueueList, financeQueueTab, loadFailure, useFinanceQueueCounts } from "@checkin/expense/pages/financeQueue";
+import { LoadError } from "@checkin/component-ui";
+import { useLoad } from "@/lib/api";
 import { FINANCE_REVIEW_PATH } from "@/lib/nav/sections/finance";
 
 /** A tab as the host lays it out: its `?queue=` value, label, group, and this viewer's counts. */
@@ -33,21 +35,6 @@ const ALL = "all";
 
 const badgeOf = (actionable: number, total: number): QueueBadge | null =>
   actionable > 0 ? { count: actionable, intent: "action" } : total > 0 ? { count: total, intent: "info" } : null;
-
-/** Part mapping's apply-failed count, for the Not delivered tab's pointer to Part mapping › Apply failed. */
-function useApplyFailed(enabled: boolean): number {
-  const [n, setN] = useState(0);
-  useEffect(() => {
-    if (!enabled) return;
-    let live = true;
-    fetch("/api/workflow-mapping/receipts/counts")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((c: { apply_failed?: number } | null) => { if (live) setN(c?.apply_failed ?? 0); })
-      .catch(() => { if (live) setN(0); });
-    return () => { live = false; };
-  }, [enabled]);
-  return n;
-}
 
 function TabButton({ tab, selected, onSelect }: { tab: Tab; selected: boolean; onSelect: (queue: string) => void }) {
   return (
@@ -78,9 +65,9 @@ export default function FinanceReview() {
   const receipts = useQueueCounts();
   useEffect(() => {
     if (receipts.error) {
-      notifications.show({ id: "receipt-queue-counts", title: "Couldn't load the receipt tab counts", message: loadFailure("/api/receipts/queue-counts", receipts.error), color: "red", autoClose: false });
+      notifications.show({ id: "receipt-queue-counts", title: "Couldn't load the receipt tab counts", message: loadFailure("/api/receipts/queue-counts", receipts.error, receipts.status), color: "red", autoClose: false });
     }
-  }, [receipts.error]);
+  }, [receipts.error, receipts.status]);
   const expenses = useFinanceQueueCounts();
 
   const receiptTab = (q: { value: string; label: string }): Tab => {
@@ -105,7 +92,9 @@ export default function FinanceReview() {
   const landing = ordered.find((t) => t.actionable > 0)?.queue ?? QUEUES[0].value;
   const queue = known ? param : loaded ? landing : null;
   const reason = params.get("reason");
-  const applyFailed = useApplyFailed(queue === NOT_PUSHED);
+  // Part mapping's apply-failed count, for the Not delivered tab's pointer to Part mapping › Apply failed.
+  const applyFailed = useLoad<{ apply_failed?: number }>(queue === NOT_PUSHED ? "/api/workflow-mapping/receipts/counts" : null);
+  const applyFailedCount = applyFailed.data?.apply_failed ?? 0;
 
   const hrefFor = (q: string, chip: string | null = null) => `${FINANCE_REVIEW_PATH}?${new URLSearchParams({ queue: q, ...(chip ? { reason: chip } : {}) })}`;
   const show = (q: string, chip: string | null = null) => router.replace(hrefFor(q, chip), { scroll: false });
@@ -163,10 +152,11 @@ export default function FinanceReview() {
           )}
         </Alert>
       )}
-      {queue === NOT_PUSHED && applyFailed > 0 && (
+      {applyFailed.error && <LoadError what="the part-mapping apply-failed count" message={applyFailed.error} onRetry={applyFailed.reload} />}
+      {queue === NOT_PUSHED && applyFailedCount > 0 && (
         <Alert color="orange" mb="md">
           <Anchor component={Link} href="/inventory/receiving?queue=failed">
-            {applyFailed} {applyFailed === 1 ? "receipt" : "receipts"} failed to apply in part mapping
+            {applyFailedCount} {applyFailedCount === 1 ? "receipt" : "receipts"} failed to apply in part mapping
           </Anchor>
         </Alert>
       )}

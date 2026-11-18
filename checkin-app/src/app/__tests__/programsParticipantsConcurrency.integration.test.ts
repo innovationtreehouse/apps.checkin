@@ -20,6 +20,7 @@
 import { POST } from '@/app/api/programs/[id]/participants/route';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
+import { WITH_EMERGENCY_CONTACT } from '@/test-helpers/emergencyContact';
 
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
@@ -54,7 +55,7 @@ describe('POST /api/programs/[id]/participants concurrency (capacity lock)', () 
     beforeAll(async () => {
         await cleanup();
 
-        const household = await prisma.household.create({ data: { name: `${TAG} household` } });
+        const household = await prisma.household.create({ data: { name: `${TAG} household`, ...WITH_EMERGENCY_CONTACT } });
         householdId = household.id;
 
         const lead = await prisma.person.create({

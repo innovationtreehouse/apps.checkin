@@ -13,7 +13,7 @@ import { createProvisionalItemRepository } from "../../lib/repositories/provisio
 import { createProvisionalResolutionRepository } from "../../lib/repositories/provisionalResolutionRepository";
 import { createReceiveQueueRepository } from "../../lib/repositories/receiveQueueRepository";
 import { applyQtyChangeIn, createInventoryService } from "../../lib/services/inventoryService";
-import { createProvisionalItemService } from "../../lib/services/provisionalItemService";
+import { createProvisionalItemService, receivingGtin13 } from "../../lib/services/provisionalItemService";
 import { createReceiptService } from "../../lib/services/receiptService";
 import { createReceiveQueueService } from "../../lib/services/receiveQueueService";
 import { setupIntegrationDb } from "../helpers/setup";
@@ -437,6 +437,46 @@ describeDb("merge after a concurrent resolution", () => {
     expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL } })).toBeNull();
   });
 
+  it("a resolve waits for a stock add that routed to the provisional, and settles that stock", async () => {
+    const { provisional } = services();
+    await db.inventoryProvisionalItem.update({
+      where: { id: (await provisionalItem(2)).id },
+      data: { status: "mapped_to_existing", resolvedToGtin13: REAL },
+    });
+    const conflict = await db.inventoryMergeConflict.create({
+      data: {
+        orgId: TEST_ORG_ID, provisionalGtin13: PROVISIONAL, realGtin13: REAL, conflictType: "uom_mismatch",
+        provisionalConversionFactor: 2, existingConversionFactor: 1, sourceEventId: 12,
+      },
+    });
+
+    // A stock add with no org-item row on either GTIN routes to the provisional under the open conflict.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let routed!: (pid: number) => void;
+    const isRouted = new Promise<number>((r) => (routed = r));
+    let target = "";
+    const add = db.$transaction(async (tx) => {
+      target = await receivingGtin13(tx, TEST_ORG_ID, PROVISIONAL);
+      routed(await backendPid(tx));
+      await gate;
+      await applyQtyChangeIn(tx, TEST_ORG_ID, target, 3, { userId: null, changeType: "received", receiptId: "s-1" });
+    });
+    const addPid = await isRouted;
+    const resolve = provisional.resolveConflict(conflict.id, TEST_ORG_ID, { quantityMethod: "sum" }, 1);
+    try {
+      await waitersBehind(db, addPid);
+    } finally {
+      release();
+      await add;
+    }
+    await resolve;
+
+    expect(target).toBe(PROVISIONAL);
+    expect(await qty(REAL)).toBe(3);
+    expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL } })).toBeNull();
+  });
+
   it("a merge into a real row holding none carries the provisional count with no factor check", async () => {
     const { provisional } = services();
     await provisionalItem(2);
@@ -512,7 +552,7 @@ describeDb("merge after a concurrent resolution", () => {
     expect(await db.orgItem.findFirst({ where: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL } })).toBeNull();
   });
 
-  it("a reject that read pending before an approve merged is a 409 and leaves the approve standing", async () => {
+  it("a reject that read pending before an approve merged does nothing and leaves the approve standing", async () => {
     const { provisional } = services();
     await provisionalItem(1);
     await db.orgItem.create({ data: { orgId: TEST_ORG_ID, gtin13: PROVISIONAL, existingQuantity: 5 } });
@@ -533,8 +573,7 @@ describeDb("merge after a concurrent resolution", () => {
     const reject = provisional.rejectProvisional(TEST_ORG_ID, PROVISIONAL, "dup");
     await waitersBehind(db, holderPid, 2);
     release();
-    await Promise.all([holder, approve]);
-    await expect(reject).rejects.toMatchObject({ status: 409 });
+    await Promise.all([holder, approve, reject]);
 
     expect(await db.inventoryProvisionalItem.findFirst()).toMatchObject({ status: "approved", resolvedToGtin13: REAL });
     expect(await qty(REAL)).toBe(5);

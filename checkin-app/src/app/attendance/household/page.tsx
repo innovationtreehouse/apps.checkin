@@ -1,13 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { ActionIcon, Alert, Badge, Button, Group, Table, Text, TextInput, Title } from "@mantine/core";
+import { ActionIcon, Badge, Button, Group, Table, Text, TextInput, Title } from "@mantine/core";
 import { IconPencil, IconTrash, IconX } from "@tabler/icons-react";
-import { notifications } from "@mantine/notifications";
-import { LoadError } from "@checkin/component-ui";
+import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
 import { PageContainer } from "@/components/ui/PageContainer";
 import { useRequireRole } from "@/hooks/useRequireRole";
-import { useLoad } from "@/lib/api";
+import { api, useLoad } from "@/lib/api";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
 import { formatDateOnly, orgCalendarDay, toDatetimeLocal } from "@/lib/time";
 import { useOrgTime } from '@/components/TimezoneProvider';
@@ -17,7 +16,7 @@ import { PageLoader } from "@/components/ui/PageLoader";
 type Visit = { id: number; person?: { name: string }; event?: { name: string }; arrivedAt: string; departedAt?: string };
 
 // A household lead corrects their household members' visits on the same
-// trust-first terms as their own (docs/rules/attendance-checkin.md) — the server flags significant changes to the board.
+// trust-first terms as their own — the server flags significant changes to the board.
 export default function HouseholdCheckins() {
   const { formatVisitRange, formatDateTime } = useOrgTime();
   const { ready, loading: authLoading, user } = useRequireRole([]);
@@ -32,7 +31,6 @@ export default function HouseholdCheckins() {
   const [arrivedAt, setArrived] = useState("");
   const [departedAt, setDeparted] = useState("");
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
 
   const isLead = !!user?.householdLead;
 
@@ -44,20 +42,13 @@ export default function HouseholdCheckins() {
 
   const submit = async (id: number, init: RequestInit, okMessage: string) => {
     setSaving(true);
-    setError("");
     try {
-      const res = await fetch(`/api/attendance/manual/${id}`, init);
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(data.error || "Correction failed.");
-      } else {
-        notifications.show({ message: okMessage });
-        setEditing(null);
-        reload();
-        notifyNavRefresh();
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error occurred.", autoClose: false });
+      await api(`/api/attendance/manual/${id}`, init);
+      showSuccess(okMessage);
+      setEditing(null);
+      notifyNavRefresh();
+    } catch (err) {
+      showError(errorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -66,7 +57,6 @@ export default function HouseholdCheckins() {
   const saveEdit = (id: number) =>
     submit(id, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
       // datetime-local is naive — send a real instant (same rule as manual entry).
       body: JSON.stringify({
         arrivedAt: arrivedAt ? new Date(arrivedAt).toISOString() : "",
@@ -104,7 +94,6 @@ export default function HouseholdCheckins() {
         )}
       </Text>
 
-      {error && <Alert color="red" mb="md">{error}</Alert>}
 
       {loadError ? (
         <LoadError what="your household's visits" message={loadError} onRetry={reload} />

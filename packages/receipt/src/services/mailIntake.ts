@@ -2,6 +2,7 @@
 // becomes a receipt by its authenticated sender, a deferred item when that sender is over their
 // daily upload limit, or a held mail item for finance.
 import { createHash } from "node:crypto";
+import { z } from "zod";
 import { isServiceError, kindOf, ServiceError } from "@checkin/component-kit";
 import { isUniqueConstraintError } from "@checkin/pg-kit";
 import { db } from "../db";
@@ -30,11 +31,20 @@ export const MAIL_HELD_CEILING = 500;
 // worth of fetches inside 30 days can still push a later receipt past the window, with an alert; widen the budget then.
 /** Wall time per run; messages not reached wait for the next run. */
 export const MAIL_TIME_BUDGET_MS = 2 * 60_000;
+export { MAIL_CATCH_UP_CAP } from "../lib/mailCatchUpCap";
+/** Wall time of one catch-up run, which runs after its request has answered. */
+export const MAIL_CATCH_UP_BUDGET_MS = 10 * 60_000;
+/** How long a run's lease outlasts its budget, covering its last OCR call, alerts and replies; a crashed run blocks the next for this long at most. */
+const LEASE_SLACK_MS = 10 * 60_000;
 const DAY_MS = 24 * 60 * 60_000;
 
 export type MailIntakeResult =
   | { status: "unbound" }
-  | {
+  /** Another run holds the mailbox; this one read nothing. */
+  | { status: "busy" }
+  | MailRunCounts;
+
+export type MailRunCounts = {
       /** `listing_failed`: the mailbox could not be listed, so no message was read this run. */
       status: "ok" | "listing_failed";
       messages: number;
@@ -56,7 +66,7 @@ export type MailIntakeResult =
       /** Acknowledgements sent, and sends that reported failure. */
       replied: number;
       replyFailed: number;
-    };
+};
 
 type Headers = { name: string; value: string }[];
 
@@ -333,6 +343,9 @@ export const INLINE_FLOOR_BYTES = 5 * 1024;
 /** A money amount: a number with two decimal places. A body without one is trivial. */
 const MONEY_AMOUNT = /\d\.\d{2}(?!\d)/;
 
+/** An HTML body's visible text: its style blocks and tags (with their style attributes) hold CSS numbers, never amounts. */
+const visibleText = (html: string) => html.replace(/<style\b[\s\S]*?<\/style\s*>/gi, " ").replace(/<[^>]*>/g, " ");
+
 /**
  * A message's candidate files, read in this order: each attachment of an accepted type, each inline
  * part of an accepted non-text type at or over the floor, then the body, stored as text, unless it
@@ -366,7 +379,8 @@ export function mailFiles(msg: MailMessage, reader: MailboxReader): { files: Mai
   const body = bodyPart("text/plain") ?? bodyPart("text/html");
   const files = [...attachments, ...sized].map((p) => file(p));
   if (body) {
-    if (MONEY_AMOUNT.test(Buffer.from(body.body?.data ?? "", "base64url").toString())) files.push({ ...file(body, "text/plain"), body: true });
+    const text = Buffer.from(body.body?.data ?? "", "base64url").toString();
+    if (MONEY_AMOUNT.test(typeOf(body) === "text/html" ? visibleText(text) : text)) files.push({ ...file(body, "text/plain"), body: true });
     else ignored++;
   }
   return { files, ignored, refused };
@@ -425,11 +439,93 @@ export async function intakeDeferred(
   return receiptId;
 }
 
-export async function readMailbox(): Promise<MailIntakeResult> {
+/** Takes the org's mail lease until `until`, unless a live run holds it. */
+async function takeLease(orgId: string, until: Date): Promise<boolean> {
+  await db.receiptMailLease.createMany({ data: [{ orgId, until: new Date(0) }], skipDuplicates: true });
+  const { count } = await db.receiptMailLease.updateMany({ where: { orgId, until: { lt: new Date() } }, data: { until } });
+  return count === 1;
+}
+
+/** What a finished run leaves on the lease for finance: its counts, or `crashed` when it threw. */
+const MailRunSummarySchema = z.object({
+  status: z.enum(["ok", "listing_failed", "crashed"]),
+  messages: z.number(),
+  receipts: z.number(),
+  held: z.number(),
+  /** Files put off by a cap or the sender's daily limit, and messages not reached: read on a later run. */
+  waiting: z.number(),
+  failed: z.number(),
+  /** Put-off files or unread messages remain, which another run would read now. */
+  more: z.boolean(),
+});
+export type MailRunSummary = z.infer<typeof MailRunSummarySchema>;
+
+function summarize(counts: MailRunCounts | null): MailRunSummary {
+  if (!counts) return { status: "crashed", messages: 0, receipts: 0, held: 0, waiting: 0, failed: 0, more: false };
+  const { status, messages, receipts, held, failed, deferred, unread, overLimit } = counts;
+  return { status, messages, receipts, held, waiting: deferred + unread + overLimit, failed, more: deferred + unread > 0 };
+}
+
+export type MailRun = { status: "unbound" } | { status: "busy" } | { status: "started"; done: Promise<MailRunCounts> };
+
+/**
+ * Takes the org's mail lease and starts one intake pass, `busy` when another run holds the lease.
+ * `beforeRun` runs while the lease is held; if it throws, the lease is freed and no pass starts.
+ * `done` settles when the pass ends and the lease is released with its summary.
+ */
+export async function startMailRun({
+  cap = MAIL_CAP,
+  budgetMs = MAIL_TIME_BUDGET_MS,
+  beforeRun,
+}: { cap?: number; budgetMs?: number; beforeRun?: () => Promise<unknown> } = {}): Promise<MailRun> {
   const reader = mailbox();
   if (!reader) return { status: "unbound" };
-  const started = Date.now();
   const orgId = await getOrgId();
+  const started = Date.now();
+  const until = new Date(started + budgetMs + LEASE_SLACK_MS);
+  if (!(await takeLease(orgId, until))) return { status: "busy" };
+  try {
+    await beforeRun?.();
+  } catch (err) {
+    await db.receiptMailLease
+      .updateMany({ where: { orgId, until }, data: { until: new Date(0) } })
+      .catch((releaseErr: unknown) => console.error("[receipt] mail lease release failed; it expires on its own:", releaseErr));
+    throw err;
+  }
+  const release = (counts: MailRunCounts | null) =>
+    db.receiptMailLease
+      .updateMany({ where: { orgId, until }, data: { until: new Date(0), lastRunAt: new Date(), lastRun: summarize(counts) } })
+      .catch((err: unknown) => console.error("[receipt] mail lease release failed; it expires on its own:", err));
+  const done = readLeased(reader, orgId, started, cap, budgetMs).then(
+    async (counts) => {
+      await release(counts);
+      return counts;
+    },
+    async (err: unknown) => {
+      await release(null);
+      throw err;
+    },
+  );
+  return { status: "started", done };
+}
+
+/** The org's mail lease: whether a run holds it now, and the last finished run's summary. */
+export async function mailRunState(): Promise<{ running: boolean; lastRunAt: Date | null; lastRun: MailRunSummary | null }> {
+  const lease = await db.receiptMailLease.findUnique({ where: { orgId: await getOrgId() } });
+  return {
+    running: !!lease && lease.until.getTime() > Date.now(),
+    lastRunAt: lease?.lastRunAt ?? null,
+    lastRun: MailRunSummarySchema.safeParse(lease?.lastRun).data ?? null,
+  };
+}
+
+/** The cron's intake pass, run to its end; `busy` while another run holds the lease. */
+export async function readMailbox(): Promise<MailIntakeResult> {
+  const run = await startMailRun();
+  return run.status === "started" ? run.done : run;
+}
+
+async function readLeased(reader: MailboxReader, orgId: string, started: number, cap: number, budgetMs: number): Promise<MailRunCounts> {
   const unresolved = await db.receiptMailItem.count({ where: { orgId, status: { in: STORED_STATUSES } } });
   const counts = { messages: 0, receipts: 0, held: 0, skipped: 0, rejected: 0, failed: 0, deferred: 0, overLimit: 0, overCeiling: 0, unread: 0, ignored: 0 };
   const ignoredHashes = new Set(
@@ -437,8 +533,8 @@ export async function readMailbox(): Promise<MailIntakeResult> {
   );
   let heldFiles = 0;
   let heldBytes = 0;
-  const capped = () => counts.receipts >= MAIL_CAP;
-  const outOfTime = () => Date.now() - started >= MAIL_TIME_BUDGET_MS;
+  const capped = () => counts.receipts >= cap;
+  const outOfTime = () => Date.now() - started >= budgetMs;
   const stored = () => unresolved + counts.held + counts.overLimit;
   const holdsSpent = () => heldFiles >= MAIL_HELD_CAP || stored() >= MAIL_HELD_CEILING;
 
@@ -739,13 +835,8 @@ export async function readMailbox(): Promise<MailIntakeResult> {
     ids = await reader.listRecent(MAIL_WINDOW_DAYS);
   } catch (err) {
     const kind = kindOf(err);
+    // The cron run counts `listing_failed` as a failure, so the Problems list shows it.
     console.error(`[receipt] mailbox listing failed (${kind}):`, err);
-    // Sent every run the listing fails: mail is ageing out unread for as long as it lasts.
-    try {
-      await ports().alerts.mailListingFailed({ orgId, kind });
-    } catch (alertErr) {
-      console.error("[receipt] mailbox listing alert failed:", alertErr);
-    }
   }
   if (ids) await readListed(ids, reader);
   await alertAtRisk(reader);

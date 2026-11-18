@@ -6,7 +6,7 @@
  * check-in for the same person can open a visit while it waits on that lock.
  * The scan must then park as a double IN — never hit
  * the one-open-visit index and be acked as a duplicate with its rows rolled
- * back (docs/rules/attendance-checkin.md: a touch is never lost).
+ * back: a touch is never lost.
  *
  * The race is made deterministic by inserting the open visit the moment the
  * scan first acquires the facility lock.

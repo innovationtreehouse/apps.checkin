@@ -12,10 +12,15 @@ import { hasHouseholdConflict, sharesHousehold } from "@/lib/conflictOfInterest"
 import { householdLeadship } from "@/lib/household/leads";
 import { isMembershipFeeSettled } from "@/lib/orgMembership";
 import { isProgramCheckoutBroken } from "@/lib/programCheckout";
+import { isProgramStoreClosed } from "@/lib/programs/storeClosed";
 import { changeProgramStockWith } from "@/lib/shopify/stock";
 import { isSaleEnded } from "@/lib/programs/saleState";
 import { PROGRAM_ENDED_PAYMENT } from "@/lib/programs/checkoutSignature";
 import { apiError } from "@/lib/api-response";
+import { ServiceError } from "@checkin/component-kit";
+import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
+import { householdMayEnrol, NO_EMERGENCY_CONTACT_TO_ENROL } from "@/lib/emergencyContacts/service";
+import { personActor, recordAudit } from "@/lib/auditActor";
 
 export const POST = withAuth({}, async (req, auth, { params }: { params: Promise<{ id: string }> }) => {
     if (auth.type !== 'session') return apiError("Unauthorized", 401);
@@ -99,6 +104,11 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         // page is just a parent — they pay like anyone else, whether or not they
         // happen to be the household's lead.
         const isExternalAdmin = isSysAdminOrBoard && !isConflicted;
+
+        // Staff adding from the roster are exempt, so the front desk can fix the contact afterwards.
+        if (!isExternalAdmin && !(await householdMayEnrol(prisma, participantData?.householdId))) {
+            return apiError(NO_EMERGENCY_CONTACT_TO_ENROL, 400);
+        }
 
         if (isExternalAdmin && !override) {
              return NextResponse.json({ error: "This bypasses all payment. Are you sure?", requiresOverride: true }, { status: 400 });
@@ -185,7 +195,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         // goes through while every payment-bound enrollment — including a
         // conflicted admin's override, which still owes the fee — is refused.
         // No requiresOverride: an override cannot make the program sellable.
-        if (initialStatus === 'PENDING' && isProgramCheckoutBroken(currentProgram)) {
+        if (initialStatus === 'PENDING' && isProgramCheckoutBroken(currentProgram, await isProgramStoreClosed())) {
             return apiError("This program has a price but no payment link set up, so enrollment can't be paid for. An admin must fix the Shopify link in program-ops before anyone can enroll.", 400);
         }
 
@@ -194,6 +204,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         // a recorded -1 not yet pushed; it stays owed in the carry and the daily heal lands it.
         const takesSeatWithoutSale = isExternalAdmin && override && currentProgram.maxParticipants !== null;
         const { result: enrollment, landed: stockLanded } = await changeProgramStockWith(currentProgram, "comp", async (tx) => {
+            await lockLiveHouseholdsOf(tx, [participantId]);
             // Re-check capacity under a row lock right before insert, so
             // concurrent enrollers can't both pass a stale count and overfill.
             if (enforceLimits) {
@@ -208,6 +219,13 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
                         status: initialStatus,
                         ...(takesSeatWithoutSale && { seatTakenWithoutSaleAt: new Date() }),
                     }
+                });
+                await recordAudit(tx, personActor(currentUserId), {
+                    action: 'CREATE',
+                    tableName: 'ProgramParticipant',
+                    affectedEntityId: participantId,
+                    secondaryAffectedEntity: programId,
+                    newData: row
                 });
                 return { result: row, delta };
             }
@@ -229,22 +247,18 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             });
             if (count === 0) return { result: null, delta: 0 };
             const row = await tx.programParticipant.findUniqueOrThrow({ where: { programId_personId: { programId, personId: participantId } } });
+            await recordAudit(tx, personActor(currentUserId), {
+                action: 'EDIT',
+                tableName: 'ProgramParticipant',
+                affectedEntityId: participantId,
+                secondaryAffectedEntity: programId,
+                newData: row
+            });
             return { result: row, delta };
         }, { inRequest: true });
         if (!enrollment) {
             return apiError("Participant is already enrolled in this program.", 409);
         }
-
-        await prisma.auditLog.create({
-            data: {
-                actorId: currentUserId,
-                action: existingClaim?.status === 'WITHDRAWN' ? 'EDIT' : 'CREATE',
-                tableName: 'ProgramParticipant',
-                affectedEntityId: participantId,
-                secondaryAffectedEntity: programId,
-                newData: enrollment
-            }
-        });
 
         // Trigger notification
         await sendNotification(participantId, 'PROGRAM_ENROLLMENT', { programName: currentProgram.name });
@@ -278,6 +292,9 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
     } catch (error) {
         if (error instanceof ProgramCapacityError) {
             return NextResponse.json({ error: "Program has reached maximum capacity.", requiresOverride: true }, { status: 400 });
+        }
+        if (error instanceof ServiceError) {
+            return apiError(error.message, error.status);
         }
         // P2002 = unique violation on the @@id([programId, participantId]) PK.
         // Benign double-submit (UI double-click) re-enrolls the same participant;

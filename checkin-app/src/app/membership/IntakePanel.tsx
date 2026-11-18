@@ -1,6 +1,6 @@
 "use client";
 
-import { Alert, Button, Card, Checkbox, Group, SimpleGrid, Stack, Textarea, TextInput, Title } from "@mantine/core";
+import { Alert, Button, Card, Checkbox, Group, SimpleGrid, Stack, TextInput, Title } from "@mantine/core";
 import type { AlertTone } from "@/components/admin/AlertBanner";
 import AddressForm from "@/components/membership/AddressForm";
 import EmergencyContactForm from "@/components/membership/EmergencyContactForm";
@@ -9,18 +9,19 @@ import { blankPerson, type MembershipForm, type PersonFields } from "./membershi
 
 type ChildField = Exclude<keyof PersonFields, "over25">;
 
-/** The INTAKE step: household, guardians, children and notes, with save and submit. */
-export default function IntakePanel({ form, fieldErrors, clearErr, message, saving, onSave, onSubmit }: {
+/** The INTAKE step: household, guardians and children, with save and submit. */
+export default function IntakePanel({ form, fieldErrors, clearErr, message, saving, locked, onSave, onSubmit }: {
   form: MembershipForm;
   fieldErrors: Record<string, string>;
   clearErr: (key: string) => void;
   message: { text: string; tone: AlertTone } | undefined;
   saving: boolean;
+  locked: boolean;
   onSave: () => void;
   onSubmit: () => void;
 }) {
-  const { values: { address, emName, emPhone, emEmail, primary, hasSecondary, secondary, children, notes } } = form;
-  const { setAddress, setEmName, setEmPhone, setEmEmail, setPrimary, setHasSecondary, setSecondary, setChildren, setNotes } = form;
+  const { values: { address, emName, emPhone, emEmail, primary, hasSecondary, secondary, children } } = form;
+  const { setAddress, setEmName, setEmPhone, setEmEmail, setPrimary, setHasSecondary, setSecondary, setChildren } = form;
 
   const addChild = () => setChildren((c) => [...c, { ...blankPerson }]);
   const updateChild = (i: number, field: ChildField, value: string) =>
@@ -91,16 +92,6 @@ export default function IntakePanel({ form, fieldErrors, clearErr, message, savi
 
         <ChildrenListForm items={children} onAdd={addChild} onUpdate={updateChild} onRemove={removeChild} />
 
-        <section>
-          <Textarea
-            label="Anything else we should know?"
-            description="Optional. Tell us anything that would help us review your application — for example, if your household is applying to volunteer only, with no students enrolled."
-            autosize
-            minRows={3}
-            value={notes}
-            onChange={(e) => setNotes(e.currentTarget.value)}
-          />
-        </section>
 
         {/* Local echo of the page-top banner: intake is a long card, so
             the top AlertBanner posts off-screen next to these buttons. */}
@@ -111,8 +102,8 @@ export default function IntakePanel({ form, fieldErrors, clearErr, message, savi
         )}
 
         <Group gap="md" wrap="wrap">
-          <Button variant="default" disabled={saving} loading={saving} onClick={onSave}>Save progress</Button>
-          <Button disabled={saving} loading={saving} onClick={onSubmit}>Submit &amp; continue</Button>
+          <Button variant="default" disabled={saving || locked} loading={saving} onClick={onSave}>Save progress</Button>
+          <Button disabled={saving || locked} loading={saving} onClick={onSubmit}>Submit &amp; continue</Button>
         </Group>
       </Stack>
     </Card>

@@ -59,7 +59,7 @@ function archivedListReq() {
     return new Request('http://localhost:4000/api/membership-ops/applications?archived=1') as unknown as Parameters<typeof ADMIN_LIST>[0];
 }
 
-type Status = 'INTAKE' | 'PENDING_EXTERNAL_ACTION' | 'PENDING_BG_REVIEW' | 'PENDING_PAYMENT' | 'PENDING_BG_CLEARANCE' | 'BLOCKED' | 'ACTIVE' | 'RENEWAL_PENDING_BG';
+type Status = 'INTAKE' | 'PENDING_RENEWAL' | 'PENDING_EXTERNAL_ACTION' | 'PENDING_BG_REVIEW' | 'PENDING_PAYMENT' | 'PENDING_BG_CLEARANCE' | 'BLOCKED' | 'ACTIVE' | 'RENEWAL_PENDING_BG';
 async function makeProcess(
     label: string,
     status: Status,
@@ -398,6 +398,25 @@ describe('Membership application archive API', () => {
         expect(counts.admin?.applicationsTotal).toBe(listed.length);
     });
 
+    it('the red Applications count takes rows missing a signature, and a cleared check only for check reviewers', async () => {
+        const board = { id: boardId, isBoardMember: true } as AuthenticatedUser;
+        const sysadmin = { id: boardId, isSysadmin: true } as AuthenticatedUser;
+        const incomplete = async (u: AuthenticatedUser) => (await todoCounts(u)).admin?.applicationsIncomplete ?? 0;
+        const [boardBefore, sysadminBefore] = [await incomplete(board), await incomplete(sysadmin)];
+
+        await makeProcess('IntakeNotRed', 'INTAKE');
+        await makeProcess('RenewalNotRed', 'PENDING_RENEWAL', { kind: 'RENEWAL' });
+        await makeProcess('BlockedNotRed', 'BLOCKED');
+        await makeProcess('UnsignedRed', 'PENDING_EXTERNAL_ACTION');
+        const { processId: unclearedId } = await makeProcess('SignedUnclearedRedForReviewers', 'PENDING_PAYMENT');
+        await prisma.orgMembershipProcess.update({ where: { id: unclearedId }, data: { contractSignedAt: new Date() } });
+        const { processId: doneId } = await makeProcess('SignedClearedNotRed', 'PENDING_PAYMENT');
+        await prisma.orgMembershipProcess.update({ where: { id: doneId }, data: { contractSignedAt: new Date(), bgClearedAt: new Date() } });
+
+        expect(await incomplete(board)).toBe(boardBefore + 2);
+        expect(await incomplete(sysadmin)).toBe(sysadminBefore + 1);
+    });
+
     // --- record refund (lib; the route lands with its registry entry) ---
 
     it('record refund: PENDING_BG_CLEARANCE → PENDING_PAYMENT, clears paidAt, keeps the order id and the check', async () => {
@@ -432,6 +451,25 @@ describe('Membership application archive API', () => {
         expect(await recordRefund(processId, boardId, 'Refunded')).toEqual({ status: 'BLOCKED' });
         const after = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
         expect({ status: after?.status, paidAt: after?.paidAt }).toEqual({ status: 'BLOCKED', paidAt: null });
+    });
+
+    it('the red refund-owed count takes paid, unrefunded applications of denied households, board and sysadmin only', async () => {
+        const board = { id: boardId, isBoardMember: true } as AuthenticatedUser;
+        const owed = async (u: AuthenticatedUser) => (await todoCounts(u)).admin?.applicationsAwaitingRefund ?? 0;
+        const before = await owed(board);
+
+        const { processId: owedId } = await makeProcess('DeniedPaidOwed', 'PENDING_BG_CLEARANCE', { paidAt: new Date(), membershipStatus: 'DENIED' });
+        const { processId: refundedId } = await makeProcess('DeniedPaidRefunded', 'BLOCKED', { paidAt: new Date(), membershipStatus: 'DENIED' });
+        await recordRefund(refundedId, boardId, 'Refunded in Shopify');
+        await makeProcess('BlockedPaidNotDenied', 'BLOCKED', { paidAt: new Date() });
+        await makeProcess('DeniedUnpaid', 'PENDING_PAYMENT', { membershipStatus: 'DENIED' });
+
+        expect(await owed(board)).toBe(before + 1);
+        expect(await owed({ id: boardId, isSysadmin: true } as AuthenticatedUser)).toBe(before + 1);
+        expect((await todoCounts({ id: boardId } as AuthenticatedUser)).admin).toBeUndefined();
+
+        await recordRefund(owedId, boardId, 'Refunded in Shopify');
+        expect(await owed(board)).toBe(before);
     });
 
     it('record refund refuses unpaid, ACTIVE, and own-household applications', async () => {

@@ -34,12 +34,14 @@ import {
     CLOSABLE_STATUSES,
     RESTORE_CLOSABLE_STATUSES,
     refundLandsIn,
+    refundableApplication,
     RESTORABLE_STATUSES,
     LEGACY_REOPEN_STATUSES,
     openProcess,
     INITIAL_STATES,
     type ProcessKind,
     type ProcessStatus,
+    asHouseholdProcess,
 } from '@/lib/membership/lifecycle';
 import { assertEnumParity, reachability } from '@/lib/lifecycle';
 
@@ -254,6 +256,14 @@ describe('isLegalTransition covers the declared edges', () => {
         expect(TRANSITIONS.some((t) => t.from === 'BLOCKED' && t.event === 'recordRefund')).toBe(false);
     });
 
+    test('Record refund is offered on a paid row exactly where a refund lands somewhere', () => {
+        for (const st of ALL_STATUSES) {
+            expect(refundableApplication.has({ status: st, paidAt: true })).toBe(refundLandsIn(st) !== null);
+            expect(refundableApplication.has({ status: st, paidAt: false })).toBe(false);
+        }
+        expect(refundableApplication.where).toEqual({ status: { in: [...openProcess.statuses] }, paidAt: { not: null } });
+    });
+
     test('close takes the legacy RENEWAL_PENDING_BG too, and a restore closes it, without a reopen edge back', () => {
         expect([...CLOSABLE_STATUSES].sort()).toEqual([...ARCHIVABLE_STATUSES, 'RENEWAL_PENDING_BG'].sort());
         expect([...RESTORE_CLOSABLE_STATUSES].sort()).toEqual([...CLOSABLE_STATUSES, 'BLOCKED'].sort());
@@ -274,7 +284,7 @@ describe('isLegalTransition covers the declared edges', () => {
     });
 
     test('rejects undeclared edges', () => {
-        // The external advance always opens payment — an intake note does not hold it.
+        // The external advance always opens payment.
         expect(isLegalTransition('PENDING_EXTERNAL_ACTION', 'PENDING_BG_REVIEW')).toBe(false);
         expect(isLegalTransition('INTAKE', 'ACTIVE')).toBe(false);
         expect(isLegalTransition('ACTIVE', 'PENDING_PAYMENT')).toBe(false);
@@ -312,5 +322,15 @@ describe('enum parity with Prisma', () => {
     });
     test('ProcessKind union matches OrgMembershipProcessKind keys', () => {
         expect(() => assertEnumParity(ALL_KINDS, OrgMembershipProcessKind, 'OrgMembershipProcessKind')).not.toThrow();
+    });
+});
+
+describe('asHouseholdProcess', () => {
+    test('passes a household process through with its orgMembershipId', () => {
+        const process = { id: 7, kind: 'RENEWAL' as const, orgMembershipId: 42, status: 'PENDING_RENEWAL' };
+        expect(asHouseholdProcess(process)).toEqual(process);
+    });
+    test.each(['PERSON_BG', 'PERSON_AGREEMENT', 'KEY_VOLUNTEER_AGREEMENT'] as const)('throws for a %s process', (kind) => {
+        expect(() => asHouseholdProcess({ id: 9, kind, orgMembershipId: null })).toThrow(`Membership process #9 (${kind}) has no household membership.`);
     });
 });

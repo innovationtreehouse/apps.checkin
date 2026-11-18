@@ -90,8 +90,8 @@ export async function processCheckin(
 ): Promise<ScanOutcome> {
     // Facility lock serializes the open-state read and the create against the
     // last-keyholder sweep: a check-in lands wholly before a close (and is swept)
-    // or wholly after it. Same 2-arg lock space as the close sweep —
-    // independent of the per-person lock the scan route already holds.
+    // or wholly after it. Taken after the person lock the caller already holds,
+    // the lock order in facilityLock.ts.
     return withFacilityLock(db, async (tx) => {
     // Callers read "no open visit" before this lock; a concurrent check-in for
     // the same person can land in that window. Park the scan instead of

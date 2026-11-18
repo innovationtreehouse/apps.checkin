@@ -6,9 +6,10 @@ import { apiError } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { addHouseholdLead, HouseholdLeadLimitError, HouseholdLeadYouthError } from "@/lib/household/leads";
 import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
-import { withIntakeNotesFor } from "@/lib/household/intakeNotes";
 import { lockBoardRoles } from "@/lib/roles";
 import { lockAndFindDeniedHousehold, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
+import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
+import { personActor, recordAudit } from "@/lib/auditActor";
 
 /** The person's row was deleted, by a merge or otherwise, between the pre-check and the write. */
 class PersonGoneError extends Error {}
@@ -82,7 +83,7 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
         // the target household, so the move must be written first; one
         // transaction keeps the whole reassign atomic and puts the helper's lock
         // in it. A same-household no-op leaves the flag untouched.
-        const { updatedParticipant, targetHouseholdId } = await prisma.$transaction(async (tx) => {
+        const { updatedParticipant } = await prisma.$transaction(async (tx) => {
             // Moving someone out of a DENIED household would free them of the denial, and
             // moving someone in would put them under it (a board member included, which a
             // deny refuses). The BOARD lock comes first, as a deny takes it, so a deny of
@@ -90,6 +91,8 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
             await lockBoardRoles(tx);
             const denied = await lockAndFindDeniedHousehold(tx, requestedHouseholdId === null ? [participant.householdId] : [participant.householdId, requestedHouseholdId]);
             if (denied !== null) throw new DeniedHouseholdMoveError(denied, participantId);
+            // Nobody moves into or out of an archived household.
+            await lockLiveHouseholds(tx, requestedHouseholdId === null ? [participant.householdId] : [participant.householdId, requestedHouseholdId]);
 
             // New household starts as a visitor (no membership) — membership is
             // earned via the application process or set on the households page.
@@ -111,6 +114,13 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
                 throw now === null ? new PersonGoneError() : new StaleSourceHouseholdError();
             }
             const updated = await tx.person.findUniqueOrThrow({ where: { id: participantId }, include: { household: true } });
+            await recordAudit(tx, personActor(auth.user.id), {
+                action: "EDIT",
+                tableName: "Person",
+                affectedEntityId: participantId,
+                oldData: { householdId: participant.householdId },
+                newData: { householdId: targetHouseholdId, createNew: Boolean(createNew) },
+            });
 
             if (!createNew) return { updatedParticipant: updated, targetHouseholdId };
 
@@ -124,22 +134,11 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
             };
         });
 
-        await prisma.auditLog.create({
-            data: {
-                actorId: auth.user.id,
-                action: "EDIT",
-                tableName: "Person",
-                affectedEntityId: participantId,
-                oldData: { householdId: participant.householdId },
-                newData: { householdId: targetHouseholdId, createNew: Boolean(createNew) },
-            },
-        });
-
         invalidateAttendanceCache();
 
         return NextResponse.json({
             success: true,
-            participant: { ...updatedParticipant, household: updatedParticipant.household && withIntakeNotesFor(updatedParticipant.household, auth.user) },
+            participant: updatedParticipant,
         });
     } catch (error) {
         if (error instanceof PersonGoneError) {
@@ -147,6 +146,9 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
         }
         if (error instanceof StaleSourceHouseholdError) {
             return apiError("This person was moved to another household while you were working. Reload and try again.", 409);
+        }
+        if (error instanceof ArchivedHouseholdError) {
+            return apiError(error.message, error.status);
         }
         if (error instanceof DeniedHouseholdMoveError) {
             await raiseDeniedHouseholdActivity({ householdId: error.householdId, personId: error.personId, what: "household reassign refused" });

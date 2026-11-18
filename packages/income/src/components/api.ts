@@ -10,9 +10,14 @@ const BASE = "/api/income";
 
 export const { api, useLoad } = createClient(BASE);
 
-export { errorMessage, notifyNavCounts, type Loaded } from "@checkin/component-ui";
+export { errorMessage, notifyNavCounts, refusalMessage, type Loaded } from "@checkin/component-ui";
 
 /** Whether the viewer may act (resolve, run, map, exclude). Mirrors the routes' FINANCE gate. */
 export function useIsFinance(): boolean {
   return useViewer()?.isFinance === true;
+}
+
+/** Whether the viewer is on the Board, who alone may raise an income cap. */
+export function useIsBoard(): boolean {
+  return useViewer()?.isBoardMember === true;
 }

@@ -11,6 +11,13 @@ import { getServerSession } from "next-auth/next";
 import prisma from "@/lib/prisma";
 import { PATCH } from "@/app/api/household/member/route";
 
+// The archived-household guard has its own tests; here every household is live.
+jest.mock("@/lib/household/archiveGuard", () => ({
+    ...jest.requireActual("@/lib/household/archiveGuard"),
+    lockLiveHouseholds: jest.fn(),
+    lockLiveHouseholdsOf: jest.fn(),
+}));
+
 jest.mock("next-auth/next", () => ({ getServerSession: jest.fn() }));
 jest.mock("@/lib/auth-options", () => ({ authOptions: {} }));
 jest.mock("@/lib/logger", () => ({ logger: { error: jest.fn() } }));
@@ -19,6 +26,7 @@ jest.mock("@/lib/emergencyContacts/service", () => ({ reconcileAndWarn: jest.fn(
 jest.mock("@/lib/household/leads", () => ({
     ...jest.requireActual("@/lib/household/leads"),
     householdLeadship: jest.fn(),
+    setsHouseholdAges: jest.fn().mockResolvedValue(true),
 }));
 
 const tx = {
@@ -53,6 +61,9 @@ function person(id: number, dateOfBirth: Date | null, isDeclaredAdult = false) {
         canAccessStaging: false,
         household: { orgMembership: { isVolunteerFamily: false } },
         _count: { accounts: 1, roles: 0, programsLed: 0, programVolunteers: 0, bgAttestationsAsSubject: 0, personBgProcesses: 0, toolStatuses: 0 },
+        budgetOwnersOwned: [],
+        budgetOwnerTreasurerships: [],
+        instancesLed: [],
     };
 }
 

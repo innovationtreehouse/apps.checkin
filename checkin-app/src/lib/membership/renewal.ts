@@ -4,11 +4,13 @@ import { ServiceError } from "@checkin/component-kit";
 import { RENEWAL_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { logger, logBackendError } from "@/lib/logger";
-import { IN_FLIGHT_INITIAL, IN_FLIGHT_RENEWAL, handledThisCycleWhere, fromWhere } from "@/lib/membership/lifecycle";
+import { IN_FLIGHT_INITIAL, IN_FLIGHT_RENEWAL, asHouseholdProcess, handledThisCycleWhere, fromWhere } from "@/lib/membership/lifecycle";
 import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { personActor, systemActor } from "@/lib/auditActor";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
-import { membershipYearLabel, membershipYearOf } from "@/lib/programYear";
+import { membershipYearLabel, membershipYearOf, nextBoundary, monthsBefore, renewalWindow, membershipYearCycle, liveMembershipYear, RENEWAL_LEAD_MONTHS } from "@/lib/programYear";
+
+export { nextBoundary, monthsBefore, renewalWindow, membershipYearCycle, liveMembershipYear };
 
 /**
  * Annual renewal. A common membership-year boundary (BoardSettings) drives every
@@ -27,7 +29,6 @@ import { membershipYearLabel, membershipYearOf } from "@/lib/programYear";
  * nothing writes it anymore (a migration moved open rows to the request flow).
  */
 
-const RENEWAL_LEAD_MONTHS = 2;
 
 /**
  * A household application that stops another from starting: one in flight (one
@@ -49,18 +50,6 @@ export class RenewalError extends ServiceError {
     }
 }
 
-/** The next occurrence (>= now) of the boundary's month/day. */
-export function nextBoundary(boundary: Date, now: Date): Date {
-    const b = new Date(Date.UTC(now.getUTCFullYear(), boundary.getUTCMonth(), boundary.getUTCDate()));
-    if (b.getTime() < now.getTime()) b.setUTCFullYear(b.getUTCFullYear() + 1);
-    return b;
-}
-
-export function monthsBefore(date: Date, months: number): Date {
-    const d = new Date(date);
-    d.setUTCMonth(d.getUTCMonth() - months);
-    return d;
-}
 
 // Mirrors monthsBefore exactly — raw JS month arithmetic, UTC, no end-of-month
 // clamping (JS rolls over: Jan 31 + 1mo -> Mar 2/3). Consistency with
@@ -96,46 +85,6 @@ export function bgValidUntilBoundary(
     return nextBoundary(settings.orgMembershipYearBoundary, rawExpiryDay);
 }
 
-/**
- * From a configured boundary date, the next boundary occurrence and whether `now`
- * sits inside the renewal lead window before it. Pure; the single source of the
- * "are we in renewal season" calc.
- */
-export function renewalWindow(configuredBoundary: Date, now: Date): { boundary: Date; windowStart: Date; inSeason: boolean } {
-    const boundary = nextBoundary(configuredBoundary, now);
-    const windowStart = monthsBefore(boundary, RENEWAL_LEAD_MONTHS);
-    return { boundary, windowStart, inSeason: now.getTime() >= windowStart.getTime() };
-}
-
-/**
- * The membership year now in effect: its label, the boundary that opened it
- * (`cycleStart`), the boundary that closes it (`cycleEnd`), and the day its renewal
- * window opened (`settledSince`). The year flips
- * at windowStart — the coming year becomes "live" exactly when it becomes renewable
- * and stays live until the next window opens — so in season the live year is the
- * one about to begin, and off season it is the one that began at the last boundary.
- * Drives badge years and every money horizon; pure, from the configured boundary.
- */
-export function membershipYearCycle(
-    configuredBoundary: Date,
-    now: Date,
-): { label: string; settledSince: Date; cycleStart: Date; cycleEnd: Date } {
-    const { boundary, windowStart, inSeason } = renewalWindow(configuredBoundary, now);
-    // Off-season, `boundary` is already next year's, so the live cycle is the one that
-    // opened at the previous windowStart.
-    const endYear = boundary.getUTCFullYear() + (inSeason ? 1 : 0);
-    const settledSince = inSeason
-        ? windowStart
-        : new Date(Date.UTC(windowStart.getUTCFullYear() - 1, windowStart.getUTCMonth(), windowStart.getUTCDate()));
-    const cycleEnd = new Date(Date.UTC(endYear, boundary.getUTCMonth(), boundary.getUTCDate()));
-    const cycleStart = new Date(Date.UTC(endYear - 1, boundary.getUTCMonth(), boundary.getUTCDate()));
-    return { label: `${endYear - 1}-${endYear}`, settledSince, cycleStart, cycleEnd };
-}
-
-/** The live year at `now`, named by the year its opening boundary is in; null with no boundary set. */
-export function liveMembershipYear(configuredBoundary: Date | null | undefined, now: Date): number | null {
-    return configuredBoundary ? membershipYearCycle(configuredBoundary, now).cycleStart.getUTCFullYear() : null;
-}
 
 /**
  * The years a board grant may record at `now`, earliest first: the year in progress
@@ -180,8 +129,9 @@ export function membershipYearCycleForLabel(
 }
 
 /**
- * Open renewal processes for every ACTIVE membership, inside the lead window only,
- * unless the household was already handled this cycle. Backs the board's
+ * Open renewal processes for every ACTIVE membership, inside the lead window only
+ * and only while the coming year has a product to pay through, unless the
+ * household was already handled this cycle. Backs the board's
  * "Open renewals" button, the only way renewals start. Returns a summary.
  */
 export async function runRenewalSweep(now: Date) {
@@ -193,6 +143,13 @@ export async function runRenewalSweep(now: Date) {
     const { boundary, windowStart, inSeason } = renewalWindow(settings.orgMembershipYearBoundary, now);
     if (!inSeason) {
         return { opened: 0, skipped: 0, reason: "not yet within renewal window" };
+    }
+
+    // In season the live year is the coming year. Lazy: payment.ts imports this module.
+    const comingYear = membershipYearCycle(settings.orgMembershipYearBoundary, now).cycleStart.getUTCFullYear();
+    const { liveYearVariantId } = await import("@/lib/membership/payment");
+    if (!(await liveYearVariantId(settings.orgMembershipYearBoundary, now))) {
+        return { opened: 0, skipped: 0, reason: `no membership product set for ${membershipYearLabel(comingYear)}` };
     }
 
     const memberships = await prisma.orgMembership.findMany({
@@ -209,7 +166,7 @@ export async function runRenewalSweep(now: Date) {
                 where: {
                     OR: [
                         { kind: "RENEWAL", status: { in: [...IN_FLIGHT_RENEWAL] } },
-                        handledThisCycleWhere(liveMembershipYear(settings.orgMembershipYearBoundary, now), windowStart),
+                        handledThisCycleWhere(comingYear, windowStart),
                     ],
                 },
                 select: { id: true },
@@ -243,8 +200,7 @@ export async function beginRenewal(processId: number, actorId: number) {
     if (!process) throw new RenewalError("not_found", "Renewal not found.");
     if (process.status !== "PENDING_RENEWAL") throw new RenewalError("wrong_phase", "This renewal is not awaiting your confirmation.");
 
-    // A RENEWAL always has a membership (orgMembershipId is only null for PERSON_BG).
-    const orgMembershipId = process.orgMembershipId!;
+    const { orgMembershipId } = asHouseholdProcess(process);
     const membership = await prisma.orgMembership.findUnique({
         where: { id: orgMembershipId },
         select: { householdId: true },
@@ -290,8 +246,8 @@ export async function beginRenewal(processId: number, actorId: number) {
         }
     }
 
-    // The gate can already be met on arrival (bgClearedAt stamped by settle, or a board
-    // pre-mark of contractSignedAt/bgConsentAt), so re-run the advance; it is a
+    // The gate can already be met on arrival (bgClearedAt stamped by settle, a board
+    // pre-mark of contractSignedAt, or a lead's check already started), so re-run the advance; it is a
     // no-op when the external actions aren't done. Lazy: external.ts pulls in the
     // agreement PDF and S3 client, and renewal.ts is imported across the app.
     const { advanceExternalIfComplete } = await import("@/lib/membership/external");

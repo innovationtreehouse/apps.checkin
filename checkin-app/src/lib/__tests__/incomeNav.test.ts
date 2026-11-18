@@ -46,7 +46,7 @@ describe("Revenue Ops Income and Shopify tabs", () => {
     expect(hrefs(tabs.find((t) => t.name === "Shopify")?.subLinks ?? [])).toEqual([
       "/finance-ops/shopify-holds", "/finance-ops/payments", "/finance-ops/shopify-stock", "/income/payouts", "/income/reconciliation",
     ]);
-    expect(hrefs(tabs.find((t) => t.name === "Income")?.subLinks ?? [])).toEqual(["/income/items", "/income/exclusions"]);
+    expect(hrefs(tabs.find((t) => t.name === "Income")?.subLinks ?? [])).toEqual(["/income/items", "/income/exclusions", "/income/settings"]);
     expect(hrefs(tabs)).toEqual([...FINANCE_NAV_LINKS.map((l) => l.href), "/income/items"]);
   });
 

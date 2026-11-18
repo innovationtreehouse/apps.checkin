@@ -188,7 +188,7 @@ export async function reconcileForwardMembership(order: MirrorOrder): Promise<bo
     // Membership-item gate, parity with the orders/paid webhook: recover only if the
     // order actually CONTAINS a membership product (its variant id), the same
     // membershipVariantYears the webhook builds — mirrored onto order lines. A variant
-    // id is stable and can't drift; the order total never decides (docs/rules/revenue.md).
+    // id is stable and can't drift; the order total never decides.
     const settings = await prisma.boardSettings.findUnique({
         where: { id: 1 },
         select: { orgMembershipVariantId: true, orgMembershipYearBoundary: true, volunteerFamilyDiscountCode: true },

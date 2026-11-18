@@ -3,7 +3,7 @@ import { logger } from "@/lib/logger";
 import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { apiError } from "@/lib/api-response";
-import { resolveScholarshipRecipients, notifyReviewTeam, sendScholarshipAck, resolveAckCopy } from "@/lib/scholarshipEmails";
+import { resolveScholarshipRecipients, notifyReviewTeam, sendScholarshipAck } from "@/lib/scholarshipEmails";
 import { config } from "@/lib/config";
 import { fromWhere } from "@/lib/membership/lifecycle";
 import { ScholarshipRequestKind } from "@/generated/prisma/client";
@@ -69,19 +69,12 @@ export const POST = withAuth({}, async (req, auth) => {
         const base = config.baseUrl();
         const householdId = process.orgMembership.householdId;
         await notifyReviewTeam(
-            `New membership scholarship / payment-plan request (household ${householdId})`,
-            `<p>The Scholarship Review Team has a new membership scholarship / payment-plan request to review.</p>`
-            + `<p>What they asked for: <strong>${scholarshipRequestKindLabel(kind)}</strong></p>`
-            + `<p>Review it here: <a href="${base}/finance-ops/membership-payment-plan">${base}/finance-ops/membership-payment-plan</a></p>`,
+            "scholarship.membershipReview",
+            { householdId: String(householdId), requestKind: scholarshipRequestKindLabel(kind), actionLink: `${base}/finance-ops/membership-payment-plan` },
             "Scholarship review-team notify failed (membership request):",
         );
         const recipients = await resolveScholarshipRecipients(householdId);
-        const ackSettings = await prisma.boardSettings.findUnique({
-            where: { id: 1 },
-            select: { scholarshipAckSubject: true, scholarshipAckMembershipBody: true },
-        });
-        const ack = resolveAckCopy(ackSettings, "membership");
-        await sendScholarshipAck(recipients, ack.subject, ack.body);
+        await sendScholarshipAck(recipients, "scholarship.ackMembership", {});
 
         return NextResponse.json({ success: true });
     } catch (error) {

@@ -80,7 +80,7 @@ describe("OnboardingGate", () => {
     );
   });
 
-  it("shows a validation error instead of submitting an invalid phone", async () => {
+  it("flags an invalid phone on its field and does not submit", async () => {
     setSession({ id: 1 });
     const fetchSpy = mockFetchJson({
       "/api/profile/onboarding-status": { needsPhone: true, needsEmergencyContact: false },
@@ -88,11 +88,34 @@ describe("OnboardingGate", () => {
     renderGate();
 
     await screen.findByText("Action Required");
-    fireEvent.change(screen.getByLabelText(/Your Phone Number/i), { target: { value: "123" } });
+    const field = screen.getByLabelText(/Your Phone Number/i);
+    fireEvent.change(field, { target: { value: "123" } });
     fireEvent.click(screen.getByRole("button", { name: /Save & Continue/i }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Enter a valid 10-digit US phone number.");
+    expect(field).toHaveAttribute("aria-invalid", "true");
+    expect(field).toHaveFocus();
+    expect(screen.getByText("Enter a valid 10-digit US phone number.")).toBeInTheDocument();
     // Only the initial status fetch happened; the invalid submit never posted.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("flags a bad emergency contact email on its field and does not submit", async () => {
+    setSession({ id: 1 });
+    const fetchSpy = mockFetchJson({
+      "/api/profile/onboarding-status": { needsPhone: false, needsEmergencyContact: true },
+    });
+    renderGate();
+
+    await screen.findByText("Action Required");
+    fireEvent.change(screen.getByLabelText(/Contact Name/i), { target: { value: "Jane Doe" } });
+    fireEvent.change(screen.getByLabelText(/Contact Phone/i), { target: { value: "5559876543" } });
+    const email = screen.getByLabelText(/Contact Email/i);
+    fireEvent.change(email, { target: { value: "jane@example" } });
+    fireEvent.click(screen.getByRole("button", { name: /Save & Continue/i }));
+
+    expect(email).toHaveAttribute("aria-invalid", "true");
+    expect(email).toHaveFocus();
+    expect(screen.getByLabelText(/Contact Phone/i)).not.toHaveAttribute("aria-invalid", "true");
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 

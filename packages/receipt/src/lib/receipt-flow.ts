@@ -3,7 +3,7 @@ import { CompletedReceiptSchema, type FinancialReviewReason } from "@checkin/rec
 import { db, type Db } from "../db";
 import type { Prisma, ReceiptOrgSettings } from "../generated/prisma/client";
 import { ingestResultSchema } from "../contract";
-import { audit, CLEARED, ReceiptStateConflictError, receiptRepo, recordFailure, type Actor, type ReceiptRow } from "../repositories/receipt";
+import { audit, CLEARED, logUnrecorded, ReceiptStateConflictError, receiptRepo, recordFailure, type Actor, type ReceiptRow } from "../repositories/receipt";
 import { getOrgId, ports } from "../runtime";
 import { sendDonorSync } from "./donor-sync";
 import { duplicateGroup } from "./duplicateGroup";
@@ -214,7 +214,7 @@ export async function pushReceipt(receiptId: string, actor: Actor | null): Promi
     const kind = kindOf(err);
     const valueAfter = err instanceof Error ? err.message : String(err);
     await audit(db, receiptId, actor, { action: "push_failed", valueBefore: kind, valueAfter }).catch(() => undefined);
-    await recordFailure(db, receiptId, err).catch(() => undefined);
+    await recordFailure(db, receiptId, err).catch(logUnrecorded(receiptId));
     return false;
   }
 }
@@ -245,17 +245,19 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
 
   const transition = async (detail: Parameters<typeof receiptRepo.update>[1]["detail"], valueAfter: string) => {
     try {
-      await receiptRepo.update(receiptId, { core: CLEARED, detail }, row.state);
+      await db.$transaction(async (tx) => {
+        await receiptRepo.update(receiptId, { core: CLEARED, detail }, row.state, tx);
+        await audit(tx, receiptId, actor, {
+          action: "pipeline_transition",
+          fieldChanged: "state",
+          valueBefore: row.state,
+          valueAfter,
+        });
+      });
     } catch (err) {
       if (err instanceof ReceiptStateConflictError) return;
       throw err;
     }
-    await audit(db, receiptId, actor, {
-      action: "pipeline_transition",
-      fieldChanged: "state",
-      valueBefore: row.state,
-      valueAfter,
-    });
   };
 
   const total = row.receiptTotalCents;
@@ -342,16 +344,18 @@ export async function runFullFlow(receiptId: string, actor: Actor | null): Promi
   } catch (err) {
     if (err instanceof ReceiptStateConflictError) return;
     try {
-      await receiptRepo.update(receiptId, { detail: { state: "flow_error" } }, row.state);
+      await db.$transaction(async (tx) => {
+        await receiptRepo.update(receiptId, { detail: { state: "flow_error" } }, row.state, tx);
+        await audit(tx, receiptId, actor, {
+          action: "pipeline_failed",
+          fieldChanged: "state",
+          valueBefore: row.state,
+          valueAfter: err instanceof Error ? err.message : String(err),
+        });
+      });
     } catch (conflict) {
       throw conflict instanceof ReceiptStateConflictError ? err : conflict;
     }
-    await audit(db, receiptId, actor, {
-      action: "pipeline_failed",
-      fieldChanged: "state",
-      valueBefore: row.state,
-      valueAfter: err instanceof Error ? err.message : String(err),
-    });
     await recordFailure(db, receiptId, err);
     throw err;
   }

@@ -83,8 +83,7 @@ function KioskDisplayInner() {
   // safety flag below is only meaningful while `data` is non-null, so each one is
   // rendered behind that check.
   const counts = data?.counts || { keyholders: 0, volunteers: 0, youth: 0, total: 0 };
-  // Missing OR malformed `safety` is UNKNOWN, never all-clear (see
-  // docs/rules/attendance-checkin.md, kiosk resilience). Both flags must be
+  // Missing OR malformed `safety` is UNKNOWN, never all-clear. Both flags must be
   // actual booleans — a partial object like `{}` must not read as compliant.
   const rawSafety = data?.safety;
   const safety =
@@ -161,7 +160,12 @@ function KioskDisplayInner() {
     const handleMessage = (event: MessageEvent) => {
       // Only the kiosk wrapper that frames this page, served from the same Pi proxy origin, may push a roster.
       if (event.source !== window.parent || event.origin !== window.location.origin) return;
-      if (typeof event.data === "object" && event.data?.type === "refresh-attendance" && event.data.attendance) {
+      if (typeof event.data === "object" && event.data?.type === "refresh-attendance") {
+        // A partial push would render missing counts as an empty building, so it reloads instead.
+        if (!event.data.attendance || !event.data.counts || !event.data.safety) {
+          fetchAttendance();
+          return;
+        }
         setData({ access: "full", attendance: event.data.attendance, counts: event.data.counts, safety: event.data.safety });
         setAsOf(new Date().toISOString());
         setNamesAreKioskLabels(true);

@@ -6,7 +6,8 @@ import { isPrismaError, uniqueViolationFields } from "@/lib/prismaUniqueViolatio
 import { EMAIL_IN_USE_REFUSAL } from "@/lib/household/emailInUse";
 import type { OrgMembershipProcess } from "@/generated/prisma/client";
 import { IN_FLIGHT_INITIAL_STATUSES } from "@/lib/membership/phases";
-import { getExternalStatus, advanceExternalIfComplete, getOwnBackgroundCheck } from "@/lib/membership/external";
+import { getExternalStatus, advanceExternalIfComplete } from "@/lib/membership/external";
+import { getOwnBackgroundCheck } from "@/lib/membership/checkStarted";
 import { householdApplicationOpenOrBlockedWhere } from "@/lib/membership/renewal";
 import { ensureHouseholdMembership, lockAndFindDeniedHousehold, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { fromWhere, openProcess } from "@/lib/membership/lifecycle";
@@ -16,12 +17,14 @@ import { addHouseholdLead, HouseholdLeadLimitError, HouseholdLeadDeniedError, Ho
 import { upsertPrimaryContact, reconcileHouseholdConflicts } from "@/lib/emergencyContacts/service";
 import { normalizeAddressInput, pickAddress, type StructuredAddress } from "@/lib/address";
 import { INTAKE_PROFILES, missingRequiredFields } from "@/lib/intake/profiles";
-import { normalizeAdultDob, replacesUnder18Date, UNDER_18_DECLARATION_REFUSAL } from "@/lib/person/adultDob";
+import { AGE_LEAD_ONLY_REFUSAL, changesAge, mayDeclareAges, normalizeAdultDob, replacesUnder18Date, UNDER_18_DECLARATION_REFUSAL } from "@/lib/person/adultDob";
 import { isYouth } from "@/lib/time";
 import { mintPersonId } from "@/lib/person/mintId";
 import { nameWrite } from "@/lib/person/name";
 import type { TxClient } from "@/lib/db-client";
+import { lockLiveHouseholds } from "@/lib/household/archiveGuard";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
+import { notifyBoardOfYouthLeads } from "@/lib/membership/boardAlerts";
 import { isDesignatedEmail, designatedEmailRefusalForBoard } from "@/lib/membership/volunteerDesignation";
 import { findSelfGrantRefusal, recordSelfGrantRefusal, type GrantSubject, type SelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
 
@@ -44,7 +47,7 @@ export class IntakeError extends Error {
      *                "primaryName".
      */
     constructor(
-        public readonly code: "no_household" | "not_lead" | "already_member" | "denied" | "blocked" | "renewal_open" | "no_process" | "incomplete" | "lead_limit" | "name_required" | "email_designated" | "email_in_use" | "under_18_declared",
+        public readonly code: "no_household" | "not_lead" | "already_member" | "denied" | "blocked" | "renewal_open" | "no_process" | "incomplete" | "lead_limit" | "name_required" | "email_designated" | "email_in_use" | "under_18_declared" | "age_lead_only",
         message: string,
         public readonly fields?: string[],
     ) {
@@ -68,7 +71,7 @@ type ParentInput = { id?: number; name?: string; email?: string; dob?: string | 
 type ChildInput = { id?: number; name?: string; email?: string | null; dob?: string | null; allergies?: string | null };
 
 export interface IntakeSaveInput {
-    household?: Partial<StructuredAddress> & { emergencyContactName?: string; emergencyContactPhone?: string; emergencyContactEmail?: string; notes?: string | null };
+    household?: Partial<StructuredAddress> & { emergencyContactName?: string; emergencyContactPhone?: string; emergencyContactEmail?: string };
     primaryParent?: ParentInput;
     secondaryParent?: ParentInput | null;
     children?: ChildInput[];
@@ -126,7 +129,6 @@ export async function getIntakeState(userId: number) {
         allergies: p.allergies,
     });
 
-    const canSeeNotes = leadIds.has(userId);
     const external = process ? await getExternalStatus(process) : null;
 
     // The caller's own individual agreement, if they have one open. Person-scoped,
@@ -134,7 +136,7 @@ export async function getIntakeState(userId: number) {
     // independent of the household's own application state — an adult child in a settled
     // member household still has one to sign.
     const ownAgreement = await findOpenPersonAgreement(userId);
-    const ownBackgroundCheck = await getOwnBackgroundCheck(user);
+    const ownBackgroundCheck = await getOwnBackgroundCheck(userId);
 
     return {
         hasHousehold: !!household,
@@ -148,11 +150,6 @@ export async function getIntakeState(userId: number) {
             household: household
                 ? {
                       name: household.name,
-                      // intakeNotes is the lead's free-text note TO the board
-                      // (pii); household peers — including youth with their own
-                      // logins — must not read it. Same lead gate as
-                      // GET /api/household, and only a lead can write it back.
-                      notes: canSeeNotes ? household.intakeNotes : null,
                       ...pickAddress(household),
                       // The primary (lowest-priority) contact backs the single-field
                       // form. Shown even when flagged invalid so the lead can fix it.
@@ -197,6 +194,7 @@ export async function startIntake(userId: number) {
             const [locked] = await tx.$queryRaw<{ status: string }[]>`SELECT status FROM "OrgMembership" WHERE id = ${membership.id} FOR UPDATE`;
             if (locked?.status === "DENIED") return { refuse: "denied" };
             if (locked?.status === "ACTIVE") return { refuse: "already_member" };
+            await lockLiveHouseholds(tx, [householdId]);
 
             const open = await tx.orgMembershipProcess.findMany({
                 where: { orgMembershipId: membership.id, ...householdApplicationOpenOrBlockedWhere },
@@ -308,6 +306,12 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
         }
         return true;
     };
+    const leadIds = (user.household?.householdMembers ?? []).filter((p) => p.isHouseholdLead).map((p) => p.id);
+    const declaresAges = user.isHouseholdLead || mayDeclareAges(userId, leadIds);
+    const ageWrite = (age: ReturnType<typeof normalizeAdultDob>, onFile: Parameters<typeof changesAge>[1], field: string) => {
+        if (!declaresAges && changesAge(age, onFile)) throw new IntakeError("age_lead_only", AGE_LEAD_ONLY_REFUSAL, [field]);
+        return age;
+    };
     const addLeadOrRecord = async (tx: TxClient, participantId: number, refusalSubject: GrantSubject) => {
         // A sysadmin manages their household's intake without leading it, so making
         // someone its lead that way is a grant to their own household.
@@ -358,14 +362,10 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
             // Lead promotion locks OrgMembership then Household, the order every
             // writer takes them in; the household update below would invert it.
             await lockAndFindDeniedHousehold(tx, [householdId]);
+            await lockLiveHouseholds(tx, [householdId]);
 
             if (input.household) {
-                // Address + the optional "anything else we should know?" note share one
-                // household.update. Note is trimmed to null so an empty box clears it.
-                const householdData = {
-                    ...normalizeAddressInput(input.household),
-                    ...(input.household.notes !== undefined && { intakeNotes: input.household.notes?.trim() || null }),
-                };
+                const householdData = normalizeAddressInput(input.household);
                 if (Object.keys(householdData).length > 0) {
                     await tx.household.update({ where: { id: householdId }, data: householdData });
                 }
@@ -397,7 +397,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                     where: { id: userId },
                     data: {
                         ...(input.primaryParent.name !== undefined && { name: nameWrite(input.primaryParent.name) }),
-                        ...normalizeAdultDob(input.primaryParent.dob, input.primaryParent.over25, user.dateOfBirth),
+                        ...ageWrite(normalizeAdultDob(input.primaryParent.dob, input.primaryParent.over25, user.dateOfBirth), user, "primaryParent"),
                         ...(input.primaryParent.allergies !== undefined && { allergies: input.primaryParent.allergies }),
                     },
                 });
@@ -414,7 +414,8 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                     if (sp.name !== undefined && sp.name !== null && !nameWrite(sp.name)) {
                         throw new IntakeError("name_required", "A name is required for the second parent / guardian.", ["secondaryParent"]);
                     }
-                    const spDobOnFile = user.household?.householdMembers.find((p) => p.id === sp.id)?.dateOfBirth;
+                    const spOnFile = user.household?.householdMembers.find((p) => p.id === sp.id);
+                    const spDobOnFile = spOnFile?.dateOfBirth;
                     if (replacesUnder18Date(sp.dob, sp.over25, spDobOnFile)) {
                         throw new IntakeError("under_18_declared", UNDER_18_DECLARATION_REFUSAL, ["secondaryParent"]);
                     }
@@ -422,7 +423,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                         where: { id: sp.id },
                         data: {
                             ...(sp.name !== undefined && sp.name !== null && { name: nameWrite(sp.name) }),
-                            ...normalizeAdultDob(sp.dob, sp.over25, spDobOnFile),
+                            ...ageWrite(normalizeAdultDob(sp.dob, sp.over25, spDobOnFile), spOnFile, "secondaryParent"),
                             ...(sp.allergies !== undefined && { allergies: sp.allergies }),
                         },
                     });
@@ -437,7 +438,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                             householdId,
                             name: newSpName,
                             ...(sp.email && { email: sp.email.toLowerCase() }),
-                            ...normalizeAdultDob(sp.dob, sp.over25),
+                            ...ageWrite(normalizeAdultDob(sp.dob, sp.over25), null, "secondaryParent"),
                             allergies: sp.allergies ?? null,
                         },
                     });
@@ -467,7 +468,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                         where: { id: child.id },
                         data: {
                             ...(child.name !== undefined && { name: nameWrite(child.name) }),
-                            ...normalizeAdultDob(child.dob),
+                            ...ageWrite(normalizeAdultDob(child.dob), user.household?.householdMembers.find((p) => p.id === child.id), "children"),
                             ...(child.allergies !== undefined && { allergies: child.allergies }),
                         },
                     });
@@ -480,7 +481,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                             householdId,
                             name: newChildName,
                             ...(child.email && { email: child.email.toLowerCase() }),
-                            ...normalizeAdultDob(child.dob),
+                            ...ageWrite(normalizeAdultDob(child.dob), null, "children"),
                             allergies: child.allergies ?? null,
                         },
                     });
@@ -504,6 +505,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
     }
 
     invalidateAttendanceCache();
+    await notifyBoardOfYouthLeads(user.household?.householdMembers ?? []);
     // These write through the root client, so they wait for the commit: a person
     // created above isn't visible to another connection until then.
     for (const e of deniedPromotions) {
@@ -591,10 +593,10 @@ export async function submitIntake(userId: number) {
         await logBackendError(error, "household background-check settle after intake", { householdId: household.id, processId: process.id });
     }
 
-    // The external actions (contract sign, BG consent) can already be satisfied the
-    // moment we land at PENDING_EXTERNAL_ACTION: settle stamps bgClearedAt above,
-    // and the board can pre-mark contractSignedAt/bgConsentAt on the INTAKE row via
-    // the ops API. advanceExternalIfComplete doesn't fire on those marks
+    // The external actions (contract sign, a lead's check started) can already be
+    // satisfied the moment we land at PENDING_EXTERNAL_ACTION: settle stamps
+    // bgClearedAt above, the board can pre-mark contractSignedAt on the INTAKE row
+    // via the ops API, and a lead's check may be marked started at any time. advanceExternalIfComplete doesn't fire on those marks
     // (status isn't PENDING_EXTERNAL_ACTION yet), so without this the process would
     // strand here with its gate already met. Re-run the advance now — it's a no-op
     // (status guard, contract/BG checks) when the actions aren't actually done.

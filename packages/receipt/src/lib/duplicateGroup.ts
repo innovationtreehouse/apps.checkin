@@ -81,12 +81,6 @@ async function component(client: Client, orgId: string, start: Node): Promise<{ 
 
 export { describeKept, describeReceipt };
 
-/** The kept receipt's upload time and vendor, by id. */
-export async function keptReceipts(client: Client, ids: string[]): Promise<Map<string, { retailer: string | null; uploadedAt: Date }>> {
-  const rows = await client.receipt.findMany({ where: { id: { in: ids } }, select: { id: true, uploadedAt: true, details: { select: { retailer: true } } } });
-  return new Map(rows.map((r) => [r.id, { retailer: r.details?.retailer ?? null, uploadedAt: r.uploadedAt }]));
-}
-
 /** Each receipt's description by id, for labels and messages. */
 export async function describeReceipts(client: Client, ids: string[]): Promise<Map<string, string>> {
   const rows = await client.receiptDetail.findMany({ where: { id: { in: ids } }, select: { id: true, retailer: true, receiptDate: true, receiptTotalCents: true } });
@@ -106,15 +100,13 @@ async function labels(client: Client, nodes: Node[]): Promise<Map<string, Omit<D
   const last = new Map(logs.map((l) => [`${l.receiptId}:${l.action}`, l]));
   const copies = await client.receiptPairDecision.findMany({ where: { kind: "copy_of", copyReceiptId: { in: ended } } });
   const keptOf = new Map(copies.map((p) => [p.copyReceiptId, p.receiptId === p.copyReceiptId ? p.otherReceiptId : p.receiptId]));
-  const kept = await keptReceipts(client, [...keptOf.values()]);
-  const uploads = nodes.map((n) => n.uploadedAt);
   const text = (n: Node): string => {
     if (n.state === "rejected") {
       const log = last.get(`${n.id}:reject_financial`);
-      const keptRow = kept.get(keptOf.get(n.id) ?? "");
+      const keptId = keptOf.get(n.id);
       // A member already rejected when Keep this one recorded it as a copy keeps its own reason.
       const recorded = last.get(`${n.id}:duplicate_pair_copy_of`);
-      if (keptRow && (!log || !recorded || log.id > recorded.id)) return `${REJECTED_AS_COPY}${describeKept(keptRow, uploads)}`;
+      if (keptId && (!log || !recorded || log.id > recorded.id)) return `${REJECTED_AS_COPY}${describeKept(keptId)}`;
       return log ? `Rejected on ${day(log.changedAt)}: ${log.valueAfter ?? ""}` : "Rejected";
     }
     if (n.state === "discarded") {

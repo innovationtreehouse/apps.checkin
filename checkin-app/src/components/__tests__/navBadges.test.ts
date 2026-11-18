@@ -1,4 +1,4 @@
-import { navBadgeFor, tabBadgeFor, sectionTabBadge, reviewBadges, settingsMisconfigBadge, programsMisconfigBadge, leadsAnyProgram, leadPendingCount, leadConflictCount } from '@/components/navBadges';
+import { navBadgeFor, tabBadgeFor, sectionTabBadge, reviewBadges, applicationBadges, settingsMisconfigBadge, programsMisconfigBadge, leadsAnyProgram, leadPendingCount, leadConflictCount } from '@/components/navBadges';
 import type { TodoCounts } from '@/lib/nav/todoCounts';
 import { FINANCE_NAV_LINKS, SHOPIFY_NAV_LINKS } from '@/lib/nav/sections/revenueOps';
 
@@ -104,6 +104,8 @@ const admin = (over: Partial<NonNullable<TodoCounts['admin']>> = {}): TodoCounts
   admin: {
     membership: 0,
     applicationsTotal: 0,
+    applicationsIncomplete: 0,
+    applicationsAwaitingRefund: 0,
     paymentPlanPending: 0,
     membershipPaymentPlanPending: 0,
     trustedAdults: 0,
@@ -156,7 +158,7 @@ describe('reviewBadges (Review tab + Membership Ops nav)', () => {
     };
     expect(navBadgeFor('/membership-ops', counts)).toEqual([
       { count: 3, color: 'treehouseGreen', label: '2 pending membership reviews; 1 background check you can review now' },
-      { count: 43, color: 'gray', label: '40 in-flight applications; 3 you approved awaiting a second reviewer' },
+      { count: 41, color: 'gray', label: '38 in-flight applications; 3 you approved awaiting a second reviewer' },
     ]);
   });
 
@@ -249,6 +251,43 @@ describe('tabBadgeFor', () => {
   it('applications tab shows every in-flight application (gray)', () => {
     expect(tabBadgeFor('/membership-ops/applications', admin({ applicationsTotal: 40 })))
       .toEqual({ count: 40, color: 'gray', label: '40 applications' });
+  });
+
+  it('applications tab splits red (missing signature or check) from gray (the rest)', () => {
+    const counts = admin({ applicationsTotal: 40, applicationsIncomplete: 3 });
+    expect(applicationBadges(counts)).toEqual([
+      { count: 3, color: 'red', label: '3 applications missing a signature or background check' },
+      { count: 37, color: 'gray', label: '37 other applications' },
+    ]);
+    expect(tabBadgeFor('/membership-ops/applications', counts)?.color).toBe('red');
+    expect(applicationBadges(admin({ applicationsTotal: 1, applicationsIncomplete: 1 })))
+      .toEqual([{ count: 1, color: 'red', label: '1 application missing a signature or background check' }]);
+  });
+
+  it('applications tab folds refund-owed applications into the one red pill', () => {
+    const counts = admin({ applicationsTotal: 40, applicationsIncomplete: 2, applicationsAwaitingRefund: 1 });
+    expect(applicationBadges(counts)).toEqual([
+      { count: 3, color: 'red', label: '2 applications missing a signature or background check; 1 paid application of a denied household awaiting a refund' },
+      { count: 38, color: 'gray', label: '38 other applications' },
+    ]);
+    expect(applicationBadges(admin({ applicationsTotal: 2, applicationsAwaitingRefund: 2 })))
+      .toEqual([
+        { count: 2, color: 'red', label: '2 paid applications of denied households awaiting a refund' },
+        { count: 2, color: 'gray', label: '2 applications' },
+      ]);
+  });
+
+  it('Membership Ops nav adds refund-owed applications to its red pill', () => {
+    expect(navBadgeFor('/membership-ops', admin({ applicationsTotal: 40, applicationsAwaitingRefund: 2 }))[0]).toEqual(
+      { count: 2, color: 'red', label: '2 paid applications of denied households awaiting a refund' },
+    );
+  });
+
+  it('Membership Ops nav folds incomplete applications into red and out of gray', () => {
+    expect(navBadgeFor('/membership-ops', admin({ brokenEmails: 1, applicationsTotal: 40, applicationsIncomplete: 3 }))).toEqual([
+      { count: 4, color: 'red', label: '1 member with an undeliverable email; 3 applications missing a signature or background check' },
+      { count: 37, color: 'gray', label: '37 in-flight applications; 0 you approved awaiting a second reviewer' },
+    ]);
   });
 
   it('broken-households tab is red (board action, blocking), the other audit tabs gray', () => {

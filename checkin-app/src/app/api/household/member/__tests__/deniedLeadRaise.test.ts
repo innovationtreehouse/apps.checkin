@@ -12,6 +12,13 @@ import { logger, logBackendError } from "@/lib/logger";
 import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { PATCH } from "@/app/api/household/member/route";
 
+// The archived-household guard has its own tests; here every household is live.
+jest.mock("@/lib/household/archiveGuard", () => ({
+    ...jest.requireActual("@/lib/household/archiveGuard"),
+    lockLiveHouseholds: jest.fn(),
+    lockLiveHouseholdsOf: jest.fn(),
+}));
+
 jest.mock("next-auth/next", () => ({ getServerSession: jest.fn() }));
 jest.mock("@/lib/auth-options", () => ({ authOptions: {} }));
 jest.mock("@/lib/logger", () => ({ logger: { error: jest.fn() }, logBackendError: jest.fn() }));
@@ -21,6 +28,7 @@ jest.mock("@/lib/membership/householdStatus", () => ({ raiseDeniedHouseholdActiv
 jest.mock("@/lib/household/leads", () => ({
     ...jest.requireActual("@/lib/household/leads"),
     householdLeadship: jest.fn(),
+    setsHouseholdAges: jest.fn().mockResolvedValue(true),
     addHouseholdLead: jest.fn(),
 }));
 
@@ -71,6 +79,9 @@ beforeEach(() => {
             canAccessStaging: false,
             household: { orgMembership: { isVolunteerFamily: false } },
             _count: { accounts: 0, roles: 0, programsLed: 0, programVolunteers: 0, bgAttestationsAsSubject: 0, personBgProcesses: 0, toolStatuses: 0 },
+            budgetOwnersOwned: [],
+            budgetOwnerTreasurerships: [],
+            instancesLed: [],
         }));
     tx.person.update.mockResolvedValue({ id: OTHER });
     tx.person.findUnique.mockResolvedValue({ isHouseholdLead: false });

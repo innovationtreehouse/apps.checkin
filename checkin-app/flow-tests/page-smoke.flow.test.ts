@@ -13,7 +13,7 @@ import type { NavSection, NavUser } from "@/lib/nav/types";
 import type { TodoCounts } from "@/lib/nav/todoCounts";
 import { NOT_PUSHED, OTHER_QUEUES, QUEUES, queueListPath, reviewDetailHref } from "../../packages/receipt/src/components/reviewQueue";
 import { navPages as viewerPages, navSections } from "../test-support/navPages";
-import { api, loginAs, type Session } from "./helpers";
+import { api, loginAs, newClassId, type Session } from "./helpers";
 import { expenseViewsFor } from "@checkin/expense/nav";
 
 // The first persona pays the dev server's compile of every page and route it opens.
@@ -239,7 +239,7 @@ beforeAll(async () => {
   releasedBefore = (await api<TodoCounts>(board, "/api/nav/todo-counts")).json.releasedLibraries ?? [];
   for (const library of LIBRARY_KEYS) expect([library, (await release(board, library, true)).status]).toEqual([library, 200]);
   // A bucket of this suite's own makes the approver its owner and the treasurer its treasurer.
-  const bucket = await send(finance, "POST", "/api/budget-owners", { name: `Page smoke ${Date.now()}` });
+  const bucket = await send(finance, "POST", "/api/budget-owners", { name: `Page smoke ${Date.now()}`, quickBooksClassId: newClassId() });
   expect(bucket.status).toBe(200);
   bucketId = (bucket.json as { id: number }).id;
   const approver = await loginAs(APPROVER);

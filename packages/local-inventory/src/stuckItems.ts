@@ -27,8 +27,8 @@ export async function stuckItems(): Promise<StuckItem[]> {
 
 /**
  * Runs the item's step once. Safe to repeat: the delta's "already applied" check, the event
- * ledger and the provisional's status checks hold. A step that fails again leaves the item stuck with its first failure time; an item
- * that is not stuck answers 404. A delta's id is its receipt id, or its row id when it has none.
+ * ledger and the provisional's status checks hold. A step that fails again leaves the item stuck with
+ * its first failure time and answers 409 with no error text; an item that is not stuck answers 404. A delta's id is its receipt id, or its row id when it has none.
  */
 export async function retryStuckItem({ id, step }: { id: string; step: string }): Promise<void> {
   switch (step) {

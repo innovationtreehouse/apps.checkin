@@ -1,13 +1,14 @@
 import type { Prisma, OrgMembershipProcess } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
-import { ReviewError, applicantHousehold, reviewHouseholds } from "@/lib/membership/review";
+import { ReviewError, applicantHousehold, reviewHouseholds, wrongPersonClosedAt } from "@/lib/membership/review";
 import { reviewHoldsRejection } from "@/lib/membership/checkStanding";
 import { CLOSABLE_STATUSES, RESTORABLE_STATUSES, RESTORE_CLOSABLE_STATUSES, fromWhere, openProcess } from "@/lib/membership/lifecycle";
 import { advanceExternalIfComplete, pickUpMissedSignature } from "@/lib/membership/external";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { personActor, type AuditActor } from "@/lib/auditActor";
 import { type TxClient } from "@/lib/db-client";
+import { reopenYearRefusal } from "@/lib/programYear";
 
 // Loaded on use: settleHouseholdBg imports review.ts, and a static import closes that cycle at load.
 const settleModule = () => import("@/lib/membership/settleHouseholdBg");
@@ -77,6 +78,8 @@ export async function archiveApplication(processId: number, actorId: number) {
 
 const HOUSEHOLD_KINDS = ["INITIAL", "RENEWAL"] as const;
 
+const RESTORE_CLOSE_REASON = "household restored";
+
 /**
  * Locks a household's applications FOR UPDATE and returns the open ones, for a
  * restore to close. Taken before the household row, the order the payment and
@@ -88,6 +91,11 @@ export async function lockOpenApplications(tx: TxClient, orgMembershipId: number
         where: { orgMembershipId, kind: { in: [...HOUSEHOLD_KINDS] }, ...openProcess.where },
         select: { id: true, status: true, paidAt: true },
     });
+}
+
+/** How many applications {@link lockOpenApplications} would return now, read without locking. */
+export function countOpenApplications(tx: TxClient, orgMembershipId: number) {
+    return tx.orgMembershipProcess.count({ where: { orgMembershipId, kind: { in: [...HOUSEHOLD_KINDS] }, ...openProcess.where } });
 }
 
 /**
@@ -121,7 +129,7 @@ export async function closeForRestore(
                 tableName: "OrgMembershipProcess",
                 affectedEntityId: p.id,
                 oldData: { status: p.status },
-                newData: { status: "ARCHIVED", reason: action === "restore" ? "household restored" : "household archived" },
+                newData: { status: "ARCHIVED", reason: action === "restore" ? RESTORE_CLOSE_REASON : "household archived" },
             },
         });
     }
@@ -131,9 +139,14 @@ export async function closeForRestore(
  * Why reopening would break a household rule, or null. A DENIED household starts
  * nothing; a household has one open application at a time (BLOCKED counts as open:
  * the board must resolve it first); an ACTIVE household gets renewals, never a
- * second joining application. Person-scoped kinds allow one open item per subject.
+ * second joining application; a household application is reopened only within its
+ * own membership year. Person-scoped kinds allow one open item per subject.
  */
 async function reopenRefusal(tx: Prisma.TransactionClient, process: OrgMembershipProcess, householdId: number | null): Promise<string | null> {
+    const settings = await tx.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
+    const yearRefusal = reopenYearRefusal(process.kind, process.createdAt, settings?.orgMembershipYearBoundary, new Date());
+    if (yearRefusal) return yearRefusal;
+
     const membership = householdId == null ? null : await tx.orgMembership.findUnique({ where: { householdId }, select: { status: true } });
     if (membership?.status === "DENIED") return "This household has been denied membership. Restore the household before reopening its application.";
     if (process.kind === "INITIAL" && membership?.status === "ACTIVE") return "This household is already an active member, so its joining application cannot be reopened.";
@@ -155,12 +168,46 @@ async function reopenRefusal(tx: Prisma.TransactionClient, process: OrgMembershi
 }
 
 /**
+ * Whether the household was denied at any point after this application closed, or the
+ * close was the restore's own. Zoho gives no signing time, so a signature found at
+ * Reopen may have been made during that denial.
+ */
+async function deniedSinceClose(tx: Prisma.TransactionClient, processId: number, householdId: number): Promise<boolean> {
+    const close = await tx.auditLog.findFirst({
+        where: { tableName: "OrgMembershipProcess", affectedEntityId: processId, newData: { path: ["status"], equals: "ARCHIVED" } },
+        orderBy: { id: "desc" },
+        select: { id: true },
+    });
+    if (!close) return false;
+    const evidence = await tx.auditLog.findFirst({
+        where: {
+            OR: [
+                { id: close.id, newData: { path: ["reason"], equals: RESTORE_CLOSE_REASON } },
+                {
+                    tableName: "OrgMembership",
+                    secondaryAffectedEntity: householdId,
+                    id: { gt: close.id },
+                    OR: [{ newData: { path: ["status"], equals: "DENIED" } }, { oldData: { path: ["status"], equals: "DENIED" } }],
+                },
+            ],
+        },
+        select: { id: true },
+    });
+    return evidence !== null;
+}
+
+const FORGET_SIGNING_REQUEST = { zohoEnvelopeId: null, zohoActionId: null, zohoSignerPersonId: null };
+
+/**
  * Board "Reopen": returns a closed application to the step it was closed from
  * (`archivedFromStatus`, captured by the close write). Refuses with the reason when
- * the household is DENIED or already has another open application, then picks up a
+ * the household is DENIED, already has another open application, or the next
+ * year's renewal window has opened since the application's own year, then picks up a
  * signature made while closed and re-runs the external advance so a gate met while
- * closed doesn't strand the application. The households it touches are then settled
- * on their people's check standing, which may block it or open its check review.
+ * closed doesn't strand the application. When the household was denied since the
+ * close, the unsigned signing request is forgotten in the reopen write instead, and
+ * the family signs again. The households it touches are then settled on their
+ * people's check standing, which may block it or open its check review.
  */
 export async function unarchiveApplication(processId: number, actorId: number) {
     const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
@@ -174,29 +221,36 @@ export async function unarchiveApplication(processId: number, actorId: number) {
     }
     const householdId = await applicantHousehold(prisma, process);
 
+    let reopened: { forgotRequest: boolean } | null;
     try {
-        await prisma.$transaction(async (tx) => {
+        reopened = await prisma.$transaction(async (tx) => {
             // Same lock startIntake/createRenewalProcess take, so a new application
             // can't open between the sibling check and the reopen.
             if (householdId != null) await tx.$queryRaw`SELECT id FROM "OrgMembership" WHERE "householdId" = ${householdId} FOR UPDATE`;
+            if (process.kind === "PERSON_BG" && await wrongPersonClosedAt(tx, processId)) {
+                throw new ReviewError("wrong_phase", "The Board closed this check review as opened for the wrong person. Reopen it with a reason instead.");
+            }
             const refusal = await reopenRefusal(tx, process, householdId);
             if (refusal) throw new ReviewError("wrong_phase", refusal);
+            const forgotRequest = householdId != null && process.zohoEnvelopeId != null && process.contractSignedAt == null
+                && await deniedSinceClose(tx, processId, householdId);
 
             const { count } = await tx.orgMembershipProcess.updateMany({
                 where: { id: processId, ...fromWhere("ARCHIVED") },
-                data: { status: target, archivedFromStatus: null, stageEnteredAt: new Date() },
+                data: { status: target, archivedFromStatus: null, stageEnteredAt: new Date(), ...(forgotRequest ? FORGET_SIGNING_REQUEST : {}) },
             });
-            if (count !== 1) return; // a concurrent reopen won; it wrote the audit row
+            if (count !== 1) return null; // a concurrent reopen won; it wrote the audit row
             await tx.auditLog.create({
                 data: {
                     ...personActor(actorId),
                     action: "EDIT",
                     tableName: "OrgMembershipProcess",
                     affectedEntityId: processId,
-                    oldData: { status: "ARCHIVED" },
-                    newData: { status: target, unarchived: true },
+                    oldData: { status: "ARCHIVED", ...(forgotRequest ? { zohoEnvelopeId: process.zohoEnvelopeId, zohoActionId: process.zohoActionId, zohoSignerPersonId: process.zohoSignerPersonId } : {}) },
+                    newData: { status: target, unarchived: true, ...(forgotRequest ? { ...FORGET_SIGNING_REQUEST, reason: "household denied since close" } : {}) },
                 },
             });
+            return { forgotRequest };
         });
     } catch (e) {
         // The partial unique indexes (membership_one_inflight_*) back the sibling check.
@@ -205,7 +259,7 @@ export async function unarchiveApplication(processId: number, actorId: number) {
         }
         throw e;
     }
-    await pickUpMissedSignature(process);
+    if (reopened && !reopened.forgotRequest) await pickUpMissedSignature(process);
     const { settleHouseholdBg } = await settleModule();
     for (const id of await reviewHouseholds(prisma, process)) await settleHouseholdBg(id);
     const advanced = await advanceExternalIfComplete(processId);

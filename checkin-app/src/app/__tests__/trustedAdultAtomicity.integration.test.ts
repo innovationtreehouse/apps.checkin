@@ -15,7 +15,7 @@
 import {
     createTrustedAdult,
     decideReview,
-    overrideReview,
+    resetReview,
     renewTrustedAdult,
     runExpirySweep,
     withdrawTrustedAdult,
@@ -156,18 +156,19 @@ describe('Trusted Adults — mutation + audit are atomic', () => {
         expect(await prisma.auditLog.count()).toBe(auditBefore);
     });
 
-    it('overrideReview: a failing audit rolls back the force-DENY — status stays PENDING_BOARD_REVIEW', async () => {
+    it('resetReview: a failing audit rolls back the reset — status stays DENIED', async () => {
         const ta = await discloseOne();
         const reviewId = ta.reviews[0].id;
+        await decideReview(reviewId, boardId, { decision: 'DENY' });
         const auditBefore = await prisma.auditLog.count();
 
         const spy = breakAuditInTransaction();
-        await expect(overrideReview(reviewId, boardId, 'deny')).rejects.toThrow('forced audit failure');
+        await expect(resetReview(reviewId, boardId, 'Second look.')).rejects.toThrow('forced audit failure');
         spy.mockRestore();
 
         const after = await prisma.trustedAdultReview.findUnique({ where: { id: reviewId } });
-        expect(after!.status).toBe('PENDING_BOARD_REVIEW'); // NOT DENIED
-        expect(after!.decision).toBeNull();
+        expect(after!.status).toBe('DENIED'); // NOT reset
+        expect(after!.decidedById).toBe(boardId);
         expect(await prisma.auditLog.count()).toBe(auditBefore);
     });
 

@@ -4,9 +4,9 @@ import { useViewer } from "@checkin/component-ui";
 import { Alert, Anchor, Badge, Button, Checkbox, Group, NumberInput, Paper, Select, Stack, Table, Text, TextInput, Title } from "@mantine/core";
 import { act, api, useLoad, when } from "../components/api";
 import { formatGtinDisplay } from "@checkin/gtin";
-import { formatCents } from "@checkin/money";
+import { dollarsToCents, formatCents } from "@checkin/money";
 import { LINE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
-import { LoadError } from "@checkin/component-ui";
+import { InactivePickWarning, LoadError, QuickBooksListsRefresh } from "@checkin/component-ui";
 import { IN_KIND_STATE as STATE, type InKindSource, type WaitingOn } from "../components/inKindState";
 
 interface QueueLine {
@@ -89,10 +89,11 @@ function DecidePanel({ item, buckets, onDone }: { item: QueueItem; buckets: Buck
   const [busy, setBusy] = useState(false);
   const needsValues = item.source === "manual" && !accepted;
   // The large-value warning's threshold, as the server reads it; until it loads, the server's flag stands.
-  const settings = useLoad<{ capitalLineItemThresholdCents: number }>(needsValues ? "/api/expense/org-settings" : null);
-  const valueCents = (lineId: number) => Math.round(Number(values[lineId] || 0) * 100);
+  const settings = useLoad<{ capitalLineItemThresholdCents: number | null }>(needsValues ? "/api/expense/org-settings" : null);
+  const valueCents = (lineId: number) => dollarsToCents(values[lineId] || 0);
   const allValued = item.lines.every((l) => valueCents(l.id) > 0);
-  const threshold = settings.data?.capitalLineItemThresholdCents;
+  // An unset threshold warns on every gift, as the server does.
+  const threshold = settings.data ? (settings.data.capitalLineItemThresholdCents ?? 0) : undefined;
   const warnLargeValue =
     needsValues && threshold !== undefined ? item.lines.reduce((sum, l) => sum + valueCents(l.id), 0) >= threshold : item.warnLargeValue;
   const bucketOptions = buckets.map((b) => ({ value: String(b.id), label: b.name }));
@@ -224,6 +225,7 @@ function QbPanel({ item, onDone }: { item: QueueItem; onDone: () => void }) {
         {isHeld(item) && (
           <>
             {live.error && <LoadError what="QuickBooks' account list" message={live.error} onRetry={live.reload} />}
+            <QuickBooksListsRefresh />
             {item.lines.map((l) => (
               <Group key={l.id} align="end">
                 <Text size="sm" w={240}>
@@ -241,6 +243,7 @@ function QbPanel({ item, onDone }: { item: QueueItem; onDone: () => void }) {
                 >
                   Set account
                 </Button>
+                {!lineAccount[l.id] && <InactivePickWarning saved={l.quickBooksAccountId} options={live.data} />}
               </Group>
             ))}
           </>

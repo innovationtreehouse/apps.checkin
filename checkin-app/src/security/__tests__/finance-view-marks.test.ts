@@ -1,7 +1,7 @@
 /**
  * @jest-environment node
  *
- * Finance view log contract (docs/in-design/FINANCE_VIEW_RECORD_IDS.md): a GET response
+ * Finance view log contract (the finance-view rule): a GET response
  * is logged when the stripped bag carries a marked field on a row that is not the
  * viewer's own. The log names each record as `Model:id` with the marked field names it
  * was sent. The writer (merging, windows, repeats) is covered by its own tests.
@@ -35,6 +35,7 @@ import {
 import type { CallerContext } from '@/security/access-resolvers';
 import { authenticateRequest } from '@/lib/auth';
 import { pageViewDisposition, recordFinanceViewCall, type FinanceViewCall } from '@/lib/finance/financeViewLog';
+import { PAST_QUERY_KEYS } from '@/lib/finance/paymentPlanHistoryPage';
 
 jest.mock('@/lib/auth', () => ({ authenticateRequest: jest.fn() }));
 jest.mock('@/lib/finance/financeViewLog', () => ({
@@ -50,7 +51,7 @@ const FULL = ['everyones:pii', 'everyones:personal', 'everyones:internal', 'publ
 // ReceiptView binds `their_own` on uploadedByUserId: the submitter's own receipt.
 const VIEW: readonly OrderedViewEntry[] = [
     ['isBoardMember', FULL],
-    ['authenticated', ['everyones:internal']],
+    ['authenticated', ['everyones:internal', 'public']],
 ];
 const RECEIPTS = 'GET /api/__test__/fv/receipts/[id]';
 const UNMARKED = 'GET /api/__test__/fv/ignored-files';
@@ -290,6 +291,16 @@ describe('record names', () => {
         const declarations = getRoute('GET /api/receipts/[id]/audit-logs')?.financeView?.records ?? [];
         expect(rowRecords('ReceiptAuditLog', { id: 41, receiptId: 'r9', valueAfter: '1200' }, declarations, { id: 'r9' })).toEqual([
             { ref: 'Receipt:r9', fields: ['valueAfter'] },
+        ]);
+    });
+
+    it('names a finance-queue intake row by its receipt, and an expense row by its expense', () => {
+        const declarations = getRoute('GET /api/expense/finance-queue')?.financeView?.records ?? [];
+        expect(rowRecords('FinanceQueueRow', { expenseId: null, receiptId: 'r-failed', amountCents: 900 }, declarations, {})).toEqual([
+            { ref: 'Receipt:r-failed', fields: ['amountCents'] },
+        ]);
+        expect(rowRecords('FinanceQueueRow', { expenseId: 'e_1', receiptId: null, amountCents: 900 }, declarations, {})).toEqual([
+            { ref: 'Expense:e_1', fields: ['amountCents'] },
         ]);
     });
 
@@ -538,5 +549,14 @@ describe('routes audited before field marks still log', () => {
             ? (route.returns ?? []).some(model => route.orderedView.some(([, tokens]) => marksVisible(tokens, model)))
             : file !== undefined && (marks[file.file.model] ?? []).includes(file.file.field);
         expect(logs).toBe(true);
+    });
+});
+
+describe('payment-plan Past routes log the archived filter', () => {
+    it.each([
+        'GET /api/finance-ops/payment-plans/past',
+        'GET /api/finance-ops/membership-payment-plans/past',
+    ])('%s records the query keys the route reads', endpoint => {
+        expect(getRoute(endpoint)?.financeView?.query).toEqual(Object.values(PAST_QUERY_KEYS));
     });
 });

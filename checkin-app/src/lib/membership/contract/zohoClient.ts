@@ -1,5 +1,5 @@
 import { config } from "@/lib/config";
-import { toZohoFields, type FieldPrefill } from "@/lib/membership/contract/signFields";
+import { toZohoFields, type FieldPrefill, type SignFieldSpec } from "@/lib/membership/contract/signFields";
 
 /**
  * Zoho Sign API client — the "send for signature" half of the integration, a
@@ -191,9 +191,10 @@ export async function submitRequest(params: {
     lastPageNo: number;
     pageWidth: number;
     pageHeight: number;
+    fieldSpecs: readonly SignFieldSpec[];
     prefill?: FieldPrefill;
 }): Promise<void> {
-    const fields = toZohoFields(params.documentId, params.lastPageNo, params.pageWidth, params.pageHeight, params.prefill);
+    const fields = toZohoFields(params.fieldSpecs, params.documentId, params.lastPageNo, params.pageWidth, params.pageHeight, params.prefill);
     const payload = {
         requests: {
             actions: [

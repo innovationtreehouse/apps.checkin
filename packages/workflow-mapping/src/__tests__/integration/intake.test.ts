@@ -101,7 +101,7 @@ describeDb("S1 — replay and org", () => {
 });
 
 describeDb("S1 — recognition and push", () => {
-  it("a failed catalog lookup is non-fatal: every line stays unrecognized", async () => {
+  it("a failed catalog lookup is non-fatal: every line stays unrecognized and matching is pending", async () => {
     configure({
       catalogReader: {
         lookupItems: async () => {
@@ -115,6 +115,7 @@ describeDb("S1 — recognition and push", () => {
     expect(res.state).toBe("pending_review");
     const created = await db.workflowAuditLog.findFirstOrThrow({ where: { receivedReceiptId: res.id, eventType: "receipt_created" } });
     expect(created.details).toBeNull();
+    expect((await db.receivedReceipt.findUniqueOrThrow({ where: { id: res.id } })).matchingPendingReason).toBe("unexpected_error");
   });
 
   it("an unbound catalog leaves every line unrecognized and records that it is not connected", async () => {
@@ -140,7 +141,7 @@ describeDb("S1 — recognition and push", () => {
     expect(created.details).toBe("catalog not connected");
   });
 
-  it("a missing catalog database fails the intake and stores nothing, so the sender retries", async () => {
+  it("a missing catalog database saves the receipt with matching pending on a settings error", async () => {
     configure({
       catalogReader: {
         lookupItems: async () => {
@@ -150,9 +151,12 @@ describeDb("S1 — recognition and push", () => {
         getActiveItem: recognizeAll.getActiveItem,
       },
     });
-    const payload = buildReceiptPayload({ lineCount: 2 });
-    await expect(ingestReceipt(payload)).rejects.toMatchObject({ code: "P1003" });
-    expect(await db.receivedReceipt.count({ where: { receiptId: payload.receiptId } })).toBe(0);
+    const res = await ingestReceipt(buildReceiptPayload({ lineCount: 2 }));
+    expect(res).toMatchObject({ state: "pending_review", created: true });
+    expect(await db.receivedReceipt.findUniqueOrThrow({ where: { id: res.id } })).toMatchObject({
+      matchingPendingSince: expect.any(Date),
+      matchingPendingReason: "catalog_settings",
+    });
   });
 
   it("all lines recognized with inert sinks: recorded and held in apply_failed", async () => {

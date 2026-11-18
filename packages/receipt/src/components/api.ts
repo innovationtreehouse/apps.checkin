@@ -66,7 +66,7 @@ export interface ReceiptListRow {
   reimburseePersonId?: number | null;
   /** On a stuck receipt: when its step first failed, and, on its own page for finance, the latest error. */
   lastPushFailedAt?: string | null;
-  lastPushFailure?: string | null;
+  lastError?: string | null;
   duplicateFlaggedAt?: string | null;
   /** On a receipt rejected as a copy, in finance's views: the receipt kept in its place. */
   copyOfId?: string | null;

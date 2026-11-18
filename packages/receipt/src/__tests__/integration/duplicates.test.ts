@@ -294,10 +294,9 @@ describeDb("deciding a duplicate group", () => {
     actAs(FINANCE);
     await receiptService.keepThisOne(b.id, [a.id, b.id]);
     const row = await db.receiptAuditLog.findFirst({ where: { receiptId: a.id, action: "reject_financial" } });
-    // Both were uploaded today, so the kept receipt is told apart by its upload time.
-    expect(row?.valueAfter).toMatch(/^Copy of Home Depot, uploaded \d{1,2} \w{3}, \d{2}:\d{2}$/);
+    expect(row?.valueAfter).toBe(`Copy of receipt ${b.id}`);
     const member = (await receiptService.duplicateGroup(b.id)).members.find((m) => m.id === a.id);
-    expect(member).toMatchObject({ label: `Rejected as a copy of ${row?.valueAfter?.slice("Copy of ".length)}`, copyOfId: b.id });
+    expect(member).toMatchObject({ label: `Rejected as a copy of receipt ${b.id}`, copyOfId: b.id });
   });
 });
 
@@ -349,5 +348,35 @@ describeDb("deciding on a suspected original", () => {
     await receiptService.discard(original.id, "submitter");
     expect(await stateOf(original.id)).toBe("discarded");
     expect(await actions(flagged.id)).not.toContain("suspected_original_rejected");
+  });
+});
+
+describeDb("the time a receipt was flagged as a duplicate", () => {
+  beforeEach(() => configure({ receiptSink: recordingPorts().receiptSink, ocr: okOcr() }));
+
+  const flaggedAt = async (id: string) => (await db.receiptDetail.findUniqueOrThrow({ where: { id } })).duplicateFlaggedAt;
+
+  it("is set by each flag, emptied by a re-check that clears it, and kept when the flagged receipt is discarded", async () => {
+    const file = textFile();
+    const original = await receiptService.upload(file, "text/plain", {});
+    const copy = await receiptService.upload(file, "text/plain", {});
+    expect([original.state, copy.state]).toEqual(["submitter_review", "duplicate_flagged"]);
+    expect(await flaggedAt(copy.id)).toBeInstanceOf(Date);
+
+    await receiptService.discard(original.id, "submitter");
+    expect(await stateOf(copy.id)).toBe("submitter_review");
+    expect(await flaggedAt(copy.id)).toBeNull();
+
+    const later = await receiptService.upload(file, "text/plain", {});
+    expect(later.state).toBe("duplicate_flagged");
+    await receiptService.submitterConfirm(copy.id);
+    expect(await stateOf(copy.id)).toBe("duplicate_flagged");
+    expect(await flaggedAt(copy.id)).toBeInstanceOf(Date);
+
+    await receiptService.discard(copy.id, "submitter");
+    expect(await stateOf(copy.id)).toBe("discarded");
+    expect(await flaggedAt(copy.id)).toBeInstanceOf(Date);
+    expect(await stateOf(later.id)).toBe("submitter_review");
+    expect(await flaggedAt(later.id)).toBeNull();
   });
 });

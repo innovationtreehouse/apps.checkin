@@ -28,6 +28,7 @@ import * as path from 'path';
 import { allRoutes, CRON_SECRET_ENV, getRoute, type Authorize, type SessionFlagRole } from '@/security/core';
 import type { AuthenticatedUser } from '@/types/auth';
 import prisma from '@/lib/prisma';
+import { REGISTERED_BEFORE_HANDLER } from './registeredBeforeHandler';
 import { configureRuntime as configureBulkDonationRuntime } from '@/lib/bulkDonation/configure';
 import { configureRuntime as configureExpenseRuntime } from '@/lib/expense/configure';
 import { configureRuntime as configureIncomeRuntime } from '@/lib/income/configure';
@@ -35,10 +36,19 @@ import '@/security/registry';
 import libraries from '../../libraries.json';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
-// This tier has no expense database, and the qbo-posting admission case asserts only the gate.
+// This tier has no library databases; the qbo-posting and bucket-archive admission cases assert only the gate.
 jest.mock('@checkin/expense', () => ({
     ...jest.requireActual('@checkin/expense'),
     runExpenseQbPosting: jest.fn().mockResolvedValue({ failedParts: [] }),
+    unfinishedBucketUses: jest.fn().mockResolvedValue([]),
+}));
+jest.mock('@checkin/bulk-donation', () => ({
+    ...jest.requireActual('@checkin/bulk-donation'),
+    unfinishedBucketUses: jest.fn().mockResolvedValue([]),
+}));
+jest.mock('@checkin/income', () => ({
+    ...jest.requireActual('@checkin/income'),
+    unfinishedBucketUses: jest.fn().mockResolvedValue([]),
 }));
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const mockSession = require('next-auth/next').getServerSession;
@@ -77,8 +87,9 @@ function planAuthorize(authorize: Authorize): { gate: Gate; requiredRoles: Sessi
         return { gate: 'anyRole', requiredRoles: [...authorize.anyRole] };
     }
     // Program-scoped gates: resolveAccess admits a lead/core-vol of THIS program
-    // OR a sysadmin/board. A plain authenticated user holds neither → 403.
-    if (authorize === 'program-lead-mentor' || authorize === 'program-core-volunteer') {
+    // OR a sysadmin/board ('program-roster-staff' also Finance). A plain
+    // authenticated user holds none of these → 403.
+    if (authorize === 'program-lead-mentor' || authorize === 'program-core-volunteer' || authorize === 'program-roster-staff') {
         return { gate: 'program-scoped', requiredRoles: null };
     }
     // Catalog: 'catalog-viewer' admits any staff relationship (a plain
@@ -269,7 +280,7 @@ describe('Registry route admission gates', () => {
             // library flow tests instead.
             // A prefix also covers its bare root (e.g. GET /api/receipts for /api/receipts/).
             const isLibrary = libraries.flatMap(l => l.routePrefixes).some(p => plan.routePath.startsWith(p) || plan.routePath === p.slice(0, -1));
-            const itServed = routeFileExists(plan.routePath) && !isLibrary ? it : it.skip;
+            const itServed = routeFileExists(plan.routePath) && !isLibrary && !REGISTERED_BEFORE_HANDLER.has(plan.endpoint) ? it : it.skip;
 
             it('has a handled authorize gate (route not silently skipped)', () => {
                 expect(plan.gate).not.toBe('unhandled');

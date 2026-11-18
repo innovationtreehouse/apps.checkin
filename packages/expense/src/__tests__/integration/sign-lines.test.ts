@@ -110,6 +110,26 @@ describeDb("the To sign and Board lists", () => {
     expect((await signaturesWaiting(BOARD)).map((w) => [w.toSign, w.board])).toEqual([[[], lines]]);
   });
 
+  it("still lists an older waiting expense behind more than a page of newer Treasurer-signed candidates with an open Board seat", async () => {
+    const waiting = await expenseWith([{ status: "approved", decidedByUserId: 2 }], { submittedAt: new Date("2026-01-01T00:00:00Z") });
+    for (let day = 1; day <= 30; day++) {
+      const signed = await expenseWith([{ status: "approved", decidedByUserId: 2 }], { submittedAt: new Date(Date.UTC(2026, 1, day)) });
+      await db.expenseLineSignoff.create({ data: { expenseId: signed.id, lineItemId: signed.lines[0], seat: "TREASURER", signerUserId: 4 } });
+    }
+    expect((await signaturesWaiting(FINANCE)).map((w) => [w.expense.id, w.toSign])).toEqual([[waiting.id, waiting.lines]]);
+  });
+
+  it("lists each waiting expense once when pages split expenses submitted at the same moment", async () => {
+    const submittedAt = new Date("2026-02-01T00:00:00Z");
+    const waiting: string[] = [];
+    for (let i = 0; i < 30; i++) {
+      const e = await expenseWith([{ status: "approved", decidedByUserId: 2 }], { submittedAt });
+      if (i % 6 === 0) waiting.push(e.id);
+      else await db.expenseLineSignoff.create({ data: { expenseId: e.id, lineItemId: e.lines[0], seat: "TREASURER", signerUserId: 4 } });
+    }
+    expect((await signaturesWaiting(FINANCE)).map((w) => w.expense.id)).toEqual([...waiting].sort());
+  });
+
   it("gives a viewer with neither role nothing", async () => {
     await expenseWith([{ status: "approved", decidedByUserId: 2 }]);
     expect(await signaturesWaiting(principal(2))).toEqual([]);

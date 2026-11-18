@@ -4,20 +4,21 @@ import { use, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useRequireRole } from '@/hooks/useRequireRole';
 import { Alert, Badge, Box, Button, Card, Checkbox, Container, Divider, Group, NumberInput, Select, SimpleGrid, Stack, Tabs, Text, TextInput, Title } from '@mantine/core';
-import { LoadError } from '@checkin/component-ui';
+import { errorMessage, LoadError, showError, showSuccess } from '@checkin/component-ui';
 import { shallowEqual } from '@/components/UnsavedChangesProvider';
 import { useSeedForm } from '@/hooks/useSeedForm';
-import { useLoad } from '@/lib/api';
+import { api, useLoad } from '@/lib/api';
 import { EntityPicker } from '@/components/admin/EntityPicker';
 import { ScrollableTabsList } from '@/components/ui/ScrollableTabsList';
 import { ProgramRosterTab } from './ProgramRosterTab';
 import { notifications } from '@mantine/notifications';
 import { ProgramEventsTab } from './ProgramEventsTab';
 import { isProgramCheckoutBroken } from '@/lib/programCheckout';
+import { useProgramStoreClosed } from '../../useProgramStoreClosed';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
 
 import { PageLoader } from "@/components/ui/PageLoader";
-import { ProgramYearField, formYearsTouched, useMembershipYearBoundary } from '../../ProgramYearField';
+import { ProgramYearField, YearBoundaryError, formYearsTouched, useMembershipYearBoundary } from '../../ProgramYearField';
 import { membershipYearLabel } from '@/lib/programYear';
 export type ProgramDetail = {
   id: number;
@@ -39,9 +40,14 @@ export type ProgramDetail = {
     personId: number;
     status: string;
     pendingSince: string | null;
+    // Age in whole years at the program's start; null when the date of birth is unknown.
+    age?: number | null;
     person: {
       name: string | null;
       email: string;
+      // Present for an adult participant only, and only to a viewer granted it.
+      phone?: string | null;
+      householdId: number;
       // householdMembers is the household's leads (the parents) only. Contact
       // fields are optional because the response stripper drops them for a
       // viewer without the grant.
@@ -112,7 +118,6 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
 
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [saveError, setSaveError] = useState("");
   const [activeTab, setActiveTab] = useState<'general' | 'roster' | 'events'>('general');
 
   // Each form reseeds from a read only while it is unedited, so a late read never overwrites typing.
@@ -173,7 +178,9 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
   }, []);
 
   const canStateYear = !!sessionUser?.isBoardMember;
-  const boundary = useMembershipYearBoundary(!!(sessionUser?.isSysadmin || sessionUser?.isBoardMember));
+  const yearBoundary = useMembershipYearBoundary(!!(sessionUser?.isSysadmin || sessionUser?.isBoardMember));
+  const storeClosed = useProgramStoreClosed(!!(sessionUser?.isSysadmin || sessionUser?.isBoardMember));
+  const { boundary } = yearBoundary;
   const years = formYearsTouched(boundary, startAt, endAt);
   const crossing = years.length > 1;
   // A stored year counts as stated only when the saved dates cross; a derived year is never pre-selected.
@@ -191,11 +198,9 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
       return;
     }
     setSaving(true);
-    setSaveError("");
     try {
-      const res = await fetch(`/api/programs/${id}`, {
+      const saved = await api<{ warning?: string; notice?: string }>(`/api/programs/${id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           startAt: startAt || null,
           endAt: endAt || null,
@@ -211,17 +216,14 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
           nonMemberPrice: nonMemberPrice || null,
         })
       });
-      if (res.ok) {
-        notifications.show({ message: "Saved." });
-        notifyNavRefresh();
-        setSeededGeneral(generalForm);
-        reload();
-      } else {
-        const data = await res.json().catch(() => ({}));
-        setSaveError(data.error || "Failed to save settings.");
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
+      const followUps = [saved?.warning, saved?.notice].filter((m): m is string => !!m);
+      for (const message of followUps) notifications.show({ color: "yellow", message, autoClose: false });
+      if (followUps.length === 0) showSuccess("Saved.");
+      notifyNavRefresh();
+      setSeededGeneral(generalForm);
+      await reload();
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setSaving(false);
     }
@@ -230,25 +232,19 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
   const handleSaveShopifyIds = async () => {
     setSyncing(true);
     try {
-      const res = await fetch(`/api/programs/${id}`, {
+      await api(`/api/programs/${id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           shopifyProductId: shopifyProductIdInput || null,
           shopifyVariantId: variantInput || null,
         }),
       });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        notifications.show({ message: "Shopify identifiers saved." });
-        notifyNavRefresh();
-        setSeededShopify(shopifyForm);
-        reload();
-      } else {
-        notifications.show({ color: "red", message: data.error || "Failed to save.", autoClose: false });
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
+      showSuccess("Shopify identifiers saved.");
+      notifyNavRefresh();
+      setSeededShopify(shopifyForm);
+      await reload();
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setSyncing(false);
     }
@@ -257,19 +253,13 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
   const handleSyncShopify = async () => {
     setSyncing(true);
     try {
-      const res = await fetch(`/api/programs/${id}/sync-shopify`, { method: 'POST' });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        notifications.show(data.warning
-          ? { color: "yellow", message: data.warning, autoClose: false }
-          : { message: "Shopify checkout configured." });
-        notifyNavRefresh();
-        reload();
-      } else {
-        notifications.show({ color: "red", message: data.error || "Failed to sync to Shopify.", autoClose: false });
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
+      const data = await api<{ warning?: string }>(`/api/programs/${id}/sync-shopify`, { method: 'POST' });
+      if (data?.warning) notifications.show({ color: "yellow", message: data.warning, autoClose: false });
+      else showSuccess("Shopify checkout configured.");
+      notifyNavRefresh();
+      await reload();
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setSyncing(false);
     }
@@ -367,7 +357,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
                   </Group>
                 </Card>
 
-                {isProgramCheckoutBroken(program) ? (
+                {isProgramCheckoutBroken(program, storeClosed) ? (
                   <Alert color="red" variant="light" title="⚠️ Broken checkout">
                     <Stack gap="xs" align="flex-start">
                       <Text size="sm">
@@ -409,7 +399,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
                     <Text size="xs" c="dimmed">
                       A hidden (unlisted, untracked) product the app&apos;s checkout links to, so a family holding a seat can pay even when the store shows the program sold out.
                     </Text>
-                    {!program.claimantShopifyVariantId && !isProgramCheckoutBroken(program)
+                    {!program.claimantShopifyVariantId && !isProgramCheckoutBroken(program, storeClosed)
                       && ((program.nonOrgMemberPriceCents ?? program.orgMemberPriceCents ?? 0) > 0) && (
                       <Group mt="xs">
                         <Button type="button" variant="light" size="xs" loading={syncing} onClick={handleSyncShopify}>
@@ -466,6 +456,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
                 </SimpleGrid>
 
                 <ProgramYearField years={years} value={effectiveYear} onChange={setYearChoice} canEdit={canStateYear} />
+                <YearBoundaryError load={yearBoundary} />
 
                 <div>
                   <NumberInput label="Max Participants (Optional)" value={maxParticipants} onChange={v => setMaxParticipants(String(v))} min={1} placeholder="Leave blank for unlimited" description="Sets the inventory limit on Shopify. Leave blank for unlimited enrollment." />
@@ -517,7 +508,6 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
                     ]} />
                 </SimpleGrid>
 
-                {saveError && <Alert color="red" variant="light">{saveError}</Alert>}
                 <Group gap="sm">
                   <Button type="submit" disabled={saving || !leadMentorIdInput || (canStateYear && crossing && effectiveYear == null)} loading={saving}>
                     Save Settings
@@ -534,6 +524,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
               program={program}
               isSysAdminOrBoard={!!isSysAdminOrBoard}
               isBoardMember={!!user?.isBoardMember}
+              viewerHouseholdId={sessionUser?.householdId ?? null}
               fetchProgram={reload}
             />
           </Tabs.Panel>

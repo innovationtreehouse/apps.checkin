@@ -12,20 +12,20 @@ export interface QueueCounts {
   actionableByState?: Record<string, number>;
   /** Finalized receipts not yet delivered to receiving. */
   notPushed: number;
-  /** Of those, the ones catch-up has stopped retrying. */
-  pushGivenUp: number;
+  /** Of those, the ones whose delivery has failed. */
+  failedPushes: number;
 }
 
 export const QUEUE_COUNTS_PATH = "/queue-counts";
 
 /** The review queues' counts, reloaded whenever a receipt write tells the nav to refetch. */
-export function useQueueCounts(): { counts: QueueCounts | null; error: string | null } {
-  const { data, error, reload } = useLoad<QueueCounts>(QUEUE_COUNTS_PATH);
+export function useQueueCounts(): { counts: QueueCounts | null; error: string | null; status: number | null } {
+  const { data, error, status, reload } = useLoad<QueueCounts>(QUEUE_COUNTS_PATH);
   useEffect(() => {
     window.addEventListener("nav-counts-mutated", reload);
     return () => window.removeEventListener("nav-counts-mutated", reload);
   }, [reload]);
-  return { counts: data, error };
+  return { counts: data, error, status };
 }
 
 export interface QueueBadge {
@@ -35,8 +35,8 @@ export interface QueueBadge {
 }
 
 /**
- * The badge on `queue`'s tab. FINANCE acts on its queues and on undelivered receipts catch-up
- * gave up on, so those show green with the actionable count; every other non-empty queue
+ * The badge on `queue`'s tab. FINANCE acts on its queues and on undelivered receipts whose
+ * delivery is stuck, so those show green with the actionable count; every other non-empty queue
  * shows its total in gray. All has no badge.
  */
 export function queueBadge(queue: string, counts: QueueCounts | null, isFinance: boolean): QueueBadge | null {
@@ -45,7 +45,7 @@ export function queueBadge(queue: string, counts: QueueCounts | null, isFinance:
   const actionable = !isFinance
     ? 0
     : queue === NOT_PUSHED
-      ? counts.pushGivenUp
+      ? counts.failedPushes
       : FINANCE_ACTION_STATES.includes(queue)
         ? (counts.actionableByState?.[queue] ?? 0)
         : 0;
@@ -67,7 +67,7 @@ export function QueueCount({ badge, selected = false }: { badge: QueueBadge | nu
         : { color: "treehouseGreen", c: "black" };
   return (
     <Badge size="sm" variant="filled" {...look} aria-label={`${badge.count} ${badge.intent === "action" ? "to act on" : "in this queue"}`}>
-      {badge.count}
+      {badge.count > 99 ? "99+" : badge.count}
     </Badge>
   );
 }

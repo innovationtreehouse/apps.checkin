@@ -14,6 +14,7 @@ beforeAll(() => {
 
 const intakeRow = {
   expenseId: null,
+  receiptId: "r-failed",
   vendorName: "Bolt",
   date: "2026-10-02",
   amountCents: 900,

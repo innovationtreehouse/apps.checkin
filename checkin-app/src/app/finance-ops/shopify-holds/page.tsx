@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { Alert, Button, Group, Modal, Stack, Text } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { notifications } from '@mantine/notifications';
-import { AlertBanner } from '@/components/admin/AlertBanner';
+import { errorMessage, HttpError, LoadError, showError, showSuccess } from '@checkin/component-ui';
+import { api, useLoad } from '@/lib/api';
 import { DataTable, type DataTableColumn } from '@/components/admin/DataTable';
 import { useRequireRole } from '@/hooks/useRequireRole';
 import { FINANCE_TOOL_ROLES } from '@/lib/nav/sections/revenueOps';
@@ -38,63 +38,37 @@ export default function ShopifyHoldsPage() {
   const ownHousehold = (row: HoldFailedRow) =>
     sharesHousehold(me?.householdId, row.person.householdId);
 
-  const [rows, setRows] = useState<HoldFailedRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [message, setMessage] = useState("");
+  // Each read logs a finance view, so it reads once on mount and once after this page's own write, with no retry.
+  const { data, error: loadError, reload } = useLoad<{ ProgramParticipant?: HoldFailedRow[] }>(
+    ready ? '/api/finance-ops/payment-plans?queue=holds' : null,
+    { retry: false, reconnect: false, skipWriteReload: true },
+  );
 
   const [holdOpened, { open: openHold, close: closeHold }] = useDisclosure(false);
   const [approveOpened, { open: openApprove, close: closeApprove }] = useDisclosure(false);
   const [denyOpened, { open: openDeny, close: closeDeny }] = useDisclosure(false);
   const [target, setTarget] = useState<Target>(null);
+  // The row whose write is in flight; its buttons stay disabled so a second click can't send again.
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const rowKey = (programId: number, participantId: number) => `${programId}-${participantId}`;
 
-  const fetchRows = useCallback(() => fetch('/api/finance-ops/payment-plans?queue=holds')
-    .then(async (res) => {
-      if (res.ok) {
-        const data = await res.json();
-        setRows(data.ProgramParticipant ?? []);
-      } else {
-        setMessage("Failed to load the reconciliation queue. You may not have access.");
-      }
-    })
-    .catch(() => {
-      notifications.show({ color: "red", message: "Network error loading the reconciliation queue.", autoClose: false });
-    })
-    .finally(() => {
-      setLoading(false);
-    }),
-  []);
-
-  useEffect(() => {
-    if (ready) fetchRows();
-  }, [ready, fetchRows]);
-
-  const drop = (programId: number, participantId: number) =>
-    setRows(prev => prev.filter(r => !(r.programId === programId && r.personId === participantId)));
-
-  // One POST helper for all three actions — each moves the row OUT of this queue
-  // (manual-hold → scholarship queue; approve → ACTIVE; deny → denied), so all
-  // three drop it from the list on success.
+  // One POST helper for all three actions; each moves the row out of this queue
+  // (manual-hold → scholarship queue; approve → ACTIVE; deny → denied).
   const post = async (url: string, successMsg: string) => {
     if (!target) return;
     const { programId, participantId } = target;
     setTarget(null);
+    setBusyKey(rowKey(programId, participantId));
     try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ programId, participantId }),
-      });
-      if (res.ok) {
-        drop(programId, participantId);
-        notifyNavRefresh();
-        notifications.show({ message: successMsg });
-      } else {
-        const data = await res.json();
-        notifications.show({ color: 'red', message: data.error || "Action failed.", autoClose: false });
-        fetchRows();
-      }
-    } catch {
-      notifications.show({ color: 'red', message: "Network error.", autoClose: false });
+      await api(url, { method: 'POST', body: JSON.stringify({ programId, participantId }) });
+      await reload();
+      notifyNavRefresh();
+      showSuccess(successMsg);
+    } catch (e) {
+      showError(errorMessage(e));
+      if (e instanceof HttpError) await reload();
+    } finally {
+      setBusyKey(null);
     }
   };
 
@@ -103,7 +77,7 @@ export default function ShopifyHoldsPage() {
     ({ hold: openHold, approve: openApprove, deny: openDeny })[which]();
   };
 
-  if (authLoading || loading) return <PageLoader />;
+  if (authLoading) return <PageLoader />;
   if (!ready) return null;
 
   const columns: DataTableColumn<HoldFailedRow>[] = [
@@ -134,7 +108,7 @@ export default function ShopifyHoldsPage() {
         <Group justify="flex-end" gap="xs" wrap="nowrap">
           <Button
             size="xs" fz={15} color="red" variant="subtle"
-            disabled={ownHousehold(r)}
+            disabled={ownHousehold(r) || busyKey === rowKey(r.programId, r.personId)}
             title={ownHousehold(r) ? "You can't deny your own household's plan — someone outside your household must." : undefined}
             onClick={() => openFor(r, 'deny')}
           >
@@ -142,13 +116,13 @@ export default function ShopifyHoldsPage() {
           </Button>
           <Button
             size="xs" fz={15} color="red" variant="subtle"
-            disabled={ownHousehold(r)}
+            disabled={ownHousehold(r) || busyKey === rowKey(r.programId, r.personId)}
             title={ownHousehold(r) ? "You can't approve your own household's plan — someone outside your household must." : undefined}
             onClick={() => openFor(r, 'approve')}
           >
             Approve request without holding a seat
           </Button>
-          <Button size="xs" fz={15} color="blue" onClick={() => openFor(r, 'hold')}>
+          <Button size="xs" fz={15} color="blue" disabled={busyKey === rowKey(r.programId, r.personId)} onClick={() => openFor(r, 'hold')}>
             Confirm manual hold
           </Button>
         </Group>
@@ -165,14 +139,14 @@ export default function ShopifyHoldsPage() {
         the hold. Remove the seat in Shopify by hand, then use <strong>Confirm manual hold</strong>.
       </Text>
 
-      <AlertBanner message={message} tone="error" />
-
-      <DataTable
-        columns={columns}
-        rows={rows}
-        getRowKey={(r) => `${r.programId}-${r.personId}`}
-        emptyMessage="No failed seat holds to reconcile."
-      />
+      {loadError ? <LoadError what="the reconciliation queue" message={loadError} onRetry={reload} /> : !data ? <PageLoader /> : (
+        <DataTable
+          columns={columns}
+          rows={data.ProgramParticipant ?? []}
+          getRowKey={(r) => `${r.programId}-${r.personId}`}
+          emptyMessage="No failed seat holds to reconcile."
+        />
+      )}
 
       {/* Confirm manual hold — the safe path. */}
       <Modal

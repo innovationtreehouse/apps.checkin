@@ -3,13 +3,12 @@
  * only checks that keyholder out; the last recorded keyholder's checkout is
  * audited as a leave. From an older kiosk the checkout still decides the close:
  * the kiosk's `shownEmpty` when sent, else the server's records — a leave with a
- * close offer, or a close (docs/rules/attendance-checkin.md, Opening and closing).
+ * close offer, or a close.
  *
  * The offer is rendered on the kiosk screen, a public display that mostly lists
  * minors. It names people the way the kiosk roster does — nickname, else first
  * name, last initial only to tell two apart — never a last name; a person with
- * no `name` degrades to the email local-part, never the address
- * (docs/rules/attendance-checkin.md, "The kiosk").
+ * no `name` degrades to the email local-part, never the address.
  */
 import type { Person } from "@/generated/prisma/client";
 import type { DbClient } from "@/lib/db-client";

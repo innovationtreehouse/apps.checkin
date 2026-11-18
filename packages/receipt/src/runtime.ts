@@ -97,9 +97,6 @@ export const inertAlerts: ReceiptAlerts = {
   mailAgingOut: async (event) => {
     console.warn("[receipt] mail is leaving the window unread; finance alerts are not bound:", event);
   },
-  mailListingFailed: async (event) => {
-    console.warn("[receipt] the mailbox could not be listed; finance alerts are not bound:", event);
-  },
 };
 
 export const inertOcr: OcrProvider = {

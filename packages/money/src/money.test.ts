@@ -52,14 +52,14 @@ describe("dollarsToCentsOrNull", () => {
 
 // Both entry points must agree on what is valid — they share one parse helper.
 describe("parse convergence", () => {
-  const invalid = ["", "   ", "12.5x", "abc", "N/A"];
+  const invalid = ["", "   ", "12.5x", "abc", "N/A", "0x10", "1e3", "1E-2", "Infinity", "-Infinity", "+5", "-", ".", "1,000"];
   for (const v of invalid) {
     it(`both reject ${JSON.stringify(v)}`, () => {
       expect(() => dollarsToCents(v)).toThrow();
       expect(dollarsToCentsOrNull(v)).toBeNull();
     });
   }
-  const valid = ["123.45", "-50.00", "0", "1.005"];
+  const valid = ["123.45", "-50.00", "0", "1.005", " 12.50 ", ".5", "5."];
   for (const v of valid) {
     it(`both accept ${JSON.stringify(v)} with equal cents`, () => {
       expect(dollarsToCents(v)).toBe(dollarsToCentsOrNull(v));

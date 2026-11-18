@@ -213,15 +213,15 @@ export async function mapProvisionalToExisting(
   const item = await catalogRepo.findItemByGtin13(realGtin13);
   if (!item) throw new ServiceError(400, "Item not found in catalog");
 
-  // Canonical conversion of the EXISTING real item — the consumer compares this
-  // against the factor its provisional stock was counted under to decide whether
-  // the quantities are directly summable or need human reconciliation.
-  const canonical = await getCanonicalConversion(realGtin13);
-
   const now = new Date();
   await transactionWithEvents(async (tx) => {
     const claimed = await proposalRepo.transitionProvisionalItem(tx, proposalId, proposal.status, { status: mappedStatus, reviewedByUserId: userId, reviewedAt: now, resultGtin13: realGtin13 });
     if (claimed === 0) throw new ServiceError(409, ALREADY_REVIEWED);
+
+    // Canonical conversion of the EXISTING real item — the consumer compares this
+    // against the factor its provisional stock was counted under to decide whether
+    // the quantities are directly summable or need human reconciliation.
+    const canonical = await getCanonicalConversion(tx, realGtin13);
 
     await proposalRepo.createProvisionalItemMappingLog(tx, {
       orgId: proposal.orgId,

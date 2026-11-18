@@ -8,7 +8,7 @@ import { db } from "../db";
 import type { Prisma } from "../generated/prisma/client";
 import type { ReceiptPrincipal } from "../contract";
 import { getOrgId, ports, requireActor } from "../runtime";
-import { intakeDeferred, STORED_STATUSES, type DmarcVerdict } from "./mailIntake";
+import { intakeDeferred, MAIL_CATCH_UP_BUDGET_MS, MAIL_CATCH_UP_CAP, mailRunState, startMailRun, STORED_STATUSES, type DmarcVerdict } from "./mailIntake";
 import { intakeMailedReceipt } from "./receiptService";
 import { closeUnreplyable } from "./mailReplies";
 import { deleteStoredFiles, readStoredFile } from "../lib/fileStorage";
@@ -17,7 +17,7 @@ import { ServiceError } from "@checkin/component-kit";
 const ITEM_FIELDS = { id: true, receivedAt: true, senderAddress: true, status: true, holdReason: true, dmarcVerdict: true, mimeType: true, receiptId: true } as const;
 
 const AssignSchema = z.union([
-  z.object({ email: z.string().trim().min(1).max(320) }).strict(),
+  z.object({ email: z.string().trim().min(1).max(320), remember: z.literal(true).optional() }).strict(),
   z.object({ release: z.literal(true) }).strict(),
 ]);
 const REASON = z.string().trim().min(1, "A reason is required").max(500);
@@ -28,6 +28,7 @@ const IgnoreSchema = z.object({ reason: REASON }).strict();
 const IGNORED_FIELDS = { id: true, orgId: true, fileHash: true, reason: true, addedByUserId: true, createdAt: true } as const;
 
 export const CANNOT_ASSIGN = "This receipt can't be assigned to that email";
+export const CANNOT_REMEMBER = "Only mail whose sender check passed can be remembered as the assignee's address";
 
 type Tx = Prisma.TransactionClient | typeof db;
 
@@ -101,7 +102,8 @@ export const mailQueueService = {
    * `release`, make a deferred file a receipt by its own sender now, outside their daily upload
    * limit for this file only. Nobody assigns or releases a receipt to themself or their own
    * household. The item flips to `assigned` in the receipt's own insert, so a concurrent assign,
-   * release, retry or discard leaves no second receipt.
+   * release, retry or discard leaves no second receipt. With `remember`, the host approves the
+   * sender address as the assignee's alias around that insert: both happen or neither does.
    */
   async assign(id: number, rawInput: unknown) {
     const actor = await requireActor();
@@ -109,6 +111,10 @@ export const mailQueueService = {
     const item = await storedItem(id);
     const release = "release" in input;
     if (release && item.status !== "deferred") throw new ServiceError(409, "Only a deferred mail item can be released");
+    const remember = "remember" in input && input.remember === true;
+    const rememberAlias = ports().people.rememberMailAlias;
+    if (remember && item.dmarcVerdict !== ("pass" satisfies DmarcVerdict)) throw new ServiceError(409, CANNOT_REMEMBER);
+    if (remember && !rememberAlias) throw new ServiceError(409, "Remembering a sender address is not available");
     const assignee = await ports().people.submitterByEmail(release ? item.senderAddress : input.email.toLowerCase());
     // One answer for every unusable email (no one, several, unverified, not a submitter): no existence oracle.
     if (!assignee) throw new ServiceError(404, CANNOT_ASSIGN);
@@ -133,7 +139,13 @@ export const mailQueueService = {
       });
       if (claimed.count !== 1) throw new ServiceError(409, "This mail item was already handled. Refresh and retry.");
       await auditClaim(tx, newId);
-    }, { mailAllowance: false, heldFileKey: item.fileKey });
+    }, {
+      mailAllowance: false,
+      heldFileKey: item.fileKey,
+      aroundInsert: remember && rememberAlias
+        ? (insert) => rememberAlias({ actorId: actor.id, personId: assignee.id, address: item.senderAddress, mailItemId: id }, insert)
+        : undefined,
+    });
     return { ...shown, status: "assigned", receiptId };
   },
 
@@ -223,5 +235,33 @@ export const mailQueueService = {
       await auditIgnored(tx, actor, "file_unignored", "ignored_file", entry.fileHash, entry.reason);
       return entry;
     });
+  },
+
+  /** Whether a mail run holds the lease now (`running` or `idle`), and the last finished run's counts. */
+  async catchUpState() {
+    await requireActor();
+    const { running, lastRunAt, lastRun } = await mailRunState();
+    return { status: running ? "running" : "idle", lastRunAt, lastRun };
+  },
+
+  /**
+   * Starts one mail intake pass with the catch-up cap and budget, after the request answers;
+   * `busy` while the cron or another catch-up holds the lease. A start is audited with who asked
+   * before the pass begins; if the audit write fails, no pass starts.
+   */
+  async catchUp() {
+    const actor = await requireActor();
+    const run = await startMailRun({
+      cap: MAIL_CATCH_UP_CAP,
+      budgetMs: MAIL_CATCH_UP_BUDGET_MS,
+      beforeRun: () =>
+        db.receiptAuditLog.create({
+          data: { receiptId: null, userId: actor.id, username: actor.name, action: "mail_catch_up_started", fieldChanged: "mail_intake", valueAfter: `cap ${MAIL_CATCH_UP_CAP}` },
+        }),
+    });
+    if (run.status === "unbound") throw new ServiceError(409, "No receipt mailbox is set up.");
+    if (run.status === "started") run.done.catch((err: unknown) => console.error("[receipt] mail catch-up run failed:", err));
+    const { lastRunAt, lastRun } = await mailRunState();
+    return { status: run.status, lastRunAt, lastRun };
   },
 };

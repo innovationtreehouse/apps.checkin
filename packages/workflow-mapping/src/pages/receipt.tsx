@@ -12,8 +12,9 @@ import {
 import { USAGE_BEHAVIORS } from "@checkin/receipt-types";
 import { LINE_STATUS_COLOR, LINE_STATUS_LABEL, api, stateColor, stateLabel, errorMessage, notifyNavCounts, useCanManage, useLoad } from "../components/api";
 import { formatCents } from "@checkin/money";
-import { type LineFormKind, lineFormBody } from "../lib/line-form";
+import { type LineFormFields, type LineFormKind, lineFormBody, lineFormStart, lineFormUnchanged } from "../lib/line-form";
 import { lineLockReason } from "../lib/line-lock";
+import { MATCHING_PENDING_REASON } from "../db/schema";
 
 interface Receipt {
   id: number;
@@ -25,8 +26,16 @@ interface Receipt {
   expenseAppliedAt: string | null;
   donationAppliedAt: string | null;
   matchingPendingSince?: string | null;
+  matchingPendingReason?: string | null;
   applyFirstFailedAt?: string | null;
 }
+const PENDING_REASON_TEXT: Readonly<Record<string, string>> = MATCHING_PENDING_REASON;
+
+/** Why matching couldn't run; a pending receipt with no recorded reason waited on a catalog outage. */
+function matchingPendingReason(receipt: Receipt): string {
+  return PENDING_REASON_TEXT[receipt.matchingPendingReason ?? "catalog_unavailable"] ?? MATCHING_PENDING_REASON.unexpected_error;
+}
+
 interface LineItem {
   receiptLineItemId: number;
   lineNumber: number;
@@ -176,7 +185,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
       const after = await api<Detail>(base);
       if (leaveIfResolved(after.ReceivedReceipt.state)) return;
       if (after.ReceivedReceipt.matchingPendingSince) {
-        notifications.show({ message: "Catalog still unavailable. Try again later, or map the lines by hand.", color: "gray" });
+        notifications.show({ message: `Matching still couldn't run because ${matchingPendingReason(after.ReceivedReceipt)}. Try again later, or map the lines by hand.`, color: "gray" });
       } else {
         const matched = after.ReceivedReceiptLineStatus.filter((ls) => undecided.has(ls.id) && ls.recognitionStatus === "recognized").length;
         notifications.show({ message: `${matched} ${matched === 1 ? "line" : "lines"} matched`, color: "green" });
@@ -219,7 +228,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
         <Field label="Received" value={new Date(receipt.createdAt).toLocaleString()} />
       </Group>
       {receipt.matchingPendingSince && (
-        <Text size="sm" c="dimmed" mb="md">{"Matching didn't run because the catalog was unavailable. Run matching now, or map the lines by hand."}</Text>
+        <Text size="sm" c="dimmed" mb="md">{`Matching didn't run because ${matchingPendingReason(receipt)}. Run matching now, or map the lines by hand.`}</Text>
       )}
       {receipt.validationNotes && <Alert color="orange" mb="md" title="Last push failed">{receipt.validationNotes}</Alert>}
       {receipt.state === "applying" && !stuck && (
@@ -320,6 +329,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
                         <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="lg">
                           <LineDetails item={li} currency={parsed.currency} />
                           <LineForm
+                            start={lineFormStart(ls)}
                             busy={busy}
                             onCancel={() => setOpenLineId(null)}
                             onNonInventory={ls.recognitionStatus === "non_inventory" ? undefined : async () => {
@@ -372,7 +382,8 @@ function LineDetails({ item, currency }: { item: LineItem | undefined; currency:
   );
 }
 
-function LineForm({ busy, onSubmit, onCancel, onNonInventory }: {
+function LineForm({ start, busy, onSubmit, onCancel, onNonInventory }: {
+  start: LineFormFields;
   busy: boolean;
   onSubmit: (form: LineFormKind, body: NonNullable<ReturnType<typeof lineFormBody>>) => void;
   onCancel: () => void;
@@ -383,12 +394,12 @@ function LineForm({ busy, onSubmit, onCancel, onNonInventory }: {
   const [search, setSearch] = useState("");
   const found = useCatalogSearch(search);
   const results = [...(chosen ? [chosen] : []), ...found.items.filter((item) => item.gtin13 !== chosen?.gtin13)];
-  const gtin13 = chosen?.gtin13 ?? null;
-  const [name, setName] = useState("");
-  const [categoryId, setCategoryId] = useState<string | null>(null);
-  const [subcategoryId, setSubcategoryId] = useState<string | null>(null);
-  const [usage, setUsage] = useState<string | null>(null);
-  const [factor, setFactor] = useState<number | string>(1);
+  const [gtin13, setGtin13] = useState(start.gtin13);
+  const [name, setName] = useState(start.name);
+  const [categoryId, setCategoryId] = useState(start.categoryId);
+  const [subcategoryId, setSubcategoryId] = useState(start.subcategoryId);
+  const [usage, setUsage] = useState(start.usage);
+  const [factor, setFactor] = useState<number | string>(start.conversionFactor);
   const conversionFactor = Number(factor) || 1;
   const categories = useLoad<CategoryOption[]>("/api/catalog/categories");
   const subcategories = useLoad<SubcategoryOption[]>("/api/catalog/subcategories");
@@ -396,7 +407,8 @@ function LineForm({ busy, onSubmit, onCancel, onNonInventory }: {
   const subcategoryOptions = (subcategories.data ?? [])
     .filter((s) => String(s.categoryId) === categoryId)
     .map((s) => ({ value: String(s.id), label: `${String(s.number).padStart(2, "0")} — ${s.name}` }));
-  const body = lineFormBody(form, { gtin13, name, categoryId, subcategoryId, usage, conversionFactor });
+  const fields = { gtin13, name, categoryId, subcategoryId, usage, conversionFactor };
+  const body = lineFormUnchanged(form, start, fields) ? null : lineFormBody(form, fields);
 
   return (
     <Stack gap={4}>
@@ -410,6 +422,7 @@ function LineForm({ busy, onSubmit, onCancel, onNonInventory }: {
             error={found.error && `Couldn't search the catalog: ${found.error}`}
             miw={320}
           />
+          {gtin13 && !chosen && <Text size="xs" c="dimmed">Keeps {formatGtinDisplay(gtin13)} unless you choose another item</Text>}
           {catalogSearchTerm(search) === null && <Text size="xs" c="dimmed">Type at least {MIN_CATALOG_SEARCH_LENGTH} characters</Text>}
           {found.answered && !found.error && results.length === 0 && <Text size="xs" c="dimmed">No matching catalog items</Text>}
           {results.length > 0 && (
@@ -417,7 +430,7 @@ function LineForm({ busy, onSubmit, onCancel, onNonInventory }: {
               <Radio.Group
                 aria-label="Catalog items"
                 value={gtin13}
-                onChange={(v) => setChosen(results.find((item) => item.gtin13 === v) ?? null)}
+                onChange={(v) => { setChosen(results.find((item) => item.gtin13 === v) ?? null); setGtin13(v); }}
               >
                 <Stack gap={6} py={4}>
                   {results.map((item) => <Radio key={item.gtin13} size="xs" value={item.gtin13} label={catalogItemLabel(item)} />)}
@@ -426,11 +439,12 @@ function LineForm({ busy, onSubmit, onCancel, onNonInventory }: {
             </ScrollArea.Autosize>
           )}
           <Group>
-            <Button size="xs" variant="light" onClick={() => { setName(search.trim()); setForm("propose"); }}>Propose new item</Button>
+            <Button size="xs" variant="light" onClick={() => { setName(search.trim() || name); setForm("propose"); }}>Propose new item</Button>
           </Group>
         </>
       ) : (
         <>
+          {start.name && <Text size="xs" c="dimmed">Choose the category, subcategory and usage again</Text>}
           <TextInput size="xs" placeholder="Proposed name" value={name} onChange={(e) => setName(e.currentTarget.value)} />
           <Select
             size="xs"

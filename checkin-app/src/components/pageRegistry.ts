@@ -3,8 +3,8 @@
 // `visible` is read from its section descriptor (lib/nav/sections): the gate of
 // the section tab it is, or of the tab it sits under, or the section's own gate.
 // Over-listing here never grants access: every target re-enforces its own gate
-// on arrival, so a drifted predicate at worst shows a link that 403s. See
-// docs/rules/principles.md, "Reachability is not permission".
+// on arrival, so a drifted predicate at worst shows a link that 403s.
+// Reachability is not permission.
 
 import type { NavGate } from '@/lib/nav/types';
 import { anyRole, everyone, linkGate, signedIn } from '@/lib/nav/gates';
@@ -139,6 +139,7 @@ export const PAGES: PageEntry[] = [
   { href: '/income/reconciliation', label: 'Income Reconciliation', section: 'Income', keywords: 'payout deposit quickbooks drift', visible: REVENUE('/income/reconciliation') },
   { href: '/income/items', label: 'Item Categories', section: 'Income', keywords: 'budget owner bucket class', visible: REVENUE('/income/items') },
   { href: '/income/exclusions', label: 'QB Exclusions', section: 'Income', keywords: 'quickbooks deposit exclude', visible: REVENUE('/income/exclusions') },
+  { href: '/income/settings', label: 'Income Settings', section: 'Income', keywords: 'cap limit benevity match window quickbooks', visible: REVENUE('/income/settings') },
 
   // My Receipts — anyone who may upload; Finance — finance.
   { href: '/receipts', label: 'My Receipts', section: 'My Receipts', keywords: 'receipt reimbursement upload purchase', visible: linkGate(MY_RECEIPTS, '/receipts') },
@@ -234,6 +235,7 @@ export const PAGES: PageEntry[] = [
   { href: '/settings/membership', label: 'Membership Settings', section: 'Settings', visible: SETTING('/settings/membership') },
   { href: '/settings/localization', label: 'Localization', section: 'Settings', visible: SETTING('/settings/localization') },
   { href: '/settings/email', label: 'Email Settings', section: 'Settings', keywords: 'sender from reply-to identity', visible: SETTING('/settings/email') },
+  { href: '/settings/templates', label: 'Email Templates', section: 'Settings', keywords: 'email wording subject body copy message template preview', visible: SETTING('/settings/templates') },
   { href: '/settings/outreach', label: 'Outreach', section: 'Settings', keywords: 'renewal join campaign email template bulk send reminder opening', visible: SETTING('/settings/outreach') },
   { href: '/settings/shopify-webhook', label: 'Shopify Webhook', section: 'Settings', keywords: 'orders paid delivery test notification signature secret payment', visible: SETTING('/settings/shopify-webhook') },
   { href: '/settings/finance', label: 'Expenses', section: 'Settings', keywords: 'expense threshold capital board review note in lieu', visible: SETTING('/settings/finance') },

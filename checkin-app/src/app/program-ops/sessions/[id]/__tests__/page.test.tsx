@@ -2,7 +2,7 @@
 import { screen, waitFor, fireEvent, within } from "@testing-library/react";
 jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
 import { notifications } from "@mantine/notifications";
 import { renderWithProviders, mockFetchJson, setSession, setSearchParams, router, resetRtl } from "@/test-helpers/rtl";
 import EventAdminPage from "../page";
@@ -63,12 +63,16 @@ const params = paramsFor("5");
  * test needs a method-aware stub instead: GET returns `event`, PATCH runs
  * `onPatch` (so each test controls success/failure/throw per click).
  */
+function jsonResponse(body: unknown, status = 200): Response {
+    return { ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) } as Response;
+}
+
 function fetchEventThenPatchWith(event: unknown, onPatch: (body: Record<string, unknown>) => Response | Promise<Response>) {
     const fn = jest.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
         if (init?.method === "PATCH") {
             return onPatch(JSON.parse(init.body as string));
         }
-        return { ok: true, json: async () => event } as Response;
+        return jsonResponse(event);
     });
     global.fetch = fn as unknown as typeof fetch;
     return fn;
@@ -165,19 +169,40 @@ describe("EventAdminPage", () => {
         await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Attendance confirmed successfully!" })));
     });
 
+    it("confirm attendance: the buttons stay disabled until the re-read roster lands", async () => {
+        setSession({ id: 1, isSysadmin: true });
+        let patched = false;
+        let release: () => void = () => {};
+        const reread = new Promise<void>((resolve) => { release = resolve; });
+        global.fetch = jest.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+            if (init?.method === "PATCH") { patched = true; return jsonResponse({}); }
+            if (patched) await reread;
+            return jsonResponse(baseEvent({ attendanceConfirmedAt: patched ? "2020-01-02T00:00:00.000Z" : null }));
+        }) as unknown as typeof fetch;
+        renderPage(params);
+        await screen.findByText("Robotics Session");
+
+        fireEvent.click(screen.getByRole("button", { name: "Confirm Attendance" }));
+        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Attendance confirmed successfully!" })));
+        expect(screen.getByRole("button", { name: "Confirm Attendance" })).toBeDisabled();
+
+        release();
+        expect(await screen.findByRole("button", { name: "Re-confirm" })).toBeEnabled();
+    });
+
     it("confirm attendance: shows the server error, then a network-error message", async () => {
         setSession({ id: 1, isSysadmin: true });
         mockFetchJson({ "/api/events/5": baseEvent() });
         renderPage(params);
         await screen.findByText("Robotics Session");
 
-        fetchEventThenPatchWith(baseEvent(), () => ({ ok: false, json: async () => ({ error: "Not ready to confirm." }) } as Response));
+        fetchEventThenPatchWith(baseEvent(), () => jsonResponse({ error: "Not ready to confirm." }, 400));
         fireEvent.click(screen.getByRole("button", { name: "Confirm Attendance" }));
-        expect(await screen.findByText("Not ready to confirm.")).toBeInTheDocument();
+        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Not ready to confirm.", autoClose: false })));
 
         fetchEventThenPatchWith(baseEvent(), () => { throw new Error("boom"); });
         fireEvent.click(screen.getByRole("button", { name: "Confirm Attendance" }));
-        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Network error.", autoClose: false })));
+        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Couldn't reach the server. Check your connection and try again.", autoClose: false })));
     });
 
     it("edit time: shows the server error, then a network-error message", async () => {
@@ -188,13 +213,13 @@ describe("EventAdminPage", () => {
         await screen.findByText("Robotics Session");
         fireEvent.click(screen.getByRole("button", { name: "Edit Date / Time" }));
 
-        fetchEventThenPatchWith(future, () => ({ ok: false, json: async () => ({ error: "Time window closed." }) } as Response));
+        fetchEventThenPatchWith(future, () => jsonResponse({ error: "Time window closed." }, 400));
         fireEvent.click(screen.getByRole("button", { name: "Save Time Changes" }));
-        expect(await screen.findByText("Time window closed.")).toBeInTheDocument();
+        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Time window closed.", autoClose: false })));
 
         fetchEventThenPatchWith(future, () => { throw new Error("boom"); });
         fireEvent.click(screen.getByRole("button", { name: "Save Time Changes" }));
-        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Network error.", autoClose: false })));
+        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Couldn't reach the server. Check your connection and try again.", autoClose: false })));
     });
 
     it("manual edit: a checked-in member (open visit) defaults to Present with time fields; Absent is disabled with a hint", async () => {
@@ -252,6 +277,42 @@ describe("EventAdminPage", () => {
         expect(body).toMatchObject({ action: "manualEditAttendance", status: "Absent", arrivedAt: null, departedAt: null });
     });
 
+    it("manual edit: a Present mark with no departure flags the Departed Time field and does not save", async () => {
+        setSession({ id: 1, isSysadmin: true });
+        const fetchMock = mockFetchJson({ "/api/events/5": baseEvent() });
+        renderPage(params);
+        await screen.findByText("Robotics Session");
+
+        fireEvent.click(screen.getAllByRole("button", { name: "Manual Edit" })[1]);
+        await screen.findByText(/Manual Edit: Pat Participant/);
+        fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+        const departed = screen.getByLabelText("Departed Time");
+        expect(departed).toHaveAttribute("aria-invalid", "true");
+        expect(departed).toHaveFocus();
+        expect(screen.getByText("Departure time is required for Present status")).toBeInTheDocument();
+        expect(fetchMock).not.toHaveBeenCalledWith("/api/events/5", expect.objectContaining({ method: "PATCH" }));
+    });
+
+    it("manual edit: changing the arrival clears a departure error checked against the old one", async () => {
+        setSession({ id: 1, isSysadmin: true });
+        mockFetchJson({ "/api/events/5": baseEvent() });
+        renderPage(params);
+        await screen.findByText("Robotics Session");
+
+        fireEvent.click(screen.getAllByRole("button", { name: "Manual Edit" })[1]);
+        await screen.findByText(/Manual Edit: Pat Participant/);
+        fireEvent.change(screen.getByLabelText("Arrived Time"), { target: { value: "2020-01-01T19:10" } });
+        fireEvent.change(screen.getByLabelText("Departed Time"), { target: { value: "2020-01-01T18:10" } });
+        fireEvent.click(screen.getByRole("button", { name: "Save" }));
+        expect(screen.getByText("Departure time must be after arrival time")).toBeInTheDocument();
+
+        fireEvent.change(screen.getByLabelText("Arrived Time"), { target: { value: "2020-01-01T17:10" } });
+
+        expect(screen.getByLabelText("Departed Time")).not.toHaveAttribute("aria-invalid", "true");
+        expect(screen.queryByText("Departure time must be after arrival time")).not.toBeInTheDocument();
+    });
+
     it("manual edit modal: Cancel button and the (X) close button both dismiss without saving", async () => {
         setSession({ id: 1, isSysadmin: true });
         const fetchMock = mockFetchJson({ "/api/events/5": baseEvent() });
@@ -280,14 +341,14 @@ describe("EventAdminPage", () => {
         fireEvent.click(screen.getAllByRole("button", { name: "Manual Edit" })[0]);
         await screen.findByText(/Manual Edit:/);
 
-        fetchEventThenPatchWith(baseEvent(), () => ({ ok: false, json: async () => ({ error: "Locked." }) } as Response));
+        fetchEventThenPatchWith(baseEvent(), () => jsonResponse({ error: "Locked." }, 400));
         fireEvent.click(screen.getByRole("button", { name: "Save" }));
-        expect(await screen.findByText("Locked.")).toBeInTheDocument();
+        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Locked.", autoClose: false })));
 
         fireEvent.click(screen.getAllByRole("button", { name: "Manual Edit" })[0]);
         fetchEventThenPatchWith(baseEvent(), () => { throw new Error("boom"); });
         fireEvent.click(screen.getByRole("button", { name: "Save" }));
-        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Network error.", autoClose: false })));
+        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Couldn't reach the server. Check your connection and try again.", autoClose: false })));
     });
 
     it("cancel event: declining the confirm() dialog skips the request; accepting shows the server error", async () => {
@@ -306,11 +367,11 @@ describe("EventAdminPage", () => {
         expect(fetchMock).not.toHaveBeenCalledWith("/api/events/5", expect.objectContaining({ method: "PATCH" }));
         await waitFor(() => expect(screen.queryByRole("dialog", { name: "Cancel Event" })).not.toBeInTheDocument());
 
-        fetchEventThenPatchWith(future, () => ({ ok: false, json: async () => ({ error: "Cannot cancel now." }) } as Response));
+        fetchEventThenPatchWith(future, () => jsonResponse({ error: "Cannot cancel now." }, 400));
         fireEvent.click(screen.getByRole("button", { name: "Cancel Event(s)" }));
         modal = await screen.findByRole("dialog", { name: "Cancel Event" });
         fireEvent.click(within(modal).getByRole("button", { name: "Cancel Event(s)" }));
-        expect(await screen.findByText("Cannot cancel now.")).toBeInTheDocument();
+        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Cannot cancel now.", autoClose: false })));
     });
 
     it("cancel event: network error, then a program-less event falls back to the programs list on success", async () => {
@@ -325,10 +386,10 @@ describe("EventAdminPage", () => {
         fireEvent.click(screen.getByRole("button", { name: "Cancel Event(s)" }));
         let modal = await screen.findByRole("dialog", { name: "Cancel Event" });
         fireEvent.click(within(modal).getByRole("button", { name: "Cancel Event(s)" }));
-        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Network error.", autoClose: false })));
+        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Couldn't reach the server. Check your connection and try again.", autoClose: false })));
         await waitFor(() => expect(screen.queryByRole("dialog", { name: "Cancel Event" })).not.toBeInTheDocument());
 
-        fetchEventThenPatchWith(future, () => ({ ok: true, json: async () => ({}) } as Response));
+        fetchEventThenPatchWith(future, () => jsonResponse({}));
         fireEvent.click(screen.getByRole("button", { name: "Cancel Event(s)" }));
         modal = await screen.findByRole("dialog", { name: "Cancel Event" });
         fireEvent.click(within(modal).getByRole("button", { name: "Cancel Event(s)" }));

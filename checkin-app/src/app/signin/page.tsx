@@ -9,6 +9,7 @@ import { AlertBanner } from "@/components/admin/AlertBanner";
 import { ORG_DOMAIN } from "@/lib/config";
 import { useCheckinEnv, useIsDevInstance, useIsLocalInstance } from "@/components/EnvProvider";
 import DevLoginPicker from "@/components/DevLoginPicker";
+import { returnPath } from "@/lib/returnPath";
 
 // Set by the signIn callback in auth-options.ts (UNVERIFIED_EMAIL_SIGNIN_ERROR).
 const UNVERIFIED_EMAIL_ERROR = "EmailNotVerified";
@@ -27,11 +28,9 @@ function SignInInner() {
     const isDevInstance = useIsDevInstance();
     const isLocalInstance = useIsLocalInstance();
     const checkinEnv = useCheckinEnv();
-    // Same-origin relative paths only: this value comes off the query string and
-    // feeds a client-side redirect, so an absolute (or protocol-relative) URL here
-    // would be an open redirect for any authenticated visitor.
-    const rawCallback = params.get("callbackUrl") || "/";
-    const callbackUrl = rawCallback.startsWith("/") && !rawCallback.startsWith("//") ? rawCallback : "/";
+    // Same-origin paths only: this value comes off the query string and feeds a
+    // client-side redirect, so anything that could leave the site falls back to "/".
+    const callbackUrl = returnPath(params.get("callbackUrl") ?? undefined, "/");
     const error = params.get("error");
 
     const signedIn = status === "authenticated" && !!session?.user;

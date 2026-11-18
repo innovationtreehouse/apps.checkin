@@ -47,11 +47,11 @@ describe("flow: membership background check is non-blocking", () => {
         expect(afterSubmit.json.process?.status).toBe("PENDING_EXTERNAL_ACTION");
         const processId = afterSubmit.json.process!.id;
 
-        // Board records the contract + background-check consent (manual fallbacks,
-        // no Zoho/Averity needed).
+        // Board records the contract (manual fallback, no Zoho needed) and the lead
+        // marks their own check started.
         const c1 = await api(board, "/api/membership-ops/applications/external", { method: "POST", body: JSON.stringify({ processId, action: "mark-contract" }) });
         expect(c1.status).toBe(200);
-        const c2 = await api(board, "/api/membership-ops/applications/external", { method: "POST", body: JSON.stringify({ processId, action: "mark-bg-consent" }) });
+        const c2 = await api(applicant, "/api/membership/check-started", { method: "POST", body: JSON.stringify({ personId: applicant.personaId }) });
         expect(c2.status).toBe(200);
 
         const afterExternal = await api<State>(applicant, "/api/membership");

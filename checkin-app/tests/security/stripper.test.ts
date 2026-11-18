@@ -486,7 +486,7 @@ describe('Event roster strip (events/[id] view)', () => {
     // scope strips email/phone (pii) and dob/allergies (personal) — but the
     // participant's NAME is tier 'public', so it survives. Stripping alone would still leak the full
     // attendee roster. This asserts that leak exists, documenting the reason the
-    // handler fn 403s non-staff before the roster is ever returned.
+    // handler fn 404s non-staff before the roster is ever returned.
     it('stripping alone leaves the roster name (tier public) — hence the fail-closed admission gate', () => {
         const strangerCtx = ctx({ selfId: 999 }); // leads nothing, not on roster
         const out = stripValue('Event', eventBag(), EVENTS_VIEW, strangerCtx);

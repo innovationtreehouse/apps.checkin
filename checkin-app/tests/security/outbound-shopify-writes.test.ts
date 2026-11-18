@@ -20,7 +20,7 @@ const PROGRAM = {
     shopifyStockPendingWrite: '{"key":"k"}',        // internal
     leadMentorNotificationSettings: { email: true }, // personal
 };
-const HOUSEHOLD = { id: 9, name: 'Doe', line1: '1 Main St', intakeNotes: 'note' };
+const HOUSEHOLD = { id: 9, name: 'Doe', line1: '1 Main St' };
 
 describe('Shopify write surfaces', () => {
     it.each(['shopify.product.create', 'shopify.product.update', 'shopify.inventory.activate', 'shopify.discount.create'])(

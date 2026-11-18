@@ -32,7 +32,9 @@ function mockServer(write: Reply, reads: Reads = {}) {
   global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input.toString();
     if (init?.method) return write();
-    if (url.includes("/quickbooks-classes")) return reads.classes ? reads.classes() : jsonResponse(200, []);
+    if (url.includes("/quickbooks-classes")) {
+      return reads.classes ? reads.classes() : jsonResponse(200, [{ id: "12", name: "Shop", active: true }]);
+    }
     if (url.includes("/approver-options")) {
       return reads.approverOptions ? reads.approverOptions() : jsonResponse(200, [{ id: 9, name: "Tess Treasurer" }]);
     }
@@ -47,9 +49,15 @@ function mockServer(write: Reply, reads: Reads = {}) {
 
 const ok: Reply = async () => jsonResponse(200, {});
 
+async function pickNewClass() {
+  fireEvent.click(await screen.findByRole("textbox", { name: "QuickBooks Class" }));
+  fireEvent.click(await screen.findByRole("option", { name: "Shop" }));
+}
+
 async function createBucket() {
   renderWithProviders(<BudgetsPage />);
   fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "Shop" } });
+  await pickNewClass();
   fireEvent.click(screen.getByRole("button", { name: "Create" }));
 }
 
@@ -62,6 +70,24 @@ beforeEach(() => {
 
 describe("budgets page create submit", () => {
   const writeCount = () => (global.fetch as jest.Mock).mock.calls.filter(([, init]) => init?.method).length;
+
+  it("enables Create only once a name and a QuickBooks Class are set, and sends the Class", async () => {
+    mockServer(ok);
+    renderWithProviders(<BudgetsPage />);
+    fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "Shop" } });
+    expect(screen.getByRole("button", { name: "Create" })).toBeDisabled();
+
+    await pickNewClass();
+    const button = screen.getByRole("button", { name: "Create" });
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+
+    await waitFor(() => expect(writeCount()).toBe(1));
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/api/budget-owners",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ name: "Shop", isOrgLevel: false, quickBooksClassId: "12" }) }),
+    );
+  });
 
   it("sends one create while the first is in flight", async () => {
     let release: (res: Response) => void = () => {};
@@ -104,13 +130,13 @@ describe("budgets page write errors", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("names the status when the reply carries no JSON error", async () => {
+  it("gives the fixed text when the reply carries no JSON error", async () => {
     mockServer(async () => htmlResponse(500));
     await createBucket();
 
     await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
       color: "red",
-      message: "HTTP 500",
+      message: "Something went wrong. Try again.",
     })));
   });
 
@@ -180,20 +206,21 @@ describe("budgets page write errors", () => {
     })));
   });
 
-  it("shows a red chip when the reload after a write fails", async () => {
-    let reloads = 0;
-    mockServer(ok, {
-      buckets: async () => (reloads++ === 0 ? jsonResponse(200, [programBucket]) : htmlResponse(502)),
-    });
-    await createBucket();
+  it("shows a failed bucket load in place of the table, not an empty list", async () => {
+    mockServer(ok, { buckets: async () => jsonResponse(403, { error: "Finance only" }) });
+    renderWithProviders(<BudgetsPage />);
 
-    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
-      color: "red",
-      title: "Buckets not loaded",
-      message: "The server is unavailable. Try again in a minute.",
-      autoClose: false,
-    })));
-    expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Bucket created." }));
+    expect(await screen.findByText("Couldn't load buckets")).toBeInTheDocument();
+    expect(screen.getByText("Finance only")).toBeInTheDocument();
+    expect(screen.queryByText("No buckets.")).not.toBeInTheDocument();
+  });
+
+  it("re-reads the buckets after a create, with no reload of its own", async () => {
+    mockServer(ok);
+    await createBucket();
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Bucket created." })));
+    const bucketReads = () => (global.fetch as jest.Mock).mock.calls.filter(([url, init]) => String(url) === "/api/budget-owners?includeArchived=1" && !init?.method);
+    await waitFor(() => expect(bucketReads()).toHaveLength(2));
   });
 
   it("replaces the failure chip on a retry and clears it on success", async () => {
@@ -212,16 +239,13 @@ describe("budgets page write errors", () => {
     expect((notifications.hide as jest.Mock).mock.calls.filter(([id]) => id === "Bucket not created").length).toBeGreaterThanOrEqual(3);
   });
 
-  it("shows a red chip when the QuickBooks Class list fails", async () => {
-    mockServer(ok, { classes: async () => jsonResponse(502, { error: "QuickBooks is not connected" }) });
+  it("shows a failed QuickBooks Class load, and the buckets still", async () => {
+    mockServer(ok, { classes: async () => jsonResponse(409, { error: "QuickBooks is not connected" }) });
     renderWithProviders(<BudgetsPage />);
 
-    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
-      color: "red",
-      title: "QuickBooks Classes unavailable",
-      message: "QuickBooks is not connected",
-      autoClose: false,
-    })));
+    expect(await screen.findByText("Couldn't load QuickBooks Classes")).toBeInTheDocument();
+    expect(screen.getByText("QuickBooks is not connected")).toBeInTheDocument();
+    expect(screen.getByText("Robotics")).toBeInTheDocument();
   });
 
   it("shows an approver change failure in a red chip", async () => {
@@ -239,31 +263,22 @@ describe("budgets page write errors", () => {
     expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument();
   });
 
-  it("says the approvers couldn't be loaded instead of spinning", async () => {
-    mockServer(ok, { approvers: async () => { throw new TypeError("Failed to fetch"); } });
+  it("shows a failed approvers load in place of the list instead of spinning", async () => {
+    mockServer(ok, { approvers: async () => jsonResponse(404, { error: "Bucket not found" }) });
     renderWithProviders(<BudgetsPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Approvers" }));
 
-    expect(await screen.findByText("Approvers couldn't be loaded.")).toBeInTheDocument();
-    expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
-      color: "red",
-      title: "Approvers not loaded",
-      message: "Couldn't reach the server. Check your connection and try again.",
-      autoClose: false,
-    }));
+    expect(await screen.findByText("Couldn't load approvers")).toBeInTheDocument();
+    expect(screen.getByText("Bucket not found")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
   });
 
-  it("shows a red chip when the people for the approver pickers fail to load", async () => {
-    mockServer(ok, { approverOptions: async () => htmlResponse(504) });
+  it("shows a failed load of the people for the approver pickers, and the approvers still", async () => {
+    mockServer(ok, { approverOptions: async () => jsonResponse(403, { error: "Board only" }) });
     renderWithProviders(<BudgetsPage />);
     fireEvent.click(await screen.findByRole("button", { name: "Approvers" }));
 
-    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
-      color: "red",
-      title: "People not loaded",
-      message: "The server is unavailable. Try again in a minute.",
-      autoClose: false,
-    })));
+    expect(await screen.findByText("Couldn't load people for the pickers")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Remove" })).toBeInTheDocument();
   });
 });
@@ -334,6 +349,38 @@ describe("budgets org-level and restore", () => {
       title: "Bucket not restored",
       message: "Refused",
     })));
+  });
+});
+
+describe("budgets inactive QuickBooks Classes", () => {
+  const classes = async () => jsonResponse(200, [{ id: "12", name: "Shop", active: true }, { id: "14", name: "Retired", active: false }]);
+  const writes = () => (global.fetch as jest.Mock).mock.calls.filter(([, init]) => init?.method);
+
+  it("offers no inactive Class on create", async () => {
+    mockServer(ok, { classes });
+    renderWithProviders(<BudgetsPage />);
+    fireEvent.click(await screen.findByRole("textbox", { name: "QuickBooks Class" }));
+    expect((await screen.findAllByRole("option")).map((o) => o.textContent)).toEqual(["Shop"]);
+  });
+
+  it("warns beside the edit picker when the saved Class is inactive, and a rename keeps it", async () => {
+    mockServer(ok, { classes, buckets: async () => jsonResponse(200, [{ ...programBucket, quickBooksClassId: "14" }]) });
+    renderWithProviders(<BudgetsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    const dialog = await screen.findByRole("dialog");
+    const warning = within(dialog).getByText("Retired is inactive in QuickBooks. Pick an active one.").closest<HTMLElement>("[role=alert]")!;
+    expect(within(warning).getByRole("button", { name: "Update now" })).toBeInTheDocument();
+    const picker = within(dialog).getByRole("textbox", { name: "QuickBooks Class" });
+    expect(picker).toHaveValue("");
+    fireEvent.click(picker);
+    expect((await screen.findAllByRole("option")).map((o) => o.textContent)).toEqual(["Shop"]);
+
+    fireEvent.change(within(dialog).getByLabelText("Name"), { target: { value: "Old robotics" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(writes()).toEqual([[
+      "/api/budget-owners/7",
+      expect.objectContaining({ method: "PATCH", body: JSON.stringify({ name: "Old robotics", quickBooksClassId: "14", isOrgLevel: false }) }),
+    ]]));
   });
 });
 

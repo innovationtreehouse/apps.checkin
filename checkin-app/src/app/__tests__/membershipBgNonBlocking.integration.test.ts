@@ -4,14 +4,16 @@
 /**
  * Integration coverage for the non-blocking background-check flow.
  *
- * The check is a PARALLEL track: after the contract is signed + consent is
- * given (or a valid prior check exists), the application advances straight to
+ * The check is a PARALLEL track: after the contract is signed + a lead's check is
+ * started (or a valid prior check exists), the application advances straight to
  * PENDING_PAYMENT. The membership only goes ACTIVE once BOTH payment and the
  * check are done — whichever finishes last. A valid prior check auto-clears the
  * requirement; a reject after payment blocks (and would need a manual refund).
  */
 
-import { markContractSigned, markBgConsent } from '@/lib/membership/external';
+import { markContractSigned } from '@/lib/membership/external';
+import { markCheckStarted } from '@/lib/membership/checkStarted';
+import { markLeadCheckStarted } from '@/test-helpers/checkStarted';
 import { normalizeAuditData } from '@/lib/auditPayload';
 import { attest, boardResetReview } from '@/lib/membership/review';
 import { certifyPaymentPlan, activate, activateByProcessId } from '@/lib/membership/payment';
@@ -72,7 +74,7 @@ async function makeApplicant(status: 'PENDING_EXTERNAL_ACTION', extra: { lastBac
     return { householdId: hh.id, orgMembershipId: m.id, processId: proc.id, leadId: lead.id };
 }
 
-/** The check review the application's consent opened. */
+/** The check review a lead's check started opened for the household. */
 async function reviewOf(processId: number): Promise<number> {
     const app = await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: processId }, select: { orgMembership: { select: { householdId: true } } } });
     const review = await prisma.orgMembershipProcess.findFirstOrThrow({ where: { kind: 'PERSON_BG', requestedForHouseholdId: app.orgMembership!.householdId }, orderBy: { id: 'desc' } });
@@ -140,18 +142,18 @@ describe('background check is non-blocking', () => {
         await prisma.$disconnect();
     });
 
-    it('contract + consent advance to PENDING_PAYMENT (not BG review) — payment unblocked', async () => {
+    it("contract + a lead's check started advance to PENDING_PAYMENT (not BG review) — payment unblocked", async () => {
         const { processId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
         await markContractSigned(processId);
-        expect(await statusOf(processId)).toBe('PENDING_EXTERNAL_ACTION'); // consent still missing
-        await markBgConsent(processId, revA);
+        expect(await statusOf(processId)).toBe('PENDING_EXTERNAL_ACTION'); // check not started yet
+        await markLeadCheckStarted(processId);
         expect(await statusOf(processId)).toBe('PENDING_PAYMENT'); // payment available; review runs in parallel
     });
 
     it('pay before the check clears → holds at PENDING_BG_CLEARANCE, then 2 approvals activate', async () => {
         const { processId, orgMembershipId, householdId, leadId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
         await markContractSigned(processId);
-        await markBgConsent(processId, revA);
+        await markLeadCheckStarted(processId);
         // Pay first.
         await certifyPaymentPlan(processId, board);
         expect(await statusOf(processId)).toBe('PENDING_BG_CLEARANCE');
@@ -172,7 +174,7 @@ describe('background check is non-blocking', () => {
     it('a payment keeps its year when the check clears later', async () => {
         const { processId, leadId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
         await markContractSigned(processId);
-        await markBgConsent(processId, revA);
+        await markLeadCheckStarted(processId);
         await activateByProcessId(processId, `year-${processId}`, { appliesToYear: 2026 });
         expect(await statusOf(processId)).toBe('PENDING_BG_CLEARANCE');
         await attest(revA, await reviewOf(processId), { result: 'APPROVE', subjectPersonIds: [leadId] });
@@ -183,7 +185,7 @@ describe('background check is non-blocking', () => {
     it('check clears before payment → stays PENDING_PAYMENT, then paying activates', async () => {
         const { processId, orgMembershipId, leadId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
         await markContractSigned(processId);
-        await markBgConsent(processId, revA);
+        await markLeadCheckStarted(processId);
         await attest(revA, await reviewOf(processId), { result: 'APPROVE', subjectPersonIds: [leadId] });
         await attest(revB, await reviewOf(processId), { result: 'APPROVE', subjectPersonIds: [leadId] });
         expect(await statusOf(processId)).toBe('PENDING_PAYMENT'); // cleared, but unpaid → not active
@@ -196,7 +198,7 @@ describe('background check is non-blocking', () => {
     it('a deny that commits while certify waits on the household lock refuses the certify', async () => {
         const { processId, orgMembershipId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
         await markContractSigned(processId);
-        await markBgConsent(processId, revA);
+        await markLeadCheckStarted(processId);
         expect(await statusOf(processId)).toBe('PENDING_PAYMENT');
 
         let certify!: Promise<unknown>;
@@ -216,7 +218,7 @@ describe('background check is non-blocking', () => {
     it('reject after payment → BLOCKED, membership stays inactive', async () => {
         const { processId, orgMembershipId, leadId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
         await markContractSigned(processId);
-        await markBgConsent(processId, revA);
+        await markLeadCheckStarted(processId);
         await certifyPaymentPlan(processId, board); // paid → PENDING_BG_CLEARANCE
         await attest(revA, await reviewOf(processId), { result: 'REJECT', note: 'concern', subjectPersonIds: [leadId] });
         expect(await statusOf(processId)).toBe('BLOCKED');
@@ -226,7 +228,7 @@ describe('background check is non-blocking', () => {
     it('reject BEFORE the payment webhook → payment still recorded + board notified (no dropped money)', async () => {
         const { processId, orgMembershipId, leadId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
         await markContractSigned(processId);
-        await markBgConsent(processId, revA);            // → PENDING_PAYMENT
+        await markLeadCheckStarted(processId);            // → PENDING_PAYMENT
         await attest(revA, await reviewOf(processId), { result: 'APPROVE', subjectPersonIds: [leadId] });
         await attest(revB, await reviewOf(processId), { result: 'REJECT', note: 'concern' }); // → BLOCKED, not yet paid
         expect(await statusOf(processId)).toBe('BLOCKED');
@@ -279,7 +281,7 @@ describe('background check is non-blocking', () => {
         await prisma.volunteerDesignation.create({ data: { email: lead!.email! } });
 
         await markContractSigned(processId);
-        await markBgConsent(processId, revA); // → PENDING_PAYMENT; review not yet started
+        await markLeadCheckStarted(processId); // → PENDING_PAYMENT; review not yet started
         expect(await statusOf(processId)).toBe('PENDING_PAYMENT');
         // The membership fee tier is read at PENDING_PAYMENT (ensurePaymentLink) — the
         // allowlist must already be applied here, not only at clearance, or a
@@ -320,48 +322,45 @@ describe('background check is non-blocking', () => {
         expect(await isVolunteerOf(orgMembershipId)).toBe(true);
     });
 
-    it('an intake note does not gate payment — the advance opens payment, review runs in parallel', async () => {
-        const { processId, householdId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
-        await prisma.household.update({ where: { id: householdId }, data: { intakeNotes: 'please treat us as a volunteer household' } });
+    it('the advance opens payment while the review runs in parallel', async () => {
+        const { processId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
 
         await markContractSigned(processId);
-        await markBgConsent(processId, revA);
+        await markLeadCheckStarted(processId);
         expect(await statusOf(processId)).toBe('PENDING_PAYMENT');
 
         await certifyPaymentPlan(processId, board);
         expect(await statusOf(processId)).toBe('PENDING_BG_CLEARANCE'); // paid first, check still open
     });
 
-    it('fresh check + intake note → the note does not disqualify the auto-clear at submit', async () => {
+    it('a fresh check auto-clears at submit', async () => {
         await setBgPolicy();
         const { processId, householdId, leadId } = await makeApplicant('PENDING_EXTERNAL_ACTION', { lastBackgroundCheck: new Date() });
         await prisma.orgMembershipProcess.update({ where: { id: processId }, data: { status: 'INTAKE' } });
         await prisma.household.update({
             where: { id: householdId },
-            data: { line1: '123 Test St', city: 'Austin', state: 'TX', postalCode: '78701', intakeNotes: 'volunteer only, no students' },
+            data: { line1: '123 Test St', city: 'Austin', state: 'TX', postalCode: '78701' },
         });
         await prisma.emergencyContact.create({ data: { householdId, name: 'Out Of House', phone: '555-555-1212', phoneDigits: '5555551212', priority: 0 } });
 
         await submitIntake(leadId);
         const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
         expect(proc?.status).toBe('PENDING_EXTERNAL_ACTION');
-        expect(proc?.bgClearedAt).not.toBeNull(); // still-valid check clears; the note is irrelevant
+        expect(proc?.bgClearedAt).not.toBeNull(); // still-valid check clears
 
         await markContractSigned(processId);
         expect(await statusOf(processId)).toBe('PENDING_PAYMENT');
     });
 
-    it('fresh-check renewal with a household note opens payment on signature alone', async () => {
+    it('fresh-check renewal opens payment on signature alone', async () => {
         await setBgPolicy();
-        const { orgMembershipId, processId, leadId } = await makeFreshRenewal();
-        const m = await prisma.orgMembership.findUnique({ where: { id: orgMembershipId } });
-        await prisma.household.update({ where: { id: m!.householdId }, data: { intakeNotes: 'note for the reviewer' } });
+        const { processId, leadId } = await makeFreshRenewal();
 
         await beginRenewal(processId, leadId);
 
         const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
         expect(proc?.status).toBe('PENDING_EXTERNAL_ACTION');
-        expect(proc?.bgClearedAt).not.toBeNull(); // still-valid check clears; the note is irrelevant
+        expect(proc?.bgClearedAt).not.toBeNull(); // still-valid check clears
 
         await markContractSigned(processId);
         expect(await statusOf(processId)).toBe('PENDING_PAYMENT');
@@ -370,7 +369,7 @@ describe('background check is non-blocking', () => {
     it('conflict of interest: a certifier in the applicant household is blocked, Board/sysadmin flags or not', async () => {
         const { processId, leadId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
         await markContractSigned(processId);
-        await markBgConsent(processId, revA);
+        await markLeadCheckStarted(processId);
         expect(await statusOf(processId)).toBe('PENDING_PAYMENT');
 
         // A household lead certifying their OWN membership = self-approval → forbidden.
@@ -387,7 +386,7 @@ describe('background check is non-blocking', () => {
     it('conflict of interest: a board reset by the applicant household is refused, sysadmin flag or not', async () => {
         const { processId, leadId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
         await markContractSigned(processId);
-        await markBgConsent(processId, revA);
+        await markLeadCheckStarted(processId);
         const reviewId = await reviewOf(processId);
         await attest(revA, reviewId, { result: 'REJECT', note: 'concern', subjectPersonIds: [leadId] }); // one reject → BLOCKED
         expect(await statusOf(processId)).toBe('BLOCKED');
@@ -402,7 +401,7 @@ describe('background check is non-blocking', () => {
     it('a check that clears on a DENIED household converges nothing and raises a board item', async () => {
         const { processId, leadId, orgMembershipId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
         await markContractSigned(processId);
-        await markBgConsent(processId, revA);
+        await markLeadCheckStarted(processId);
         await attest(revA, await reviewOf(processId), { result: 'APPROVE', subjectPersonIds: [leadId] });
         await prisma.orgMembership.update({ where: { id: orgMembershipId }, data: { status: 'DENIED' } });
 
@@ -419,7 +418,7 @@ describe('background check is non-blocking', () => {
     it('an approver moved into the applicant household before the second approval does not count', async () => {
         const { processId, leadId, householdId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
         await markContractSigned(processId);
-        await markBgConsent(processId, revA);
+        await markLeadCheckStarted(processId);
         const moved = await makeReviewer('RevMoved');
         await attest(moved, await reviewOf(processId), { result: 'APPROVE', subjectPersonIds: [leadId] });
         await prisma.person.update({ where: { id: moved }, data: { householdId } });
@@ -433,7 +432,7 @@ describe('background check is non-blocking', () => {
     it('board reset is refused on a DENIED household', async () => {
         const { processId, orgMembershipId, leadId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
         await markContractSigned(processId);
-        await markBgConsent(processId, revA);
+        await markLeadCheckStarted(processId);
         const reviewId = await reviewOf(processId);
         await attest(revA, reviewId, { result: 'REJECT', note: 'concern', subjectPersonIds: [leadId] });
         await prisma.orgMembership.update({ where: { id: orgMembershipId }, data: { status: 'DENIED' } });
@@ -445,7 +444,7 @@ describe('background check is non-blocking', () => {
         // A review still waiting on its second approval is refused the same way.
         const open = await makeApplicant('PENDING_EXTERNAL_ACTION');
         await markContractSigned(open.processId);
-        await markBgConsent(open.processId, revA);
+        await markLeadCheckStarted(open.processId);
         await attest(revA, await reviewOf(open.processId), { result: 'APPROVE', subjectPersonIds: [open.leadId] });
         await prisma.orgMembership.update({ where: { id: open.orgMembershipId }, data: { status: 'DENIED' } });
         await expect(boardResetReview(await reviewOf(open.processId), revB, { reason: 'start over' })).rejects.toMatchObject({ code: 'wrong_phase', message: expect.stringContaining('denied') });
@@ -458,7 +457,7 @@ describe('background check is non-blocking', () => {
         it('wipes every attestation, returns the review to waiting, and counts as approval 1 of 2', async () => {
             const { processId, leadId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
             await markContractSigned(processId);
-            await markBgConsent(processId, revA);
+            await markLeadCheckStarted(processId);
             const reviewId = await reviewOf(processId);
             const earlier = await makeReviewer('RevEarlier');
             await attest(earlier, reviewId, { result: 'APPROVE', subjectPersonIds: [leadId] });
@@ -486,7 +485,7 @@ describe('background check is non-blocking', () => {
         it('never lets the rejector clear the check alone', async () => {
             const { processId, leadId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
             await markContractSigned(processId);
-            await markBgConsent(processId, revA);
+            await markLeadCheckStarted(processId);
             const reviewId = await reviewOf(processId);
             await attest(revA, reviewId, { result: 'REJECT', note: 'concern', subjectPersonIds: [leadId] });
             await attest(revA, reviewId, { result: 'APPROVE' });
@@ -500,7 +499,7 @@ describe('background check is non-blocking', () => {
         it('is the rejector\'s alone: anyone else approving a blocked review is refused', async () => {
             const { processId, leadId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
             await markContractSigned(processId);
-            await markBgConsent(processId, revA);
+            await markLeadCheckStarted(processId);
             const reviewId = await reviewOf(processId);
             await attest(revA, reviewId, { result: 'REJECT', note: 'concern', subjectPersonIds: [leadId] });
 
@@ -512,7 +511,7 @@ describe('background check is non-blocking', () => {
         it('keeps the named adult, and is refused on a denied household', async () => {
             const { processId, leadId, orgMembershipId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
             await markContractSigned(processId);
-            await markBgConsent(processId, revA);
+            await markLeadCheckStarted(processId);
             const reviewId = await reviewOf(processId);
             await attest(revA, reviewId, { result: 'REJECT', note: 'concern', subjectPersonIds: [leadId] });
 
@@ -527,7 +526,7 @@ describe('background check is non-blocking', () => {
     it('reset returns a still-open review to neutral (the misclicked approval), but not a cleared one', async () => {
         const { processId, leadId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
         await markContractSigned(processId);
-        await markBgConsent(processId, revA);
+        await markLeadCheckStarted(processId);
         const reviewId = await reviewOf(processId);
         await attest(revA, reviewId, { result: 'APPROVE', subjectPersonIds: [leadId] }); // 1 of 2 — review still open
         expect(await statusOf(processId)).toBe('PENDING_PAYMENT');
@@ -569,7 +568,7 @@ describe('background check is non-blocking', () => {
     it('paying twice is idempotent (one activation)', async () => {
         const { processId, leadId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
         await markContractSigned(processId);
-        await markBgConsent(processId, revA);
+        await markLeadCheckStarted(processId);
         await attest(revA, await reviewOf(processId), { result: 'APPROVE', subjectPersonIds: [leadId] });
         await attest(revB, await reviewOf(processId), { result: 'APPROVE', subjectPersonIds: [leadId] }); // cleared, PENDING_PAYMENT
         // The idempotent payment path is the Shopify webhook (activate), which a
@@ -590,8 +589,8 @@ describe('background check is non-blocking', () => {
         expect(proc?.paidAt).toBeNull();
     });
 
-    it('markContractSigned / markBgConsent on a non-existent process throw not_found', async () => {
+    it('markContractSigned on a non-existent process and markCheckStarted on a non-existent person throw not_found', async () => {
         await expect(markContractSigned(999999999)).rejects.toMatchObject({ code: 'not_found' });
-        await expect(markBgConsent(999999999, revA)).rejects.toMatchObject({ code: 'not_found' });
+        await expect(markCheckStarted(999999999, board)).rejects.toMatchObject({ code: 'not_found' });
     });
 });

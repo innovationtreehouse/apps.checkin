@@ -108,11 +108,19 @@ Schema annotations classify *data*. Registry views grant *access* in the form of
 1. Add the field in `prisma/schema.prisma` with a `/// @sensitivity:<tier>` comment above it.
 2. Run `npx prisma generate` and commit the regenerated `src/security/generated/classifications.ts`.
 3. If the field should be exposed: nothing else to do unless its tier isn't already covered. Every existing view that grants `*:<that-tier>` will now expose it automatically. A schema tier change is the policy change; maintainer reviews under CODEOWNERS.
-4. If the field is a finance amount actually charged, paid, given or moved, or names a person or company tied to money (the list is in `docs/in-design/FINANCE_VIEW_RECORD_IDS.md`), add `/// @financeMark` beside its `@sensitivity`. A synthetic view model lists its marked fields in its file's `marks` export. A GET response that carries a marked field on a row that is not the viewer's own writes a finance view log row; nothing on the route needs flagging. Book prices, fee schedules and thresholds are not marked.
+4. If the field is a finance amount actually charged, paid, given or moved, or names a person or company tied to money, add `/// @financeMark` beside its `@sensitivity`. A synthetic view model lists its marked fields in its file's `marks` export. A GET response that carries a marked field on a row that is not the viewer's own writes a finance view log row; nothing on the route needs flagging. What carries the mark:
+    - every amount actually charged, paid, given or moved, with any discount, waiver, scholarship amount, processor or platform fee, and the discount codes a buyer used;
+    - the people and companies tied to money: a submitter, the person reimbursed, an expense's vendor (a receipt's `retailer` included), a donor's name and comment text, a company that gave or matched, a Shopify buyer, and a mailed receipt's sender;
+    - payment-plan and scholarship requests and their outcomes, membership plans included, though they carry no amount;
+    - stored files (a receipt image, a mail item's file, a donation upload) and stored text that copies amounts or names (received payloads, a stored receipt, change-history values).
+
+    Not marked: book prices, fee schedules and thresholds (policy, not a price paid), the ids and names of those who approved, reviewed or comped a record, a picker's list of candidate people, and a catalog item's `retailer`.
 
 ### Declaring a finance view's records
 
 By default a logged row names its own model and `id`. Where that is wrong (a view model, a pointer to another record, a composite id, an id in the path or nested), declare `financeView.records` on the route; `financeView.query` lists the query parameters that pick the screen. Registration refuses a route that can send a marked field on top-level rows with no `id` and no declaration, a declared field that is not classified, a model that is neither classified nor an outside name (`QuickBooks.Transaction`, `Benevity.Disbursement`), and an id that a role able to see a marked field cannot see. A page whose panels should fold into one log entry goes in `src/security/pageViewFolds.ts`.
+
+The browser tags every same-origin `/api` call with a page-view id and the page's path (`src/lib/pageViewTagging.ts`, installed by `src/instrumentation-client.ts`), minting a new id whenever the URL's path or query changes. The server merges one person's tagged calls into one entry for 30 seconds, under one path, and only from routes the page's `pageViewFolds.ts` list names. A call that fails any of those limits, or carries no tag, writes a row of its own. The tag comes from the browser, so a false one can cost an entry its page name or its timing, never which records were seen.
 
 ### Sending data to a third party
 

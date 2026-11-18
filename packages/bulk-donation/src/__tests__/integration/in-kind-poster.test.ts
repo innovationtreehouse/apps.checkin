@@ -162,7 +162,7 @@ function configure() {
     },
     capital,
     partAccounts: rules,
-    quickBooksAccounts: async () => QB_ACCOUNTS.map((a) => ({ id: a.Id, name: a.FullyQualifiedName, accountType: a.AccountType ?? "" })),
+    quickBooksAccounts: async () => QB_ACCOUNTS.map((a) => ({ id: a.Id, name: a.FullyQualifiedName, accountType: a.AccountType ?? "", active: a.Active !== false })),
     inKindQb: {
       client: async () => client,
       booksMap: { accounts: async () => accounts, classes: async () => new Map([[1, "77"], [2, "78"]]) },
@@ -1010,7 +1010,8 @@ describeDb("finance's QuickBooks actions on an in-kind gift", () => {
 
     await expect(resolve(id, { action: "set-account", lineId: lathe, quickBooksAccountId: "600" })).rejects.toMatchObject({
       status: 400,
-      message: "Donated equipment takes a Fixed Asset account; Supplies is Expense",
+      code: "quickbooks-list-stale",
+      message: "Donated equipment takes a Fixed Asset account; QuickBooks' list in the app shows Supplies as Expense. If you changed it in QuickBooks, press Update now, then save again.",
     });
     expect(await events("IN_KIND_LINE_ACCOUNT_SET")).toHaveLength(0);
   });

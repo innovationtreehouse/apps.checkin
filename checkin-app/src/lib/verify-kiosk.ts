@@ -57,10 +57,16 @@ export function getKioskPublicKeys(): Buffer[] {
 }
 
 export type VerifyResult =
-    | { ok: true }
+    | { ok: true; keyFingerprint: string }
     | { ok: false; status: number; error: string };
 
-function signatureMatches(message: Buffer, signatureHex: string, keys: Buffer[]): boolean {
+/** Names a kiosk public key: the first 16 hex of SHA-256 over its 32 raw bytes. */
+export function kioskKeyFingerprint(publicKey: Buffer): string {
+    return crypto.createHash("sha256").update(publicKey).digest("hex").slice(0, 16);
+}
+
+/** The configured key that verifies the signature, or null. */
+function signatureMatches(message: Buffer, signatureHex: string, keys: Buffer[]): Buffer | null {
     const sigBytes = Buffer.from(signatureHex, "hex");
 
     // Try each public key — succeed if ANY matches
@@ -82,13 +88,13 @@ function signatureMatches(message: Buffer, signatureHex: string, keys: Buffer[])
                 },
                 sigBytes
             );
-            if (ok) return true;
+            if (ok) return publicKey;
         } catch (e) {
             // Key failed — try next one
             console.error("Signature verification error with key:", e);
         }
     }
-    return false;
+    return null;
 }
 
 export function verifyKioskSignature(
@@ -125,7 +131,8 @@ export function verifyKioskSignature(
         return { ok: false, status: 401, error: "Timestamp too old or too far in the future" };
     }
 
-    if (!signatureMatches(message, signatureHeader, keys)) {
+    const matchedKey = signatureMatches(message, signatureHeader, keys);
+    if (!matchedKey) {
         return { ok: false, status: 401, error: "Invalid signature" };
     }
 
@@ -142,5 +149,5 @@ export function verifyKioskSignature(
     stampKioskSeen(nowMs, parseQueueDepth(queueDepthHeader));
     noteKioskClockSkew(skewSeconds, nowMs);
 
-    return { ok: true };
+    return { ok: true, keyFingerprint: kioskKeyFingerprint(matchedKey) };
 }

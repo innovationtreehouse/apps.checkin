@@ -23,12 +23,14 @@ const receipt = {
 beforeEach(() => resetRtl());
 
 describe("ShopifyWebhookSettingsPage", () => {
-    it("shows the failure message when the status load fails", async () => {
+    it("shows a failed load in place of the status, with a Retry", async () => {
         setSession({ id: 1, isSysadmin: true });
-        mockFetchJson({});
+        global.fetch = jest.fn(async () => new Response(JSON.stringify({ error: "Not found" }), { status: 404 })) as unknown as typeof fetch;
         renderWithProviders(<ShopifyWebhookSettingsPage />);
 
-        expect(await screen.findByText("Failed to load webhook status.")).toBeInTheDocument();
+        expect(await screen.findByText("Couldn't load webhook status")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+        expect(screen.queryByText(/No deliveries recorded/)).not.toBeInTheDocument();
     });
 
     it("Refresh re-fetches and shows the new deliveries", async () => {
@@ -45,8 +47,10 @@ describe("ShopifyWebhookSettingsPage", () => {
         receipts = [receipt];
         fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
 
+        expect(screen.getByRole("button", { name: "Refresh" })).toHaveAttribute("data-loading", "true");
         expect(await screen.findByText("rejected: bad signature")).toBeInTheDocument();
         expect(fetchMock).toHaveBeenCalledTimes(loadsBefore + 1);
+        expect(screen.getByRole("button", { name: "Refresh" })).not.toHaveAttribute("data-loading");
     });
 
     it("shows the delivery id and flags a retried delivery", async () => {

@@ -358,6 +358,21 @@ describe('the year a settlement records', () => {
         expect(recordedYear()).toBe(2026);
     });
 
+    it("a board grant's year and reason go on the certify's own audit row; a certify without a year adds none", async () => {
+        await certifyPaymentPlan(PROCESS_ID, 1, { year: 2026, reason: 'Paid by check' });
+        expect(prisma.auditLog.create).toHaveBeenCalledTimes(1);
+        expect(prisma.auditLog.create.mock.calls[0][0].data).toMatchObject({
+            secondaryAffectedEntity: expect.any(Number),
+            newData: { grantedYear: 2026, reason: 'Paid by check', certificationNote: 'Paid by check' },
+        });
+
+        prisma.auditLog.create.mockClear();
+        prisma.orgMembershipProcess.findUnique.mockResolvedValue(awaiting);
+        await certifyPaymentPlan(PROCESS_ID, 1, { reason: 'Paid by check' });
+        expect(prisma.auditLog.create.mock.calls[0][0].data.newData).not.toHaveProperty('grantedYear');
+        expect(prisma.auditLog.create.mock.calls[0][0].data).not.toHaveProperty('secondaryAffectedEntity');
+    });
+
     it('a board certify records no year when no boundary is set', async () => {
         prisma.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: null });
         await certifyPaymentPlan(PROCESS_ID, 1);

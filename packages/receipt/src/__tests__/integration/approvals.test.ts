@@ -143,9 +143,11 @@ describeDb("receipts awaiting finance", () => {
     expect((await receiptService.upload(textFile("B"), "text/plain", { details: taxed() })).state).toBe("duplicate_flagged");
     const off = await receiptService.upload(textFile("C"), "text/plain", { details: manualDetails({ receiptTotal: "1" }) });
     expect(off.state).toBe("validation_failed");
+    const stuck = await receiptService.upload(textFile("D"), "text/plain", { details: manualDetails({ retailer: "Stuck", receiptDate: "2999-01-01" }) });
+    await db.receiptDetail.update({ where: { id: stuck.id }, data: { state: "flow_error" } });
     expect(await receiptService.countAwaitingFinance(FINANCE.id)).toEqual({
-      total: 2,
-      byState: { financial_review: 1, duplicate_flagged: 1, flow_error: 0 },
+      total: 3,
+      byState: { financial_review: 1, duplicate_flagged: 1, flow_error: 1 },
     });
   });
 });
@@ -175,13 +177,16 @@ describeDb("receipts awaiting a conflicted finance viewer", () => {
 
   const future = (retailer: string) => ({ details: manualDetails({ retailer, receiptDate: "2999-01-01" }) });
 
-  it("leaves out receipts the viewer uploaded, is reimbursed for, or shares a household with", async () => {
+  it("leaves out receipts the viewer uploaded, is reimbursed for, or shares a household with as uploader or reimbursee", async () => {
     actAs(FINANCE);
     expect((await receiptService.upload(textFile(), "text/plain", future("Uploaded by finance"))).state).toBe("financial_review");
     actAs(ALICE);
     const reimbursed = await receiptService.upload(textFile(), "text/plain", future("Reimbursed to finance"));
     expect(reimbursed.state).toBe("financial_review");
     await db.receipt.update({ where: { id: reimbursed.id }, data: { reimburseePersonId: REIMBURSEE.id } });
+    const forBob = await receiptService.upload(textFile(), "text/plain", future("Reimbursed to Bob"));
+    expect(forBob.state).toBe("financial_review");
+    await db.receipt.update({ where: { id: forBob.id }, data: { reimburseePersonId: BOB.id } });
     actAs(BOB);
     const file = textFile();
     await receiptService.upload(file, "text/plain", { details: manualDetails() });
@@ -191,9 +196,9 @@ describeDb("receipts awaiting a conflicted finance viewer", () => {
       total,
       byState: { financial_review, duplicate_flagged, flow_error: 0 },
     });
-    expect(await receiptService.countAwaitingFinance(INDEPENDENT.id)).toEqual(counts(3, 2, 1));
-    expect(await receiptService.countAwaitingFinance(FINANCE.id)).toEqual(counts(2, 1, 1));
-    expect(await receiptService.countAwaitingFinance(REIMBURSEE.id)).toEqual(counts(2, 1, 1));
+    expect(await receiptService.countAwaitingFinance(INDEPENDENT.id)).toEqual(counts(4, 3, 1));
+    expect(await receiptService.countAwaitingFinance(FINANCE.id)).toEqual(counts(3, 2, 1));
+    expect(await receiptService.countAwaitingFinance(REIMBURSEE.id)).toEqual(counts(3, 2, 1));
     expect(await receiptService.countAwaitingFinance(HOUSEMATE.id)).toEqual(counts(2, 2, 0));
 
     householdLookups = [];
@@ -202,10 +207,10 @@ describeDb("receipts awaiting a conflicted finance viewer", () => {
 
     // The review tabs' totals stay org-wide; a FINANCE viewer's actionable counts match the pill.
     const forHousemate = await receiptService.queueCounts(HOUSEMATE.id);
-    expect(forHousemate.byState).toMatchObject({ financial_review: 2, duplicate_flagged: 1 });
+    expect(forHousemate.byState).toMatchObject({ financial_review: 3, duplicate_flagged: 1 });
     expect(forHousemate.actionableByState).toEqual({ financial_review: 2, duplicate_flagged: 0, flow_error: 0 });
     const forBoard = await receiptService.queueCounts(null);
-    expect(forBoard.byState).toMatchObject({ financial_review: 2, duplicate_flagged: 1 });
+    expect(forBoard.byState).toMatchObject({ financial_review: 3, duplicate_flagged: 1 });
     expect(forBoard).not.toHaveProperty("actionableByState");
   });
 });

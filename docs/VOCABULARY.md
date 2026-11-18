@@ -136,7 +136,8 @@ adult) → two attestations → **clearance** (dated; the validity window runs f
 | **Attest** | one reviewer putting their name to a judgement about one adult — the act, and the only thing the app stores | `attest()`, `BackgroundCheckAttestation` | "Attest" |
 | **Approve / Reject** | the **value** carried on an attestation — what was judged, never the act of judging | `AttestationResult` | "Approve" / "Reject" |
 | **Clearance** / **cleared** | the outcome: two attestations, dated. The re-check window runs from that date | `bgClearedAt`, `PENDING_BG_CLEARANCE`, `Person.lastBackgroundCheck` | "cleared" |
-| **Consent** | the **applicant's** act — they submitted the Averity form. Never "attest" | `bgConsentAt`, `markBgConsent` | "consent" |
+| **Consent** | the applicant's act **in the outside background-check tool**. The app never sees or records it | `getConsentDeepLink` | "consent" (only for the tool's form) |
+| **Check started** | someone marked that a person's check was started outside, putting their review in the reviewers' queue. Not consent; approves nothing | `bgConsentAt` (PERSON_BG only), `markCheckStarted` | "check started" |
 | **Reset** | the board discarding a review's attestations so it needs two new approvals. The board never clears a check itself | `boardResetReview` | "Reset for re-review" |
 
 Rules:
@@ -209,7 +210,7 @@ Both are non-household people attached to a household, and **may be the same per
 
 ### Membership application
 
-**`OrgMembershipProcess` = the membership "application"** — technically an intake process, called an **"application"** because it includes a background check (vendor **Averity**) and **can be rejected**. One `OrgMembershipProcess` = one cycle (`INITIAL` or `RENEWAL`); `INTAKE` is its first stage.
+**`OrgMembershipProcess` = the membership "application"** — technically an intake process, called an **"application"** because it includes a background check (vendor **Averity**) and **can be rejected**. One `OrgMembershipProcess` = one cycle (`INITIAL` or `RENEWAL`); `INTAKE` is its first stage. An application is **closed**, never archived; **archive** is reserved for archiving a household.
 
 ### Corporation (aspirational)
 

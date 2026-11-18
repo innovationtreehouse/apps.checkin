@@ -4,6 +4,7 @@ import { Badge, Button, Group, Paper, Select, Table, Text } from "@mantine/core"
 import { formatCents } from "@checkin/money";
 import { formatGtinDisplay } from "@checkin/gtin";
 import { LINE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
+import { InactivePickWarning, QuickBooksListsRefresh } from "@checkin/component-ui";
 import { send, useLoad } from "./api";
 import NonInventoryBadge from "./NonInventoryBadge";
 
@@ -30,7 +31,9 @@ interface QbAccount {
 /** One account from QuickBooks' live list, as the host's books-map route returns it. */
 interface LiveAccount {
   id: string;
+  name: string;
   accountType: string;
+  active: boolean;
 }
 interface LookupContext {
   category: string | null;
@@ -81,9 +84,9 @@ export function matchedRulesOf(matchedRows: string): MatchedRule[] {
 }
 
 /**
- * Lines the QuickBooks processor could not give an account. FINANCE sets one per line and resubmits;
- * Resubmit stays disabled while a held line has no account, and the server refuses it as well. A
- * refused resubmit may still have moved the expense, so `onRefused` rereads it.
+ * Lines the QuickBooks processor could not give an account. FINANCE sets one per line, or fixes an
+ * account rule, and resubmits; the resubmit re-runs the mapping and holds again any line still
+ * unresolved. A refused resubmit may still have moved the expense, so `onRefused` rereads it.
  */
 export default function AccountHoldsPanel({ expenseId, holds, lines, currency, isFinance, onChanged, onRefused }: {
   expenseId: string;
@@ -104,7 +107,7 @@ export default function AccountHoldsPanel({ expenseId, holds, lines, currency, i
   const lineOf = new Map(lines.map((l) => [l.id, l]));
   const accountName = new Map((accounts.data ?? []).map((a) => [a.qbAccount, a.name]));
   const accountLabel = (code: string) => (accountName.has(code) ? `${accountName.get(code)} (${code})` : code);
-  const typeOf = new Map((live.data ?? []).map((a) => [a.id, a.accountType]));
+  const typeOf = new Map((live.data ?? []).filter((a) => a.active).map((a) => [a.id, a.accountType]));
   /** A capital line books to a Fixed Asset account; any other line to an expense type. */
   const optionsFor = (capital: boolean) => {
     const allowed: readonly string[] = capital ? LINE_ACCOUNT_TYPES.donatedCapital : LINE_ACCOUNT_TYPES.donatedGoods;
@@ -118,14 +121,16 @@ export default function AccountHoldsPanel({ expenseId, holds, lines, currency, i
         <Text fw={600}>Account holds</Text>
         {isFinance && (
           <Group gap="xs">
+            <QuickBooksListsRefresh />
             {withoutAccount > 0 && (
               <Text size="xs" c="dimmed">
-                {withoutAccount === 1 ? "1 held line has no account yet" : `${withoutAccount} held lines have no account yet`}
+                {withoutAccount === 1
+                  ? "1 held line has no account yet. Resubmit re-reads the catalog, checks the account rules again, and holds it if it still matches none."
+                  : `${withoutAccount} held lines have no account yet. Resubmit re-reads the catalog, checks the account rules again, and holds each one that still matches none.`}
               </Text>
             )}
             <Button
               size="xs"
-              disabled={withoutAccount > 0}
               onClick={async () => { if (await send(`${base}/resubmit`, "POST", {}, "Resubmitted")) onChanged(); else onRefused(); }}
             >Resubmit</Button>
           </Group>
@@ -175,6 +180,7 @@ export default function AccountHoldsPanel({ expenseId, holds, lines, currency, i
                           if (await send(`${base}/line-items/${h.lineItemId}/account`, "PUT", { qbAccount: picked[h.id] }, "Account set")) onChanged();
                         }}
                       >Set account</Button>
+                      {!picked[h.id] && <InactivePickWarning saved={line?.manualQbAccount} options={live.data} />}
                     </Group>
                   ) : (line?.manualQbAccount ? accountLabel(line.manualQbAccount) : "—")}
                 </Table.Td>

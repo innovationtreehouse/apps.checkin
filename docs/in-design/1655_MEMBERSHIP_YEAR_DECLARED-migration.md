@@ -5,15 +5,16 @@ Everything here expires when the change has run. The design is in
 
 ## Where it stands
 
-Nothing is built. There is no year column on the settlement record and no per-year
-variant table; the coverage probes still infer the year from `stageEnteredAt`; and
-the single variant id `BoardSettings.orgMembershipVariantId` is read in eight
-production files. The prerequisites have landed: coverage follows the live
-membership year (#1812), and both board grants pay a real application through
-`certifyPaymentPlan` (#2003), so no grant is a bare status change any more.
+PRs 1 to 9 are built. Every payment records its year, settled rows are filled,
+coverage reads the recorded year, settings hold a variant per year, the checkout
+sells the live year's row (PR 8), and the renewal sweep opens nothing while the
+coming year has no variant (PR 9). The board entered the 2026-27 row in dev and
+production on 2026-11-13.
 
-Ten pull requests finish this. The owner has answered every question; one PR waits
-on an operations step in production (the board entering variants).
+Left: PR 10 (retire the single variant), after PR 9 deploys and drains. The single variant id `BoardSettings.orgMembershipVariantId` is
+still read by the settings route and page, the registry, and the transitional entry
+in `membershipVariantYears` (through the webhook, the reconciler, reversals, the
+match audit and `income/appItems.ts`). PR 10 removes all of them.
 
 ## Decisions settled
 
@@ -177,7 +178,7 @@ Shopify products.
     transition row becomes the grant's; `grantableRenewalWhere` widens to "an
     application awaiting payment, joining or renewing", which the list route's
     probe uses to show the coming-year button. Regenerate
-    `checkin-app/docs/generated/lifecycle/membership.md`.
+    `docs/generated/lifecycle/membership.md`.
   - `checkin-app/src/app/api/membership-ops/households/route.ts`: the list response
     carries the years a grant may record now, each with its label (the year in
     progress; inside the window, the coming year too). `POST` takes `year` and
@@ -224,7 +225,11 @@ Shopify products.
 - **Migration safety:** none.
 - **Blocked on:** PR 6.
 
-### PR 8: checkout sells the live year [app]
+### PR 8: checkout sells the live year [app] (built)
+
+Built as `liveYearVariantId` in `payment.ts`, shared by the checkout link, the dev
+orders-paid route and the dev Shopify page. The nav count asks about the live year
+and the coming year together and counts a year once when they are the same.
 
 - **Files:**
   - `ensurePaymentLink` in `checkin-app/src/lib/membership/payment.ts`: the variant
@@ -234,8 +239,9 @@ Shopify products.
     variant.
   - `checkin-app/src/app/dev/shopify/page.tsx`: "has a variant" reads the live
     year's row.
-  - `checkin-app/src/lib/nav/todoCounts.ts`: the single-variant term becomes "the
-    live year has no row".
+  - `checkin-app/src/lib/nav/todoCounts.ts`: the single-variant term and the
+    coming-year term become one count of the live year and the coming year with no
+    row, a year counted once when they are the same.
 - **Tests:** integration (`membershipPaymentAPI`, `api/dev/shopify/orders-paid`),
   then the flow suite (`npm run test:flow:standalone`, heavy), since every
   membership flow pays through the mock checkout.
@@ -244,12 +250,15 @@ Shopify products.
   live year's row in dev and production (it may reuse the existing variant id).
 - **Blocked on:** PR 7, and the rows entered.
 
-### PR 9: renewals stop without a coming-year variant [app]
+### PR 9: renewals stop without a coming-year variant [app] (built)
+
+Built in `runRenewalSweep` with `liveYearVariantId`, the checkout's own choice of
+variant, so a local instance with the Shopify mock active still opens renewals.
 
 - **Files:** `runRenewalSweep` in `checkin-app/src/lib/membership/renewal.ts`: a
   second early return when the coming year has no row, with a reason naming it.
 - **Rules:** applies the sweep line in the Destination, then confirms every block
-  there is in `docs/rules/membership.md`.
+  there is recorded.
 - **Tests:** unit (`renewal.test.ts`) and integration (`membershipBulkRenewalAPI`).
 - **Migration safety:** none.
 - **Blocked on:** PR 8.
@@ -268,7 +277,7 @@ Shopify products.
   this lands and goes to the board; confirm first that no such process is still
   awaiting payment. If the boundary-isolation check flags the removed
   classifications, follow the decommission shape in
-  `checkin-app/docs/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md` rule 7.
+  `docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md` rule 7.
 - **Rules:** none; then the Last step below.
 - **Blocked on:** PR 9 deployed and drained.
 
@@ -282,7 +291,7 @@ which PR 4 moves to the recorded year.
 not equality between a settlement's year and the program's (design, "Program
 pricing needs nothing new").
 
-## Destination: `docs/rules/membership.md`
+## Destination
 
 **Replace** the Renewal line beginning "Settling inside the renewal window buys the
 coming membership year" with (PR 4):
@@ -306,8 +315,10 @@ coming membership year" with (PR 4):
 **Insert** under Renewal, after the line on when renewals open (PR 9):
 
 ```markdown
-- Renewals do not open while the coming year has no membership product to pay
-  through.  [Decision — *Principle: an unconfigured setting does not act*]
+- The board's "open renewals" button opens nothing while the coming year has no
+  membership product to pay through. A board grant still opens one household's
+  renewal, because the board pays it by grant once it reaches payment.
+  [Decision — *Principle: an unconfigured setting does not act*]
 ```
 
 Nothing about the column, the variant table, the fill or the reader fragments goes
@@ -315,5 +326,5 @@ into the rules file.
 
 ## Last step
 
-In PR 10: confirm every block above is in `docs/rules/membership.md`, then delete
+In PR 10: confirm every block above is recorded as a standing rule, then delete
 both files in this directory.

@@ -11,6 +11,13 @@ import { signCheckout } from '@/lib/programs/checkoutSignature';
 process.env.NEXTAUTH_SECRET ||= 'integration-test-nextauth-secret';
 
 // Mocking dependencies
+// The archived-household guard has its own tests; here every household is live.
+jest.mock("@/lib/household/archiveGuard", () => ({
+    ...jest.requireActual("@/lib/household/archiveGuard"),
+    lockLiveHouseholds: jest.fn(),
+    lockLiveHouseholdsOf: jest.fn(),
+}));
+
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
 }));
@@ -48,6 +55,7 @@ jest.mock('@/lib/prisma', () => {
     },
     emergencyContact: {
       findMany: jest.fn(),
+      count: jest.fn().mockResolvedValue(1),
     },
     program: {
       create: jest.fn(),
@@ -63,6 +71,7 @@ jest.mock('@/lib/prisma', () => {
     household: {
       create: jest.fn(),
       delete: jest.fn(),
+      count: jest.fn().mockResolvedValue(1),
     },
     membership: {
       create: jest.fn(),

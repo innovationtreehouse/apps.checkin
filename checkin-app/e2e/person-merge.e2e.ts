@@ -1,6 +1,6 @@
 /**
- * A person merge carrying a valid background check onto a family whose application is in review
- * (docs/rules/membership.md, the person-merge ruling of 2026-10-30). The check comes from a second
+ * A person merge carrying a valid background check onto a family whose application is in review.
+ * The check comes from a second
  * family cleared by two reviewers; the Board merges that family's lead into the applicant's. The
  * carryover counts only under a set re-check interval, which the fresh seed leaves unset, so the
  * suite sets one and puts it back in afterAll. Every test mints its own families, so a rerun on the
@@ -125,9 +125,9 @@ test.describe("person merge carrying a background check", () => {
     const refusal = `Cannot merge: this person's background check is disputed by review #${reviewId}`;
     await asViewer(browser, BOARD, async (page) => {
       await requestMerge(page, email, source);
-      await expect(page.locator(".mantine-Alert-root").filter({ hasText: refusal })).toBeVisible();
+      await expect(page.locator(".mantine-Notification-root").filter({ hasText: refusal })).toBeVisible();
       await expect(heading(page, "Merge Successful!")).toHaveCount(0);
-    }, new RegExp(`^error alert: ${refusal}\\b`));
+    }, new RegExp(`^error chip: ${refusal}\\b`));
 
     expect([await persona(email), await persona(source)]).toEqual([kept, merged]);
     await asViewer(browser, email, async (page) => {

@@ -64,6 +64,40 @@ describeDb("associate (CI3, optimistic)", () => {
     expect(audit).toMatchObject({ actorUserId: MANAGER.id, actorUsername: MANAGER.name });
   });
 
+  it("leaves a line already associated with the same GTIN and factor as it is: no write, event or proposal", async () => {
+    const { r, lines } = await pendingWithLines(2);
+    await db.receivedReceiptLineStatus.update({
+      where: { id: lines[0].id },
+      data: { recognitionStatus: "recognized", assignedGtin13: "0000000000017", conversionFactor: 4, conversionVersion: 3 },
+    });
+    const before = await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: lines[0].id } });
+    await lineItemService.associateGtin(r.id, lines[0].id, { gtin13: "0000000000017", conversionFactor: 4 });
+    expect(await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: lines[0].id } })).toEqual(before);
+    expect(await db.workflowAuditLog.count({ where: { eventType: "line_associated" } })).toBe(0);
+    expect(submitted.proposals).toHaveLength(0);
+  });
+
+  it("writes one association when two identical associates race", async () => {
+    const { r, lines } = await pendingWithLines(2);
+    const body = { gtin13: "0000000000017", conversionFactor: 4 };
+    await Promise.all([
+      lineItemService.associateGtin(r.id, lines[0].id, body),
+      lineItemService.associateGtin(r.id, lines[0].id, body),
+    ]);
+    expect(await db.workflowAuditLog.count({ where: { eventType: "line_associated" } })).toBe(1);
+  });
+
+  it("rewrites the line when the factor changes, resetting the conversion version", async () => {
+    const { r, lines } = await pendingWithLines(2);
+    await db.receivedReceiptLineStatus.update({
+      where: { id: lines[0].id },
+      data: { recognitionStatus: "recognized", assignedGtin13: "0000000000017", conversionFactor: 4, conversionVersion: 3 },
+    });
+    await lineItemService.associateGtin(r.id, lines[0].id, { gtin13: "0000000000017", conversionFactor: 6 });
+    expect(await db.receivedReceiptLineStatus.findUniqueOrThrow({ where: { id: lines[0].id } })).toMatchObject({ conversionFactor: 6, conversionVersion: 1 });
+    expect(await db.workflowAuditLog.count({ where: { eventType: "line_associated" } })).toBe(1);
+  });
+
   it("reports a conflict when an existing reference has a different GTIN", async () => {
     refCheck.mfr_part = { exists: true, gtin13: "0000000000024", id: 9, conversionFactor: 1, conversionVersion: 1 };
     const { r, lines } = await pendingWithLines(2);

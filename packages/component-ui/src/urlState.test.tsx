@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { clampPage, hrefWith, readPage, useSetUrlFilters, useUrlChoice, useUrlFilter, useUrlPage } from "./urlState";
+import { clampPage, hrefWith, readPage, useSetUrlFilters, useUrlBefore, useUrlChoice, useUrlFilter, useUrlPage } from "./urlState";
 
 const nav = vi.hoisted(() => ({
   search: new URLSearchParams(),
@@ -120,6 +120,36 @@ describe("useSetUrlFilters", () => {
     act(() => result.current({ from: "2026-02-01", to: "2026-03-01" }));
     expect(nav.replace).toHaveBeenCalledWith("/donations/transactions?from=2026-02-01&to=2026-03-01", { scroll: false });
     expect(nav.push).not.toHaveBeenCalled();
+  });
+});
+
+describe("useUrlBefore", () => {
+  it("reads the marker from the URL, empty when absent", () => {
+    at("before=1730902312345_9");
+    expect(renderHook(() => useUrlBefore()).result.current[0]).toBe("1730902312345_9");
+    at("");
+    expect(renderHook(() => useUrlBefore()).result.current[0]).toBe("");
+  });
+
+  it("pushes a new marker, keeping the filters", () => {
+    at("person=12&before=1_5");
+    const { result } = renderHook(() => useUrlBefore());
+    act(() => result.current[1]("1_3"));
+    expect(nav.push).toHaveBeenCalledWith("/donations/transactions?person=12&before=1_3", { scroll: false });
+  });
+
+  it("drops the marker for the first page", () => {
+    at("person=12&before=1_5");
+    const { result } = renderHook(() => useUrlBefore());
+    act(() => result.current[1](""));
+    expect(nav.push).toHaveBeenCalledWith("/donations/transactions?person=12", { scroll: false });
+  });
+
+  it("is dropped by a filter change", () => {
+    at("person=12&before=1_5");
+    const { result } = renderHook(() => useUrlFilter("person"));
+    act(() => result.current[1]("40"));
+    expect(nav.replace).toHaveBeenCalledWith("/donations/transactions?person=40", { scroll: false });
   });
 });
 

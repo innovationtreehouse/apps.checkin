@@ -69,10 +69,10 @@ describe("flow: refund Shopify has not reported", () => {
         expect((await api(applicant, "/api/membership/intake/submit", { method: "POST" })).status).toBe(200);
 
         const processId = (await api<State>(applicant, "/api/membership")).json.process!.id;
-        for (const action of ["mark-contract", "mark-bg-consent"]) {
-            const res = await api(board, "/api/membership-ops/applications/external", { method: "POST", body: JSON.stringify({ processId, action }) });
-            expect(res.status).toBe(200);
-        }
+        const signed = await api(board, "/api/membership-ops/applications/external", { method: "POST", body: JSON.stringify({ processId, action: "mark-contract" }) });
+        expect(signed.status).toBe(200);
+        const started = await api(applicant, "/api/membership/check-started", { method: "POST", body: JSON.stringify({ personId: applicant.personaId }) });
+        expect(started.status).toBe(200);
 
         const queued = await queuedReviewFor(board, applicant.personaId);
         expect(queued).toBeDefined();

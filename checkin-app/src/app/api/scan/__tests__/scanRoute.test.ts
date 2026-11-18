@@ -8,7 +8,9 @@ import { logger } from '@/lib/logger';
 import { processCheckin, processCheckout } from '@/lib/attendance/scan';
 import { processCloseRequest, executePendingCloses } from '@/lib/attendance/close';
 import { notifyScanOutcome } from '@/lib/attendance/scanNotify';
-import { KIOSK_DEBOUNCE_PROTOCOL_VERSION } from '@/lib/scanProtocol';
+import { KIOSK_DEBOUNCE_PROTOCOL_VERSION, SCAN_PROTOCOL_VERSION } from '@/lib/scanProtocol';
+import { recordKioskProtocolSeen } from '@/lib/kioskProtocolSeen';
+import { specTrace } from '@/lib/specTrace';
 
 jest.mock('@/lib/auth', () => ({
     authenticateRequest: jest.fn(),
@@ -54,6 +56,12 @@ jest.mock('@/lib/prisma', () => {
     mock.$transaction.mockImplementation((cb: (tx: typeof mock) => unknown) => cb(mock));
     return mock;
 });
+
+jest.mock('@/lib/kioskProtocolSeen', () => ({
+    recordKioskProtocolSeen: jest.fn().mockResolvedValue(undefined),
+}));
+
+jest.mock('@/lib/specTrace', () => ({ specTrace: jest.fn() }));
 
 jest.mock('@/lib/logger', () => ({
     logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
@@ -114,7 +122,7 @@ describe('POST /api/scan', () => {
         expect(json.error).toBe('Invalid JSON payload.');
     });
 
-    it('should return 400 if participantId is missing', async () => {
+    it('should return 400 if no badge id is sent', async () => {
         (authenticateRequest as jest.Mock).mockResolvedValue({ type: 'kiosk' });
         const req = new Request('http://localhost/api/scan', {
             method: 'POST',
@@ -125,7 +133,7 @@ describe('POST /api/scan', () => {
         expect(res.status).toBe(400);
 
         const json = await res.json();
-        expect(json.error).toBe('A valid numeric participantId is required.');
+        expect(json.error).toBe('A valid numeric personId is required.');
     });
 
     it('should return 400 if participantId is not a number', async () => {
@@ -139,7 +147,7 @@ describe('POST /api/scan', () => {
         expect(res.status).toBe(400);
 
         const json = await res.json();
-        expect(json.error).toBe('A valid numeric participantId is required.');
+        expect(json.error).toBe('A valid numeric personId is required.');
     });
     // An id past Postgres int4 makes the lookup throw (a 500 the kiosk retries
     // forever at its queue head); a 400 dead-letters it instead.
@@ -153,6 +161,54 @@ describe('POST /api/scan', () => {
         const res = await POST(req);
         expect(res.status).toBe(400);
         expect(prisma.person.findUnique).not.toHaveBeenCalled();
+    });
+
+    // Kiosks send participantId until the client switches to personId.
+    describe('the badge id field', () => {
+        const scan = (body: Record<string, unknown>) => POST(new Request('http://localhost/api/scan', {
+            method: 'POST',
+            body: JSON.stringify(body),
+        }) as unknown as import('next/server').NextRequest);
+
+        beforeEach(() => {
+            (authenticateRequest as jest.Mock).mockResolvedValue({ type: 'kiosk' });
+            (prisma.person.findUnique as jest.Mock).mockResolvedValue({ id: 7 });
+            (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
+            (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
+            (prisma.visit.findFirst as jest.Mock).mockResolvedValue(null);
+            (processCheckin as jest.Mock).mockResolvedValue(checkedIn);
+        });
+
+        it.each([
+            ['personId alone', { personId: 7 }],
+            ['participantId alone', { participantId: 7 }],
+            ['both, equal', { personId: 7, participantId: 7 }],
+        ])('scans with %s', async (_label, body) => {
+            const res = await scan(body);
+            expect(res.status).toBe(200);
+            expect(prisma.person.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 7 } }));
+            expect(prisma.rawBadgeLog.create).toHaveBeenCalledWith({ data: { personId: 7, location: 'Main Entrance' } });
+        });
+
+        it('400s when personId and participantId disagree, without touching the DB', async () => {
+            const res = await scan({ personId: 7, participantId: 8 });
+            expect(res.status).toBe(400);
+            expect((await res.json()).error).toBe('personId and participantId disagree.');
+            expect(prisma.person.findUnique).not.toHaveBeenCalled();
+            expect(prisma.rawBadgeLog.create).not.toHaveBeenCalled();
+        });
+
+        it('parks a replay whose ids disagree instead of refusing it', async () => {
+            const res = await scan({
+                personId: 7, participantId: 8, replay: true,
+                clientEventId: 'evt-conflict', scannedAt: new Date().toISOString(),
+            });
+            expect(res.status).toBe(200);
+            expect(prisma.person.findUnique).not.toHaveBeenCalled();
+            expect(prisma.rawBadgeLog.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({ personId: null, scannedValue: '7', reviewReason: 'client_dead:unresolvable' }),
+            });
+        });
     });
 
     describe('check-in/out notifications', () => {
@@ -255,7 +311,7 @@ describe('POST /api/scan', () => {
 
             const res = await POST(scanReq(1));
             expect(res.status).toBe(404);
-            expect((await res.json()).error).toBe('Participant 1 not found.');
+            expect((await res.json()).error).toBe('Person 1 not found.');
             expect(prisma.household.count).toHaveBeenCalledWith({ where: { id: 3, archivedAt: null } });
             expect(prisma.rawBadgeLog.create).not.toHaveBeenCalled();
         });
@@ -371,8 +427,7 @@ describe('POST /api/scan', () => {
         });
     });
 
-    // Replayed-scan idempotency (docs/rules/attendance-checkin.md, kiosk
-    // resilience). `replay: true` marks a redelivery; the try-first rule puts
+    // Replayed-scan idempotency. `replay: true` marks a redelivery; the try-first rule puts
     // clientEventId on the live attempt too, so the id alone never implies a replay.
     describe('replayed scans (clientEventId/scannedAt)', () => {
         function replayReq(overrides: Record<string, unknown> = {}) {
@@ -417,8 +472,6 @@ describe('POST /api/scan', () => {
         // server cannot apply parks as a dead letter instead, never toggling.
         it.each([
             ['without a clientEventId', { clientEventId: undefined }],
-            ['without a scannedAt', { scannedAt: undefined }],
-            ['with an unparseable scannedAt', { scannedAt: 'not-a-date' }],
             ['with an unknown intent', { intent: 'SIDEWAYS' }],
             ['with a malformed protocolVersion', { protocolVersion: '2' }],
         ])('parks a replay %s as client_dead:400 instead of refusing it', async (_label, overrides) => {
@@ -431,6 +484,61 @@ describe('POST /api/scan', () => {
             });
             expect(processCheckin).not.toHaveBeenCalled();
             expect(processCheckout).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            ['without a scannedAt', { scannedAt: undefined }],
+            ['with an unparseable scannedAt', { scannedAt: 'not-a-date' }],
+        ])('parks a replay %s as having no scan time, its server-now time marked suspect', async (_label, overrides) => {
+            (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
+            const res = await POST(replayReq({ intent: 'OUT', ...overrides }));
+            expect((await res.json()).type).toBe('parked');
+            expect(prisma.rawBadgeLog.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({ personId: 1, reviewReason: 'client_dead:no_scan_time' }),
+            });
+            expect(prisma.presenceEvent.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({ direction: 'OUT', clockSuspect: true }),
+            });
+            expect(processCheckout).not.toHaveBeenCalled();
+        });
+
+        it('treats a replay whose scan-time uncertainty is implausibly wide as a suspect clock, without a close lookup', async () => {
+            (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
+            const res = await POST(replayReq({ protocolVersion: SCAN_PROTOCOL_VERSION, scanTimeUncertaintyMs: 1e16 }));
+            expect(res.status).toBe(200);
+            expect((await res.json()).type).toBe('parked');
+            expect(prisma.rawBadgeLog.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({ personId: 1, reviewReason: 'clock_suspect' }),
+            });
+        });
+
+        it('keys a replay parked for having no clientEventId by its body, so a resend dedups', async () => {
+            (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
+            const body = { clientEventId: undefined, scannedAt: '2026-11-01T10:00:00.000Z', intent: 'IN' };
+
+            await POST(replayReq(body));
+            const key = (prisma.rawBadgeLog.create as jest.Mock).mock.calls[0][0].data.clientEventId;
+            expect(key).toMatch(/^body:[0-9a-f]{64}$/);
+
+            jest.clearAllMocks();
+            (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue({ id: 5, clientEventId: key });
+            const res = await POST(replayReq(body));
+            expect((await res.json()).type).toBe('duplicate_ignored');
+            expect(prisma.rawBadgeLog.findUnique).toHaveBeenCalledWith({ where: { clientEventId: key } });
+            expect(prisma.rawBadgeLog.create).not.toHaveBeenCalled();
+        });
+
+        it.each([
+            ['a parked replay', 'dead', { clientEventId: undefined }],
+            ['a dead-lettered scan', 'dead', { replay: undefined, dead: true }],
+            ['a replay', 'replay', {}],
+        ])('traces %s in the %s slot', async (_label, slot, overrides) => {
+            (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
+            (prisma.visit.aggregate as jest.Mock).mockResolvedValue({ _max: { arrivedAt: null, departedAt: null } });
+            (prisma.visit.findFirst as jest.Mock).mockResolvedValue(null);
+            (processCheckin as jest.Mock).mockResolvedValue(checkedIn);
+            await POST(replayReq(overrides));
+            expect(specTrace).toHaveBeenCalledWith('ScanRequest', expect.objectContaining({ slot }));
         });
 
         it.each([
@@ -968,6 +1076,80 @@ describe('POST /api/scan', () => {
             const res = await replay(new Date(Date.now() + 30_000));
             expect(res.status).toBe(200);
             expect(processCheckin).toHaveBeenCalled();
+        });
+    });
+
+    describe('records the kiosk key\'s protocol version', () => {
+        const keyFingerprint = '0123456789abcdef';
+        const scanReq = (fields: Record<string, unknown>) => new Request('http://localhost/api/scan', {
+            method: 'POST',
+            body: JSON.stringify({ participantId: 1, ...fields }),
+        }) as unknown as import('next/server').NextRequest;
+        // The kiosk-protocol-seen write is fire-and-forget from the finally; let its promise settle.
+        const settle = () => new Promise(resolve => setImmediate(resolve));
+
+        beforeEach(() => {
+            (authenticateRequest as jest.Mock).mockResolvedValue({ type: 'kiosk', keyFingerprint });
+            (prisma.person.findUnique as jest.Mock).mockResolvedValue({ id: 1 });
+            (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue(null);
+            (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
+            (prisma.visit.aggregate as jest.Mock).mockResolvedValue({ _max: { arrivedAt: null, departedAt: null } });
+            (prisma.visit.findFirst as jest.Mock).mockResolvedValue(null);
+            (processCheckin as jest.Mock).mockResolvedValue(checkedIn);
+            (recordKioskProtocolSeen as jest.Mock).mockResolvedValue(undefined);
+        });
+
+        const recorded = () => (recordKioskProtocolSeen as jest.Mock).mock.calls;
+
+        it('records the version under the key fingerprint', async () => {
+            const res = await POST(scanReq({ protocolVersion: 6 }));
+            expect(res.status).toBe(200);
+            expect(recorded()).toEqual([[keyFingerprint, 6]]);
+        });
+
+        it('records an absent version as 1', async () => {
+            await POST(scanReq({}));
+            expect(recorded()[0][1]).toBe(1);
+        });
+
+        it('records nothing for a request refused with 400', async () => {
+            const res = await POST(scanReq({ protocolVersion: 0 }));
+            expect(res.status).toBe(400);
+            expect(recordKioskProtocolSeen).not.toHaveBeenCalled();
+        });
+
+        it('records nothing for a replay whose own version is invalid', async () => {
+            await POST(scanReq({ replay: true, clientEventId: 'evt-pv', scannedAt: new Date().toISOString(), protocolVersion: '2' }));
+            expect(recordKioskProtocolSeen).not.toHaveBeenCalled();
+        });
+
+        it('records a newer version from a replay refused with 426', async () => {
+            const newer = SCAN_PROTOCOL_VERSION + 1;
+            const res = await POST(scanReq({ replay: true, clientEventId: 'evt-new', scannedAt: new Date().toISOString(), protocolVersion: newer }));
+            expect(res.status).toBe(426);
+            expect(recorded()[0][1]).toBe(newer);
+        });
+
+        it('records a newer version from an accepted live scan', async () => {
+            const newer = SCAN_PROTOCOL_VERSION + 1;
+            const res = await POST(scanReq({ protocolVersion: newer }));
+            expect(res.status).toBe(200);
+            expect(recorded()[0][1]).toBe(newer);
+        });
+
+        it('records nothing for a kiosk with no key fingerprint', async () => {
+            (authenticateRequest as jest.Mock).mockResolvedValue({ type: 'kiosk' });
+            await POST(scanReq({ protocolVersion: 6 }));
+            expect(recordKioskProtocolSeen).not.toHaveBeenCalled();
+        });
+
+        it('still answers the scan when the write fails, and logs the failure', async () => {
+            (recordKioskProtocolSeen as jest.Mock).mockRejectedValue(new Error('db down'));
+            const res = await POST(scanReq({ protocolVersion: 6 }));
+            expect(res.status).toBe(200);
+            expect(processCheckin).toHaveBeenCalled();
+            await settle();
+            expect(logger.error).toHaveBeenCalledWith('Failed to record kiosk protocol version:', expect.any(Error));
         });
     });
 });

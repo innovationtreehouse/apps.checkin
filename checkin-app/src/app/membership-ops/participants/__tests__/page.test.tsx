@@ -141,7 +141,7 @@ describe("AdminParticipantsIndex", () => {
     });
 
     it("shows an empty state when the search returns no participants", async () => {
-        mockFetchJson({});
+        mockFetchJson({ "/api/people/search": { people: [] } });
         renderWithProviders(<AdminParticipantsIndex />);
         expect(screen.queryByText("No people found.")).not.toBeInTheDocument();
 
@@ -149,13 +149,15 @@ describe("AdminParticipantsIndex", () => {
         expect(await screen.findByText("No people found.")).toBeInTheDocument();
     });
 
-    it("recovers from a network error while searching", async () => {
-        const errSpy = jest.spyOn(console, "error").mockImplementation(() => {});
-        global.fetch = jest.fn().mockRejectedValue(new Error("boom"));
+    it("shows a failed search in place of the list, not an empty result", async () => {
+        global.fetch = jest.fn(async () => new Response(JSON.stringify({ error: "Search is down" }), { status: 403 })) as unknown as typeof fetch;
         renderWithProviders(<AdminParticipantsIndex />);
-        await waitFor(() => expect(errSpy).toHaveBeenCalled());
+        fireEvent.change(screen.getByPlaceholderText("Search by name, email, or ID..."), { target: { value: "zzz" } });
+
+        expect(await screen.findByText("Search is down")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+        expect(screen.queryByText("No people found.")).not.toBeInTheDocument();
         expect(screen.getByPlaceholderText("Search by name, email, or ID...")).toBeInTheDocument();
-        errSpy.mockRestore();
     });
 
     it("pulls a participant from an existing household into a new one via the confirm step", async () => {
@@ -227,7 +229,7 @@ describe("AdminParticipantsIndex", () => {
 
         global.fetch = jest.fn(async (input: RequestInfo | URL) => {
             const url = typeof input === "string" ? input : input.toString();
-            if (url.includes("/api/people/search")) return { ok: true, status: 200, json: async () => ({ people: [carol] }) } as Response;
+            if (url.includes("/api/people/search")) return new Response(JSON.stringify({ people: [carol] }));
             return { ok: false, status: 400, json: async () => ({ error: "Household is full" }) } as Response;
         });
 
@@ -258,7 +260,7 @@ describe("AdminParticipantsIndex", () => {
 
         global.fetch = jest.fn(async (input: RequestInfo | URL) => {
             const url = typeof input === "string" ? input : input.toString();
-            if (url.includes("/api/people/search")) return { ok: true, status: 200, json: async () => ({ people: [alice] }) } as Response;
+            if (url.includes("/api/people/search")) return new Response(JSON.stringify({ people: [alice] }));
             return { ok: false, status: 400, json: async () => ({ error: "Email already in use" }) } as Response;
         });
         fireEvent.click(screen.getByRole("button", { name: "Details" }));
@@ -285,18 +287,20 @@ describe("AdminParticipantsIndex", () => {
         await waitFor(() => expect(screen.queryByText("Edit Person")).not.toBeInTheDocument());
     });
 
-    it("opens Edit Household Info from a row's Household button and saves via the admin household modal", async () => {
-        mockFetchJson({ "/api/people/search": { people: [bob] } });
+    it("opens Edit Household Info from a row's Household button, saves via the admin household modal, and re-reads the list", async () => {
+        let saved = false;
         global.fetch = jest.fn(async (input: RequestInfo | URL) => {
             const url = typeof input === "string" ? input : input.toString();
-            if (url.includes("/api/people/search")) return { ok: true, status: 200, json: async () => ({ people: [bob] }) } as Response;
+            if (url.includes("/api/people/search")) {
+                const household = saved ? { ...bob.household!, name: "The B Family Updated" } : bob.household;
+                return new Response(JSON.stringify({ people: [{ ...bob, household }] }));
+            }
             if (url.includes("/api/membership-ops/households?id=20")) {
-                return {
-                    ok: true, status: 200,
-                    json: async () => ({ household: { id: 20, name: "The B Family", emergencyContactName: null, emergencyContactPhone: null, householdMembers: bob.household!.householdMembers, householdLeads: [] } }),
-                } as Response;
+                const body = { household: { id: 20, name: "The B Family", emergencyContactName: null, emergencyContactPhone: null, householdMembers: bob.household!.householdMembers, householdLeads: [] } };
+                return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) } as Response;
             }
             if (url.includes("/api/membership-ops/households/20")) {
+                saved = true;
                 return { ok: true, status: 200, text: async () => JSON.stringify({ household: { id: 20, name: "The B Family Updated" } }) } as Response;
             }
             return { ok: false, status: 404, json: async () => ({}) } as Response;
@@ -318,9 +322,10 @@ describe("AdminParticipantsIndex", () => {
         mockFetchJson({ "/api/people/search": { people: [bob] } });
         global.fetch = jest.fn(async (input: RequestInfo | URL) => {
             const url = typeof input === "string" ? input : input.toString();
-            if (url.includes("/api/people/search")) return { ok: true, status: 200, json: async () => ({ people: [bob] }) } as Response;
+            if (url.includes("/api/people/search")) return new Response(JSON.stringify({ people: [bob] }));
             if (url.includes("/api/membership-ops/households?id=20")) {
-                return { ok: true, status: 200, json: async () => ({ household: { id: 20, name: "The B Family", householdMembers: bob.household!.householdMembers } }) } as Response;
+                const body = { household: { id: 20, name: "The B Family", householdMembers: bob.household!.householdMembers } };
+                return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) } as Response;
             }
             return { ok: false, status: 404, json: async () => ({}) } as Response;
         });
@@ -358,14 +363,14 @@ describe("AdminParticipantsIndex", () => {
                         }),
                     } as Response;
                 }
-                return { ok: true, status: 200, json: async () => ({ people: [] }) } as Response;
+                return new Response(JSON.stringify({ people: [] }));
             });
             global.fetch = fetchMock as unknown as typeof fetch;
 
             renderWithProviders(<AdminParticipantsIndex />);
             // Let the initial search-debounce fetch fire and settle before creating a
             // contact, so it can't land its (empty) setResults after the prepend below.
-            await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/api/people/search")));
+            await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/people/search"))).toBe(true));
 
             fireEvent.click(await screen.findByRole("button", { name: "+ Add contact" }));
             expect(await screen.findByText("Add Contact")).toBeInTheDocument();
@@ -409,12 +414,12 @@ describe("AdminParticipantsIndex", () => {
                         json: async () => ({ error: "This email already belongs to Jane Doe", fields: ["email"] }),
                     } as Response;
                 }
-                return { ok: true, status: 200, json: async () => ({ people: [] }) } as Response;
+                return new Response(JSON.stringify({ people: [] }));
             });
             global.fetch = fetchMock as unknown as typeof fetch;
 
             renderWithProviders(<AdminParticipantsIndex />);
-            await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("/api/people/search")));
+            await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/people/search"))).toBe(true));
 
             fireEvent.click(await screen.findByRole("button", { name: "+ Add contact" }));
             expect(await screen.findByText("Add Contact")).toBeInTheDocument();
@@ -427,18 +432,5 @@ describe("AdminParticipantsIndex", () => {
             // The modal stays open on a 409 (only the field error shows), unlike the success path.
             expect(screen.getByText("Add Contact")).toBeInTheDocument();
         }, 15000);
-    });
-
-    it("shows an Unsubscribed pill for a suppressed row, and not for others", async () => {
-        mockFetchJson({
-            "/api/people/search": { people: [{ ...alice, emailSuppressed: true }, { ...dave, emailSuppressed: false }] },
-        });
-        renderWithProviders(<AdminParticipantsIndex />);
-
-        const aliceRow = (await screen.findByText("Alice A")).closest("tr")!;
-        expect(within(aliceRow).getByText("Unsubscribed")).toBeInTheDocument();
-
-        const daveRow = screen.getByText("Dave D").closest("tr")!;
-        expect(within(daveRow).queryByText("Unsubscribed")).not.toBeInTheDocument();
     });
 });

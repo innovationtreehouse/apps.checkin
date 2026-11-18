@@ -17,7 +17,9 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async ()
 
     const households = await prisma.household.findMany({
         where: { id: { in: ids } },
-        include: {
+        select: {
+            id: true,
+            name: true,
             householdMembers: {
                 where: { isHouseholdLead: true },
                 select: { id: true, name: true, phone: true, email: true },

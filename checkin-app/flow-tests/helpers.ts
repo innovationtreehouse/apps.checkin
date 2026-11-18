@@ -55,6 +55,11 @@ export async function loginAs(email: string): Promise<Session> {
     return { jar, personaId: persona.id };
 }
 
+/** A QuickBooks Class id no other bucket holds: a bucket is created with its own Class. */
+export function newClassId(): string {
+    return `${Date.now()}${Math.floor(Math.random() * 1e6)}`;
+}
+
 /** Fetch JSON from the running server, attaching a session's cookies when given. */
 export async function api<T = unknown>(
     session: Session | null,
@@ -86,7 +91,7 @@ export async function differentPurchases<T = unknown>(finance: Session, receiptI
 export type QueuedReview = {
     id: number;
     subjectPerson: { id: number } | null;
-    requestedForHousehold: { intakeNotes?: string | null; householdMembers: { id: number }[] } | null;
+    requestedForHousehold: { householdMembers: { id: number }[] } | null;
 };
 
 /**

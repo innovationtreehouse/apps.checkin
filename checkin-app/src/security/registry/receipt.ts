@@ -1,17 +1,19 @@
 // Receipt library route policy. Aggregated by ../registry.ts.
 import { defineFileRoute, defineRoute, type OrderedViewEntry } from '../core';
 
-// Submitters are adult members or Treehouse Volunteers (`receipt-submitter`,
-// docs/rules/expenses.md) and read only their own receipts: `their_own` resolves on the row's uploadedByUserId against
+// Submitters are adult members or Treehouse Volunteers (`receipt-submitter`)
+// and read only their own receipts: `their_own` resolves on the row's uploadedByUserId against
 // the session id, and grants no pii, so donor and reimbursee names
-// never come back to the uploader. FINANCE acts org-wide; BOARD reads alongside
+// never come back to the uploader. Both views carry a bare `public` token for the receipt ids, which admits every `public`
+// field on every returned row with no row gate; receipt ids are the only such fields today
+// (__tests__/receipt-public-fields.test.ts). FINANCE acts org-wide; BOARD reads alongside
 // FINANCE (finance's superuser) but takes no finance action. Sysadmins get
 // nothing extra (revenue.md), except the automatic-reading switch below, which
 // the owner opened to sysadmins (expenses.md). A route shared by both audiences lists
 // isFinance first; the route passes `access: "finance"` to the library exactly
 // when that view matched, else `"submitter"`.
-const FINANCE = ['everyones:pii', 'everyones:personal', 'everyones:internal'] as const;
-const OWN = ['their_own:personal', 'their_own:internal'] as const;
+const FINANCE = ['everyones:pii', 'everyones:personal', 'everyones:internal', 'public'] as const;
+const OWN = ['their_own:personal', 'their_own:internal', 'public'] as const;
 
 const SUBMITTER_VIEW: readonly OrderedViewEntry[] = [['authenticated', OWN]];
 const SHARED_VIEW: readonly OrderedViewEntry[] = [['isFinance', FINANCE], ['authenticated', OWN]];
@@ -55,7 +57,7 @@ defineRoute({ endpoint: 'GET /api/receipts/reimbursements', authorize: 'authenti
 
 // Shared: a submitter on their own receipt, or FINANCE on any.
 defineRoute({ endpoint: 'GET /api/receipts/needs-attention', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SHARED_VIEW, financeView: { records: [{ key: 'ReceiptView', id: 'id', model: 'Receipt' }] } });
-defineRoute({ endpoint: 'GET /api/receipts/[id]', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView', 'ReceiptLineView'], orderedView: SHARED_READ_VIEW, financeView: { records: [{ key: 'ReceiptView', id: 'id', model: 'Receipt' }] } });
+defineRoute({ endpoint: 'GET /api/receipts/[id]', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView', 'ReceiptLineView', 'ReceiptDuplicateNotice'], orderedView: SHARED_READ_VIEW, financeView: { records: [{ key: 'ReceiptView', id: 'id', model: 'Receipt' }] } });
 // Anyone who may view the receipt's file turns its image; a display setting, not an edit.
 defineRoute({ endpoint: 'PUT /api/receipts/[id]/rotation', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SHARED_READ_VIEW });
 defineRoute({ endpoint: 'PATCH /api/receipts/[id]', authorize: 'receipt-submitter', envelope: null, returns: ['ReceiptView'], orderedView: SHARED_VIEW });
@@ -109,7 +111,7 @@ defineRoute({ endpoint: 'POST /api/receipts/mail-items/[id]/discard', authorize:
 defineRoute({ endpoint: 'GET /api/receipts/mail-items/catch-up', authorize: 'finance', envelope: null, returns: ['ReceiptMailCatchUp'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/mail-items/catch-up', authorize: 'finance', envelope: null, returns: ['ReceiptMailCatchUp'], orderedView: FINANCE_VIEW });
 
-// Mail aliases (docs/rules/people-households.md): the extra addresses a person's
+// Mail aliases: the extra addresses a person's
 // receipt mail may come from. FINANCE and the BOARD list, add, remove and
 // approve them, and nobody else reads them, so no `their_own` view. The address
 // is `pii`, like Person.email.

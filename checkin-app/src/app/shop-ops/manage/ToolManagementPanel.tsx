@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from 'react';
-import { LoadError } from '@checkin/component-ui';
+import { errorMessage, LoadError, showError, showSuccess } from '@checkin/component-ui';
 import { useRequireRole } from '@/hooks/useRequireRole';
-import { useLoad } from '@/lib/api';
+import { api, useLoad } from '@/lib/api';
 import { Alert, Anchor, Button, Card, Center, Group, Loader, Modal, Select, Stack, Table, Tabs, Text, TextInput } from '@mantine/core';
 import { ToolLevelBadge, toToolLevel, toolLevelDot, toolLevelLabel } from '@/components/ToolLevelBadge';
 import { ScrollableTabsList } from '@/components/ui/ScrollableTabsList';
@@ -41,13 +41,12 @@ const LEVEL_OPTIONS = [
 ];
 
 function GrantForm({
-  tools, members, prefillToolId, prefillMemberId, onGranted, saving, setSaving, canGrantCertifier,
+  tools, members, prefillToolId, prefillMemberId, saving, setSaving, canGrantCertifier,
 }: {
   tools: Tool[];
   members: Member[];
   prefillToolId?: number;
   prefillMemberId?: number;
-  onGranted: (msg: string) => void;
   saving: boolean;
   setSaving: (v: boolean) => void;
   // Only admins/board may grant the Certifier (MAY_CERTIFY_OTHERS) level.
@@ -81,22 +80,15 @@ function GrantForm({
     if (!confirm) return;
     setSaving(true);
     try {
-      const res = await fetch('/api/shop/certifications', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(confirm.payload),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        onGranted(`Certification updated for ${confirm.userName} on ${confirm.toolName}.`);
-        setMemberId(prefillMemberId?.toString() ?? "");
-        setToolId(prefillToolId?.toString() ?? "");
-      } else {
-        onGranted(data.error ?? 'Failed.');
-      }
+      await api('/api/shop/certifications', { method: 'POST', body: JSON.stringify(confirm.payload) });
+      showSuccess(`Certification updated for ${confirm.userName} on ${confirm.toolName}.`);
+      setMemberId(prefillMemberId?.toString() ?? "");
+      setToolId(prefillToolId?.toString() ?? "");
+      setConfirm(null);
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setSaving(false);
-      setConfirm(null);
     }
   };
 
@@ -140,20 +132,17 @@ function GrantForm({
 
 // ---- Tools tab ----
 
-function ToolsTab({ tools, members, isAdmin, isCertifier, onToolsChange }: {
+function ToolsTab({ tools, members, isAdmin, isCertifier }: {
   tools: Tool[];
   members: Member[];
   isAdmin: boolean;
   isCertifier: boolean;
-  onToolsChange: () => void;
 }) {
   const [expanded, setExpanded] = useState<number | null>(null);
   const { data: certsAnswer, error: certsError, reload: reloadCerts } = useLoad<Certification[]>(expanded === null ? null : `/api/shop/certifications?toolId=${expanded}`);
   const certs = certsAnswer ?? [];
   const [editingGuide, setEditingGuide] = useState<{ id: number; value: string } | null>(null);
   const [savingGuide, setSavingGuide] = useState(false);
-  const [msg, setMsg] = useState("");
-  const [grantMsg, setGrantMsg] = useState("");
   const [grantSaving, setGrantSaving] = useState(false);
   const [search, setSearch] = useState("");
 
@@ -163,19 +152,11 @@ function ToolsTab({ tools, members, isAdmin, isCertifier, onToolsChange }: {
     if (!editingGuide) return;
     setSavingGuide(true);
     try {
-      const res = await fetch(`/api/shop/tools/${editingGuide.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ safetyGuide: editingGuide.value }),
-      });
-      if (res.ok) {
-        setMsg("Safety guide updated.");
-        setEditingGuide(null);
-        onToolsChange();
-        if (expanded === editingGuide.id) reloadCerts();
-      } else {
-        setMsg("Failed to update.");
-      }
+      await api(`/api/shop/tools/${editingGuide.id}`, { method: 'PATCH', body: JSON.stringify({ safetyGuide: editingGuide.value }) });
+      showSuccess("Safety guide updated.");
+      setEditingGuide(null);
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setSavingGuide(false);
     }
@@ -185,8 +166,6 @@ function ToolsTab({ tools, members, isAdmin, isCertifier, onToolsChange }: {
 
   return (
     <div>
-      {msg && <Alert color="cyan" mb="md">{msg}</Alert>}
-
       <Group mb="md" align="center" wrap="wrap">
         <TextInput placeholder="Search tools..." value={search} onChange={e => setSearch(e.currentTarget.value)} style={{ flex: '1 1 220px' }} />
       </Group>
@@ -207,7 +186,7 @@ function ToolsTab({ tools, members, isAdmin, isCertifier, onToolsChange }: {
                   <Text size="sm" c="dimmed">No guide</Text>
                 )}
                 {isAdmin && (
-                  <Button size="compact-xs" variant="default" onClick={(e) => { e.stopPropagation(); setEditingGuide({ id: tool.id, value: tool.safetyGuide ?? '' }); setMsg(""); }}>
+                  <Button size="compact-xs" variant="default" onClick={(e) => { e.stopPropagation(); setEditingGuide({ id: tool.id, value: tool.safetyGuide ?? '' }); }}>
                     Edit guide
                   </Button>
                 )}
@@ -234,10 +213,8 @@ function ToolsTab({ tools, members, isAdmin, isCertifier, onToolsChange }: {
                       )}
                       {isCertifier && (
                         <>
-                          {grantMsg && <Text size="sm" c="cyan" mb="sm">{grantMsg}</Text>}
                           <GrantForm tools={tools} members={members} prefillToolId={tool.id}
                             canGrantCertifier={isAdmin}
-                            onGranted={m => { setGrantMsg(m); reloadCerts(); }}
                             saving={grantSaving} setSaving={setGrantSaving} />
                         </>
                       )}
@@ -268,7 +245,6 @@ function PersonTab({ members, tools, isCertifier, isAdmin }: { members: Member[]
   const { data: certsAnswer, error: certsError, reload: reloadCerts } = useLoad<Certification[]>(expanded === null ? null : `/api/shop/certifications?personId=${expanded}`);
   const certs = certsAnswer ?? [];
   const [search, setSearch] = useState("");
-  const [grantMsg, setGrantMsg] = useState("");
   const [grantSaving, setGrantSaving] = useState(false);
 
   const toggle = (memberId: number) => setExpanded(expanded === memberId ? null : memberId);
@@ -313,10 +289,8 @@ function PersonTab({ members, tools, isCertifier, isAdmin }: { members: Member[]
                       )}
                       {isCertifier && (
                         <>
-                          {grantMsg && <Text size="sm" c="cyan" mb="sm">{grantMsg}</Text>}
                           <GrantForm tools={tools} members={members} prefillMemberId={member.id}
                             canGrantCertifier={isAdmin}
-                            onGranted={m => { setGrantMsg(m); reloadCerts(); }}
                             saving={grantSaving} setSaving={setGrantSaving} />
                         </>
                       )}
@@ -506,7 +480,7 @@ export function ToolManagementPanel() {
       </ScrollableTabsList>
 
       <Tabs.Panel value="tools">
-        {toolsAnswer !== null && <ToolsTab tools={tools} members={members} isAdmin={!!isAdmin} isCertifier={!!isCertifier} onToolsChange={reloadTools} />}
+        {toolsAnswer !== null && <ToolsTab tools={tools} members={members} isAdmin={!!isAdmin} isCertifier={!!isCertifier} />}
       </Tabs.Panel>
       <Tabs.Panel value="person">
         {membersAnswer !== null && <PersonTab members={members} tools={tools} isCertifier={!!isCertifier} isAdmin={!!isAdmin} />}

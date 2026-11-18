@@ -4,6 +4,7 @@ import type { Prisma, OrgMembershipProcess } from "@/generated/prisma/client";
 import { certifyPaymentPlan, PaymentError } from "@/lib/membership/payment";
 import { IN_FLIGHT_INITIAL, IN_FLIGHT_RENEWAL, settledThisCycleWhere } from "@/lib/membership/lifecycle";
 import type { DbClient } from "@/lib/db-client";
+import { lockLiveHouseholds } from "@/lib/household/archiveGuard";
 import { ensureHouseholdMembership, raiseDeniedHouseholdActivity, type HouseholdStatus } from "@/lib/membership/householdStatus";
 import { householdApplicationOpenOrBlockedWhere, createRenewalProcess, liveMembershipYear } from "@/lib/membership/renewal";
 
@@ -69,17 +70,8 @@ export async function grantMembership(
         if (existing.status !== "PENDING_PAYMENT") {
             throw new PaymentError("wrong_phase", `The household's application is at ${existing.status}; it can be granted once it reaches payment.`);
         }
+        // The certify row records the reason and the granted year in its own transaction.
         await certifyPaymentPlan(existing.id, actor.actorId, { reason: actor.reason, year });
-        await prisma.auditLog.create({
-            data: {
-                actorId: actor.actorId,
-                action: "EDIT",
-                tableName: "OrgMembershipProcess",
-                affectedEntityId: existing.id,
-                secondaryAffectedEntity: householdId,
-                newData: { grantedYear: year, reason: actor.reason },
-            },
-        });
         return { paid: true, process: await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: existing.id } }) };
     }
 
@@ -125,6 +117,7 @@ async function openInitial(
             const [locked] = await tx.$queryRaw<{ status: HouseholdStatus }[]>`SELECT status FROM "OrgMembership" WHERE id = ${orgMembershipId} FOR UPDATE`;
             if (locked?.status === "DENIED") return "denied" as const;
             if (locked?.status === "ACTIVE") return "active" as const;
+            await lockLiveHouseholds(tx, [householdId]);
             const open = await tx.orgMembershipProcess.findMany({
                 where: { orgMembershipId, ...householdApplicationOpenOrBlockedWhere },
                 orderBy: { id: "desc" },

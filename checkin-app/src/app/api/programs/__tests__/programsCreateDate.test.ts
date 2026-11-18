@@ -6,11 +6,22 @@
  *    (not null), and the response carries them back so the client can redirect.
  * 2. Stores those date-only strings at the calendar-date convention (UTC
  *    midnight), which formatDateOnly renders back as the picked date.
+ * 3. Refuses a name that is not a string, blank, or over 250 characters, and
+ *    saves it trimmed.
  */
 
 import { POST } from '@/app/api/programs/route';
 import { getServerSession } from 'next-auth/next';
 import { formatDateOnly } from '@/lib/time';
+import prisma from '@/lib/prisma';
+import { ArchivedHouseholdError, lockLiveHouseholdsOf } from '@/lib/household/archiveGuard';
+
+// The archived-household guard has its own tests; here every household is live.
+jest.mock("@/lib/household/archiveGuard", () => ({
+    ...jest.requireActual("@/lib/household/archiveGuard"),
+    lockLiveHouseholds: jest.fn(),
+    lockLiveHouseholdsOf: jest.fn(),
+}));
 
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
@@ -32,11 +43,13 @@ jest.mock('@/lib/logger', () => ({
 const mockProgramCreate = jest.fn();
 const mockAuditLogCreate = jest.fn().mockResolvedValue({});
 
-jest.mock('@/lib/prisma', () => ({
-    __esModule: true,
-    default: {
+jest.mock('@/lib/prisma', () => {
+    const db = {
         person: {
             findUnique: jest.fn().mockResolvedValue({ dateOfBirth: null, isDeclaredAdult: true }),
+        },
+        household: {
+            count: jest.fn().mockResolvedValue(1),
         },
         program: {
             create: (...args: unknown[]) => mockProgramCreate(...args),
@@ -47,8 +60,46 @@ jest.mock('@/lib/prisma', () => ({
         boardSettings: {
             findUnique: jest.fn().mockResolvedValue({ orgMembershipYearBoundary: new Date('2000-09-01T00:00:00Z') }),
         },
-    },
-}));
+        $transaction: (fn: (tx: unknown) => unknown) => fn(db),
+    };
+    return { __esModule: true, default: db };
+});
+
+describe('POST /api/programs — name', () => {
+    const post = (name: unknown) => POST(new Request('http://localhost/api/programs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, leadMentorId: 7, startAt: '2024-09-01', endAt: '2024-12-15', maxParticipants: 5 }),
+    }) as unknown as import('next/server').NextRequest);
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: 1, isBoardMember: true } });
+        mockProgramCreate.mockResolvedValue({ id: 45, name: 'x' });
+    });
+
+    it.each([
+        ['a number', 123],
+        ['an object', { first: 'x' }],
+        ['whitespace only', '   '],
+        ['251 characters', 'a'.repeat(251)],
+    ])('refuses %s', async (_label, name) => {
+        const res = await post(name);
+        expect(res.status).toBe(400);
+        expect(mockProgramCreate).not.toHaveBeenCalled();
+    });
+
+    it('accepts 250 characters', async () => {
+        const name = 'a'.repeat(250);
+        expect((await post(name)).status).toBe(200);
+        expect(mockProgramCreate.mock.calls[0][0].data.name).toBe(name);
+    });
+
+    it('saves the trimmed name', async () => {
+        expect((await post('  Woodshop  ')).status).toBe(200);
+        expect(mockProgramCreate.mock.calls[0][0].data.name).toBe('Woodshop');
+    });
+});
 
 describe('POST /api/programs — startAt/endAt date preservation', () => {
     const adminSession = {
@@ -231,5 +282,33 @@ describe('POST /api/programs — startAt/endAt date preservation', () => {
             expect(mockProgramCreate).not.toHaveBeenCalled();
         });
 
+    });
+});
+
+describe('POST /api/programs — a leader in an archived household', () => {
+    const create = () => POST(new Request('http://localhost/api/programs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Test Program', leadMentorId: 7, startAt: '2024-09-01', endAt: '2024-12-15', maxParticipants: 50 }),
+    }) as unknown as import('next/server').NextRequest);
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: 1, isBoardMember: true } });
+    });
+
+    it('is refused before anything is created', async () => {
+        (prisma.household.count as jest.Mock).mockResolvedValueOnce(0);
+        const res = await create();
+        expect(res.status).toBe(409);
+        expect((await res.json()).error).toContain('archived');
+        expect(mockProgramCreate).not.toHaveBeenCalled();
+    });
+
+    it('is refused when the household is archived while the program is being created', async () => {
+        (lockLiveHouseholdsOf as jest.Mock).mockRejectedValueOnce(new ArchivedHouseholdError());
+        const res = await create();
+        expect(res.status).toBe(409);
+        expect(mockProgramCreate).not.toHaveBeenCalled();
     });
 });

@@ -7,7 +7,7 @@
  * `ensureHouseholdMembership`. `noRawStatusWrites.test.ts` fails CI on any other
  * status write under src/.
  *
- * Rules (owner, 2026-10-12 — docs/rules/membership.md):
+ * Rules (owner, 2026-10-12):
  *   - only an application converging (paid + check cleared) makes a household ACTIVE;
  *   - ACTIVE stops only by REVOKED or DENIED; nothing returns ACTIVE/REVOKED to NONE;
  *   - DENIED never becomes ACTIVE; its only exit is the board's restore to NONE;
@@ -22,6 +22,7 @@
 import type { Prisma, OrgMembershipStatus } from "@/generated/prisma/client";
 import { withTx, type DbClient, type TxClient } from "@/lib/db-client";
 import type { AuditActor } from "@/lib/auditActor";
+import { lockLiveHouseholds } from "@/lib/household/archiveGuard";
 import { fromStatusWhere, isLegalTransition, type Transition, type Expect, type Equal } from "@/lib/lifecycle";
 
 export type HouseholdStatus = "NONE" | "ACTIVE" | "REVOKED" | "DENIED";
@@ -57,12 +58,20 @@ export function fromWhere(from: HouseholdStatus | readonly HouseholdStatus[]): W
     return fromStatusWhere<Where>(typeof from === "string" ? [from] : from);
 }
 
-/** ∅→NONE: the household's membership row, created at NONE if missing. Never changes an existing row. */
-export async function ensureHouseholdMembership(db: DbClient, householdId: number): Promise<{ id: number; status: HouseholdStatus }> {
-    // ON CONFLICT DO NOTHING waits out a concurrent insert without raising: a unique
-    // violation would abort a caller's transaction, leaving it unable to read the winner.
-    await db.orgMembership.createMany({ data: { householdId }, skipDuplicates: true });
-    return db.orgMembership.findUniqueOrThrow({ where: { householdId }, select: { id: true, status: true } });
+/**
+ * ∅→NONE: the household's membership row, created at NONE if missing. Never changes an
+ * existing row. Refuses an archived household, locking the membership row before the
+ * household row, the order archiving takes them in.
+ */
+export async function ensureHouseholdMembership(client: DbClient, householdId: number): Promise<{ id: number; status: HouseholdStatus }> {
+    return withTx(client, async (db) => {
+        await db.$queryRaw`SELECT id FROM "OrgMembership" WHERE "householdId" = ${householdId} FOR UPDATE`;
+        await lockLiveHouseholds(db, [householdId]);
+        // ON CONFLICT DO NOTHING waits out a concurrent insert without raising: a unique
+        // violation would abort a caller's transaction, leaving it unable to read the winner.
+        await db.orgMembership.createMany({ data: { householdId }, skipDuplicates: true });
+        return db.orgMembership.findUniqueOrThrow({ where: { householdId }, select: { id: true, status: true } });
+    });
 }
 
 /**

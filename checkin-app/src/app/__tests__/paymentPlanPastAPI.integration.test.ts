@@ -19,6 +19,8 @@ import { POST as MembershipRefuse } from '@/app/api/finance-ops/membership-payme
 import { GET as MembershipPast } from '@/app/api/finance-ops/membership-payment-plans/past/route';
 import { DELETE as ParticipantExit } from '@/app/api/programs/[id]/participants/route';
 import prisma from '@/lib/prisma';
+import { PROGRAM_DECISION_AUDIT } from '@/lib/finance/paymentPlanHistory';
+import type { Prisma } from '@/generated/prisma/client';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 jest.mock('@/lib/email');
@@ -155,6 +157,29 @@ describe('program payment plans — Past', () => {
     });
 
     it('lists each decision once, though both places were later withdrawn', async () => {
+        asFinance();
+        const rows = await mine();
+        expect(rows.filter((r) => r.personId === approvedId).map((r) => r.outcome)).toEqual(['APPROVED']);
+        expect(rows.filter((r) => r.personId === refusedId).map((r) => r.outcome)).toEqual(['REFUSED']);
+    });
+
+    it('loads only decision audits from the database, not enrollment snapshots', async () => {
+        const [approved, refused] = await Promise.all(
+            [approvedId, refusedId].map((personId) => prisma.programParticipant.findUniqueOrThrow({ where: { programId_personId: { programId, personId } } })),
+        );
+        const snapshot = (newData: Prisma.InputJsonObject, personId: number) =>
+            ({ actorId: boardId, action: 'EDIT' as const, tableName: 'ProgramParticipant', affectedEntityId: personId, secondaryAffectedEntity: programId, newData });
+        await prisma.auditLog.createMany({
+            data: [
+                snapshot({ ...approved, status: 'ACTIVE' }, approvedId),
+                snapshot({ ...refused, reason: 'refund restocked the seat after withdrawal' }, refusedId),
+                snapshot({ ...refused, status: 'ACTIVE', wasOrgMemberAtApproval: false }, refusedId),
+            ],
+        });
+
+        const loaded = await prisma.auditLog.findMany({ where: { AND: [PROGRAM_DECISION_AUDIT, { secondaryAffectedEntity: programId }] }, select: { affectedEntityId: true } });
+        expect(loaded.map((a) => a.affectedEntityId).sort()).toEqual([approvedId, refusedId].sort());
+
         asFinance();
         const rows = await mine();
         expect(rows.filter((r) => r.personId === approvedId).map((r) => r.outcome)).toEqual(['APPROVED']);

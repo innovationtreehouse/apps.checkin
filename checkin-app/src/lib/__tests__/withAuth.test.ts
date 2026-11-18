@@ -113,16 +113,16 @@ describe('withAuth', () => {
         expect(handler).not.toHaveBeenCalled();
     });
 
-    it('invokes the handler for a kiosk request on an allowKiosk route', async () => {
+    it('invokes the handler for a kiosk request on an allowKiosk route, carrying the signing key fingerprint', async () => {
         mockPubKeys.mockReturnValue(['key']);
-        mockVerify.mockReturnValue({ ok: true });
+        mockVerify.mockReturnValue({ ok: true, keyFingerprint: '0123456789abcdef' });
         const route = withAuth({ allowKiosk: true }, handler);
         const res = await route(kioskReq());
 
         expect(res.status).toBe(200);
         expect(handler).toHaveBeenCalledTimes(1);
         // calls tuple is typed empty (handler declares no params); cast to read forwarded auth.
-        expect((handler.mock.calls[0] as unknown[])[1]).toEqual({ type: 'kiosk' });
+        expect((handler.mock.calls[0] as unknown[])[1]).toEqual({ type: 'kiosk', keyFingerprint: '0123456789abcdef' });
     });
 
     it('invokes the handler for a session holding a required role', async () => {
@@ -220,6 +220,84 @@ describe('withAuth — ops-stg access gate', () => {
         mockSession.mockResolvedValue({ user: user({ hd: 'gmail.com', emailVerified: true }) });
         const route = withAuth({}, handler);
         const res = await route(sessionReq());
+
+        expect(res.status).toBe(200);
+        expect(handler).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('withAuth — dev instance org gate', () => {
+    const ORIGINAL_ENV = process.env.CHECKIN_ENV;
+    const ORIGINAL_URL = process.env.NEXTAUTH_URL;
+    beforeEach(() => {
+        process.env.CHECKIN_ENV = 'dev';
+        process.env.NEXTAUTH_URL = 'https://ops-dev.innovationtreehouse.org';
+    });
+    afterEach(() => {
+        if (ORIGINAL_ENV === undefined) delete process.env.CHECKIN_ENV;
+        else process.env.CHECKIN_ENV = ORIGINAL_ENV;
+        if (ORIGINAL_URL === undefined) delete process.env.NEXTAUTH_URL;
+        else process.env.NEXTAUTH_URL = ORIGINAL_URL;
+    });
+
+    it('401s a session from a Google account outside the org', async () => {
+        mockSession.mockResolvedValue({ user: user({ hd: null, emailVerified: true }) });
+        const res = await withAuth({}, handler)(sessionReq());
+
+        expect(res.status).toBe(401);
+        expect(handler).not.toHaveBeenCalled();
+    });
+
+    it('401s an org email whose emailVerified is false', async () => {
+        mockSession.mockResolvedValue({ user: user({ hd: ORG_DOMAIN, emailVerified: false }) });
+        const res = await withAuth({}, handler)(sessionReq());
+
+        expect(res.status).toBe(401);
+        expect(handler).not.toHaveBeenCalled();
+    });
+
+    it('admits a verified org member', async () => {
+        mockSession.mockResolvedValue({ user: user({ hd: ORG_DOMAIN, emailVerified: true }) });
+        const res = await withAuth({}, handler)(sessionReq());
+
+        expect(res.status).toBe(200);
+        expect(handler).toHaveBeenCalledTimes(1);
+    });
+
+    it('admits a minted persona carrying the org gate claims', async () => {
+        mockSession.mockResolvedValue({
+            user: user({ hd: ORG_DOMAIN, emailVerified: true, impersonatedBy: 'org@innovationtreehouse.org' }),
+        });
+        const res = await withAuth({}, handler)(sessionReq());
+
+        expect(res.status).toBe(200);
+        expect(handler).toHaveBeenCalledTimes(1);
+    });
+
+    it('admits a keyed kiosk, which carries no session claims', async () => {
+        mockPubKeys.mockReturnValue(['key']);
+        mockVerify.mockReturnValue({ ok: true });
+        const res = await withAuth({ allowKiosk: true }, handler)(kioskReq());
+
+        expect(res.status).toBe(200);
+        expect(handler).toHaveBeenCalledTimes(1);
+    });
+
+    it('is off on dev at localhost, as under plain jest: the same non-org session succeeds', async () => {
+        process.env.NEXTAUTH_URL = 'http://localhost:4000';
+        mockSession.mockResolvedValue({ user: user({ hd: null, emailVerified: true }) });
+        const res = await withAuth({}, handler)(sessionReq());
+
+        expect(res.status).toBe(200);
+        expect(handler).toHaveBeenCalledTimes(1);
+    });
+
+    it('is inert on local: the same non-org session succeeds', async () => {
+        process.env.CHECKIN_ENV = 'local';
+        mockSession.mockResolvedValue({ user: user({ hd: null, emailVerified: true }) });
+        // On local a cookieless request counts as a keyless kiosk, so this one carries a cookie.
+        const req = new Request('http://localhost/api/whatever', { headers: { cookie: 'next-auth.session-token=x' } }) as never;
+        const res = await withAuth({}, handler)(req);
 
         expect(res.status).toBe(200);
         expect(handler).toHaveBeenCalledTimes(1);

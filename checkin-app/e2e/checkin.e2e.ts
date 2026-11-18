@@ -1,6 +1,6 @@
 /**
  * Check-in and check-out in the browser: scans go to the server as the kiosk sends them, and the
- * pages show keyholders, members and the Board what they did (docs/rules/attendance-checkin.md).
+ * pages show keyholders, members and the Board what they did.
  * Who is inside and the latest close are global, so the tests run in order and each one ends with
  * a keyholder's one-badge close. Without a kiosk key the roster reads as unconfirmed.
  */

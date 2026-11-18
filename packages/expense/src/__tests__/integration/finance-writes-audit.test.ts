@@ -4,7 +4,7 @@
  */
 import { beforeEach, expect, it } from "vitest";
 import { describeDb } from "../helpers/db";
-import { bindPorts, catalogResolving, principal, seedExpense, seedLineItem, ORG } from "../helpers/seed";
+import { bindPorts, catalogResolving, principal, seedExpense, seedHold, seedLineItem, ORG } from "../helpers/seed";
 import { db } from "../../db";
 import { expenses, finance } from "../../routes";
 import { resubmitHeldExpense, setHeldLineAccount } from "../../services/holdService";
@@ -47,6 +47,7 @@ describeDb("FINANCE writes are audited", () => {
   it("setting a held line's account records hold_account_set with before and after", async () => {
     const id = await seedExpense({ state: "qb_on_hold" });
     const li = await seedLineItem(id, { manualQbAccount: "4000" });
+    await seedHold(id, li);
 
     await setHeldLineAccount(FINANCE, id, li, "5000");
 
@@ -118,7 +119,7 @@ describeDb("FINANCE writes are audited", () => {
   });
 
   it("QuickBooks account create, update and delete each record one row", async () => {
-    const accounts = ["5100", "5200"].map((id) => ({ id, name: `Supplies ${id}`, accountType: "Expense" }));
+    const accounts = ["5100", "5200"].map((id) => ({ id, name: `Supplies ${id}`, accountType: "Expense", active: true }));
     bindPorts({ quickbooks: { accounts: async () => accounts } });
     const created = await auditOf(() => call(finance.createQbAccount, "POST", {}, { name: "Supplies", qbAccount: "5100" }));
     expect(created).toMatchObject({ entityType: "qb_account", action: "created" });

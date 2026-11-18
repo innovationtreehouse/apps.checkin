@@ -116,7 +116,7 @@ export const updateAccountMapping: ExpenseRouteHandler = async ({ req, params, p
   const orgId = await getOrgId();
   const before = await ownedRow(() => db.accountMapping.findFirst({ where: { id, orgId } }));
   if (data.partNumber !== before.partNumber) checkRulePart(data.partNumber);
-  await refuseRuleType(data);
+  if (data.qbAccount !== before.qbAccount || data.isCapital !== before.isCapital) await refuseRuleType(data);
   return {
     AccountMapping: await db.$transaction(async (tx) => {
       const row = await tx.accountMapping.update({ where: { id }, data });
@@ -177,9 +177,9 @@ export const updateQbAccount: ExpenseRouteHandler = async ({ req, params, princi
   const id = parseId(params.id);
   const data = await parseBody(req, qbAccountSchema);
   const actor = actorOf(await asFinance(principal));
-  await refuseListType(data.qbAccount);
   const orgId = await getOrgId();
   const before = await ownedRow(() => db.expenseQbAccount.findFirst({ where: { id, orgId } }));
+  if (data.qbAccount !== before.qbAccount) await refuseListType(data.qbAccount);
   return {
     ExpenseQbAccount: await db.$transaction(async (tx) => {
       const row = await tx.expenseQbAccount.update({ where: { id }, data });

@@ -17,7 +17,6 @@ function fields(overrides: Partial<MergeFields> = {}): MergeFields {
         email: null,
         googleId: null,
         emailVerified: null,
-        emailSuppressed: false,
         lastBackgroundCheck: null,
         lastWaiverSign: null,
         ...overrides,
@@ -63,15 +62,14 @@ describe("resolveKeeperUpdate", () => {
         expect(resolveKeeperUpdate(fields({ image: "a.png" }), fields({ image: "b.png" }), {})).toEqual({});
     });
 
-    it("moves the whole login identity as one unit, suppression with it", () => {
+    it("moves the whole login identity as one unit", () => {
         const verified = new Date("2024-05-01");
         const keep = fields({ email: "old@example.com", googleId: "g-keep" });
-        const merge = fields({ email: "new@example.com", googleId: null, emailVerified: verified, emailSuppressed: true });
+        const merge = fields({ email: "new@example.com", googleId: null, emailVerified: verified });
         expect(resolveKeeperUpdate(keep, merge, { identity: "merge" })).toEqual({
             email: "new@example.com",
             googleId: null,
             emailVerified: verified,
-            emailSuppressed: true,
         });
         expect(resolveKeeperUpdate(keep, merge, { identity: "keep" })).toEqual({});
     });

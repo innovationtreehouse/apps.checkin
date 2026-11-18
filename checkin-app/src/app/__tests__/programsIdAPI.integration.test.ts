@@ -1757,6 +1757,57 @@ describe('Individual Program API Integration Tests', () => {
         });
     });
 
+    // The roster shows each participant's age at the program's start, never the date of birth.
+    describe('GET /api/programs/[id] — roster ages', () => {
+        let hhId: number;
+        let kidId: number;
+        let unknownId: number;
+        let programId: number;
+
+        beforeAll(async () => {
+            hhId = (await prisma.household.create({ data: { name: 'Roster Age HH' } })).id;
+            // Turns 12 the day after the 2026-03-01 start.
+            kidId = (await prisma.person.create({ data: { email: 'rosterage-kid-prog-id-api-test@example.com', name: 'Age Kid', householdId: hhId, dateOfBirth: new Date(Date.UTC(2014, 2, 2)) } })).id;
+            unknownId = (await prisma.person.create({ data: { email: 'rosterage-unknown-prog-id-api-test@example.com', name: 'Unknown Age Kid', householdId: hhId } })).id;
+            programId = (await prisma.program.create({
+                data: { appliesToYear: 2026, name: 'Roster Age Prog ID API Test', startAt: new Date('2026-03-01'), endAt: new Date('2026-08-31'), phase: 'UPCOMING', leadMentorId: leadId },
+            })).id;
+            await prisma.programParticipant.createMany({
+                data: [
+                    { programId, personId: kidId, status: 'ACTIVE' },
+                    { programId, personId: unknownId, status: 'ACTIVE' },
+                ],
+            });
+        });
+
+        afterAll(async () => {
+            await prisma.programParticipant.deleteMany({ where: { programId } });
+            await prisma.program.deleteMany({ where: { id: programId } });
+            await prisma.person.deleteMany({ where: { id: { in: [kidId, unknownId] } } });
+            await prisma.household.deleteMany({ where: { id: hhId } });
+        });
+
+        const read = async (user: Record<string, unknown>) => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user });
+            const req = new Request(`http://localhost:4000/api/programs/${programId}`, { method: 'GET' });
+            const res = await GET(req as unknown as import("next/server").NextRequest, createParams(programId) as unknown as never);
+            expect(res.status).toBe(200);
+            return res.json();
+        };
+
+        it.each([
+            ['the lead', () => ({ id: leadId })],
+            ['the Board', () => ({ id: adminId, isBoardMember: true })],
+        ])('%s sees each age at the start and no date of birth', async (_who, user) => {
+            const data = await read(user());
+            const ageOf = (id: number) => data.participants.find((p: { personId: number }) => p.personId === id).age;
+            expect(ageOf(kidId)).toBe(11);
+            expect(ageOf(unknownId)).toBeNull();
+            expect(JSON.stringify(data)).not.toContain('dateOfBirth');
+            expect(data).not.toHaveProperty('ProgramRosterAge');
+        });
+    });
+
     // A start-date or age-bound edit flags, for the Board, enrolled people who fitted
     // before and no longer do. Enrollments are never changed.
     describe('PATCH /api/programs/[id] — age re-check on date/age edits', () => {

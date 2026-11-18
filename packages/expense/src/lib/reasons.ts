@@ -11,6 +11,7 @@ export type ReasonCode =
   | "BUCKET_UNKNOWN"
   | "OWNER_EXCEPTION"
   | "CAPITAL_REVIEW"
+  | "CAPITAL_THRESHOLDS_UNSET"
   | "DEPRECIATION_CYCLE"
   | "REIMBURSEE_TO_NAME"
   | "TAX_NOT_REVIEWED"
@@ -52,6 +53,8 @@ export interface ReasonFacts {
     qbMatchState: string;
   };
   receiptReview: StoredReceiptReview | null;
+  /** Capital review is on with a threshold unset. */
+  capitalThresholdsUnset: boolean;
   /** The tax finance approved on the expense, or null when it approved none. */
   approvedTaxCents: number | null;
   approvals: { status: string; ownerId: number | null }[];
@@ -99,6 +102,7 @@ export function deriveReasons(f: ReasonFacts): DerivedReason[] {
     if (f.approvals.some((a) => a.status === "unknown")) out.push(reason("BUCKET_UNKNOWN", "expenses"));
     if (f.approvals.some((a) => a.status === "exception_raised")) out.push(reason("OWNER_EXCEPTION", "expenses"));
     if (e.state === "capital_review") out.push(reason("CAPITAL_REVIEW", "expenses"));
+    if (e.state === "capital_review" && f.capitalThresholdsUnset) out.push(reason("CAPITAL_THRESHOLDS_UNSET", "expenses"));
     if (e.state === "set_depreciation_cycle") out.push(reason("DEPRECIATION_CYCLE", "expenses"));
     if (reimburseeUnknown(e)) out.push(reason("REIMBURSEE_TO_NAME", "expenses"));
     if (taxWaitsOnFinance(e.taxCents, f.receiptReview, f.approvedTaxCents)) out.push(reason("TAX_NOT_REVIEWED", "expenses", { amountCents: e.taxCents }));

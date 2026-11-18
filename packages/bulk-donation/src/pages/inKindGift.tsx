@@ -49,6 +49,8 @@ interface Gift {
   state: WaitingOn | null;
   revenueBooking: string | null;
   expenseBooking: string | null;
+  qbFirstFailedAt?: string | null;
+  qbLastError?: string | null;
   inventorySourceKey: string | null;
   inventoryLoadedAt: string | null;
   inventoryLoadFailureReason: string | null;
@@ -177,6 +179,7 @@ function InKindGiftPage({ source }: { source: InKindSource }) {
           <Text>Decision: {g.outcome ? `${OUTCOME[g.outcome] ?? g.outcome}, ${when(g.decidedAt)}` : "Not decided yet"}</Text>
           <Text>Bucket: {g.budgetOwnerName ?? "—"}{g.bucketHeld ? " (archived or has no Class)" : ""}</Text>
           <Text>Bookings: revenue {g.revenueBooking ?? "—"}, expense {g.expenseBooking ?? "—"}</Text>
+          {g.qbFirstFailedAt && <Text size="sm" c="red">Last error: {g.qbLastError ?? "no error recorded"}</Text>}
         </Stack>
       </Group>
 

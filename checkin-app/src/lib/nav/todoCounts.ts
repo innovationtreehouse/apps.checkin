@@ -3,13 +3,14 @@ import type { OrgMembershipProcessStatus, TrustedAdultReviewStatus } from "@/gen
 import type { AuthenticatedUser } from "@/types/auth";
 import { countHouseholdsMissingValidContact } from "@/lib/emergencyContacts/service";
 import { canReviewBackgroundChecks, reviewQueueCounts } from "@/lib/membership/review";
-import { openProcess } from "@/lib/membership/lifecycle";
+import { awaitingBgReview, openProcess, refundableApplication, SETTLES_ON_SIGNATURE } from "@/lib/membership/lifecycle";
 import { getLeadConflicts } from "@/lib/attendanceConflicts";
 import { pickAddress, validateAddress } from "@/lib/address";
 import { alertAddressCheck, getConfigHealth, openConfigIssues } from "@/lib/configHealth";
 import { countUnhealthyCronJobs } from "@/lib/cronRuns";
 import { openIncidentSummary } from "@/lib/opsIncidentView";
-import { PROGRAM_CHECKOUT_BROKEN_WHERE } from "@/lib/programCheckout";
+import { programCheckoutBrokenWhere } from "@/lib/programCheckout";
+import { isProgramStoreClosed } from "@/lib/programs/storeClosed";
 import { BROKEN_HOUSEHOLD_WHERE, UNCLAIMED_OR_BROKEN_HOUSEHOLD_WHERE } from "@/lib/household/filters";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { seesHouseholdPaymentStatus } from "@/lib/programs/paymentVisibility";
@@ -18,6 +19,7 @@ import { expiringApprovals } from "@/lib/trusted-adult/filters";
 import { buildingLink } from "@/lib/kioskSeen";
 import { collectLibraryCounts, type LibraryCounts } from "@/lib/navLibraryCounts";
 import { variantSlotYears } from "@/lib/programYear";
+import { liveMembershipYear } from "@/lib/membership/renewal";
 import { IN_LIVE_HOUSEHOLD } from "@/lib/household/archived";
 
 /**
@@ -75,21 +77,24 @@ export type TodoCounts = {
     // that lists its own queue, so the number is enough.
     // `membership` = board-actionable (BLOCKED, green). `applicationsTotal` =
     // every open application, the gray count shown on the Applications tab —
-    // mirrors what /api/membership-ops/applications lists.
+    // mirrors what /api/membership-ops/applications lists. `applicationsIncomplete` =
+    // the part of that total still missing a signature, or a cleared check for a
+    // check reviewer (red). `applicationsAwaitingRefund` = paid applications of DENIED
+    // households the board can still "Record refund" on (red).
     // `brokenEmails` = people whose email Resend has reported as undeliverable
     // (bounce/complaint) and no later delivery has cleared — see webhooks/resend.
     // Red pill on the Membership Ops nav item + the Manage Memberships (households) tab.
     // `brokenHouseholds` = households with no lead at all (red — blocking board action).
     // `settingsMisconfig` = how many required membership settings are still unset: the
-    // membership variant ID, the volunteer discount code, the re-check interval, the
-    // boundary, and the coming year's variant. Red pill on the Settings nav + Membership
+    // volunteer discount code, the re-check interval, the boundary, and the variant rows
+    // for the live year and the coming year (one row when they are the same year). Red pill on the Settings nav + Membership
     // Settings tab.
     // `programsMisconfig` = how many programs have a price but no matching Shopify variant
     // (paid enrollment silently can't check out). Red pill on the Program Ops Programs tab.
     // `openPaymentExceptions` = reconciler-detected payment problems (OPEN or
     // ACKNOWLEDGED) awaiting board action — green pill on the Finance Ops Payment
     // problems tab. Same count as getMembershipNotifications.openPaymentExceptions.
-    admin?: { membership: number; applicationsTotal: number; paymentPlanPending: number; membershipPaymentPlanPending: number; trustedAdults: number; householdsMissingContact: number; unclaimedHouseholds: number; brokenHouseholds: number; brokenEmails: number; settingsMisconfig: number; programsMisconfig: number; openPaymentExceptions: number };
+    admin?: { membership: number; applicationsTotal: number; applicationsIncomplete: number; applicationsAwaitingRefund: number; paymentPlanPending: number; membershipPaymentPlanPending: number; trustedAdults: number; householdsMissingContact: number; unclaimedHouseholds: number; brokenHouseholds: number; brokenEmails: number; settingsMisconfig: number; programsMisconfig: number; openPaymentExceptions: number };
     // Infra-health gaps (admins + board only). Both halves drive the ONE red System
     // Status nav badge; the full detail lives at /api/system-status/config-health.
     // `openIssues` = failing system-config checks (e.g. Zoho e-sign unconfigured) —
@@ -443,27 +448,56 @@ async function leadCounts(userId: number): Promise<TodoCounts["lead"]> {
     };
 }
 
-/** True when the coming membership year has no variant row. With no boundary there is no coming year to ask about. */
-export async function comingYearVariantUnset(boundary: Date | null | undefined, now: Date): Promise<boolean> {
-    if (!boundary) return false;
-    const row = await prisma.membershipYearVariant.findUnique({
-        where: { membershipYear: variantSlotYears(boundary, now)[1] },
+/**
+ * How many of the live year and the coming year have no variant row, counting a year
+ * once when they are the same. With no boundary there is no year to ask about.
+ */
+export async function variantYearsUnset(boundary: Date | null | undefined, now: Date): Promise<number> {
+    const live = liveMembershipYear(boundary, now);
+    if (!boundary || live === null) return 0;
+    const years = [...new Set([live, variantSlotYears(boundary, now)[1]])];
+    const rows = await prisma.membershipYearVariant.findMany({
+        where: { membershipYear: { in: years } },
         select: { membershipYear: true },
     });
-    return row === null;
+    return years.length - rows.length;
 }
 
 /** Board surface: the board's own queue plus infra health. Callers gate on sysadmin or board. */
 async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoCounts, "admin" | "configHealth">>> {
     // Finance counts are Board/Finance reads; a sysadmin off the Board gets zeros.
     const seesFinance = !!user.isBoardMember || !!user.isFinance;
-    const [membership, applicationsTotal, paymentPlanPending, membershipPaymentPlanPending, trustedAdults, householdsMissingContact, unclaimedHouseholds, brokenHouseholds, brokenEmails, programsMisconfig, openPaymentExceptions, boardSettings, incidentHealth] = await Promise.all([
+    const [membership, applicationsTotal, applicationsIncomplete, applicationsAwaitingRefund, paymentPlanPending, membershipPaymentPlanPending, trustedAdults, householdsMissingContact, unclaimedHouseholds, brokenHouseholds, brokenEmails, programsMisconfig, openPaymentExceptions, boardSettings, incidentHealth] = await Promise.all([
         prisma.orgMembershipProcess.count({
             where: { status: { in: BOARD_ACTIONABLE_MEMBERSHIP } },
         }),
         // Every open application, the same rows the Applications page lists.
         prisma.orgMembershipProcess.count({
             where: openProcess.where,
+        }),
+        // Open applications past intake still missing a signature, or (for check
+        // reviewers) a cleared check. Leaves out unstarted renewals, BLOCKED rows
+        // (in `membership`) and check reviews (in the review queue's own pills).
+        prisma.orgMembershipProcess.count({
+            where: {
+                AND: [
+                    openProcess.where,
+                    { status: { notIn: ["INTAKE", "PENDING_RENEWAL", "BLOCKED"] } },
+                    { NOT: awaitingBgReview.where },
+                    {
+                        OR: [
+                            { kind: { not: "PERSON_BG" }, contractSignedAt: null },
+                            ...(canReviewBackgroundChecks(user)
+                                ? [{ kind: { notIn: [...SETTLES_ON_SIGNATURE] }, bgClearedAt: null }]
+                                : []),
+                        ],
+                    },
+                ],
+            },
+        }),
+        // The rows the Applications page offers "Record refund" on, for denied households.
+        prisma.orgMembershipProcess.count({
+            where: { AND: [refundableApplication.where, { orgMembership: { status: "DENIED" } }] },
         }),
         // Scholarship-queue count: mirror GET /api/finance-ops/payment-plans'
         // default filter exactly so the nav badge can't over-count. Excludes
@@ -500,8 +534,8 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
         }),
         // Programs priced on a tier with no matching Shopify variant — paid enrollment
         // silently can't check out. Same condition as the list/detail UI, shared via
-        // PROGRAM_CHECKOUT_BROKEN_WHERE (see lib/programCheckout.ts).
-        prisma.program.count({ where: PROGRAM_CHECKOUT_BROKEN_WHERE }),
+        // programCheckoutBrokenWhere (see lib/programCheckout.ts).
+        isProgramStoreClosed().then((closed) => prisma.program.count({ where: programCheckoutBrokenWhere(closed) })),
         // Reconciler-detected payment problems still needing board action
         // (OPEN or ACKNOWLEDGED). Green pill on the Finance Ops Payment problems tab.
         seesFinance ? prisma.paymentException.count({ where: { status: { in: ["OPEN", "ACKNOWLEDGED"] } } }) : 0,
@@ -511,7 +545,7 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
         // a null orgMembershipYearBoundary means the renewal cycle has no anchor date.
         prisma.boardSettings.findUnique({
             where: { id: 1 },
-            select: { orgMembershipVariantId: true, volunteerFamilyDiscountCode: true, bgRecheckMonths: true, orgMembershipYearBoundary: true, alertEmailAddress: true },
+            select: { volunteerFamilyDiscountCode: true, bgRecheckMonths: true, orgMembershipYearBoundary: true, alertEmailAddress: true },
         }),
         // Cron sweeps that stopped running, plus ones running but failing rows. The
         // schedule lives in a separate infra repo, so this is the app's only way to
@@ -523,13 +557,12 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
         })),
     ]);
     const settingsMisconfig =
-        ((await comingYearVariantUnset(boardSettings?.orgMembershipYearBoundary, new Date())) ? 1 : 0) +
-        (boardSettings?.orgMembershipVariantId ? 0 : 1) +
+        (await variantYearsUnset(boardSettings?.orgMembershipYearBoundary, new Date())) +
         (boardSettings?.volunteerFamilyDiscountCode ? 0 : 1) +
         (isRecheckPolicySet(boardSettings?.bgRecheckMonths) ? 0 : 1) +
         (boardSettings?.orgMembershipYearBoundary ? 0 : 1);
     return {
-        admin: { membership, applicationsTotal, paymentPlanPending, membershipPaymentPlanPending, trustedAdults, householdsMissingContact, unclaimedHouseholds, brokenHouseholds, brokenEmails, settingsMisconfig, programsMisconfig, openPaymentExceptions },
+        admin: { membership, applicationsTotal, applicationsIncomplete, applicationsAwaitingRefund, paymentPlanPending, membershipPaymentPlanPending, trustedAdults, householdsMissingContact, unclaimedHouseholds, brokenHouseholds, brokenEmails, settingsMisconfig, programsMisconfig, openPaymentExceptions },
         // Env-var/deploy gaps and the alert address (presence checks), cron sweeps that
         // stopped running or stopped working, and open incidents all fold into the single red
         // System Status pill.

@@ -186,6 +186,18 @@ describe('a no', () => {
 });
 
 describe('refusals', () => {
+    it('refuses a yes into an archived household, and lets a no move the account out', async () => {
+        const { householdId, added } = await addedAdult();
+        await prisma.household.update({ where: { id: householdId }, data: { archivedAt: new Date() } });
+        signedInAs(added.id, { householdJoinPending: true });
+        const yes = await answer(true);
+        expect(yes.status).toBe(409);
+        expect((await yes.json()).error).toContain('archived');
+        expect(await pending(added.id)).toBe(true);
+        expect((await answer(false)).status).toBe(200);
+        expect((await prisma.person.findUniqueOrThrow({ where: { email: added.email! } })).householdId).not.toBe(householdId);
+    });
+
     it('refuses both answers in a denied household, and the denied session itself', async () => {
         const { added } = await addedAdult('DENIED');
         signedInAs(added.id, { householdJoinPending: true });

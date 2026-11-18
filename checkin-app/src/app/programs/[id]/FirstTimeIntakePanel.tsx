@@ -1,8 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { Alert, Button, Center, Checkbox, Loader, Stack, Text, Textarea, TextInput, Title } from "@mantine/core";
+import { useState } from "react";
+import { Button, Center, Checkbox, Loader, Stack, Text, TextInput, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
+import { errorMessage, HttpError, LoadError, showError } from "@checkin/component-ui";
+import { api, useLoad } from "@/lib/api";
+import { useSeedForm } from "@/hooks/useSeedForm";
+import { mapServerFields, type IntakePrefill } from "@/app/membership/membershipForm";
 import { pickAddress, type StructuredAddress } from "@/lib/address";
 import { isValidPhone, PHONE_ERROR } from "@/lib/phone";
 import { INTAKE_PROFILES, missingRequiredFields, type IntakeSubmitContext } from "@/lib/intake/profiles";
@@ -11,7 +15,7 @@ import EmergencyContactForm from "@/components/membership/EmergencyContactForm";
 import ChildrenListForm from "@/components/membership/ChildrenListForm";
 
 /**
- * First-time household setup for auth-first program registration (PR C). Shown
+ * First-time household setup for auth-first program registration. Shown
  * inline on /programs/[id] when a freshly-signed-in user has no enrollable
  * participant and/or no emergency contact. Collects the minimum the enroll step
  * needs, then hands control back so the existing member-select + Shopify flow
@@ -34,9 +38,7 @@ interface ChildForm {
 }
 
 export default function FirstTimeIntakePanel({ ageGated, onSaved }: { ageGated: boolean; onSaved: () => void }) {
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   const [address, setAddress] = useState<StructuredAddress>(blankAddress);
@@ -47,49 +49,29 @@ export default function FirstTimeIntakePanel({ ageGated, onSaved }: { ageGated: 
   const [primaryDob, setPrimaryDob] = useState("");
   const [primaryOver25, setPrimaryOver25] = useState(false);
   const [primaryAllergies, setPrimaryAllergies] = useState("");
-  const [notes, setNotes] = useState("");
   const [children, setChildren] = useState<ChildForm[]>([]);
 
   const clearErr = (key: string) =>
     setFieldErrors((fe) => (fe[key] ? Object.fromEntries(Object.entries(fe).filter(([k]) => k !== key)) : fe));
 
   // Prefill from the caller's household so a returning user only sees the gaps.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch("/api/household/intake");
-        if (!res.ok) return;
-        const s = await res.json();
-        if (cancelled) return;
-        const h = s.prefill?.household;
-        const a = pickAddress(h);
-        setAddress({ line1: a.line1 ?? "", line2: a.line2 ?? "", city: a.city ?? "", state: a.state ?? "", postalCode: a.postalCode ?? "" });
-        setEmName(h?.emergencyContactName ?? "");
-        setEmPhone(h?.emergencyContactPhone ?? "");
-        setEmEmail(h?.emergencyContactEmail ?? "");
-        setPrimaryName(s.prefill?.primaryParent?.name ?? "");
-        setPrimaryDob(s.prefill?.primaryParent?.dob ?? "");
-        setPrimaryOver25(!!s.prefill?.primaryParent?.over25);
-        setPrimaryAllergies(s.prefill?.primaryParent?.allergies ?? "");
-        setNotes(h?.notes ?? "");
-        setChildren(
-          (s.prefill?.children ?? []).map((c: { id: number; name: string | null; dob: string | null; allergies: string | null }) => ({
-            id: c.id,
-            name: c.name ?? "",
-            email: "",
-            dob: c.dob ?? "",
-            allergies: c.allergies ?? "",
-          })),
-        );
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  // Seeded once: the only save leaves the panel, so a later answer never replaces typing.
+  const prefill = useLoad<{ prefill?: IntakePrefill }>("/api/household/intake");
+  const [seeded, setSeeded] = useState(false);
+  useSeedForm(prefill.data, seeded, (s) => {
+    setSeeded(true);
+    const h = s.prefill?.household;
+    const a = pickAddress(h);
+    setAddress({ line1: a.line1 ?? "", line2: a.line2 ?? "", city: a.city ?? "", state: a.state ?? "", postalCode: a.postalCode ?? "" });
+    setEmName(h?.emergencyContactName ?? "");
+    setEmPhone(h?.emergencyContactPhone ?? "");
+    setEmEmail(h?.emergencyContactEmail ?? "");
+    setPrimaryName(s.prefill?.primaryParent?.name ?? "");
+    setPrimaryDob(s.prefill?.primaryParent?.dob ?? "");
+    setPrimaryOver25(!!s.prefill?.primaryParent?.over25);
+    setPrimaryAllergies(s.prefill?.primaryParent?.allergies ?? "");
+    setChildren((s.prefill?.children ?? []).map((c) => ({ id: c.id, name: c.name ?? "", email: "", dob: c.dob ?? "", allergies: c.allergies ?? "" })));
+  });
 
   const addChild = () => setChildren((c) => [...c, { name: "", email: "", dob: "", allergies: "" }]);
   const updateChild = (i: number, field: keyof ChildForm, value: string) =>
@@ -137,37 +119,34 @@ export default function FirstTimeIntakePanel({ ageGated, onSaved }: { ageGated: 
     const errs = validate();
     setFieldErrors(errs);
     if (Object.keys(errs).length) {
-      setError("Please complete the highlighted fields.");
+      showError("Please complete the highlighted fields.");
       return;
     }
     setSaving(true);
-    setError("");
     try {
-      const res = await fetch("/api/household/intake", {
+      const { rejections } = await api<{ rejections?: { message: string }[] }>("/api/household/intake", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          household: { ...address, emergencyContactName: emName, emergencyContactPhone: emPhone, emergencyContactEmail: emEmail, notes: notes || null },
+          household: { ...address, emergencyContactName: emName, emergencyContactPhone: emPhone, emergencyContactEmail: emEmail },
           // Adult's age is captured so a single-person household can enroll itself.
           // over25 wins when checked (declared adult, DOB cleared), matching my-household.
           primaryParent: { name: primaryName, dob: primaryOver25 ? null : primaryDob || null, over25: primaryOver25, allergies: primaryAllergies || null },
           children: namedChildren.map((c) => ({ id: c.id, name: c.name, dob: c.dob || null, allergies: c.allergies || null })),
         }),
       });
-      if (res.ok) {
-        onSaved();
-      } else {
-        const d = await res.json().catch(() => ({}));
-        setError(d.error || "Could not save your details.");
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error saving your details.", autoClose: false });
+      // A part the save could not apply stays for the person to read.
+      for (const r of rejections ?? []) notifications.show({ color: "yellow", message: r.message, autoClose: false });
+      onSaved();
+    } catch (e) {
+      if (e instanceof HttpError) setFieldErrors(mapServerFields([...e.fields]));
+      showError(errorMessage(e));
     } finally {
       setSaving(false);
     }
   };
 
-  if (loading) return <Center py="md"><Loader size="sm" /></Center>;
+  if (prefill.error) return <LoadError what="your household details" message={prefill.error} onRetry={prefill.reload} />;
+  if (!prefill.data) return <Center py="md"><Loader size="sm" /></Center>;
 
   return (
     <Stack gap="lg">
@@ -236,18 +215,6 @@ export default function FirstTimeIntakePanel({ ageGated, onSaved }: { ageGated: 
         <AddressForm address={address} onChange={setAddress} onErrorClear={() => {}} required={false} />
       </section>
 
-      <section>
-        <Textarea
-          label="Anything else we should know?"
-          description="Optional — for example, if your household is here to volunteer only."
-          autosize
-          minRows={2}
-          value={notes}
-          onChange={(e) => setNotes(e.currentTarget.value)}
-        />
-      </section>
-
-      {error && <Alert color="red" variant="light">{error}</Alert>}
 
       <Button size="md" onClick={save} loading={saving} disabled={saving}>Save &amp; continue to enroll</Button>
     </Stack>

@@ -2,7 +2,7 @@
 jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories run hoisted, before imports exist
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
 
 import { act, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { notifications } from "@mantine/notifications";
@@ -82,6 +82,12 @@ const programData = {
   shopifyProductId: null,
 };
 
+// A participant's Remove sits in their row menu.
+async function openRemove(name: string) {
+  fireEvent.click(screen.getByRole("button", { name: `Actions for ${name}` }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Remove" }));
+}
+
 function renderPage() {
   return renderWithProviders(<ProgramDetailsPage params={resolvedParams({ id: "1" })} />);
 }
@@ -116,6 +122,24 @@ describe("ProgramDetailsPage", () => {
     expect(await screen.findByText(/Vera Volunteer/)).toBeInTheDocument();
     expect(screen.getByText(/Alice Kid/)).toBeInTheDocument();
     expect(screen.getByText(/Charlie Kid/)).toBeInTheDocument();
+  });
+
+  it("shows each participant's age, or that it is unknown", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const withAges = {
+      ...programData,
+      participants: [
+        { ...programData.participants[0], age: 12 },
+        { ...programData.participants[1], age: null },
+      ],
+    };
+    mockFetchJson({ "/api/programs/1": withAges });
+    renderPage();
+    await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
+
+    fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
+    expect(await screen.findByText("(12)")).toBeInTheDocument();
+    expect(screen.getByText("(age unknown)")).toBeInTheDocument();
   });
 
   it("searches and adds a volunteer", async () => {
@@ -216,6 +240,26 @@ describe("ProgramDetailsPage", () => {
     );
   });
 
+  it("shows a save's price-sync warning and sale-reopened notice until dismissed, instead of plain Saved", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const warning = "Program saved, but the Shopify price is out of date — admins have been emailed. Set the price by hand in Shopify on both the public and reserved-seat products.";
+    const notice = "Sale reopened. The public store product stays hidden: re-list it in Shopify by hand if it should sell again.";
+    jest.mocked(notifications.show).mockClear();
+    routedFetch([
+      { url: "/api/programs/1", method: "GET", result: { ok: true, body: programData } },
+      { url: "/api/programs/1", method: "PATCH", result: { ok: true, body: { success: true, warning, notice } } },
+    ]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith({ color: "yellow", message: warning, autoClose: false }),
+    );
+    expect(notifications.show).toHaveBeenCalledWith({ color: "yellow", message: notice, autoClose: false });
+    expect(notifications.show).not.toHaveBeenCalledWith(expect.objectContaining({ message: "Saved." }));
+  });
+
   it("shows the server error message when saving general settings fails", async () => {
     setSession({ id: 1, isSysadmin: true });
     routedFetch([
@@ -226,7 +270,9 @@ describe("ProgramDetailsPage", () => {
     await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
 
     fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
-    expect(await screen.findByText("Invalid dates.")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Invalid dates.", autoClose: false })),
+    );
   });
 
   it("shows a network error message when saving general settings throws", async () => {
@@ -241,7 +287,7 @@ describe("ProgramDetailsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
     await waitFor(() =>
       expect(notifications.show).toHaveBeenCalledWith(
-        expect.objectContaining({ color: "red", message: "Network error.", autoClose: false }),
+        expect.objectContaining({ color: "red", message: "Couldn't reach the server. Check your connection and try again.", autoClose: false }),
       ),
     );
   });
@@ -415,7 +461,9 @@ describe("ProgramDetailsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
     const failModal = await screen.findByRole("dialog", { name: "Add Participant Manually" });
     fireEvent.click(within(failModal).getByRole("button", { name: "Add Participant" }));
-    expect(await screen.findByText("Program is full.")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Program is full.", autoClose: false })),
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
     const retryModal = await screen.findByRole("dialog", { name: "Add Participant Manually" });
@@ -426,6 +474,31 @@ describe("ProgramDetailsPage", () => {
         expect.objectContaining({ method: "POST", body: JSON.stringify({ participantId: 777, override: true }) }),
       ),
     );
+  });
+
+  it("says so when an enrolment never reaches the server, and keeps the pick", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    routedFetch([
+      { url: "/api/programs/1/eligible-participants", method: "GET", result: { ok: true, body: { members: [{ id: 777, name: "Gerry Grownup", ageWarning: null }] } } },
+      { url: "/api/programs/1/participants", method: "POST", result: { throws: true } },
+      { url: "/api/programs/1", method: "GET", result: { ok: true, body: programData } },
+    ]);
+    renderPage();
+    await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
+
+    fireEvent.change((await screen.findAllByPlaceholderText("Start typing to search..."))[1], { target: { value: "G" } });
+    fireEvent.click(await screen.findByText("Gerry Grownup"));
+    fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
+    fireEvent.click(within(await screen.findByRole("dialog", { name: "Add Participant Manually" })).getByRole("button", { name: "Add Participant" }));
+
+    await waitFor(() =>
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ color: "red", message: "Couldn't reach the server. Check your connection and try again.", autoClose: false }),
+      ),
+    );
+    expect(screen.getByRole("button", { name: "Enroll" })).toBeEnabled();
+    expect(screen.getByDisplayValue("Gerry Grownup")).toBeInTheDocument();
   });
 
   it("renders the parents above the emergency contacts, skipping a participant who leads their own household", async () => {
@@ -512,9 +585,7 @@ describe("ProgramDetailsPage", () => {
     expect(screen.getByText(/Mom - 512-555-1111; Dad - 512-555-2222/)).toBeInTheDocument();
     expect(screen.getByText("Unknown")).toBeInTheDocument(); // pendingSince null
 
-    const removeButtons = screen.getAllByRole("button", { name: "Remove" });
-    // Volunteers card renders first (1 volunteer), then active participants (401, 402), then pending (403).
-    fireEvent.click(removeButtons[1]);
+    await openRemove("No Phone Kid");
     const modal1 = await screen.findByRole("dialog", { name: "Remove Participant" });
     // An active place defaults to a withdrawal that keeps history.
     expect(within(modal1).getByRole("button", { name: "Withdrew: keep history" })).toHaveAttribute("data-variant", "filled");
@@ -527,7 +598,7 @@ describe("ProgramDetailsPage", () => {
     );
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Remove Participant" })).not.toBeInTheDocument());
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[3]);
+    await openRemove("Unknown Pending");
     const modal2 = await screen.findByRole("dialog", { name: "Remove Participant" });
     expect(within(modal2).getByRole("button", { name: "Never took part: remove" })).toHaveAttribute("data-variant", "filled");
     fireEvent.click(within(modal2).getByRole("button", { name: "Never took part: remove" }));
@@ -541,7 +612,7 @@ describe("ProgramDetailsPage", () => {
 
   const pricedProgram = { ...programData, orgMemberPriceCents: 1000, nonOrgMemberPriceCents: 1500, shopifyVariantId: "v1" };
 
-  it("disables removing a paid place for a sysadmin who is not on the Board", async () => {
+  it("hides Remove on a paid place from a sysadmin who is not on the Board", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson({ "/api/programs/1": pricedProgram });
     renderPage();
@@ -549,11 +620,59 @@ describe("ProgramDetailsPage", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
     await screen.findByText(/Charlie Kid/);
 
-    // Volunteer (201), paid active participant (101), then the pending one (102).
-    const removeButtons = screen.getAllByRole("button", { name: "Remove" });
-    expect(removeButtons[1]).toBeDisabled();
-    expect(removeButtons[1]).toHaveAttribute("title", "Only the Board removes a paid place");
-    expect(removeButtons[2]).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Actions for Alice Kid" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Actions for Charlie Kid" })).toBeEnabled();
+  });
+
+  it("hides Remove on a paid place in the Board member's own household", async () => {
+    setSession({ id: 1, isBoardMember: true, householdId: 7 });
+    const ownHousehold = {
+      ...pricedProgram,
+      participants: [
+        { ...pricedProgram.participants[0], person: { ...pricedProgram.participants[0].person, householdId: 7 } },
+        { personId: 103, status: "ACTIVE", pendingSince: null, person: { name: "Other Kid", email: "other@example.com", householdId: 8 } },
+      ],
+    };
+    mockFetchJson({ "/api/programs/1": ownHousehold });
+    renderPage();
+    await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
+    await screen.findByText(/Other Kid/);
+
+    expect(screen.queryByRole("button", { name: "Actions for Alice Kid" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Actions for Other Kid" })).toBeInTheDocument();
+  });
+
+  it("shows a participant's phone only when the roster sends one", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({ "/api/programs/1": {
+      ...programData,
+      participants: [
+        { personId: 101, status: "ACTIVE", pendingSince: null, person: { name: "Adult Learner", email: "adult@example.com", phone: "5125551234" } },
+        { personId: 104, status: "ACTIVE", pendingSince: null, person: { name: "Youth Learner", email: "youth@example.com", phone: null } },
+      ],
+    } });
+    renderPage();
+    await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
+    await screen.findByText(/Youth Learner/);
+
+    expect(screen.getAllByText("Phone:")).toHaveLength(1);
+    expect(screen.getByText("Phone:").parentElement).toHaveTextContent("Phone: 512-555-1234");
+  });
+
+  it("keeps Remove in the row menu, not on the row", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({ "/api/programs/1": programData });
+    renderPage();
+    await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
+    fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
+    await screen.findByText(/Charlie Kid/);
+
+    // The one bare Remove button left is the volunteer's.
+    expect(screen.getAllByRole("button", { name: "Remove" })).toHaveLength(1);
+    await openRemove("Alice Kid");
+    expect(await screen.findByRole("dialog", { name: "Remove Participant" })).toBeInTheDocument();
   });
 
   it("asks a Board member for a written reason before removing a paid place", async () => {
@@ -564,7 +683,7 @@ describe("ProgramDetailsPage", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
     await screen.findByText(/Charlie Kid/);
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[1]);
+    await openRemove("Alice Kid");
     const modal = await screen.findByRole("dialog", { name: "Remove Participant" });
     const confirm = within(modal).getByRole("button", { name: "Withdrew: keep history" });
     expect(confirm).toBeDisabled();
@@ -589,7 +708,7 @@ describe("ProgramDetailsPage", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
     await screen.findByText(/Charlie Kid/);
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[1]);
+    await openRemove("Alice Kid");
     const modal = await screen.findByRole("dialog", { name: "Remove Participant" });
     expect(within(modal).getByRole("button", { name: "Never took part: remove" })).toBeDisabled();
     fireEvent.change(within(modal).getByRole("textbox", { name: /Reason/ }), { target: { value: "Paid before the price was zeroed" } });
@@ -616,8 +735,7 @@ describe("ProgramDetailsPage", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
     await screen.findByText(/Charlie Kid/);
 
-    // Volunteer (201), active participant (101), then the pending one (102).
-    fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[2]);
+    await openRemove("Charlie Kid");
     const modal = await screen.findByRole("dialog", { name: "Remove Participant" });
     fireEvent.click(within(modal).getByRole("button", { name: "Never took part: remove" }));
 
@@ -647,13 +765,13 @@ describe("ProgramDetailsPage", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
     await screen.findByText(/Charlie Kid/);
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[2]);
+    await openRemove("Charlie Kid");
     const modal = await screen.findByRole("dialog", { name: "Remove Participant" });
     fireEvent.click(within(modal).getByRole("button", { name: "Never took part: remove" }));
 
     await waitFor(() =>
       expect(notifications.show).toHaveBeenCalledWith(
-        expect.objectContaining({ color: "red", message: "Network error — please try again." }),
+        expect.objectContaining({ color: "red", message: "Couldn't reach the server. Check your connection and try again." }),
       ),
     );
   });
@@ -673,10 +791,10 @@ describe("ProgramDetailsPage", () => {
     const modal = await screen.findByRole("dialog", { name: "Remove Volunteer" });
     fireEvent.click(within(modal).getByRole("button", { name: "Remove" }));
 
-    // No `error` in the body -> the status-code fallback.
+    // No `error` in the body -> the kit's fixed text.
     await waitFor(() =>
       expect(notifications.show).toHaveBeenCalledWith(
-        expect.objectContaining({ color: "red", message: "Request failed (500)." }),
+        expect.objectContaining({ color: "red", message: "Something went wrong. Try again." }),
       ),
     );
   });
@@ -699,14 +817,14 @@ describe("ProgramDetailsPage", () => {
     await screen.findByText(/Alice Kid/);
 
     // 1st remove -> notice (blue)
-    fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[1]);
+    await openRemove("Alice Kid");
     fireEvent.click(within(await screen.findByRole("dialog", { name: "Remove Participant" })).getByRole("button", { name: "Never took part: remove" }));
     await waitFor(() =>
       expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "blue", message: "Seat freed. Add +1 in Shopify." })),
     );
 
     // 2nd remove -> warning (yellow)
-    fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[1]);
+    await openRemove("Alice Kid");
     fireEvent.click(within(await screen.findByRole("dialog", { name: "Remove Participant" })).getByRole("button", { name: "Never took part: remove" }));
     await waitFor(() =>
       expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "yellow", message: "Shopify inventory release failed." })),
@@ -714,7 +832,7 @@ describe("ProgramDetailsPage", () => {
 
     // 3rd remove -> bare success, no further notification
     const before = (notifications.show as jest.Mock).mock.calls.length;
-    fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[1]);
+    await openRemove("Alice Kid");
     fireEvent.click(within(await screen.findByRole("dialog", { name: "Remove Participant" })).getByRole("button", { name: "Never took part: remove" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Remove Participant" })).not.toBeInTheDocument());
     expect((notifications.show as jest.Mock).mock.calls.length).toBe(before);
@@ -856,7 +974,7 @@ describe("a load that lands while the Board is editing", () => {
     fireEvent.change((await screen.findAllByPlaceholderText("Start typing to search..."))[0], { target: { value: "Wendy" } });
     fireEvent.click(await screen.findByText("Wendy West"));
     fireEvent.click(screen.getAllByRole("button", { name: "Add" })[0]);
-    await waitFor(() => expect(reads).toBe(2));
+    await waitFor(() => expect(reads).toBe(3));
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 
     fireEvent.click(screen.getByRole("tab", { name: "General" }));
@@ -875,18 +993,18 @@ describe("a load that lands while the Board is editing", () => {
       if (init?.method === "PATCH") return answer({});
       if (!String(input).endsWith("/api/programs/1")) return answer({}, 404);
       reads += 1;
+      // The write's own invalidation starts read 2; the page's awaited reload starts read 3.
       if (reads === 2) return new Promise<Response>((resolve) => { finishOlder = () => resolve(answer(programData)); });
-      return answer(reads === 3 ? notCore : programData);
+      return answer(notCore);
     }) as unknown as typeof fetch;
     renderPage();
     await screen.findByRole("heading", { name: "Robotics Club", level: 1 });
     fireEvent.click(screen.getByRole("tab", { name: "Roster" }));
 
     fireEvent.click(await screen.findByLabelText("Core Volunteer"));
-    await waitFor(() => expect(reads).toBe(2));
+    await waitFor(() => expect(reads).toBe(3));
     await waitFor(() => expect(screen.getByLabelText("Core Volunteer")).toBeEnabled());
-    fireEvent.click(screen.getByLabelText("Core Volunteer"));
-    await waitFor(() => expect(screen.getByLabelText("Core Volunteer")).not.toBeChecked());
+    expect(screen.getByLabelText("Core Volunteer")).not.toBeChecked();
 
     await act(async () => { finishOlder(); await new Promise((resolve) => setTimeout(resolve, 0)); });
     expect(screen.getByLabelText("Core Volunteer")).not.toBeChecked();

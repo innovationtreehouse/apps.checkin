@@ -34,7 +34,9 @@ const UNCONFIGURED_FROM = '(no From configured)';
  * can override the EMAIL_FROM env value and set a Reply-To in Settings → Email.
  * `headers` go on the message as given, e.g. Auto-Submitted on an automatic reply.
  */
-export async function sendEmail(to: string, subject: string, html: string, headers?: Record<string, string>): Promise<boolean> {
+export async function sendEmail(to: string, rawSubject: string, html: string, headers?: Record<string, string>): Promise<boolean> {
+    // A subject is one header line, so no newline from any caller may reach the transport.
+    const subject = rawSubject.replace(/\s+/g, ' ').trim();
     const { from, replyTo } = await getEmailSenderIdentity();
 
     // Nothing can be delivered without a key, and nothing may be sent without a

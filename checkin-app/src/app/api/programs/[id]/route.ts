@@ -6,10 +6,11 @@ import { handler, notFound, forbidden, badRequest } from "@/security/handler";
 import { isActiveOrgMember, isMembershipFeeSettled, isMembershipFeeSettledThrough, programCoverageDate } from "@/lib/orgMembership";
 import { apiError } from "@/lib/api-response";
 import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
-import { emailWithheldParticipants, rosterHousehold, rosterPerson, withholdEmail } from "@/lib/person/leaderEmail";
+import { adultPhoneOnly, emailWithheldParticipants, rosterHousehold, rosterPerson, withholdEmail } from "@/lib/person/leaderEmail";
 import { householdPaymentViewer } from "@/lib/programs/paymentVisibility";
 import { authorizeProgramEdit, updateProgram, type ProgramRefusal } from "@/lib/programs/update";
 import { enrollmentClosedBy } from "@/lib/programs/saleState";
+import { calculateAge } from "@/lib/time";
 
 // ORDER MATTERS: this export sits ABOVE getProgram so the routeAuthDrift
 // guard attributes getProgram's edge-model reads to the nearest preceding
@@ -30,7 +31,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     const res = await getProgram(req, ctx);
     if (res.status !== 200) return res;
 
-    const body = (await res.json()) as ProgramBody;
+    const body = withRosterAges((await res.json()) as ProgramBag);
     const closure = { enrollmentClosedBy: closedBy(body) };
 
     const auth = await authenticateRequest(req);
@@ -54,6 +55,19 @@ type ProgramBody = {
     startAt: string; endAt: string; appliesToYear: number; offSaleAt: string | null;
     enrollmentStatus: 'OPEN' | 'CLOSED'; maxParticipants: number | null; _count?: { participants?: number };
 };
+
+type RosterAge = { personId: number; age?: number | null };
+type ProgramBag = { Program: ProgramBody & { participants?: { personId: number }[] }; ProgramRosterAge: RosterAge[] };
+
+// Each roster row carries `age` only where the stripper kept it: null is an unknown date of birth.
+function withRosterAges({ Program, ProgramRosterAge }: ProgramBag): ProgramBag['Program'] {
+    const ages = new Map(ProgramRosterAge.filter(r => 'age' in r).map(r => [r.personId, r.age ?? null]));
+    if (!Program.participants) return Program;
+    return {
+        ...Program,
+        participants: Program.participants.map(p => ages.has(p.personId) ? { ...p, age: ages.get(p.personId) } : p),
+    };
+}
 
 // saleEndedAt is internal-tier and absent here; the off-sale date alone decides, as the claim route does until the sweep runs.
 function closedBy(body: ProgramBody) {
@@ -119,7 +133,9 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
                             id: true,
                             name: true,
                             email: true,
+                            phone: true,
                             dateOfBirth: true,
+                            isDeclaredAdult: true,
                             householdId: true,
                             household: {
                                 select: {
@@ -173,9 +189,13 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
     const isPrivileged = isSysAdminOrBoard || isLeadMentor || isCoreVolunteer;
     const viewerIsLeader = (isLeadMentor || isCoreVolunteer) && !isSysAdminOrBoard;
     const emailWithheldFrom = emailWithheldParticipants(program.participants, viewerIsLeader);
+    const ages = program.participants.map(p => ({
+        personId: p.personId,
+        age: p.person.dateOfBirth ? calculateAge(p.person.dateOfBirth, program.startAt) : null,
+    }));
     const roster = program.participants.map(p => ({
         ...p,
-        person: { ...rosterPerson(p.person, viewerIsLeader), household: rosterHousehold(p.person.household, emailWithheldFrom) },
+        person: { ...rosterPerson(adultPhoneOnly(p.person, program.startAt), viewerIsLeader), household: rosterHousehold(p.person.household, emailWithheldFrom) },
     }));
 
     // A members-only program is hidden unless its leader opted it into the public
@@ -219,11 +239,11 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
         const metadata: Record<string, unknown> = { ...program };
         delete metadata.volunteers;
         delete metadata.participants;
-        return { Program: metadata };
+        return { Program: metadata, ProgramRosterAge: [] };
     }
     if (isPrivileged) {
         const volunteers = program.volunteers.map(v => ({ ...v, person: withholdEmail(v.person, emailWithheldFrom) }));
-        return { Program: { ...program, volunteers, participants: roster } };
+        return { Program: { ...program, volunteers, participants: roster }, ProgramRosterAge: ages };
     }
 
     // Payment status (status = paid vs not paid yet) is staff's, plus a household
@@ -238,7 +258,7 @@ const getProgram = handler<{ id: string }>('GET /api/programs/[id]', async ({ au
     const participants = roster.map(({ status, pendingSince, ...row }) =>
         seesPayment(row) ? { ...row, status, pendingSince } : row
     );
-    return { Program: { ...program, participants } };
+    return { Program: { ...program, participants }, ProgramRosterAge: ages };
 });
 
 

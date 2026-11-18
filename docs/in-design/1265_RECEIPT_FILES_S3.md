@@ -408,6 +408,5 @@ The bulk-donation library also stores its uploaded CSVs as `bytea`
     waits until finance acts on it specifically.
   - Daily limits differ by role: program leaders and the Board can reach 25 in a
     day when catching up (one person has sent 20); for others, 5 is high.
-  - Extra sending addresses (aliases) for a person are ruled in
-    `docs/rules/people-households.md`: finance or the Board record them, and one
+  - Extra sending addresses (aliases) for a person are ruled: finance or the Board record them, and one
     counts only after finance or the Board approves it from its first mail.

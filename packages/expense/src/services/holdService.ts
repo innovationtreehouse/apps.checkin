@@ -1,6 +1,6 @@
-// Account-mapping holds (NO_MATCH / MULTIPLE_MATCHES / NO_PART_NUMBER / NON_INVENTORY): FINANCE sets a line's
-// account by hand and resubmits. The same resubmit retries a failed QuickBooks post, and books an
-// UNBOOKED one (finance's "book it").
+// Account-mapping holds (NO_MATCH / MULTIPLE_MATCHES / NO_PART_NUMBER / NON_INVENTORY): FINANCE sets a held
+// line's account by hand, or fixes a rule, and resubmits. The same resubmit retries a failed QuickBooks post,
+// and books an UNBOOKED one (finance's "book it").
 import { db } from "../db";
 import type { ExpensePrincipal } from "../contract";
 import { getOrgId } from "../runtime";
@@ -14,7 +14,9 @@ import { requireFinance } from "./approvalService";
 import { ServiceError } from "@checkin/component-kit";
 
 /** Once the entry is (or is being) booked, a line's account is corrected in QuickBooks, not here. */
-const IN_QUICKBOOKS = new Set([POSTING, "CREATED", "MATCHED"]);
+export const IN_QUICKBOOKS = new Set([POSTING, "CREATED", "MATCHED"]);
+/** Past mapping and waiting on finance: a line's account may be fixed here without a hold. */
+export const WAITING_ON_FINANCE = new Set(["POST_FAILED", "NEEDS_FINANCE", "UNBOOKED", "AMBIGUOUS"]);
 
 export async function setHeldLineAccount(
   principal: ExpensePrincipal,
@@ -33,6 +35,10 @@ export async function setHeldLineAccount(
     await lockExpense(tx, expenseId);
     const { qbMatchState } = await tx.expense.findUniqueOrThrow({ where: { id: expenseId }, select: { qbMatchState: true } });
     if (IN_QUICKBOOKS.has(qbMatchState)) throw new ServiceError(409, "already posted to QuickBooks; correct it there");
+    // An account set by hand wins over every rule, so it goes only on a held line or an expense finance must fix.
+    if (!WAITING_ON_FINANCE.has(qbMatchState) && !(await tx.expenseHold.findFirst({ where: { expenseId, lineItemId, status: "PENDING" }, select: { id: true } }))) {
+      throw new ServiceError(409, "This line isn't held for an account; fix the account rule instead");
+    }
     const { resolvedQbAccount } = await tx.expenseLineItem.findUniqueOrThrow({ where: { id: lineItemId }, select: { resolvedQbAccount: true } });
     // The poster reads resolvedQbAccount, and nothing refreshes it on every path after the processing commit.
     await tx.expenseLineItem.update({
@@ -69,6 +75,8 @@ export function retryRefusal(outcome: PostOutcome | "unbound"): ServiceError | n
   return new ServiceError(status, message);
 }
 
+export const NO_SINGLE_ACCOUNT = "A line no longer resolves to one QuickBooks account; fix the account mapping first";
+
 export async function resubmitHeldExpense(principal: ExpensePrincipal, expenseId: string): Promise<void> {
   requireFinance(principal);
   const orgId = await getOrgId();
@@ -78,11 +86,11 @@ export async function resubmitHeldExpense(principal: ExpensePrincipal, expenseId
   if (expense.qbMatchState === "UNBOOKED") return bookExpenseToQb(orgId, expenseId, actorOf(principal));
   if (expense.qbMatchState === "POST_FAILED" || expense.qbMatchState === "NEEDS_FINANCE") {
     const outcome = await retryQbPost(orgId, expenseId, actorOf(principal));
-    if (outcome === false) throw new ServiceError(409, "A line no longer resolves to one QuickBooks account; fix the account mapping first");
+    if (outcome === false) throw new ServiceError(409, NO_SINGLE_ACCOUNT);
     const refusal = retryRefusal(outcome);
     if (refusal) throw refusal;
     return;
   }
   await writeAudit(db, actorOf(principal), { expenseId, action: "hold_resubmitted" });
-  await checkAndProcessExpense(orgId, expenseId);
+  await checkAndProcessExpense(orgId, expenseId, actorOf(principal));
 }

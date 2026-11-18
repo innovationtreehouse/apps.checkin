@@ -3,6 +3,7 @@
 import { use } from 'react';
 import { useRouter } from 'next/navigation';
 import { Alert, Button, Card, Center, Container, Group, Text, Title } from '@mantine/core';
+import { LoadError } from '@checkin/component-ui';
 import { PageLoader } from "@/components/ui/PageLoader";
 import { useProgramEnrollment } from './useProgramEnrollment';
 import ProgramDetailsCard from './ProgramDetailsCard';
@@ -12,19 +13,27 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
   const { id } = use(params);
   const router = useRouter();
   const {
-    session, status, program, loading, message, successMessage, startEnrollmentProcess, showEnrollmentSelection, picker,
+    session, status, program, programLoad, successMessage, startEnrollmentProcess, signInToProgram, showEnrollmentSelection, picker,
   } = useProgramEnrollment(id);
 
-  if (loading || status === "loading") {
+  if ((!program && (programLoad.loading || programLoad.retrying)) || status === "loading") {
     return <PageLoader />;
   }
+
+  if (!program && programLoad.error && programLoad.status !== 404) return (
+    <Container size="sm" py="xl">
+      <LoadError what="this program" message={programLoad.error} onRetry={programLoad.reload} />
+    </Container>
+  );
 
   if (!program) return (
     <Container size="sm" py="xl">
       <Card withBorder radius="md" padding="xl" ta="center">
-        <Title order={3}>{message || "Not Found"}</Title>
+        <Title order={3}>{programLoad.status === 404 ? "Program not found." : "Not Found"}</Title>
         <Group justify="center" mt="lg">
           <Button onClick={() => router.push('/programs')}>Back to Directory</Button>
+          {/* A members-only program reads as not found until the visitor signs in. */}
+          {!session && <Button variant="default" onClick={signInToProgram}>Sign in</Button>}
         </Group>
       </Card>
     </Container>
@@ -45,7 +54,7 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
     }));
   const hasPrice = !!(program.orgMemberPriceCents || program.nonOrgMemberPriceCents);
   // A youth is shown no payment obligation, action, or status — their own or
-  // their household's (docs/rules/programs.md). An unverifiable age is NOT a
+  // their household's. An unverifiable age is NOT a
   // youth: they keep every affordance so they can reach the intake panel and
   // establish an age.
   const viewerIsYouth = user?.ageBand === 'youth';
@@ -108,7 +117,6 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
           </Alert>
         )}
 
-        {message && <Alert color="red" mb="lg">{message}</Alert>}
         {successMessage && <Alert mb="lg">{successMessage}</Alert>}
 
         <Center mt="xl">
@@ -131,7 +139,7 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
                 // existence is resolved by NextAuth, never leaked by a public API
                 // response. First-time users are then filled in by the intake
                 // panel below.
-                <Button size="md" onClick={() => router.push(`/signin?callbackUrl=/programs/${program.id}`)} disabled={isClosed}>
+                <Button size="md" onClick={signInToProgram} disabled={isClosed}>
                   {isClosed ? <>Enrollment Closed{closedSuffix}</> : "Sign in to enroll"}
                 </Button>
               )}

@@ -11,13 +11,14 @@ end. The mock exists to close exactly that gap. The contract-signing mock
 ## What it stands in for
 
 Only the vendor's own step. The applicant is handed an in-app consent
-interstitial instead of Averity's hosted page; confirming there records **real**
-consent and advances the application into parallel board review. Everything from
-that point on — including the two-reviewer attestation on the membership-ops
-review queue — is the production path, unmodified.
+interstitial instead of Averity's hosted page; confirming there marks the
+applicant's own check started, for real, which puts their check review in the
+reviewers' queue. Everything from that point on — including the two-reviewer
+attestation on the membership-ops review queue — is the production path,
+unmodified.
 
 The system never holds a check result either way, in production or under the
-mock: what it stores is the consent flag and the reviewers' attestations.
+mock: what it stores is the check-started flag and the reviewers' attestations.
 
 ## Turning it on
 

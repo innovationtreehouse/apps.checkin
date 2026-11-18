@@ -1,6 +1,6 @@
 import prisma from "@/lib/prisma";
 import { jsonField } from "@/lib/membership/checkStanding";
-import type { Prisma } from "@/generated/prisma/client";
+import { Prisma } from "@/generated/prisma/client";
 import { PAST_PAGE_SIZE } from "./paymentPlanHistoryPage";
 
 export type PaymentPlanOutcome = "APPROVED" | "REFUSED";
@@ -41,11 +41,14 @@ async function personNames(ids: Iterable<number>) {
     return new Map(people.map((p) => [p.id, p]));
 }
 
-// The audit rows that can be program decisions. It also matches whole-row snapshots of a
-// withdrawn refused place, which programAuditOutcome drops.
-const PROGRAM_DECISION_AUDIT: Prisma.AuditLogWhereInput = {
+// The audit rows that record a program decision, matched in the database. A whole-row
+// snapshot (enrollment, withdrawal, refund) carries `personId`; a decision never does.
+export const PROGRAM_DECISION_AUDIT: Prisma.AuditLogWhereInput = {
     tableName: "ProgramParticipant",
-    newData: { path: ["isPaymentPlanRequested"], equals: false },
+    AND: [
+        { newData: { path: ["isPaymentPlanRequested"], equals: false } },
+        { newData: { path: ["personId"], equals: Prisma.DbNull } },
+    ],
     OR: [
         { AND: [{ newData: { path: ["status"], equals: "ACTIVE" } }, { newData: { path: ["wasOrgMemberAtApproval"], equals: true } }] },
         { AND: [{ newData: { path: ["status"], equals: "ACTIVE" } }, { newData: { path: ["wasOrgMemberAtApproval"], equals: false } }] },
@@ -56,7 +59,7 @@ const PROGRAM_DECISION_AUDIT: Prisma.AuditLogWhereInput = {
 
 // ponytail: reads every decision and pages in memory — fine at a few hundred
 // requests a year; move paging into SQL if the history reaches the thousands.
-export async function programPaymentPlanHistory(page: number) {
+export async function programPaymentPlanHistory(page: number, showArchived: boolean) {
     const [audits, stamped] = await Promise.all([
         prisma.auditLog.findMany({
             where: PROGRAM_DECISION_AUDIT,
@@ -91,7 +94,11 @@ export async function programPaymentPlanHistory(page: number) {
         });
     }
 
-    const rows = pageOf(decisions, page);
+    const archived = showArchived ? new Set<number>() : new Set((await prisma.person.findMany({
+        where: { id: { in: [...new Set(decisions.map((d) => d.personId))] }, household: { archivedAt: { not: null } } },
+        select: { id: true },
+    })).map((p) => p.id));
+    const rows = pageOf(decisions.filter((d) => !archived.has(d.personId)), page);
     const [people, programs] = await Promise.all([
         personNames(rows.flatMap((r) => (r.decidedById === null ? [r.personId] : [r.personId, r.decidedById]))),
         prisma.program.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.programId))] } }, select: { id: true, name: true } }),
@@ -112,7 +119,7 @@ export async function programPaymentPlanHistory(page: number) {
 }
 
 // ponytail: same in-memory paging ceiling as programPaymentPlanHistory.
-export async function membershipPaymentPlanHistory(page: number) {
+export async function membershipPaymentPlanHistory(page: number, showArchived: boolean) {
     const [audits, stamped] = await Promise.all([
         prisma.auditLog.findMany({
             where: {
@@ -141,7 +148,11 @@ export async function membershipPaymentPlanHistory(page: number) {
         decisions.push({ id: `stamp:${p.id}`, outcome: "APPROVED", decidedAt: p.paidAt, decidedById: p.manualPaymentById, processId: p.id });
     }
 
-    const rows = pageOf(decisions, page);
+    const archived = showArchived ? new Set<number>() : new Set((await prisma.orgMembershipProcess.findMany({
+        where: { id: { in: [...new Set(decisions.map((d) => d.processId))] }, orgMembership: { household: { archivedAt: { not: null } } } },
+        select: { id: true },
+    })).map((p) => p.id));
+    const rows = pageOf(decisions.filter((d) => !archived.has(d.processId)), page);
     const [people, processes] = await Promise.all([
         personNames(rows.flatMap((r) => (r.decidedById === null ? [] : [r.decidedById]))),
         prisma.orgMembershipProcess.findMany({
