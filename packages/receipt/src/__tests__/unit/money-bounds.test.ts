@@ -7,6 +7,7 @@ describe("money fields stop at the column limit", () => {
   it("takes a dollar field up to 21,474,836.47", () => {
     expect(EditReceiptSchema.safeParse({ receiptTotal: 21474836.47 }).success).toBe(true);
     expect(EditReceiptSchema.safeParse({ receiptTotal: 21474836.48 }).success).toBe(false);
+    expect(EditReceiptSchema.safeParse({ receiptTotal: 21474836.471 }).success).toBe(true);
   });
 
   it("takes a cents field up to 2,147,483,647", () => {

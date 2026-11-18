@@ -33,6 +33,8 @@ import {
   EditLineItemSchema,
   EditReceiptSchema,
   InKindInputSchema,
+  LINE_COST_MESSAGE,
+  MAX_CENTS,
   RotationInputSchema,
   toCents,
   UploadInputSchema,
@@ -992,6 +994,7 @@ export const receiptService = {
 
       const edited = fields.filter((f) => f.after !== undefined && String(f.before) !== String(f.after));
       const totalPriceCents = edit.totalPrice === undefined ? lineTotalAfterEdit(li, { quantity, unitPriceCents }) : toCents(edit.totalPrice);
+      if (totalPriceCents > MAX_CENTS) throw new ServiceError(400, LINE_COST_MESSAGE);
       if (totalPriceCents !== li.totalPriceCents) {
         edited.push({ field: "totalPrice", before: li.totalPriceCents / 100, after: totalPriceCents / 100 });
       }

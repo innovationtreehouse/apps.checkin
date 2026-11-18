@@ -15,11 +15,11 @@ export const MAX_IMPORT_BATCH = 50;
 const MAX_FILE_BASE64 = Math.ceil((10 * 1024 * 1024) / 3) * 4;
 
 /** The most a money column holds: its integer cents limit. */
-const MAX_CENTS = 2 ** 31 - 1;
+export const MAX_CENTS = 2 ** 31 - 1;
 const DOLLAR_RANGE = { message: "must be a number from 0 to 21,474,836.47" };
 const CENTS_RANGE = { message: "must be a whole number of cents from 0 to 2,147,483,647" };
 const quantity = z.number().finite().positive().max(MAX_LINE_QUANTITY);
-const dollars = z.number().finite().min(0, DOLLAR_RANGE).max(MAX_CENTS / 100, DOLLAR_RANGE);
+const dollars = z.number().finite().min(0, DOLLAR_RANGE).refine((v) => dollarsToCents(v) <= MAX_CENTS, DOLLAR_RANGE);
 const cents = z.number().int(CENTS_RANGE).min(0, CENTS_RANGE).max(MAX_CENTS, CENTS_RANGE);
 const currencyCode = z.string().regex(CURRENCY_CODE, { message: "Currency must be a 3-letter code, like USD" });
 const dollarString = z.string().refine((v) => {
@@ -30,9 +30,11 @@ const dollarString = z.string().refine((v) => {
 /** A dollar input from these shapes in cents; missing counts as 0, and text that is not a plain decimal throws. */
 export const toCents = (dollars: number | string | undefined): number => dollarsToCents(dollars ?? 0);
 /** A line with no total stores quantity × unit price, which must fit the money column too. */
-const lineCostFits = (l: { quantity?: number; unitPrice?: number; totalPrice?: number }) =>
+export const lineCostFits = (l: { quantity?: number; unitPrice?: number; totalPrice?: number }) =>
   l.totalPrice !== undefined || Math.round((l.quantity ?? 1) * toCents(l.unitPrice)) <= MAX_CENTS;
-const LINE_COST_RANGE = { message: "Quantity × unit price must be at most 21,474,836.47", path: ["unitPrice"] };
+export const LINE_COST_MESSAGE = "Quantity × unit price must be at most 21,474,836.47";
+/** Zod rewrites `message` to `error` on this object when it is used, so read the text from LINE_COST_MESSAGE. */
+export const LINE_COST_RANGE = { message: LINE_COST_MESSAGE, path: ["unitPrice"] };
 
 /** Text a receipt cannot be checked without; blank or spaces-only is refused. */
 const requiredText = (name: string, max: number) => z.string({ error: `${name} is required` }).trim().min(1, { message: `${name} is required` }).max(max);
