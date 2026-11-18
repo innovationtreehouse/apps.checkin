@@ -9,6 +9,7 @@ import { notifyBoardPaidReject } from "@/lib/membership/boardAlerts";
 import { householdCheckStandings, householdCheckStarted, householdQualifies, jsonField, legacyHouseholdCheckStarted, liveBgThreshold, reviewHoldsRejection } from "@/lib/membership/checkStanding";
 import { advanceExternalIfComplete } from "@/lib/membership/external";
 import { lockAndFindDeniedHousehold, setHouseholdStatus } from "@/lib/membership/householdStatus";
+import { lockProcessRows } from "@/lib/lockOrder";
 import { SETTLE_BLOCKABLE_STATUSES, fromWhere, openProcess, personBgOpen, type ProcessStatus } from "@/lib/membership/lifecycle";
 import {
     applyVolunteerFamilyStatus,
@@ -118,9 +119,10 @@ const CONVERGES: readonly ProcessStatus[] = ["PENDING_BG_REVIEW", "PENDING_BG_CL
 
 async function settleInTx(tx: TxClient, processId: number, householdId: number, threshold: Date | null, trigger: SettleTrigger | undefined, orderRead: boolean): Promise<Settled> {
     const record = (oldData: Prisma.InputJsonObject, newData: Prisma.InputJsonObject) => audit(tx, processId, householdId, oldData, withTrigger(newData, trigger));
-    // Process, then household: the order clearBackgroundCheck locks in.
-    await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
-    if (await lockAndFindDeniedHousehold(tx, [householdId]) !== null) return { steps: ["denied"] };
+    // Membership, then application: the order lib/lockOrder.ts states.
+    const denied = await lockAndFindDeniedHousehold(tx, [householdId]) !== null;
+    await lockProcessRows(tx, [processId]);
+    if (denied) return { steps: ["denied"] };
     const process = await tx.orgMembershipProcess.findUnique({
         where: { id: processId },
         select: { id: true, kind: true, status: true, orgMembershipId: true, paidAt: true, bgConsentAt: true, bgClearedAt: true, contractSignedAt: true, shopifyOrderId: true },
@@ -261,8 +263,10 @@ export async function releaseDepartedRejection(processId: number, actorId: numbe
     }
 
     const status = await prisma.$transaction(async (tx) => {
-        await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
-        if (await lockAndFindDeniedHousehold(tx, [householdId]) !== null) {
+        // Membership, then application: the order lib/lockOrder.ts states.
+        const denied = await lockAndFindDeniedHousehold(tx, [householdId]) !== null;
+        await lockProcessRows(tx, [processId]);
+        if (denied) {
             throw new ReviewError("wrong_phase", "This household has been denied membership, so its application cannot be released.");
         }
         const fresh = await tx.orgMembershipProcess.findUnique({ where: { id: processId }, select: { kind: true, status: true, paidAt: true, bgConsentAt: true, contractSignedAt: true } });

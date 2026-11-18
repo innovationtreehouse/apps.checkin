@@ -16,6 +16,7 @@ import { recordUnreportedReversal } from "@/lib/finance/reconcile/liveOrder";
 import { liveMembershipYear } from "@/lib/membership/renewal";
 import { householdHasDisputedCheck } from "@/lib/membership/checkStanding";
 import type { Prisma } from "@/generated/prisma/client";
+import { lockProcessRows } from "@/lib/lockOrder";
 
 // Loaded on use: settleHouseholdBg imports review.ts, and a static import closes that cycle at load.
 const settleModule = () => import("@/lib/membership/settleHouseholdBg");
@@ -153,14 +154,18 @@ async function settle(
     opts: { via: "payment" | "manual"; actorId?: number; shopifyOrderId?: string; hasMembershipItem?: boolean; reason?: string; appliesToYear?: number | null; grantedYear?: number; requireRequested?: boolean },
 ): Promise<{ outcome: ActivateOutcome; householdId?: number; disputed?: boolean }> {
     if (opts.shopifyOrderId) await recordUnreportedReversal(opts.shopifyOrderId);
+    // An application's membership is fixed at its creation, so this unlocked read stays true.
+    const ref = await prisma.orgMembershipProcess.findUnique({ where: { id: processId }, select: { orgMembershipId: true } });
     const result = await prisma.$transaction(async (tx) => {
-        await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
+        // Membership, then application: the order lib/lockOrder.ts states. The membership
+        // lock keeps a deny from committing between the DENIED check and the payment write.
+        const [membership] = ref?.orgMembershipId
+            ? await tx.$queryRaw<{ householdId: number; status: HouseholdStatus }[]>`SELECT "householdId", status FROM "OrgMembership" WHERE id = ${ref.orgMembershipId} FOR UPDATE`
+            : [];
+        await lockProcessRows(tx, [processId]);
         const found = await tx.orgMembershipProcess.findUnique({ where: { id: processId } });
         if (!found) throw new PaymentError("not_found", "Application not found.");
         const process = asHouseholdProcess(found);
-        // Household row locked after the process row (the order review.ts takes), so a
-        // deny can't commit between this DENIED check and the payment write.
-        const [membership] = await tx.$queryRaw<{ householdId: number; status: HouseholdStatus }[]>`SELECT "householdId", status FROM "OrgMembership" WHERE id = ${process.orgMembershipId} FOR UPDATE`;
         if (!membership) throw new PaymentError("not_found", "Membership not found.");
 
         if (opts.via === "manual") {

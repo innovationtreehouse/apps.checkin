@@ -254,6 +254,25 @@ describe("membership-ops/review page", () => {
     });
   });
 
+  it("re-reads the queue when a reset is refused, so a stale row does not stay up", async () => {
+    setSession({ id: 1, isBoardMember: true });
+    const fetchMock = mockFetchJson({
+      "/api/membership/reviews?mine=1": { queue: [{ ...named, id: 305 }] },
+      "/api/membership/reviews": { queue: [] },
+    });
+    const queueLoads = () => fetchMock.mock.calls.filter(([url]) => String(url) === "/api/membership/reviews").length;
+    renderPage();
+    await screen.findByText("Nothing awaiting your review right now.");
+    fireEvent.click(screen.getByRole("checkbox", { name: "Show incomplete reviews I've already approved" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Close: opened for the wrong person" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByRole("textbox", { name: /Reason/ }), { target: { value: "not this Pat" } });
+    const before = queueLoads();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close review" }));
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red" })));
+    await waitFor(() => expect(queueLoads()).toBeGreaterThan(before));
+  });
+
   it("lets a reviewer undo their own approval, with a reason", async () => {
     setSession({ id: 1, isBackgroundCheckReviewer: true });
     const fetchMock = mockFetchJson({

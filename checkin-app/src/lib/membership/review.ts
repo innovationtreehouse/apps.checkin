@@ -18,6 +18,7 @@ import { type DbClient, type TxClient } from "@/lib/db-client";
 import { awaitingBgReview, fromWhere, personBgOpen } from "@/lib/membership/lifecycle";
 import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
 import { lockHouseholdRows } from "@/lib/household/archiveGuard";
+import { lockPersonRows, lockProcessRows } from "@/lib/lockOrder";
 import { raisePaymentException } from "@/lib/finance/reconcile/exceptions";
 import { SIGN_IN_VERIFIED_PERSON } from "@/lib/person/filters";
 import { householdCheckStarted, jsonField, reviewHoldsRejection } from "@/lib/membership/checkStanding";
@@ -264,10 +265,14 @@ export async function attest(reviewerId: number, processId: number, input: Attes
     const reviewer = await loadReviewer(reviewerId);
     if (!reviewer || !canReviewBackgroundChecks(reviewer)) throw new ReviewError("not_reviewer", "You are not a background-check reviewer.");
 
-    // FOR UPDATE on the review row serializes concurrent decisions on it.
+    const before = await prisma.orgMembershipProcess.findUnique({ where: { id: processId }, select: { orgMembershipId: true, subjectPersonId: true, requestedForHouseholdId: true } });
+    if (!before) throw new ReviewError("not_found", "Application not found.");
+    const lockedSubject = before.subjectPersonId ?? soleId(input.subjectPersonIds);
+    const lockedHouseholds = await reviewHouseholds(prisma, { ...before, subjectPersonId: lockedSubject });
+
     type AttestOutcome = { status: OrgMembershipProcessStatus; approvals?: number; reopened?: true; rejected?: true; clearance?: ClearanceOutcome; households: number[] };
     const result = await reviewTransaction<AttestOutcome>(async (tx) => {
-        await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
+        await lockReview(tx, lockedHouseholds, [lockedSubject], processId);
 
         const process = await tx.orgMembershipProcess.findUnique({
             where: { id: processId },
@@ -276,6 +281,7 @@ export async function attest(reviewerId: number, processId: number, input: Attes
         if (!process) throw new ReviewError("not_found", "Application not found.");
         if (process.kind !== "PERSON_BG") throw new ReviewError("wrong_phase", "This application is decided by its people's check reviews, not reviewed itself.");
         if (input.result === "APPROVE" && process.status === "BLOCKED" && process.attestations.some((a) => a.reviewerId === reviewerId && a.result === "REJECT")) {
+            await throwIfMoved(tx, process, lockedSubject, lockedHouseholds);
             return switchRejectionToApprove(tx, reviewerId, process, input);
         }
         if (!awaitingBgReview.has({ kind: process.kind, status: process.status, bgConsentAt: !!process.bgConsentAt, bgClearedAt: !!process.bgClearedAt })) {
@@ -286,6 +292,7 @@ export async function attest(reviewerId: number, processId: number, input: Attes
         const naming = process.subjectPersonId === null;
         const subjectPersonId = naming ? await namedSubject(tx, process.requestedForHouseholdId, input.subjectPersonIds) : confirmedSubject(process.subjectPersonId!, input.subjectPersonIds);
         const target = { ...process, subjectPersonId };
+        await throwIfMoved(tx, target, lockedSubject, lockedHouseholds);
         if (naming) await throwIfOwnReview(tx, reviewerId, target, { attestation: input.result });
         if (process.attestations.some((a) => a.reviewerId === reviewerId)) throw new ReviewError("already_attested", "You have already reviewed this background check.");
         if (process.attestations.some((a) => sharesHousehold(reviewer.householdId, a.reviewer.householdId))) throw new ReviewError("same_household_reviewer", "Another reviewer from your household has already reviewed this background check.");
@@ -360,6 +367,12 @@ async function namedSubject(tx: TxClient, requestedForHouseholdId: number | null
     return requested[0];
 }
 
+/** The one id a list names, or null when it names none or several. */
+function soleId(ids: number[] | undefined): number | null {
+    const unique = [...new Set(ids ?? [])];
+    return unique.length === 1 ? unique[0] : null;
+}
+
 /** A later decision on a named review: it may repeat its person or name nobody, never another. */
 function confirmedSubject(subject: number, subjectPersonIds: number[] | undefined): number {
     const requested = [...new Set(subjectPersonIds ?? [])];
@@ -370,13 +383,12 @@ function confirmedSubject(subject: number, subjectPersonIds: number[] | undefine
 }
 
 /**
- * Fixes the review's person at its first decision. The person's row is locked so two
- * reviews can't name them at once. A review of their own that already has decisions,
- * is blocked or was sent back keeps them: the reviewer reviews them there. An empty
- * one is closed in favour of this review.
+ * Fixes the review's person at its first decision. Runs under attest()'s lock on the
+ * person's row, so two reviews can't name them at once. A review of their own that
+ * already has decisions, is blocked or was sent back keeps them: the reviewer reviews
+ * them there. An empty one is closed in favour of this review.
  */
 async function nameSubject(tx: TxClient, reviewerId: number, processId: number, subjectPersonId: number) {
-    await tx.$queryRaw`SELECT id FROM "Person" WHERE id = ${subjectPersonId} FOR UPDATE`;
     const own = await tx.orgMembershipProcess.findMany({
         where: { kind: "PERSON_BG", subjectPersonId, id: { not: processId }, ...personBgOpen.where },
         select: { id: true, status: true, _count: { select: { attestations: true } } },
@@ -723,13 +735,13 @@ export async function boardResetReview(processId: number, actorId: number, opts:
     const households = await boardReviewHouseholds(process, actorId, "reset");
 
     const status = await reviewTransaction(async (tx) => {
-        // FOR UPDATE per attest()'s contract: without it a concurrent second
-        // attestation could clear the check between the phase test and the delete,
-        // leaving a cleared process with no attestations behind it.
-        await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
+        // The process lock is attest()'s: without it a concurrent second attestation could
+        // clear the check between the phase test and the delete, leaving a cleared process
+        // with no attestations behind it.
+        await lockReview(tx, households, [process.subjectPersonId], processId);
         const fresh = await tx.orgMembershipProcess.findUnique({ where: { id: processId }, select: { status: true, kind: true, paidAt: true, bgConsentAt: true, bgClearedAt: true, contractSignedAt: true, subjectPersonId: true, orgMembershipId: true, requestedForHouseholdId: true } });
         if (!fresh) throw new ReviewError("not_found", "Application not found.");
-        await throwIfHouseholdsMoved(tx, fresh, households);
+        await throwIfMoved(tx, fresh, process.subjectPersonId, households);
         await throwIfDenied(tx, households, "reset");
         await throwIfActorJoined(tx, actorId, households, "reset");
         const blocked = fresh.status === "BLOCKED";
@@ -809,10 +821,10 @@ async function closeAsWrongPerson(process: OrgMembershipProcess, actorId: number
     const processId = process.id;
     const households = await boardReviewHouseholds(process, actorId, "close");
     await reviewTransaction(async (tx) => {
-        await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
+        await lockReview(tx, households, [process.subjectPersonId], processId);
         const fresh = await tx.orgMembershipProcess.findUnique({ where: { id: processId }, select: { status: true, orgMembershipId: true, subjectPersonId: true, requestedForHouseholdId: true } });
         if (!fresh) throw new ReviewError("not_found", "Application not found.");
-        await throwIfHouseholdsMoved(tx, fresh, households);
+        await throwIfMoved(tx, fresh, process.subjectPersonId, households);
         await throwIfDenied(tx, households, "closed");
         await throwIfActorJoined(tx, actorId, households, "close");
         if (!personBgOpen.has({ status: fresh.status })) throw new ReviewError("wrong_phase", "Only an open check review can be closed as opened for the wrong person.");
@@ -851,11 +863,11 @@ export async function boardReopenWrongPersonClose(processId: number, actorId: nu
     const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
     if (!process || process.kind !== "PERSON_BG") throw new ReviewError("not_found", "Check review not found.");
     const households = await boardReviewHouseholds(process, actorId, "reopen");
+    const lockedPeople = await reopenPeople(prisma, processId, process.subjectPersonId, process.subjectPersonId === null ? process.requestedForHouseholdId : null);
 
     const status = await reviewTransaction(async (tx) => {
-        // Process, then person: the order attest() locks in. The person's lock is the one
-        // openPersonBg takes, so no new review opens for them meanwhile.
-        await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
+        // The people's locks are the ones openPersonBg takes, so no new review opens for them meanwhile.
+        await lockReview(tx, households, lockedPeople, processId);
         const fresh = await tx.orgMembershipProcess.findUnique({
             where: { id: processId },
             select: { status: true, archivedFromStatus: true, orgMembershipId: true, subjectPersonId: true, requestedForHouseholdId: true },
@@ -867,8 +879,8 @@ export async function boardReopenWrongPersonClose(processId: number, actorId: nu
         }
         const unnamedFor = fresh.subjectPersonId === null ? fresh.requestedForHouseholdId : null;
         const people = await reopenPeople(tx, processId, fresh.subjectPersonId, unnamedFor);
-        for (const id of people) await tx.$queryRaw`SELECT id FROM "Person" WHERE id = ${id} FOR UPDATE`;
-        await throwIfHouseholdsMoved(tx, fresh, households);
+        if (people.join() !== lockedPeople.join()) throw movedOn();
+        await throwIfMoved(tx, fresh, process.subjectPersonId, households);
         await throwIfDenied(tx, households, "reopened");
         await throwIfActorJoined(tx, actorId, households, "reopen");
         const later = await tx.orgMembershipProcess.findFirst({
@@ -904,9 +916,9 @@ const isoDay = (d: Date) => d.toISOString().slice(0, 10);
 /**
  * Whoever a reopened review would count against: its person, anyone a wrong-person
  * reset cleared off it (they keep its rejection), and for an unnamed review the leads
- * of the household that asked for it. Sorted, so their row locks are taken in one order.
+ * of the household that asked for it, sorted.
  */
-async function reopenPeople(tx: TxClient, processId: number, subjectPersonId: number | null, unnamedFor: number | null): Promise<number[]> {
+async function reopenPeople(tx: DbClient, processId: number, subjectPersonId: number | null, unnamedFor: number | null): Promise<number[]> {
     const rows = await tx.auditLog.findMany({ where: { tableName: "OrgMembershipProcess", affectedEntityId: processId }, select: { oldData: true, newData: true } });
     const held = rows.filter((r) => jsonField(r.newData, "subjectPersonId") === null).map((r) => jsonField(r.oldData, "subjectPersonId"));
     const leads = unnamedFor === null ? [] : await liveHouseholdLeadIds(tx, unnamedFor);
@@ -914,10 +926,19 @@ async function reopenPeople(tx: TxClient, processId: number, subjectPersonId: nu
     return [...new Set(ids)].sort((a, b) => a - b);
 }
 
-/** The household bar ran before the lock; refuse if the review's households have changed since. */
-async function throwIfHouseholdsMoved(tx: TxClient, fresh: ReviewTarget, checked: number[]) {
+/** Locks the rows a review act reads, in the order lib/lockOrder.ts states. */
+async function lockReview(tx: TxClient, households: number[], people: (number | null)[], processId: number) {
+    await lockAndFindDeniedHousehold(tx, households);
+    await lockHouseholdRows(tx, households);
+    await lockPersonRows(tx, people);
+    await lockProcessRows(tx, [processId]);
+}
+
+/** The locks were chosen before they were taken; refuse if the review's person or households have changed since. */
+async function throwIfMoved(tx: TxClient, fresh: ReviewTarget, lockedSubject: number | null, lockedHouseholds: number[]) {
+    if (fresh.subjectPersonId !== lockedSubject) throw movedOn();
     const now = await reviewHouseholds(tx, fresh);
-    if (now.length !== checked.length || now.some((id) => !checked.includes(id))) throw movedOn();
+    if (now.length !== lockedHouseholds.length || now.some((id) => !lockedHouseholds.includes(id))) throw movedOn();
 }
 
 type BlockedResetRow = {
