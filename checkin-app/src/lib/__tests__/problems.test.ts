@@ -270,6 +270,16 @@ describe("sendProblemsDigest", () => {
         expect(digestCtx().items).not.toContain("item(s) failed");
     });
 
+    it("sends a job that has never completed a run", async () => {
+        jest.mocked(getCronJobStatuses).mockResolvedValue([
+            { job: "new-job", lastSuccessAt: null, stale: false, lastError: "boom", lastErrorAt: hoursAgo(1) },
+        ]);
+
+        await sendProblemsDigest(NOW);
+
+        expect(digestCtx().items).toMatch(/^Scheduled job new-job: last run reported failures, /);
+    });
+
     it("sends nothing for a job once a later run is clean", async () => {
         jest.mocked(getCronJobStatuses).mockResolvedValue([{ job: "reconcile-shopify", lastSuccessAt: hoursAgo(1), stale: false }]);
         await sendProblemsDigest(NOW);

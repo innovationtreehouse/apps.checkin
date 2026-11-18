@@ -135,7 +135,8 @@ export async function getProblems(now = new Date()): Promise<{ items: Problem[];
 const address = (value: string | null | undefined): string | null => value?.trim() || null;
 
 /** A job whose latest run reported failures; a late job is listed as late instead. */
-export const failingJob = (j: CronJobStatus): boolean => Boolean(j.lastError) && !j.stale;
+export const failingJob = (j: CronJobStatus): j is CronJobStatus & { lastError: string; lastErrorAt: Date } =>
+    Boolean(j.lastError && j.lastErrorAt) && !j.stale;
 
 /**
  * The daily email: while anything has been stuck more than a day, a job has not run on time or its
@@ -153,7 +154,7 @@ export async function sendProblemsDigest(now = new Date()): Promise<void> {
         ]);
         const age = (at: Date) => now.getTime() - at.getTime();
         const stuck = items.filter((i) => age(i.failedAt) > DAY_MS);
-        const stale = jobs.filter((j) => j.stale);
+        const stale = jobs.filter((j): j is CronJobStatus & { lastSuccessAt: Date } => j.stale && j.lastSuccessAt !== null);
         const failing = jobs.filter(failingJob);
         if (stuck.length === 0 && stale.length === 0 && failing.length === 0 && unread.length === 0 && notices.length === 0) return;
 
@@ -161,7 +162,7 @@ export async function sendProblemsDigest(now = new Date()): Promise<void> {
         const lines = [
             ...stuck.map((i) => `${i.library}, ${i.step}: ${i.id}, stuck since ${when(i.failedAt)}`),
             ...stale.map((j) => `Scheduled job ${j.job}: last ran ${when(j.lastSuccessAt)}`),
-            ...failing.map((j) => `Scheduled job ${j.job}: last run reported failures, ${when(j.lastErrorAt ?? j.lastSuccessAt)}`),
+            ...failing.map((j) => `Scheduled job ${j.job}: last run reported failures, ${when(j.lastErrorAt)}`),
             ...unread.map(unreadLine),
             ...notices.map((n) => n.text),
         ];

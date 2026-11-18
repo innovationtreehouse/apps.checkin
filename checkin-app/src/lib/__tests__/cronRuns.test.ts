@@ -113,6 +113,22 @@ describe('getCronJobStatuses', () => {
 
         expect((await getCronJobStatuses(NOW))[0].lastError).toBe('unknown error');
     });
+
+    it('lists a job that has runs but never completed one as failing, first', async () => {
+        stubGroupBy(
+            [{ job: 'nightly', finishedAt: ago(2 * HOUR) }],
+            [
+                { job: 'new-job', success: false, error: 'boom', finishedAt: ago(HOUR) },
+                { job: 'nightly', success: true, error: null, finishedAt: ago(2 * HOUR) },
+            ],
+        );
+
+        expect(await getCronJobStatuses(NOW)).toEqual([
+            { job: 'new-job', lastSuccessAt: null, stale: false, lastError: 'boom', lastErrorAt: ago(HOUR) },
+            { job: 'nightly', lastSuccessAt: ago(2 * HOUR), stale: false },
+        ]);
+        expect(await countUnhealthyCronJobs(NOW)).toBe(1);
+    });
 });
 
 /**

@@ -6,6 +6,8 @@
  * default after a large import or backlog, so each sets an explicit timeout.
  */
 import prisma from '@/lib/prisma';
+import { executePendingCloses } from '@/lib/attendance/close';
+import { sendProblemsDigest } from '@/lib/problems';
 import { GET } from '../route';
 
 jest.mock('@/lib/prisma', () => ({ __esModule: true, default: { $transaction: jest.fn() } }));
@@ -53,5 +55,16 @@ describe('nightly cron transactions', () => {
         for (const { options } of [...sweep, ...checkout, ...purge]) {
             expect(options).toEqual(EXPLICIT);
         }
+    });
+});
+
+describe('nightly Problems email', () => {
+    it('is sent even when an earlier step throws', async () => {
+        jest.mocked(sendProblemsDigest).mockClear();
+        jest.mocked(executePendingCloses).mockRejectedValueOnce(new Error('close failed'));
+
+        await expect(GET(new Request('http://localhost/api/cron/nightly'))).rejects.toThrow('close failed');
+
+        expect(sendProblemsDigest).toHaveBeenCalledTimes(1);
     });
 });

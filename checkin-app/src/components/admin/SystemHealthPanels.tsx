@@ -259,7 +259,7 @@ export function ProblemsBox() {
                 <Badge variant="light" color="orange">scheduled job</Badge>
                 <Code>{j.job}</Code>
               </Group>
-              <Text size="xs" c="dimmed" title={j.lastSuccessAt}>Has not run on time; last ran {timeAgo(j.lastSuccessAt)}</Text>
+              <Text size="xs" c="dimmed" title={j.lastSuccessAt ?? undefined}>Has not run on time; last ran {lastRan(j.lastSuccessAt)}</Text>
             </List.Item>
           ))}
           {data.failingJobs.map((j) => (
@@ -268,7 +268,7 @@ export function ProblemsBox() {
                 <Badge variant="light" color="orange">scheduled job</Badge>
                 <Code>{j.job}</Code>
               </Group>
-              <Text size="xs" c="dimmed" title={j.lastErrorAt}>Last run reported failures {timeAgo(j.lastErrorAt ?? j.lastSuccessAt)}</Text>
+              <Text size="xs" c="dimmed" title={j.lastErrorAt}>Last run reported failures {lastRan(j.lastErrorAt ?? j.lastSuccessAt)}</Text>
             </List.Item>
           ))}
         </List>
@@ -279,7 +279,7 @@ export function ProblemsBox() {
 }
 
 // Mirrors CronJobStatus in lib/cronRuns.ts (its dates arrive JSON-serialized).
-type CronJob = { job: string; lastSuccessAt: string; stale: boolean; lastError?: string; lastErrorAt?: string };
+type CronJob = { job: string; lastSuccessAt: string | null; stale: boolean; lastError?: string; lastErrorAt?: string };
 
 /** "3 hours ago" / "2 days ago" — coarse on purpose; the exact stamp is the title text. */
 function timeAgo(iso: string): string {
@@ -290,6 +290,9 @@ function timeAgo(iso: string): string {
   const days = Math.round(hours / 24);
   return `${days} days ago`;
 }
+
+/** When a job last ran, or "never" for one that has not completed a run. */
+const lastRan = (iso: string | null | undefined): string => (iso ? timeAgo(iso) : 'never');
 
 /**
  * Last successful run of each cron sweep, from GET /api/system-status/config-health
@@ -338,8 +341,8 @@ export function CronRunsBox() {
             <List.Item key={j.job}>
               <Group justify="space-between" wrap="nowrap" align="flex-start">
                 <Code>{j.job}</Code>
-                <Text c={j.stale ? 'red' : 'green'} fw={j.stale ? 700 : undefined} ta="right" title={j.lastSuccessAt}>
-                  ● {timeAgo(j.lastSuccessAt)}
+                <Text c={j.stale || !j.lastSuccessAt ? 'red' : 'green'} fw={j.stale || !j.lastSuccessAt ? 700 : undefined} ta="right" title={j.lastSuccessAt ?? undefined}>
+                  ● {lastRan(j.lastSuccessAt)}
                 </Text>
               </Group>
               {j.lastError && (
