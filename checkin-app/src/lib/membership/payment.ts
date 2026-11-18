@@ -115,14 +115,6 @@ export async function ensurePaymentLinkForUser(userId: number) {
  */
 type SettleOpts = { via: "payment" | "manual"; actorId?: number; shopifyOrderId?: string; hasMembershipItem?: boolean; reason?: string; appliesToYear?: number | null; grantedYear?: number; requireRequested?: boolean; boundary?: Date | null };
 
-/** The membership year a payment-plan request is for. A request with no stored year takes the year its application entered payment. */
-export function paymentPlanRequestYear(
-    row: { paymentPlanYear: number | null; stageEnteredAt: Date | null; createdAt: Date },
-    boundary: Date | null | undefined,
-): number | null {
-    return row.paymentPlanYear ?? liveMembershipYear(boundary, row.stageEnteredAt ?? row.createdAt);
-}
-
 /**
  * What a payment did. `noop` is a redelivery of the order already recorded;
  * every other non-settling outcome is money that landed on nothing awaiting it,
@@ -184,8 +176,9 @@ async function settle(
                 throw new PaymentError("wrong_phase", "No pending payment-plan request");
             }
             if (opts.requireRequested) {
-                appliesToYear = paymentPlanRequestYear(process, opts.boundary);
-                const ended = endedPaymentPlanYearRefusal(appliesToYear, opts.boundary, new Date());
+                // A request with no stored year predates the column: it takes the live year and is never refused.
+                appliesToYear = process.paymentPlanYear ?? liveMembershipYear(opts.boundary, new Date());
+                const ended = endedPaymentPlanYearRefusal(process.paymentPlanYear, opts.boundary, new Date());
                 if (ended) throw new PaymentError("wrong_phase", ended);
             }
             if (process.paidAt) throw new PaymentError("wrong_phase", "This application is already paid.");
@@ -362,7 +355,7 @@ export async function activate(
  * the actor's own household; activate() rejects (409) under the row lock unless
  * the process is awaiting payment. Records `year`, or with none the live year.
  * `requireRequested` makes this the decision on an open payment-plan request (see
- * settle), which records the request's own year and refuses one that has ended.
+ * settle), which records the request's stored year and refuses one that has ended.
  */
 export async function certifyPaymentPlan(processId: number, actorId: number, opts?: { reason?: string; year?: number; requireRequested?: boolean }) {
     // Only the Board certifies a payment (owner ruling 10-15). Checked here so every

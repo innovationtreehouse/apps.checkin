@@ -398,11 +398,11 @@ describe('a payment-plan approval certifies the request year', () => {
         expect(recordedYear()).toBe(2026);
     });
 
-    it('a request with no stored year takes the year its application entered payment', async () => {
-        prisma.orgMembershipProcess.findUnique.mockResolvedValue({ ...request, paymentPlanYear: null, stageEnteredAt: new Date(Date.UTC(2027, 5, 1)) });
-        at(new Date(Date.UTC(2027, 6, 15)));
+    it('a request with no stored year is certified for the live year, never refused', async () => {
+        prisma.orgMembershipProcess.findUnique.mockResolvedValue({ ...request, paymentPlanYear: null, stageEnteredAt: new Date(Date.UTC(2025, 5, 1)) });
+        at(new Date(Date.UTC(2027, 8, 2)));
         await certifyPaymentPlan(PROCESS_ID, 1, { reason: 'Plan agreed', requireRequested: true });
-        expect(recordedYear()).toBe(2026);
+        expect(recordedYear()).toBe(2027);
     });
 
     it('approves the stored year on the day before its cutoff', async () => {

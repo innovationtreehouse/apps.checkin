@@ -630,7 +630,7 @@ model OrgMembershipProcess {
   scholarshipRequestKind ScholarshipRequestKind?
   /// The membership year a payment-plan request is for: the live year when the
   /// family asked. Approval certifies this year. Null on a request made before
-  /// this column; lib/membership/payment.ts › paymentPlanRequestYear supplies it.
+  /// this column, which is approved for the year live at approval.
   /// @sensitivity:hardship
   /// @financeMark
   paymentPlanYear       Int?
