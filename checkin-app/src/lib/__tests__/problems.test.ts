@@ -12,13 +12,13 @@ jest.mock("@/lib/cronRuns", () => ({ getCronJobStatuses: jest.fn() }));
 jest.mock("@/lib/email-templates/send", () => ({ sendTemplated: jest.fn() }));
 jest.mock("@checkin/receipt", () => ({ stuckItems: jest.fn(), problemNotices: jest.fn(), retryStuckItem: jest.fn() }));
 jest.mock("@checkin/expense", () => ({ stuckItems: jest.fn(), retryStuckItem: jest.fn() }));
-jest.mock("@checkin/bulk-donation", () => ({ stuckItems: jest.fn(), retryStuckItem: jest.fn() }));
+jest.mock("@checkin/bulk-donation", () => ({ stuckItems: jest.fn(), retryStuckItem: jest.fn(), getOrgId: jest.fn(), manualInKindService: { loadInventory: jest.fn() } }));
 jest.mock("@checkin/workflow-mapping", () => ({ stuckItems: jest.fn(), problemNotices: jest.fn(), retryStuckItem: jest.fn() }));
 jest.mock("@checkin/local-inventory", () => ({ stuckItems: jest.fn(), retryStuckItem: jest.fn() }));
 
 const receipt = jest.requireMock<{ stuckItems: jest.Mock; problemNotices: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/receipt");
 const expense = jest.requireMock<{ stuckItems: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/expense");
-const gifts = jest.requireMock<{ stuckItems: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/bulk-donation");
+const gifts = jest.requireMock<{ stuckItems: jest.Mock; retryStuckItem: jest.Mock; getOrgId: jest.Mock; manualInKindService: { loadInventory: jest.Mock } }>("@checkin/bulk-donation");
 const mapping = jest.requireMock<{ stuckItems: jest.Mock; problemNotices: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/workflow-mapping");
 const inventory = jest.requireMock<{ stuckItems: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/local-inventory");
 
@@ -61,6 +61,43 @@ describe("retryProblem", () => {
 
         expect(gifts.retryStuckItem).toHaveBeenCalledWith({ id: "receipt 4", step: "QuickBooks posting" });
         expect(expense.retryStuckItem).not.toHaveBeenCalled();
+    });
+
+    describe("a manual gift's inventory load", () => {
+        const DELTA = { library: "local inventory", step: "inventory delta", id: "donation:12" };
+
+        beforeEach(() => {
+            gifts.getOrgId.mockResolvedValue("org-1");
+            inventory.retryStuckItem.mockResolvedValue(undefined);
+            gifts.manualInKindService.loadInventory.mockResolvedValue(undefined);
+        });
+
+        it("marks the gift loaded once the retried load applies", async () => {
+            await retryProblem(DELTA, BY);
+
+            expect(inventory.retryStuckItem).toHaveBeenCalledWith({ id: "donation:12", step: "inventory delta" });
+            expect(gifts.manualInKindService.loadInventory).toHaveBeenCalledWith("org-1", 12);
+        });
+
+        it("leaves the gift alone when the retried load fails again", async () => {
+            inventory.retryStuckItem.mockRejectedValue(new ServiceError(409, "failed again"));
+
+            await expect(retryProblem(DELTA, BY)).rejects.toMatchObject({ status: 409 });
+            expect(gifts.manualInKindService.loadInventory).not.toHaveBeenCalled();
+        });
+
+        it("still succeeds when the gift cannot be marked loaded", async () => {
+            jest.spyOn(console, "error").mockImplementation(() => {});
+            gifts.manualInKindService.loadInventory.mockRejectedValue(new Error("gifts db down"));
+
+            await expect(retryProblem(DELTA, BY)).resolves.toBeUndefined();
+        });
+
+        it("does not touch gifts for a receipt's delta", async () => {
+            await retryProblem({ ...DELTA, id: "rcpt-1" }, BY);
+
+            expect(gifts.manualInKindService.loadInventory).not.toHaveBeenCalled();
+        });
     });
 
     it("passes the library's refusal through", async () => {
