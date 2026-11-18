@@ -996,6 +996,7 @@ def recommend():
 
 ANSWER_MARK = "<!-- ai-answer:%s:%s -->"
 ASKS_AI = re.compile(r"@github-actions(?:\[bot\])?\b", re.I)
+ASKS_OTHER = re.compile(r"(?<![\w`])@(?!github-actions\b)[\w-]+", re.I)
 MAX_ANSWERS = 5
 ANSWER_BUDGET = 300  # seconds; no new question starts after this
 
@@ -1006,7 +1007,8 @@ def is_question(body):
 
 def pending_questions(review_comments, issue_comments):
     """Trusted human questions with no bot answer yet: (kind, id, reply_to, comment). Inside a thread
-    the bot started, any question counts; elsewhere the comment must mention @github-actions."""
+    the bot started, any question counts unless it @-mentions only someone else; elsewhere the
+    comment must mention @github-actions."""
     done = {m for c in review_comments + issue_comments if (c.get("user") or {}).get("login") == BOT
             for m in re.findall(r"<!-- ai-answer:(\w+:\d+) -->", c.get("body") or "")}
     bot_roots = {c["id"] for c in review_comments
@@ -1024,7 +1026,7 @@ def pending_questions(review_comments, issue_comments):
             if kind == "r" and any((x.get("in_reply_to_id") or x["id"]) == root and _trusted(x)
                                    and (x.get("user") or {}).get("login") not in (BOT, who) for x in comments[pos + 1:]):
                 continue
-            if (kind == "r" and root in bot_roots) or ASKS_AI.search(body):
+            if ASKS_AI.search(body) or (kind == "r" and root in bot_roots and not ASKS_OTHER.search(body)):
                 found.append((kind, c["id"], root, c))
     found.sort(key=lambda f: f[3].get("created_at") or "", reverse=True)
     return found[:MAX_ANSWERS]
@@ -1047,7 +1049,7 @@ def code_around(path, line, n=30):
     return "\n".join(f"{i + 1}: {t}" for i, t in enumerate(lines[lo:line + n], lo))
 
 
-def ask_model(model, diff, q):
+def ask_model(model, diff, q, timeout=300):
     ctx = ""
     if q["path"]:
         ctx = f"File {q['path']} line {q['line']}\n{q['hunk']}\n\nFile excerpt:\n{code_around(q['path'], q['line'])}\n\n"
@@ -1058,7 +1060,7 @@ def ask_model(model, diff, q):
         {"role": "user", "content": f"{ctx}Thread:\n{q['thread']}\n\nPR diff:\n{diff[:60000]}\n\nQuestion:\n{q['question']}"}]}).encode()
     req = urllib.request.Request("https://openrouter.ai/api/v1/chat/completions", data=body, headers={
         "Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}", "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=300) as r:
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         return (json.load(r)["choices"][0]["message"]["content"] or "").strip()
 
 
@@ -1075,7 +1077,8 @@ def answer():
     diff = pr_diff(pr, repo, os.environ.get("BASE_SHA", ""), os.environ.get("HEAD_SHA", ""))
     start = time.monotonic()
     for kind, cid, root, c in todo:
-        if time.monotonic() - start > ANSWER_BUDGET:
+        left = ANSWER_BUDGET - (time.monotonic() - start)
+        if left <= 0:
             print("::warning::answer time budget spent; remaining questions wait for the next round")
             break
         try:
@@ -1083,14 +1086,15 @@ def answer():
                                for x in rc if (x.get("in_reply_to_id") or x["id"]) == root) if kind == "r" else ""
             line = c.get("line") if c.get("side") == "RIGHT" else None  # LEFT or outdated: no head-file excerpt
             text = ask_model(model, diff, {"path": c.get("path") if kind == "r" else "", "line": line,
-                                           "hunk": c.get("diff_hunk", ""), "thread": thread, "question": _clean(c["body"], 4000)})
+                                           "hunk": c.get("diff_hunk", ""), "thread": thread, "question": _clean(c["body"], 4000)},
+                             timeout=max(30, left))
             # Escaped so no marker survives, even rebuilt from nested comments; a forged one would hide a question.
             text = text.replace("<!--", "&lt;!--").strip() or "I could not answer this from the code shown."
             mark = ANSWER_MARK % (kind, cid)
             if kind == "r":
                 gh("api", f"repos/{repo}/pulls/{pr}/comments/{root}/replies", "-f", f"body={mark}\n{text}")
             else:
-                quote = "> " + _clean(c["body"], 200).replace("\n", "\n> ")
+                quote = "> " + _clean(c["body"], 200).replace("<!--", "&lt;!--").replace("\n", "\n> ")
                 gh("api", f"repos/{repo}/issues/{pr}/comments", "-f", f"body={mark}\n{quote}\n\n{text}")
             print(f"answered {kind}:{cid}")
         except Exception as e:
@@ -1138,6 +1142,10 @@ def answer_selftest():
           {"id": 3, "user": u("eve"), "author_association": "NONE", "body": "no idea", "in_reply_to_id": 1, "created_at": "2"},
           {"id": 4, "user": u("ann"), "author_association": "MEMBER", "body": "see line 40", "in_reply_to_id": 1, "created_at": "3"}]
     assert [i for _, i, _, _ in pending_questions(c3, [])] == [2]  # untrusted or own replies do not settle it
+    c4 = [{"id": 1, "user": u(BOT), "body": "f"},
+          {"id": 2, "user": u("ann"), "author_association": "MEMBER", "body": "@bob, keep this?", "in_reply_to_id": 1},
+          {"id": 3, "user": u("ann"), "author_association": "MEMBER", "body": "@bob @github-actions why?", "in_reply_to_id": 1}]
+    assert [i for _, i, _, _ in pending_questions(c4, [])] == [3]
     print("answer selftest ok")
 
 

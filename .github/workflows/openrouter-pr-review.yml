@@ -163,7 +163,7 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       # Answers human questions left for the reviewer, in their thread. Not triggered by comments, so
       # bot replies cannot loop; questions asked after a review are answered on the next push or label.
-      - if: always() && steps.route.outputs.model != ''
+      - if: ${{ !cancelled() && steps.route.outputs.model != '' }}
         continue-on-error: true
         timeout-minutes: 8
         run: python3 ${{ steps.cfg.outputs.dir }}/.github/scripts/ai-review-route.py answer
