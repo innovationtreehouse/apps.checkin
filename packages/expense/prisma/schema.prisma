@@ -333,11 +333,11 @@ model ExpenseLineItem {
   /// @financeMark
   allocatedDiscountCents Int?  @map("allocated_discount_cents")
   // QuickBooks match state: UNMATCHED | MATCHED | CREATED | AMBIGUOUS | UNBOOKED | POST_FAILED.
-  // Read only: the expense holds its QuickBooks entry; qb_txn_id is unique, so a line held an entry at most once.
+  // Read only: the expense holds its QuickBooks entry; (qb_txn_entity, qb_txn_id) is unique, so a line held an entry at most once.
   /// @sensitivity:internal
   qbMatchState      String   @default("UNMATCHED") @map("qb_match_state")
   /// @sensitivity:internal
-  qbTxnId           String?  @unique @map("qb_txn_id")
+  qbTxnId           String?  @map("qb_txn_id")
   // QuickBooks entity type of qb_txn_id (Bill | Purchase); QuickBooks ids are unique per entity type only.
   /// @sensitivity:internal
   qbTxnEntity       String?  @map("qb_txn_entity")
@@ -354,6 +354,7 @@ model ExpenseLineItem {
   holds             ExpenseHold[]
   auditLog          ExpenseAuditLog[]
 
+  @@unique([qbTxnEntity, qbTxnId])
   @@map("expense_line_items")
 }
 
@@ -670,6 +671,9 @@ model CapitalAsset {
   sourceReceiptId      String?  @map("source_receipt_id")
   /// @sensitivity:internal
   sourceQbTxnId        String?  @map("source_qb_txn_id")
+  // QuickBooks entity type of source_qb_txn_id (Bill | Purchase); null when the seed did not say.
+  /// @sensitivity:internal
+  sourceQbTxnEntity    String?  @map("source_qb_txn_entity")
   /// @sensitivity:internal
   sourceDonatedLineId  Int?     @map("source_donated_line_id")
   // "expense_line" or "gift_line"; null on seeded rows and rows minted before it existed.
@@ -756,6 +760,9 @@ model ExpenseQbMatchExclusion {
   orgId              String   @map("org_id")
   /// @sensitivity:internal
   qbTxnId            String   @map("qb_txn_id")
+  // QuickBooks entity type of qb_txn_id (Bill | Purchase); null excludes the id for both types.
+  /// @sensitivity:internal
+  qbTxnEntity        String?  @map("qb_txn_entity")
   /// @sensitivity:personal
   reason             String
   /// @sensitivity:pii
@@ -765,7 +772,7 @@ model ExpenseQbMatchExclusion {
   /// @sensitivity:internal
   excludedAt         DateTime @default(now()) @map("excluded_at")
 
-  @@unique([orgId, qbTxnId])
+  @@unique([orgId, qbTxnEntity, qbTxnId])
   @@map("qb_match_exclusion")
 }
 

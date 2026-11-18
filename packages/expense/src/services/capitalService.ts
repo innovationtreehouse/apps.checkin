@@ -55,6 +55,7 @@ export const CapitalSeedSchema = z.array(z.object({
   depreciationYears: z.number().int().positive().nullable().optional(),
   parentAssetNumber: z.string().max(20).nullable().optional(),
   sourceQbTxnId: z.string().max(100).nullable().optional(),
+  sourceQbTxnEntity: z.enum(["Bill", "Purchase"]).nullable().optional(),
 })).min(1).max(2000);
 
 async function loadExpense(expenseId: string, eventType: string, stateName: string) {
@@ -222,6 +223,7 @@ export async function seedCapitalAssets(
           fullyDepreciatedDate: fullyDepreciatedDate(r.acquisitionDate, r.depreciationYears),
           status: "tracked",
           sourceQbTxnId: r.sourceQbTxnId ?? null,
+          sourceQbTxnEntity: r.sourceQbTxnEntity ?? null,
           seeded: true,
         }],
         skipDuplicates: true,

@@ -147,8 +147,10 @@ with fault 6210 counts as closed.
 
 **Claims.** `ExpenseQbClaim` is unique on org, entity and QuickBooks id, because
 those ids are unique per entity only. A claim covers expenses and lines alike, so
-two records never hold one entry. `ExpenseQbMatchExclusion` is unique on org and id
-with no entity, so an exclusion drops that id for both Purchases and Bills.
+two records never hold one entry. Every other QuickBooks key carries the entity too:
+a line's link is unique on entity and id, and `ExpenseQbMatchExclusion` is unique on
+org, entity and id, so excluding Bill N leaves Purchase N a candidate. An exclusion
+with no entity drops that id for both types.
 
 ### Voided entries
 

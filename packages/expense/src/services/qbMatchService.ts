@@ -91,17 +91,23 @@ export interface QbMatchInputs {
   skipIds: string[];
 }
 
+/** QuickBooks ids of one entity type finance excluded from matching; a row without a type excludes both. */
+export async function excludedQbTxnIds(orgId: string, qbTxnEntity: string): Promise<string[]> {
+  const rows = await db.expenseQbMatchExclusion.findMany({
+    where: { orgId, OR: [{ qbTxnEntity }, { qbTxnEntity: null }] },
+    select: { qbTxnId: true },
+  });
+  return rows.map((r) => r.qbTxnId);
+}
+
 export async function qbMatchInputs(entity: QbMatchEntity): Promise<QbMatchInputs> {
   const orgId = await getOrgId();
-  const [claimed, excluded] = await Promise.all([
-    claimedQbTxnIds(orgId, entity),
-    db.expenseQbMatchExclusion.findMany({ where: { orgId }, select: { qbTxnId: true } }),
-  ]);
-  return { skipIds: [...claimed, ...excluded.map((e) => e.qbTxnId)] };
+  const [claimed, excluded] = await Promise.all([claimedQbTxnIds(orgId, entity), excludedQbTxnIds(orgId, entity)]);
+  return { skipIds: [...claimed, ...excluded] };
 }
 
 /** Finance permanently removes a QuickBooks transaction from matching, with a reason. */
-export async function excludeQbTxn(principal: ExpensePrincipal, qbTxnId: string, reason: string): Promise<void> {
+export async function excludeQbTxn(principal: ExpensePrincipal, qbTxnEntity: QbMatchEntity, qbTxnId: string, reason: string): Promise<void> {
   requireFinance(principal);
   const actor = actorOf(principal);
   if (!reason.trim()) throw new ServiceError(400, "A reason is required");
@@ -109,9 +115,9 @@ export async function excludeQbTxn(principal: ExpensePrincipal, qbTxnId: string,
   try {
     await db.$transaction(async (tx) => {
       await tx.expenseQbMatchExclusion.create({
-        data: { orgId, qbTxnId, reason: reason.trim(), excludedByUserId: actor.userId, excludedByUsername: actor.username },
+        data: { orgId, qbTxnEntity, qbTxnId, reason: reason.trim(), excludedByUserId: actor.userId, excludedByUsername: actor.username },
       });
-      await writeOrgAudit(tx, orgId, actor, { entityType: "qb_txn", entityId: qbTxnId, action: "excluded", after: { reason: reason.trim() } });
+      await writeOrgAudit(tx, orgId, actor, { entityType: "qb_txn", entityId: `${qbTxnEntity}:${qbTxnId}`, action: "excluded", after: { reason: reason.trim() } });
     });
   } catch (err) {
     if (isUniqueConstraintError(err)) throw new ServiceError(409, "Already excluded");
