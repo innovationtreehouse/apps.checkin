@@ -215,12 +215,11 @@ export async function rejectException(
 ): Promise<void> {
   requireFinance(principal);
   const actor = actorOf(principal);
-  const { expense, approval } = await loadApproval(expenseId, approvalId, "owner_approval");
+  const { approval } = await loadApproval(expenseId, approvalId, "owner_approval");
   requireStatus(approval, "exception_raised");
-  await refuseConflicted(principal, expense);
 
   await db.$transaction(async (tx) => {
-    await lockExpense(tx, expenseId);
+    await refuseConflicted(principal, await lockedExpense(tx, expenseId));
     await transition(tx, approval, { status: "rejected", notes, decidedAt: new Date(), decidedByUserId: actor.userId });
     await writeAudit(tx, actor, {
       expenseId,

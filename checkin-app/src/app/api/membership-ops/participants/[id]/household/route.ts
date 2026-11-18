@@ -4,7 +4,7 @@ import { withAuth } from "@/lib/auth";
 import { logBackendError, logger } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
-import { addHouseholdLead, HouseholdLeadLimitError, HouseholdLeadYouthError } from "@/lib/household/leads";
+import { addHouseholdLead, HouseholdLeadLimitError, HouseholdLeadMismatchError, HouseholdLeadYouthError, removeHouseholdLead } from "@/lib/household/leads";
 import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
 import { lockBoardRoles } from "@/lib/roles";
 import { lockAndFindDeniedHousehold, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
@@ -16,6 +16,9 @@ class PersonGoneError extends Error {}
 
 /** The person changed household between the pre-check and the write. */
 class StaleSourceHouseholdError extends Error {}
+
+/** The person is their household's only lead, and a household keeps one. */
+class LastLeadMoveError extends Error {}
 
 /** The source or destination household is DENIED. */
 class DeniedHouseholdMoveError extends Error {
@@ -100,6 +103,12 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
                 data: { name: `${participant.name || 'User'}'s Household` },
             })).id;
 
+            // The same locked demote the lead routes use, so a move never leaves the source household without a lead.
+            if (participant.householdId !== targetHouseholdId) {
+                const demoted = await removeHouseholdLead(tx, participant.householdId, participantId);
+                if (!demoted.removed && demoted.reason === "last_lead") throw new LastLeadMoveError();
+            }
+
             // Conditional on the person still being in the household locked above, so a
             // merge or another move that lands after the pre-check is refused.
             const { count } = await tx.person.updateMany({
@@ -144,7 +153,10 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
         if (error instanceof PersonGoneError) {
             return apiError("This person's record no longer exists; they may have been merged into another. Reload and try again.", 404);
         }
-        if (error instanceof StaleSourceHouseholdError) {
+        if (error instanceof LastLeadMoveError) {
+            return apiError("This person is the household's only lead. Make someone else a lead first, then move them.", 409);
+        }
+        if (error instanceof StaleSourceHouseholdError || error instanceof HouseholdLeadMismatchError) {
             return apiError("This person was moved to another household while you were working. Reload and try again.", 409);
         }
         if (error instanceof ArchivedHouseholdError) {

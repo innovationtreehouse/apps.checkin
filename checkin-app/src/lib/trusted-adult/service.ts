@@ -1,18 +1,18 @@
 import prisma from "@/lib/prisma";
 import { ServiceError } from "@checkin/component-kit";
 import { isLiveHousehold } from "@/lib/household/archived";
-import { ARCHIVED_HOUSEHOLD_REFUSAL, ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
+import { ARCHIVED_HOUSEHOLD_REFUSAL, ArchivedHouseholdError, lockHouseholdRows, lockLiveHouseholds } from "@/lib/household/archiveGuard";
 import { TRUSTED_ADULT_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { personActor, systemActor, type AuditActor } from "@/lib/auditActor";
 import { emailBoardMembers, emailHouseholdLeads } from "@/lib/emailRecipients";
 import type { TemplateCtx, TemplateKey } from "@/lib/email-templates/registry";
 import { trustedAdultConflictReason } from "@/lib/trusted-adult/conflict";
-import { recordSelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
+import { recordSelfGrantRefusal, type SelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
 import { authorizedReview, expiringApprovals, isAuthorizedApproval } from "@/lib/trusted-adult/filters";
 import { config } from "@/lib/config";
 import { validateContact } from "@/lib/trusted-adult/contact";
 import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
-import type { TxClient } from "@/lib/db-client";
+import type { DbClient, TxClient } from "@/lib/db-client";
 
 /**
  * Serialize all mutations of one TrustedAdult by taking a row lock on the parent.
@@ -76,6 +76,22 @@ export class TrustedAdultError extends ServiceError {
     ) {
         super(TRUSTED_ADULT_ERROR_STATUS[code], message, code);
         this.name = "TrustedAdultError";
+    }
+}
+
+/** A conflict refused inside a transaction; `conflictCheckedTransaction` records it after the rollback. */
+class ConflictRefusedError extends TrustedAdultError {
+    constructor(public readonly refusal: SelfGrantRefusal, message: string) {
+        super("forbidden", message);
+    }
+}
+
+async function conflictCheckedTransaction<T>(fn: (tx: TxClient) => Promise<T>): Promise<T> {
+    try {
+        return await prisma.$transaction(fn);
+    } catch (e) {
+        if (e instanceof ConflictRefusedError) await recordSelfGrantRefusal(prisma, e.refusal);
+        throw e;
     }
 }
 
@@ -402,9 +418,9 @@ interface ConflictReview {
     };
 }
 
-/** Refuses, with a SelfGrantRefusal audit row, an actor the trusted-adult conflict rule bars from this review. */
-async function refuseConflictedActor(actorId: number, reviewId: number, review: ConflictReview, message: string) {
-    const me = await prisma.person.findUnique({
+/** The refusal the trusted-adult conflict rule makes of this actor on this review, or null. Writes nothing. */
+async function findConflictRefusal(db: DbClient, actorId: number, reviewId: number, review: ConflictReview): Promise<SelfGrantRefusal | null> {
+    const me = await db.person.findUnique({
         where: { id: actorId },
         select: { householdId: true, household: { select: { householdMembers: { select: { email: true, phone: true } } } } },
     });
@@ -422,13 +438,37 @@ async function refuseConflictedActor(actorId: number, reviewId: number, review: 
         },
         proposed: { email: review.proposedEmail, phone: review.proposedPhone },
     });
-    if (reason === null) return;
-    await recordSelfGrantRefusal(prisma, {
-        actorId,
-        affectedEntityId: reviewId,
-        newData: { reason, table: "TrustedAdultReview" },
-    });
+    return reason === null ? null : { actorId, affectedEntityId: reviewId, newData: { reason, table: "TrustedAdultReview" } };
+}
+
+/** Refuses, with a SelfGrantRefusal audit row, an actor the trusted-adult conflict rule bars from this review. */
+async function refuseConflictedActor(actorId: number, reviewId: number, review: ConflictReview, message: string) {
+    const refusal = await findConflictRefusal(prisma, actorId, reviewId, review);
+    if (refusal === null) return;
+    await recordSelfGrantRefusal(prisma, refusal);
     throw new TrustedAdultError("forbidden", message);
+}
+
+/**
+ * Takes the parent lock and re-runs the conflict bar, which ran before it, on the review
+ * as it stands. The actor's and the adult's household rows are locked first, as a
+ * household move and a deny take them, and before the parent, as a deny does.
+ */
+async function lockAndRecheckConflict(tx: TxClient, taId: number, actorId: number, reviewId: number, message: string) {
+    const readReview = () => tx.trustedAdultReview.findUnique({
+        where: { id: reviewId },
+        select: { proposedEmail: true, proposedPhone: true, trustedAdult: { select: CONFLICT_TA_SELECT } },
+    });
+    const before = await readReview();
+    if (!before) throw new TrustedAdultError("not_found", "Review not found.");
+    const actor = await tx.person.findUnique({ where: { id: actorId }, select: { householdId: true } });
+    const ta = before.trustedAdult;
+    await lockHouseholdRows(tx, [ta.householdId, ta.trustedAdultPerson?.householdId, actor?.householdId].filter((id): id is number => id != null));
+    await lockTrustedAdult(tx, taId);
+    const review = await readReview();
+    if (!review) throw new TrustedAdultError("not_found", "Review not found.");
+    const refusal = await findConflictRefusal(tx, actorId, reviewId, review);
+    if (refusal) throw new ConflictRefusedError(refusal, message);
 }
 
 /**
@@ -582,13 +622,14 @@ export async function decideReview(reviewId: number, boardMemberId: number, inpu
     if (!head) throw new TrustedAdultError("not_found", "Review not found.");
 
     // The UI disables the buttons off the same rule; this is the enforcement a direct POST meets.
-    await refuseConflictedActor(boardMemberId, reviewId, head, "You can't decide a trusted-adult review tied to your own household — another board member must.");
+    const conflictMessage = "You can't decide a trusted-adult review tied to your own household — another board member must.";
+    await refuseConflictedActor(boardMemberId, reviewId, head, conflictMessage);
 
     // Lock the parent TA, then re-read the review under the lock and check its phase.
     // Without this two board members both read PENDING_BOARD_REVIEW, both update, and
     // both write an audit row — the loser leaving an orphan audit that contradicts state.
-    const result = await prisma.$transaction(async (tx) => {
-        await lockTrustedAdult(tx, head.trustedAdultId);
+    const result = await conflictCheckedTransaction(async (tx) => {
+        await lockAndRecheckConflict(tx, head.trustedAdultId, boardMemberId, reviewId, conflictMessage);
         const review = await tx.trustedAdultReview.findUnique({ where: { id: reviewId } });
         if (!review) throw new TrustedAdultError("not_found", "Review not found.");
         if (review.status !== "PENDING_BOARD_REVIEW") {
@@ -691,6 +732,8 @@ export async function decideReview(reviewId: number, boardMemberId: number, inpu
     return result.updated;
 }
 
+const OVERRIDE_CONFLICT_MESSAGE = "You can't override a trusted-adult review tied to your own household — someone outside your household must.";
+
 /** The review an override acts on, with what the conflict-of-interest refusal reads. */
 async function overrideHead(reviewId: number, actorId: number) {
     const head = await prisma.trustedAdultReview.findUnique({
@@ -698,7 +741,7 @@ async function overrideHead(reviewId: number, actorId: number) {
         include: { trustedAdult: { select: CONFLICT_TA_SELECT } },
     });
     if (!head) throw new TrustedAdultError("not_found", "Review not found.");
-    await refuseConflictedActor(actorId, reviewId, head, "You can't override a trusted-adult review tied to your own household — someone outside your household must.");
+    await refuseConflictedActor(actorId, reviewId, head, OVERRIDE_CONFLICT_MESSAGE);
     return head;
 }
 
@@ -710,8 +753,8 @@ async function overrideHead(reviewId: number, actorId: number) {
 export async function revokeReview(reviewId: number, actorId: number) {
     const head = await overrideHead(reviewId, actorId);
     const actor = personActor(actorId);
-    const updated = await prisma.$transaction(async (tx) => {
-        await lockTrustedAdult(tx, head.trustedAdultId);
+    const updated = await conflictCheckedTransaction(async (tx) => {
+        await lockAndRecheckConflict(tx, head.trustedAdultId, actorId, reviewId, OVERRIDE_CONFLICT_MESSAGE);
         const review = await tx.trustedAdultReview.findUnique({ where: { id: reviewId } });
         if (!review) throw new TrustedAdultError("not_found", "Review not found.");
 
@@ -761,8 +804,8 @@ export async function resetReview(reviewId: number, actorId: number, reason: str
     if (!reason?.trim()) throw new TrustedAdultError("bad_input", "Give a reason for the reset.");
     const head = await overrideHead(reviewId, actorId);
 
-    const reset = await prisma.$transaction(async (tx) => {
-        await lockTrustedAdult(tx, head.trustedAdultId);
+    const reset = await conflictCheckedTransaction(async (tx) => {
+        await lockAndRecheckConflict(tx, head.trustedAdultId, actorId, reviewId, OVERRIDE_CONFLICT_MESSAGE);
         const review = await tx.trustedAdultReview.findUnique({ where: { id: reviewId } });
         if (!review) throw new TrustedAdultError("not_found", "Review not found.");
         const latest = await tx.trustedAdultReview.findFirst({ where: { trustedAdultId: review.trustedAdultId }, orderBy: { id: "desc" } });

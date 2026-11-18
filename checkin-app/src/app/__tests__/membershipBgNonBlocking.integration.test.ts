@@ -398,7 +398,7 @@ describe('background check is non-blocking', () => {
         expect(await prisma.backgroundCheckAttestation.count({ where: { processId: reviewId } })).toBe(1);
     });
 
-    it('a check that clears on a DENIED household converges nothing and raises a board item', async () => {
+    it('a second approval on a DENIED household is refused and changes nothing', async () => {
         const { processId, leadId, orgMembershipId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
         await markContractSigned(processId);
         await markLeadCheckStarted(processId);
@@ -406,13 +406,13 @@ describe('background check is non-blocking', () => {
         await prisma.orgMembership.update({ where: { id: orgMembershipId }, data: { status: 'DENIED' } });
 
         const reviewId = await reviewOf(processId);
-        await attest(revB, reviewId, { result: 'APPROVE', subjectPersonIds: [leadId] });
+        await expect(attest(revB, reviewId, { result: 'APPROVE', subjectPersonIds: [leadId] })).rejects.toMatchObject({ code: 'wrong_phase' });
         const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
         expect(proc?.status).toBe('PENDING_PAYMENT');
         expect(proc?.bgClearedAt).toBeNull();
         expect((await prisma.person.findUnique({ where: { id: leadId } }))?.lastBackgroundCheck).toBeNull();
-        expect(await membershipStatusOf(orgMembershipId)).toBe('DENIED');
-        expect(await prisma.paymentException.count({ where: { kind: 'DENIED_HOUSEHOLD_ACTIVITY', processId: reviewId } })).toBe(1);
+        expect(await prisma.backgroundCheckAttestation.count({ where: { processId: reviewId } })).toBe(1);
+        expect(await prisma.paymentException.count({ where: { kind: 'DENIED_HOUSEHOLD_ACTIVITY', processId: reviewId } })).toBe(0);
     });
 
     it('an approver moved into the applicant household before the second approval does not count', async () => {

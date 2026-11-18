@@ -2,7 +2,6 @@ import { notifyClearanceOutcome, type ClearanceOutcome } from "@/lib/membership/
 import { sendCongrats } from "@/lib/membership/payment";
 import { openPersonBgForNewMember } from "@/lib/membership/personBgTriggers";
 import { openPersonAgreementForNewMember } from "@/lib/membership/personAgreementTriggers";
-import { notifyBoardPaymentException } from "@/lib/membership/boardAlerts";
 import { raisePaymentException } from "@/lib/finance/reconcile/exceptions";
 import { logBackendError } from "@/lib/logger";
 
@@ -53,26 +52,5 @@ describe("notifyClearanceOutcome after the clearance has committed", () => {
         await expect(notifyClearanceOutcome(outcome)).resolves.toBeUndefined();
 
         expect(logBackendError).toHaveBeenCalledWith(expect.any(Error), "clearance refunded order raise", expect.objectContaining({ processId: 7 }));
-    });
-
-    it("does not throw when a denied household's email throws", async () => {
-        (notifyBoardPaymentException as jest.Mock).mockRejectedValue(new Error("config"));
-        const outcome: ClearanceOutcome = {
-            status: "PENDING_PAYMENT",
-            activated: false,
-            householdId: null,
-            isInitial: false,
-            denied: { householdId: 20, processId: 7, notice: { kind: "DENIED_HOUSEHOLD_ACTIVITY", severity: "CRITICAL", exceptionId: 99 } },
-        };
-
-        await expect(notifyClearanceOutcome(outcome)).resolves.toBeUndefined();
-
-        expect(notifyBoardPaymentException).toHaveBeenCalledWith("DENIED_HOUSEHOLD_ACTIVITY", "CRITICAL", 99);
-    });
-
-    it("sends no email for a denied household whose item was already open", async () => {
-        const outcome: ClearanceOutcome = { status: "PENDING_PAYMENT", activated: false, householdId: null, isInitial: false, denied: { householdId: 20, processId: 7, notice: null } };
-        await notifyClearanceOutcome(outcome);
-        expect(notifyBoardPaymentException).not.toHaveBeenCalled();
     });
 });
