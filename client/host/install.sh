@@ -6,8 +6,8 @@ set -eu
 
 KIOSK_USER=${1:?usage: install.sh <kiosk-user>}
 HERE=$(cd "$(dirname "$0")" && pwd)
-STATE=/var/lib/kiosk-host
-CONF=/etc/kiosk/host.conf
+STATE=${KIOSK_STATE_DIR:-/var/lib/kiosk-host}
+CONF=${KIOSK_CONF:-/etc/kiosk/host.conf}
 UNITS="kiosk-client.service kiosk-update.service kiosk-update.timer kiosk-urgent.service kiosk-urgent.timer kiosk-reboot.service kiosk-reboot.timer"
 
 [ "$(id -u)" -eq 0 ] || { echo "run as root" >&2; exit 1; }
@@ -15,6 +15,10 @@ docker buildx version >/dev/null || { echo "docker with the buildx plugin is req
 command -v flock >/dev/null || { echo "flock is required" >&2; exit 1; }
 INPUT_GID=$(getent group input | cut -d: -f3)
 [ -n "$INPUT_GID" ] || { echo "the input group is required" >&2; exit 1; }
+
+# The Pi has no battery-backed clock, and the server refuses signed requests more than 60 s off.
+timedatectl set-ntp true ||
+  echo "could not turn on NTP; install systemd-timesyncd, then run: timedatectl set-ntp true" >&2
 
 install -d -m 755 /etc/kiosk "$STATE"
 install -d -m 750 -o "$KIOSK_USER" -g "$KIOSK_USER" /var/lib/kiosk
