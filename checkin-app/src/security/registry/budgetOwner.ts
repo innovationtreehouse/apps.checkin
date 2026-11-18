@@ -49,3 +49,9 @@ defineRoute({ endpoint: 'PUT /api/books-map/accounts/[role]', authorize: 'financ
 // may refresh it from QuickBooks.
 defineRoute({ endpoint: 'GET /api/books-map/quickbooks-lists', authorize: 'finance-or-board', envelope: null, returns: ['QuickBooksListsStatus'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'POST /api/books-map/quickbooks-lists/refresh', authorize: 'finance-or-board', envelope: null, returns: ['QuickBooksListsStatus'], orderedView: FINANCE_OR_BOARD_VIEW });
+
+// Finance's QuickBooks posting catch-up: POST asks for a run of one lane under the
+// shared posting slot (started, or queued behind the run holding it); GET reads the
+// slot and queue. FINANCE or BOARD, like the saved lists' refresh.
+defineRoute({ endpoint: 'GET /api/finance/quickbooks/catch-up', authorize: 'finance-or-board', envelope: null, returns: ['QuickBooksPostingCatchUp'], orderedView: FINANCE_OR_BOARD_VIEW });
+defineRoute({ endpoint: 'POST /api/finance/quickbooks/catch-up', authorize: 'finance-or-board', envelope: null, returns: ['QuickBooksPostingCatchUp'], orderedView: FINANCE_OR_BOARD_VIEW });

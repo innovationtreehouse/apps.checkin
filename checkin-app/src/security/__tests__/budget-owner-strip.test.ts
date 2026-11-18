@@ -90,4 +90,19 @@ describe('budget-owner synthetic views', () => {
             ]);
         }
     });
+
+    it('finance or board asks for and reads a QuickBooks posting catch-up; a public view sees nothing', () => {
+        const state = { lane: 'expense', status: 'queued', heldBy: 'in-kind', until: '2026-11-18T14:05:00.000Z', queued: ['expense'] };
+        expect(strip('QuickBooksPostingCatchUp', state, FINANCE_OR_BOARD_VIEW)).toEqual(state);
+        expect(strip('QuickBooksPostingCatchUp', state, PUBLIC_ONLY)).toEqual({});
+        for (const endpoint of ['GET /api/finance/quickbooks/catch-up', 'POST /api/finance/quickbooks/catch-up']) {
+            const route = getRoute(endpoint);
+            expect(route?.authorize).toBe('finance-or-board');
+            expect(route?.returns).toEqual(['QuickBooksPostingCatchUp']);
+            expect(route?.orderedView).toEqual([
+                ['isFinance', FINANCE_OR_BOARD_VIEW],
+                ['isBoardMember', FINANCE_OR_BOARD_VIEW],
+            ]);
+        }
+    });
 });
