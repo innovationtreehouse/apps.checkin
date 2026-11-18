@@ -6,7 +6,7 @@ import { adjustProgramInventory } from "@/lib/shopify/stock";
 import { isSaleEnded, type SaleRow } from "@/lib/programs/saleState";
 import * as mirror from "@/lib/shopifyRead/client";
 import type { MirrorOrder } from "@/lib/shopifyRead/client";
-import type { OrgMembershipProcessStatus, Prisma } from "@/generated/prisma/client";
+import type { Prisma } from "@/generated/prisma/client";
 import { recordDeniedStoreRefund } from "@/lib/membership/refund";
 import { refundableApplication } from "@/lib/membership/lifecycle";
 import { raisePaymentException, recordReversal, recordSettledPaymentException, type PaymentExceptionKind } from "./exceptions";
@@ -381,10 +381,11 @@ async function recordDeniedStoreRefunds(): Promise<number> {
         if (!o || classifyReversal(o, disputes.has(o.orderGid)) !== "REFUND") continue;
         const ref = { shopifyOrderId: proc.shopifyOrderId!, processId: proc.id, evidence: reversalEvidence(o, disputes.get(o.orderGid) ?? 0) };
         await recordReversal(proc.shopifyOrderId!, "REFUND");
-        if (isFullyRefunded(o) && (await recordDeniedStoreRefund(proc.id, proc.shopifyOrderId!))) {
-            await recordSettledPaymentException("REFUND", ref, DENIED_REFUND_NOTE);
-        } else if (!ACTIVATED_STATUSES.includes(proc.status)) {
-            // A partial refund the main pass below does not see goes to the Board here.
+        if (isFullyRefunded(o)) {
+            // False when the Board recorded it first: nothing is left to raise.
+            if (await recordDeniedStoreRefund(proc.id, proc.shopifyOrderId!)) await recordSettledPaymentException("REFUND", ref, DENIED_REFUND_NOTE);
+        } else if (proc.status !== "PENDING_BG_CLEARANCE") {
+            // A partial refund the main pass below does not read goes to the Board here.
             await raisePaymentException("REFUND", { ...ref, ...(proc.status === "PENDING_BG_REVIEW" ? { severity: "CRITICAL" as const } : {}) });
             raised++;
         }
@@ -392,15 +393,12 @@ async function recordDeniedStoreRefunds(): Promise<number> {
     return raised;
 }
 
-/** The steps the main reversal pass reads: money recorded on an activated order. */
-const ACTIVATED_STATUSES: OrgMembershipProcessStatus[] = ["ACTIVE", "PENDING_BG_CLEARANCE"];
-
 export async function reconcileReversals(): Promise<number> {
     const deniedRaised = await recordDeniedStoreRefunds();
     // App-side activated orders: money recorded (paidAt) with an order id. BLOCKED
     // stays out — a refund on a paid-while-blocked application is the expected fix.
     const procs = await prisma.orgMembershipProcess.findMany({
-        where: { shopifyOrderId: { not: null }, paidAt: { not: null }, status: { in: ACTIVATED_STATUSES } },
+        where: { shopifyOrderId: { not: null }, paidAt: { not: null }, status: { in: ["ACTIVE", "PENDING_BG_CLEARANCE"] } },
         select: { id: true, shopifyOrderId: true, orgMembershipId: true, status: true },
     });
     // A withdrawn row keeps its order, so a late reversal is raised against it.
