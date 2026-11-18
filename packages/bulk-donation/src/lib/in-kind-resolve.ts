@@ -78,7 +78,8 @@ async function readyGift(run: Run, source: InKindSource, id: number): Promise<Gi
 /**
  * Saves a settlement finance made, while the gift is still finance's and its posting is unchanged
  * since `read`: every claim moves `updatedAt`, so a create attempted meanwhile, first or retry, is
- * refused (it may have landed). Another gift holding an entry is refused too.
+ * refused (it may have landed). Another gift holding an entry is refused too. The stray entries
+ * the note named are recorded as answered, so the sweep never notes them again.
  */
 async function settleByFinance(orgId: string, gift: GiftRef, read: HeldPosting, s: Settlement, actor: Actor, payload: Record<string, unknown>): Promise<void> {
   try {
@@ -90,7 +91,8 @@ async function settleByFinance(orgId: string, gift: GiftRef, read: HeldPosting, 
       if (posting.matchState === QB_MATCH_STATE.DRIFT && s.entries.length > 0) {
         await tx.inKindBooking.deleteMany({ where: { orgId, source: gift.source, giftId: gift.id } });
       }
-      await writeSettlement(tx, orgId, gift, posting, s, actor, { from: posting.matchState, manual: true, ...payload });
+      const answeredEntries = strayEntriesOf(posting.qbNote).map(answeredEntryRef);
+      await writeSettlement(tx, orgId, gift, posting, s, actor, { from: posting.matchState, manual: true, ...payload, answeredEntries });
     });
   } catch (err) {
     if (isUniqueConstraintError(err)) throw new ServiceError(409, `QuickBooks ${s.entries.map((e) => `${e.entity} ${e.id}`).join(", ")} is already held by another gift`);

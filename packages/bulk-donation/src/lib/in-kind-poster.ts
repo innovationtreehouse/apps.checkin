@@ -342,7 +342,7 @@ async function settle(run: Run, gift: GiftToBook, claimedAt: Date, s: Settlement
       const created = s.createdNow ? s.entries.find((e) => e.entity === "JournalEntry") : undefined;
       if (created && posting) {
         const held = await tx.inKindBooking.findFirst({ where: { orgId: run.orgId, source: gift.source, giftId: gift.id, qbEntity: created.entity, qbTxnId: created.id } });
-        if (!held) await tx.inKindPosting.update({ where: { id: posting.id }, data: { qbNote: `QuickBooks JournalEntry ${created.id} was created by a post that lost its claim; void it or link it` } });
+        if (!held) await tx.inKindPosting.update({ where: { id: posting.id }, data: { qbNote: withNoteLine(posting.qbNote, `QuickBooks JournalEntry ${created.id} was created by a post that lost its claim; void it or link it`) } });
       }
       return null;
     }
@@ -379,7 +379,7 @@ export async function writeSettlement(
     orgId,
     entityType: gift.entityType,
     entityId: gift.entityId,
-    eventType: "IN_KIND_QB_SETTLED",
+    eventType: IN_KIND_SETTLED,
     ...actor,
     payload: { ...payload, to: s.state, entries: s.entries, note: s.note, ...(s.failure ? { failure: s.failure } : {}) },
   });
@@ -428,6 +428,8 @@ function outcomeOf(saved: Settlement): InKindPostOutcome {
 
 /** The audit event of finance clearing a gift's note; its `answeredEntries` name the stray entries it answered. */
 export const IN_KIND_NOTE_CLEARED = "IN_KIND_QB_NOTE_CLEARED";
+/** The audit event of a settlement; finance's skip or match names the stray entries it answered in `answeredEntries`. */
+export const IN_KIND_SETTLED = "IN_KIND_QB_SETTLED";
 /** How a cleared note's audit names a stray app entry it answered. */
 export const answeredEntryRef = (entryId: string) => `JournalEntry:${entryId}`;
 
@@ -436,10 +438,24 @@ export function strayEntriesOf(note: string | null): string[] {
   return [...(note ?? "").matchAll(/QuickBooks JournalEntry (\S+) (?:carries this gift's key|was created by a post that lost its claim)/g)].map((m) => m[1]);
 }
 
-/** Whether finance already answered this stray entry by clearing a note that named it. */
+/** A note holds one line per thing finance must answer, so a stray entry's line and another note show side by side. */
+const noteLines = (note: string | null) => (note ?? "").split("\n").filter(Boolean);
+
+/** The note with `line` added, unless it already has it. */
+export function withNoteLine(note: string | null, line: string): string {
+  const lines = noteLines(note);
+  return lines.includes(line) ? lines.join("\n") : [...lines, line].join("\n");
+}
+
+/** The note's stray-entry lines, which a new note keeps until finance answers them. */
+export function strayLinesOf(note: string | null): string[] {
+  return noteLines(note).filter((line) => strayEntriesOf(line).length > 0);
+}
+
+/** Whether finance already answered this stray entry by clearing, skipping or matching a gift whose note named it. */
 async function answeredStray(orgId: string, entryId: string): Promise<boolean> {
   const answer = await db.workflowEvent.findFirst({
-    where: { orgId, eventType: IN_KIND_NOTE_CLEARED, actorUserId: { not: null }, payload: { contains: JSON.stringify(answeredEntryRef(entryId)) } },
+    where: { orgId, eventType: { in: [IN_KIND_NOTE_CLEARED, IN_KIND_SETTLED] }, actorUserId: { not: null }, payload: { contains: JSON.stringify(answeredEntryRef(entryId)) } },
     select: { id: true },
   });
   return answer !== null;
@@ -498,7 +514,7 @@ export async function sweepInKindQbStrays(
         if (!posting || posting.matchState === QB_MATCH_STATE.POSTING) return false;
         const held = await tx.inKindBooking.findFirst({ where: { orgId, source: gift.source, giftId: gift.giftId, qbEntity: "JournalEntry", qbTxnId: entry.Id } });
         if (held) return false;
-        const qbNote = `QuickBooks JournalEntry ${entry.Id} carries this gift's key but is not linked to it; void it or link it`;
+        const qbNote = withNoteLine(posting.qbNote, `QuickBooks JournalEntry ${entry.Id} carries this gift's key but is not linked to it; void it or link it`);
         if (posting.qbNote === qbNote) return false;
         await tx.inKindPosting.update({ where: { id: posting.id }, data: { qbNote } });
         return true;
