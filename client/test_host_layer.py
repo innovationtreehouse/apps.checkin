@@ -9,6 +9,7 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 KIOSKCTL = os.path.join(HERE, "host", "kioskctl")
+INSTALL = os.path.join(HERE, "host", "install.sh")
 
 A = "sha256:" + "a" * 64
 B = "sha256:" + "b" * 64
@@ -19,7 +20,7 @@ FAKES = {
     "docker": r"""#!/usr/bin/env bash
 echo "docker $*" >>"$FAKE/log"
 case "$1" in
-  buildx) tag=${4##*:}; cat "$FAKE/tags/$tag" 2>/dev/null || exit 1 ;;
+  buildx) [ "$2" = version ] && exit 0; tag=${4##*:}; cat "$FAKE/tags/$tag" 2>/dev/null || exit 1 ;;
   pull) [ ! -e "$FAKE/pull_fails" ] ;;
   exec)
     [ "$3" = touch ] && exit 0
@@ -35,6 +36,25 @@ echo "systemctl $* urgent=$(cat "$KIOSK_STATE_DIR/urgent" 2>/dev/null)" >>"$FAKE
     "date": 'cat "$FAKE/hour"\n',
     "sleep": "",
     "flock": 'echo "flock $*" >>"$FAKE/log"\n[ ! -e "$FAKE/lock_held" ]\n',
+    "timedatectl": r"""#!/usr/bin/env bash
+echo "timedatectl $*" >>"$FAKE/log"
+case "$1" in
+  set-ntp) [ ! -e "$FAKE/no_timesyncd" ] || { echo "Failed to set ntp: NTP not supported" >&2; exit 1; } ;;
+  show) cat "$FAKE/ntp_synced" 2>/dev/null || echo yes ;;
+esac
+""",
+}
+
+# install.sh's own system calls: it runs as root on a Pi with a kiosk user.
+INSTALL_FAKES = {
+    "id": '[ $# -eq 1 ] && echo 0 || echo 1000\n',
+    "getent": r"""case "$1" in
+  group) echo "input:x:105:" ;;
+  passwd) echo "kiosk:x:1000:1000::$FAKE/home:/bin/bash" ;;
+esac
+""",
+    "install": 'echo "install $*" >>"$FAKE/log"\n',
+    "chown": "",
 }
 
 
@@ -61,7 +81,17 @@ while True:
 """
 
 
-class KioskctlTest(unittest.TestCase):
+def write_fakes(directory, fakes):
+    for name, body in fakes.items():
+        path = os.path.join(directory, name)
+        with open(path, "w") as f:
+            f.write(body if body.startswith("#!") else "#!/usr/bin/env bash\n" + body)
+        os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR)
+
+
+class HostLayerCase(unittest.TestCase):
+    """Fakes on PATH and a scratch state directory."""
+
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -71,11 +101,7 @@ class KioskctlTest(unittest.TestCase):
         os.mkdir(os.path.join(self.fake, "tags"))
         self.bin = os.path.join(self.fake, "bin")
         os.mkdir(self.bin)
-        for name, body in FAKES.items():
-            path = os.path.join(self.bin, name)
-            with open(path, "w") as f:
-                f.write(body if body.startswith("#!") else "#!/usr/bin/env bash\n" + body)
-            os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR)
+        write_fakes(self.bin, FAKES)
         self.conf = os.path.join(self.fake, "host.conf")
         self.write_conf()
         self.write(self.state, "current.env", f"KIOSK_DIGEST={A}\n")
@@ -131,6 +157,8 @@ class KioskctlTest(unittest.TestCase):
     def restarts(self):
         return [line for line in self.log() if line.startswith("systemctl restart")]
 
+
+class KioskctlTest(HostLayerCase):
     def test_good_image_swaps_inside_window(self):
         self.set_tag("kiosk-release", B)
         self.assertEqual(self.run_ctl("check-release"), 0)
@@ -406,6 +434,21 @@ class KioskctlTest(unittest.TestCase):
         self.assertIn("EnvironmentFile=/var/lib/kiosk-host/current.env\n", unit)
         self.assertIn("-v /var/lib/kiosk:/data \\\n", unit)
 
+    def test_unsynced_clock_warns_and_the_update_goes_ahead(self):
+        self.write(self.fake, "ntp_synced", "no\n")
+        self.set_tag("kiosk-release", B)
+        result = subprocess.run([KIOSKCTL, "check-release"], env=self.env(), capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("clock is not synced by NTP", result.stderr)
+        self.assertEqual(self.current(), B)
+
+    def test_synced_clock_logs_nothing(self):
+        self.set_tag("kiosk-release", A)
+        result = subprocess.run([KIOSKCTL, "check-release"], env=self.env(), capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("timedatectl show -p NTPSynchronized --value", self.log())
+        self.assertEqual(result.stdout + result.stderr, "")
+
     def test_example_health_command_runs_the_script_in_the_image(self):
         with open(os.path.join(HERE, "host", "host.conf.example")) as f:
             self.assertIn('KIOSK_HEALTH_CMD="python /app/healthcheck.py"\n', f.read())
@@ -413,6 +456,34 @@ class KioskctlTest(unittest.TestCase):
             copies = [line for line in f if line.startswith("COPY") and "healthcheck.py" in line]
         self.assertEqual(len(copies), 1)
         self.assertTrue(copies[0].rstrip().endswith(" /app/"))
+
+
+class InstallTest(HostLayerCase):
+    """install.sh against the same fakes, with config and state already in place."""
+
+    def setUp(self):
+        super().setUp()
+        write_fakes(self.bin, INSTALL_FAKES)
+        self.autostart = os.path.join(self.fake, "home", ".config", "openbox", "autostart")
+        os.makedirs(os.path.dirname(self.autostart))
+
+    def run_install(self):
+        return subprocess.run([INSTALL, "kiosk"], env=self.env(), capture_output=True, text=True)
+
+    def test_install_turns_on_ntp_and_survives_a_rerun(self):
+        for _ in range(2):
+            result = self.run_install()
+            self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.log().count("timedatectl set-ntp true"), 2)
+        with open(self.autostart) as f:
+            self.assertEqual(f.read(), "/usr/local/bin/kiosk-browser &\n")
+
+    def test_install_without_timesyncd_says_what_to_do_and_finishes(self):
+        self.write(self.fake, "no_timesyncd", "")
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("install systemd-timesyncd, then run: timedatectl set-ntp true", result.stderr)
+        self.assertIn("Installed.", result.stdout)
 
 
 if __name__ == "__main__":

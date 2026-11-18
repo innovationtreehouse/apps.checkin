@@ -23,6 +23,8 @@ sudo client/host/install.sh <kiosk-user>
 Needs Docker with the buildx plugin, and `flock`. The closing lines it prints say
 what to set and what to start.
 
+It turns on NTP; the nightly check logs a warning while the clock is not synced and updates anyway.
+
 ## How an image moves
 
 A check compares the tag's digest with what is recorded. If it differs, the kiosk

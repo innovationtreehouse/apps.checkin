@@ -88,8 +88,15 @@ swap_to() {
   return 1
 }
 
+# A report only: an unsynced clock never stops an update.
+warn_unsynced_clock() {
+  [ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" = yes ] ||
+    log "clock is not synced by NTP; signed requests fail once it drifts 60s" >&2
+}
+
 check_release() {
   local target
+  warn_unsynced_clock
   in_window || return 0
   target=$(resolve_tag "$KIOSK_RELEASE_TAG") || { log "registry unreachable; staying put"; return 0; }
   [ "$target" = "$(current)" ] && return 0
