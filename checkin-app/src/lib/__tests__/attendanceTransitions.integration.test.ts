@@ -134,6 +134,17 @@ describe('attendanceTransitions', () => {
             expect(eventVisit!.departedAt).toEqual(checkout);
         });
 
+        it.each([true, false, null])('copies the arrival\'s arrivedLive (%s) onto every chunk', async (arrivedLive) => {
+            const t0 = new Date(Date.now() - 4 * HOUR);
+            await makeEvent(`live-${arrivedLive}`, new Date(t0.getTime() + HOUR), new Date(t0.getTime() + 2 * HOUR));
+            const visit = await prisma.visit.create({ data: { personId: participantId, arrivedAt: t0, arrivedLive } });
+
+            const result = await processVisitCheckout(visit.id, new Date(t0.getTime() + 3 * HOUR), prisma, "TYPED");
+
+            expect(result.length).toBeGreaterThan(1);
+            expect(result.map(v => v.arrivedLive)).toEqual(result.map(() => arrivedLive));
+        });
+
         it('splits back-to-back events into adjacent event visits at the handoff', async () => {
             const t0 = new Date(Date.now() - 5 * HOUR);
             const e1Start = new Date(t0.getTime() + HOUR);

@@ -623,6 +623,33 @@ describe("a load that answers after a newer one", () => {
     expect(yearCell("John Smith")).toBe("2026-2027");
   });
 
+  it("ignores the opening no-year roster's failure when it answers after the selected year's roster", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    (notifications.show as jest.Mock).mockClear();
+    const logged = jest.spyOn(console, "error").mockImplementation(() => {});
+    let failNoYear: () => void = () => {};
+    global.fetch = jest.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.searchParams.get("roster") === "years") return answer({ years: ["2026-2027"], current: "2026-2027" });
+      if (url.searchParams.get("roster") === "active") {
+        if (url.searchParams.get("year")) return answer({ people: johnRoster });
+        return new Promise<Response>((resolve) => {
+          failNoYear = () => resolve({ ok: false, status: 500, ...jsonBody({ error: "Internal Server Error" }) } as Response);
+        });
+      }
+      return answer({ people: johns });
+    }) as unknown as typeof fetch;
+    renderWithProviders(<PrintBadgesPage />);
+    await screen.findByText("John Smith");
+    await waitFor(() => expect(yearCell("John Smith")).toBe("2026-2027"));
+
+    await act(async () => { failNoYear(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(yearCell("John Smith")).toBe("2026-2027");
+    expect(notifications.show).not.toHaveBeenCalled();
+    expect(logged).not.toHaveBeenCalled();
+    logged.mockRestore();
+  });
+
   it("keeps the latest search's rows when an earlier search answers last", async () => {
     setSession({ id: 1, isSysadmin: true });
     let finishKi: () => void = () => {};
