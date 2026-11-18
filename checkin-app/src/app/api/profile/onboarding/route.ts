@@ -8,15 +8,24 @@ import { apiError } from "@/lib/api-response";
 import { isYouth } from "@/lib/time";
 import { ArchivedHouseholdError } from "@/lib/household/archiveGuard";
 
+// The inputs an emergency-contact refusal concerns: a bad phone flags the phone; a missing name or phone flags both.
+function contactFields(error: EmergencyContactError, phone: unknown) {
+    if (error.code !== "incomplete") return undefined;
+    const badPhone = typeof phone === "string" && phone.trim() !== "" && !isValidPhone(phone);
+    return badPhone ? ["emergencyContactPhone"] : ["emergencyContactName", "emergencyContactPhone"];
+}
+
 export const POST = withAuth(
     {},
     async (req, auth) => {
         if (auth.type !== 'session') return apiError("Unauthorized", 401);
         const userId = auth.user.id;
+        let contactPhone: unknown;
 
         try {
             const body = await req.json();
             const { phone, emergencyContactName, emergencyContactPhone, emergencyContactEmail } = body;
+            contactPhone = emergencyContactPhone;
 
             const user = await prisma.person.findUnique({
                 where: { id: userId },
@@ -31,7 +40,7 @@ export const POST = withAuth(
                     return apiError("Youth profiles are read-only.", 403);
                 }
                 if (phone !== "" && !isValidPhone(phone)) {
-                    return apiError(PHONE_ERROR, 400);
+                    return NextResponse.json({ error: PHONE_ERROR, fields: ["phone"] }, { status: 400 });
                 }
                 await prisma.person.update({
                     where: { id: userId },
@@ -54,7 +63,7 @@ export const POST = withAuth(
         } catch (error) {
             if (error instanceof ArchivedHouseholdError) return apiError(error.message, error.status);
             if (error instanceof EmergencyContactError) {
-                return apiError(error.message, 400);
+                return NextResponse.json({ error: error.message, fields: contactFields(error, contactPhone) }, { status: 400 });
             }
             logger.error("Error saving onboarding details:", error);
             return apiError("Failed to save data", 500);
