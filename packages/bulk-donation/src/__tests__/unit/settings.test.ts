@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_DONATION_SETTINGS as D, settingsChanges } from "../../services/settingsService";
+import type { DbOrTx } from "../../db";
+import { DEFAULT_DONATION_SETTINGS as D, readDonationSettings, settingsChanges } from "../../services/settingsService";
 
 const finance = { isFinance: true, isBoard: false };
 const board = { isFinance: false, isBoard: true };
@@ -9,6 +10,16 @@ describe("settingsChanges", () => {
     expect(settingsChanges(D, { qbMaxCreatesPerRun: 10 }, finance)).toEqual({ qbMaxCreatesPerRun: 10 });
     expect(() => settingsChanges(D, { qbMaxCreatesPerRun: 60 }, finance)).toThrow(/board/);
     expect(settingsChanges(D, { qbMaxCreatesPerRun: 60 }, board)).toEqual({ qbMaxCreatesPerRun: 60 });
+  });
+
+  it("lets the board set the per-run limit up to 100, not above", () => {
+    expect(settingsChanges(D, { qbMaxCreatesPerRun: 100 }, board)).toEqual({ qbMaxCreatesPerRun: 100 });
+    expect(() => settingsChanges(D, { qbMaxCreatesPerRun: 101 }, board)).toThrow(/1 to 100/);
+  });
+
+  it("reads a stored per-run limit above 100 as 100", async () => {
+    const client = { donationOrgSettings: { findUnique: async () => ({ qbMatchWindowDays: 7, qbMaxCreatesPerRun: 1_000 }) } } as unknown as DbOrTx;
+    await expect(readDonationSettings(client, "org")).resolves.toEqual({ qbMatchWindowDays: 7, qbMaxCreatesPerRun: 100 });
   });
 
   it("lets finance or the board move the match window either way, from 1 to 30 days", () => {

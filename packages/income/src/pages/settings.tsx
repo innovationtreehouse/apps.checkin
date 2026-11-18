@@ -14,7 +14,7 @@ interface Settings {
 type Key = keyof Settings;
 
 const FIELDS: readonly { key: Key; label: string; cents?: boolean; cap: boolean; max?: number }[] = [
-  { key: "maxCreatesPerRun", label: "QuickBooks deposits created per run, all sources together", cap: true },
+  { key: "maxCreatesPerRun", label: "QuickBooks deposits created per run, all sources together (at most 100)", cap: true, max: 100 },
   { key: "maxCreateCentsPerRun", label: "Dollars booked per run, each source other than Benevity", cents: true, cap: true },
   { key: "benevityMaxCreateCentsPerRun", label: "Dollars booked per run from Benevity", cents: true, cap: true },
   { key: "benevityMatchWindowDays", label: "Benevity match window: days either side of the payout date", cap: false, max: 30 },

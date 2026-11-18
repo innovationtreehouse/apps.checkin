@@ -7,6 +7,8 @@ export const MATCH_WINDOW_DAYS = 7;
 /** The widest match window a lane may set, and the reach of a read for an entry already linked, so narrowing never hides one. */
 export const MAX_MATCH_WINDOW_DAYS = 30;
 export const MAX_CREATES_PER_RUN = 25;
+/** The most entries one run of any lane may create, whatever its setting says; a stored setting above it reads as it. */
+export const MAX_CREATES_PER_RUN_CEILING = 100;
 export const MAX_CREATES_PER_DAY = 50;
 /** Failed posts before the drain stops retrying and hands the record to finance. */
 export const MAX_POST_ATTEMPTS = 5;
@@ -84,7 +86,7 @@ export interface DrainLane<R, O extends string> {
   stopNow?: readonly O[];
   /** Entries already created today, for a lane held to a daily limit. */
   createdToday?: number;
-  /** Defaults to MAX_CREATES_PER_RUN. */
+  /** Defaults to MAX_CREATES_PER_RUN; held to MAX_CREATES_PER_RUN_CEILING. */
   maxCreatesPerRun?: number;
   /** Defaults to MAX_CREATES_PER_DAY. */
   maxCreatesPerDay?: number;
@@ -103,7 +105,7 @@ export async function runDrain<R, O extends string>(rows: readonly R[], lane: Dr
   for (const [i, row] of rows.entries()) {
     const remaining = rows.length - i;
     if (lane.createdToday !== undefined && lane.createdToday + lane.counts.posted >= (lane.maxCreatesPerDay ?? MAX_CREATES_PER_DAY)) return { by: "day", remaining };
-    if (lane.counts.posted >= (lane.maxCreatesPerRun ?? MAX_CREATES_PER_RUN)) return { by: "count", remaining };
+    if (lane.counts.posted >= Math.min(lane.maxCreatesPerRun ?? MAX_CREATES_PER_RUN, MAX_CREATES_PER_RUN_CEILING)) return { by: "count", remaining };
     const posted = await lane.post(row);
     if (posted === null) return { by: "post", remaining };
     const outcome = typeof posted === "string" ? posted : posted.outcome;

@@ -19,7 +19,7 @@ const CAPITAL_KEYS = new Set<Key>(["capitalTotalThresholdCents", "capitalLineIte
 
 const QB_FIELDS = [
   { key: "qbMatchWindowDays", label: "QuickBooks match window: days either side of the receipt date", max: 30, lowerOnly: false },
-  { key: "qbMaxCreatesPerRun", label: "QuickBooks entries created per run", max: 1000, lowerOnly: true },
+  { key: "qbMaxCreatesPerRun", label: "QuickBooks entries created per run (at most 100)", max: 100, lowerOnly: true },
   { key: "qbMaxCreatesPerDay", label: "QuickBooks entries created per day", max: 1000, lowerOnly: true },
 ] as const;
 type QbKey = (typeof QB_FIELDS)[number]["key"];

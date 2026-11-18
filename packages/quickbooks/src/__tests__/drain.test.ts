@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_CONSECUTIVE_FAILURES, MAX_CREATES_PER_DAY, MAX_CREATES_PER_RUN, MAX_SAME_CODE_REFUSALS, qbGate, runDrain, type Posted } from "../drain";
+import { MAX_CONSECUTIVE_FAILURES, MAX_CREATES_PER_DAY, MAX_CREATES_PER_RUN, MAX_CREATES_PER_RUN_CEILING, MAX_SAME_CODE_REFUSALS, qbGate, runDrain, type Posted } from "../drain";
 
 type Outcome = "posted" | "failed" | "skipped";
 
@@ -158,6 +158,12 @@ describe("runDrain limits passed by the lane", () => {
     const counts = fresh();
     expect(await runDrain<number, "posted">([1, 2, 3], { counts, failures: [], maxCreatesPerRun: 2, post: async () => "posted" })).toEqual({ by: "count", remaining: 1 });
     expect(counts.posted).toBe(2);
+  });
+  it("holds a per-run limit above the ceiling to the ceiling", async () => {
+    const counts = fresh();
+    const rows = Array.from({ length: MAX_CREATES_PER_RUN_CEILING + 5 }, (_, i) => i);
+    expect(await runDrain<number, "posted">(rows, { counts, failures: [], maxCreatesPerRun: 500, post: async () => "posted" })).toEqual({ by: "count", remaining: 5 });
+    expect(counts.posted).toBe(MAX_CREATES_PER_RUN_CEILING);
   });
   it("stops at the lane's per-day limit", async () => {
     expect(await runDrain<number, "posted">([1], { counts: fresh(), failures: [], createdToday: 3, maxCreatesPerDay: 3, post: async () => "posted" })).toEqual({ by: "day", remaining: 1 });
