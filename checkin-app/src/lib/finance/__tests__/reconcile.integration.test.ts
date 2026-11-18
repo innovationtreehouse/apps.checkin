@@ -94,7 +94,7 @@ async function signedAttrs(programId: number, ids: string) {
 /** A household whose lead has `email`, an OrgMembership, and one process. */
 async function makeApplicant(opts: {
     email: string;
-    status: "PENDING_PAYMENT" | "PENDING_BG_CLEARANCE" | "ACTIVE" | "BLOCKED" | "ARCHIVED";
+    status: "PENDING_PAYMENT" | "PENDING_BG_CLEARANCE" | "PENDING_BG_REVIEW" | "ACTIVE" | "BLOCKED" | "ARCHIVED";
     household?: "NONE" | "DENIED";
     bgCleared?: boolean;
     isVolunteerFamily?: boolean;
@@ -1685,6 +1685,7 @@ describe("a store refund on a denied household's paid application records itself
         ["a full refund", "901", "PENDING_BG_CLEARANCE", { financialStatus: "REFUNDED", totalRefundedCents: 5000 }, "PENDING_PAYMENT"],
         ["a partial refund", "902", "PENDING_BG_CLEARANCE", { financialStatus: "PARTIALLY_REFUNDED", totalRefundedCents: 1000 }, "PENDING_PAYMENT"],
         ["a partial refund on a BLOCKED application", "903", "BLOCKED", { financialStatus: "PARTIALLY_REFUNDED", totalRefundedCents: 1000 }, "BLOCKED"],
+        ["a full refund while the check is in review", "906", "PENDING_BG_REVIEW", { financialStatus: "REFUNDED", totalRefundedCents: 5000 }, "PENDING_BG_REVIEW"],
     ] as const)("the daily pass records %s the webhook never delivered", async (_label, n, status, refund, landsIn) => {
         const oid = `${TAG}-${n}`;
         const { processId } = await makeApplicant({ email: `dr${n}-${TAG}@ex.com`, status, household: "DENIED", paid: true, shopifyOrderId: oid });
