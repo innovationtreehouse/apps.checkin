@@ -336,10 +336,10 @@ defineRoute({
     endpoint: 'GET /api/membership-ops/applications',
     authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
     envelope: 'processes',
-    // Bag: { OrgMembershipProcess } with attestations (BackgroundCheckAttestation),
-    // membership (OrgMembership → household Household → householdMembers Person,
-    // leads flagged isHouseholdLead).
-    returns: ['OrgMembershipProcess', 'BackgroundCheckAttestation', 'OrgMembership', 'Household', 'Person'],
+    // Bag: { MembershipApplicationRow } with attestations (BackgroundCheckAttestation),
+    // subjectPerson (Person), membership (OrgMembership → household Household →
+    // householdMembers Person, leads flagged isHouseholdLead).
+    returns: ['MembershipApplicationRow', 'BackgroundCheckAttestation', 'OrgMembership', 'Household', 'Person'],
     orderedView: [
         ['isSysadmin',    ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
         ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
@@ -1019,6 +1019,30 @@ defineRoute({
     orderedView: [
         ['authenticated', ['their_households:pii', 'their_households:personal', 'their_households:internal', 'member', 'public']],
     ],
+});
+
+// A household lead says the household won't renew into the year the next
+// renewal run opens (POST), or takes that back (DELETE). Any session is
+// admitted; the service refuses anyone but a lead of an active household. Each
+// returns the household's OrgMembership under GET /api/household's view.
+const NOT_RENEWING_VIEW: readonly OrderedViewEntry[] = [
+    ['authenticated', ['their_households:pii', 'their_households:personal', 'their_households:internal', 'member', 'public']],
+];
+
+defineRoute({
+    endpoint: 'POST /api/membership/not-renewing',
+    authorize: 'authenticated',
+    envelope: null,
+    returns: ['OrgMembership'],
+    orderedView: NOT_RENEWING_VIEW,
+});
+
+defineRoute({
+    endpoint: 'DELETE /api/membership/not-renewing',
+    authorize: 'authenticated',
+    envelope: null,
+    returns: ['OrgMembership'],
+    orderedView: NOT_RENEWING_VIEW,
 });
 
 // App-localization singleton (timezone/locale) — sysadmin-only surface,
