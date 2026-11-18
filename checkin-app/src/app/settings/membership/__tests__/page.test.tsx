@@ -105,7 +105,6 @@ describe("MembershipSettingsPage", () => {
     expect(screen.getByText(/Background-check interval is/)).toBeInTheDocument();
 
     fireEvent.change(screen.getByDisplayValue("50.00"), { target: { value: "60.00" } });
-    fireEvent.change(screen.getByDisplayValue("123456"), { target: { value: "" } });
     fireEvent.change(screen.getByDisplayValue("VOLUNTEER"), { target: { value: "" } });
     fireEvent.change(screen.getByLabelText("Background check valid for"), { target: { value: "12" } });
     expect(screen.queryByText(/Background-check interval is/)).not.toBeInTheDocument();
