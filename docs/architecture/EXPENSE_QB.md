@@ -280,7 +280,7 @@ expense's state.
 | Book it | `bookExpenseToQb` | One post with creating allowed; still matches first and stops at the closing date |
 | Retry | `retryQbPost` | Re-resolves accounts from the current mappings and the live catalog, posts once |
 | Skip, with a reason | `skipExpenseQb` | `SKIPPED` for good; refused to a conflicted person |
-| Exclude an entry, with a reason | `excludeQbTxn` | That id is never a candidate again |
+| Exclude an entry, with a reason | `excludeQbTxn` | That id is never a candidate again for that entity type; an exclusion recorded without a type covers both |
 | Link or create a Vendor | `reimburseeVendorService` | The reimbursee's Vendor is set; a same-name Vendor must be confirmed by picking it |
 | Set an account on a held line | `setHeldLineAccount` | Clears the hold on resubmit |
 

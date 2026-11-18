@@ -295,13 +295,18 @@ async function claimForPost(orgId: string, expenseId: string, posting: ExpensePo
   return withPostable(orgId, expenseId, async (tx, locked): Promise<PostOutcome | Claimed> => {
     // A stale claim is a post that died mid-call; it settles as a retry of a failed post.
     const current = locked.qbMatchState === POSTING ? { ...locked, qbMatchState: "POST_FAILED" } : locked;
+    // State stays postable, so the next drain posts it; a stale claim is released.
+    const release = async <O extends PostOutcome>(outcome: O, note: string): Promise<O> => {
+      if (locked.qbMatchState === POSTING) await settle(tx, locked, "waiting", { qbMatchState: current.qbMatchState }, note);
+      return outcome;
+    };
     if (!(await tx.expenseEvent.findFirst({ where: { orgId, expenseId }, select: { id: true } }))) return "waiting";
     const held = await postingHold(tx, current);
     if (held) {
       logWarn("qb_post_held", { expenseId, orgId });
       // A closed expense takes no further sign-off or decision, so finance has to be told.
       if (current.state === "qb_complete") await flagHeld(tx, expenseId, `closed but not posted: ${held}`);
-      return "waiting";
+      return release("waiting", held);
     }
 
     const refused = notSendable(posting, current);
@@ -320,14 +325,10 @@ async function claimForPost(orgId: string, expenseId: string, posting: ExpensePo
     // Retrying cannot fix the expense's own data, so it waits for finance.
     if ("unpostable" in built) return settle(tx, current, "unpostable", { qbMatchState: "NEEDS_FINANCE" }, built.unpostable);
     if ("queue" in built) return settle(tx, current, "queued", { qbMatchState: "AMBIGUOUS" }, built.queue);
-    // State stays postable, so the next drain posts it once the bucket has a Class; a stale claim is released.
-    if ("noClass" in built) {
-      if (locked.qbMatchState === POSTING) await settle(tx, locked, "waiting", { qbMatchState: current.qbMatchState }, "a line's bucket has no QuickBooks Class");
-      return "no_class";
-    }
+    if ("noClass" in built) return release("no_class", "a line's bucket has no QuickBooks Class");
 
     // ponytail: concurrent posts can each see the count under the ceiling, so a day may overshoot by the in-flight posts.
-    if ((await qbCreatesToday(tx)) >= inputs.settings.qbMaxCreatesPerDay) return "waiting";
+    if ((await qbCreatesToday(tx)) >= inputs.settings.qbMaxCreatesPerDay) return release("waiting", "the daily QuickBooks create limit is reached");
 
     const date = built.write.fields.txnDate;
     const gate = qbGate(date, inputs.close, inputs.onAt, current.submittedAt, inputs.book);

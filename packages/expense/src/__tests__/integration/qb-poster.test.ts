@@ -176,7 +176,10 @@ beforeEach(async () => {
   // Switched on before any seeded expense, with no closing date: nothing dated before 2026 is created.
   if (process.env.EXPENSE_DATABASE_URL) await switchedOn(new Date("2026-01-01T00:00:00Z"));
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 describeDb("QB-2 posting — create", () => {
   it("posts one Purchase per expense with a line per item, CREATED with the ids stored", async () => {
@@ -811,6 +814,17 @@ describeDb("QB-2 posting — daily ceiling", () => {
     warn.mockRestore();
   });
 
+  it("a stale claim at the ceiling is released to POST_FAILED", async () => {
+    await createdAt(MAX_CREATES_PER_DAY, new Date());
+    const { id } = await outboxed("2026-09-10");
+    await db.expense.update({ where: { id }, data: { qbMatchState: "POSTING", qbClaimedAt: new Date(Date.now() - STALE_CLAIM_MS - 1000) } });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    expect(await postExpenseToQb(ORG, id)).toBe("waiting");
+    expect(qbo.posts).toHaveLength(0);
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "POST_FAILED", qbClaimedAt: null });
+  });
+
   it("the drain stops at the ceiling partway through a run", async () => {
     await createdAt(MAX_CREATES_PER_DAY - 1, new Date());
     const first = await outboxed("2026-09-10");
@@ -957,6 +971,17 @@ describeDb("QB-2 posting — checks at post time", () => {
     expect(await db.expenseFlag.findMany({ where: { expenseId: id }, select: { detail: true, checkedOffAt: true } })).toEqual([
       { detail: "closed but not posted: a line is not approved: it is pending, under exception, waiting for its new bucket's approver, or rejected", checkedOffAt: null },
     ]);
+  });
+
+  it("a held stale claim is released to POST_FAILED", async () => {
+    const { id, lines } = await outboxed("2026-09-10");
+    await db.expenseLineSignoff.deleteMany({ where: { lineItemId: lines[0], seat: "TREASURER" } });
+    await db.expense.update({ where: { id }, data: { qbMatchState: "POSTING", qbClaimedAt: new Date(Date.now() - STALE_CLAIM_MS - 1000) } });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    expect(await postExpenseToQb(ORG, id)).toBe("waiting");
+    expect(qbo.posts).toHaveLength(0);
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "POST_FAILED", qbClaimedAt: null });
   });
 
   it("a hold on an expense not yet closed waits without a flag", async () => {

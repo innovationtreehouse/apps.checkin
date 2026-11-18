@@ -296,8 +296,9 @@ export async function assignOwner(
   const actor = actorOf(principal);
   await requireLiveBuckets([ownerId]);
   const { expense, approval } = await loadApproval(expenseId, approvalId, "assign_ownership");
-  if (approval.ownerId !== null && approval.status !== "pending") {
-    throw new ServiceError(400, "This item already has an owner assigned");
+  if (approval.ownerId !== null) throw new ServiceError(400, "This item already has an owner assigned");
+  if (approval.status !== "pending") {
+    throw new ServiceError(400, `This item is ${approval.status}; only a pending item takes an owner`);
   }
 
   const lineItem = await expenseRepo.findLineItemById(approval.lineItemId);

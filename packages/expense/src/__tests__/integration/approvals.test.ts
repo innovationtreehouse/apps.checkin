@@ -395,6 +395,19 @@ describeDb("assignOwner", () => {
     const { id, approvalId } = await lineInApproval(null);
     await expect(assignOwner(LEADER, id, approvalId, 100)).rejects.toMatchObject({ status: 403 });
   });
+
+  it("refuses a line that already has an owner, even one still pending", async () => {
+    const { id, approvalId } = await lineInApproval(100);
+    await db.expense.update({ where: { id }, data: { state: "assign_ownership" } });
+    await expect(assignOwner(FINANCE, id, approvalId, 101)).rejects.toMatchObject({ status: 400 });
+    expect(await approval(approvalId)).toMatchObject({ ownerId: 100, status: "pending" });
+  });
+
+  it("refuses an ownerless line that is not pending", async () => {
+    const { id, approvalId } = await lineInApproval(null, "unknown");
+    await expect(assignOwner(FINANCE, id, approvalId, 100)).rejects.toMatchObject({ status: 400 });
+    expect(await approval(approvalId)).toMatchObject({ ownerId: null, status: "unknown" });
+  });
 });
 
 /** Holds `lock` until both racers have read and are waiting to write, then lets them go. */
@@ -437,22 +450,21 @@ describeDb("racing decisions", () => {
     expect(decided).toBe(1);
   });
 
-  it("a stale assignment never undoes a racing bucket move, and the submitter seat stays", async () => {
+  it("of two racing assignments on one line, exactly one lands; the other gets 409 and the submitter seat stays", async () => {
     bindPorts({ signoff: directory({ approvers: { 100: [2], 101: [4] }, finance: [3, 6] }) });
-    const { id, li, approvalId } = await lineInApproval(100);
-    await db.expense.update({ where: { id }, data: { state: "assign_ownership", needsReimbursement: true, reimburseePersonId: 1 } });
+    const { id, li, approvalId } = await lineInApproval(null);
+    await db.expense.update({ where: { id }, data: { needsReimbursement: true, reimburseePersonId: 1 } });
     await seedSubmitterSeat(li, 1);
 
-    const [same, moved] = await race(
+    const [first, second] = await race(
       `SELECT id FROM expenses WHERE id = '${id}' FOR UPDATE`,
       () => assignOwner(FINANCE, id, approvalId, 100),
       () => assignOwner(principal(6, { isFinance: true }), id, approvalId, 101),
     );
 
-    // The no-op assignment changes nothing, so the move lands after it; landing after the move, it is refused.
-    expect(moved.status).toBe("fulfilled");
-    if (same.status === "rejected") expect(same.reason).toMatchObject({ status: 409 });
-    expect((await approval(approvalId))!.ownerId).toBe(101);
+    expect([first.status, second.status].sort()).toEqual(["fulfilled", "rejected"]);
+    expect(rejection(first, second)).toMatchObject({ status: 409 });
+    expect((await approval(approvalId))!.ownerId).toBe(first.status === "fulfilled" ? 100 : 101);
     expect((await db.expenseLineSignoff.findMany({ where: { lineItemId: li } })).map((s) => s.seat)).toEqual(["SUBMITTER"]);
   });
 });
