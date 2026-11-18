@@ -124,6 +124,15 @@ describe("PATCH /api/household — adding a member with a designated address", (
     });
 });
 
+describe("PATCH /api/household — a body that is not JSON", () => {
+    it.each([["empty", undefined], ["malformed", "{"]])("refuses an %s body as a missing name", async (_label, raw) => {
+        const res = await householdPATCH(new Request("http://localhost/api/household", { method: "PATCH", body: raw }) as unknown as NextRequest);
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toBe("Name is required");
+        expect(tx.person.create).not.toHaveBeenCalled();
+    });
+});
+
 describe("an archived household", () => {
     beforeEach(() => (lockLiveHouseholds as jest.Mock).mockRejectedValueOnce(new ArchivedHouseholdError()));
 

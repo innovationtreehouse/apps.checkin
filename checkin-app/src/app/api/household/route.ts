@@ -84,7 +84,7 @@ export const PATCH = handler('PATCH /api/household', async ({ req, auth }) => {
         throw forbidden("Staff accounts cannot add household members. Use the membership-ops participant tools instead.");
     }
 
-    const body = await req.json();
+    const body = (await req.json().catch(() => null)) ?? {};
     const { memberName, memberEmail, memberDob, memberPhone, memberOver25, memberAllergies } = body;
 
     const hh = await householdLeadship(userId);
