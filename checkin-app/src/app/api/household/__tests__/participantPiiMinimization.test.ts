@@ -136,7 +136,7 @@ describe("Participant PII minimization (M1, M2)", () => {
         expect(Object.keys(callArgs.select.household.select).sort()).toEqual(
             ["city", "householdMembers", "id", "line1", "line2", "name", "orgMembership", "postalCode", "state"],
         );
-        expect(callArgs.select.household.select.orgMembership).toEqual({ select: { status: true, memberSince: true, isVolunteerFamily: true } });
+        expect(callArgs.select.household.select.orgMembership).toEqual({ select: { status: true, memberSince: true, isVolunteerFamily: true, householdId: true, notRenewingYear: true } });
         expect(callArgs.select.household.select.householdMembers).toEqual({ select: HOUSEHOLD_PEER_WITH_EMAIL_LOCK_SELECT });
     });
 

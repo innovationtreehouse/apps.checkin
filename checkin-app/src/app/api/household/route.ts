@@ -21,6 +21,7 @@ import { isDesignatedEmail, designatedEmailRefusalForBoard } from "@/lib/members
 import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
 import { personActor } from "@/lib/auditActor";
 import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
+import { noteStands } from "@/lib/membership/notRenewing";
 
 export const GET = withAuth(
     {},
@@ -42,13 +43,20 @@ export const GET = withAuth(
                             state: true,
                             postalCode: true,
                             householdMembers: { select: HOUSEHOLD_PEER_WITH_EMAIL_LOCK_SELECT },
-                            orgMembership: { select: { status: true, memberSince: true, isVolunteerFamily: true } },
+                            orgMembership: { select: { status: true, memberSince: true, isVolunteerFamily: true, householdId: true, notRenewingYear: true } },
                         }
                     }
                 }
             });
 
             if (!user) return apiError("User not found", 404);
+
+            const membership = user.household?.orgMembership;
+            if (membership?.notRenewingYear != null) {
+                const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
+                // A note for a year that has passed means nothing, so the page never sees it.
+                if (!noteStands(membership.notRenewingYear, settings?.orgMembershipYearBoundary, new Date())) membership.notRenewingYear = null;
+            }
 
             const household = user.household && {
                 ...user.household,

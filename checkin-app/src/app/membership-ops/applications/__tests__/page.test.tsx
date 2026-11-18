@@ -549,6 +549,32 @@ describe("AdminMembershipPage", () => {
         expect(screen.queryByText(/Showing only/)).not.toBeInTheDocument();
     });
 
+    it("tags a renewal whose household said it won't renew, and filters to the tagged ones", async () => {
+        const declined = {
+            ...rows[1],
+            id: 7,
+            status: "PENDING_RENEWAL",
+            paidAt: null,
+            notRenewing: true,
+            orgMembership: { householdId: 7, isVolunteerFamily: false, household: household("Leaving Family", 7) },
+        };
+        const waiting = { ...declined, id: 8, notRenewing: false, orgMembership: { householdId: 8, isVolunteerFamily: false, household: household("Slow Family", 8) } };
+        mockFetchJson({ "/api/membership-ops/applications": { processes: [...rows, declined, waiting] } });
+        const { rerender } = renderPage();
+        await screen.findByText("Leaving Family");
+
+        expect(screen.getAllByRole("button", { name: "Not renewing" })).toHaveLength(1);
+        expect(screen.getByText("PENDING RENEWAL: 2")).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole("button", { name: "Not renewing: 1" }));
+        rerender(rewrapped());
+
+        expect(screen.getByText("Leaving Family")).toBeInTheDocument();
+        expect(screen.queryByText("Slow Family")).not.toBeInTheDocument();
+        expect(screen.queryByText("Awaiting Family")).not.toBeInTheDocument();
+        expect(screen.getByText(/Showing only/)).toHaveTextContent("Showing only Not renewing");
+    });
+
     it("shows a clear-filter empty state when the active status has no matching rows", async () => {
         search = "status=PENDING_BG_REVIEW";
         mockFetchJson({ "/api/membership-ops/applications": { processes: rows } });

@@ -12,6 +12,8 @@ import { useLoad } from '@/lib/api';
 import { AdminEditHouseholdModal } from '@/components/admin/AdminEditHouseholdModal';
 import { sharesHousehold } from '@/lib/conflictOfInterest';
 import { formatDateOnly } from '@/lib/time';
+import { membershipYearLabel } from '@/lib/programYear';
+import { useOrgTime } from '@/components/TimezoneProvider';
 import { isMembershipLapsed } from '@/lib/membership/lapsed';
 
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -30,6 +32,8 @@ type Household = {
   // An application (joining or renewing) is at PENDING_PAYMENT: granting certifies it.
   awaitingPayment?: boolean;
   bgValidUntil?: string | null;
+  // The household has said it won't renew into `year`, on `since`.
+  notRenewing?: { year: number; since: string } | null;
 };
 
 // Every date this renders (memberSince, validUntil, bgValidUntil) is a calendar
@@ -42,6 +46,7 @@ export default function AdminHouseholdsPage() {
   // Certifying a payment is Board-only (the server 403s a sysadmin), so a Grant that
   // would certify is hidden from anyone else. One that only opens an application stays.
   const isBoard = me?.isBoardMember === true;
+  const { formatDate } = useOrgTime();
   const router = useRouter();
 
   const { data, error, reload } = useLoad<{ households: Household[]; grantYears?: GrantYear[] }>(ready ? '/api/membership-ops/households' : null);
@@ -246,6 +251,11 @@ export default function AdminHouseholdsPage() {
                             ✉ Broken email
                           </Badge>
                         </Tooltip>
+                      )}
+                      {household.notRenewing && (
+                        <Badge color="gray" variant="light" size="sm">
+                          Not renewing {membershipYearLabel(household.notRenewing.year)} · said {formatDate(household.notRenewing.since)}
+                        </Badge>
                       )}
                     </Group>
                   </Table.Td>

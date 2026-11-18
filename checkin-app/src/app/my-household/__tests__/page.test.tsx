@@ -254,6 +254,66 @@ describe("HouseholdPage", () => {
     expect(router.push).toHaveBeenCalledWith("/membership");
   });
 
+  describe("won't be renewing", () => {
+    const noted = { ...householdData, orgMembership: { ...householdData.orgMembership, notRenewingYear: 2026 } };
+    const writes = (fetchSpy: jest.Mock) => fetchSpy.mock.calls.filter(([u, init]) => String(u).includes("/api/membership/not-renewing") && init?.method);
+
+    it("a lead confirms, with the real end date, before the Board is told", async () => {
+      setSession({ id: 10, email: "sam@example.com" });
+      let current: unknown = householdData;
+      const fetchSpy = mockRoutes({
+        "/api/household": () => ({ household: current, validUntil: "2026-08-31" }),
+        "/api/membership/not-renewing": () => { current = noted; return {}; },
+      });
+      renderWithProviders(<HouseholdPage />);
+
+      fireEvent.click(await screen.findByRole("button", { name: "We won't be renewing" }));
+      expect(screen.getByText(/continues through Aug 31, 2026, and\s+renewal emails stop/)).toBeInTheDocument();
+      expect(writes(fetchSpy)).toHaveLength(0);
+
+      fireEvent.click(screen.getByRole("button", { name: "Yes, tell the Board" }));
+      expect(await screen.findByText(/You've told the Board you won't be renewing/)).toBeInTheDocument();
+      expect(writes(fetchSpy).map(([, init]) => init.method)).toEqual(["POST"]);
+    });
+
+    it("cancelling sends nothing", async () => {
+      setSession({ id: 10, email: "sam@example.com" });
+      const fetchSpy = mockRoutes();
+      renderWithProviders(<HouseholdPage />);
+
+      fireEvent.click(await screen.findByRole("button", { name: "We won't be renewing" }));
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(await screen.findByRole("button", { name: "We won't be renewing" })).toBeInTheDocument();
+      expect(writes(fetchSpy)).toHaveLength(0);
+    });
+
+    it("a standing note shows with an undo, and the renew control stays", async () => {
+      setSession({ id: 10, email: "sam@example.com" });
+      const fetchSpy = mockRoutes({
+        "/api/household": { household: noted },
+        "/api/membership/renewal-status": { renewalDue: true, notRenewing: true },
+        "/api/membership/not-renewing": {},
+      });
+      renderWithProviders(<HouseholdPage />);
+
+      expect(await screen.findByText(/You've told the Board you won't be renewing/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Renew!" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "We won't be renewing" })).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+      await waitFor(() => expect(writes(fetchSpy).map(([, init]) => init.method)).toEqual(["DELETE"]));
+    });
+
+    it("is not offered to a member who is not a lead", async () => {
+      setSession({ id: 11, email: "" });
+      mockRoutes({ "/api/household": { household: noted } });
+      renderWithProviders(<HouseholdPage />);
+      await screen.findByRole("heading", { name: "Smith Household", level: 1 });
+
+      expect(screen.queryByRole("button", { name: "We won't be renewing" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
+    });
+  });
+
   it("shows a volunteer-only badge when memberSince is absent", async () => {
     setSession({ id: 10, email: "sam@example.com" });
     mockRoutes({ "/api/household": { household: { ...householdData, orgMembership: { status: "ACTIVE", isVolunteerFamily: true } } } });
