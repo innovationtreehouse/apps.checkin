@@ -464,7 +464,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
   const [permanent, setPermanent] = useState(false);
   const [final, setFinal] = useState(false);
   const [authorization, setAuthorization] = useState("");
-  const [capital, setCapital] = useState<Record<number, { isCapital: boolean; years: number | ""; owner: string }>>({});
+  const [capital, setCapital] = useState<Record<number, { isCapital: boolean; years: number | ""; owner: string; seeded?: string }>>({});
   const [taxNote, setTaxNote] = useState("");
 
   const reloadAll = () => { expense.reload(); approvals.reload(); signoffs.reload(); vendor.reload(); };
@@ -785,6 +785,13 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
                   />
                 )}
                 <NumberInput w={140} placeholder="Years" min={1} value={value.years} onChange={(v) => setCapital({ ...capital, [line.id]: { ...value, years: typeof v === "number" ? v : "" } })} />
+                {e.state === "set_depreciation_cycle" && e.backfill && (
+                  <TextInput
+                    w={240} placeholder="ITFA05, ITFA06" aria-label={`Seeded asset numbers for ${line.description}`}
+                    description={`One per unit (${Math.max(1, Math.round(line.quantity))}), seeded first`}
+                    value={value.seeded ?? ""} onChange={(ev) => setCapital({ ...capital, [line.id]: { ...value, seeded: ev.currentTarget.value } })}
+                  />
+                )}
               </Group>
             ))}
           <Button
@@ -800,6 +807,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
                 : await send(`${base}/set-depreciation-cycle/submit`, "POST", {
                     items: capitalRows.filter(({ line }) => line.isCapital).map(({ line, value }) => ({
                       lineItemId: line.id, depreciationYears: Number(value.years), ownerId: Number(value.owner),
+                      ...(e.backfill ? { seededAssetNumbers: (value.seeded ?? "").split(",").map((n) => n.trim()).filter(Boolean) } : {}),
                     })),
                   }, "Depreciation cycle set");
               if (ok) await decided();

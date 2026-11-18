@@ -1,4 +1,3 @@
-import type { ExpenseLineItem } from "../db/schema";
 import type { ExpenseSettings } from "../contract";
 
 // ── Approval terminal states ──────────────────────────────────────────────────
@@ -26,18 +25,15 @@ export function capitalThresholdsUnset(s: CapitalSettings): boolean {
 }
 
 /**
- * Whether spending goes to capital review: never while review is off, always while a threshold is
- * unset, and otherwise when the total or a unit price is at or over its threshold.
+ * Whether a record goes to capital review: never while review is off, always while a threshold is
+ * unset, and otherwise when its total or a unit's cost is at or over its threshold. A unit's cost
+ * is its share of what its line books at.
  */
-export function classifyCapital(
-  receiptTotalCents: number,
-  lineItems: Pick<ExpenseLineItem, "unitPriceCents">[],
-  s: CapitalSettings,
-): boolean {
+export function classifyCapital(totalCents: number, unitCostCents: number[], s: CapitalSettings): boolean {
   if (!s.capitalReviewEnabled) return false;
   if (s.capitalTotalThresholdCents === null || s.capitalLineItemThresholdCents === null) return true;
   const { capitalTotalThresholdCents: total, capitalLineItemThresholdCents: unit } = s;
-  return receiptTotalCents >= total || lineItems.some((li) => li.unitPriceCents >= unit);
+  return totalCents >= total || unitCostCents.some((c) => c >= unit);
 }
 
 // ── Hold reasons ──────────────────────────────────────────────────────────────

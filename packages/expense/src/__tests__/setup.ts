@@ -26,6 +26,7 @@ afterEach(async () => {
   await db.expenseReceivedOrgEvent.deleteMany();
   await db.expenseQbAccount.deleteMany();
   await db.capitalAsset.deleteMany();
+  await db.capitalAssetSequence.deleteMany();
   await db.donatedCapitalLine.deleteMany();
   await db.expenseQbMatchExclusion.deleteMany();
   await db.expenseQbClaim.deleteMany();

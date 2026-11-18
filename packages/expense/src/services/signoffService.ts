@@ -7,7 +7,7 @@ import type { ExpensePrincipal, SetReimbursee } from "../contract";
 import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
 import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
-import { drainExpense } from "../lib/financial-flow";
+import { checkApprovalAutoTransition, drainExpense } from "../lib/financial-flow";
 import { boardApprovalNeeded, clearFrom, isConflicted, filledSeatsByLine, lineHolds, lockBucketLines, lockExpense, signoffFactsByLine, signoffFactsForExpenses, unsignedLines } from "../lib/signoff-facts";
 import { APPROVABLE_STATUSES, CLOSED_STATES, approvesAsStandIn, blockedSeats, boardAuthorizationRefusal, missingSeats, reimburseeUnknown, signoffRefusal, type FilledSeat, type Seat, type SignoffFacts } from "../lib/signoff";
 import { approvalWaitsOnBoard, lineActions, mayRecordBoardAuthorization, signatureTab, type LineActionsInput } from "../lib/line-actions";
@@ -245,6 +245,7 @@ export const setReimbursee: SetReimbursee = async (orgId, expenseId, choice, pri
   });
 
   if (state === "qb_pending") await drainExpense(orgId, expenseId);
+  if (state === "owner_approval") await checkApprovalAutoTransition(expenseId, actor);
 };
 
 /** The expense, locked and open to change, or the refusal. */

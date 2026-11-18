@@ -1,5 +1,4 @@
 import { catalogSettingsMessage, isNotWired, kindOf, ServiceError } from "@checkin/component-kit";
-import { allocateCents } from "@checkin/money";
 import { db, isUniqueConstraintError, type Db } from "../db";
 import type { AccountMapping, ExpenseLineItem } from "../db/schema";
 import { HoldReason, type HoldReason as HoldReasonType } from "./expense-rules";
@@ -13,6 +12,7 @@ import { lockExpense, outboxHeldIds } from "./signoff-facts";
 import { postExpenseToQb, type PostOutcome } from "./expense-qb-poster";
 import { getExpenseRuntime } from "../runtime";
 import { sendOutcomeNotices } from "./outcome-notices";
+import { allocationsFor } from "../qb-write";
 import type { Expense } from "../generated/prisma/client";
 
 // ── Translation lookup ────────────────────────────────────────────────────────
@@ -254,23 +254,6 @@ async function persistConflicts(
       });
     }
   }
-}
-
-// ── Stage 3 (pure): allocate tax, shipping and discount over the lines ────────
-
-// Lines in id order, so a tie in the allocator goes to the earlier line.
-function allocationsFor(expense: Expense, lineItems: ExpenseLineItem[]) {
-  const lines = [...lineItems].sort((a, b) => a.id - b.id);
-  const weights = lines.map((li) => li.totalPriceCents);
-  const allocate = (totalCents: number) => {
-    const parts = allocateCents(totalCents, weights);
-    return new Map(lines.map((li, i) => [li.id, parts[i]]));
-  };
-  return {
-    taxAlloc: allocate(expense.taxCents),
-    shippingAlloc: allocate(expense.shippingCents),
-    discountAlloc: allocate(expense.discountCents),
-  };
 }
 
 // ── Stage 4 (atomic): commit QB processing ───────────────────────────────────
