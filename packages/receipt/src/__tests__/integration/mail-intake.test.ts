@@ -20,6 +20,7 @@ import {
 import { createMemoryFileStore } from "../../lib/fileStorage";
 import { createGmailReader } from "../../lib/gmail";
 import { mailQueueService } from "../../services/mailQueueService";
+import { OCR_INTERRUPTED_AFTER_MS, sweepInterruptedOcr } from "../../services/catchUp";
 import { describeDb } from "../helpers/db";
 import type { ReceiptLimits } from "../../lib/limits";
 import { receiptService } from "../../services/receiptService";
@@ -511,6 +512,91 @@ describeDb("mail intake flood limits", () => {
     };
     expect(await readMailbox()).toMatchObject({ messages: 1, receipts: 1, unread: 1 });
     expect(agingAlerts).toEqual([]);
+  });
+});
+
+/** A call that never answers, after moving the clock past the run's reading deadline but not its lease. */
+const hangPastReadingDeadline = (): Promise<never> => {
+  vi.setSystemTime(Date.now() + MAIL_TIME_BUDGET_MS + 8 * 60_000);
+  return new Promise(() => {});
+};
+
+describeDb("mail intake call deadlines", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("abandons a hung reading at its deadline, sends the replies owed, releases the lease, and leaves the receipt for the sweep", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    send("m1");
+    send("m2");
+    const sent: string[] = [];
+    configure({
+      ocr: { extract: hangPastReadingDeadline },
+      mailbox: mail.reader,
+      alerts: testAlerts(),
+      people: { submitterByEmail: async () => ALICE },
+      replies: {
+        contactOf: async () => ({ email: "alice@example.org", name: "Alice" }),
+        send: async (ack) => {
+          sent.push(ack.to);
+          return true;
+        },
+      },
+    });
+
+    expect(await readMailbox()).toMatchObject({ status: "ok", messages: 1, receipts: 1, unread: 1, replied: 1 });
+    expect(sent).toEqual(["alice@example.org"]);
+    expect((await mailRunState()).running).toBe(false);
+    const [receipt] = await db.receipt.findMany();
+    expect(await stateOf(receipt.id)).toBe("auto_upload");
+    await sweepInterruptedOcr(new Date(Date.now() + OCR_INTERRUPTED_AFTER_MS + 1));
+    expect(await stateOf(receipt.id)).toBe("ocr_failed");
+  });
+
+  it("ends the run as a listing failure when a mailbox fetch hangs, and releases the lease", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    send("m1");
+    send("m2");
+    mail.reader.getMessage = hangPastReadingDeadline;
+
+    expect(await readMailbox()).toMatchObject({ status: "listing_failed", messages: 1, failed: 1, unread: 1, receipts: 0 });
+    expect((await mailRunState()).running).toBe(false);
+    expect(await db.receipt.count()).toBe(0);
+  });
+
+  it("counts a hung acknowledgement as failed, releases the lease, and sends it on the next run", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    send("m1");
+    const sent: string[] = [];
+    let hang = true;
+    configure({
+      ocr: okOcr(),
+      mailbox: mail.reader,
+      alerts: testAlerts(),
+      people: { submitterByEmail: async () => ALICE },
+      replies: {
+        contactOf: async () => ({ email: "alice@example.org", name: "Alice" }),
+        send: async (ack) => {
+          if (hang) {
+            // Past the run's end-of-run deadline, short of its lease.
+            vi.setSystemTime(Date.now() + MAIL_TIME_BUDGET_MS + 9.5 * 60_000);
+            return new Promise<boolean>(() => {});
+          }
+          sent.push(ack.to);
+          return true;
+        },
+      },
+    });
+
+    expect(await readMailbox()).toMatchObject({ status: "ok", receipts: 1, replied: 0, replyFailed: 1 });
+    expect((await mailRunState()).running).toBe(false);
+    hang = false;
+    expect(await readMailbox()).toMatchObject({ replied: 1 });
+    expect(sent).toEqual(["alice@example.org"]);
   });
 });
 

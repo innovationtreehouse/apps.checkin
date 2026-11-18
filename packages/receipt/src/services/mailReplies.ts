@@ -5,6 +5,7 @@
 import { db } from "../db";
 import type { MailAcknowledgement, MailPart, MailRefusal, ReceiptReplies } from "../contract";
 import type { Prisma } from "../generated/prisma/client";
+import { byDeadline } from "../lib/deadline";
 import { withLivePeople } from "../lib/livePeople";
 import { getOrgId, replies } from "../runtime";
 
@@ -110,7 +111,7 @@ async function settle(id: number, allSent: boolean, hasReceipt: boolean): Promis
  * send and stays claimed once a send succeeds, so nothing is sent twice; a send that reports
  * failure releases the claim for a later run. Does nothing while the host's mail out is unbound.
  */
-export async function sendMailReplies(): Promise<{ sent: number; failed: number }> {
+export async function sendMailReplies(deadline = Infinity): Promise<{ sent: number; failed: number }> {
   const out = replies();
   const counts = { sent: 0, failed: 0 };
   if (!out) return counts;
@@ -149,7 +150,7 @@ export async function sendMailReplies(): Promise<{ sent: number; failed: number 
     for (const { fields, ack } of sends) {
       let ok = false;
       try {
-        ok = await out.send(ack);
+        ok = await byDeadline(deadline, "an acknowledgement send", () => out.send(ack));
       } catch (err) {
         console.error("[receipt] mail acknowledgement failed for one message:", err);
       }
