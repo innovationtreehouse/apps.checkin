@@ -5,7 +5,7 @@
  * line and the receipt in its review lists. Only routes with no external integration: the local OCR
  * mock reads the upload. Real HTTP against the running dev server.
  */
-import { api, BASE, differentPurchases, loginAs, type Session } from "./helpers";
+import { api, BASE, differentPurchases, loginAs, newClassId, type Session } from "./helpers";
 
 const SUBMITTER = "inventory.manager@example.com";
 const FINANCE = "finance@example.com";
@@ -43,11 +43,12 @@ let finance: Session;
 let board: Session;
 let approver: Session;
 let bucketId: number | undefined;
+let lineAssigned = false;
 let original: Receipt | undefined;
 
 beforeAll(async () => {
   [submitter, finance, board, approver] = await Promise.all([loginAs(SUBMITTER), loginAs(FINANCE), loginAs(BOARD), loginAs(APPROVER)]);
-  const bucket = await post<{ id: number }>(finance, "/api/budget-owners", { name: `Receipt journey ${stamp}` });
+  const bucket = await post<{ id: number }>(finance, "/api/budget-owners", { name: `Receipt journey ${stamp}`, quickBooksClassId: newClassId() });
   expect(bucket.status).toBe(200);
   bucketId = bucket.json.id;
   expect((await send(board, "PUT", `/api/budget-owners/${bucketId}/owner`, { personId: approver.personaId })).status).toBe(200);
@@ -57,8 +58,10 @@ afterAll(async () => {
   // The sessions are all set before the bucket is, so a beforeAll that failed earlier leaves nothing to undo.
   if (bucketId !== undefined) {
     await send(board, "PUT", `/api/budget-owners/${bucketId}/owner`, { personId: null });
-    // Archive is the only removal: the booked expense line still references the bucket by id.
-    expect((await post(finance, `/api/budget-owners/${bucketId}/archive`)).status).toBe(200);
+    // Archive is the only removal, refused while the journey's expense line is still open in the bucket.
+    const archived = await post(finance, `/api/budget-owners/${bucketId}/archive`);
+    if (lineAssigned) expect(archived).toMatchObject({ status: 409, json: { error: expect.stringContaining("open expense lines: 1") } });
+    else expect(archived.status).toBe(200);
   }
   if (original) await post(submitter, `/api/receipts/${original.id}/submitter-discard`);
 });
@@ -106,6 +109,7 @@ describe("receipt to expense journey", () => {
     expect(unassigned).toMatchObject({ ownerId: null });
     const assigned = await post<Approval>(finance, `/api/expense/expenses/${expenseId}/line-item-approvals/${unassigned.id}/assign-owner`, { ownerId: bucketId });
     expect(assigned.status).toBe(200);
+    lineAssigned = true;
     expect(assigned.json).toMatchObject({ ownerId: bucketId, status: "pending" });
 
     const awaiting = await api<{ Expense: ExpenseRow[] }>(approver, "/api/expense/expenses?view=owner_approval&page=1&limit=50");

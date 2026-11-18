@@ -10,6 +10,7 @@ import Anthropic, {
 } from "@anthropic-ai/sdk";
 import type { FailureKind } from "@checkin/component-kit";
 import { DEFAULT_CURRENCY } from "@checkin/receipt-types";
+import { ZodError } from "zod";
 import { OCR_FILE_REFUSED, OcrDataSchema, type OcrData, type OcrProvider, type OcrResult } from "../contract";
 
 const MODEL = "claude-opus-5-5";
@@ -112,6 +113,12 @@ export function buildContent(file: Buffer, mimeType: string): ContentBlock[] {
   throw new Error(`Unsupported MIME type: ${mimeType}`);
 }
 
+/** The turn, as a line for the model, when the image was saved sideways or upside down. */
+export function rotationNote(mimeType: string, rotation = 0): ContentBlock[] {
+  if (!rotation || !IMAGE_TYPES.includes(mimeType)) return [];
+  return [{ type: "text", text: `This image is stored turned: rotate it ${rotation} degrees clockwise to read it upright.` }];
+}
+
 /** A reading without its retailer, date or total still lands, for its submitter to fill in; one without lines does not. */
 function complete(data: OcrData): boolean {
   return data.lineItems.length > 0;
@@ -143,7 +150,7 @@ export function createAnthropicOcr(apiKey: string | undefined): OcrProvider {
   const client = new Anthropic({ apiKey, timeout: 120_000, maxRetries: 2 });
 
   return {
-    async extract(file, mimeType): Promise<OcrResult> {
+    async extract(file, mimeType, rotation): Promise<OcrResult> {
       try {
         const response = await client.beta.messages.create({
           model: MODEL,
@@ -151,7 +158,7 @@ export function createAnthropicOcr(apiKey: string | undefined): OcrProvider {
           betas: [FALLBACK_BETA],
           fallbacks: "default",
           output_config: { effort: "medium", format: { type: "json_schema", schema: EXTRACT_SCHEMA } },
-          messages: [{ role: "user", content: [...buildContent(file, mimeType), { type: "text", text: INSTRUCTION }] }],
+          messages: [{ role: "user", content: [...buildContent(file, mimeType), ...rotationNote(mimeType, rotation), { type: "text", text: INSTRUCTION }] }],
         });
         if (response.stop_reason === "refusal") return { success: false, kind: "data", error: "the reader refused it" };
 
@@ -165,11 +172,17 @@ export function createAnthropicOcr(apiKey: string | undefined): OcrProvider {
         }
         if (typeof raw !== "object" || raw === null) return { success: false, kind: "data", error: "the reader's answer could not be understood" };
 
-        const parsed = OcrDataSchema.safeParse(mapRawToOcrDataSafe(raw as Record<string, unknown>));
-        if (!parsed.success || !complete(parsed.data)) {
-          return { success: false, kind: "data", error: "no line items were found" };
+        let data: OcrData;
+        try {
+          data = mapRawToOcrData(raw as Record<string, unknown>);
+        } catch (err) {
+          // Field paths only: the values are receipt text, which is personal.
+          const fields = err instanceof ZodError ? err.issues.map((i) => i.path.map(String).join(".")) : [];
+          console.error("[receipt] OCR answer failed the schema:", { fields });
+          return { success: false, kind: "data", error: "the reader's answer had a field we could not use" };
         }
-        return { success: true, data: parsed.data };
+        if (!complete(data)) return { success: false, kind: "data", error: "no line items were found" };
+        return { success: true, data };
       } catch (err) {
         const kind = ocrKind(err);
         // The API's message can echo the request; log only what identifies the call.
@@ -179,14 +192,6 @@ export function createAnthropicOcr(apiKey: string | undefined): OcrProvider {
       }
     },
   };
-}
-
-function mapRawToOcrDataSafe(raw: Record<string, unknown>): OcrData | null {
-  try {
-    return mapRawToOcrData(raw);
-  } catch {
-    return null;
-  }
 }
 
 /** Deterministic local adapter (CHECKIN_ENV=local, flow tests, dev seed). */

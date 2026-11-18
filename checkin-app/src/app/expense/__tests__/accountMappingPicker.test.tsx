@@ -1,5 +1,5 @@
 jest.mock("next/navigation", () => jest.requireActual("@/test-helpers/rtl").navMock({ followUrl: true }));
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import AccountMappingPage, { nameOptions } from "@checkin/expense/pages/accountMapping";
 import { paged } from "@checkin/component-ui";
@@ -9,6 +9,7 @@ beforeEach(() => resetRtl());
 
 let mockLoads: Record<string, unknown> = {};
 let mockErrors: Record<string, string> = {};
+let mockIsFinance = true;
 const mockSend = jest.fn();
 
 jest.mock("@checkin/expense/components/api", () => ({
@@ -17,7 +18,7 @@ jest.mock("@checkin/expense/components/api", () => ({
     error: path ? mockErrors[path] ?? null : null,
     reload: () => {},
   }),
-  useRoles: () => ({ isFinance: true, isBoard: false }),
+  useRoles: () => ({ isFinance: mockIsFinance, isBoard: !mockIsFinance }),
   paged: jest.requireActual("@checkin/component-ui").paged,
   send: (...args: unknown[]) => mockSend(...args),
 }));
@@ -160,5 +161,38 @@ describe("Account mapping catalog load failure", () => {
     render(<MantineProvider><AccountMappingPage /></MantineProvider>);
     expect(screen.getByText("Couldn't load categories: HTTP 500")).toBeInTheDocument();
     expect(screen.getByText("Couldn't load subcategories: HTTP 503")).toBeInTheDocument();
+  });
+});
+
+describe("Account mapping inactive QuickBooks accounts", () => {
+  afterEach(() => {
+    mockIsFinance = true;
+  });
+
+  function renderInactiveRule() {
+    cleanup();
+    mockLoads = {
+      ...mockLoads,
+      [paged("/account-mapping", 1)]: [{ id: 5, category: "*", subcategory: "*", partNumber: "*", isDelayed: null, isCapital: null, qbAccount: "4100" }],
+      "/qb-accounts": [...(mockLoads["/qb-accounts"] as unknown[]), { id: 3, name: "Old supplies", qbAccount: "4100" }],
+      "/api/books-map/quickbooks-accounts": [
+        ...(mockLoads["/api/books-map/quickbooks-accounts"] as unknown[]),
+        { id: "4100", name: "Old supplies", accountType: "Expense", active: false },
+      ],
+    };
+    render(<MantineProvider><AccountMappingPage /></MantineProvider>);
+  }
+
+  it("offers no inactive account, and warns beside a rule that books to one", () => {
+    renderInactiveRule();
+    const warning = screen.getByText("Old supplies is inactive in QuickBooks. Delete this rule and add one with an active account.").closest<HTMLElement>("[role=alert]")!;
+    expect(within(warning).getByRole("button", { name: "Update now" })).toBeInTheDocument();
+    expect(offered()).toEqual(["Supplies"]);
+  });
+
+  it("tells Board, who cannot delete a rule, that Finance fixes it", () => {
+    mockIsFinance = false;
+    renderInactiveRule();
+    expect(screen.getByText("Old supplies is inactive in QuickBooks. Finance can fix this.")).toBeInTheDocument();
   });
 });

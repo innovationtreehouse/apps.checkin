@@ -6,6 +6,9 @@ import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { apiError } from "@/lib/api-response";
 import { isKnownAdult } from "@/lib/programAge";
 import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/selfGrantGuard";
+import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
+import { ServiceError } from "@checkin/component-kit";
+import { personActor, recordAudit } from "@/lib/auditActor";
 
 /**
  * A volunteer row confers volunteer standing and core grants scopes over enrolled
@@ -54,29 +57,32 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
 
         // No eligibility gate (age/membership): a plain volunteer can be anyone.
         // Being made core (PATCH) is what requires a known adult.
-        const assignment = await prisma.programVolunteer.create({
-            data: {
-                programId,
-                personId: participantId,
-                isCore: false
-            }
-        });
-
-        await prisma.auditLog.create({
-            data: {
-                actorId: currentUserId,
+        const assignment = await prisma.$transaction(async (tx) => {
+            await lockLiveHouseholdsOf(tx, [participantId]);
+            const created = await tx.programVolunteer.create({
+                data: {
+                    programId,
+                    personId: participantId,
+                    isCore: false
+                }
+            });
+            await recordAudit(tx, personActor(currentUserId), {
                 action: 'CREATE',
                 tableName: 'ProgramVolunteer',
                 affectedEntityId: participantId,
                 secondaryAffectedEntity: programId,
-                newData: assignment
-            }
+                newData: created
+            });
+            return created;
         });
 
         return NextResponse.json({ success: true, assignment });
     } catch (error) {
         // P2002 = unique violation on @@id([programId, participantId]). Benign
         // double-submit re-assigns the same volunteer; 409 instead of 500.
+        if (error instanceof ServiceError) {
+            return apiError(error.message, error.status);
+        }
         if (isPrismaError(error, 'P2002')) {
             return apiError("Participant is already a volunteer for this program.", 409);
         }
@@ -120,24 +126,23 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
             return apiError("Forbidden: Not authorized to remove volunteers", 403);
         }
 
-        const assignment = await prisma.programVolunteer.delete({
-            where: {
-                programId_personId: {
-                    programId,
-                    personId: participantId
+        const assignment = await prisma.$transaction(async (tx) => {
+            const removed = await tx.programVolunteer.delete({
+                where: {
+                    programId_personId: {
+                        programId,
+                        personId: participantId
+                    }
                 }
-            }
-        });
-
-        await prisma.auditLog.create({
-            data: {
-                actorId: currentUserId,
+            });
+            await recordAudit(tx, personActor(currentUserId), {
                 action: 'DELETE',
                 tableName: 'ProgramVolunteer',
                 affectedEntityId: participantId,
                 secondaryAffectedEntity: programId,
-                oldData: assignment
-            }
+                oldData: removed
+            });
+            return removed;
         });
 
         return NextResponse.json({ success: true, assignment });
@@ -193,31 +198,34 @@ export const PATCH = withAuth({}, async (req, auth, { params }: { params: Promis
             }
         }
 
-        const assignment = await prisma.programVolunteer.update({
-            where: {
-                programId_personId: {
-                    programId,
-                    personId: participantId
+        const assignment = await prisma.$transaction(async (tx) => {
+            if (isCore) await lockLiveHouseholdsOf(tx, [participantId]);
+            const updated = await tx.programVolunteer.update({
+                where: {
+                    programId_personId: {
+                        programId,
+                        personId: participantId
+                    }
+                },
+                data: {
+                    isCore
                 }
-            },
-            data: {
-                isCore
-            }
-        });
-
-        await prisma.auditLog.create({
-            data: {
-                actorId: currentUserId,
+            });
+            await recordAudit(tx, personActor(currentUserId), {
                 action: 'EDIT',
                 tableName: 'ProgramVolunteer',
                 affectedEntityId: participantId,
                 secondaryAffectedEntity: programId,
-                newData: assignment
-            }
+                newData: updated
+            });
+            return updated;
         });
 
         return NextResponse.json({ success: true, assignment });
     } catch (error) {
+        if (error instanceof ServiceError) {
+            return apiError(error.message, error.status);
+        }
         logger.error("Volunteer toggle error:", error);
         return apiError("Failed to toggle volunteer", 500);
     }

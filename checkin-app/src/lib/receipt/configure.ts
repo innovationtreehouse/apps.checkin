@@ -11,7 +11,6 @@
  * the person reimbursed (purchaseOutcomeMail.ts).
  */
 import type { JWT } from "next-auth/jwt";
-import type { FailureKind } from "@checkin/component-kit";
 import { expenseOutcomes, reimbursementStatus, submitterConfirmations } from "@checkin/expense";
 import {
   configureReceipt,
@@ -94,7 +93,9 @@ async function personNames(personIds: number[]): Promise<Map<number, string>> {
  * verified-email claim: mail intake by DMARC alignment, the finance mail queue by the finance
  * holder who typed it.
  */
-async function submitterByEmail(address: string): Promise<ReceiptPrincipal | null> {
+async function submitterByEmail(rawAddress: string): Promise<ReceiptPrincipal | null> {
+  // Aliases are stored lowercase.
+  const address = rawAddress.trim().toLowerCase();
   const [{ default: prisma }, { SIGN_IN_VERIFIED_PERSON }, { assignParticipantClaims }, { canSubmitReceipts }, { isKnownAdult }] =
     await Promise.all([
       import("@/lib/prisma"),
@@ -134,6 +135,8 @@ async function submitterByEmail(address: string): Promise<ReceiptPrincipal | nul
 
 /** Live people whose name contains the query, by name. */
 const AGE_FIELDS = { id: true, name: true, dateOfBirth: true, isDeclaredAdult: true } as const;
+/** The most name matches read before the adult filter. */
+const REIMBURSEE_SCAN_CAP = 500;
 
 /** Live known adults whose name contains the query, by name. Adulthood is isKnownAdult, applied after the name match. */
 async function searchReimbursees(query: string, limit: number): Promise<ReimburseeOption[]> {
@@ -145,6 +148,8 @@ async function searchReimbursees(query: string, limit: number): Promise<Reimburs
     where: { name: { contains: query, mode: "insensitive" }, ...IN_LIVE_HOUSEHOLD },
     select: AGE_FIELDS,
     orderBy: [{ name: "asc" }, { id: "asc" }],
+    // ponytail: fixed scan cap; a query matching more people than this offers adults from the first rows only.
+    take: REIMBURSEE_SCAN_CAP,
   });
   return matches.filter(isKnownAdult).slice(0, limit).map(({ id, name }) => ({ id, name }));
 }
@@ -179,15 +184,6 @@ function receiptMailbox(): MailboxReader | undefined {
   return createGmailReader(mailbox.mailboxAddress, gmailAccessToken(mailbox));
 }
 
-/** The mail-run alert that names the cause of a failed mailbox listing. */
-const MAILBOX_LISTING_ALERT = {
-  connection: "finance.receiptMailboxUnreadable",
-  system: "finance.receiptMailboxUnanswered",
-  settings: "finance.receiptMailboxNotFound",
-  data: "finance.receiptMailboxFailed",
-  bug: "finance.receiptMailboxFailed",
-} as const satisfies Record<FailureKind, string>;
-
 const alerts: ReceiptAlerts = {
   async mailHoldCeilingReached({ unresolved, refused }) {
     const { emailAlert } = await import("@/lib/emailRecipients");
@@ -206,12 +202,6 @@ const alerts: ReceiptAlerts = {
     });
     // Throwing leaves the mail unstamped, so the next run alerts again.
     if (!sent) throw new Error("Receipt mail ageing alert was not sent");
-  },
-  async mailListingFailed({ kind }) {
-    const { emailAlert } = await import("@/lib/emailRecipients");
-    await emailAlert(MAILBOX_LISTING_ALERT[kind], {
-      actionLink: `${config.baseUrl()}/receipts/mail`,
-    });
   },
 };
 
@@ -245,13 +235,18 @@ const outcomeMail: OutcomeMail = {
   },
 };
 
+async function rememberMailAlias<T>(input: { actorId: number; personId: number; address: string; mailItemId: number }, assign: () => Promise<T>): Promise<T> {
+  const aliases = await import("@/lib/receipt/mailAliases");
+  return aliases.rememberMailAlias(input, assign);
+}
+
 export function configureRuntime(): void {
   configureReceipt({
     auth: { getPrincipal },
     org: getOrg,
     households: { householdOf },
     personIds: { liveIds, storedIdsOf },
-    people: { submitterByEmail },
+    people: { submitterByEmail, rememberMailAlias },
     personNames: { namesOf: personNames },
     reimbursees: { search: searchReimbursees, byId: reimburseeById, hasAccount: reimburseeHasAccount, addNonMemberAdult: addNonMemberReimbursee },
     alerts,

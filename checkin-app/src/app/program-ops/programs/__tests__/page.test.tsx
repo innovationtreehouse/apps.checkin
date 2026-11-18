@@ -5,6 +5,7 @@ jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 
 import { screen, fireEvent } from "@testing-library/react";
 import { renderWithProviders, mockFetchJson, resetRtl, router, setSession } from "@/test-helpers/rtl";
+import { settleAfter } from "@/test-helpers/settle";
 import AdminProgramsIndex from "../page";
 
 beforeEach(() => resetRtl());
@@ -61,6 +62,34 @@ describe("AdminProgramsIndex", () => {
     expect(screen.getByText(expected)).toBeInTheDocument();
   });
 
+  describe("broken-checkout badge while the Board has closed the store to program seats", () => {
+    const priced = (id: number, name: string, claimantShopifyVariantId: string | null) => ({
+      ...programs[0], id, name, nonOrgMemberPriceCents: 1500, shopifyVariantId: `pub-${id}`, claimantShopifyVariantId,
+    });
+    const render = async (programStoreClosedAt: string | null) => {
+      setSession({ id: 1, isBoardMember: true });
+      mockFetchJson({
+        "/api/programs": [priced(10, "With reserved seat", "claim-10"), priced(11, "Public item only", null)],
+        "/api/settings/membership": { settings: { BoardSettings: { programStoreClosedAt } } },
+      });
+      renderWithProviders(<AdminProgramsIndex />);
+      await screen.findByText("With reserved seat");
+    };
+
+    it("flags only the program missing its reserved-seat variant", async () => {
+      await render("2026-11-17T00:00:00.000Z");
+      expect(await screen.findByText("⚠️ Broken checkout")).toBeInTheDocument();
+      expect(screen.getAllByText("⚠️ Broken checkout")).toHaveLength(1);
+      expect(screen.getByText("Public item only").closest("tr")).toHaveTextContent("Broken checkout");
+    });
+
+    it("flags neither while the store is open, since both have a public variant", async () => {
+      await render(null);
+      await settleAfter("/api/settings/membership");
+      expect(screen.queryByText("⚠️ Broken checkout")).not.toBeInTheDocument();
+    });
+  });
+
   it("hides create-program from a sysadmin off the Board", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson({ "/api/programs": programs });
@@ -78,5 +107,20 @@ describe("AdminProgramsIndex", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "+ New Program" }));
     expect(router.push).toHaveBeenCalledWith("/program-ops/new");
+  });
+});
+
+describe("failed load", () => {
+  it("shows an error with a retry, never the empty state", async () => {
+    mockFetchJson({});
+    renderWithProviders(<AdminProgramsIndex />);
+
+    await settleAfter("/api/programs");
+    expect(screen.queryByText("No programs found. Create your first one!")).not.toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load programs")).toBeInTheDocument();
+
+    mockFetchJson({ "/api/programs": programs });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("Robotics Club")).toBeInTheDocument();
   });
 });

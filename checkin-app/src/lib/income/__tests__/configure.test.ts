@@ -26,6 +26,8 @@ const buildQuickBooks = jest.fn();
 jest.mock("@/lib/quickbooks/client", () => ({ getQuickBooks, buildQuickBooks }));
 const listQuickBooksAccounts = jest.fn();
 jest.mock("@/lib/finance/booksMap", () => ({ listQuickBooksAccounts: () => listQuickBooksAccounts() }));
+const listQuickBooksClasses = jest.fn();
+jest.mock("@/lib/finance/budgetOwners", () => ({ listQuickBooksClasses: () => listQuickBooksClasses() }));
 const emailAlert = jest.fn().mockResolvedValue(true);
 jest.mock("@/lib/emailRecipients", () => ({ emailAlert }));
 
@@ -73,10 +75,22 @@ describe("income QuickBooks Class binding", () => {
     await expect((await config()).classes!.activeClassIds()).resolves.toEqual(["1", "3"]);
   });
 
-  it("throws while QuickBooks is off, so an assignment is refused", async () => {
+  it("throws while QuickBooks is off", async () => {
     process.env.QBO_REALM_ID = "123";
     getQuickBooks.mockResolvedValue(null);
     await expect((await config()).classes!.activeClassIds()).rejects.toThrow("QuickBooks is off");
+  });
+});
+
+describe("income saved Class list binding", () => {
+  it("answers the active Classes in the app's copy without asking QuickBooks", async () => {
+    delete process.env.QBO_REALM_ID;
+    listQuickBooksClasses.mockResolvedValue([
+      { id: "1", name: "Camp", active: true },
+      { id: "2", name: "Old", active: false },
+    ]);
+    await expect((await config()).savedClasses!.activeClassIds()).resolves.toEqual(["1"]);
+    expect(getQuickBooks).not.toHaveBeenCalled();
   });
 });
 
@@ -137,8 +151,8 @@ describe("Benevity posting readiness", () => {
 });
 
 describe("income QuickBooks account list binding", () => {
-  it("reads the books map's live account list", async () => {
-    const accounts = [{ id: "4001", name: "Sales", accountType: "Income" }];
+  it("reads the books map's account list", async () => {
+    const accounts = [{ id: "4001", name: "Sales", accountType: "Income", active: true }];
     listQuickBooksAccounts.mockResolvedValue(accounts);
     await expect((await config()).quickBooksAccounts!()).resolves.toEqual(accounts);
   });

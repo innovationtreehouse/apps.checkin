@@ -1,11 +1,10 @@
 # Engineering conventions
 
 How we build, as distinct from what the domain requires. Nothing here is a
-statement about membership, programs, or people — those live in `docs/rules/`,
-and a reviewer checking a domain change does not need this file.
+statement about membership, programs, or people, and a reviewer checking a
+domain change does not need this file.
 
-A convention earns a place here the same way a rule does: a change could violate
-it, and you can picture the change that does.
+A convention earns a place here when a change could violate it, and you can picture the change that does.
 
 ---
 
@@ -48,6 +47,12 @@ by anyone, and the mistake is only visible to whoever owns it.
   forgot, and a list of justified exceptions are one smell, not three.** That
   arrangement is how a design announces it needs the invariant moved into the
   data rather than reasserted at each site.
+
+- **A person query drops an archived household's members only when it filters on
+  their household with `IN_LIVE_HOUSEHOLD`.** Row security hides the archived
+  household row, not its people. A relation include returns the person with a
+  null household, and a `NOT: { household: … }` filter matches them, so neither
+  excludes anyone.
 
 The failure is silent by construction. Forgetting produces no error, no failed
 test and no wrong-looking code — just a row that should not have been there,
@@ -211,9 +216,12 @@ missed a row stored at a different time of day.
   shows its last page for a page past the end; a list without one shows the
   empty page with its pager.
 - **`limit` stays out of the URL** while no screen lets anyone pick a page size.
-- **Read and write it with `@checkin/component-ui`'s `useUrlPage`,
-  `useUrlFilter`, `useUrlChoice` and `useSetUrlFilters`**, never `useState`
-  for the page or a filter.
+- **A list that grows at its head while it is read pages by position, not
+  number.** It keeps `before`, the last row shown, in place of `page`, so a row
+  added between two pages never repeats on the next. A filter change drops it.
+- **Read and write it with `@checkin/component-ui`'s `useUrlPage` (or
+  `useUrlBefore`), `useUrlFilter`, `useUrlChoice` and `useSetUrlFilters`**,
+  never `useState` for the page or a filter.
 
 ---
 
@@ -349,6 +357,32 @@ can hold in their head, and the bugs live in the transitions nobody traced.
 The failure shows only in a built app. In unit tests every module is loaded once,
 so `instanceof` holds; in the server, the same 409 arrives as an error from
 another copy of the class and the caller sees a 500.
+
+---
+
+## Access is declared once, per route; code checks only what the declaration can't say
+
+- **The route's registry entry is the gate.** Its `authorize` names who may
+  call the route, and `handler()` (`checkin-app/src/security/handler.ts`)
+  enforces it before any library code runs: a caller it refuses gets a 401 or
+  403. The stripper then removes every field the caller's view does not grant.
+- **A library narrows rows and checks the rules that depend on the data.** A
+  library service asks its runtime for the signed-in principal, which is a 401
+  when there is none, and narrows the rows to what that actor may see, as
+  receipt's `Access` does. It checks a role only when the decision turns on the
+  data, which a registry entry cannot express. In bulk-donation, finance may
+  lower the QuickBooks create limit, but raising it takes the board
+  (`packages/bulk-donation/src/services/settingsService.ts:46`).
+- **New code does not repeat `authorize`.** A role check that only restates
+  the route's rule is a second copy of it, free to drift from the registry,
+  which is the one place to audit who may do what. Existing ones, such as
+  expense's `requireFinance()` and the finance-or-board check at the top of
+  bulk-donation's `settingsChanges()` (`settingsService.ts:35`), stay until the
+  route's policy can carry them.
+
+The failure is drift. A role check copied into a library looks like extra
+safety; the day the registry entry changes, the two disagree, and whichever
+one is stricter decides what the route does.
 
 ---
 

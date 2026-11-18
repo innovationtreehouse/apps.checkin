@@ -178,8 +178,8 @@ describe("PATCH /api/attendance/manual/[id]", () => {
 
     // A corrected arrival must be restamped to the current
     // typed-form source (TYPED), so a SECOND correction of the same time is
-    // weighed as overwriting a self-report, not the original measurement
-    // (docs/rules/attendance-checkin.md, visit-record). The edit's own
+    // weighed as overwriting a self-report, not the original measurement.
+    // The edit's own
     // significance was already computed from the pre-edit source above the update.
     it("restamps a corrected arrival's source to TYPED", async () => {
         const leadMarked = { ...baseVisit, arrivedVia: "LEAD_MARKED", departedVia: "LEAD_MARKED" };

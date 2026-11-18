@@ -63,7 +63,6 @@ export const classifications = {
         city: 'internal',
         state: 'internal',
         postalCode: 'internal',
-        intakeNotes: 'pii',
         archivedAt: 'public',
     },
     EmergencyContact: {
@@ -86,6 +85,7 @@ export const classifications = {
         memberSince: 'public',
         status: 'public',
         isVolunteerFamily: 'public',
+        notRenewingYear: 'internal',
         householdId: 'public',
     },
     OrgMembershipProcess: {
@@ -116,9 +116,6 @@ export const classifications = {
         renewalReminderSentAt: 'internal',
         isPaymentPlanRequested: 'hardship',
         scholarshipRequestKind: 'hardship',
-        intakeNoteSnapshot: 'pii',
-        noteAckById: 'internal',
-        noteAckAt: 'internal',
     },
     MembershipYearVariant: {
         membershipYear: 'public',
@@ -146,8 +143,6 @@ export const classifications = {
         standardMembershipFeeCents: 'public',
         volunteerMembershipFeeCents: 'public',
         orgMembershipYearBoundary: 'public',
-        orgMembershipVariantId: 'internal',
-        orgMembershipProductUrl: 'internal',
         volunteerFamilyDiscountCode: 'internal',
         bgRecheckMonths: 'public',
         keyVolunteerAgreementVersion: 'public',
@@ -168,10 +163,9 @@ export const classifications = {
         shopifyOrgMembershipProductId: 'internal',
         shopifyPriceSyncedAt: 'internal',
         shopifyReconcileCursorAt: 'internal',
-        scholarshipDenialGraceDays: 'public',
         releasedLibraries: 'public',
+        programStoreClosedAt: 'internal',
         updatedAt: 'internal',
-        qboProductionRealmId: 'internal',
     },
     EmailTemplate: {
         key: 'public',
@@ -217,6 +211,7 @@ export const classifications = {
         proposedPhone: 'personal',
         proposedEmail: 'personal',
         proposedContext: 'internal',
+        familyReply: 'internal',
         createdAt: 'public',
         updatedAt: 'internal',
     },
@@ -308,6 +303,7 @@ export const classifications = {
         paymentPlanDeniedAt: 'hardship',
         shopifyOrderId: 'internal',
         seatTakenWithoutSaleAt: 'hardship',
+        enrollmentBasis: 'hardship',
         endedAt: 'personal',
     },
     Event: {
@@ -451,6 +447,11 @@ export const classifications = {
         metric: 'internal',
         value: 'internal',
     },
+    KioskProtocolSeen: {
+        keyFingerprint: 'internal',
+        protocolVersion: 'internal',
+        lastSeenAt: 'internal',
+    },
     IntegrationErrorLog: {
         id: 'internal',
         source: 'internal',
@@ -580,6 +581,11 @@ export const classifications = {
         role: 'internal',
         quickBooksAccountId: 'internal',
     },
+    QuickBooksList: {
+        list: 'internal',
+        entries: 'internal',
+        refreshedAt: 'internal',
+    },
 } as const;
 
 export const relations = {
@@ -592,7 +598,6 @@ export const relations = {
         bgAttestations: { model: 'BackgroundCheckAttestation', isList: true },
         bgAttestationsAsSubject: { model: 'BackgroundCheckAttestation', isList: true },
         personBgProcesses: { model: 'OrgMembershipProcess', isList: true },
-        intakeNoteAcks: { model: 'OrgMembershipProcess', isList: true },
         zohoSigningRequests: { model: 'OrgMembershipProcess', isList: true },
         corporationLeads: { model: 'CorporationLead', isList: true },
         corporationMembers: { model: 'CorporationMember', isList: true },
@@ -648,7 +653,6 @@ export const relations = {
         subjectPerson: { model: 'Person', isList: false },
         requestedForHousehold: { model: 'Household', isList: false },
         zohoSigner: { model: 'Person', isList: false },
-        noteAckBy: { model: 'Person', isList: false },
         attestations: { model: 'BackgroundCheckAttestation', isList: true },
     },
     MembershipYearVariant: {
@@ -750,6 +754,8 @@ export const relations = {
     },
     SystemMetricLog: {
     },
+    KioskProtocolSeen: {
+    },
     IntegrationErrorLog: {
     },
     CronRunLog: {
@@ -789,11 +795,13 @@ export const relations = {
     },
     BooksMapRoleAccount: {
     },
+    QuickBooksList: {
+    },
 } as const;
 
 export const marks = {
     OrgMembershipProcess: ['isPaymentPlanRequested', 'scholarshipRequestKind'],
-    ProgramParticipant: ['isPaymentPlanRequested', 'scholarshipRequestKind', 'inventoryHeldAt', 'paymentPlanDeniedAt', 'seatTakenWithoutSaleAt'],
+    ProgramParticipant: ['isPaymentPlanRequested', 'scholarshipRequestKind', 'inventoryHeldAt', 'paymentPlanDeniedAt', 'seatTakenWithoutSaleAt', 'enrollmentBasis'],
 } as const;
 
 export type Models = keyof typeof classifications;

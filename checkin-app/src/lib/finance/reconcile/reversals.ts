@@ -3,7 +3,6 @@ import { logger } from "@/lib/logger";
 import { systemActor, type SystemActorName } from "@/lib/auditActor";
 import { programVariantIds } from "@/lib/programs/variants";
 import { adjustProgramInventory } from "@/lib/shopify/stock";
-import { clearFutureRsvps } from "@/lib/program/capacity";
 import { isSaleEnded, type SaleRow } from "@/lib/programs/saleState";
 import * as mirror from "@/lib/shopifyRead/client";
 import type { MirrorOrder } from "@/lib/shopifyRead/client";
@@ -51,8 +50,9 @@ export async function raiseReversalByOrderId(
     restocked: RestockedLine[] = [],
     refundId: string | null = null,
 ): Promise<boolean> {
-    await recordReversal(orderLegacyId, kind);
+    // Restock rows land before the ledger row: a gate that sees the reversal also sees what it restocked.
     if (kind === "REFUND" && refundId) await recordRestock(refundId, orderLegacyId, restocked);
+    await recordReversal(orderLegacyId, kind);
     let matched = false;
     const proc = await prisma.orgMembershipProcess.findFirst({ where: { shopifyOrderId: orderLegacyId }, select: { id: true, status: true, paidAt: true } });
     if (proc) {
@@ -177,8 +177,9 @@ async function claimOnce(tableName: string, actor: SystemActorName, key: string,
             select: { id: true },
         });
         if (seen) return false;
-        // ponytail: claimed before settling, so a crash mid-settlement leaves the rest to
-        // the board's REFUND flags rather than risking a second stock change.
+        // ponytail: claimed before settling, so a crash mid-settlement never changes stock
+        // twice but loses the settlement. A recorded enrollment still has its REFUND flag;
+        // an unrecorded order or a test order leaves no flag.
         await tx.auditLog.create({
             data: {
                 ...systemActor(actor),
@@ -267,13 +268,14 @@ export async function takeBackRestockedSeats(orderLegacyId: string, program: { i
 /**
  * Keep public stock equal to the seats children hold after a restocking refund.
  * Only public-variant lines count: the claimant variant tracks no stock, so its
- * restock puts nothing back on sale and stays flag-only. Of the k public seats
- * Shopify restocked, a child is removed only when the order says which: every
- * seat the order bought for the program came back, or a fully restocked line
- * names its children. Seats nobody can be matched to are taken back off sale
- * with -k, and the children stay enrolled under their REFUND flags for the board.
- * After the program's sale has ended every restocked seat is taken back off sale:
- * the off-sale rule wins over putting a refunded seat back on sale.
+ * restock puts nothing back on sale and stays flag-only. A refund removes nobody:
+ * every child stays enrolled under their REFUND flag until the Board acts. Of the
+ * k public seats Shopify restocked, a seat goes back on sale only when the order
+ * ties it to a child who no longer holds it (every seat the order bought for the
+ * program came back, or a fully restocked line names its children). Every other
+ * seat is taken back off sale with -k. After the program's sale has ended every
+ * restocked seat is taken back off sale: the off-sale rule wins over putting a
+ * refunded seat back on sale.
  */
 async function settleRestockedSeats(
     orderLegacyId: string,
@@ -292,16 +294,16 @@ async function settleRestockedSeats(
     const seats = (await mirror.orderLines(`gid://shopify/Order/${orderLegacyId}`))
         .filter((l) => variantIds.has(l.variantId))
         .reduce((n, l) => n + l.quantity, 0);
-    let unmatched = 0;
+    let held = 0;
     if (seats > 0 && k >= seats && personIds.length <= k) {
-        for (const personId of personIds) unmatched += await removeRefundedEnrollment(programId, personId, orderLegacyId);
+        for (const personId of personIds) held += await keepRefundedEnrollment(programId, personId, orderLegacyId);
     } else {
         for (const l of lines) {
             const named = [...new Set(l.personIds ?? [])].filter((id) => personIds.includes(id));
             if (l.quantity === l.lineQuantity && named.length === l.quantity) {
-                for (const personId of named) unmatched += await removeRefundedEnrollment(programId, personId, orderLegacyId);
+                for (const personId of named) held += await keepRefundedEnrollment(programId, personId, orderLegacyId);
             } else {
-                unmatched += l.quantity;
+                held += l.quantity;
             }
         }
     }
@@ -310,20 +312,20 @@ async function settleRestockedSeats(
         await takeBackAfterSale(orderLegacyId, variant, k);
         return;
     }
-    if (unmatched === 0) return;
-    logger.warn(`[reconcile] refund on order ${orderLegacyId} restocked ${unmatched} seat(s) of program ${programId} that no enrolled child holds: taking them back off sale, the board decides who leaves`);
-    await adjustProgramInventory(variant, -unmatched, "refund-unmatched", { deferred: true });
+    if (held === 0) return;
+    logger.warn(`[reconcile] refund on order ${orderLegacyId} restocked ${held} seat(s) of program ${programId} still held: taking them back off sale, the board decides who leaves`);
+    await adjustProgramInventory(variant, -held, "refund-restocked", { deferred: true });
 }
 
 /**
- * Remove an ACTIVE enrollment whose seat a restocking refund already put back on
- * sale. No hold release and no Shopify call: Shopify restocked the unit itself.
- * Scoped to the refunded order, so a row since re-paid on another order is left
- * alone. A WITHDRAWN row is history: the refund is recorded against it and the row
- * stays. Returns the seats to take back off sale: 1 when that withdrawal already
- * put the seat back, so the restock would offer it twice.
+ * A restocking refund on an enrollment removes nobody: the refund is raised for
+ * the Board, which alone removes a paid place. Scoped to the refunded order, so a
+ * row since re-paid on another order is left alone. Returns the seats to take back
+ * off sale: 1 for an ACTIVE row, whose child still holds the seat; for a WITHDRAWN
+ * row, 1 only when the withdrawal already put the seat back, so the restock would
+ * offer it twice. A WITHDRAWN row is history: the refund is recorded against it.
  */
-async function removeRefundedEnrollment(programId: number, personId: number, orderLegacyId: string): Promise<number> {
+async function keepRefundedEnrollment(programId: number, personId: number, orderLegacyId: string): Promise<number> {
     const where = { programId, personId, shopifyOrderId: orderLegacyId };
     const withdrawn = await prisma.programParticipant.findFirst({ where: { ...where, status: "WITHDRAWN" } });
     if (withdrawn) {
@@ -339,27 +341,8 @@ async function removeRefundedEnrollment(programId: number, personId: number, ord
         });
         return withdrawn.seatTakenWithoutSaleAt ? 1 : 0;
     }
-    const active = { ...where, status: "ACTIVE" as const };
-    const removed = await prisma.$transaction(async (tx) => {
-        const row = await tx.programParticipant.findFirst({ where: active });
-        if (!row) return false;
-        const { count } = await tx.programParticipant.deleteMany({ where: active });
-        if (count === 0) return false;
-        await clearFutureRsvps(tx, programId, personId);
-        await tx.auditLog.create({
-            data: {
-                ...systemActor("webhook:shopify-refund"),
-                action: "DELETE",
-                tableName: "ProgramParticipant",
-                affectedEntityId: personId,
-                secondaryAffectedEntity: programId,
-                oldData: { ...row, reason: `refund restocked the seat on order ${orderLegacyId}` },
-            },
-        });
-        return true;
-    });
-    if (removed) logger.info(`[reconcile] removed enrollment program ${programId} / person ${personId}: refund on order ${orderLegacyId} restocked the seat`);
-    return 0;
+    const active = await prisma.programParticipant.count({ where: { ...where, status: "ACTIVE" } });
+    return active > 0 ? 1 : 0;
 }
 
 export async function reconcileReversals(): Promise<number> {
@@ -387,7 +370,7 @@ export async function reconcileReversals(): Promise<number> {
 
     const settings = await prisma.boardSettings.findUnique({
         where: { id: 1 },
-        select: { orgMembershipVariantId: true, orgMembershipYearBoundary: true, volunteerFamilyDiscountCode: true },
+        select: { orgMembershipYearBoundary: true, volunteerFamilyDiscountCode: true },
     });
     const memberIds = procs.map((p) => p.orgMembershipId).filter((v): v is number => v != null);
     const members = memberIds.length
@@ -406,7 +389,7 @@ export async function reconcileReversals(): Promise<number> {
         const o = byLegacy.get(proc.shopifyOrderId!);
         if (!o) continue; // pre-cutover / not yet mirrored — can't judge.
         let kind = classifyReversal(o, disputes.has(o.orderGid));
-        // Judged by item, never by total (docs/rules/revenue.md).
+        // Judged by item, never by total.
         if (!kind && droppedMembership.has(o.orderGid)) {
             logger.warn(`[reconcile] activated order ${proc.shopifyOrderId} no longer carries the membership item (process ${proc.id})`);
             kind = "AMOUNT_MISMATCH";

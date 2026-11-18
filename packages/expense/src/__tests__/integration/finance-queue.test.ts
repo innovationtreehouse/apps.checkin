@@ -1,14 +1,19 @@
 /** The finance queue's expense tabs: each reason is read from the record, and counts are this viewer's. */
-import { beforeEach, expect, it } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
-import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, ORG } from "../helpers/seed";
+import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, seedOrgSettings, ORG } from "../helpers/seed";
 import { financeQueueActionable, financeQueueCounts, financeQueueRows } from "../../services/financeQueueService";
 import { expenseActionCounts, expensesAwaitingMyApproval, signoffsAwaitingCount } from "../../services/badgeCounts";
 import { raiseFlag } from "../../services/flagService";
 import { expenseReasons } from "../../services/reasonService";
 import { writeAudit } from "../../lib/audit";
 import { SYSTEM_ACTOR } from "../../lib/system-actor";
+
+vi.mock("../../services/reasonService", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("../../services/reasonService")>();
+  return { ...mod, expenseReasons: vi.fn(mod.expenseReasons) };
+});
 
 const FINANCE = principal(3, { isFinance: true });
 const BOARD = principal(5, { isBoard: true });
@@ -20,12 +25,15 @@ beforeEach(() => {
   bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5, 6], households: [[1, 11]] }) });
 });
 
+// These suites are not about capital review; with it off, no expense stops at that step.
+beforeEach(() => seedOrgSettings({ capitalReviewEnabled: false }));
+
 describeDb("finance queue — expenses tab", () => {
   it("lists the finance steps from the expense's own state, and one row per expense with its reasons", async () => {
     const id = await seedExpense({ state: "capital_review", taxCents: 120, needsReimbursement: true });
     expect(await codes(FINANCE, "expenses", id)).toEqual(["CAPITAL_REVIEW", "REIMBURSEE_TO_NAME", "TAX_NOT_REVIEWED"]);
     const [row] = await financeQueueRows(FINANCE, "expenses");
-    expect(row).toMatchObject({ expenseId: id, vendorName: "Acme", amountCents: 100, currency: "USD" });
+    expect(row).toMatchObject({ expenseId: id, receiptId: null, vendorName: "Acme", amountCents: 100, currency: "USD" });
     expect(row.reasons.find((x) => x.code === "TAX_NOT_REVIEWED")?.text).toBe("Tax $1.20 not reviewed on the receipt");
   });
 
@@ -40,7 +48,7 @@ describeDb("finance queue — expenses tab", () => {
       data: { orgId: ORG, receiptId: "r-failed", status: "failed", failureReason: "boom", payloadJson: JSON.stringify({ vendorName: "Bolt", receiptTotalCents: 900, receiptDate: "2026-10-02", currency: "USD" }) },
     });
     const [row] = await financeQueueRows(FINANCE, "expenses");
-    expect(row).toMatchObject({ expenseId: null, vendorName: "Bolt", amountCents: 900, date: "2026-10-02", failureReason: "boom" });
+    expect(row).toMatchObject({ expenseId: null, receiptId: "r-failed", vendorName: "Bolt", amountCents: 900, date: "2026-10-02", failureReason: "boom" });
     expect(row.reasons).toEqual([{ code: "INTAKE_FAILED", text: "Receipt didn't become an expense", href: "/receipts/r-failed" }]);
   });
 
@@ -71,7 +79,7 @@ describeDb("finance queue — expenses tab", () => {
 
   it("gives a viewer with neither role nothing", async () => {
     await seedExpense({ state: "capital_review" });
-    expect(await financeQueueActionable(principal(2))).toBe(0);
+    expect(await financeQueueActionable(principal(2), 99)).toBe(0);
     expect(await financeQueueRows(principal(2), "expenses")).toEqual([]);
   });
 });
@@ -190,7 +198,7 @@ describeDb("finance queue — To sign and Board tabs", () => {
     bindPorts({ signoff: directory({ approvers: { 100: [2] }, finance: [3], board: [5, 6], households: [[1, 3]] }) });
     const { id } = await pending();
     expect(await codes(BOARD, "board", id)).toEqual(["BOARD_SIGNATURE"]);
-    expect(await financeQueueActionable(BOARD)).toBe(1);
+    expect(await financeQueueActionable(BOARD, 99)).toBe(1);
   });
 });
 
@@ -228,7 +236,7 @@ describeDb("finance queue — line approvals only the Board can give", () => {
     const [row] = (await financeQueueRows(BOARD, "board")).filter((r) => r.expenseId === id);
     expect(row.reasons).toEqual([{ code: "BOARD_LINE_APPROVAL", text: "1 line to approve as Board" }]);
     expect((await financeQueueCounts(BOARD)).board).toMatchObject({ actionable: 1, total: 1, byReason: { BOARD_LINE_APPROVAL: 1 } });
-    expect(await financeQueueActionable(BOARD)).toBe(1);
+    expect(await financeQueueActionable(BOARD, 99)).toBe(1);
   });
 
   it("lists it in gray for a Board member in the submitter's household, so they see another Board member must act", async () => {
@@ -237,7 +245,7 @@ describeDb("finance queue — line approvals only the Board can give", () => {
     const [row] = (await financeQueueRows(conflicted, "board")).filter((r) => r.expenseId === id);
     expect(row.reasons).toEqual([{ code: "BOARD_LINE_APPROVAL", text: "1 line waits for another Board member's approval: you are conflicted" }]);
     expect((await financeQueueCounts(conflicted)).board).toMatchObject({ actionable: 0, total: 1, byReason: {} });
-    expect(await financeQueueActionable(conflicted)).toBe(0);
+    expect(await financeQueueActionable(conflicted, 99)).toBe(0);
   });
 
   it("leaves out a program line its bucket approver can approve, and lists nothing for FINANCE outside the Board", async () => {
@@ -262,5 +270,44 @@ describeDb("finance queue — line approvals only the Board can give", () => {
     expect((await expensesAwaitingMyApproval(BOARD)).map((e) => e.expenseId)).toEqual([ownBucket]);
     expect(await signoffsAwaitingCount(BOARD)).toBe(1);
     expect((await expenseActionCounts(BOARD)).owner_approval).toBe(1);
+  });
+});
+
+describeDb("finance queue — the Finance review pill", () => {
+  const pageActionable = async (p: typeof FINANCE) => Object.values(await financeQueueCounts(p)).reduce((sum, c) => sum + c.actionable, 0);
+
+  async function signable(submittedAt: Date) {
+    const id = await seedExpense({ state: "qb_pending", submittedAt });
+    const line = await seedLineItem(id, { partNumber: null, manualQbAccount: "5000" });
+    await seedApproval(id, line, { ownerId: 100, status: "approved", decidedByUserId: 2 });
+    return { id, line };
+  }
+
+  it("matches the page's actionable count at or under the ceiling", async () => {
+    await seedExpense({ state: "capital_review", needsReimbursement: true });
+    await seedExpense({ state: "capital_review" });
+    await signable(new Date("2026-03-01T00:00:00Z"));
+    const page = await pageActionable(FINANCE);
+    expect(page).toBeGreaterThan(2);
+    expect(await financeQueueActionable(FINANCE, page)).toBe(page);
+    expect(await financeQueueActionable(FINANCE, 99)).toBe(page);
+  });
+
+  it("answers one more than the ceiling once the count passes it", async () => {
+    for (let i = 0; i < 4; i++) await seedExpense({ state: "capital_review" });
+    expect(await pageActionable(FINANCE)).toBe(4);
+    vi.mocked(expenseReasons).mockClear();
+    expect(await financeQueueActionable(FINANCE, 2)).toBe(3);
+    expect(expenseReasons).toHaveBeenCalledTimes(3);
+  });
+
+  it("still counts an older waiting signature behind more than a page of newer Treasurer-signed expenses", async () => {
+    await signable(new Date("2026-01-01T00:00:00Z"));
+    for (let day = 1; day <= 30; day++) {
+      const { id, line } = await signable(new Date(Date.UTC(2026, 1, day)));
+      await db.expenseLineSignoff.create({ data: { expenseId: id, lineItemId: line, seat: "TREASURER", signerUserId: 4 } });
+    }
+    expect((await financeQueueCounts(FINANCE)).toSign).toMatchObject({ actionable: 1 });
+    expect(await financeQueueActionable(FINANCE, 99)).toBe(await pageActionable(FINANCE));
   });
 });

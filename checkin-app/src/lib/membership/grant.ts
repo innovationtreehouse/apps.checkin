@@ -4,7 +4,8 @@ import type { Prisma, OrgMembershipProcess } from "@/generated/prisma/client";
 import { certifyPaymentPlan, PaymentError } from "@/lib/membership/payment";
 import { IN_FLIGHT_INITIAL, IN_FLIGHT_RENEWAL, settledThisCycleWhere } from "@/lib/membership/lifecycle";
 import type { DbClient } from "@/lib/db-client";
-import { ensureHouseholdMembership, raiseDeniedHouseholdActivity, type HouseholdStatus } from "@/lib/membership/householdStatus";
+import { lockLiveHouseholds } from "@/lib/household/archiveGuard";
+import { ensureHouseholdMembership, type HouseholdStatus } from "@/lib/membership/householdStatus";
 import { householdApplicationOpenOrBlockedWhere, createRenewalProcess, liveMembershipYear } from "@/lib/membership/renewal";
 
 /**
@@ -24,7 +25,7 @@ import { householdApplicationOpenOrBlockedWhere, createRenewalProcess, liveMembe
  *   paid for the live year gets a renewal, in or out of renewal season; any other
  *   household gets an INITIAL at INTAKE.
  * - A BLOCKED application: refused. Only a board reset or override moves it on.
- * - DENIED: refused, and raised to the board.
+ * - DENIED: refused.
  */
 export type GrantResult =
     | { paid: true; process: OrgMembershipProcess }
@@ -37,14 +38,13 @@ const IN_FLIGHT_WHERE: Prisma.OrgMembershipProcessWhereInput = {
     ],
 };
 
-/** Refuse any board grant on a DENIED household, and raise it to the board. */
-export async function refuseGrantIfDenied(householdId: number, actorId: number): Promise<void> {
+/** Refuse any board grant on a DENIED household. */
+export async function refuseGrantIfDenied(householdId: number): Promise<void> {
     const membership = await prisma.orgMembership.findUnique({ where: { householdId }, select: { status: true } });
-    if (membership?.status === "DENIED") await refuseDenied(householdId, actorId);
+    if (membership?.status === "DENIED") refuseDenied();
 }
 
-async function refuseDenied(householdId: number, actorId: number): Promise<never> {
-    await raiseDeniedHouseholdActivity({ householdId, what: `board grant attempted by person ${actorId}` });
+function refuseDenied(): never {
     throw new PaymentError("wrong_phase", "This household is denied. Restore it before granting membership.");
 }
 
@@ -53,7 +53,7 @@ export async function grantMembership(
     actor: { actorId: number; reason: string },
     year: number,
 ): Promise<GrantResult> {
-    await refuseGrantIfDenied(householdId, actor.actorId);
+    await refuseGrantIfDenied(householdId);
     const membership = await ensureHouseholdMembership(prisma, householdId);
 
     const existing = await prisma.orgMembershipProcess.findFirst({
@@ -69,17 +69,8 @@ export async function grantMembership(
         if (existing.status !== "PENDING_PAYMENT") {
             throw new PaymentError("wrong_phase", `The household's application is at ${existing.status}; it can be granted once it reaches payment.`);
         }
+        // The certify row records the reason and the granted year in its own transaction.
         await certifyPaymentPlan(existing.id, actor.actorId, { reason: actor.reason, year });
-        await prisma.auditLog.create({
-            data: {
-                actorId: actor.actorId,
-                action: "EDIT",
-                tableName: "OrgMembershipProcess",
-                affectedEntityId: existing.id,
-                secondaryAffectedEntity: householdId,
-                newData: { grantedYear: year, reason: actor.reason },
-            },
-        });
         return { paid: true, process: await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: existing.id } }) };
     }
 
@@ -89,7 +80,7 @@ export async function grantMembership(
     if (opened === "active") {
         throw new PaymentError("wrong_phase", "This household is already an active member; there is no application to pay.");
     }
-    if (opened === "denied") return refuseDenied(householdId, actor.actorId);
+    if (opened === "denied") refuseDenied();
     if (opened === "blocked") {
         throw new PaymentError("wrong_phase", "This household has a blocked application. Reset or override it before granting membership.");
     }
@@ -125,6 +116,7 @@ async function openInitial(
             const [locked] = await tx.$queryRaw<{ status: HouseholdStatus }[]>`SELECT status FROM "OrgMembership" WHERE id = ${orgMembershipId} FOR UPDATE`;
             if (locked?.status === "DENIED") return "denied" as const;
             if (locked?.status === "ACTIVE") return "active" as const;
+            await lockLiveHouseholds(tx, [householdId]);
             const open = await tx.orgMembershipProcess.findMany({
                 where: { orgMembershipId, ...householdApplicationOpenOrBlockedWhere },
                 orderBy: { id: "desc" },

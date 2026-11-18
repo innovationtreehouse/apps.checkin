@@ -161,6 +161,55 @@ describe("isStaging — driven by CHECKIN_ENV=stg (no separate variable)", () =>
     });
 });
 
+describe("isDeployedDev — CHECKIN_ENV=dev on a non-loopback host", () => {
+    beforeEach(() => {
+        delete process.env.CHECKIN_ENV;
+        delete process.env.NEXTAUTH_URL;
+        delete process.env.VERCEL_URL;
+    });
+
+    it("true for CHECKIN_ENV=dev with NEXTAUTH_URL on an 'ops-dev.' host", () => {
+        process.env.CHECKIN_ENV = "dev";
+        process.env.NEXTAUTH_URL = "https://ops-dev.innovationtreehouse.org";
+        expect(config.isDeployedDev()).toBe(true);
+    });
+
+    it("false for CHECKIN_ENV=dev at the localhost default, as under plain jest", () => {
+        process.env.CHECKIN_ENV = "dev";
+        expect(config.isDeployedDev()).toBe(false);
+    });
+
+    it("true for CHECKIN_ENV=dev on any other non-loopback host", () => {
+        process.env.CHECKIN_ENV = "dev";
+        process.env.NEXTAUTH_URL = "https://checkin.example.org";
+        expect(config.isDeployedDev()).toBe(true);
+    });
+
+    it.each(["http://localhost:4000", "http://127.0.0.1:4000", "http://[::1]:4000"])(
+        "false for CHECKIN_ENV=dev on loopback %s",
+        (url) => {
+            process.env.CHECKIN_ENV = "dev";
+            process.env.NEXTAUTH_URL = url;
+            expect(config.isDeployedDev()).toBe(false);
+        },
+    );
+
+    it("false on the ops-dev host when CHECKIN_ENV is not dev", () => {
+        process.env.NEXTAUTH_URL = "https://ops-dev.innovationtreehouse.org";
+        for (const v of ["local", "prod", "stg", ""]) {
+            process.env.CHECKIN_ENV = v;
+            expect(config.isDeployedDev()).toBe(false);
+        }
+    });
+
+    it("does not throw on an unparsable NEXTAUTH_URL, and fails closed to true", () => {
+        process.env.CHECKIN_ENV = "dev";
+        process.env.NEXTAUTH_URL = "not a url";
+        expect(() => config.isDeployedDev()).not.toThrow();
+        expect(config.isDeployedDev()).toBe(true);
+    });
+});
+
 describe("isStagingAccessAllowed — the ops-stg gate predicate", () => {
     it("denies null/undefined claims (no token, anonymous caller)", () => {
         expect(isStagingAccessAllowed(null)).toBe(false);

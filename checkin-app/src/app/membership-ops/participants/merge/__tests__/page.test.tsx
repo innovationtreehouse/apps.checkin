@@ -2,7 +2,7 @@
 jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories run hoisted, before imports exist
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
 
 import { act, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl, router } from "@/test-helpers/rtl";
@@ -11,7 +11,7 @@ import { pinTimezone } from "@/test-helpers/tz";
 import { jsonBody } from "@/test-helpers/jsonBody";
 import MergeParticipants from "../page";
 
-beforeEach(() => { resetRtl(); (notifications.show as jest.Mock).mockClear(); });
+beforeEach(() => { resetRtl(); (notifications.show as jest.Mock).mockClear(); (notifications.hide as jest.Mock).mockClear(); });
 
 const participantA = {
   id: 1, name: "Alice Adams", email: "alice@example.com", phone: null, googleId: "g1",
@@ -78,6 +78,52 @@ describe("membership-ops/participants/merge page", () => {
     expect(await screen.findByText("Sam One", { exact: false })).toBeInTheDocument();
     expect(screen.getByText("Sam Two", { exact: false })).toBeInTheDocument();
     expect(screen.getByText("Sam Three", { exact: false })).toBeInTheDocument();
+  });
+
+  it("raises an error chip that waits to be dismissed when the search fails, and retries", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    let searches = 0;
+    const answers = mockFetchJson({});
+    answers.mockImplementation(async () => {
+      searches += 1;
+      const ok = searches > 1;
+      const body = ok ? { people: [participantA] } : { error: "Search is unavailable." };
+      return { ok, status: ok ? 200 : 500, json: async () => body, text: async () => JSON.stringify(body) } as Response;
+    });
+    renderWithProviders(<MergeParticipants />);
+
+    fireEvent.change(screen.getAllByPlaceholderText("Search by name, email, or ID...")[0], { target: { value: "Alice" } });
+
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "merge-search-Participant 1", color: "red", autoClose: false }),
+    ));
+    expect(screen.queryByText("Alice Adams", { exact: false })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry search" }));
+
+    expect(await screen.findByText("Alice Adams", { exact: false })).toBeInTheDocument();
+    await waitFor(() => expect(notifications.hide).toHaveBeenCalledWith("merge-search-Participant 1"));
+    expect(screen.queryByRole("button", { name: "Retry search" })).not.toBeInTheDocument();
+  });
+
+  it("names the colliding attestation ids from the analysis", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({
+      "/api/membership-ops/participants/merge/analyze": {
+        participants: [participantA, participantB],
+        collisions: [
+          { type: "bgAttestationSubject", message: "One reviewer attested both records.", attestationIds: [31, 32] },
+          { type: "openVisit", message: "Both have an open building visit." },
+        ],
+      },
+      "/api/people/search?q=Alice": { people: [participantA] },
+      "/api/people/search?q=Bob": { people: [participantB] },
+    });
+    renderWithProviders(<MergeParticipants />);
+    await selectBoth();
+
+    expect(await screen.findByText(/One reviewer attested both records\. Attestation IDs: 31, 32\./)).toBeInTheDocument();
+    expect(screen.getByText("Both have an open building visit.")).toBeInTheDocument();
   });
 
   describe("background-check notice in the preview", () => {
@@ -276,7 +322,36 @@ describe("membership-ops/participants/merge page", () => {
     renderWithProviders(<MergeParticipants />);
 
     await selectBoth();
-    expect(await screen.findByText("Failed to analyze participants")).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load the merge analysis")).toBeInTheDocument();
+    expect(screen.getByText("Couldn't reach the server. Check your connection and try again.")).toBeInTheDocument();
+    expect(screen.queryByText("boom")).not.toBeInTheDocument();
+  });
+
+  it("shows a refused analysis in the server's words, and Retry loads it again", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const refusal = { error: "Cannot analyze: one of these participants has already been merged." };
+    let refuse = true;
+    global.fetch = jest.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("q=Alice")) return { ok: true, ...jsonBody({ people: [participantA] }) } as Response;
+      if (url.includes("q=Bob")) return { ok: true, ...jsonBody({ people: [participantB] }) } as Response;
+      if (url.includes("merge/analyze")) {
+        return refuse
+          ? { ok: false, status: 409, ...jsonBody(refusal) } as Response
+          : { ok: true, ...jsonBody({ participants: [participantA, participantB] }) } as Response;
+      }
+      return { ok: false, json: async () => ({}) } as Response;
+    }) as unknown as typeof fetch;
+    renderWithProviders(<MergeParticipants />);
+
+    await selectBoth();
+    expect(await screen.findByText(refusal.error)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Proceed to Preview" })).not.toBeInTheDocument();
+
+    refuse = false;
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("Keep and augment")).toBeInTheDocument();
+    expect(screen.queryByText(refusal.error)).not.toBeInTheDocument();
   });
 
   it("shows a red alert and disables Proceed when the merged participant is a lead of a household with other members", async () => {
@@ -345,20 +420,21 @@ describe("membership-ops/participants/merge page", () => {
     fireEvent.click(screen.getByRole("button", { name: "Proceed to Preview" }));
     await screen.findByText("Preview & Confirm Merge");
 
-    global.fetch = jest.fn(async () => ({ ok: false, status: 400, json: async () => ({ error: "Cannot merge." }) })) as unknown as typeof fetch;
+    global.fetch = jest.fn(async () => ({ ok: false, status: 400, json: async () => ({ error: "Cannot merge." }), text: async () => JSON.stringify({ error: "Cannot merge." }) })) as unknown as typeof fetch;
     fireEvent.click(screen.getByRole("button", { name: "Confirm Merge & Delete" }));
-    expect(await screen.findByText("Cannot merge.")).toBeInTheDocument();
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Cannot merge.", autoClose: false })));
+    expect(screen.queryByText("Cannot merge.")).not.toBeInTheDocument();
 
     // Network failure surfaces as a persistent toast, and never leaks the raw JS error text.
     global.fetch = jest.fn(() => Promise.reject(new Error("Connection lost"))) as unknown as typeof fetch;
     fireEvent.click(screen.getByRole("button", { name: "Confirm Merge & Delete" }));
     await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(
-      expect.objectContaining({ color: "red", message: "Network error", autoClose: false })));
+      expect.objectContaining({ color: "red", message: "Couldn't reach the server. Check your connection and try again.", autoClose: false })));
     expect(screen.queryByText("Connection lost")).not.toBeInTheDocument();
 
     global.fetch = jest.fn(() => Promise.reject("not an Error")) as unknown as typeof fetch;
     fireEvent.click(screen.getByRole("button", { name: "Confirm Merge & Delete" }));
-    await waitFor(() => expect(notifications.show).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledTimes(3));
   });
 
   it("resets back to the search screen after Merge More", async () => {

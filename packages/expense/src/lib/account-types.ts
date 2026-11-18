@@ -1,7 +1,7 @@
-// Which QuickBooks account types expense books to (docs/rules/expenses.md): a capital rule or
-// line takes Fixed Asset, every other rule or line an expense type. Saves read QuickBooks live.
+// Which QuickBooks account types expense books to: a capital rule or
+// line takes Fixed Asset, every other rule or line an expense type. Saves read the app's copy of QuickBooks' accounts.
 import { ServiceError } from "@checkin/component-kit";
-import { LINE_ACCOUNT_TYPES, accountTypeRefusal } from "@checkin/quickbooks";
+import { LINE_ACCOUNT_TYPES, QUICKBOOKS_LIST_STALE, staleListRefusal } from "@checkin/quickbooks";
 import type { Prisma } from "../generated/prisma/client";
 import { getExpenseRuntime } from "../runtime";
 import { writeAudit } from "./audit";
@@ -13,10 +13,10 @@ export const bookableTypes = (capital: boolean | null): readonly string[] => (ca
 /** The types expense's QuickBooks account list admits: every type a rule or line may book to. */
 export const LISTED_TYPES: readonly string[] = [...LINE_ACCOUNT_TYPES.donatedGoods, ...LINE_ACCOUNT_TYPES.donatedCapital];
 
-/** Refuses (400) an account QuickBooks doesn't list under one of `allowed`; 503 while QuickBooks can't be read. */
+/** Refuses (400, QUICKBOOKS_LIST_STALE) an account the app's QuickBooks list doesn't hold, active, under one of `allowed`. */
 export async function refuseWrongType(qbAccount: string, allowed: readonly string[], what: string): Promise<void> {
-  const refusal = accountTypeRefusal(await getExpenseRuntime().quickbooks.accounts(), qbAccount, allowed, what);
-  if (refusal) throw new ServiceError(400, refusal);
+  const refusal = staleListRefusal(await getExpenseRuntime().quickbooks.accounts(), qbAccount, allowed, what);
+  if (refusal) throw new ServiceError(400, refusal, QUICKBOOKS_LIST_STALE);
 }
 
 /** Drops a line's hand-set account, audited: it was checked against a capital designation that has since changed. */

@@ -40,16 +40,14 @@ beforeEach(() => {
     mockEnrollments.mockResolvedValue([]);
 });
 
-function visit(id: number, personId: number, arrivedVia: string | null, hours: number) {
+function visit(personId: number, arrivedVia: string | null, hours: number) {
     const arrivedAt = new Date("2026-03-10T15:00:00.000Z");
     return {
-        id,
+        personId,
         arrivedAt,
         departedAt: new Date(arrivedAt.getTime() + hours * 60 * 60 * 1000),
         associatedEventId: null,
         arrivedVia,
-        person: { id: personId },
-        event: null,
     };
 }
 
@@ -57,11 +55,11 @@ async function fetchBucket(): Promise<TrendBucket> {
     // person 3 carries TWO sources in the same bucket (SCANNER and LEAD_MARKED) —
     // the case the issue calls out where per-source people counts would double-count.
     mockVisits.mockResolvedValue([
-        visit(1, 1, "SCANNER", 2),
-        visit(2, 2, "WEB", 1),
-        visit(3, 3, "SCANNER", 1),
-        visit(4, 3, "LEAD_MARKED", 1),
-        visit(5, 4, null, 0.5),
+        visit(1, "SCANNER", 2),
+        visit(2, "WEB", 1),
+        visit(3, "SCANNER", 1),
+        visit(3, "LEAD_MARKED", 1),
+        visit(4, null, 0.5),
     ]);
     const res = await GET(new Request("http://localhost/api/facility/trends?period=month"));
     const body = await res.json();
@@ -104,4 +102,11 @@ describe("GET /api/facility/trends — bySource", () => {
         expect(bucket).not.toHaveProperty("uniqueParticipantsBySource");
         expect(bucket).not.toHaveProperty("bySourcePeople");
     });
+});
+
+it('selects only the visit columns the buckets read', async () => {
+    await fetchBucket();
+    const args = mockVisits.mock.calls[0][0];
+    expect(args).not.toHaveProperty('include');
+    expect(Object.keys(args.select).sort()).toEqual(['arrivedAt', 'arrivedVia', 'associatedEventId', 'departedAt', 'personId']);
 });

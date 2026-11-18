@@ -11,9 +11,10 @@
  */
 import { stripValue } from '@/security/stripper';
 import type { CallerContext } from '@/security/access-resolvers';
-import type { Token } from '@/security/core';
+import { getRoute, type Token } from '@/security/core';
 import * as expenseGenerated from '@/security/generated/expense-classifications';
 import * as expenseSynthetic from '@/security/expenseSyntheticClassifications';
+import '@/security/registry';
 
 const ctx: CallerContext = {
     selfId: 1,
@@ -126,6 +127,26 @@ describe('expense stripper', () => {
         expect(strip('Expense', expense(), FINANCE_VIEW)).toEqual(expense());
     });
 
+    describe("a stuck expense's last error on its detail read", () => {
+        const view = (role: string) =>
+            getRoute('GET /api/expense/expenses/[id]')?.orderedView.find(([r]) => r === role)?.[1] ?? [];
+        const stuck = { id: 'e-1', qbMatchState: 'NEEDS_FINANCE', qbFirstFailedAt: '2026-11-01T00:00:00Z', qbLastError: 'QBO create Purchase failed: socket hang up' };
+
+        it.each(['isFinance', 'isBoardMember'])('reaches the %s view', (role) => {
+            expect(strip('Expense', stuck, view(role))).toEqual(stuck);
+        });
+
+        it('is stripped from a bucket approver, who keeps when it got stuck', () => {
+            expect(strip('Expense', stuck, view('authenticated'))).toEqual({ id: 'e-1', qbMatchState: 'NEEDS_FINANCE', qbFirstFailedAt: '2026-11-01T00:00:00Z' });
+        });
+
+        it('is stripped from its own submitter too: the gate admits approvers only, and the approver view grants no their_own', () => {
+            expect(getRoute('GET /api/expense/expenses/[id]')?.authorize).toBe('expense-approver');
+            const own = { ...stuck, submitterId: ctx.selfId };
+            expect(strip('Expense', own, view('authenticated'))).not.toHaveProperty('qbLastError');
+        });
+    });
+
     it('an internal-only view strips who signed, through the line relation too', () => {
         const signoff = { id: 1, expenseId: 'e-1', lineItemId: 3, seat: 'TREASURER', signerUserId: 9, signerUsername: 'jordan' };
         expect(strip('ExpenseLineSignoff', signoff, INTERNAL_ONLY)).toEqual({ id: 1, expenseId: 'e-1', lineItemId: 3, seat: 'TREASURER' });
@@ -191,12 +212,18 @@ describe('expense stripper', () => {
             filled: ['SUBMITTER'],
             missing: ['TREASURER'],
             blocked: [],
-            actions: [{ act: 'sign', primary: true }],
+            actions: [{ act: 'sign', seat: 'TREASURER', primary: true, noteRequired: false }],
             awaiting: ['Awaiting approval'],
             mayRecordBoardAuthorization: false,
         };
         expect(strip('ExpenseLineSignoffStatus', { ...status, signerUserId: 9, signerUsername: 'jordan' }, INTERNAL_ONLY)).toEqual(status);
         expect(strip('ExpenseLineSignoffStatus', status, ['public'])).toEqual({});
+    });
+
+    it('an act on a line passes only its classified fields', () => {
+        const act = { act: 'approve', primary: true, noteRequired: false };
+        const status = { lineItemId: 3, actions: [{ ...act, ownerUserId: 9, ownerName: 'jordan' }] };
+        expect(strip('ExpenseLineSignoffStatus', status, INTERNAL_ONLY)).toEqual({ lineItemId: 3, actions: [act] });
     });
 
     it('a public-only view sees nothing, settings included', () => {

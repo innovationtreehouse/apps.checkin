@@ -1,7 +1,7 @@
 import type { Expense, Prisma } from "../generated/prisma/client";
 import type { Db } from "../db";
 import { getExpenseRuntime } from "../runtime";
-import { isEveryday, lineKind, withinEverydayLimits, missingSeats, needsBoardApproval, needsBoardSeat, type FilledSeat, type Seat, type SignoffFacts, type StepSigner } from "./signoff";
+import { isEveryday, lineKind, reimburseeUnknown, withinEverydayLimits, missingSeats, needsBoardApproval, needsBoardSeat, type FilledSeat, type Seat, type SignoffFacts, type StepSigner } from "./signoff";
 import type { ExpenseSettings } from "../contract";
 import { readExpenseSettings } from "../services/settingsService";
 import { writeAudit } from "./audit";
@@ -9,6 +9,7 @@ import { dropHandSetAccount } from "./account-types";
 import { advanceWorkflowInTx, type Actor } from "./workflow-engine";
 import { ServiceError } from "@checkin/component-kit";
 import { liveIds } from "./livePeople";
+import { taxWaitsOnFinance } from "./reasons";
 
 type SignoffExpense = Pick<
   Expense,
@@ -22,21 +23,46 @@ type SignoffExpense = Pick<
   | "everydayWithinLimits"
 >;
 
+type Parties = { submitterId: number; reimburseePersonId: number | null };
+
 /** The submitter and the reimbursee when known. */
-function partiesOf(expense: { submitterId: number; reimburseePersonId: number | null }): number[] {
+function partiesOf(expense: Parties): number[] {
   return expense.reimburseePersonId === null ? [expense.submitterId] : [expense.submitterId, expense.reimburseePersonId];
 }
 
-/**
- * Whether the person is the submitter, the reimbursee when known, or in either one's household,
- * each as the live person they name. A party naming nobody live cannot be checked, so everyone is conflicted.
- */
-export async function isConflicted(expense: { submitterId: number; reimburseePersonId: number | null }, personId: number): Promise<boolean> {
+/** The parties as the live people they name, and whether one of them names nobody live. */
+function resolveParties(expense: Parties, live: Map<number, number | null>): { parties: number[]; unresolved: boolean } {
   const stored = partiesOf(expense);
-  const live = await liveIds(stored);
   const parties = stored.flatMap((id) => live.get(id) ?? []);
-  if (parties.length < stored.length) return true;
-  return parties.includes(personId) || (await getExpenseRuntime().signoff.householdOf(parties)).includes(personId);
+  return { parties, unresolved: parties.length < stored.length };
+}
+
+/**
+ * The conflict rule: the person is a party or in a party's household. A party naming nobody live
+ * cannot be checked, so everyone is conflicted. `household` is read only when the parties alone do not decide.
+ */
+async function conflictedOn(
+  { parties, unresolved }: { parties: number[]; unresolved: boolean },
+  personId: number,
+  household: (parties: number[]) => number[] | Promise<number[]>,
+): Promise<boolean> {
+  return unresolved || parties.includes(personId) || (await household(parties)).includes(personId);
+}
+
+/** Whether the person is conflicted on the expense, in one liveIds and at most one householdOf read. */
+export async function isConflicted(expense: Parties, personId: number): Promise<boolean> {
+  const resolved = resolveParties(expense, await liveIds(partiesOf(expense)));
+  return conflictedOn(resolved, personId, (parties) => getExpenseRuntime().signoff.householdOf(parties));
+}
+
+/** The ids of the expenses the person is conflicted on, as isConflicted decides, in one liveIds and one householdsOf read. */
+export async function conflictedExpenses(expenses: (Parties & { id: string })[], personId: number): Promise<Set<string>> {
+  if (expenses.length === 0) return new Set();
+  const live = await liveIds(expenses.flatMap(partiesOf));
+  const resolved = expenses.map((e) => ({ id: e.id, ...resolveParties(e, live) }));
+  const households = await getExpenseRuntime().signoff.householdsOf([...new Set(resolved.flatMap((e) => (e.unresolved ? [] : e.parties)))]);
+  const conflicted = await Promise.all(resolved.map((e) => conflictedOn(e, personId, (parties) => parties.flatMap((id) => households.get(id) ?? []))));
+  return new Set(resolved.filter((_, i) => conflicted[i]).map((e) => e.id));
 }
 
 /**
@@ -237,6 +263,41 @@ export async function boardApprovalNeeded(db: Db, expense: Pick<SignoffExpense, 
 /** What still holds a line: its unfilled seats, then the Board's approval when the expense needs it. */
 export function lineHolds(approvalNeeded: boolean, facts: SignoffFacts, filled: FilledSeat[]): LineHold[] {
   return [...missingSeats(facts, filled), ...(approvalNeeded ? (["BOARD_APPROVAL"] as const) : [])];
+}
+
+/** Whether the stored expense's tax waits on finance; while it does, the expense neither closes nor posts. */
+export async function storedTaxWaits(db: Db, expenseId: string): Promise<boolean> {
+  const { taxCents, receiptReview, taxApproval } = await db.expense.findUniqueOrThrow({
+    where: { id: expenseId },
+    select: {
+      taxCents: true,
+      receiptReview: { select: { taxReviewRequired: true, reasons: true, approvedTaxCents: true } },
+      taxApproval: { select: { taxCents: true } },
+    },
+  });
+  return taxWaitsOnFinance(taxCents, receiptReview, taxApproval?.taxCents ?? null);
+}
+
+/**
+ * The expenses the QB outbox holds back: tax waiting on finance, or, outside a backfill, an
+ * unknown reimbursee or a line with an unfilled sign-off. Each clears when the missing step is done.
+ */
+export async function outboxHeldIds(db: Db, expenses: (SignoffExpense & Pick<Expense, "state" | "backfill">)[]): Promise<Set<string>> {
+  if (expenses.length === 0) return new Set();
+  const taxes = await db.expense.findMany({
+    where: { id: { in: expenses.map((e) => e.id) } },
+    select: {
+      id: true,
+      taxCents: true,
+      receiptReview: { select: { taxReviewRequired: true, reasons: true, approvedTaxCents: true } },
+      taxApproval: { select: { taxCents: true } },
+    },
+  });
+  const held = new Set(taxes.filter((t) => taxWaitsOnFinance(t.taxCents, t.receiptReview, t.taxApproval?.taxCents ?? null)).map((t) => t.id));
+  const signed = expenses.filter((e) => !e.backfill);
+  const unsigned = await unsignedLinesForExpenses(db, signed);
+  for (const e of signed) if (reimburseeUnknown(e) || unsigned.get(e.id)!.size > 0) held.add(e.id);
+  return held;
 }
 
 /**

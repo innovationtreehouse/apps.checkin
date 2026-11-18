@@ -4,7 +4,7 @@ import { defineRoute, type OrderedViewEntry } from '../core';
 
 // Every BudgetOwner field is `internal` except the owner's person id; an
 // approver's id and name are `public`, as on Person. No view grants pii or personal, and no view lists
-// isSysadmin: Finance Ops excludes sysadmins (docs/rules/revenue.md).
+// isSysadmin: Finance Ops excludes sysadmins.
 // FINANCE creates, renames and archives buckets and sets their QuickBooks Class;
 // the BOARD alone sets a bucket's owner and treasurers, because they come from
 // the Board-approved budget. There is no DELETE on a bucket: archive
@@ -44,3 +44,8 @@ defineRoute({ endpoint: 'GET /api/books-map', authorize: 'finance-or-board', env
 defineRoute({ endpoint: 'GET /api/books-map/quickbooks-accounts', authorize: 'finance-or-board', envelope: null, returns: ['QuickBooksAccountOption'], orderedView: FINANCE_OR_BOARD_VIEW });
 defineRoute({ endpoint: 'PUT /api/books-map/classes/[budgetOwnerId]', authorize: 'finance', envelope: null, returns: ['BooksMapClass'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'PUT /api/books-map/accounts/[role]', authorize: 'finance', envelope: null, returns: ['BooksMapAccount'], orderedView: FINANCE_VIEW });
+// The saved copy of QuickBooks' account and Class lists: when it was last
+// refreshed and how many entries each list holds. FINANCE or BOARD reads it and
+// may refresh it from QuickBooks.
+defineRoute({ endpoint: 'GET /api/books-map/quickbooks-lists', authorize: 'finance-or-board', envelope: null, returns: ['QuickBooksListsStatus'], orderedView: FINANCE_OR_BOARD_VIEW });
+defineRoute({ endpoint: 'POST /api/books-map/quickbooks-lists/refresh', authorize: 'finance-or-board', envelope: null, returns: ['QuickBooksListsStatus'], orderedView: FINANCE_OR_BOARD_VIEW });

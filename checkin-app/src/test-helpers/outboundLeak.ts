@@ -20,7 +20,7 @@ function withLeaks(payload: OutboundPayload): OutboundPayload {
     return {
         ...payload,
         Program: { ...program, leadMentorNotificationSettings: LEAK.personal, saleEndedAt: LEAK.internal },
-        Household: { ...household, intakeNotes: LEAK.pii, line1: LEAK.internal },
+        Household: { ...household, line1: LEAK.internal },
         Person: { email: LEAK.pii, dateOfBirth: LEAK.personal },
     };
 }

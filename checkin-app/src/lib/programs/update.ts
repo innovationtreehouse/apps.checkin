@@ -9,10 +9,13 @@ import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { emailBoardMembers } from "@/lib/emailRecipients";
 import { config } from "@/lib/config";
 import { parseDateOnly } from "@/lib/time";
-import { isSaleEnded, saleStockDelta } from "@/lib/programs/saleState";
+import { classify, isSaleEnded, saleStockDelta } from "@/lib/programs/saleState";
 import { countStockTakenSeats } from "@/lib/program/capacity";
 import { membershipYearLabel, programYearsTouched } from "@/lib/programYear";
 import { ProgramPhase, EnrollmentStatus, type Program } from "@/generated/prisma/client";
+import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
+import { ServiceError } from "@checkin/component-kit";
+import { personActor, recordAudit } from "@/lib/auditActor";
 
 export interface ProgramEditor {
     id: number;
@@ -22,7 +25,7 @@ export interface ProgramEditor {
 
 /** The PATCH body as the edit form sends it; every field is optional. */
 export interface ProgramPatch {
-    name?: string;
+    name?: unknown;
     leadMentorId?: unknown;
     startAt?: unknown;
     endAt?: unknown;
@@ -61,6 +64,17 @@ export type ProgramUpdateResult =
     | { ok: false; refusal: ProgramRefusal; message: string };
 
 const refuse = (refusal: ProgramRefusal, message: string) => ({ ok: false as const, refusal, message });
+
+export const PROGRAM_NAME_MAX = 250;
+
+/** A program name as saved: a string, trimmed, non-empty, at most PROGRAM_NAME_MAX characters. */
+export function parseProgramName(name: unknown): { ok: true; name: string } | { ok: false; message: string } {
+    if (typeof name !== "string") return { ok: false, message: "Program name must be text" };
+    const trimmed = name.trim();
+    if (!trimmed) return { ok: false, message: "Program name is required" };
+    if (trimmed.length > PROGRAM_NAME_MAX) return { ok: false, message: `Program name must be ${PROGRAM_NAME_MAX} characters or fewer.` };
+    return { ok: true, name: trimmed };
+}
 
 export type ProgramYearResult =
     | { ok: true; appliesToYear: number }
@@ -134,6 +148,12 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
     const { name, startAt, endAt, orgMemberOnly, publiclyVisible, announceOnOpen, phase, enrollmentStatus, minAge, maxAge, maxParticipants, leadMentorNotificationSettings, memberPrice, nonMemberPrice, shopifyProductId, shopifyVariantId } = patch;
     let leadMentorId: number | undefined;
 
+    let newName: string | undefined;
+    if (name !== undefined) {
+        const parsed = parseProgramName(name);
+        if (!parsed.ok) return refuse("invalid", parsed.message);
+        newName = parsed.name;
+    }
     if (announceOnOpen !== undefined && typeof announceOnOpen !== "boolean") {
         return refuse("invalid", "announceOnOpen must be a boolean");
     }
@@ -262,6 +282,21 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
     if (enrollmentStatus === 'OPEN' && currentProgram.enrollmentStatus !== 'OPEN' && saleEndedNow && !rearmSale) {
         return refuse("conflict", "Sales for this program have ended. To reopen enrollment, move the off-sale date later.");
     }
+    const effPhase = phase ?? currentProgram.phase;
+    if (rearmSale && effPhase === 'FINISHED') {
+        return refuse("conflict", "This program has ended, so its sale can't be reopened.");
+    }
+    // A program ends only once nothing is on sale: its sale has ended or enrollment is closed (saleState TRANSITIONS).
+    const saleAfterSave = classify({
+        phase: currentProgram.phase,
+        enrollmentStatus: enrollmentStatus ?? currentProgram.enrollmentStatus,
+        startAt: effStartAt,
+        offSaleAt: newOffSaleAt !== undefined ? newOffSaleAt : currentProgram.offSaleAt,
+        saleEndedAt: rearmSale ? null : currentProgram.saleEndedAt,
+    });
+    if (phase === 'FINISHED' && currentProgram.phase !== 'FINISHED' && saleAfterSave === 'ON_SALE') {
+        return refuse("conflict", "This program is still on sale. Close enrollment or end the sale before ending the program.");
+    }
 
     // Variant⟺price invariant: a program has a Shopify variant iff it
     // has a price on some tier — the capacity/oversell math assumes this
@@ -314,7 +349,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
     }
 
     const updateData: Record<string, unknown> = {
-        ...(name !== undefined && { name }),
+        ...(newName !== undefined && { name: newName }),
         ...(leadMentorId !== undefined && { leadMentorId }),
         ...(newStartAt !== undefined && { startAt: newStartAt }),
         ...(newEndAt !== undefined && { endAt: newEndAt }),
@@ -350,31 +385,46 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         ...(newShopifyVariantId !== undefined && newShopifyVariantId !== currentProgram.shopifyVariantId && STOCK_BOOKKEEPING_RESET),
     };
 
-    const updatedProgram = await prisma.program.update({
-        where: { id: programId },
-        data: updateData
-    });
+    const newLeader = leadMentorId !== undefined && leadMentorId !== currentProgram.leadMentorId ? leadMentorId : null;
+    let lockedBefore: Program | null;
+    let updatedProgram: Program;
+    try {
+        ({ before: lockedBefore, after: updatedProgram } = await prisma.$transaction(async (tx) => {
+            // Locked so the audit's "before" is the row this update replaces. Program before
+            // households, the order enrollment takes them in (changeProgramStockWith).
+            await tx.$queryRaw`SELECT id FROM "Program" WHERE id = ${programId} FOR UPDATE`;
+            if (newLeader !== null) await lockLiveHouseholdsOf(tx, [newLeader]);
+            const before = await tx.program.findUnique({ where: { id: programId } });
+            // The re-arm decision above was made on the caller's read of the sale.
+            if (before && isSaleEnded(before) !== saleEndedNow) {
+                throw new ServiceError(409, "This program's sale changed while you were editing. Reload and try again.");
+            }
+            const after = await tx.program.update({ where: { id: programId }, data: updateData });
+            await recordAudit(tx, personActor(actor.id), {
+                action: 'EDIT',
+                tableName: 'Program',
+                affectedEntityId: after.id,
+                oldData: before ?? undefined,
+                newData: after,
+            });
+            return { before, after };
+        }));
+    } catch (e) {
+        if (e instanceof ServiceError) return refuse("conflict", e.message);
+        throw e;
+    }
 
-    await prisma.auditLog.create({
-        data: {
-            actorId: actor.id,
-            action: 'EDIT',
-            tableName: 'Program',
-            affectedEntityId: updatedProgram.id,
-            oldData: currentProgram,
-            newData: updatedProgram
-        }
-    });
-
+    // The post-commit checks compare against the row the update replaced, not the caller's earlier read.
+    const before = lockedBefore ?? currentProgram;
     // The edit has landed; a failed re-check is logged, not reported as a failed save.
-    await flagEnrollmentsNoLongerFitting(currentProgram, updatedProgram)
+    await flagEnrollmentsNoLongerFitting(before, updatedProgram)
         .catch(e => logger.error("Program age re-check failed:", e));
 
     // Announce trigger — transition rule, once-per-lifetime claim, audit row,
     // and fire-without-await all live in the helper. Never throws.
     await maybeAnnounceOnOpen({
         programId: updatedProgram.id,
-        before: currentProgram,
+        before,
         after: updatedProgram,
         actorId: actor.id,
     });
@@ -383,7 +433,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
     // Only fires when the program already has Shopify checkout wired up;
     // creation and sync-shopify set the initial stock themselves.
     let warning: string | undefined;
-    const oldMax = currentProgram.maxParticipants;
+    const oldMax = before.maxParticipants;
     const newMax = updatedProgram.maxParticipants;
     const hasShopifyVariant = !!updatedProgram.shopifyVariantId;
 
@@ -415,7 +465,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
     // store: a cleared or $0 full price is reported to admins and Shopify keeps its
     // old price. Only admin/board can change prices.
     const newBase = updatedProgram.nonOrgMemberPriceCents;
-    if (newBase !== currentProgram.nonOrgMemberPriceCents) {
+    if (newBase !== before.nonOrgMemberPriceCents) {
         const ok = await syncProgramPrice(updatedProgram, newBase);
         if (!ok) {
             const priceWarning = "Program saved, but the Shopify price is out of date — admins have been emailed. Set the price by hand in Shopify on both the public and reserved-seat products.";
@@ -424,7 +474,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
     }
 
     // The sweep hid the public product; reopening never re-lists it (automatic changes only reduce visibility).
-    const notice = rearmSale && currentProgram.productHiddenAt
+    const notice = rearmSale && before.productHiddenAt
         ? "Sale reopened. The public store product stays hidden: re-list it in Shopify by hand if it should sell again."
         : undefined;
     return { ok: true, program: updatedProgram, warning, notice };

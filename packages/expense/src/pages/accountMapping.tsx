@@ -4,7 +4,7 @@ import { useState } from "react";
 import { ActionIcon, Badge, Button, Group, Select, Table, Text, Title, Tooltip } from "@mantine/core";
 import { IconTrash } from "@tabler/icons-react";
 import { paged, send, useLoad, useRoles } from "../components/api";
-import { CatalogPicker, LoadError, Pager, useUrlPage } from "@checkin/component-ui";
+import { CatalogPicker, InactivePickWarning, LoadError, Pager, QuickBooksListsRefresh, useUrlPage } from "@checkin/component-ui";
 import { LINE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
 
 interface Mapping {
@@ -24,7 +24,9 @@ interface QbAccount {
 /** One account from QuickBooks' live list, as the host's books-map route returns it. */
 interface LiveAccount {
   id: string;
+  name: string;
   accountType: string;
+  active: boolean;
 }
 
 /** GET /api/catalog/categories and /subcategories rows; both lists omit archived entries. */
@@ -78,7 +80,7 @@ export default function AccountMappingPage() {
   const subcategoryOptions = form.category === "*"
     ? nameOptions([], "*")
     : nameOptions((subcategories.data ?? []).filter((s) => categoryIds.has(s.categoryId)).map((s) => s.name), form.subcategory);
-  const typeOf = new Map((live.data ?? []).map((a) => [a.id, a.accountType]));
+  const typeOf = new Map((live.data ?? []).filter((a) => a.active).map((a) => [a.id, a.accountType]));
   const allowed: readonly string[] = form.isCapital === "yes" ? LINE_ACCOUNT_TYPES.donatedCapital : LINE_ACCOUNT_TYPES.donatedGoods;
   const options = (accounts.data ?? []).filter((a) => allowed.includes(typeOf.get(a.qbAccount) ?? "")).map((a) => ({ value: a.qbAccount, label: a.name }));
 
@@ -106,7 +108,7 @@ export default function AccountMappingPage() {
           {(mappings.data ?? []).map((m) => (
             <Table.Tr key={m.id}>
               <Table.Td>{m.category}</Table.Td><Table.Td>{m.subcategory}</Table.Td><Table.Td><RulePart partNumber={m.partNumber} /></Table.Td>
-              <Table.Td>{triLabel(m.isDelayed)}</Table.Td><Table.Td>{triLabel(m.isCapital)}</Table.Td><Table.Td>{m.qbAccount}</Table.Td>
+              <Table.Td>{triLabel(m.isDelayed)}</Table.Td><Table.Td>{triLabel(m.isCapital)}</Table.Td><Table.Td>{m.qbAccount}<InactivePickWarning saved={m.qbAccount} options={live.data} advice={isFinance ? "Delete this rule and add one with an active account." : "Finance can fix this."} /></Table.Td>
               <Table.Td>
                 {isFinance && (
                   <ActionIcon variant="subtle" color="red" aria-label="Delete rule" onClick={async () => { if (await send(`/account-mapping/${m.id}`, "DELETE", {}, "Rule deleted")) mappings.reload(); }}>
@@ -157,6 +159,7 @@ export default function AccountMappingPage() {
             w={200}
           />
           <Button onClick={() => void add()} disabled={!form.qbAccount}>Add rule</Button>
+          <QuickBooksListsRefresh />
         </Group>
       )}
       <Pager page={page} onChange={setPage} rows={mappings.data} />

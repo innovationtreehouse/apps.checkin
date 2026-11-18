@@ -5,8 +5,7 @@
  * Flow test: at the kiosk, a keyholder closes. An older kiosk's single badge with
  * others recorded inside checks the last keyholder out and offers the close, and
  * a second badge echoing the offer closes; a kiosk that sends close requests
- * closes on the one badge it sent as a close, whoever the server records
- * (docs/rules/attendance-checkin.md, Opening and closing).
+ * closes on the one badge it sent as a close, whoever the server records.
  *
  * Under CHECKIN_ENV=local a cookieless request is the keyless kiosk.
  */

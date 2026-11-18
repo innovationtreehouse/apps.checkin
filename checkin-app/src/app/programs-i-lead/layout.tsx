@@ -9,7 +9,7 @@ import { PageContainer } from "@/components/ui/PageContainer";
 import { ScrollableTabsList } from "@/components/ui/ScrollableTabsList";
 import { useTodoCounts } from "@/hooks/useTodoCounts";
 import { useConflicts } from "@/hooks/useConflicts";
-import { leadPendingCount } from "@/components/navBadges";
+import { badgeText, leadPendingCount } from "@/components/navBadges";
 import type { SectionLink } from "@/lib/nav/types";
 import { visibleLinks } from "@/lib/nav/gates";
 import { PROGRAMS_I_LEAD } from "@/lib/nav/sections/programsILead";
@@ -56,8 +56,8 @@ export default function ProgramsILeadLayout({ children }: { children: React.Reac
   const pending = leadPendingCount(counts);
   const conflictCount = conflicts?.length ?? 0;
   const tabBadge = ({ href, badge }: SectionLink): React.ReactNode => {
-    if (href === "/programs-i-lead/attendance") return pending > 0 ? <CountBadge intent="action">{pending}</CountBadge> : undefined;
-    if (href === "/programs-i-lead/conflicts") return conflictCount > 0 ? <CountBadge intent="alert">{conflictCount}</CountBadge> : undefined;
+    if (href === "/programs-i-lead/attendance") return pending > 0 ? <CountBadge intent="action" aria-label={`${pending} attendance ${pending === 1 ? "item" : "items"} to confirm`}>{badgeText(pending)}</CountBadge> : undefined;
+    if (href === "/programs-i-lead/conflicts") return conflictCount > 0 ? <CountBadge intent="alert" aria-label={`${conflictCount} ${conflictCount === 1 ? "conflict" : "conflicts"} to resolve`}>{badgeText(conflictCount)}</CountBadge> : undefined;
     return <TabBadge badge={badge?.(counts) ?? null} />;
   };
   const subtitle: Record<string, string> = {

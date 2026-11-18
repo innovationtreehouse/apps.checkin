@@ -272,14 +272,52 @@ function eq(a: Set<string>, b: Set<string>): boolean {
  * hand a program lead the parents' phone/email on the roster. On a household-lead
  * row in an in-scope household the resolver adds their_program_households.
  *
- * Receipt / ReceiptView / ReceiptLineView.their_own: the oracle has no case for
- * receipt models. Each is bound `their_own` on uploadedByUserId === selfId, so on
+ * Receipt / ReceiptView / ReceiptLineView / ReceiptDuplicateNotice.their_own: the
+ * oracle has no case for receipt models. Each is bound `their_own` on uploadedByUserId === selfId, so on
  * such a row the resolver adds their_own.
  *
  * KeyVolunteerSelfStatus / KeyVolunteerSigning.their_own: the oracle has no case for
  * Key Volunteer Agreement models. Each is bound `their_own` on personId === selfId,
  * so on such a row the resolver adds their_own.
+ *
+ * CheckStartedRow.their_own / led_households: the oracle has no case for the
+ * check-started rows. Bound like Visit: their_own on personId === selfId, and
+ * led_households on personId ∈ ctx.ledHouseholdMemberIds.
+ *
+ * ProgramRosterAge.their_own / their_program_participants: the oracle has no case
+ * for roster ages. Bound like Person on personId: their_own on personId === selfId,
+ * and their_program_participants on personId ∈ ctx.participantIdsInScopePrograms.
+ *
+ * VolunteerRosterRow.their_households: the oracle has no case for the volunteer
+ * roster row. Bound for coverage on householdId === ctx.householdId.
+ *
+ * OWNER_KEYS models.their_own: the oracle has no case for these finance and Board
+ * models. Each is bound for coverage on its owner key === selfId.
+ *
+ * UnconfirmedStockRow / UnconfirmedStockSettlement.their_program_participants: the
+ * oracle has no case for the stock screen. Bound for coverage like Event, on
+ * programId in programsLed or programsCoreVolIn.
+ *
+ * HouseholdPageHousehold / HouseholdPeer / EmergencyContactWarning: the oracle has
+ * no case for the /api/household response models. Each is row-scoped on one key
+ * (id, householdId, householdId): a non-object row or a row without a numeric key
+ * holds nothing; otherwise everyones, plus their_households when the key equals
+ * ctx.householdId.
  */
+const HOUSEHOLD_ROUTE_KEYS: Record<string, string> = {
+    HouseholdPageHousehold: 'id',
+    HouseholdPeer: 'householdId',
+    EmergencyContactWarning: 'householdId',
+};
+
+const OWNER_KEYS: Record<string, string> = {
+    BudgetOwnerApprover: 'personId',
+    BudgetOwnerTreasurer: 'personId',
+    PersonMailAlias: 'personId',
+    ExpenseReimburseeView: 'personId',
+    FinanceViewLog: 'actorId',
+};
+
 function expectedFromSnapshot(
     model: string,
     row: Record<string, unknown> | null | undefined,
@@ -318,7 +356,7 @@ function expectedFromSnapshot(
         expected.add('their_program_households');
     }
     if (
-        (model === 'Receipt' || model === 'ReceiptView' || model === 'ReceiptLineView') &&
+        (model === 'Receipt' || model === 'ReceiptView' || model === 'ReceiptLineView' || model === 'ReceiptDuplicateNotice') &&
         row &&
         typeof row === 'object' &&
         typeof row.uploadedByUserId === 'number' &&
@@ -334,6 +372,44 @@ function expectedFromSnapshot(
         row.personId === callerCtx.selfId
     ) {
         expected.add('their_own');
+    }
+    if (model === 'CheckStartedRow' && row && typeof row === 'object' && typeof row.personId === 'number') {
+        if (row.personId === callerCtx.selfId) expected.add('their_own');
+        if (callerCtx.ledHouseholdMemberIds.has(row.personId)) expected.add('led_households');
+    }
+    if (model === 'ProgramRosterAge' && row && typeof row === 'object' && typeof row.personId === 'number') {
+        if (row.personId === callerCtx.selfId) expected.add('their_own');
+        if (callerCtx.participantIdsInScopePrograms.has(row.personId)) expected.add('their_program_participants');
+    }
+    if (
+        model === 'VolunteerRosterRow' &&
+        row &&
+        typeof row === 'object' &&
+        typeof row.householdId === 'number' &&
+        row.householdId === callerCtx.householdId
+    ) {
+        expected.add('their_households');
+    }
+    if (
+        (model === 'UnconfirmedStockRow' || model === 'UnconfirmedStockSettlement') &&
+        row &&
+        typeof row === 'object' &&
+        typeof row.programId === 'number' &&
+        (callerCtx.programsLed.has(row.programId) || callerCtx.programsCoreVolIn.has(row.programId))
+    ) {
+        expected.add('their_program_participants');
+    }
+    const ownerKey = OWNER_KEYS[model];
+    if (ownerKey !== undefined && row && typeof row === 'object' && typeof row[ownerKey] === 'number' && row[ownerKey] === callerCtx.selfId) {
+        expected.add('their_own');
+    }
+    const householdKey = HOUSEHOLD_ROUTE_KEYS[model];
+    if (householdKey !== undefined) {
+        const key = row && typeof row === 'object' ? row[householdKey] : undefined;
+        if (typeof key !== 'number') return new Set<Scope>();
+        const scopes = new Set<Scope>(['everyones']);
+        if (key === callerCtx.householdId) scopes.add('their_households');
+        return scopes;
     }
     return expected;
 }
@@ -361,6 +437,6 @@ describe('scopesHeld ≡ frozen switch + intentional deltas (personas × models 
     it('covers every bound model', () => {
         // Guard against the row set silently not exercising a model.
         expect(MODELS).toEqual(expect.arrayContaining(Object.keys(SCOPE_BINDINGS)));
-        expect(Object.keys(SCOPE_BINDINGS).length).toBe(25);
+        expect(Object.keys(SCOPE_BINDINGS).length).toBe(39);
     });
 });

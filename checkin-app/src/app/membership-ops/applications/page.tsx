@@ -1,19 +1,20 @@
 "use client";
 
-import { useState, Suspense } from "react";
-import { Alert, Button, Card, Center, Group, Loader, Modal, Stack, Switch, Text, Textarea } from "@mantine/core";
+import { useRef, useState, Suspense } from "react";
+import { Alert, Button, Card, Center, Group, Loader, Modal, Select, Stack, Switch, Text, Textarea } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
-import { AlertBanner } from "@/components/admin/AlertBanner";
-import { notifications } from "@mantine/notifications";
-import { LoadError } from "@checkin/component-ui";
+import { errorMessage, HttpError, LoadError, showError, showSuccess } from "@checkin/component-ui";
 import { modals } from "@mantine/modals";
 import { useSession } from "next-auth/react";
-import { useLoad } from "@/lib/api";
+import { api, useLoad } from "@/lib/api";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
 import { sharesHousehold } from "@/lib/conflictOfInterest";
 import { PageLoader } from "@/components/ui/PageLoader";
+import { ReasonConfirm } from "@/components/ReasonConfirm";
 import { StatusFilterBadge, ActiveFilterNotice, useStatusFilter } from "@/components/StatusFilter";
-import { CLOSABLE_STATUSES, awaitingBgReview, refundLandsIn, type ProcessKind, type ProcessStatus } from "@/lib/membership/lifecycle";
+import { reopenYearRefusal } from "@/lib/programYear";
+import { useMembershipYearBoundary } from "@/app/program-ops/ProgramYearField";
+import { CLOSABLE_STATUSES, awaitingBgReview, refundableApplication, type ProcessKind, type ProcessStatus } from "@/lib/membership/lifecycle";
 
 interface Person {
   id: number;
@@ -76,13 +77,65 @@ const statusLabel = (status: string) => (status === "ARCHIVED" ? "CLOSED" : stat
 const awaitingBg = (r: ProcessRow) =>
   awaitingBgReview.has({ kind: r.kind as ProcessKind, status: r.status as ProcessStatus, bgConsentAt: !!r.bgConsentAt, bgClearedAt: !!r.bgClearedAt });
 
-// A household application past consent whose check has not cleared waits on its people's check reviews.
-const waitingOnCheckReview = (r: ProcessRow) =>
-  r.kind !== "PERSON_BG" && !!r.orgMembership && !!r.bgConsentAt && !r.bgClearedAt && r.status !== "BLOCKED";
+const leadsOf = (r: ProcessRow) => (r.orgMembership?.household?.householdMembers ?? []).filter((p) => p.isHouseholdLead);
+
+// The body of the mark-check-started dialog: confirming with no lead picked flags the Lead field.
+function LeadPickConfirm({ leads, onCancel, onConfirm }: {
+  leads: Person[];
+  onCancel: () => void;
+  onConfirm: (personId: number) => void;
+}) {
+  const [personId, setPersonId] = useState<string | null>(leads.length === 1 ? String(leads[0].id) : null);
+  const [error, setError] = useState<string | null>(null);
+  const field = useRef<HTMLInputElement>(null);
+  const confirm = () => {
+    if (personId === null) {
+      setError("Pick a lead.");
+      field.current?.focus();
+      return;
+    }
+    onConfirm(Number(personId));
+  };
+  return (
+    <Stack gap="xs">
+      <Text size="sm">Pick the lead whose check was started in the background-check tool. Their review goes to the reviewers.</Text>
+      <Select
+        ref={field}
+        label="Lead"
+        required
+        data={leads.map((p) => ({ value: String(p.id), label: p.name || p.email || `Person #${p.id}` }))}
+        value={personId}
+        error={error}
+        onChange={(v) => { setPersonId(v); setError(null); }}
+      />
+      <Group justify="flex-end" mt="sm">
+        <Button variant="default" onClick={onCancel}>Cancel</Button>
+        <Button onClick={confirm}>Mark check started</Button>
+      </Group>
+    </Stack>
+  );
+}
+
+// A household's check is started when an open review has a lead's check started, or a
+// review it asked for waits to be named, or the application carries the legacy flag.
+// Mirrors householdCheckStarted on the server, from rows this page already has.
+const householdCheckStarted = (r: ProcessRow, rows: readonly ProcessRow[]) => {
+  const householdId = r.orgMembership?.householdId;
+  if (householdId === undefined) return false;
+  if (r.bgConsentAt) return true;
+  const leadIds = new Set(leadsOf(r).map((p) => p.id));
+  return rows.some((p) =>
+    p.kind === "PERSON_BG" && (p.status === "PENDING_BG_REVIEW" || p.status === "BLOCKED") &&
+    ((!!p.bgConsentAt && !!p.subjectPerson && leadIds.has(p.subjectPerson.id)) || (!p.subjectPerson && p.requestedForHouseholdId === householdId)));
+};
+
+// A household application with its check started and not cleared waits on its people's check reviews.
+const waitingOnCheckReview = (r: ProcessRow, rows: readonly ProcessRow[]) =>
+  r.kind !== "PERSON_BG" && !!r.orgMembership && !r.bgClearedAt && r.status !== "BLOCKED" && householdCheckStarted(r, rows);
 
 // Mirror archiveApplication's and recordRefund's gates; the server re-checks.
 const closable = (r: ProcessRow) => !r.paidAt && (CLOSABLE_STATUSES as readonly string[]).includes(r.status);
-const refundable = (r: ProcessRow) => !!r.paidAt && refundLandsIn(r.status as ProcessStatus) != null;
+const refundable = (r: ProcessRow) => refundableApplication.has({ status: r.status, paidAt: !!r.paidAt });
 
 export default function AdminMembershipPage() {
   return (
@@ -102,13 +155,14 @@ function ApplicationsBoard() {
   const ownHousehold = (r: ProcessRow) =>
     [r.orgMembership?.householdId, r.subjectPerson?.householdId, r.requestedForHouseholdId].some((h) => sharesHousehold(me?.householdId, h ?? null));
   const [busyId, setBusyId] = useState<number | null>(null);
-  const [message, setMessage] = useState("");
-  const [messageId, setMessageId] = useState<number | null>(null);
   const { active, toggle, clear } = useStatusFilter();
   const [certifyOpened, { open: openCertify, close: closeCertify }] = useDisclosure(false);
   const [pendingCertify, setPendingCertify] = useState<number | null>(null);
   const [certifyReason, setCertifyReason] = useState("");
   const [showArchived, setShowArchived] = useState(false);
+  // Mirrors the server's same-year Reopen refusal; the server stays the enforcement.
+  const { boundary } = useMembershipYearBoundary(showArchived);
+  const yearRefusal = (r: ProcessRow) => reopenYearRefusal(r.kind, new Date(r.createdAt), boundary, new Date());
   const [refundOpened, { open: openRefund, close: closeRefund }] = useDisclosure(false);
   const [pendingRefund, setPendingRefund] = useState<number | null>(null);
   const [refundReason, setRefundReason] = useState("");
@@ -118,88 +172,80 @@ function ApplicationsBoard() {
   );
   const rows = data?.processes ?? [];
 
-  const act = async (processId: number, action: string, extra?: Record<string, unknown>) => {
+  // The row stays busy until the list re-reads, so a second click can't act on a stale row. A 409 means the
+  // row changed under the board, so it re-reads too.
+  const post = async (processId: number, path: string, body: Record<string, unknown>, done: string) => {
     setBusyId(processId);
-    setMessageId(processId);
-    setMessage("");
     try {
-      const res = await fetch("/api/membership-ops/applications/external", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processId, action, ...extra }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        notifications.show({ message: "Updated." });
-        reload();
-        notifyNavRefresh();
-      } else {
-        setMessage(data.error || "Action failed.");
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
+      await api(path.startsWith("/") ? path : `/api/membership-ops/applications/${path}`, { method: "POST", body: JSON.stringify({ processId, ...body }), invalidate: false });
+      showSuccess(done);
+      notifyNavRefresh();
+      await reload();
+    } catch (e) {
+      // The title names the application, since the message sits away from its row.
+      const row = rows.find((r) => r.id === processId);
+      showError(errorMessage(e), { key: `application-${processId}`, title: row ? processLabel(row) : `Application #${processId}` });
+      if (e instanceof HttpError && e.status === 409) await reload();
     } finally {
       setBusyId(null);
     }
   };
 
+  const act = (processId: number, action: string) => post(processId, "external", { action }, "Updated.");
   const resetReview = (processId: number, reason: string, wrongPerson: boolean) =>
-    overrideReview(processId, { action: "reset", reason, wrongPerson }, "Sent back for re-review.", "Reset failed.");
+    post(processId, "review-override", { action: "reset", reason, wrongPerson }, "Sent back for re-review.");
   const releaseApplication = (processId: number, reason: string) =>
-    overrideReview(processId, { action: "release", reason }, "Released — the application moves on.", "Release failed.");
+    post(processId, "review-override", { action: "release", reason }, "Released — the application moves on.");
+  const closeWrongPerson = (processId: number, reason: string) =>
+    post(processId, "review-override", { action: "reset", reason, closeAsWrongPerson: true }, "Closed as opened for the wrong person.");
+  const reopenWrongPerson = (processId: number, reason: string) =>
+    post(processId, "review-override", { action: "reopen", reason }, "Check review reopened.");
+  const archive = (processId: number) => post(processId, "archive", {}, "Application closed.");
+  const markLeadCheckStarted = (processId: number, personId: number) =>
+    post(processId, "/api/membership-audit/person-bg", { personId }, "Check marked started.");
+  const dismissReview = (processId: number, reason: string) =>
+    post(processId, "/api/membership/reviews/dismiss", { reason }, "Dismissed: the check is no longer marked started.");
 
-  const overrideReview = async (processId: number, body: Record<string, unknown>, done: string, failed: string) => {
-    setBusyId(processId);
-    setMessageId(processId);
-    setMessage("");
-    try {
-      const res = await fetch("/api/membership-ops/applications/review-override", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processId, ...body }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        notifications.show({ message: done });
-        // A repeated reset passes the server's check once the review is open, so the row stays busy until it re-reads.
-        await reload();
-        notifyNavRefresh();
-      } else if (data.code === "wrong_phase") {
-        notifications.show({ color: "red", message: data.error || "This application is no longer blocked.", autoClose: false });
-        reload();
-      } else {
-        setMessage(data.error || failed);
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    } finally {
-      setBusyId(null);
-    }
+  const confirmMarkLead = (r: ProcessRow) => {
+    const modalId = `mark-lead-${r.id}`;
+    modals.open({
+      modalId,
+      title: "Mark a lead's check started",
+      children: (
+        <LeadPickConfirm
+          leads={leadsOf(r)}
+          onCancel={() => modals.close(modalId)}
+          onConfirm={(personId) => {
+            modals.close(modalId);
+            markLeadCheckStarted(r.id, personId);
+          }}
+        />
+      ),
+    });
   };
 
-  const archive = async (processId: number) => {
-    setBusyId(processId);
-    setMessageId(processId);
-    setMessage("");
-    try {
-      const res = await fetch("/api/membership-ops/applications/archive", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processId }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        notifications.show({ message: "Application closed." });
-        reload();
-        notifyNavRefresh();
-      } else {
-        setMessage(data.error || "Couldn't close the application.");
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    } finally {
-      setBusyId(null);
-    }
+  const confirmDismiss = (r: ProcessRow) => {
+    const modalId = `dismiss-${r.id}`;
+    modals.open({
+      modalId,
+      title: "Dismiss: opened by mistake",
+      children: (
+        <ReasonConfirm
+          confirmLabel="Dismiss"
+          missingReason="A reason is required to dismiss a check review."
+          onCancel={() => modals.close(modalId)}
+          onConfirm={(reason) => {
+            modals.close(modalId);
+            dismissReview(r.id, reason);
+          }}
+        >
+          <Text size="sm">
+            This undoes the &quot;check started&quot; mark on <strong>{processLabel(r)}</strong>. It decides nothing:
+            no approval, no rejection. Check the background-check tool first.
+          </Text>
+        </ReasonConfirm>
+      ),
+    });
   };
 
   // An awaiting review only ever holds APPROVE attestations (any REJECT blocks it).
@@ -208,37 +254,92 @@ function ApplicationsBoard() {
   // Every reset takes a reason. A review a household asked for can also be reset as
   // naming the wrong person, which returns it to no person.
   const confirmResetReview = (r: ProcessRow) => {
-    let reason = "";
     let wrongPerson = false;
-    const modalId = modals.openConfirmModal({
+    const modalId = `reset-review-${r.id}`;
+    modals.open({
+      modalId,
       title: "Start this background-check review over?",
       children: (
-        <Stack gap="xs">
+        <ReasonConfirm
+          confirmLabel="Start over"
+          missingReason="A reason is required to start a review over."
+          onCancel={() => modals.close(modalId)}
+          onConfirm={(reason) => {
+            modals.close(modalId);
+            resetReview(r.id, reason, wrongPerson);
+          }}
+        >
           <Text size="sm">
             This discards the {r.attestations.length} decision(s) recorded for <strong>{processLabel(r)}</strong>{" "}
             and asks the reviewers to start again. The check itself has not cleared, so nothing else changes.
           </Text>
-          <Textarea label="Reason" required autosize minRows={2} onChange={(e) => { reason = e.currentTarget.value; }} />
           {r.kind === "PERSON_BG" && r.requestedForHouseholdId !== null && r.subjectPerson && (
             <Switch
               label="The review names the wrong person — the next reviewer names again"
               onChange={(e) => { wrongPerson = e.currentTarget.checked; }}
             />
           )}
-        </Stack>
+        </ReasonConfirm>
       ),
-      labels: { confirm: "Start over", cancel: "Cancel" },
-      closeOnConfirm: false,
-      onConfirm: () => {
-        if (!reason.trim()) {
-          notifications.show({ color: "red", message: "A reason is required to start a review over.", autoClose: false });
-          return;
-        }
-        modals.close(modalId);
-        resetReview(r.id, reason.trim(), wrongPerson);
-      },
     });
   };
+
+  // B27: the Board closes a check review opened for the wrong person. Its decisions stay
+  // on record, and its rejection stops counting.
+  const confirmCloseWrongPerson = (r: ProcessRow) => {
+    const modalId = `close-wrong-person-${r.id}`;
+    modals.open({
+      modalId,
+      title: "Close this check review as opened for the wrong person?",
+      children: (
+        <ReasonConfirm
+          confirmLabel="Close review"
+          missingReason="A reason is required to close a review as opened for the wrong person."
+          onCancel={() => modals.close(modalId)}
+          onConfirm={(reason) => {
+            modals.close(modalId);
+            closeWrongPerson(r.id, reason);
+          }}
+        >
+          <Text size="sm">
+            This closes the review of <strong>{processLabel(r)}</strong>. Its {r.attestations.length} decision(s),
+            any rejection included, stay on record against it but no longer count against anyone. The Board can reopen it.
+          </Text>
+        </ReasonConfirm>
+      ),
+    });
+  };
+
+  const confirmReopenWrongPerson = (r: ProcessRow) => {
+    const modalId = `reopen-wrong-person-${r.id}`;
+    modals.open({
+      modalId,
+      title: "Reopen this check review?",
+      children: (
+        <ReasonConfirm
+          confirmLabel="Reopen review"
+          missingReason="A reason is required to reopen a review."
+          onCancel={() => modals.close(modalId)}
+          onConfirm={(reason) => {
+            modals.close(modalId);
+            reopenWrongPerson(r.id, reason);
+          }}
+        >
+          <Text size="sm">
+            Only for a review the Board closed as opened for the wrong person. It returns to where it was
+            closed, and any rejection on it counts again.
+          </Text>
+        </ReasonConfirm>
+      ),
+    });
+  };
+
+  const wrongPersonClose = (r: ProcessRow) =>
+    me?.isBoardMember && r.kind === "PERSON_BG" && (
+      <Button size="xs" fz={15} variant="default" color="red" disabled={busyId === r.id || ownHousehold(r)} onClick={() => confirmCloseWrongPerson(r)}>
+        Close: opened for the wrong person
+      </Button>
+    );
 
   // A blocked household application with nobody in its household under a blocked check
   // review: whoever's rejection blocked it has left. The server re-checks.
@@ -247,28 +348,26 @@ function ApplicationsBoard() {
     !rows.some((p) => p.kind === "PERSON_BG" && p.status === "BLOCKED" && p.subjectPerson?.householdId === r.orgMembership?.householdId);
 
   const confirmRelease = (r: ProcessRow) => {
-    let reason = "";
-    const modalId = modals.openConfirmModal({
+    const modalId = `release-${r.id}`;
+    modals.open({
+      modalId,
       title: "Release this household from a departed person's rejection?",
       children: (
-        <Stack gap="xs">
+        <ReasonConfirm
+          confirmLabel="Release"
+          missingReason="A reason is required to release a household."
+          onCancel={() => modals.close(modalId)}
+          onConfirm={(reason) => {
+            modals.close(modalId);
+            releaseApplication(r.id, reason);
+          }}
+        >
           <Text size="sm">
             The person whose check was rejected has left <strong>{processLabel(r)}</strong>. Releasing lets this
             application move on. Their rejection stays on them and still blocks any household they are in.
           </Text>
-          <Textarea label="Reason" required autosize minRows={2} onChange={(e) => { reason = e.currentTarget.value; }} />
-        </Stack>
+        </ReasonConfirm>
       ),
-      labels: { confirm: "Release", cancel: "Cancel" },
-      closeOnConfirm: false,
-      onConfirm: () => {
-        if (!reason.trim()) {
-          notifications.show({ color: "red", message: "A reason is required to release a household.", autoClose: false });
-          return;
-        }
-        modals.close(modalId);
-        releaseApplication(r.id, reason.trim());
-      },
     });
   };
 
@@ -292,83 +391,9 @@ function ApplicationsBoard() {
 
   // Board reopen of a closed application — the server restores the step it was
   // closed from, or refuses with the reason.
-  const unarchive = async (processId: number) => {
-    setBusyId(processId);
-    setMessageId(processId);
-    setMessage("");
-    try {
-      const res = await fetch("/api/membership-ops/applications/unarchive", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processId }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        notifications.show({ message: "Application reopened." });
-        reload();
-        notifyNavRefresh();
-      } else {
-        notifications.show({ color: "red", message: data.error || "Couldn't reopen the application.", autoClose: false });
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const certify = async (processId: number, reason: string) => {
-    setBusyId(processId);
-    setMessageId(processId);
-    setMessage("");
-    try {
-      const res = await fetch("/api/membership-ops/applications/certify-payment", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processId, reason }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        notifications.show({ message: "Certified — membership activated." });
-        reload();
-        notifyNavRefresh();
-      } else if (data.code === "wrong_phase") {
-        notifications.show({ color: "red", message: data.error || "This application is no longer awaiting payment.", autoClose: false });
-        reload();
-      } else {
-        setMessage(data.error || "Certification failed.");
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const recordRefund = async (processId: number, reason: string) => {
-    setBusyId(processId);
-    setMessageId(processId);
-    setMessage("");
-    try {
-      const res = await fetch("/api/membership-ops/applications/refund", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processId, reason }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        notifications.show({ message: "Refund recorded." });
-        reload();
-        notifyNavRefresh();
-      } else {
-        setMessage(data.error || "Couldn't record the refund.");
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    } finally {
-      setBusyId(null);
-    }
-  };
+  const unarchive = (processId: number) => post(processId, "unarchive", {}, "Application reopened.");
+  const certify = (processId: number, reason: string) => post(processId, "certify-payment", { reason }, "Certified — membership activated.");
+  const recordRefund = (processId: number, reason: string) => post(processId, "refund", { reason }, "Refund recorded.");
 
   const handleRefund = (processId: number) => {
     setPendingRefund(processId);
@@ -418,7 +443,7 @@ function ApplicationsBoard() {
     <Stack>
       <Text c="dimmed">
         In-flight applications. Use the manual controls below to confirm the contract was signed
-        or that background-check consent was received. (The contract is also confirmed
+        or to mark a lead&apos;s background check started. (The contract is also confirmed
         automatically once the Zoho webhook is configured.)
       </Text>
 
@@ -502,17 +527,17 @@ function ApplicationsBoard() {
                     )}
                   </div>
                   <div>
-                    <Text size="xs" c="dimmed" mb={4}>Background-check consent</Text>
-                    {r.bgConsentAt ? (
-                      <Text c="green" fw={600}>✓ Received</Text>
+                    <Text size="xs" c="dimmed" mb={4}>Background check started</Text>
+                    {householdCheckStarted(r, rows) ? (
+                      <Text c="green" fw={600}>✓ Started</Text>
                     ) : (
-                      <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => act(r.id, "mark-bg-consent")}>
-                        Confirm BG consent
+                      <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || leadsOf(r).length === 0} onClick={() => confirmMarkLead(r)}>
+                        Mark a lead&apos;s check started
                       </Button>
                     )}
                   </div>
-                  {ownHousehold(r) && (
-                    <Text size="xs" c="dimmed">You can&apos;t confirm your own household&apos;s contract or consent — someone outside your household must.</Text>
+                  {ownHousehold(r) && !r.contractSignedAt && (
+                    <Text size="xs" c="dimmed">You can&apos;t confirm your own household&apos;s contract — someone outside your household must.</Text>
                   )}
                 </Group>
               )}
@@ -530,10 +555,16 @@ function ApplicationsBoard() {
                       Discard approvals — start the review over
                     </Button>
                   )}
+                  {me?.isBoardMember && r.attestations.length === 0 && (
+                    <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => confirmDismiss(r)}>
+                      Dismiss: opened by mistake
+                    </Button>
+                  )}
+                  {wrongPersonClose(r)}
                 </Group>
               )}
 
-              {waitingOnCheckReview(r) && (
+              {waitingOnCheckReview(r, rows) && (
                 <Text size="sm" c="dimmed" mt="md">
                   Background check (in parallel) — waiting on the household&apos;s check review.
                 </Text>
@@ -544,7 +575,7 @@ function ApplicationsBoard() {
                   <Text size="sm" c="dimmed">Awaiting payment.</Text>
                   {me?.isBoardMember && (
                     <Button size="xs" fz={15} disabled={busyId === r.id || ownHousehold(r)} onClick={() => handleCertify(r.id)}>
-                      Certify payment plan → {r.bgClearedAt ? "activate" : "(holds for background check)"}
+                      Activate without payment{r.bgClearedAt ? "" : " (holds for background check)"}
                     </Button>
                   )}
                   {me?.isBoardMember && ownHousehold(r) && (
@@ -577,6 +608,7 @@ function ApplicationsBoard() {
                         <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => confirmResetReview(r)}>
                           Reset for re-review
                         </Button>
+                        {wrongPersonClose(r)}
                         {releasable(r) && (
                           <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => confirmRelease(r)}>
                             Release
@@ -611,15 +643,19 @@ function ApplicationsBoard() {
                 </Group>
               )}
 
-              {messageId === r.id && (
-                <AlertBanner message={message} tone="error" mt="md" />
-              )}
-
               <Group justify="flex-end" mt="md">
                 {showArchived ? (
-                  <Button size="xs" fz={15} disabled={busyId === r.id || ownHousehold(r)} onClick={() => unarchive(r.id)}>
-                    Reopen
-                  </Button>
+                  <Group gap="md" wrap="wrap" align="center">
+                    {yearRefusal(r) && <Text size="xs" c="dimmed">{yearRefusal(r)}</Text>}
+                    {me?.isBoardMember && r.kind === "PERSON_BG" && (
+                      <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => confirmReopenWrongPerson(r)}>
+                        Reopen: closed as wrong person
+                      </Button>
+                    )}
+                    <Button size="xs" fz={15} disabled={busyId === r.id || ownHousehold(r) || !!yearRefusal(r)} onClick={() => unarchive(r.id)}>
+                      Reopen
+                    </Button>
+                  </Group>
                 ) : closable(r) && (
                   <Button size="xs" fz={15} variant="subtle" color="red" disabled={busyId === r.id || ownHousehold(r)} onClick={() => confirmArchive(r)}>
                     Close application
@@ -634,12 +670,13 @@ function ApplicationsBoard() {
       <Modal
         opened={certifyOpened}
         onClose={closeCertify}
-        title={<Text span fw={700} fz="lg">Certify Payment Plan</Text>}
+        title={<Text span fw={700} fz="lg">Activate Without Payment</Text>}
         centered
       >
         <Text mb="sm">
-          Certify this payment plan? This activates the household&apos;s membership without a
-          Shopify payment (holding for background clearance if it isn&apos;t done yet).
+          Activate this household&apos;s membership without a Shopify payment? Use this when the
+          board has agreed payment outside Shopify. It holds for background clearance if that
+          isn&apos;t done yet.
         </Text>
         <Textarea
           value={certifyReason}

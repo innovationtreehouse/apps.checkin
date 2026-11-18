@@ -20,7 +20,7 @@ import {
     validate as validateEnrollment,
 } from "@/lib/programs/enrollmentState";
 import { validate as validateMembership } from "@/lib/membership/lifecycle";
-import { systemActor } from "@/lib/auditActor";
+import { recordAudit, systemActor } from "@/lib/auditActor";
 import { changeProgramStockWith } from "@/lib/shopify/stock";
 import { isSaleEnded } from "@/lib/programs/saleState";
 
@@ -123,7 +123,7 @@ export type ReconcileSummary = {
  * Auto-heal the enrollment I1 rows (`status=ACTIVE` with `inventoryHeldAt` set):
  * a `-1` the webhook took but never released. Per row, a guarded `updateMany`
  * clears the stranded hold (CAS — a concurrent release wins and this no-ops),
- * and the missed +1 release commit together (changeProgramStockWith). §9 of the
+ * and its audit row and the missed +1 release commit together (changeProgramStockWith). §9 of the
  * enrollment doc. Audit-logs each heal (actorId 0 = system). Returns the rows
  * healed and the rows whose heal threw. Per-row isolated; a Shopify leg that did
  * not land is owed in the stock carry, so it is not a failed heal.
@@ -161,7 +161,20 @@ async function healEnrollmentI1(): Promise<{ healed: number; failed: number }> {
                         },
                         data: { inventoryHeldAt: null },
                     });
-                    return { result: count === 1, delta: count === 1 && !saleEnded ? 1 : 0 };
+                    if (count !== 1) return { result: false, delta: 0 };
+                    await recordAudit(tx, systemActor("cron:lifecycle-reconcile"), {
+                        action: "EDIT",
+                        tableName: "ProgramParticipant",
+                        affectedEntityId: row.personId,
+                        secondaryAffectedEntity: row.programId,
+                        oldData: {
+                            status: "ACTIVE",
+                            inventoryHeldAt: row.inventoryHeldAt?.toISOString() ?? null,
+                            reason: "lifecycle-reconcile: enrollment I1 (stranded hold on ACTIVE)",
+                        },
+                        newData: { inventoryHeldAt: null, releaseSkippedSaleEnded: saleEnded },
+                    });
+                    return { result: true, delta: saleEnded ? 0 : 1 };
                 },
             );
             if (!cleared) continue; // already cleared under us — not ours to release.
@@ -170,22 +183,6 @@ async function healEnrollmentI1(): Promise<{ healed: number; failed: number }> {
                     `[lifecycle-reconcile] I1 heal cleared hold for program ${row.programId} / person ${row.personId} but the +1 release failed (see Shopify error alert).`,
                 );
             }
-
-            await prisma.auditLog.create({
-                data: {
-                    ...systemActor("cron:lifecycle-reconcile"),
-                    action: "EDIT",
-                    tableName: "ProgramParticipant",
-                    affectedEntityId: row.personId,
-                    secondaryAffectedEntity: row.programId,
-                    oldData: {
-                        status: "ACTIVE",
-                        inventoryHeldAt: row.inventoryHeldAt?.toISOString() ?? null,
-                        reason: "lifecycle-reconcile: enrollment I1 (stranded hold on ACTIVE)",
-                    },
-                    newData: { inventoryHeldAt: null, shopifyReleaseOk: shopifyOk, releaseSkippedSaleEnded: saleEnded },
-                },
-            });
             healed++;
         } catch (error) {
             // Per-row isolation: one bad row never aborts the sweep.

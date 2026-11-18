@@ -7,6 +7,7 @@ const push = jest.fn();
 let mockPathname = "/programs-i-lead";
 let mockSession: { status: string; data?: { user: { id: number } } };
 let mockCounts: TodoCounts | null;
+let mockConflicts: unknown[] = [];
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push }),
@@ -19,7 +20,7 @@ jest.mock("@/hooks/useTodoCounts", () => ({
   useTodoCounts: () => mockCounts,
 }));
 jest.mock("@/hooks/useConflicts", () => ({
-  useConflicts: () => ({ conflicts: [] }),
+  useConflicts: () => ({ conflicts: mockConflicts }),
 }));
 
 beforeAll(() => {
@@ -67,6 +68,7 @@ const noLeadCounts = { lead: { programs: [] } } as unknown as TodoCounts;
 
 beforeEach(() => {
   push.mockClear();
+  mockConflicts = [];
 });
 
 describe("ProgramsILeadLayout lead gate", () => {
@@ -98,5 +100,18 @@ describe("ProgramsILeadLayout lead gate", () => {
   it("redirects unauthenticated callers", () => {
     renderLayout("/programs-i-lead", { status: "unauthenticated" }, null);
     expect(push).toHaveBeenCalledWith("/");
+  });
+});
+
+describe("ProgramsILeadLayout tab badges", () => {
+  it("caps both pills at 99+ and keeps the exact counts in their accessible names", () => {
+    const pending = Array.from({ length: 250 }, (_, i) => ({ id: i, label: "x" }));
+    const counts = {
+      lead: { programs: [{ id: 1, name: "Robotics", totalEnrolled: 4, pending, upcoming: [] }] },
+    } as unknown as TodoCounts;
+    mockConflicts = Array.from({ length: 250 }, (_, i) => ({ id: i }));
+    renderLayout("/programs-i-lead", { status: "authenticated" }, counts);
+    expect(screen.getByLabelText("250 attendance items to confirm")).toHaveTextContent(/^99\+$/);
+    expect(screen.getByLabelText("250 conflicts to resolve")).toHaveTextContent(/^99\+$/);
   });
 });

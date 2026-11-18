@@ -14,9 +14,8 @@ way. So nothing here is inventory-specific: it is the shared architecture every
 component inherits, and it survives the per-app working docs, which are deleted
 as each lands.
 
-Each component's **domain rules** (its access, identity, and invariants) live in
-that domain's `docs/rules/` file — the catalog's are in `docs/rules/inventory.md`.
-This file is the architecture those rules sit on, and it uses the catalog as the
+This file is the architecture each component's domain rules (its access,
+identity, and invariants) sit on, and it uses the catalog as the
 worked example because it is the first component built.
 
 ## One process, many component packages
@@ -78,7 +77,7 @@ A component that owns data gets its own dedicated database (its own
 
 A component's schema is annotated with `@sensitivity:` and carries its own
 `generator security` block, which emits a classifications map that is merged
-into checkin's via a spread in `src/security/core.ts`. Routes go through
+into checkin's in `src/security/classificationSources.ts`. Routes go through
 checkin's registry/handler/stripper like any other.
 
 - **Cross-package coupling.** The component's `generator security` `provider`
@@ -95,7 +94,7 @@ checkin's registry/handler/stripper like any other.
 - **Synthetic public-scalar classification.** `handler()`'s stripper drops
   non-model bag keys, so a bare scalar (a count, a total, a nav badge) cannot
   ride a response. The sanctioned way across is a small hand-authored `public`
-  classification for the scalar's shape, merged in `core.ts`, behind its own
+  classification for the scalar's shape, merged in `classificationSources.ts`, behind its own
   registered endpoint (the catalog's `CatalogItemCount { total: public }` is the
   reference example). Prefer this over envelope workarounds.
 - **Boundary-isolation process applies.** Registry/generator changes ship in
@@ -146,10 +145,11 @@ producer is the first instance.
   commit rule decides how a reaction and its ledger row land: expense writes
   both in one transaction; local inventory and receipt mapping react first and
   rely on idempotent reactions, so many local inventories can stay async against
-  one global catalog. A failed event is recorded and retried, and never holds
-  back the events after it. The catch-up cron step pages through the producer's
-  rows and consumes any not in the ledger (`sweepOrgEvents` in
-  `@checkin/component-kit`). The producer records nothing about who consumed
+  one global catalog. A failed event is recorded and waits for someone to press
+  Retry; it never holds back the events after it. The catch-up cron step pages
+  through the producer's rows and consumes only those with no ledger row
+  (`sweepOrgEvents` in `@checkin/component-kit`); expense and local inventory
+  also finish events their ledger holds as received but not yet processed. The producer records nothing about who consumed
   what — tracking consumers would couple it to them.
 
 ## UI and nav
@@ -181,8 +181,8 @@ unchanged as each component is built.
 Each component's read/write admission is expressed against the checkin session —
 a write role plus a read gate, wired through the injected auth, never a
 component-local auth system. The catalog uses `INVENTORY_MANAGER` for writes and
-a broad viewer gate (the shared catalog audience, `canSeeCatalog`) for reads; those specific roles are domain rules in
-`docs/rules/inventory.md`, not architecture. The pattern — gate at the component
+a broad viewer gate (the shared catalog audience, `canSeeCatalog`) for reads; those specific roles are domain rules,
+not architecture. The pattern — gate at the component
 boundary against checkin's session — is what is universal.
 
 ## Deploy — the prod image is not free

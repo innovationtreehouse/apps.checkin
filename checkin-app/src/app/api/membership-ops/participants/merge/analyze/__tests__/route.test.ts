@@ -2,9 +2,9 @@
  * @jest-environment node
  */
 /**
- * Unit tests for the `bgNotice` field of the merge analysis: which date the survivor
- * would adopt in each direction.
- * Collisions and blocks are in ../../__tests__/route.integration.test.ts.
+ * Unit tests for the `bgNotice` field of the merge analysis (which date the survivor
+ * would adopt in each direction) and the attestation ids on background-check collisions.
+ * Other collisions and blocks are in ../../__tests__/route.integration.test.ts.
  */
 import type { NextRequest } from 'next/server';
 import { GET } from '../route';
@@ -18,7 +18,6 @@ jest.mock('@/lib/prisma', () => ({
         program: { findMany: jest.fn().mockResolvedValue([]) },
         tool: { findMany: jest.fn().mockResolvedValue([]) },
         event: { findMany: jest.fn().mockResolvedValue([]) },
-        orgMembershipProcess: { count: jest.fn().mockResolvedValue(0) },
         backgroundCheckAttestation: { findMany: jest.fn().mockResolvedValue([]) },
         visit: { findFirst: jest.fn().mockResolvedValue(null) },
     },
@@ -28,6 +27,7 @@ jest.mock('@/lib/prisma', () => ({
 const mockSession = require('next-auth/next').getServerSession;
 const db = prisma as unknown as {
     person: { findUnique: jest.Mock; findFirst: jest.Mock };
+    backgroundCheckAttestation: { findMany: jest.Mock };
 };
 
 const RECENT = new Date(Date.now() - 86_400_000);
@@ -74,5 +74,49 @@ describe('GET merge/analyze bgNotice', () => {
         mockPeople({ 1: { lastBackgroundCheck: null }, 2: { lastBackgroundCheck: null } });
         const { bgNotice } = await analyze();
         expect(bgNotice).toEqual({ aAsKeeper: null, bAsKeeper: null });
+    });
+});
+
+describe('GET merge/analyze background-check collisions', () => {
+    type Row = { id: number; processId: number; reviewerId: number; subjectPersonId: number | null };
+
+    async function collisionsFor(rows: Row[]) {
+        mockPeople({ 1: { lastBackgroundCheck: null }, 2: { lastBackgroundCheck: null } });
+        db.backgroundCheckAttestation.findMany.mockResolvedValueOnce(rows);
+        const { collisions } = await analyze();
+        return collisions as Array<{ type: string; attestationIds?: number[] }>;
+    }
+
+    it("names both reviewers' attestations on a shared review", async () => {
+        const collisions = await collisionsFor([
+            { id: 11, processId: 7, reviewerId: 1, subjectPersonId: 50 },
+            { id: 12, processId: 7, reviewerId: 2, subjectPersonId: 51 },
+            { id: 13, processId: 8, reviewerId: 1, subjectPersonId: 50 },
+        ]);
+        expect(collisions).toEqual([expect.objectContaining({ type: 'bgAttestation', attestationIds: [11, 12] })]);
+    });
+
+    it('names the attestation one record reviewed about the other', async () => {
+        const collisions = await collisionsFor([
+            { id: 21, processId: 7, reviewerId: 1, subjectPersonId: 2 },
+        ]);
+        expect(collisions).toEqual([expect.objectContaining({ type: 'bgAttestationCrossRole', attestationIds: [21] })]);
+    });
+
+    it('names both subject attestations one reviewer made under the same process', async () => {
+        const collisions = await collisionsFor([
+            { id: 31, processId: 7, reviewerId: 9, subjectPersonId: 1 },
+            { id: 32, processId: 7, reviewerId: 9, subjectPersonId: 2 },
+            { id: 33, processId: 8, reviewerId: 9, subjectPersonId: 2 },
+        ]);
+        expect(collisions).toEqual([expect.objectContaining({ type: 'bgAttestationSubject', attestationIds: [31, 32] })]);
+    });
+
+    it('reports no collision for unrelated attestations', async () => {
+        const collisions = await collisionsFor([
+            { id: 41, processId: 7, reviewerId: 1, subjectPersonId: 50 },
+            { id: 42, processId: 8, reviewerId: 2, subjectPersonId: 51 },
+        ]);
+        expect(collisions).toEqual([]);
     });
 });

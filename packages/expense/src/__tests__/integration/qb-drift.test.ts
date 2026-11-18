@@ -120,7 +120,7 @@ describeDb("QB-3 drift", () => {
     const { id } = await created("2026-09-10");
     const { id: billId } = await created("2026-09-11", { bill: true });
 
-    expect(await checkQbDrift()).toEqual({ checked: 2, drifted: 0, failed: 0 });
+    expect(await checkQbDrift()).toEqual({ checked: 2, drifted: 0, resolved: 0, failed: 0 });
     expect(await driftFlag(id)).toBeNull();
     expect(await driftFlag(billId)).toBeNull();
     expect(new Set(qbo.methods)).toEqual(new Set(["GET"]));
@@ -132,7 +132,7 @@ describeDb("QB-3 drift", () => {
     entry.VendorRef = { value: "78" };
     entry.Line = [line(7, "60"), line(5, "62")];
 
-    expect(await checkQbDrift()).toEqual({ checked: 1, drifted: 1, failed: 0 });
+    expect(await checkQbDrift()).toEqual({ checked: 1, drifted: 1, resolved: 0, failed: 0 });
     expect(await driftFlag(id)).toMatchObject({ audience: "FINANCE", detail: "amount, accounts, vendor", checkedOffAt: null });
   });
 
@@ -148,7 +148,7 @@ describeDb("QB-3 drift", () => {
     const { id, entry } = await created("2026-09-10");
     entry.TxnDate = "2026-09-12";
 
-    expect(await checkQbDrift()).toEqual({ checked: 1, drifted: 1, failed: 0 });
+    expect(await checkQbDrift()).toEqual({ checked: 1, drifted: 1, resolved: 0, failed: 0 });
     expect(await driftFlag(id)).toMatchObject({ detail: "date" });
     expect(JSON.parse((await driftFlag(id))?.observed ?? "null")).toEqual({ date: "2026-09-12" });
   });
@@ -238,10 +238,24 @@ describeDb("QB-3 drift", () => {
     expect(await db.expenseFlag.findFirst({ where: { expenseId: id, kind: "QB_POST_HELD" } })).toMatchObject({ checkedOffAt: null });
   });
 
+  it("leaves a matched entry's checked-off drift closed, and reopens on different drift", async () => {
+    const { id, entry } = await matched("2026-09-10");
+    entry.TotalAmt = 12;
+    await checkQbDrift();
+    await checkOff(id);
+
+    await checkQbDrift();
+    expect((await driftFlag(id))?.checkedOffAt).not.toBeNull();
+
+    entry.Line = [line(7, "60"), line(5, "62")];
+    await checkQbDrift();
+    expect(await driftFlag(id)).toMatchObject({ detail: "amount, accounts", checkedOffAt: null });
+  });
+
   it("raises nothing for a matched entry still as it was at match", async () => {
     const { id } = await matched("2026-09-10");
 
-    expect(await checkQbDrift()).toEqual({ checked: 1, drifted: 0, failed: 0 });
+    expect(await checkQbDrift()).toEqual({ checked: 1, drifted: 0, resolved: 0, failed: 0 });
     expect(await driftFlag(id)).toBeNull();
   });
 
@@ -249,7 +263,7 @@ describeDb("QB-3 drift", () => {
     const { id, entry } = await matched("2026-09-10");
     entry.TotalAmt = 12;
 
-    expect(await checkQbDrift()).toEqual({ checked: 1, drifted: 1, failed: 0 });
+    expect(await checkQbDrift()).toEqual({ checked: 1, drifted: 1, resolved: 0, failed: 0 });
     expect(await driftFlag(id)).toMatchObject({ audience: "FINANCE", detail: "amount", checkedOffAt: null });
     expect(await db.expense.findUniqueOrThrow({ where: { id } })).toMatchObject({ qbMatchState: "MATCHED", qbTxnId: entry.Id });
   });
@@ -274,7 +288,7 @@ describeDb("QB-3 drift", () => {
     const { id, entry } = await matched("2026-09-10", { legacy: true });
     entry.TotalAmt = 11;
 
-    expect(await checkQbDrift()).toEqual({ checked: 1, drifted: 0, failed: 0 });
+    expect(await checkQbDrift()).toEqual({ checked: 1, drifted: 0, resolved: 0, failed: 0 });
     expect(await driftFlag(id)).toBeNull();
     expect(JSON.parse((await baseline(id)) ?? "null")).toEqual({ amountCents: 1100, accounts: ["60", "61"], vendorId: null, txnDate: "2026-09-10" });
 
@@ -298,11 +312,78 @@ describeDb("QB-3 drift", () => {
     expect(qbo.methods).toHaveLength(MAX_DRIFT_CHECKS_PER_RUN);
   });
 
+  it("closes an open drift flag as the system once the entry matches again, and audits it", async () => {
+    const { id, entry } = await created("2026-09-10");
+    entry.TotalAmt = 12;
+    await checkQbDrift();
+    entry.TotalAmt = 10;
+
+    expect(await checkQbDrift(new Date("2026-11-15T09:00:00Z"))).toEqual({ checked: 1, drifted: 0, resolved: 1, failed: 0 });
+    expect(await driftFlag(id)).toMatchObject({ checkedOffByUserId: 0, checkedOffByUsername: "system", notes: "Resolved in QuickBooks 2026-11-15" });
+    expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "flag_checked_off", valueAfter: "QB_DRIFT", userId: 0 } })).toBe(1);
+
+    expect(await checkQbDrift()).toMatchObject({ resolved: 0 });
+  });
+
+  it("reopens a system-closed flag when the same drift returns", async () => {
+    const { id, entry } = await created("2026-09-10");
+    entry.TotalAmt = 12;
+    await checkQbDrift();
+    entry.TotalAmt = 10;
+    await checkQbDrift();
+    entry.TotalAmt = 12;
+
+    expect(await checkQbDrift()).toMatchObject({ drifted: 1, resolved: 0 });
+    expect(await driftFlag(id)).toMatchObject({ detail: "amount", checkedOffAt: null, notes: null });
+    expect(JSON.parse((await driftFlag(id))?.observed ?? "null")).toEqual({ amount: 1200 });
+  });
+
+  it("leaves a drift flag finance checked off untouched when the entry matches again", async () => {
+    const { id, entry } = await created("2026-09-10");
+    entry.TotalAmt = 12;
+    await checkQbDrift();
+    await checkOff(id);
+    entry.TotalAmt = 10;
+
+    expect(await checkQbDrift()).toMatchObject({ resolved: 0 });
+    expect(await driftFlag(id)).toMatchObject({ checkedOffByUserId: 5, checkedOffByUsername: "finance" });
+    expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "flag_checked_off" } })).toBe(0);
+  });
+
+  it("keeps the flag open while the entry is still drifted", async () => {
+    const { id, entry } = await created("2026-09-10");
+    entry.TotalAmt = 12;
+    await checkQbDrift();
+
+    expect(await checkQbDrift()).toMatchObject({ drifted: 1, resolved: 0 });
+    expect(await driftFlag(id)).toMatchObject({ detail: "amount", checkedOffAt: null });
+  });
+
+  it("yields to a finance check-off that lands between the read and the close", async () => {
+    const { id, entry } = await created("2026-09-10");
+    entry.TotalAmt = 12;
+    await checkQbDrift();
+    entry.TotalAmt = 10;
+    const read = db.expenseFlag.findFirst.bind(db.expenseFlag);
+    const spy = vi.spyOn(db.expenseFlag, "findFirst").mockImplementationOnce((async (args: Parameters<typeof read>[0]) => {
+      const open = await read(args);
+      await checkOff(id);
+      return open;
+    }) as unknown as typeof db.expenseFlag.findFirst);
+    try {
+      expect(await checkQbDrift()).toMatchObject({ resolved: 0, failed: 0 });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await driftFlag(id)).toMatchObject({ checkedOffByUserId: 5, checkedOffByUsername: "finance", notes: null });
+    expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "flag_checked_off" } })).toBe(0);
+  });
+
   it("is skipped while QuickBooks is unbound, and runs in the QuickBooks cron step", async () => {
     const { entry } = await created("2026-09-10");
     entry.TotalAmt = 12;
 
-    expect((await runExpenseQbPosting()).qbDrift).toEqual({ checked: 1, drifted: 1, failed: 0 });
+    expect((await runExpenseQbPosting()).qbDrift).toEqual({ checked: 1, drifted: 1, resolved: 0, failed: 0 });
     bindPorts({});
     expect(await checkQbDrift()).toBe("unbound");
   });

@@ -1,10 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { Badge, Button, Group, Modal, SegmentedControl, Stack, Text } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { notifications } from '@mantine/notifications';
-import { AlertBanner } from '@/components/admin/AlertBanner';
 import { DataTable, type DataTableColumn } from '@/components/admin/DataTable';
 import { PastPaymentPlanDecisions, type PaymentPlanDecisionRow } from '@/components/admin/PastPaymentPlanDecisions';
 import { useRequireRole } from '@/hooks/useRequireRole';
@@ -16,6 +14,8 @@ import { formatCents } from '@checkin/money';
 import { landsNextYear } from '@/lib/programYear';
 import { scholarshipRequestKindLabel } from '@/lib/scholarshipRequestKind';
 
+import { errorMessage, HttpError, LoadError, showError, showSuccess, useUrlChoice } from '@checkin/component-ui';
+import { api, useLoad } from '@/lib/api';
 import { PageLoader } from "@/components/ui/PageLoader";
 type HouseholdLead = { id: number; name: string | null; email: string | null };
 
@@ -62,6 +62,8 @@ const PAST_IDENTITY_COLUMNS: DataTableColumn<PastProgramDecision>[] = [
   { header: 'Program', render: (row) => <Text fw={500}>{row.programName}</Text> },
 ];
 
+const VIEWS = ['pending', 'past'] as const;
+
 export default function PendingParticipantsPage() {
   const { formatDateTime } = useOrgTime();
   const { user: me, ready, loading: authLoading } = useRequireRole(PAYMENT_PLAN_ROLES);
@@ -70,37 +72,21 @@ export default function PendingParticipantsPage() {
   const ownHousehold = (req: PaymentPlanRequest) =>
     sharesHousehold(me?.householdId, req.person.householdId);
 
-  const [requests, setRequests] = useState<PaymentPlanRequest[]>([]);
-  const [cutoff, setCutoff] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<'pending' | 'past'>('pending');
-  const [message, setMessage] = useState("");
+  const [view, setView] = useUrlChoice('view', VIEWS, 'pending');
   const [confirmApproveOpened, { open: openConfirmApprove, close: closeConfirmApprove }] = useDisclosure(false);
   const [pendingApproval, setPendingApproval] = useState<{ programId: number; participantId: number } | null>(null);
   const [confirmRefuseOpened, { open: openConfirmRefuse, close: closeConfirmRefuse }] = useDisclosure(false);
   const [pendingRefusal, setPendingRefusal] = useState<{ programId: number; participantId: number } | null>(null);
+  // The row whose write is in flight; its buttons stay disabled so a second click can't send again.
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const rowKey = (programId: number, participantId: number) => `${programId}-${participantId}`;
 
-  const fetchRequests = useCallback(() => fetch('/api/finance-ops/payment-plans')
-    .then(async (res) => {
-      if (res.ok) {
-        const data = await res.json();
-        setRequests(data.ProgramParticipant ?? []);
-        setCutoff(data.BoardSettings?.orgMembershipYearBoundary ?? null);
-      } else {
-        setMessage("Failed to load requests. You may not have access.");
-      }
-    })
-    .catch(() => {
-      notifications.show({ color: "red", message: "Network error loading requests.", autoClose: false });
-    })
-    .finally(() => {
-      setLoading(false);
-    }),
-  []);
-
-  useEffect(() => {
-    if (ready) fetchRequests();
-  }, [ready, fetchRequests]);
+  // Each read logs a finance view, so it reads once on mount and once after this page's own write, with no retry.
+  const { data, error: loadError, reload } = useLoad<{ ProgramParticipant?: PaymentPlanRequest[]; BoardSettings?: { orgMembershipYearBoundary?: string | null } | null }>(
+    ready ? '/api/finance-ops/payment-plans' : null,
+    { retry: false, reconnect: false, skipWriteReload: true },
+  );
+  const cutoff = data?.BoardSettings?.orgMembershipYearBoundary ?? null;
 
   const handleApprove = (programId: number, participantId: number) => {
     setPendingApproval({ programId, participantId });
@@ -108,28 +94,17 @@ export default function PendingParticipantsPage() {
   };
 
   const doApprove = async (programId: number, participantId: number) => {
+    setBusyKey(rowKey(programId, participantId));
     try {
-      const res = await fetch('/api/finance-ops/payment-plans', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ programId, participantId })
-      });
-
-      if (res.ok) {
-        setRequests(prev => prev.filter(r => !(r.programId === programId && r.personId === participantId)));
-        notifyNavRefresh();
-        notifications.show({ message: 'Scholarship / payment plan approved.' });
-      } else {
-        const data = await res.json();
-        if (data.error === "No pending payment-plan request") {
-          notifications.show({ color: 'red', message: data.error, autoClose: false });
-          fetchRequests();
-        } else {
-          notifications.show({ color: 'red', message: data.error || "Failed to approve.", autoClose: false });
-        }
-      }
-    } catch {
-      notifications.show({ color: 'red', message: "Network error processing approval.", autoClose: false });
+      await api('/api/finance-ops/payment-plans', { method: 'POST', body: JSON.stringify({ programId, participantId }) });
+      await reload();
+      notifyNavRefresh();
+      showSuccess('Scholarship / payment plan approved.');
+    } catch (e) {
+      showError(errorMessage(e));
+      if (e instanceof HttpError && e.status === 409) await reload();
+    } finally {
+      setBusyKey(null);
     }
   };
 
@@ -147,28 +122,17 @@ export default function PendingParticipantsPage() {
   };
 
   const doRefuse = async (programId: number, participantId: number) => {
+    setBusyKey(rowKey(programId, participantId));
     try {
-      const res = await fetch('/api/finance-ops/payment-plans/refuse', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ programId, participantId })
-      });
-
-      if (res.ok) {
-        setRequests(prev => prev.filter(r => !(r.programId === programId && r.personId === participantId)));
-        notifyNavRefresh();
-        notifications.show({ message: 'Scholarship / payment plan refused.' });
-      } else {
-        const data = await res.json();
-        if (data.error === "No pending payment-plan request") {
-          notifications.show({ color: 'red', message: data.error, autoClose: false });
-          fetchRequests();
-        } else {
-          notifications.show({ color: 'red', message: data.error || "Failed to refuse.", autoClose: false });
-        }
-      }
-    } catch {
-      notifications.show({ color: 'red', message: "Network error processing refusal.", autoClose: false });
+      await api('/api/finance-ops/payment-plans/refuse', { method: 'POST', body: JSON.stringify({ programId, participantId }) });
+      await reload();
+      notifyNavRefresh();
+      showSuccess('Scholarship / payment plan refused.');
+    } catch (e) {
+      showError(errorMessage(e));
+      if (e instanceof HttpError && e.status === 409) await reload();
+    } finally {
+      setBusyKey(null);
     }
   };
 
@@ -180,7 +144,7 @@ export default function PendingParticipantsPage() {
     await doRefuse(programId, participantId);
   };
 
-  if (authLoading || loading) {
+  if (authLoading) {
     return <PageLoader />;
   }
 
@@ -255,7 +219,7 @@ export default function PendingParticipantsPage() {
         <Group justify="flex-end" gap="xs" wrap="nowrap">
           <Button
             size="xs" fz={15} color="red" variant="light"
-            disabled={ownHousehold(req)}
+            disabled={ownHousehold(req) || busyKey === rowKey(req.programId, req.personId)}
             title={ownHousehold(req) ? "You can't refuse your own household's plan — someone outside your household must." : undefined}
             onClick={() => handleRefuse(req.programId, req.personId)}
           >
@@ -263,7 +227,7 @@ export default function PendingParticipantsPage() {
           </Button>
           <Button
             size="xs" fz={15} variant="light"
-            disabled={ownHousehold(req)}
+            disabled={ownHousehold(req) || busyKey === rowKey(req.programId, req.personId)}
             title={ownHousehold(req) ? "You can't approve your own household's plan — someone outside your household must." : undefined}
             onClick={() => handleApprove(req.programId, req.personId)}
           >
@@ -282,21 +246,23 @@ export default function PendingParticipantsPage() {
         they keep the seat they took when they asked.
       </Text>
 
-      <AlertBanner message={message} tone="error" />
-
       <SegmentedControl
         value={view}
-        onChange={(v) => setView(v === 'past' ? 'past' : 'pending')}
+        onChange={setView}
         data={[{ label: 'Pending', value: 'pending' }, { label: 'Past', value: 'past' }]}
         style={{ alignSelf: 'flex-start' }}
       />
 
       {view === 'past' ? (
         <PastPaymentPlanDecisions<PastProgramDecision> endpoint="/api/finance-ops/payment-plans/past" identityColumns={PAST_IDENTITY_COLUMNS} />
+      ) : loadError ? (
+        <LoadError what="payment plan requests" message={loadError} onRetry={reload} />
+      ) : !data ? (
+        <PageLoader />
       ) : (
         <DataTable
           columns={columns}
-          rows={requests}
+          rows={data.ProgramParticipant ?? []}
           getRowKey={(req) => `${req.programId}-${req.personId}`}
           emptyMessage="No pending scholarship or payment plan requests."
         />
@@ -325,7 +291,7 @@ export default function PendingParticipantsPage() {
         centered
       >
         <Text mb="lg">
-          Refuse this request? The participant stays enrolled and can pay normally, withdraw, or re-request later.
+          Refuse this request? The participant stays enrolled and can pay normally or withdraw.
         </Text>
         <Group justify="flex-end">
           <Button variant="default" onClick={closeConfirmRefuse}>Cancel</Button>

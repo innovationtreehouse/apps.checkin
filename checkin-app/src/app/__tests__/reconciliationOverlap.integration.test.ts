@@ -147,10 +147,11 @@ describe('reconciliation overlap check', () => {
 
             const res = await GET(request('/api/facility/visits?closedOut=true', 'GET'), noParams);
             expect(res.status).toBe(200);
-            const { visits } = await res.json() as { visits: { id: number; personId: number; facilityCloseId: number }[] };
+            const { visits } = await res.json() as { visits: { id: number; personId: number; facilityCloseId: number; facilityClose: { closedBy: { name: string } | null } }[] };
             const mine = visits.filter(v => v.personId === memberId);
             expect(mine.map(v => v.id)).toEqual([closedOut.id]);
             expect(mine[0].facilityCloseId).toBe(close.id);
+            expect(mine[0].facilityClose.closedBy?.name).toBe('Board');
         });
     });
 });

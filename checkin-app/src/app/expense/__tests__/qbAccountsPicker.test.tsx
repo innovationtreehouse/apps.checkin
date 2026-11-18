@@ -1,14 +1,15 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import QbAccountsPage from "@checkin/expense/pages/qbAccounts";
 
 const LIVE = "/api/books-map/quickbooks-accounts";
 const mockSend = jest.fn<Promise<boolean>, unknown[]>(async () => true);
 let mockLoads: Record<string, { data: unknown; error: string | null }> = {};
+let mockIsFinance = true;
 
 jest.mock("@checkin/expense/components/api", () => ({
   useLoad: (path: string | null) => ({ ...(path ? mockLoads[path] : null) ?? { data: null, error: null }, reload: () => {} }),
-  useRoles: () => ({ isFinance: true, isBoard: false }),
+  useRoles: () => ({ isFinance: mockIsFinance, isBoard: !mockIsFinance }),
   send: (...args: unknown[]) => mockSend(...args),
 }));
 
@@ -50,7 +51,10 @@ function renderPage(live: { data: unknown; error: string | null }, saved: unknow
 }
 
 describe("QuickBooks accounts page", () => {
-  beforeEach(() => mockSend.mockClear());
+  beforeEach(() => {
+    mockSend.mockClear();
+    mockIsFinance = true;
+  });
 
   it("offers only active Expense, Other Expense, Cost of Goods Sold and Fixed Asset accounts from QuickBooks", () => {
     renderPage({ data: liveAccounts, error: null });
@@ -74,6 +78,19 @@ describe("QuickBooks accounts page", () => {
     ]);
     expect(screen.getByRole("row", { name: /Supplies/ })).toHaveTextContent("Shop supplies");
     expect(screen.getByRole("row", { name: /Gone/ })).toHaveTextContent("Not in QuickBooks");
+  });
+
+  it("warns on a saved row whose QuickBooks account is inactive", () => {
+    renderPage({ data: liveAccounts, error: null }, [{ id: 3, name: "Old", qbAccount: "8009" }]);
+    const warning = screen.getByText("Old supplies is inactive in QuickBooks. Delete it and add an active account.").closest<HTMLElement>("[role=alert]")!;
+    expect(within(warning).getByRole("button", { name: "Update now" })).toBeInTheDocument();
+    expect(screen.queryByText(/\(inactive\)/)).not.toBeInTheDocument();
+  });
+
+  it("tells Board, who cannot delete, that Finance fixes an inactive account", () => {
+    mockIsFinance = false;
+    renderPage({ data: liveAccounts, error: null }, [{ id: 3, name: "Old", qbAccount: "8009" }]);
+    expect(screen.getByText("Old supplies is inactive in QuickBooks. Finance can fix this.")).toBeInTheDocument();
   });
 
   it("shows the load error and no way to type an id when QuickBooks can't be read", () => {

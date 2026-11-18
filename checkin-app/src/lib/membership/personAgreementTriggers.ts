@@ -9,7 +9,7 @@ import { personOrSystemActor } from "@/lib/auditActor";
  * An 18+ child of the household lead is a legal adult and cannot be bound by their
  * parent's signature, so they sign their own agreement.
  *
- * Rules: docs/rules/membership.md. Two things diverge from personBgTriggers.ts on
+ * Two things diverge from personBgTriggers.ts on
  * purpose — age is judged as-of NOW (not as-of the boundary) and the trigger runs
  * NIGHTLY (not annually). Both are load-bearing; see below.
  */
@@ -139,7 +139,7 @@ export async function openPersonAgreement(
             },
         });
         return created;
-    });
+    }, { maxWait: 5_000, timeout: 15_000 });
 }
 
 /** The caller's own open agreement, if any — the process they sign on /membership. */

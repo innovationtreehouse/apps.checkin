@@ -1,9 +1,8 @@
 "use client";
 import { useState } from "react";
 import { Badge, Button, Group, Stack, Table, Text, Tooltip } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
 import { IconAlertTriangle } from "@tabler/icons-react";
-import { errorMessage, LoadError, showError } from "@checkin/component-ui";
+import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
 import { formatGtinDisplay } from "../lib/gtin";
 import { api, useLoad } from "./api";
 import type { ReferenceConflictRow } from "./viewTypes";
@@ -20,7 +19,7 @@ export default function ReferenceConflictsClient() {
     setResolving(true);
     try {
       await api(`/reference-conflicts/${c.id}/resolve`, { method: "PUT", body: JSON.stringify({ resolution, existingGtin13: c.itemReference.gtin13 }) });
-      notifications.show({ message: "Conflict resolved", color: "green" });
+      showSuccess("Conflict resolved");
     } catch (e) { showError(errorMessage(e)); }
     finally {
       setResolving(false);

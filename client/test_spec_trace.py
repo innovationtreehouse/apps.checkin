@@ -4,6 +4,7 @@ and replay_drain against a scripted server, asserts what the kiosk did, and
 leaves one NDJSON trace per scenario in KIOSK_TRACE_DIR (a temp dir when
 unset). The first line is the scenario's topology."""
 
+import ast
 import glob
 import json
 import os
@@ -108,9 +109,12 @@ class TestSpecTraceScenarios(unittest.TestCase):
         with self.assertRaises(_Drained):
             replay_drain(self.outbox, server.post_scan, sleep_fn=stop_when_empty)
 
-    def events(self):
+    def trace(self):
         with open(self.file) as f:
-            return [json.loads(l)["event"]["name"] for l in f if json.loads(l)["tag"] == "trace"]
+            return [line["event"] for line in map(json.loads, f) if line["tag"] == "trace"]
+
+    def events(self):
+        return [event["name"] for event in self.trace()]
 
     def test_single_keyholder_close(self):
         server, state = self.begin("kiosk_single_keyholder_close", {K1, M1})
@@ -124,6 +128,8 @@ class TestSpecTraceScenarios(unittest.TestCase):
         self.assertEqual(server.sent[-1][1]["close"], "confirmed")
         self.assertEqual(state.present_ids, set())
         self.assertEqual(self.events().count("KioskLiveResult"), 2)
+        shown = [event["present"] for event in self.trace() if event["name"] == "KioskBadge"]
+        self.assertEqual(shown, [sorted({K1, M1}), [M1]], "each badge records who the kiosk showed inside")
 
     def test_two_keyholders(self):
         server, state = self.begin("kiosk_two_keyholders", {K1, K2})
@@ -207,7 +213,31 @@ class TestSpecTraceIsAbsentInProduction(unittest.TestCase):
             if os.path.basename(path).startswith("test_"):
                 continue
             with open(path) as f:
-                self.assertNotIn("spec_trace.start(", f.read(), path)
+                self.assertEqual(spec_trace_start_uses(f.read()), [], path)
+
+    def test_the_guard_sees_every_way_to_reach_start(self):
+        for source in ("import spec_trace\nspec_trace.start('t')\n",
+                       "import spec_trace as st\nst.start('t')\n",
+                       "from spec_trace import start\nstart('t')\n",
+                       "from spec_trace import start as go\ngo('t')\n",
+                       "from spec_trace import *\n"):
+            self.assertNotEqual(spec_trace_start_uses(source), [], source)
+        self.assertEqual(spec_trace_start_uses("import spec_trace\nspec_trace.emit('x')\n"), [])
+
+
+def spec_trace_start_uses(source):
+    """Line numbers where `source` reaches spec_trace.start, by any import form."""
+    tree = ast.parse(source)
+    names = {alias.asname or alias.name for node in ast.walk(tree) if isinstance(node, ast.Import)
+             for alias in node.names if alias.name == "spec_trace"}
+    uses = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "spec_trace":
+            uses += [node.lineno for alias in node.names if alias.name in ("start", "*")]
+        elif (isinstance(node, ast.Attribute) and node.attr == "start"
+              and isinstance(node.value, ast.Name) and node.value.id in names):
+            uses.append(node.lineno)
+    return uses
 
 
 if __name__ == "__main__":

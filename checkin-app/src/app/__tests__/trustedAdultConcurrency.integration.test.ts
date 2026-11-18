@@ -77,10 +77,15 @@ describe('trusted-adult mutation concurrency', () => {
         });
     }
 
+    // A renewal opens only inside the expiry warning window; move the live approval there.
+    const intoRenewalWindow = (taId: number) =>
+        prisma.trustedAdultReview.updateMany({ where: { trustedAdultId: taId, status: 'APPROVED' }, data: { reviewBy: new Date(Date.now() + 10 * 86_400_000) } });
+
     it('two concurrent renewals open exactly ONE pending review (not two)', async () => {
         // Latest review terminal (APPROVED) so a renewal is allowed.
         const ta = await disclose();
         await decideReview(ta.reviews[0].id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
+        await intoRenewalWindow(ta.id);
 
         const [a, b] = await Promise.allSettled([
             renewTrustedAdult(ta.id, leadId),

@@ -1,4 +1,4 @@
-// Expense route policy (docs/rules/expenses.md). Aggregated by ../registry.ts.
+// Expense route policy. Aggregated by ../registry.ts.
 import { defineRoute, type OrderedViewEntry, type Token } from '../core';
 
 // FINANCE and BOARD read the whole surface: money (`internal`), every person id
@@ -11,8 +11,8 @@ import { defineRoute, type OrderedViewEntry, type Token } from '../core';
 // adult or Treehouse Volunteer (`receipt-submitter`, for the submitter seat) or a
 // bucket approver, FINANCE or BOARD (`expense-approver`). That is wider than the
 // seat holders; the library refuses a caller who holds no seat on the line.
-// No view lists isSysadmin: Finance Ops excludes sysadmins
-// (docs/rules/revenue.md). Finance-only actions are `finance`.
+// No view lists isSysadmin: Finance Ops excludes sysadmins.
+// Finance-only actions are `finance`.
 //
 // NOT registered here, deliberately:
 //   • the org-bearer intake POST /api/expenses — checkin cannot gate a

@@ -16,6 +16,11 @@ describe("roleMergeBlock", () => {
         expect(roleMergeBlock(sysadminOnly, ["KEYHOLDER", "SYSADMIN"], [], "NONE")).toBeNull();
     });
 
+    it("refuses a non-board actor when KEY_VOLUNTEER moves", () => {
+        expect(roleMergeBlock(sysadminOnly, ["KEY_VOLUNTEER", "KEYHOLDER"], [], "NONE")?.status).toBe(403);
+        expect(roleMergeBlock(board, ["KEY_VOLUNTEER", "KEYHOLDER"], [], "NONE")).toBeNull();
+    });
+
     it("refuses a non-board actor when BOARD moves, even as a duplicate", () => {
         expect(roleMergeBlock(sysadminOnly, ["BOARD"], ["BOARD"], "ACTIVE")?.status).toBe(403);
     });

@@ -1,8 +1,8 @@
 /**
  * @jest-environment node
  *
- * Only the kiosk starts or ends a visit, and only the kiosk closes the building
- * (docs/rules/attendance-checkin.md). The attendance route is a read; a verb it
+ * Only the kiosk starts or ends a visit, and only the kiosk closes the building.
+ * The attendance route is a read; a verb it
  * does not export answers 405.
  */
 import * as attendanceRoute from "../route";

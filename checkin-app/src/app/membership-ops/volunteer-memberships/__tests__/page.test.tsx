@@ -2,12 +2,17 @@
 jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories run hoisted, before imports exist
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
 
 import { screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl } from "@/test-helpers/rtl";
+import { notifications } from "@mantine/notifications";
 import VolunteerMembershipsPage from "../page";
 
-beforeEach(() => resetRtl());
+beforeEach(() => {
+  resetRtl();
+  (notifications.show as jest.Mock).mockClear();
+});
 
 const ROSTER = "/api/membership-ops/volunteer-memberships";
 const DESIGNATIONS = "/api/settings/membership/volunteer-designations";
@@ -220,13 +225,16 @@ describe("membership-ops/volunteer-memberships page", () => {
 
   it("surfaces a failed remove instead of silently reporting success", async () => {
     setSession({ id: 1, isSysadmin: true });
-    mockFetchJson({ [ROSTER]: roster }); // DELETE 404s
+    const answer = (status: number, body: unknown) => ({ ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) }) as Response;
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+      init?.method === "DELETE" ? answer(404, { error: "That designation is gone." }) : answer(200, roster)) as unknown as typeof fetch;
     renderWithProviders(<VolunteerMembershipsPage />);
     await screen.findByText("zoe@example.com");
 
     fireEvent.click(screen.getByRole("button", { name: "Remove zoe@example.com" }));
 
-    expect(await screen.findByText(/Could not remove that designation/)).toBeInTheDocument();
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "That designation is gone.", autoClose: false })));
+    expect(notifications.show).not.toHaveBeenCalledWith(expect.objectContaining({ message: "Designation removed." }));
     // The row is still there — nothing was removed.
     expect(screen.getByText("zoe@example.com")).toBeInTheDocument();
   });

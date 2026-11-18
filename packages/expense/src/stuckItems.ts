@@ -1,10 +1,10 @@
 import { ServiceError, type StuckItem } from "@checkin/component-kit";
 import { db } from "./db";
 import { getOrgId } from "./runtime";
-import { checkAndProcessExpense } from "./lib/expense-qb-processor";
-import { retryFailedPost } from "./lib/expense-qb-poster";
+import { checkAndProcessExpense, retryQbPost } from "./lib/expense-qb-processor";
 import { FAILED_AGAIN } from "./lib/retry";
-import { retryRefusal } from "./services/holdService";
+import type { Actor } from "./lib/workflow-engine";
+import { NO_SINGLE_ACCOUNT, retryRefusal } from "./services/holdService";
 import { retryCatalogEvent } from "./services/catalogEventConsumer";
 import { retryFailedPayload } from "./services/intakeService";
 
@@ -44,11 +44,12 @@ export async function stuckItems(): Promise<StuckItem[]> {
 }
 
 /**
- * Runs the item's step once. Safe to repeat: intake's "already applied" check, the event ledger
+ * Runs the item's step once for the person `by` who pressed Retry; a QuickBooks step reads the live
+ * catalog, as finance's Retry does. Safe to repeat: intake's "already applied" check, the event ledger
  * and the post's claim hold. A step that fails again stays stuck with its first failure time and
  * answers an error that carries no error text; one that is not stuck answers 404.
  */
-export async function retryStuckItem({ id, step }: { id: string; step: string }): Promise<void> {
+export async function retryStuckItem({ id, step }: { id: string; step: string }, by: Actor): Promise<void> {
   switch (step) {
     case INTAKE:
       return retryFailedPayload(id);
@@ -57,14 +58,16 @@ export async function retryStuckItem({ id, step }: { id: string; step: string })
     case QB_PROCESSING: {
       const orgId = await getOrgId();
       if (!(await db.expense.findFirst({ where: { id, orgId, state: "qb_error" }, select: { id: true } }))) throw new ServiceError(404, "No failed QuickBooks processing for this expense");
-      await checkAndProcessExpense(orgId, id);
+      await checkAndProcessExpense(orgId, id, by);
       if (await db.expense.findFirst({ where: { id, state: "qb_error" }, select: { id: true } })) throw new ServiceError(409, FAILED_AGAIN);
       return;
     }
     case QB_POSTING: {
       const orgId = await getOrgId();
       if (!(await db.expense.findFirst({ where: { id, orgId, ...FAILED_POST }, select: { id: true } }))) throw new ServiceError(404, "No failed QuickBooks post for this expense");
-      const refusal = retryRefusal(await retryFailedPost(orgId, id));
+      const outcome = await retryQbPost(orgId, id, by);
+      if (outcome === false) throw new ServiceError(409, NO_SINGLE_ACCOUNT);
+      const refusal = retryRefusal(outcome);
       if (refusal) throw refusal;
       return;
     }

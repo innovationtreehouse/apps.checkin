@@ -1,8 +1,8 @@
 /**
  * @jest-environment node
  *
- * The catalog review queues are INVENTORY_MANAGER-only reads; finished catalog
- * data stays open to every catalog viewer (docs/rules/inventory.md, Access).
+ * The catalog review queues, and filing into them, are INVENTORY_MANAGER-only;
+ * finished catalog data stays open to every catalog viewer.
  */
 import { getRoute } from '@/security/core';
 import '@/security/registry';
@@ -12,6 +12,10 @@ const REVIEW_QUEUE_READS = [
     'GET /api/catalog/provisional-items',
     'GET /api/catalog/reference-conflicts',
     'GET /api/catalog/conversion-challenges',
+];
+
+const REVIEW_QUEUE_FILINGS = [
+    'POST /api/catalog/conversion-challenges',
 ];
 
 const FINISHED_CATALOG_READS = [
@@ -29,6 +33,13 @@ describe('catalog read admission', () => {
         const spec = getRoute(endpoint);
         expect(spec?.authorize).toBe('inventory-manager');
         expect(spec?.orderedView.map(([role]) => role)).toEqual(['isInventoryManager']);
+    });
+
+    it.each(REVIEW_QUEUE_FILINGS)('%s admits INVENTORY_MANAGER only', (endpoint) => {
+        const spec = getRoute(endpoint);
+        expect(spec?.authorize).toBe('inventory-manager');
+        expect(spec?.orderedView.map(([role]) => role)).toEqual(['isInventoryManager']);
+        expect(spec?.returns).toEqual(['ConversionChallenge']);
     });
 
     it.each(FINISHED_CATALOG_READS)('%s admits any catalog viewer', (endpoint) => {

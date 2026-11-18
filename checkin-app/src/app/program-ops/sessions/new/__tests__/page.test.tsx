@@ -79,4 +79,32 @@ describe("NewEventPage", () => {
     fireEvent.change(screen.getByLabelText("End Time", { exact: false }), { target: { value: "17:00" } });
     expect(screen.getByText("End time must be after start time")).toBeInTheDocument();
   });
+
+  it("flags a recurrence with no days and an end date before the start on the fields, and does not post", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const fetchMock = mockFetchJson({ "/api/programs": programs });
+    renderWithProviders(<NewEventPage />);
+    await screen.findByText("Schedule Event");
+
+    fireEvent.change(screen.getByLabelText("Event Name", { exact: false }), { target: { value: "Session 1" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Generate Recurring Events" }));
+    fireEvent.change(screen.getByLabelText("Start Date", { exact: false }), { target: { value: "2026-02-10" } });
+    fireEvent.change(screen.getByLabelText("Start Time", { exact: false }), { target: { value: "18:00" } });
+    fireEvent.change(screen.getByLabelText("End Time", { exact: false }), { target: { value: "20:00" } });
+    const until = screen.getByLabelText("Ends On", { exact: false });
+    fireEvent.change(until, { target: { value: "2026-03-01" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Event(s)" }));
+
+    expect(screen.getByText("Pick at least one day of the week.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sun" })).toHaveFocus();
+
+    fireEvent.click(screen.getByRole("button", { name: "Tue" }));
+    fireEvent.change(until, { target: { value: "2026-02-01" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Event(s)" }));
+
+    expect(until).toHaveAttribute("aria-invalid", "true");
+    expect(until).toHaveFocus();
+    expect(screen.getByText("The end date must be on or after the start date.")).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/events", expect.objectContaining({ method: "POST" }));
+  });
 });

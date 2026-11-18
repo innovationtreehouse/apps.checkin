@@ -8,8 +8,7 @@ purchasing pipeline. It runs in the checkin process against its own database,
 private S3 bucket is partly built, and [File storage](#file-storage) says exactly
 how far it has got.
 
-This file describes the shape of the code. The rules a change must not violate,
-such as who may approve or discard a receipt, are in `docs/rules/expenses.md`.
+This file describes the shape of the code.
 
 ---
 
@@ -109,8 +108,7 @@ reimbursee, the vendor or `needsReimbursement`.
 lines in one transaction with the move to `uploaded`. Any failure moves the receipt
 to `ocr_failed` with the reason in `validationNotes` and writes nothing from the
 reading. A reading with lines but no retailer, date or total counts as good; the
-pipeline sends it to `submitter_review` to be filled in. The rule is in
-`docs/rules/expenses.md`.
+pipeline sends it to `submitter_review` to be filled in.
 
 From `ocr_failed` a person can type the details and resubmit, retry the reading,
 discard the receipt or reject it. A good reading replaces whatever was typed, so the
@@ -169,8 +167,8 @@ up to 30 days without losing mail.
 **Files in a message**, in reading order: each attachment of an accepted type, each
 inline part of an accepted non-text type at 5 KB or more, then the body stored as
 text. A body with no amount written to two decimals is skipped. A message attached
-whole is never opened, only counted. Finance's ignore list skips a file by exact
-hash, and upload never consults that list.
+whole is never opened, only counted. Finance's ignore list, which finance adds to from
+a discarded or rejected receipt, skips a file by exact hash, and upload never consults that list.
 
 **Sender.** The address counts only when the message has one `From` with one
 address, and the topmost `Authentication-Results`, written by `mx.google.com`,
@@ -196,11 +194,13 @@ shows a DMARC pass for that domain and a DKIM pass signed by exactly that domain
 
 Mail a run leaves unread is stored in `ReceiptMailAtRisk`, and finance gets one
 alert once such a message would leave the window before the next run. A failed
-listing alerts finance on every run and counts as a failure in the cron result.
+listing sends no alert of its own: it counts as a failure in the cron result, so
+the Problems list shows the job's latest run as failed and the daily problems email
+lists it.
 
 ## Daily steps
 
-There are no schedules of the library's own and nothing runs at boot. Three steps
+There are no schedules of the library's own and nothing runs at boot. Four steps
 run inside the host's existing daily `/api/cron/reconcile-shopify`, in this order,
 each in its own `try/catch` and each returning counts only. None retries a failed step:
 
@@ -208,15 +208,20 @@ each in its own `try/catch` and each returning counts only. None retries a faile
 |---|---|---|
 | `sweepInterruptedOcr` | `auto_upload` older than ten minutes to `ocr_failed` | 50 |
 | `sweepStuckUploaded` | `uploaded` idle for over an hour to `flow_error` | 50 |
-| `readMailbox` | the mailbox, last because it is the only slow step | as above |
+| `readMailbox` | the mailbox, the only slow step | as above |
+| `sweepOutcomeNotices` | sends the outcome emails still owed to a receipt's uploader and the person reimbursed; a notice is given up after three failed sends | 50 |
 
 ## Stuck receipts
 
 After input, a receipt that fails a step is stuck in it: `flow_error`, or finalized with
 `pushedAt` null. `firstFailedAt` keeps when the step first failed, and `lastError` the latest
-failure's error; a step that succeeds clears both. `stuckItems()` lists stuck receipts for
-the Problems list, timed by `firstFailedAt`, with no error text. `retryStuckItem({ id, step })`
-runs the step once ("flow" or "push to mapping"), and nothing retries by itself. Finance sees
+failure's error; a step that succeeds clears both. A finalized receipt with `pushedAt` null
+counts as stuck by its state alone once `PUSH_GRACE_MS` (ten minutes) has passed since its
+finalize, so a push that crashed or could not record its failure is still found. A failure that
+cannot be recorded is logged with the receipt id. `stuckItems()` lists stuck receipts for the
+Problems list with no error text, timed by `firstFailedAt`, or failing that by the finalize. `retryStuckItem({ id, step })`
+runs the step once ("flow" or "push to mapping"), and nothing retries by itself. It answers 404
+for a receipt not stuck in that step and 409 when the receipt is still stuck afterwards. Finance sees
 `lastError` on the receipt's own page.
 
 A failed reading leaves nothing stuck: the receipt waits in `ocr_failed` for its submitter. So
@@ -257,8 +262,9 @@ is not yet paid, and a failed read shows as "status unavailable".
 ## File storage
 
 The S3 move is partly built. The code to write to and read from a bucket has
-shipped behind a flag that defaults to off, and the steps that would empty the
-database column have not been built. Whether the buckets exist, and whether the
+shipped behind a flag that defaults to off, and so has the task that copies
+existing rows to the bucket. The steps that would empty the database column have
+not been built. Whether the buckets exist, and whether the
 flag is on in a given environment, is set outside this repo.
 
 **Built.**
@@ -267,7 +273,7 @@ flag is on in a given environment, is set outside this repo.
   takes no AWS dependency. `checkin-app/src/lib/receipt/fileStore.ts` binds S3 on
   every deployed instance and a temp directory under `CHECKIN_ENV=local`. The S3 put
   is write-once (`If-None-Match: *`) and carries a SHA-256 checksum. The temp-directory
-  store refuses a second write and does not check the hash.
+  store also refuses a second write, and refuses bytes that miss their SHA-256.
 - `file_key` and `file_size` exist on `receipts` and `receipt_mail_items`, and
   `receipts.file_blob` is nullable.
 - `RECEIPT_FILES_S3=true` sends new files to the bucket. The object goes first and
@@ -279,6 +285,11 @@ flag is on in a given environment, is set outside this repo.
 - Assigning or discarding a stored mail item deletes its object after the commit.
   A discarded item keeps its `fileKey`, to name the object for an admin restore; an
   assigned one clears it.
+- `backfillFiles` and `verifyFiles` in `src/services/fileBackfill.ts`, run by
+  `checkin-app/scripts/receipt-file-backfill.ts`, copy existing rows' bytes to the
+  store and check the copy. The copy sets `file_key` and `file_size` and never
+  touches `file_blob`. How and when to run it is in
+  `docs/ops/receipt-files-backfill.md`.
 - Daily byte limits sum `file_size`, falling back to the column's length for older
   rows. The config-health page reports a flag that is on with no
   `RECEIPT_FILES_S3_BUCKET`, and with the flag on and no bucket a deployed instance
@@ -286,8 +297,6 @@ flag is on in a given environment, is set outside this repo.
 
 **Not built.**
 
-- A task that copies existing rows' bytes to the bucket and verifies them. Rows
-  stored in `file_blob` stay there.
 - Removing the `file_blob` reads and the flag, then dropping the column.
 - Retention: nothing deletes a receipt file on a schedule.
 - Automatic discard of held mail nobody acts on: a held item waits for finance.

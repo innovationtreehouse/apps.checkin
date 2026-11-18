@@ -4,6 +4,7 @@
 export const classifications = {
     ExpenseOrgSettings: {
         orgId: 'internal',
+        capitalReviewEnabled: 'internal',
         capitalTotalThresholdCents: 'internal',
         capitalLineItemThresholdCents: 'internal',
         boardReviewTotalCents: 'internal',
@@ -254,8 +255,17 @@ export const classifications = {
         sourceReceiptId: 'internal',
         sourceQbTxnId: 'internal',
         sourceDonatedLineId: 'internal',
+        sourceKind: 'internal',
+        sourceGiftSource: 'internal',
+        sourceGiftId: 'internal',
+        sourceGiftLineId: 'internal',
+        unitIndex: 'internal',
         seeded: 'internal',
         createdAt: 'internal',
+    },
+    CapitalAssetSequence: {
+        orgId: 'internal',
+        highestIssued: 'internal',
     },
     DonatedCapitalLine: {
         id: 'internal',
@@ -382,6 +392,8 @@ export const relations = {
     ExpenseReceivedOrgEvent: {
     },
     CapitalAsset: {
+    },
+    CapitalAssetSequence: {
     },
     DonatedCapitalLine: {
     },

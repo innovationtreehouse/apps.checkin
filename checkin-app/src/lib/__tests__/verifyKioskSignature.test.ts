@@ -14,7 +14,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { buildingLink, getKioskClockSkew, resetKioskSeen } from '../kioskSeen';
-import { verifyKioskSignature } from '../verify-kiosk';
+import { kioskKeyFingerprint, verifyKioskSignature } from '../verify-kiosk';
 
 /** Generate an Ed25519 keypair and return the raw 32-byte public key + a signer. */
 function makeKeypair() {
@@ -190,7 +190,11 @@ describe('verifyKioskSignature', () => {
         const sig = newKey.sign(ts, nonce, 'POST', '/api/scan', '');
         // Server still lists the old key first, then the new one.
         const res = verifyKioskSignature('POST', '/api/scan', '', ts, sig, nonce, [oldKey.rawPublic, newKey.rawPublic]);
-        expect(res.ok).toBe(true);
+        expect(res).toEqual({ ok: true, keyFingerprint: kioskKeyFingerprint(newKey.rawPublic) });
+    });
+
+    it('fingerprints a key as the first 16 hex of SHA-256 over its raw bytes', () => {
+        expect(kioskKeyFingerprint(Buffer.alloc(32, 1))).toBe('72cd6e8422c407fb');
     });
 
     it('rejects when none of the configured keys match', () => {
@@ -266,6 +270,6 @@ describe('kiosk signing contract (golden vector shared with the Python client)',
             vector.nonce,
             publicKey
         );
-        expect(res).toEqual({ ok: true });
+        expect(res).toEqual({ ok: true, keyFingerprint: kioskKeyFingerprint(publicKey) });
     });
 });

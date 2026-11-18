@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * GET /api/cron/qbo-posting: admits only QBO_POSTING_CRON_SECRET, runs the expense, donation and
+ * GET /api/cron/qbo-posting: admits only QBO_POSTING_CRON_SECRET, refreshes the copy of QuickBooks' lists, runs the expense, donation and
  * in-kind QuickBooks steps, income's drain and income's orphan sweep (each isolated), records the run, and answers `{}`.
  */
 import type { NextRequest as NextRequestType } from 'next/server';
@@ -13,6 +13,7 @@ import { authenticateRequest } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { reportTo } from '@/lib/finishRun';
 import { evaluateRun } from '@/lib/runIncidents';
+import { refreshQuickBooksLists } from '@/lib/finance/quickBooksLists';
 import { GET } from '../route';
 
 jest.mock('@/lib/auth', () => ({ authenticateRequest: jest.fn() }));
@@ -21,6 +22,7 @@ jest.mock('@/lib/runIncidents', () => ({ evaluateRun: jest.fn() }));
 jest.mock('@checkin/expense', () => ({ runExpenseQbPosting: jest.fn() }));
 jest.mock('@checkin/bulk-donation', () => ({ runDonationDepositHandOver: jest.fn(), runInKindQbPosting: jest.fn() }));
 jest.mock('@checkin/income', () => ({ drainIncomeOutbox: jest.fn(), runIncomeOrphanSweep: jest.fn() }));
+jest.mock('@/lib/finance/quickBooksLists', () => ({ refreshQuickBooksLists: jest.fn() }));
 jest.mock('@/lib/components/host', () => ({ getOrg: jest.fn().mockResolvedValue({ id: 'org-1', name: 'Org' }) }));
 const { NextRequest } = jest.requireActual<{ NextRequest: typeof NextRequestType }>('next/server');
 
@@ -48,6 +50,7 @@ describe('GET /api/cron/qbo-posting', () => {
         jest.mocked(runInKindQbPosting).mockResolvedValue('unbound');
         jest.mocked(drainIncomeOutbox).mockResolvedValue({ reconcile: { status: 'unbound' }, post: 'unbound' });
         jest.mocked(runIncomeOrphanSweep).mockResolvedValue({ status: 'unbound' });
+        jest.mocked(refreshQuickBooksLists).mockResolvedValue(null);
     });
 
     afterAll(() => {
@@ -110,6 +113,29 @@ describe('GET /api/cron/qbo-posting', () => {
         await GET(req());
 
         expect(jest.mocked(evaluateRun).mock.calls[0][0].lanes).toEqual(['qbo-posting', 'bulk-donation in-kind-posting', 'income deposit-build']);
+    });
+
+    it('covers the lists refresh when it ran', async () => {
+        jest.mocked(refreshQuickBooksLists).mockResolvedValue({ refreshedAt: new Date(), accounts: 3, classes: 2 });
+
+        await GET(req());
+
+        expect(jest.mocked(evaluateRun).mock.calls[0][0].lanes).toEqual(['qbo-posting', 'quickbooks lists-refresh']);
+    });
+
+    it('files a failed lists refresh under its lane and the QuickBooks cause, and still runs every posting step', async () => {
+        jest.mocked(refreshQuickBooksLists).mockRejectedValue(new Error('QuickBooks down'));
+        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+        await GET(req());
+
+        const run = jest.mocked(evaluateRun).mock.calls[0][0];
+        expect(run.lanes).toEqual(['qbo-posting']);
+        expect(run.failures).toEqual([{ lane: 'quickbooks lists-refresh', cause: 'quickbooks', kind: 'bug', code: 'lists crashed', count: 1, stopped: false }]);
+        expect(runExpenseQbPosting).toHaveBeenCalledTimes(1);
+        expect(runIncomeOrphanSweep).toHaveBeenCalledTimes(1);
+        expect(create.mock.calls[0][0].data).toMatchObject({ success: true, error: 'failed: lists' });
+        logged.mockRestore();
     });
 
     it('files a crashed drain under its lane and cause, leaving the lane uncovered', async () => {

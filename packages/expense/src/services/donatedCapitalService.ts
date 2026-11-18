@@ -1,4 +1,4 @@
-// Capital review of donated equipment (docs/rules/expenses.md, Receipts): a gift line at or over the capital thresholds
+// Capital review of donated equipment: a gift line at or over the capital thresholds
 // is reviewed by finance like a purchased line, and an asset line mints into the one register.
 import { z } from "zod";
 import { db } from "../db";
@@ -9,6 +9,7 @@ import { writeOrgAudit } from "../lib/audit";
 import { classifyCapital } from "../lib/expense-rules";
 import { formatItfa, fullyDepreciatedDate, nextItfaSeq } from "../lib/capital-register";
 import { requireFinance, requireLiveBuckets } from "./approvalService";
+import { readExpenseSettings } from "./settingsService";
 import { ServiceError } from "@checkin/component-kit";
 import { allocateCents } from "@checkin/money";
 import { DonatedCapitalLineSchema, type DonatedCapitalLine } from "@checkin/receipt-types";
@@ -42,7 +43,7 @@ export function unitCosts(costCents: number, units: number): number[] {
 export async function submitDonatedLines(orgId: string, sent: DonatedCapitalLine[]): Promise<void> {
   await assertOrg(orgId);
   const lines = DonatedCapitalLineSchema.array().parse(sent);
-  const settings = await db.expenseOrgSettings.findFirst({ where: { orgId } });
+  const settings = await readExpenseSettings(db, orgId);
   const candidates = lines.filter((l) =>
     classifyCapital(l.costCents, [{ unitPriceCents: unitCosts(l.costCents, unitsOf(l.quantity))[0] }], settings),
   );

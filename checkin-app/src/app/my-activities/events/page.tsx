@@ -5,10 +5,9 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Badge, Button, Card, Group, SimpleGrid, Stack, Text, Title } from '@mantine/core';
-import { notifications } from "@mantine/notifications";
-import { LoadError } from "@checkin/component-ui";
+import { errorMessage, LoadError, showError } from "@checkin/component-ui";
 import { useOrgTime } from '@/components/TimezoneProvider';
-import { useLoad } from "@/lib/api";
+import { api, useLoad } from "@/lib/api";
 import { useSeedForm } from "@/hooks/useSeedForm";
 import type { RSVPStatus } from '@/types/rsvp';
 
@@ -72,22 +71,16 @@ export default function ParticipantEventsDashboard() {
     setSaving((n) => n + 1);
 
     try {
-      const res = await fetch(`/api/events/${eventId}/rsvp`, {
+      await api(`/api/events/${eventId}/rsvp`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus, participantId })
       });
-      if (!res.ok) {
-        // Non-OK doesn't throw — revert the optimistic update and surface the error.
-        const body = await res.json().catch(() => ({}));
-        setRsvp(previous);
-        notifications.show({ color: "red", message: body.error || "Failed to update RSVP.", autoClose: false });
-      }
-    } catch {
+    } catch (e) {
       setRsvp(previous);
+      showError(errorMessage(e));
+      reload();
     } finally {
       setSaving((n) => n - 1);
-      reload();
     }
   };
 

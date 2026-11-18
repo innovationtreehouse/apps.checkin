@@ -150,7 +150,7 @@ describe("what the server says", () => {
     [403, json({ error: "Forbidden" }, 403), "Forbidden"],
     [404, json({ error: "No such thing" }, 404), "No such thing"],
     [400, json({ error: "Bad input" }, 400), "Bad input"],
-    [200, new Response("<html>", { status: 200 }), "Unexpected non-JSON response (HTTP 200)"],
+    [200, new Response("<html>", { status: 200 }), "Something went wrong. Try again."],
   ])("HTTP %i does not retry and reports the answer", async (status, answer, message) => {
     const fetchMock = stubFetch(() => answer.clone());
     const { result } = renderHook(() => useLoad("/x"));
@@ -193,7 +193,7 @@ describe("what the server says", () => {
     expect(result.current.map((l) => [l.retrying, l.error])).toEqual([[true, null], [true, null]]);
     await advance(30000);
     expect(fetchMock).toHaveBeenCalledTimes(5);
-    expect(result.current.map((l) => l.error)).toEqual(["HTTP 500", "HTTP 500"]);
+    expect(result.current.map((l) => l.error)).toEqual(["Something went wrong. Try again.", "Something went wrong. Try again."]);
   });
 });
 
@@ -443,6 +443,73 @@ describe("a write re-reads cached loads", () => {
     await api("/y", { method: "POST", invalidate: false });
     await advance();
     expect(gets(fetchMock)).toBe(1);
+  });
+});
+
+describe("loads that opt out of re-reads", () => {
+  // SWR bound its reconnect callback to the real setTimeout when its cache was created.
+  const realSetTimeout = globalThis.setTimeout;
+  const reconnectAfterDedupe = async () => {
+    await advance(6000);
+    window.dispatchEvent(new Event("online"));
+    await act(() => new Promise<void>((resolve) => { realSetTimeout(resolve, 0); }));
+    await advance();
+  };
+
+  it("re-reads on reconnect by default", async () => {
+    const fetchMock = stubFetch(() => json([1]));
+    renderHook(() => useLoad<number[]>("/x"));
+    await advance();
+    await reconnectAfterDedupe();
+    expect(gets(fetchMock)).toBe(2);
+  });
+
+  it("reconnect: false does not re-read on reconnect", async () => {
+    const fetchMock = stubFetch(() => json([1]));
+    renderHook(() => useLoad<number[]>("/x", { reconnect: false }));
+    await advance();
+    await reconnectAfterDedupe();
+    expect(gets(fetchMock)).toBe(1);
+  });
+
+  it("skipWriteReload is not re-read after another write, but is by its own reload", async () => {
+    const fetchMock = stubFetch(() => json([1]));
+    const { result } = renderHook(() => useLoad<number[]>("/x", { skipWriteReload: true }));
+    await advance();
+    await api("/y", { method: "POST" });
+    await advance();
+    expect(gets(fetchMock)).toBe(1);
+    await act(() => result.current.reload());
+    expect(gets(fetchMock)).toBe(2);
+  });
+
+  it("a held key is re-read after a write again once its page unmounts", async () => {
+    const fetchMock = stubFetch(() => json([1]));
+    renderHook(() => useLoad<number[]>("/x", { skipWriteReload: true })).unmount();
+    await advance();
+    await api("/y", { method: "POST" });
+    renderHook(() => useLoad<number[]>("/x", { skipWriteReload: true }));
+    await advance();
+    expect(gets(fetchMock)).toBe(2);
+  });
+
+  it("a hold is per URL, so a default mount of the same URL also skips the write's re-read", async () => {
+    const fetchMock = stubFetch(() => json([1]));
+    renderHook(() => [useLoad<number[]>("/x", { skipWriteReload: true }), useLoad<number[]>("/x")]);
+    await advance();
+    await api("/y", { method: "POST" });
+    await advance();
+    expect(gets(fetchMock)).toBe(1);
+  });
+
+  it("another load still re-reads after a write while one key is held", async () => {
+    const fetchMock = stubFetch(() => json([1]));
+    renderHook(() => [useLoad<number[]>("/held", { skipWriteReload: true }), useLoad<number[]>("/free")]);
+    await advance();
+    await api("/y", { method: "POST" });
+    await advance();
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/things/held")).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/things/free")).toHaveLength(2);
   });
 });
 

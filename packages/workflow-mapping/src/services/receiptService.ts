@@ -3,7 +3,8 @@ import { DEFAULT_CURRENCY } from "@checkin/receipt-types";
 import { db } from "../db";
 import { receivedReceiptStateEnum, type ReceivedReceiptState } from "../db/schema";
 import { executePushAndSettle, type ApplyResult } from "../lib/apply-receipt";
-import { insertAuditEvent } from "../lib/audit";
+import { insertAuditEvent, parseAuditDetails } from "../lib/audit";
+import { LEG_LABEL, receiptLegs, type CloseOutBody } from "../lib/legs";
 import { parseStoredReceipt } from "../lib/parse-receipt";
 import { getOrgId, ports, requireActor } from "../runtime";
 import {
@@ -135,21 +136,23 @@ export const receiptService = {
 
     const nextState = assertWorkflowMappingTransition(received.state as ReceivedReceiptState, "PROCEED");
 
-    // Compare-and-set: a concurrent proceed (manual or auto) that already moved it wins.
-    const { count } = await db.receivedReceipt.updateMany({
-      where: { id: receiptId, state: received.state },
-      data: { state: nextState, matchingPendingSince: null },
-    });
-    if (count !== 1) throw httpError(409, "Receipt was already proceeded");
+    await db.$transaction(async (tx) => {
+      // Compare-and-set: a concurrent proceed (manual or auto) that already moved it wins.
+      const { count } = await tx.receivedReceipt.updateMany({
+        where: { id: receiptId, state: received.state },
+        data: { state: nextState, matchingPendingSince: null },
+      });
+      if (count !== 1) throw httpError(409, "Receipt was already proceeded");
 
-    await insertAuditEvent(db, {
-      orgId: received.orgId,
-      actorUserId: actor.id,
-      actorUsername: actor.name,
-      eventType: "receipt_proceeded",
-      receivedReceiptId: receiptId,
-      fromState: received.state,
-      toState: nextState,
+      await insertAuditEvent(tx, {
+        orgId: received.orgId,
+        actorUserId: actor.id,
+        actorUsername: actor.name,
+        eventType: "receipt_proceeded",
+        receivedReceiptId: receiptId,
+        fromState: received.state,
+        toState: nextState,
+      });
     });
 
     return { state: nextState };
@@ -180,21 +183,73 @@ export const receiptService = {
     }
     const nextState = assertWorkflowMappingTransition(received.state as ReceivedReceiptState, "RETRY");
 
-    // Compare-and-set from apply_failed or a stuck applying; an apply racing an in-flight push gets 409 from its claim, and any re-send is a replay.
-    const { count } = await db.receivedReceipt.updateMany({
-      where: { id: receiptId, state: received.state, updatedAt: received.updatedAt },
-      data: { state: nextState },
-    });
-    if (count !== 1) throw httpError(409, "Receipt was already retried");
+    await db.$transaction(async (tx) => {
+      // Compare-and-set from apply_failed or a stuck applying; an apply racing an in-flight push gets 409 from its claim, and any re-send is a replay.
+      const { count } = await tx.receivedReceipt.updateMany({
+        where: { id: receiptId, state: received.state, updatedAt: received.updatedAt },
+        data: { state: nextState },
+      });
+      if (count !== 1) throw httpError(409, "Receipt was already retried");
 
-    await insertAuditEvent(db, {
-      orgId: received.orgId,
-      actorUserId: actor.id,
-      actorUsername: actor.name,
-      eventType: "receipt_retry_started",
-      receivedReceiptId: receiptId,
-      fromState: received.state,
-      toState: nextState,
+      await insertAuditEvent(tx, {
+        orgId: received.orgId,
+        actorUserId: actor.id,
+        actorUsername: actor.name,
+        eventType: "receipt_retry_started",
+        receivedReceiptId: receiptId,
+        fromState: received.state,
+        toState: nextState,
+      });
+    });
+
+    return { state: nextState };
+  },
+
+  /**
+   * Closes an apply_failed receipt as handled by hand, for good. Every leg that never applied needs
+   * a disposition and the close needs a note; the state change and its audit row commit together.
+   */
+  async closeOut(receiptId: number, body: CloseOutBody): Promise<{ state: ReceivedReceiptState }> {
+    const actor = await requireActor();
+    const received = await loadReceipt(receiptId);
+
+    if (!isWorkflowMappingTransitionLegal(received.state as ReceivedReceiptState, "CLOSE_OUT")) {
+      throw httpError(409, `Cannot close out receipt in state "${received.state}"`);
+    }
+    const parsed = parseStoredReceipt(received.receiptJson);
+    if (!parsed.ok) throw httpError(422, parsed.error);
+
+    const lineStatuses = await db.receivedReceiptLineStatus.findMany({ where: { receivedReceiptId: receiptId } });
+    const legs = receiptLegs(received, parsed.receipt.isInKind, lineStatuses);
+    const unapplied = legs.filter((l) => !l.applied).map((l) => l.leg);
+    const missing = unapplied.filter((leg) => !body.legs[leg]);
+    if (missing.length) throw httpError(400, `Say how each part not applied was settled: ${missing.map((l) => LEG_LABEL[l]).join(", ")}`);
+    const extra = Object.keys(body.legs).filter((leg) => !unapplied.some((u) => u === leg));
+    if (extra.length) throw httpError(400, `Not a part left to settle on this receipt: ${extra.join(", ")}`);
+
+    const nextState = assertWorkflowMappingTransition(received.state as ReceivedReceiptState, "CLOSE_OUT");
+    const details = {
+      note: body.note,
+      legs: Object.fromEntries(legs.map(({ leg, applied }) => [leg, applied ? "applied" : body.legs[leg]])),
+    };
+
+    await db.$transaction(async (tx) => {
+      // Compare-and-set: a retry or another close-out that moved it first wins.
+      const { count } = await tx.receivedReceipt.updateMany({
+        where: { id: receiptId, state: received.state, updatedAt: received.updatedAt },
+        data: { state: nextState, validationNotes: null, applyFirstFailedAt: null },
+      });
+      if (count !== 1) throw httpError(409, "Receipt changed since it was loaded");
+      await insertAuditEvent(tx, {
+        orgId: received.orgId,
+        actorUserId: actor.id,
+        actorUsername: actor.name,
+        eventType: "receipt_closed_by_hand",
+        receivedReceiptId: receiptId,
+        fromState: received.state,
+        toState: nextState,
+        details: JSON.stringify(details),
+      });
     });
 
     return { state: nextState };
@@ -223,7 +278,7 @@ export const receiptService = {
       lineStatusId: row.lineStatusId,
       fromState: row.fromState,
       toState: row.toState,
-      details: row.details ? (JSON.parse(row.details) as unknown) : null,
+      details: parseAuditDetails(row.details),
       createdAt: row.createdAt.toISOString(),
     }));
   },

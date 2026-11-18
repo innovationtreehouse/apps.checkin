@@ -28,6 +28,7 @@ export const classifications = {
     familyName: "internal",
     familyEmail: "pii",
     programName: "internal",
+    detail: "internal",
   },
   // The live mirror amounts on a queue row (shop_order).
   PaymentQueueLiveOrder: {

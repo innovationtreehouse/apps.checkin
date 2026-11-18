@@ -1,5 +1,5 @@
 import { HttpError } from "@checkin/component-ui";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import ReceiptDetailPage from "@checkin/receipt/pages/detail";
@@ -17,7 +17,7 @@ jest.mock("next/navigation", () => ({
   useSearchParams: () => mockSearch,
   useRouter: () => ({ push: mockPush, replace: jest.fn() }),
 }));
-jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 1 } } }) }));
+jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 1, ageBand: "adult" } } }) }));
 jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
 jest.mock("@checkin/receipt/components/ReceiptFile", () => ({ __esModule: true, default: () => null }));
 
@@ -300,6 +300,31 @@ describe("reviewing an OCR-read receipt", () => {
     await waitFor(() => expect(shown()).toContainEqual({ message: "Saved", color: "green" }));
     expect(resubmitted()).toBe(false);
   });
+
+  it("locks the fields and the draft's other actions while a save runs, so nothing is overwritten when it lands", async () => {
+    mockReceipt = { ...receipt, state: "submitter_review", validationNotes: null };
+    let land: (value: unknown) => void = () => {};
+    mockApi.mockImplementationOnce(() => new Promise((resolve) => { land = resolve; }));
+    wrap();
+    type("Retailer", "Acme Hardware");
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(screen.getByLabelText("Line 1 description")).toBeDisabled());
+    expect(screen.getByLabelText("Retailer")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Undo changes" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Discard" })).toBeDisabled();
+    land({});
+    await waitFor(() => expect(screen.getByLabelText("Retailer")).toBeEnabled());
+  });
+
+  it("saves unsaved line edits before changing who paid", async () => {
+    mockReceipt = { ...receipt, state: "submitter_review", validationNotes: null };
+    wrap();
+    type("Line 1 description", "Wood screws");
+    fireEvent.click(screen.getByRole("button", { name: "I paid for this myself" }));
+    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/reimbursement", "PUT", { needsReimbursement: true }, "Updated", "Couldn't change who paid"));
+    expect(mockApi).toHaveBeenCalledWith("/r1/line-items/11", { method: "PATCH", body: JSON.stringify({ description: "Wood screws" }) });
+    expect(mockApi.mock.invocationCallOrder[0]).toBeLessThan(mockSend.mock.invocationCallOrder[0]);
+  });
 });
 
 describe("typing the details of a receipt OCR could not read", () => {
@@ -325,6 +350,31 @@ describe("typing the details of a receipt OCR could not read", () => {
     await waitFor(() => expect(resubmitted()).toBe(true));
     expect(mockApi.mock.calls.map((c) => c[0])).toEqual(["/r1", "/r1/resubmit"]);
     expect(shown()).toContainEqual({ message: "Saved and resubmitted: Finance review", color: "green" });
+  });
+
+  it("reads a receipt with nothing typed again without asking", async () => {
+    mockReceipt = unread;
+    wrap();
+    fireEvent.click(screen.getByRole("button", { name: "Read it again" }));
+    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/retry-ocr", "POST", {}, "Read again", "Couldn't read the receipt again"));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("asks before reading a receipt with typed details again: Cancel reads nothing, confirming reads it", async () => {
+    mockReceipt = { ...unread, retailer: "Acme" };
+    wrap();
+    fireEvent.click(screen.getByRole("button", { name: "Read it again" }));
+    const asked = await screen.findByRole("dialog");
+    expect(within(asked).getByText(/A good reading replaces the details and lines typed on this receipt/)).toBeInTheDocument();
+    fireEvent.click(within(asked).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(mockSend).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Read it again" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Read it again" }));
+    await waitFor(() => expect(mockSend).toHaveBeenCalledWith("/r1/retry-ocr", "POST", {}, "Read again", "Couldn't read the receipt again"));
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 
   it("sends on details saved before a failed resubmit, with nothing left to save", async () => {

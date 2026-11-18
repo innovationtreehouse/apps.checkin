@@ -7,7 +7,7 @@ jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), u
 import { act, screen, fireEvent, waitFor } from "@testing-library/react";
 import { invalidateLoads } from "@checkin/component-ui";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl, router } from "@/test-helpers/rtl";
-import { DEFAULT_ACK_MEMBERSHIP_BODY, DEFAULT_ACK_PROGRAM_BODY } from "@/lib/scholarshipAckCopy";
+import { REGISTRY } from "@/lib/email-templates/registry";
 import EmailSettingsPage from "../page";
 
 beforeEach(() => resetRtl());
@@ -41,18 +41,61 @@ describe("EmailSettingsPage", () => {
     });
   });
 
-  it("already set: fields locked until the confirm checkbox unlocks them", async () => {
+  it("already set: From and Reply-To locked until the confirm checkbox unlocks them; other fields stay editable", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson({ "/api/settings/email": { settings: { emailFromAddress: "Org <no-reply@org.test>", emailReplyToAddress: null } } });
     renderWithProviders(<EmailSettingsPage />);
 
     const from = await screen.findByLabelText(/From address/i);
+    const replyTo = screen.getByLabelText(/Reply-To address/i);
     expect(from).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Save settings" })).toBeDisabled();
+    expect(replyTo).toBeDisabled();
+    expect(screen.getByLabelText(/Alert address/i)).not.toBeDisabled();
+    expect(screen.getByLabelText(/Scholarship ACK subject/i)).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save settings" })).not.toBeDisabled();
 
     fireEvent.click(screen.getByLabelText(/let me edit the sender addresses/i));
     expect(from).not.toBeDisabled();
-    expect(screen.getByRole("button", { name: "Save settings" })).not.toBeDisabled();
+    expect(replyTo).not.toBeDisabled();
+  });
+
+  it("already set: saves an alert address without unlocking, sending no sender fields", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const fetchMock = mockFetchJson({ "/api/settings/email": { settings: { emailFromAddress: "Org <no-reply@org.test>", emailReplyToAddress: null } } });
+    renderWithProviders(<EmailSettingsPage />);
+
+    await screen.findByLabelText(/From address/i);
+    fireEvent.change(screen.getByLabelText(/Alert address/i), { target: { value: "alerts@org.test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/settings/email", expect.objectContaining({ method: "PUT" })));
+    const [, putOpts] = fetchMock.mock.calls.find(([, opts]) => opts?.method === "PUT")!;
+    const body = JSON.parse(putOpts!.body as string);
+    expect(body).toMatchObject({ alertEmailAddress: "alerts@org.test" });
+    expect(body).not.toHaveProperty("emailFromAddress");
+    expect(body).not.toHaveProperty("emailReplyToAddress");
+  });
+
+  it("already set: a From edited then re-locked is not sent, and the field shows the saved From again", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const fetchMock = mockFetchJson({ "/api/settings/email": { settings: { emailFromAddress: "Org <no-reply@org.test>", emailReplyToAddress: null } } });
+    renderWithProviders(<EmailSettingsPage />);
+
+    const from = await screen.findByLabelText(/From address/i);
+    const unlock = screen.getByLabelText(/let me edit the sender addresses/i);
+    fireEvent.click(unlock);
+    fireEvent.change(from, { target: { value: "half-edited" } });
+    fireEvent.click(unlock);
+    fireEvent.change(screen.getByLabelText(/Alert address/i), { target: { value: "alerts@org.test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/settings/email", expect.objectContaining({ method: "PUT" })));
+    const [, putOpts] = fetchMock.mock.calls.find(([, opts]) => opts?.method === "PUT")!;
+    const body = JSON.parse(putOpts!.body as string);
+    expect(body).toMatchObject({ alertEmailAddress: "alerts@org.test" });
+    expect(body).not.toHaveProperty("emailFromAddress");
+    expect(body).not.toHaveProperty("emailReplyToAddress");
+    await waitFor(() => expect(from).toHaveValue("Org <no-reply@org.test>"));
   });
 
   it("accepts a comma-separated Reply-To list: no inline error, PUT fires", async () => {
@@ -138,9 +181,9 @@ describe("EmailSettingsPage", () => {
     expect(subject).toHaveValue("Custom subject");
     const membershipBody = screen.getByLabelText(/Scholarship ACK body — membership fee request/i);
     expect(membershipBody).toHaveValue("");
-    expect(membershipBody).toHaveAttribute("placeholder", DEFAULT_ACK_MEMBERSHIP_BODY);
+    expect(membershipBody).toHaveAttribute("placeholder", REGISTRY["scholarship.ackMembership"].defaultBody);
     const programBody = screen.getByLabelText(/Scholarship ACK body — program request/i);
-    expect(programBody).toHaveAttribute("placeholder", DEFAULT_ACK_PROGRAM_BODY);
+    expect(programBody).toHaveAttribute("placeholder", REGISTRY["scholarship.ackProgram"].defaultBody);
 
     fireEvent.change(programBody, { target: { value: "  Thanks for applying to {{programName}}!  " } });
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));

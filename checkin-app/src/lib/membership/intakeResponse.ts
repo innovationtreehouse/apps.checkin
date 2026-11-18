@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { config } from "@/lib/config";
 import { IntakeError } from "@/lib/membership/intake";
 import { EmergencyContactError } from "@/lib/emergencyContacts/service";
+import { ArchivedHouseholdError } from "@/lib/household/archiveGuard";
 
 const STATUS_FOR: Record<IntakeError["code"], number> = {
     no_household: 400,
@@ -17,6 +18,7 @@ const STATUS_FOR: Record<IntakeError["code"], number> = {
     email_designated: 400,
     email_in_use: 400,
     under_18_declared: 400,
+    age_lead_only: 403,
 };
 
 /**
@@ -40,6 +42,9 @@ export function intakeErrorResponse(error: unknown, logContext: string) {
             { error: error.message, code: error.code, ...(error.fields ? { fields: error.fields } : {}) },
             { status: STATUS_FOR[error.code] },
         );
+    }
+    if (error instanceof ArchivedHouseholdError) {
+        return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
     }
     if (error instanceof EmergencyContactError) {
         return NextResponse.json(

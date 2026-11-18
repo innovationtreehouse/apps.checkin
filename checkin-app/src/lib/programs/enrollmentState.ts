@@ -90,7 +90,7 @@ export const STATES = {
         flags: { inventoryHeldAt: true, paymentPlanDeniedAt: false },
         equals: { isPaymentPlanRequested: true },
     }),
-    /** PENDING, held=set, req=FALSE, den=set. Denied, seat still held, grace clock. */
+    /** PENDING, held=set, req=FALSE, den=set. Denied, seat still held. */
     PENDING_HELD_DENIED: mk({
         statuses: ['PENDING'] as const,
         flags: { inventoryHeldAt: true, paymentPlanDeniedAt: true },
@@ -213,14 +213,14 @@ export type EnrollmentWrite = {
  * enrollmentGuards.integration.test.ts runs them on Postgres over every row shape.
  */
 export const ENROLLMENT_WRITES = {
-    requestFlag: { where: { status: 'PENDING', isPaymentPlanRequested: false }, data: () => ({ isPaymentPlanRequested: true }) },
+    // A denied request is never re-flagged: the family follows up with finance instead.
+    requestFlag: {
+        where: { status: 'PENDING', isPaymentPlanRequested: false, paymentPlanDeniedAt: null },
+        data: () => ({ isPaymentPlanRequested: true }),
+    },
     takeHold: {
         where: { status: 'PENDING', inventoryHeldAt: null },
         data: (now: Date) => ({ isPaymentPlanRequested: true, inventoryHeldAt: now, paymentPlanDeniedAt: null }),
-    },
-    reapply: {
-        where: { status: 'PENDING', inventoryHeldAt: { not: null } },
-        data: () => ({ isPaymentPlanRequested: true, paymentPlanDeniedAt: null }),
     },
     requestWithoutHold: {
         where: { status: 'PENDING', inventoryHeldAt: null, isPaymentPlanRequested: false },
@@ -248,6 +248,14 @@ export const ENROLLMENT_WRITES = {
     },
     approveUnheld: {
         where: { status: 'PENDING', isPaymentPlanRequested: true, inventoryHeldAt: null },
+        data: () => ({ status: 'ACTIVE', isPaymentPlanRequested: false, inventoryHeldAt: null }),
+    },
+    enrollByHandHeld: {
+        where: { status: 'PENDING', inventoryHeldAt: { not: null } },
+        data: () => ({ status: 'ACTIVE', isPaymentPlanRequested: false, inventoryHeldAt: null }),
+    },
+    enrollByHandUnheld: {
+        where: { status: 'PENDING', inventoryHeldAt: null },
         data: () => ({ status: 'ACTIVE', isPaymentPlanRequested: false, inventoryHeldAt: null }),
     },
     denyHeld: {
@@ -284,7 +292,6 @@ export type EnrollmentGuard = {
 
 export const ENROLLMENT_GUARDS = {
     apply: { steps: ['requestFlag', 'takeHold'], from: ['PENDING_UNPAID', 'PENDING_HOLD_FAILED'], to: 'PENDING_HELD' },
-    reapply: { steps: ['requestFlag', 'reapply'], from: ['PENDING_HELD_DENIED', 'PENDING_HELD'], to: 'PENDING_HELD' },
     holdFailed: { steps: ['requestWithoutHold'], from: ['PENDING_UNPAID'], to: 'PENDING_HOLD_FAILED' },
     holdFailedRetry: { steps: ['retryWithoutHold'], from: ['PENDING_HOLD_FAILED'], to: 'PENDING_HOLD_FAILED' },
     manualHold: { steps: ['manualHold'], from: ['PENDING_HOLD_FAILED'], to: 'PENDING_HELD' },
@@ -292,6 +299,8 @@ export const ENROLLMENT_GUARDS = {
     activateUnheld: { steps: ['activateUnheld'], from: ['PENDING_UNPAID', 'PENDING_HOLD_FAILED'], to: 'ACTIVE' },
     approveHeld: { steps: ['approveHeld'], from: ['PENDING_HELD'], to: 'ACTIVE' },
     approveUnheld: { steps: ['approveUnheld'], from: ['PENDING_HOLD_FAILED'], to: 'ACTIVE' },
+    enrollByHandHeld: { steps: ['enrollByHandHeld'], from: ['PENDING_HELD', 'PENDING_HELD_DENIED'], to: 'ACTIVE' },
+    enrollByHandUnheld: { steps: ['enrollByHandUnheld'], from: ['PENDING_UNPAID', 'PENDING_HOLD_FAILED'], to: 'ACTIVE' },
     denyHeld: { steps: ['denyHeld'], from: ['PENDING_HELD'], to: 'PENDING_HELD_DENIED' },
     denyUnheld: { steps: ['denyUnheld'], from: ['PENDING_HOLD_FAILED'], to: 'PENDING_UNPAID' },
     withdraw: {
@@ -333,7 +342,6 @@ export const TRANSITIONS: readonly (Transition<LifecycleState> & { readonly guar
     { event: 'T1 enroll(paid)', from: 'UNENROLLED', to: 'PENDING_UNPAID', actor: 'user/admin', guardSite: 'participants/route.ts POST — FOR UPDATE capacity lock' },
     { event: 'T2 enroll(comp)', from: 'UNENROLLED', to: 'ACTIVE', actor: 'user/admin', guardSite: 'participants/route.ts POST — initialStatus in same tx' },
     { event: 'T3 apply(−1 ok)', from: 'PENDING_UNPAID', to: 'PENDING_HELD', actor: 'user', guardSite: 'request-payment-plan/route.ts — CAS status:PENDING, held:null', guard: 'apply' },
-    { event: 'T3 re-apply', from: 'PENDING_HELD_DENIED', to: 'PENDING_HELD', actor: 'user', guardSite: 'request-payment-plan/route.ts — CAS held:{not:null} (clears denial, no 2nd −1)', guard: 'reapply' },
     { event: 'T3f apply(−1 FAILS)', from: 'PENDING_UNPAID', to: 'PENDING_HOLD_FAILED', actor: 'user', guardSite: 'request-payment-plan/route.ts — hold and −1 roll back together; the request flag is written alone', guard: 'holdFailed' },
     { event: 'T3 apply(retry)', from: 'PENDING_HOLD_FAILED', to: 'PENDING_HELD', actor: 'user', guardSite: 'request-payment-plan/route.ts — same CAS as apply: held:null takes the hold on a retry', guard: 'apply' },
     { event: 'T3m manual-hold', from: 'PENDING_HOLD_FAILED', to: 'PENDING_HELD', actor: 'admin', guardSite: 'finance-ops/payment-plans/manual-hold/route.ts — CAS held:null, req:true → stamp held', guard: 'manualHold' },
@@ -346,11 +354,9 @@ export const TRANSITIONS: readonly (Transition<LifecycleState> & { readonly guar
     { event: 'T6 deny', from: 'PENDING_HELD', to: 'PENDING_HELD_DENIED', actor: 'admin', guardSite: 'finance-ops/payment-plans/refuse/route.ts — CAS req:true,status:PENDING; stamp den; COI guard', guard: 'denyHeld' },
     { event: 'T6f deny(no hold)', from: 'PENDING_HOLD_FAILED', to: 'PENDING_UNPAID', actor: 'admin', guardSite: 'finance-ops/payment-plans/refuse/route.ts — CAS req:true,held:null,status:PENDING; clears req, stamps nothing, denial kept in the audit row; COI guard', guard: 'denyUnheld' },
     { event: 'T7 remove(unpaid)', from: 'PENDING_UNPAID', to: 'UNENROLLED', actor: 'user/admin', guardSite: 'participants/route.ts DELETE → capacity.ts deleteAndReleaseHold — delete(); cron/pending-participants only reports overdue rows' },
-    { event: 'T8 grace expiry', from: 'PENDING_HELD_DENIED', to: 'UNENROLLED', actor: 'cron', guardSite: 'cron/scholarship-grace-expiry/route.ts — delete(); NULL graceDays = off' },
     { event: 'T9 remove', from: 'PENDING_HELD', to: 'UNENROLLED', actor: 'user/admin', guardSite: 'capacity.ts deleteAndReleaseHold — delete() = atomicity boundary; +1 iff held' },
     { event: 'T9 remove(hold failed)', from: 'PENDING_HOLD_FAILED', to: 'UNENROLLED', actor: 'user/admin', guardSite: 'participants/route.ts DELETE → capacity.ts deleteAndReleaseHold — delete(); nothing held, no +1' },
     { event: 'T9 remove(denied)', from: 'PENDING_HELD_DENIED', to: 'UNENROLLED', actor: 'user/admin', guardSite: 'participants/route.ts DELETE → capacity.ts deleteAndReleaseHold — delete(); +1 iff held' },
-    { event: 'T10 refund restocked', from: 'ACTIVE', to: 'UNENROLLED', actor: 'shopify-webhook', guardSite: 'reconcile.ts settleRestockedSeats → removeRefundedEnrollment — only children the order identifies, deleteMany status:ACTIVE scoped to the refunded order (a WITHDRAWN row stays and the refund is recorded on it) + audit row in one tx; no +1 (Shopify restocked); unidentified public seats taken back with -k' },
     { event: 'T11 remove(comp/approved)', from: 'ACTIVE', to: 'UNENROLLED', actor: 'admin', guardSite: 'capacity.ts deleteAndReleaseHold — delete(); +1 iff seatTakenWithoutSaleAt is set (a paid place returns nothing)' },
     { event: 'T12 withdraw', from: 'ACTIVE', to: 'WITHDRAWN', actor: 'admin', guardSite: 'capacity.ts withdrawParticipant — CAS status:{not:WITHDRAWN} → WITHDRAWN, endedAt = atomicity boundary; +1 iff seatTakenWithoutSaleAt is set', guard: 'withdraw' },
     { event: 'T13 withdraw(held)', from: 'PENDING_HELD', to: 'WITHDRAWN', actor: 'user/admin', guardSite: 'capacity.ts withdrawParticipant — same status CAS, then CAS held:{not:null}→null; +1 iff that clears a hold', guard: 'withdraw' },
@@ -359,4 +365,8 @@ export const TRANSITIONS: readonly (Transition<LifecycleState> & { readonly guar
     { event: 'T13 withdraw(denied)', from: 'PENDING_HELD_DENIED', to: 'WITHDRAWN', actor: 'user/admin', guardSite: 'capacity.ts withdrawParticipant — same status CAS, then CAS held:{not:null}→null; +1 iff that clears a hold', guard: 'withdraw' },
     { event: 'T14 re-enroll(paid)', from: 'WITHDRAWN', to: 'PENDING_UNPAID', actor: 'user/admin', guardSite: 'participants/route.ts POST — FOR UPDATE capacity lock; CAS status:WITHDRAWN, resets the last stint\'s fields', guard: 'reenrollPaid' },
     { event: 'T15 re-enroll(comp)', from: 'WITHDRAWN', to: 'ACTIVE', actor: 'user/admin', guardSite: 'participants/route.ts POST — CAS status:WITHDRAWN, resets the last stint\'s fields', guard: 'reenrollComp' },
+    { event: 'T16 enroll-by-hand(unpaid)', from: 'PENDING_UNPAID', to: 'ACTIVE', actor: 'board/finance', guardSite: 'participants/route.ts POST → enrollByHand.ts — CAS status:PENDING, held:null; outside payment or comp −1 and stamps seatTakenWithoutSaleAt, a matched order counts as T4 under the order lock; COI guard', guard: 'enrollByHandUnheld' },
+    { event: 'T16 enroll-by-hand(hold failed)', from: 'PENDING_HOLD_FAILED', to: 'ACTIVE', actor: 'board/finance', guardSite: 'participants/route.ts POST → enrollByHand.ts — CAS status:PENDING, held:null; as T16 enroll-by-hand(unpaid)', guard: 'enrollByHandUnheld' },
+    { event: 'T16 enroll-by-hand(held)', from: 'PENDING_HELD', to: 'ACTIVE', actor: 'board/finance', guardSite: 'participants/route.ts POST → enrollByHand.ts — CAS status:PENDING, held:{not:null}; outside payment or comp keeps the hold\'s −1 as seatTakenWithoutSaleAt, a matched order releases it as T4; COI guard', guard: 'enrollByHandHeld' },
+    { event: 'T16 enroll-by-hand(denied)', from: 'PENDING_HELD_DENIED', to: 'ACTIVE', actor: 'board/finance', guardSite: 'participants/route.ts POST → enrollByHand.ts — CAS status:PENDING, held:{not:null}; as T16 enroll-by-hand(held)', guard: 'enrollByHandHeld' },
 ] as const;

@@ -8,6 +8,7 @@ import { db } from "../db";
 import type { OrgEventRecord } from "../../contract";
 import { getCatalogEventSource, getOrgId, getServices } from "../../runtime";
 import { createOrgEventsRepository } from "../repositories/orgEventsRepository";
+import { FAILED_AGAIN } from "../retry";
 import { reconcileRecorded } from "./provisionalItemService";
 
 export type ConsumeResult = "processed" | "duplicate" | "failed" | "skipped";
@@ -72,11 +73,13 @@ export const orgEventConsumer = {
   },
 };
 
-/** Retry of a failed event: applies it once from its ledger row. 404 when this org has no such failed event. */
+/** Retry of a failed event: applies it once from its ledger row. 404 when this org has no such failed event; 409 when it fails again. */
 export async function retryOrgEvent(id: number): Promise<void> {
   const row = Number.isInteger(id) ? await db.inventoryReceivedOrgEvent.findFirst({ where: { id, orgId: await getOrgId(), status: "failed" } }) : null;
   if (!row) throw new ServiceError(404, "No failed catalog event with this id");
-  await consumeOrgEvent({ id: row.id, orgId: row.orgId, eventType: row.eventType, payload: row.payload, createdAt: row.receivedAt });
+  const result = await consumeOrgEvent({ id: row.id, orgId: row.orgId, eventType: row.eventType, payload: row.payload, createdAt: row.receivedAt });
+  // "duplicate" means an overlapping consumer processed it: the event is applied.
+  if (result !== "processed" && result !== "duplicate") throw new ServiceError(409, FAILED_AGAIN);
 }
 
 /** The provisional GTINs that this org's failed catalog events decide; those events' Retry applies them. */
@@ -161,10 +164,10 @@ export async function catchUpOrgEvents(limit = 200): Promise<Record<ConsumeResul
   };
 }
 
-/** Retry of a provisional whose stored catalog decision failed to apply: applies it once. 404 when this org has no such provisional. */
+/** Retry of a provisional whose stored catalog decision failed to apply: applies it once. 404 when this org has no such provisional; 409 when it fails again. */
 export async function retryProvisionalReconcile(provisionalGtin13: string): Promise<void> {
   const orgId = await getOrgId();
   const row = await db.inventoryProvisionalItem.findFirst({ where: { orgId, provisionalGtin13, status: "pending", reconcileFirstFailedAt: { not: null } }, select: { id: true } });
   if (!row) throw new ServiceError(404, "No provisional item waiting on the catalog's decision");
-  await reconcileRecorded(db, getServices().provisionalItemService, orgId, provisionalGtin13);
+  if (!(await reconcileRecorded(db, getServices().provisionalItemService, orgId, provisionalGtin13))) throw new ServiceError(409, FAILED_AGAIN);
 }

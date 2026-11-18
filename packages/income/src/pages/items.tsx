@@ -2,8 +2,8 @@
 import { useState } from "react";
 import { Button, Code, Group, Select, Table, Text, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { api, errorMessage, notifyNavCounts, useIsFinance, useLoad } from "../components/api";
-import { LoadError } from "@checkin/component-ui";
+import { api, notifyNavCounts, refusalMessage, useIsFinance, useLoad } from "../components/api";
+import { InactivePickWarning, LoadError, QuickBooksListsRefresh } from "@checkin/component-ui";
 import { LINE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
 
 interface ItemRow {
@@ -26,16 +26,19 @@ interface AccountOption {
 
 const SALE_TYPES: readonly string[] = LINE_ACCOUNT_TYPES.storeSale;
 
-/** Picker choices: active accounts of a type a sale takes, plus the saved one, marked when inactive, of another type or gone from QuickBooks. */
+/** Picker choices: active accounts of a type a sale takes, plus the saved one marked when active but of another type; a saved inactive one shows as a warning. */
 function accountChoices(options: AccountOption[] | null, saved: string | null) {
-  const list = (options ?? [])
-    .filter((o) => (o.active && SALE_TYPES.includes(o.accountType)) || o.id === saved)
-    .map((o) => ({
-      value: o.id,
-      label: !SALE_TYPES.includes(o.accountType) ? `${o.name} (wrong type: ${o.accountType})` : o.active ? o.name : `${o.name} (inactive)`,
-    }));
-  if (saved && !list.some((o) => o.value === saved)) list.push({ value: saved, label: `QuickBooks id ${saved}` });
-  return list;
+  return (options ?? [])
+    .filter((o) => o.active && (SALE_TYPES.includes(o.accountType) || o.id === saved))
+    .map((o) => ({ value: o.id, label: SALE_TYPES.includes(o.accountType) ? o.name : `${o.name} (wrong type: ${o.accountType})` }));
+}
+
+/** An item's account as a viewer who can't edit it reads it. */
+function accountLabel(options: AccountOption[] | null, id: string) {
+  const account = options?.find((o) => o.id === id);
+  if (!account) return `QuickBooks id ${id}`;
+  if (!account.active) return `${account.name} (inactive)`;
+  return SALE_TYPES.includes(account.accountType) ? account.name : `${account.name} (wrong type: ${account.accountType})`;
 }
 
 const GENERAL = "general";
@@ -68,7 +71,7 @@ export default function ItemsPage() {
       items.reload();
       notifyNavCounts();
     } catch (err) {
-      notifications.show({ message: errorMessage(err), color: "red", autoClose: false });
+      notifications.show({ message: refusalMessage(err), color: "red", autoClose: false });
     } finally {
       setBusy(null);
     }
@@ -86,6 +89,7 @@ export default function ItemsPage() {
       <Text size="sm" c="dimmed" mb="md">
         Assign each item to a bucket or to general income, then pick the QuickBooks account its sales book to. A payout with a sale of an item missing either, or of an item whose bucket has a problem, waits until finance fixes it.
       </Text>
+      {isFinance && <Group mb="sm"><QuickBooksListsRefresh /></Group>}
       {items.error && <LoadError what="items" message={items.error} onRetry={items.reload} />}
       {buckets.error && <Text size="sm" c="red" mb="sm">Couldn&apos;t load buckets: {buckets.error}</Text>}
       {accounts.error && <LoadError what="QuickBooks accounts" message={accounts.error} onRetry={accounts.reload} />}
@@ -141,7 +145,8 @@ export default function ItemsPage() {
                         onChange={(v) => save(item.variantId, item.budgetOwnerId, { quickBooksAccountId: v })}
                         disabled={busy === item.variantId || item.decision === "undecided"}
                       />
-                    ) : item.quickBooksAccountId ? (accountChoices(accounts.data, item.quickBooksAccountId).find((o) => o.value === item.quickBooksAccountId)?.label) : "Not set"}
+                    ) : item.quickBooksAccountId ? accountLabel(accounts.data, item.quickBooksAccountId) : "Not set"}
+                    {isFinance && <InactivePickWarning saved={item.quickBooksAccountId} options={accounts.data} advice="Pick an active one." />}
                     {item.decision !== "undecided" && !item.quickBooksAccountId && <Text size="xs" c="red">No account; its payouts wait</Text>}
                   </Table.Td>
                 </Table.Tr>

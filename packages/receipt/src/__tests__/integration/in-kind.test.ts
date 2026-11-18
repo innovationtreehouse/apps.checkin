@@ -296,7 +296,7 @@ describeDb("donor sync failures (X13)", () => {
     const sends = ports.calls.donors.length;
 
     actAs(FINANCE);
-    expect(await receiptService.queueCounts(null)).toMatchObject({ notPushed: 1, pushGivenUp: 1 });
+    expect(await receiptService.queueCounts(null)).toMatchObject({ notPushed: 1, failedPushes: 1 });
     expect(await receiptService.listNeedsAttention("finance")).toEqual([expect.objectContaining({ id: r.id, lastPushFailedAt: expect.any(Date) })]);
     expect(await db.receiptAuditLog.findFirst({ where: { receiptId: r.id, action: "donor_sync_failed" }, select: { valueBefore: true } })).toEqual({ valueBefore: kind });
     expect(ports.calls.donors).toHaveLength(sends);

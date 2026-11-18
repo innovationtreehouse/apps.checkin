@@ -6,7 +6,8 @@ import { db } from "../../db";
 import { configureIncome, incomeRuntime, type BucketUnusableEvent, type IncomeConfig, type PostCapEvent } from "../../runtime";
 import { updateIncomeSettings } from "../../services/settingsService";
 import { ATTEMPTED_MATCH_NOTE, ATTEMPTED_NET_NOTE, lockReconciliation, runReconcile } from "../../lib/reconcile";
-import { CLOSED_NOTE, drainIncomeOutbox, missingRoles, runIncomeOrphanSweep } from "../../lib/outbox";
+import { CLOSED_NOTE, drainIncomeOutbox, missingRoles, postPayout, runIncomeOrphanSweep } from "../../lib/outbox";
+import { backendPid, waitersBehind } from "@checkin/pg-test-harness";
 import { quickBooksDepositSource } from "../../lib/qb-deposits";
 import { reconciliationService } from "../../services/reconciliationService";
 import { itemCategoryService } from "../../services/itemCategoryService";
@@ -140,6 +141,7 @@ function bind(over: Partial<IncomeConfig> = {}) {
     booksMap: shopifyMap,
     posting: { client: new QuickBooksClient(tokens, realm), mirrorNewestWins: true },
     classes: { activeClassIds: async () => activeClasses },
+    savedClasses: { activeClassIds: async () => activeClasses },
     alerts: {
       postCapReached: async (e) => void alerts.push(e),
       bucketUnusable: async (e) => void bucketAlerts.push(e),
@@ -1398,11 +1400,17 @@ describeDb("item assignment", () => {
     expect(await db.incomeItemCategory.count()).toBe(0);
   });
 
-  it("refuses a bucket while QuickBooks can't be reached, but still takes general income", async () => {
+  it("refuses a Class the saved list doesn't show as active with the stale-list code", async () => {
+    owners = [{ id: 7, name: "Camp", archivedAt: null, quickBooksClassId: "700" }];
+    activeClasses = [];
+    await expect(assign(7)).rejects.toMatchObject({ status: 422, code: "quickbooks-list-stale" });
+  });
+
+  it("checks the saved Class list, never the live one, and refuses a bucket while the saved list is unbound", async () => {
     owners = [{ id: 7, name: "Camp", archivedAt: null, quickBooksClassId: "700" }];
     bind({ classes: { activeClassIds: async () => { throw new Error("socket hang up"); } } });
-    await expect(assign(7)).rejects.toMatchObject({ status: 503 });
-    bind({ classes: undefined });
+    expect(await assign(7)).toMatchObject({ budgetOwnerId: 7 });
+    bind({ savedClasses: undefined });
     await expect(assign(7)).rejects.toMatchObject({ status: 503 });
     expect(await assign(null)).toMatchObject({ budgetOwnerId: null });
   });
@@ -1835,6 +1843,32 @@ describeDb("a second source: Benevity deposits handed over through expectDeposit
     expect(await drain()).toMatchObject({ post: { posted: 0, failed: 0, waiting: 1 } });
     expect(qbo.posts).toHaveLength(0);
     expect(await rowFor("D1")).toMatchObject({ status: "WAITING", kind: null });
+  });
+
+  it("never books a deposit handed over again between the post's build and its claim; the next turn books the new figures", async () => {
+    await switchOn();
+    await expect1();
+    const { id } = await rowFor("D1");
+    const later = disbursement("2026-06-29", { netCents: 14_800, lines: [{ accountId: "60", budgetOwnerId: 7, amountCents: 14_800 }] });
+    let turn!: ReturnType<typeof postPayout>;
+    // The reconcile lock holds the post between its build and its claim while donation re-sends the deposit, as expectDeposit writes it.
+    await db.$transaction(async (tx) => {
+      await lockReconciliation(tx, ORG_A, true);
+      const pid = await backendPid(tx);
+      turn = postPayout(ORG_A, id, { closedThrough: "2026-05-31", mayCreate: true }, true);
+      await waitersBehind(db, pid);
+      await tx.payoutReconciliation.update({ where: { id }, data: { payoutDate: later.txnDate, payoutNetCents: later.netCents, expected: { ...later } } });
+    }, { timeout: 15_000 });
+
+    expect((await turn)?.outcome).toBe("waiting");
+    expect(qbo.posts).toHaveLength(0);
+    expect(await rowFor("D1")).toMatchObject({ status: "WAITING", postClaimedAt: null, qbCreateAttemptedAt: null });
+
+    expect(await drain()).toMatchObject({ post: { posted: 1 } });
+    expect(qbo.posts).toHaveLength(1);
+    expect(qbo.posts[0].body).toMatchObject({ TxnDate: "2026-06-29" });
+    expect(qbo.posts[0].body.Line.map((l) => l.Amount)).toEqual([148]);
+    expect(await rowFor("D1")).toMatchObject({ status: "POSTED", depositTotalCents: 14_800 });
   });
 
   it("parks a Benevity deposit over its own cents cap while a Shopify payout of the same size posts", async () => {

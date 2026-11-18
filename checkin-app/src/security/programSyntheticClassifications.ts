@@ -3,10 +3,15 @@
  * (the catalogSyntheticClassifications.ts pattern).
  *
  * EligibleCandidate — one row of the eligible-participants staff search
- * (GET /api/programs/[id]/eligible-participants). Names only, by owner ruling
- * (docs/rules/programs.md): id and name, plus `ageWarning`, the program's
+ * (GET /api/programs/[id]/eligible-participants). Names only, by owner ruling:
+ * id and name, plus `ageWarning`, the program's
  * age-bound label ("Too young", "Too old", "DOB missing", "Adult") or null.
  * The label is computed server-side so no date of birth leaves.
+ *
+ * ProgramRosterAge — one roster person's age in whole years at the program's
+ * start (GET /api/programs/[id]), computed from date of birth so the date itself
+ * need not ship. `age` carries the `personal` tier of Person.dateOfBirth, and
+ * its scope bindings mirror Person's, so it reaches the viewers the date does.
  *
  * UnconfirmedStockRow / UnconfirmedStockSettlement — the board's unconfirmed
  * Shopify stock screen (GET /api/finance-ops/shopify-stock and its settle POST):
@@ -27,6 +32,10 @@ export const classifications = {
     id: "public",
     name: "public",
     ageWarning: "public",
+  },
+  ProgramRosterAge: {
+    personId: "public",
+    age: "personal",
   },
   UnconfirmedStockRow: {
     programId: "internal",

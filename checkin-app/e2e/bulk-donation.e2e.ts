@@ -1,6 +1,6 @@
 /**
  * Donations (giving-platform batches) in the browser. Finance and the Board see donations and
- * finance manages them (docs/rules/revenue.md → Donations). A batch is finished only once every
+ * finance manages them. A batch is finished only once every
  * gift has a place in the books, so a gift with no matching account rule holds its batch until
  * the rule exists and the batch is resubmitted. Errors are red chips that stay until dismissed.
  */

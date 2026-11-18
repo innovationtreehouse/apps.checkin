@@ -9,7 +9,9 @@
 import { POST, DELETE } from '@/app/api/programs/[id]/participants/route';
 import prisma from '@/lib/prisma';
 import { deleteAndReleaseHold } from '@/lib/program/capacity';
+import { checkoutVariantId } from '@/lib/programs/variants';
 import { getServerSession } from 'next-auth/next';
+import { WITH_EMERGENCY_CONTACT } from '@/test-helpers/emergencyContact';
 // Mock NextAuth
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
@@ -77,7 +79,7 @@ describe('Program Participants API Integration Tests', () => {
                 name: 'Admin',
                 isSysadmin: true,
                 dateOfBirth: new Date(Date.now() - (35 * 31556952000)),
-                household: { create: { name: "Test HH" } },
+                household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } },
             }
         });
         adminId = admin.id;
@@ -89,7 +91,7 @@ describe('Program Participants API Integration Tests', () => {
                 email: 'lead-partic-api-test@example.com',
                 name: 'Lead',
                 dateOfBirth: new Date(Date.now() - (30 * 31556952000)),
-                household: { create: { name: "Test HH" } },
+                household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } },
             }
         });
         leadId = lead.id;
@@ -100,7 +102,7 @@ describe('Program Participants API Integration Tests', () => {
                 email: 'common-partic-api-test@example.com',
                 name: 'Common',
                 dateOfBirth: new Date(Date.now() - (25 * 31556952000)),
-                household: { create: { name: "Test HH" } }
+                household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } }
             }
         });
         commonId = commonUser.id;
@@ -111,14 +113,14 @@ describe('Program Participants API Integration Tests', () => {
                 email: 'other-partic-api-test@example.com',
                 name: 'Other Underage',
                 dateOfBirth: new Date(Date.now() - (10 * 31556952000)),
-                household: { create: { name: "Test HH" } }
+                household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } }
             }
         });
         otherId = otherUser.id;
 
         // Board member who leads a household containing a 25yo dependent. The
         // board flag lives on the session, not the DB row — see the mocks below.
-        const boardHousehold = await prisma.household.create({ data: { name: "Test HH" } });
+        const boardHousehold = await prisma.household.create({ data: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } });
         const board = await prisma.person.create({
             data: { email: 'board-partic-api-test@example.com', name: 'Board Parent', householdId: boardHousehold.id }
         });
@@ -168,7 +170,7 @@ describe('Program Participants API Integration Tests', () => {
                 email: 'board-remover-partic-api-test@example.com',
                 name: 'Board Remover',
                 isBoardMember: true,
-                household: { create: { name: "Test HH" } },
+                household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } },
             }
         });
         boardRemoverId = boardRemover.id;
@@ -211,7 +213,7 @@ describe('Program Participants API Integration Tests', () => {
         // Treehouse Member (household carries the ACTIVE OrgMembership) + the
         // members-only program they are the only eligible enroller for.
         const memberHousehold = await prisma.household.create({
-            data: { name: "Test HH", orgMembership: { create: { status: 'ACTIVE' } } }
+            data: { name: "Test HH", orgMembership: { create: { status: 'ACTIVE' } }, ...WITH_EMERGENCY_CONTACT }
         });
         memberHouseholdId = memberHousehold.id;
         const member = await prisma.person.create({
@@ -305,6 +307,49 @@ describe('Program Participants API Integration Tests', () => {
              expect(data.enrollment.status).toBe('PENDING');
         });
 
+        describe('while the Board has closed the store to program seats', () => {
+            const programIds: number[] = [];
+            const mkPriced = async (name: string, claimantShopifyVariantId: string | null) => {
+                const p = await prisma.program.create({
+                    data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `${name} Partic API Test`, phase: 'RUNNING', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), orgMemberPriceCents: 1000, nonOrgMemberPriceCents: 1500, shopifyVariantId: `dev-mock-variant-${name}`, claimantShopifyVariantId },
+                });
+                programIds.push(p.id);
+                return p.id;
+            };
+            const enrol = (programId: number) => POST(new Request(`http://localhost:4000/api/programs/${programId}/participants`, {
+                method: 'POST',
+                body: JSON.stringify({ participantId: commonId }),
+            }) as unknown as import("next/server").NextRequest, createParams(programId) as unknown as never);
+
+            beforeEach(async () => {
+                (getServerSession as jest.Mock).mockResolvedValue({ user: { id: commonId } });
+                await prisma.boardSettings.upsert({ where: { id: 1 }, create: { id: 1, programStoreClosedAt: new Date() }, update: { programStoreClosedAt: new Date() } });
+            });
+            afterEach(async () => {
+                await prisma.boardSettings.update({ where: { id: 1 }, data: { programStoreClosedAt: null } });
+            });
+            afterAll(async () => {
+                await prisma.programParticipant.deleteMany({ where: { programId: { in: programIds } } });
+                await prisma.program.deleteMany({ where: { id: { in: programIds } } });
+            });
+
+            it('a family claims and pays on the reserved-seat item', async () => {
+                const programId = await mkPriced('closed-claimant', 'dev-mock-claimant-closed');
+                const res = await enrol(programId);
+                expect(res.status).toBe(200);
+                expect((await res.json()).enrollment.status).toBe('PENDING');
+                const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
+                expect(checkoutVariantId(program)).toBe('dev-mock-claimant-closed');
+            });
+
+            it('refuses a claim on a program with only the hidden public item, which nobody can pay', async () => {
+                const programId = await mkPriced('closed-public-only', null);
+                const res = await enrol(programId);
+                expect(res.status).toBe(400);
+                expect(await prisma.programParticipant.count({ where: { programId } })).toBe(0);
+            });
+        });
+
         it('should allow a common user to self-enroll into a free program as ACTIVE', async () => {
              (getServerSession as jest.Mock).mockResolvedValue({ user: { id: commonId } });
 
@@ -386,7 +431,7 @@ describe('Program Participants API Integration Tests', () => {
 
              const data = await res.json();
              expect(data.success).toBe(true);
-             expect(data.enrollment.status).toBe('ACTIVE'); // override → confirmed comp
+             expect(data.enrollment.status).toBe('ACTIVE'); // a free program
 
              // Program is now intentionally over its cap of 1.
              const enrolled = await prisma.programParticipant.count({ where: { programId: fullProgramId } });
@@ -475,29 +520,22 @@ describe('Program Participants API Integration Tests', () => {
              expect(data.enrollment.status).toBe('PENDING'); // not a comp
         });
 
-        // The comp still belongs to genuine admin action: a board member
-        // enrolling someone OUTSIDE their household (the program-ops surface).
-        it('should require override + comp (ACTIVE) when a board member enrolls a non-household participant', async () => {
+        // Skipping payment takes a stated basis: a board member enrolling someone
+        // OUTSIDE their household (the program-ops surface) without one adds a place
+        // that waits for payment.
+        it('should comp (ACTIVE) only when a board member names the basis for a non-household participant', async () => {
              (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
 
-             const promptReq = new Request(`http://localhost:4000/api/programs/${standardProgramId}/participants`, {
+             const compReq = new Request(`http://localhost:4000/api/programs/${standardProgramId}/participants`, {
                  method: 'POST',
-                 body: JSON.stringify({ participantId: otherId }) // not in board's household, no override
+                 body: JSON.stringify({ participantId: otherId, basis: 'COMP' }) // not in board's household
              });
-             const promptRes = await POST(promptReq as unknown as import("next/server").NextRequest, createParams(standardProgramId) as unknown as never);
-             expect(promptRes.status).toBe(400);
-             expect((await promptRes.json()).requiresOverride).toBe(true);
-
-             const forceReq = new Request(`http://localhost:4000/api/programs/${standardProgramId}/participants`, {
-                 method: 'POST',
-                 body: JSON.stringify({ participantId: otherId, override: true })
-             });
-             const forceRes = await POST(forceReq as unknown as import("next/server").NextRequest, createParams(standardProgramId) as unknown as never);
-             expect(forceRes.status).toBe(200);
-             expect((await forceRes.json()).enrollment.status).toBe('ACTIVE'); // admin comp
+             const compRes = await POST(compReq as unknown as import("next/server").NextRequest, createParams(standardProgramId) as unknown as never);
+             expect(compRes.status).toBe(200);
+             expect((await compRes.json()).enrollment).toMatchObject({ status: 'ACTIVE', enrollmentBasis: 'COMP' });
         });
 
-        // A board/sysadmin comp seats a participant with NO Shopify
+        // A board/finance comp seats a participant with NO Shopify
         // checkout, so unlike a paid PENDING enrollment nothing ever fires
         // Shopify's own sale-time -1. The comp path must reconcile it (-1),
         // exactly like a paid sale and like scholarship apply — else the
@@ -510,14 +548,14 @@ describe('Program Participants API Integration Tests', () => {
                 data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Comp Shopify Partic API Test', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), maxParticipants: 5, orgMemberPriceCents: 1000, shopifyVariantId: 'dev-mock-variant-comp-partic' },
             });
             try {
-                (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+                (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardRemoverId, isBoardMember: true } });
                 const res = await POST(
                     // CHECKIN_ENV=local arms the keyless-kiosk fallback — send a cookie so
                     // the request isn't hijacked as `kiosk` before the session gate runs.
                     new Request(`http://localhost:4000/api/programs/${shopifyProgram.id}/participants`, {
                         method: 'POST',
                         headers: { cookie: 'session=test' },
-                        body: JSON.stringify({ participantId: otherId, override: true }), // external admin comp
+                        body: JSON.stringify({ participantId: otherId, basis: 'COMP' }),
                     }) as unknown as import("next/server").NextRequest,
                     createParams(shopifyProgram.id) as unknown as never,
                 );
@@ -559,11 +597,11 @@ describe('Program Participants API Integration Tests', () => {
                 data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: 'Comp Shopify Fail Partic API Test', enrollmentStatus: 'OPEN', offSaleAt: new Date('2999-01-01'), maxParticipants: 5, orgMemberPriceCents: 1000, shopifyVariantId: 'dev-mock-variant-comp-fail' },
             });
             try {
-                (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+                (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardRemoverId, isBoardMember: true } });
                 const res = await POST(
                     new Request(`http://localhost:4000/api/programs/${shopifyProgram.id}/participants`, {
                         method: 'POST',
-                        body: JSON.stringify({ participantId: otherId, override: true }),
+                        body: JSON.stringify({ participantId: otherId, basis: 'COMP' }),
                     }) as unknown as import("next/server").NextRequest,
                     createParams(shopifyProgram.id) as unknown as never,
                 );
@@ -647,6 +685,7 @@ describe('Program Participants API Integration Tests', () => {
                      household: {
                          create: {
                              name: 'Test HH',
+                             ...WITH_EMERGENCY_CONTACT,
                              orgMembership: {
                                  create: {
                                      status: 'NONE',
@@ -679,10 +718,9 @@ describe('Program Participants API Integration Tests', () => {
              }
         });
 
-        // The members-only gate lives inside enforceLimits, so it must not break
-        // the deliberate comp path — a confirmed board/sysadmin override still
-        // seats a non-member.
-        it('should let a confirmed admin comp a non-member into a members-only program', async () => {
+        // The members-only gate lives inside enforceLimits, so a confirmed
+        // board/sysadmin override still seats a non-member.
+        it('should let a confirmed admin override seat a non-member in a members-only program', async () => {
              (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
 
              const req = new Request(`http://localhost:4000/api/programs/${memberOnlyProgramId}/participants`, {
@@ -718,7 +756,7 @@ describe('Program Participants API Integration Tests', () => {
 
         it('should block a self-enroller whose age is unverifiable, pointing them at age capture', async () => {
              const noAge = await prisma.person.create({
-                 data: { email: 'noage-partic-api-test@example.com', name: 'No Age', household: { create: { name: "Test HH" } } }
+                 data: { email: 'noage-partic-api-test@example.com', name: 'No Age', household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } } }
              });
              try {
                  (getServerSession as jest.Mock).mockResolvedValue({ user: { id: noAge.id } });

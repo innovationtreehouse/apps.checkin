@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { signOut, useSession } from 'next-auth/react';
 import { usePathname } from 'next/navigation';
-import { notifications } from '@mantine/notifications';
-import { useLoad } from '@/lib/api';
+import { errorMessage, showError } from '@checkin/component-ui';
+import { api, useLoad } from '@/lib/api';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
 import { isValidEmail } from '@/lib/emergencyContacts/identity';
 import { isValidPhone, PHONE_ERROR } from '@/lib/phone';
@@ -26,27 +26,18 @@ function HouseholdQuestion() {
   const { data, error: loadError } = useLoad<{ household: { name: string } | null }>('/api/profile/household-question', { expireOn401: false });
   const householdName = data?.household?.name ?? null;
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
 
   const answer = async (join: boolean) => {
     setSaving(true);
-    setError('');
     try {
-      const res = await fetch('/api/profile/household-question', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ join }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setError(data.error || 'That answer could not be saved.');
-      } else if (join) {
+      await api('/api/profile/household-question', { method: 'POST', body: JSON.stringify({ join }) });
+      if (join) {
         window.location.reload();
       } else {
         await signOut({ callbackUrl: '/signin' });
       }
-    } catch {
-      setError('Network error');
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setSaving(false);
     }
@@ -64,7 +55,6 @@ function HouseholdQuestion() {
             If you say no, you get a new record of your own and sign in again.
           </Text>
           {loadError && <Alert color="red">Could not load this question. Please try again.</Alert>}
-          {error && <Alert color="red">{error}</Alert>}
           <Group>
             <Button loading={saving} onClick={() => answer(true)}>Yes, join</Button>
             <Button loading={saving} variant="default" onClick={() => answer(false)}>No</Button>
@@ -90,7 +80,10 @@ export default function OnboardingGate({ children }: { children: React.ReactNode
   const [emergencyContactEmail, setEmergencyContactEmail] = useState('');
 
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<{ phone?: string; contactPhone?: string; contactEmail?: string }>({});
+  const phoneRef = useRef<HTMLInputElement>(null);
+  const contactPhoneRef = useRef<HTMLInputElement>(null);
+  const contactEmailRef = useRef<HTMLInputElement>(null);
 
   const checkStatus = useCallback(() => fetch('/api/profile/onboarding-status')
     .then(async (res) => {
@@ -120,21 +113,21 @@ export default function OnboardingGate({ children }: { children: React.ReactNode
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (needsPhone && !isValidPhone(phone)) {
-      setError(PHONE_ERROR);
-      return;
-    }
-    if (needsEmergencyContact && !isValidPhone(emergencyContactPhone)) {
-      setError(`Emergency contact: ${PHONE_ERROR}`);
-      return;
-    }
-    if (needsEmergencyContact && emergencyContactEmail.trim() && !isValidEmail(emergencyContactEmail)) {
-      setError("That emergency contact email doesn't look right.");
+    const errors = {
+      phone: needsPhone && !isValidPhone(phone) ? PHONE_ERROR : undefined,
+      contactPhone: needsEmergencyContact && !isValidPhone(emergencyContactPhone) ? PHONE_ERROR : undefined,
+      contactEmail: needsEmergencyContact && emergencyContactEmail.trim() && !isValidEmail(emergencyContactEmail)
+        ? "That email doesn't look right."
+        : undefined,
+    };
+    setFieldErrors(errors);
+    const firstBroken = errors.phone ? phoneRef : errors.contactPhone ? contactPhoneRef : errors.contactEmail ? contactEmailRef : null;
+    if (firstBroken) {
+      firstBroken.current?.focus();
       return;
     }
 
     setSaving(true);
-    setError('');
 
     try {
       const payload: Record<string, string> = {};
@@ -147,22 +140,12 @@ export default function OnboardingGate({ children }: { children: React.ReactNode
         if (emergencyContactEmail.trim()) payload.emergencyContactEmail = emergencyContactEmail.trim();
       }
 
-      const res = await fetch('/api/profile/onboarding', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      if (res.ok) {
-        // Check status again to dismiss the modal
-        await checkStatus();
-        notifyNavRefresh();
-      } else {
-        const data = await res.json().catch(() => ({}));
-        setError(data.error || 'Failed to save information');
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error", autoClose: false });
+      await api('/api/profile/onboarding', { method: 'POST', body: JSON.stringify(payload) });
+      // Check status again to dismiss the modal
+      await checkStatus();
+      notifyNavRefresh();
+    } catch (err) {
+      showError(errorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -198,8 +181,10 @@ export default function OnboardingGate({ children }: { children: React.ReactNode
                 label="Your Phone Number"
                 description="Required for all adult participants."
                 placeholder="(555) 123-4567"
+                ref={phoneRef}
                 value={phone}
-                onChange={(e) => setPhone(e.currentTarget.value)}
+                error={fieldErrors.phone}
+                onChange={(e) => { setPhone(e.currentTarget.value); setFieldErrors((f) => ({ ...f, phone: undefined })); }}
                 required
               />
             )}
@@ -226,25 +211,23 @@ export default function OnboardingGate({ children }: { children: React.ReactNode
                     type="tel"
                     label="Contact Phone"
                     placeholder="(555) 987-6543"
+                    ref={contactPhoneRef}
                     value={emergencyContactPhone}
-                    onChange={(e) => setEmergencyContactPhone(e.currentTarget.value)}
+                    error={fieldErrors.contactPhone}
+                    onChange={(e) => { setEmergencyContactPhone(e.currentTarget.value); setFieldErrors((f) => ({ ...f, contactPhone: undefined })); }}
                     required
                   />
                   <TextInput
                     type="email"
                     label="Contact Email (optional)"
                     placeholder="jane@example.com"
+                    ref={contactEmailRef}
                     value={emergencyContactEmail}
-                    onChange={(e) => setEmergencyContactEmail(e.currentTarget.value)}
+                    error={fieldErrors.contactEmail}
+                    onChange={(e) => { setEmergencyContactEmail(e.currentTarget.value); setFieldErrors((f) => ({ ...f, contactEmail: undefined })); }}
                   />
                 </Stack>
               </Paper>
-            )}
-
-            {error && (
-              <Alert color="red" variant="light">
-                {error}
-              </Alert>
             )}
 
             <Box>

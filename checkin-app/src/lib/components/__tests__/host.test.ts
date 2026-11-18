@@ -8,8 +8,9 @@ jest.mock("@/lib/prisma", () => ({ __esModule: true, default: { org: { findUniqu
 jest.mock("@checkin/global-catalog", () => ({}));
 jest.mock("@/lib/auth-options", () => ({ authOptions: {} }));
 jest.mock("@/lib/config", () => ({
-  config: { isStaging: jest.fn(() => false) },
+  config: { isStaging: jest.fn(() => false), isDeployedDev: jest.fn(() => false) },
   isStagingAccessAllowed: jest.requireActual("@/lib/config").isStagingAccessAllowed,
+  isVerifiedOrgAccount: jest.requireActual("@/lib/config").isVerifiedOrgAccount,
 }));
 
 const mockSession = getServerSession as jest.Mock;

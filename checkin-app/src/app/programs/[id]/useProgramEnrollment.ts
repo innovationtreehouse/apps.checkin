@@ -1,15 +1,15 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useRef, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { notifications } from '@mantine/notifications';
 import { useDisclosure } from '@mantine/hooks';
+import { errorMessage, HttpError, invalidateLoads, showError, showSuccess } from '@checkin/component-ui';
+import { api, useLoad } from '@/lib/api';
 import { checkProgramAge } from '@/lib/programAge';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
 import { aggregateEnrollOutcomes, buildShopifyCheckoutUrl, findRepeatPayments, type EnrollOutcome, type RepeatPayment } from './enroll';
 import { checkoutVariantId } from '@/lib/programs/variants';
 import type { EnrollmentClosedBy } from '@/lib/programs/saleState';
 import { useIsLocalInstance, useShopifyStoreDomain } from '@/components/EnvProvider';
-
 
 export type ProgramDetail = {
   id: number;
@@ -46,59 +46,55 @@ export type ProgramDetail = {
   viewerMemberPricingEligible?: boolean;
 };
 
+type HouseholdMember = { id: number; name: string | null; dateOfBirth: string | null; isDeclaredAdult?: boolean };
+type HouseholdAnswer = { household: { householdMembers?: HouseholdMember[] } | null };
+type CheckoutPlan = { enrolledIds: number[]; variantId: string; storeDomain: string | undefined; mockPay: boolean; pricingEligible: boolean };
+/** Who was refused and why, and the checkout for the rest (null when nobody was accepted). */
+export type RefusedPause = { refusals: { name: string; reason: string }[]; accepted: string[]; plan: CheckoutPlan | null };
+type IntakeAnswer = { prefill?: { household?: { emergencyContactName?: string | null; emergencyContactPhone?: string | null } | null } };
+
+/** A write's refusal as an outcome, so one member's refusal doesn't stop the rest. Anything else still throws. */
+async function attempt(write: Promise<unknown>): Promise<{ status: number; error?: string }> {
+  try {
+    await write;
+    return { status: 200 };
+  } catch (e) {
+    if (e instanceof HttpError) return { status: e.status, error: e.message };
+    throw e;
+  }
+}
+
 /** Program load, household picker state and the enroll / payment-plan actions for the program page. */
 export function useProgramEnrollment(id: string) {
   const { data: session, status, update: updateSession } = useSession();
   const router = useRouter();
+  // /signin validates callbackUrl and returns the visitor here once signed in.
+  const signInToProgram = () => router.push(`/signin?callbackUrl=${encodeURIComponent(`/programs/${id}`)}`);
   const isLocalInstance = useIsLocalInstance();
   const shopifyStoreDomain = useShopifyStoreDomain();
 
-  const [program, setProgram] = useState<ProgramDetail | null>(null);
-  const [loading, setLoading] = useState(true);
+  const programLoad = useLoad<ProgramDetail>(`/api/programs/${id}`);
+  const program = programLoad.data;
   const [enrolling, setEnrolling] = useState(false);
-  const [message, setMessage] = useState("");
+  // A second click lands before React re-renders the disabled button, so the in-flight check is a ref.
+  const writing = useRef(false);
   const [successMessage, setSuccessMessage] = useState("");
   const [planKind, setPlanKind] = useState<string | null>(null);
   const [confirmPlanOpened, { open: openConfirmPlan, close: closeConfirmPlan }] = useDisclosure(false);
   const [repeatPayments, setRepeatPayments] = useState<RepeatPayment[]>([]);
+  const [refusedPause, setRefusedPause] = useState<RefusedPause | null>(null);
 
   const [showEnrollmentSelection, setShowEnrollmentSelection] = useState(false);
-  const [householdMembers, setHouseholdMembers] = useState<{ id: number; name: string | null; dateOfBirth: string | null; isDeclaredAdult?: boolean }[]>([]);
   const [selectedParticipantIds, setSelectedParticipantIds] = useState<number[]>([]);
-  const [loadingHousehold, setLoadingHousehold] = useState(false);
-  // First-time gap: a freshly-signed-in user has a single-person household with
-  // no enrollable participant and/or no emergency contact. When set, we offer the
-  // intake panel instead of the dead-end "no eligible participants" alert.
-  const [needsSetup, setNeedsSetup] = useState(false);
   const [showIntake, setShowIntake] = useState(false);
 
-  const fetchProgram = useCallback(() => fetch(`/api/programs/${id}`)
-    .then(async (res) => {
-      if (res.ok) {
-        const data = await res.json();
-        setProgram(data);
-      } else if (res.status === 404) {
-        setMessage("Program not found.");
-      } else {
-        setMessage("Failed to load program details.");
-      }
-    })
-    .catch(() => {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
-    })
-    .finally(() => {
-      setLoading(false);
-    }),
-  [id]);
+  const householdLoad = useLoad<HouseholdAnswer>(showEnrollmentSelection ? '/api/household' : null);
+  // Emergency contact isn't in /api/household; the process-free intake state has it.
+  const intakeLoad = useLoad<IntakeAnswer>(showEnrollmentSelection ? '/api/household/intake' : null);
 
-  useEffect(() => {
-    fetchProgram();
-  }, [fetchProgram]);
-
-  // Why a member can't be enrolled. Shared by the default selection and the row
-  // render so an ineligible member is never auto-selected and then POSTed (which
-  // returned a confusing "Date of Birth is missing" for over-25 adults).
-  const enrollBlock = (member: { id: number; dateOfBirth: string | null; isDeclaredAdult?: boolean }): { reason: 'enrolled' | 'pending' | 'age' | 'dob' | 'lead' | null; label: string } => {
+  // Why a member can't be enrolled. Shared by the setup check and the row render
+  // so an ineligible member is never selected and then POSTed.
+  const enrollBlock = (member: HouseholdMember): { reason: 'enrolled' | 'pending' | 'age' | 'dob' | 'lead' | null; label: string } => {
     // Only a known adult may commit THEMSELVES to a program and its charge — the
     // enroll route refuses the rest, so the viewer's own row must never offer it.
     const viewer = session?.user;
@@ -129,151 +125,177 @@ export function useProgramEnrollment(id: string) {
     return { reason: null, label: '' };
   };
 
-  // Load the caller's household into the member-select, and decide whether they
-  // still need first-time setup (no enrollable participant, or no valid emergency
-  // contact). Shared by the initial "Enroll" click and the post-intake re-fetch.
-  const populateHousehold = async () => {
-    const currentUserId = session!.user.id;
-    setLoadingHousehold(true);
-    try {
-      const res = await fetch(`/api/household`);
-      let members: { id: number; name: string | null; dateOfBirth: string | null; isDeclaredAdult?: boolean }[] =
-        [{ id: currentUserId, name: "Myself", dateOfBirth: null }];
-      if (res.ok) {
-        const data = await res.json();
-        if (data.household?.householdMembers) members = data.household.householdMembers;
-      }
-      setHouseholdMembers(members);
-      // Nobody is pre-checked: enrolling creates a PENDING row and a payment
-      // obligation, so each participant must be an explicit click — including
-      // the account holder, the easiest person to enroll by accident.
-      setSelectedParticipantIds([]);
+  const household = householdLoad.data?.household;
+  const householdMembers: HouseholdMember[] = !householdLoad.data ? []
+    : household?.householdMembers ?? (session ? [{ id: session.user.id, name: "Myself", dateOfBirth: null }] : []);
+  const memberName = (personId: number) => householdMembers.find((m) => m.id === personId)?.name || 'One member';
+  // After an intake save the picker waits for the re-read, so it never shows the household as it was.
+  const [refreshingHousehold, setRefreshingHousehold] = useState(false);
+  const loadingHousehold = refreshingHousehold || (!householdLoad.data && !householdLoad.error) || (!intakeLoad.data && !intakeLoad.error);
+  // The enroll routes don't check the emergency contact, so a probe that can't answer blocks enrolment.
+  const householdError = householdLoad.error ?? intakeLoad.error;
+  const householdErrorWhat = householdLoad.error ? "your household" : "your emergency contact";
+  const reloadHousehold = () => Promise.all([householdLoad.reload(), intakeLoad.reload()]);
+  const prefillHousehold = intakeLoad.data?.prefill?.household;
+  const hasValidEmergencyContact = !!(prefillHousehold?.emergencyContactName?.trim() && prefillHousehold?.emergencyContactPhone?.trim());
+  const hasEnrollable = householdMembers.some((m) => { const r = enrollBlock(m).reason; return r === null || r === 'pending'; });
+  // A freshly-signed-in user with no enrollable participant or no emergency contact is offered setup instead of a dead end.
+  const needsSetup = !!householdLoad.data && (!hasEnrollable || !hasValidEmergencyContact);
 
-      const hasEnrollable = members.some((m) => { const r = enrollBlock(m).reason; return r === null || r === 'pending'; });
-      // Emergency contact isn't in /api/household; probe the process-free intake
-      // state for it. Fail open (treat as present) if the probe can't answer, so
-      // a household with an enrollable member is never blocked by an EC hiccup.
-      let hasValidEmergencyContact = true;
-      try {
-        const ir = await fetch(`/api/household/intake`);
-        if (ir.ok) {
-          const s = await ir.json();
-          if (s && "prefill" in s) {
-            const h = s.prefill?.household;
-            hasValidEmergencyContact = !!(h?.emergencyContactName?.trim() && h?.emergencyContactPhone?.trim());
-          }
-        }
-      } catch {
-        /* fail open */
-      }
-      setNeedsSetup(!hasEnrollable || !hasValidEmergencyContact);
-    } catch {
-      const solo = { id: currentUserId, name: "Myself", dateOfBirth: null };
-      setHouseholdMembers([solo]);
-      // The solo entry carries no DOB, so an age-gated program blocks it and
-      // leaves nothing to check. Offer household setup instead of a panel whose
-      // only row is disabled.
-      const reason = enrollBlock(solo).reason;
-      setNeedsSetup(!(reason === null || reason === 'pending'));
-    } finally {
-      setLoadingHousehold(false);
-    }
-  };
-
-  const startEnrollmentProcess = async () => {
+  const startEnrollmentProcess = () => {
     if (!session) {
-      router.push('/');
+      signInToProgram();
       return;
     }
+    // Nobody is pre-checked: enrolling creates a PENDING row and a payment
+    // obligation, so each participant must be an explicit click — including
+    // the account holder, the easiest person to enroll by accident.
+    setSelectedParticipantIds([]);
     setShowEnrollmentSelection(true);
-    await populateHousehold();
   };
 
-  // Back from the first-time intake panel: reload the household (the new child /
-  // emergency contact are now saved) and drop into the normal member-select.
+  // Back from the first-time intake panel: re-read the household so the new
+  // member and emergency contact show in the normal member-select.
   const handleIntakeSaved = async () => {
     setShowIntake(false);
-    // Intake just set a DOB or the over-25 flag. Re-stamp the session so the
-    // ageBand claim reflects it NOW — the jwt callback refreshes on its own
-    // schedule, and this is the one flow where waiting would leave a member who
-    // just proved their age still blocked from enrolling.
-    await updateSession();
-    await populateHousehold();
+    setSelectedParticipantIds([]);
+    setRefreshingHousehold(true);
+    try {
+      // Intake just set a DOB or the over-25 flag. Re-stamp the session so the
+      // ageBand claim reflects it NOW — the jwt callback refreshes on its own
+      // schedule, and this is the one flow where waiting would leave a member who
+      // just proved their age still blocked from enrolling.
+      await Promise.all([updateSession(), reloadHousehold()]);
+    } finally {
+      setRefreshingHousehold(false);
+    }
   };
 
   const handleRequestPaymentPlan = async () => {
-    if (!session) return router.push('/');
+    if (!session) return signInToProgram();
     if (selectedParticipantIds.length === 0) return;
     if (!planKind) return;
+    if (writing.current) return;
+    writing.current = true;
     closeConfirmPlan();
-
     setEnrolling(true);
-    setMessage("");
 
     const errors: string[] = [];
     let anyRequested = false;
 
     try {
       for (const participantId of selectedParticipantIds) {
-        const enrollRes = await fetch(`/api/programs/${id}/participants`, {
+        const enrollRes = await attempt(api(`/api/programs/${id}/participants`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ participantId })
-        });
+          body: JSON.stringify({ participantId }),
+          invalidate: false,
+        }));
 
         // A 409 means the row already exists; the plan route decides whether it can take a request.
-        if (!enrollRes.ok && enrollRes.status !== 409) {
-          const data = await enrollRes.json();
-          errors.push(data.error || "Failed to start enrollment.");
+        if (enrollRes.status !== 200 && enrollRes.status !== 409) {
+          errors.push(enrollRes.error ?? "Failed to start enrollment.");
           continue;
         }
 
-        const res = await fetch(`/api/programs/${id}/request-payment-plan`, {
+        const res = await attempt(api(`/api/programs/${id}/request-payment-plan`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           // One choice covers the whole selected batch: the ask is the household's
           // situation, not the individual participant's.
-          body: JSON.stringify({ participantId, kind: planKind })
-        });
+          body: JSON.stringify({ participantId, kind: planKind }),
+          invalidate: false,
+        }));
 
-        if (res.ok) {
+        if (res.status === 200) {
           anyRequested = true;
-        } else if (enrollRes.ok && res.status >= 500) {
+        } else if (enrollRes.status === 200 && res.status >= 500) {
           errors.push("Enrolled as pending, but failed to alert the Scholarship Review Team for one member. Please email them directly.");
         } else {
           const name = householdMembers.find((m) => m.id === participantId)?.name ?? "One member";
           errors.push(res.status < 500
-            ? `${name}: ${(await res.json()).error ?? "This request can't go ahead."}`
+            ? `${name}: ${res.error ?? "This request can't go ahead."}`
             : `${name}: We couldn't send your request to the Scholarship Review Team. Please email them directly.`);
         }
       }
 
       if (anyRequested) {
-        notifications.show({ message: "Requested! Please check your email for communication from the Scholarship Review Team." });
-        fetchProgram();
+        showSuccess("Requested! Please check your email for communication from the Scholarship Review Team.");
         notifyNavRefresh();
       }
-      if (errors.length > 0) setMessage(errors.join(" "));
-    } catch {
-      notifications.show({ color: "red", message: "Network error requesting payment plan.", autoClose: false });
+      errors.forEach((e) => showError(e));
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
+      invalidateLoads();
+      writing.current = false;
       setEnrolling(false);
     }
   };
 
+  /** Checks out exactly these children: mock payment on a local instance, else the Shopify redirect. True when leaving the page. */
+  const goToCheckout = async ({ enrolledIds, variantId, storeDomain, mockPay, pricingEligible }: CheckoutPlan): Promise<boolean> => {
+    // Every checkout starts at the server: it refuses a checkout naming
+    // someone outside the household (400) or from a non-lead (403), and mints the member discount code for
+    // single-pool programs when the household's membership fee covers the program. A
+    // mint failure is non-fatal: an undiscounted link is always a safe fallback,
+    // per lib/shopify/discounts.ts's mintMemberDiscountCode contract. The checkout
+    // signature is not optional: without it the order activates nobody.
+    let discountCode: string | null = null;
+    let signature: string | null = null;
+    try {
+      const data = await api<{ code?: string | null; signature?: string | null }>(`/api/programs/${id}/discount-code`, {
+        method: 'POST',
+        body: JSON.stringify({ participantIds: enrolledIds }),
+        invalidate: false,
+      });
+      discountCode = pricingEligible ? data.code ?? null : null;
+      signature = data.signature ?? null;
+    } catch (e) {
+      if (e instanceof HttpError && (e.status === 400 || e.status === 403)) {
+        showError(e.message);
+        return false;
+      }
+      // Any other failure leaves no signature: refused below.
+    }
+    if (mockPay) {
+      // Local mock: fire the Debug section's orders/paid webhook to activate the
+      // PENDING enrollments, exactly as the dev Shopify tool's button does — no redirect.
+      try {
+        await api('/api/dev/shopify/orders-paid', {
+          method: 'POST',
+          body: JSON.stringify({ programId: Number(id), participantIds: enrolledIds }),
+          invalidate: false,
+        });
+        showSuccess("Payment mocked (local) — enrollment activated.");
+      } catch {
+        showError("Enrolled, but the mock payment failed — fire it from the Debug → Shopify tool.");
+      }
+      return false;
+    }
+    if (!signature) {
+      showError("We couldn't start the checkout. Please try again.");
+      return false;
+    }
+    setSuccessMessage("Redirecting to Shopify for secure payment...");
+    // qty=N single variant + comma-joined account ids — see buildShopifyCheckoutUrl.
+    window.location.href = buildShopifyCheckoutUrl(storeDomain, variantId, enrolledIds, id, signature, discountCode);
+    return true; // spinner stays; page unloads on redirect
+  };
+
   const handleEnroll = async (confirmedRepeat = false) => {
     if (!session) {
-      router.push('/');
+      signInToProgram();
       return;
     }
     if (selectedParticipantIds.length === 0) return;
+    if (writing.current) return;
+    writing.current = true;
 
     const isPayingOnShopify = program?.orgMemberPriceCents || program?.nonOrgMemberPriceCents;
 
     setEnrolling(true);
-    setMessage("");
 
     let navigating = false; // only the Shopify redirect keeps the spinner past finally
+    let wrote = false;
     try {
       // Resolve the Shopify checkout details BEFORE enrolling. A paid program with
       // no variant (or no store domain) can never be charged, so it must fail here
@@ -287,27 +309,20 @@ export function useProgramEnrollment(id: string) {
       // Variant is always required — local synthesizes dev-mock-variant ids, so a null
       // one is a real config gap in every env.
       let mockPay = false;
-      let isMember = false;
-      // Pricing goes by the server-computed duration-aware flag when present (a
-      // member not covered through this program's end must pay full price);
-      // ?? isMember is the fallback for an older cached response missing it.
+      // Pricing goes by the server-computed duration-aware flag: a member not covered
+      // through this program's end pays full price, and an absent flag gets no discount.
       let pricingEligible = false;
       if (isPayingOnShopify && program) {
-        const householdRes = await fetch('/api/household');
-        if (householdRes.ok) {
-          const householdData = await householdRes.json();
-          isMember = householdData.household?.orgMembership?.status === "ACTIVE" || false;
-        }
-        pricingEligible = program.viewerMemberPricingEligible ?? isMember;
+        pricingEligible = program.viewerMemberPricingEligible === true;
         // Every app checkout follows a claim, so it sells the claimant variant when
         // the program has one; the discount code (below) does the member pricing.
         variantId = checkoutVariantId(program);
         storeDomain = shopifyStoreDomain ?? undefined;
         mockPay = isLocalInstance;
         if (!variantId || (!mockPay && !storeDomain)) {
-          notifications.show({ color: "red", autoClose: false, message: variantId
+          showError(variantId
             ? "Cannot enroll: Shopify store domain not configured. Contact an admin."
-            : "Cannot enroll: no pricing variant set for this program — set one in program-ops." });
+            : "Cannot enroll: no pricing variant set for this program — set one in program-ops.");
           return; // no enrollment created — payment path is broken
         }
       }
@@ -316,13 +331,10 @@ export function useProgramEnrollment(id: string) {
       // loaded, and the participants POST answers that with a 409 like any re-run.
       if (isPayingOnShopify && !confirmedRepeat) {
         // The warning is advisory: a failed re-read checks the page's roster instead.
-        const fresh: ProgramDetail | null = await fetch(`/api/programs/${id}`)
-          .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-          .catch((err: unknown) => {
-            console.warn("[programs] roster re-read failed; checking repeat payments against the loaded roster", err);
-            return null;
-          });
-        if (fresh) setProgram(fresh);
+        const fresh = await api<ProgramDetail>(`/api/programs/${id}`).catch((err: unknown) => {
+          console.warn("[programs] roster re-read failed; checking repeat payments against the loaded roster", err);
+          return null;
+        });
         const repeats = findRepeatPayments(
           selectedParticipantIds,
           (fresh ?? program)?.participants ?? [],
@@ -335,95 +347,74 @@ export function useProgramEnrollment(id: string) {
       }
 
       const outcomes: EnrollOutcome[] = [];
+      wrote = true;
       for (const participantId of selectedParticipantIds) {
-        const res = await fetch(`/api/programs/${id}/participants`, {
+        const res = await attempt(api(`/api/programs/${id}/participants`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ participantId })
-        });
-
-        // Only the error path carries a JSON body we need (error/requiresOverride);
+          body: JSON.stringify({ participantId }),
+          invalidate: false,
+        }));
         // ok and 409 (already enrolled) are both treated as enrolled downstream.
-        const data = (res.ok || res.status === 409) ? {} : await res.json();
-        outcomes.push({ participantId, ok: res.ok, status: res.status, error: data.error, requiresOverride: data.requiresOverride });
+        outcomes.push({ participantId, ok: res.status === 200, status: res.status, error: res.error });
       }
 
-      const { enrolledIds, errors } = aggregateEnrollOutcomes(outcomes);
+      const { enrolledIds, refused } = aggregateEnrollOutcomes(outcomes);
+      const named = refused.map((r) => ({ name: memberName(r.participantId), reason: r.error }));
+
+      if (enrolledIds.length > 0) notifyNavRefresh();
+
+      if (isPayingOnShopify && variantId) {
+        const plan: CheckoutPlan = { enrolledIds, variantId, storeDomain, mockPay, pricingEligible };
+        // A refusal pauses before checkout so the family sees who was left out; the accepted claims stay held.
+        if (refused.length > 0) {
+          setRefusedPause({ refusals: named, accepted: enrolledIds.map(memberName), plan: enrolledIds.length > 0 ? plan : null });
+          return;
+        }
+        navigating = await goToCheckout(plan);
+        return;
+      }
 
       if (enrolledIds.length > 0) {
-        notifyNavRefresh();
-        // Every checkout starts at the server: it refuses a checkout naming
-        // someone outside the household (400) or from a non-lead (403), and mints the member discount code for
-        // single-pool programs when the household's membership fee covers the program. A
-        // mint failure is non-fatal: an undiscounted link is always a safe fallback,
-        // per lib/shopify/discounts.ts's mintMemberDiscountCode contract. The checkout
-        // signature is not optional: without it the order activates nobody.
-        let discountCode: string | null = null;
-        let signature: string | null = null;
-        if (isPayingOnShopify) {
-          let refusal: string | null = null;
-          try {
-            const discRes = await fetch(`/api/programs/${id}/discount-code`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ participantIds: enrolledIds }),
-            });
-            if (discRes.ok) {
-              const data = await discRes.json();
-              discountCode = pricingEligible ? data.code ?? null : null;
-              signature = data.signature ?? null;
-            } else if (discRes.status === 400 || discRes.status === 403) refusal = (await discRes.json()).error ?? "This checkout can't go ahead.";
-          } catch { /* no signature: refused below */ }
-          if (refusal) {
-            setMessage(refusal);
-            fetchProgram();
-            return;
-          }
-        }
-        if (isPayingOnShopify && program && variantId && mockPay) {
-          // Local mock: fire the Debug section's orders/paid webhook to activate the
-          // PENDING enrollments, exactly as the dev Shopify tool's button does — no redirect.
-          const payRes = await fetch('/api/dev/shopify/orders-paid', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ programId: program.id, participantIds: enrolledIds }),
-          });
-          if (payRes.ok) {
-            notifications.show({ message: "Payment mocked (local) — enrollment activated." });
-          } else {
-            notifications.show({ color: "red", autoClose: false, message: "Enrolled, but the mock payment failed — fire it from the Debug → Shopify tool." });
-          }
-          fetchProgram();
-        } else if (isPayingOnShopify && program && variantId && storeDomain) {
-          if (!signature) {
-            setMessage("We couldn't start the checkout. Please try again.");
-            fetchProgram();
-            return;
-          }
-          setSuccessMessage("Redirecting to Shopify for secure payment...");
-          navigating = true;
-          // qty=N single variant + comma-joined account ids — see buildShopifyCheckoutUrl.
-          window.location.href = buildShopifyCheckoutUrl(storeDomain, variantId, enrolledIds, id, signature, discountCode);
-          return; // spinner stays; page unloads on redirect
-        } else {
-          notifications.show({ message: enrolledIds.length > 1 ? `Successfully enrolled ${enrolledIds.length} members!` : "Successfully enrolled!" });
-          fetchProgram();
-        }
+        showSuccess(enrolledIds.length > 1 ? `Successfully enrolled ${enrolledIds.length} members!` : "Successfully enrolled!");
       }
-
-      if (errors.length > 0) setMessage(errors.join(" "));
-    } catch {
-      notifications.show({ color: "red", message: "Network error during enrollment.", autoClose: false });
+      named.forEach((r) => showError(`${r.name}: ${r.reason}`));
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
-      if (!navigating) setEnrolling(false);
+      if (!navigating) {
+        if (wrote) invalidateLoads();
+        writing.current = false;
+        setEnrolling(false);
+      }
+    }
+  };
+
+  const continueToCheckout = async () => {
+    const plan = refusedPause?.plan;
+    setRefusedPause(null);
+    if (!plan || writing.current) return;
+    writing.current = true;
+    setEnrolling(true);
+    let navigating = false;
+    try {
+      navigating = await goToCheckout(plan);
+    } catch (e) {
+      showError(errorMessage(e));
+    } finally {
+      if (!navigating) {
+        invalidateLoads();
+        writing.current = false;
+        setEnrolling(false);
+      }
     }
   };
 
   return {
-    session, status, program, loading, message, successMessage, startEnrollmentProcess, showEnrollmentSelection,
+    session, status, program, programLoad, successMessage, startEnrollmentProcess, signInToProgram, showEnrollmentSelection,
     picker: {
-      showIntake, setShowIntake, handleIntakeSaved, loadingHousehold, householdMembers, enrollBlock, needsSetup,
+      showIntake, setShowIntake, handleIntakeSaved, loadingHousehold, householdError, householdErrorWhat, reloadHousehold, householdMembers, enrollBlock, needsSetup,
       selectedParticipantIds, setSelectedParticipantIds, enrolling, handleEnroll, repeatPayments, setRepeatPayments,
+      refusedPause, setRefusedPause, continueToCheckout,
       planKind, setPlanKind, confirmPlanOpened, openConfirmPlan, closeConfirmPlan, handleRequestPaymentPlan,
     },
   };

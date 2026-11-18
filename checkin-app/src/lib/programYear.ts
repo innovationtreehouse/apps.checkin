@@ -1,7 +1,6 @@
-// Pure, prisma-free helpers for the finance-ops board's "next year" flag, so a
-// client component can import them (lib/membership/renewal.nextBoundary pulls in
-// prisma and can't cross into the browser bundle). Kept dependency-free and
-// unit-tested in __tests__/programYear.test.ts.
+// Pure, prisma-free membership-year helpers, so a client component can import them
+// (lib/membership/renewal pulls in prisma and can't cross into the browser bundle).
+// Kept dependency-free and unit-tested in __tests__/programYear.test.ts.
 
 /** Next occurrence (>= now) of the membership-year boundary's month/day. */
 export function nextBoundary(boundary: Date, now: Date): Date {
@@ -67,4 +66,69 @@ export function programYearsTouched(boundary: Date, startAt: Date, endAt: Date):
     const first = membershipYearOf(boundary, startAt);
     const last = Math.max(first, membershipYearOf(boundary, new Date(endAt.getTime() - 1)));
     return Array.from({ length: last - first + 1 }, (_, i) => first + i);
+}
+
+/** How many months before the boundary the renewal window opens. */
+export const RENEWAL_LEAD_MONTHS = 2;
+
+/** `date` moved back `months` calendar months, UTC, with JS month rollover. */
+export function monthsBefore(date: Date, months: number): Date {
+    const d = new Date(date);
+    d.setUTCMonth(d.getUTCMonth() - months);
+    return d;
+}
+
+/**
+ * From a configured boundary date, the next boundary occurrence and whether `now`
+ * sits inside the renewal lead window before it. Pure; the single source of the
+ * "are we in renewal season" calc.
+ */
+export function renewalWindow(configuredBoundary: Date, now: Date): { boundary: Date; windowStart: Date; inSeason: boolean } {
+    const boundary = nextBoundary(configuredBoundary, now);
+    const windowStart = monthsBefore(boundary, RENEWAL_LEAD_MONTHS);
+    return { boundary, windowStart, inSeason: now.getTime() >= windowStart.getTime() };
+}
+
+/**
+ * The membership year now in effect: its label, the boundary that opened it
+ * (`cycleStart`), the boundary that closes it (`cycleEnd`), and the day its renewal
+ * window opened (`settledSince`). The year flips
+ * at windowStart — the coming year becomes "live" exactly when it becomes renewable
+ * and stays live until the next window opens — so in season the live year is the
+ * one about to begin, and off season it is the one that began at the last boundary.
+ * Drives badge years and every money horizon; pure, from the configured boundary.
+ */
+export function membershipYearCycle(
+    configuredBoundary: Date,
+    now: Date,
+): { label: string; settledSince: Date; cycleStart: Date; cycleEnd: Date } {
+    const { boundary, windowStart, inSeason } = renewalWindow(configuredBoundary, now);
+    // Off-season, `boundary` is already next year's, so the live cycle is the one that
+    // opened at the previous windowStart.
+    const endYear = boundary.getUTCFullYear() + (inSeason ? 1 : 0);
+    const settledSince = inSeason
+        ? windowStart
+        : new Date(Date.UTC(windowStart.getUTCFullYear() - 1, windowStart.getUTCMonth(), windowStart.getUTCDate()));
+    const cycleEnd = new Date(Date.UTC(endYear, boundary.getUTCMonth(), boundary.getUTCDate()));
+    const cycleStart = new Date(Date.UTC(endYear - 1, boundary.getUTCMonth(), boundary.getUTCDate()));
+    return { label: `${endYear - 1}-${endYear}`, settledSince, cycleStart, cycleEnd };
+}
+
+/** The live year at `now`, named by the year its opening boundary is in; null with no boundary set. */
+export function liveMembershipYear(configuredBoundary: Date | null | undefined, now: Date): number | null {
+    return configuredBoundary ? membershipYearCycle(configuredBoundary, now).cycleStart.getUTCFullYear() : null;
+}
+
+/**
+ * Why a closed household application can't be reopened for its year, or null. Its
+ * year is the live year when it was created; once the next year's renewal window
+ * opens, Reopen refuses. No boundary set, or a per-person kind: null.
+ */
+export function reopenYearRefusal(kind: string, createdAt: Date, boundary: Date | null | undefined, now: Date): string | null {
+    if (kind !== "INITIAL" && kind !== "RENEWAL") return null;
+    const year = liveMembershipYear(boundary, createdAt);
+    const live = liveMembershipYear(boundary, now);
+    if (year == null || live == null || live <= year) return null;
+    const instead = kind === "RENEWAL" ? "use the new renewal" : "start a new application";
+    return `This application is for ${membershipYearLabel(year)}. The ${membershipYearLabel(year + 1)} renewal period has started, so it can't be reopened; ${instead}.`;
 }

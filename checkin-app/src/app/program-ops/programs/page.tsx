@@ -1,12 +1,15 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { Anchor, Badge, Button, Checkbox, Group, Stack, Text, Tooltip } from "@mantine/core";
+import { LoadError } from "@checkin/component-ui";
 import { DataTable, type DataTableColumn } from "@/components/admin/DataTable";
+import { useLoad } from "@/lib/api";
 import { isProgramCheckoutBroken } from "@/lib/programCheckout";
+import { useProgramStoreClosed } from "../useProgramStoreClosed";
 import { formatDateOnly } from "@/lib/time";
 
 type Program = {
@@ -21,6 +24,7 @@ type Program = {
   orgMemberPriceCents?: number | null;
   nonOrgMemberPriceCents?: number | null;
   shopifyVariantId?: string | null;
+  claimantShopifyVariantId?: string | null;
   maxParticipants?: number | null;
   _count?: { participants?: number; events?: number };
 };
@@ -45,27 +49,13 @@ const dateRange = (p: Program) =>
   `${fmtDate(p.startAt)} – ${fmtDate(p.endAt)}`;
 
 export default function AdminProgramsIndex() {
-  const [programs, setPrograms] = useState<Program[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data, error: loadError, reload } = useLoad<Program[]>("/api/programs");
+  const programs = data ?? [];
   const [activeOnly, setActiveOnly] = useState(false);
   const [publicOnly, setPublicOnly] = useState(false);
   const router = useRouter();
   const { data: session } = useSession();
-
-  useEffect(() => {
-    fetch('/api/programs')
-      .then(res => res.json())
-      .then(data => {
-        if (Array.isArray(data)) {
-          setPrograms(data);
-        }
-        setLoading(false);
-      })
-      .catch(err => {
-        console.error("Failed to load programs:", err);
-        setLoading(false);
-      });
-  }, []);
+  const storeClosed = useProgramStoreClosed(!!(session?.user?.isSysadmin || session?.user?.isBoardMember));
 
   const visiblePrograms = programs.filter(
     (p) =>
@@ -79,7 +69,7 @@ export default function AdminProgramsIndex() {
       render: (p) => (
         <Group gap="xs" wrap="nowrap">
           <Text fw={600}>{p.name}</Text>
-          {isProgramCheckoutBroken(p) && (
+          {isProgramCheckoutBroken(p, storeClosed) && (
             <Tooltip label="Priced but no Shopify checkout variant — paid enrollment will not work. Open the program to sync.">
               <Badge color="red" variant="filled">⚠️ Broken checkout</Badge>
             </Tooltip>
@@ -167,13 +157,17 @@ export default function AdminProgramsIndex() {
         />
       </Group>
 
-      <DataTable
-        columns={columns}
-        rows={visiblePrograms}
-        getRowKey={(p) => p.id}
-        loading={loading}
-        emptyMessage="No programs found. Create your first one!"
-      />
+      {loadError ? (
+        <LoadError what="programs" message={loadError} onRetry={reload} />
+      ) : (
+        <DataTable
+          columns={columns}
+          rows={visiblePrograms}
+          getRowKey={(p) => p.id}
+          loading={data === null}
+          emptyMessage="No programs found. Create your first one!"
+        />
+      )}
     </Stack>
   );
 }

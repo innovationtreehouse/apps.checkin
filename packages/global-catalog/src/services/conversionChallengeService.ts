@@ -5,7 +5,6 @@ import type { Prisma } from "../generated/prisma/client";
 import type { ConversionChallenge, ConversionChallengeStatus } from "../db/schema";
 
 const challengeRepo = createConversionChallengeRepository(db);
-const itemRefRepo = createItemReferenceRepository(db);
 import { ServiceError } from "@checkin/component-kit";
 import { reviewTransitionError } from "./categoryService";
 import { assertConversionChallengeTransition } from "../workflows/conversion-challenge.machine";
@@ -28,12 +27,20 @@ export async function lockChallengeSubmission(tx: Prisma.TransactionClient, item
 }
 
 export async function submitChallenge(params: SubmitChallengeParams): Promise<ConversionChallenge> {
-  if (params.proposedFactor <= 0) throw new ServiceError(400, "proposedFactor must be greater than 0");
-
-  const ref = await itemRefRepo.findById(params.itemReferenceId);
-  if (!ref) throw new ServiceError(404, "Item reference not found");
+  if (!Number.isInteger(params.proposedFactor) || params.proposedFactor < 1) {
+    throw new ServiceError(400, "proposedFactor must be a whole number of at least 1");
+  }
+  const reason = params.reason.trim();
+  if (!reason) throw new ServiceError(400, "reason is required");
 
   return db.$transaction(async (tx) => {
+    const ref = await createItemReferenceRepository(tx).findByIdForUpdate(params.itemReferenceId);
+    if (!ref) throw new ServiceError(404, "Item reference not found");
+    if (ref.archivedAt) throw new ServiceError(409, "This reference is archived");
+    if (params.proposedFactor === ref.conversionFactor) {
+      throw new ServiceError(400, "proposedFactor must differ from the current factor");
+    }
+
     await lockChallengeSubmission(tx, params.itemReferenceId, params.orgId);
     const repo = createConversionChallengeRepository(tx);
 
@@ -47,7 +54,7 @@ export async function submitChallenge(params: SubmitChallengeParams): Promise<Co
       orgName: params.orgName,
       currentFactor: ref.conversionFactor,
       proposedFactor: params.proposedFactor,
-      reason: params.reason.trim(),
+      reason,
       status: "pending",
     });
   });
@@ -63,10 +70,11 @@ export async function acceptChallenge(challengeId: number, userId: number): Prom
     throw reviewTransitionError(err, challenge.status !== "pending", ALREADY_REVIEWED);
   }
 
-  const ref = await itemRefRepo.findById(challenge.itemReferenceId);
-  if (!ref) throw new ServiceError(404, "Item reference not found");
-
   await transactionWithEvents(async (tx) => {
+    const ref = await createItemReferenceRepository(tx).findByIdForUpdate(challenge.itemReferenceId);
+    if (!ref) throw new ServiceError(404, "Item reference not found");
+    if (ref.archivedAt) throw new ServiceError(409, "This reference is archived");
+
     const { count } = await tx.conversionChallenge.updateMany({
       where: { id: challengeId, status: challenge.status },
       data: { status: acceptedStatus, reviewedByUserId: userId, reviewedAt: new Date() },

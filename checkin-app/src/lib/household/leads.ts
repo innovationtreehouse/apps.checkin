@@ -1,7 +1,9 @@
 import { type DbClient, type TxClient, withTx } from "@/lib/db-client";
 import prisma from "@/lib/prisma";
 import { isYouth } from "@/lib/time";
+import { mayDeclareAges } from "@/lib/person/adultDob";
 import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
+import { lockLiveHouseholds } from "@/lib/household/archiveGuard";
 
 /**
  * Shared household-lead ownership check. Loads the person and
@@ -47,6 +49,12 @@ export const MAX_HOUSEHOLD_LEADS = 2;
  */
 export const householdLeadsWhere = (householdId: number) =>
     ({ householdId, isHouseholdLead: true }) as const;
+
+/** Whether the caller may set ages in this household ({@link mayDeclareAges}). */
+export async function setsHouseholdAges(db: DbClient, callerId: number, householdId: number): Promise<boolean> {
+    const leads = await db.person.findMany({ where: householdLeadsWhere(householdId), select: { id: true } });
+    return mayDeclareAges(callerId, leads.map((l) => l.id));
+}
 
 /** Thrown by {@link addHouseholdLead} when the per-household lead cap is reached. */
 export class HouseholdLeadLimitError extends Error {
@@ -113,10 +121,10 @@ async function addHouseholdLeadTx(
     // household serializes with the promotion.
     const denied = await lockAndFindDeniedHousehold(tx, [householdId]) !== null;
 
-    // FOR UPDATE serializes lead additions for this household. Postgres' default
+    // The row lock serializes lead additions for this household. Postgres' default
     // Read Committed isolation does NOT prevent two transactions from both
     // counting N and both flagging — the explicit lock is what does.
-    await tx.$queryRaw`SELECT id FROM "Household" WHERE id = ${householdId} FOR UPDATE`;
+    await lockLiveHouseholds(tx, [householdId]);
 
     const person = await tx.person.findUnique({
         where: { id: participantId },
@@ -191,7 +199,7 @@ async function removeHouseholdLeadTx(
     householdId: number,
     participantId: number,
 ): Promise<RemoveLeadResult> {
-    await tx.$queryRaw`SELECT id FROM "Household" WHERE id = ${householdId} FOR UPDATE`;
+    await lockLiveHouseholds(tx, [householdId]);
 
     const person = await tx.person.findUnique({
         where: { id: participantId },

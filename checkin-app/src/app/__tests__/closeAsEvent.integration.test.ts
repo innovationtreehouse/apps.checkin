@@ -5,7 +5,7 @@
  * A close is one recorded event: the kiosk decides, the server records the
  * close with the keyholder's checkout and carries it out from that row. Each
  * case is one item of the check-in modeling brief (MC-*) or the intended
- * state machine (docs/rules/attendance-checkin.md, Opening and closing).
+ * state machine.
  */
 import { POST } from '@/app/api/scan/route';
 import prisma from '@/lib/prisma';
@@ -99,6 +99,34 @@ describe('close as one recorded event (real DB)', () => {
         const [close] = await closesSince();
         expect(close).toMatchObject({ via: 'KIOSK', closedById: k.id });
         expect(close.executedAt).not.toBeNull();
+    });
+
+    describe('what a check-in stores in arrivedLive', () => {
+        const arrival = (cid?: string, scannedAt?: Date) => scan({
+            participantId: m.id,
+            intent: 'IN',
+            ...(cid && scannedAt ? { clientEventId: `${TAG}-${cid}`, scannedAt: scannedAt.toISOString(), replay: true, protocolVersion: 7 } : {}),
+        });
+        const visitOfM = () => prisma.visit.findFirstOrThrow({ where: { personId: m.id }, orderBy: { id: 'desc' } });
+
+        it('a live badge IN stores true', async () => {
+            expect(await (await arrival()).json()).toMatchObject({ type: 'checkin' });
+            expect((await visitOfM()).arrivedLive).toBe(true);
+        });
+
+        it('a replayed IN stores false', async () => {
+            expect(await (await arrival('live-replay', at(60_000))).json()).toMatchObject({ type: 'checkin' });
+            const v = await visitOfM();
+            expect(v).toMatchObject({ arrivedLive: false, departedAt: null });
+        });
+
+        it('a replayed IN fenced by a close that reached the server first stores false', async () => {
+            await prisma.facilityClose.create({ data: { closedAt: at(30_000), closedById: k.id, via: 'KIOSK', executedAt: at(30_000) } });
+
+            await arrival('live-fence', at(60_000));
+
+            expect(await visitOfM()).toMatchObject({ arrivedLive: false, departedVia: 'FACILITY_CLOSE' });
+        });
     });
 
     it('MC-A1: a stale "alone" replay closes at the scan time, unflagged, past others still recorded', async () => {

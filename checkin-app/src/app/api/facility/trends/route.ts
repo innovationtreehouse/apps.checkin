@@ -85,10 +85,7 @@ export const GET = withAuth(
 
             const visits = await prisma.visit.findMany({
                 where: whereClause,
-                include: {
-                    person: { select: { id: true } },
-                    event: { select: { programId: true } },
-                },
+                select: { personId: true, arrivedAt: true, departedAt: true, associatedEventId: true, arrivedVia: true },
                 orderBy: { arrivedAt: "asc" },
             });
 
@@ -134,13 +131,13 @@ export const GET = withAuth(
 
                 const bucket = bucketMap.get(key)!;
                 const hours = getHoursBetween(visit.arrivedAt, visit.departedAt);
-                const isParticipant = enrolledParticipantIds.has(visit.person.id);
+                const isParticipant = enrolledParticipantIds.has(visit.personId);
 
                 if (isParticipant) {
-                    bucket.participantIds.add(visit.person.id);
+                    bucket.participantIds.add(visit.personId);
                     bucket.participantHours += hours;
                 } else {
-                    bucket.volunteerIds.add(visit.person.id);
+                    bucket.volunteerIds.add(visit.personId);
                     bucket.volunteerHours += hours;
                 }
 
@@ -186,8 +183,8 @@ export const GET = withAuth(
             const totals: TrendBucket = {
                 label: "Total",
                 periodStart: "",
-                uniqueVolunteers: new Set(visits.filter(v => !enrolledParticipantIds.has(v.person.id)).map(v => v.person.id)).size,
-                uniqueParticipants: new Set(visits.filter(v => enrolledParticipantIds.has(v.person.id)).map(v => v.person.id)).size,
+                uniqueVolunteers: new Set(visits.filter(v => !enrolledParticipantIds.has(v.personId)).map(v => v.personId)).size,
+                uniqueParticipants: new Set(visits.filter(v => enrolledParticipantIds.has(v.personId)).map(v => v.personId)).size,
                 totalVolunteerHours: Math.round(buckets.reduce((s, b) => s + b.totalVolunteerHours, 0) * 10) / 10,
                 totalParticipantHours: Math.round(buckets.reduce((s, b) => s + b.totalParticipantHours, 0) * 10) / 10,
                 structuredHours: Math.round(buckets.reduce((s, b) => s + b.structuredHours, 0) * 10) / 10,

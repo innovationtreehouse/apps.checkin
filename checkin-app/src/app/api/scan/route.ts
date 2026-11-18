@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
@@ -7,17 +8,18 @@ import { notifyScanOutcome } from "@/lib/attendance/scanNotify";
 import { appendPresenceEvent, parkReasonToClass, PresenceClass } from "@/lib/presence/events";
 import { applyPresenceIntent, flagForReview } from "@/lib/presence/project";
 import { withKiosk } from "@/lib/kioskAuth";
+import { recordKioskProtocolSeen } from "@/lib/kioskProtocolSeen";
 import { CLOSE_REQUEST_PROTOCOL_VERSION, KIOSK_DEBOUNCE_PROTOCOL_VERSION, SCAN_PROTOCOL_VERSION, TRUSTED_REPLAY_PROTOCOL_VERSION } from "@/lib/scanProtocol";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { uniqueViolationFields } from "@/lib/prismaUniqueViolation";
 import { resolveMergedPerson } from "@/lib/person/mergeChain";
 import { isLiveHousehold } from "@/lib/household/archived";
-import { specTrace } from "@/lib/specTrace";
+import { specTrace, traceOnCommit } from "@/lib/specTrace";
 import type { Prisma } from "@/generated/prisma/client";
 import { lastNightlyCloseAt } from "@/lib/attendance/nightlyClose";
 import { type ScanResult, toResponse } from "./scanResponse";
 
-// docs/rules/attendance-checkin.md (kiosk resilience): a replayed scan older
+// A replayed scan older
 // than this still applies, and is also flagged for human review — state may
 // have moved on while the kiosk was offline.
 const REPLAY_FRESHNESS_WINDOW_MS = 10 * 60 * 1000;
@@ -25,6 +27,10 @@ const REPLAY_FRESHNESS_WINDOW_MS = 10 * 60 * 1000;
 // A replay stamped further ahead of server now than this came from a kiosk
 // whose clock is wrong; it applies at server now, flagged clock_suspect.
 const REPLAY_FUTURE_TOLERANCE_MS = 2 * 60 * 1000;
+
+// Far beyond any honest kiosk figure (about a second online, some seconds after
+// a night offline). A wider one means the kiosk does not know the time.
+const MAX_SCAN_TIME_UNCERTAINTY_MS = 60 * 60 * 1000;
 
 // Bounded to Postgres int4 (see lib/searchId.ts): a larger id makes the
 // lookup throw instead of matching nothing.
@@ -58,28 +64,32 @@ const maxDate = (a: Date | null, b: Date | null): Date | null =>
     !a ? b : !b ? a : (a > b ? a : b);
 
 // High cap: kiosks burst and a whole facility may share one NAT IP. withKiosk
-// reads the raw body and authenticates it; only a signed kiosk scans
-// (docs/rules/attendance-checkin.md, Opening and closing).
+// reads the raw body and authenticates it; only a signed kiosk scans.
 export const POST = withKiosk(
     { rateLimit: { name: "scan", limit: 300 } },
-    async (_req, body: { participantId?: unknown; clientEventId?: unknown; scannedAt?: unknown; replay?: unknown; forceCloseToken?: unknown; forceCloseConfirmed?: unknown; dead?: unknown; deadStatus?: unknown; intent?: unknown; clockSuspect?: unknown; shownEmpty?: unknown; rosterAsOf?: unknown; protocolVersion?: unknown; close?: unknown; scanTimeUncertaintyMs?: unknown }, auth) => {
+    async (_req, body: { personId?: unknown; participantId?: unknown; clientEventId?: unknown; scannedAt?: unknown; replay?: unknown; forceCloseToken?: unknown; forceCloseConfirmed?: unknown; dead?: unknown; deadStatus?: unknown; intent?: unknown; clockSuspect?: unknown; shownEmpty?: unknown; rosterAsOf?: unknown; protocolVersion?: unknown; close?: unknown; scanTimeUncertaintyMs?: unknown }, auth) => {
     if (auth.type !== 'kiosk') return apiError("Check in at the kiosk.", 403);
 
     const startTime = Date.now();
+    // The protocol version recorded for this kiosk key; set only once the body passes validation.
+    let seenVersion: number | null = null;
 
     try {
-        const participantId = isPersonId(body.participantId) ? body.participantId : null;
+        // Older kiosks name the badge participantId.
+        const rawId = body.personId ?? body.participantId;
+        const idConflict = body.personId != null && body.participantId != null && body.personId !== body.participantId;
+        const personId = !idConflict && isPersonId(rawId) ? rawId : null;
         // A queued row (dead-lettered or replayed) is the exception: it is
         // parked below whatever it carries, so a corrupt read reaches the
         // review queue instead of bouncing on the kiosk forever.
-        if (participantId === null && body.dead !== true && body.replay !== true) {
-            return apiError("A valid numeric participantId is required.", 400);
+        if (personId === null && body.dead !== true && body.replay !== true) {
+            return apiError(idConflict ? "personId and participantId disagree." : "A valid numeric personId is required.", 400);
         }
 
         // Optional replay fields from a queued kiosk scan. Absent → a live scan.
         // An unparseable scannedAt
         // normalizes to null, which parks a replay below.
-        const clientEventId = (typeof body.clientEventId === 'string' && body.clientEventId) || null;
+        const sentEventId = (typeof body.clientEventId === 'string' && body.clientEventId) || null;
         const parsedScannedAt = typeof body.scannedAt === 'string' ? new Date(body.scannedAt) : null;
         const scannedAt = parsedScannedAt && !isNaN(parsedScannedAt.getTime()) ? parsedScannedAt : null;
 
@@ -100,7 +110,7 @@ export const POST = withKiosk(
         if (body.dead === true && body.replay === true) {
             return apiError("dead and replay are mutually exclusive.", 400);
         }
-        if (body.dead === true && !clientEventId) {
+        if (body.dead === true && !sentEventId) {
             return apiError("A dead-lettered scan requires clientEventId.", 400);
         }
         if (body.dead === true && !scannedAt) {
@@ -114,8 +124,7 @@ export const POST = withKiosk(
                 ? body.forceCloseToken
                 : null;
 
-        // A keyholder's close, decided at the kiosk (docs/rules/attendance-checkin.md,
-        // Opening and closing). An older kiosk's offline confirm flag, or a token it
+        // A keyholder's close, decided at the kiosk. An older kiosk's offline confirm flag, or a token it
         // echoes on the second scan of the same badge, is the same decision.
         const requestedClose: CloseKind | null = body.close === 'alone' || body.close === 'confirmed'
             ? body.close
@@ -134,7 +143,7 @@ export const POST = withKiosk(
         // should park. intent is the displayed direction; absent, a legacy
         // live-state toggle. protocolVersion is the contract bit.
         const invalid =
-            body.replay === true && !clientEventId ? "A replayed scan requires clientEventId." :
+            body.replay === true && !sentEventId ? "A replayed scan requires clientEventId." :
             body.replay === true && !scannedAt ? "A replayed scan requires a valid scannedAt." :
             body.intent !== undefined && body.intent !== 'IN' && body.intent !== 'OUT' ? "intent must be IN or OUT." :
             body.close !== undefined && body.close !== 'alone' && body.close !== 'confirmed' ? "close must be alone or confirmed." :
@@ -153,9 +162,19 @@ export const POST = withKiosk(
         if (invalid && body.replay !== true) {
             return apiError(invalid, 400);
         }
+        // An absent version is 1; a replay whose own version is invalid parks and is not recorded.
+        seenVersion = body.protocolVersion === undefined ? 1
+            : typeof body.protocolVersion === 'number' && Number.isInteger(body.protocolVersion) && body.protocolVersion >= 1 ? body.protocolVersion
+            : null;
         const isReplay = body.replay === true && !invalid;
         const isDead = body.dead === true || (body.replay === true && invalid !== null);
-        const deadStatus = invalid ? 400
+        // A parked replay that sent no id of its own is keyed by its body, so a resend dedups.
+        const clientEventId = sentEventId
+            ?? (isDead ? `body:${createHash("sha256").update(JSON.stringify(body)).digest("hex")}` : null);
+        // A replay with no usable scan time parks at server now, which only bounds it from above.
+        const noScanTime = body.replay === true && !scannedAt;
+        const deadStatus = noScanTime ? 'no_scan_time'
+            : invalid ? 400
             : typeof body.deadStatus === 'number' && Number.isFinite(body.deadStatus) ? body.deadStatus
             : 'unknown';
         const closeKind = invalid ? null : requestedClose;
@@ -170,11 +189,13 @@ export const POST = withKiosk(
         if (clockAhead) eventTime = new Date();
 
         const intent = body.intent === 'IN' || body.intent === 'OUT' ? body.intent : null;
-        const clockSuspect = body.clockSuspect === true;
-        const uncertaintyMs = isReplay && typeof body.scanTimeUncertaintyMs === 'number' ? body.scanTimeUncertaintyMs : 0;
-        const slot = (isReplay || isDead) ? "replay" : "live";
+        const sentUncertaintyMs = isReplay && typeof body.scanTimeUncertaintyMs === 'number' ? body.scanTimeUncertaintyMs : 0;
+        const uncertaintyTooWide = sentUncertaintyMs > MAX_SCAN_TIME_UNCERTAINTY_MS;
+        const clockSuspect = body.clockSuspect === true || uncertaintyTooWide || noScanTime;
+        const uncertaintyMs = uncertaintyTooWide ? 0 : sentUncertaintyMs;
+        const slot = isDead ? "dead" : isReplay ? "replay" : "live";
         specTrace("ScanRequest", {
-            slot, p: body.participantId, cid: clientEventId, intent, close: closeKind,
+            slot, p: rawId, cid: clientEventId, intent, close: closeKind,
             t: eventTime.getTime(), scannedAt: scannedAt?.getTime() ?? null, rosterAsOf: rosterAsOf?.getTime() ?? null,
         });
 
@@ -205,8 +226,7 @@ export const POST = withKiosk(
         const respond = async (result: ScanResult, closeRefused = false): Promise<Response> =>
             toResponse(result, { signedRequest: true, closeRefused, lastNightlyCloseAt: await lastNightlyCloseAt() });
         const parkUnresolvable = async (): Promise<Response> => {
-            const raw = body.participantId;
-            const scannedValue = (typeof raw === 'string' ? raw : JSON.stringify(raw) ?? '').slice(0, 64);
+            const scannedValue = (typeof rawId === 'string' ? rawId : JSON.stringify(rawId) ?? '').slice(0, 64);
             try {
                 await prisma.rawBadgeLog.create({
                     data: {
@@ -220,13 +240,13 @@ export const POST = withKiosk(
                 });
             } catch (err) {
                 if (!uniqueViolationFields(err)?.includes("clientEventId")) throw err;
-                specTrace("ScanCommit", { slot, p: raw, cid: clientEventId, kind: "duplicate" });
+                specTrace("ScanCommit", { slot, p: rawId, cid: clientEventId, kind: "duplicate" });
                 return respond({ kind: "duplicate" });
             }
-            specTrace("ScanCommit", { slot, p: raw, cid: clientEventId, kind: "parked", reason: "unresolvable" });
+            specTrace("ScanCommit", { slot, p: rawId, cid: clientEventId, kind: "parked", reason: "unresolvable" });
             return respond({ kind: "parked", reason: "review" });
         };
-        if (participantId === null) {
+        if (personId === null) {
             return await parkUnresolvable();
         }
 
@@ -234,18 +254,18 @@ export const POST = withKiosk(
         // reject its owner at the door: it resolves to the surviving record, and a
         // broken chain asks the operator to reissue the badge. A member of an
         // archived household scans exactly as a badge that matches nobody.
-        const resolved = await resolveMergedPerson(participantId);
+        const resolved = await resolveMergedPerson(personId);
         if (resolved.kind !== "live" || !(await isLiveHousehold(resolved.person.householdId))) {
             if (isDead || isReplay) return await parkUnresolvable();
-            specTrace("ScanCommit", { slot, p: participantId, cid: clientEventId, kind: "rejected" });
+            specTrace("ScanCommit", { slot, p: personId, cid: clientEventId, kind: "rejected" });
             return resolved.kind === "broken"
-                ? apiError(`This badge belongs to a merged record; reissue it for participant ${resolved.lastId}.`, 409)
-                : apiError(`Participant ${participantId} not found.`, 404);
+                ? apiError(`This badge belongs to a merged record; reissue it for person ${resolved.lastId}.`, 409)
+                : apiError(`Person ${personId} not found.`, 404);
         }
         const { person: participant, hops: mergeHops } = resolved;
         if (mergeHops > 0) {
             logger.info("Scan forwarded from merged record", {
-                badgeId: participantId,
+                badgeId: personId,
                 survivorId: participant.id,
                 hops: mergeHops,
             });
@@ -259,14 +279,14 @@ export const POST = withKiosk(
         // a double check-out that 500s on Prisma P2025 when the second tries to
         // delete the already-deleted visit. We wrap the whole sequence in one
         // transaction and take a per-participant Postgres advisory xact lock at
-        // the top, so concurrent scans for the same participantId serialize: the
+        // the top, so concurrent scans for the same person serialize: the
         // second blocks until the first commits, then observes committed state
         // and branches correctly. The lock auto-releases on commit/rollback.
         let closeRefused = false;
 
         let result: ScanResult;
         try {
-        result = await prisma.$transaction(async (tx): Promise<ScanResult> => {
+        result = await traceOnCommit(() => prisma.$transaction(async (tx): Promise<ScanResult> => {
             // Per-participant lock. Serializes only same-participant scans;
             // different participants get different lock keys and never block.
             // $executeRaw (not $queryRaw): pg_advisory_xact_lock returns `void`,
@@ -535,7 +555,7 @@ export const POST = withKiosk(
             // blocked on pg_advisory_xact_lock while an earlier scan holds it.
             maxWait: 5000,
             timeout: 15000,
-        });
+        }));
         } catch (err) {
             // Cross-lock race on the same clientEventId (e.g. two replay attempts
             // of one queued event racing different advisory-lock windows) — the
@@ -572,7 +592,8 @@ export const POST = withKiosk(
         return await respond(result, closeRefused);
     } finally {
         // Errors propagate to withKiosk's top-level catch/500; this finally only
-        // records the metric. Times the handler body (post-auth), not rate-limit.
+        // records the metric and the kiosk's protocol version. The metric times the
+        // handler body (post-auth), not rate-limit.
         const durationMs = Date.now() - startTime;
         prisma.systemMetricLog.create({
             data: {
@@ -580,5 +601,10 @@ export const POST = withKiosk(
                 value: durationMs,
             }
         }).catch((err: unknown) => logger.error("Failed to log scan_response_time metric:", err));
+        const keyFingerprint = auth.keyFingerprint;
+        const protocolVersion = seenVersion;
+        if (keyFingerprint && protocolVersion !== null) {
+            recordKioskProtocolSeen(keyFingerprint, protocolVersion).catch((err: unknown) => logger.error("Failed to record kiosk protocol version:", err));
+        }
     }
 });

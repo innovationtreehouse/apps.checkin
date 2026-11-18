@@ -49,7 +49,7 @@ resetting, and the real data stays.
 
 ## Rules this relies on
 
-From `docs/rules/principles.md`:
+Principles:
 
 - **A non-production capability is absent in production.** Both reset paths
   decide whether they exist from `CHECKIN_ENV` alone, re-checked in the body of
@@ -242,7 +242,7 @@ link step finds each object by a stable name and writes its id back:
 |---|---|
 | Each bucket's QuickBooks Class (`BudgetOwner.quickBooksClassId`) | Class name, matched to the seeded bucket name |
 | Books map role accounts (`BooksMapRoleAccount`) | Account name, from a fixed role-to-name table in the seed |
-| Membership year variants and `BoardSettings.orgMembershipVariantId` | Product handle `dev-seed-membership`, variant per year |
+| Membership year variants (`MembershipYearVariant`) | Product handle `dev-seed-membership`, variant per year |
 | Program and program-instance product and variant ids | Product handle `dev-seed-program-…` |
 | Refresher secrets (QuickBooks and Gmail tokens) | Nothing to do: they live in Secrets Manager, kept current by the refresher functions, and the reset never touches them |
 | Shopify webhook subscriptions | Nothing to do: registered once against dev's stable address, held by the store |

@@ -3,7 +3,7 @@
 // Server-side paged + filtered so the full history is reachable without ever
 // shipping it all at once. The board is admitted because it answers for the
 // decisions recorded here — a trail only a sysadmin can read cannot answer a
-// family six months on (docs/rules/principles.md § Accountability).
+// family six months on.
 import { NextResponse, type NextRequest } from "next/server";
 import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";

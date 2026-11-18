@@ -32,18 +32,17 @@ export async function raiseMembershipPaymentOutcome(
  * Membership variant id → the year it sells: the ONE "is this line a membership?"
  * rule. Exported so matchAudit.ts consumes the same keys as the item gate; a variant
  * missed in a private copy would silently VANISH from the audit (filtered out in
- * SQL), not show as a gap. The BoardSettings variant and the dev-mock variant (when
- * the Shopify mock is active) sell the live year at `paidAt` unless a row claims them.
+ * SQL), not show as a gap. The dev-mock variant (when the Shopify mock is active)
+ * sells the live year at `paidAt` unless a row claims it.
  */
 export async function membershipVariantYears(
-    settings: { orgMembershipVariantId: string | null; orgMembershipYearBoundary: Date | null } | null,
+    settings: { orgMembershipYearBoundary: Date | null } | null,
     paidAt: Date,
 ): Promise<Map<string, number | null>> {
     const rows = await prisma.membershipYearVariant.findMany({ select: { shopifyVariantId: true, membershipYear: true } });
     const years = new Map<string, number | null>(rows.map((r) => [r.shopifyVariantId, r.membershipYear]));
-    const liveYear = liveMembershipYear(settings?.orgMembershipYearBoundary, paidAt);
-    for (const variantId of [settings?.orgMembershipVariantId, config.shopifyMockActive() ? DEV_MOCK_MEMBERSHIP_VARIANT_ID : null]) {
-        if (variantId && !years.has(variantId)) years.set(variantId, liveYear);
+    if (config.shopifyMockActive() && !years.has(DEV_MOCK_MEMBERSHIP_VARIANT_ID)) {
+        years.set(DEV_MOCK_MEMBERSHIP_VARIANT_ID, liveMembershipYear(settings?.orgMembershipYearBoundary, paidAt));
     }
     return years;
 }
@@ -188,10 +187,10 @@ export async function reconcileForwardMembership(order: MirrorOrder): Promise<bo
     // Membership-item gate, parity with the orders/paid webhook: recover only if the
     // order actually CONTAINS a membership product (its variant id), the same
     // membershipVariantYears the webhook builds — mirrored onto order lines. A variant
-    // id is stable and can't drift; the order total never decides (docs/rules/revenue.md).
+    // id is stable and can't drift; the order total never decides.
     const settings = await prisma.boardSettings.findUnique({
         where: { id: 1 },
-        select: { orgMembershipVariantId: true, orgMembershipYearBoundary: true, volunteerFamilyDiscountCode: true },
+        select: { orgMembershipYearBoundary: true, volunteerFamilyDiscountCode: true },
     });
     const variantYears = await membershipVariantYears(settings ?? null, order.processedAt ?? new Date());
     const line = findMembershipLine(variantYears, await mirror.orderLineVariantIds(order.orderGid));

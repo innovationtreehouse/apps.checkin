@@ -21,7 +21,6 @@ beforeEach(() => { resetRtl(); (notifications.show as jest.Mock).mockClear(); })
 
 const smiths = {
   name: "The Smiths",
-  intakeNotes: "We're volunteer only — no students.",
   householdMembers: [
     { id: 1, name: "Pat Smith", email: "pat@example.com" },
     { id: 2, name: "Sam Smith", email: "sam@example.com" },
@@ -45,7 +44,6 @@ describe("membership-ops/review page", () => {
     expect(screen.getByText("Pat Smith <pat@example.com>", { exact: false })).toBeInTheDocument();
     expect(screen.getByText("Whose check did you review?")).toBeInTheDocument();
     expect(screen.getByText("0/2 approvals so far.")).toBeInTheDocument();
-    expect(screen.getByText("We're volunteer only — no students.")).toBeInTheDocument();
     expect(screen.getByText("This is a volunteer only family (no students)")).toBeInTheDocument();
   });
 
@@ -169,6 +167,25 @@ describe("membership-ops/review page", () => {
     expect(await screen.findByText("Nothing awaiting your review right now.")).toBeInTheDocument();
   });
 
+  it("offers the volunteer tick on a marked review of one of the household's leads", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({ "/api/membership/reviews": { queue: [{ ...named, id: 300, _count: { attestations: 0 } }] } });
+    renderPage();
+
+    expect(await screen.findByText("Pat Smith")).toBeInTheDocument();
+    expect(screen.getByText("This is a volunteer only family (no students)")).toBeInTheDocument();
+  });
+
+  it("hides the volunteer tick on a review of an adult who is not one of the household's leads", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const adultChild = { id: 301, subjectPerson: { id: 3, name: "Kit Smith", householdId: 7, household: { name: "The Smiths" } }, requestedForHousehold: smiths, _count: { attestations: 0 } };
+    mockFetchJson({ "/api/membership/reviews": { queue: [adultChild] } });
+    renderPage();
+
+    expect(await screen.findByText("Kit Smith")).toBeInTheDocument();
+    expect(screen.queryByText("This is a volunteer only family (no students)")).not.toBeInTheDocument();
+  });
+
   it("hides the volunteer tick on a review no household asked for", async () => {
     setSession({ id: 1, isSysadmin: true });
     mockFetchJson({
@@ -208,7 +225,32 @@ describe("membership-ops/review page", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Start over" }));
     await waitFor(() => {
       const call = fetchMock.mock.calls.find(([url]) => String(url).includes("review-override"));
-      expect(JSON.parse(String(call?.[1]?.body))).toEqual({ processId: 300, action: "reset", reason: "report is Sam's", wrongPerson: true });
+      expect(JSON.parse(String(call?.[1]?.body))).toEqual({ processId: 300, action: "reset", reason: "report is Sam's", wrongPerson: true, closeAsWrongPerson: false });
+    });
+  });
+
+  it("lets a board member close a review as opened for the wrong person, with a reason", async () => {
+    setSession({ id: 1, isBoardMember: true });
+    const fetchMock = mockFetchJson({
+      "/api/membership/reviews?mine=1": { queue: [{ ...named, id: 304 }] },
+      "/api/membership/reviews": { queue: [] },
+      "/api/membership-ops/applications/review-override": { outcome: { status: "ARCHIVED" } },
+    });
+    renderPage();
+    await screen.findByText("Nothing awaiting your review right now.");
+    fireEvent.click(screen.getByRole("checkbox", { name: "Show incomplete reviews I've already approved" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Close: opened for the wrong person" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close review" }));
+    expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "A reason is required to close a review as opened for the wrong person." }));
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("review-override"))).toBe(false);
+
+    fireEvent.change(within(dialog).getByRole("textbox", { name: /Reason/ }), { target: { value: " not this Pat " } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close review" }));
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(([url]) => String(url).includes("review-override"));
+      expect(JSON.parse(String(call?.[1]?.body))).toEqual({ processId: 304, action: "reset", reason: "not this Pat", wrongPerson: false, closeAsWrongPerson: true });
     });
   });
 
@@ -271,6 +313,7 @@ describe("membership-ops/review page", () => {
 
     expect(await screen.findByText("A board member can start this review over.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Start review over" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Close: opened for the wrong person" })).not.toBeInTheDocument();
   });
 });
 

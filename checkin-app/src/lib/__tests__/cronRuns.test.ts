@@ -21,13 +21,13 @@ const HOUR = 60 * 60 * 1000;
  */
 function stubGroupBy(
     rows: { job: string; finishedAt: Date | null }[],
-    latest?: { job: string; success: boolean; error: string | null }[],
+    latest?: { job: string; success: boolean; error: string | null; finishedAt?: Date | null }[],
 ) {
     prisma.cronRunLog.groupBy = jest.fn().mockResolvedValue(
         rows.map((r) => ({ job: r.job, _max: { finishedAt: r.finishedAt } })),
     );
     prisma.cronRunLog.findMany = jest.fn().mockResolvedValue(
-        latest ?? rows.map((r) => ({ job: r.job, success: true, error: null })),
+        latest ?? rows.map((r) => ({ job: r.job, success: true, error: null, finishedAt: r.finishedAt })),
     );
 }
 
@@ -86,11 +86,11 @@ describe('getCronJobStatuses', () => {
     it('reports the error of a job whose latest run failed outright', async () => {
         stubGroupBy(
             [{ job: 'nightly', finishedAt: ago(3 * 24 * HOUR) }],
-            [{ job: 'nightly', success: false, error: 'connection refused' }],
+            [{ job: 'nightly', success: false, error: 'connection refused', finishedAt: ago(HOUR) }],
         );
 
         expect(await getCronJobStatuses(NOW)).toEqual([
-            { job: 'nightly', lastSuccessAt: ago(3 * 24 * HOUR), stale: true, lastError: 'connection refused' },
+            { job: 'nightly', lastSuccessAt: ago(3 * 24 * HOUR), stale: true, lastError: 'connection refused', lastErrorAt: ago(HOUR) },
         ]);
     });
 
@@ -126,7 +126,7 @@ describe('a run that completed but could not do all of its work', () => {
     const partial = () =>
         stubGroupBy(
             [{ job: 'nightly', finishedAt: ago(2 * HOUR) }],
-            [{ job: 'nightly', success: true, error: '1 item(s) failed' }],
+            [{ job: 'nightly', success: true, error: '1 item(s) failed', finishedAt: ago(2 * HOUR) }],
         );
 
     it('is not stale — it ran, so lastSuccessAt keeps moving', async () => {
@@ -141,6 +141,12 @@ describe('a run that completed but could not do all of its work', () => {
         partial();
 
         expect((await getCronJobStatuses(NOW))[0].lastError).toBe('1 item(s) failed');
+    });
+
+    it('carries when that run finished', async () => {
+        partial();
+
+        expect((await getCronJobStatuses(NOW))[0].lastErrorAt).toEqual(ago(2 * HOUR));
     });
 
     it('counts toward the nav badge even though nothing is stale', async () => {

@@ -2,7 +2,7 @@
 import { Fragment, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { Alert, Anchor, Badge, Button, Group, NumberInput, Paper, Radio, ScrollArea, Select, SimpleGrid, Stack, Table, Text, TextInput, Title } from "@mantine/core";
+import { Alert, Anchor, Badge, Button, Group, NumberInput, Paper, Radio, ScrollArea, Select, SimpleGrid, Stack, Table, Text, TextInput, Textarea, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { formatGtinDisplay } from "@checkin/gtin";
 import {
@@ -10,10 +10,12 @@ import {
   type CatalogItem, type CatalogNames,
 } from "@checkin/component-ui";
 import { USAGE_BEHAVIORS } from "@checkin/receipt-types";
-import { LINE_STATUS_COLOR, LINE_STATUS_LABEL, api, stateColor, stateLabel, errorMessage, notifyNavCounts, useCanManage, useLoad } from "../components/api";
+import { LINE_STATUS_COLOR, LINE_STATUS_LABEL, api, stateColor, stateLabel, errorMessage, notifyNavCounts, useCanCloseOut, useCanManage, useLoad } from "../components/api";
 import { formatCents } from "@checkin/money";
-import { type LineFormKind, lineFormBody } from "../lib/line-form";
+import { type LineFormFields, type LineFormKind, lineFormBody, lineFormStart, lineFormUnchanged } from "../lib/line-form";
 import { lineLockReason } from "../lib/line-lock";
+import { MATCHING_PENDING_REASON } from "../db/schema";
+import { CLOSE_OUT_DISPOSITIONS, DISPOSITION_LABEL, LEG_LABEL, receiptLegs, type ApplyLeg, type CloseOutDisposition } from "../lib/legs";
 
 interface Receipt {
   id: number;
@@ -25,8 +27,16 @@ interface Receipt {
   expenseAppliedAt: string | null;
   donationAppliedAt: string | null;
   matchingPendingSince?: string | null;
+  matchingPendingReason?: string | null;
   applyFirstFailedAt?: string | null;
 }
+const PENDING_REASON_TEXT: Readonly<Record<string, string>> = MATCHING_PENDING_REASON;
+
+/** Why matching couldn't run; a pending receipt with no recorded reason waited on a catalog outage. */
+function matchingPendingReason(receipt: Receipt): string {
+  return PENDING_REASON_TEXT[receipt.matchingPendingReason ?? "catalog_unavailable"] ?? MATCHING_PENDING_REASON.unexpected_error;
+}
+
 interface LineItem {
   receiptLineItemId: number;
   lineNumber: number;
@@ -47,6 +57,7 @@ interface ParsedReceipt {
   shippingCents?: number;
   discountCents?: number;
   receiptDate: string | null;
+  isInKind?: boolean;
   lineItems: LineItem[];
 }
 interface LineStatus {
@@ -116,6 +127,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const canManage = useCanManage();
+  const canCloseOut = useCanCloseOut();
   const detail = useLoad<Detail>(`/receipts/${id}`);
   const partLookup = usePartNames((detail.data?.ReceivedReceiptLineStatus ?? []).flatMap((ls) => ls.assignedGtin13 ?? ls.provisionalItemGtin13 ?? []));
   const [busy, setBusy] = useState(false);
@@ -166,6 +178,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
   const base = `/receipts/${receipt.id}`;
   const items = new Map(parsed.lineItems.map((li) => [li.receiptLineItemId, li]));
   const partLabels = withProvisionalNames(partLookup);
+  const legs = receiptLegs(receipt, parsed.isInKind ?? false, lines);
 
   /** Runs matching now, then says how many of the lines undecided before it matched. */
   async function runMatching() {
@@ -176,7 +189,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
       const after = await api<Detail>(base);
       if (leaveIfResolved(after.ReceivedReceipt.state)) return;
       if (after.ReceivedReceipt.matchingPendingSince) {
-        notifications.show({ message: "Catalog still unavailable. Try again later, or map the lines by hand.", color: "gray" });
+        notifications.show({ message: `Matching still couldn't run because ${matchingPendingReason(after.ReceivedReceipt)}. Try again later, or map the lines by hand.`, color: "gray" });
       } else {
         const matched = after.ReceivedReceiptLineStatus.filter((ls) => undecided.has(ls.id) && ls.recognitionStatus === "recognized").length;
         notifications.show({ message: `${matched} ${matched === 1 ? "line" : "lines"} matched`, color: "green" });
@@ -219,7 +232,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
         <Field label="Received" value={new Date(receipt.createdAt).toLocaleString()} />
       </Group>
       {receipt.matchingPendingSince && (
-        <Text size="sm" c="dimmed" mb="md">{"Matching didn't run because the catalog was unavailable. Run matching now, or map the lines by hand."}</Text>
+        <Text size="sm" c="dimmed" mb="md">{`Matching didn't run because ${matchingPendingReason(receipt)}. Run matching now, or map the lines by hand.`}</Text>
       )}
       {receipt.validationNotes && <Alert color="orange" mb="md" title="Last push failed">{receipt.validationNotes}</Alert>}
       {receipt.state === "applying" && !stuck && (
@@ -255,6 +268,14 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
           )}
         </Group>
       )}
+      {canCloseOut && receipt.state === "apply_failed" && (
+        <CloseOutForm
+          unapplied={legs.filter((l) => !l.applied).map((l) => l.leg)}
+          busy={busy}
+          onSubmit={(body) => act(`${base}/close-out`, body, "Closed by hand")}
+        />
+      )}
+      {receipt.state === "closed_by_hand" && <ClosedOutSummary receiptId={receipt.id} legs={legs} />}
       <CatalogNamesUnavailable lookup={partLookup} />
       <Table withTableBorder>
         <Table.Thead>
@@ -320,6 +341,7 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
                         <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="lg">
                           <LineDetails item={li} currency={parsed.currency} />
                           <LineForm
+                            start={lineFormStart(ls)}
                             busy={busy}
                             onCancel={() => setOpenLineId(null)}
                             onNonInventory={ls.recognitionStatus === "non_inventory" ? undefined : async () => {
@@ -340,6 +362,94 @@ export default function ReceiptPage({ backHref = "/inventory/receiving" }: { bac
         </Table.Tbody>
       </Table>
     </>
+  );
+}
+
+/**
+ * Closes an apply_failed receipt as handled by hand: a disposition for each part that never applied,
+ * and a note. Sends only once every part has one and the note is not blank.
+ */
+function CloseOutForm({ unapplied, busy, onSubmit }: {
+  unapplied: ApplyLeg[];
+  busy: boolean;
+  onSubmit: (body: { note: string; legs: Partial<Record<ApplyLeg, CloseOutDisposition>> }) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState("");
+  const [chosen, setChosen] = useState<Partial<Record<ApplyLeg, CloseOutDisposition>>>({});
+  const ready = note.trim() !== "" && unapplied.every((leg) => chosen[leg]);
+  if (!open) {
+    return (
+      <Group mb="md">
+        <Button variant="light" color="gray" onClick={() => setOpen(true)}>Close out</Button>
+      </Group>
+    );
+  }
+  return (
+    <Paper component="section" aria-label="Close out" p="md" mb="md" withBorder>
+      <Stack gap="sm">
+        <Title order={5}>Close out as handled by hand</Title>
+        <Text size="sm" c="dimmed">{"A closed receipt is never applied again and can't be reopened."}</Text>
+        {unapplied.map((leg) => (
+          <Radio.Group
+            key={leg}
+            label={`${LEG_LABEL[leg]} (not applied)`}
+            value={chosen[leg] ?? null}
+            onChange={(v) => {
+              const disposition = CLOSE_OUT_DISPOSITIONS.find((d) => d === v);
+              if (disposition) setChosen((c) => ({ ...c, [leg]: disposition }));
+            }}
+          >
+            <Group gap="md" mt={4}>
+              {CLOSE_OUT_DISPOSITIONS.map((d) => <Radio key={d} size="xs" value={d} label={DISPOSITION_LABEL[d]} />)}
+            </Group>
+          </Radio.Group>
+        ))}
+        <Textarea label="Note" required value={note} onChange={(e) => setNote(e.currentTarget.value)} autosize minRows={2} />
+        <Group gap="xs">
+          <Button loading={busy} disabled={!ready} onClick={() => onSubmit({ note: note.trim(), legs: chosen })}>Close out</Button>
+          <Button variant="subtle" onClick={() => setOpen(false)}>Cancel</Button>
+        </Group>
+      </Stack>
+    </Paper>
+  );
+}
+
+interface CloseOutRow {
+  eventType: string;
+  actorUsername: string | null;
+  createdAt: string;
+  details: unknown;
+}
+
+/** The close-out's note and outcome per part, as its audit row records them. */
+function closeOutRecord(details: unknown): { note: string; legs: Record<string, string> } | null {
+  if (typeof details !== "object" || details === null || !("note" in details) || !("legs" in details)) return null;
+  const { note, legs } = details;
+  if (typeof note !== "string" || typeof legs !== "object" || legs === null) return null;
+  return { note, legs: Object.fromEntries(Object.entries(legs).filter((e): e is [string, string] => typeof e[1] === "string")) };
+}
+
+const LEG_OUTCOME: Readonly<Record<string, string>> = { applied: "Applied", ...DISPOSITION_LABEL };
+
+/** Which parts applied and how the rest were settled, with who closed the receipt and their note. */
+function ClosedOutSummary({ receiptId, legs }: { receiptId: number; legs: { leg: ApplyLeg; applied: boolean }[] }) {
+  const log = useLoad<CloseOutRow[]>(`/audit-log?receiptId=${receiptId}`);
+  const row = log.data?.find((r) => r.eventType === "receipt_closed_by_hand");
+  const record = row ? closeOutRecord(row.details) : null;
+  return (
+    <Alert color="gray" mb="md" title="Closed by hand">
+      <Stack gap={4}>
+        {legs.map(({ leg, applied }) => (
+          <Text key={leg} size="sm">
+            {LEG_LABEL[leg]}: {applied ? "Applied" : LEG_OUTCOME[record?.legs[leg] ?? ""] ?? "Not applied"}
+          </Text>
+        ))}
+        {record && <Text size="sm">Note: {record.note}</Text>}
+        {row && <Text size="xs" c="dimmed">{row.actorUsername ?? "Someone"} closed it on {new Date(row.createdAt).toLocaleString()}</Text>}
+        {log.error && <Text size="xs" c="red">{`Couldn't load the close-out record: ${log.error}`}</Text>}
+      </Stack>
+    </Alert>
   );
 }
 
@@ -372,7 +482,8 @@ function LineDetails({ item, currency }: { item: LineItem | undefined; currency:
   );
 }
 
-function LineForm({ busy, onSubmit, onCancel, onNonInventory }: {
+function LineForm({ start, busy, onSubmit, onCancel, onNonInventory }: {
+  start: LineFormFields;
   busy: boolean;
   onSubmit: (form: LineFormKind, body: NonNullable<ReturnType<typeof lineFormBody>>) => void;
   onCancel: () => void;
@@ -383,12 +494,12 @@ function LineForm({ busy, onSubmit, onCancel, onNonInventory }: {
   const [search, setSearch] = useState("");
   const found = useCatalogSearch(search);
   const results = [...(chosen ? [chosen] : []), ...found.items.filter((item) => item.gtin13 !== chosen?.gtin13)];
-  const gtin13 = chosen?.gtin13 ?? null;
-  const [name, setName] = useState("");
-  const [categoryId, setCategoryId] = useState<string | null>(null);
-  const [subcategoryId, setSubcategoryId] = useState<string | null>(null);
-  const [usage, setUsage] = useState<string | null>(null);
-  const [factor, setFactor] = useState<number | string>(1);
+  const [gtin13, setGtin13] = useState(start.gtin13);
+  const [name, setName] = useState(start.name);
+  const [categoryId, setCategoryId] = useState(start.categoryId);
+  const [subcategoryId, setSubcategoryId] = useState(start.subcategoryId);
+  const [usage, setUsage] = useState(start.usage);
+  const [factor, setFactor] = useState<number | string>(start.conversionFactor);
   const conversionFactor = Number(factor) || 1;
   const categories = useLoad<CategoryOption[]>("/api/catalog/categories");
   const subcategories = useLoad<SubcategoryOption[]>("/api/catalog/subcategories");
@@ -396,7 +507,8 @@ function LineForm({ busy, onSubmit, onCancel, onNonInventory }: {
   const subcategoryOptions = (subcategories.data ?? [])
     .filter((s) => String(s.categoryId) === categoryId)
     .map((s) => ({ value: String(s.id), label: `${String(s.number).padStart(2, "0")} — ${s.name}` }));
-  const body = lineFormBody(form, { gtin13, name, categoryId, subcategoryId, usage, conversionFactor });
+  const fields = { gtin13, name, categoryId, subcategoryId, usage, conversionFactor };
+  const body = lineFormUnchanged(form, start, fields) ? null : lineFormBody(form, fields);
 
   return (
     <Stack gap={4}>
@@ -410,6 +522,7 @@ function LineForm({ busy, onSubmit, onCancel, onNonInventory }: {
             error={found.error && `Couldn't search the catalog: ${found.error}`}
             miw={320}
           />
+          {gtin13 && !chosen && <Text size="xs" c="dimmed">Keeps {formatGtinDisplay(gtin13)} unless you choose another item</Text>}
           {catalogSearchTerm(search) === null && <Text size="xs" c="dimmed">Type at least {MIN_CATALOG_SEARCH_LENGTH} characters</Text>}
           {found.answered && !found.error && results.length === 0 && <Text size="xs" c="dimmed">No matching catalog items</Text>}
           {results.length > 0 && (
@@ -417,7 +530,7 @@ function LineForm({ busy, onSubmit, onCancel, onNonInventory }: {
               <Radio.Group
                 aria-label="Catalog items"
                 value={gtin13}
-                onChange={(v) => setChosen(results.find((item) => item.gtin13 === v) ?? null)}
+                onChange={(v) => { setChosen(results.find((item) => item.gtin13 === v) ?? null); setGtin13(v); }}
               >
                 <Stack gap={6} py={4}>
                   {results.map((item) => <Radio key={item.gtin13} size="xs" value={item.gtin13} label={catalogItemLabel(item)} />)}
@@ -426,11 +539,12 @@ function LineForm({ busy, onSubmit, onCancel, onNonInventory }: {
             </ScrollArea.Autosize>
           )}
           <Group>
-            <Button size="xs" variant="light" onClick={() => { setName(search.trim()); setForm("propose"); }}>Propose new item</Button>
+            <Button size="xs" variant="light" onClick={() => { setName(search.trim() || name); setForm("propose"); }}>Propose new item</Button>
           </Group>
         </>
       ) : (
         <>
+          {start.name && <Text size="xs" c="dimmed">Choose the category, subcategory and usage again</Text>}
           <TextInput size="xs" placeholder="Proposed name" value={name} onChange={(e) => setName(e.currentTarget.value)} />
           <Select
             size="xs"

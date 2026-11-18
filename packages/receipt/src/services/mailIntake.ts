@@ -343,6 +343,9 @@ export const INLINE_FLOOR_BYTES = 5 * 1024;
 /** A money amount: a number with two decimal places. A body without one is trivial. */
 const MONEY_AMOUNT = /\d\.\d{2}(?!\d)/;
 
+/** An HTML body's visible text: its style blocks and tags (with their style attributes) hold CSS numbers, never amounts. */
+const visibleText = (html: string) => html.replace(/<style\b[\s\S]*?<\/style\s*>/gi, " ").replace(/<[^>]*>/g, " ");
+
 /**
  * A message's candidate files, read in this order: each attachment of an accepted type, each inline
  * part of an accepted non-text type at or over the floor, then the body, stored as text, unless it
@@ -376,7 +379,8 @@ export function mailFiles(msg: MailMessage, reader: MailboxReader): { files: Mai
   const body = bodyPart("text/plain") ?? bodyPart("text/html");
   const files = [...attachments, ...sized].map((p) => file(p));
   if (body) {
-    if (MONEY_AMOUNT.test(Buffer.from(body.body?.data ?? "", "base64url").toString())) files.push({ ...file(body, "text/plain"), body: true });
+    const text = Buffer.from(body.body?.data ?? "", "base64url").toString();
+    if (MONEY_AMOUNT.test(typeOf(body) === "text/html" ? visibleText(text) : text)) files.push({ ...file(body, "text/plain"), body: true });
     else ignored++;
   }
   return { files, ignored, refused };
@@ -466,15 +470,28 @@ export type MailRun = { status: "unbound" } | { status: "busy" } | { status: "st
 
 /**
  * Takes the org's mail lease and starts one intake pass, `busy` when another run holds the lease.
+ * `beforeRun` runs while the lease is held; if it throws, the lease is freed and no pass starts.
  * `done` settles when the pass ends and the lease is released with its summary.
  */
-export async function startMailRun({ cap = MAIL_CAP, budgetMs = MAIL_TIME_BUDGET_MS } = {}): Promise<MailRun> {
+export async function startMailRun({
+  cap = MAIL_CAP,
+  budgetMs = MAIL_TIME_BUDGET_MS,
+  beforeRun,
+}: { cap?: number; budgetMs?: number; beforeRun?: () => Promise<unknown> } = {}): Promise<MailRun> {
   const reader = mailbox();
   if (!reader) return { status: "unbound" };
   const orgId = await getOrgId();
   const started = Date.now();
   const until = new Date(started + budgetMs + LEASE_SLACK_MS);
   if (!(await takeLease(orgId, until))) return { status: "busy" };
+  try {
+    await beforeRun?.();
+  } catch (err) {
+    await db.receiptMailLease
+      .updateMany({ where: { orgId, until }, data: { until: new Date(0) } })
+      .catch((releaseErr: unknown) => console.error("[receipt] mail lease release failed; it expires on its own:", releaseErr));
+    throw err;
+  }
   const release = (counts: MailRunCounts | null) =>
     db.receiptMailLease
       .updateMany({ where: { orgId, until }, data: { until: new Date(0), lastRunAt: new Date(), lastRun: summarize(counts) } })
@@ -818,13 +835,8 @@ async function readLeased(reader: MailboxReader, orgId: string, started: number,
     ids = await reader.listRecent(MAIL_WINDOW_DAYS);
   } catch (err) {
     const kind = kindOf(err);
+    // The cron run counts `listing_failed` as a failure, so the Problems list shows it.
     console.error(`[receipt] mailbox listing failed (${kind}):`, err);
-    // Sent every run the listing fails: mail is ageing out unread for as long as it lasts.
-    try {
-      await ports().alerts.mailListingFailed({ orgId, kind });
-    } catch (alertErr) {
-      console.error("[receipt] mailbox listing alert failed:", alertErr);
-    }
   }
   if (ids) await readListed(ids, reader);
   await alertAtRisk(reader);

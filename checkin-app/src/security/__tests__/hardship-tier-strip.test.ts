@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 // A scholarship or payment-plan request is the Board's and finance's alone; no
-// other staff role sees one by default (docs/rules/revenue.md, Ownership). The
+// other staff role sees one by default. The
 // `hardship` tier carries those fields, and only Board and finance views hold a
 // hardship token. View tokens and tiers come from the live registry and
 // classifications, so these pins track policy edits.
@@ -53,6 +53,7 @@ const HARDSHIP_FIELDS = {
         'inventoryHeldAt',
         'paymentPlanDeniedAt',
         'seatTakenWithoutSaleAt',
+        'enrollmentBasis',
     ],
     ProgramPaymentPlanDecision: ['outcome', 'decidedAt'],
     MembershipPaymentPlanDecision: ['outcome', 'decidedAt'],
@@ -78,6 +79,7 @@ const participantRow = {
     inventoryHeldAt: '2026-01-06T00:00:00.000Z',
     paymentPlanDeniedAt: '2026-01-08T00:00:00.000Z',
     seatTakenWithoutSaleAt: '2026-01-09T00:00:00.000Z',
+    enrollmentBasis: 'OUTSIDE_PAYMENT',
     shopifyOrderId: '1001',
 };
 
@@ -153,7 +155,6 @@ describe('hardship tier: staff audiences outside the Board and finance lose the 
         [PROGRAM_PAGE, 'programCoreVolunteer', 'ProgramParticipant', ctx({ programsCoreVolIn: new Set([7]) })],
         ['GET /api/membership-audit/turning-18', 'isSysadmin', 'ProgramParticipant', ctx()],
         ['GET /api/membership-ops/applications', 'isSysadmin', 'OrgMembershipProcess', ctx()],
-        ['GET /api/membership-ops/volunteer-memberships', 'isSysadmin', 'OrgMembershipProcess', ctx()],
         ['GET /api/membership-audit/bg-attestations', 'isSysadmin', 'OrgMembershipProcess', ctx()],
         ['POST /api/membership-audit/person-agreement', 'isSysadmin', 'OrgMembershipProcess', ctx()],
         ['GET /api/membership/reviews', 'isBackgroundCheckReviewer', 'OrgMembershipProcess', ctx()],
@@ -168,7 +169,6 @@ describe('hardship tier: staff audiences outside the Board and finance lose the 
     it.each([
         'GET /api/membership-ops/applications',
         'GET /api/membership-audit/bg-attestations',
-        'GET /api/membership-ops/volunteer-memberships',
     ])('%s still gives a sysadmin the application state it works from', (endpoint) => {
         const out = stripValue('OrgMembershipProcess', processRow, tokensFor(endpoint, 'isSysadmin'), ctx()) as Record<string, unknown>;
         expect(out.status).toBe('PENDING_PAYMENT');

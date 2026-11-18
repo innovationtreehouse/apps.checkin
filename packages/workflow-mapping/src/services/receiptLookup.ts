@@ -41,19 +41,27 @@ type LineDecision = Pick<ReceivedReceiptLineStatusRow,
 /**
  * Write a line decision only if its receipt is still editable at write time, so a concurrent
  * proceed or apply cannot be followed by an edit to what was pushed. The audit row commits with
- * the decision, so no edit lands unlogged.
+ * the decision, so no edit lands unlogged. When `unchanged` holds for the row, read under a row
+ * lock, nothing is written or logged and the result is false.
  */
 export async function updateEditableLine(
   edit: { received: ReceivedReceipt; lineStatus: ReceivedReceiptLineStatusRow },
   data: Partial<LineDecision>,
   event: NewWorkflowAuditEvent,
-): Promise<void> {
-  await db.$transaction(async (tx) => {
+  unchanged?: (current: ReceivedReceiptLineStatusRow) => boolean,
+): Promise<boolean> {
+  return db.$transaction(async (tx) => {
+    if (unchanged) {
+      await tx.$queryRaw`SELECT id FROM received_receipt_line_statuses WHERE id = ${edit.lineStatus.id} FOR UPDATE`;
+      const current = await tx.receivedReceiptLineStatus.findUnique({ where: { id: edit.lineStatus.id } });
+      if (current && unchanged(current)) return false;
+    }
     const { count } = await tx.receivedReceiptLineStatus.updateMany({
       where: { id: edit.lineStatus.id, receivedReceipt: EDITABLE_RECEIPT_WHERE },
       data,
     });
     if (count !== 1) throw httpError(409, "Receipt is no longer editable");
     await insertAuditEvent(tx, event);
+    return true;
   });
 }

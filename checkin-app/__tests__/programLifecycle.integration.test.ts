@@ -4,6 +4,7 @@ import { GET as CronPending } from '@/app/api/cron/pending-participants/route';
 import prisma from '@/lib/prisma';
 import crypto from 'crypto';
 import { signCheckout } from '@/lib/programs/checkoutSignature';
+import { WITH_EMERGENCY_CONTACT } from '@/test-helpers/emergencyContact';
 
 process.env.NEXTAUTH_SECRET ||= 'integration-test-nextauth-secret';
 
@@ -43,7 +44,7 @@ describe('Program Lifecycle Integration Tests', () => {
                 isSysadmin: false,
                 isBoardMember: true,
                 dateOfBirth: new Date('1990-01-01'),
-                household: { create: { name: "Test HH" } }
+                household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } }
             }
         });
         boardAdminId = adminUser.id;
@@ -55,7 +56,7 @@ describe('Program Lifecycle Integration Tests', () => {
                 email: "mentor@test.com",
                 googleId: "test-auth-mentor",
                 dateOfBirth: new Date('1985-01-01'),
-                household: { create: { name: "Test HH" } }
+                household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } }
             }
         });
         leadMentorId = mentorUser.id;
@@ -67,7 +68,7 @@ describe('Program Lifecycle Integration Tests', () => {
                 email: "participant@test.com",
                 googleId: "test-auth-std",
                 dateOfBirth: new Date('2000-01-01'),
-                household: { create: { name: "Test HH" } }
+                household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } }
             }
         });
         testParticipantId = standardUser.id;
@@ -144,25 +145,22 @@ describe('Program Lifecycle Integration Tests', () => {
         expect(res.status).toBe(403);
     });
 
-    it('Should require a Board Member to supply override=true when bypassing payment flows', async () => {
+    it('A Board Member adding a participant without a basis adds a place that waits for payment', async () => {
         mockGetSession.mockResolvedValue({ user: { id: boardAdminId, isBoardMember: true } });
 
-        // An existing PENDING claim short-circuits to 409 before the override prompt.
         await prisma.programParticipant.deleteMany({ where: { programId: testProgramId, personId: testParticipantId } });
 
         const req = new Request(`http://localhost/api/programs/${testProgramId}/participants`, {
             method: 'POST',
-            body: JSON.stringify({ participantId: testParticipantId }) // No override flag
+            body: JSON.stringify({ participantId: testParticipantId }) // No basis
         });
 
         const res = await ParticipantPost(req as unknown as import("next/server").NextRequest, { params: Promise.resolve({ id: String(testProgramId) }) });
-        expect(res.status).toBe(400);
-        
-        const data = await res.json();
-        expect(data.requiresOverride).toBe(true);
+        expect(res.status).toBe(200);
+        expect((await res.json()).enrollment.status).toBe('PENDING');
     });
 
-    it('Should allow a Board Member to override and add a participant, defaulting to ACTIVE', async () => {
+    it('Should allow a Board Member to enroll a participant as a comp, ACTIVE', async () => {
         mockGetSession.mockResolvedValue({ user: { id: boardAdminId, isBoardMember: true } });
 
         // Clean previous runs
@@ -170,7 +168,7 @@ describe('Program Lifecycle Integration Tests', () => {
 
         const req = new Request(`http://localhost/api/programs/${testProgramId}/participants`, {
             method: 'POST',
-            body: JSON.stringify({ participantId: testParticipantId, override: true })
+            body: JSON.stringify({ participantId: testParticipantId, basis: 'COMP' })
         });
 
         const res = await ParticipantPost(req as unknown as import("next/server").NextRequest, { params: Promise.resolve({ id: String(testProgramId) }) });
@@ -180,7 +178,6 @@ describe('Program Lifecycle Integration Tests', () => {
             where: { programId_personId: { programId: testProgramId, personId: testParticipantId } }
         });
 
-        // Overrides by board default to ACTIVE
         expect(dbRecord?.status).toBe('ACTIVE'); 
     });
 

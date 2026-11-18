@@ -4,11 +4,13 @@ import {
   type CompletedReceipt,
   type CompletedReceiptLineItem,
 } from "@checkin/receipt-types";
-import { db } from "../db";
+import { db, type Db } from "../db";
 import type { ReceivedReceipt, ReceivedReceiptLineStatusRow } from "../db/schema";
+import type { Prisma } from "../generated/prisma/client";
 import { getOrgId, ports } from "../runtime";
 import { parseStoredReceipt } from "./parse-receipt";
 import { insertAuditEvent } from "./audit";
+import { isInventoryLine } from "./legs";
 
 export type ApplyResult =
   | { state: "resolved" }
@@ -70,7 +72,8 @@ export function buildExpenseReceipt(
  * Claims the receipt with a lease (`applyClaimedAt`) by conditional update, so
  * of concurrent callers only one pushes, and no transaction stays open across
  * the sinks. Returns null when another push holds a live claim or the receipt
- * is no longer `applying`. The claim is released when the push settles. A push that fails or
+ * is no longer `applying`, including when it stops being `applying` mid-push (a person closed it
+ * out after a takeover). The claim is released when the push settles. A push that fails or
  * throws leaves the receipt stuck with its error and first failure time, for a person's Retry.
  */
 export async function executePushAndSettle(
@@ -145,16 +148,24 @@ export async function sweepStuckApplying(): Promise<{
   return counts;
 }
 
-/** Records a push's latest error, and its first failure time while none is set. */
-async function recordFailure(receiptId: number, error: string, data: { state?: "apply_failed"; inventoryUnconfirmedAt?: Date } = {}): Promise<void> {
-  await db.receivedReceipt.update({ where: { id: receiptId }, data: { ...data, validationNotes: error } });
-  await db.receivedReceipt.updateMany({ where: { id: receiptId, applyFirstFailedAt: null }, data: { applyFirstFailedAt: new Date() } });
+type Client = Db | Prisma.TransactionClient;
+
+/** Writes a push's outcome only while the receipt is still `applying`; false when it has moved on. */
+async function settleIfApplying(client: Client, receiptId: number, data: Prisma.ReceivedReceiptUpdateManyMutationInput): Promise<boolean> {
+  const { count } = await client.receivedReceipt.updateMany({ where: { id: receiptId, state: "applying" }, data });
+  return count === 1;
 }
 
-/** A line the inventory leg carries. */
-function isInventoryLine(ls: LineStatusFields): boolean {
-  if (ls.recognitionStatus === "provisional") return !!ls.provisionalItemGtin13;
-  return ls.recognitionStatus === "recognized" && ls.assignedGtin13 != null;
+/** Records a push's latest error, and its first failure time while none is set; false when the receipt has moved on. */
+async function recordFailure(
+  receiptId: number,
+  error: string,
+  data: { state?: "apply_failed"; inventoryUnconfirmedAt?: Date } = {},
+  client: Client = db,
+): Promise<boolean> {
+  if (!(await settleIfApplying(client, receiptId, { ...data, validationNotes: error }))) return false;
+  await client.receivedReceipt.updateMany({ where: { id: receiptId, applyFirstFailedAt: null }, data: { applyFirstFailedAt: new Date() } });
+  return true;
 }
 
 async function pushAndSettle(
@@ -162,7 +173,7 @@ async function pushAndSettle(
   received: Pick<ReceivedReceipt, "id" | "orgId" | "receiptJson">,
   actorUserId?: number | null,
   actorUsername?: string | null,
-): Promise<ApplyResult> {
+): Promise<ApplyResult | null> {
   const actor = { actorUserId: actorUserId ?? null, actorUsername: actorUsername ?? null };
   await insertAuditEvent(db, {
     orgId: received.orgId,
@@ -213,11 +224,13 @@ async function pushAndSettle(
     db.receivedReceipt.update({ where: { id: receiptId }, data });
 
   const pushes: Array<{ leg: string; push: () => Promise<void> }> = [];
+  const stampedLegs: string[] = [];
   let inventoryUnstamped = false;
   let moneyUnstamped = false;
   const stampMoney = async (data: { expenseAppliedAt?: Date; donationAppliedAt?: Date }) => {
     try {
       await stamp(data);
+      stampedLegs.push(data.donationAppliedAt ? "donation" : "expense");
     } catch (err) {
       moneyUnstamped = true;
       throw err;
@@ -248,6 +261,7 @@ async function pushAndSettle(
       );
       try {
         await stamp({ inventoryAppliedAt: new Date() });
+        stampedLegs.push("inventory");
       } catch (err) {
         inventoryUnstamped = true;
         throw err;
@@ -261,26 +275,47 @@ async function pushAndSettle(
   const failures = results.flatMap((r, i) =>
     r.status === "rejected" ? [`${pushes[i].leg}: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}`] : [],
   );
-  if (failures.length > 0) {
-    const error = failures.join("; ");
+  const error = failures.join("; ");
+  const result = failures.length === 0
+    ? await settleResolved(receiptId, received.orgId, actor)
     // A sink took its leg but the stamp was lost: stay applying so lines stay locked and a retry re-sends the same payload, which the sinks dedupe.
-    if (inventoryUnstamped || moneyUnstamped) return settleUnstamped(receiptId, received.orgId, actor, error, { inventoryUnstamped, moneyUnstamped });
-    return settleFailed(receiptId, received.orgId, actor, error);
-  }
+    : inventoryUnstamped || moneyUnstamped
+      ? await settleUnstamped(receiptId, received.orgId, actor, error, { inventoryUnstamped, moneyUnstamped })
+      : await settleFailed(receiptId, received.orgId, actor, error);
+  if (!result && stampedLegs.length > 0) await logLegsAppliedLate(receiptId, received.orgId, actor, stampedLegs);
+  return result;
+}
 
-  await db.receivedReceipt.update({
-    where: { id: receiptId },
-    data: { state: "resolved", validationNotes: null, applyFirstFailedAt: null },
-  });
+/** Records legs a sink took after the receipt left `applying`, such as a push that outlived a close-out. */
+async function logLegsAppliedLate(receiptId: number, orgId: string, actor: Actor, legs: string[]): Promise<void> {
+  const { state } = await db.receivedReceipt.findUniqueOrThrow({ where: { id: receiptId }, select: { state: true } });
   await insertAuditEvent(db, {
-    orgId: received.orgId,
+    orgId,
     ...actor,
-    eventType: "receipt_apply_succeeded",
+    eventType: "receipt_applied_after_settle",
     receivedReceiptId: receiptId,
-    fromState: "applying",
-    toState: "resolved",
+    fromState: state,
+    toState: state,
+    details: JSON.stringify({ legs }),
   });
-  return { state: "resolved" };
+}
+
+type Actor = { actorUserId: number | null; actorUsername: string | null };
+
+async function settleResolved(receiptId: number, orgId: string, actor: Actor): Promise<ApplyResult | null> {
+  const settled = await db.$transaction(async (tx) => {
+    if (!(await settleIfApplying(tx, receiptId, { state: "resolved", validationNotes: null, applyFirstFailedAt: null }))) return false;
+    await insertAuditEvent(tx, {
+      orgId,
+      ...actor,
+      eventType: "receipt_apply_succeeded",
+      receivedReceiptId: receiptId,
+      fromState: "applying",
+      toState: "resolved",
+    });
+    return true;
+  });
+  return settled ? { state: "resolved" } : null;
 }
 
 async function settleUnstamped(
@@ -289,18 +324,21 @@ async function settleUnstamped(
   actor: { actorUserId: number | null; actorUsername: string | null },
   error: string,
   unstamped: { inventoryUnstamped: boolean; moneyUnstamped: boolean },
-): Promise<ApplyResult> {
-  await recordFailure(receiptId, error, unstamped.inventoryUnstamped ? { inventoryUnconfirmedAt: new Date() } : {});
-  await insertAuditEvent(db, {
-    orgId,
-    ...actor,
-    eventType: "receipt_apply_failed",
-    receivedReceiptId: receiptId,
-    fromState: "applying",
-    toState: "applying",
-    details: JSON.stringify({ error, ...unstamped }),
+): Promise<ApplyResult | null> {
+  const settled = await db.$transaction(async (tx) => {
+    if (!(await recordFailure(receiptId, error, unstamped.inventoryUnstamped ? { inventoryUnconfirmedAt: new Date() } : {}, tx))) return false;
+    await insertAuditEvent(tx, {
+      orgId,
+      ...actor,
+      eventType: "receipt_apply_failed",
+      receivedReceiptId: receiptId,
+      fromState: "applying",
+      toState: "applying",
+      details: JSON.stringify({ error, ...unstamped }),
+    });
+    return true;
   });
-  return { state: "applying", error };
+  return settled ? { state: "applying", error } : null;
 }
 
 async function settleFailed(
@@ -308,16 +346,19 @@ async function settleFailed(
   orgId: string,
   actor: { actorUserId: number | null; actorUsername: string | null },
   error: string,
-): Promise<ApplyResult> {
-  await recordFailure(receiptId, error, { state: "apply_failed" });
-  await insertAuditEvent(db, {
-    orgId,
-    ...actor,
-    eventType: "receipt_apply_failed",
-    receivedReceiptId: receiptId,
-    fromState: "applying",
-    toState: "apply_failed",
-    details: JSON.stringify({ error }),
+): Promise<ApplyResult | null> {
+  const settled = await db.$transaction(async (tx) => {
+    if (!(await recordFailure(receiptId, error, { state: "apply_failed" }, tx))) return false;
+    await insertAuditEvent(tx, {
+      orgId,
+      ...actor,
+      eventType: "receipt_apply_failed",
+      receivedReceiptId: receiptId,
+      fromState: "applying",
+      toState: "apply_failed",
+      details: JSON.stringify({ error }),
+    });
+    return true;
   });
-  return { state: "apply_failed", error };
+  return settled ? { state: "apply_failed", error } : null;
 }

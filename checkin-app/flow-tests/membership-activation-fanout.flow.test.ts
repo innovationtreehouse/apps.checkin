@@ -24,7 +24,7 @@
  *
  * Persona / isolation note: uses parent.family (household1) as the applicant. Only two
  * seeded personas are household leads (parent.family, parent.family2) and BOTH are already
- * claimed by sibling flow tests (membership-self-attest uses parent.family; membership-
+ * claimed by sibling flow tests (membership-check-started uses parent.family; membership-
  * bg-nonblocking uses parent.family2). Those siblings coexist only because neither drives
  * its household to a terminal ACTIVE membership — this test does, and an ACTIVE household
  * makes startIntake reject the next application with 409 already_member. So this test
@@ -145,18 +145,17 @@ describe("flow: membership post-payment activation fan-out", () => {
         expect(afterSubmit.json.process?.status).toBe("PENDING_EXTERNAL_ACTION");
         const processId = afterSubmit.json.process!.id;
 
-        // Board records the contract + background-check consent (manual fallbacks) → PENDING_PAYMENT.
+        // Board records the contract (manual fallback) and the lead marks their own check started → PENDING_PAYMENT.
         const c1 = await api(board, "/api/membership-ops/applications/external", { method: "POST", body: JSON.stringify({ processId, action: "mark-contract" }) });
         expect(c1.status).toBe(200);
-        const c2 = await api(board, "/api/membership-ops/applications/external", { method: "POST", body: JSON.stringify({ processId, action: "mark-bg-consent" }) });
+        const c2 = await api(applicant, "/api/membership/check-started", { method: "POST", body: JSON.stringify({ personId: applicant.personaId }) });
         expect(c2.status).toBe(200);
 
         const afterExternal = await api<State>(applicant, "/api/membership");
         expect(afterExternal.json.process?.status).toBe("PENDING_PAYMENT");
 
-        // The consent opened a check review for the household, naming nobody. A check is
-        // recorded against a NAMED adult, so its first reviewer says whose report they read,
-        // from the leads the queue GET lists, as a real reviewer does.
+        // The mark opened the lead's own check review, requested for the household. The
+        // first reviewer confirms whose report they read, from the leads the queue GET lists.
         const queued = await queuedReviewFor(board, applicant.personaId);
         expect(queued).toBeDefined();
         const leadIds = (queued!.requestedForHousehold?.householdMembers ?? []).map((p) => p.id);

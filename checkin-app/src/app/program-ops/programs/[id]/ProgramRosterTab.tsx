@@ -1,9 +1,12 @@
 "use client";
 
 import { useCallback, useState } from 'react';
-import { Alert, Badge, Box, Button, Card, Checkbox, Flex, Group, Modal, SimpleGrid, Stack, Text, Textarea, Title } from '@mantine/core';
+import { ActionIcon, Alert, Badge, Box, Button, Card, Checkbox, Flex, Group, Menu, Modal, Radio, SimpleGrid, Stack, Text, Textarea, TextInput, Title } from '@mantine/core';
+import { IconDotsVertical } from '@tabler/icons-react';
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
+import { errorMessage, HttpError, showError } from '@checkin/component-ui';
+import { api } from '@/lib/api';
 import { EntityPicker } from '@/components/admin/EntityPicker';
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { formatPhone } from '@/lib/phone';
@@ -11,18 +14,17 @@ import type { ProgramDetail, EligibleOption } from './page';
 
 type Participant = ProgramDetail['participants'][number];
 
-// Roster mutation routes answer with these advisory fields. A non-JSON body
-// (session-expiry HTML redirect, proxy error page) must not throw and skip the
-// roster refetch, so parse failures degrade to an empty object.
-type ApiFeedback = { notice?: string; warning?: string; error?: string };
-async function readJson(res: Response): Promise<ApiFeedback> {
-  try { return await res.json(); } catch { return {}; }
-}
+// Roster mutation routes answer with these advisory fields.
+type ApiFeedback = { notice?: string; warning?: string } | null;
 
 // The household's leads, minus the participant themselves when they lead their
 // own household — an adult enrolled in a program is not their own parent.
 function parentsOf(p: Participant) {
   return (p.person.household?.householdMembers ?? []).filter(m => m.id !== p.personId);
+}
+
+function ageLabel(age: Participant['age']) {
+  return age == null ? 'age unknown' : String(age);
 }
 
 // Contact fields are absent for a viewer the stripper denied them to, so a
@@ -32,25 +34,52 @@ function formatParent(m: ReturnType<typeof parentsOf>[number]) {
   return contact ? `${m.name || 'Unnamed'} - ${contact}` : (m.name || 'Unnamed');
 }
 
+// A row menu keeps Remove a deliberate second click away from the roster.
+function RowActions({ name, onEnroll, onRemove }: { name: string; onEnroll?: () => void; onRemove?: () => void }) {
+  if (!onEnroll && !onRemove) return null;
+  return (
+    <Menu position="bottom-end" withinPortal>
+      <Menu.Target>
+        <ActionIcon variant="subtle" color="gray" aria-label={`Actions for ${name}`}>
+          <IconDotsVertical size={16} />
+        </ActionIcon>
+      </Menu.Target>
+      <Menu.Dropdown>
+        {onEnroll && <Menu.Item onClick={onEnroll}>Enroll</Menu.Item>}
+        {onRemove && <Menu.Item color="red" onClick={onRemove}>Remove</Menu.Item>}
+      </Menu.Dropdown>
+    </Menu>
+  );
+}
+
+type Basis = 'OUTSIDE_PAYMENT' | 'MATCHED_ORDER' | 'COMP';
+// Who the Enroll dialog is for: someone picked from the search, or an unpaid place on the roster.
+type EnrollTarget = { personId: number; name: string };
+
 type ProgramRosterTabProps = {
   programId: string;
   program: Pick<ProgramDetail, 'volunteers' | 'participants' | 'startAt' | 'minAge' | 'maxAge' | 'orgMemberPriceCents' | 'nonOrgMemberPriceCents'>;
   isSysAdminOrBoard: boolean;
   isBoardMember: boolean;
+  /** Board or Finance: enrolls without a store payment, never in their own household. */
+  canEnrollByHand: boolean;
+  viewerHouseholdId: number | null;
   fetchProgram: () => Promise<void>;
 };
 
-export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoardMember, fetchProgram }: ProgramRosterTabProps) {
+export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoardMember, canEnrollByHand, viewerHouseholdId, fetchProgram }: ProgramRosterTabProps) {
   const { formatDateTime } = useOrgTime();
   const [saving, setSaving] = useState(false);
-  const [enrollError, setEnrollError] = useState("");
   const [newVolId, setNewVolId] = useState("");
   const [volLabel, setVolLabel] = useState("");
   const [newPartId, setNewPartId] = useState("");
   const [partLabel, setPartLabel] = useState("");
   const [confirmRemoveVolOpened, { open: openConfirmRemoveVol, close: closeConfirmRemoveVol }] = useDisclosure(false);
   const [pendingRemoveVolId, setPendingRemoveVolId] = useState<number | null>(null);
-  const [confirmAddPartOpened, { open: openConfirmAddPart, close: closeConfirmAddPart }] = useDisclosure(false);
+  const [enrollTarget, setEnrollTarget] = useState<EnrollTarget | null>(null);
+  const [basis, setBasis] = useState<Basis | null>(null);
+  const [orderId, setOrderId] = useState("");
+  const [enrollNote, setEnrollNote] = useState("");
   const [confirmRemovePartOpened, { open: openConfirmRemovePart, close: closeConfirmRemovePart }] = useDisclosure(false);
   const [pendingRemovePart, setPendingRemovePart] = useState<Participant | null>(null);
   const [pendingRemoveNeedsReason, setPendingRemoveNeedsReason] = useState(false);
@@ -63,20 +92,18 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
   // The roster carries no payment fields, so the Board gives a reason for every active
   // place; one paid before the price was zeroed is refused for others by the server.
   const isPriced = (program.orgMemberPriceCents ?? 0) > 0 || (program.nonOrgMemberPriceCents ?? 0) > 0;
+  // Only a Board member outside the household removes a paid place; nobody else is offered it.
+  const outsideOwnHousehold = (p: Participant) => viewerHouseholdId == null || p.person.householdId !== viewerHouseholdId;
+  const mayRemoveActive = (p: Participant) => !isPriced || (isBoardMember && outsideOwnHousehold(p));
 
-  // Roster mutations must never fail silently: a rejected remove (403 from a
-  // caller who isn't this program's lead, a 400, a 500) is otherwise
-  // indistinguishable from a successful one — the row just stays put.
-  const mutate = async (path: string, init: RequestInit): Promise<ApiFeedback | null> => {
+  // A rejected roster change must say so: otherwise the row just stays put, as if it worked.
+  const mutate = async (path: string, init: RequestInit): Promise<{ data: ApiFeedback } | null> => {
     try {
-      const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...init });
-      const data = await readJson(res);
-      if (res.ok) return data;
-      notifications.show({ color: 'red', message: data.error || `Request failed (${res.status}).`, autoClose: false });
-    } catch {
-      notifications.show({ color: 'red', message: 'Network error — please try again.', autoClose: false });
+      return { data: await api<ApiFeedback>(path, init) };
+    } catch (e) {
+      showError(errorMessage(e));
+      return null;
     }
-    return null;
   };
 
   // Volunteer + participant pickers both search this program's eligible members.
@@ -96,7 +123,7 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
         method: 'POST',
         body: JSON.stringify({ participantId: parseInt(newVolId) })
       });
-      if (ok) { setNewVolId(""); setVolLabel(""); fetchProgram(); }
+      if (ok) { setNewVolId(""); setVolLabel(""); await fetchProgram(); }
     } finally {
       setSaving(false);
     }
@@ -113,55 +140,60 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
     const participantId = pendingRemoveVolId;
     setPendingRemoveVolId(null);
     const ok = await mutate(`/api/programs/${programId}/volunteers`, { method: 'DELETE', body: JSON.stringify({ participantId }) });
-    if (ok) fetchProgram();
+    if (ok) await fetchProgram();
   };
 
   const handleToggleCore = async (participantId: number, isCore: boolean) => {
     setSaving(true);
     try {
       const ok = await mutate(`/api/programs/${programId}/volunteers`, { method: 'PATCH', body: JSON.stringify({ participantId, isCore }) });
-      if (ok) fetchProgram();
+      if (ok) await fetchProgram();
     } finally {
       setSaving(false);
     }
   };
 
+  const openEnroll = (target: EnrollTarget) => {
+    setEnrollTarget(target);
+    setBasis(null); setOrderId(""); setEnrollNote("");
+  };
+
+  // A free program has no payment to account for: staff add from the roster directly.
+  const canAdd = isPriced ? canEnrollByHand : isSysAdminOrBoard;
+
   const handleAddParticipant = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newPartId) return;
-
-    if (isSysAdminOrBoard) {
-      openConfirmAddPart();
-      return;
-    }
-
-    doAddParticipant();
+    if (isPriced) openEnroll({ personId: parseInt(newPartId), name: partLabel });
+    else enroll(parseInt(newPartId), { override: true });
   };
 
-  const doAddParticipant = async () => {
-    closeConfirmAddPart();
+  const doEnroll = () => {
+    if (!enrollTarget || !basis) return;
+    enroll(enrollTarget.personId, {
+      basis,
+      ...(basis === 'MATCHED_ORDER' && { shopifyOrderId: orderId.trim() }),
+      ...(enrollNote.trim() && { note: enrollNote.trim() }),
+      // The Board may also waive the program's limits (age, capacity, closed enrollment).
+      ...(isBoardMember && { override: true }),
+    });
+  };
+
+  const enroll = async (personId: number, fields: Record<string, unknown>) => {
     setSaving(true);
-    setEnrollError("");
     try {
-      const res = await fetch(`/api/programs/${programId}/participants`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ participantId: parseInt(newPartId), override: true })
+      const data = await api<ApiFeedback>(`/api/programs/${programId}/participants`, {
+        method: 'POST',
+        body: JSON.stringify({ participantId: personId, ...fields }),
       });
-      const data = await readJson(res);
-      if (res.ok) {
-        if (data.warning) notifications.show({ color: 'yellow', message: data.warning, autoClose: false });
-        setNewPartId(""); setPartLabel(""); fetchProgram();
-      }
-      else {
-        if (res.status === 409) {
-          // Race: benign double-submit / stale view — already enrolled.
-          notifications.show({ color: "red", message: data.error || "Participant is already enrolled in this program.", autoClose: false });
-          setNewPartId(""); setPartLabel("");
-          fetchProgram();
-        } else {
-          setEnrollError(data.error || "Failed to enroll participant.");
-        }
-      }
+      if (data?.warning) notifications.show({ color: 'yellow', message: data.warning, autoClose: false });
+      setEnrollTarget(null);
+      if (String(personId) === newPartId) { setNewPartId(""); setPartLabel(""); }
+      await fetchProgram();
+    } catch (e) {
+      showError(errorMessage(e));
+      // A 409 is a double submit or a stale view.
+      if (e instanceof HttpError && e.status === 409) await fetchProgram();
     } finally {
       setSaving(false);
     }
@@ -182,11 +214,11 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
     const reason = removeReason.trim();
     setPendingRemovePart(null);
     const body = pendingRemoveNeedsReason ? { participantId, mode, reason } : { participantId, mode };
-    const data = await mutate(`/api/programs/${programId}/participants`, { method: 'DELETE', body: JSON.stringify(body) });
-    if (data) {
-      if (data.notice) notifications.show({ color: 'blue', message: data.notice, autoClose: false });
-      if (data.warning) notifications.show({ color: 'yellow', message: data.warning, autoClose: false });
-      fetchProgram();
+    const result = await mutate(`/api/programs/${programId}/participants`, { method: 'DELETE', body: JSON.stringify(body) });
+    if (result) {
+      if (result.data?.notice) notifications.show({ color: 'blue', message: result.data.notice, autoClose: false });
+      if (result.data?.warning) notifications.show({ color: 'yellow', message: result.data.warning, autoClose: false });
+      await fetchProgram();
     }
   };
 
@@ -235,8 +267,8 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
         <form onSubmit={handleAddParticipant}>
           {/* On a phone the Program Lead notice stacks above the picker instead of squeezing beside it. */}
           <Flex
-            direction={{ base: isSysAdminOrBoard ? 'row' : 'column-reverse', sm: 'row' }}
-            align={{ base: isSysAdminOrBoard ? 'flex-end' : 'stretch', sm: 'flex-end' }}
+            direction={{ base: canAdd ? 'row' : 'column-reverse', sm: 'row' }}
+            align={{ base: canAdd ? 'flex-end' : 'stretch', sm: 'flex-end' }}
             gap="md"
             mb="lg"
             wrap="wrap"
@@ -254,9 +286,9 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
                 onClear={() => { setNewPartId(""); setPartLabel(""); }}
               />
             </Box>
-            {!isSysAdminOrBoard ? (
+            {!canAdd ? (
               <Alert color="yellow" variant="light" style={{ flex: 1 }}>
-                ⚠️ Program Leads cannot manually enroll participants. Participants must enroll themselves and complete payment via Shopify.
+                ⚠️ Only the Board or Finance enroll participants here. Participants enroll themselves and pay via Shopify.
               </Alert>
             ) : (
               <Button type="submit" disabled={saving || !newPartId}>Enroll</Button>
@@ -264,7 +296,6 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
           </Flex>
         </form>
 
-        {enrollError && <Alert color="red" variant="light" mb="lg">{enrollError}</Alert>}
 
         {activeParticipants.length === 0 ? <Text c="dimmed">No active participants yet.</Text> : (
           <Stack gap="xs">
@@ -273,15 +304,12 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
               return (
               <Card key={p.personId} withBorder radius="sm" padding="sm">
                 <Group justify="space-between">
-                  <Text fw={700} c="blue">{p.person.name || 'Unnamed'}</Text>
-                  {isPriced && !isBoardMember ? (
-                    <Button size="compact-xs" variant="subtle" color="red" disabled title="Only the Board removes a paid place">Remove</Button>
-                  ) : (
-                    <Button size="compact-xs" variant="subtle" color="red" onClick={() => handleRemoveParticipant(p, isBoardMember)}>Remove</Button>
-                  )}
+                  <Text fw={700} c="blue">{p.person.name || 'Unnamed'}{p.age !== undefined && <Text component="span" c="dimmed" size="sm"> ({ageLabel(p.age)})</Text>}</Text>
+                  {mayRemoveActive(p) && <RowActions name={p.person.name || 'Unnamed'} onRemove={() => handleRemoveParticipant(p, isBoardMember)} />}
                 </Group>
                 <SimpleGrid cols={{ base: 1, sm: 2 }} mt="xs" spacing="xs">
                   <Text size="sm" c="dimmed"><strong>Email:</strong> {p.person.email}</Text>
+                  {p.person.phone && <Text size="sm" c="dimmed"><strong>Phone:</strong> {formatPhone(p.person.phone)}</Text>}
                   {p.person.household && (
                     <>
                       <Text size="sm" c="dimmed" style={{ gridColumn: '1 / -1' }}>
@@ -312,8 +340,13 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
             {pendingParticipants.map(p => (
               <Card key={p.personId} withBorder radius="sm" padding="sm">
                 <Group justify="space-between">
-                  <Text fw={700} c="yellow">{p.person.name || 'Unnamed'}</Text>
-                  <Button size="compact-xs" variant="subtle" color="red" onClick={() => handleRemoveParticipant(p)}>Remove</Button>
+                  <Text fw={700} c="yellow">{p.person.name || 'Unnamed'}{p.age !== undefined && <Text component="span" c="dimmed" size="sm"> ({ageLabel(p.age)})</Text>}</Text>
+                  <RowActions
+                    name={p.person.name || 'Unnamed'}
+                    onEnroll={canEnrollByHand && outsideOwnHousehold(p) ? () => openEnroll({ personId: p.personId, name: p.person.name || 'Unnamed' }) : undefined}
+                    // Finance enrolls here but does not remove places.
+                    onRemove={canEnrollByHand && !isSysAdminOrBoard ? undefined : () => handleRemoveParticipant(p)}
+                  />
                 </Group>
                 <SimpleGrid cols={{ base: 1, sm: 2 }} mt="xs" spacing="xs">
                   <Text size="sm" c="dimmed"><strong>Email:</strong> {p.person.email}</Text>
@@ -333,12 +366,38 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
         </Group>
       </Modal>
 
-      <Modal opened={confirmAddPartOpened} onClose={closeConfirmAddPart} title={<Text span fw={700} fz="lg">Add Participant Manually</Text>} centered>
-        <Text mb="lg">Warning: Adding a participant manually bypasses all payment requirements. Are you sure you wish to proceed?</Text>
-        <Group justify="flex-end">
-          <Button variant="default" onClick={closeConfirmAddPart}>Cancel</Button>
-          <Button color="red" onClick={doAddParticipant} disabled={saving} loading={saving}>Add Participant</Button>
-        </Group>
+      <Modal opened={enrollTarget !== null} onClose={() => setEnrollTarget(null)} title={<Text span fw={700} fz="lg">Enroll {enrollTarget?.name}</Text>} centered>
+        <Stack>
+          <Radio.Group label="What does this enrollment stand for?" value={basis} onChange={(v) => setBasis(v as Basis)} required>
+            <Stack gap="xs" mt="xs">
+              <Radio value="OUTSIDE_PAYMENT" label="Paid outside the store" description="A check or cash." />
+              <Radio value="MATCHED_ORDER" label="Store order matched by hand" />
+              <Radio value="COMP" label="No payment (comp)" />
+            </Stack>
+          </Radio.Group>
+          {basis === 'MATCHED_ORDER' && (
+            <TextInput
+              required
+              label="Store order id"
+              description="The number at the end of the order's Shopify admin link."
+              value={orderId}
+              onChange={e => setOrderId(e.currentTarget.value)}
+            />
+          )}
+          {basis === 'COMP' && (
+            <Alert color="yellow" variant="light">This bypasses all payment.</Alert>
+          )}
+          <Textarea
+            label="Note"
+            description="Optional, such as a check number. It is kept in the audit log."
+            value={enrollNote}
+            onChange={e => setEnrollNote(e.currentTarget.value)}
+          />
+          <Group justify="flex-end">
+            <Button variant="default" onClick={() => setEnrollTarget(null)}>Cancel</Button>
+            <Button onClick={doEnroll} disabled={saving || !basis || (basis === 'MATCHED_ORDER' && !/^\d+$/.test(orderId.trim()))} loading={saving}>Enroll</Button>
+          </Group>
+        </Stack>
       </Modal>
 
       <Modal opened={confirmRemovePartOpened} onClose={closeConfirmRemovePart} title={<Text span fw={700} fz="lg">Remove Participant</Text>} centered>

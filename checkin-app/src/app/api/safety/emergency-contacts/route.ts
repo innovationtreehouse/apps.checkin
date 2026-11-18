@@ -12,7 +12,9 @@ export const GET = withAuth(
         try {
             const households = await prisma.household.findMany({
                 where: { householdMembers: { some: {} } },
-                include: {
+                select: {
+                    id: true,
+                    name: true,
                     householdMembers: {
                         select: {
                             id: true,
@@ -27,6 +29,7 @@ export const GET = withAuth(
                         }
                     },
                     emergencyContacts: {
+                        select: { id: true, name: true, phone: true, email: true, relationship: true, conflictParticipantId: true },
                         orderBy: [{ priority: "asc" }, { id: "asc" }]
                     }
                 }

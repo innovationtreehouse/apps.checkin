@@ -27,8 +27,9 @@ jest.mock('@/lib/verify-kiosk', () => ({
 // jest.fn (default false, per beforeEach below) so the "ops-stg" describe below
 // can flip it per-test — every OTHER case in this file runs with the gate off.
 jest.mock('@/lib/config', () => ({
-    config: { isLocal: () => false, isProd: () => false, isStaging: jest.fn(() => false) },
+    config: { isLocal: () => false, isProd: () => false, isStaging: jest.fn(() => false), isDeployedDev: () => false },
     isStagingAccessAllowed: jest.requireActual('@/lib/config').isStagingAccessAllowed,
+    isVerifiedOrgAccount: jest.requireActual('@/lib/config').isVerifiedOrgAccount,
 }));
 
 const mockSession = getServerSession as jest.Mock;
@@ -53,7 +54,7 @@ beforeEach(() => {
 describe('withKiosk', () => {
     it('admits a valid kiosk signature and passes the parsed body + actor to the handler', async () => {
         mockPubKeys.mockReturnValue(['key']);
-        mockVerify.mockReturnValue({ ok: true });
+        mockVerify.mockReturnValue({ ok: true, keyFingerprint: '0123456789abcdef' });
 
         const res = await post({
             headers: { 'x-kiosk-signature': 'sig' },
@@ -64,7 +65,7 @@ describe('withKiosk', () => {
         expect(handler).toHaveBeenCalledTimes(1);
         const call = handler.mock.calls[0] as unknown[];
         expect(call[1]).toEqual({ participantId: 5 });   // parsed body
-        expect(call[2]).toEqual({ type: 'kiosk' });        // signed actor
+        expect(call[2]).toStrictEqual({ type: 'kiosk', keyFingerprint: '0123456789abcdef' }); // signed actor
     });
 
     it('feeds the RAW request body to the kiosk verifier (HMAC covers the bytes)', async () => {

@@ -1,15 +1,13 @@
 "use client";
 
-import { useState, useMemo } from 'react';
-import { Alert, Button, Center, Group, Loader, Modal, Select, Stack, Switch, Table, Text, TextInput, Tooltip, UnstyledButton } from '@mantine/core';
+import { useState, useMemo, useRef } from 'react';
+import { Button, Center, Group, Loader, Modal, Select, Stack, Switch, Table, Text, TextInput, Tooltip, UnstyledButton } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconChevronDown, IconChevronUp, IconDeviceLaptop, IconLock, IconRobot, IconScan, IconSelector, IconUserCheck } from '@tabler/icons-react';
 import { useRequireRole } from '@/hooks/useRequireRole';
 import { FACILITY_RECORD_ROLES } from '@/lib/nav/sections/facilityOps';
-import { type AlertTone } from '@/components/admin/AlertBanner';
-import { LoadError } from '@checkin/component-ui';
-import { useLoad } from '@/lib/api';
-import { notifications } from '@mantine/notifications';
+import { errorMessage, LoadError, showError, showSuccess } from '@checkin/component-ui';
+import { api, useLoad } from '@/lib/api';
 import { toDatetimeLocal, fromDatetimeLocal } from '@/lib/time';
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { MAX_VISIT_MS } from '@/lib/visitTimes';
@@ -24,6 +22,7 @@ type Visit = {
   arrivedVia?: VisitSource | null;
   departedVia?: VisitSource | null;
   facilityCloseId?: number | null;
+  facilityClose?: { closedBy?: { name?: string | null } | null } | null;
   person?: { name?: string | null; email?: string | null } | null;
   event?: { name?: string | null } | null;
 };
@@ -47,16 +46,16 @@ const SourceIcon = ({ via }: { via?: VisitSource | null }) => {
   );
 };
 
-type RowNoticeState = { id: number; text: string; tone: AlertTone } | null;
-
-const RowNotice = ({ notice, id, onClose }: { notice: RowNoticeState; id: number; onClose: () => void }) => {
-  if (notice?.id !== id) return null;
-  return (
-    <Alert py={4} px="xs" color={notice.tone === 'success' ? 'treehouseGreen' : 'red'} variant="light" withCloseButton onClose={onClose}>
-      {notice.text}
-    </Alert>
-  );
+// What is wrong with a departure given its arrival, or undefined when either is blank or the pair is fine.
+const departureError = (arrivedAt: string, departedAt: string) => {
+  if (!arrivedAt || !departedAt) return undefined;
+  const span = Date.parse(departedAt) - Date.parse(arrivedAt);
+  if (span <= 0) return 'Departure time must be after arrival time';
+  if (span > MAX_VISIT_MS) return 'A visit cannot be longer than 24 hours.';
+  return undefined;
 };
+
+type AddErrors = { personId?: string; arrivedAt?: string; departedAt?: string };
 
 type SortKey = 'id' | 'participant' | 'event' | 'arrivedAt' | 'departedAt';
 
@@ -94,16 +93,18 @@ export default function AdminVisitsPage() {
 
   const [editingVisitId, setEditingVisitId] = useState<number | null>(null);
   const [editForm, setEditForm] = useState({ arrivedAt: "", departedAt: "" });
-  // Save error shown inline in the edited row's Actions cell — the row stays in
-  // edit mode on failure, and the page-top banner lands off-screen on long tables
-  // and reads as "nothing happened". Success uses the standard corner toast.
-  const [rowNotice, setRowNotice] = useState<{ id: number; text: string; tone: AlertTone } | null>(null);
+  // A departure the form itself rejects is flagged on the edited row's input; the row stays in edit mode.
+  const [editDepartedError, setEditDepartedError] = useState<string | undefined>();
+  const editDepartedRef = useRef<HTMLInputElement>(null);
 
   // Insert-for-others: the walk-in path neither the kiosk (live only) nor the
   // event roster mark (program-scoped, event window) can record.
   const [addOpened, { open: openAdd, close: closeAdd }] = useDisclosure(false);
   const [addForm, setAddForm] = useState({ personId: '', arrivedAt: '', departedAt: '' });
-  const [addError, setAddError] = useState('');
+  const [addErrors, setAddErrors] = useState<AddErrors>({});
+  const addPersonRef = useRef<HTMLInputElement>(null);
+  const addArrivedRef = useRef<HTMLInputElement>(null);
+  const addDepartedRef = useRef<HTMLInputElement>(null);
   const [adding, setAdding] = useState(false);
 
   const [closedOut, setClosedOut] = useState(false);
@@ -146,42 +147,38 @@ export default function AdminVisitsPage() {
 
   // The Select is searchable over the whole directory the search endpoint returns.
   const openAddModal = () => {
-    setAddError('');
+    setAddErrors({});
     setAddForm({ personId: '', arrivedAt: '', departedAt: '' });
     openAdd();
   };
 
   const handleAdd = async () => {
     // Instant feedback only — server remains the trust boundary.
-    if (!addForm.personId) return setAddError('Choose a person.');
-    if (!addForm.arrivedAt || !addForm.departedAt) return setAddError('Arrival and departure times are both required.');
-    if (Date.parse(addForm.departedAt) <= Date.parse(addForm.arrivedAt)) {
-      return setAddError('Departure time must be after arrival time');
-    }
-    if (Date.parse(addForm.departedAt) - Date.parse(addForm.arrivedAt) > MAX_VISIT_MS) {
-      return setAddError('A visit cannot be longer than 24 hours.');
+    const errors: AddErrors = {
+      personId: addForm.personId ? undefined : 'Choose a person.',
+      arrivedAt: addForm.arrivedAt ? undefined : 'Arrival time is required.',
+      departedAt: addForm.departedAt ? departureError(addForm.arrivedAt, addForm.departedAt) : 'Departure time is required.',
+    };
+    setAddErrors(errors);
+    const firstBroken = errors.personId ? addPersonRef : errors.arrivedAt ? addArrivedRef : errors.departedAt ? addDepartedRef : null;
+    if (firstBroken) {
+      firstBroken.current?.focus();
+      return;
     }
     setAdding(true);
     try {
-      const res = await fetch('/api/facility/visits/insert', {
+      await api('/api/facility/visits/insert', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           personId: Number(addForm.personId),
           arrivedAt: fromDatetimeLocal(addForm.arrivedAt),
           departedAt: fromDatetimeLocal(addForm.departedAt),
         }),
       });
-      if (res.ok) {
-        notifications.show({ message: 'Visit added.' });
-        closeAdd();
-        reload();
-      } else {
-        const data = await res.json().catch(() => ({}));
-        setAddError(data.error || 'Failed to add visit.');
-      }
-    } catch {
-      notifications.show({ color: 'red', message: 'Network error adding visit.', autoClose: false });
+      showSuccess('Visit added.');
+      closeAdd();
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setAdding(false);
     }
@@ -195,7 +192,7 @@ export default function AdminVisitsPage() {
   const confirmEditClick = () => {
     if (!pendingEditVisit) return;
     closeConfirmEdit();
-    setRowNotice(null);
+    setEditDepartedError(undefined);
     setEditingVisitId(pendingEditVisit.id);
     setEditForm({
       arrivedAt: toDatetimeLocal(pendingEditVisit.arrivedAt),
@@ -206,38 +203,27 @@ export default function AdminVisitsPage() {
 
   const handleSaveEdit = async (id: number) => {
     // Instant feedback only — server remains the trust boundary.
-    if (!editForm.departedAt) {
-      setRowNotice({ id, text: "Departure time is required to close this visit.", tone: "error" });
-      return;
-    }
-    if (editForm.arrivedAt && Date.parse(editForm.departedAt) <= Date.parse(editForm.arrivedAt)) {
-      setRowNotice({ id, text: "Departure time must be after arrival time", tone: "error" });
-      return;
-    }
-    if (editForm.arrivedAt && Date.parse(editForm.departedAt) - Date.parse(editForm.arrivedAt) > MAX_VISIT_MS) {
-      setRowNotice({ id, text: "A visit cannot be longer than 24 hours.", tone: "error" });
+    const departedError = editForm.departedAt
+      ? departureError(editForm.arrivedAt, editForm.departedAt)
+      : "Departure time is required to close this visit.";
+    setEditDepartedError(departedError);
+    if (departedError) {
+      editDepartedRef.current?.focus();
       return;
     }
     try {
-      const res = await fetch(`/api/facility/visits`, {
+      await api(`/api/facility/visits`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           visitId: id,
           arrivedAt: editForm.arrivedAt ? fromDatetimeLocal(editForm.arrivedAt) : undefined,
           departedAt: editForm.departedAt ? fromDatetimeLocal(editForm.departedAt) : undefined
         })
       });
-      if (res.ok) {
-        notifications.show({ message: "Visit updated successfully." });
-        setEditingVisitId(null);
-        reload();
-      } else {
-        const data = await res.json().catch(() => ({}));
-        setRowNotice({ id, text: data.error || "Failed to update visit.", tone: "error" });
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error saving visit.", autoClose: false });
+      showSuccess("Visit updated successfully.");
+      setEditingVisitId(null);
+    } catch (e) {
+      showError(errorMessage(e));
     }
   };
 
@@ -252,20 +238,10 @@ export default function AdminVisitsPage() {
     closeConfirmDelete();
     setPendingDeleteVisit(null);
     try {
-      const res = await fetch(`/api/facility/visits`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ visitId: id })
-      });
-      if (res.ok) {
-        notifications.show({ message: "Visit deleted." });
-        reload();
-      } else {
-        const data = await res.json().catch(() => ({}));
-        notifications.show({ color: "red", message: data.error || "Failed to delete visit.", autoClose: false });
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error deleting visit.", autoClose: false });
+      await api(`/api/facility/visits`, { method: 'DELETE', body: JSON.stringify({ visitId: id }) });
+      showSuccess("Visit deleted.");
+    } catch (e) {
+      showError(errorMessage(e));
     }
   };
 
@@ -321,27 +297,28 @@ export default function AdminVisitsPage() {
                       <TextInput
                         type="datetime-local"
                         size="xs"
+                        aria-label="Arrived"
                         value={editForm.arrivedAt}
-                        onChange={(e) => setEditForm({ ...editForm, arrivedAt: e.currentTarget.value })}
+                        onChange={(e) => { setEditForm({ ...editForm, arrivedAt: e.currentTarget.value }); setEditDepartedError(undefined); }}
                       />
                     </Table.Td>
                     <Table.Td>
                       <TextInput
+                        ref={editDepartedRef}
                         type="datetime-local"
                         size="xs"
+                        aria-label="Departed"
                         value={editForm.departedAt}
-                        onChange={(e) => setEditForm({ ...editForm, departedAt: e.currentTarget.value })}
+                        error={editDepartedError}
+                        onChange={(e) => { setEditForm({ ...editForm, departedAt: e.currentTarget.value }); setEditDepartedError(undefined); }}
                       />
                     </Table.Td>
                     {closedOut && <Table.Td>#{v.facilityCloseId}</Table.Td>}
                     <Table.Td>
-                      <Stack gap={6}>
-                        <Group gap="xs" wrap="nowrap">
-                          <Button size="xs" fz={15} onClick={() => handleSaveEdit(v.id)}>Save</Button>
-                          <Button size="xs" fz={15} variant="default" onClick={() => setEditingVisitId(null)}>Cancel</Button>
-                        </Group>
-                        <RowNotice notice={rowNotice} id={v.id} onClose={() => setRowNotice(null)} />
-                      </Stack>
+                      <Group gap="xs" wrap="nowrap">
+                        <Button size="xs" fz={15} onClick={() => handleSaveEdit(v.id)}>Save</Button>
+                        <Button size="xs" fz={15} variant="default" onClick={() => setEditingVisitId(null)}>Cancel</Button>
+                      </Group>
                     </Table.Td>
                   </>
                 ) : (
@@ -361,7 +338,7 @@ export default function AdminVisitsPage() {
                       ) : <Text component="span" c="yellow">Active</Text>}
                     </Table.Td>
                     {closedOut && (
-                      <Table.Td>#{v.facilityCloseId} · {v.departedVia === 'AUTO_CLOSE' ? 'Nightly' : 'Keyholder'}</Table.Td>
+                      <Table.Td>#{v.facilityCloseId} · {v.departedVia === 'AUTO_CLOSE' ? 'Nightly' : (v.facilityClose?.closedBy?.name ?? 'Closer deleted')}</Table.Td>
                     )}
                     <Table.Td>
                       {v.departedAt ? (
@@ -390,26 +367,31 @@ export default function AdminVisitsPage() {
             For a walk-in whose visit was never recorded. Closed visits only —
             live presence comes from the kiosk. This is logged to the audit trail.
           </Text>
-          {addError && <Alert color="red">{addError}</Alert>}
           {peopleError && <LoadError what="the people list" message={peopleError} onRetry={reloadPeople} />}
           <Select
             label="Person"
             searchable
             data={people.map((p) => ({ value: String(p.id), label: p.name || p.email }))}
+            ref={addPersonRef}
             value={addForm.personId || null}
-            onChange={(v) => setAddForm({ ...addForm, personId: v ?? '' })}
+            error={addErrors.personId}
+            onChange={(v) => { setAddForm({ ...addForm, personId: v ?? '' }); setAddErrors({ ...addErrors, personId: undefined }); }}
           />
           <TextInput
+            ref={addArrivedRef}
             type="datetime-local"
             label="Arrived"
             value={addForm.arrivedAt}
-            onChange={(e) => setAddForm({ ...addForm, arrivedAt: e.currentTarget.value })}
+            error={addErrors.arrivedAt}
+            onChange={(e) => { setAddForm({ ...addForm, arrivedAt: e.currentTarget.value }); setAddErrors({ ...addErrors, arrivedAt: undefined, departedAt: undefined }); }}
           />
           <TextInput
+            ref={addDepartedRef}
             type="datetime-local"
             label="Departed"
             value={addForm.departedAt}
-            onChange={(e) => setAddForm({ ...addForm, departedAt: e.currentTarget.value })}
+            error={addErrors.departedAt}
+            onChange={(e) => { setAddForm({ ...addForm, departedAt: e.currentTarget.value }); setAddErrors({ ...addErrors, departedAt: undefined }); }}
           />
           <Group justify="flex-end">
             <Button variant="default" onClick={closeAdd}>Cancel</Button>

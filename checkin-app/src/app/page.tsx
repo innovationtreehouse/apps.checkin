@@ -1,6 +1,5 @@
 "use client";
 
-import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession, signIn } from "next-auth/react";
 import {
@@ -10,6 +9,7 @@ import {
   Container,
   Divider,
   Group,
+  Loader,
   Paper,
   Stack,
   Text,
@@ -28,6 +28,14 @@ import Notifications from '@/components/Notifications';
 import { RoleBadge } from '@/components/ui/RoleBadge';
 import { PageLoader } from '@/components/ui/PageLoader';
 import { BuildingUnconfirmedAlert } from '@/components/BuildingUnconfirmedAlert';
+import { LoadError } from '@checkin/component-ui';
+import { useLoad } from '@/lib/api';
+import { useFreshRead } from '@/hooks/useFreshRead';
+
+type AttendanceAnswer = {
+  safety?: { isLastKeyholder?: boolean; isTwoDeepViolation?: boolean };
+  building?: { reachable?: boolean; lastSeenAt?: string | null; queued?: number };
+};
 
 export default function Home() {
   const router = useRouter();
@@ -35,58 +43,30 @@ export default function Home() {
   const isDevInstance = useIsDevInstance();
   const isLocalInstance = useIsLocalInstance();
 
-  const [isLastKeyholder, setIsLastKeyholder] = useState(false);
-  const [isTwoDeepViolation, setIsTwoDeepViolation] = useState(false);
-  // Set (to the kiosk's last-seen time and backlog) when a warning would show but
-  // the kiosk is unreachable or still syncing, so the building state behind it can't be confirmed.
-  const [unconfirmedSince, setUnconfirmedSince] = useState<{ lastSeenAt: string | null; queued: number } | null>(null);
-  // null = not loaded yet; once loaded, status/processStatus drive the join banner.
-  const [membership, setMembership] = useState<{ status: string | null; processStatus: string | null } | null>(null);
+  const membership = useLoad<{ membershipStatus?: string | null; process?: { status?: string | null } | null }>(
+    session?.user ? '/api/membership' : null,
+    { expireOn401: false },
+  );
 
-  const checkAttendanceStatus = useCallback(async () => {
-    if (!session?.user) return;
-    try {
-      const res = await fetch('/api/attendance');
-      const data = await res.json();
-
-      // Use server-computed safety flags
-      const lastKeyholder = Boolean(data.safety?.isLastKeyholder && session.user?.isKeyholder);
-      const twoDeep = Boolean(data.safety?.isTwoDeepViolation);
-      const reachable = data.building?.reachable === true;
-      setIsLastKeyholder(reachable && lastKeyholder);
-      setIsTwoDeepViolation(reachable && twoDeep);
-      setUnconfirmedSince(!reachable && (lastKeyholder || twoDeep)
-        ? { lastSeenAt: data.building?.lastSeenAt ?? null, queued: data.building?.queued ?? 0 }
-        : null);
-    } catch (err) {
-      console.error("Failed to fetch attendance status", err);
-    }
-  }, [session]);
-
-  useEffect(() => {
-    // Async fetch that syncs React state from the server; state is set in the
-    // promise continuation, not synchronously in this effect body.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    checkAttendanceStatus();
-  }, [checkAttendanceStatus]);
-
-  useEffect(() => {
-    if (!session?.user) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setMembership(null);
-      return;
-    }
-    let cancelled = false;
-    fetch('/api/membership')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (!cancelled && data) {
-          setMembership({ status: data.membershipStatus ?? null, processStatus: data.process?.status ?? null });
-        }
-      })
-      .catch(() => { /* non-blocking: leave banner hidden on error */ });
-    return () => { cancelled = true; };
-  }, [session]);
+  // No auto-retry: a pending retry shows nothing, and a keyholder must see that the check failed.
+  const attendancePath = session?.user ? '/api/attendance' : null;
+  const attendance = useLoad<AttendanceAnswer>(attendancePath, { retry: false, expireOn401: false });
+  // A cached answer may be old, so the page says it is still checking until this visit's read answers.
+  const { fresh, retry: retryAttendance } = useFreshRead(attendancePath, attendance.reload);
+  const safety = attendance.data;
+  // An answer without both flags is unknown, never all-clear.
+  const safetyUnknown = safety != null && !(
+    typeof safety.safety?.isLastKeyholder === 'boolean' && typeof safety.safety?.isTwoDeepViolation === 'boolean'
+  );
+  const lastKeyholder = Boolean(safety?.safety?.isLastKeyholder && session?.user?.isKeyholder);
+  const twoDeep = Boolean(safety?.safety?.isTwoDeepViolation);
+  const reachable = safety?.building?.reachable === true;
+  const isLastKeyholder = reachable && lastKeyholder;
+  const isTwoDeepViolation = reachable && twoDeep;
+  // The kiosk is unreachable or still syncing, so the building state behind a warning can't be confirmed.
+  const unconfirmedSince = !reachable && (lastKeyholder || twoDeep)
+    ? { lastSeenAt: safety?.building?.lastSeenAt ?? null, queued: safety?.building?.queued ?? 0 }
+    : null;
 
   // While the session is still resolving, `session` is undefined — rendering the
   // ternary below as-is would flash the signed-out landing at a signed-in user.
@@ -124,14 +104,37 @@ export default function Home() {
               </Paper>
 
               {/* Visitor call-to-action — only for non-members; copy reflects in-flight state */}
-              {membership && membership.status !== 'ACTIVE' && (
-                <JoinTreehouseBanner processStatus={membership.processStatus} />
+              {membership.error && (
+                <LoadError what="your membership status" message={membership.error} onRetry={membership.reload} />
+              )}
+              {membership.data && membership.data.membershipStatus !== 'ACTIVE' && (
+                <JoinTreehouseBanner processStatus={membership.data.process?.status ?? null} />
               )}
 
               {/* In-app red-dot indicators (membership reviewer queue / blocked apps, …) */}
               <Notifications />
 
               {/* Operational Warnings */}
+              {attendance.error && (
+                <LoadError
+                  what="the building safety check"
+                  message={`${attendance.error} Two-deep and last-keyholder warnings can't show until it loads.`}
+                  onRetry={retryAttendance}
+                />
+              )}
+              {safetyUnknown && !attendance.error && fresh && (
+                <LoadError
+                  what="the building safety check"
+                  message="The answer came back without the safety result. Two-deep and last-keyholder warnings can't show until it does."
+                  onRetry={retryAttendance}
+                />
+              )}
+              {attendancePath && !fresh && !attendance.error && (
+                <Group gap="xs" role="status">
+                  <Loader size="xs" />
+                  <Text size="sm" c="dimmed">Checking building safety…</Text>
+                </Group>
+              )}
               {unconfirmedSince && <BuildingUnconfirmedAlert lastSeenAt={unconfirmedSince.lastSeenAt} queued={unconfirmedSince.queued} />}
               {isTwoDeepViolation && (
                 <Alert color="red" icon={<IconAlertTriangle size={18} />} title="Critical Warning">

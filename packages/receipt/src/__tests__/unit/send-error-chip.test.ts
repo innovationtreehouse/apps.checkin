@@ -24,10 +24,10 @@ describe("send()", () => {
     });
   });
 
-  it("names the HTTP status when the server gives no reason", async () => {
+  it("gives the fixed text when the server gives no reason", async () => {
     respond(502, "");
     await send("/settings", "PUT", {}, "Settings saved", "Couldn't save the settings");
-    expect(show).toHaveBeenCalledWith(expect.objectContaining({ title: "Couldn't save the settings", message: "HTTP 502", autoClose: false }));
+    expect(show).toHaveBeenCalledWith(expect.objectContaining({ title: "Couldn't save the settings", message: "Something went wrong. Try again.", autoClose: false }));
   });
 
   it("shows a green chip on success", async () => {

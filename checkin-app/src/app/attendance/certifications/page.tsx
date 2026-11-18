@@ -3,13 +3,16 @@
 import { useState, Suspense, useCallback, useSyncExternalStore } from "react";
 import { useSearchParams } from "next/navigation";
 import { Alert, Badge, Box, Card, Center, Group, Loader, Text, Title } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
+import { clearError, showError } from "@checkin/component-ui";
 import { useAutoCycle } from "../../../hooks/useAutoCycle";
 import { usePolling } from "@/hooks/usePolling";
 import { goesBy } from "@/lib/person/name";
 import { ToolLevelBadge, toToolLevel, toolLevelDot } from "@/components/ToolLevelBadge";
 
 import { PageLoader } from "@/components/ui/PageLoader";
+const NETWORK_ERROR_KEY = "certifications-network";
+const UNREACHABLE = "Couldn't reach the server. Check your connection and try again.";
+
 type ToolStatusLevel = "BASIC" | "DOF" | "CERTIFIED" | "INSTRUCTOR" | "MAY_CERTIFY_OTHERS";
 
 type Person = {
@@ -58,6 +61,7 @@ function KioskCertificationsInner() {
   // The kiosk proxy answers 204 while the building is known empty.
   const [kioskResting, setKioskResting] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [unreachable, setUnreachable] = useState(false);
   // Off the kiosk, "present" is stated as fact only while the kiosk is reachable.
   const [presenceConfirmed, setPresenceConfirmed] = useState(false);
   const minute = useSyncExternalStore(subscribeToClock, currentMinute, noMinute);
@@ -78,6 +82,8 @@ function KioskCertificationsInner() {
       }
 
       const res = await fetch(`/api/kioskdisplay/certifications?limit_to_present=${limitToPresent}`, { headers });
+      setUnreachable(false);
+      clearError(NETWORK_ERROR_KEY);
       setKioskResting(res.status === 204);
       if (res.status === 204) {
         setError(null);
@@ -98,11 +104,13 @@ function KioskCertificationsInner() {
       }
     } catch (error) {
       console.error("Failed to fetch certifications data:", error);
-      notifications.show({ color: "red", message: "Network error", autoClose: false });
+      setUnreachable(true);
+      // Nobody can dismiss a message on the door screen, so the kiosk shows staleness inline only.
+      if (!isKioskMode) showError(UNREACHABLE, { key: NETWORK_ERROR_KEY });
     } finally {
       setLoading(false);
     }
-  }, [searchParams, limitToPresent]);
+  }, [searchParams, limitToPresent, isKioskMode]);
 
   // Visibility gate only, NO idle-stop: this is an unattended wall display, so
   // idle-stop would freeze it. On the kiosk, the Pi's proxy answers these polls
@@ -189,6 +197,7 @@ function KioskCertificationsInner() {
                     ? `${participants.length} People Present`
                     : `${participants.length} Checked In (unconfirmed)`}
               </Badge>
+              {loaded && unreachable && <Text size="sm" c="dimmed">Not up to date</Text>}
             </Group>
             <Group gap="sm" align="center">
               <Text fw={700} size="sm">Legend:</Text>
@@ -215,6 +224,8 @@ function KioskCertificationsInner() {
           <Center py="xl"><Loader /></Center>
         ) : error ? (
           <Alert color="red">{error}</Alert>
+        ) : !loaded && unreachable ? (
+          <Alert color="red">{UNREACHABLE}</Alert>
         ) : !loaded && kioskResting ? (
           <Center py="xl"><Text c="dimmed">Kiosk resting — zzz. Badge in to wake it.</Text></Center>
         ) : participants.length === 0 || tools.length === 0 ? (

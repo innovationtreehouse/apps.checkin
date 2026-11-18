@@ -36,7 +36,7 @@ async function resolveAuthResult(
                 pubKeys,
                 req.headers.get('x-kiosk-queue-depth')
             );
-            if (result.ok) return { type: 'kiosk' };
+            if (result.ok) return { type: 'kiosk', keyFingerprint: result.keyFingerprint };
         } else if (pubKeys.length === 0 && config.isLocal()) {
             // Local laptops only (CHECKIN_ENV=local): treat as kiosk when no signing key is
             // configured, so the kiosk/check-in flows can be exercised without provisioning keys.

@@ -137,12 +137,14 @@ job ends its run in one shared step (`checkin-app/src/lib/finishRun.ts`): it
 records the run with its failures by kind, then hands the run to the engine,
 which also checks every job for a stopped schedule.
 
-**What it hears.** The receipt, expense, gift-of-goods and income libraries report
+**What it hears.** The expense, gift-of-goods and income libraries report
 each sorted failure through their "on failure" port; the app files the
-reports under the job run in progress. The daily reconcile job runs the receipt
-lanes (re-push, mailbox reading, OCR of mailed files) and expense intake; the daily posting job runs
-the expense, gift-of-goods and income posting lanes. A step of either job that
-crashes counts too, as a bug unless its error was sorted. An item counts once
+reports under the job run in progress. The receipt library has no such port. The
+daily reconcile job runs expense intake and four receipt steps
+(`sweepInterruptedOcr`, `sweepStuckUploaded`, `readMailbox`,
+`sweepOutcomeNotices`); only a receipt step that crashes reaches the engine. The
+daily posting job runs the expense, gift-of-goods and income posting lanes. A step
+of either job that crashes counts too, as a bug unless its error was sorted. An item counts once
 per run, however often its lane reports it. A run covers only the lanes whose
 work it reached, so a step that crashed or could not run keeps its incident open. A failure outside a job run, such
 as a receipt finalized by hand, is only logged.
@@ -197,5 +199,26 @@ connection that is [step 3 of the go-live runbook](quickbooks-go-live.md)
 with the infra operator, then reseeding the secret. For a bug, read the job
 logs for the code named. Nothing needs closing by hand: the next clean run
 closes the incident and sends the recovery note.
+
+### The Problems list
+
+System Status → Health also has a Problems list, separate from incidents. It
+shows:
+
+- every item stuck in the receipt flow (receipts, receiving, expenses, gifts,
+  local inventory), oldest first, with its step and when it first failed;
+- jobs that have not run on time;
+- jobs whose latest run reported failures;
+- a library whose stuck items could not be read;
+- a line when three or more receipt readings failed in a day.
+
+**The daily email.** The nightly job sends the list to the alert address while
+anything is on it: an item stuck over a day, a late or failing job, an unread
+library, or a reading-failure line. The Board address is copied once a stuck item
+or a late job has waited over 14 days. The email carries ids, steps and dates
+only. With no address set, nothing is sent.
+
+**Retry is manual.** Nothing on the list retries by itself: a stuck item stays
+until a person retries it.
 
 Closed incidents are deleted after 90 days.

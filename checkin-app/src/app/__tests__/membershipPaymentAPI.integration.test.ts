@@ -56,6 +56,16 @@ describe('Membership payment API', () => {
     const prevWebhookSecret = process.env.SHOPIFY_WEBHOOK_SECRET;
     const prevStoreDomain = process.env.SHOPIFY_STORE_DOMAIN;
     let restoreBoardSettings: () => Promise<void> = async () => {};
+    const BOUNDARY = new Date('2000-09-01T00:00:00Z');
+    const liveYear = liveMembershipYear(BOUNDARY, new Date())!;
+    let prevLiveRow: { membershipYear: number; shopifyVariantId: string; productUrl: string | null } | null = null;
+    async function setLiveRow() {
+        await prisma.membershipYearVariant.upsert({
+            where: { membershipYear: liveYear },
+            create: { membershipYear: liveYear, shopifyVariantId: VARIANT_ID },
+            update: { shopifyVariantId: VARIANT_ID },
+        });
+    }
 
     async function makeProc(label: string, isVolunteerFamily: boolean, withLead = false) {
         const hh = await prisma.household.create({ data: { name: `${label} ${TAG}` } });
@@ -91,7 +101,7 @@ describe('Membership payment API', () => {
         const settingsData = {
             standardMembershipFeeCents: 10000,
             volunteerMembershipFeeCents: 2500,
-            orgMembershipVariantId: VARIANT_ID,
+            orgMembershipYearBoundary: BOUNDARY,
             volunteerFamilyDiscountCode: DISCOUNT_CODE,
         };
         await prisma.boardSettings.upsert({
@@ -99,6 +109,8 @@ describe('Membership payment API', () => {
             create: { id: 1, ...settingsData },
             update: settingsData,
         });
+        prevLiveRow = await prisma.membershipYearVariant.findUnique({ where: { membershipYear: liveYear } });
+        await setLiveRow();
         await wipe();
 
         const normal = await makeProc('Normal', false, true);
@@ -122,6 +134,8 @@ describe('Membership payment API', () => {
 
     afterAll(async () => {
         await wipe();
+        await prisma.membershipYearVariant.deleteMany({ where: { membershipYear: liveYear } });
+        if (prevLiveRow) await prisma.membershipYearVariant.create({ data: prevLiveRow });
         await restoreBoardSettings();
         if (prevWebhookSecret === undefined) delete process.env.SHOPIFY_WEBHOOK_SECRET;
         else process.env.SHOPIFY_WEBHOOK_SECRET = prevWebhookSecret;
@@ -130,7 +144,7 @@ describe('Membership payment API', () => {
         await prisma.$disconnect();
     });
 
-    it('builds a checkout link to the membership product (no discount for normal)', async () => {
+    it("builds a checkout link to the live year's variant (no discount for normal)", async () => {
         const res = await ensurePaymentLink(normalProc);
         expect(res.amountCents).toBe(10000);
         expect(res.checkoutUrl).toBe(`https://${STORE_DOMAIN}/cart/${VARIANT_ID}:1?attributes[Membership_Process_ID]=${normalProc}`);
@@ -141,6 +155,17 @@ describe('Membership payment API', () => {
         const res = await ensurePaymentLink(volProc);
         expect(res.amountCents).toBe(2500);
         expect(res.checkoutUrl).toBe(`https://${STORE_DOMAIN}/cart/${VARIANT_ID}:1?discount=${DISCOUNT_CODE}&attributes[Membership_Process_ID]=${volProc}`);
+    });
+
+    it("builds no link when the live year has no row", async () => {
+        await prisma.membershipYearVariant.delete({ where: { membershipYear: liveYear } });
+        try {
+            const res = await ensurePaymentLink(normalProc);
+            expect(res.amountCents).toBe(10000);
+            expect(res.checkoutUrl).toBeNull();
+        } finally {
+            await setLiveRow();
+        }
     });
 
     it('resolves the payment link for the calling user', async () => {
@@ -190,7 +215,7 @@ describe('Membership payment API', () => {
     });
 
     it('orders/paid webhook activates the membership (and is idempotent)', async () => {
-        // line_items must contain the configured orgMembershipVariantId or the variant check rejects it (no membership item).
+        // line_items must contain a membership year's variant or the variant check rejects it (no membership item).
         const payload = { id: 555, line_items: [{ variant_id: VARIANT_ID }], note_attributes: [{ name: 'Membership_Process_ID', value: String(normalProc) }] };
         const res = await SHOPIFY_WEBHOOK(shopifyReq(payload, WEBHOOK_SECRET) as never);
         expect(res.status).toBe(200);

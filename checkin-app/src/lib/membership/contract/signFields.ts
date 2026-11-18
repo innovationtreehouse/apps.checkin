@@ -1,14 +1,9 @@
 /**
- * Signature-field layout for the membership agreement — a direct port of
- * `signature_fields()` in innovationtreehouse/sign-script (send_for_signature.py),
- * the source of truth for how Zoho Sign requests are generated.
+ * Signature-field layouts for the agreements sent to Zoho Sign. Each layout
+ * matches the blank lines printed on its PDF's LAST page.
  *
  * Coordinates are PERCENTAGES of the page (0–100); Zoho needs absolutes, so
  * `toZohoFields()` multiplies by the actual page width/height (read from the PDF).
- * All five fields sit at the bottom of the LAST page:
- *
- *   [        Signature        ]   [        Date Signed        ]      y≈76%
- *   [ Printed Name ] [ Insurance Company ] [ Policy # (N/A) ]       y≈87%
  */
 
 /** Zoho field_type_name values used by the agreement. */
@@ -25,13 +20,31 @@ export interface SignFieldSpec {
     h_pct: number;
 }
 
-/** The five fields, in the same order/coords as the Python source of truth. */
+/**
+ * Membership agreement, ported from `signature_fields()` in
+ * innovationtreehouse/sign-script (send_for_signature.py):
+ *
+ *   [        Signature        ]   [        Date Signed        ]      y≈76%
+ *   [ Printed Name ] [ Insurance Company ] [ Policy # (N/A) ]       y≈87%
+ */
 export const SIGN_FIELDS: SignFieldSpec[] = [
     { field_type_name: "Signature", field_name: "Signature", field_label: "Signature", is_mandatory: true, x_pct: 2, y_pct: 76, w_pct: 54, h_pct: 8 },
     { field_type_name: "Date", field_name: "DateSigned", field_label: "Date", is_mandatory: true, x_pct: 59, y_pct: 76, w_pct: 39, h_pct: 8 },
     { field_type_name: "Textfield", field_name: "PrintedName", field_label: "Printed Name", is_mandatory: true, x_pct: 2, y_pct: 87, w_pct: 29, h_pct: 5 },
     { field_type_name: "Textfield", field_name: "InsuranceCo", field_label: "Insurance Company", is_mandatory: true, x_pct: 33, y_pct: 87, w_pct: 33, h_pct: 5 },
     { field_type_name: "Textfield", field_name: "PolicyNumber", field_label: "Policy # (N/A if none)", is_mandatory: true, x_pct: 68, y_pct: 87, w_pct: 30, h_pct: 5 },
+];
+
+/**
+ * Key Volunteer Agreement (key-volunteer-agreement.pdf), each box on its printed line:
+ *
+ *   Full Name: [              Printed Name              ]              y≈79%
+ *   Signature: [        Signature        ]  Date: [ Date ]             y≈84–86%
+ */
+export const KVA_SIGN_FIELDS: SignFieldSpec[] = [
+    { field_type_name: "Textfield", field_name: "PrintedName", field_label: "Full Name", is_mandatory: true, x_pct: 22.2, y_pct: 79.4, w_pct: 63.9, h_pct: 2.8 },
+    { field_type_name: "Signature", field_name: "Signature", field_label: "Signature", is_mandatory: true, x_pct: 21.9, y_pct: 84.1, w_pct: 44.5, h_pct: 4.5 },
+    { field_type_name: "Date", field_name: "DateSigned", field_label: "Date", is_mandatory: true, x_pct: 72.8, y_pct: 85.8, w_pct: 14.9, h_pct: 2.8 },
 ];
 
 /** A field as Zoho's `submit` endpoint expects it (absolute coords on one document). */
@@ -59,13 +72,14 @@ export type FieldPrefill = Partial<Record<string, string>>;
  * rounded). Textfields carry `field_category: "Textfield"` as in the source.
  */
 export function toZohoFields(
+    specs: readonly SignFieldSpec[],
     documentId: string,
     pageNo: number,
     pageWidth: number,
     pageHeight: number,
     prefill: FieldPrefill = {},
 ): ZohoSubmitField[] {
-    return SIGN_FIELDS.map((f) => {
+    return specs.map((f) => {
         const entry: ZohoSubmitField = {
             field_name: f.field_name,
             field_type_name: f.field_type_name,

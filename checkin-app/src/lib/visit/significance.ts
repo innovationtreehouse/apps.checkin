@@ -1,7 +1,7 @@
 import type { VisitSource } from "@/generated/prisma/client";
 
 /**
- * Post-hoc significance of a self-correction (docs/rules/attendance-checkin.md):
+ * Post-hoc significance of a self-correction:
  * the edit always applies; a change
  * is flagged to the board only when it is large relative to how authoritative
  * the value it overwrote was. significance = Σ per-field (minutes shifted ×

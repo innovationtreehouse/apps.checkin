@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Alert, Badge, Button, Card, Group, Table, Text, Title } from "@mantine/core";
-import { errorMessage, showError, showSuccess } from "@checkin/component-ui";
+import { errorMessage, HttpError, showError, showSuccess } from "@checkin/component-ui";
 import { api } from "@/lib/api";
 import { formatCents } from "@checkin/money";
 // Type-only imports: erased at compile time, so the server modules' prisma
@@ -58,17 +58,12 @@ export function MatchAuditPanel() {
     setRunning(true);
     setError(null);
     try {
-      const res = await fetch('/api/finance-ops/s-read/match-audit');
-      if (res.status === 503) {
-        setResult(null);
-        setError('The Shopify mirror is not wired in this environment.');
-        return;
-      }
-      if (!res.ok) throw new Error();
-      setResult((await res.json()) as MatchAuditResult);
-    } catch {
+      setResult(await api<MatchAuditResult>('/api/finance-ops/s-read/match-audit'));
+    } catch (e) {
       setResult(null);
-      setError('Match audit failed to run — see the server log, or run diagnostics on the System Status page.');
+      setError(e instanceof HttpError && e.status === 503
+        ? errorMessage(e)
+        : 'Match audit failed to run — see the server log, or run diagnostics on the System Status page.');
     } finally {
       setRunning(false);
     }
@@ -76,7 +71,7 @@ export function MatchAuditPanel() {
 
   // One memoized pass per result: this panel re-renders on every keystroke in
   // the page's resolve-exception modal, and the audit arrays can be large.
-  const { unclaimedPaid, unclaimedUnpaid, membershipGaps, enrollmentGaps, manual, scholarships, comped, reversedMemberships, reversedEnrollments, preMirrorCount, matched } = useMemo(() => {
+  const { unclaimedPaid, unclaimedUnpaid, membershipGaps, enrollmentGaps, manual, scholarships, comped, paidOutside, reversedMemberships, reversedEnrollments, preMirrorCount, matched } = useMemo(() => {
     const matchedCounts = { orders: 0, tracked: 0, memberships: 0, enrollments: 0 };
     let preMirrorCount = 0;
     const groups = {
@@ -87,6 +82,7 @@ export function MatchAuditPanel() {
       manual: [] as NonNullable<typeof result>['memberships'],
       scholarships: [] as NonNullable<typeof result>['enrollments'],
       comped: [] as NonNullable<typeof result>['enrollments'],
+      paidOutside: [] as NonNullable<typeof result>['enrollments'],
       reversedMemberships: [] as NonNullable<typeof result>['memberships'],
       reversedEnrollments: [] as NonNullable<typeof result>['enrollments'],
       matched: matchedCounts,
@@ -109,6 +105,7 @@ export function MatchAuditPanel() {
       if (e.bucket === 'NO_PAYMENT_BASIS' || e.bucket === 'ORDER_NOT_IN_MIRROR') groups.enrollmentGaps.push(e);
       else if (e.bucket === 'SCHOLARSHIP_APPROVED') groups.scholarships.push(e);
       else if (e.bucket === 'ADMIN_COMPED') groups.comped.push(e);
+      else if (e.bucket === 'PAID_OUTSIDE_STORE') groups.paidOutside.push(e);
       else if (e.bucket === 'ORDER_REVERSED') groups.reversedEnrollments.push(e);
       else if (e.bucket === 'PRE_MIRROR') preMirrorCount++;
       else if (e.bucket === 'TRACKED_EXCEPTION') matchedCounts.tracked++;
@@ -170,6 +167,7 @@ export function MatchAuditPanel() {
             {count('Manually recorded payments', manual.length)}
             {count('Scholarships', scholarships.length)}
             {count('Comped', comped.length)}
+            {count('Paid outside the store', paidOutside.length)}
             {preMirrorCount > 0 && count('Pre-mirror (before mirror history)', preMirrorCount)}
           </Group>
 
@@ -288,7 +286,7 @@ export function MatchAuditPanel() {
             </>
           )}
 
-          {(manual.length > 0 || scholarships.length > 0 || comped.length > 0) && (
+          {(manual.length > 0 || scholarships.length > 0 || comped.length > 0 || paidOutside.length > 0) && (
             <>
               <Title order={5} mt="md">Manual — legitimate, listed for audit</Title>
               <Table striped withTableBorder mt="xs">
@@ -316,7 +314,14 @@ export function MatchAuditPanel() {
                     <Table.Tr key={`comp-${e.programId}-${e.personId}`}>
                       <Table.Td>{e.programName}</Table.Td>
                       <Table.Td>{e.personName}</Table.Td>
-                      <Table.Td>Comped by {e.compedByName}</Table.Td>
+                      <Table.Td>{e.compedByName ? `Comped by ${e.compedByName}` : 'Comped'}</Table.Td>
+                    </Table.Tr>
+                  ))}
+                  {paidOutside.map((e) => (
+                    <Table.Tr key={`out-${e.programId}-${e.personId}`}>
+                      <Table.Td>{e.programName}</Table.Td>
+                      <Table.Td>{e.personName}</Table.Td>
+                      <Table.Td>Paid outside the store</Table.Td>
                     </Table.Tr>
                   ))}
                 </Table.Tbody>

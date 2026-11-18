@@ -17,8 +17,10 @@ import {
   seedPartOwner,
   bindPorts,
   directory,
+  principal,
   ORG,
 } from "../helpers/seed";
+import { expenseReasons } from "../../services/reasonService";
 
 const checkAndProcessExpense = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock("../../lib/expense-qb-processor", () => ({ checkAndProcessExpense }));
@@ -153,8 +155,8 @@ describeDb("checkApprovalAutoTransition", () => {
     expect(checkAndProcessExpense).toHaveBeenCalledOnce();
   });
 
-  it("routes to capital_review when the receipt total exceeds the threshold", async () => {
-    const id = await seedExpense({ state: "owner_approval", receiptTotalCents: 6000 });
+  it("routes to capital_review when the receipt total is at the threshold", async () => {
+    const id = await seedExpense({ state: "owner_approval", receiptTotalCents: 5000 });
     const li = await seedLineItem(id, { unitPriceCents: 100 });
     await seedApproval(id, li, { ownerId: 5, status: "approved" });
 
@@ -199,9 +201,9 @@ describeDb("checkApprovalAutoTransition", () => {
     expect(checkAndProcessExpense).not.toHaveBeenCalled();
   });
 
-  it("routes to capital_review when a single line item exceeds the line threshold", async () => {
+  it("routes to capital_review when a single line item's unit price is at the line threshold", async () => {
     const id = await seedExpense({ state: "owner_approval", receiptTotalCents: 100 });
-    const li = await seedLineItem(id, { unitPriceCents: 3000 });
+    const li = await seedLineItem(id, { unitPriceCents: 2500 });
     await seedApproval(id, li, { ownerId: 5, status: "approved" });
 
     await checkApprovalAutoTransition(id, ACTOR);
@@ -217,5 +219,51 @@ describeDb("checkApprovalAutoTransition", () => {
     await checkApprovalAutoTransition(id, ACTOR);
 
     expect(await stateOf(id)).toBe("owner_approval");
+  });
+});
+
+describeDb("checkApprovalAutoTransition — capital review switch", () => {
+  const FINANCE = principal(3, { isFinance: true });
+
+  async function approvedExpense(receiptTotalCents: number): Promise<string> {
+    const id = await seedExpense({ state: "owner_approval", receiptTotalCents });
+    await seedApproval(id, await seedLineItem(id, { unitPriceCents: receiptTotalCents }), { ownerId: 5, status: "approved" });
+    return id;
+  }
+
+  it("sends nothing to capital review while it is off, whatever the thresholds", async () => {
+    await seedOrgSettings({ capitalReviewEnabled: false, capitalTotalThresholdCents: 0, capitalLineItemThresholdCents: 0 });
+    const id = await approvedExpense(1_000_000);
+
+    await checkApprovalAutoTransition(id, ACTOR);
+
+    expect(await stateOf(id)).toBe("qb_pending");
+  });
+
+  it("sends every expense to capital review while it is on with zero thresholds", async () => {
+    await seedOrgSettings({ capitalReviewEnabled: true, capitalTotalThresholdCents: 0, capitalLineItemThresholdCents: 0 });
+    const id = await approvedExpense(1);
+
+    await checkApprovalAutoTransition(id, ACTOR);
+
+    expect(await stateOf(id)).toBe("capital_review");
+    expect(checkAndProcessExpense).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["no settings row", async () => {}],
+    ["a row with thresholds unset", () => seedOrgSettings({ capitalTotalThresholdCents: null, capitalLineItemThresholdCents: null })],
+  ])("holds the expense at capital_review with a thresholds alert for finance, with %s", async (_, seed) => {
+    await seed();
+    const id = await approvedExpense(1);
+
+    await checkApprovalAutoTransition(id, ACTOR);
+
+    expect(await stateOf(id)).toBe("capital_review");
+    expect(checkAndProcessExpense).not.toHaveBeenCalled();
+    expect((await expenseReasons(FINANCE, id)).filter((r) => r.code.startsWith("CAPITAL")).map((r) => [r.code, r.actionable])).toEqual([
+      ["CAPITAL_REVIEW", true],
+      ["CAPITAL_THRESHOLDS_UNSET", true],
+    ]);
   });
 });

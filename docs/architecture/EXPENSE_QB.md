@@ -6,9 +6,7 @@ account. The app looks for a matching entry first and creates one only when noth
 matches and the books allow it. It tries right after the expense commits, and the
 daily `GET /api/cron/qbo-posting` run catches up whatever is left.
 
-This file describes the shape of the code. The rules a change must not violate are
-in `docs/rules/expenses.md` and under *The books are finance's* in
-`docs/rules/principles.md`. The package pattern this lane follows (host injection,
+This file describes the shape of the code. The package pattern this lane follows (host injection,
 own database, in-process crossings, no hosted machine route) is in
 `docs/architecture/COMPONENT_ARCHITECTURE.md`. Operator steps for consent and the
 per-environment deploy checklist are in `packages/quickbooks/README.md`.
@@ -54,22 +52,26 @@ as `Cash`.
 
 ## From signed-off expense to outbox
 
-`checkAndProcessExpense` does nothing while the reimbursee is unknown or a line has
-an unfilled sign-off seat. Past that check, each line must resolve to exactly one
+`checkAndProcessExpense` does nothing while the reimbursee is unknown, a line has
+an unfilled sign-off seat, or the expense's tax waits on finance
+(`taxWaitsOnFinance`). Approving the tax drains the expense. Past that check, each line must resolve to exactly one
 account:
 
 1. An account finance set by hand on a held line wins.
 2. A part-numbered inventory line is looked up in the catalog and matched against
    the `AccountMapping` rules, where `*` is a wildcard and a rule naming the exact
-   item beats the others. Catalog inputs are snapshotted on the line, so a later
-   catalog edit cannot move the account.
+   item beats the others. Catalog inputs are snapshotted on the line at sign-off,
+   so a later catalog edit cannot move the first post's account. A person's Retry
+   or Resubmit before the expense is in QuickBooks reads the live catalog instead,
+   replaces the snapshot, and writes a `qb_account_reresolved` audit row for each
+   line whose category or account moved.
 3. Any other line needs a hand-set account.
 
 A line that resolves to no account or to several raises an `ExpenseHold`
 (`NO_MATCH`, `MULTIPLE_MATCHES`, `NO_PART_NUMBER`, `NON_INVENTORY`) and the expense
 moves to `qb_on_hold`.
 
-With no holds, one transaction re-reads the sign-offs under the expense lock,
+With no holds, one transaction re-reads the sign-offs and the tax wait under the expense lock,
 writes each line's tax, shipping and discount share and its `resolvedQbAccount`,
 creates the `ExpenseEvent` row, and moves the expense from `qb_pending` to
 `qb_complete`. The outbox row carries no data: it says "this expense may post", and
@@ -197,12 +199,12 @@ expense whose vendor name starts `TEST-` posts; production never posts an
 `postExpenseToQb` holds no lock while it talks to QuickBooks. It has three steps:
 
 1. **Claim.** Under the row lock it re-reads the outbox row, the reimbursee, the
-   sign-off seats and the line approvals, builds the entry, and sets `POSTING`. A
+   sign-off seats, the tax wait and the line approvals, builds the entry, and sets `POSTING`. A
    post that may create stamps `qbCreateAttemptedAt` the first time, and the stamp
    never moves. A hold makes the post wait; on a closed expense it also raises
    `QB_POST_HELD`, since the app takes no further sign-off on it. A closed expense
-   is held only for a missing submitter or Treasurer seat, an unapproved line or an
-   unknown reimbursee. Its Board seat and Board approval were settled at the outbox
+   is held only for a missing submitter or Treasurer seat, an unapproved line, tax
+   waiting on finance or an unknown reimbursee. Its Board seat and Board approval were settled at the outbox
    commit, so later changes to the reimbursee's membership or the Board-review total
    do not hold it.
 2. **Call.** If `qbCreateAttemptedAt` was already set, it first reads what QuickBooks
@@ -274,7 +276,7 @@ expense's state.
 |---|---|---|
 | Pick a candidate | `matchExpenseToQb` | `MATCHED`; needs every sign-off |
 | Book it | `bookExpenseToQb` | One post with creating allowed; still matches first and stops at the closing date |
-| Retry | `retryQbPost` | Re-resolves accounts from the current mappings, posts once |
+| Retry | `retryQbPost` | Re-resolves accounts from the current mappings and the live catalog, posts once |
 | Skip, with a reason | `skipExpenseQb` | `SKIPPED` for good; refused to a conflicted person |
 | Exclude an entry, with a reason | `excludeQbTxn` | That id is never a candidate again |
 | Link or create a Vendor | `reimburseeVendorService` | The reimbursee's Vendor is set; a same-name Vendor must be confirmed by picking it |
@@ -295,7 +297,10 @@ windowed reader around its receipt date. A created entry is compared with what t
 app posted (amount, date, key, accounts, Vendor). A matched entry is compared with
 its baseline, and the accounts on it are compared only when the baseline recorded
 them, because they are finance's. Any difference, or a missing entry, raises
-`QB_DRIFT` with what QuickBooks showed. The check only reads QuickBooks; its writes
+`QB_DRIFT` with what QuickBooks showed. An open `QB_DRIFT` whose entry matches again
+is checked off by the system with "Resolved in QuickBooks" and the date, counted as
+`resolved`; the close matches the `observed` it read, so a finance check-off or a new
+drift landing first wins. The check only reads QuickBooks; its writes
 are in the expense database, where it raises the flags and stores a baseline for a
 matched entry that has none, raising nothing for that entry on that run.
 

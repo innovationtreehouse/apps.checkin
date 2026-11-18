@@ -1,15 +1,13 @@
 "use client";
 
-import { useState, useEffect, Suspense } from 'react';
+import { useState, useEffect, useRef, Suspense } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Button, Card, Checkbox, Container, Group, Select, SimpleGrid, Stack, Text, TextInput } from '@mantine/core';
-import { notifications } from '@mantine/notifications';
+import { Button, Card, Checkbox, Container, Group, Input, Select, SimpleGrid, Stack, TextInput } from '@mantine/core';
 import { AdminPageHeader } from '@/components/admin/AdminPageHeader';
-import { AlertBanner } from '@/components/admin/AlertBanner';
 import { useUnsavedGuard, shallowEqual } from '@/components/UnsavedChangesProvider';
-import { LoadError } from '@checkin/component-ui';
-import { useLoad } from '@/lib/api';
+import { errorMessage, LoadError, showError } from '@checkin/component-ui';
+import { api, useLoad } from '@/lib/api';
 
 import { PageLoader } from "@/components/ui/PageLoader";
 const DAYS_MAP = [
@@ -46,7 +44,9 @@ export function NewEventForm() {
 
   const [saving, setSaving] = useState(false);
   const [submitted, setSubmitted] = useState(false);
-  const [message, setMessage] = useState("");
+  const [recurrenceErrors, setRecurrenceErrors] = useState<{ days?: string; until?: string }>({});
+  const firstDayRef = useRef<HTMLButtonElement>(null);
+  const untilRef = useRef<HTMLInputElement>(null);
 
   // Dirty = any field (incl. recurrence) changed from blank creation defaults.
   // daysOfWeek joined to a string so it fits shallowEqual's primitive compare.
@@ -79,46 +79,40 @@ export function NewEventForm() {
     return end <= start;
   })();
 
+  // What is wrong with the recurrence, field by field; empty when it can be sent.
+  const checkRecurrence = (): { days?: string; until?: string } => {
+    if (!repeats) return {};
+    const errors = {
+      days: daysOfWeek.length === 0 ? "Pick at least one day of the week." : undefined,
+      until: until ? undefined : "Pick an end date for recurring events.",
+    };
+    if (errors.days || errors.until) return errors;
+    // Parse as local dates (YYYY-MM-DD as local midnight) so getDay() matches the picker.
+    const start = new Date(`${startDate}T00:00:00`);
+    const end = new Date(`${until}T00:00:00`);
+    if (end < start) return { until: "The end date must be on or after the start date." };
+    // A window of 7 or more days always covers every weekday; only short ranges need scanning.
+    const spanDays = Math.round((end.getTime() - start.getTime()) / 86400000);
+    if (spanDays < 7) {
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        if (daysOfWeek.includes(d.getDay())) return {};
+      }
+      return { until: "The selected day(s) don't fall within the start–end date range. Pick a wider range or different days." };
+    }
+    return {};
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (timeError) return; // fields are already highlighted; skip the doomed server round-trip
+
+    const errors = checkRecurrence();
+    setRecurrenceErrors(errors);
+    if (errors.days) { firstDayRef.current?.focus(); return; }
+    if (errors.until) { untilRef.current?.focus(); return; }
+
     setSaving(true);
-    setMessage("");
-
-    if (timeError) {
-      setSaving(false);
-      return; // fields are already highlighted; skip the doomed server round-trip
-    }
-
-    if (repeats && (daysOfWeek.length === 0 || !until)) {
-      setMessage("Please select at least one day of the week and an end date for recurring events.");
-      setSaving(false);
-      return;
-    }
-
-    if (repeats && daysOfWeek.length > 0 && until) {
-      // Parse as local dates (YYYY-MM-DD as local midnight) so getDay() matches the picker.
-      const start = new Date(`${startDate}T00:00:00`);
-      const end = new Date(`${until}T00:00:00`);
-      if (end < start) {
-        setMessage("The end date must be on or after the start date.");
-        setSaving(false);
-        return;
-      }
-      // A window of ≥7 days always covers every weekday; only short ranges need scanning.
-      const spanDays = Math.round((end.getTime() - start.getTime()) / 86400000);
-      if (spanDays < 7) {
-        let hit = false;
-        for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-          if (daysOfWeek.includes(d.getDay())) { hit = true; break; }
-        }
-        if (!hit) {
-          setMessage("The selected day(s) don't fall within the start–end date range. Pick a wider range or different days.");
-          setSaving(false);
-          return;
-        }
-      }
-    }
-
     try {
       interface EventPayload {
         name: string;
@@ -143,21 +137,11 @@ export function NewEventForm() {
         payload.recurrence = { daysOfWeek, until };
       }
 
-      const res = await fetch('/api/events', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      if (res.ok) {
-        setSubmitted(true); // clear unsaved-changes guard before redirect
-        router.push(programId ? `/program-ops/programs/${programId}` : '/program-ops/events');
-      } else {
-        const err = await res.json().catch(() => ({}));
-        setMessage(err.error || "Failed to create event");
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error", autoClose: false });
+      await api('/api/events', { method: 'POST', body: JSON.stringify(payload) });
+      setSubmitted(true); // clear unsaved-changes guard before redirect
+      router.push(programId ? `/program-ops/programs/${programId}` : '/program-ops/events');
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setSaving(false);
     }
@@ -173,7 +157,6 @@ export function NewEventForm() {
     <Card withBorder radius="md" padding="lg">
       <AdminPageHeader title="Schedule Event" back={{ href: cancelHref, label: 'Cancel' }} mb="lg" />
 
-      <AlertBanner message={message} tone="error" mb="md" />
       {programsError && <LoadError what="the programs" message={programsError} onRetry={reloadPrograms} />}
 
       <form onSubmit={handleSubmit}>
@@ -211,27 +194,29 @@ export function NewEventForm() {
 
             {repeats && (
               <Stack mt="md">
-                <div>
-                  <Text fw={500} mb="xs">Repeat on Days:</Text>
-                  <Group gap="xs">
-                    {DAYS_MAP.map((day) => (
+                <Input.Wrapper label="Repeat on Days" error={recurrenceErrors.days}>
+                  <Group gap="xs" mt={4}>
+                    {DAYS_MAP.map((day, i) => (
                       <Button
                         key={day.value}
+                        ref={i === 0 ? firstDayRef : undefined}
                         type="button"
                         variant={daysOfWeek.includes(day.value) ? 'filled' : 'default'}
-                        onClick={() => toggleDay(day.value)}
+                        onClick={() => { toggleDay(day.value); setRecurrenceErrors((r) => ({ ...r, days: undefined })); }}
                       >
                         {day.label}
                       </Button>
                     ))}
                   </Group>
-                </div>
+                </Input.Wrapper>
                 <TextInput
+                  ref={untilRef}
                   type="date"
                   label="Ends On"
                   required={repeats}
                   value={until}
-                  onChange={(e) => setUntil(e.currentTarget.value)}
+                  error={recurrenceErrors.until}
+                  onChange={(e) => { setUntil(e.currentTarget.value); setRecurrenceErrors((r) => ({ ...r, until: undefined })); }}
                   description="Events will be generated individually up to this date."
                   maw={300}
                 />

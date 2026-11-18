@@ -80,6 +80,10 @@ export interface HandlerContext<P = Record<string, string>> {
 }
 
 export type ModelBag = Record<string, unknown>;
+/**
+ * The response payload is the stripped bag's only value when it has one key,
+ * else the whole bag keyed by model name; a non-null envelope then wraps it.
+ */
 export type HandlerFn<P = Record<string, string>> = (
     ctx: HandlerContext<P>,
 ) => Promise<ModelBag>;
@@ -154,15 +158,9 @@ export function handler<P extends Record<string, string> = Record<string, string
             }
         }
 
-        let body: unknown;
-        if (spec.envelope === null) {
-            const keys = Object.keys(stripped);
-            body = keys.length === 1 ? stripped[keys[0]] : stripped;
-        } else {
-            const keys = Object.keys(stripped);
-            const payload = keys.length === 1 ? stripped[keys[0]] : stripped;
-            body = { [spec.envelope]: payload };
-        }
+        const keys = Object.keys(stripped);
+        const payload = keys.length === 1 ? stripped[keys[0]] : stripped;
+        const body = spec.envelope === null ? payload : { [spec.envelope]: payload };
         return NextResponse.json(body, { status: 200 });
     };
 }

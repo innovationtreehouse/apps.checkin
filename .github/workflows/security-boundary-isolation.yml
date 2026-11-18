@@ -25,7 +25,9 @@ name: Security boundary isolation
 #
 # The sanctioned flow for a new registered route: land the registry entry in
 # its own PR first (a defineRoute for an endpoint nothing serves yet is
-# inert), then land the route handler in the feature PR.
+# inert), then land the route handler in the feature PR. When the route file
+# already exists for other verbs, the registry PR adds a `// registry-first:
+# <VERB>` line to it, and nothing else in that file; the route PR replaces it.
 #
 # Enforcement applies only to PRs into main — the branch where boundary
 # changes first land and get reviewed. Release-line PRs (main→rel/* syncs,
@@ -93,6 +95,10 @@ jobs:
         if: github.event_name == 'pull_request' && github.base_ref == 'main'
         with:
           fetch-depth: 0
+
+      - name: Self-check the isolation gate
+        if: github.event_name == 'pull_request' && github.base_ref == 'main'
+        run: bash checkin-app/scripts/security-boundary-isolation-diff.selfcheck.sh
 
       - name: Check boundary changes ship alone
         if: github.event_name == 'pull_request' && github.base_ref == 'main'
@@ -162,6 +168,10 @@ jobs:
             esac
             return 1
           }
+          # A route file whose whole diff adds `// registry-first: <VERB>` lines
+          # marks a verb registered in this PR; check-route-coverage.ts checks the
+          # marker itself. Tested by security-boundary-isolation-diff.selfcheck.sh.
+          source .github/scripts/registry-first-marker.sh
           is_companion() { # allowed to accompany a boundary change
             case "$1" in
               checkin-app/src/security/*) return 0 ;;                # incl. generated
@@ -178,6 +188,9 @@ jobs:
               # The route-coverage lint parses the registry files as text, so a
               # change to where registry entries live must update it in step.
               checkin-app/scripts/check-route-coverage.ts) return 0 ;;
+              .github/scripts/registry-first-marker.sh) return 0 ;;
+              checkin-app/scripts/security-boundary-isolation-diff.selfcheck.sh) return 0 ;;
+              checkin-app/src/app/api/*/route.ts) is_marker_only_route_change "$BASE_SHA" "$HEAD_SHA" "$1" && return 0 ;;
               # boundary files are their own companions — a boundary PR must be
               # able to contain them
               checkin-app/src/middleware.ts) return 0 ;;

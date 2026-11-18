@@ -36,6 +36,12 @@ Design rationale, regressions-to-learn-from, and past approaches live in
 `docs/` and PR history — not in code comments. (This file's own flow-test
 section is an example: the failure stories sit in docs, not in the source.)
 
+`docs/comment-rules.md` applies the policy above to the cases that recur in this
+repo, as numbered rules a reviewer can cite ("C5"), and includes a checklist for
+any PR that adds comments. Read it before a comment sweep, and when a comment is
+doing more than describing the line below it. This section wins where the two
+disagree.
+
 ## Lint and type errors
 
 A suppressed error is an error the next reader cannot see. Fix what the tool is
@@ -328,10 +334,12 @@ means say nothing, or approve.
 
 Read these before changing the relevant area — start here, then follow links.
 
-**Domain rules — read first** (`docs/rules/`)
-- The register of board and operations decisions, and the invariants a change must not violate: `membership.md`, `programs.md`, `people-households.md`, `revenue.md`, `expenses.md`, `attendance-checkin.md`, `tools-certification.md`, plus `principles.md` for the cross-cutting ones. **Before changing behaviour in a domain, read its file.** If a change contradicts a rule there, raise it — do not quietly proceed. A **Policy**-tier rule is not negotiable in a PR at all: stop and escalate.
-- `docs/DOCUMENTATION_STANDARD.md` — how documentation is organised, written, and retired: the document classes, what belongs in the register and what does not, the citation and format rules, and the working-doc lifecycle (write it in `docs/in-design/`, extract standing rules and delete it at merge). Read before writing or moving any doc.
+When a change would conflict with an organisational policy, stop and escalate to the owner.
+
+**Docs and conventions**
+- `docs/DOCUMENTATION_STANDARD.md` — how documentation is organised, written, and retired: the document classes and the working-doc lifecycle (write it in `docs/in-design/`, delete it at merge). Read before writing or moving any doc.
 - `docs/conventions.md` — how we build, independent of any domain.
+- `docs/comment-rules.md` — which comments to keep and which to delete, as numbered rules a reviewer can cite, plus a checklist for any PR that adds comments. Read before a comment sweep; the Comments section above is the policy it applies. Its `docs/comment-rules-rationale.md` carries the arguments behind the contested rules, for changing one rather than following it.
 
 **Project-wide**
 - `README.md` — what the app is + Quick Start; OS setup: `docs/setup/SETUP_LINUX.md`, `docs/setup/SETUP_MACOS.md`.
@@ -351,7 +359,7 @@ Read these before changing the relevant area — start here, then follow links.
 **Security** (`docs/security/`)
 - `SECURITY-POLICY.md` — the response-stripper / `@sensitivity` registry rules (read before adding API responses or schema fields).
 - `pentest_findings_2026-04-21.md` — prior findings.
-- **Boundary isolation rule**: the handler/registry layer (`checkin-app/src/security/`) exists to make the data policy easy to AUDIT — it is not a substitute for careful route management (tight selects, deliberate response shapes). Any change to the boundary itself — registry grants, token grammar, handler/stripper, scope bindings, or a re-tier of an existing field's `@sensitivity` — must ship **in its own PR** (tests/docs/schema annotations may accompany; no app/feature code). New registered route: land the registry entry PR first (an unused `defineRoute` is inert), then the route PR. CI-enforced by `.github/workflows/security-boundary-isolation.yml`. `checkin-app/src/middleware.ts` counts as a boundary file — it is the site-wide org-login/access gate and nothing imports it, so deleting or renaming it leaves tsc and the build green; a PR touching it ships alone. Security *tests* (`src/security/__tests__/`) are companions, not boundary files. One exception, for decommissions: a boundary diff that only removes *whole* entries whose subjects cease to exist in the same PR (model dropped from schema, route file/verb deleted) may ship with the drop migration and the route files of the removed registry entries — no other deletion — certified fail-closed by `checkin-app/scripts/check-boundary-decommission.js`; see `docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md` rule 7.
+- **Boundary isolation rule**: the handler/registry layer (`checkin-app/src/security/`) exists to make the data policy easy to AUDIT — it is not a substitute for careful route management (tight selects, deliberate response shapes). Any change to the boundary itself — registry grants, token grammar, handler/stripper, scope bindings, or a re-tier of an existing field's `@sensitivity` — must ship **in its own PR** (tests/docs/schema annotations may accompany; no app/feature code). New registered route: land the registry entry PR first (an unused `defineRoute` is inert), then the route PR. A new verb on an existing route file: the registry PR also adds a `// registry-first: <VERB>` line to that file (the only route-file change the isolation check accepts), and the route PR replaces the line with the handler. CI-enforced by `.github/workflows/security-boundary-isolation.yml`. `checkin-app/src/middleware.ts` counts as a boundary file — it is the site-wide org-login/access gate and nothing imports it, so deleting or renaming it leaves tsc and the build green; a PR touching it ships alone. Security *tests* (`src/security/__tests__/`) are companions, not boundary files. One exception, for decommissions: a boundary diff that only removes *whole* entries whose subjects cease to exist in the same PR (model dropped from schema, route file/verb deleted) may ship with the drop migration and the route files of the removed registry entries — no other deletion — certified fail-closed by `checkin-app/scripts/check-boundary-decommission.js`; see `docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md` rule 7.
   - **Stacking hazard — base the route PR on `main`, not on the registry branch.** Registry-first means two PRs, and stacking the second on the first strands it: when the registry PR merges, the route PR still targets a branch tip nothing will ever merge, while GitHub reports it `MERGED` once you merge it there. Its code never reaches `main`, and a closed PR cannot be retargeted — recovery is a cherry-pick into a fresh PR. This happened to #1447 (stranded on `claude/registry-turning-18` behind #1490; re-landed as #1495). **After any stacked merge, confirm the files are on `main`** (`git show origin/main:<path>`) rather than trusting the PR state.
 
 **Deploy & migrations** (`docs/ops/`)

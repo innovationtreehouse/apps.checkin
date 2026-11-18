@@ -7,6 +7,7 @@
 import { EXPENSE_ACTION_VIEWS, FINANCE_QUEUE_COUNT_KEY, expenseActionCountKey } from "@checkin/expense/nav";
 import { expenseActionCounts, financeQueueActionable, getExpenseRuntime } from "@checkin/expense";
 import type { SessionUser } from "@/types/auth";
+import { BADGE_CEILING } from "@/components/navBadges";
 
 /** The count, or null after logging when it fails, so one failing count leaves the others showing. */
 async function orNull<T>(name: string, count: () => Promise<T>): Promise<T | null> {
@@ -25,7 +26,7 @@ export async function expenseLibraryCounts(user: SessionUser): Promise<Record<st
   if (!approver && !principal.isFinance && !principal.isBoard) return { approver: 0 };
   const finance = principal.isFinance || principal.isBoard;
   const [financeQueue, actions] = await Promise.all([
-    finance ? orNull("finance queue count", () => financeQueueActionable(principal)) : null,
+    finance ? orNull("finance queue count", () => financeQueueActionable(principal, BADGE_CEILING)) : null,
     orNull("action counts", () => expenseActionCounts(principal)),
   ]);
   const counted = EXPENSE_ACTION_VIEWS.flatMap((v) => (actions?.[v] === undefined ? [] : [[v, actions[v]] as const]));

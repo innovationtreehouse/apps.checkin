@@ -76,23 +76,42 @@ describeDb("arrival during a catalog outage", () => {
     const res = await ingestReceipt(buildReceiptPayload({ lineCount: 2 }));
 
     expect(res.state).toBe("pending_review");
-    expect((await receiptRow(res.id)).matchingPendingSince).toBeInstanceOf(Date);
+    expect(await receiptRow(res.id)).toMatchObject({ matchingPendingSince: expect.any(Date), matchingPendingReason: "catalog_unavailable" });
     expect((await linesOf(res.id)).map((l) => l.recognitionStatus)).toEqual(["unrecognized", "unrecognized"]);
-    expect(await auditsOf(res.id, "matching_deferred")).toHaveLength(1);
+    const [deferred, ...more] = await auditsOf(res.id, "matching_deferred");
+    expect(more).toHaveLength(0);
+    expect(JSON.parse(deferred?.details ?? "{}")).toEqual({ reason: "catalog_unavailable" });
     expect(sinks.calls.expense).toHaveLength(0);
   });
 
-  it("a connection failure is deferred the same way", async () => {
-    cat.state.down = new KindedError("connection", "catalog credential refused");
+  it.each([
+    ["a connection failure", new KindedError("connection", "catalog credential refused"), "catalog_unavailable"],
+    ["a settings failure", new KindedError("settings", "catalog misconfigured"), "catalog_settings"],
+    ["a missing catalog database", Object.assign(new Error("Database does not exist"), { code: "P1003" }), "catalog_settings"],
+    ["an unreadable reply", new KindedError("data", "reply failed its schema"), "unexpected_error"],
+    ["a bug in the reply", new Error("unexpected shape"), "unexpected_error"],
+  ])("%s saves the receipt pending with its reason", async (_name, err, reason) => {
+    cat.state.down = err;
     const res = await ingestReceipt(buildReceiptPayload());
-    expect((await receiptRow(res.id)).matchingPendingSince).toBeInstanceOf(Date);
+
+    expect(res).toMatchObject({ state: "pending_review", created: true });
+    expect(await receiptRow(res.id)).toMatchObject({ matchingPendingSince: expect.any(Date), matchingPendingReason: reason });
+    const [deferred] = await auditsOf(res.id, "matching_deferred");
+    expect(JSON.parse(deferred?.details ?? "{}")).toEqual({ reason });
   });
 
-  it("a bug in the reply is not deferred: matching counts as run", async () => {
-    cat.state.down = new Error("unexpected shape");
-    const res = await ingestReceipt(buildReceiptPayload());
-    expect((await receiptRow(res.id)).matchingPendingSince).toBeNull();
-    expect(await auditsOf(res.id, "matching_deferred")).toHaveLength(0);
+  it("a replay of a pending receipt answers as stored and writes nothing", async () => {
+    cat.state.down = new KindedError("settings", "catalog misconfigured");
+    const payload = buildReceiptPayload();
+    const first = await ingestReceipt(payload);
+    cat.state.down = null;
+
+    expect(await ingestReceipt(payload)).toEqual({ id: first.id, state: "pending_review", created: false });
+
+    expect(await db.receivedReceipt.count({ where: { receiptId: payload.receiptId } })).toBe(1);
+    expect(await receiptRow(first.id)).toMatchObject({ matchingPendingSince: expect.any(Date), matchingPendingReason: "catalog_settings" });
+    expect(await auditsOf(first.id, "matching_deferred")).toHaveLength(1);
+    expect(cat.state.seen).toHaveLength(1);
   });
 
   it("a catalog that answered leaves no flag", async () => {
@@ -145,7 +164,27 @@ describeDb("Run matching now", () => {
 
     expect(await runNow(r.id)).toEqual({ ReceivedReceipt: { id: r.id, state: "pending_review" } });
 
-    expect((await receiptRow(r.id)).matchingPendingSince).not.toBeNull();
+    expect(await receiptRow(r.id)).toMatchObject({ matchingPendingSince: expect.any(Date), matchingPendingReason: "catalog_unavailable" });
+  });
+
+  it("records the latest reason when matching still can't run", async () => {
+    cat.state.down = new Error("unexpected shape");
+    const r = await pendingReceipt();
+
+    await runNow(r.id);
+
+    expect((await receiptRow(r.id)).matchingPendingReason).toBe("unexpected_error");
+  });
+
+  it("matches a receipt that arrived during a settings failure once the settings are fixed", async () => {
+    cat.state.down = new KindedError("settings", "catalog misconfigured");
+    const res = await ingestReceipt(buildReceiptPayload({ lineCount: 2 }));
+    cat.state.down = null;
+
+    expect(await runNow(res.id)).toEqual({ ReceivedReceipt: { id: res.id, state: "resolved" } });
+
+    expect((await linesOf(res.id)).map((l) => l.recognitionStatus)).toEqual(["recognized", "recognized"]);
+    expect((await receiptRow(res.id)).matchingPendingSince).toBeNull();
   });
 
   it("never touches a line a person has decided, and sends the receipt once every line is decided", async () => {

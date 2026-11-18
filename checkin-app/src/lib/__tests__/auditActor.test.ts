@@ -1,4 +1,6 @@
-import { SYSTEM_ACTOR, SYSTEM_ACTORS, personActor, personOrSystemActor, systemActor } from "@/lib/auditActor";
+import { SYSTEM_ACTOR, SYSTEM_ACTORS, personActor, personOrSystemActor, recordAudit, systemActor } from "@/lib/auditActor";
+import type { PrismaClient } from "@/generated/prisma/client";
+import { type TxClient, registerRootClient } from "@/lib/db-client";
 
 describe("auditActor", () => {
     it("names the automated path alongside the sentinel id", () => {
@@ -22,6 +24,43 @@ describe("auditActor", () => {
 
     it("keeps every system actor name distinct and surface-prefixed", () => {
         expect(new Set(SYSTEM_ACTORS).size).toBe(SYSTEM_ACTORS.length);
-        for (const name of SYSTEM_ACTORS) expect(name).toMatch(/^(cron|system|webhook|kiosk):[a-z0-9-]+$/);
+        for (const name of SYSTEM_ACTORS) expect(name).toMatch(/^(cron|system|webhook|kiosk|migration):[a-z0-9-]+$/);
+    });
+});
+
+describe("recordAudit", () => {
+    it("writes the actor and entry through the client it is given", async () => {
+        const create = jest.fn().mockResolvedValue({ id: 1 });
+        const tx = { auditLog: { create } } as unknown as TxClient;
+
+        const entry = {
+            action: "EDIT",
+            tableName: "Tool",
+            affectedEntityId: 3,
+            secondaryAffectedEntity: null,
+            oldData: { name: "Saw", tags: ["wood"] },
+            newData: { name: "Saw", tags: [] },
+        } as const;
+
+        await recordAudit(tx, personActor(7), entry);
+
+        expect(create).toHaveBeenCalledWith({ data: { actorId: 7, actorSystem: null, ...entry } });
+    });
+
+    it("opens no transaction of its own", async () => {
+        const $transaction = jest.fn();
+        const tx = { $transaction, auditLog: { create: jest.fn() } } as unknown as TxClient;
+
+        await recordAudit(tx, systemActor("cron:nightly"), { action: "DELETE", tableName: "Person", affectedEntityId: 1 });
+
+        expect($transaction).not.toHaveBeenCalled();
+    });
+
+    it("refuses the root client, which would commit the row on its own", () => {
+        const create = jest.fn();
+        const root = registerRootClient({ auditLog: { create } } as unknown as PrismaClient);
+
+        expect(() => recordAudit(root, personActor(7), { action: "EDIT", tableName: "Tool", affectedEntityId: 3 })).toThrow(/inside the change's transaction/);
+        expect(create).not.toHaveBeenCalled();
     });
 });

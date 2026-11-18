@@ -13,7 +13,7 @@ describe("SystemStatusHealthPage", () => {
         mockFetchJson({
             "/api/system-status/kiosk-version": { version: "dev" },
             "/api/system-status/health": { days: [] },
-            "/api/system-status/kiosk-heartbeat": { heartbeat: [] },
+            "/api/system-status/kiosk-heartbeat": { heartbeat: { SystemMetricLog: [], KioskProtocolSeen: [] } },
         });
         renderWithProviders(<SystemStatusHealthPage />);
 

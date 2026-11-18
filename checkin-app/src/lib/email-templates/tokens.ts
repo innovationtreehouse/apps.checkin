@@ -1,8 +1,8 @@
-import { escapeHtml } from "./base";
+import { baseEmailLayout, escapeHtml } from "./base";
 
 /**
  * Per-key `{{token}}` substitution for editable email templates. Dependency-free
- * (escapeHtml only) so the admin preview can import it client-side and render
+ * (./base only) so the admin preview can import it client-side and render
  * exactly what the send path renders.
  */
 
@@ -18,6 +18,12 @@ export type TokenSpecs = Record<string, TokenSpec>;
 
 const TOKEN_RE = /\{\{\s*(\w+)\s*\}\}/g;
 
+/** A link token becomes an anchor only for a web URL or a single-slash site path, never `javascript:`, `data:`, `//host` or `/\host`. */
+const SAFE_HREF_RE = /^(https?:\/\/|\/(?![/\\]))/i;
+
+/** URL parsers strip tabs and newlines, so `/\t/host` would resolve to another host; any control character makes the value text. */
+const hasControlChar = (value: string) => Array.from(value).some(c => c <= "\u001F" || c === "\u007F");
+
 /** Every `{{token}}` name in `text` that `tokens` does not allow. */
 export function findUnknownTokens(text: string, tokens: TokenSpecs): string[] {
     const found = new Set<string>();
@@ -30,7 +36,8 @@ export function findUnknownTokens(text: string, tokens: TokenSpecs): string[] {
 /**
  * Replace the allowed tokens with their `ctx` values (missing → ""). With
  * `escape` (the body) the template text and every value are HTML-escaped and a
- * link token becomes an anchor; without it (the subject, which is not HTML)
+ * link token with a web or site-relative URL becomes an anchor (any other
+ * value is shown as text); without it (the subject, which is not HTML)
  * everything is inserted raw and a link token is its URL. Unknown tokens are
  * left as written; save-time validation rejects them.
  */
@@ -52,7 +59,7 @@ export function substituteTokens(
         }
         const value = Object.hasOwn(ctx, m[1]) ? ctx[m[1]] : "";
         if (!escape) out += value;
-        else if (spec.kind === "link") out += `<a href="${escapeHtml(value)}">${escapeHtml(spec.label ?? value)}</a>`;
+        else if (spec.kind === "link" && !hasControlChar(value) && SAFE_HREF_RE.test(value)) out += `<a href="${escapeHtml(value)}">${escapeHtml(spec.label ?? value)}</a>`;
         else out += escapeHtml(value);
     }
     out += escape ? escapeHtml(template.slice(last)) : template.slice(last);
@@ -72,4 +79,34 @@ export function renderBodyHtml(substitutedBody: string): string {
         .filter((paragraph) => paragraph.length > 0)
         .map((paragraph) => `<p>${paragraph.split("\n").map((line) => line.trim()).join("<br>")}</p>`)
         .join("");
+}
+
+/** The copy a key sends: each given field, or the key's default where it is missing or blank. */
+export function withDefaults(
+    defaults: { defaultSubject: string; defaultBody: string },
+    copy: { subject: string; body: string } | null | undefined,
+): { subject: string; body: string } {
+    return {
+        subject: copy?.subject.trim() ? copy.subject : defaults.defaultSubject,
+        body: copy?.body.trim() ? copy.body : defaults.defaultBody,
+    };
+}
+
+/**
+ * The subject and branded HTML one template sends: the subject substituted raw,
+ * the body escaped and laid out. `appendix` is plain text added after the body,
+ * outside token substitution.
+ */
+export function renderTemplate(
+    subject: string,
+    body: string,
+    ctx: Record<string, string>,
+    tokens: TokenSpecs,
+    appendix?: string,
+): { subject: string; html: string } {
+    const substituted = substituteTokens(body, ctx, tokens, { escape: true });
+    return {
+        subject: substituteTokens(subject, ctx, tokens, { escape: false }),
+        html: baseEmailLayout(renderBodyHtml(appendix ? `${substituted}\n\n${escapeHtml(appendix)}` : substituted)),
+    };
 }

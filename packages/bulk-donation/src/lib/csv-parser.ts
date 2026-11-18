@@ -1,6 +1,6 @@
 import { CsvError, parse } from "csv-parse/sync";
 import { z } from "zod";
-import { dollarsToCents, formatCents, sumCents } from "@checkin/money";
+import { dollarsToCents, dollarsToCentsOrNull, formatCents, sumCents } from "@checkin/money";
 
 /**
  * Benevity CSV row after parsing. Monetary fields are INTEGER CENTS.
@@ -49,24 +49,24 @@ export class CsvValidationError extends Error {
 /** "1,500.00" as Benevity's Donations Report writes it; only well-formed thousands groups. */
 const THOUSANDS = /^-?\d{1,3}(?:,\d{3})+(?:\.\d+)?$/;
 
-/** Empty -> 0 cents; otherwise must be a finite number, else throw via refine. */
+/** Empty -> 0 cents; otherwise must be plain decimal text, else throw via refine. */
 const moneyCents = z
   .string()
   .transform((s) => s.trim())
   .transform((s) => (THOUSANDS.test(s) ? s.replace(/,/g, "") : s))
   .superRefine((s, ctx) => {
-    if (s !== "" && !Number.isFinite(Number(s))) {
+    if (s !== "" && dollarsToCentsOrNull(s) === null) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: `not a number: "${s}"` });
     }
   })
   .transform((s) => (s === "" ? 0 : dollarsToCents(s)));
 
-/** Empty -> null; otherwise must be a finite number. */
+/** Empty -> null; otherwise must be plain decimal text. */
 const rateNullable = z
   .string()
   .transform((s) => s.trim())
   .superRefine((s, ctx) => {
-    if (s !== "" && !Number.isFinite(Number(s))) {
+    if (s !== "" && dollarsToCentsOrNull(s) === null) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: `not a number: "${s}"` });
     }
   })
@@ -225,6 +225,9 @@ const TOTALLED = [
   "donationAmountCents", "matchAmountCents", "causeSupportFeeCents", "merchantFeeCents", "checkFeeCents",
 ] as const satisfies readonly (keyof BenevityRow)[];
 
+/** The fees a gift row carries, each netted out of its deposit. */
+const FEES = ["causeSupportFeeCents", "merchantFeeCents", "checkFeeCents"] as const satisfies readonly (keyof BenevityRow)[];
+
 /**
  * Amount columns a Benevity file always carries, zero or not. A file without one
  * would import every gift at $0 there, so it is refused. The Donations Report has no
@@ -278,6 +281,8 @@ export function parseBenevityCsv(buffer: Buffer): BenevityRow[] {
   const rows: BenevityRow[] = [];
   const issues: string[] = [];
   const totals: Located[] = [];
+  const nets: Located[] = [];
+  const negativeFees: string[] = [];
 
   for (const { record, info } of records.slice(headerAt + 1)) {
     const mapped = {} as RawRow;
@@ -289,6 +294,7 @@ export function parseBenevityCsv(buffer: Buffer): BenevityRow[] {
     const footer = FOOTER_LABELS.has(label) ? label : null;
     if (footer !== null && mapped.transactionId.trim() === "") {
       if (footer === "totals") totals.push({ record, info });
+      if (footer === "net total payment") nets.push({ record, info });
       // The disbursement-level check fee has no gift to land on.
       if (footer === "check fee") {
         const fee = moneyCents.safeParse(record[1] ?? "");
@@ -313,22 +319,50 @@ export function parseBenevityCsv(buffer: Buffer): BenevityRow[] {
       continue;
     }
     rows.push(parsed.data);
+    for (const field of FEES) {
+      if (parsed.data[field] < 0) {
+        negativeFees.push(`line ${info.lines} (${mapped.transactionId}), "${labelOf(field)}": the fee is negative ("${mapped[field].trim()}") and the file has no "Net Total Payment" line to check it against`);
+      }
+    }
   }
 
+  // A negative fee raises the deposit; only a Net Total Payment line can confirm it.
+  if (nets.length === 0) issues.push(...negativeFees);
   if (issues.length === 0) {
     for (const footer of totals) issues.push(...checkTotals(footer, rows, bindings));
+    for (const footer of nets) issues.push(...checkNet(footer, rows));
   }
   if (issues.length > 0) throw new CsvValidationError(issues);
   return rows;
 }
 
-/** Compares each amount a Totals row gives with the sum of the parsed gifts; a column the row leaves empty is not checked. */
-function checkTotals({ record, info }: Located, rows: BenevityRow[], bindings: Map<keyof BenevityRow, Binding>): string[] {
+/** The currency amounts in this file's messages are shown in, and a note when the file's own code is unusable. */
+function displayCurrency(rows: BenevityRow[]): { currency: string; shownIn: string } {
   const fileCurrency = rows[0]?.currency ?? "USD";
   // Intl accepts any three-letter code and throws a RangeError on anything else.
   const known = /^[A-Za-z]{3}$/.test(fileCurrency);
-  const currency = known ? fileCurrency : "USD";
-  const shownIn = known ? "" : ` (shown in USD; the file's Currency "${fileCurrency}" is not a currency code)`;
+  return known
+    ? { currency: fileCurrency, shownIn: "" }
+    : { currency: "USD", shownIn: ` (shown in USD; the file's Currency "${fileCurrency}" is not a currency code)` };
+}
+
+/** Compares the Net Total Payment footer, what Benevity paid, with the net the gifts deposit: gross less every fee. */
+function checkNet({ record, info }: Located, rows: BenevityRow[]): string[] {
+  const label = record[0].trim();
+  const cell = (record[1] ?? "").trim();
+  const reported = moneyCents.safeParse(cell);
+  if (!reported.success) return [`line ${info.lines}, "${label}": not a number: "${cell}"`];
+  const net = sumCents(
+    ...rows.flatMap((r) => [r.donationAmountCents, r.matchAmountCents, -r.causeSupportFeeCents, -r.merchantFeeCents, -r.checkFeeCents]),
+  );
+  if (reported.data === net) return [];
+  const { currency, shownIn } = displayCurrency(rows);
+  return [`line ${info.lines}: "${label}" is ${formatCents(reported.data, currency)} but the gifts net to ${formatCents(net, currency)}${shownIn}`];
+}
+
+/** Compares each amount a Totals row gives with the sum of the parsed gifts; a column the row leaves empty is not checked. */
+function checkTotals({ record, info }: Located, rows: BenevityRow[], bindings: Map<keyof BenevityRow, Binding>): string[] {
+  const { currency, shownIn } = displayCurrency(rows);
   const issues: string[] = [];
   for (const field of TOTALLED) {
     const b = bindings.get(field) ?? null;

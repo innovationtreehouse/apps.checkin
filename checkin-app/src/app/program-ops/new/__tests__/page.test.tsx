@@ -2,7 +2,7 @@
 jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories run hoisted, before imports exist
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
 
 import { screen, fireEvent, waitFor } from "@testing-library/react";
 import { notifications } from "@mantine/notifications";
@@ -208,12 +208,12 @@ describe("CreateProgramPage", () => {
     global.fetch = jest.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input.toString();
       if (url.includes("/api/people/search")) {
-        return { ok: true, status: 200, json: async () => ({ people: [mentor] }) } as Response;
+        return { ok: true, status: 200, json: async () => ({ people: [mentor] }), text: async () => JSON.stringify({ people: [mentor] }) } as Response;
       }
       if (url.includes("/api/programs")) {
-        return { ok: false, status: 400, json: async () => ({ error: "Name already taken." }) } as Response;
+        return { ok: false, status: 400, json: async () => ({ error: "Name already taken." }), text: async () => JSON.stringify({ error: "Name already taken." }) } as Response;
       }
-      return { ok: false, status: 404, json: async () => ({}) } as Response;
+      return { ok: false, status: 404, json: async () => ({}), text: async () => JSON.stringify({}) } as Response;
     }) as unknown as typeof fetch;
     renderWithProviders(<CreateProgramPage />);
     const nameInput = await screen.findByLabelText("Program Name", { exact: false });
@@ -224,7 +224,7 @@ describe("CreateProgramPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Create Program" }));
 
-    expect(await screen.findByText("Name already taken.")).toBeInTheDocument();
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", title: "Couldn't create program", message: "Name already taken.", autoClose: false })));
     expect(router.push).not.toHaveBeenCalled();
   });
 
@@ -241,13 +241,13 @@ describe("CreateProgramPage", () => {
     global.fetch = jest.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === "string" ? input : input.toString();
       if (url.includes("/api/people/search")) {
-        return { ok: true, status: 200, json: async () => ({ people: [mentor] }) } as Response;
+        return { ok: true, status: 200, json: async () => ({ people: [mentor] }), text: async () => JSON.stringify({ people: [mentor] }) } as Response;
       }
       throw new Error("boom");
     }) as unknown as typeof fetch;
 
     fireEvent.click(screen.getByRole("button", { name: "Create Program" }));
 
-    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Network error creating program.", autoClose: false })));
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Couldn't reach the server. Check your connection and try again.", autoClose: false })));
   });
 });

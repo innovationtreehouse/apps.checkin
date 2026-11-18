@@ -1,4 +1,3 @@
-import { DEFAULT_ACK_MEMBERSHIP_BODY, DEFAULT_ACK_PROGRAM_BODY, DEFAULT_ACK_SUBJECT } from "@/lib/scholarshipAckCopy";
 import type { TokenSpec, TokenSpecs } from "./tokens";
 
 /**
@@ -32,6 +31,10 @@ const OPS_SAMPLE = {
     todo: "Finance repeats step 3 of the QuickBooks go-live runbook with the infra operator and reseeds the secret (docs/ops/quickbooks-go-live.md).",
     actionLink: SAMPLE_URL,
 };
+const ACK_SUBJECT = "We received your scholarship / payment-plan request";
+const OUTREACH_TOKENS = { name: text, deadline: text, actionLink: link() };
+const OUTREACH_SAMPLE = { name: "Jordan Rivera", deadline: "2027-01-01", actionLink: SAMPLE_URL };
+
 const OPS_SUBJECT = "[{{kind}}] {{cause}}: {{lanes}} — {{status}}";
 const OPS_BODY = "{{summary}}\n\nLanes: {{lanes}}\nFirst seen: {{firstSeen}}\nRuns seen: {{runsSeen}}\nItems waiting: {{items}}\n\nWhat to do: {{todo}}\n\n{{actionLink}}";
 
@@ -181,6 +184,13 @@ export const REGISTRY = {
         defaultBody: "An edit to the dates or age limits of {{programName}} leaves these enrolled people outside its ages at the start date. Nothing was changed; please decide with the program leader and the families.\n{{people}}\n\n{{actionLink}}",
     },
 
+    "board.youthHouseholdLead": {
+        allowedTokens: { personName: text, householdName: text, actionLink: link("Open the household") },
+        sampleCtx: { personName: "Alex Rivera", householdName: "Rivera", actionLink: SAMPLE_URL },
+        defaultSubject: "Household lead under 18: {{personName}}",
+        defaultBody: "A date of birth saved for {{personName}}, a lead of {{householdName}}, shows they are under 18. They are still its lead; nothing was changed. Please decide with the household. {{actionLink}}",
+    },
+
     // ── ops incidents (lib/opsIncidents.ts) ─────────────────────────────────
     // Codes, counts and dates only: no amounts, donor or vendor names, or memo text.
     "ops.incidentOpened": {
@@ -218,7 +228,7 @@ export const REGISTRY = {
             actionLink: SAMPLE_URL,
         },
         defaultSubject: "Receipt flow: {{count}} problem(s) waiting on a person",
-        defaultBody: "These have been waiting more than a day. System Status lists each one with its error.\n\n{{items}}\n\n{{actionLink}}",
+        defaultBody: "These have been waiting more than a day. System Status lists each one with a link to its page where it has one.\n\n{{items}}\n\n{{actionLink}}",
     },
 
     // ── finance ─────────────────────────────────────────────────────────────
@@ -242,36 +252,21 @@ export const REGISTRY = {
         defaultSubject: "Receipts: mailed receipts are about to be missed",
         defaultBody: "Mail runs did not finish reading {{messages}} message(s) in the receipt mailbox{{since}}. They have left the 30-day reading window or will before the next run, so no receipt will be made from them. Open the receipt mailbox in Gmail and upload or forward them again. {{actionLink}}",
     },
-    // One per cause of a failed mailbox listing; receiptAlerts.mailListingFailed picks by the failure's kind.
-    "finance.receiptMailboxUnreadable": {
-        allowedTokens: { actionLink: link("Open the incoming receipt queue") },
-        sampleCtx: { actionLink: SAMPLE_URL },
-        defaultSubject: "Receipts: the receipt mailbox needs reconnecting",
-        defaultBody: "Gmail refused today's mail run access to the receipt mailbox, so no mailed receipt was read. Mail leaves the 30-day reading window unread while this lasts, and no receipt will be made from it. Have an administrator reconnect the mailbox's Gmail access, then upload or forward anything that was missed. {{actionLink}}",
-    },
-    "finance.receiptMailboxUnanswered": {
-        allowedTokens: { actionLink: link("Open the incoming receipt queue") },
-        sampleCtx: { actionLink: SAMPLE_URL },
-        defaultSubject: "Receipts: Gmail did not answer the mail run",
-        defaultBody: "Gmail did not answer today's mail run, so no mailed receipt was read. The next run tries again; nothing needs fixing in the app. Mail leaves the 30-day reading window unread while this lasts, and no receipt will be made from it. If this repeats, upload or forward anything that was missed. {{actionLink}}",
-    },
-    "finance.receiptMailboxNotFound": {
-        allowedTokens: { actionLink: link("Open the incoming receipt queue") },
-        sampleCtx: { actionLink: SAMPLE_URL },
-        defaultSubject: "Receipts: Gmail can't find the receipt mailbox",
-        defaultBody: "Gmail has no mailbox at the address today's mail run asked for, so no mailed receipt was read. Mail leaves the 30-day reading window unread while this lasts, and no receipt will be made from it. Have an administrator check the receipt mailbox setting, then upload or forward anything that was missed. {{actionLink}}",
-    },
-    "finance.receiptMailboxFailed": {
-        allowedTokens: { actionLink: link("Open the incoming receipt queue") },
-        sampleCtx: { actionLink: SAMPLE_URL },
-        defaultSubject: "Receipts: the mail run failed unexpectedly",
-        defaultBody: "Today's mail run failed unexpectedly while listing the receipt mailbox, so no mailed receipt was read. It has been logged for the developers. Mail leaves the 30-day reading window unread while this lasts, and no receipt will be made from it. Upload or forward anything that was missed. {{actionLink}}",
-    },
     "finance.incomeBucketUnusable": {
         allowedTokens: { bucketName: text, issue: text, itemCount: text, actionLink: link("Open income items") },
         sampleCtx: { bucketName: "Robotics", issue: "is archived", itemCount: "4", actionLink: SAMPLE_URL },
         defaultSubject: "Income: a budget-owner bucket can't take sales",
         defaultBody: "The budget-owner bucket {{bucketName}} {{issue}}. {{itemCount}} store item(s) are assigned to it, and payouts with their sales wait until you restore the bucket or its Class, or reassign the items. {{actionLink}}",
+    },
+    "finance.bucketClassUnusable": {
+        allowedTokens: { bucketName: text, issue: text, actionLink: link("Open budgets") },
+        sampleCtx: {
+            bucketName: "Robotics",
+            issue: "Robotics's QuickBooks Class Programs:Robotics is inactive in QuickBooks. Lines in this bucket will wait until you pick an active Class or reactivate it in QuickBooks.",
+            actionLink: SAMPLE_URL,
+        },
+        defaultSubject: "Budgets: the bucket {{bucketName}} can't take lines",
+        defaultBody: "{{issue}} {{actionLink}}",
     },
     "finance.incomeSweepIncomplete": {
         allowedTokens: { since: text, actionLink: link("Open income reconciliation") },
@@ -440,20 +435,36 @@ export const REGISTRY = {
     "scholarship.ackMembership": {
         allowedTokens: {},
         sampleCtx: {},
-        defaultSubject: DEFAULT_ACK_SUBJECT,
-        defaultBody: DEFAULT_ACK_MEMBERSHIP_BODY,
+        defaultSubject: ACK_SUBJECT,
+        defaultBody: "Hi — we've received your household's scholarship / payment-plan request for your Treehouse membership fee. "
+            + "The Scholarship Review Team will review it and follow up.",
     },
     "scholarship.ackProgram": {
         allowedTokens: { programName: text },
         sampleCtx: { programName: "Robotics Club" },
-        defaultSubject: DEFAULT_ACK_SUBJECT,
-        defaultBody: DEFAULT_ACK_PROGRAM_BODY,
+        defaultSubject: ACK_SUBJECT,
+        defaultBody: "Hi — we've received your scholarship / payment-plan request for {{programName}}. "
+            + "The Scholarship Review Team will review it and follow up. Your spot is held while they do.",
     },
     "scholarship.ackProgramHoldFailed": {
         allowedTokens: {},
         sampleCtx: {},
-        defaultSubject: DEFAULT_ACK_SUBJECT,
+        defaultSubject: ACK_SUBJECT,
         defaultBody: "Your scholarship / payment-plan request has been recorded and the board notified. A seat-reservation step needs a board member to finish it — nothing more is required from you.",
+    },
+
+    // ── outreach ────────────────────────────────────────────────────────────
+    "outreach.opening": {
+        allowedTokens: OUTREACH_TOKENS,
+        sampleCtx: OUTREACH_SAMPLE,
+        defaultSubject: "Time to renew your Innovation Treehouse membership",
+        defaultBody: "Hi {{name}},\n\nMembership for the new year is open. Renew before {{deadline}} here:\n\n{{actionLink}}\n\nQuestions? Reply to this email.",
+    },
+    "outreach.reminder": {
+        allowedTokens: OUTREACH_TOKENS,
+        sampleCtx: OUTREACH_SAMPLE,
+        defaultSubject: "Reminder: renew by {{deadline}}",
+        defaultBody: "Hi {{name}},\n\nMembership for the new year closes on {{deadline}}. If you haven't yet, renew here:\n\n{{actionLink}}\n\nQuestions? Reply to this email.",
     },
 } satisfies Record<string, TemplateSpec>;
 

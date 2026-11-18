@@ -38,6 +38,7 @@ jest.mock('@/lib/logger', () => ({
 const SECRET = 'shopify-test-secret';
 const TAG = 'shopify-webhook-test';
 const MEMBERSHIP_VARIANT_ID = '778899';
+const MEMBERSHIP_YEAR = 2041;
 const PROGRAM_VARIANT_ID = '445566';
 const OTHER_VARIANT_ID = '999999'; // cheapest-item-in-the-store stand-in — never matches the program
 
@@ -85,15 +86,16 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         });
         p2 = b.id;
 
-        // The route checks the order's line items against BoardSettings'
-        // configured membership variant id(s) — seed one so the routing test
-        // below can prove a matching order activates.
+        // The route checks the order's line items against the membership year
+        // variant rows — seed one so the routing test below can prove a matching
+        // order activates.
         restoreBoardSettings = await snapshotBoardSettings();
         await prisma.boardSettings.upsert({
             where: { id: 1 },
-            create: { id: 1, orgMembershipVariantId: MEMBERSHIP_VARIANT_ID, orgMembershipYearBoundary: null },
-            update: { orgMembershipVariantId: MEMBERSHIP_VARIANT_ID, orgMembershipYearBoundary: null },
+            create: { id: 1, orgMembershipYearBoundary: null },
+            update: { orgMembershipYearBoundary: null },
         });
+        await prisma.membershipYearVariant.create({ data: { membershipYear: MEMBERSHIP_YEAR, shopifyVariantId: MEMBERSHIP_VARIANT_ID } });
     });
 
     // No year boundary, so a bare-ACTIVE membership covers every program date. Under
@@ -107,6 +109,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
 
     afterAll(async () => {
         await restoreBoardSettings();
+        await prisma.membershipYearVariant.deleteMany({ where: { membershipYear: MEMBERSHIP_YEAR } });
         await prisma.integrationErrorLog.deleteMany({ where: { source: 'shopify-webhook' } });
         await prisma.paymentException.deleteMany({ where: { programId } });
         await prisma.programParticipant.deleteMany({ where: { programId } });
@@ -622,7 +625,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         expect(res.status).toBe(200);
         // Whether the order actually contains the configured membership variant
         // is forwarded so activate() can enforce it.
-        expect(activateByProcessId).toHaveBeenCalledWith(42, '98765', { appliesToYear: null });
+        expect(activateByProcessId).toHaveBeenCalledWith(42, '98765', { appliesToYear: MEMBERSHIP_YEAR });
     });
 
     it('forwards the year of the order\'s variant row', async () => {
@@ -640,24 +643,6 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
             await prisma.membershipYearVariant.delete({ where: { membershipYear: 2031 } });
         }
         expect(activateByProcessId).toHaveBeenCalledWith(44, '98770', { appliesToYear: 2031 });
-    });
-
-    it('takes the year from processed_at, not from when the webhook arrives', async () => {
-        await prisma.boardSettings.update({ where: { id: 1 }, data: { orgMembershipYearBoundary: new Date(Date.UTC(2000, 7, 1)) } });
-        try {
-            const body = JSON.stringify({
-                financial_status: 'paid',
-                id: 98772,
-                // Before the 2020 renewal window opens on 1 June, so still the year opened in August 2019.
-                processed_at: '2020-05-15T12:00:00Z',
-                line_items: [{ variant_id: MEMBERSHIP_VARIANT_ID }],
-                note_attributes: [{ name: 'Membership_Process_ID', value: '46' }],
-            });
-            expect((await POST(webhookReq(body, sign(body)))).status).toBe(200);
-        } finally {
-            await prisma.boardSettings.update({ where: { id: 1 }, data: { orgMembershipYearBoundary: null } });
-        }
-        expect(activateByProcessId).toHaveBeenCalledWith(46, '98772', { appliesToYear: 2019 });
     });
 
     it('forwards no membership line for a variant in no year\'s row', async () => {
@@ -698,7 +683,7 @@ describe('POST /api/webhooks/shopify — negatives & idempotency', () => {
         });
         const res = await POST(webhookReq(body, sign(body)));
         expect(res.status).toBe(200);
-        expect(activateByProcessId).toHaveBeenCalledWith(43, '98766', { appliesToYear: null });
+        expect(activateByProcessId).toHaveBeenCalledWith(43, '98766', { appliesToYear: MEMBERSHIP_YEAR });
         const row = await prisma.programParticipant.findUnique({
             where: { programId_personId: { programId, personId: p1 } },
         });

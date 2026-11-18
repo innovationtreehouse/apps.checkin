@@ -57,37 +57,19 @@ describe("CommunicationPage", () => {
         expect(await screen.findByLabelText("Email me about my receipts and reimbursements")).not.toBeChecked();
     });
 
-    it("persists the outreach-suppression toggle immediately", async () => {
+    it("reverts a toggle if the save fails", async () => {
         setSession({ id: 1, email: "a@example.com" });
-        const fetchMock = mockFetchJson({
-            "/api/profile": { profile: { notificationSettings: {}, emailSuppressed: false } },
-        });
+        mockFetchJson({ "/api/profile": { profile: { notificationSettings: {} } } });
         renderWithProviders(<CommunicationPage />);
 
-        const suppress = await screen.findByLabelText("Don't email me membership join/renewal invitations");
-        expect(suppress).not.toBeChecked();
-
-        fireEvent.click(suppress);
-        await waitFor(() => expect(suppress).toBeChecked());
-        expect(fetchMock).toHaveBeenCalledWith(
-            "/api/profile",
-            expect.objectContaining({ method: "PATCH", body: JSON.stringify({ emailSuppressed: true }) }),
-        );
-    });
-
-    it("reverts the outreach-suppression toggle if the save fails", async () => {
-        setSession({ id: 1, email: "a@example.com" });
-        mockFetchJson({ "/api/profile": { profile: { notificationSettings: {}, emailSuppressed: false } } });
-        renderWithProviders(<CommunicationPage />);
-
-        const suppress = await screen.findByLabelText("Don't email me membership join/renewal invitations");
-        expect(suppress).not.toBeChecked();
+        const receipts = await screen.findByLabelText("Email me when I check in or out");
+        expect(receipts).not.toBeChecked();
 
         global.fetch = jest.fn(() => Promise.reject(new Error("net"))) as unknown as typeof fetch;
-        fireEvent.click(suppress);
-        expect(suppress).toBeChecked(); // optimistic flip
+        fireEvent.click(receipts);
+        expect(receipts).toBeChecked(); // optimistic flip
 
-        await waitFor(() => expect(suppress).not.toBeChecked()); // reverted
+        await waitFor(() => expect(receipts).not.toBeChecked()); // reverted
         expect(notificationsStore.getState().notifications).toEqual([
             expect.objectContaining({ color: "red", message: "Couldn't reach the server. Check your connection and try again.", autoClose: false }),
         ]);

@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { Button, Group, Modal, Stack, Text } from '@mantine/core';
-import { notifications } from '@mantine/notifications';
-import { AlertBanner } from '@/components/admin/AlertBanner';
+import { errorMessage, HttpError, LoadError, showError, showSuccess } from '@checkin/component-ui';
+import { api, useLoad } from '@/lib/api';
 import { DataTable, type DataTableColumn } from '@/components/admin/DataTable';
 import { useRequireRole } from '@/hooks/useRequireRole';
 import { FINANCE_TOOL_ROLES } from '@/lib/nav/sections/revenueOps';
@@ -28,58 +28,34 @@ const seats = (n: number) => `${n > 0 ? '+' : ''}${n} seat${Math.abs(n) === 1 ? 
 export default function UnconfirmedShopifyStockPage() {
   const { formatDateTime } = useOrgTime();
   const { ready, loading: authLoading } = useRequireRole(FINANCE_TOOL_ROLES);
-  const [rows, setRows] = useState<Row[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [message, setMessage] = useState("");
+  // Each read asks Shopify for every program's stock, so a failed read is not retried and a reconnect does not re-read.
+  const { data: rows, error: loadError, reload } = useLoad<Row[]>(ready ? '/api/finance-ops/shopify-stock' : null, { retry: false, reconnect: false });
   const [target, setTarget] = useState<{ row: Row; choice: Choice } | null>(null);
-
-  const fetchRows = useCallback(() => fetch('/api/finance-ops/shopify-stock')
-    .then(async (res) => {
-      if (res.ok) {
-        setRows(await res.json());
-        setMessage("");
-      } else {
-        setMessage("Failed to load unconfirmed Shopify stock. You may not have access.");
-      }
-    })
-    .catch(() => {
-      notifications.show({ color: "red", message: "Network error loading unconfirmed Shopify stock.", autoClose: false });
-    })
-    .finally(() => setLoading(false)),
-  []);
-
-  useEffect(() => {
-    if (ready) fetchRows();
-  }, [ready, fetchRows]);
+  // The program whose write is in flight; its buttons stay disabled so a second click can't send again.
+  const [busyId, setBusyId] = useState<number | null>(null);
 
   const settle = async () => {
     if (!target) return;
     const { row, choice } = target;
     setTarget(null);
+    setBusyId(row.programId);
     try {
-      const res = await fetch(`/api/finance-ops/shopify-stock/${row.programId}`, {
+      await api(`/api/finance-ops/shopify-stock/${row.programId}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ choice, expected: row.unconfirmed, since: row.unconfirmedSince }),
       });
-      if (res.ok) {
-        fetchRows();
-        notifications.show({
-          message: choice === 'landed'
-            ? `${row.programName}: cleared — Shopify already has the change.`
-            : `${row.programName}: the change is owed again and will be pushed to Shopify.`,
-        });
-      } else {
-        const data = await res.json().catch(() => ({}));
-        notifications.show({ color: 'red', message: data.error || "Action failed.", autoClose: false });
-        fetchRows();
-      }
-    } catch {
-      notifications.show({ color: 'red', message: "Network error.", autoClose: false });
+      showSuccess(choice === 'landed'
+        ? `${row.programName}: cleared — Shopify already has the change.`
+        : `${row.programName}: the change is owed again and will be pushed to Shopify.`);
+    } catch (e) {
+      showError(errorMessage(e));
+      if (e instanceof HttpError) await reload();
+    } finally {
+      setBusyId(null);
     }
   };
 
-  if (authLoading || loading) return <PageLoader />;
+  if (authLoading) return <PageLoader />;
   if (!ready) return null;
 
   const columns: DataTableColumn<Row>[] = [
@@ -97,10 +73,10 @@ export default function UnconfirmedShopifyStockPage() {
       align: 'right',
       render: (r) => (
         <Group justify="flex-end" gap="xs" wrap="nowrap">
-          <Button size="xs" fz={15} variant="default" onClick={() => setTarget({ row: r, choice: 'notLanded' })}>
+          <Button size="xs" fz={15} variant="default" disabled={busyId === r.programId} onClick={() => setTarget({ row: r, choice: 'notLanded' })}>
             Shopify doesn&apos;t have it
           </Button>
-          <Button size="xs" fz={15} color="blue" onClick={() => setTarget({ row: r, choice: 'landed' })}>
+          <Button size="xs" fz={15} color="blue" disabled={busyId === r.programId} onClick={() => setTarget({ row: r, choice: 'landed' })}>
             Shopify has it
           </Button>
         </Group>
@@ -117,14 +93,15 @@ export default function UnconfirmedShopifyStockPage() {
         <strong>Shopify doesn&apos;t have it</strong> puts it back on what the app owes, and the next push sends it.
       </Text>
 
-      <AlertBanner message={message} tone="error" />
 
-      <DataTable
-        columns={columns}
-        rows={rows}
-        getRowKey={(r) => `${r.programId}-${r.unconfirmedSince ?? 'earlier'}-${r.unconfirmed}`}
-        emptyMessage="No unconfirmed Shopify stock changes."
-      />
+      {loadError ? <LoadError what="unconfirmed Shopify stock" message={loadError} onRetry={reload} /> : !rows ? <PageLoader /> : (
+        <DataTable
+          columns={columns}
+          rows={rows}
+          getRowKey={(r) => `${r.programId}-${r.unconfirmedSince ?? 'earlier'}-${r.unconfirmed}`}
+          emptyMessage="No unconfirmed Shopify stock changes."
+        />
+      )}
 
       <Modal
         opened={target !== null}

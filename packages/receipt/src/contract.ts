@@ -8,6 +8,7 @@ import { z } from "zod";
 import type { FailureKind } from "@checkin/component-kit";
 import { CURRENCY_CODE, MAX_LINE_QUANTITY, type CompletedReceipt, type InKindDonor } from "@checkin/receipt-types";
 import type { ReceiptLimits } from "./lib/limits";
+import { LINE_COST_RANGE, lineCostFits } from "./lib/schemas";
 
 /** The acting host user, projected from the checkin Person. `id` is the Person.id. */
 export interface ReceiptPrincipal {
@@ -156,7 +157,7 @@ export const OcrLineItemSchema = z.object({
   unitPrice: ocrMoney,
   totalPrice: ocrMoney.optional(),
   isDelayed: z.boolean(),
-});
+}).refine(lineCostFits, LINE_COST_RANGE);
 
 /** What OCR may fill: the receipt's own details. Never reimbursee, vendor or needsReimbursement. */
 export const OcrDataSchema = z.object({
@@ -184,7 +185,8 @@ export const OCR_FILE_REFUSED = "the reading service refused the file";
 
 /** Reads a stored receipt file. Never throws: every failure is `{ success: false }`. */
 export interface OcrProvider {
-  extract(file: Buffer, mimeType: string): Promise<OcrResult>;
+  /** `rotation` is the clockwise turn, in degrees, that shows the receipt's image upright. */
+  extract(file: Buffer, mimeType: string, rotation?: number): Promise<OcrResult>;
 }
 
 // ── Mail intake (phase G) ────────────────────────────────────────────────────
@@ -193,6 +195,12 @@ export interface OcrProvider {
 export interface ReceiptPeople {
   /** The one live person allowed to submit receipts whom the host identifies by exactly this address, else null. */
   submitterByEmail(address: string): Promise<ReceiptPrincipal | null>;
+  /**
+   * Approves `address` as this person's mail alias and runs `assign` inside the same host
+   * transaction: a refused or failed alias write runs no assign, and an assign that throws undoes
+   * the alias. Unbound, finance cannot remember an address while assigning.
+   */
+  rememberMailAlias?<T>(input: { actorId: number; personId: number; address: string; mailItemId: number }, assign: () => Promise<T>): Promise<T>;
 }
 
 /** The host's names for its people, for finance reading who uploaded a receipt. */
@@ -269,12 +277,6 @@ export interface MailAgingOutEvent {
   oldestReceivedAt: Date | null;
 }
 
-export interface MailListingFailedEvent {
-  orgId: string;
-  /** Why the listing failed, which decides the alert's wording. */
-  kind: FailureKind;
-}
-
 /** One acknowledgement of a mailed receipt, to one recipient. */
 /** Why a mailed file was not accepted; `no_receipt` stands for a whole message that held nothing to read. */
 export type MailRefusalReason = "too_large" | "wrong_type" | "empty" | "forwarded" | "ceiling" | "no_receipt";
@@ -341,7 +343,6 @@ export interface OutcomeMail {
 export interface ReceiptAlerts {
   mailHoldCeilingReached(event: MailHoldCeilingEvent): Promise<void>;
   mailAgingOut(event: MailAgingOutEvent): Promise<void>;
-  mailListingFailed(event: MailListingFailedEvent): Promise<void>;
 }
 
 /** Where receipt and held-mail files live. The host binds it; the library takes no storage dependency. */

@@ -39,3 +39,8 @@ export const NON_LOOPBACK_URL_RE = /\bhttps?:\/\/(?!(?:localhost|127\.0\.0\.1|\[
 /** An API SDK hides its host (the Anthropic SDK defaults to api.anthropic.com, resend to
  *  api.resend.com). @aws-sdk/* is absent: it reaches only AWS, the platform the code runs on. */
 export const THIRD_PARTY_SDK_RE = /['"](@anthropic-ai\/sdk|resend|googleapis|@googleapis\/gmail)['"]/;
+
+/** Package scan: directories it never enters, the source files it reads, and the test files it skips. */
+export const PACKAGE_SKIP_DIR_RE = /^(node_modules|dist|generated|__tests__|__fixtures__|fixtures|test|tests)$/;
+export const PACKAGE_SOURCE_FILE_RE = /\.(tsx?|[cm]?js)$/;
+export const PACKAGE_SKIP_FILE_RE = /\.(test|spec)\.(tsx?|[cm]?js)$/;

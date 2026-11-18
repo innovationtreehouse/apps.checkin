@@ -50,14 +50,29 @@ export function useUrlPage(last?: number | null): [number, (page: number) => voi
 }
 
 /**
+ * A list paged by position rather than number: `before` names the last row of the page before,
+ * and the list shows the rows after it. Moving to another page pushes a history entry, as for
+ * `useUrlPage`; setting an empty marker returns to the first page.
+ */
+export function useUrlBefore(): [string, (before: string) => void] {
+  const { router, pathname, params } = useQuery();
+  const before = params?.get("before") ?? "";
+  const setBefore = useCallback(
+    (next: string) => router.push(hrefWith(pathname, params, { before: next }), { scroll: false }),
+    [router, pathname, params],
+  );
+  return [before, setBefore];
+}
+
+/**
  * Writes a list's filters, view tabs or sort to the URL. It replaces the history entry, so back
- * skips filter states, and drops `page`, so a new filter starts on page 1. Pass every key that
+ * skips filter states, and drops `page` and `before`, so a new filter starts on the first page. Pass every key that
  * changes together in one call: two calls in one event each start from the same URL.
  */
 export function useSetUrlFilters(): (updates: QueryUpdates) => void {
   const { router, pathname, params } = useQuery();
   return useCallback(
-    (updates: QueryUpdates) => router.replace(hrefWith(pathname, params, { ...updates, page: null }), { scroll: false }),
+    (updates: QueryUpdates) => router.replace(hrefWith(pathname, params, { ...updates, page: null, before: null }), { scroll: false }),
     [router, pathname, params],
   );
 }

@@ -62,7 +62,7 @@ describe("AdminEditHouseholdModal", () => {
     await waitFor(() => expect(document.querySelector(".mantine-Loader-root")).toBeInTheDocument());
     expect(screen.queryByLabelText("Household Name")).not.toBeInTheDocument();
 
-    resolveFetch({ ok: true, json: async () => ({ household }) });
+    resolveFetch({ ok: true, status: 200, json: async () => ({ household }), text: async () => JSON.stringify({ household }) });
     expect(await screen.findByDisplayValue("Smith Family")).toBeInTheDocument();
   });
 
@@ -148,14 +148,46 @@ describe("AdminEditHouseholdModal", () => {
     expect(onClose).toHaveBeenCalledTimes(2);
   });
 
-  it("shows an error notification when the household fails to load", async () => {
-    global.fetch = jest.fn(() => Promise.reject(new Error("net"))) as unknown as typeof fetch;
+  it("shows the load error with Retry, and no form or Save, when the household fails to load", async () => {
+    mockFetchJson({});
     renderWithProviders(<AdminEditHouseholdModal householdId={55} opened={true} onClose={jest.fn()} />);
 
-    await waitFor(() =>
-      expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "red", message: "Failed to load household." })),
-    );
-    expect(screen.getByLabelText("Household Name")).toHaveValue("");
+    expect(await screen.findByText("Couldn't load this household")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Household Name")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save Changes — As Admin" })).not.toBeInTheDocument();
+
+    mockFetchJson({ "/api/membership-ops/households?id=55": { household } });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByDisplayValue("Smith Family")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save Changes — As Admin" })).toBeEnabled();
+  });
+
+  it("holds the form until this opening's own read answers, even with an older read cached", async () => {
+    mockFetchJson({ "/api/membership-ops/households?id=55": { household } });
+    const earlier = renderWithProviders(<AdminEditHouseholdModal householdId={55} opened={true} onClose={jest.fn()} />);
+    await screen.findByDisplayValue("Smith Family");
+    earlier.unmount();
+
+    let resolveFetch!: (v: unknown) => void;
+    global.fetch = jest.fn(() => new Promise((resolve) => { resolveFetch = resolve; })) as unknown as typeof fetch;
+    renderWithProviders(<AdminEditHouseholdModal householdId={55} opened={true} onClose={jest.fn()} />);
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalled());
+    expect(screen.queryByLabelText("Household Name")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save Changes — As Admin" })).not.toBeInTheDocument();
+
+    const renamed = { household: { ...household, name: "Smith Renamed" } };
+    resolveFetch({ ok: true, status: 200, json: async () => renamed, text: async () => JSON.stringify(renamed) });
+    expect(await screen.findByDisplayValue("Smith Renamed")).toBeInTheDocument();
+  });
+
+  it("says the household no longer exists, with no form or Save, when the read finds none", async () => {
+    mockFetchJson({ "/api/membership-ops/households?id=55": { household: null } });
+    renderWithProviders(<AdminEditHouseholdModal householdId={55} opened={true} onClose={jest.fn()} />);
+
+    expect(await screen.findByText("This household no longer exists.")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Household Name")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save Changes — As Admin" })).not.toBeInTheDocument();
   });
 
   it("shows a server error message, then a network-error message, when saving fails", async () => {

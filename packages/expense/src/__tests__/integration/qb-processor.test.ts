@@ -9,7 +9,7 @@
 import { it, expect, vi, beforeEach } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
-import { seedExpense, seedLineItem, seedAccountMapping, signAllLines, bindPorts, principal, ORG } from "../helpers/seed";
+import { seedExpense, seedHold, seedLineItem, seedAccountMapping, signAllLines, bindPorts, principal, ORG } from "../helpers/seed";
 
 const inv = vi.hoisted(() => ({
   listCategories: vi.fn(),
@@ -62,6 +62,7 @@ beforeEach(() => {
 describeDb("checkAndProcessExpense — happy path", () => {
   it("emits a QB event, completes, and allocates tax to the penny", async () => {
     const id = await seedExpense({ state: "qb_pending", taxCents: 10, receiptTotalCents: 110 });
+    await db.expenseReceiptReview.create({ data: { expenseId: id, taxReviewRequired: false, reasons: [] } });
     const li1 = await seedLineItem(id, { partNumber: "PN-1", totalPriceCents: 75 });
     const li2 = await seedLineItem(id, { partNumber: "PN-2", totalPriceCents: 25 });
     catalogResolvesAll({ [li1]: "0000000000017", [li2]: "0000000000024" });
@@ -165,6 +166,7 @@ describeDb("checkAndProcessExpense — finance's account set during processing",
     const id = await seedExpense({ state: "qb_pending", receiptTotalCents: 200 });
     const manual = await seedLineItem(id, { manualQbAccount: "6100", totalPriceCents: 100 });
     const part = await seedLineItem(id, { partNumber: "PN-1", totalPriceCents: 100 });
+    await seedHold(id, manual);
     catalogResolvesAll({ [part]: "0000000000017" });
     await seedAccountMapping({ qbAccount: "4000" });
     await signAllLines(id);
@@ -179,6 +181,28 @@ describeDb("checkAndProcessExpense — finance's account set during processing",
     expect(await stateOf(id)).toBe("qb_complete");
     expect((await db.expenseLineItem.findUniqueOrThrow({ where: { id: manual } })).resolvedQbAccount).toBe("6200");
     expect((await db.expenseLineItem.findUniqueOrThrow({ where: { id: part } })).resolvedQbAccount).toBe("4000");
+  });
+});
+
+describeDb("checkAndProcessExpense — finance's account on a line that isn't held", () => {
+  it("refuses an account on a line still being mapped, and processing books the rule's account", async () => {
+    const finance = principal(500, { isFinance: true });
+    const id = await seedExpense({ state: "qb_pending" });
+    const li = await seedLineItem(id, { partNumber: "PN-1", totalPriceCents: 100 });
+    catalogResolvesAll({ [li]: "0000000000017" });
+    await seedAccountMapping({ qbAccount: "4000" });
+    await signAllLines(id);
+    const lookup = inv.lookupItems.getMockImplementation()!;
+    let refusal: unknown;
+    inv.lookupItems.mockImplementationOnce(async (...args: unknown[]) => {
+      refusal = await setHeldLineAccount(finance, id, li, "6200").catch((e: unknown) => e);
+      return lookup(...args);
+    });
+
+    await checkAndProcessExpense(ORG, id);
+
+    expect(refusal).toMatchObject({ status: 409, message: expect.stringContaining("isn't held") });
+    expect(await db.expenseLineItem.findUniqueOrThrow({ where: { id: li } })).toMatchObject({ manualQbAccount: null, resolvedQbAccount: "4000" });
   });
 });
 
@@ -239,6 +263,34 @@ describeDb("checkAndProcessExpense — finance's account on every hold reason", 
 
     expect(await stateOf(id)).toBe("qb_complete");
     expect((await db.expenseLineItem.findUniqueOrThrow({ where: { id: li } })).resolvedQbAccount).toBe("6100");
+  });
+  it("books a held line by a rule finance adds, resubmitted with no account set by hand", async () => {
+    const id = await seedExpense({ state: "qb_pending" });
+    const li = await seedLineItem(id, { partNumber: "PN-1", totalPriceCents: 100 });
+    catalogResolvesAll({ [li]: "0000000000017" });
+    await signAllLines(id);
+    await checkAndProcessExpense(ORG, id);
+    expect(await holdsFor(id)).toMatchObject([{ reason: "NO_MATCH", status: "PENDING", lineItemId: li }]);
+    await seedAccountMapping({ qbAccount: "4000" });
+
+    await resubmitHeldExpense(finance, id);
+
+    expect(await stateOf(id)).toBe("qb_complete");
+    expect((await holdsFor(id)).map((h) => h.status)).toEqual(["RESOLVED"]);
+    expect(await db.expenseLineItem.findUniqueOrThrow({ where: { id: li } })).toMatchObject({ manualQbAccount: null, resolvedQbAccount: "4000" });
+  });
+
+  it("holds the line again when a resubmit finds no rule and no account set by hand", async () => {
+    const id = await seedExpense({ state: "qb_pending" });
+    const li = await seedLineItem(id, { partNumber: "PN-1", totalPriceCents: 100 });
+    catalogResolvesAll({ [li]: "0000000000017" });
+    await signAllLines(id);
+    await checkAndProcessExpense(ORG, id);
+
+    await resubmitHeldExpense(finance, id);
+
+    expect(await stateOf(id)).toBe("qb_on_hold");
+    expect(await holdsFor(id)).toContainEqual(expect.objectContaining({ reason: "NO_MATCH", status: "PENDING", lineItemId: li }));
   });
 });
 
@@ -339,7 +391,7 @@ describeDb("checkAndProcessExpense — failure path", () => {
     expect(await recoverStrandedQbExpenses()).toEqual({ checked: 0, failed: 0 });
     expect(await stateOf(id)).toBe("qb_error");
 
-    await retryStuckItem({ id, step: "QuickBooks processing" });
+    await retryStuckItem({ id, step: "QuickBooks processing" }, { userId: 500 });
 
     expect(await db.expense.findUniqueOrThrow({ where: { id } })).toMatchObject({ state: "qb_complete", qbFirstFailedAt: null, qbLastError: null });
     expect(await eventsFor(id)).toHaveLength(1);
@@ -355,7 +407,7 @@ describeDb("checkAndProcessExpense — failure path", () => {
     const { qbFirstFailedAt } = await db.expense.findUniqueOrThrow({ where: { id } });
 
     await new Promise((r) => setTimeout(r, 5));
-    await expect(retryStuckItem({ id, step: "QuickBooks processing" })).rejects.toMatchObject({ status: 409, message: "Retried, and it failed again; the item's page shows why" });
+    await expect(retryStuckItem({ id, step: "QuickBooks processing" }, { userId: 500 })).rejects.toMatchObject({ status: 409, message: "Retried, and it failed again; the item's page shows why" });
 
     expect(await db.expense.findUniqueOrThrow({ where: { id } })).toMatchObject({ state: "qb_error", qbFirstFailedAt });
     expect(await stuckItems()).toEqual([{ id, step: "QuickBooks processing", href: `/expense/expenses/${id}`, failedAt: qbFirstFailedAt }]);
@@ -391,5 +443,69 @@ describeDb("checkAndProcessExpense — sign-off hold", () => {
 
     expect(await stateOf(id)).toBe("qb_skipped");
     expect(await eventsFor(id)).toHaveLength(0);
+  });
+});
+
+describeDb("recoverStrandedQbExpenses", () => {
+  const minutesAgo = (n: number) => new Date(Date.now() - n * 60_000);
+
+  /** A signed qb_pending expense with no outbox row: the crash case the sweep exists for. */
+  async function stranded(submittedAt = new Date()) {
+    const id = await seedExpense({ state: "qb_pending", submittedAt });
+    await seedLineItem(id, { partNumber: null, manualQbAccount: "4000", totalPriceCents: 100 });
+    await signAllLines(id);
+    return id;
+  }
+
+  /** A qb_pending expense held on each hold the outbox names: an unsigned line, an unknown reimbursee, tax waiting on finance. */
+  async function heldOnEachHold(submittedAt = new Date()) {
+    const unsigned = await seedExpense({ state: "qb_pending", submittedAt });
+    await seedLineItem(unsigned, { partNumber: null, manualQbAccount: "4000", totalPriceCents: 100 });
+
+    const noReimbursee = await seedExpense({ state: "qb_pending", needsReimbursement: true, submittedAt });
+    await seedLineItem(noReimbursee, { partNumber: null, manualQbAccount: "4000", totalPriceCents: 100 });
+
+    const taxWaits = await seedExpense({ state: "qb_pending", taxCents: 50, receiptTotalCents: 150, submittedAt });
+    await db.expenseReceiptReview.create({ data: { expenseId: taxWaits, taxReviewRequired: true, reasons: [] } });
+    await seedLineItem(taxWaits, { partNumber: null, manualQbAccount: "4000", totalPriceCents: 100 });
+    await signAllLines(taxWaits);
+
+    return [unsigned, noReimbursee, taxWaits];
+  }
+
+  it("recovers a stranded expense behind more than a full batch of older held ones", async () => {
+    const held: string[] = [];
+    for (let i = 0; i < 17; i++) held.push(...(await heldOnEachHold(minutesAgo(100 - i))));
+    const id = await stranded();
+
+    expect(await recoverStrandedQbExpenses()).toEqual({ checked: 1, failed: 0 });
+
+    expect(await stateOf(id)).toBe("qb_complete");
+    expect(await eventsFor(id)).toHaveLength(1);
+    expect(await db.expense.count({ where: { id: { in: held }, state: "qb_pending" } })).toBe(held.length);
+  });
+
+  it("leaves an expense held on any hold out of the sweep", async () => {
+    const held = await heldOnEachHold();
+
+    expect(await recoverStrandedQbExpenses()).toEqual({ checked: 0, failed: 0 });
+
+    for (const id of held) {
+      expect(await stateOf(id)).toBe("qb_pending");
+      expect(await eventsFor(id)).toHaveLength(0);
+    }
+  });
+
+  it("recovers stranded expenses oldest first up to the limit, including an unsigned backfill", async () => {
+    const older = await stranded(minutesAgo(3));
+    const backfill = await seedExpense({ state: "qb_pending", backfill: true, submittedAt: minutesAgo(2) });
+    await seedLineItem(backfill, { partNumber: null, manualQbAccount: "4000" });
+    const newest = await stranded(minutesAgo(1));
+
+    expect(await recoverStrandedQbExpenses(2)).toEqual({ checked: 2, failed: 0 });
+
+    expect(await stateOf(older)).toBe("qb_complete");
+    expect(await stateOf(backfill)).toBe("qb_skipped");
+    expect(await stateOf(newest)).toBe("qb_pending");
   });
 });

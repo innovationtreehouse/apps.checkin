@@ -88,10 +88,12 @@ describe('cron run ledger (real DB)', () => {
         });
 
         // Stalest first.
-        expect(await mine()).toEqual([
-            { job: JOB_A, lastSuccessAt: expect.any(Date), stale: true, lastError: 'newest failure' },
+        const statuses = await mine();
+        expect(statuses).toEqual([
+            { job: JOB_A, lastSuccessAt: expect.any(Date), stale: true, lastError: 'newest failure', lastErrorAt: expect.any(Date) },
             { job: JOB_B, lastSuccessAt: expect.any(Date), stale: false },
         ]);
+        expect(Math.abs((statuses[0].lastErrorAt?.getTime() ?? 0) - ago(HOUR).getTime())).toBeLessThan(60_000);
     });
 
     it('purges rows past the 90-day TTL on write', async () => {

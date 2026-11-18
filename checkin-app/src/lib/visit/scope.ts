@@ -4,8 +4,8 @@ import { householdLeadship } from "@/lib/household/leads";
 export type VisitSubject = { id: number; isKeyholder: boolean };
 
 /**
- * Resolve who the actor may write visits for on the self-service surface
- * (docs/rules/attendance-checkin.md): themselves always, and
+ * Resolve who the actor may write visits for on the self-service surface:
+ * themselves always, and
  * — for a household lead — any member of their OWN household. The lead is the
  * responsible adult, so acting for a household member is self-equivalent; this
  * is the only way a minor's visit can be corrected at all.

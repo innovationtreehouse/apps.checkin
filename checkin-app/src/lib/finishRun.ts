@@ -23,6 +23,7 @@ const CAUSES: Record<string, string> = {
     "expense posting": "quickbooks",
     "bulk-donation in-kind-posting": "quickbooks",
     "income deposit-build": "quickbooks",
+    "quickbooks lists-refresh": "quickbooks",
 };
 
 export const newRun = (): Run => ({ reports: [], reached: new Set() });

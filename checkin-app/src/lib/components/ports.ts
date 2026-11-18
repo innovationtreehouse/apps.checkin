@@ -46,8 +46,16 @@ export async function quickBooks() {
   return (await import("@/lib/quickbooks/client")).getQuickBooks();
 }
 
-/** QuickBooks' live account list, as the books map reads it; a 503 while QuickBooks can't be read. */
+/** The app's copy of QuickBooks' accounts, as the books map reads it. */
 export const quickBooksAccounts: QboAccountList = async () => (await import("@/lib/finance/booksMap")).listQuickBooksAccounts();
+
+/** The active Classes in the app's copy of QuickBooks' Class list. */
+export const savedClasses = {
+  async activeClassIds(): Promise<string[]> {
+    const classes = await (await import("@/lib/finance/budgetOwners")).listQuickBooksClasses();
+    return classes.filter((c) => c.active).map((c) => c.id);
+  },
+};
 
 export const booksMap: BooksMap = {
   async accounts() {

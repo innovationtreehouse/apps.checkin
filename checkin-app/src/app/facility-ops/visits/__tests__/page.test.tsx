@@ -26,10 +26,10 @@ describe("facility-ops/visits page", () => {
     expect(screen.getByRole("switch", { name: "Closed out by a close" })).toBeInTheDocument();
   });
 
-  it("the closed-out filter asks the server for it and shows which close", async () => {
+  it("the closed-out filter asks the server for it and labels a nightly sweep Nightly", async () => {
     setSession({ id: 1, isSysadmin: true });
     const fetchMock = mockFetchJson({
-      "/api/facility/visits?closedOut=true": { visits: [{ ...visits[0], departedVia: "AUTO_CLOSE", facilityCloseId: 7 }] },
+      "/api/facility/visits?closedOut=true": { visits: [{ ...visits[0], departedVia: "AUTO_CLOSE", facilityCloseId: 7, facilityClose: { closedBy: { name: "Kim Keyholder" } } }] },
       "/api/facility/visits": { visits },
     });
     renderWithProviders(<AdminVisitsPage />);
@@ -39,6 +39,24 @@ describe("facility-ops/visits page", () => {
 
     expect(await screen.findByText("#7 · Nightly")).toBeInTheDocument();
     expect(fetchMock.mock.calls.map(([url]) => url)).toContain("/api/facility/visits?closedOut=true");
+  });
+
+  it("the closed-out filter names who closed for a keyholder close", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({
+      "/api/facility/visits?closedOut=true": { visits: [
+        { ...visits[0], departedVia: "FACILITY_CLOSE", facilityCloseId: 8, facilityClose: { closedBy: { name: "Kim Keyholder" } } },
+        { ...visits[0], id: 3, departedVia: "FACILITY_CLOSE", facilityCloseId: 9, facilityClose: { closedBy: null } },
+      ] },
+      "/api/facility/visits": { visits },
+    });
+    renderWithProviders(<AdminVisitsPage />);
+    await screen.findByText("Val Volunteer");
+
+    fireEvent.click(screen.getByRole("switch", { name: "Closed out by a close" }));
+
+    expect(await screen.findByText("#8 · Kim Keyholder")).toBeInTheDocument();
+    expect(screen.getByText("#9 · Closer deleted")).toBeInTheDocument();
   });
 
   it("loads and renders visit rows", async () => {
@@ -134,5 +152,82 @@ describe("facility-ops/visits page", () => {
       ),
     );
     await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Visit updated successfully." })));
+  });
+
+  it("flags a departure before arrival on the edited row's input and does not save", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const fetchMock = mockFetchJson({ "/api/facility/visits": { visits } });
+    renderWithProviders(<AdminVisitsPage />);
+    await screen.findByText("Val Volunteer");
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const confirmModal = await screen.findByRole("dialog", { name: "Edit Past Visit Record" });
+    fireEvent.click(within(confirmModal).getByRole("button", { name: "Continue" }));
+    const departed = screen.getByLabelText("Departed");
+    fireEvent.change(departed, { target: { value: "2000-01-01T00:00" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(departed).toHaveAttribute("aria-invalid", "true");
+    expect(departed).toHaveFocus();
+    expect(screen.getByText("Departure time must be after arrival time")).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/facility/visits", expect.objectContaining({ method: "PATCH" }));
+  });
+
+  it("clears the edited row's departure error once the arrival it was checked against changes", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({ "/api/facility/visits": { visits } });
+    renderWithProviders(<AdminVisitsPage />);
+    await screen.findByText("Val Volunteer");
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const confirmModal = await screen.findByRole("dialog", { name: "Edit Past Visit Record" });
+    fireEvent.click(within(confirmModal).getByRole("button", { name: "Continue" }));
+    const departed = screen.getByLabelText("Departed");
+    fireEvent.change(departed, { target: { value: "2000-01-01T00:00" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(departed).toHaveAttribute("aria-invalid", "true");
+
+    fireEvent.change(screen.getByLabelText("Arrived"), { target: { value: "1999-12-31T23:00" } });
+
+    expect(departed).not.toHaveAttribute("aria-invalid", "true");
+    expect(screen.queryByText("Departure time must be after arrival time")).not.toBeInTheDocument();
+  });
+
+  it("clears Add Past Visit's departure error once the arrival changes", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({ "/api/facility/visits": { visits }, "/api/people/search": { people: [] } });
+    renderWithProviders(<AdminVisitsPage />);
+    await screen.findByText("Val Volunteer");
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Visit" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add Past Visit" });
+    fireEvent.change(within(dialog).getByLabelText("Arrived"), { target: { value: "2026-01-01T12:00" } });
+    fireEvent.change(within(dialog).getByLabelText("Departed"), { target: { value: "2026-01-01T10:00" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add Visit" }));
+    expect(within(dialog).getByText("Departure time must be after arrival time")).toBeInTheDocument();
+
+    fireEvent.change(within(dialog).getByLabelText("Arrived"), { target: { value: "2026-01-01T09:00" } });
+
+    expect(within(dialog).getByLabelText("Departed")).not.toHaveAttribute("aria-invalid", "true");
+    expect(within(dialog).queryByText("Departure time must be after arrival time")).not.toBeInTheDocument();
+  });
+
+  it("flags each missing field in Add Past Visit on its input and does not post", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const fetchMock = mockFetchJson({ "/api/facility/visits": { visits }, "/api/people/search": { people: [] } });
+    renderWithProviders(<AdminVisitsPage />);
+    await screen.findByText("Val Volunteer");
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Visit" }));
+    const dialog = await screen.findByRole("dialog", { name: "Add Past Visit" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add Visit" }));
+
+    const person = within(dialog).getByRole("textbox", { name: "Person" });
+    expect(person).toHaveAttribute("aria-invalid", "true");
+    expect(person).toHaveFocus();
+    expect(within(dialog).getByLabelText("Arrived")).toHaveAttribute("aria-invalid", "true");
+    expect(within(dialog).getByLabelText("Departed")).toHaveAttribute("aria-invalid", "true");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/insert"))).toBe(false);
+    expect(notifications.show).not.toHaveBeenCalled();
   });
 });

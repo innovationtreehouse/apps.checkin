@@ -9,7 +9,7 @@ import { CountBadge } from "@/components/ui/CountBadge";
 import { PageContainer } from "@/components/ui/PageContainer";
 import { PROGRAM_OPS } from "@/lib/nav/sections/programOps";
 import { useTodoCounts } from "@/hooks/useTodoCounts";
-import { programsMisconfigBadge } from "@/components/navBadges";
+import { badgeText, programsMisconfigBadge } from "@/components/navBadges";
 
 // A program-edit URL (/program-ops/programs/[id]) carries a PROGRAM id, so the
 // layout can gate it precisely against the caller's led-program set. Session URLs
@@ -38,7 +38,7 @@ export default function ProgramOpsLayout({ children }: { children: React.ReactNo
     if (href !== "/program-ops/programs") return undefined;
     const badge = programsMisconfigBadge(todoCounts);
     return badge ? (
-      <CountBadge intent="alert" aria-label={badge.label}>{badge.count}</CountBadge>
+      <CountBadge intent="alert" aria-label={badge.label}>{badgeText(badge.count)}</CountBadge>
     ) : undefined;
   };
 
@@ -50,8 +50,10 @@ export default function ProgramOpsLayout({ children }: { children: React.ReactNo
 
   // Chrome-less (no section tabs) for the lead-mentor edit screens, as under /admin.
   const isChromeless = editProgramId !== null || isSessionFlow;
+  // Finance reaches a program's roster only, to enroll places paid outside the store.
+  const financeRoster = editProgramId !== null && !!user?.isFinance;
   const authorized =
-    isGlobalAdmin || leadsThisProgram || (isSessionFlow && status === "authenticated");
+    isGlobalAdmin || leadsThisProgram || financeRoster || (isSessionFlow && status === "authenticated");
 
   useEffect(() => {
     if (status === "unauthenticated") {

@@ -14,8 +14,8 @@ import { reconcileReversals } from "./reversals";
  *              family past the paid checkpoint. Application AND renewal.
  *   reversal — an order we already activated on that is later refunded, charged
  *              back, or cancelled: raise a PaymentException for the board. We never
- *              auto-revert access (a chargeback can be a bank error) — except a
- *              program refund that restocked the seat, see raiseReversalByOrderId.
+ *              auto-revert access (a chargeback can be a bank error); only the
+ *              board removes a paid place.
  *
  * Runs once daily from api/cron/reconcile-shopify (09:15 UTC, just behind s-read's
  * 09:00 sync — the cadence is a scale-to-zero constraint, see that route).

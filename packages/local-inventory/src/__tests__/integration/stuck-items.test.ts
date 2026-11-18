@@ -1,7 +1,9 @@
 /** The Problems list's ports: inventory deltas and catalog events that failed to apply, timed by their first failure, and their retry. */
+import { ServiceError } from "@checkin/component-kit";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { inertCatalogEventSource, type OrgEventRecord } from "../../contract";
 import { db } from "../../lib/db/index";
+import { FAILED_AGAIN } from "../../lib/retry";
 import { catchUpOrgEvents, orgEventConsumer } from "../../lib/services/orgEventConsumer";
 import { configureLocalInventory, getServices } from "../../runtime";
 import { retryStuckItem, stuckItems } from "../../stuckItems";
@@ -51,7 +53,7 @@ describeDb("stuckItems", () => {
     const delta = (orgId: string, sourceKey: string, status: string, receiptId: string | null, firstFailedAt: Date | null = first) =>
       db.receivedInventoryDelta.create({ data: { orgId, sourceKey, receiptId, deltaJson: "{}", status, failureReason: "boom", receivedAt: at, firstFailedAt } });
     await delta(TEST_ORG_ID, "receipt:r1", "failed", "r1");
-    const donation = await delta(TEST_ORG_ID, "donation:d1", "failed", null);
+    await delta(TEST_ORG_ID, "donation:11", "failed", null);
     await delta(TEST_ORG_ID, "receipt:r4", "failed", "r4", null);
     await delta(TEST_ORG_ID, "receipt:r2", "applied", "r2", null);
     await delta(TEST_ORG_ID_2, "receipt:r3", "failed", "r3");
@@ -60,7 +62,7 @@ describeDb("stuckItems", () => {
 
     expect(await stuckItems()).toEqual([
       { id: "r1", step: "inventory delta", href: "/receipts/r1", failedAt: first },
-      { id: String(donation.id), step: "inventory delta", href: null, failedAt: first },
+      { id: "donation:11", step: "inventory delta", href: "/donations/in-kind/manual/11", failedAt: first },
       { id: "r4", step: "inventory delta", href: "/receipts/r4", failedAt: at },
       { id: String(event.id), step: "catalog event", href: null, failedAt: first },
     ]);
@@ -77,7 +79,7 @@ describeDb("stuckItems", () => {
     const [before] = await stuckItems();
 
     await tick();
-    await retryStuckItem({ id: before.id, step: before.step });
+    await expect(retryStuckItem({ id: before.id, step: before.step })).rejects.toMatchObject({ status: 409, message: FAILED_AGAIN });
     await expect(receipts.applyReceipt(TEST_ORG_ID, "r1", undefined, [{ gtin13: GTIN, quantityDelta: OVERFLOW }])).rejects.toThrow();
     expect(await stuckItems()).toEqual([before]);
 
@@ -91,7 +93,7 @@ describeDb("stuckItems", () => {
     const [before] = await stuckItems();
 
     await tick();
-    await retryStuckItem({ id: before.id, step: before.step });
+    await expect(retryStuckItem({ id: before.id, step: before.step })).rejects.toMatchObject({ status: 409, message: FAILED_AGAIN });
     await orgEventConsumer.onOrgEvents([malformed(5)]);
 
     expect(await stuckItems()).toEqual([before]);
@@ -123,7 +125,7 @@ describeDb("stuckItems: provisionals", () => {
     expect(before).toMatchObject({ id: PROV, step: "provisional item" });
 
     await tick();
-    await retryStuckItem(before);
+    await expect(retryStuckItem(before)).rejects.toMatchObject({ status: 409, message: FAILED_AGAIN });
     expect(await stuckItems()).toEqual([before]);
     expect(await db.inventoryProvisionalItem.findFirst({ where: { provisionalGtin13: PROV } })).toMatchObject({ reconcileLastError: "again" });
 
@@ -151,10 +153,10 @@ describeDb("retryStuckItem", () => {
     expect(await getServices().receiptService.applyReceipt(TEST_ORG_ID, "r1", "Costco", lines)).toMatchObject({ replayed: true });
   });
 
-  it("applies a failed donation delta, found by its row id", async () => {
-    const row = await failedDelta("donation:7", null, { kind: "donation", donationId: "7" }, [{ gtin13: GTIN, quantityDelta: 1 }]);
+  it("applies a failed donation delta, found by its donation key", async () => {
+    await failedDelta("donation:7", null, { kind: "donation", donationId: "7" }, [{ gtin13: GTIN, quantityDelta: 1 }]);
     const [item] = await stuckItems();
-    expect(item).toMatchObject({ id: String(row.id), href: null });
+    expect(item).toMatchObject({ id: "donation:7", href: "/donations/in-kind/manual/7" });
 
     await retryStuckItem(item);
 
@@ -162,12 +164,28 @@ describeDb("retryStuckItem", () => {
     expect(await stuckItems()).toEqual([]);
   });
 
-  it("a retry that fails again leaves the delta stuck and does not throw its error", async () => {
+  it("a delta retry that fails again answers 409 with fixed text and leaves the delta stuck", async () => {
     await expect(getServices().receiptService.applyReceipt(TEST_ORG_ID, "r1", undefined, [{ gtin13: GTIN, quantityDelta: OVERFLOW }])).rejects.toThrow();
     const [item] = await stuckItems();
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    await expect(retryStuckItem(item)).resolves.toBeUndefined();
+    const err = await retryStuckItem(item).catch((e: unknown) => e);
 
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining("receipt:r1"), expect.anything());
+    expect(err).toBeInstanceOf(ServiceError);
+    expect(err).toMatchObject({ status: 409, message: FAILED_AGAIN });
+    expect(await stuckItems()).toEqual([item]);
+  });
+
+  it("a catalog event retry that fails again answers 409 with fixed text and leaves the event stuck", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await orgEventConsumer.onOrgEvents([malformed(6)]);
+    const [item] = await stuckItems();
+
+    const err = await retryStuckItem(item).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ServiceError);
+    expect(err).toMatchObject({ status: 409, message: FAILED_AGAIN });
     expect(await stuckItems()).toEqual([item]);
   });
 

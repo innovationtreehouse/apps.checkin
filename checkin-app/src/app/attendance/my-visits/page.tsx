@@ -1,14 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { ActionIcon, Alert, Button, Card, Group, Table, Text, TextInput, Title } from "@mantine/core";
+import { ActionIcon, Button, Card, Group, Table, Text, TextInput, Title } from "@mantine/core";
 import { IconPencil, IconTrash, IconX } from "@tabler/icons-react";
-import { notifications } from "@mantine/notifications";
-import { LoadError } from "@checkin/component-ui";
+import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
 import { PageContainer } from "@/components/ui/PageContainer";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { useRequireRole } from "@/hooks/useRequireRole";
-import { useLoad } from "@/lib/api";
+import { api, useLoad } from "@/lib/api";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
 import { toDatetimeLocal } from "@/lib/time";
 import { useOrgTime } from '@/components/TimezoneProvider';
@@ -23,13 +22,12 @@ type Visit = {
 
 // Self-correction of the member's own visits: every row is editable and
 // deletable, no approval step — significant changes are flagged to the board
-// server-side (trust-first, docs/rules/attendance-checkin.md).
+// server-side (trust-first).
 export default function MyVisits() {
   const { formatVisitRange } = useOrgTime();
   const { ready, loading: authLoading } = useRequireRole([]);
   const { data, error: loadError, reload } = useLoad<{ visits: Visit[] }>(ready ? "/api/profile/visits" : null);
   const visits = data?.visits ?? null;
-  const [error, setError] = useState("");
   const [editing, setEditing] = useState<number | null>(null);
   const [arrivedAt, setArrived] = useState("");
   const [departedAt, setDeparted] = useState("");
@@ -43,20 +41,13 @@ export default function MyVisits() {
 
   const submit = async (id: number, init: RequestInit, okMessage: string) => {
     setSaving(true);
-    setError("");
     try {
-      const res = await fetch(`/api/attendance/manual/${id}`, init);
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(data.error || "Correction failed.");
-      } else {
-        notifications.show({ message: okMessage });
-        setEditing(null);
-        reload();
-        notifyNavRefresh();
-      }
-    } catch {
-      notifications.show({ color: "red", message: "Network error occurred.", autoClose: false });
+      await api(`/api/attendance/manual/${id}`, init);
+      showSuccess(okMessage);
+      setEditing(null);
+      notifyNavRefresh();
+    } catch (err) {
+      showError(errorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -65,7 +56,6 @@ export default function MyVisits() {
   const saveEdit = (id: number) =>
     submit(id, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
       // datetime-local is naive — send a real instant (same rule as manual entry).
       body: JSON.stringify({
         arrivedAt: arrivedAt ? new Date(arrivedAt).toISOString() : "",
@@ -91,7 +81,6 @@ export default function MyVisits() {
           these records — fix a wrong time or remove a mistaken entry directly.
         </Text>
 
-        {error && <Alert color="red" mb="md">{error}</Alert>}
         {loadError ? <LoadError what="your visits" message={loadError} onRetry={reload} /> : !visits ? <PageLoader /> : visits.length === 0 ? (
           <Text c="dimmed">No visits in the last two weeks.</Text>
         ) : (
