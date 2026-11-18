@@ -63,7 +63,7 @@ export async function orderEntitlesEnrollment(order: EntitlementOrder, programId
     const seats = order.lines.filter((l) => variantIds.has(l.variantId)).reduce((n, l) => n + l.currentQuantity, 0);
     const unspent = Math.max(0, seats - (order.legacyId ? await seatsSpentBy(prisma, order.legacyId, programId) : 0));
     if (awaiting === 0) {
-        const surplus = await surplusSeats(order, programId, personIds, unspent);
+        const surplus = await surplusSeats(prisma, order.legacyId, programId, personIds, unspent);
         return { ok: false, kind: surplus?.kind ?? null, personId: surplus?.personId, nothingAwaiting: true };
     }
     if (seats === 0) return { ok: false, kind: "NO_ITEM" };
@@ -72,7 +72,7 @@ export async function orderEntitlesEnrollment(order: EntitlementOrder, programId
         return { ok: false, kind: "UNMATCHED_ORDER" };
     }
     if (unspent < awaiting) return { ok: false, kind: "AMOUNT_MISMATCH" };
-    return { ok: true, surplus: await surplusSeats(order, programId, personIds, unspent - awaiting) };
+    return { ok: true, surplus: await surplusSeats(prisma, order.legacyId, programId, personIds, unspent - awaiting) };
 }
 
 /** The households the people an order names live in; one order pays for one household. */
@@ -86,13 +86,15 @@ async function householdsOf(personIds: number[]): Promise<number[]> {
 }
 
 /** `unspent` is already net of the seats the order spent; what is left beyond those awaiting is surplus. */
-async function surplusSeats(order: EntitlementOrder, programId: number, personIds: number[], unspent: number): Promise<Surplus | undefined> {
+export async function surplusSeats(db: DbClient, shopifyOrderId: string | null, programId: number, personIds: number[], unspent: number): Promise<Surplus | undefined> {
     if (unspent <= 0) return undefined;
-    const active = await prisma.programParticipant.findMany({
+    // Ordered, so the order check and activation name the same person and their raises coincide.
+    const active = await db.programParticipant.findMany({
         where: { programId, personId: { in: personIds }, status: "ACTIVE" },
         select: { personId: true, shopifyOrderId: true },
+        orderBy: { personId: "asc" },
     });
-    const otherwisePaid = active.filter((r) => !order.legacyId || r.shopifyOrderId !== order.legacyId);
+    const otherwisePaid = active.filter((r) => !shopifyOrderId || r.shopifyOrderId !== shopifyOrderId);
     return otherwisePaid.length > 0 ? { kind: "DUPLICATE_PAYMENT", personId: otherwisePaid[0].personId } : { kind: "UNCLAIMED_SEATS" };
 }
 
