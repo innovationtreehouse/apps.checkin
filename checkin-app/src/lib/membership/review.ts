@@ -934,15 +934,17 @@ async function applicationCheckStarted(db: DbClient, orgMembershipId: number | n
 
 /**
  * The step a BLOCKED review or application resumes at when its block is lifted. A
- * check review returns to waiting for review. A household application goes back to
- * the external step when its check is not started (`householdCheckStarted`) or the
- * agreement is missing, so it never reaches payment unsigned; otherwise to
- * PENDING_BG_CLEARANCE if paid, else PENDING_PAYMENT.
+ * check review returns to waiting for review. A paid household application waits at
+ * PENDING_BG_CLEARANCE whatever its check track says: payment is never asked for
+ * again, and settleHouseholdBg opens a review if none is under way. An unpaid one
+ * goes back to the external step when its check is not started
+ * (`householdCheckStarted`) or the agreement is missing, so it never reaches
+ * payment unsigned; otherwise to PENDING_PAYMENT.
  */
 export function blockedResetStatus(process: BlockedResetRow, checkStarted: boolean): OrgMembershipProcessStatus {
     return process.kind === "PERSON_BG" ? "PENDING_BG_REVIEW"
-        : !checkStarted || !process.contractSignedAt ? "PENDING_EXTERNAL_ACTION"
         : process.paidAt ? "PENDING_BG_CLEARANCE"
+        : !checkStarted || !process.contractSignedAt ? "PENDING_EXTERNAL_ACTION"
         : "PENDING_PAYMENT";
 }
 

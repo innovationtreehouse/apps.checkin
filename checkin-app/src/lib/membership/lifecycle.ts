@@ -458,7 +458,7 @@ export const TRANSITIONS: readonly Transition<TState, string, ProcessKind>[] = [
     // A household row blocked by a household attestation before cutover: Board reset only.
     { from: "BLOCKED", to: "PENDING_PAYMENT", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI (legacy household row, unpaid)", legacy: true },
     { from: "BLOCKED", to: "PENDING_BG_CLEARANCE", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI (legacy household row, paid)", legacy: true },
-    { from: "BLOCKED", to: "PENDING_EXTERNAL_ACTION", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI (legacy household row, check not started or unsigned)", legacy: true },
+    { from: "BLOCKED", to: "PENDING_EXTERNAL_ACTION", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI (legacy household row, unpaid, check not started or unsigned)", legacy: true },
     // Refund recorded by the board: money undone, background check untouched. Every
     // other step only loses paidAt (flag-only, no status edge).
     ...ALL_STATUSES.flatMap((from): Transition<TState, string, ProcessKind>[] => {
