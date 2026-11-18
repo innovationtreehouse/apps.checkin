@@ -8,11 +8,14 @@ import { getExpenseRuntime, getOrgId } from "../runtime";
 import { writeAudit, writeOrgAudit } from "../lib/audit";
 import { matchedBaseline } from "../lib/expense-qb-drift";
 import { actorOf, callerId } from "../lib/caller";
-import { isConflicted, lockExpense, unsignedLines } from "../lib/signoff-facts";
+import { isConflicted, lockExpense, storedTaxWaits, unsignedLines } from "../lib/signoff-facts";
 import { reimburseeUnknown } from "../lib/signoff";
 import { requireFinance } from "./approvalService";
 import { SKIPPED_CHECK_OFF, checkOffHeldOnPost, checkOffOnLink } from "./flagService";
 import { ServiceError } from "@checkin/component-kit";
+
+/** Finance approves an expense's waiting tax before the expense is matched or linked. */
+const TAX_WAITS = "The expense's tax waits on finance; approve the tax first";
 
 /** A reimbursement matches a Bill; every other line matches a Purchase. */
 export type QbMatchEntity = "Bill" | "Purchase";
@@ -194,12 +197,13 @@ async function linkOwnFirst(expense: Awaited<ReturnType<typeof loadExpense>>, en
   const qbTxnId = own.entry.Id;
   try {
     await db.$transaction(async (tx) => {
-      // Linking books the expense as much as a match does, so it takes the same sign-offs, read under the lock.
+      // Linking books the expense as much as a match does, so it takes the same sign-offs and tax check, read under the lock.
       await lockExpense(tx, expense.id);
       const current = await tx.expense.findUniqueOrThrow({ where: { id: expense.id } });
       if (reimburseeUnknown(current) || (await unsignedLines(tx, current)).size > 0) {
         throw new ServiceError(409, "Expense is missing a required sign-off or the Board's approval");
       }
+      if (await storedTaxWaits(tx, expense.id)) throw new ServiceError(409, TAX_WAITS);
       const linked = await tx.expense.updateMany({
         where: { id: expense.id, qbTxnId: null, qbMatchState: { in: MATCHABLE_STATES } },
         data: { qbMatchState: "CREATED", qbFirstFailedAt: null, qbLastError: null, qbTxnId, qbTxnEntity: entity, qbVendorId: entity === "Bill" ? own.entry.VendorRef?.value ?? null : null },
@@ -225,7 +229,7 @@ async function linkOwnFirst(expense: Awaited<ReturnType<typeof loadExpense>>, en
 
 /**
  * Finance links an expense to an existing QuickBooks entry; an entry is claimed once across expenses and lines.
- * The entry must be one of the expense's own candidates, and every line fully signed off. An
+ * The entry must be one of the expense's own candidates, every line fully signed off, and no tax waiting on finance. An
  * expense whose create may already have landed links to the app's own entry first, when there is one.
  * A matched expense holds a qbTxnId, so the poster never books it again.
  */
@@ -251,6 +255,7 @@ export async function matchExpenseToQb(principal: ExpensePrincipal, expenseId: s
       if (reimburseeUnknown(current) || (await unsignedLines(tx, current)).size > 0) {
         throw new ServiceError(409, "Expense is missing a required sign-off or the Board's approval");
       }
+      if (await storedTaxWaits(tx, expenseId)) throw new ServiceError(409, TAX_WAITS);
       const linked = await tx.expense.updateMany({
         where: { id: expenseId, qbTxnId: null, qbMatchState: { in: MATCHABLE_STATES } },
         data: { qbMatchState: "MATCHED", qbFirstFailedAt: null, qbLastError: null, qbTxnId, qbTxnEntity: entity, qbMatchBaseline },
