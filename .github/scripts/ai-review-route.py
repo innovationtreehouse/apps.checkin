@@ -656,8 +656,7 @@ def later_round(pr, repo, head_sha, profiles):
             print(f"::warning::could not compare with the last review ({e}); routing uncapped", file=sys.stderr)
             return rounds, (False, prior_ok, None, False), has_ledger
         # A truncated compare (over 250 commits or 300 files) can hide a risky path, so it gets no cap.
-        truncated = cmp.get("total_commits", 0) > len(cmp.get("commits", [])) or len(cmp.get("files", [])) >= 300
-        if truncated or cmp.get("status") != "ahead" or any(len(c.get("parents", [])) > 1 for c in cmp.get("commits", [])):
+        if len(cmp.get("files", [])) >= 300 or not linear_since(cmp):
             return rounds, (False, prior_ok, None, False), has_ledger
         files = cmp.get("files", [])
         risky = [p for p in profiles if p["name"] in DELTA_HIGH]
