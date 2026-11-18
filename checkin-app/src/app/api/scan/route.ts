@@ -14,7 +14,7 @@ import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { uniqueViolationFields } from "@/lib/prismaUniqueViolation";
 import { resolveMergedPerson } from "@/lib/person/mergeChain";
 import { isLiveHousehold } from "@/lib/household/archived";
-import { specTrace } from "@/lib/specTrace";
+import { specTrace, traceOnCommit } from "@/lib/specTrace";
 import type { Prisma } from "@/generated/prisma/client";
 import { lastNightlyCloseAt } from "@/lib/attendance/nightlyClose";
 import { type ScanResult, toResponse } from "./scanResponse";
@@ -286,7 +286,7 @@ export const POST = withKiosk(
 
         let result: ScanResult;
         try {
-        result = await prisma.$transaction(async (tx): Promise<ScanResult> => {
+        result = await traceOnCommit(() => prisma.$transaction(async (tx): Promise<ScanResult> => {
             // Per-participant lock. Serializes only same-participant scans;
             // different participants get different lock keys and never block.
             // $executeRaw (not $queryRaw): pg_advisory_xact_lock returns `void`,
@@ -555,7 +555,7 @@ export const POST = withKiosk(
             // blocked on pg_advisory_xact_lock while an earlier scan holds it.
             maxWait: 5000,
             timeout: 15000,
-        });
+        }));
         } catch (err) {
             // Cross-lock race on the same clientEventId (e.g. two replay attempts
             // of one queued event racing different advisory-lock windows) — the
