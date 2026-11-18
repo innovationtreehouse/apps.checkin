@@ -141,8 +141,14 @@ describe('trusted-adult mutation concurrency', () => {
         // household row, as the move route does, until the decision queues on it.
         const holder = prisma.$transaction(async (tx) => {
             await tx.$queryRaw`SELECT id FROM "Household" WHERE id = ${householdId} FOR UPDATE`;
-            for (let i = 0; i < 100; i++) {
-                const [{ waiting }] = await tx.$queryRaw<{ waiting: number }[]>`SELECT count(*)::int AS waiting FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`;
+            for (let i = 0; ; i++) {
+                if (i === 100) throw new Error('The action never queued on the Household lock.');
+                // Postgres caches pg_stat_activity for the transaction unless the snapshot is cleared.
+                await tx.$queryRaw`SELECT pg_stat_clear_snapshot()::text`;
+                const [{ waiting }] = await tx.$queryRaw<{ waiting: number }[]>`
+                    SELECT count(*)::int AS waiting FROM pg_stat_activity
+                    WHERE datname = current_database() AND pid <> pg_backend_pid()
+                      AND wait_event_type = 'Lock' AND query LIKE '%"Household"%'`;
                 if (waiting > 0) break;
                 await new Promise((r) => setTimeout(r, 50));
             }
