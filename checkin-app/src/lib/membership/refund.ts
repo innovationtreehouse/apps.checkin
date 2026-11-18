@@ -1,8 +1,9 @@
 import prisma from "@/lib/prisma";
+import type { OrgMembershipProcess } from "@/generated/prisma/client";
 import { ReviewError, applicantHousehold } from "@/lib/membership/review";
 import { fromWhere, refundLandsIn } from "@/lib/membership/lifecycle";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
-import { personActor } from "@/lib/auditActor";
+import { personActor, systemActor, type AuditActor } from "@/lib/auditActor";
 
 /**
  * Board "Record refund": records a refund already made in Shopify by clearing
@@ -19,13 +20,37 @@ export async function recordRefund(processId: number, actorId: number, reason: s
     if (await hasHouseholdConflict(prisma, actorId, await applicantHousehold(prisma, process))) {
         throw new ReviewError("same_household_applicant", "You cannot record a refund on your own household's application — someone outside your household must.");
     }
+    return applyRefund(process, personActor(actorId), reason);
+}
+
+/**
+ * A store refund on a DENIED household's paid application records itself, as
+ * "Record refund" would. Returns true when it recorded one; false when the order is
+ * not this application's payment, the household is not DENIED, or nothing is left
+ * to refund.
+ */
+export async function recordDeniedStoreRefund(processId: number, shopifyOrderId: string): Promise<boolean> {
+    const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId }, include: { orgMembership: { select: { status: true } } } });
+    if (!process || process.orgMembership?.status !== "DENIED") return false;
+    if (process.shopifyOrderId !== shopifyOrderId || !process.paidAt || !refundLandsIn(process.status)) return false;
+    try {
+        await applyRefund(process, systemActor("webhook:shopify-refund"), `Store refund on order ${shopifyOrderId}`);
+        return true;
+    } catch (e: unknown) {
+        // Another writer cleared the payment first.
+        if (e instanceof ReviewError && e.code === "wrong_phase") return false;
+        throw e;
+    }
+}
+
+async function applyRefund(process: OrgMembershipProcess, actor: AuditActor, reason: string) {
     if (!process.paidAt) throw new ReviewError("wrong_phase", "This application has no payment recorded.");
     const to = refundLandsIn(process.status);
     if (!to) throw new ReviewError("wrong_phase", "A refund can only be recorded on a paid application that has not become a membership.");
 
     await prisma.$transaction(async (tx) => {
         const { count } = await tx.orgMembershipProcess.updateMany({
-            where: { id: processId, ...fromWhere(process.status), paidAt: { not: null } },
+            where: { id: process.id, ...fromWhere(process.status), paidAt: { not: null } },
             data: {
                 paidAt: null,
                 isPaymentPlanRequested: false,
@@ -35,10 +60,10 @@ export async function recordRefund(processId: number, actorId: number, reason: s
         if (count !== 1) throw new ReviewError("wrong_phase", "This application changed while you were looking at it. Reload and try again.");
         await tx.auditLog.create({
             data: {
-                ...personActor(actorId),
+                ...actor,
                 action: "EDIT",
                 tableName: "OrgMembershipProcess",
-                affectedEntityId: processId,
+                affectedEntityId: process.id,
                 oldData: { status: process.status, paidAt: process.paidAt!.toISOString(), shopifyOrderId: process.shopifyOrderId },
                 newData: { status: to, paidAt: null, refundRecorded: true, reason },
             },

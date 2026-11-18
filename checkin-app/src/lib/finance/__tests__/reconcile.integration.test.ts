@@ -13,6 +13,7 @@ import { snapshotBoardSettings } from "@/test-helpers/boardSettings";
 import { runReconcile } from "@/lib/finance/reconcile";
 import { raiseReversalByOrderId, returnTestOrderStock } from "@/lib/finance/reconcile/reversals";
 import { recordPaymentException } from "@/lib/finance/reconcile/exceptions";
+import { refundableApplication } from "@/lib/membership/lifecycle";
 import { orderEntitlesEnrollment, type EntitlementOrder } from "@/lib/finance/reconcile/program";
 import { activateProgramEnrollment } from "@/lib/programs/activateEnrollment";
 import { systemActor } from "@/lib/auditActor";
@@ -93,7 +94,7 @@ async function signedAttrs(programId: number, ids: string) {
 /** A household whose lead has `email`, an OrgMembership, and one process. */
 async function makeApplicant(opts: {
     email: string;
-    status: "PENDING_PAYMENT" | "ACTIVE" | "BLOCKED" | "ARCHIVED";
+    status: "PENDING_PAYMENT" | "PENDING_BG_CLEARANCE" | "ACTIVE" | "BLOCKED" | "ARCHIVED";
     household?: "NONE" | "DENIED";
     bgCleared?: boolean;
     isVolunteerFamily?: boolean;
@@ -1650,5 +1651,78 @@ describe("a resolved exception and the next day's pass", () => {
 
         await runReconcile();
         expectStillResolved(await row(oid, "DISCOUNT_UNAUTHORIZED"));
+    });
+});
+
+describe("a store refund on a denied household's paid application records itself", () => {
+    const proc = (id: number) => prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id }, select: { status: true, paidAt: true } });
+    /** The red refund-owed count's predicate, for this one application. */
+    const owed = (id: number) => prisma.orgMembershipProcess.count({ where: { AND: [refundableApplication.where, { id, orgMembership: { status: "DENIED" } }] } });
+    const problems = (processId: number) =>
+        prisma.paymentException.findMany({ where: { processId }, select: { kind: true, status: true, resolvedById: true, resolutionNote: true } });
+    const settled = [{ kind: "REFUND", status: "RESOLVED", resolvedById: null, resolutionNote: expect.stringContaining("denied") }];
+    const refundAudits = (id: number) =>
+        prisma.auditLog.count({ where: { tableName: "OrgMembershipProcess", affectedEntityId: id, actorSystem: "webhook:shopify-refund", newData: { path: ["refundRecorded"], equals: true } } });
+
+    it("the refunds webhook clears the payment and leaves nothing for the Board", async () => {
+        const oid = `${TAG}-900`;
+        const { processId } = await makeApplicant({ email: `dr900-${TAG}@ex.com`, status: "PENDING_BG_CLEARANCE", household: "DENIED", paid: true, shopifyOrderId: oid });
+        expect(await owed(processId)).toBe(1);
+
+        expect(await raiseReversalByOrderId(oid, "REFUND", [], `${oid}-r1`)).toBe(true);
+        expect(await proc(processId)).toEqual({ status: "PENDING_PAYMENT", paidAt: null });
+        expect(await owed(processId)).toBe(0);
+        expect(await problems(processId)).toEqual(settled);
+        expect(await refundAudits(processId)).toBe(1);
+
+        // A redelivery changes nothing.
+        await raiseReversalByOrderId(oid, "REFUND", [], `${oid}-r1`);
+        expect(await problems(processId)).toEqual(settled);
+        expect(await refundAudits(processId)).toBe(1);
+    });
+
+    it.each([
+        ["a full refund", "901", "PENDING_BG_CLEARANCE", { financialStatus: "REFUNDED", totalRefundedCents: 5000 }, "PENDING_PAYMENT"],
+        ["a partial refund", "902", "PENDING_BG_CLEARANCE", { financialStatus: "PARTIALLY_REFUNDED", totalRefundedCents: 1000 }, "PENDING_PAYMENT"],
+        ["a partial refund on a BLOCKED application", "903", "BLOCKED", { financialStatus: "PARTIALLY_REFUNDED", totalRefundedCents: 1000 }, "BLOCKED"],
+    ] as const)("the daily pass records %s the webhook never delivered", async (_label, n, status, refund, landsIn) => {
+        const oid = `${TAG}-${n}`;
+        const { processId } = await makeApplicant({ email: `dr${n}-${TAG}@ex.com`, status, household: "DENIED", paid: true, shopifyOrderId: oid });
+        ordersByLegacyIds.mockResolvedValue([order({ legacyId: oid, ...refund })]);
+
+        await runReconcile();
+        expect(await proc(processId)).toEqual({ status: landsIn, paidAt: null });
+        expect(await owed(processId)).toBe(0);
+        expect(await problems(processId)).toEqual(settled);
+
+        await runReconcile();
+        expect(await problems(processId)).toEqual(settled);
+        expect(await refundAudits(processId)).toBe(1);
+    });
+
+    it("a refund on a household that is not denied keeps the payment and is raised for the Board", async () => {
+        const oid = `${TAG}-904`;
+        const { processId } = await makeApplicant({ email: `dr904-${TAG}@ex.com`, status: "PENDING_BG_CLEARANCE", paid: true, shopifyOrderId: oid });
+
+        await raiseReversalByOrderId(oid, "REFUND", [], `${oid}-r1`);
+        expect((await proc(processId)).paidAt).not.toBeNull();
+        expect(await prisma.paymentException.findMany({ where: { processId }, select: { kind: true, status: true, severity: true } }))
+            .toEqual([{ kind: "REFUND", status: "OPEN", severity: "CRITICAL" }]);
+
+        ordersByLegacyIds.mockResolvedValue([order({ legacyId: oid, financialStatus: "PARTIALLY_REFUNDED", totalRefundedCents: 1000 })]);
+        await runReconcile();
+        expect((await proc(processId)).paidAt).not.toBeNull();
+        expect(await prisma.paymentException.count({ where: { processId, status: "OPEN" } })).toBe(1);
+        expect(await refundAudits(processId)).toBe(0);
+    });
+
+    it("a cancellation on a denied household stays with the Board", async () => {
+        const oid = `${TAG}-905`;
+        const { processId } = await makeApplicant({ email: `dr905-${TAG}@ex.com`, status: "PENDING_BG_CLEARANCE", household: "DENIED", paid: true, shopifyOrderId: oid });
+
+        await raiseReversalByOrderId(oid, "CANCELLED");
+        expect((await proc(processId)).paidAt).not.toBeNull();
+        expect(await owed(processId)).toBe(1);
+        expect(await prisma.paymentException.findMany({ where: { processId }, select: { kind: true, status: true } })).toEqual([{ kind: "CANCELLED", status: "OPEN" }]);
     });
 });

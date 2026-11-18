@@ -7,7 +7,9 @@ import { isSaleEnded, type SaleRow } from "@/lib/programs/saleState";
 import * as mirror from "@/lib/shopifyRead/client";
 import type { MirrorOrder } from "@/lib/shopifyRead/client";
 import type { Prisma } from "@/generated/prisma/client";
-import { raisePaymentException, recordReversal, type PaymentExceptionKind } from "./exceptions";
+import { recordDeniedStoreRefund } from "@/lib/membership/refund";
+import { refundableApplication } from "@/lib/membership/lifecycle";
+import { raisePaymentException, recordReversal, recordSettledPaymentException, type PaymentExceptionKind } from "./exceptions";
 import { isReversed } from "./orderStatus";
 import { membershipVariantYears, usesVolunteerCodeUnentitled } from "./membership";
 
@@ -34,6 +36,8 @@ export interface RestockedLine {
     personIds?: number[];
 }
 
+const DENIED_REFUND_NOTE = "Refund recorded on its own: the household is denied.";
+
 /**
  * Fast-path entry for the reversal webhooks (refunds/create, orders/cancelled,
  * disputes/*): map a Shopify order id to the membership process and/or program
@@ -55,7 +59,10 @@ export async function raiseReversalByOrderId(
     await recordReversal(orderLegacyId, kind);
     let matched = false;
     const proc = await prisma.orgMembershipProcess.findFirst({ where: { shopifyOrderId: orderLegacyId }, select: { id: true, status: true, paidAt: true } });
-    if (proc) {
+    if (proc && kind === "REFUND" && (await recordDeniedStoreRefund(proc.id, orderLegacyId))) {
+        await recordSettledPaymentException("REFUND", { shopifyOrderId: orderLegacyId, processId: proc.id }, DENIED_REFUND_NOTE);
+        matched = true;
+    } else if (proc) {
         // Paid and still waiting on its check: it must not activate, so the Board hears now.
         const waiting = !!proc.paidAt && (proc.status === "PENDING_BG_CLEARANCE" || proc.status === "PENDING_BG_REVIEW");
         await raisePaymentException(kind, { shopifyOrderId: orderLegacyId, processId: proc.id, ...(waiting ? { severity: "CRITICAL" as const } : {}) });
@@ -345,7 +352,31 @@ async function keepRefundedEnrollment(programId: number, personId: number, order
     return active > 0 ? 1 : 0;
 }
 
+/**
+ * A store refund on a DENIED household's paid application records itself. The daily
+ * pass for a refund whose webhook never arrived, or one that arrived before the denial.
+ */
+async function recordDeniedStoreRefunds(): Promise<void> {
+    const procs = await prisma.orgMembershipProcess.findMany({
+        where: { AND: [refundableApplication.where, { shopifyOrderId: { not: null }, orgMembership: { status: "DENIED" } }] },
+        select: { id: true, shopifyOrderId: true },
+    });
+    if (procs.length === 0) return;
+    const orders = await mirror.ordersByLegacyIds([...new Set(procs.map((p) => p.shopifyOrderId!))]);
+    const byLegacy = new Map(orders.map((o) => [o.legacyId ?? "", o]));
+    const disputes = await mirror.orderDisputeCounts(orders.map((o) => o.orderGid));
+    for (const proc of procs) {
+        const o = byLegacy.get(proc.shopifyOrderId!);
+        if (!o || classifyReversal(o, disputes.has(o.orderGid)) !== "REFUND") continue;
+        await recordReversal(proc.shopifyOrderId!, "REFUND");
+        if (!(await recordDeniedStoreRefund(proc.id, proc.shopifyOrderId!))) continue;
+        const evidence = reversalEvidence(o, disputes.get(o.orderGid) ?? 0);
+        await recordSettledPaymentException("REFUND", { shopifyOrderId: proc.shopifyOrderId!, processId: proc.id, evidence }, DENIED_REFUND_NOTE);
+    }
+}
+
 export async function reconcileReversals(): Promise<number> {
+    await recordDeniedStoreRefunds();
     // App-side activated orders: money recorded (paidAt) with an order id. BLOCKED
     // stays out — a refund on a paid-while-blocked application is the expected fix.
     const procs = await prisma.orgMembershipProcess.findMany({

@@ -115,6 +115,18 @@ export async function raisePaymentException(kind: PaymentExceptionKind, ref: Exc
     if (notice) await notifyBoardPaymentException(notice.kind, notice.severity, notice.exceptionId);
 }
 
+/**
+ * Record a problem the app has already settled on its own: the row is written for the
+ * record and left resolved with a system note, so the Board is not asked to act.
+ */
+export async function recordSettledPaymentException(kind: PaymentExceptionKind, ref: ExceptionRef & { shopifyOrderId: string }, note: string): Promise<void> {
+    await recordPaymentException(prisma, kind, ref);
+    await prisma.paymentException.updateMany({
+        where: { kind, shopifyOrderId: ref.shopifyOrderId, personId: ref.personId ?? null, status: { not: "RESOLVED" } },
+        data: { status: "RESOLVED", resolvedAt: new Date(), resolvedById: null, resolutionNote: note },
+    });
+}
+
 /** Problems that mean the order's money went back to the payer. */
 const REVERSAL_KINDS: PaymentExceptionKind[] = ["REFUND", "CANCELLED", "CHARGEBACK", "REVERSED_BEFORE_ACTIVATION"];
 
