@@ -1,6 +1,7 @@
 import prisma from "@/lib/prisma";
 import { handler } from "@/security/handler";
 import { openProcess } from "@/lib/membership/lifecycle";
+import { isNotRenewingRenewal, notRenewingTargetYear } from "@/lib/membership/notRenewing";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +17,9 @@ export const dynamic = "force-dynamic";
  *
  * ?archived=1 flips to the board's recovery view: only ARCHIVED rows, so a
  * wrongly-archived application can be found and restored (unarchive route).
+ *
+ * Each row carries `notRenewing`: true for a renewal opened for the year its
+ * household has said it won't renew into.
  */
 export const GET = handler("GET /api/membership-ops/applications", async ({ req }) => {
     const archived = new URL(req.url).searchParams.get("archived") === "1";
@@ -51,5 +55,20 @@ export const GET = handler("GET /api/membership-ops/applications", async ({ req 
         },
     });
 
-    return { OrgMembershipProcess: processes };
+    const now = new Date();
+    const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
+    const boundary = settings?.orgMembershipYearBoundary;
+    const notedYear = notRenewingTargetYear(boundary, now);
+    const noted = notedYear === null ? [] : await prisma.orgMembership.findMany({
+        where: { notRenewingYear: notedYear },
+        select: { householdId: true },
+    });
+    const notedHouseholds = new Set(noted.map((m) => m.householdId));
+
+    const rows = processes.map((p) => ({
+        ...p,
+        notRenewing: !!p.orgMembership && notedHouseholds.has(p.orgMembership.householdId)
+            && isNotRenewingRenewal(p, notedYear, boundary, now),
+    }));
+    return { MembershipApplicationRow: rows };
 });

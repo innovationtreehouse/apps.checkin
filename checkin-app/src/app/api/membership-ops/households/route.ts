@@ -20,6 +20,7 @@ import { searchId } from "@/lib/searchId";
 import { withArchivedHouseholds } from "@/lib/household/archived";
 import { ArchivedHouseholdError } from "@/lib/household/archiveGuard";
 import { householdCheckStandings } from "@/lib/membership/checkStanding";
+import { notRenewingTargetYear } from "@/lib/membership/notRenewing";
 
 export const dynamic = 'force-dynamic';
 
@@ -192,8 +193,10 @@ export const GET = withAuth(
                     // matches no row, keeping one query shape.
                     orgMembership: {
                         select: {
+                            id: true,
                             status: true,
                             memberSince: true,
+                            notRenewingYear: true,
                             processes: {
                                 where: {
                                     OR: [
@@ -215,10 +218,17 @@ export const GET = withAuth(
             const recheckMonths = settings?.bgRecheckMonths ?? 0;
             const bgSettings = { orgMembershipYearBoundary: settings?.orgMembershipYearBoundary ?? null, bgRecheckMonths: recheckMonths };
 
+            const notedYear = notRenewingTargetYear(settings?.orgMembershipYearBoundary, new Date());
+            const notRenewingSince = await notRenewingNotedAt(
+                households.flatMap((h) => (h.orgMembership && h.orgMembership.notRenewingYear === notedYear ? [h.orgMembership.id] : [])),
+                notedYear,
+            );
+
             const withGrantable = households.map((h) => {
                 // Split the single OR probe by status: PENDING_PAYMENT awaits a grant;
                 // any other row is a fee-paid process, so the live year is settled.
-                const { processes = [], ...orgMembership } = h.orgMembership ?? {};
+                const { processes = [], id: membershipId, notRenewingYear, ...orgMembership } = h.orgMembership ?? {};
+                const notRenewingAt = membershipId === undefined ? undefined : notRenewingSince.get(membershipId);
                 const awaitingPayment = processes.some((p) => p.status === "PENDING_PAYMENT");
                 const settledForComingYear = processes.some((p) => p.status !== "PENDING_PAYMENT");
                 // Household-level BG "valid until" — later lastBackgroundCheck among leads
@@ -233,6 +243,7 @@ export const GET = withAuth(
                     awaitingPayment,
                     settledForComingYear,
                     bgValidUntil,
+                    notRenewing: notRenewingYear != null && notRenewingAt ? { year: notRenewingYear, since: notRenewingAt } : null,
                     validUntil: h.orgMembership?.status === "ACTIVE" && cycle ? coveredThrough(cycle, settledForComingYear) : null,
                 };
             });
@@ -247,6 +258,17 @@ export const GET = withAuth(
         }
     }
 );
+
+/** When each membership's current "won't renew" note was made, from its audit row. */
+async function notRenewingNotedAt(membershipIds: number[], year: number | null): Promise<Map<number, Date>> {
+    if (membershipIds.length === 0 || year === null) return new Map();
+    const rows = await prisma.auditLog.findMany({
+        where: { tableName: "OrgMembership", affectedEntityId: { in: membershipIds }, newData: { path: ["notRenewingYear"], equals: year } },
+        orderBy: { timestamp: "asc" },
+        select: { affectedEntityId: true, timestamp: true },
+    });
+    return new Map(rows.map((r) => [r.affectedEntityId, r.timestamp]));
+}
 
 export const POST = withAuth(
     { roles: ['isSysadmin', 'isBoardMember'] },
