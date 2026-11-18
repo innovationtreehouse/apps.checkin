@@ -78,9 +78,11 @@ async function readyGift(run: Run, source: InKindSource, id: number): Promise<Gi
 /**
  * Saves a settlement finance made, while the gift is still finance's and its posting is unchanged
  * since `read`: every claim moves `updatedAt`, so a create attempted meanwhile, first or retry, is
- * refused (it may have landed). Another gift holding an entry is refused too.
+ * refused (it may have landed). Another gift holding an entry is refused too. A skip answers
+ * every stray entry the note named; a match answers none, since the gift holds what it links and
+ * a later re-match may let go of it.
  */
-async function settleByFinance(orgId: string, gift: GiftRef, read: HeldPosting, s: Settlement, actor: Actor, payload: Record<string, unknown>): Promise<void> {
+async function settleByFinance(orgId: string, gift: GiftRef, read: HeldPosting, s: Settlement, actor: Actor, payload: Record<string, unknown>, answersEveryStray = false): Promise<void> {
   try {
     await db.$transaction(async (tx) => {
       const posting = await lockPosting(tx, orgId, gift.source, gift.id);
@@ -90,7 +92,8 @@ async function settleByFinance(orgId: string, gift: GiftRef, read: HeldPosting, 
       if (posting.matchState === QB_MATCH_STATE.DRIFT && s.entries.length > 0) {
         await tx.inKindBooking.deleteMany({ where: { orgId, source: gift.source, giftId: gift.id } });
       }
-      await writeSettlement(tx, orgId, gift, posting, s, actor, { from: posting.matchState, manual: true, ...payload });
+      const answered = answersEveryStray ? { answeredEntries: strayEntriesOf(posting.qbNote).map(answeredEntryRef) } : {};
+      await writeSettlement(tx, orgId, gift, posting, s, actor, { from: posting.matchState, manual: true, ...payload, ...answered });
     });
   } catch (err) {
     if (isUniqueConstraintError(err)) throw new ServiceError(409, `QuickBooks ${s.entries.map((e) => `${e.entity} ${e.id}`).join(", ")} is already held by another gift`);
@@ -183,7 +186,7 @@ async function skip(orgId: string, source: InKindSource, id: number, reason: str
   const ref = await giftRef(orgId, source, id);
   const posting = await heldPosting(orgId, source, id);
   if (await linkOwnFirst(orgId, ref, posting, actor)) return;
-  await settleByFinance(orgId, ref, posting, { state: QB_MATCH_STATE.DISMISSED, note: null, entries: [] }, actor, { reason: why });
+  await settleByFinance(orgId, ref, posting, { state: QB_MATCH_STATE.DISMISSED, note: null, entries: [] }, actor, { reason: why }, true);
 }
 
 /**
@@ -213,7 +216,7 @@ async function book(orgId: string, source: InKindSource, id: number, actor: Acto
     case QB_MATCH_STATE.UNBOOKED:
       throw new ServiceError(409, "The gift is dated in closed books; it can only be skipped");
     default:
-      throw new ServiceError(409, `Not booked: the gift now waits as ${saved.matchState}${saved.qbNote ? ` (${saved.qbNote})` : ""}`);
+      throw new ServiceError(409, `Not booked: the gift now waits as ${saved.matchState}${saved.qbNote ? ` (${saved.qbNote.replaceAll("\n", ", ")})` : ""}`);
   }
 }
 
