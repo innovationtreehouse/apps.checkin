@@ -72,10 +72,8 @@ beforeEach(() => {
     mirrorMock.lineVariantStats.mockResolvedValue({ lines: 10, withVariant: 10 });
     mirrorMock.ordersForVariants.mockResolvedValue([]);
     mirrorMock.orderLegacyIdsPresent.mockResolvedValue(new Set());
-    prismaMock.membershipYearVariant.findMany.mockResolvedValue([]);
-    prismaMock.boardSettings.findUnique.mockResolvedValue({
-        orgMembershipVariantId: '111',
-    });
+    prismaMock.membershipYearVariant.findMany.mockResolvedValue([{ shopifyVariantId: '111', membershipYear: 2026 }]);
+    prismaMock.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: null });
     prismaMock.program.findMany.mockResolvedValue([
         { id: 7, name: 'Robotics', shopifyVariantId: '222' },
     ]);

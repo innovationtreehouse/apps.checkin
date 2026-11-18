@@ -132,7 +132,7 @@ export async function runMatchAudit(): Promise<MatchAuditResult> {
     const [settings, programs, variantCoverage] = await Promise.all([
         prisma.boardSettings.findUnique({
             where: { id: 1 },
-            select: { orgMembershipVariantId: true, orgMembershipYearBoundary: true },
+            select: { orgMembershipYearBoundary: true },
         }),
         prisma.program.findMany({
             select: { id: true, name: true, shopifyVariantId: true, claimantShopifyVariantId: true },

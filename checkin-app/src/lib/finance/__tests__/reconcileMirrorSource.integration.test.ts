@@ -31,6 +31,7 @@ let mirror: Client;
 let restoreBoardSettings: () => Promise<void> = async () => {};
 let nextOrder = 1;
 const MEMBERSHIP_VARIANT = `${TAG}-membership`;
+const MEMBERSHIP_YEAR = 2043;
 
 function urlFor(db: string): string {
     const url = new URL(process.env.DATABASE_URL!);
@@ -123,8 +124,9 @@ beforeAll(async () => {
     process.env.SHOPIFY_READ_DATABASE_URL = urlFor(MIRROR_DB);
 
     restoreBoardSettings = await snapshotBoardSettings();
-    const settings = { standardMembershipFeeCents: 5000, volunteerMembershipFeeCents: 2000, orgMembershipVariantId: MEMBERSHIP_VARIANT, orgMembershipYearBoundary: null, shopifyReconcileCursorAt: null };
+    const settings = { standardMembershipFeeCents: 5000, volunteerMembershipFeeCents: 2000, orgMembershipYearBoundary: null, shopifyReconcileCursorAt: null };
     await prisma.boardSettings.upsert({ where: { id: 1 }, create: { id: 1, ...settings }, update: settings });
+    await prisma.membershipYearVariant.create({ data: { membershipYear: MEMBERSHIP_YEAR, shopifyVariantId: MEMBERSHIP_VARIANT } });
 }, 60_000);
 
 afterAll(async () => {
@@ -140,6 +142,7 @@ afterAll(async () => {
     await prisma.person.deleteMany({ where: { householdId: { in: ids } } });
     await prisma.household.deleteMany({ where: { id: { in: ids } } });
     await restoreBoardSettings();
+    await prisma.membershipYearVariant.deleteMany({ where: { membershipYear: MEMBERSHIP_YEAR } });
 
     await mirror?.end();
     delete process.env.SHOPIFY_READ_DATABASE_URL;

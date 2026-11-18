@@ -50,6 +50,7 @@ import { adjustProgramInventory } from "@/lib/shopify/stock";
 const TAG = "reconcile-matrix-test";
 // A membership variant id the board has configured; the mirror copies it onto order lines.
 const MEMBERSHIP_VARIANT = "variant-normal-1";
+const MEMBERSHIP_YEAR = 2042;
 const ordersChangedSince = mirror.ordersChangedSince as jest.Mock;
 const ordersByLegacyIds = mirror.ordersByLegacyIds as jest.Mock;
 const orderDisputeCounts = mirror.orderDisputeCounts as jest.Mock;
@@ -162,9 +163,10 @@ beforeAll(async () => {
     restoreBoardSettings = await snapshotBoardSettings();
     await prisma.boardSettings.upsert({
         where: { id: 1 },
-        create: { id: 1, standardMembershipFeeCents: 5000, volunteerMembershipFeeCents: 2000, orgMembershipVariantId: MEMBERSHIP_VARIANT, volunteerFamilyDiscountCode: VOLUNTEER_CODE, orgMembershipYearBoundary: null },
-        update: { standardMembershipFeeCents: 5000, volunteerMembershipFeeCents: 2000, orgMembershipVariantId: MEMBERSHIP_VARIANT, volunteerFamilyDiscountCode: VOLUNTEER_CODE, orgMembershipYearBoundary: null, shopifyReconcileCursorAt: null },
+        create: { id: 1, standardMembershipFeeCents: 5000, volunteerMembershipFeeCents: 2000, volunteerFamilyDiscountCode: VOLUNTEER_CODE, orgMembershipYearBoundary: null },
+        update: { standardMembershipFeeCents: 5000, volunteerMembershipFeeCents: 2000, volunteerFamilyDiscountCode: VOLUNTEER_CODE, orgMembershipYearBoundary: null, shopifyReconcileCursorAt: null },
     });
+    await prisma.membershipYearVariant.create({ data: { membershipYear: MEMBERSHIP_YEAR, shopifyVariantId: MEMBERSHIP_VARIANT } });
 });
 
 beforeEach(() => {
@@ -209,6 +211,7 @@ afterAll(async () => {
     await prisma.paymentException.deleteMany({ where: { shopifyOrderId: { startsWith: `${TAG}-` } } });
     await prisma.auditLog.deleteMany({ where: { tableName: "ShopifyOrderReversal", newData: { path: ["shopifyOrderId"], string_starts_with: `${TAG}-` } } });
     await restoreBoardSettings();
+    await prisma.membershipYearVariant.deleteMany({ where: { membershipYear: MEMBERSHIP_YEAR } });
 });
 
 describe("forward recovery", () => {
@@ -419,21 +422,6 @@ describe("forward recovery", () => {
             await prisma.membershipYearVariant.delete({ where: { membershipYear: 2031 } });
         }
         expect(await prisma.orgMembershipProcess.findUnique({ where: { id: processId } })).toMatchObject({ status: "ACTIVE", appliesToYear: 2031 });
-    });
-
-    it("stamps the single variant with the live year when the order was paid, not when it was found", async () => {
-        const email = `yearpaid-${TAG}@ex.com`;
-        const oid = `${TAG}-131`;
-        const { processId } = await makeApplicant({ email, status: "PENDING_PAYMENT", bgCleared: true });
-        await prisma.boardSettings.update({ where: { id: 1 }, data: { orgMembershipYearBoundary: new Date(Date.UTC(2000, 8, 1)) } });
-        orderLineVariantIds.mockResolvedValue([MEMBERSHIP_VARIANT]);
-        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, customerEmail: email, processedAt: new Date(Date.UTC(2024, 5, 20)) })]);
-        try {
-            await runReconcile();
-        } finally {
-            await prisma.boardSettings.update({ where: { id: 1 }, data: { orgMembershipYearBoundary: null } });
-        }
-        expect(await prisma.orgMembershipProcess.findUnique({ where: { id: processId } })).toMatchObject({ status: "ACTIVE", appliesToYear: 2023 });
     });
 
     it("raises NO_ITEM when a variant-mirrored order contains no membership product", async () => {

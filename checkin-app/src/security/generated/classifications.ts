@@ -143,8 +143,6 @@ export const classifications = {
         standardMembershipFeeCents: 'public',
         volunteerMembershipFeeCents: 'public',
         orgMembershipYearBoundary: 'public',
-        orgMembershipVariantId: 'internal',
-        orgMembershipProductUrl: 'internal',
         volunteerFamilyDiscountCode: 'internal',
         bgRecheckMonths: 'public',
         keyVolunteerAgreementVersion: 'public',
