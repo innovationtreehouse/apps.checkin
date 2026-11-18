@@ -88,15 +88,15 @@ describe('self-grant refusal audit rows', () => {
         expect(await refusalSubjects(leadId, 'override', 'reset')).toEqual([householdId]);
     });
 
-    it('refuses a board reset when the actor joins the household while it waits on the review lock', async () => {
+    it('refuses a board reset when the actor joins the household while it waits on the household lock', async () => {
         const { processId, householdId } = await makeOwnHouseholdReview('BLOCKED');
         const boardHh = await prisma.household.create({ data: { name: `Board ${TAG}` } });
         const board = await prisma.person.create({ data: { name: `Board ${TAG}`, householdId: boardHh.id, isBoardMember: true } });
 
-        // The holder takes the review lock, waits for the reset to queue on it (its bar
-        // has passed), then moves the board member into the review's household.
+        // The holder is a move of the board member into the review's household: it holds
+        // the household's membership row, as the move route does, until the reset queues on it.
         const holder = prisma.$transaction(async (tx) => {
-            await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${processId} FOR UPDATE`;
+            await tx.$queryRaw`SELECT id FROM "OrgMembership" WHERE "householdId" = ${householdId} FOR UPDATE`;
             for (let i = 0; i < 100; i++) {
                 const [{ waiting }] = await tx.$queryRaw<{ waiting: number }[]>`SELECT count(*)::int AS waiting FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`;
                 if (waiting > 0) break;

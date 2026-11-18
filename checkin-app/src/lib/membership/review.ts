@@ -17,6 +17,7 @@ import { sharesHousehold } from "@/lib/conflictOfInterest";
 import { type DbClient, type TxClient } from "@/lib/db-client";
 import { awaitingBgReview, fromWhere, personBgOpen } from "@/lib/membership/lifecycle";
 import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
+import { lockHouseholdRows } from "@/lib/household/archiveGuard";
 import { raisePaymentException } from "@/lib/finance/reconcile/exceptions";
 import { SIGN_IN_VERIFIED_PERSON } from "@/lib/person/filters";
 import { householdCheckStarted, jsonField, reviewHoldsRejection } from "@/lib/membership/checkStanding";
@@ -729,8 +730,8 @@ export async function boardResetReview(processId: number, actorId: number, opts:
         const fresh = await tx.orgMembershipProcess.findUnique({ where: { id: processId }, select: { status: true, kind: true, paidAt: true, bgConsentAt: true, bgClearedAt: true, contractSignedAt: true, subjectPersonId: true, orgMembershipId: true, requestedForHouseholdId: true } });
         if (!fresh) throw new ReviewError("not_found", "Application not found.");
         await throwIfHouseholdsMoved(tx, fresh, households);
-        await throwIfActorJoined(tx, actorId, households, "reset");
         await throwIfDenied(tx, households, "reset");
+        await throwIfActorJoined(tx, actorId, households, "reset");
         const blocked = fresh.status === "BLOCKED";
         if (!blocked && !awaitingBgReview.has({ kind: fresh.kind, status: fresh.status, bgConsentAt: !!fresh.bgConsentAt, bgClearedAt: !!fresh.bgClearedAt })) {
             throw new ReviewError("wrong_phase", "This background-check review is neither blocked nor still in progress.");
@@ -778,8 +779,9 @@ type BoardOverride = "reset" | "close" | "reopen";
 
 const boardOverrideRefusal = (override: BoardOverride) => `You cannot ${override} your own household's review — someone outside your household must.`;
 
-/** boardReviewHouseholds' bar ran before the lock; re-run it on the actor as they stand now. */
+/** boardReviewHouseholds' bar ran before the lock; re-run it on the actor under the household locks a move into these households takes. */
 async function throwIfActorJoined(tx: TxClient, actorId: number, households: number[], override: BoardOverride) {
+    await lockHouseholdRows(tx, households);
     for (const householdId of households) {
         const refusal = await findSelfGrantRefusal(tx, actorId, { householdId }, { table: "Person", attempted: { override } });
         if (refusal) throw new SelfGrantRefusedError(refusal, boardOverrideRefusal(override));
@@ -811,8 +813,8 @@ async function closeAsWrongPerson(process: OrgMembershipProcess, actorId: number
         const fresh = await tx.orgMembershipProcess.findUnique({ where: { id: processId }, select: { status: true, orgMembershipId: true, subjectPersonId: true, requestedForHouseholdId: true } });
         if (!fresh) throw new ReviewError("not_found", "Application not found.");
         await throwIfHouseholdsMoved(tx, fresh, households);
-        await throwIfActorJoined(tx, actorId, households, "close");
         await throwIfDenied(tx, households, "closed");
+        await throwIfActorJoined(tx, actorId, households, "close");
         if (!personBgOpen.has({ status: fresh.status })) throw new ReviewError("wrong_phase", "Only an open check review can be closed as opened for the wrong person.");
         const { count } = await tx.orgMembershipProcess.updateMany({
             where: { id: processId, ...fromWhere(fresh.status) },
@@ -867,8 +869,8 @@ export async function boardReopenWrongPersonClose(processId: number, actorId: nu
         const people = await reopenPeople(tx, processId, fresh.subjectPersonId, unnamedFor);
         for (const id of people) await tx.$queryRaw`SELECT id FROM "Person" WHERE id = ${id} FOR UPDATE`;
         await throwIfHouseholdsMoved(tx, fresh, households);
-        await throwIfActorJoined(tx, actorId, households, "reopen");
         await throwIfDenied(tx, households, "reopened");
+        await throwIfActorJoined(tx, actorId, households, "reopen");
         const later = await tx.orgMembershipProcess.findFirst({
             where: {
                 kind: "PERSON_BG",

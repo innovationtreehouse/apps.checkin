@@ -132,15 +132,15 @@ describe('trusted-adult mutation concurrency', () => {
         expect(JSON.stringify(normalizeAuditData(decisions[0].newData))).toContain(`"status":"${review!.status}"`);
     });
 
-    it('a board member who joins the household while the decision waits on the lock is refused', async () => {
+    it('a board member who joins the household while the decision waits on its lock is refused', async () => {
         const ta = await disclose();
         const reviewId = ta.reviews[0].id;
         const boardHouseholdId = (await prisma.person.findUniqueOrThrow({ where: { id: boardId } })).householdId;
 
-        // The holder takes the parent lock, waits for the decision to queue on it (its
-        // conflict bar has passed), then moves the board member into the family.
+        // The holder is a move of the board member into the family: it holds the family's
+        // household row, as the move route does, until the decision queues on it.
         const holder = prisma.$transaction(async (tx) => {
-            await tx.$queryRaw`SELECT id FROM "TrustedAdult" WHERE id = ${ta.id} FOR UPDATE`;
+            await tx.$queryRaw`SELECT id FROM "Household" WHERE id = ${householdId} FOR UPDATE`;
             for (let i = 0; i < 100; i++) {
                 const [{ waiting }] = await tx.$queryRaw<{ waiting: number }[]>`SELECT count(*)::int AS waiting FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`;
                 if (waiting > 0) break;

@@ -1,7 +1,7 @@
 import prisma from "@/lib/prisma";
 import { ServiceError } from "@checkin/component-kit";
 import { isLiveHousehold } from "@/lib/household/archived";
-import { ARCHIVED_HOUSEHOLD_REFUSAL, ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
+import { ARCHIVED_HOUSEHOLD_REFUSAL, ArchivedHouseholdError, lockHouseholdRows, lockLiveHouseholds } from "@/lib/household/archiveGuard";
 import { TRUSTED_ADULT_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { personActor, systemActor, type AuditActor } from "@/lib/auditActor";
 import { emailBoardMembers, emailHouseholdLeads } from "@/lib/emailRecipients";
@@ -440,12 +440,21 @@ async function refuseConflictedActor(actorId: number, reviewId: number, review: 
     throw new TrustedAdultError("forbidden", message);
 }
 
-/** The conflict bar ran before the lock; re-run it on the review as it stands under the lock. */
+/**
+ * The conflict bar ran before the lock; re-run it on the review as it stands, under the
+ * locks a household move takes on the actor's and the adult's households.
+ */
 async function throwIfConflictedUnderLock(tx: TxClient, actorId: number, reviewId: number, message: string) {
-    const review = await tx.trustedAdultReview.findUnique({
+    const readReview = () => tx.trustedAdultReview.findUnique({
         where: { id: reviewId },
         select: { proposedEmail: true, proposedPhone: true, trustedAdult: { select: CONFLICT_TA_SELECT } },
     });
+    const before = await readReview();
+    if (!before) throw new TrustedAdultError("not_found", "Review not found.");
+    const actor = await tx.person.findUnique({ where: { id: actorId }, select: { householdId: true } });
+    const ta = before.trustedAdult;
+    await lockHouseholdRows(tx, [ta.householdId, ta.trustedAdultPerson?.householdId, actor?.householdId].filter((id): id is number => id != null));
+    const review = await readReview();
     if (!review) throw new TrustedAdultError("not_found", "Review not found.");
     const refusal = await findConflictRefusal(tx, actorId, reviewId, review);
     if (refusal) throw new ConflictRefusedError(refusal, message);

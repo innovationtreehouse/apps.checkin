@@ -143,7 +143,8 @@ describe('Admin Participant Household API Integration Tests', () => {
         it('refuses a move whose source changed and was denied after the pre-check -> 409, unchanged', async () => {
             const denied = await prisma.household.create({ data: { name: 'Household API Test Later Denied' } });
             const realTransaction = prisma.$transaction.bind(prisma) as (fn: unknown) => Promise<unknown>;
-            const spy = jest.spyOn(prisma, '$transaction').mockImplementation((async (fn: unknown) => {
+            // Once: the route's own nested calls (the lead demote's savepoint) pass through.
+            const spy = jest.spyOn(prisma, '$transaction').mockImplementationOnce((async (fn: unknown) => {
                 // A concurrent move into `denied` commits, then the household is denied.
                 await prisma.person.update({ where: { id: testParticipantId }, data: { householdId: denied.id } });
                 await prisma.orgMembership.upsert({ where: { householdId: denied.id }, create: { householdId: denied.id, status: 'DENIED' }, update: {} });
