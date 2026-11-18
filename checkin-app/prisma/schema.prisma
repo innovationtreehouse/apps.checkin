@@ -505,6 +505,10 @@ model OrgMembership {
   status      OrgMembershipStatus @default(NONE)
   /// @sensitivity:public
   isVolunteerFamily Boolean       @default(false) @map("isVolunteer")
+  /// The membership year the household has told the Board it won't renew into.
+  /// Null means no note; a year other than the one being renewed is ignored.
+  /// @sensitivity:internal
+  notRenewingYear   Int?
 
   /// @sensitivity:public
   householdId Int       @unique
