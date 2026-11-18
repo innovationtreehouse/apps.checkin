@@ -18,6 +18,7 @@ import { POST as RequestPost } from '@/app/api/programs/[id]/request-payment-pla
 import { POST as ParticipantsPost, DELETE as ParticipantsDelete } from '@/app/api/programs/[id]/participants/route';
 import prisma from '@/lib/prisma';
 import * as shopify from '@/lib/shopify/stock';
+import { Client } from 'pg';
 
 // Wrap only changeProgramStockWith (call-through) so one test can force a −1 that
 // could not be recorded; SWC exports are non-configurable getters, so no spyOn.
@@ -1025,6 +1026,55 @@ describe('Program payment-plan routes', () => {
                 orderBy: { id: 'desc' },
             });
             expect(audit.newData).toMatchObject({ reason: 'payment_plan_denied_no_hold' });
+        });
+
+        it('a manual hold landing between the held and unheld deny steps wins: the deny 409s and the hold stays', async () => {
+            await enroll(selfId, { requested: true, held: false }); // PENDING_HOLD_FAILED
+            const auditsBefore = await prisma.auditLog.count({ where: { tableName: 'ProgramParticipant', affectedEntityId: selfId, secondaryAffectedEntity: programId } });
+            // The hold is written, uncommitted, on a connection outside the app's pool: the
+            // deny's held step skips the row, and its unheld step waits on the row lock.
+            const holder = new Client({ connectionString: process.env.DATABASE_URL });
+            await holder.connect();
+            let deny!: Promise<Response>;
+            try {
+                await holder.query('BEGIN');
+                await holder.query(
+                    `UPDATE "ProgramParticipant" SET "inventoryHeldAt" = now()
+                     WHERE "programId" = $1 AND "personId" = $2 AND status = 'PENDING' AND "inventoryHeldAt" IS NULL AND "isPaymentPlanRequested"`,
+                    [programId, selfId],
+                );
+                mockSession.mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+                deny = RefusePost(new Request('http://localhost/api/finance-ops/payment-plans/refuse', {
+                    method: 'POST',
+                    headers: { cookie: 'session=test' },
+                    body: JSON.stringify({ programId, participantId: selfId }),
+                }) as unknown as import('next/server').NextRequest);
+                let waiting = 0;
+                for (let i = 0; i < 100 && waiting === 0; i++) {
+                    await holder.query('SELECT pg_stat_clear_snapshot()');
+                    const { rows } = await holder.query<{ n: number }>(
+                        `SELECT count(*)::int AS n FROM pg_stat_activity
+                         WHERE datname = current_database() AND pid <> pg_backend_pid()
+                           AND wait_event_type = 'Lock' AND query LIKE '%UPDATE%"ProgramParticipant"%'`,
+                    );
+                    waiting = rows[0].n;
+                    if (waiting === 0) await new Promise((r) => setTimeout(r, 50));
+                }
+                expect(waiting).toBe(1);
+                await holder.query('COMMIT');
+            } finally {
+                await holder.end();
+            }
+
+            expect((await deny).status).toBe(409);
+            const row = await prisma.programParticipant.findUniqueOrThrow({
+                where: { programId_personId: { programId, personId: selfId } },
+            });
+            expect(row.status).toBe('PENDING');
+            expect(row.isPaymentPlanRequested).toBe(true);
+            expect(row.inventoryHeldAt).not.toBeNull();
+            expect(row.paymentPlanDeniedAt).toBeNull();
+            expect(await prisma.auditLog.count({ where: { tableName: 'ProgramParticipant', affectedEntityId: selfId, secondaryAffectedEntity: programId } })).toBe(auditsBefore);
         });
     });
 
