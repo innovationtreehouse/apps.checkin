@@ -8,6 +8,7 @@ import { z } from "zod";
 import type { FailureKind } from "@checkin/component-kit";
 import { CURRENCY_CODE, MAX_LINE_QUANTITY, type CompletedReceipt, type InKindDonor } from "@checkin/receipt-types";
 import type { ReceiptLimits } from "./lib/limits";
+import { LINE_COST_RANGE, lineCostFits } from "./lib/schemas";
 
 /** The acting host user, projected from the checkin Person. `id` is the Person.id. */
 export interface ReceiptPrincipal {
@@ -156,7 +157,7 @@ export const OcrLineItemSchema = z.object({
   unitPrice: ocrMoney,
   totalPrice: ocrMoney.optional(),
   isDelayed: z.boolean(),
-});
+}).refine(lineCostFits, LINE_COST_RANGE);
 
 /** What OCR may fill: the receipt's own details. Never reimbursee, vendor or needsReimbursement. */
 export const OcrDataSchema = z.object({
