@@ -100,6 +100,14 @@ describe('setBooksMapAccount', () => {
         nothingWritten();
     });
 
+    it('does not re-check an unchanged account against the list', async () => {
+        tx.booksMapRoleAccount.findUnique.mockResolvedValue({ quickBooksAccountId: '8004' });
+        savedList.mockResolvedValue(null);
+        await expect(setBooksMapAccount(1, 'SHOPIFY_FEES', { quickBooksAccountId: '8004' })).resolves.toEqual({ role: 'SHOPIFY_FEES', quickBooksAccountId: '8004' });
+        expect(savedList).not.toHaveBeenCalled();
+        nothingWritten();
+    });
+
     it.each([
         ['an unknown role', 'NOT_A_ROLE', { quickBooksAccountId: '1' }],
         ['a missing id', 'SHOPIFY_FEES', {}],

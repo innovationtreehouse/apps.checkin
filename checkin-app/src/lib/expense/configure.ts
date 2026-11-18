@@ -213,10 +213,11 @@ async function alertRefusedAccount(accountId: string, accountType: string | unde
 async function alertSweepIncomplete({ since }: { since: Date }): Promise<void> {
   const { emailAlert } = await import("@/lib/emailRecipients");
   const { config } = await import("@/lib/config");
-  await emailAlert("finance.expenseSweepIncomplete", {
+  const sent = await emailAlert("finance.expenseSweepIncomplete", {
     since: since.toISOString().slice(0, 10),
     actionLink: `${config.baseUrl()}/expense/expenses`,
   });
+  if (!sent) throw new Error("Expense sweep alert was not sent");
 }
 
 type PostingResolution = { posting: ExpensePosting } | { missing: string; refused?: { accountId: string; accountType: string | undefined } };
