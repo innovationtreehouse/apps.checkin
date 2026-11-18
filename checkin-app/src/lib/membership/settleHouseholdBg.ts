@@ -60,7 +60,7 @@ export async function settleHouseholdBg(householdId: number, opts: { reviewJustC
 
     let result = await prisma.$transaction((tx) => settleInTx(tx, app.id, householdId, threshold, opts.trigger, false));
     if (result.needsOrderRead) {
-        // A lifted block on a paid application converges in the same pass, so Shopify is asked first, outside the transaction.
+        // A lifted block on a paid application may converge in the same pass, so Shopify is asked first, outside the transaction.
         await recordUnreportedReversalOnProcess(app.id);
         result = await prisma.$transaction((tx) => settleInTx(tx, app.id, householdId, threshold, opts.trigger, true));
     }
