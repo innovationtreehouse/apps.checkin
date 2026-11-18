@@ -139,7 +139,7 @@ export default function AccountMapPage() {
                 <Select label={label} placeholder="Not set" searchable clearable
                   data={choices(accounts.data, editing.form[k])} value={editing.form[k]}
                   onChange={(v) => setEditing({ ...editing, form: { ...editing.form, [k]: v } })} />
-                <InactivePickWarning saved={editing.form[k]} options={accounts.data} />
+                <InactivePickWarning saved={editing.form[k]} options={accounts.data} advice="Pick an active one." />
               </Stack>
             ))}
             <QuickBooksListsRefresh />
