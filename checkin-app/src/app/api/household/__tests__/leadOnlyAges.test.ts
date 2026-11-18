@@ -75,11 +75,11 @@ function person(id: number, dateOfBirth: Date | null, isDeclaredAdult = false) {
 }
 
 function signInAs(id: number, canManage: boolean) {
-    mockSession.mockResolvedValue({ user: { id, email: `p${id}@example.com` } });
+    mockSession.mockResolvedValue({ user: { id, householdId: 10, email: `p${id}@example.com` } });
     householdLeadship.mockResolvedValue({ householdId: 10, canManage });
 }
 
-function call(handler: typeof memberPATCH, path: string, body: Record<string, unknown>) {
+function call(handler: (req: NextRequest) => Promise<Response>, path: string, body: Record<string, unknown>) {
     return handler(new Request(`http://localhost${path}`, { method: "PATCH", body: JSON.stringify(body) }) as unknown as NextRequest);
 }
 const editMember = (body: Record<string, unknown>) => call(memberPATCH, "/api/household/member", body);

@@ -59,8 +59,6 @@ POST /api/household/intake
 POST /api/household/lead
 DELETE /api/household/lead
 PATCH /api/household/member
-GET /api/household
-PATCH /api/household
 PATCH /api/household/settings
 GET /api/household/visits
 GET /api/kioskdisplay/certifications
