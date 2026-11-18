@@ -308,7 +308,7 @@ describeDb("mailed receipt acknowledgements", () => {
     expect(sent).toEqual([]);
     expect(await db.receiptMailReply.count()).toBe(0);
     expect(await db.receiptMailItem.findMany({ select: { status: true, holdReason: true, fileBlob: true, refusal: true } })).toEqual([
-      { status: "held", holdReason: "side_copy", fileBlob: null, refusal: { file: "your email", reason: "no_amount" } },
+      { status: "held", holdReason: "side_copy", fileBlob: null, refusal: [{ file: "your email", reason: "no_amount" }] },
     ]);
   });
 

@@ -29,7 +29,8 @@ function refusedText(ack: MailAcknowledgement): string | undefined {
   if (whole) {
     return `${REFUSAL_TEXT[whole.reason]}. To send a receipt, send a new email with the receipt attached as a PDF or image file, or with its total (such as $40.00) in the text, or upload it at ${config.baseUrl()}/receipts/upload.`;
   }
-  const lines = ack.refused.map((r) => `${r.file}: ${REFUSAL_TEXT[r.reason]}`);
+  // A reason this instance does not know, stored by a newer one, reads as unreadable rather than "undefined".
+  const lines = ack.refused.map((r) => `${r.file}: ${REFUSAL_TEXT[r.reason] ?? REFUSAL_TEXT.wrong_type}`);
   return `We could not accept these files from your email of ${day(ack.receivedAt)}:\n${lines.join("\n")}`;
 }
 

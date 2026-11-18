@@ -102,7 +102,7 @@ describe("mail queue routes admit FINANCE only", () => {
 
   it("shows FINANCE the refused file a file-less held item names", async () => {
     signIn({ isFinance: true });
-    const refused = { ...ITEM, mimeType: null, refusal: { file: "invoice.docx", reason: "wrong_type" } };
+    const refused = { ...ITEM, mimeType: null, refusal: [{ file: "invoice.docx", reason: "wrong_type" }, { file: "receipt.eml", reason: "forwarded" }] };
     service.listHeld.mockResolvedValue([{ ...refused, receivedAt: new Date(ITEM.receivedAt) }]);
     const res = await list(req(""), noParams);
     expect(await res.json()).toEqual([refused]);

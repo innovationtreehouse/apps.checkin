@@ -345,8 +345,11 @@ export const BODY_MIN_BYTES = 100;
 /** A money amount: `$` before a digit, or a number with two decimal places. */
 export const MONEY_AMOUNT = /\$\s?\d|\d\.\d{2}(?!\d)/;
 
-/** A signature separator or a mail client's trailer line. Only the line goes: a forwarded receipt often sits below it. */
-const TRAILER_LINE = /^(?:-- |sent from (?:my |yahoo mail|mail for windows).*)\r?$/gim;
+/**
+ * A signature separator or a mail client's trailer line holding no digit, so a line naming an amount stays. Only the
+ * line goes: a forwarded receipt often sits below it.
+ */
+const TRAILER_LINE = /^(?:-- |sent from (?:my |yahoo mail|mail for windows)[^\d\r\n]*)\r?$/gim;
 
 /** An HTML body's visible text: its style blocks and tags (with their style attributes) hold CSS numbers, never amounts. */
 const visibleText = (html: string) => html.replace(/<style\b[\s\S]*?<\/style\s*>/gi, " ").replace(/<[^>]*>/g, " ");
@@ -407,14 +410,16 @@ const isStatus = (err: unknown, code: number) => isServiceError(err) && err.stat
  */
 export type HoldReason = "unverified_sender" | "not_a_submitter" | "side_copy";
 
-/** Refused files finance is told about, as a held item with no file, when no submitter sent the mail. */
+/** Refused files finance is told about, in a held note with no file, when no submitter sent the mail. */
 const HELD_REFUSALS = new Set<MailRefusalReason>(["wrong_type", "forwarded", "too_large", "empty"]);
 
-/** A held refusal's ledger key: one per file name and reason, so a later run never writes it again. */
-const refusalKey = (r: MailRefusal) => createHash("sha256").update(`refused\0${r.reason}\0${r.file}`).digest("hex");
+/** The ledger key of a message's one refusal note, which names what finance should hear of and keeps no file. */
+export const REFUSAL_NOTE_KEY = createHash("sha256").update("receipt mail refusal note").digest("hex");
 
-/** A held item that names a refused file and keeps none. */
-export const isHeldRefusal = (row: { status: string; refusal: unknown }) => row.status === "held" && row.refusal !== null;
+/** A message's refusal note, held or since discarded: never the ledger row of a file. */
+export const isRefusalNote = (row: { attachmentHash: string }) => row.attachmentHash === REFUSAL_NOTE_KEY;
+
+const sameRefusal = (a: MailRefusal) => (b: MailRefusal) => a.file === b.file && a.reason === b.reason;
 
 /** The statuses whose items keep their file in the ledger, awaiting finance or a later run. */
 export const STORED_STATUSES = ["held", "deferred"];
@@ -608,10 +613,11 @@ async function readLeased(reader: MailboxReader, orgId: string, started: number,
       refused.push({ file: "your email", reason: "no_receipt" });
     }
     // Every file already in the ledger: nothing to download.
-    const rows = await db.receiptMailItem.findMany({ where: { gmailMessageId: msg.id }, select: { status: true, refusal: true } });
-    const ledgered = files.length > 0 && rows.filter((r) => !isHeldRefusal(r)).length >= files.length;
+    const rows = await db.receiptMailItem.findMany({ where: { gmailMessageId: msg.id }, select: { id: true, attachmentHash: true, status: true, refusal: true } });
+    const note = rows.find(isRefusalNote);
+    const ledgered = files.length > 0 && rows.length - (note ? 1 : 0) >= files.length;
     // A file refused on an earlier pass is never read again, so its row carries it into the notice.
-    refused.push(...rows.flatMap((r) => (r.refusal && !isHeldRefusal(r) ? [r.refusal as unknown as MailRefusal] : [])));
+    refused.push(...rows.flatMap((r) => (r.refusal && !isRefusalNote(r) ? [r.refusal as unknown as MailRefusal] : [])));
     const sender: ReceiptPrincipal | null = known !== undefined ? known : !ledgered || refused.length > 0 ? await submitter() : null;
     const holdReason: HoldReason = aligned ? "not_a_submitter" : "unverified_sender";
     // Owed in the same transaction as each stored file, so a reply is owed exactly when the message has one.
@@ -631,32 +637,36 @@ async function readLeased(reader: MailboxReader, orgId: string, started: number,
       });
     };
     /**
-     * Without a submitter to tell, each refused file becomes a held item with no file, so finance hears of it, and so
-     * does a submitter's side copy with no amount. Past the held ceiling none is written, and the message stays open.
+     * Without a submitter to tell, the message's refused files go to finance as one held note that keeps no file, and so
+     * does a submitter's side copy with no amount. The note is charged one held file against the run's budget and the
+     * ceiling; with no room, the message stays open for a later run. A discarded note is never reopened.
      */
     const holdRefusals = async () => {
-      const notes: [MailRefusal, string][] = sender
-        ? sideCopyNote ? [[{ file: "your email", reason: "no_amount" }, "side_copy" satisfies HoldReason]] : []
-        : refused.filter((r) => HELD_REFUSALS.has(r.reason)).map((r) => [r, holdReason]);
-      const held = new Set(rows.flatMap((r) => (isHeldRefusal(r) ? [refusalKey(r.refusal as unknown as MailRefusal)] : [])));
-      const toHold = [...new Map(notes.map(([r, reason]) => [refusalKey(r), { r, reason }])).entries()].filter(([key]) => !held.has(key));
-      if (toHold.length === 0) return;
-      if (stored() >= MAIL_HELD_CEILING) {
-        counts.overCeiling += toHold.length;
+      const toNote: MailRefusal[] = sender
+        ? sideCopyNote ? [{ file: "your email", reason: "no_amount" }] : []
+        : refused.filter((r) => HELD_REFUSALS.has(r.reason));
+      const noted = (note?.refusal ?? []) as unknown as MailRefusal[];
+      const fresh = toNote.filter((r, i) => !noted.some(sameRefusal(r)) && toNote.findIndex(sameRefusal(r)) === i);
+      if (fresh.length === 0 || (note && note.status !== "held")) return;
+      const refusal = [...noted, ...fresh] as unknown as Prisma.InputJsonValue;
+      if (note) {
+        await db.receiptMailItem.update({ where: { id: note.id }, data: { refusal } });
         return;
       }
+      if (!roomToHold(0)) return;
+      heldFiles++;
       const { count } = await db.receiptMailItem.createMany({
-        data: toHold.map(([key, { r, reason }]) => ({
+        data: [{
           orgId,
           gmailMessageId: msg.id,
-          attachmentHash: key,
+          attachmentHash: REFUSAL_NOTE_KEY,
           receivedAt: new Date(Number(msg.internalDate)),
           senderAddress: address ?? "",
           dmarcVerdict: verdict,
           status: "held",
-          holdReason: reason,
-          refusal: { file: r.file, reason: r.reason },
-        })),
+          holdReason: sender ? ("side_copy" satisfies HoldReason) : holdReason,
+          refusal,
+        }],
         skipDuplicates: true,
       });
       counts.held += count;

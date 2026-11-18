@@ -15,8 +15,8 @@ interface MailItem {
   holdReason: string | null;
   dmarcVerdict: string | null;
   mimeType: string | null;
-  /** Set on an item that names a refused file and keeps none. */
-  refusal: { file: string; reason: string } | null;
+  /** Set on a message's refusal note, which names what was not accepted and keeps no file. */
+  refusal: { file: string; reason: string }[] | null;
 }
 
 const REFUSED_FILES: Record<string, string> = {
@@ -101,10 +101,12 @@ function MailItemCard({ item, onDone }: { item: MailItem; onDone: () => void }) 
         {item.status === "held" && <Text size="sm">{HOLD_REASONS[item.holdReason ?? ""] ?? "Reason not recorded"}</Text>}
         <Text size="sm">{DMARC_VERDICTS[item.dmarcVerdict ?? ""] ?? "Sender check: not recorded"}</Text>
         {item.refusal ? (
-          <Text size="sm">
-            {REFUSED_FILES[item.refusal.reason] ?? "A file we did not accept"} ({item.refusal.file}). Nothing was kept: find the email in
-            the mailbox by its sender and date, or discard this.
-          </Text>
+          <Stack gap={4}>
+            {item.refusal.map((r) => (
+              <Text key={`${r.reason}:${r.file}`} size="sm">{REFUSED_FILES[r.reason] ?? "A file we did not accept"} ({r.file})</Text>
+            ))}
+            <Text size="sm" c="dimmed">Nothing was kept: find the email in the mailbox by its sender and date, or discard this.</Text>
+          </Stack>
         ) : (
           item.mimeType && <ReceiptFile src={`${BASE}${path}/file`} mimeType={item.mimeType} />
         )}

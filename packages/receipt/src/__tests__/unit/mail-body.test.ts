@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MailboxReader, MailMessage, MailPart } from "../../contract";
-import { BODY_MIN_BYTES, bodyText, isHeldRefusal, mailFiles } from "../../services/mailIntake";
+import { BODY_MIN_BYTES, bodyText, isRefusalNote, mailFiles, REFUSAL_NOTE_KEY } from "../../services/mailIntake";
 
 const reader: MailboxReader = { address: "receipts@example.org", listRecent: async () => [], getMessage: async () => { throw new Error("unused"); }, getAttachment: async () => Buffer.alloc(0) };
 const b64 = (s: string) => Buffer.from(s).toString("base64url");
@@ -23,6 +23,10 @@ describe("bodyText", () => {
 
   it("never cuts at a quoted reply", () => {
     expect(bodyText("thanks\nOn Mon, Pat wrote:\n> Total 12.00", false)).toBe("thanks\nOn Mon, Pat wrote:\n> Total 12.00");
+  });
+
+  it("keeps a trailer-like line that names an amount", () => {
+    expect(bodyText("Sent from my card ending 1234: total $40.00\nSent from my iPhone", false)).toBe("Sent from my card ending 1234: total $40.00");
   });
 
   it("keeps a line that only starts like a signature separator", () => {
@@ -92,10 +96,9 @@ describe("mailFiles — the body", () => {
   });
 });
 
-describe("isHeldRefusal", () => {
-  it("is a held item naming a refused file", () => {
-    expect(isHeldRefusal({ status: "held", refusal: { file: "r.doc", reason: "wrong_type" } })).toBe(true);
-    expect(isHeldRefusal({ status: "held", refusal: null })).toBe(false);
-    expect(isHeldRefusal({ status: "refused", refusal: { file: "r.pdf", reason: "ceiling" } })).toBe(false);
+describe("isRefusalNote", () => {
+  it("is a message's refusal note whatever its status, never a file's row", () => {
+    expect(isRefusalNote({ attachmentHash: REFUSAL_NOTE_KEY })).toBe(true);
+    expect(isRefusalNote({ attachmentHash: "a".repeat(64) })).toBe(false);
   });
 });
