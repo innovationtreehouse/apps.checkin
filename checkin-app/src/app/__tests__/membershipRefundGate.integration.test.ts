@@ -11,12 +11,13 @@ import { attest, boardResetReview } from '@/lib/membership/review';
 import { settleHouseholdBg } from '@/lib/membership/settleHouseholdBg';
 import { activateByProcessId } from '@/lib/membership/payment';
 import { raiseReversalByOrderId } from '@/lib/finance/reconcile/reversals';
-import { isOrderReversed } from '@/lib/finance/reconcile/exceptions';
+import { isOrderReversed, ORDER_REVERSAL_ADVISORY_CLASS, recordReversal } from '@/lib/finance/reconcile/exceptions';
 import { raiseMembershipPaymentOutcome } from '@/lib/finance/reconcile/membership';
 import { resetTokenCache } from '@/lib/shopify/client';
 import prisma from '@/lib/prisma';
 import { setBgRecheckPolicy } from '@/test-helpers/boardSettings';
 import { sendEmail } from '@/lib/email';
+import { Client } from 'pg';
 
 jest.mock('@/lib/email', () => ({
     sendEmail: jest.fn().mockResolvedValue(true),
@@ -380,6 +381,36 @@ describe('a refunded order never activates', () => {
 
         expect(await refund).toBe(true);
         expect((await prisma.paymentException.findFirst({ where: { kind: 'REFUND', processId } }))?.severity).toBe('CRITICAL');
+    });
+
+    it('two concurrent reversals of one order queue on its lock and record one ledger row', async () => {
+        const oid = orderId('twice');
+        // A connection outside the app's pool holds the order's lock until both calls wait on it.
+        const holder = new Client({ connectionString: process.env.DATABASE_URL });
+        await holder.connect();
+        try {
+            await holder.query('BEGIN');
+            await holder.query('SELECT pg_advisory_xact_lock($1::int, hashtext($2))', [ORDER_REVERSAL_ADVISORY_CLASS, oid]);
+            const both = Promise.all([recordReversal(oid, 'REFUND'), recordReversal(oid, 'CHARGEBACK')]);
+            let waiting = 0;
+            for (let i = 0; i < 100 && waiting < 2; i++) {
+                await holder.query('SELECT pg_stat_clear_snapshot()');
+                const { rows } = await holder.query<{ n: number }>(
+                    `SELECT count(*)::int AS n FROM pg_stat_activity
+                     WHERE datname = current_database() AND pid <> pg_backend_pid()
+                       AND wait_event_type = 'Lock' AND wait_event = 'advisory' AND query LIKE '%pg_advisory_xact_lock%'`,
+                );
+                waiting = rows[0].n;
+                if (waiting < 2) await new Promise((r) => setTimeout(r, 50));
+            }
+            expect(waiting).toBe(2);
+            await holder.query('COMMIT');
+            await both;
+        } finally {
+            await holder.end();
+        }
+        const rows = await prisma.auditLog.findMany({ where: { tableName: 'ShopifyOrderReversal', newData: { path: ['shopifyOrderId'], equals: oid } } });
+        expect(rows).toHaveLength(1);
     });
 
     it('an unrefunded order still activates, on either path', async () => {

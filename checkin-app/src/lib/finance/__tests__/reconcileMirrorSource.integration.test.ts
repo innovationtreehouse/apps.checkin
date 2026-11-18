@@ -23,8 +23,9 @@ jest.mock("@/lib/email", () => ({
 
 const TAG = "reconcile-mirror-source-test";
 process.env.NEXTAUTH_SECRET ||= "integration-test-nextauth-secret";
-// One mirror per integration worker DB, so parallel workers never share it.
-const MIRROR_DB = `${new URL(process.env.DATABASE_URL!).pathname.slice(1)}_mirror`;
+// Named after this suite and the worker DB, so no other suite or worker shares it.
+const MIRROR_DB = `${new URL(process.env.DATABASE_URL!).pathname.slice(1)}_reconcile_mirror_source`;
+const PRIOR_MIRROR_URL = process.env.SHOPIFY_READ_DATABASE_URL;
 const MIGRATIONS = path.resolve(__dirname, "../../../../../packages/s-ingest-core/prisma/migrations");
 
 let mirror: Client;
@@ -145,7 +146,8 @@ afterAll(async () => {
     await prisma.membershipYearVariant.deleteMany({ where: { membershipYear: MEMBERSHIP_YEAR } });
 
     await mirror?.end();
-    delete process.env.SHOPIFY_READ_DATABASE_URL;
+    if (PRIOR_MIRROR_URL === undefined) delete process.env.SHOPIFY_READ_DATABASE_URL;
+    else process.env.SHOPIFY_READ_DATABASE_URL = PRIOR_MIRROR_URL;
     await withAdmin(`DROP DATABASE IF EXISTS "${MIRROR_DB}" WITH (FORCE)`);
 }, 60_000);
 
