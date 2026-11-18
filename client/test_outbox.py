@@ -29,6 +29,9 @@ class FakeState:
     def saved_view(self):
         return None
 
+    def attendance_view(self):
+        return {"counts": {"total": len(self.present_ids)}}
+
     def push_event(self, data):
         self.events.append(data)
 

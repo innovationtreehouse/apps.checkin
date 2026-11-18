@@ -3,7 +3,7 @@
  */
 /**
  * Removing a program volunteer and its audit row commit together
- * (docs/in-design/AUDIT_IN_TRANSACTION.md). A trigger makes Postgres refuse the
+ * (docs/rules/principles.md, Accountability). A trigger makes Postgres refuse the
  * audit row for one volunteer, whichever client writes it, so that removal must
  * roll back with the refused row.
  */

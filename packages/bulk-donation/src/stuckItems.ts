@@ -3,9 +3,10 @@ import { db } from "./db";
 import { getOrgId } from "./runtime";
 import { IN_KIND_HELD_STATES, postGift, type InKindPostOutcome } from "./lib/in-kind-poster";
 import { openRun } from "./lib/in-kind-resolve";
-import type { InKindSource } from "./services/inKindAcceptService";
+import { inKindCapitalSend, type InKindSource } from "./services/inKindAcceptService";
 
 const QB_POSTING = "QuickBooks posting";
+const CAPITAL_SEND = "capital review send";
 const RETRY_ACTOR = { actorUserId: null, actorUsername: "system:problems-retry", correlationId: null };
 /** What a retry that did not reach the books answers; the error itself stays on the gift's own page. */
 const NOT_POSTED = "Retried, and it was not posted; the gift's page shows why";
@@ -19,25 +20,34 @@ const RETRY_REFUSALS: Record<Exclude<InKindPostOutcome, "posted" | "matched"> | 
   busy: [409, "The gift is being posted; try again shortly"],
 };
 
-/** In-kind gifts whose QuickBooks post failed, timed by their first failure. */
+const giftHref = (source: string, giftId: number) => `/donations/in-kind/${source}/${giftId}`;
+
+/** In-kind gifts whose QuickBooks post or capital review send failed, timed by their first failure. */
 export async function stuckItems(): Promise<StuckItem[]> {
   const orgId = await getOrgId();
-  const rows = await db.inKindPosting.findMany({
-    where: { orgId, qbFirstFailedAt: { not: null }, matchState: { in: [...IN_KIND_HELD_STATES] } },
-    select: { source: true, giftId: true, qbFirstFailedAt: true },
-  });
-  return rows.flatMap((r) => (r.qbFirstFailedAt ? [{ id: `${r.source} ${r.giftId}`, step: QB_POSTING, href: `/donations/in-kind/${r.source}/${r.giftId}`, failedAt: r.qbFirstFailedAt }] : []));
+  const [rows, sends] = await Promise.all([
+    db.inKindPosting.findMany({
+      where: { orgId, qbFirstFailedAt: { not: null }, matchState: { in: [...IN_KIND_HELD_STATES] } },
+      select: { source: true, giftId: true, qbFirstFailedAt: true },
+    }),
+    inKindCapitalSend.stuckCapitalSends(orgId),
+  ]);
+  return [
+    ...rows.flatMap((r) => (r.qbFirstFailedAt ? [{ id: `${r.source} ${r.giftId}`, step: QB_POSTING, href: giftHref(r.source, r.giftId), failedAt: r.qbFirstFailedAt }] : [])),
+    ...sends.map((g) => ({ id: `${g.source} ${g.id}`, step: CAPITAL_SEND, href: giftHref(g.source, g.id), failedAt: g.failedAt })),
+  ];
 }
 
 /**
- * Posts the stuck gift once, as the drain would. Safe to repeat: the claim and the look-up of the
- * gift's own entry by key hold. Returns only when the gift reached the books; any other outcome
- * answers an error that carries no error text and keeps the first failure time. A gift that is not
- * stuck answers 404.
+ * Retries the stuck gift's step once. A posting retry posts as the drain would, safe to repeat because
+ * the claim and the look-up of the gift's own entry by key hold. Returns only when the step succeeded;
+ * any other outcome answers an error that carries no error text and keeps the first failure time.
+ * A gift that is not stuck at that step answers 404.
  */
 export async function retryStuckItem({ id, step }: { id: string; step: string }): Promise<void> {
   const [source, giftId] = id.split(" ");
   const orgId = await getOrgId();
+  if (step === CAPITAL_SEND) return retryCapitalSend(orgId, source, Number(giftId), id);
   const stuck =
     step === QB_POSTING && (source === "receipt" || source === "manual") &&
     (await db.inKindPosting.findFirst({ where: { orgId, source, giftId: Number(giftId) || -1, qbFirstFailedAt: { not: null }, matchState: { in: [...IN_KIND_HELD_STATES] } }, select: { id: true } }));
@@ -46,4 +56,13 @@ export async function retryStuckItem({ id, step }: { id: string; step: string })
   if (outcome === "posted" || outcome === "matched") return;
   const [status, message] = RETRY_REFUSALS[outcome] ?? [409, NOT_POSTED];
   throw new ServiceError(status, message);
+}
+
+/** Resends the stuck gift's lines once; the callee keys each line, so a repeat is safe. */
+async function retryCapitalSend(orgId: string, source: string, giftId: number, id: string): Promise<void> {
+  const outcome = source === "receipt" || source === "manual" ? await inKindCapitalSend.resendCapitalReview(orgId, source, giftId || -1) : "not_stuck";
+  if (outcome === "sent") return;
+  if (outcome === "not_stuck") throw new ServiceError(404, `No failed ${CAPITAL_SEND} for ${id} in gifts`);
+  if (outcome === "system" || outcome === "connection") throw new ServiceError(503, "Retried, and capital review could not be reached");
+  throw new ServiceError(409, "Retried, and capital review did not take the gift's lines");
 }

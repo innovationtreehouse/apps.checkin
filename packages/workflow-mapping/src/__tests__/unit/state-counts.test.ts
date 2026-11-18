@@ -10,12 +10,13 @@ describe("receiving state tally", () => {
       { state: "applying", label: "Applying", count: 0 },
       { state: "apply_failed", label: "Apply failed", count: 0 },
       { state: "resolved", label: "Resolved", count: 0 },
+      { state: "closed_by_hand", label: "Closed by hand", count: 0 },
     ]);
   });
 
   it("counts present states and keeps absent ones at zero", () => {
     const out = tallyReceivingStates([row("applying", 4), row("resolved", 9)]);
-    expect(out.map((s) => [s.state, s.count])).toEqual([["pending_review", 0], ["applying", 4], ["apply_failed", 0], ["resolved", 9]]);
+    expect(out.map((s) => [s.state, s.count])).toEqual([["pending_review", 0], ["applying", 4], ["apply_failed", 0], ["resolved", 9], ["closed_by_hand", 0]]);
   });
 
   it("appends a stored state the enum does not define, labelled by its code", () => {

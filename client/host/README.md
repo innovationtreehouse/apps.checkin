@@ -75,7 +75,8 @@ A force published before a new Pi's first urgent check is recorded, not applied.
 Forcing also moves `kiosk-release`, so it lands at the next nightly window.
 
 The nightly reboot waits up to 30 minutes for the update lock, then reboots anyway
-so a hung pull cannot stop reboots for good.
+so a hung pull cannot stop reboots for good. While it waits, the timer checks
+do not start, so they cannot take the lock ahead of it.
 
 ## Tests
 
