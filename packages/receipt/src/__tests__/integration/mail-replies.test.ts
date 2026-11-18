@@ -44,6 +44,9 @@ function send(id: string, { from = "alice@example.org", auth = GOOGLE_PASS, head
 
 const b64 = (text: string) => Buffer.from(text).toString("base64url");
 const NO_RECEIPT = { file: "your email", reason: "no_receipt" };
+const NO_AMOUNT = { file: "your email", reason: "no_amount" };
+/** Over the body size floor, with no amount in it. */
+const LONG_NOTE = "Hi, here are the notes from Tuesday's build session. We finished the frame and need more screws next week.";
 
 /** A message holding the given parts. */
 function mailWith(id: string, parts: MailPart[], { from = "alice@example.org", auth = GOOGLE_PASS, headers = [] as { name: string; value: string }[] } = {}): void {
@@ -255,7 +258,7 @@ describeDb("mailed receipt acknowledgements", () => {
     expect(sent.map((a) => a.refused)).toEqual([[NO_RECEIPT]]);
   });
 
-  it("tells a verified sender once that a message held no receipt: no file, no amount, only a tiny inline image", async () => {
+  it("tells a verified sender once that a message held no receipt: no file, a short text, only a tiny inline image", async () => {
     const inline = [{ name: "Content-Disposition", value: "inline" }];
     mailWith("m1", [
       { mimeType: "text/plain", body: { data: b64("receipt for the lathe, total $5") } },
@@ -266,6 +269,22 @@ describeDb("mailed receipt acknowledgements", () => {
     await sendMailReplies();
     expect(sent).toEqual([expect.objectContaining({ to: "alice@example.org", receiptId: null, refused: [NO_RECEIPT] })]);
     expect(await db.receiptMailReply.findFirstOrThrow()).toMatchObject({ refusalSentAt: expect.any(Date), doneAt: expect.any(Date) });
+  });
+
+  it("tells a submitter once that a long text held no amount, and stores nothing", async () => {
+    mailWith("m1", [{ mimeType: "text/plain", body: { data: b64(LONG_NOTE) } }]);
+    expect(await readMailbox()).toMatchObject({ receipts: 0, held: 0, replied: 1 });
+    await readMailbox();
+    await sendMailReplies();
+    expect(sent).toEqual([expect.objectContaining({ to: "alice@example.org", receiptId: null, refused: [NO_AMOUNT] })]);
+    expect(await db.receiptMailItem.count()).toBe(0);
+  });
+
+  it("tells an unknown sender nothing about a long text with no amount, which is held for finance", async () => {
+    mailWith("m1", [{ mimeType: "text/plain", body: { data: b64(LONG_NOTE) } }], { from: "stranger@example.org" });
+    expect(await readMailbox()).toMatchObject({ held: 1 });
+    await sendMailReplies();
+    expect(sent).toEqual([]);
   });
 
   it("tells nobody about a reply to its own notice, or a copy on which the receipt mailbox is only in Cc", async () => {

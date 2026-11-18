@@ -28,6 +28,10 @@ import { actAs, ALICE, BOB, clearAll, configure, FINANCE, manualDetails, okOcr, 
 const GOOGLE_PASS = "mx.google.com; dkim=pass header.i=@example.org; spf=pass; dmarc=pass (p=NONE sp=NONE) header.from=example.org";
 const b64 = (s: string) => Buffer.from(s).toString("base64url");
 const pdf = (label: string) => `%PDF-1.4 receipt ${label}`;
+/** Over the body size floor on its own, with no amount in it. */
+const PAD = "Thank you for shopping with us. Please keep this email for your records; it is your proof of purchase.";
+/** A text receipt long enough to be read. */
+const textReceipt = (line: string) => `${line}\n${PAD}`;
 
 /** A fake Gmail mailbox: messages by id, attachments by id, and the ids of attachments downloaded. */
 function fakeMailbox() {
@@ -136,16 +140,38 @@ describeDb("mail intake", () => {
   });
 
   it("takes a body holding a money amount as a receipt, storing HTML as text", async () => {
-    send("plain", { parts: [{ mimeType: "text/plain", body: { data: b64("Order 42 total $5.00") } }] });
-    send("html", { parts: [{ mimeType: "text/html", body: { data: b64("<p>Order 43 total 7.50</p>") } }] });
+    const plain = textReceipt("Order 42 total $5.00");
+    const html = `<p>Order 43 total 7.50</p><p>${PAD}</p>`;
+    send("plain", { parts: [{ mimeType: "text/plain", body: { data: b64(plain) } }] });
+    send("html", { parts: [{ mimeType: "text/html", body: { data: b64(html) } }] });
     expect(await readMailbox()).toMatchObject({ receipts: 2, ignored: 0 });
     const files = (await db.receipt.findMany()).map((r) => [r.mimeType, Buffer.from(r.fileBlob ?? []).toString()]);
-    expect(files).toEqual(expect.arrayContaining([["text/plain", "Order 42 total $5.00"], ["text/plain", "<p>Order 43 total 7.50</p>"]]));
+    expect(files).toEqual(expect.arrayContaining([["text/plain", plain], ["text/plain", html]]));
   });
 
-  it("skips a trivial body, one with no money amount, and counts it ignored", async () => {
+  it("skips a body under the size floor and counts it ignored", async () => {
     send("m1", { parts: [{ mimeType: "text/plain", body: { data: b64("For the lathe, total $5") } }] });
     expect(await readMailbox()).toMatchObject({ receipts: 0, held: 0, ignored: 1 });
+    expect(await db.receiptMailItem.count()).toBe(0);
+  });
+
+  it("holds an unknown sender's long body with no amount for finance", async () => {
+    send("m1", { from: ["stranger@example.org"], parts: [{ mimeType: "text/plain", body: { data: b64(PAD) } }] });
+    expect(await readMailbox()).toMatchObject({ receipts: 0, held: 1 });
+    const [item] = await db.receiptMailItem.findMany();
+    expect(item).toMatchObject({ status: "held", holdReason: "not_a_submitter", mimeType: "text/plain" });
+    expect(Buffer.from(item.fileBlob ?? []).toString()).toBe(PAD);
+  });
+
+  it("holds an unverified sender's long body with no amount for finance", async () => {
+    send("m1", { auth: [], parts: [{ mimeType: "text/plain", body: { data: b64(PAD) } }] });
+    expect(await readMailbox()).toMatchObject({ receipts: 0, held: 1 });
+    expect(await db.receiptMailItem.findFirstOrThrow()).toMatchObject({ status: "held", holdReason: "unverified_sender" });
+  });
+
+  it("stores no item for a submitter's long body with no amount", async () => {
+    send("m1", { parts: [{ mimeType: "text/plain", body: { data: b64(PAD) } }] });
+    expect(await readMailbox()).toMatchObject({ receipts: 0, held: 0 });
     expect(await db.receiptMailItem.count()).toBe(0);
   });
 
@@ -161,7 +187,7 @@ describeDb("mail intake", () => {
   };
 
   it("reads a body after the attachments, and discards it when its reading repeats one", async () => {
-    send("m1", { parts: [{ mimeType: "text/plain", body: { data: b64("Order total 5.00") } }, attachment("a", pdf("a"))] });
+    send("m1", { parts: [{ mimeType: "text/plain", body: { data: b64(textReceipt("Order total 5.00")) } }, attachment("a", pdf("a"))] });
     expect(await readMailbox()).toMatchObject({ receipts: 2 });
     const [[pdfId, pdfType], [bodyId, bodyType, bodyState]] = await messageReceipts();
     expect([pdfType, bodyType, bodyState]).toEqual(["application/pdf", "text/plain", "discarded"]);
@@ -181,7 +207,7 @@ describeDb("mail intake", () => {
       mailbox: mail.reader,
       people: { submitterByEmail: async (address) => (address === "alice@example.org" ? ALICE : null) },
     });
-    send("m1", { parts: [{ mimeType: "text/plain", body: { data: b64("Order total 9.00") } }, attachment("a", pdf("a"))] });
+    send("m1", { parts: [{ mimeType: "text/plain", body: { data: b64(textReceipt("Order total 9.00")) } }, attachment("a", pdf("a"))] });
     expect(await readMailbox()).toMatchObject({ receipts: 2 });
     expect((await messageReceipts()).map(([, , state]) => state)).not.toContain("discarded");
   });
@@ -828,7 +854,7 @@ describeDb("mail intake sender authentication", () => {
     send("m1", {
       from: ["stranger@example.org"],
       parts: [
-        { mimeType: "text/plain", body: { data: b64("fwd total 9.99") } },
+        { mimeType: "text/plain", body: { data: b64(textReceipt("fwd total 9.99")) } },
         {
           mimeType: "message/rfc822",
           headers: [{ name: "From", value: "alice@example.org" }],
@@ -837,7 +863,7 @@ describeDb("mail intake sender authentication", () => {
       ],
     });
     await heldAs("stranger@example.org");
-    expect(Buffer.from((await db.receiptMailItem.findFirstOrThrow()).fileBlob ?? []).toString()).toBe("fwd total 9.99");
+    expect(Buffer.from((await db.receiptMailItem.findFirstOrThrow()).fileBlob ?? []).toString()).toBe(textReceipt("fwd total 9.99"));
   });
 
   it("never opens a message forwarded as an attachment, and counts it ignored", async () => {
@@ -914,7 +940,7 @@ describeDb("mail intake over a sender's daily upload limit", () => {
 
   it("discards a deferred body that repeats its message's attachment once it is retried", async () => {
     withLimits({ mailUploadsPerPersonPerDay: 1 });
-    send("m1", { parts: [{ mimeType: "text/plain", body: { data: b64("Order total 5.00") } }, attachment("a", pdf("a"))] });
+    send("m1", { parts: [{ mimeType: "text/plain", body: { data: b64(textReceipt("Order total 5.00")) } }, attachment("a", pdf("a"))] });
     expect(await readMailbox()).toMatchObject({ receipts: 1, overLimit: 1 });
 
     withLimits({ mailUploadsPerPersonPerDay: 30 });
