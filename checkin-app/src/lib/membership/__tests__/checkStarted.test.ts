@@ -13,6 +13,7 @@ import { checkStartedRows, markCheckStarted } from '@/lib/membership/checkStarte
 import { advanceExternalIfComplete } from '@/lib/membership/external';
 import { notifyReviewers } from '@/lib/membership/review';
 import { settleHouseholdBg } from '@/lib/membership/settleHouseholdBg';
+import { logBackendError } from '@/lib/logger';
 import { liveBgThreshold } from '@/lib/membership/checkStanding';
 
 function mockMakeDb() {
@@ -31,6 +32,7 @@ jest.mock('@/lib/membership/external', () => {
 });
 jest.mock('@/lib/membership/review', () => ({ notifyReviewers: jest.fn() }));
 jest.mock('@/lib/membership/settleHouseholdBg', () => ({ settleHouseholdBg: jest.fn() }));
+jest.mock('@/lib/logger', () => ({ ...jest.requireActual('@/lib/logger'), logBackendError: jest.fn() }));
 jest.mock('@/lib/membership/checkStanding', () => ({ liveBgThreshold: jest.fn() }));
 jest.mock('@/lib/membership/background-check/manual-adapter', () => ({ backgroundCheckProvider: { getConsentDeepLink: jest.fn() } }));
 
@@ -123,6 +125,14 @@ describe('markCheckStarted — the review', () => {
         expect(auditCreate.mock.calls[0][0].data).toMatchObject({ actorId: 2, action: 'CREATE', affectedEntityId: 70, newData: expect.objectContaining({ checkStarted: true }) });
         expect(notifyReviewers).toHaveBeenCalledTimes(1);
         expect(settleHouseholdBg).toHaveBeenCalledWith(10);
+        expect(advanceExternalIfComplete).toHaveBeenCalledWith(40);
+    });
+
+    it('a failed settle is logged; the started check stands and the external step still advances', async () => {
+        const failure = new Error('Shopify unavailable');
+        jest.mocked(settleHouseholdBg).mockRejectedValueOnce(failure);
+        await expect(markCheckStarted(2, 2)).resolves.toEqual({ processId: 70 });
+        expect(logBackendError).toHaveBeenCalledWith(failure, expect.any(String), { householdId: 10, processId: 70 });
         expect(advanceExternalIfComplete).toHaveBeenCalledWith(40);
     });
 
