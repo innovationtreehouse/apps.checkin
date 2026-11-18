@@ -84,6 +84,18 @@ This is an interim mechanism. `docs/in-design/SHOPIFY_MEMBER_SEGMENT_PRICING.md`
 planned upgrade — segment-gated automatic discounts, once checkout identity (that doc's
 §5) is solved — at which point per-checkout discount codes go away entirely.
 
+### Two store items
+
+A paid program has a public item, whose stock is counted, and a hidden reserved-seat
+item, which is not stock-tracked and never sells out. Every filled place ends up exactly
+one unit out of the public item's stock, so the store never offers a place a family
+already holds. A sale on the public item takes its own unit. A reserved-seat sale takes
+none, so activation takes the unit, unless the family's scholarship hold already took it.
+
+The public item keeps a counted stock for people buying straight from the store. A change
+to a program's full price is sent to both store items. A member price is not sent,
+because members pay the full-price item through a discount code.
+
 ### Legacy two-variant shape (removed)
 
 An earlier design gave each program two variants with separate inventory pools kept in
