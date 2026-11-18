@@ -85,6 +85,7 @@ export const classifications = {
         memberSince: 'public',
         status: 'public',
         isVolunteerFamily: 'public',
+        notRenewingYear: 'internal',
         householdId: 'public',
     },
     OrgMembershipProcess: {
