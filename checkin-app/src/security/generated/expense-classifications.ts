@@ -61,8 +61,6 @@ export const classifications = {
         qbTxnId: 'internal',
         qbTxnEntity: 'internal',
         qbVendorId: 'internal',
-        qbPostAttempts: 'internal',
-        qbFailureKind: 'internal',
         qbFirstFailedAt: 'internal',
         qbLastError: 'personal',
         qbClaimedAt: 'internal',
@@ -226,7 +224,6 @@ export const classifications = {
         status: 'internal',
         failureReason: 'personal',
         receivedAt: 'internal',
-        replayAttempts: 'internal',
         firstFailedAt: 'internal',
     },
     ExpenseReceivedOrgEvent: {
