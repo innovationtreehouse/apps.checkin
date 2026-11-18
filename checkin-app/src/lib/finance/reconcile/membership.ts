@@ -20,13 +20,58 @@ export async function raiseMembershipPaymentOutcome(
     ref: { shopifyOrderId: string | null; processId: number },
 ): Promise<void> {
     if (outcome === "paid_while_blocked") return raisePaidWhileBlocked(ref);
+    if (outcome === "nothing_due") {
+        const settledBy = await howYearWasSettled(ref.processId);
+        if (settledBy) {
+            await raisePaymentException("DUPLICATE_MEMBERSHIP_PAYMENT", { ...ref, evidence: DUPLICATE_MEMBERSHIP_WORDING[settledBy] });
+            return;
+        }
+    }
     const kind: PaymentExceptionKind | null =
         outcome === "no_item" ? "NO_ITEM"
-        // Duplicate order, both leads paying, payment after close or certify.
+        // Payment after close, or before payment was due.
         : outcome === "nothing_due" ? "UNMATCHED_ORDER"
         : outcome === "refunded" ? "REVERSED_BEFORE_ACTIVATION"
         : null;
     if (kind) await raisePaymentException(kind, { ...ref, ...(outcome === "refunded" ? { severity: "CRITICAL" as const } : {}) });
+}
+
+/** How an application's membership year was already settled when another payment arrived. */
+export type SettledBy = "store" | "certified" | "granted";
+
+/** What the Board reads on a duplicate membership payment, per way the year was settled. */
+export const DUPLICATE_MEMBERSHIP_WORDING: Record<SettledBy, string> = {
+    store: "the household paid twice in the store for the same year: a refund may be needed",
+    certified: "the household paid after the Board certified a plan: a refund may be needed",
+    granted: "the household paid after the Board granted the year: a refund may be needed",
+};
+
+/** The way the year was settled, from the application's recorded payment; null when it was never paid. */
+export function settledByFrom(
+    process: { paidAt: Date | null; shopifyOrderId: string | null; manualPaymentById: number | null },
+    granted: boolean,
+): SettledBy | null {
+    if (!process.paidAt) return null;
+    if (process.shopifyOrderId) return "store";
+    if (process.manualPaymentById === null) return null;
+    return granted ? "granted" : "certified";
+}
+
+async function howYearWasSettled(processId: number): Promise<SettledBy | null> {
+    const process = await prisma.orgMembershipProcess.findUnique({
+        where: { id: processId },
+        select: { paidAt: true, shopifyOrderId: true, manualPaymentById: true },
+    });
+    if (!process) return null;
+    // A grant is a Board settlement that records the year it grants (payment.ts settle's grantAudit).
+    const settlements = process.shopifyOrderId
+        ? []
+        : await prisma.auditLog.findMany({
+              where: { tableName: "OrgMembershipProcess", affectedEntityId: processId, newData: { path: ["via"], equals: "manual" } },
+              select: { newData: true },
+          });
+    const granted = settlements.some((a) => typeof a.newData === "object" && a.newData !== null && "grantedYear" in a.newData);
+    return settledByFrom(process, granted);
 }
 
 /**
