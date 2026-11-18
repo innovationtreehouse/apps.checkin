@@ -270,7 +270,7 @@ describe("registered verb served by the old wrapper", () => {
     it("passes a handler() call inside a wrapper function, endpoint held in a constant", () => {
         const src = `const ENDPOINT = "${key}";\nexport async function GET(req) {\n  const res = await handler(ENDPOINT, async () => x);\n  return res(req);\n}`;
         expect(run(src, [])).toEqual([]);
-        expect(extractHandlerServedEndpoints(src)).toEqual(new Set([key]));
+        expect(extractHandlerServedEndpoints(src)).toEqual(new Map([["GET", new Set([key])]]));
     });
 
     it("passes a fileHandler() route", () => {
@@ -282,6 +282,11 @@ describe("registered verb served by the old wrapper", () => {
         const found = findRegisteredNotHandlerServed("route.ts", ["GET", "POST"], "/api/thing", src,
             new Set([key, "POST /api/thing"]), new Set());
         expect(found.map(f => f.message)).toEqual([expect.stringContaining("POST /api/thing is in the security registry")]);
+    });
+
+    it("does not let another export's handler() call cover a verb", () => {
+        const src = `export const POST = handler("${key}", h);\nexport const GET = withAuth(h);`;
+        expect(run(src, []).map(f => f.message)).toEqual([expect.stringContaining(`${key} is in the security registry`)]);
     });
 
     it("ignores an unregistered verb and a commented-out handler()", () => {

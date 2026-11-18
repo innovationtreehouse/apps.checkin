@@ -95,7 +95,7 @@ export const GET = withCron(() => duringNightlyRun(async () => {
                 } catch (err) {
                     failed += 1;
                     stillOpen.push(visit);
-                    logger.error(`Failed to check out visit ${visit.id} (person ${visit.person.email}):`, err);
+                    logger.error(`Failed to check out visit ${visit.id} (person ${visit.personId}):`, err);
                 }
             }
             // After every per-visit transaction commits: the checkout's own
@@ -173,6 +173,7 @@ export const GET = withCron(() => duringNightlyRun(async () => {
         // at the membership-year boundary because an annual pass misses everyone who
         // starts qualifying after it fires. Idempotent — one per person per cycle.
         const personAgreements = await runPersonAgreementSweep(now);
+        failed += personAgreements.failed;
         if (personAgreements.opened > 0) {
             logger.info(`Nightly cron: opened ${personAgreements.opened} individual membership agreement(s).`);
         }
@@ -182,7 +183,7 @@ export const GET = withCron(() => duringNightlyRun(async () => {
 
         return NextResponse.json({
             success: true,
-            // Checkouts this run swallowed. withCron reads it and records the run
+            // Checkouts and agreement opens this run swallowed. withCron reads it and records the run
             // as completed-but-unclean when non-zero — a swept-nothing sweep is not
             // a green sweep, and is also not a sweep that failed to run.
             failed,

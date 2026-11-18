@@ -8,7 +8,7 @@ import { lookupItems, getItem, listCategories, listSubcategories } from "./catal
 import { matchingRules, type CatalogInfo } from "./account-rules";
 import { StaleStateError, advanceWorkflow, advanceWorkflowInTx, unlessRaceLost, type Actor } from "./workflow-engine";
 import { writeAudit } from "./audit";
-import { lockExpense, outboxHeldIds } from "./signoff-facts";
+import { lockExpense, OUTBOX_HOLD_FIELDS, outboxHeldIds } from "./signoff-facts";
 import { postExpenseToQb, type PostOutcome } from "./expense-qb-poster";
 import { getExpenseRuntime } from "../runtime";
 import { sendOutcomeNotices } from "./outcome-notices";
@@ -462,6 +462,7 @@ export async function recoverStrandedQbExpenses(limit = 50): Promise<{ checked: 
   const candidates = await db.expense.findMany({
     where: { state: "qb_pending" },
     orderBy: { submittedAt: "asc" },
+    select: OUTBOX_HOLD_FIELDS,
   });
 
   const processedIds = new Set(
@@ -474,14 +475,18 @@ export async function recoverStrandedQbExpenses(limit = 50): Promise<{ checked: 
   let checked = 0;
   let failed = 0;
   const unprocessed = candidates.filter((c) => !processedIds.has(c.id));
-  const held = await outboxHeldIds(db, unprocessed);
-  for (const { id, orgId } of unprocessed.filter((c) => !held.has(c.id)).slice(0, limit)) {
-    checked++;
-    try {
-      await checkAndProcessExpense(orgId, id);
-    } catch (err) {
-      failed++;
-      logError("recovery_failed", { expenseId: id, orgId }, err);
+  // Hold checks read sign-off facts, so they run a batch at a time and stop once the batch is full.
+  for (let start = 0; start < unprocessed.length && checked < limit; start += limit) {
+    const page = unprocessed.slice(start, start + limit);
+    const held = await outboxHeldIds(db, page);
+    for (const { id, orgId } of page.filter((c) => !held.has(c.id)).slice(0, limit - checked)) {
+      checked++;
+      try {
+        await checkAndProcessExpense(orgId, id);
+      } catch (err) {
+        failed++;
+        logError("recovery_failed", { expenseId: id, orgId }, err);
+      }
     }
   }
   return { checked, failed };

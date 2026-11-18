@@ -63,7 +63,7 @@ export async function openPersonBg(personId: number, asOf: Date, threshold: Date
             },
         });
         return created;
-    });
+    }, { maxWait: 5_000, timeout: 15_000 });
 }
 
 /**
