@@ -269,8 +269,8 @@ describe('advanceExternalIfComplete', () => {
 
             const call = prisma.orgMembershipProcess.updateMany.mock.calls[0][0];
             expect(call.where.paidAt).toEqual({ not: null });
-            expect(call.data).toMatchObject({ status: 'PENDING_BG_CLEARANCE', bgClearedAt: null });
-            expect(prisma.auditLog.create.mock.calls[0][0].data.newData).toEqual({ status: 'PENDING_BG_CLEARANCE', paid: true });
+            expect(call.data).toEqual({ status: 'PENDING_BG_CLEARANCE', stageEnteredAt: expect.any(Date), bgClearedAt: null });
+            expect(prisma.auditLog.create.mock.calls[0][0].data.newData).toEqual({ status: 'PENDING_BG_CLEARANCE', paid: true, bgCleared: false });
             expect(settleHouseholdBg).toHaveBeenCalledWith(7);
             expect(result).toEqual({ ...paidProcess, status: 'ACTIVE' });
         });
@@ -287,14 +287,29 @@ describe('advanceExternalIfComplete', () => {
             expect(settleHouseholdBg).toHaveBeenCalledWith(7);
         });
 
-        it('loser of the race: no settle', async () => {
-            prisma.orgMembershipProcess.findUnique.mockResolvedValueOnce(paidProcess).mockResolvedValueOnce(paidProcess);
+        it('loser of the race: reads again once, then no audit and no settle', async () => {
+            prisma.orgMembershipProcess.findUnique.mockResolvedValueOnce(paidProcess).mockResolvedValueOnce(paidProcess).mockResolvedValueOnce(paidProcess);
             prisma.orgMembershipProcess.updateMany.mockResolvedValue({ count: 0 });
 
             await advanceExternalIfComplete(20);
 
+            expect(prisma.orgMembershipProcess.updateMany).toHaveBeenCalledTimes(2);
             expect(prisma.auditLog.create).not.toHaveBeenCalled();
             expect(settleHouseholdBg).not.toHaveBeenCalled();
+        });
+
+        it('a refund between the read and the CAS: the second read sends the row to PENDING_PAYMENT', async () => {
+            const refunded = { ...paidProcess, paidAt: null };
+            prisma.orgMembershipProcess.findUnique.mockResolvedValueOnce(paidProcess).mockResolvedValueOnce(refunded).mockResolvedValueOnce({ ...refunded, status: 'PENDING_PAYMENT' });
+            prisma.orgMembershipProcess.updateMany.mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 1 });
+
+            const result = await advanceExternalIfComplete(20);
+
+            const retry = prisma.orgMembershipProcess.updateMany.mock.calls[1][0];
+            expect(retry.where.paidAt).toBeNull();
+            expect(retry.data.status).toBe('PENDING_PAYMENT');
+            expect(settleHouseholdBg).not.toHaveBeenCalled();
+            expect(result).toEqual({ ...refunded, status: 'PENDING_PAYMENT' });
         });
 
         it('a failed settle is logged and the advance still stands', async () => {

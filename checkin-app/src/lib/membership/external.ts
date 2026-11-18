@@ -116,6 +116,10 @@ async function applicationCheckStarted(process: { orgMembershipId: number | null
  * audit row is written exactly once, and a later status is never regressed. Mirrors review.ts `attest`.
  */
 export async function advanceExternalIfComplete(processId: number) {
+    return advanceExternal(processId, true);
+}
+
+async function advanceExternal(processId: number, retryOnLoss: boolean): Promise<OrgMembershipProcess | null> {
     const process = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
     if (!process) return process;
     if (process.status !== "PENDING_EXTERNAL_ACTION") return process;
@@ -126,7 +130,7 @@ export async function advanceExternalIfComplete(processId: number) {
     const to = paid ? "PENDING_BG_CLEARANCE" : "PENDING_PAYMENT";
 
     const { orgMembershipId } = asHouseholdProcess(process);
-    const householdId = await prisma.$transaction(async (tx) => {
+    const advanced = await prisma.$transaction(async (tx) => {
         const membership = await tx.orgMembership.findUnique({
             where: { id: orgMembershipId },
             select: { householdId: true },
@@ -156,11 +160,14 @@ export async function advanceExternalIfComplete(processId: number) {
                 tableName: "OrgMembershipProcess",
                 affectedEntityId: processId,
                 oldData: { status: "PENDING_EXTERNAL_ACTION" },
-                newData: { status: to, ...(paid ? { paid: true, ...(process.bgClearedAt ? { bgCleared: false } : {}) } : {}) },
+                newData: { status: to, ...(paid ? { paid: true, bgCleared: false } : {}) },
             },
         });
-        return membership?.householdId ?? null;
+        return { householdId: membership?.householdId ?? null };
     });
+    // A refund between the read and the CAS clears paidAt and fails the CAS; read again once.
+    if (!advanced && retryOnLoss) return advanceExternal(processId, false);
+    const householdId = advanced?.householdId ?? null;
     if (paid && householdId !== null) {
         // Lazy: settleHouseholdBg imports this module.
         const { settleHouseholdBg } = await import("@/lib/membership/settleHouseholdBg");
