@@ -1272,6 +1272,20 @@ describeDb("QB-2 posting — QuickBooks Class per line", () => {
     expect(await db.expenseFlag.count({ where: { expenseId: id } })).toBe(0);
   });
 
+  it("a stale claim on an unclassed expense is released to POST_FAILED and recorded", async () => {
+    await handMatched("2026-08-01");
+    await bucket100Unclassed();
+    const { id } = await outboxed("2026-09-10");
+    await db.expense.update({ where: { id }, data: { qbMatchState: "POSTING", qbClaimedAt: new Date(Date.now() - STALE_CLAIM_MS - 1000) } });
+
+    expect(await drainExpenseOutbox()).toMatchObject({ no_class: 1 });
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "POST_FAILED", qbClaimedAt: null });
+    expect(await db.expenseAuditLog.findFirstOrThrow({ where: { expenseId: id, action: "qb_post_failed" } })).toMatchObject({
+      valueBefore: "POSTING",
+      notes: "a line's bucket has no QuickBooks Class",
+    });
+  });
+
   it("a line with no bucket at all is not posted", async () => {
     await handMatched("2026-08-01");
     const { id } = await outboxed("2026-09-10", { buckets: [7, null] });
