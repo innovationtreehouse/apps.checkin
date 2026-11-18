@@ -160,6 +160,9 @@ async function outboxed(
   return { id, lines: [l1, l2] };
 }
 
+/** Waits for the first QuickBooks call, failing after five seconds rather than at the test timeout. */
+const untilFetched = () => vi.waitFor(() => expect(fetch).toHaveBeenCalled(), { timeout: 5_000, interval: 5 });
+
 const expenseRow = (id: string) => db.expense.findUniqueOrThrow({ where: { id } });
 
 /** The person pressing Retry on the Problems list or the expense. */
@@ -822,9 +825,14 @@ describeDb("QB-2 posting — daily ceiling", () => {
     await createdAt(2, new Date());
     await db.expenseOrgSettings.upsert({ where: { orgId: ORG }, create: { orgId: ORG, qbMaxCreatesPerDay: 2 }, update: { qbMaxCreatesPerDay: 2 } });
     const { id } = await outboxed("2026-09-10");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     expect(await postExpenseToQb(ORG, id)).toBe("waiting");
     expect(await drainExpenseOutbox()).toMatchObject({ posted: 0, capped: "day" });
+
+    const logged = warn.mock.calls.map(([m]) => JSON.parse(String(m))).filter((m) => m.event === "qb_daily_cap");
+    expect(logged).toEqual([expect.objectContaining({ cap: 2 })]);
+    warn.mockRestore();
   });
 
   it("takes the org's per-run limit from settings", async () => {
@@ -844,13 +852,19 @@ describeDb("QB-2 posting — daily ceiling", () => {
   });
 
   it("creates from before UTC midnight do not count", async () => {
-    const yesterday = new Date();
-    yesterday.setUTCHours(0, 0, 0, 0);
-    yesterday.setUTCMilliseconds(-1);
-    await createdAt(MAX_CREATES_PER_DAY, yesterday);
-    const { id } = await outboxed("2026-09-10");
+    // One frozen clock seeds the rows and counts them, so the run cannot cross 00:00Z between the two.
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date() });
+    try {
+      const yesterday = new Date();
+      yesterday.setUTCHours(0, 0, 0, 0);
+      yesterday.setUTCMilliseconds(-1);
+      await createdAt(MAX_CREATES_PER_DAY, yesterday);
+      const { id } = await outboxed("2026-09-10");
 
-    expect(await postExpenseToQb(ORG, id)).toBe("posted");
+      expect(await postExpenseToQb(ORG, id)).toBe("posted");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("the post right after sign-off respects the ceiling and leaves the expense for a later run", async () => {
@@ -985,10 +999,6 @@ describeDb("QB-2 posting — claim, call, settle", () => {
     let release!: () => void;
     qbo.gate = new Promise((r) => { release = r; });
     return () => { qbo.gate = null; release(); };
-  }
-
-  async function untilFetched() {
-    while (vi.mocked(fetch).mock.calls.length === 0) await new Promise((r) => setTimeout(r, 5));
   }
 
   it("holds no row lock during the QuickBooks call, and the row reads POSTING meanwhile", async () => {
@@ -1600,7 +1610,7 @@ describeDb("QB closed books — a create that may have landed", () => {
       // The attempt above already called fetch; only a call after this clear is the skip's lookup.
       vi.mocked(fetch).mockClear();
       const skipping = skipExpenseQb(finance, id, "why");
-      while (vi.mocked(fetch).mock.calls.length === 0) await new Promise((r) => setTimeout(r, 5));
+      await untilFetched();
 
       // A failed post meanwhile writes its audit row and leaves the state as it was.
       await db.expenseAuditLog.create({ data: { expenseId: id, userId: 0, action: "qb_needs_finance", notes: "timeout" } });
@@ -1626,7 +1636,7 @@ describeDb("QB closed books — a create that may have landed", () => {
     let release!: () => void;
     qbo.gate = new Promise((r) => { release = r; });
     const post = postExpenseToQb(ORG, id, { close: { ok: true, date: null } });
-    while (vi.mocked(fetch).mock.calls.length === 0) await new Promise((r) => setTimeout(r, 5));
+    await untilFetched();
     // Another worker took the claim over meanwhile.
     await db.expense.update({ where: { id }, data: { qbClaimedAt: new Date(Date.now() + 1000) } });
     qbo.gate = null;

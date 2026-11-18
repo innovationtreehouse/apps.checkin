@@ -15,6 +15,7 @@ import { financeQueueRows } from "../../services/financeQueueService";
 import { approveLine } from "../../services/approvalService";
 import { claimQbTxn, excludeQbTxn, matchExpenseToQb, qbCandidates, qbMatchInputs } from "../../services/qbMatchService";
 import { inertQbReader, type QbTxn } from "../../contract";
+import { expenses } from "../../routes";
 
 const FINANCE = principal(3, { isFinance: true });
 const BOARD = principal(5, { isBoard: true });
@@ -335,6 +336,22 @@ describeDb("sign-off seats", () => {
       await expect(setReimbursee(ORG, id, { newPerson: { name: "  " } }, FINANCE)).rejects.toMatchObject({ status: 400 });
       expect(added).toEqual([]);
       expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBeNull();
+    });
+
+    it("the route adds nobody unless the adder says the new person is an adult", async () => {
+      const { id } = await unknownReimbursee();
+      const added: string[] = [];
+      bindPorts({ signoff: directory({ finance: [3], nonMembers: [900], added }) });
+      const put = (newPerson: Record<string, unknown>) =>
+        expenses.reimbursee({ req: new Request("http://test/api/expense", { method: "PUT", body: JSON.stringify({ newPerson }) }), params: { id }, principal: FINANCE });
+
+      await expect(put({ name: "Dana Field", isAdult: false })).rejects.toMatchObject({ status: 400 });
+      await expect(put({ name: "Dana Field" })).rejects.toMatchObject({ status: 400 });
+      expect(added).toEqual([]);
+      expect((await db.expense.findFirst({ where: { id } }))!.reimburseePersonId).toBeNull();
+
+      await put({ name: "Dana Field", isAdult: true });
+      expect(added).toEqual(["Dana Field"]);
     });
 
     it("FINANCE cannot name a minor as reimbursee", async () => {

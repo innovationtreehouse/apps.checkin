@@ -240,6 +240,16 @@ describeDb("checkApprovalAutoTransition — capital review switch", () => {
     expect(await stateOf(id)).toBe("qb_pending");
   });
 
+  it("sends every expense to capital review while it is on with zero thresholds", async () => {
+    await seedOrgSettings({ capitalReviewEnabled: true, capitalTotalThresholdCents: 0, capitalLineItemThresholdCents: 0 });
+    const id = await approvedExpense(1);
+
+    await checkApprovalAutoTransition(id, ACTOR);
+
+    expect(await stateOf(id)).toBe("capital_review");
+    expect(checkAndProcessExpense).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["no settings row", async () => {}],
     ["a row with thresholds unset", () => seedOrgSettings({ capitalTotalThresholdCents: null, capitalLineItemThresholdCents: null })],
