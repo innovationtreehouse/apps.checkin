@@ -1,6 +1,6 @@
 /**
  * A family joining, in the browser: the family, the reviewers and the Board each see their part
- * of an application (docs/rules/membership.md). Every test mints its own family, so a rerun on the
+ * of an application. Every test mints its own family, so a rerun on the
  * same stack starts clean. The dev mocks stand in for signing, the background-check tool and payment.
  */
 import { expect, test, type Locator, type Page, type Request } from "@playwright/test";

@@ -12,6 +12,7 @@ import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { lockFacility } from "@/lib/facilityLock";
 import { duringNightlyRun } from "@/lib/attendance/nightlyClose";
 import { sendProblemsDigest } from "@/lib/problems";
+import { traceOnCommit } from "@/lib/specTrace";
 
 /** A nightly run this soon after the last one is a retry of the same night. */
 const SAME_NIGHT_MS = 12 * 60 * 60 * 1000;
@@ -72,7 +73,7 @@ export const GET = withCron(() => duringNightlyRun(async () => {
                 // may be hours earlier. Correcting one of these is expected by
                 // construction and never flags (lib/visit/significance.ts).
                 try {
-                    const segments = await prisma.$transaction(async (tx) => {
+                    const segments = await traceOnCommit(() => prisma.$transaction(async (tx) => {
                         await tx.$executeRaw`SELECT pg_advisory_xact_lock(${visit.personId})`;
                         await lockFacility(tx);
                         // Empty: someone else departed the visit first, so this close set nothing.
@@ -89,7 +90,7 @@ export const GET = withCron(() => duringNightlyRun(async () => {
                         }] : []);
                         await logCloseDepartures(tx, closeId, systemActor("cron:nightly"), departures, "NIGHTLY_SWEEP");
                         return segments;
-                    });
+                    }));
                     if (segments.length > 0) forceClosed.push(visit);
                 } catch (err) {
                     failed += 1;
@@ -161,7 +162,7 @@ export const GET = withCron(() => duringNightlyRun(async () => {
                 }))
             });
             return purged;
-        });
+        }, { maxWait: 5_000, timeout: 15_000 });
         const adultDobPurged = purgedPeople.length;
         if (adultDobPurged > 0) {
             logger.info(`Nightly cron: purged DoB for ${adultDobPurged} member(s) now over 25 (#1165).`);

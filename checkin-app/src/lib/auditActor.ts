@@ -4,7 +4,7 @@ import { type TxClient, isRootClient } from "@/lib/db-client";
 /**
  * Who an AuditLog row is attributed to.
  *
- * Two rules from `docs/rules/principles.md` are enforced here rather than at 85
+ * Two rules are enforced here rather than at 85
  * scattered `auditLog.create` call sites:
  *
  * - *Accountability — a system actor names itself.* `actorId: 0` alone cannot
@@ -26,7 +26,6 @@ export const SYSTEM_ACTOR = 0;
  */
 export const SYSTEM_ACTORS = [
     "cron:nightly",
-    "cron:scholarship-grace-expiry",
     "cron:trusted-adult-expiry",
     "cron:lifecycle-reconcile",
     "system:google-sign-in",

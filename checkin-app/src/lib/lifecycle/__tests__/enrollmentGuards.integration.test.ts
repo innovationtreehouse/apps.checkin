@@ -23,9 +23,6 @@ const TAG = 'enrollment-guards-test';
 const writes: Record<EnrollmentWriteName, EnrollmentWrite> = ENROLLMENT_WRITES;
 const guards: Record<string, EnrollmentGuard> = ENROLLMENT_GUARDS;
 
-/** request-payment-plan runs `reapply` in the same transaction when `apply`'s takeHold matches nothing. */
-const CONTINUES_WITH: Record<string, EnrollmentWriteName> = { apply: 'reapply' };
-
 describe('enrollment guards on real rows', () => {
     let programId: number;
     let personId: number;
@@ -66,7 +63,7 @@ describe('enrollment guards on real rows', () => {
         });
     }
 
-    it.each(Object.entries(guards))('%s admits its from-states, lands on its to-state, and leaves a refused row on the diagram', async (name, guard) => {
+    it.each(Object.entries(guards))('%s admits its from-states, lands on its to-state, and leaves a refused row on the diagram', async (_name, guard) => {
         const admittedBy = guard.admittedBy ?? guard.steps[guard.steps.length - 1];
         const admitted = new Set<string>();
         const refusedOffDiagram: string[] = [];
@@ -84,8 +81,6 @@ describe('enrollment guards on real rows', () => {
                 if (step === admittedBy) took = count > 0;
             }
             if (!took) {
-                const next = CONTINUES_WITH[name];
-                if (next) await prisma.programParticipant.updateMany({ where: { programId, personId, ...writes[next].where }, data: writes[next].data(new Date()) });
                 if (classify(toRow(await prisma.programParticipant.findUniqueOrThrow({ where: key() }))) === null) refusedOffDiagram.push(from);
                 continue;
             }

@@ -4,12 +4,13 @@
 /**
  * Integration tests for Trusted Adult management: household-scoped disclosure,
  * single-board-member decision (approve requires the shared note), one-click
- * renewal, the 1-year expiry sweep (warn-then-expire), withdrawal, board reset and revoke, and
+ * renewal, answering a request for more information, the 1-year expiry sweep (warn-then-expire), withdrawal, board reset and revoke, and
  * the household-lead guard.
  */
 
 import { normalizeAuditData } from '@/lib/auditPayload';
 import {
+    answerInfoRequest,
     createTrustedAdult,
     decideReview,
     renewTrustedAdult,
@@ -600,22 +601,115 @@ describe('Trusted Adults service', () => {
         }
     });
 
-    // PENDING_SUBJECT_ACTION (board asked for info) is a dead-end in the service: there is
-    // NO resubmit/re-decide path. The board can't re-decide (wrong_phase), the family can't
-    // open a fresh review (already_open) — the only exits are withdraw or board override.
-    it('PENDING_SUBJECT_ACTION is a dead-end: no re-decide, no renew; only withdraw/override exits it', async () => {
+    const JANE = { trustedAdultName: 'Jane External', trustedAdultEmail: 'jane@example.com', familyContext: 'Our nanny; may collect the kids on weekdays.' };
+
+    it('PENDING_SUBJECT_ACTION: the board cannot re-decide and the family cannot open a parallel review', async () => {
         const ta = await discloseOne();
         const reviewId = ta.reviews[0].id;
         await decideReview(reviewId, boardId, { decision: 'REQUEST_INFO', note: 'Need dates.' });
-        expect((await prisma.trustedAdultReview.findUnique({ where: { id: reviewId } }))!.status).toBe('PENDING_SUBJECT_ACTION');
-
-        // Board can't re-decide it; family can't open a parallel review while one is in flight.
         await expect(decideReview(reviewId, boardId, { decision: 'DENY' })).rejects.toMatchObject({ code: 'wrong_phase' });
         await expect(renewTrustedAdult(ta.id, leadId)).rejects.toMatchObject({ code: 'already_open' });
+    });
 
-        // The escape hatch: a lead can withdraw it → REVOKED.
-        const withdrawn = await withdrawTrustedAdult(ta.id, leadId);
-        expect(withdrawn.status).toBe('REVOKED');
+    it('answering the info request sends the same review back to the board with the reply, and pings the board', async () => {
+        const ta = await discloseOne();
+        const reviewId = ta.reviews[0].id;
+        await decideReview(reviewId, boardId, { decision: 'REQUEST_INFO', note: 'Which days?' });
+        sendEmail.mockClear();
+
+        const out = await answerInfoRequest(ta.id, leadId, { ...JANE, reply: 'Mondays and Wednesdays.' });
+        expect(out.id).toBe(reviewId);
+        expect(out.status).toBe('PENDING_BOARD_REVIEW');
+        expect(out.familyReply).toBe('Mondays and Wednesdays.');
+        expect(out.proposedName).toBeNull(); // facts unchanged, nothing proposed
+        expect(await prisma.trustedAdultReview.count({ where: { trustedAdultId: ta.id } })).toBe(1);
+        expect(sendEmail).toHaveBeenCalledWith(`board-${TAG}@ex.com`, expect.any(String), expect.any(String));
+
+        const audit = await latestAudit(ta.id);
+        expect(audit?.actorId).toBe(leadId);
+        expect(normalizeAuditData(audit?.newData)).toMatchObject({ status: 'PENDING_BOARD_REVIEW', reviewId, reply: 'Mondays and Wednesdays.', changedDetails: false });
+
+        // The board can now decide it.
+        const denied = await decideReview(reviewId, boardId, { decision: 'DENY' });
+        expect(denied.status).toBe('DENIED');
+    });
+
+    it('answering with changed details holds them on the review until the board approves', async () => {
+        const ta = await discloseOne();
+        const reviewId = ta.reviews[0].id;
+        await decideReview(reviewId, boardId, { decision: 'REQUEST_INFO', note: 'Phone?' });
+        const out = await answerInfoRequest(ta.id, leadId, { ...JANE, trustedAdultPhone: '555-123-4567' });
+        expect(out.proposedPhone).not.toBeNull();
+        expect((await prisma.trustedAdult.findUnique({ where: { id: ta.id } }))!.trustedAdultPhone).toBeNull();
+
+        await decideReview(reviewId, boardId, { decision: 'APPROVE', sharedNote: SHARED });
+        expect((await prisma.trustedAdult.findUnique({ where: { id: ta.id } }))!.trustedAdultPhone).toBe(out.proposedPhone);
+    });
+
+    it('answering a change request leaves the earlier approval untouched', async () => {
+        const ta = await discloseOne();
+        const first = await decideReview(ta.reviews[0].id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
+        const change = await resubmitWithChanges(ta.id, leadId, { ...JANE, familyContext: 'Weekends too.' });
+        await decideReview(change.id, boardId, { decision: 'REQUEST_INFO', note: 'Which weekends?' });
+
+        const out = await answerInfoRequest(ta.id, leadId, { ...JANE, familyContext: 'Weekends too.', reply: 'Every other.' });
+        expect(out.id).toBe(change.id);
+        expect(out.status).toBe('PENDING_BOARD_REVIEW');
+        const prior = await prisma.trustedAdultReview.findUnique({ where: { id: first.id } });
+        expect(prior).toMatchObject({ status: 'APPROVED', sharedNote: SHARED, reviewBy: first.reviewBy });
+        expect((await prisma.trustedAdult.findUnique({ where: { id: ta.id } }))!.familyContext).toBe(JANE.familyContext);
+
+        const approved = await decideReview(change.id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
+        expect(approved.status).toBe('APPROVED');
+    });
+
+    it('an answered renewal with no change, approved then reset, puts the earlier approval back as it was', async () => {
+        const ta = await discloseOne();
+        const first = await decideReview(ta.reviews[0].id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
+        await intoRenewalWindow(ta.id);
+        const firstBefore = await prisma.trustedAdultReview.findUnique({ where: { id: first.id } });
+        const renewal = await renewTrustedAdult(ta.id, leadId);
+        await decideReview(renewal.id, boardId, { decision: 'REQUEST_INFO', note: 'Still weekdays?' });
+        const answered = await answerInfoRequest(ta.id, leadId, { ...JANE, reply: 'Yes.' });
+        expect(answered.proposedName).toBeNull();
+
+        await decideReview(renewal.id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
+        expect((await prisma.trustedAdultReview.findUnique({ where: { id: first.id } }))!.status).toBe('SUPERSEDED');
+
+        const reset = await resetReview(renewal.id, boardId, 'Approved too early.');
+        expect(reset.status).toBe('PENDING_BOARD_REVIEW');
+        expect(await prisma.trustedAdultReview.findUnique({ where: { id: first.id } })).toEqual(
+            { ...firstBefore, status: 'APPROVED', updatedAt: expect.any(Date) },
+        );
+    });
+
+    it('a later answer without a reply keeps the earlier reply', async () => {
+        const ta = await discloseOne();
+        const reviewId = ta.reviews[0].id;
+        await decideReview(reviewId, boardId, { decision: 'REQUEST_INFO', note: 'Which days?' });
+        await answerInfoRequest(ta.id, leadId, { ...JANE, reply: 'Mondays.' });
+        await decideReview(reviewId, boardId, { decision: 'REQUEST_INFO', note: 'And a phone?' });
+
+        const out = await answerInfoRequest(ta.id, leadId, { ...JANE, trustedAdultPhone: '555-123-4567' });
+        expect(out.status).toBe('PENDING_BOARD_REVIEW');
+        expect(out.familyReply).toBe('Mondays.');
+        expect(out.proposedPhone).not.toBeNull();
+    });
+
+    it('answering is refused for a non-lead, outside PENDING_SUBJECT_ACTION, and with nothing to say', async () => {
+        const ta = await discloseOne();
+        const reviewId = ta.reviews[0].id;
+        await expect(answerInfoRequest(ta.id, leadId, { ...JANE, reply: 'x' })).rejects.toMatchObject({ code: 'wrong_phase' });
+
+        await decideReview(reviewId, boardId, { decision: 'REQUEST_INFO', note: 'Need dates.' });
+        const auditBefore = await prisma.auditLog.count({ where: { tableName: 'TrustedAdult', affectedEntityId: ta.id } });
+        await expect(answerInfoRequest(ta.id, outsiderId, { ...JANE, reply: 'x' })).rejects.toMatchObject({ code: 'forbidden' });
+        await expect(answerInfoRequest(ta.id, leadId, { ...JANE, reply: '  ' })).rejects.toMatchObject({ code: 'bad_input' });
+        expect((await prisma.trustedAdultReview.findUnique({ where: { id: reviewId } }))!.status).toBe('PENDING_SUBJECT_ACTION');
+        expect(await prisma.auditLog.count({ where: { tableName: 'TrustedAdult', affectedEntityId: ta.id } })).toBe(auditBefore);
+
+        // Withdraw still exits it.
+        expect((await withdrawTrustedAdult(ta.id, leadId)).status).toBe('REVOKED');
     });
 });
 

@@ -110,28 +110,28 @@ state: non-null means a hold is outstanding.
                                  │ deny (no Shopify op)
                                  ▼
                           ┌──────────────┐
-                          │  HELD +      │  re-apply (same seat, no 2nd -1)
-                          │  DENIED      │ ─────────────────────────────► back to HELD
-                          │ (paymentPlanDeniedAt set)   (deniedAt cleared)
+                          │  HELD +      │  a new request is refused (409);
+                          │  DENIED      │  the family follows up with finance
+                          │ (paymentPlanDeniedAt set)
                           └──────┬───────┘
                                  │
-              ┌──────────────────┼───────────────────────┐
-              │ (a) withdraw     │ (b) pay anyway         │ (c) grace expires
-              ▼                 ▼                        ▼
-     +1, row removed     +1 (compensates the       +1, auto-withdrawn
-                          webhook's real sale),     (reuses path (a))
-                          row -> ACTIVE
+              ┌──────────────────┴───────┐
+              │ (a) withdraw             │ (b) pay anyway
+              ▼                          ▼
+     +1, row removed             +1 (compensates the
+                                  webhook's real sale),
+                                  row -> ACTIVE
 ```
 
 ### Application (`POST /api/programs/[id]/request-payment-plan`)
 
-Stamps `inventoryHeldAt = now()` and clears `paymentPlanDeniedAt`, guarded so the `-1`
-only fires the moment `inventoryHeldAt` transitions **null → set**. A denied re-applicant
-already has `inventoryHeldAt` set (denial never clears it — see below), so re-applying
-just flips `isPaymentPlanRequested` back to `true` and clears the denial stamp — it does
-**not** decrement a second time for a seat it's already holding. On a genuine transition
-(fresh hold or re-request after denial) this now emails the Scholarship Review Team and
-sends the applicant household an acknowledgement — see §5.
+Stamps `inventoryHeldAt = now()`, guarded so the `-1` only fires the moment
+`inventoryHeldAt` transitions **null → set**; a re-POST on a row already holding writes
+nothing. A denied request cannot be sent again: the route answers 409 and names the
+`financeContactEmail` setting (or the Board, when it is unset) as where to follow up, and
+the request-flag write itself refuses a row with `paymentPlanDeniedAt` set. On a genuine
+transition (fresh hold) this emails the Scholarship Review Team and sends the applicant
+household an acknowledgement — see §5.
 
 ### Denial (`POST /api/finance-ops/payment-plans/refuse`)
 
@@ -144,8 +144,7 @@ applicant, silently drifting DB capacity and Shopify's count apart.) Sends no au
 email — see §5.
 
 A request whose hold failed has no seat to keep, so denying it stamps nothing: the flag
-clears, the row is an ordinary unpaid claim with its non-payment notices and no grace
-clock, and the denial is kept in the audit log.
+clears, the row is an ordinary unpaid claim with its non-payment notices, and the denial is kept in the audit log.
 
 ### Approval (`POST /api/finance-ops/payment-plans`)
 
@@ -211,30 +210,12 @@ against *failed calls* but not against *crashes between the two steps*:
   (+1) to compensate, guarded transactionally (`inventoryHeldAt` not-null → null) so a
   webhook retry can't release twice. Never allowed to fail the webhook's 200 — Shopify
   retries the whole order on a non-2xx.
-- **(c) Grace-period expiry** — `cron/scholarship-grace-expiry`. See below.
 
-## 4. Grace-period expiry
+## 4. A denied hold has no expiry
 
-`BoardSettings.scholarshipDenialGraceDays` (nullable int; **NULL = the feature is off**,
-never a guessed default) sets how many days a denied applicant keeps their held seat
-before being auto-withdrawn. The cron sweep (`GET /api/cron/scholarship-grace-expiry`,
-`Authorization: Bearer $CRON_SECRET`, same auth guard as every other cron route) finds
-`PENDING` rows with `isPaymentPlanRequested: false`, `inventoryHeldAt` set,
-`paymentPlanDeniedAt` set, and `paymentPlanDeniedAt + scholarshipDenialGraceDays days` in
-the past, then auto-withdraws each one (reusing release path (a) — semantically, expiry
-*is* auto-withdrawal + seat restore) and audit-logs with a distinct
-`reason: "scholarship_grace_expired"` context so it reads differently from a manual
-withdrawal in the audit trail. The delete repeats the sweep's query as its own condition,
-so a row that was paid, approved, re-applied for or removed after the select is skipped:
-it stays as it is, with no +1 and no audit entry. Each row is processed independently (a per-row failure
-doesn't block the rest of the sweep), and the sweep never touches non-`PENDING` rows —
-an approved (`ACTIVE`) participant's hold was already consumed, not left outstanding, so
-it can never match this query regardless of how old `paymentPlanDeniedAt` is.
-
-Configured on the membership settings surface (`/settings/membership` →
-`PUT /api/settings/membership`), alongside the other board policy knobs
-(`bgRecheckMonths`, dues) — board/sysadmin only, audit-logged, blank input clears it back
-to `null`.
+No automated job removes a denied applicant. A denied hold stays until the applicant
+pays or withdraws, or a board member removes them (release paths (a) and (b)). The
+applicant cannot send the request again.
 
 ## 5. Notifications
 
@@ -260,7 +241,7 @@ still the applicant's only automatic email.
 
 | Event | Route | Review Team | Household |
 |---|---|---|---|
-| Program request (fresh hold or re-request-after-denial) | `POST /api/programs/[id]/request-payment-plan` | ✅ `scholarshipNotifyEmail` → else all board | ✅ ack (leads ∪ participant), ungated |
+| Program request (fresh hold) | `POST /api/programs/[id]/request-payment-plan` | ✅ `scholarshipNotifyEmail` → else all board | ✅ ack (leads ∪ participant), ungated |
 | Membership request | `POST /api/membership/request-payment-plan` | ✅ | ✅ ack (leads only), ungated |
 | Program approve | `POST /api/finance-ops/payment-plans` | — | **no automatic email** |
 | Program deny | `POST /api/finance-ops/payment-plans/refuse` | — | **no automatic email** |
@@ -276,15 +257,13 @@ one-automatic-email rule.)
 
 **2. Approve/deny are silent by design.** The Scholarship Review Team communicates board
 decisions (program approve/deny, membership approve) **manually** — hence no automatic
-applicant email. A **denial** starts the `scholarshipDenialGraceDays` clock (§4) with no
-automatic notice, so the board's manual denial message should state the deadline itself;
-the grace-expiry auto-withdraw (§4) also sends nothing — both silences are deliberate, not gaps.
+applicant email. A **denial** sends no automatic notice; the silence is deliberate, not a gap.
 
 **3. Fallback rule.** `BoardSettings.scholarshipNotifyEmail` unset (or unparseable) → email
 **all board members** (the board *is* the review team until configured). Set on
-**Settings → Email** (distinct from `scholarshipDenialGraceDays`, set on Settings → Membership).
+**Settings → Email**.
 
-**4. Membership deny — parity closed, still silent.** The membership side now has both approve and deny (`POST /api/finance-ops/membership-payment-plans/refuse`). Denial clears `isPaymentPlanRequested` back to `false`; the process stays `PENDING_PAYMENT` and the household returns to normal pay-to-activate (membership holds no seat and has no grace cron, so denial state is the cleared flag plus the audit row). Like every other board decision it sends **no automatic email** — the board communicates the denial manually.
+**4. Membership deny — parity closed, still silent.** The membership side now has both approve and deny (`POST /api/finance-ops/membership-payment-plans/refuse`). Denial clears `isPaymentPlanRequested` back to `false`; the process stays `PENDING_PAYMENT` and the household returns to normal pay-to-activate (membership holds no seat, so denial state is the cleared flag plus the audit row). Like every other board decision it sends **no automatic email** — the board communicates the denial manually.
 
 **5. The pending-participants cron never removes anyone — reviewer decision (core customer
 service, not a job for a computer).** Day-1/3/6 household warnings send to leads ∪

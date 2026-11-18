@@ -219,7 +219,7 @@ const recordedYear = (year: number | null) => year ?? { in: [] as number[] };
  * "Settled for the live membership year" — the MONEY question: a process whose
  * membership fee is paid: terminal ACTIVE, or paid and only waiting on background
  * clearance ({@link membershipFeeSettledAwaitingBg}) — that records the live year,
- * INITIAL and RENEWAL alike (docs/rules/membership.md). ARCHIVED (a closed
+ * INITIAL and RENEWAL alike. ARCHIVED (a closed
  * application) is deliberately absent: only unpaid applications can be closed, so
  * it must not extend a horizon. Read by the households valid-until,
  * membershipValidThrough and the outreach audiences. No live year matches nothing.
@@ -274,7 +274,7 @@ export type ClassifyRow = { status: ProcessStatus; kind: ProcessKind } & Process
 
 /** The kinds that reach ACTIVE on a signature, owing no clearance stamp. An
  *  exemption list, not an allowlist: a kind added later owes the stamp by default. */
-const SETTLES_ON_SIGNATURE: readonly ProcessKind[] = ["PERSON_AGREEMENT", "KEY_VOLUNTEER_AGREEMENT"];
+export const SETTLES_ON_SIGNATURE: readonly ProcessKind[] = ["PERSON_AGREEMENT", "KEY_VOLUNTEER_AGREEMENT"];
 
 /**
  * Name a row's lifecycle state, or null when it's off-diagram. Total over the
@@ -381,6 +381,12 @@ export const REFUND_LANDS_IN: Readonly<Partial<Record<ProcessStatus, ProcessStat
 export function refundLandsIn(status: ProcessStatus): ProcessStatus | null {
     return REFUND_LANDS_IN[status] ?? null;
 }
+
+/** A paid application the board can "Record refund" on: paid, at a step `REFUND_LANDS_IN` names. */
+export const refundableApplication = defineStateSet<Where>()({
+    statuses: Object.keys(REFUND_LANDS_IN) as ProcessStatus[],
+    flags: { paidAt: true },
+});
 
 /**
  * Steps a row closed before the unpaid-only rule may still hold in

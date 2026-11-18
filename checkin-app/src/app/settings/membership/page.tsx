@@ -14,6 +14,7 @@ import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { useSession } from "next-auth/react";
 import { LibraryReleaseCard } from "@/components/admin/LibraryReleaseCard";
 import { KeyVolunteerAgreementCard } from "@/components/admin/KeyVolunteerAgreementCard";
+import { ProgramStoreCard } from "@/components/admin/ProgramStoreCard";
 import { liveMembershipYear, membershipYearLabel, variantSlotYears } from "@/lib/programYear";
 import { VariantPicker } from "./VariantPicker";
 
@@ -26,9 +27,9 @@ interface Settings {
   volunteerFamilyDiscountCode: string | null;
   bgRecheckMonths: number;
   devSigningTarget: string | null;
-  scholarshipDenialGraceDays: number | null;
   releasedLibraries: string[];
   keyVolunteerAgreementVersion: number;
+  programStoreClosedAt: string | null;
 }
 
 interface YearVariant {
@@ -66,7 +67,6 @@ export default function MembershipSettingsPage() {
   const [standardFee, setStandardFee] = useState("0");
   const [volunteerFee, setVolunteerFee] = useState("0");
   const [bgRecheckMonths, setBgRecheckMonths] = useState("0");
-  const [scholarshipGraceDays, setScholarshipGraceDays] = useState("");
   const [boundary, setBoundary] = useState("");
   const [boundaryUnlocked, setBoundaryUnlocked] = useState(false);
   const [variantId, setVariantId] = useState("");
@@ -94,7 +94,7 @@ export default function MembershipSettingsPage() {
   const [confirmOpenRenewalsOpened, { open: openConfirmOpenRenewals, close: closeConfirmOpenRenewals }] = useDisclosure(false);
 
   const [saving, setSaving] = useState(false);
-  const [fieldErrors, setFieldErrors] = useState<{ standardFee?: string; volunteerFee?: string; variantId?: string; scholarshipGraceDays?: string }>({});
+  const [fieldErrors, setFieldErrors] = useState<{ standardFee?: string; volunteerFee?: string; variantId?: string }>({});
   const isBoardMember = !!useSession().data?.user?.isBoardMember;
 
   const { data, error, reload } = useLoad<{ settings: SettingsBody }>("/api/settings/membership");
@@ -103,7 +103,7 @@ export default function MembershipSettingsPage() {
   const releasedLibraries = settingsRow?.releasedLibraries ?? [];
   const kvaVersion = settingsRow?.keyVolunteerAgreementVersion ?? 1;
 
-  const current = { standardFee, volunteerFee, bgRecheckMonths, scholarshipGraceDays, boundary, variantId, productUrl, discountCode, signingTarget, slots: JSON.stringify(slots) };
+  const current = { standardFee, volunteerFee, bgRecheckMonths, boundary, variantId, productUrl, discountCode, signingTarget, slots: JSON.stringify(slots) };
 
   // Confirm-checkbox gate only matters when a boundary already exists — changing
   // it shifts every household's cycle. First-time set has nothing to shift.
@@ -112,16 +112,12 @@ export default function MembershipSettingsPage() {
 
   const saveSettings = async () => {
     setFieldErrors({});
-    const fe: { standardFee?: string; volunteerFee?: string; variantId?: string; scholarshipGraceDays?: string } = {};
+    const fe: { standardFee?: string; volunteerFee?: string; variantId?: string } = {};
     const standardCents = typedDollarsToCents(standardFee);
     if (standardCents === null || standardCents < 0) fe.standardFee = "Enter a dollar amount of 0 or more.";
     const volunteerCents = typedDollarsToCents(volunteerFee);
     if (volunteerCents === null || volunteerCents < 0) fe.volunteerFee = "Enter a dollar amount of 0 or more.";
     if (variantId.trim() !== "" && !/^\d+$/.test(variantId.trim())) fe.variantId = "Must be a numeric Shopify variant ID.";
-    if (scholarshipGraceDays.trim() !== "") {
-      const g = parseInt(scholarshipGraceDays.trim(), 10);
-      if (!Number.isInteger(g) || g <= 0 || String(g) !== scholarshipGraceDays.trim()) fe.scholarshipGraceDays = "Enter a positive whole number of days, or leave blank to disable.";
-    }
     const slotFe: Record<number, string> = {};
     slots.forEach((slot, i) => {
       const id = slot.variantId.trim();
@@ -129,7 +125,7 @@ export default function MembershipSettingsPage() {
       else if (id !== "" && !/^\d+$/.test(id)) slotFe[slot.year] = "Must be a numeric Shopify variant ID.";
     });
     setSlotErrors(slotFe);
-    if (fe.standardFee || fe.volunteerFee || fe.variantId || fe.scholarshipGraceDays || Object.keys(slotFe).length) { setFieldErrors(fe); return; }
+    if (fe.standardFee || fe.volunteerFee || fe.variantId || Object.keys(slotFe).length) { setFieldErrors(fe); return; }
     const changedSlots = slots.filter((slot, i) =>
       slot.variantId.trim() !== "" &&
       (slot.variantId.trim() !== savedSlots[i]?.variantId || slot.productUrl.trim() !== savedSlots[i]?.productUrl));
@@ -152,7 +148,6 @@ export default function MembershipSettingsPage() {
           } : {}),
           volunteerFamilyDiscountCode: discountCode.trim() || null,
           bgRecheckMonths: Math.round(parseInt(bgRecheckMonths || "0", 10)),
-          scholarshipDenialGraceDays: scholarshipGraceDays.trim() === "" ? null : parseInt(scholarshipGraceDays.trim(), 10),
           // Dev instances only — the API rejects it elsewhere.
           ...(isDev ? { devSigningTarget: signingTarget } : {}),
           // Send the boundary when the unlock is checked, or when it was never set (no
@@ -199,7 +194,6 @@ export default function MembershipSettingsPage() {
       standardFee: centsToDecimalString(settings.standardMembershipFeeCents),
       volunteerFee: centsToDecimalString(settings.volunteerMembershipFeeCents),
       bgRecheckMonths: String(settings.bgRecheckMonths ?? 0),
-      scholarshipGraceDays: settings.scholarshipDenialGraceDays != null ? String(settings.scholarshipDenialGraceDays) : "",
       boundary: settings.orgMembershipYearBoundary ? settings.orgMembershipYearBoundary.slice(0, 10) : "",
       variantId: settings.orgMembershipVariantId ?? "",
       productUrl: settings.orgMembershipProductUrl ?? "",
@@ -210,7 +204,6 @@ export default function MembershipSettingsPage() {
     setStandardFee(snap.standardFee);
     setVolunteerFee(snap.volunteerFee);
     setBgRecheckMonths(snap.bgRecheckMonths);
-    setScholarshipGraceDays(snap.scholarshipGraceDays);
     setBoundary(snap.boundary);
     setVariantId(snap.variantId);
     setProductUrl(snap.productUrl);
@@ -260,17 +253,6 @@ export default function MembershipSettingsPage() {
                 error={!isRecheckPolicySet(parseInt(bgRecheckMonths, 10)) ? "Required — not configured." : undefined}
                 value={bgRecheckMonths}
                 onChange={(e) => setBgRecheckMonths(e.currentTarget.value)}
-              />
-              <TextInput
-                label="Scholarship denial grace period"
-                description="Days a denied scholarship applicant keeps their held seat before auto-release. Blank disables auto-release."
-                rightSection={<Text size="sm" c="dimmed">days</Text>}
-                rightSectionWidth={44}
-                inputMode="numeric"
-                w={220}
-                error={fieldErrors.scholarshipGraceDays}
-                value={scholarshipGraceDays}
-                onChange={(e) => { setScholarshipGraceDays(e.currentTarget.value); setFieldErrors((f) => ({ ...f, scholarshipGraceDays: undefined })); }}
               />
             </Group>
 
@@ -401,6 +383,8 @@ export default function MembershipSettingsPage() {
           {isBoardMember && <LibraryReleaseCard key={releasedLibraries.join()} initial={releasedLibraries} />}
 
           {isBoardMember && <KeyVolunteerAgreementCard key={kvaVersion} initialVersion={kvaVersion} />}
+
+          {isBoardMember && settingsRow && <ProgramStoreCard initialClosedAt={settingsRow.programStoreClosedAt ?? null} />}
 
           <Card withBorder radius="md" padding="lg" style={{ borderColor: "var(--mantine-color-yellow-5)" }}>
             <Title order={3} mb="xs">Go-live: open renewals</Title>

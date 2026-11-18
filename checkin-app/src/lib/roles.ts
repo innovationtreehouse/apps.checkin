@@ -226,7 +226,7 @@ export async function mayManageKeyVolunteers(db: DbClient, actor: { isBoardMembe
  *  - the denied-household guard: BOARD can't be granted to a member of a DENIED
  *    household, the mirror of the deny-side refusal in
  *    POST /api/membership-ops/households. Also actor-independent.
- *  - the Key Volunteer rules (docs/rules/membership.md): KEY_VOLUNTEER is granted
+ *  - the Key Volunteer rules: KEY_VOLUNTEER is granted
  *    and removed by the Board (`mayManageKeyVolunteers`); the gated roles are
  *    granted only to a Key Volunteer signed at the current agreement version, for
  *    every actor; KEY_VOLUNTEER can't be removed while a gated role is held.

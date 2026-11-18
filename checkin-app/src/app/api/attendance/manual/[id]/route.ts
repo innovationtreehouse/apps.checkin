@@ -13,8 +13,7 @@ import { resolveDisplayTimezone } from "@/lib/appSettings";
 import { findVisitOverlaps, openOverlapRefusal, overlapFlag } from "@/lib/visit/overlap";
 
 // Self-correction of a member's own visits, and a household lead's correction
-// of their household members' (trust-first, see
-// docs/rules/attendance-checkin.md): the edit always
+// of their household members' (trust-first): the edit always
 // applies — the only gates are validity (times parse, departure after arrival,
 // ≤ 24h, closed visits only) and scope. Integrity is post-hoc: every change is
 // audited, and a significant one (big delta × trusted old source, doubled when
@@ -125,7 +124,7 @@ export const PATCH = handler<{ id: string }>('PATCH /api/attendance/manual/[id]'
             // Significance already read the pre-edit source above, so restamping
             // here only sets what the NEXT correction overwrites — a second
             // correction of the same time weighs it as a self-report, not a
-            // measurement (docs/rules/attendance-checkin.md, visit-record).
+            // measurement.
             const edited = await tx.visit.update({
                 where: { id: visitId },
                 data: {

@@ -2,8 +2,7 @@
  * @jest-environment node
  */
 /**
- * Kiosk replay idempotency against the real DB (docs/rules/attendance-checkin.md,
- * kiosk resilience): a queued scan carries clientEventId + scannedAt + `replay:
+ * Kiosk replay idempotency against the real DB: a queued scan carries clientEventId + scannedAt + `replay:
  * true`, and
  * replay must dedup, toggle with the original scan time, and park instead of
  * toggling when stale or out-of-order. The live attempt carries the same

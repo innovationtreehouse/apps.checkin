@@ -7,6 +7,7 @@ import { handler } from "@/security/handler";
 import { isLibraryKey, type LibraryKey } from "@/lib/libraryRelease";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { variantSlotYears } from "@/lib/programYear";
+import { closeProgramStore, openProgramStore, storeSwitchRefusalMessage } from "@/lib/programs/storeSwitch";
 
 export const dynamic = "force-dynamic";
 
@@ -51,9 +52,10 @@ function parseYearVariants(raw: unknown, boundary: Date | null | undefined): Yea
  * perYearVariantClient (true — required; any other body is refused with nothing changed),
  * membershipYearVariants ([{ membershipYear, shopifyVariantId, productUrl }] — replaced by year; 409 when
  * another year already holds the variant, and nothing in the save is kept),
- * scholarshipDenialGraceDays (positive int|null — null disables the grace-period expiry cron),
  * releaseLibrary ({ library: LibraryKey, released: boolean } — board members only; the nav's UI-only
  * release gate, merged into the stored list in one statement so concurrent toggles don't clobber).
+ * programStore ("close" | "open" — board members only, sent alone): closes or reopens the store to
+ * program seats (lib/programs/storeSwitch.ts); a refusal is a 409 naming what to fix first.
  * Membership fees must be finite and >= 0; an invalid value rejects the whole update (400) so the
  * previous value survives rather than silently collapsing to zero. (The Averity consent
  * link is an env var, not a board setting. Email sender identity lives in /api/settings/email.)
@@ -72,16 +74,23 @@ export const PUT = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
         volunteerFamilyDiscountCode?: string | null;
         bgRecheckMonths?: number;
         devSigningTarget?: string | null;
-        scholarshipDenialGraceDays?: number | null;
         releasedLibraries?: unknown;
         releaseLibrary?: { library?: unknown; released?: unknown } | null;
         membershipYearVariants?: unknown;
         perYearVariantClient?: unknown;
+        programStore?: unknown;
     };
     try {
         body = await req.json();
     } catch {
         return apiError("Invalid JSON", 400);
+    }
+    if (body.programStore !== undefined) {
+        if (!auth.user.isBoardMember) return apiError("Only board members can close or reopen the store to program seats", 403);
+        if (body.programStore !== "close" && body.programStore !== "open") return apiError("programStore must be 'close' or 'open'", 400);
+        const result = body.programStore === "close" ? await closeProgramStore(auth.user.id) : await openProgramStore(auth.user.id);
+        if ("refused" in result) return apiError(storeSwitchRefusalMessage(result), 409, result);
+        return NextResponse.json({ programStore: result });
     }
     // A page without this marker cannot read the GET response, so its form holds defaults, not the stored settings.
     if (body.perYearVariantClient !== true) return apiError("This page is out of date. Reload the page and try again.", 400);
@@ -122,15 +131,6 @@ export const PUT = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
             return apiError("devSigningTarget must be 'zoho', 'debug', or null", 400);
         }
         data.devSigningTarget = body.devSigningTarget;
-    }
-    // scholarshipDenialGraceDays: null = feature off (never guess a default); otherwise a positive integer.
-    if (body.scholarshipDenialGraceDays !== undefined) {
-        if (body.scholarshipDenialGraceDays !== null) {
-            if (!Number.isFinite(body.scholarshipDenialGraceDays) || !Number.isInteger(body.scholarshipDenialGraceDays) || body.scholarshipDenialGraceDays <= 0) {
-                return apiError("scholarshipDenialGraceDays must be a positive whole number of days, or null", 400);
-            }
-        }
-        data.scholarshipDenialGraceDays = body.scholarshipDenialGraceDays;
     }
 
     if (body.releasedLibraries !== undefined) {

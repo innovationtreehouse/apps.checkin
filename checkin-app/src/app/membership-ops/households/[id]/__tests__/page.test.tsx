@@ -21,6 +21,28 @@ describe("household detail page", () => {
     expect(screen.getByText("Sam Rivera")).toBeInTheDocument();
   });
 
+  it("shows a rejection that counts against a member of an active household", async () => {
+    setSession({ id: 1, isBoardMember: true });
+    mockFetchJson({ [ROUTE]: { household: { id: 7, name: "Rivera", orgMembership: { status: "ACTIVE" }, householdMembers: [
+      { id: 9, name: "Sam Rivera", programParticipants: [], disputed: true },
+      { id: 10, name: "Alex Rivera", programParticipants: [], disputed: false },
+    ] } } });
+    renderWithProviders(<HouseholdDetailPage params={params} />);
+
+    expect(await screen.findByText("A background-check rejection counts against this household")).toBeInTheDocument();
+    expect(screen.getByText(/^Sam Rivera: a rejection on their check review counts/)).toHaveTextContent("The membership stands until renewal.");
+    expect(screen.queryByText(/Alex Rivera: a rejection/)).not.toBeInTheDocument();
+  });
+
+  it("shows no rejection notice when nobody is disputed", async () => {
+    setSession({ id: 1, isBoardMember: true });
+    mockFetchJson({ [ROUTE]: { household: { id: 7, name: "Rivera", orgMembership: { status: "ACTIVE" }, householdMembers: [{ id: 9, name: "Sam Rivera", programParticipants: [], disputed: false }] } } });
+    renderWithProviders(<HouseholdDetailPage params={params} />);
+
+    expect(await screen.findByText("Sam Rivera")).toBeInTheDocument();
+    expect(screen.queryByText("A background-check rejection counts against this household")).not.toBeInTheDocument();
+  });
+
   it("says when the household does not exist", async () => {
     setSession({ id: 1, isBoardMember: true });
     mockFetchJson({ [ROUTE]: { household: null } });

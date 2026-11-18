@@ -6,7 +6,7 @@
 **Progress:** P1 (table + backfill, no readers) merged in September 2026 (issue #1361). P2–P5 remain. The `ProgramInstance` table stays; it is not to be dropped.
 **Baseline:** today's `main` (2026-10-16). The earlier draft assumed the member-segment pricing proposal (#929) would ship first; it has not (`docs/in-design/SHOPIFY_MEMBER_SEGMENT_PRICING.md` is still a proposal). Member pricing today is a minted single-use discount code per household checkout (§2a). `Fee`/`FeePayment` were dropped with issue #354 and are not part of this plan.
 
-**Naming.** This doc says **program leader** for the person who runs a program, matching the rules register (`docs/rules/programs.md`). The schema still says `leadMentor` (`Program.leadMentorId`, `ProgramInstance.leadMentorId`, the `programsLed` claim, the `program-lead-mentor` resolver). The architectural review's WI 4.5 renames "lead mentor" to "program leader" in code; that review is not on `main` yet. The two pieces of work touch the same files — see open question Q6. No step of this plan renames a leader column or claim in place.
+**Naming.** This doc says **program leader** for the person who runs a program, matching the rules register. The schema still says `leadMentor` (`Program.leadMentorId`, `ProgramInstance.leadMentorId`, the `programsLed` claim, the `program-lead-mentor` resolver). The architectural review's WI 4.5 renames "lead mentor" to "program leader" in code; that review is not on `main` yet. The two pieces of work touch the same files — see open question Q6. No step of this plan renames a leader column or claim in place.
 
 ---
 
@@ -250,7 +250,7 @@ Live-site consequences to accept before P4: one card per open run, not per progr
 
 ## 7. Phased plan
 
-Each phase is an ordered list of PRs. **[mig]** = migrations group, **[sec]** = security group (boundary-only), **[app]** = feature. Each PR is green and shippable on its own. Only the [sec] split is a repo rule (boundary isolation); keeping [mig] separate and merging [mig]/[sec] one at a time is this plan's convention. "Keeps" lists the `docs/rules/programs.md` rules (and recent fixes) the phase's tests must keep passing — the phase is not done if one of them regresses.
+Each phase is an ordered list of PRs. **[mig]** = migrations group, **[sec]** = security group (boundary-only), **[app]** = feature. Each PR is green and shippable on its own. Only the [sec] split is a repo rule (boundary isolation); keeping [mig] separate and merging [mig]/[sec] one at a time is this plan's convention. "Keeps" lists the program rules (and recent fixes) the phase's tests must keep passing — the phase is not done if one of them regresses.
 
 **P1 — Done** (#1361): table, `Event.instanceId`, one-off id-aliased backfill.
 
@@ -313,7 +313,7 @@ Keeps: every rule above, on the contracted schema.
 2. **`ProgramInstance.name` is a stored, separate run label**, editable by the run operator. (§3)
 3. **Policy narrowing** (§3a): an instance may narrow `minAge`/`maxAge`/`orgMemberOnly`, never widen, enforced at write time.
 4. **Pricing stays on `Program` (single per definition).** Per-run pricing is someday-maybe. Post-#929 the escape hatch is a per-instance automatic discount/price override — not a shareable discount code (#929 retires codes as forgeable). No instance price column and no override today. If it ever becomes real, revisit then. (§2, §2a)
-   > **Contradicted by today's code (reasoning only).** #929 has not shipped: member pricing *is* a discount code, minted per household checkout and bound to that household (`mintMemberDiscountCode`, `docs/rules/programs.md` › Pricing). The decision itself — price on the definition, no instance price column — still holds.
+   > **Contradicted by today's code (reasoning only).** #929 has not shipped: member pricing *is* a discount code, minted per household checkout and bound to that household (`mintMemberDiscountCode`). The decision itself — price on the definition, no instance price column — still holds.
 
 ## 10. Open questions for the owner
 

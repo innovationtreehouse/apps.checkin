@@ -88,7 +88,7 @@ defineRoute({
 // the sibling GET/PATCH/DELETE on /api/facility/visits carry and the same set
 // facility-ops/visits gates the page on, which must stay equal. Not
 // isOperations: operations' reach into attendance is aggregate only (the
-// trends, printing ID badges; docs/rules/attendance-checkin.md), so one
+// trends, printing ID badges), so one
 // person's visit record stays outside it.
 //
 // Its own endpoint rather than a POST on /api/facility/visits: adding a verb to
@@ -174,6 +174,10 @@ defineRoute({
     orderedView: [
         ['isSysadmin',             ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
         ['isBoardMember',          ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
+        // Finance reads every roster to enroll places paid outside the store:
+        // the Board's view less 'internal', which the
+        // roster does not show (Person.isDeclaredAdult is the only such field here).
+        ['isFinance',              ['everyones:pii', 'everyones:personal', 'member', 'public']],
         // their_program_households delivers the household band leads operationally
         // need: the family's emergency contacts (personal) and the parents' own
         // contact details (pii). Person binds this scope ONLY on isHouseholdLead
@@ -222,7 +226,7 @@ defineRoute({
 // personal: the two staff-only fields the session page renders
 // (Event.attendanceConfirmedAt, ProgramVolunteer.isCore) are personal, and every
 // internal ProgramParticipant field says how a family pays, which is not a
-// program leader's (docs/rules/programs.md).
+// program leader's.
 defineRoute({
     endpoint: 'GET /api/events/[id]',
     authorize: 'authenticated',
@@ -243,20 +247,21 @@ defineRoute({
 });
 
 // Staff directory SEARCH for un-enrolled participants to add to a program.
-// Admission ('program-lead-mentor'; resolveAccess also admits sysadmin/board)
-// is the real boundary. The search returns names only (owner ruling,
-// docs/rules/programs.md) as EligibleCandidate rows: id, name and a computed
+// Admission ('program-roster-staff': the program's lead mentor, sysadmin, board,
+// or finance, which enrolls from the roster) is the real boundary. The search returns names only (owner ruling)
+// as EligibleCandidate rows: id, name and a computed
 // age-fit label, all public. Person is not in the bag, so no email or date of
 // birth can leave even if the query over-selects.
 defineRoute({
     endpoint: 'GET /api/programs/[id]/eligible-participants',
-    authorize: 'program-lead-mentor',
+    authorize: 'program-roster-staff',
     envelope: 'members',
     // Bag: { EligibleCandidate }.
     returns: ['EligibleCandidate'],
     orderedView: [
         ['isSysadmin',        ['public']],
         ['isBoardMember',     ['public']],
+        ['isFinance',         ['public']],
         ['programLeadMentor', ['public']],
     ],
 });
@@ -374,7 +379,7 @@ defineRoute({
 // merge refuses to carry forward: its collision check ("Both attested the
 // same background check") means the same human reviewed
 // under two Person identities. Board-only, NOT sysadmin — removing a review
-// is a membership decision (docs/rules/membership.md). No bag: the response
+// is a membership decision. No bag: the response
 // is { success: true }, no model data.
 defineRoute({
     endpoint: 'DELETE /api/membership-ops/bg-attestations/[id]',
@@ -837,7 +842,7 @@ defineRoute({
     ],
 });
 
-// Parked kiosk scans awaiting review (docs/rules/attendance-checkin.md, kiosk
+// Parked kiosk scans awaiting review (kiosk
 // resilience) — the
 // RawBadgeLog rows a replay parked instead of toggling (reviewReason set,
 // reviewedAt still null).

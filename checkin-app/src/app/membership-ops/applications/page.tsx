@@ -12,7 +12,9 @@ import { sharesHousehold } from "@/lib/conflictOfInterest";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { ReasonConfirm } from "@/components/ReasonConfirm";
 import { StatusFilterBadge, ActiveFilterNotice, useStatusFilter } from "@/components/StatusFilter";
-import { CLOSABLE_STATUSES, awaitingBgReview, refundLandsIn, type ProcessKind, type ProcessStatus } from "@/lib/membership/lifecycle";
+import { reopenYearRefusal } from "@/lib/programYear";
+import { useMembershipYearBoundary } from "@/app/program-ops/ProgramYearField";
+import { CLOSABLE_STATUSES, awaitingBgReview, refundableApplication, type ProcessKind, type ProcessStatus } from "@/lib/membership/lifecycle";
 
 interface Person {
   id: number;
@@ -133,7 +135,7 @@ const waitingOnCheckReview = (r: ProcessRow, rows: readonly ProcessRow[]) =>
 
 // Mirror archiveApplication's and recordRefund's gates; the server re-checks.
 const closable = (r: ProcessRow) => !r.paidAt && (CLOSABLE_STATUSES as readonly string[]).includes(r.status);
-const refundable = (r: ProcessRow) => !!r.paidAt && refundLandsIn(r.status as ProcessStatus) != null;
+const refundable = (r: ProcessRow) => refundableApplication.has({ status: r.status, paidAt: !!r.paidAt });
 
 export default function AdminMembershipPage() {
   return (
@@ -158,6 +160,9 @@ function ApplicationsBoard() {
   const [pendingCertify, setPendingCertify] = useState<number | null>(null);
   const [certifyReason, setCertifyReason] = useState("");
   const [showArchived, setShowArchived] = useState(false);
+  // Mirrors the server's same-year Reopen refusal; the server stays the enforcement.
+  const { boundary } = useMembershipYearBoundary(showArchived);
+  const yearRefusal = (r: ProcessRow) => reopenYearRefusal(r.kind, new Date(r.createdAt), boundary, new Date());
   const [refundOpened, { open: openRefund, close: closeRefund }] = useDisclosure(false);
   const [pendingRefund, setPendingRefund] = useState<number | null>(null);
   const [refundReason, setRefundReason] = useState("");
@@ -191,6 +196,10 @@ function ApplicationsBoard() {
     post(processId, "review-override", { action: "reset", reason, wrongPerson }, "Sent back for re-review.");
   const releaseApplication = (processId: number, reason: string) =>
     post(processId, "review-override", { action: "release", reason }, "Released — the application moves on.");
+  const closeWrongPerson = (processId: number, reason: string) =>
+    post(processId, "review-override", { action: "reset", reason, closeAsWrongPerson: true }, "Closed as opened for the wrong person.");
+  const reopenWrongPerson = (processId: number, reason: string) =>
+    post(processId, "review-override", { action: "reopen", reason }, "Check review reopened.");
   const archive = (processId: number) => post(processId, "archive", {}, "Application closed.");
   const markLeadCheckStarted = (processId: number, personId: number) =>
     post(processId, "/api/membership-audit/person-bg", { personId }, "Check marked started.");
@@ -274,6 +283,63 @@ function ApplicationsBoard() {
       ),
     });
   };
+
+  // B27: the Board closes a check review opened for the wrong person. Its decisions stay
+  // on record, and its rejection stops counting.
+  const confirmCloseWrongPerson = (r: ProcessRow) => {
+    const modalId = `close-wrong-person-${r.id}`;
+    modals.open({
+      modalId,
+      title: "Close this check review as opened for the wrong person?",
+      children: (
+        <ReasonConfirm
+          confirmLabel="Close review"
+          missingReason="A reason is required to close a review as opened for the wrong person."
+          onCancel={() => modals.close(modalId)}
+          onConfirm={(reason) => {
+            modals.close(modalId);
+            closeWrongPerson(r.id, reason);
+          }}
+        >
+          <Text size="sm">
+            This closes the review of <strong>{processLabel(r)}</strong>. Its {r.attestations.length} decision(s),
+            any rejection included, stay on record against it but no longer count against anyone. The Board can reopen it.
+          </Text>
+        </ReasonConfirm>
+      ),
+    });
+  };
+
+  const confirmReopenWrongPerson = (r: ProcessRow) => {
+    const modalId = `reopen-wrong-person-${r.id}`;
+    modals.open({
+      modalId,
+      title: "Reopen this check review?",
+      children: (
+        <ReasonConfirm
+          confirmLabel="Reopen review"
+          missingReason="A reason is required to reopen a review."
+          onCancel={() => modals.close(modalId)}
+          onConfirm={(reason) => {
+            modals.close(modalId);
+            reopenWrongPerson(r.id, reason);
+          }}
+        >
+          <Text size="sm">
+            Only for a review the Board closed as opened for the wrong person. It returns to where it was
+            closed, and any rejection on it counts again.
+          </Text>
+        </ReasonConfirm>
+      ),
+    });
+  };
+
+  const wrongPersonClose = (r: ProcessRow) =>
+    me?.isBoardMember && r.kind === "PERSON_BG" && (
+      <Button size="xs" fz={15} variant="default" color="red" disabled={busyId === r.id || ownHousehold(r)} onClick={() => confirmCloseWrongPerson(r)}>
+        Close: opened for the wrong person
+      </Button>
+    );
 
   // A blocked household application with nobody in its household under a blocked check
   // review: whoever's rejection blocked it has left. The server re-checks.
@@ -494,6 +560,7 @@ function ApplicationsBoard() {
                       Dismiss: opened by mistake
                     </Button>
                   )}
+                  {wrongPersonClose(r)}
                 </Group>
               )}
 
@@ -541,6 +608,7 @@ function ApplicationsBoard() {
                         <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => confirmResetReview(r)}>
                           Reset for re-review
                         </Button>
+                        {wrongPersonClose(r)}
                         {releasable(r) && (
                           <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => confirmRelease(r)}>
                             Release
@@ -577,9 +645,17 @@ function ApplicationsBoard() {
 
               <Group justify="flex-end" mt="md">
                 {showArchived ? (
-                  <Button size="xs" fz={15} disabled={busyId === r.id || ownHousehold(r)} onClick={() => unarchive(r.id)}>
-                    Reopen
-                  </Button>
+                  <Group gap="md" wrap="wrap" align="center">
+                    {yearRefusal(r) && <Text size="xs" c="dimmed">{yearRefusal(r)}</Text>}
+                    {me?.isBoardMember && r.kind === "PERSON_BG" && (
+                      <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => confirmReopenWrongPerson(r)}>
+                        Reopen: closed as wrong person
+                      </Button>
+                    )}
+                    <Button size="xs" fz={15} disabled={busyId === r.id || ownHousehold(r) || !!yearRefusal(r)} onClick={() => unarchive(r.id)}>
+                      Reopen
+                    </Button>
+                  </Group>
                 ) : closable(r) && (
                   <Button size="xs" fz={15} variant="subtle" color="red" disabled={busyId === r.id || ownHousehold(r)} onClick={() => confirmArchive(r)}>
                     Close application

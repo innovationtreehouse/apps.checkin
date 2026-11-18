@@ -201,17 +201,19 @@ export function QuickBooksListsRefresh({ onRefreshed }: { onRefreshed?: () => vo
  * A saved QuickBooks pick the app's copy shows as inactive or no longer holds, as a warning beside its picker
  * with "Update now"; the picker never offers it. Nothing while the pick is active, unset, or the list isn't loaded.
  */
-export function InactivePickWarning({ saved, options, onRefreshed }: {
+export function InactivePickWarning({ saved, options, onRefreshed, advice = "Pick an active one." }: {
   saved: string | null | undefined;
   options: readonly { id: string; name: string; active: boolean }[] | null | undefined;
   onRefreshed?: () => void;
+  /** What to do about it; rows with no picker say so here. */
+  advice?: string;
 }) {
   if (!saved || !options?.length) return null;
   const entry = options.find((o) => o.id === saved);
   if (entry?.active) return null;
   return (
     <Alert color="yellow" variant="light" p="xs">
-      <Text size="sm">{entry ? `${entry.name} is inactive in QuickBooks.` : `QuickBooks id ${saved} is not in QuickBooks' list in the app.`} Pick an active one.</Text>
+      <Text size="sm">{entry ? `${entry.name} is inactive in QuickBooks.` : `QuickBooks id ${saved} is not in QuickBooks' list in the app.`} {advice}</Text>
       <QuickBooksListsRefresh onRefreshed={onRefreshed} />
     </Alert>
   );

@@ -92,7 +92,7 @@ describe('Cron Pending-Participants API Integration Tests', () => {
             await mkParticipant('day7');
             await mkParticipant('plan'); // PENDING_HELD (req=true, seat held) -> never swept
             await mkParticipant('holdFailed'); // PENDING_HOLD_FAILED (req=true, held=null) -> also never swept
-            await mkParticipant('denied'); // denied applicant -> grace-expiry cron's job, never this sweep's
+            await mkParticipant('denied'); // denied applicant -> the board's to settle, never this sweep's
 
             await prisma.programParticipant.createMany({
                 data: [
@@ -107,7 +107,7 @@ describe('Cron Pending-Participants API Integration Tests', () => {
                     // problem (Shopify reconciliation queue), NEVER the applicant's, so it must survive.
                     { programId, personId: ids.holdFailed, status: 'PENDING', pendingSince: daysAgo(now, 9), isPaymentPlanRequested: true, inventoryHeldAt: null },
                     // Denied 10 days after enrolling: pendingSince is way past the 7-day
-                    // overdue tier, but paymentPlanDeniedAt hands the timeline to scholarship-grace-expiry.
+                    // overdue tier, but a denied applicant is never swept.
                     { programId, personId: ids.denied, status: 'PENDING', pendingSince: daysAgo(now, 10), isPaymentPlanRequested: false, paymentPlanDeniedAt: daysAgo(now, 0), inventoryHeldAt: daysAgo(now, 10) },
                 ]
             });

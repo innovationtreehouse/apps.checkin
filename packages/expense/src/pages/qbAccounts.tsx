@@ -53,7 +53,7 @@ export default function QbAccountsPage() {
                 <Table.Td>{a.name}</Table.Td>
                 <Table.Td>
                   {inQb?.active && inQb.name}
-                  {inQb && <InactivePickWarning saved={a.qbAccount} options={live.data} />}
+                  {inQb && <InactivePickWarning saved={a.qbAccount} options={live.data} advice="Delete it and add an active account." />}
                   {live.data && !inQb && <Badge color="red" variant="light">Not in QuickBooks</Badge>}
                 </Table.Td>
                 <Table.Td>

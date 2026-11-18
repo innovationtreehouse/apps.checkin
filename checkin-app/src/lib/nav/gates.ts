@@ -10,7 +10,7 @@ export const hasAnyRole = (
 ): boolean => roles.some((r) => user?.[r] === true);
 
 export const SYSADMIN_OR_BOARD = ["isSysadmin", "isBoardMember"] as const satisfies readonly RoleFlag[];
-/** The finance areas admit FINANCE or BOARD; sysadmin has no access (docs/rules/revenue.md). */
+/** The finance areas admit FINANCE or BOARD; sysadmin has no access. */
 export const FINANCE_OR_BOARD = ["isFinance", "isBoardMember"] as const satisfies readonly RoleFlag[];
 
 export const everyone: NavGate = () => true;

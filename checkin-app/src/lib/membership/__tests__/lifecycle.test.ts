@@ -34,6 +34,7 @@ import {
     CLOSABLE_STATUSES,
     RESTORE_CLOSABLE_STATUSES,
     refundLandsIn,
+    refundableApplication,
     RESTORABLE_STATUSES,
     LEGACY_REOPEN_STATUSES,
     openProcess,
@@ -253,6 +254,14 @@ describe('isLegalTransition covers the declared edges', () => {
         expect(refundLandsIn('ARCHIVED')).toBeNull();
         expect(TRANSITIONS.filter((t) => t.event === 'recordRefund').map((t) => [t.from, t.to])).toEqual([['PENDING_BG_CLEARANCE', 'PENDING_PAYMENT']]);
         expect(TRANSITIONS.some((t) => t.from === 'BLOCKED' && t.event === 'recordRefund')).toBe(false);
+    });
+
+    test('Record refund is offered on a paid row exactly where a refund lands somewhere', () => {
+        for (const st of ALL_STATUSES) {
+            expect(refundableApplication.has({ status: st, paidAt: true })).toBe(refundLandsIn(st) !== null);
+            expect(refundableApplication.has({ status: st, paidAt: false })).toBe(false);
+        }
+        expect(refundableApplication.where).toEqual({ status: { in: [...openProcess.statuses] }, paidAt: { not: null } });
     });
 
     test('close takes the legacy RENEWAL_PENDING_BG too, and a restore closes it, without a reopen edge back', () => {

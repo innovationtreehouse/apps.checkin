@@ -9,7 +9,7 @@ import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { emailBoardMembers } from "@/lib/emailRecipients";
 import { config } from "@/lib/config";
 import { parseDateOnly } from "@/lib/time";
-import { isSaleEnded, saleStockDelta } from "@/lib/programs/saleState";
+import { classify, isSaleEnded, saleStockDelta } from "@/lib/programs/saleState";
 import { countStockTakenSeats } from "@/lib/program/capacity";
 import { membershipYearLabel, programYearsTouched } from "@/lib/programYear";
 import { ProgramPhase, EnrollmentStatus, type Program } from "@/generated/prisma/client";
@@ -282,6 +282,21 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
     if (enrollmentStatus === 'OPEN' && currentProgram.enrollmentStatus !== 'OPEN' && saleEndedNow && !rearmSale) {
         return refuse("conflict", "Sales for this program have ended. To reopen enrollment, move the off-sale date later.");
     }
+    const effPhase = phase ?? currentProgram.phase;
+    if (rearmSale && effPhase === 'FINISHED') {
+        return refuse("conflict", "This program has ended, so its sale can't be reopened.");
+    }
+    // A program ends only once nothing is on sale: its sale has ended or enrollment is closed (saleState TRANSITIONS).
+    const saleAfterSave = classify({
+        phase: currentProgram.phase,
+        enrollmentStatus: enrollmentStatus ?? currentProgram.enrollmentStatus,
+        startAt: effStartAt,
+        offSaleAt: newOffSaleAt !== undefined ? newOffSaleAt : currentProgram.offSaleAt,
+        saleEndedAt: rearmSale ? null : currentProgram.saleEndedAt,
+    });
+    if (phase === 'FINISHED' && currentProgram.phase !== 'FINISHED' && saleAfterSave === 'ON_SALE') {
+        return refuse("conflict", "This program is still on sale. Close enrollment or end the sale before ending the program.");
+    }
 
     // Variant⟺price invariant: a program has a Shopify variant iff it
     // has a price on some tier — the capacity/oversell math assumes this
@@ -371,9 +386,10 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
     };
 
     const newLeader = leadMentorId !== undefined && leadMentorId !== currentProgram.leadMentorId ? leadMentorId : null;
+    let lockedBefore: Program | null;
     let updatedProgram: Program;
     try {
-        updatedProgram = await prisma.$transaction(async (tx) => {
+        ({ before: lockedBefore, after: updatedProgram } = await prisma.$transaction(async (tx) => {
             // Locked so the audit's "before" is the row this update replaces. Program before
             // households, the order enrollment takes them in (changeProgramStockWith).
             await tx.$queryRaw`SELECT id FROM "Program" WHERE id = ${programId} FOR UPDATE`;
@@ -387,22 +403,24 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
                 oldData: before ?? undefined,
                 newData: after,
             });
-            return after;
-        });
+            return { before, after };
+        }));
     } catch (e) {
         if (e instanceof ServiceError) return refuse("conflict", e.message);
         throw e;
     }
 
+    // The post-commit checks compare against the row the update replaced, not the caller's earlier read.
+    const before = lockedBefore ?? currentProgram;
     // The edit has landed; a failed re-check is logged, not reported as a failed save.
-    await flagEnrollmentsNoLongerFitting(currentProgram, updatedProgram)
+    await flagEnrollmentsNoLongerFitting(before, updatedProgram)
         .catch(e => logger.error("Program age re-check failed:", e));
 
     // Announce trigger — transition rule, once-per-lifetime claim, audit row,
     // and fire-without-await all live in the helper. Never throws.
     await maybeAnnounceOnOpen({
         programId: updatedProgram.id,
-        before: currentProgram,
+        before,
         after: updatedProgram,
         actorId: actor.id,
     });

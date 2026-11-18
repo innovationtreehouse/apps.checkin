@@ -12,6 +12,7 @@ import { hasHouseholdConflict, sharesHousehold } from "@/lib/conflictOfInterest"
 import { householdLeadship } from "@/lib/household/leads";
 import { isMembershipFeeSettled } from "@/lib/orgMembership";
 import { isProgramCheckoutBroken } from "@/lib/programCheckout";
+import { isProgramStoreClosed } from "@/lib/programs/storeClosed";
 import { changeProgramStockWith } from "@/lib/shopify/stock";
 import { isSaleEnded } from "@/lib/programs/saleState";
 import { PROGRAM_ENDED_PAYMENT } from "@/lib/programs/checkoutSignature";
@@ -194,7 +195,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         // goes through while every payment-bound enrollment — including a
         // conflicted admin's override, which still owes the fee — is refused.
         // No requiresOverride: an override cannot make the program sellable.
-        if (initialStatus === 'PENDING' && isProgramCheckoutBroken(currentProgram)) {
+        if (initialStatus === 'PENDING' && isProgramCheckoutBroken(currentProgram, await isProgramStoreClosed())) {
             return apiError("This program has a price but no payment link set up, so enrollment can't be paid for. An admin must fix the Shopify link in program-ops before anyone can enroll.", 400);
         }
 

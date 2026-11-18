@@ -135,21 +135,23 @@ export const receiptService = {
 
     const nextState = assertWorkflowMappingTransition(received.state as ReceivedReceiptState, "PROCEED");
 
-    // Compare-and-set: a concurrent proceed (manual or auto) that already moved it wins.
-    const { count } = await db.receivedReceipt.updateMany({
-      where: { id: receiptId, state: received.state },
-      data: { state: nextState, matchingPendingSince: null },
-    });
-    if (count !== 1) throw httpError(409, "Receipt was already proceeded");
+    await db.$transaction(async (tx) => {
+      // Compare-and-set: a concurrent proceed (manual or auto) that already moved it wins.
+      const { count } = await tx.receivedReceipt.updateMany({
+        where: { id: receiptId, state: received.state },
+        data: { state: nextState, matchingPendingSince: null },
+      });
+      if (count !== 1) throw httpError(409, "Receipt was already proceeded");
 
-    await insertAuditEvent(db, {
-      orgId: received.orgId,
-      actorUserId: actor.id,
-      actorUsername: actor.name,
-      eventType: "receipt_proceeded",
-      receivedReceiptId: receiptId,
-      fromState: received.state,
-      toState: nextState,
+      await insertAuditEvent(tx, {
+        orgId: received.orgId,
+        actorUserId: actor.id,
+        actorUsername: actor.name,
+        eventType: "receipt_proceeded",
+        receivedReceiptId: receiptId,
+        fromState: received.state,
+        toState: nextState,
+      });
     });
 
     return { state: nextState };
@@ -180,21 +182,23 @@ export const receiptService = {
     }
     const nextState = assertWorkflowMappingTransition(received.state as ReceivedReceiptState, "RETRY");
 
-    // Compare-and-set from apply_failed or a stuck applying; an apply racing an in-flight push gets 409 from its claim, and any re-send is a replay.
-    const { count } = await db.receivedReceipt.updateMany({
-      where: { id: receiptId, state: received.state, updatedAt: received.updatedAt },
-      data: { state: nextState },
-    });
-    if (count !== 1) throw httpError(409, "Receipt was already retried");
+    await db.$transaction(async (tx) => {
+      // Compare-and-set from apply_failed or a stuck applying; an apply racing an in-flight push gets 409 from its claim, and any re-send is a replay.
+      const { count } = await tx.receivedReceipt.updateMany({
+        where: { id: receiptId, state: received.state, updatedAt: received.updatedAt },
+        data: { state: nextState },
+      });
+      if (count !== 1) throw httpError(409, "Receipt was already retried");
 
-    await insertAuditEvent(db, {
-      orgId: received.orgId,
-      actorUserId: actor.id,
-      actorUsername: actor.name,
-      eventType: "receipt_retry_started",
-      receivedReceiptId: receiptId,
-      fromState: received.state,
-      toState: nextState,
+      await insertAuditEvent(tx, {
+        orgId: received.orgId,
+        actorUserId: actor.id,
+        actorUsername: actor.name,
+        eventType: "receipt_retry_started",
+        receivedReceiptId: receiptId,
+        fromState: received.state,
+        toState: nextState,
+      });
     });
 
     return { state: nextState };

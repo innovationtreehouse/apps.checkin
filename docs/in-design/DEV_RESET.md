@@ -49,7 +49,7 @@ resetting, and the real data stays.
 
 ## Rules this relies on
 
-From `docs/rules/principles.md`:
+Principles:
 
 - **A non-production capability is absent in production.** Both reset paths
   decide whether they exist from `CHECKIN_ENV` alone, re-checked in the body of

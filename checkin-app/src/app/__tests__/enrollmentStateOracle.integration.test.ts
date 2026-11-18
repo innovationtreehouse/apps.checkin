@@ -4,7 +4,7 @@
 /**
  * Validator-oracle integration tests.
  *
- * Drives each real transition (T3, T3f, T3m, T4, T5, T6, T7/T8/T9) against a real
+ * Drives each real transition (T3, T3f, T3m, T4, T5, T6, T7/T9) against a real
  * DB through its OWNING code — the route handler / shared mutator that carries the
  * guard — then asserts the resulting row `classify`es to the expected state and
  * `validate`s clean. A simulated crash window (activate's first updateMany, skip
@@ -162,22 +162,24 @@ describe('enrollment state — validator oracle over real transitions', () => {
         }
     });
 
-    it.each([
-        ['a failed -1', () => new shopify.StockNotRecordedError('stock carry could not be written')],
-        ['any other transaction error', () => new Error('lock timeout')],
-    ])('T3 re-apply that fails on %s leaves a denied row PENDING_HELD_DENIED, with no warning', async (_label, error) => {
-        jest.mocked(shopify.changeProgramStockWith).mockRejectedValueOnce(error());
-        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {}); // the route logs its 500
-        try {
-            await seed({ req: false, held: true, den: true }); // PENDING_HELD_DENIED
-            mockSession.mockResolvedValue({ user: { id: selfId } });
-            const res = await RequestPost(reqReq('SCHOLARSHIP'), params());
-            expect(res.status).toBe(500);
-            expect((await res.json()).warning).toBeUndefined();
-            await assertState('PENDING_HELD_DENIED');
-        } finally {
-            errorSpy.mockRestore();
-        }
+    it('a request on a denied place is refused and the row stays PENDING_HELD_DENIED', async () => {
+        await seed({ req: false, held: true, den: true }); // PENDING_HELD_DENIED
+        mockSession.mockResolvedValue({ user: { id: selfId } });
+        const res = await RequestPost(reqReq('SCHOLARSHIP'), params());
+        expect(res.status).toBe(409);
+        expect((await res.json()).error).toMatch(/was not approved/);
+        expect(shopify.changeProgramStockWith).not.toHaveBeenCalled();
+        await assertState('PENDING_HELD_DENIED');
+    });
+
+    it('T4 activate (payment) from PENDING_HELD_DENIED → ACTIVE: a denied family can still pay', async () => {
+        await seed({ req: false, held: true, den: true }); // PENDING_HELD_DENIED
+        const { activatedCount, releasedHoldCount } = await activateProgramEnrollment({
+            programId, personIds: [selfId], shopifyOrderId: 'order-oracle-denied',
+        });
+        expect(activatedCount).toBe(1);
+        expect(releasedHoldCount).toBe(1);
+        await assertState('ACTIVE');
     });
 
     it('T3m manual-hold: PENDING_HOLD_FAILED → PENDING_HELD', async () => {
@@ -236,21 +238,13 @@ describe('enrollment state — validator oracle over real transitions', () => {
         await assertState('PENDING_UNPAID');
     });
 
-    // T7/T8/T9 all funnel through the one shared exit (deleteAndReleaseHold);
+    // T7/T9 all funnel through the one shared exit (deleteAndReleaseHold);
     // their end-state is UNENROLLED (row deleted), with +1 iff the row still held.
     it('T7 remove(unpaid): PENDING_UNPAID → ∅ (no hold, no +1)', async () => {
         await seed({ req: false, held: false, den: false }); // PENDING_UNPAID
         const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
         const { released } = await deleteAndReleaseHold(programId, selfId, program);
         expect(released).toBe(false);
-        await assertGone();
-    });
-
-    it('T8 grace expiry: PENDING_HELD_DENIED → ∅ (held → +1)', async () => {
-        await seed({ req: false, held: true, den: true }); // PENDING_HELD_DENIED
-        const program = await prisma.program.findUniqueOrThrow({ where: { id: programId } });
-        const { released } = await deleteAndReleaseHold(programId, selfId, program);
-        expect(released).toBe(true);
         await assertGone();
     });
 

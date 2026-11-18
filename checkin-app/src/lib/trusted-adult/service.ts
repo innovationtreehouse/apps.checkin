@@ -11,6 +11,7 @@ import { recordSelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
 import { authorizedReview, expiringApprovals, isAuthorizedApproval } from "@/lib/trusted-adult/filters";
 import { config } from "@/lib/config";
 import { validateContact } from "@/lib/trusted-adult/contact";
+import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
 import type { TxClient } from "@/lib/db-client";
 
 /**
@@ -52,6 +53,7 @@ async function lockLiveHousehold(tx: TxClient, householdId: number) {
  * Status machine (TrustedAdultReview.status):
  *   PENDING_BOARD_REVIEW ──► APPROVED | DENIED
  *                        └─► PENDING_SUBJECT_ACTION (board asked for info)
+ *   PENDING_SUBJECT_ACTION ──(household answers)──► PENDING_BOARD_REVIEW (same review)
  *   APPROVED ──(reviewBy passes)──► EXPIRED ──(renew)──► new PENDING_BOARD_REVIEW
  *   APPROVED ──(a later review on the adult is approved)──► SUPERSEDED
  *   APPROVED (in force) | DENIED ──(board reset)──► PENDING_BOARD_REVIEW
@@ -116,6 +118,13 @@ export async function createTrustedAdult(input: CreateInput) {
     if (!household) throw new TrustedAdultError("not_found", "Household not found.");
 
     const ta = await prisma.$transaction(async (tx) => {
+        // Locks the membership rows a denial updates: a concurrent deny either lands first and is seen here,
+        // or waits and then revokes the review this creates. Membership rows before the household row,
+        // the order archiving takes them in.
+        const households = await adultHouseholdIds(tx, { householdId: input.householdId, trustedAdultPersonId: input.trustedAdultPersonId ?? null });
+        if ((await lockAndFindDeniedHousehold(tx, households)) !== null) {
+            throw new TrustedAdultError("wrong_phase", "This household has been denied membership, so this trusted adult cannot be added.");
+        }
         await lockLiveHousehold(tx, input.householdId);
         const created = await tx.trustedAdult.create({
             data: {
@@ -242,6 +251,73 @@ export async function resubmitWithChanges(id: number, actorId: number, input: Re
     return review;
 }
 
+export interface AnswerInput extends ResubmitInput {
+    /** The family's reply to the board's question. */
+    reply?: string | null;
+}
+
+/**
+ * A household lead answers the board's request for more information and sends the SAME
+ * review back to PENDING_BOARD_REVIEW. Changed facts ride on the review as proposed*
+ * (promoted only on approval), so a live earlier approval keeps its facts meanwhile.
+ * Needs a reply, a change, or both.
+ */
+export async function answerInfoRequest(id: number, actorId: number, input: AnswerInput) {
+    if (!input.trustedAdultName?.trim()) {
+        throw new TrustedAdultError("bad_input", "The trusted adult's name is required.");
+    }
+    const contact = validateContact({ phone: input.trustedAdultPhone, email: input.trustedAdultEmail });
+    if ("error" in contact) {
+        throw new TrustedAdultError("bad_input", contact.error);
+    }
+    if (!input.familyContext?.trim()) {
+        throw new TrustedAdultError("bad_input", "Tell the board what this adult may or may not do.");
+    }
+    const reply = input.reply?.trim() || null;
+
+    const ta = await prisma.trustedAdult.findUnique({ where: { id }, select: { id: true, householdId: true } });
+    if (!ta) throw new TrustedAdultError("not_found", "Trusted adult not found.");
+    await assertHouseholdLead(ta.householdId, actorId);
+
+    const review = await prisma.$transaction(async (tx) => {
+        await lockLiveHousehold(tx, ta.householdId);
+        await lockTrustedAdult(tx, ta.id);
+        const latest = await tx.trustedAdultReview.findFirst({ where: { trustedAdultId: ta.id }, orderBy: { id: "desc" } });
+        if (!latest || latest.status !== "PENDING_SUBJECT_ACTION") {
+            throw new TrustedAdultError("wrong_phase", "The board hasn't asked for more information on this trusted adult.");
+        }
+        const parent = await tx.trustedAdult.findUniqueOrThrow({ where: { id: ta.id } });
+        const current = latest.proposedName == null
+            ? { name: parent.trustedAdultName, phone: parent.trustedAdultPhone, email: parent.trustedAdultEmail, context: parent.familyContext }
+            : { name: latest.proposedName, phone: latest.proposedPhone, email: latest.proposedEmail, context: latest.proposedContext };
+        const next = { name: input.trustedAdultName.trim(), phone: contact.phone, email: contact.email, context: input.familyContext.trim() };
+        const changed = (Object.keys(next) as (keyof typeof next)[]).some((k) => next[k] !== current[k]);
+        if (!changed && !reply) {
+            throw new TrustedAdultError("bad_input", "Add a reply for the board or change the details.");
+        }
+        const updated = await tx.trustedAdultReview.update({
+            where: { id: latest.id },
+            data: {
+                status: "PENDING_BOARD_REVIEW",
+                ...(reply ? { familyReply: reply } : {}),
+                ...(changed
+                    ? { proposedName: next.name, proposedPhone: next.phone, proposedEmail: next.email, proposedContext: next.context }
+                    : {}),
+            },
+        });
+        await audit(
+            tx,
+            personActor(actorId),
+            ta.id,
+            { status: latest.status, reviewId: latest.id },
+            { status: "PENDING_BOARD_REVIEW", reviewId: latest.id, answeredInfoRequest: true, reply, changedDetails: changed },
+        );
+        return updated;
+    });
+    await notifyBoard();
+    return review;
+}
+
 /**
  * Retire every other approval on the adult when a review is approved, so the approved
  * review alone speaks for them. Runs under the parent lock, before the approval is written.
@@ -280,12 +356,19 @@ async function restoreSupersededBy(tx: TxClient, actor: AuditActor, taId: number
     }
 }
 
-/** A denial of the adult's own household, or of the household they belong to. */
-async function adultHouseholdDenied(tx: TxClient, ta: { householdId: number; trustedAdultPersonId: number | null }) {
+type AdultHouseholds = { householdId: number; trustedAdultPersonId: number | null };
+
+/** The household that names the adult, and the household the adult belongs to. */
+async function adultHouseholdIds(tx: TxClient, ta: AdultHouseholds) {
     const person = ta.trustedAdultPersonId
         ? await tx.person.findUnique({ where: { id: ta.trustedAdultPersonId }, select: { householdId: true } })
         : null;
-    const householdIds = person ? [ta.householdId, person.householdId] : [ta.householdId];
+    return person ? [ta.householdId, person.householdId] : [ta.householdId];
+}
+
+/** A denial of the adult's own household, or of the household they belong to. */
+async function adultHouseholdDenied(tx: TxClient, ta: AdultHouseholds) {
+    const householdIds = await adultHouseholdIds(tx, ta);
     return (await tx.orgMembership.count({ where: { householdId: { in: householdIds }, status: "DENIED" } })) > 0;
 }
 
@@ -340,15 +423,16 @@ async function refuseConflictedActor(actorId: number, reviewId: number, review: 
 }
 
 /**
- * Promote a MODIFIED review's proposed facts onto the parent TrustedAdult. Called
- * inside the approval transaction only — the live approved facts stay put until the
- * board actually signs off on the change. No-op for INITIAL/RENEWAL reviews.
+ * Promote a review's proposed facts (a MODIFIED resubmission, or edits sent with an
+ * answer to the board's question) onto the parent TrustedAdult. Called inside the
+ * approval transaction only — the live approved facts stay put until the board
+ * actually signs off on the change. No-op for a review that proposes nothing.
  */
 function promoteProposal(
     tx: TxClient,
-    review: { kind: string; trustedAdultId: number; proposedName: string | null; proposedPhone: string | null; proposedEmail: string | null; proposedContext: string | null },
+    review: { trustedAdultId: number; proposedName: string | null; proposedPhone: string | null; proposedEmail: string | null; proposedContext: string | null },
 ) {
-    if (review.kind !== "MODIFIED") return;
+    if (review.proposedName == null) return;
     return tx.trustedAdult.update({
         where: { id: review.trustedAdultId },
         data: {
@@ -511,6 +595,9 @@ export async function decideReview(reviewId: number, boardMemberId: number, inpu
         let status: string;
         switch (input.decision) {
             case "APPROVE": {
+                if (await adultHouseholdDenied(tx, head.trustedAdult)) {
+                    throw new TrustedAdultError("wrong_phase", "This household has been denied membership, so its trusted-adult review cannot be approved.");
+                }
                 const end = await approvalEnd(tx, review);
                 if (end <= now) {
                     throw new TrustedAdultError("wrong_phase", "This approval would already have lapsed — deny it and the family renews.");
@@ -683,7 +770,7 @@ export async function resetReview(reviewId: number, actorId: number, reason: str
         if (review.status !== "APPROVED" && review.status !== "DENIED") {
             throw new TrustedAdultError("wrong_phase", "Only an approved or denied review can be reset.");
         }
-        if (review.status === "APPROVED" && review.kind === "MODIFIED") {
+        if (review.status === "APPROVED" && review.proposedName != null) {
             throw new TrustedAdultError("wrong_phase", "This approved change is already on the trusted adult, so it can't be reset. Revoke the approval and the family resubmits.");
         }
         if (await adultHouseholdDenied(tx, head.trustedAdult)) {
