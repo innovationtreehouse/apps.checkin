@@ -453,10 +453,12 @@ async function moveJoinTables(tx: TxClient, keep: KeepSubject, merge: MergeSubje
             });
             moved.toolStatuses.migrated++;
         } else if (kept.level === tool.level) {
-            await tx.toolStatus.delete({
-                where: { personId_toolId: { toolId: tool.toolId, personId: mergeId } },
+            // Matching on level too: a level changed since the read is left, and refuses the merge.
+            const { count } = await tx.toolStatus.deleteMany({
+                where: { toolId: tool.toolId, personId: mergeId, level: tool.level },
             });
-            moved.toolStatuses.deduped++;
+            if (count > 0) moved.toolStatuses.deduped++;
+            else moved.toolStatuses.left++;
         } else {
             moved.toolStatuses.left++;
         }
