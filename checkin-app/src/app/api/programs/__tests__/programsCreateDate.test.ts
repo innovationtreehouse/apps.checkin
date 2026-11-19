@@ -386,3 +386,27 @@ describe('POST /api/programs — a leader who does not meet the policy', () => {
         expect(mockProgramCreate).not.toHaveBeenCalled();
     });
 });
+
+describe('POST /api/programs — naming oneself the leader', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: 7, isBoardMember: true } });
+    });
+
+    it('is refused, and the refused attempt is audited', async () => {
+        const res = await POST(new Request('http://localhost/api/programs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: 'Robotics', leadMentorId: 7, startAt: '2024-09-01', endAt: '2024-12-15', maxParticipants: 5 }),
+        }) as unknown as import('next/server').NextRequest);
+
+        expect(res.status).toBe(403);
+        expect(mockProgramCreate).not.toHaveBeenCalled();
+        expect(mockAuditLogCreate).toHaveBeenCalledWith({
+            data: expect.objectContaining({
+                actorId: 7, affectedEntityId: 7, tableName: 'SelfGrantRefusal',
+                newData: expect.objectContaining({ table: 'Program', attempted: { name: 'Robotics', leadMentorId: 7 } }),
+            }),
+        });
+    });
+});

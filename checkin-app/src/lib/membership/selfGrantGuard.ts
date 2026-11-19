@@ -24,7 +24,7 @@ export type GrantSubject =
     | { email: string };
 
 /** What the actor tried: the table the grant writes and the fields it would have set. */
-export type GrantAttempt = { table: "Person" | "OrgMembership" | "VolunteerDesignation" | "PaymentException" | "ProgramVolunteer" | "ToolStatus" | "PersonMailAlias"; attempted: Prisma.InputJsonObject };
+export type GrantAttempt = { table: "Person" | "OrgMembership" | "VolunteerDesignation" | "PaymentException" | "ProgramVolunteer" | "ToolStatus" | "PersonMailAlias" | "Program"; attempted: Prisma.InputJsonObject };
 
 export const SELF_GRANT_REFUSAL_TABLE = "SelfGrantRefusal";
 

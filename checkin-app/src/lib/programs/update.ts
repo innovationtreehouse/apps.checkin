@@ -5,6 +5,7 @@ import { adjustProgramInventory, setProgramInventory, STOCK_BOOKKEEPING_RESET, s
 import { dollarsToCentsOrNull } from "@checkin/money";
 import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { validateProgramAgeBounds, isLeaderAgeEligible, checkProgramAge } from "@/lib/programAge";
+import { recordSelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { emailBoardMembers } from "@/lib/emailRecipients";
 import { config } from "@/lib/config";
@@ -218,6 +219,11 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         if (leadMentorId !== currentProgram.leadMentorId && (
             leadMentorId === actor.id || await hasHouseholdConflict(prisma, actor.id, mentor.householdId)
         )) {
+            await recordSelfGrantRefusal(prisma, {
+                actorId: actor.id,
+                affectedEntityId: leadMentorId,
+                newData: { reason: "own_household", table: "Program", subject: { personId: leadMentorId, householdId: mentor.householdId }, attempted: { programId, leadMentorId } },
+            });
             return refuse("forbidden", "Forbidden: You cannot make yourself or a member of your household a program lead");
         }
     }
