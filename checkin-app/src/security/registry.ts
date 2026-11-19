@@ -990,16 +990,19 @@ defineRoute({
 
 // My Household: the caller's household, its members and its membership status.
 // Any session is admitted, a caller with no household included (household null);
-// every sensitive field is gated to the caller's own household.
+// every sensitive field is gated to the caller's own household. A peer's
+// background-check status reaches only that person and a lead of their household
+// (their_own / led_households on HouseholdPeerBgStatus).
 defineRoute({
     endpoint: 'GET /api/household',
     authorize: 'authenticated',
     envelope: null,
     // Bag: { HouseholdPage } with household (HouseholdPageHousehold →
-    // householdMembers HouseholdPeer, orgMembership OrgMembership).
-    returns: ['HouseholdPage', 'HouseholdPageHousehold', 'HouseholdPeer', 'OrgMembership'],
+    // householdMembers HouseholdPeer → bgStatus HouseholdPeerBgStatus,
+    // orgMembership OrgMembership).
+    returns: ['HouseholdPage', 'HouseholdPageHousehold', 'HouseholdPeer', 'HouseholdPeerBgStatus', 'OrgMembership'],
     orderedView: [
-        ['authenticated', ['their_households:pii', 'their_households:personal', 'their_households:internal', 'member', 'public']],
+        ['authenticated', ['their_households:pii', 'their_households:personal', 'their_households:internal', 'their_own:internal', 'led_households:internal', 'member', 'public']],
     ],
 });
 
