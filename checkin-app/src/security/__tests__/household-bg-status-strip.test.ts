@@ -138,6 +138,6 @@ describe('HouseholdPeerBgStatus', () => {
         const keyless = { ...peer(ADULT), bgStatus: { status: 'VALID' } };
         const bag = { HouseholdPage: { household: { id: HH, name: 'H', householdMembers: [keyless], orgMembership: null }, boardReplyTo: null, validUntil: null } };
         const out = stripBag(bag, view, adultSelf) as { HouseholdPage: { household: { householdMembers: { bgStatus?: unknown }[] } } };
-        expect(out.HouseholdPage.household.householdMembers[0].bgStatus).toEqual({});
+        expect(out.HouseholdPage.household.householdMembers[0].bgStatus).toBeNull();
     });
 });
