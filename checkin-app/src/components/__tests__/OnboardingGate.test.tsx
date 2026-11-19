@@ -22,7 +22,7 @@ beforeEach(() => {
 
 describe("OnboardingGate", () => {
   it("lets a signed-in, fully-onboarded user through with no modal", async () => {
-    setSession({ id: 1, ageBand: "adult" });
+    setSession({ id: 1 });
     mockFetchJson({ "/api/profile/onboarding-status": { needsPhone: false, needsEmergencyContact: false } });
     renderGate();
 
@@ -51,7 +51,7 @@ describe("OnboardingGate", () => {
   });
 
   it("blocks with the onboarding modal when the profile needs a phone number", async () => {
-    setSession({ id: 1, ageBand: "adult" });
+    setSession({ id: 1 });
     mockFetchJson({ "/api/profile/onboarding-status": { needsPhone: true, needsEmergencyContact: false } });
     renderGate();
 
@@ -61,7 +61,7 @@ describe("OnboardingGate", () => {
   });
 
   it("submits a valid phone and POSTs onboarding data", async () => {
-    setSession({ id: 1, ageBand: "adult" });
+    setSession({ id: 1 });
     const fetchSpy = mockFetchJson({
       "/api/profile/onboarding-status": { needsPhone: true, needsEmergencyContact: false },
       "/api/profile/onboarding": { ok: true },
@@ -81,7 +81,7 @@ describe("OnboardingGate", () => {
   });
 
   it("flags an invalid phone on its field and does not submit", async () => {
-    setSession({ id: 1, ageBand: "adult" });
+    setSession({ id: 1 });
     const fetchSpy = mockFetchJson({
       "/api/profile/onboarding-status": { needsPhone: true, needsEmergencyContact: false },
     });
@@ -100,7 +100,7 @@ describe("OnboardingGate", () => {
   });
 
   it("flags a bad emergency contact email on its field and does not submit", async () => {
-    setSession({ id: 1, ageBand: "adult" });
+    setSession({ id: 1 });
     const fetchSpy = mockFetchJson({
       "/api/profile/onboarding-status": { needsPhone: false, needsEmergencyContact: true },
     });
@@ -120,7 +120,7 @@ describe("OnboardingGate", () => {
   });
 
   it("puts a server refusal on the input it names and clears it on change", async () => {
-    setSession({ id: 1, ageBand: "adult" });
+    setSession({ id: 1 });
     const reply = (status: number, body: unknown) =>
       ({ ok: status < 400, status, headers: new Headers(), json: async () => body, text: async () => JSON.stringify(body) }) as Response;
     global.fetch = jest.fn(async (input: RequestInfo | URL) =>
@@ -147,7 +147,7 @@ describe("OnboardingGate", () => {
   });
 
   it("'Ask me next time' dismisses the modal and remembers the skip in sessionStorage", async () => {
-    setSession({ id: 1, ageBand: "adult" });
+    setSession({ id: 1 });
     mockFetchJson({ "/api/profile/onboarding-status": { needsPhone: true, needsEmergencyContact: false } });
     renderGate();
 
@@ -160,8 +160,8 @@ describe("OnboardingGate", () => {
   });
 
   describe("age step", () => {
-    it("shows only the age step when the session has no age on file", () => {
-      setSession({ id: 1, ageBand: "unknown" });
+    it("shows only the age step while the session owes its first age", () => {
+      setSession({ id: 1, ageStepPending: true });
       mockFetchJson({ "/api/profile/onboarding-status": { needsPhone: false, needsEmergencyContact: false } });
       renderGate();
 
@@ -171,7 +171,7 @@ describe("OnboardingGate", () => {
     });
 
     it("refuses an empty answer without calling the server", () => {
-      setSession({ id: 1, ageBand: "unknown" });
+      setSession({ id: 1, ageStepPending: true });
       const fetchSpy = mockFetchJson({ "/api/profile/onboarding-status": { needsPhone: false, needsEmergencyContact: false } });
       renderGate();
 
@@ -181,7 +181,7 @@ describe("OnboardingGate", () => {
     });
 
     it("saves an over-25 declaration through the profile endpoint", async () => {
-      setSession({ id: 1, ageBand: "unknown" });
+      setSession({ id: 1, ageStepPending: true });
       const fetchSpy = mockFetchJson({
         "/api/profile/onboarding-status": { needsPhone: false, needsEmergencyContact: false },
         "/api/profile": { profile: {} },
@@ -199,14 +199,12 @@ describe("OnboardingGate", () => {
       );
     });
 
-    it("applies only to a known, signed-in person who is not denied or mid join question", () => {
-      expect(needsAgeStep({ id: 1, ageBand: "unknown" })).toBe(true);
-      expect(needsAgeStep({ id: 1 })).toBe(true);
-      expect(needsAgeStep({ id: 1, ageBand: "adult" })).toBe(false);
-      expect(needsAgeStep({ id: 1, ageBand: "youth" })).toBe(false);
-      expect(needsAgeStep({ id: 1, ageBand: "unknown", denied: true })).toBe(false);
-      expect(needsAgeStep({ id: 1, ageBand: "unknown", householdJoinPending: true })).toBe(false);
-      expect(needsAgeStep({ ageBand: "unknown" })).toBe(false);
+    it("applies only to someone who created a new household and has no age yet", () => {
+      expect(needsAgeStep({ ageStepPending: true })).toBe(true);
+      expect(needsAgeStep({ ageStepPending: false })).toBe(false);
+      expect(needsAgeStep({})).toBe(false);
+      expect(needsAgeStep({ ageStepPending: true, denied: true })).toBe(false);
+      expect(needsAgeStep({ ageStepPending: true, householdJoinPending: true })).toBe(false);
       expect(needsAgeStep(undefined)).toBe(false);
     });
   });

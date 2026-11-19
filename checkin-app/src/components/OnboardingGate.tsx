@@ -71,9 +71,9 @@ function HouseholdQuestion() {
   );
 }
 
-/** Whether a signed-in session must give an age before any page: a known person with no age on file. */
-export function needsAgeStep(user: { id?: number | null; ageBand?: string; denied?: boolean; householdJoinPending?: boolean } | undefined): boolean {
-  return !!user?.id && !user.denied && !user.householdJoinPending && (user.ageBand ?? 'unknown') === 'unknown';
+/** Whether a signed-in session must give an age before any page: someone who created a new household and has no age on file yet. */
+export function needsAgeStep(user: { ageStepPending?: boolean; denied?: boolean; householdJoinPending?: boolean } | undefined): boolean {
+  return user?.ageStepPending === true && !user.denied && !user.householdJoinPending;
 }
 
 function AgeStep() {

@@ -294,6 +294,20 @@ export async function seedBaseline(prisma: Db): Promise<void> {
         },
     });
 
+    // Created a new household and owes its first age: signing in as them shows the age step.
+    const ageStep = await prisma.person.upsert({
+        where: { email: "age.step@example.com" },
+        update: { name: "Age Step", dateOfBirth: null, isDeclaredAdult: false, ageStepPending: true },
+        create: {
+            email: "age.step@example.com",
+            name: "Age Step",
+            phone: "555-555-0016",
+            ageStepPending: true,
+            household: { create: { name: "Age Step Household" } },
+        },
+    });
+    await addHouseholdLead(prisma, ageStep.householdId, ageStep.id);
+
     // 3. Household assignments & leads
     await prisma.person.update({ where: { id: parentFamily.id }, data: { householdId: household1.id } });
     await prisma.person.update({ where: { id: parent2Family.id }, data: { householdId: household1.id } });

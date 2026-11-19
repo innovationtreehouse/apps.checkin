@@ -28,6 +28,7 @@ export const classifications = {
         isBackgroundCheckReviewer: 'internal',
         canAccessStaging: 'internal',
         householdJoinPending: 'internal',
+        ageStepPending: 'internal',
     },
     PersonMailAlias: {
         id: 'internal',

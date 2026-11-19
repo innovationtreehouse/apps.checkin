@@ -210,6 +210,10 @@ model Person {
   /// @sensitivity:internal
   householdJoinPending Boolean @default(false)
 
+  /// They created a new household at sign-in and owe its first age (a date of birth or over 25).
+  /// @sensitivity:internal
+  ageStepPending Boolean @default(false)
+
   toolStatuses        ToolStatus[]
   bgAttestations      BackgroundCheckAttestation[] @relation("BgAttestations")
   bgAttestationsAsSubject BackgroundCheckAttestation[] @relation("BgAttestationSubject")
