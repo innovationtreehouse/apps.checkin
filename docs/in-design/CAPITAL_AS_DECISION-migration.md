@@ -9,7 +9,7 @@ delete both files".
 
 - Designed, not built. Every owner question, CAD-1 to CAD-16, is settled.
   CAD-8's removal and the CAD-13 conventions are their own PRs, not steps here.
-- **Production holds no financial data at all** (@thpr): no expenses, gifts,
+- **Production holds no financial data at all** (owner): no expenses, gifts,
   assets or copied lines. There is nothing to carry over, so the migration only
   creates the tables and columns the design needs.
 

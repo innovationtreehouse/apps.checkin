@@ -185,7 +185,7 @@ holds its copy afterwards, and finance's receipt view shows it.
 
 ### 1.4 Each copy between libraries: hand-off or fork
 
-@thpr's test: a copy that moves a record to its next owner, with nothing coming
+The owner's test: a copy that moves a record to its next owner, with nothing coming
 back, is a **hand-off**, and acceptable if the transfer is audited and atomic or
 recoverable. A copy after which the same steps run in two flows through
 different code is a **fork**, and is the thing to design away.
@@ -490,7 +490,7 @@ reopen it.
 Keep the copied list and patch B1 to B3 and B9 one by one: a withdrawal hook,
 a bucket resend, a review undo, a retry sweep. Each patch is another
 cross-library write keeping a copy in step. It leaves B10 and B11 as they are,
-and is the shape @thpr has asked to move away from.
+and is the shape the owner has asked to move away from.
 
 ## 4. Recommendation
 
@@ -508,7 +508,7 @@ number.
 
 ### 5.1 Settled
 
-| # | Answer (@thpr) | What it changes |
+| # | Answer (owner) | What it changes |
 |---|---|---|
 | CAD-1 | A gift follows the same threshold rules as a purchase: the **total** threshold is compared with the gift's total, as with the receipt's total on a purchase. | B4's per-line comparison goes. Six $450 chairs as six lines, $2,700 in all, go to review, as the same purchase would. |
 | CAD-2 | Both tax and shipping are included in an asset's cost, for purchases and gifts alike. | The purchase side changes: its register cost and the unit price compared with the unit threshold now carry the line's share of tax and shipping, as a gift's already do. The $1,000 table with $80 tax and $50 shipping is registered at $1,130 whether bought or given (B5). Discount is CAD-15, settled the same way. |
@@ -664,6 +664,6 @@ is nothing of capital to clear. Its signatures and QuickBooks parts stand.
 ## Appendix — where this came from
 
 A survey of change-audit gaps found that accepting a gift as capital made three
-writes with no audit row. @thpr's reading: capital should be a side decision in
+writes with no audit row. The owner's reading: capital should be a side decision in
 a larger flow, not a flow of its own that recreates records elsewhere. This
 document maps both paths and proposes that shape.
