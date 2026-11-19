@@ -2,7 +2,7 @@ import { beforeEach, expect, it } from "vitest";
 import { db } from "../../db";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
-import { ALICE, BOB, FINANCE, actAs, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile } from "../helpers/setup";
+import { ALICE, BOB, FINANCE, actAs, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile, uploadRead } from "../helpers/setup";
 
 const OPEN_STATES = [
   "uploaded", "auto_upload", "ocr_failed", "duplicate_flagged",
@@ -18,7 +18,7 @@ beforeEach(async () => {
 /** ALICE's receipt, never pushed, moved straight to `state`. */
 async function aliceReceiptIn(state: string): Promise<string> {
   actAs(ALICE);
-  const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptTotal: "25.00" }) });
+  const r = await uploadRead(textFile(), "text/plain", { details: manualDetails({ receiptTotal: "25.00" }) });
   await db.receiptDetail.update({ where: { id: r.id }, data: { state } });
   return r.id;
 }
@@ -32,7 +32,7 @@ describeDb("who discards and who rejects", () => {
 
   it("a finance user discards a receipt they uploaded themselves", async () => {
     actAs(FINANCE);
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptTotal: "25.00" }) });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails({ receiptTotal: "25.00" }) });
     await receiptService.discard(r.id, "finance");
     expect(await stateOf(r.id)).toBe("discarded");
   });

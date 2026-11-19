@@ -4,7 +4,7 @@ import { receiptService } from "../../services/receiptService";
 import type { ReceiptLimits } from "../../lib/limits";
 import { inertReimbursees } from "../../runtime";
 import { describeDb } from "../helpers/db";
-import { ALICE, BOB, FINANCE, actAs, clearAll, configure, failingOcr, okOcr, recordingPorts, textFile } from "../helpers/setup";
+import { ALICE, BOB, FINANCE, actAs, clearAll, configure, failingOcr, okOcr, recordingPorts, textFile, uploadRead, retryRead } from "../helpers/setup";
 
 const ONE_A_DAY: ReceiptLimits = {
   uploadsPerPersonPerDay: 100,
@@ -18,7 +18,9 @@ const ONE_A_DAY: ReceiptLimits = {
 const known = new Set([ALICE.id, BOB.id]);
 const people = { ...inertReimbursees, byId: async (id: number) => (known.has(id) ? { id, name: "Someone", isAdult: true } : null) };
 
-const read = () => receiptService.upload(textFile(), "text/plain", {});
+const read = () => uploadRead(textFile(), "text/plain", {});
+/** An upload over the allowance is saved, and lands in ocr_failed with the allowance note. */
+const readOverAllowance = async () => expect((await read()).validationNotes).toMatch(/allowance is used up/);
 
 async function reset(personId: number, reason = "a batch of conference receipts") {
   actAs(FINANCE);
@@ -35,7 +37,7 @@ beforeEach(async () => {
 describeDb("resetting a person's reading allowance", () => {
   it("lets the person read again once their allowance is used up", async () => {
     await read();
-    await expect(read()).rejects.toMatchObject({ status: 429 });
+    await readOverAllowance();
     expect(await reset(ALICE.id)).toEqual({ personId: ALICE.id });
     await read();
   });
@@ -44,15 +46,16 @@ describeDb("resetting a person's reading allowance", () => {
     await read();
     await reset(ALICE.id);
     await read();
-    await expect(read()).rejects.toMatchObject({ status: 429 });
+    await readOverAllowance();
   });
 
   it("counts a failed reading after the reset", async () => {
     configure({ receiptSink: recordingPorts().receiptSink, ocr: failingOcr("data"), limits: ONE_A_DAY, reimbursees: people });
     const failed = await read();
     await reset(ALICE.id);
-    await receiptService.retryOcr(failed.id, "submitter");
-    await expect(receiptService.retryOcr(failed.id, "submitter")).rejects.toMatchObject({ status: 429 });
+    await retryRead(failed.id, "submitter");
+    await retryRead(failed.id, "submitter");
+    expect((await receiptService.get(failed.id, "submitter")).validationNotes).toMatch(/allowance is used up/);
   });
 
   it("resets only the named person", async () => {
@@ -61,7 +64,7 @@ describeDb("resetting a person's reading allowance", () => {
     await read();
     await reset(ALICE.id);
     actAs(BOB);
-    await expect(read()).rejects.toMatchObject({ status: 429 });
+    await readOverAllowance();
   });
 
   it("writes one audit row naming the person, the actor and the reason", async () => {
@@ -87,6 +90,6 @@ describeDb("resetting a person's reading allowance", () => {
     await read();
     await reset(ALICE.id);
     await db.receiptAuditLog.updateMany({ where: { action: "ocr_allowance_reset" }, data: { changedAt: new Date(Date.now() - 25 * 60 * 60 * 1000) } });
-    await expect(read()).rejects.toMatchObject({ status: 429 });
+    await readOverAllowance();
   });
 });

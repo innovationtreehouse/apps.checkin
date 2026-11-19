@@ -7,7 +7,7 @@ import { receiptRepo } from "../../repositories/receipt";
 import { getOrgId } from "../../runtime";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
-import { ALICE, BOB, FINANCE, actAs, actions, clearAll, configure, manualDetails, okOcr, recordingPorts, stateOf, textFile } from "../helpers/setup";
+import { ALICE, BOB, FINANCE, actAs, actions, clearAll, configure, manualDetails, okOcr, recordingPorts, stateOf, textFile, uploadRead } from "../helpers/setup";
 
 beforeEach(async () => {
   await clearAll();
@@ -23,37 +23,37 @@ async function heldAgainst(id: string): Promise<string | null> {
 describeDb("duplicate detection", () => {
   it("flags a re-upload of the same file against the original", async () => {
     const file = textFile();
-    const first = await receiptService.upload(file, "text/plain", { details: manualDetails({ retailer: "A" }) });
-    const second = await receiptService.upload(file, "text/plain", { details: manualDetails({ retailer: "B" }) });
+    const first = await uploadRead(file, "text/plain", { details: manualDetails({ retailer: "A" }) });
+    const second = await uploadRead(file, "text/plain", { details: manualDetails({ retailer: "B" }) });
     expect(first.state).toBe("receipt_finalized");
     expect(second.state).toBe("duplicate_flagged");
     expect(await heldAgainst(second.id)).toBe(first.id);
   });
 
   it("flags the composite (retailer, date, total) match", async () => {
-    await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
-    const second = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    await uploadRead(textFile(), "text/plain", { details: manualDetails() });
+    const second = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     expect(second.state).toBe("duplicate_flagged");
   });
 
   it("matches the retailer ignoring case and extra whitespace", async () => {
-    const first = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Amazon" }) });
-    const second = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: " amazon  " }) });
+    const first = await uploadRead(textFile(), "text/plain", { details: manualDetails({ retailer: "Amazon" }) });
+    const second = await uploadRead(textFile(), "text/plain", { details: manualDetails({ retailer: " amazon  " }) });
     expect(second.state).toBe("duplicate_flagged");
     expect(await heldAgainst(second.id)).toBe(first.id);
   });
 
   it.each(["orderNumber", "receiptNumber"])("matches %s under a retailer differing in case and spacing", async (field) => {
-    const first = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Acme  Hardware", receiptDate: "2999-01-01" }) });
-    const second = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "acme hardware ", receiptDate: "2999-01-02" }) });
+    const first = await uploadRead(textFile(), "text/plain", { details: manualDetails({ retailer: "Acme  Hardware", receiptDate: "2999-01-01" }) });
+    const second = await uploadRead(textFile(), "text/plain", { details: manualDetails({ retailer: "acme hardware ", receiptDate: "2999-01-02" }) });
     await db.receiptDetail.updateMany({ where: { id: { in: [first.id, second.id] } }, data: { [field]: "N-1" } });
     const row = await receiptRepo.find(second.id, await getOrgId());
     expect(row && (await checkDuplicate(row))).toBe(first.id);
   });
 
   it.each(["orderNumber", "receiptNumber"])("does not match an empty %s", async (field) => {
-    const first = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptDate: "2999-01-01" }) });
-    const second = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptDate: "2999-01-02" }) });
+    const first = await uploadRead(textFile(), "text/plain", { details: manualDetails({ receiptDate: "2999-01-01" }) });
+    const second = await uploadRead(textFile(), "text/plain", { details: manualDetails({ receiptDate: "2999-01-02" }) });
     await db.receiptDetail.updateMany({ where: { id: { in: [first.id, second.id] } }, data: { [field]: "" } });
     const row = await receiptRepo.find(second.id, await getOrgId());
     expect(row && (await checkDuplicate(row))).toBeNull();
@@ -61,8 +61,8 @@ describeDb("duplicate detection", () => {
 
   /** Two receipts on different dates carrying `a` and `b` in `field`: the earlier one's id, and what the later one matched. */
   async function numberMatch(field: string, a: string, b: string) {
-    const first = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptDate: "2999-01-01" }) });
-    const second = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptDate: "2999-01-02" }) });
+    const first = await uploadRead(textFile(), "text/plain", { details: manualDetails({ receiptDate: "2999-01-01" }) });
+    const second = await uploadRead(textFile(), "text/plain", { details: manualDetails({ receiptDate: "2999-01-02" }) });
     await db.receiptDetail.update({ where: { id: first.id }, data: { [field]: a } });
     await db.receiptDetail.update({ where: { id: second.id }, data: { [field]: b } });
     const row = await receiptRepo.find(second.id, await getOrgId());
@@ -95,8 +95,8 @@ describeDb("duplicate detection", () => {
   });
 
   it("does not match a different retailer name on the same date and total", async () => {
-    await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Amazon" }) });
-    const second = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Amazon.com" }) });
+    await uploadRead(textFile(), "text/plain", { details: manualDetails({ retailer: "Amazon" }) });
+    const second = await uploadRead(textFile(), "text/plain", { details: manualDetails({ retailer: "Amazon.com" }) });
     expect(second.state).not.toBe("duplicate_flagged");
   });
 
@@ -117,8 +117,8 @@ describeDb("duplicate detection", () => {
       ["a different file with the same retailer, date and total", () => [textFile(), textFile()]],
     ])("holds the later one for finance on %s", async (_match, files) => {
       const [a, b] = files();
-      const first = await receiptService.upload(a, "text/plain", { details: manualDetails(), ...firstKind });
-      const second = await receiptService.upload(b, "text/plain", { details: manualDetails(), ...secondKind });
+      const first = await uploadRead(a, "text/plain", { details: manualDetails(), ...firstKind });
+      const second = await uploadRead(b, "text/plain", { details: manualDetails(), ...secondKind });
       expect(second.state).toBe("duplicate_flagged");
       expect(await heldAgainst(second.id)).toBe(first.id);
       expect((await receiptService.duplicateGroup(second.id)).members.map((m) => m.id).sort()).toEqual([first.id, second.id].sort());
@@ -130,8 +130,8 @@ describeDb("duplicate detection", () => {
       await clearAll();
       const file = textFile();
       const [a, b] = await Promise.all([
-        receiptService.upload(file, "text/plain", { details: manualDetails({ retailer: "A" }) }),
-        receiptService.upload(file, "text/plain", { details: manualDetails({ retailer: "B" }) }),
+        uploadRead(file, "text/plain", { details: manualDetails({ retailer: "A" }) }),
+        uploadRead(file, "text/plain", { details: manualDetails({ retailer: "B" }) }),
       ]);
       expect(await Promise.all([a.id, b.id].map(stateOf))).toContain("duplicate_flagged");
       const members = (await receiptService.duplicateGroup(a.id)).members.map((m) => m.id);
@@ -141,8 +141,8 @@ describeDb("duplicate detection", () => {
 
   it("Different purchases finalizes the copy, and the decision and the clear are audited", async () => {
     const file = textFile();
-    const first = await receiptService.upload(file, "text/plain", { details: manualDetails() });
-    const dup = await receiptService.upload(file, "text/plain", { details: manualDetails() });
+    const first = await uploadRead(file, "text/plain", { details: manualDetails() });
+    const dup = await uploadRead(file, "text/plain", { details: manualDetails() });
     expect(dup.state).toBe("duplicate_flagged");
 
     actAs(FINANCE);
@@ -160,11 +160,11 @@ describeDb("duplicate detection", () => {
   it("a clear empties the flag stamp, a fresh flag sets it again, and that discard reads as a duplicate", async () => {
     const flaggedAt = async (id: string) => (await db.receiptDetail.findUniqueOrThrow({ where: { id } })).duplicateFlaggedAt;
     actAs(ALICE);
-    const earlier = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Echo" }) });
+    const earlier = await uploadRead(textFile(), "text/plain", { details: manualDetails({ retailer: "Echo" }) });
     const file = textFile();
-    const original = await receiptService.upload(file, "text/plain", { details: manualDetails({ retailer: "A", receiptDate: "2999-01-01" }) });
+    const original = await uploadRead(file, "text/plain", { details: manualDetails({ retailer: "A", receiptDate: "2999-01-01" }) });
     actAs(BOB);
-    const copy = await receiptService.upload(file, "text/plain", { details: manualDetails({ retailer: "B", receiptTotal: "25.00" }) });
+    const copy = await uploadRead(file, "text/plain", { details: manualDetails({ retailer: "B", receiptTotal: "25.00" }) });
     expect([earlier.state, original.state, copy.state]).toEqual(["receipt_finalized", "financial_review", "duplicate_flagged"]);
     expect(await flaggedAt(copy.id)).not.toBeNull();
 
@@ -193,9 +193,9 @@ describeDb("deciding a duplicate group", () => {
     db.receiptPairDecision.findFirst({ where: { receiptId: a < b ? a : b, otherReceiptId: a < b ? b : a } });
 
   it("Undo of Not this one deletes the pair decision, audits it, and the match returns", async () => {
-    const a = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
-    const b = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
-    const c = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const a = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
+    const b = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
+    const c = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
 
     actAs(FINANCE);
     const after = await receiptService.notThisOne(c.id, a.id);
@@ -211,8 +211,8 @@ describeDb("deciding a duplicate group", () => {
   });
 
   it("Undo is refused once the viewed receipt has left the hold, and the decision stands", async () => {
-    const a = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
-    const b = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const a = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
+    const b = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     actAs(FINANCE);
     await receiptService.notThisOne(b.id, a.id);
     expect(await stateOf(b.id)).toBe("receipt_finalized");
@@ -223,10 +223,10 @@ describeDb("deciding a duplicate group", () => {
 
   it("Undo is refused once the dismissal released the match, which stays decided", async () => {
     // The original that keeps B held after B dismisses C.
-    await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     const scan = textFile();
-    const b = await receiptService.upload(scan, "text/plain", { details: manualDetails() });
-    const c = await receiptService.upload(scan, "text/plain", { details: manualDetails({ retailer: "Other Store" }) });
+    const b = await uploadRead(scan, "text/plain", { details: manualDetails() });
+    const c = await uploadRead(scan, "text/plain", { details: manualDetails({ retailer: "Other Store" }) });
     expect(await stateOf(c.id)).toBe("duplicate_flagged");
 
     actAs(FINANCE);
@@ -237,9 +237,9 @@ describeDb("deciding a duplicate group", () => {
   });
 
   it("Not this one on a match already dismissed answers 409", async () => {
-    const a = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
-    const b = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
-    const c = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const a = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
+    const b = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
+    const c = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     actAs(FINANCE);
     await receiptService.notThisOne(c.id, a.id);
     await expect(receiptService.notThisOne(c.id, a.id)).rejects.toMatchObject({ status: 409 });
@@ -247,9 +247,9 @@ describeDb("deciding a duplicate group", () => {
   });
 
   it("Not this one is not refused for a copy that arrived after the panel was drawn", async () => {
-    const a = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
-    const b = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
-    const c = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const a = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
+    const b = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
+    const c = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     actAs(FINANCE);
     const fresh = await receiptService.notThisOne(b.id, a.id);
     expect(fresh.members.map((m) => m.id)).toEqual([b.id, c.id]);
@@ -257,9 +257,9 @@ describeDb("deciding a duplicate group", () => {
   });
 
   it("a stale Different purchases names the new copy in its 409", async () => {
-    const a = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
-    const b = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
-    await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const a = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
+    const b = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
+    await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     actAs(FINANCE);
     await expect(receiptService.differentPurchases(b.id, [a.id, b.id])).rejects.toMatchObject({
       status: 409,
@@ -271,14 +271,14 @@ describeDb("deciding a duplicate group", () => {
   it("a decision replacing an earlier one for the same pair is audited again", async () => {
     const file = textFile();
     actAs(ALICE);
-    const a = await receiptService.upload(file, "text/plain", {});
-    const b = await receiptService.upload(file, "text/plain", { details: manualDetails() });
+    const a = await uploadRead(file, "text/plain", {});
+    const b = await uploadRead(file, "text/plain", { details: manualDetails() });
     actAs(FINANCE);
     await receiptService.keepThisOne(b.id, [a.id, b.id]);
     expect(await pairDecision(a.id, b.id)).toMatchObject({ kind: "copy_of", copyReceiptId: a.id });
 
     actAs(ALICE);
-    const c = await receiptService.upload(file, "text/plain", { details: manualDetails() });
+    const c = await uploadRead(file, "text/plain", { details: manualDetails() });
     actAs(FINANCE);
     await receiptService.differentPurchases(c.id, [a.id, b.id, c.id]);
     expect(await pairDecision(a.id, b.id)).toMatchObject({ kind: "different", copyReceiptId: null });
@@ -288,11 +288,11 @@ describeDb("deciding a duplicate group", () => {
   it("Keep this one beside an already rejected match records it as a copy and releases the kept receipt", async () => {
     const file = textFile();
     actAs(ALICE);
-    const a = await receiptService.upload(file, "text/plain", { details: manualDetails({ receiptDate: "2999-01-01" }) });
+    const a = await uploadRead(file, "text/plain", { details: manualDetails({ receiptDate: "2999-01-01" }) });
     actAs(FINANCE);
     await receiptService.rejectFinancial(a.id, "personal purchase");
     actAs(ALICE);
-    const b = await receiptService.upload(file, "text/plain", { details: manualDetails() });
+    const b = await uploadRead(file, "text/plain", { details: manualDetails() });
     expect(b.state).toBe("duplicate_flagged");
 
     actAs(FINANCE);
@@ -305,8 +305,8 @@ describeDb("deciding a duplicate group", () => {
 
   it("Keep this one beside a finalized copy is refused and writes nothing", async () => {
     const file = textFile();
-    const a = await receiptService.upload(file, "text/plain", { details: manualDetails() });
-    const b = await receiptService.upload(file, "text/plain", { details: manualDetails() });
+    const a = await uploadRead(file, "text/plain", { details: manualDetails() });
+    const b = await uploadRead(file, "text/plain", { details: manualDetails() });
     expect([a.state, b.state]).toEqual(["receipt_finalized", "duplicate_flagged"]);
 
     actAs(FINANCE);
@@ -318,8 +318,8 @@ describeDb("deciding a duplicate group", () => {
   it("Keep this one rejects the open copy with the kept receipt named, and labels it so", async () => {
     const file = textFile();
     actAs(ALICE);
-    const a = await receiptService.upload(file, "text/plain", {});
-    const b = await receiptService.upload(file, "text/plain", { details: manualDetails({ retailer: "Home Depot" }) });
+    const a = await uploadRead(file, "text/plain", {});
+    const b = await uploadRead(file, "text/plain", { details: manualDetails({ retailer: "Home Depot" }) });
     actAs(FINANCE);
     await receiptService.keepThisOne(b.id, [a.id, b.id]);
     const row = await db.receiptAuditLog.findFirst({ where: { receiptId: a.id, action: "reject_financial" } });
@@ -342,9 +342,9 @@ describeDb("deciding on a suspected original", () => {
     const file = textFile();
     const details = manualDetails({ receiptDate: "2999-01-01" });
     actAs(ALICE);
-    const original = await receiptService.upload(file, "text/plain", { details });
+    const original = await uploadRead(file, "text/plain", { details });
     actAs(BOB);
-    const flagged = await receiptService.upload(file, "text/plain", { details });
+    const flagged = await uploadRead(file, "text/plain", { details });
     expect([original.state, flagged.state, await heldAgainst(flagged.id)]).toEqual(["financial_review", "duplicate_flagged", original.id]);
     return { original, flagged };
   }
@@ -387,8 +387,8 @@ describeDb("the time a receipt was flagged as a duplicate", () => {
 
   it("is set by each flag, emptied by a re-check that clears it, and kept when the flagged receipt is discarded", async () => {
     const file = textFile();
-    const original = await receiptService.upload(file, "text/plain", {});
-    const copy = await receiptService.upload(file, "text/plain", {});
+    const original = await uploadRead(file, "text/plain", {});
+    const copy = await uploadRead(file, "text/plain", {});
     expect([original.state, copy.state]).toEqual(["submitter_review", "duplicate_flagged"]);
     expect(await flaggedAt(copy.id)).toBeInstanceOf(Date);
 
@@ -396,7 +396,7 @@ describeDb("the time a receipt was flagged as a duplicate", () => {
     expect(await stateOf(copy.id)).toBe("submitter_review");
     expect(await flaggedAt(copy.id)).toBeNull();
 
-    const later = await receiptService.upload(file, "text/plain", {});
+    const later = await uploadRead(file, "text/plain", {});
     expect(later.state).toBe("duplicate_flagged");
     await receiptService.submitterConfirm(copy.id);
     expect(await stateOf(copy.id)).toBe("duplicate_flagged");

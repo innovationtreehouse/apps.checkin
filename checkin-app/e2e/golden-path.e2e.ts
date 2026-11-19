@@ -9,7 +9,7 @@
  * approves it. Every page on the way must show no error.
  */
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { api, differentPurchases, loginAs, type Session } from "../flow-tests/helpers";
+import { api, differentPurchases, loginAs, type Session, untilRead } from "../flow-tests/helpers";
 import { lineAct, lineRow } from "./support/expenseLines";
 import { watchPage, type PageWatch } from "./support/pageErrors";
 import { inReceiving, resolveAndReopen } from "./support/receipts";
@@ -88,8 +88,8 @@ test("a receipt goes from upload to an approved line in finance review", async (
     // The upload page's own path also ends in one segment, so wait for the receipt's.
     await page.waitForURL((url) => /^\/receipts\/[^/]+$/.test(url.pathname) && url.pathname !== "/receipts/upload");
     receiptId = decodeURIComponent(new URL(page.url()).pathname.split("/").pop() ?? "");
-    // The local OCR mock reads every upload as the same purchase, so an earlier upload may flag this one.
-    const read = await api<{ state: string }>(finance.session, `/api/receipts/${encodeURIComponent(receiptId)}`);
+    // The local OCR mock reads every upload as the same purchase, so an earlier upload may flag this one once it is read.
+    const read = await untilRead(finance.session, await api<{ id: string; state: string }>(finance.session, `/api/receipts/${encodeURIComponent(receiptId)}`));
     expect([receiptId, read.status]).toEqual([receiptId, 200]);
     if (read.json.state === "duplicate_flagged") {
       expect((await differentPurchases(finance.session, receiptId)).status).toBe(200);

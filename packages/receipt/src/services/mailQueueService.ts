@@ -9,7 +9,8 @@ import type { Prisma } from "../generated/prisma/client";
 import type { ReceiptPrincipal } from "../contract";
 import { getOrgId, ports, requireActor } from "../runtime";
 import { intakeDeferred, isRefusalNote, MAIL_CATCH_UP_BUDGET_MS, MAIL_CATCH_UP_CAP, mailRunState, startMailRun, STORED_STATUSES, type DmarcVerdict } from "./mailIntake";
-import { intakeMailedReceipt } from "./receiptService";
+import { intakeMailedReceipt, readInBackground } from "./receiptService";
+import { settleMailedBody } from "./ocrDrain";
 import { closeUnreplyable } from "./mailReplies";
 import { deleteStoredFiles, readStoredFile } from "../lib/fileStorage";
 import { ServiceError } from "@checkin/component-kit";
@@ -130,6 +131,7 @@ export const mailQueueService = {
     const { fileBlob: _file, fileKey: _key, ...shown } = item;
     if (release) {
       const receiptId = await intakeDeferred(item, assignee, { uploadLimits: false, onClaim: auditClaim });
+      void readInBackground(receiptId, assignee, () => settleMailedBody(receiptId));
       return { ...shown, status: "assigned", receiptId };
     }
     const receiptId = await intakeMailedReceipt(assignee, Buffer.from(item.fileBlob), item.mimeType, async (tx, newId) => {
@@ -146,6 +148,7 @@ export const mailQueueService = {
         ? (insert) => rememberAlias({ actorId: actor.id, personId: assignee.id, address: item.senderAddress, mailItemId: id }, insert)
         : undefined,
     });
+    void readInBackground(receiptId, assignee, () => settleMailedBody(receiptId));
     return { ...shown, status: "assigned", receiptId };
   },
 

@@ -1,10 +1,10 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { db } from "../../db";
-import { intakeMailedReceipt, receiptService } from "../../services/receiptService";
+import { intakeMailedReceipt, readQueued } from "../../services/receiptService";
 import { orgSettingsService } from "../../services/orgSettingsService";
 import { OCR_OFF_NOTE } from "../../lib/ocrOff";
 import { describeDb } from "../helpers/db";
-import { ALICE, FINANCE, actAs, clearAll, configure, failingOcr, okOcr, recordingPorts, stateOf, textFile } from "../helpers/setup";
+import { ALICE, FINANCE, actAs, clearAll, configure, failingOcr, okOcr, recordingPorts, stateOf, textFile, uploadRead, retryRead } from "../helpers/setup";
 
 function withOcr(ocr = okOcr()) {
   const extract = vi.fn(ocr.extract);
@@ -44,7 +44,7 @@ describeDb("automatic reading switch", () => {
   it("while off, an upload calls no model, reserves no call and goes to manual entry with the note", async () => {
     const extract = withOcr();
     await turnOcrOff();
-    const r = await receiptService.upload(textFile(), "text/plain", {});
+    const r = await uploadRead(textFile(), "text/plain", {});
     expect(r.state).toBe("ocr_failed");
     expect(r.validationNotes).toBe(OCR_OFF_NOTE);
     expect(extract).not.toHaveBeenCalled();
@@ -53,10 +53,10 @@ describeDb("automatic reading switch", () => {
 
   it("while off, retry refuses with 503 and calls no model", async () => {
     const extract = withOcr(failingOcr("data"));
-    const failed = await receiptService.upload(textFile(), "text/plain", {});
+    const failed = await uploadRead(textFile(), "text/plain", {});
     expect(extract).toHaveBeenCalledTimes(1);
     await turnOcrOff();
-    await expect(receiptService.retryOcr(failed.id, "submitter")).rejects.toMatchObject({ status: 503, message: OCR_OFF_NOTE });
+    await expect(retryRead(failed.id, "submitter")).rejects.toMatchObject({ status: 503, message: OCR_OFF_NOTE });
     expect(extract).toHaveBeenCalledTimes(1);
     expect(await ocrCalls()).toBe(1);
     expect(await stateOf(failed.id)).toBe("ocr_failed");
@@ -71,13 +71,24 @@ describeDb("automatic reading switch", () => {
     expect(await ocrCalls()).toBe(0);
   });
 
+  it("switched off after a receipt was queued, its reading lands it in ocr_failed with the note and calls no model", async () => {
+    const extract = withOcr();
+    const id = await intakeMailedReceipt(ALICE, textFile(), "text/plain", async () => undefined);
+    expect(await stateOf(id)).toBe("ocr_queued");
+    await turnOcrOff();
+    expect(await readQueued(id, ALICE)).toBe(true);
+    expect(await db.receiptDetail.findUnique({ where: { id } })).toMatchObject({ state: "ocr_failed", validationNotes: OCR_OFF_NOTE });
+    expect(extract).not.toHaveBeenCalled();
+    expect(await ocrCalls()).toBe(0);
+  });
+
   it("turned back on, reading works again", async () => {
     const extract = withOcr();
     await turnOcrOff();
     actAs(FINANCE);
     await orgSettingsService.setOcrSwitch({ ocrEnabled: true });
     actAs(ALICE);
-    const r = await receiptService.upload(textFile(), "text/plain", {});
+    const r = await uploadRead(textFile(), "text/plain", {});
     expect(r.state).not.toBe("ocr_failed");
     expect(extract).toHaveBeenCalledTimes(1);
   });

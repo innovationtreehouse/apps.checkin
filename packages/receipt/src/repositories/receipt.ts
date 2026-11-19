@@ -12,9 +12,12 @@ export class ReceiptStateConflictError extends Error {
   }
 }
 
-/** A receipt and its details, flattened, without the file or its failure record (read on its own, for its own page). */
+/**
+ * A receipt and its details, flattened, without the file or its failure record (read on its own, for its own page),
+ * and without `ocrQueuedAt`, which only the drain's own query orders by.
+ */
 type OmittedColumns = "fileBlob" | "fileKey" | "fileSize" | "donorSyncSeq" | "firstFailedAt" | "lastError";
-export type ReceiptRow = Omit<Receipt, OmittedColumns> & Omit<ReceiptDetail, "id" | "orgId"> & { state: ReceiptState };
+export type ReceiptRow = Omit<Receipt, OmittedColumns> & Omit<ReceiptDetail, "id" | "orgId" | "ocrQueuedAt"> & { state: ReceiptState };
 
 const listShape = {
   omit: { fileBlob: true, fileKey: true, fileSize: true, donorSyncSeq: true, firstFailedAt: true, lastError: true },
@@ -24,7 +27,7 @@ const listShape = {
 function flatten(r: Omit<Receipt, OmittedColumns> & { details: ReceiptDetail | null }): ReceiptRow {
   const { details, ...core } = r;
   if (!details) throw new Error(`receipt ${r.id} has no details row`);
-  const { id: _id, orgId: _orgId, ...rest } = details;
+  const { id: _id, orgId: _orgId, ocrQueuedAt: _queuedAt, ...rest } = details;
   return { ...core, ...rest, state: rest.state as ReceiptState };
 }
 

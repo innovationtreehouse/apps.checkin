@@ -4,7 +4,7 @@ import type { OutcomeNotice } from "../../contract";
 import { OUTCOME_ATTEMPTS, oweOutcomeNotice, sweepOutcomeNotices } from "../../services/outcomeNotices";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
-import { ALICE, BOB, FINANCE, TEST_ORG_ID, actAs, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile } from "../helpers/setup";
+import { ALICE, BOB, FINANCE, TEST_ORG_ID, actAs, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile, uploadRead } from "../helpers/setup";
 
 vi.mock("../../services/outcomeNotices", async (importOriginal) => {
   const real = await importOriginal<typeof import("../../services/outcomeNotices")>();
@@ -40,7 +40,7 @@ beforeEach(async () => {
 /** ALICE's receipt, never pushed (its total disagrees with its lines), moved straight to `state`, reimbursing `reimburseePersonId` when given. */
 async function aliceReceiptIn(state: string, reimburseePersonId: number | null = null): Promise<string> {
   actAs(ALICE);
-  const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Acme Hardware", receiptDate: "2026-10-02", receiptTotal: "25.00" }) });
+  const r = await uploadRead(textFile(), "text/plain", { details: manualDetails({ retailer: "Acme Hardware", receiptDate: "2026-10-02", receiptTotal: "25.00" }) });
   await db.receiptDetail.update({ where: { id: r.id }, data: { state } });
   if (reimburseePersonId !== null) await db.receipt.update({ where: { id: r.id }, data: { needsReimbursement: true, reimburseePersonId } });
   return r.id;
@@ -79,8 +79,8 @@ describeDb("receipt outcome notices", () => {
   it("owes a notice for each copy Keep this one rejects", async () => {
     const file = textFile();
     actAs(ALICE);
-    const a = await receiptService.upload(file, "text/plain", {});
-    const b = await receiptService.upload(file, "text/plain", { details: manualDetails() });
+    const a = await uploadRead(file, "text/plain", {});
+    const b = await uploadRead(file, "text/plain", { details: manualDetails() });
     actAs(FINANCE);
     await receiptService.keepThisOne(b.id, [a.id, b.id]);
 
@@ -97,7 +97,7 @@ describeDb("receipt outcome notices", () => {
     actAs(FINANCE);
     await receiptService.approveFinancial(approved);
     actAs(ALICE);
-    const finalized = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Elsewhere" }) });
+    const finalized = await uploadRead(textFile(), "text/plain", { details: manualDetails({ retailer: "Elsewhere" }) });
 
     expect(await stateOf(discarded)).toBe("discarded");
     expect(await stateOf(finalized.id)).toBe("receipt_finalized");
