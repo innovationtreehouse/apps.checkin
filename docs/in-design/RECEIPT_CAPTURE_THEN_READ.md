@@ -39,7 +39,8 @@ Taking a receipt in and reading it are two separate steps.
 | Finance and sysadmins | A captured email can be processed again from our copy. | No new way to download mail. |
 
 Cost: one table, one state and a MIME parser, plus raw email in the bucket for 90
-days. The lease and the daily schedule stay as they are. Infra adds one lifecycle
+days. The mail lease stays, held longer to cover the drain, and the daily schedule
+stays as it is. Infra adds one lifecycle
 rule and one grant on the receipt bucket (see Storage). Reading calls and their price
 are unchanged.
 
@@ -190,7 +191,13 @@ cover mail.
 | Upload read | after the upload answers | none: the claim is the lock | one receipt |
 
 The lease runs from the start of capture to the end of the drain, so the cron and a
-catch-up never overlap and a crashed run blocks the next only until it expires.
+catch-up never overlap and a crashed run blocks the next only until it expires. Its
+length is the capture budget plus the drain's 10 minutes plus today's 10 minutes of
+slack: 20½ minutes for the daily run, 30 for a catch-up. The deadlines from #3613
+are taken per step, not from the lease alone: capture's calls end when its budget
+does, and the drain's calls end 10 minutes after the drain starts. Both fall before
+the lease's 3-minute read margin, and the slack covers the last reading call and the
+release.
 
 The scheduler waits 60 seconds for the whole `reconcile-shopify` request. Capture is
 its only mail work inside the request: 30 seconds at most, with each outside call's
