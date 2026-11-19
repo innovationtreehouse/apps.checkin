@@ -1,7 +1,9 @@
 "use client";
 
 import { Button } from "@mantine/core";
+import { errorMessage } from "@checkin/component-ui";
 import { useIsLocalInstance } from "@/components/EnvProvider";
+import { api } from "@/lib/api";
 
 type ErrorBody = { error?: string; detail?: string } | null;
 
@@ -23,15 +25,10 @@ export default function DevMockPaymentButton({ processId, saving, setSaving, onP
   const settle = async () => {
     setSaving(true);
     try {
-      const res = await fetch("/api/dev/shopify/orders-paid", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processId }),
-      });
-      if (res.ok) await onPaid();
-      else onFailed(await res.json().catch(() => null));
-    } catch {
-      onFailed(null);
+      await api("/api/dev/shopify/orders-paid", { method: "POST", body: JSON.stringify({ processId }) });
+      await onPaid();
+    } catch (e) {
+      onFailed({ error: errorMessage(e) });
     } finally {
       setSaving(false);
     }

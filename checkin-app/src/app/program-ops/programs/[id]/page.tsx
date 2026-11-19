@@ -169,12 +169,9 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
   });
 
   // Lead-mentor picker searches adult members.
-  const searchAdults = useCallback(async (query: string): Promise<ParticipantOption[]> => {
-    const res = await fetch(`/api/people/search?q=${encodeURIComponent(query)}&filter=adults`);
-    if (!res.ok) return [];
-    const data = await res.json();
-    return data.people || [];
-  }, []);
+  const searchAdults = useCallback((query: string): Promise<ParticipantOption[]> =>
+    api<{ people?: ParticipantOption[] }>(`/api/people/search?q=${encodeURIComponent(query)}&filter=adults`)
+      .then((data) => data.people ?? [], () => []), []);
 
   const canStateYear = !!sessionUser?.isBoardMember;
   const yearBoundary = useMembershipYearBoundary(!!(sessionUser?.isSysadmin || sessionUser?.isBoardMember));
