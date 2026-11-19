@@ -11,6 +11,7 @@ import { AlertBanner, type AlertTone } from '@/components/admin/AlertBanner';
 import { PageContainer } from '@/components/ui/PageContainer';
 import EmergencyContactNotice from '@/components/ui/EmergencyContactNotice';
 import { calculateAge, formatDateOnly, isYouth } from '@/lib/time';
+import type { BgStatus } from '@/lib/membership/bgStatus';
 import { isMembershipLapsed } from '@/lib/membership/lapsed';
 import TrustedAdultPanel from '@/components/TrustedAdultPanel';
 import TodoCard from '@/components/TodoCard';
@@ -51,7 +52,14 @@ function ageBadge(p: HouseholdMember): { label: string; color: string; variant: 
   return { label: 'Age Unavailable', color: 'red', variant: 'filled' };
 }
 
-type HouseholdMember = { id: number; name?: string; nickname?: string | null; email?: string; dateOfBirth?: string; phone?: string; isDeclaredAdult?: boolean; allergies?: string | null; isHouseholdLead?: boolean; emailLocked?: boolean };
+// The background-check status the route sends only to the person and their household lead.
+const BG_STATUS_BADGE: Record<BgStatus, { label: string; color: string }> = {
+  VALID: { label: 'Background check: Valid', color: 'green' },
+  EXPIRES_BEFORE_NEXT_YEAR: { label: 'Background check: Expires before upcoming year', color: 'yellow' },
+  EXPIRED: { label: 'Background check: Expired', color: 'red' },
+};
+
+type HouseholdMember = { id: number; name?: string; nickname?: string | null; email?: string; dateOfBirth?: string; phone?: string; isDeclaredAdult?: boolean; allergies?: string | null; isHouseholdLead?: boolean; emailLocked?: boolean; bgStatus?: { personId: number; status?: BgStatus } };
 type EmergencyContact = { id: number; name: string; phone: string; email?: string | null; relationship?: string | null; priority: number; invalid: boolean };
 type HouseholdData = {
   id?: number;
@@ -387,6 +395,7 @@ export default function HouseholdPage() {
                           {p.phone && <Text size="sm" c="dimmed" style={{ wordBreak: 'break-word' }}>{formatPhone(p.phone)}</Text>}
                           {p.allergies && <Text size="sm" c="dimmed" style={{ wordBreak: 'break-word' }}>Allergies: {p.allergies}</Text>}
                           {leadMissingPhone && <Badge color="red" variant="filled" mt="xs">Add a phone number</Badge>}
+                          {p.bgStatus?.status && <Badge color={BG_STATUS_BADGE[p.bgStatus.status].color} variant="light" mt="xs" style={{ whiteSpace: 'normal', height: 'auto' }}>{BG_STATUS_BADGE[p.bgStatus.status].label}</Badge>}
                           <Group gap="xs" mt="sm">
                             {householdMemberIsLead && <Badge color="grape" variant="light">Household Lead</Badge>}
                             {!householdMemberIsLead && isAdult && viewerIsLead && (
