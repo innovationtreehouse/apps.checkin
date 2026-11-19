@@ -142,10 +142,11 @@ export const failingJob = (j: CronJobStatus): j is CronJobStatus & { lastError: 
  * The daily email: while anything has been stuck more than a day, a job has not run on time or its
  * latest run reported failures, or a library has a line of its own, the alert address gets the list; the Board address gets a copy once anything has been stuck more than
  * two weeks. Ids, steps and dates only. An unset address sends nothing. Never throws.
+ * `tonight` is the calling run's own failures, which its run record does not hold yet.
  *
  * ponytail: it sends on every nightly run, so a same-night rerun of the nightly job sends it twice.
  */
-export async function sendProblemsDigest(now = new Date()): Promise<void> {
+export async function sendProblemsDigest(now = new Date(), tonight: string[] = []): Promise<void> {
     try {
         const [{ items, unread, notices }, jobs, settings] = await Promise.all([
             getProblems(now),
@@ -156,10 +157,11 @@ export async function sendProblemsDigest(now = new Date()): Promise<void> {
         const stuck = items.filter((i) => age(i.failedAt) > DAY_MS);
         const stale = jobs.filter((j): j is CronJobStatus & { lastSuccessAt: Date } => j.stale && j.lastSuccessAt !== null);
         const failing = jobs.filter(failingJob);
-        if (stuck.length === 0 && stale.length === 0 && failing.length === 0 && unread.length === 0 && notices.length === 0) return;
+        if (stuck.length === 0 && stale.length === 0 && failing.length === 0 && unread.length === 0 && notices.length === 0 && tonight.length === 0) return;
 
         const when = (at: Date) => formatDateTime(at, { timeZone: APP_TIMEZONE, dateStyle: "medium", timeStyle: "short" });
         const lines = [
+            ...tonight,
             ...stuck.map((i) => `${i.library}, ${i.step}: ${i.id}, stuck since ${when(i.failedAt)}`),
             ...stale.map((j) => `Scheduled job ${j.job}: last ran ${when(j.lastSuccessAt)}`),
             ...failing.map((j) => `Scheduled job ${j.job}: last run reported failures, ${when(j.lastErrorAt)}`),
