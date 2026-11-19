@@ -60,7 +60,7 @@ const membershipRequest = {
 // Finance reads the payment-plan queues; the decision routes are Board-only.
 describe.each([
   ["/finance-ops/payment-plan", PaymentPlanPage, "/api/finance-ops/payment-plans", { ProgramParticipant: [programRequest] }, "Pat Participant"],
-  ["/finance-ops/membership-payment-plan", MembershipPaymentPlanPage, "/api/finance-ops/membership-payment-plans", [membershipRequest], "Smith Family"],
+  ["/finance-ops/membership-payment-plan", MembershipPaymentPlanPage, "/api/finance-ops/membership-payment-plans", { OrgMembershipProcess: [membershipRequest], BoardSettings: null }, "Smith Family"],
 ])("%s", (href, Page, api, body, rowText) => {
   it("is a Revenue Ops tab FINANCE-only and Board can both see", () => {
     for (const user of [{ isFinance: true }, { isBoardMember: true }]) {
