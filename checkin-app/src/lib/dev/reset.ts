@@ -43,26 +43,13 @@ async function assertDevDatabase(db: RawDb, env: string, name: string, url: stri
     }
 }
 
-// RESTART IDENTITY needs ownership of each sequence, which the dev DML role lacks; setval needs only UPDATE.
-async function truncateAll(db: RawDb, keep: string[], restartSequences = true): Promise<void> {
+async function truncateAll(db: RawDb, keep: string[]): Promise<void> {
     const rows = (await db.$queryRawUnsafe(
         `SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND NOT (tablename = ANY($1::text[]))`,
         keep,
     )) as { tablename: string }[];
     if (rows.length === 0) return;
-    const names = rows.map((r) => r.tablename);
-    await db.$executeRawUnsafe(`TRUNCATE TABLE ${names.map((n) => `"${n}"`).join(", ")} CASCADE`);
-    if (!restartSequences) return;
-
-    const sequences = (await db.$queryRawUnsafe(
-        `SELECT s.oid::regclass::text AS seq
-         FROM pg_class s
-         JOIN pg_depend d ON d.classid = 'pg_class'::regclass AND d.objid = s.oid AND d.deptype IN ('a', 'i')
-         JOIN pg_class t ON t.oid = d.refobjid
-         WHERE s.relkind = 'S' AND t.relnamespace = 'public'::regnamespace AND t.relname = ANY($1::text[])`,
-        names,
-    )) as { seq: string }[];
-    for (const { seq } of sequences) await db.$queryRawUnsafe(`SELECT setval($1::regclass, 1, false)`, seq);
+    await db.$executeRawUnsafe(`TRUNCATE TABLE ${rows.map((r) => `"${r.tablename}"`).join(", ")} CASCADE`);
 }
 
 /**
@@ -94,10 +81,7 @@ export async function truncateDevDatabases(
 
         await truncateAll(checkin, ["_prisma_migrations", "DevLedger"]);
         try {
-            // The mirror's ids are its own, and the dev role holds no sequence grant there.
-            for (const [i, t] of configured.entries()) {
-                await truncateAll(open[i], ["_prisma_migrations"], t.db !== "shopify_read");
-            }
+            for (const db of open) await truncateAll(db, ["_prisma_migrations"]);
         } finally {
             await reseed();
         }

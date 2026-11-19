@@ -6,11 +6,7 @@ function fakeDb(name: string, tables: string[], log: string[]) {
     return {
         $queryRawUnsafe: async (query: string, ...values: unknown[]) => {
             if (query.includes("current_database")) return [{ name }];
-            if (query.includes("setval")) {
-                log.push(`${name}: setval ${values[0]}`);
-                return [];
-            }
-            if (query.includes("pg_depend")) return (values[0] as string[]).map((t) => ({ seq: `"${t}_id_seq"` }));
+            if (!query.includes("pg_tables")) throw new Error(`unexpected query: ${query}`);
             const keep = values[0] as string[];
             return tables.filter((t) => !keep.includes(t)).map((tablename) => ({ tablename }));
         },
@@ -51,16 +47,14 @@ describe("truncateDevDatabases", () => {
         return { reseed, done: truncateDevDatabases(checkin, reseed, targets, connect) };
     }
 
-    it("truncates checkin, then each configured library, then Shopify-read, keeping migrations and the ledger, and restarts sequences outside the mirror", async () => {
+    it("truncates checkin, then each configured library, then Shopify-read, keeping migrations and the ledger", async () => {
         const log: string[] = [];
         const { done } = run({}, log);
 
         await expect(done).resolves.toEqual({ skipped: ["income"] });
         expect(log).toEqual([
             'checkin_dev: TRUNCATE TABLE "Person" CASCADE',
-            'checkin_dev: setval "Person_id_seq"',
             'expense_dev: TRUNCATE TABLE "rows" CASCADE',
-            'expense_dev: setval "rows_id_seq"',
             'shopify_read_dev: TRUNCATE TABLE "rows" CASCADE',
             "reseed",
             "expense_dev: end",
