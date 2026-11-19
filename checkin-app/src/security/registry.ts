@@ -1033,7 +1033,7 @@ defineRoute({
 // admitted; the service refuses anyone but a lead of an active household. Each
 // returns the household's OrgMembership under GET /api/household's view.
 const NOT_RENEWING_VIEW: readonly OrderedViewEntry[] = [
-    ['authenticated', ['their_households:pii', 'their_households:personal', 'their_households:internal', 'member', 'public']],
+    ['authenticated', ['their_households:pii', 'their_households:personal', 'their_households:internal', 'their_own:internal', 'led_households:internal', 'member', 'public']],
 ];
 
 defineRoute({

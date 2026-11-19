@@ -85,6 +85,8 @@ describe("Participant PII minimization (M1, M2)", () => {
         } as Record<string, unknown>;
 
         (prisma.person.findUnique as jest.Mock).mockImplementation((args) => {
+            // The caller-context leadership lookup selects no household.
+            if (!args.select.household) return Promise.resolve({ householdId: 10, isHouseholdLead: false, isSysadmin: false });
             const peerSelect = args.select.household.select.householdMembers.select as Record<string, boolean>;
             const projected = Object.fromEntries(
                 Object.keys(peerSelect).filter((k) => peerSelect[k]).map((k) => [k, rawPeer[k]])
@@ -131,7 +133,7 @@ describe("Participant PII minimization (M1, M2)", () => {
         }
 
         // Pin the actual query shape, not just this test's mock.
-        const callArgs = (prisma.person.findUnique as jest.Mock).mock.calls[0][0];
+        const callArgs = (prisma.person.findUnique as jest.Mock).mock.calls.map(([a]) => a).find((a) => a.select.household);
         expect(callArgs).not.toHaveProperty("include");
         expect(Object.keys(callArgs.select).sort()).toEqual(["household"]);
         expect(Object.keys(callArgs.select.household.select).sort()).toEqual(
