@@ -24,7 +24,7 @@ import { OCR_INTERRUPTED_AFTER_MS, sweepInterruptedOcr } from "../../services/ca
 import { describeDb } from "../helpers/db";
 import type { ReceiptLimits } from "../../lib/limits";
 import { receiptService } from "../../services/receiptService";
-import { actAs, ALICE, BOB, clearAll, configure, FINANCE, manualDetails, okOcr, stateOf, TEST_ORG_ID, textFile } from "../helpers/setup";
+import { actAs, ALICE, BOB, clearAll, configure, FINANCE, manualDetails, okOcr, stateOf, storedBytes, storeFile, TEST_ORG_ID, textFile } from "../helpers/setup";
 
 const GOOGLE_PASS = "mx.google.com; dkim=pass header.i=@example.org; spf=pass; dmarc=pass (p=NONE sp=NONE) header.from=example.org";
 const b64 = (s: string) => Buffer.from(s).toString("base64url");
@@ -110,7 +110,7 @@ describeDb("mail intake", () => {
 
     const [receipt] = await db.receipt.findMany();
     expect(receipt).toMatchObject({ intakeSource: "email", uploadedByUserId: ALICE.id, mimeType: "application/pdf" });
-    expect(Buffer.from(receipt.fileBlob ?? []).toString()).toBe(pdf("m1"));
+    expect(await storedBytes(receipt.fileKey)).toBe(pdf("m1"));
     expect(await stateOf(receipt.id)).toBe("submitter_review");
     const [item] = await db.receiptMailItem.findMany();
     expect(item).toMatchObject({ status: "assigned", receiptId: receipt.id, senderAddress: "alice@example.org", fileBlob: null });
@@ -130,7 +130,7 @@ describeDb("mail intake", () => {
     expect(await db.receipt.count()).toBe(0);
     const [item] = await db.receiptMailItem.findMany();
     expect(item).toMatchObject({ status: "held", holdReason: "not_a_submitter", senderAddress: "stranger@example.org", mimeType: "application/pdf", receiptId: null });
-    expect(Buffer.from(item.fileBlob ?? []).toString()).toBe(pdf("m1"));
+    expect(await storedBytes(item.fileKey)).toBe(pdf("m1"));
   });
 
   it("does nothing when no mailbox is bound", async () => {
@@ -146,7 +146,7 @@ describeDb("mail intake", () => {
     send("plain", { parts: [{ mimeType: "text/plain", body: { data: b64(plain) } }] });
     send("html", { parts: [{ mimeType: "text/html", body: { data: b64(html) } }] });
     expect(await readMailbox()).toMatchObject({ receipts: 2, ignored: 0 });
-    const files = (await db.receipt.findMany()).map((r) => [r.mimeType, Buffer.from(r.fileBlob ?? []).toString()]);
+    const files = await Promise.all((await db.receipt.findMany()).map(async (r) => [r.mimeType, await storedBytes(r.fileKey)]));
     expect(files).toEqual(expect.arrayContaining([["text/plain", plain], ["text/plain", html]]));
   });
 
@@ -161,7 +161,7 @@ describeDb("mail intake", () => {
     expect(await readMailbox()).toMatchObject({ receipts: 0, held: 1 });
     const [item] = await db.receiptMailItem.findMany();
     expect(item).toMatchObject({ status: "held", holdReason: "not_a_submitter", mimeType: "text/plain" });
-    expect(Buffer.from(item.fileBlob ?? []).toString()).toBe(PAD);
+    expect(await storedBytes(item.fileKey)).toBe(PAD);
   });
 
   it("holds an unverified sender's long body with no amount for finance", async () => {
@@ -1050,7 +1050,7 @@ describeDb("mail intake sender authentication", () => {
       ["stranger@example.org", null],
       ["stranger@example.org", [{ file: "an attached email", reason: "forwarded" }]],
     ]);
-    expect(Buffer.from(items[0].fileBlob ?? []).toString()).toBe(textReceipt("fwd total 9.99"));
+    expect(await storedBytes(items[0].fileKey)).toBe(textReceipt("fwd total 9.99"));
   });
 
   it("never opens a message forwarded as an attachment, and counts it ignored", async () => {
@@ -1096,7 +1096,7 @@ describeDb("mail intake over a sender's daily upload limit", () => {
         receivedAt: new Date(Date.now() - 60_000 + n),
         senderAddress: address,
         status: "deferred",
-        fileBlob: new Uint8Array(Buffer.from(pdf(`deferred ${n}`))),
+        fileKey: await storeFile(Buffer.from(pdf(`deferred ${n}`))),
         mimeType: "application/pdf",
       },
     });
@@ -1110,7 +1110,7 @@ describeDb("mail intake over a sender's daily upload limit", () => {
     expect(await readMailbox()).toMatchObject({ receipts: 1, held: 0, overLimit: 1 });
     const deferred = await db.receiptMailItem.findFirstOrThrow({ where: { status: "deferred" } });
     expect(deferred).toMatchObject({ gmailMessageId: "m2", senderAddress: "alice@example.org", receiptId: null });
-    expect(Buffer.from(deferred.fileBlob ?? []).toString()).toBe(pdf("m2"));
+    expect(await storedBytes(deferred.fileKey)).toBe(pdf("m2"));
 
     const fetched = trackFetches();
     expect(await readMailbox()).toMatchObject({ receipts: 0, overLimit: 0, skipped: 2 });
@@ -1234,7 +1234,6 @@ describeDb("mail intake with files in the store", () => {
       alerts: testAlerts(),
       limits,
       fileStore: store,
-      storeNewFilesInBucket: true,
       people: { submitterByEmail: async (address) => (address === "alice@example.org" ? ALICE : null) },
     });
   }
@@ -1281,7 +1280,6 @@ describeDb("mail intake with files in the store", () => {
       ocr: okOcr(),
       mailbox: mail.reader,
       alerts: testAlerts(),
-      storeNewFilesInBucket: true,
       fileStore: { ...store, put: async () => Promise.reject(new Error("s3 down")) },
       people: { submitterByEmail: async () => null },
     });

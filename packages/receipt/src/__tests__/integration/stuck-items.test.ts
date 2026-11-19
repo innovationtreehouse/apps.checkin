@@ -21,7 +21,7 @@ async function makeReceipt(state: string, opts: { orgId?: string; pushed?: boole
       id,
       orgId,
       uploadedByUserId: ALICE.id,
-      fileBlob: Buffer.from("receipt"),
+      fileKey: `receipts/${id}`,
       fileHash: randomUUID(),
       mimeType: "text/plain",
       pushedAt: opts.pushed ? new Date() : null,

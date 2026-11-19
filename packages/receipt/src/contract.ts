@@ -381,10 +381,8 @@ export interface ReceiptConfig {
   outcomeMail?: OutcomeMail;
   /** Overrides for the daily intake limits; unset ones keep DEFAULT_LIMITS. */
   limits?: Partial<ReceiptLimits>;
-  /** Unset means no row may have a key: reading or writing one throws. */
+  /** Unset means every file read and write throws. */
   fileStore?: ReceiptFileStore;
-  /** New files go to the store instead of the database. */
-  storeNewFilesInBucket?: boolean;
 }
 
 // ── Route factories (mounted by the host under its handler()) ──────────────────

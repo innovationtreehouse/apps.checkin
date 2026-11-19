@@ -15,7 +15,6 @@ const ALL_KEYS = [
     ...MIRROR_KEYS,
     "ZOHO_WEBHOOK_SECRET",
     "AGREEMENT_PDF_S3_BUCKET",
-    "RECEIPT_FILES_S3",
     "RECEIPT_FILES_S3_BUCKET",
     "RESEND_API_KEY",
     "S_READ_TRIGGER_FUNCTION",
@@ -103,21 +102,14 @@ describe("getConfigHealth — local, nothing configured", () => {
 describe("getConfigHealth — receipt files", () => {
     const check = () => byId(getConfigHealth())["receipt-files-s3"];
 
-    it("is no gap while the flag is off", () => {
+    it("is a gap on a deployed instance with no bucket", () => {
         process.env.CHECKIN_ENV = "prod";
-        expect(check().ok).toBe(true);
-    });
-
-    it("is a gap on a deployed instance with the flag on and no bucket", () => {
-        process.env.CHECKIN_ENV = "prod";
-        process.env.RECEIPT_FILES_S3 = "true";
         expect(check().ok).toBe(false);
         expect(check().detail).toContain("RECEIPT_FILES_S3_BUCKET");
     });
 
-    it("is fine with the flag on and a bucket, and on local without one", () => {
+    it("is fine with a bucket, and on local without one", () => {
         process.env.CHECKIN_ENV = "prod";
-        process.env.RECEIPT_FILES_S3 = "true";
         process.env.RECEIPT_FILES_S3_BUCKET = "bucket";
         expect(check().ok).toBe(true);
         delete process.env.RECEIPT_FILES_S3_BUCKET;

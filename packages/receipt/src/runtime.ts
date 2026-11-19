@@ -126,7 +126,7 @@ export function limits(): ReceiptLimits {
   return { ...DEFAULT_LIMITS, ...requireRuntime().limits };
 }
 
-export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits" | "mailbox" | "replies" | "outcomeMail" | "fileStore" | "storeNewFilesInBucket">> {
+export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits" | "mailbox" | "replies" | "outcomeMail" | "fileStore">> {
   const r = requireRuntime();
   return {
     receiptSink: r.receiptSink ?? inertReceiptSink,
@@ -146,10 +146,6 @@ export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits" 
 
 export function fileStore(): ReceiptFileStore {
   return requireRuntime().fileStore ?? inertFileStore;
-}
-
-export function storesNewFilesInBucket(): boolean {
-  return requireRuntime().storeNewFilesInBucket === true;
 }
 
 /** The receipt mailbox, or null when mail intake is unbound. */

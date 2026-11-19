@@ -47,11 +47,11 @@ model Receipt {
   uploadedByUserId   Int      @map("uploaded_by_user_id")
   /// @sensitivity:internal
   uploadedAt         DateTime @default(now()) @map("uploaded_at")
-  // Null once the file lives in the store under fileKey.
+  // Unused column awaiting its drop: no code reads or writes it. The file lives in the store under fileKey.
   /// @sensitivity:pii
   /// @financeMark
   fileBlob           Bytes?   @map("file_blob")
-  // The object holding the file; null means the bytes are in fileBlob.
+  // The object holding the file; null means no file is kept.
   /// @sensitivity:pii
   fileKey            String?  @map("file_key")
   /// @sensitivity:internal
@@ -343,12 +343,12 @@ model ReceiptMailItem {
   // On a refused item, its { file, reason }, so a later pass can still name it in the sender's notice.
   /// @sensitivity:pii
   refusal        Json?
-  // Kept only while held or deferred; cleared once the item becomes a receipt or is discarded.
+  // Unused column awaiting its drop: no code reads or writes it. The file lives in the store under fileKey.
   /// @sensitivity:pii
   /// @financeMark
   fileBlob       Bytes?    @map("file_blob")
   // The object holding the file. Cleared when the item becomes a receipt; a discarded item keeps it,
-  // to name the object for an admin restore. Null with no fileBlob means no file is kept.
+  // to name the object for an admin restore. Null means no file is kept.
   /// @sensitivity:pii
   fileKey        String?   @map("file_key")
   /// @sensitivity:internal

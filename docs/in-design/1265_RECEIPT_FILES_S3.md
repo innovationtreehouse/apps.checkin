@@ -367,7 +367,7 @@ Each PR is based on `main`; none stacks.
 | 2 | **Library** | the migration (§4 step 1, with `@sensitivity` tags and regenerated classifications), the file-store port, the S3, temp-directory and fake adapters, the flagged write path, the falling-back read path, limits on `file_size`, the mail-item deletes, the config-health row, tests. No boundary file changes. | PR 1 applied in dev |
 | - | flag on, dev then staging then prod | env change only | PR 2 rolled out there |
 | 3 | **Backfill** | the copy and `--verify` script, its one-off task command, a runbook entry in `docs/ops/` | flag on in that environment |
-| 4 | **Remove `bytea` reads** | read `file_key` only, drop the flag, stop selecting `file_blob` | verify clean in prod, in a release after PR 3's run |
+| 4 | **Remove `bytea` reads** (done) | read `file_key` only, drop the flag, stop selecting `file_blob`. No environment held a receipt, so the verify gate was met with nothing to copy | the flag on in every environment |
 | 5 | **Retention** | the daily retention step (§7) and the 90-day held-mail auto-discard (§2), each with its audit row, tests | PR 4 rolled out |
 
 The bulk-donation library also stores its uploaded CSVs as `bytea`

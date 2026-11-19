@@ -20,12 +20,15 @@ export const backfilledMailItemFileKey = (gmailMessageId: string, attachmentHash
 };
 
 /**
- * A row's bytes: from the store when it has a key, else from its own column. Null when neither
- * holds them, including a key whose object is gone. A store read still out at `deadline` (epoch ms) throws DeadlineError.
+ * A row's bytes from the store. Null for a row with no key or a key whose object is gone.
+ * A store read still out at `deadline` (epoch ms) throws DeadlineError.
  */
-export async function readStoredFile(row: { fileKey: string | null; fileBlob: Uint8Array | null }, deadline = Infinity): Promise<Uint8Array | null> {
-  const { fileKey } = row;
-  return fileKey ? byDeadline(deadline, "the file store", () => fileStore().get(fileKey)) : row.fileBlob;
+export async function readStoredFile(fileKey: string | null, deadline = Infinity): Promise<Uint8Array | null> {
+  if (!fileKey) {
+    console.error("[receipt] a stored file was read from a row with no file key");
+    return null;
+  }
+  return byDeadline(deadline, "the file store", () => fileStore().get(fileKey));
 }
 
 /**

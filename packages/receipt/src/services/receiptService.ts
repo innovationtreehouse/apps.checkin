@@ -401,9 +401,9 @@ export function ocrFailureNote({ kind, error }: OcrFailure): string {
  * a store read still out then is a store failure.
  */
 async function applyOcr(id: string, actor: ReceiptPrincipal, deadline = Infinity): Promise<void> {
-  const file = await db.receipt.findUniqueOrThrow({ where: { id }, select: { fileBlob: true, fileKey: true, mimeType: true, rotation: true } });
+  const file = await db.receipt.findUniqueOrThrow({ where: { id }, select: { fileKey: true, mimeType: true, rotation: true } });
   // A missing file reads as null; a store outage throws.
-  const stored = await readStoredFile(file, deadline).then(
+  const stored = await readStoredFile(file.fileKey, deadline).then(
     (bytes): Uint8Array | OcrFailure => bytes ?? { success: false, kind: "data", error: "the receipt file is missing" },
     (err: unknown): OcrFailure => {
       console.error(`[receipt] could not read the file of ${id}:`, err);
@@ -1440,8 +1440,8 @@ export const receiptService = {
   async getFile(id: string, access: Access): Promise<{ fileBlob: Uint8Array; mimeType: string; uploadedByUserId: number }> {
     const actor = await requireActor();
     const row = await load(id, access, actor);
-    const file = await db.receipt.findUniqueOrThrow({ where: { id }, select: { fileBlob: true, fileKey: true, mimeType: true } });
-    const fileBlob = await readStoredFile(file);
+    const file = await db.receipt.findUniqueOrThrow({ where: { id }, select: { fileKey: true, mimeType: true } });
+    const fileBlob = await readStoredFile(file.fileKey);
     if (!fileBlob) throw new ServiceError(404, "Receipt file not found");
     await audit(db, id, actor, { action: "file_viewed" });
     return { fileBlob, mimeType: file.mimeType, uploadedByUserId: row.uploadedByUserId };

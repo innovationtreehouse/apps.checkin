@@ -3,7 +3,8 @@ import type { CompletedReceipt } from "@checkin/receipt-types";
 import { db } from "../../db";
 import type { FailureKind } from "@checkin/component-kit";
 import type { InKindDonor, OcrProvider, ReceiptConfig, ReceiptPrincipal } from "../../contract";
-import { configureReceipt } from "../../runtime";
+import { createMemoryFileStore, newMailItemFileKey, receiptFileKey, sha256Hex } from "../../lib/fileStorage";
+import { configureReceipt, fileStore } from "../../runtime";
 
 export const TEST_ORG_ID = "00000000-0000-0000-0000-000000000001";
 
@@ -54,16 +55,34 @@ export function recordingPorts() {
   };
 }
 
+/** The store every test uses unless it binds its own; it outlives a re-configure and is emptied by clearAll. */
+const testStore = createMemoryFileStore();
+
 export function configure(overrides: Partial<ReceiptConfig> = {}): void {
   current = ALICE;
   configureReceipt({
     auth: { getPrincipal: async () => current },
     org: async () => ({ id: TEST_ORG_ID, name: "Test Org" }),
+    fileStore: testStore,
     ...overrides,
   });
 }
 
+/** Writes bytes to the configured store, as a held mail item's (or, with a receipt id, that receipt's) file; returns its key. */
+export async function storeFile(bytes: Uint8Array, receiptId?: string): Promise<string> {
+  const key = receiptId ? receiptFileKey(receiptId) : newMailItemFileKey();
+  await fileStore().put(key, bytes, sha256Hex(bytes));
+  return key;
+}
+
+/** The bytes the configured store holds under a row's key. */
+export async function storedBytes(fileKey: string | null): Promise<string> {
+  const bytes = fileKey ? await fileStore().get(fileKey) : null;
+  return Buffer.from(bytes ?? []).toString();
+}
+
 export async function clearAll(): Promise<void> {
+  testStore.objects.clear();
   await db.receiptAuditLog.deleteMany();
   await db.receiptPairDecision.deleteMany();
   await db.receiptLineItem.deleteMany();
