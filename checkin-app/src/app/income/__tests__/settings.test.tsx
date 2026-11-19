@@ -38,7 +38,7 @@ afterEach(() => {
   jest.clearAllMocks();
 });
 
-const COUNT = "QuickBooks deposits created per run, all sources together";
+const COUNT = "QuickBooks deposits created per run, all sources together (at most 100)";
 const CENTS = "Dollars booked per run, each source other than Benevity";
 const BENEVITY_CENTS = "Dollars booked per run from Benevity";
 const WINDOW = "Benevity match window: days either side of the payout date";

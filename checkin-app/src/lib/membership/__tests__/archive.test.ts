@@ -12,7 +12,7 @@ const tx = {
     $queryRaw: jest.fn(),
     boardSettings: { findUnique: jest.fn() },
     orgMembership: { findUnique: jest.fn() },
-    orgMembershipProcess: { findFirst: jest.fn(), updateMany: jest.fn() },
+    orgMembershipProcess: { findFirst: jest.fn(), findUnique: jest.fn(), updateMany: jest.fn() },
     auditLog: { create: jest.fn(), findFirst: jest.fn() },
 };
 
@@ -70,7 +70,16 @@ describe('archiveApplication (Close application)', () => {
     it('loses to a payment that lands between the read and the write: refuses, no audit row', async () => {
         findUnique.mockResolvedValue(row({ status: 'PENDING_PAYMENT' }));
         tx.orgMembershipProcess.updateMany.mockResolvedValue({ count: 0 });
+        tx.orgMembershipProcess.findUnique.mockResolvedValue({ status: 'PENDING_BG_CLEARANCE' });
         await expect(archiveApplication(1, 2)).rejects.toMatchObject({ code: 'wrong_phase' });
+        expect(tx.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('loses to a concurrent close of the same application: succeeds as a no-op, no second audit row', async () => {
+        findUnique.mockResolvedValue(row({ status: 'PENDING_PAYMENT' }));
+        tx.orgMembershipProcess.updateMany.mockResolvedValue({ count: 0 });
+        tx.orgMembershipProcess.findUnique.mockResolvedValue({ status: 'ARCHIVED' });
+        await expect(archiveApplication(1, 2)).resolves.toEqual({ status: 'ARCHIVED' });
         expect(tx.auditLog.create).not.toHaveBeenCalled();
     });
 });

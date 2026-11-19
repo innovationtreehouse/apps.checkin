@@ -81,7 +81,7 @@ class FakeQbo {
 
   handle = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = new URL(String(input));
-    const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { intuit_tid: "tid" } });
+    const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { intuit_tid: "tid", ...(status === 429 && { "Retry-After": "0" }) } });
     if (this.outage && !(url.searchParams.get("query") ?? "").startsWith("SELECT * FROM Preferences")) return json({ Fault: { Error: [] } }, 503);
     if ((init?.method ?? "GET") === "GET") {
       const query = url.searchParams.get("query") ?? "";
@@ -1282,5 +1282,47 @@ describeDb("in-kind QuickBooks drift", () => {
     qbo.purchases[0].TxnDate = "2026-10-26";
     await runInKindQbPosting(orgId);
     await expect(resolve(id, { action: "match", depositId: "700", purchaseId: "7001" })).resolves.toMatchObject({ qbState: "MATCHED" });
+  });
+});
+
+describeDb("in-kind drain — a QuickBooks throttle", () => {
+  it("tries a throttled gift once more, ends the run at the second throttle, and leaves every gift unstuck; the next run books them", async () => {
+    await switchOn();
+    const gifts = [await acceptedGift(), await acceptedGift()];
+    qbo.createAnswer = () => ({ status: 429 });
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ throttled: 2, failed: 0, posted: 0 });
+    for (const id of gifts) expect((await posting(id).catch(() => null))?.qbFirstFailedAt ?? null).toBeNull();
+    expect(failures).toEqual([]);
+    expect(await stuckItems()).toEqual([]);
+
+    qbo.createAnswer = null;
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 2, throttled: 0 });
+  });
+
+  it("a throttled book answers 503 and leaves the gift where finance had it", async () => {
+    await switchOn();
+    const id = await acceptedGift();
+    rulesThrow = new Error("rules exploded");
+    await runInKindQbPosting(orgId);
+    const { qbFirstFailedAt, qbNote } = await posting(id);
+    rulesThrow = null;
+    qbo.createAnswer = () => ({ status: 429 });
+
+    await expect(resolve(id, { action: "book" })).rejects.toMatchObject({ status: 503, message: expect.stringContaining("slow down") });
+    expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbFirstFailedAt, qbNote, claimedAt: null });
+  });
+
+  it("a throttled read for the gift's own earlier entry leaves it as it was, not stuck", async () => {
+    await switchOn();
+    const id = await acceptedGift();
+    qbo.dropAfterCreate = true;
+    await runInKindQbPosting(orgId);
+    qbo.dropAfterCreate = false;
+    const before = await posting(id);
+    qbo.sinceReadStatus = 429;
+
+    await expect(retryStuckItem({ id: `receipt ${id}`, step: "QuickBooks posting" })).rejects.toMatchObject({ status: 503 });
+    expect(await posting(id)).toMatchObject({ matchState: before.matchState, qbFirstFailedAt: before.qbFirstFailedAt, claimedAt: null });
   });
 });

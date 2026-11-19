@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { configureIncome } from "../../runtime";
 import { matchWindow } from "../../lib/reconcile";
-import { DEFAULT_INCOME_SETTINGS, settingsChanges } from "../../services/settingsService";
+import type { TxClient } from "../../lib/audit";
+import { DEFAULT_INCOME_SETTINGS, readIncomeSettings, settingsChanges } from "../../services/settingsService";
 
 const finance = { userId: 1, isFinance: true, isBoard: false };
 const board = { userId: 2, isFinance: false, isBoard: true };
@@ -22,6 +23,17 @@ describe("settingsChanges", () => {
     for (const bad of [0, -1, 1.5, "5", null]) {
       expect(() => settingsChanges(DEFAULT_INCOME_SETTINGS, { maxCreatesPerRun: bad }, board)).toThrow(/positive whole/);
     }
+  });
+
+  it("lets the board set the per-run count up to 100, not above", () => {
+    expect(settingsChanges(DEFAULT_INCOME_SETTINGS, { maxCreatesPerRun: 100 }, board)).toEqual({ maxCreatesPerRun: 100 });
+    expect(() => settingsChanges(DEFAULT_INCOME_SETTINGS, { maxCreatesPerRun: 101 }, board)).toThrow(/at most 100/);
+  });
+
+  it("reads a stored per-run count above 100 as 100", async () => {
+    const stored = { ...DEFAULT_INCOME_SETTINGS, maxCreatesPerRun: 2_147_483_647 };
+    const client = { incomeOrgSettings: { findUnique: async () => stored } } as unknown as TxClient;
+    await expect(readIncomeSettings(client, "org")).resolves.toEqual({ ...stored, maxCreatesPerRun: 100 });
   });
 
   it("caps Benevity's cents on their own, under the same lower-only rule", () => {

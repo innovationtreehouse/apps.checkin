@@ -63,7 +63,12 @@ export async function archiveApplication(processId: number, actorId: number) {
             where: { id: processId, ...fromWhere(process.status), paidAt: null },
             data: { status: "ARCHIVED", archivedFromStatus: process.status, stageEnteredAt: new Date(), isPaymentPlanRequested: false },
         });
-        if (count !== 1) throw new ReviewError("wrong_phase", "This application changed while you were looking at it. Reload and try again.");
+        if (count !== 1) {
+            // A concurrent close of this application won; it wrote the audit row.
+            const now = await tx.orgMembershipProcess.findUnique({ where: { id: processId }, select: { status: true } });
+            if (now?.status === "ARCHIVED") return;
+            throw new ReviewError("wrong_phase", "This application changed while you were looking at it. Reload and try again.");
+        }
         await tx.auditLog.create({
             data: {
                 ...personActor(actorId),

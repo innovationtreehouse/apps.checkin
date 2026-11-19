@@ -60,6 +60,7 @@ export async function setHeldLineAccount(
 const RETRY_REFUSALS: Record<Exclude<PostOutcome, "posted" | "matched"> | "unbound", [number, string]> = {
   unbound: [503, "QuickBooks isn't connected, so nothing was sent"],
   failed: [503, "Not posted: the post failed again; see its QuickBooks reasons, then retry"],
+  throttled: [503, "Not posted: QuickBooks asked the app to slow down; the next run posts it, or retry in a minute"],
   waiting: [409, "Not posted yet: a sign-off is missing, the daily limit is reached, or a post is in flight; it is retried automatically"],
   queued: [409, "Not posted: the expense waits for finance to match, link or book it in QuickBooks review"],
   not_sent: [409, "Not posted: the test-data rule keeps this expense out of this QuickBooks company"],
