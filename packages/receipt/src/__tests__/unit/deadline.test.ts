@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { byDeadline, DeadlineError } from "../../lib/deadline";
-import { callDeadlines, MAIL_CATCH_UP_BUDGET_MS, MAIL_TIME_BUDGET_MS } from "../../services/mailIntake";
+import { callDeadlines, drainDeadline, MAIL_CATCH_UP_BUDGET_MS, MAIL_TIME_BUDGET_MS, mailLeaseUntil } from "../../services/mailIntake";
+import { DRAIN_BUDGET_MS } from "../../services/ocrDrain";
 
 const hung = () => new Promise<never>(() => {});
 
@@ -45,10 +46,31 @@ describe("byDeadline", () => {
 describe("callDeadlines", () => {
   it.each([MAIL_TIME_BUDGET_MS, MAIL_CATCH_UP_BUDGET_MS])("ends every call before the lease of a %i ms run, reading calls first", (budgetMs) => {
     const started = Date.now();
-    const leaseUntil = started + budgetMs + 10 * 60_000;
+    const leaseUntil = mailLeaseUntil(started, budgetMs);
     const { read, end } = callDeadlines(leaseUntil);
     expect(read).toBeGreaterThan(started + budgetMs);
     expect(read).toBeLessThan(end);
     expect(end).toBeLessThan(leaseUntil);
+  });
+});
+
+describe("drainDeadline", () => {
+  it.each([MAIL_TIME_BUDGET_MS, MAIL_CATCH_UP_BUDGET_MS])("gives a drain started when a %i ms run's intake ends its full budget, before the lease's reading deadline", (budgetMs) => {
+    const started = Date.now();
+    const leaseUntil = mailLeaseUntil(started, budgetMs);
+    const drainStart = started + budgetMs;
+    expect(drainDeadline(leaseUntil, drainStart)).toBe(drainStart + DRAIN_BUDGET_MS);
+    expect(drainDeadline(leaseUntil, drainStart)).toBeLessThan(callDeadlines(leaseUntil).read);
+  });
+
+  it("never runs past the lease's reading deadline, however late the drain starts", () => {
+    const started = Date.now();
+    const leaseUntil = mailLeaseUntil(started, MAIL_TIME_BUDGET_MS);
+    expect(drainDeadline(leaseUntil, leaseUntil)).toBe(callDeadlines(leaseUntil).read);
+  });
+
+  it("holds the daily run's lease to 20 and a half minutes and a catch-up's to 30", () => {
+    expect(mailLeaseUntil(0, MAIL_TIME_BUDGET_MS)).toBe(20.5 * 60_000);
+    expect(mailLeaseUntil(0, MAIL_CATCH_UP_BUDGET_MS)).toBe(30 * 60_000);
   });
 });

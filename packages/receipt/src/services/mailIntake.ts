@@ -11,7 +11,8 @@ import type { Prisma } from "../generated/prisma/client";
 import { ACCEPTED_TYPES, checkReceiptFile, MAX_FILE_BYTES } from "../lib/file-type";
 import { deleteStoredFiles, newMailItemFileKey, readStoredFile } from "../lib/fileStorage";
 import { fileStore, getOrgId, mailbox, ports } from "../runtime";
-import { discardBodyCopy, intakeMailedReceipt } from "./receiptService";
+import { intakeMailedReceipt } from "./receiptService";
+import { DRAIN_BUDGET_MS, drainOcrQueue, type DrainCounts } from "./ocrDrain";
 import { OrgUploadLimitError } from "../lib/insert";
 import { byDeadline, DeadlineError } from "../lib/deadline";
 import { isAutomated, sendMailReplies } from "./mailReplies";
@@ -19,7 +20,7 @@ import { isAutomated, sendMailReplies } from "./mailReplies";
 // ponytail: no stored cursor; the ledger makes re-reads free. Ceiling is a cron outage longer than 30 days,
 // or a flood bigger than the per-run caps drain inside 30 days; widen the window or the caps then.
 export const MAIL_WINDOW_DAYS = 30;
-/** New receipts (OCR calls) per run, oldest mail first; the rest wait for the next run, inside the window. Held items do not count. */
+/** New receipts per run, oldest mail first; the rest wait for the next run, inside the window. Held items do not count. */
 export const MAIL_CAP = 10;
 /** Downloads charged to held mail per run (see chargeHold); the rest wait for the next run. */
 export const MAIL_HELD_CAP = 50;
@@ -30,14 +31,14 @@ export const MAIL_HELD_CEILING = 500;
 // ponytail: a finished message is skipped unfetched, but every unfinished one, and every message that left no
 // ledger row (no file, or every file refused), is fetched each run; a flood of those larger than this budget's
 // worth of fetches inside 30 days can still push a later receipt past the window, with an alert; widen the budget then.
-/** Wall time per run; messages not reached wait for the next run. */
-export const MAIL_TIME_BUDGET_MS = 2 * 60_000;
+/** Wall time of the daily run's mail step, inside the scheduler's 60-second wait; messages not reached wait for the next run. */
+export const MAIL_TIME_BUDGET_MS = 30_000;
 export { MAIL_CATCH_UP_CAP } from "../lib/mailCatchUpCap";
 /** Wall time of one catch-up run, which runs after its request has answered. */
 export const MAIL_CATCH_UP_BUDGET_MS = 10 * 60_000;
-/** How long a run's lease outlasts its budget, covering its last OCR call, alerts and replies; a crashed run blocks the next for this long at most. */
+/** How long a run's lease outlasts its budget and its drain, covering the drain's last reading and the release; a crashed run blocks the next for this long at most. */
 const LEASE_SLACK_MS = 10 * 60_000;
-/** Reading calls (listing, fetches, downloads, OCR, the file store) end this long before the lease, leaving the run's end its time. */
+/** Reading calls (listing, fetches, downloads, the file store, the drain's readings) end this long before the lease, leaving the run's end its time. */
 const READ_MARGIN_MS = 3 * 60_000;
 /**
  * The run's end-of-run calls (dating mail, alerts, acknowledgements) end this long before the lease, leaving its release time.
@@ -432,20 +433,6 @@ const sameRefusal = (a: MailRefusal) => (b: MailRefusal) => a.file === b.file &&
 /** The statuses whose items keep their file in the ledger, awaiting finance or a later run. */
 export const STORED_STATUSES = ["held", "deferred"];
 
-/** A body read beside its message's other receipts is discarded when its reading repeats one of them. */
-async function discardIfCopy(gmailMessageId: string, receiptId: string): Promise<void> {
-  const siblings = await db.receiptMailItem.findMany({
-    where: { gmailMessageId, receiptId: { not: null }, NOT: { receiptId } },
-    select: { receiptId: true },
-  });
-  try {
-    await discardBodyCopy(receiptId, siblings.flatMap((s) => (s.receiptId ? [s.receiptId] : [])));
-  } catch (err) {
-    // The body stays its own receipt; finance discards it the ordinary way.
-    console.error("[receipt] body copy check failed for one receipt:", err);
-  }
-}
-
 /**
  * Make a deferred item a receipt uploaded by its sender. The item flips to `assigned` in the
  * receipt's own insert, so a concurrent retry or release leaves no second receipt (409).
@@ -469,11 +456,6 @@ export async function intakeDeferred(
     },
     { uploadLimits, heldFileKey: item.fileKey, deadline },
   );
-  // A deferred text item is a body; its message's attachments are retried first, oldest first.
-  if (item.mimeType === "text/plain") {
-    const { gmailMessageId } = await db.receiptMailItem.findUniqueOrThrow({ where: { id: item.id }, select: { gmailMessageId: true } });
-    await discardIfCopy(gmailMessageId, receiptId);
-  }
   return receiptId;
 }
 
@@ -495,13 +477,15 @@ const MailRunSummarySchema = z.object({
   failed: z.number(),
   /** Put-off files or unread messages remain, which another run would read now. */
   more: z.boolean(),
+  /** The drain after the run; absent on a run that crashed before it, or that predates it. */
+  drain: z.object({ read: z.number(), failed: z.number(), waiting: z.number() }).optional(),
 });
 export type MailRunSummary = z.infer<typeof MailRunSummarySchema>;
 
-function summarize(counts: MailRunCounts | null): MailRunSummary {
+function summarize(counts: MailRunCounts | null, drain?: DrainCounts): MailRunSummary {
   if (!counts) return { status: "crashed", messages: 0, receipts: 0, held: 0, waiting: 0, failed: 0, more: false };
   const { status, messages, receipts, held, failed, deferred, unread, overLimit } = counts;
-  return { status, messages, receipts, held, waiting: deferred + unread + overLimit, failed, more: deferred + unread > 0 };
+  return { status, messages, receipts, held, waiting: deferred + unread + overLimit, failed, more: deferred + unread > 0, drain };
 }
 
 /** The deadlines (epoch ms) a run's outside calls must answer by, from its lease's expiry: always before it. */
@@ -515,12 +499,16 @@ const readerBy = (reader: MailboxReader, deadline: number): MailboxReader => ({
   getAttachment: (messageId, attachmentId) => byDeadline(deadline, "a mailbox download", () => reader.getAttachment(messageId, attachmentId)),
 });
 
-export type MailRun = { status: "unbound" } | { status: "busy" } | { status: "started"; done: Promise<MailRunCounts> };
+export type MailRun =
+  | { status: "unbound" }
+  | { status: "busy" }
+  | { status: "started"; intake: Promise<MailRunCounts>; done: Promise<MailRunCounts> };
 
 /**
  * Takes the org's mail lease and starts one intake pass, `busy` when another run holds the lease.
  * `beforeRun` runs while the lease is held; if it throws, the lease is freed and no pass starts.
- * `done` settles when the pass ends and the lease is released with its summary.
+ * `intake` settles when the mail is taken in. The drain then reads waiting receipts under the same
+ * lease, and `done` settles once the lease is released with the run's summary.
  */
 export async function startMailRun({
   cap = MAIL_CAP,
@@ -531,7 +519,7 @@ export async function startMailRun({
   if (!reader) return { status: "unbound" };
   const orgId = await getOrgId();
   const started = Date.now();
-  const until = new Date(started + budgetMs + LEASE_SLACK_MS);
+  const until = new Date(mailLeaseUntil(started, budgetMs));
   if (!(await takeLease(orgId, until))) return { status: "busy" };
   try {
     await beforeRun?.();
@@ -541,22 +529,49 @@ export async function startMailRun({
       .catch((releaseErr: unknown) => console.error("[receipt] mail lease release failed; it expires on its own:", releaseErr));
     throw err;
   }
-  const release = (counts: MailRunCounts | null) =>
+  const release = (counts: MailRunCounts | null, drain?: DrainCounts) =>
     db.receiptMailLease
-      .updateMany({ where: { orgId, until }, data: { until: new Date(0), lastRunAt: new Date(), lastRun: summarize(counts) } })
+      .updateMany({ where: { orgId, until }, data: { until: new Date(0), lastRunAt: new Date(), lastRun: summarize(counts, drain) } })
       .catch((err: unknown) => console.error("[receipt] mail lease release failed; it expires on its own:", err));
-  const done = readLeased(reader, orgId, started, cap, budgetMs, until.getTime()).then(
+  const intake = readLeased(reader, orgId, started, cap, budgetMs, until.getTime());
+  const done = intake.then(
     async (counts) => {
-      await release(counts);
+      const drain = await drainOcrQueue(drainDeadline(until.getTime())).catch((err: unknown) => {
+        console.error("[receipt] OCR drain crashed:", err);
+        return undefined;
+      });
+      await release(drain ? counts : null, drain);
       return counts;
     },
     async (err: unknown) => {
+      // A failed intake still leaves the receipts queued before it to be read.
+      await drainOcrQueue(drainDeadline(until.getTime())).catch((drainErr: unknown) => console.error("[receipt] OCR drain crashed:", drainErr));
       await release(null);
       throw err;
     },
   );
-  return { status: "started", done };
+  return { status: "started", intake, done };
 }
+
+/** The drain under the mail lease with no mailbox bound, so a receipt left queued is still read; null while a run holds the lease. */
+export async function drainAlone(): Promise<DrainCounts | null> {
+  const orgId = await getOrgId();
+  const until = new Date(mailLeaseUntil(Date.now(), 0));
+  if (!(await takeLease(orgId, until))) return null;
+  try {
+    return await drainOcrQueue(drainDeadline(until.getTime()));
+  } finally {
+    await db.receiptMailLease
+      .updateMany({ where: { orgId, until }, data: { until: new Date(0) } })
+      .catch((err: unknown) => console.error("[receipt] mail lease release failed; it expires on its own:", err));
+  }
+}
+
+/** When a run started at `started` with `budgetMs` releases its lease at the latest: its intake, its drain and the slack. */
+export const mailLeaseUntil = (started: number, budgetMs: number) => started + budgetMs + DRAIN_BUDGET_MS + LEASE_SLACK_MS;
+
+/** The drain's deadline (epoch ms): its budget from now, and never past the lease's reading deadline. */
+export const drainDeadline = (leaseUntil: number, now = Date.now()) => Math.min(now + DRAIN_BUDGET_MS, callDeadlines(leaseUntil).read);
 
 /** The org's mail lease: whether a run holds it now, and the last finished run's summary. */
 export async function mailRunState(): Promise<{ running: boolean; lastRunAt: Date | null; lastRun: MailRunSummary | null }> {
@@ -568,10 +583,23 @@ export async function mailRunState(): Promise<{ running: boolean; lastRunAt: Dat
   };
 }
 
-/** The cron's intake pass, run to its end; `busy` while another run holds the lease. */
+/** One intake pass and its drain, run to their end; `busy` while another run holds the lease. */
 export async function readMailbox(): Promise<MailIntakeResult> {
   const run = await startMailRun();
   return run.status === "started" ? run.done : run;
+}
+
+/**
+ * The daily cron's intake pass: answers once the mail is taken in, and leaves the drain reading
+ * waiting receipts after the request has answered, with or without a mailbox bound. `busy` while
+ * another run holds the lease.
+ */
+export async function takeInMailbox(): Promise<MailIntakeResult> {
+  const run = await startMailRun();
+  if (run.status === "unbound") drainAlone().catch((err: unknown) => console.error("[receipt] OCR drain crashed:", err));
+  if (run.status !== "started") return run;
+  run.done.catch((err: unknown) => console.error("[receipt] mail run failed:", err));
+  return run.intake;
 }
 
 async function readLeased(
@@ -745,7 +773,7 @@ async function readLeased(
         }
         if (sender) {
           try {
-            const receiptId = await intakeMailedReceipt(
+            await intakeMailedReceipt(
               sender,
               bytes,
               check.mimeType,
@@ -756,7 +784,6 @@ async function readLeased(
               { deadline: deadlines.read },
             );
             counts.receipts++;
-            if (file.body) await discardIfCopy(msg.id, receiptId);
             continue;
           } catch (err) {
             // Over the sender's daily upload limit: stored to retry on a later run.

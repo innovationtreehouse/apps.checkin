@@ -10,7 +10,7 @@ import { runExpenseCatchUp } from "@checkin/expense";
 import { healProgramStock } from "@/lib/shopify/stock";
 import { catchUpOrgEvents as catchUpInventoryEvents } from "@checkin/local-inventory";
 import { catchUpOrgEvents as catchUpWorkflowEvents, sweepStuckApplying } from "@checkin/workflow-mapping";
-import { discardUnclaimedHeldMail, readMailbox, sweepExpiredFiles, sweepInterruptedOcr, sweepOutcomeNotices, sweepStuckUploaded } from "@checkin/receipt";
+import { discardUnclaimedHeldMail, takeInMailbox, sweepExpiredFiles, sweepInterruptedOcr, sweepOutcomeNotices, sweepStuckUploaded } from "@checkin/receipt";
 
 /**
  * Runs one step so its failure stays its own: logged, reported to the run under the library lanes
@@ -89,8 +89,9 @@ function rowsFailed(outcome: object): number {
  * Then moves receipts whose intake checks never ran out of `uploaded` into finance's
  * `flow_error` queue (sweepStuckUploaded). Isolated the same way; counts only.
  *
- * Then it reads the receipt mailbox (readMailbox), the only slow step: one OCR call per new
- * file, capped per run. Isolated the same way; counts only, "unbound" when no mailbox is set. A run
+ * Then it takes in the receipt mailbox (takeInMailbox): each new file becomes a receipt waiting to
+ * be read, capped per run, and the reading drain runs on after this request has answered.
+ * Isolated the same way; counts only, "unbound" when no mailbox is set. A run
  * that could not read the mailbox counts toward the top-level `failed`, so the cron run records it.
  *
  * Then it retries the receipt outcome emails still owed (sweepOutcomeNotices). Isolated the same
@@ -117,7 +118,7 @@ export const GET = withCron(async () => {
     const receivingApply = await isolated("workflow-mapping stuck applies", "workflow-mapping stuck-apply sweep", sweepStuckApplying);
     const receipt = await isolated("receipt", "receipt catch-up", sweepInterruptedOcr);
     const receiptStuck = await isolated("receipt stuck uploads", "receipt stuck-upload sweep", sweepStuckUploaded);
-    const receiptMail = await isolated("receipt mail", "receipt mail intake", readMailbox);
+    const receiptMail = await isolated("receipt mail", "receipt mail intake", takeInMailbox);
     const receiptOutcomes = await isolated("receipt outcome emails", "receipt outcome emails", sweepOutcomeNotices);
     const receiptHeldDiscard = await isolated("receipt held-mail discard", "receipt held-mail auto-discard", discardUnclaimedHeldMail);
     const receiptRetention = await isolated("receipt retention", "receipt file retention", sweepExpiredFiles);

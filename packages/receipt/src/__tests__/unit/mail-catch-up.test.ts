@@ -16,6 +16,12 @@ describe("catchUpSummary", () => {
     );
   });
 
+  it("adds what the drain read after the run", () => {
+    expect(catchUpSummary(run({ drain: { read: 7, failed: 0, waiting: 2 } }))).toBe(
+      "12 messages read, 9 receipts made, 2 held, 0 still waiting. 7 receipts read, 2 waiting to be read.",
+    );
+  });
+
   it("explains a run that could not list the mailbox or stopped with an error", () => {
     expect(catchUpSummary(run({ status: "listing_failed" }))).toMatch(/couldn't read the mailbox/);
     expect(catchUpSummary(run({ status: "crashed" }))).toMatch(/stopped with an error.*Run it again/);

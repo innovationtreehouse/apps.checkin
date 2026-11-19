@@ -213,7 +213,7 @@ each in its own `try/catch` and each returning counts only. None retries a faile
 |---|---|---|
 | `sweepInterruptedOcr` | `auto_upload` older than ten minutes to `ocr_failed` | 50 |
 | `sweepStuckUploaded` | `uploaded` idle for over an hour to `flow_error` | 50 |
-| `readMailbox` | the mailbox, the only slow step | as above |
+| `takeInMailbox` | the mailbox: answers once the mail is taken in; the reading drain (`drainOcrQueue`, 20 readings, oldest first) runs on under the mail lease after the request answers | as above |
 | `sweepOutcomeNotices` | sends the outcome emails still owed to a receipt's uploader and the person reimbursed; a notice is given up after three failed sends | 50 |
 | `discardUnclaimedHeldMail` | a `held` mail item 90 days after it was held to `discarded`, audited as a finance discard is, with no actor; deletes its object | 50 |
 | `sweepExpiredFiles` | deletes a receipt's object once its retention has ended and clears `file_key`; clears a discarded mail item's `file_key` 30 days after the discard, once its restore window has closed. Each is audited | 50 of each |
