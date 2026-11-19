@@ -13,6 +13,7 @@ import {
   Alert,
   Box,
   Button,
+  Checkbox,
   Group,
   Modal,
   Paper,
@@ -65,6 +66,66 @@ function HouseholdQuestion() {
             <Button loading={saving} variant="default" onClick={() => answer(false)}>No</Button>
           </Group>
         </Stack>
+      </Paper>
+    </Box>
+  );
+}
+
+/** Whether a signed-in session must give an age before any page: a known person with no age on file. */
+export function needsAgeStep(user: { id?: number | null; ageBand?: string; denied?: boolean; householdJoinPending?: boolean } | undefined): boolean {
+  return !!user?.id && !user.denied && !user.householdJoinPending && (user.ageBand ?? 'unknown') === 'unknown';
+}
+
+function AgeStep() {
+  const [dob, setDob] = useState('');
+  const [over25, setOver25] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!over25 && !dob) {
+      setError('Enter your date of birth, or tick "I am over 25".');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await api('/api/profile', { method: 'PATCH', body: JSON.stringify({ dob: over25 ? null : dob, over25 }) });
+      window.location.reload();
+    } catch (err) {
+      setError(errorMessage(err));
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Box p="xl">
+      <Paper withBorder p="lg" maw={520} mx="auto">
+        <form onSubmit={save}>
+          <Stack>
+            <Title order={3}>Your date of birth</Title>
+            <Text>We need your age on file before you carry on.</Text>
+            <Checkbox
+              label="I am over 25"
+              checked={over25}
+              onChange={(e) => { setOver25(e.currentTarget.checked); setError(null); }}
+            />
+            {!over25 && (
+              <TextInput
+                type="date"
+                label="Date of birth"
+                value={dob}
+                onChange={(e) => { setDob(e.currentTarget.value); setError(null); }}
+              />
+            )}
+            {error && <Alert color="red">{error}</Alert>}
+            <Group>
+              <Button type="submit" loading={saving}>Save &amp; continue</Button>
+              <Button variant="default" disabled={saving} onClick={() => signOut({ callbackUrl: '/signin' })}>Sign out</Button>
+            </Group>
+          </Stack>
+        </form>
       </Paper>
     </Box>
   );
@@ -170,6 +231,7 @@ export default function OnboardingGate({ children }: { children: React.ReactNode
   };
 
   if (joinPending) return <HouseholdQuestion />;
+  if (needsAgeStep(session?.user)) return <AgeStep />;
 
   const isBlocked = !loading && (needsPhone || needsEmergencyContact);
 

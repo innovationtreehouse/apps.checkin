@@ -5,7 +5,7 @@ import { withAuth } from "@/lib/auth";
 import { handler, notFound, unauthorized } from "@/security/handler";
 import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import { isYouth } from "@/lib/time";
-import { AGE_LEAD_ONLY_REFUSAL, changesAge, normalizeAdultDob } from "@/lib/person/adultDob";
+import { AGE_LEAD_ONLY_REFUSAL, AGE_REQUIRED_REFUSAL, changesAge, leavesAgeUnknown, normalizeAdultDob } from "@/lib/person/adultDob";
 import { setsHouseholdAges } from "@/lib/household/leads";
 import { nameWrite, nicknameWrite, isNicknameWrite } from "@/lib/person/name";
 import { apiError } from "@/lib/api-response";
@@ -63,7 +63,11 @@ export const PATCH = withAuth(
 
             // The profile form always submits both age fields, so either one
             // stands for both; notification-only PATCHes leave them unchanged.
-            const age = dob !== undefined || over25 !== undefined ? normalizeAdultDob(dob || null, !!over25) : {};
+            const agesSubmitted = dob !== undefined || over25 !== undefined;
+            const age = agesSubmitted ? normalizeAdultDob(dob || null, !!over25) : {};
+            if (agesSubmitted && leavesAgeUnknown(age, me)) {
+                return apiError(AGE_REQUIRED_REFUSAL, 400);
+            }
             if (me?.householdId && changesAge(age, me) && !(await setsHouseholdAges(prisma, userId, me.householdId))) {
                 return apiError(AGE_LEAD_ONLY_REFUSAL, 403);
             }

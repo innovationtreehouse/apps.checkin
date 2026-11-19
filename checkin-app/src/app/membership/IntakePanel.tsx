@@ -1,6 +1,6 @@
 "use client";
 
-import { Alert, Button, Card, Checkbox, Group, SimpleGrid, Stack, TextInput, Title } from "@mantine/core";
+import { Alert, Button, Card, Checkbox, Group, SimpleGrid, Stack, Text, TextInput, Title } from "@mantine/core";
 import type { AlertTone } from "@/components/admin/AlertBanner";
 import AddressForm from "@/components/membership/AddressForm";
 import EmergencyContactForm from "@/components/membership/EmergencyContactForm";
@@ -55,11 +55,11 @@ export default function IntakePanel({ form, fieldErrors, clearErr, message, savi
             mt="md"
             label="Individual is over 25"
             checked={primary.over25}
-            onChange={(e) => { const over25 = e.currentTarget.checked; setPrimary((p) => ({ ...p, over25, dob: over25 ? "" : p.dob })); }}
+            onChange={(e) => { const over25 = e.currentTarget.checked; setPrimary((p) => ({ ...p, over25, dob: over25 ? "" : p.dob })); clearErr("primaryAge"); }}
           />
           <SimpleGrid cols={{ base: 1, sm: 2 }} mt="md">
             {!primary.over25 && (
-              <TextInput type="date" label="Date of birth" value={primary.dob} onChange={(e) => { const dob = e.currentTarget.value; setPrimary((p) => ({ ...p, dob })); }} />
+              <TextInput type="date" label="Date of birth" value={primary.dob} error={fieldErrors.primaryAge} onChange={(e) => { const dob = e.currentTarget.value; setPrimary((p) => ({ ...p, dob })); clearErr("primaryAge"); }} />
             )}
             <TextInput label="Allergies (optional)" value={primary.allergies} onChange={(e) => { const allergies = e.currentTarget.value; setPrimary((p) => ({ ...p, allergies })); }} />
           </SimpleGrid>
@@ -77,12 +77,12 @@ export default function IntakePanel({ form, fieldErrors, clearErr, message, savi
               <Checkbox
                 label="Individual is over 25"
                 checked={secondary.over25}
-                onChange={(e) => { const over25 = e.currentTarget.checked; setSecondary((p) => ({ ...p, over25, dob: over25 ? "" : p.dob })); }}
+                onChange={(e) => { const over25 = e.currentTarget.checked; setSecondary((p) => ({ ...p, over25, dob: over25 ? "" : p.dob })); clearErr("secondaryAge"); }}
               />
               <SimpleGrid cols={{ base: 1, sm: 2 }}>
                 <TextInput type="email" label="Email (optional)" value={secondary.email} onChange={(e) => { const email = e.currentTarget.value; setSecondary((p) => ({ ...p, email })); }} />
                 {!secondary.over25 && (
-                  <TextInput type="date" label="Date of birth" value={secondary.dob} onChange={(e) => { const dob = e.currentTarget.value; setSecondary((p) => ({ ...p, dob })); }} />
+                  <TextInput type="date" label="Date of birth" value={secondary.dob} error={fieldErrors.secondaryAge} onChange={(e) => { const dob = e.currentTarget.value; setSecondary((p) => ({ ...p, dob })); clearErr("secondaryAge"); }} />
                 )}
               </SimpleGrid>
               <TextInput label="Allergies (optional)" value={secondary.allergies} onChange={(e) => { const allergies = e.currentTarget.value; setSecondary((p) => ({ ...p, allergies })); }} />
@@ -91,6 +91,7 @@ export default function IntakePanel({ form, fieldErrors, clearErr, message, savi
         </section>
 
         <ChildrenListForm items={children} onAdd={addChild} onUpdate={updateChild} onRemove={removeChild} />
+        {fieldErrors.childAges && <Text c="red" size="sm">{fieldErrors.childAges}</Text>}
 
 
         {/* Local echo of the page-top banner: intake is a long card, so

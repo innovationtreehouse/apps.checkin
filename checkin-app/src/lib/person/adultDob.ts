@@ -1,5 +1,5 @@
 import { calculateAge, isYouth, parseDateOnly } from "@/lib/time";
-import { MAX_PROGRAM_AGE } from "@/lib/programAge";
+import { ageBand, MAX_PROGRAM_AGE } from "@/lib/programAge";
 
 export const UNDER_18_DECLARATION_REFUSAL =
   "This person's date of birth on file shows they are under 18, so they can't be declared over 25. If the date is wrong, enter the correct one.";
@@ -72,4 +72,17 @@ export function changesAge(
     && (age.dateOfBirth?.getTime() ?? null) !== (onFile?.dateOfBirth?.getTime() ?? null);
   const declarationChanged = age.isDeclaredAdult !== undefined && age.isDeclaredAdult !== !!onFile?.isDeclaredAdult;
   return dobChanged || declarationChanged;
+}
+
+export const AGE_REQUIRED_REFUSAL =
+  "Enter a date of birth, or tick \"over 25\" for an adult. Everyone needs an age on file.";
+
+/** Whether writing `age` (from {@link normalizeAdultDob}) leaves the person with no age on file. */
+export function leavesAgeUnknown(
+  age: { dateOfBirth?: Date | null; isDeclaredAdult?: boolean },
+  onFile?: { dateOfBirth: Date | null; isDeclaredAdult: boolean | null } | null,
+): boolean {
+  const dateOfBirth = age.dateOfBirth !== undefined ? age.dateOfBirth : (onFile?.dateOfBirth ?? null);
+  const isDeclaredAdult = age.isDeclaredAdult ?? !!onFile?.isDeclaredAdult;
+  return ageBand({ dateOfBirth, isDeclaredAdult }) === "unknown";
 }

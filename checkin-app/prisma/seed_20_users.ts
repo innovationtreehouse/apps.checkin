@@ -23,6 +23,7 @@ async function main() {
             data: {
                 email: `testmember${i}@example.com`,
                 name: `Test Member ${i}`,
+                isDeclaredAdult: true,
                 householdId: household.id,
             }
         })

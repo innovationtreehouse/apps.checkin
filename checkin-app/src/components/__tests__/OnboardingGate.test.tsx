@@ -5,7 +5,7 @@ jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 
 import { screen, fireEvent, waitFor } from "@testing-library/react";
 import { renderWithProviders, mockFetchJson, setSession, resetRtl } from "@/test-helpers/rtl";
-import OnboardingGate from "../OnboardingGate";
+import OnboardingGate, { needsAgeStep } from "../OnboardingGate";
 
 const CHILD = "child-marker";
 const renderGate = () =>
@@ -22,7 +22,7 @@ beforeEach(() => {
 
 describe("OnboardingGate", () => {
   it("lets a signed-in, fully-onboarded user through with no modal", async () => {
-    setSession({ id: 1 });
+    setSession({ id: 1, ageBand: "adult" });
     mockFetchJson({ "/api/profile/onboarding-status": { needsPhone: false, needsEmergencyContact: false } });
     renderGate();
 
@@ -51,7 +51,7 @@ describe("OnboardingGate", () => {
   });
 
   it("blocks with the onboarding modal when the profile needs a phone number", async () => {
-    setSession({ id: 1 });
+    setSession({ id: 1, ageBand: "adult" });
     mockFetchJson({ "/api/profile/onboarding-status": { needsPhone: true, needsEmergencyContact: false } });
     renderGate();
 
@@ -61,7 +61,7 @@ describe("OnboardingGate", () => {
   });
 
   it("submits a valid phone and POSTs onboarding data", async () => {
-    setSession({ id: 1 });
+    setSession({ id: 1, ageBand: "adult" });
     const fetchSpy = mockFetchJson({
       "/api/profile/onboarding-status": { needsPhone: true, needsEmergencyContact: false },
       "/api/profile/onboarding": { ok: true },
@@ -81,7 +81,7 @@ describe("OnboardingGate", () => {
   });
 
   it("flags an invalid phone on its field and does not submit", async () => {
-    setSession({ id: 1 });
+    setSession({ id: 1, ageBand: "adult" });
     const fetchSpy = mockFetchJson({
       "/api/profile/onboarding-status": { needsPhone: true, needsEmergencyContact: false },
     });
@@ -100,7 +100,7 @@ describe("OnboardingGate", () => {
   });
 
   it("flags a bad emergency contact email on its field and does not submit", async () => {
-    setSession({ id: 1 });
+    setSession({ id: 1, ageBand: "adult" });
     const fetchSpy = mockFetchJson({
       "/api/profile/onboarding-status": { needsPhone: false, needsEmergencyContact: true },
     });
@@ -120,7 +120,7 @@ describe("OnboardingGate", () => {
   });
 
   it("puts a server refusal on the input it names and clears it on change", async () => {
-    setSession({ id: 1 });
+    setSession({ id: 1, ageBand: "adult" });
     const reply = (status: number, body: unknown) =>
       ({ ok: status < 400, status, headers: new Headers(), json: async () => body, text: async () => JSON.stringify(body) }) as Response;
     global.fetch = jest.fn(async (input: RequestInfo | URL) =>
@@ -147,7 +147,7 @@ describe("OnboardingGate", () => {
   });
 
   it("'Ask me next time' dismisses the modal and remembers the skip in sessionStorage", async () => {
-    setSession({ id: 1 });
+    setSession({ id: 1, ageBand: "adult" });
     mockFetchJson({ "/api/profile/onboarding-status": { needsPhone: true, needsEmergencyContact: false } });
     renderGate();
 
@@ -157,5 +157,57 @@ describe("OnboardingGate", () => {
     // Mantine's Modal unmounts its content after an exit transition (not instant in jsdom).
     await waitFor(() => expect(screen.queryByText("Action Required")).not.toBeInTheDocument());
     expect(sessionStorage.getItem("onboarding_skipped")).toBe("true");
+  });
+
+  describe("age step", () => {
+    it("shows only the age step when the session has no age on file", () => {
+      setSession({ id: 1, ageBand: "unknown" });
+      mockFetchJson({ "/api/profile/onboarding-status": { needsPhone: false, needsEmergencyContact: false } });
+      renderGate();
+
+      expect(screen.getByText("Your date of birth")).toBeInTheDocument();
+      expect(screen.queryByText(CHILD)).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /Sign out/i })).toBeInTheDocument();
+    });
+
+    it("refuses an empty answer without calling the server", () => {
+      setSession({ id: 1, ageBand: "unknown" });
+      const fetchSpy = mockFetchJson({ "/api/profile/onboarding-status": { needsPhone: false, needsEmergencyContact: false } });
+      renderGate();
+
+      fireEvent.click(screen.getByRole("button", { name: /Save & continue/i }));
+      expect(screen.getByText(/Enter your date of birth/)).toBeInTheDocument();
+      expect(fetchSpy).not.toHaveBeenCalledWith("/api/profile", expect.anything());
+    });
+
+    it("saves an over-25 declaration through the profile endpoint", async () => {
+      setSession({ id: 1, ageBand: "unknown" });
+      const fetchSpy = mockFetchJson({
+        "/api/profile/onboarding-status": { needsPhone: false, needsEmergencyContact: false },
+        "/api/profile": { profile: {} },
+      });
+      renderGate();
+
+      fireEvent.click(screen.getByLabelText("I am over 25"));
+      fireEvent.click(screen.getByRole("button", { name: /Save & continue/i }));
+
+      await waitFor(() =>
+        expect(fetchSpy).toHaveBeenCalledWith(
+          "/api/profile",
+          expect.objectContaining({ method: "PATCH", body: JSON.stringify({ dob: null, over25: true }) }),
+        ),
+      );
+    });
+
+    it("applies only to a known, signed-in person who is not denied or mid join question", () => {
+      expect(needsAgeStep({ id: 1, ageBand: "unknown" })).toBe(true);
+      expect(needsAgeStep({ id: 1 })).toBe(true);
+      expect(needsAgeStep({ id: 1, ageBand: "adult" })).toBe(false);
+      expect(needsAgeStep({ id: 1, ageBand: "youth" })).toBe(false);
+      expect(needsAgeStep({ id: 1, ageBand: "unknown", denied: true })).toBe(false);
+      expect(needsAgeStep({ id: 1, ageBand: "unknown", householdJoinPending: true })).toBe(false);
+      expect(needsAgeStep({ ageBand: "unknown" })).toBe(false);
+      expect(needsAgeStep(undefined)).toBe(false);
+    });
   });
 });

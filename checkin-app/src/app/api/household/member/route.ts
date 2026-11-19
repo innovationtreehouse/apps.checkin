@@ -7,7 +7,7 @@ import { reconcileAndWarn } from "@/lib/emergencyContacts/service";
 import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import { HOUSEHOLD_PEER_SELECT } from "@/lib/household/participantProjection";
 import { householdLeadship, setsHouseholdAges } from "@/lib/household/leads";
-import { AGE_LEAD_ONLY_REFUSAL, changesAge, normalizeAdultDob, replacesUnder18Date, UNDER_18_DECLARATION_REFUSAL } from "@/lib/person/adultDob";
+import { AGE_LEAD_ONLY_REFUSAL, AGE_REQUIRED_REFUSAL, changesAge, leavesAgeUnknown, normalizeAdultDob, replacesUnder18Date, UNDER_18_DECLARATION_REFUSAL } from "@/lib/person/adultDob";
 import { nameWrite, nicknameWrite, isNicknameWrite } from "@/lib/person/name";
 import { isYouth } from "@/lib/time";
 import { apiError } from "@/lib/api-response";
@@ -88,6 +88,9 @@ export const PATCH = withAuth(
             }
 
             const age = normalizeAdultDob(dob, over25, targetHouseholdMember.dateOfBirth);
+            if ((dob !== undefined || over25 !== undefined) && leavesAgeUnknown(age, targetHouseholdMember)) {
+                return apiError(AGE_REQUIRED_REFUSAL, 400);
+            }
             if (changesAge(age, targetHouseholdMember) && !(await setsHouseholdAges(prisma, userId, householdId))) {
                 return apiError(AGE_LEAD_ONLY_REFUSAL, 403);
             }

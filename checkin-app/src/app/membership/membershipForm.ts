@@ -95,6 +95,8 @@ export const buildIntakePayload = (v: FormValues) => ({
     .map((c) => ({ id: c.id, name: c.name, email: c.email || null, dob: c.dob || null, allergies: c.allergies || null })),
 });
 
+const AGE_REQUIRED = "Enter a date of birth, or tick \"Individual is over 25\".";
+
 // Required-field check for submit, mirroring the server's rules so the user
 // gets instant red-box feedback on every environment (no round-trip needed).
 export function validateIntake(v: FormValues): Record<string, string> {
@@ -108,6 +110,9 @@ export function validateIntake(v: FormValues): Record<string, string> {
   else if (!isValidPhone(v.emPhone)) errs.emPhone = PHONE_ERROR;
   if (v.emEmail.trim() && !isValidEmail(v.emEmail)) errs.emEmail = "That email address doesn't look right.";
   if (!v.primary.name.trim()) errs.primaryName = "Your name is required.";
+  if (!v.primary.over25 && !v.primary.dob) errs.primaryAge = AGE_REQUIRED;
+  if (v.hasSecondary && !v.secondary.over25 && !v.secondary.dob) errs.secondaryAge = AGE_REQUIRED;
+  if (v.children.some((c) => c.name.trim() && !c.dob)) errs.childAges = "Enter a date of birth for each child.";
   return errs;
 }
 
