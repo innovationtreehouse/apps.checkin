@@ -245,6 +245,16 @@ describeDb("in-kind mark and donor (X13)", () => {
     ]);
   });
 
+  it("switching a typed donor to \"I am the donor\" audits the change to the profile name", async () => {
+    const r = await receiptService.upload(textFile(), "text/plain", { details: badMath(), isInKind: true, donor: DANA });
+    await receiptService.setInKind(r.id, { isInKind: true, donor: { self: true } });
+    expect(await donorRows(r.id)).toEqual([
+      { userId: ALICE.id, fieldChanged: "donorFirstName", valueBefore: "Dana", valueAfter: ALICE.firstName },
+      { userId: ALICE.id, fieldChanged: "donorLastName", valueBefore: "Donor", valueAfter: ALICE.lastName },
+      { userId: ALICE.id, fieldChanged: "donorCompanyName", valueBefore: "Donor Co", valueAfter: null },
+    ]);
+  });
+
   it("an unchanged donor writes no donor row", async () => {
     const r = await receiptService.upload(textFile(), "text/plain", { details: badMath(), isInKind: true, donor: DANA });
     await receiptService.setInKind(r.id, { isInKind: true, donor: DANA });
