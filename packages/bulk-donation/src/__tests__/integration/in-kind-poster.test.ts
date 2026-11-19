@@ -210,8 +210,8 @@ async function acceptedGift(opts: { totalCents?: number; date?: string; freeValu
   return id;
 }
 
-/** An accepted gift without a receipt, one of its lines at $0, as accepting never leaves one: written straight to the database. */
-async function zeroLineManualGift(): Promise<number> {
+/** An accepted gift without a receipt with lines at `values`, a $0 among them as accepting never leaves one: written straight to the database. */
+async function zeroLineManualGift(values = [3000, 0]): Promise<number> {
   const now = new Date();
   const { id } = await db.manualInKindDonation.create({
     data: {
@@ -228,7 +228,7 @@ async function zeroLineManualGift(): Promise<number> {
       bucketAssignedByUserId: FINANCE,
       bucketAssignedAt: now,
       capitalSubmittedAt: now,
-      lines: { create: [{ gtin13: "0011111111116", quantity: 1, valueCents: 3000 }, { gtin13: "0011111111116", quantity: 1, valueCents: 0 }] },
+      lines: { create: values.map((valueCents) => ({ gtin13: "0011111111116", quantity: 1, valueCents })) },
     },
   });
   return id;
@@ -614,7 +614,7 @@ describeDb("in-kind drain", () => {
 
     it("a gift held without calling QuickBooks is not stuck", async () => {
       await switchOn();
-      const noValue = await zeroLineManualGift();
+      const noValue = await zeroLineManualGift([0]);
 
       await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ held: 1, failed: 0 });
       expect(await db.inKindPosting.findUniqueOrThrow({ where: { orgId_source_giftId: { orgId, source: "manual", giftId: noValue } } })).toMatchObject({ matchState: "NEEDS_FINANCE", qbFirstFailedAt: null });
