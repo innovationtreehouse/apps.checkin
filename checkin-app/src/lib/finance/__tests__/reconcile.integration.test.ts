@@ -114,6 +114,7 @@ async function makeApplicant(opts: {
             orgMembershipId: m.id,
             kind: "INITIAL",
             status: opts.status,
+            contractSignedAt: new Date(),
             bgClearedAt: opts.bgCleared ? new Date() : null,
             shopifyOrderId: opts.shopifyOrderId ?? null,
             paidAt: opts.paid ? new Date() : null,
@@ -470,7 +471,7 @@ describe("forward recovery", () => {
         const oid = `${TAG}-111`;
         const a = await makeApplicant({ email, status: "PENDING_PAYMENT", bgCleared: true });
         const second = await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: a.membershipId, kind: "RENEWAL", status: "PENDING_PAYMENT", bgClearedAt: new Date() },
+            data: { orgMembershipId: a.membershipId, kind: "RENEWAL", status: "PENDING_PAYMENT", contractSignedAt: new Date(), bgClearedAt: new Date() },
         });
         // Email-only would raise UNMATCHED_ORDER here; the attribute names the process.
         ordersChangedSince.mockResolvedValue([
@@ -499,7 +500,7 @@ describe("forward recovery", () => {
         // A second PENDING_PAYMENT process on the SAME membership (email is @unique, so
         // ambiguity comes from two live processes for one family, not two households).
         await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: a.membershipId, kind: "RENEWAL", status: "PENDING_PAYMENT", bgClearedAt: new Date() },
+            data: { orgMembershipId: a.membershipId, kind: "RENEWAL", status: "PENDING_PAYMENT", contractSignedAt: new Date(), bgClearedAt: new Date() },
         });
         ordersChangedSince.mockResolvedValue([order({ legacyId: oid, customerEmail: email })]);
         await runReconcile();

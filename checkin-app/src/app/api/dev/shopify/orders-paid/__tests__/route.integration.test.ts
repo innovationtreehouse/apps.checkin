@@ -71,7 +71,7 @@ describe('POST /api/dev/shopify/orders-paid (dev mock)', () => {
         // No bgClearedAt: activate() deterministically lands PENDING_BG_CLEARANCE
         // (not ACTIVE) when it advances — see payment.ts `activating = !!process.bgClearedAt`.
         const p = await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_PAYMENT' },
+            data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', contractSignedAt: new Date() },
         });
         return { householdId: hh.id, orgMembershipId: m.id, processId: p.id };
     }
