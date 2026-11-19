@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import prisma from "@/lib/prisma";
 import { assertDevActor } from "@/lib/dev/guard";
+import { truncateDevDatabases } from "@/lib/dev/reset";
 import { recordLedger, recentActivity, type LedgerEntry } from "@/lib/dev/ledger";
 import {
     seedBaseline,
@@ -44,29 +45,13 @@ export async function macroCheckins(): Promise<ActionResult> {
     return runMacro("checkins", createCheckins);
 }
 
-// ── Reset (truncate + reseed; docs/ops/dev-instance.md, "Reset") ────────────
+// ── Reset (truncate every database + reseed; docs/ops/dev-instance.md, "Reset") ──
 export async function resetDevInstance(): Promise<ActionResult> {
     const real = await assertDevActor();
 
-    // 1. Truncate every application table in one statement — schema-drift-proof: the list is read
-    //    from the catalog at runtime, so new models are picked up automatically and we never hand-
-    //    maintain it. _prisma_migrations is preserved (schema stays migrated — no re-migration, so
-    //    this is seconds not minutes); DevLedger is preserved so the coordination history survives.
-    const rows = await prisma.$queryRaw<{ tablename: string }[]>`
-        SELECT tablename FROM pg_tables
-        WHERE schemaname = 'public'
-          AND tablename NOT IN ('_prisma_migrations', 'DevLedger')
-    `;
-    const tables = rows.map((r) => `"${r.tablename}"`).join(", ");
-    if (tables) {
-        await prisma.$executeRawUnsafe(`TRUNCATE TABLE ${tables} RESTART IDENTITY CASCADE;`);
-    }
+    const { skipped } = await truncateDevDatabases(prisma, () => seedBaseline(prisma));
 
-    // 2. Repopulate the standard personas + tools + sample program.
-    await seedBaseline(prisma);
-
-    // 3. Record the reset (after reseed so the ledger row survives) and refresh the UI.
-    await recordLedger("reset", real);
+    await recordLedger("reset", real, skipped.length ? `not configured: ${skipped.join(", ")}` : null);
     revalidatePath("/", "layout");
     return { ok: true, summary: "Dev instance reset to baseline" };
 }

@@ -92,14 +92,15 @@ function isLocalHost(databaseUrl: string | undefined): boolean {
 }
 
 /**
- * The database each environment's check may read: dev's own (`<db>_dev`), or a local or
- * integration-test one on a local host. `databaseUrl` is the URL the client connects with.
+ * The database a dev tool may touch in each environment: dev's own (`<db>_dev`), or a local or
+ * integration-test one on a local host. `db` is checkin or a library or mirror name, and
+ * `databaseUrl` is the URL the client connects with.
  */
 export function isAllowedDatabase(
     env: string,
     name: string,
     databaseUrl: string | undefined,
-    db: "checkin" | "receipt" = "checkin",
+    db = "checkin",
 ): boolean {
     if (env === "dev") return name === `${db}_dev`;
     if (!isLocalHost(databaseUrl)) return false;
