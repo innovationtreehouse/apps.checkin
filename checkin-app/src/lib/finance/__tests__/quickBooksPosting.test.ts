@@ -183,4 +183,5 @@ it("reads a lane's place: running, queued, idle", async () => {
     expect((await postingCatchUpState('expense')).status).toBe('running');
     expect((await postingCatchUpState('income')).status).toBe('queued');
     expect(await postingCatchUpState('in-kind')).toMatchObject({ lane: 'in-kind', status: 'idle', heldBy: 'expense', queued: ['income'] });
+    expect(await postingCatchUpState(null)).toMatchObject({ lane: null, status: 'running', heldBy: 'expense', queued: ['income'] });
 });

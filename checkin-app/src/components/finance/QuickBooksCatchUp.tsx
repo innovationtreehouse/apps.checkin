@@ -8,7 +8,7 @@ import { api, useLoad } from "@/lib/api";
 type Lane = "expense" | "in-kind" | "income";
 
 interface CatchUpView {
-  lane: Lane;
+  lane: Lane | null;
   status: "started" | "queued" | "running" | "stranded" | "idle";
   heldBy: Lane | null;
   until: string | null;
@@ -33,7 +33,7 @@ export function slotLine(view: CatchUpView): string {
  * One lane posts at a time; a lane asked for while another posts waits its turn.
  */
 export default function QuickBooksCatchUp() {
-  const state = useLoad<CatchUpView>(`${PATH}?lane=expense`);
+  const state = useLoad<CatchUpView>(PATH);
   const [starting, setStarting] = useState<Lane | null>(null);
   const view = state.data;
   const busy = !!view?.heldBy;

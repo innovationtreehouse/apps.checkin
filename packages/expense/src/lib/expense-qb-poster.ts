@@ -613,6 +613,6 @@ export async function drainExpenseOutbox(now = new Date(), turn?: PostingTurn): 
     logWarn("qb_drain_capped", { cap: settings.qbMaxCreatesPerRun, remaining: stop.remaining });
   }
   // After the posts, so an expense this run linked to its own entry is not reported as a stray.
-  counts.sweep = await sweepExpenseQbStrays(orgId, posting, now);
+  if (!turn || (await turn.renew())) counts.sweep = await sweepExpenseQbStrays(orgId, posting, now);
   return counts;
 }

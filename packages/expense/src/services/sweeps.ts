@@ -29,9 +29,11 @@ export async function runExpenseCatchUp() {
  * of the parts that failed so the host can record them on the cron run.
  */
 export async function runExpenseQbPosting(turn?: PostingTurn) {
+  // Each QuickBooks step renews the posting slot first; once another run holds it, the rest are skipped.
+  const holds = async () => !turn || (await turn.renew());
   const stranded = await recoverStrandedQbExpenses().catch(failed("stranded"));
-  const qbPost = await drainExpenseOutbox(new Date(), turn).catch(failed("qbPost"));
-  const qbDrift = await checkQbDrift().catch(failed("qbDrift"));
+  const qbPost = (await holds()) ? await drainExpenseOutbox(new Date(), turn).catch(failed("qbPost")) : "slot_lost";
+  const qbDrift = (await holds()) ? await checkQbDrift().catch(failed("qbDrift")) : "slot_lost";
   const outcomeNotices = await sweepOutcomeNotices().catch(failed("outcomeNotices"));
   const parts = { stranded, qbPost, qbDrift, outcomeNotices };
   const failedParts = Object.entries(parts).flatMap(([part, outcome]) => (typeof outcome === "object" && "error" in outcome ? [part] : []));

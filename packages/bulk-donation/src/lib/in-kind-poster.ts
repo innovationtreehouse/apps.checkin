@@ -616,7 +616,8 @@ export async function runInKindQbPosting(orgId: string, now = new Date(), turn?:
   });
   counts.capped = stop?.by === "count";
   // After the posts, so a gift this run linked to its own entry is not reported as a stray.
-  counts.sweep = await sweepInKindQbStrays(orgId, client, posting.sweepIncomplete, now);
-  counts.drift = await checkInKindQbDrift(orgId, client, now);
+  // Each read renews the posting slot first; once another run holds it, the rest are skipped.
+  if (!turn || (await turn.renew())) counts.sweep = await sweepInKindQbStrays(orgId, client, posting.sweepIncomplete, now);
+  if (!turn || (await turn.renew())) counts.drift = await checkInKindQbDrift(orgId, client, now);
   return counts;
 }

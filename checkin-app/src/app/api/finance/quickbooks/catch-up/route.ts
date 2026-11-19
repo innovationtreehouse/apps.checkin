@@ -8,9 +8,11 @@ function laneOf(value: unknown): PostingLane {
     return value;
 }
 
-export const GET = handler("GET /api/finance/quickbooks/catch-up", async ({ req }) => ({
-    QuickBooksPostingCatchUp: await postingCatchUpState(laneOf(req.nextUrl.searchParams.get("lane"))),
-}));
+/** With no `lane`, the slot and queue alone. */
+export const GET = handler("GET /api/finance/quickbooks/catch-up", async ({ req }) => {
+    const lane = new URL(req.url).searchParams.get("lane");
+    return { QuickBooksPostingCatchUp: await postingCatchUpState(lane === null ? null : laneOf(lane)) };
+});
 
 export const POST = handler("POST /api/finance/quickbooks/catch-up", async ({ req, auth }) => {
     if (auth.type !== "session") throw unauthorized();

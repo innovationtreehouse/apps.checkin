@@ -42,7 +42,8 @@ export interface PostingSlotState {
 
 /** The QuickBooksPostingCatchUp response: a lane's place relative to the slot, and the slot itself. */
 export interface PostingCatchUp extends PostingSlotState {
-    lane: PostingLane;
+    /** Null when the slot was read without a lane. */
+    lane: PostingLane | null;
     /** POST: started, queued or running; GET: running, queued, stranded (the slot is free and lanes wait) or idle. */
     status: "started" | "queued" | "running" | "stranded" | "idle";
 }
@@ -182,10 +183,11 @@ export async function runPostingQueue(): Promise<void> {
     await runQueue((await getOrg()).id, new Set());
 }
 
-/** A lane's place relative to the slot, for finance's catch-up. */
-export async function postingCatchUpState(lane: PostingLane): Promise<PostingCatchUp> {
+/** A lane's place relative to the slot, for finance's catch-up; with no lane, whether any run holds it. */
+export async function postingCatchUpState(lane: PostingLane | null): Promise<PostingCatchUp> {
     const slot = await slotState((await getOrg()).id);
-    const status = slot.heldBy === lane ? "running" : slot.heldBy === null && slot.queued.length > 0 ? "stranded" : slot.queued.includes(lane) ? "queued" : "idle";
+    const running = lane === null ? slot.heldBy !== null : slot.heldBy === lane;
+    const status = running ? "running" : slot.heldBy === null && slot.queued.length > 0 ? "stranded" : lane !== null && slot.queued.includes(lane) ? "queued" : "idle";
     return { lane, status, ...slot };
 }
 

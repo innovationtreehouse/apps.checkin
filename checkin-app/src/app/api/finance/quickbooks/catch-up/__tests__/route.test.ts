@@ -57,6 +57,13 @@ test.each([['FINANCE', FINANCE], ['Board', BOARD]])('%s reads a lane and asks fo
     expect(catchUpPosting).toHaveBeenCalledWith('in-kind', 5);
 });
 
+test('a GET with no lane reads the slot and queue alone', async () => {
+    as(FINANCE);
+    const res = await GET(new NextRequest('http://localhost/api/finance/quickbooks/catch-up'));
+    expect(res.status).toBe(200);
+    expect(postingCatchUpState).toHaveBeenCalledWith(null);
+});
+
 test('a member is refused and nothing is asked', async () => {
     expect((await read(member)).status).toBe(403);
     expect((await press(member)).status).toBe(403);
