@@ -10,10 +10,10 @@ import { nameWrite } from "@/lib/person/name";
 import { createInOwnHousehold } from "@/lib/person/ownHousehold";
 import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
 import { personActor } from "@/lib/auditActor";
-import { withTx } from "@/lib/db-client";
+import { type DbClient, withTx } from "@/lib/db-client";
 import { apiError } from "@/lib/api-response";
 import { normalizeEmail } from "@/lib/prismaEmailNormalize";
-import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
+import { findSelfGrantRefusal, recordSelfGrantRefusal, type SelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
 import { lockBoardRoles } from "@/lib/roles";
 import { lockAndFindDeniedHousehold, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
@@ -24,6 +24,15 @@ class DeniedHouseholdAddError extends Error {
         super(`household ${householdId} is denied`);
     }
 }
+
+/** The actor is in the household the person would join, found under its lock; recorded after the rollback. */
+class SelfGrantAddError extends Error {
+    constructor(public readonly refusal: SelfGrantRefusal) {
+        super("own household");
+    }
+}
+
+const OWN_HOUSEHOLD_ADD = "You cannot add someone to your own household — someone outside your household must.";
 
 export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (req, auth) => {
     if (auth.type !== 'session') {
@@ -103,11 +112,13 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
 
         // Adding someone to the actor's own household would get around the own-household
         // rule on grants, since an active household's members are members.
-        if (joinsExistingHousehold && householdIdToAssign && await refuseSelfGrant(prisma, auth.user.id, { householdId: householdIdToAssign }, {
-            table: "Person",
-            attempted: { householdId: householdIdToAssign, name: nameWrite(name) ?? null },
-        })) {
-            return apiError("You cannot add someone to your own household — someone outside your household must.", 403);
+        const joinAttempt = { table: "Person" as const, attempted: { householdId: householdIdToAssign, name: nameWrite(name) ?? null } };
+        const ownHouseholdRefusal = (db: DbClient, householdId: number) =>
+            joinsExistingHousehold ? findSelfGrantRefusal(db, auth.user.id, { householdId }, joinAttempt) : Promise.resolve(null);
+        const selfGrant = householdIdToAssign ? await ownHouseholdRefusal(prisma, householdIdToAssign) : null;
+        if (selfGrant) {
+            await recordSelfGrantRefusal(prisma, selfGrant);
+            return apiError(OWN_HOUSEHOLD_ADD, 403);
         }
 
         let newParticipant;
@@ -121,6 +132,9 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                     throw new DeniedHouseholdAddError(targetHouseholdId);
                 }
                 await lockLiveHouseholds(tx, [targetHouseholdId]);
+                // Re-read under the Household lock, so an actor who joined the household since the check above is refused.
+                const lockedRefusal = await ownHouseholdRefusal(tx, targetHouseholdId);
+                if (lockedRefusal) throw new SelfGrantAddError(lockedRefusal);
                 if (email) await removeAliasesForSignInEmail(tx, email, personActor(auth.user.id), "participant_add");
                 return tx.person.create({
                     data: {
@@ -145,6 +159,10 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
 
         return NextResponse.json({ success: true, participant: newParticipant });
     } catch (error: unknown) {
+        if (error instanceof SelfGrantAddError) {
+            await recordSelfGrantRefusal(prisma, error.refusal);
+            return apiError(OWN_HOUSEHOLD_ADD, 403);
+        }
         if (error instanceof HouseholdLeadLimitError) {
             return apiError(error.message, 400);
         }
