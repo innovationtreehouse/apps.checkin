@@ -179,19 +179,34 @@ async function registerGift(orgId: string, source: InKindSource, id: number): Pr
   }
 }
 
-/** Registers every gift's capital lines that wait on their asset numbers. */
-export async function registerCapitalLines(orgId: string): Promise<RegisterCounts> {
+/** The gifts with a capital line waiting on its asset numbers. */
+async function pendingGifts(orgId: string): Promise<{ source: InKindSource; id: number }[]> {
   const where = { isCapital: true, depreciationYears: { not: null }, registeredAt: null, donation: { orgId, decisionOutcome: "ACCEPTED" } };
   const select = { donationId: true } as const;
   const [receipts, manuals] = await Promise.all([
     db.inKindDonationLine.findMany({ where, select, distinct: ["donationId"] }),
     db.manualInKindDonationLine.findMany({ where, select, distinct: ["donationId"] }),
   ]);
-  const pending: { source: InKindSource; id: number }[] = [
+  return [
     ...receipts.map((r) => ({ source: "receipt" as const, id: r.donationId })),
     ...manuals.map((r) => ({ source: "manual" as const, id: r.donationId })),
   ];
+}
+
+/**
+ * Registers every gift's capital lines that wait on their asset numbers. It never throws: a failed
+ * read of the waiting gifts is reported and registers nothing, so the drain after it still runs.
+ */
+export async function registerCapitalLines(orgId: string): Promise<RegisterCounts> {
   const counts: RegisterCounts = { registered: 0, failed: 0 };
+  let pending: { source: InKindSource; id: number }[];
+  try {
+    pending = await pendingGifts(orgId);
+  } catch (err) {
+    const kind = bulkDonationRuntime.failed("in-kind-capital-register", err, "the capital lines waiting on registration");
+    console.warn(`[bulk-donation] reading the capital lines waiting on registration failed (${kind}); the next run tries again`);
+    return counts;
+  }
   for (const { source, id } of pending) {
     const outcome = await registerGift(orgId, source, id);
     if (typeof outcome === "number") counts.registered += outcome;
