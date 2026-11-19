@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CompletedReceiptSchema } from "@checkin/receipt-types";
 import { db } from "../../db";
 import { pushReceipt } from "../../lib/receipt-flow";
 import { receiptService } from "../../services/receiptService";
 import { drainOcrQueue } from "../../services/ocrDrain";
+import { OCR_INTERRUPTED_AFTER_MS, sweepInterruptedOcr } from "../../services/catchUp";
 import { describeDb } from "../helpers/db";
 import { ALICE, BOB, FINANCE, MINOR, actAs, actions, clearAll, configure, failingOcr, manualDetails, okOcr, recordingPorts, settleReads, stateOf, textFile, uploadRead, retryRead } from "../helpers/setup";
 
@@ -296,6 +297,18 @@ describeDb("auto upload, read after it answers", () => {
     configure({ receiptSink: ports.receiptSink, ocr: failingOcr("data", "no line items were found") });
     const r = await receiptService.upload(textFile(), "text/plain", {});
     await settleReads();
+    expect(await stateOf(r.id)).toBe("ocr_failed");
+  });
+
+  it("leaves a reading that dies mid-way in auto_upload, where the interrupted-OCR sweep moves it to ocr_failed", async () => {
+    configure({ receiptSink: ports.receiptSink, ocr: { extract: async () => { throw new Error("process died mid-reading"); } } });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const r = await receiptService.upload(textFile(), "text/plain", {});
+    await settleReads();
+    logged.mockRestore();
+    expect(await stateOf(r.id)).toBe("auto_upload");
+    expect(await drainOcrQueue(Date.now() + 60_000)).toEqual({ read: 0, failed: 0, waiting: 0 });
+    expect(await sweepInterruptedOcr(new Date(Date.now() + OCR_INTERRUPTED_AFTER_MS + 1))).toEqual({ swept: 1, failed: 0 });
     expect(await stateOf(r.id)).toBe("ocr_failed");
   });
 

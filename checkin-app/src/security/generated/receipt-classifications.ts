@@ -49,6 +49,7 @@ export const classifications = {
         receiptTotalCents: 'internal',
         state: 'internal',
         ocrStartedAt: 'internal',
+        ocrQueuedAt: 'internal',
         duplicateFlaggedAt: 'internal',
         validationNotes: 'personal',
         approvedAt: 'internal',
@@ -152,6 +153,18 @@ export const classifications = {
         lastRunAt: 'internal',
         lastRun: 'internal',
     },
+    ReceiptMailMessage: {
+        id: 'internal',
+        orgId: 'internal',
+        gmailMessageId: 'internal',
+        receivedAt: 'internal',
+        capturedAt: 'internal',
+        rawKey: 'pii',
+        rawSha256: 'internal',
+        rawSize: 'internal',
+        processedAt: 'internal',
+        processError: 'pii',
+    },
     ReceiptOutcomeNotice: {
         id: 'internal',
         orgId: 'internal',
@@ -210,6 +223,8 @@ export const relations = {
     ReceiptMailAtRisk: {
     },
     ReceiptMailLease: {
+    },
+    ReceiptMailMessage: {
     },
     ReceiptOutcomeNotice: {
     },
