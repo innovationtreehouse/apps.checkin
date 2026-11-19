@@ -152,6 +152,21 @@ describe('membership-payment-plans field-stripping', () => {
     });
 });
 
+describe('membership-payment-plans year cutoff', () => {
+    it('declares BoardSettings so the queue can carry the year boundary', () => {
+        expect(getRoute(MEMBERSHIP_ENDPOINT)?.returns).toContain('BoardSettings');
+    });
+
+    it.each([
+        ['board', () => tokensFor(MEMBERSHIP_ENDPOINT, 'isBoardMember')],
+        ['finance', () => tokensFor(MEMBERSHIP_ENDPOINT, 'isFinance')],
+    ])('%s view keeps orgMembershipYearBoundary', (_label, tokens) => {
+        const settings = { orgMembershipYearBoundary: '2026-09-01' };
+        const out = stripValue('BoardSettings', settings, tokens(), ctx()) as Record<string, unknown>;
+        expect(out.orgMembershipYearBoundary).toBe('2026-09-01');
+    });
+});
+
 describe('payment-plan queue admission', () => {
     const noFlags: AuthenticatedUser = {
         id: 5,
