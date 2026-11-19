@@ -4,7 +4,7 @@
 // Set-account names a held line's account by hand, which the next book uses over every rule.
 import { ServiceError } from "@checkin/component-kit";
 import { dollarsToCents } from "@checkin/money";
-import { LINE_ACCOUNT_TYPES, QUICKBOOKS_LIST_STALE, staleListRefusal, appKeyOf, roleAccountIds, readCloseDate } from "@checkin/quickbooks";
+import { LINE_ACCOUNT_TYPES, QUICKBOOKS_LIST_STALE, THROTTLED_MESSAGE, staleListRefusal, appKeyOf, roleAccountIds, readCloseDate } from "@checkin/quickbooks";
 import { z } from "zod";
 import { db, isUniqueConstraintError } from "../db";
 import { readDonationSettings } from "../services/settingsService";
@@ -112,6 +112,7 @@ async function linkOwnFirst(orgId: string, gift: GiftRef, read: HeldPosting, act
   if (!client) throw new ServiceError(503, "QuickBooks is not connected");
   const own = await lookupOwnJournal({ orgId, client }, gift, read.qbCreateAttemptedAt);
   if (!own) return false;
+  if (own.throttled) throw new ServiceError(503, THROTTLED_MESSAGE);
   if (own.failure) throw new ServiceError(503, "The QuickBooks check for the app's own entry failed; try again shortly");
   if (own.state !== QB_MATCH_STATE.CREATED) throw new ServiceError(409, own.note ?? "The app may already have booked this gift");
   await settleByFinance(orgId, gift, read, own, actor, { note: "the app had already booked this gift" });
@@ -208,6 +209,7 @@ async function book(orgId: string, source: InKindSource, id: number, actor: Acto
   if (outcome === "not_ready") throw new ServiceError(409, "This gift waits on more than booking");
   if (outcome === "busy") throw new ServiceError(409, "The gift is being posted; try again shortly");
   if (outcome === "failed") throw new ServiceError(503, "QuickBooks failed while booking; the gift can be booked again");
+  if (outcome === "throttled") throw new ServiceError(503, `Not booked: ${THROTTLED_MESSAGE}`);
   const saved = await db.inKindPosting.findUniqueOrThrow({ where: { orgId_source_giftId: { orgId, source, giftId: id } } });
   switch (saved.matchState) {
     case QB_MATCH_STATE.CREATED:
