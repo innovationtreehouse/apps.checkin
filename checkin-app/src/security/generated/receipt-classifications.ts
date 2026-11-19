@@ -122,6 +122,7 @@ export const classifications = {
         mimeType: 'internal',
         receiptId: 'internal',
         createdAt: 'internal',
+        heldAt: 'internal',
     },
     ReceiptMailReply: {
         id: 'internal',

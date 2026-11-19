@@ -7,6 +7,9 @@ export const sha256Hex = (bytes: Uint8Array): string => createHash("sha256").upd
 
 export const receiptFileKey = (receiptId: string): string => `receipts/${receiptId}`;
 
+/** The audit action retention writes when it deletes a receipt's file. */
+export const RETENTION_FILE_DELETED = "file_deleted";
+
 /** A mail item's id is assigned at insert, after its object is written, so its key is a fresh UUID. */
 export const newMailItemFileKey = (): string => `mail-items/${randomUUID()}`;
 

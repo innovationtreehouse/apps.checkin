@@ -362,6 +362,9 @@ model ReceiptMailItem {
   receiptId      String?   @map("receipt_id")
   /// @sensitivity:internal
   createdAt      DateTime  @default(now()) @map("created_at")
+  // When the item last became held; the 90-day auto-discard counts from it. Null while it was never held.
+  /// @sensitivity:internal
+  heldAt         DateTime? @map("held_at")
 
   @@unique([gmailMessageId, attachmentHash])
   @@index([orgId, status])

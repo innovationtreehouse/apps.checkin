@@ -18,6 +18,7 @@ export { backfillFiles, verifyFiles, type FileBackfillReport, type FileVerifyRep
 export { readMailbox, takeInMailbox, type MailIntakeResult } from "./services/mailIntake";
 export { sweepOutcomeNotices } from "./services/outcomeNotices";
 export { sweepInterruptedOcr, sweepStuckUploaded } from "./services/catchUp";
+export { discardUnclaimedHeldMail, sweepExpiredFiles } from "./services/retention";
 export { mailQueueService } from "./services/mailQueueService";
 export { receiptStateCounts, RECEIPT_STATES, type ReceiptStateCount } from "./services/stateCounts";
 export * as routes from "./routes";

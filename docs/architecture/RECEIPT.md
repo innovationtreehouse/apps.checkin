@@ -205,7 +205,7 @@ lists it.
 
 ## Daily steps
 
-There are no schedules of the library's own and nothing runs at boot. Four steps
+There are no schedules of the library's own and nothing runs at boot. Six steps
 run inside the host's existing daily `/api/cron/reconcile-shopify`, in this order,
 each in its own `try/catch` and each returning counts only. None retries a failed step:
 
@@ -215,6 +215,8 @@ each in its own `try/catch` and each returning counts only. None retries a faile
 | `sweepStuckUploaded` | `uploaded` idle for over an hour to `flow_error` | 50 |
 | `takeInMailbox` | the mailbox: answers once the mail is taken in; the reading drain (`drainOcrQueue`, 20 readings, oldest first) runs on under the mail lease after the request answers | as above |
 | `sweepOutcomeNotices` | sends the outcome emails still owed to a receipt's uploader and the person reimbursed; a notice is given up after three failed sends | 50 |
+| `discardUnclaimedHeldMail` | a `held` mail item 90 days after it was held to `discarded`, audited as a finance discard is, with no actor; deletes its object | 50 |
+| `sweepExpiredFiles` | deletes a receipt's object once its retention has ended and clears `file_key`; clears a discarded mail item's `file_key` 30 days after the discard, once its restore window has closed. Each is audited | 50 of each |
 
 ## Stuck receipts
 
@@ -292,6 +294,11 @@ drop. The buckets are set up outside this repo.
   store and check the copy. The copy sets `file_key` and `file_size` and never
   touches `file_blob`. How and when to run it is in
   `docs/ops/receipt-files-backfill.md`.
+- Retention (`src/services/retention.ts`): an approved receipt's file is kept until
+  7 years after its fiscal year's Form 990 deadline (November 15; the fiscal year
+  ends June 30), dated by the receipt's date, else its approval; a rejected or
+  discarded receipt's for 1 year after that decision; an undecided receipt's for
+  good. The receipt row stays, and its file route answers 404.
 - Daily byte limits sum `file_size`. The config-health page reports a deployed
   instance with no `RECEIPT_FILES_S3_BUCKET`, and such an instance refuses files
   with a 503 rather than falling back to the database.
@@ -300,8 +307,6 @@ drop. The buckets are set up outside this repo.
 
 - Dropping the `file_blob` column, after re-pointing both file routes' registry
   entries from `fileBlob` to `fileKey`.
-- Retention: nothing deletes a receipt file on a schedule.
-- Automatic discard of held mail nobody acts on: a held item waits for finance.
 
 **Serving a file.** `GET /api/receipts/[id]/file` and
 `GET /api/receipts/mail-items/[id]/file` are the only way a file's bytes leave, and
