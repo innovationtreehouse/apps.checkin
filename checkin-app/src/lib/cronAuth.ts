@@ -59,7 +59,7 @@ async function reportedFailures(res: NextResponse): Promise<number> {
  *
  * Every completed run ends in {@link finishRun} — here rather than per-route, so
  * a cron route added later is covered without touching it: the run is stamped into
- * CronRunLog with what its library lanes reported, and the incident engine applies it.
+ * CronRunLog with what its library lanes reported.
  * Nothing about the sweep changes: the job name comes from the request path, the
  * record is written after the handler has already produced its response, and
  * finishRun swallows its own failures. Only AUTHORIZED runs are recorded; a 401 never

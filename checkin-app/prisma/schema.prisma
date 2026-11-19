@@ -628,6 +628,12 @@ model OrgMembershipProcess {
   /// @sensitivity:hardship
   /// @financeMark
   scholarshipRequestKind ScholarshipRequestKind?
+  /// The membership year a payment-plan request is for: the live year when the
+  /// family asked. Approval certifies this year. Null on a request made before
+  /// this column, which is approved for the year live at approval.
+  /// @sensitivity:hardship
+  /// @financeMark
+  paymentPlanYear       Int?
   /// Unused columns awaiting their drop. Hidden from the client so no code reads or
   /// writes them before the columns go. @sensitivity:pii
   intakeNoteSnapshot    String?                 @ignore
@@ -2009,6 +2015,9 @@ enum PaymentExceptionKind {
   // A paid program order names children from more than one household. One order
   // pays for one household, so nobody is activated; the board decides.
   MIXED_HOUSEHOLDS
+  // A paid membership order on an application whose year is already settled
+  // (paid in the store, plan certified, or year granted). A refund may be due.
+  DUPLICATE_MEMBERSHIP_PAYMENT
 }
 
 enum PaymentExceptionSeverity {
@@ -2111,7 +2120,7 @@ model BulkSendItem {
   /// "renew"; older rows may hold "join" from before outreach was renewal-only.
   /// @sensitivity:internal
   variant    String
-  /// "queued" | "sending" | "sent" | "failed" | "skipped_denied" | "skipped_not_member"
+  /// "queued" | "sending" | "sent" | "failed" | "skipped_denied" | "skipped_not_member" | "skipped_not_audience"
   /// @sensitivity:internal
   status     String
   /// @sensitivity:internal

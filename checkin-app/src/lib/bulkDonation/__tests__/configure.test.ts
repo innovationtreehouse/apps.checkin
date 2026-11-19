@@ -181,11 +181,11 @@ describe("bulk-donation wiring", () => {
     expect(emailAlert.mock.calls[0][1].batches).toBe("D1: it has no disbursement date; D2: it nets to zero or less, so no deposit is due");
   });
 
-  it("throws when the hand-over alert was not sent, so the failures stay unraised and are alerted again", async () => {
+  it("returns false when the hand-over alert was not sent, so the failures stay unraised and are alerted again", async () => {
     process.env.QBO_REALM_ID = "123";
     const { deposits } = await config();
     emailAlert.mockResolvedValueOnce(false);
-    await expect(deposits!.handOverFailing([{ disbursementId: "D1", reason: "it has no disbursement date" }])).rejects.toThrow("not sent");
+    await expect(deposits!.handOverFailing([{ disbursementId: "D1", reason: "it has no disbursement date" }])).resolves.toBe(false);
   });
 
   it("binds the in-kind drain to the guarded client and the books map wherever a realm is set", async () => {

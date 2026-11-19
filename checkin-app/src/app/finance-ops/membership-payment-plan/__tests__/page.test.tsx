@@ -20,6 +20,7 @@ const requests = [
   {
     id: 1,
     stageEnteredAt: "2026-01-15T00:00:00.000Z",
+    paymentPlanYear: 2026,
     orgMembership: {
       isVolunteerFamily: false,
       household: {
@@ -38,6 +39,17 @@ describe("finance-ops/membership-payment-plan page", () => {
 
     expect(await screen.findByText("Smith Family")).toBeInTheDocument();
     expect(screen.getByText("jane@example.com")).toBeInTheDocument();
+  });
+
+  it("shows the membership year on the row and in the approve dialog", async () => {
+    mockFetchJson({ [LIST]: requests });
+    renderWithProviders(<MembershipPaymentPlansPage />);
+    await screen.findByText("Smith Family");
+
+    expect(screen.getByText("2026-2027")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Approve & Activate" }));
+    const modal = await screen.findByRole("dialog", { name: "Approve Scholarship / Payment Plan" });
+    expect(within(modal).getByText("Membership year: 2026-2027")).toBeInTheDocument();
   });
 
   it("reads the list once on mount and not again on reconnect", async () => {

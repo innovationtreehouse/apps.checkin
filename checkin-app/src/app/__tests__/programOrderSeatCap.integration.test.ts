@@ -79,6 +79,29 @@ describe('an order seat activates one person', () => {
         expect(await activeOn(oid)).toBe(1);
     });
 
+    it('a sibling approved by the Board between the judgement and the flip leaves a paid seat, raised as a duplicate', async () => {
+        const oid = orderId('approved-between');
+        const a = await pendingChild();
+        const b = await pendingChild();
+        await prisma.programParticipant.updateMany({
+            where: { programId, personId: { in: [a, b] } },
+            data: { isPaymentPlanRequested: true, inventoryHeldAt: new Date() },
+        });
+        // The daily check judged one order paying for both while both were pending; then the Board approves a.
+        await prisma.programParticipant.update({
+            where: { programId_personId: { programId, personId: a } },
+            data: { status: 'ACTIVE', isPaymentPlanRequested: false, inventoryHeldAt: null, seatTakenWithoutSaleAt: new Date() },
+        });
+
+        const res = await activateProgramEnrollment({ programId, personIds: [a, b], shopifyOrderId: oid, lines: [{ ...LINES[0], quantity: 2, currentQuantity: 2 }] });
+
+        expect(res.activatedCount).toBe(1);
+        expect(await activeOn(oid)).toBe(1);
+        expect(await prisma.paymentException.findMany({ where: { shopifyOrderId: oid } })).toEqual([
+            expect.objectContaining({ kind: 'DUPLICATE_PAYMENT', programId, personId: a }),
+        ]);
+    });
+
     it('a redelivery of the same order for the same person changes nothing and raises nothing', async () => {
         const oid = orderId('redelivery');
         const child = await pendingChild();

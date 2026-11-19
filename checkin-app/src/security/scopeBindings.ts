@@ -264,8 +264,7 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     'MembershipPaymentPlanDecision',
     'PaymentQueueRow',
     'MatchAuditEnrollmentRow',
-    // Finance-marked: a `their_own` binding on `userId` (the acting Person.id)
-    // would make isOwnRow drop staff views of their own rows from the finance view log.
+    // Read only nested in Expense; a binding would drop staff views only from a top-level read.
     'ExpenseAuditLog',
 ]);
 

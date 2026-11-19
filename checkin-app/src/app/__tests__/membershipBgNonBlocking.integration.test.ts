@@ -22,11 +22,17 @@ import { beginRenewal } from '@/lib/membership/renewal';
 import prisma from '@/lib/prisma';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { sendEmail } from '@/lib/email';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaClient } from '@/generated/prisma/client';
 
 jest.mock('@/lib/email', () => ({
     sendEmail: jest.fn().mockResolvedValue(true),
     runPaced: (tasks: Array<() => Promise<unknown>>) => Promise.all(tasks.map((t) => t())),
 }));
+
+// The test's own held transaction runs on this connection, so the app's single connection waits on the lock, not on the pool.
+const holder = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
+afterAll(() => holder.$disconnect());
 
 const TAG = 'bg-nonblocking-test';
 
@@ -202,7 +208,7 @@ describe('background check is non-blocking', () => {
         expect(await statusOf(processId)).toBe('PENDING_PAYMENT');
 
         let certify!: Promise<unknown>;
-        await prisma.$transaction(async (tx) => {
+        await holder.$transaction(async (tx) => {
             await tx.$queryRaw`SELECT id FROM "OrgMembership" WHERE id = ${orgMembershipId} FOR UPDATE`;
             certify = certifyPaymentPlan(processId, board).catch((e: unknown) => e);
             // Let certify take the process lock and block on the household row.

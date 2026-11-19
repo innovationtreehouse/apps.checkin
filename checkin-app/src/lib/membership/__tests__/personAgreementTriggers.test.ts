@@ -1,7 +1,10 @@
 import prisma from "@/lib/prisma";
-import { inAgreementAgeBand, hasKnownAdultAge, agreementCycleFloor, openPersonAgreement } from "@/lib/membership/personAgreementTriggers";
+import { inAgreementAgeBand, hasKnownAdultAge, agreementCycleFloor, openPersonAgreement, runPersonAgreementSweep } from "@/lib/membership/personAgreementTriggers";
 
-jest.mock("@/lib/prisma", () => ({ __esModule: true, default: { $transaction: jest.fn() } }));
+jest.mock("@/lib/prisma", () => ({
+    __esModule: true,
+    default: { $transaction: jest.fn(), boardSettings: { findUnique: jest.fn() }, person: { findMany: jest.fn() } },
+}));
 
 /**
  * The two pure rules behind PERSON_AGREEMENT: who the automatic pass picks, and
@@ -111,5 +114,21 @@ describe("openPersonAgreement — the per-person transaction", () => {
         await openPersonAgreement(1, NOW, NOW);
 
         expect(transaction.mock.calls[0]?.[1]).toEqual({ maxWait: 5_000, timeout: 15_000 });
+    });
+});
+
+describe("runPersonAgreementSweep — one person's failure", () => {
+    it("counts it and still opens the rest", async () => {
+        jest.mocked(prisma.boardSettings.findUnique).mockResolvedValue({ orgMembershipYearBoundary: BOUNDARY } as never);
+        jest.mocked(prisma.person.findMany).mockResolvedValue([{ id: 1 }, { id: 2 }] as never);
+        jest.mocked(prisma.$transaction).mockRejectedValueOnce(new Error("lock timeout")).mockResolvedValueOnce({ id: 9 } as never);
+
+        const errors = jest.spyOn(console, "error").mockImplementation(() => {});
+
+        const result = await runPersonAgreementSweep(NOW);
+
+        expect(result).toMatchObject({ opened: 1, failed: 1 });
+        expect(errors).toHaveBeenCalledWith(expect.stringContaining("person 1"), expect.any(Error));
+        errors.mockRestore();
     });
 });

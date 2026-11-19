@@ -13,10 +13,16 @@ import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
 import { setRoleFlag } from '@/lib/roles';
 import { seedSignedKeyVolunteer } from '@/lib/dev/seed-helpers';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaClient } from '@/generated/prisma/client';
 
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
 }));
+
+// The test's own held transaction runs on this connection, so the app's single connection waits on the lock, not on the pool.
+const holder = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
+afterAll(() => holder.$disconnect());
 
 const TAG = 'deny-api-test';
 
@@ -112,7 +118,7 @@ describe('POST /api/membership-ops/households — Deny Membership', () => {
         await seedSignedKeyVolunteer(prisma, grantee.id);
 
         let deny: ReturnType<typeof post> | undefined;
-        await prisma.$transaction(async (tx) => {
+        await holder.$transaction(async (tx) => {
             await setRoleFlag(tx, grantee.id, 'isBoardMember', true, { id: boardId, isBoardMember: true, isSysadmin: false });
             deny = post({ householdId: grantee.householdId, deny: true });
             await new Promise((resolve) => setTimeout(resolve, 300));

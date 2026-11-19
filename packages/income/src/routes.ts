@@ -36,15 +36,16 @@ const resolveBody = z.discriminatedUnion(
 
 const positiveIntOrNull = { error: "budgetOwnerId must be a positive integer or null" };
 const qbAccountIdOrNull = { error: "quickBooksAccountId must be a QuickBooks id (digits only) or null" };
-// null is finance's choice of general income.
-const setCategoryBody = z.object(
-  {
-    budgetOwnerId: z.number(positiveIntOrNull).int(positiveIntOrNull).positive(positiveIntOrNull).nullable(),
-    // Absent leaves the item's account as it is; null clears it.
-    quickBooksAccountId: z.string(qbAccountIdOrNull).regex(/^\d+$/, qbAccountIdOrNull).nullable().optional(),
-  },
-  { error: NOT_AN_OBJECT },
-);
+// Each field absent leaves the item's value as it is. A null bucket is finance's choice of general income; a null account clears it.
+const setCategoryBody = z
+  .object(
+    {
+      budgetOwnerId: z.number(positiveIntOrNull).int(positiveIntOrNull).positive(positiveIntOrNull).nullable().optional(),
+      quickBooksAccountId: z.string(qbAccountIdOrNull).regex(/^\d+$/, qbAccountIdOrNull).nullable().optional(),
+    },
+    { error: NOT_AN_OBJECT },
+  )
+  .refine((b) => b.budgetOwnerId !== undefined || b.quickBooksAccountId !== undefined, positiveIntOrNull);
 
 const excludeBody = z.object({ qbTxnId: requiredString("qbTxnId"), reason: requiredString("reason") }, { error: NOT_AN_OBJECT });
 

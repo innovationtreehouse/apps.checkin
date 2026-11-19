@@ -58,18 +58,18 @@ const REFUSAL = "That email address can't be added here. To use it, email the bo
 const LEAD = 1;
 const KID = 3;
 
-function call(handler: typeof memberPATCH, path: string, body: Record<string, unknown>) {
+function call(handler: (req: NextRequest) => Promise<Response>, path: string, body: Record<string, unknown>) {
     return handler(new Request(`http://localhost${path}`, { method: "PATCH", body: JSON.stringify(body) }) as unknown as NextRequest);
 }
 
 beforeEach(() => {
     jest.clearAllMocks();
-    mockSession.mockResolvedValue({ user: { id: LEAD, email: "lead@example.com" } });
+    mockSession.mockResolvedValue({ user: { id: LEAD, householdId: 10, email: "lead@example.com" } });
     householdLeadship.mockResolvedValue({ householdId: 10, canManage: true });
     findDesignations.mockResolvedValue([{ email: "volunteer@gmail.com" }]);
     findSettings.mockResolvedValue({ emailFromAddress: null, emailReplyToAddress: "Board <board@example.org>" });
     tx.person.update.mockImplementation(({ where }) => Promise.resolve({ id: where.id }));
-    tx.person.create.mockImplementation(({ data }) => Promise.resolve({ id: data.id, email: data.email ?? null, name: data.name }));
+    tx.person.create.mockImplementation(({ data }) => Promise.resolve({ id: data.id, householdId: data.householdId, email: data.email ?? null, name: data.name }));
 });
 
 const NOT_TRUSTED = { roles: [], budgetOwnersOwned: [], budgetOwnerTreasurerships: [], programsLed: [], instancesLed: [], toolStatuses: [] };
@@ -117,6 +117,19 @@ describe("PATCH /api/household — adding a member with a designated address", (
         const res = await call(householdPATCH, "/api/household", { ...member, memberEmail: "new@example.com" });
         expect(res.status).toBe(200);
         expect(tx.person.create).toHaveBeenCalled();
+        expect(await res.json()).toEqual({
+            member: { id: 99, householdId: 10, email: "new@example.com", name: "New Person" },
+            warning: null,
+        });
+    });
+});
+
+describe("PATCH /api/household — a body that is not JSON", () => {
+    it.each([["empty", undefined], ["malformed", "{"]])("refuses an %s body as a missing name", async (_label, raw) => {
+        const res = await householdPATCH(new Request("http://localhost/api/household", { method: "PATCH", body: raw }) as unknown as NextRequest);
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toBe("Name is required");
+        expect(tx.person.create).not.toHaveBeenCalled();
     });
 });
 

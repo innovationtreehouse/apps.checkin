@@ -318,7 +318,7 @@ export const POST = withAuth(
                         const applied = await setHouseholdStatus(tx, membership.id, { from: ["NONE", "ACTIVE", "REVOKED"], to: "DENIED", actor, reason: trimmedReason || "board deny" });
                         return applied ? membership.id : "notApplied" as const;
                     }
-                    // Restore locks the applications before the household row, as payment and reset do.
+                    // Membership, household, then applications: the order lib/lockOrder.ts states.
                     const membership = await tx.orgMembership.findUnique({ where: { householdId }, select: { id: true } });
                     if (!membership) return "notApplied" as const;
                     const openApplications = await lockOpenApplications(tx, membership.id);

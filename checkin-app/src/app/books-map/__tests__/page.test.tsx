@@ -1,7 +1,7 @@
 type Rtl = typeof import("@/test-helpers/rtl");
 jest.mock("next/navigation", () => jest.requireActual<Rtl>("@/test-helpers/rtl").navMock());
 jest.mock("next-auth/react", () => jest.requireActual<Rtl>("@/test-helpers/rtl").authMock());
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), hide: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
 
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { notifications } from "@mantine/notifications";
@@ -198,6 +198,14 @@ describe("books map page", () => {
       expect(picker).toHaveValue("");
       fireEvent.click(picker);
       expect((await screen.findAllByRole("option")).map((o) => o.textContent)).toEqual(["Checking"]);
+    });
+
+    it("tells the board Finance fixes an inactive pick", async () => {
+      setSession({ id: 1, isBoardMember: true });
+      renderWithProviders(<BooksMapPage />);
+      expect(await screen.findByText("Retired is inactive in QuickBooks. Finance can fix this.")).toBeInTheDocument();
+      expect(screen.getByText("Old savings is inactive in QuickBooks. Finance can fix this.")).toBeInTheDocument();
+      expect(screen.queryByText(/Pick an active one/)).not.toBeInTheDocument();
     });
   });
 

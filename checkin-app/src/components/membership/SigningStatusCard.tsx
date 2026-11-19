@@ -2,8 +2,7 @@
 
 import { useState } from "react";
 import { Button, Card, Group, Stack, Text, Textarea, Title } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
-import { showSuccess } from "@checkin/component-ui";
+import { showError, showSuccess } from "@checkin/component-ui";
 import { APP_TIMEZONE, formatDate } from "@/lib/time";
 
 export type Signing = {
@@ -37,10 +36,10 @@ export function SigningStatusCard({ signing, onChange }: { signing: Signing | nu
         setReason("");
         onChange();
       } else {
-        notifications.show({ color: "red", message: data?.error ?? "Couldn't reset the signing.", autoClose: false });
+        showError(data?.error ?? "Couldn't reset the signing.");
       }
     } catch {
-      notifications.show({ color: "red", message: "Network error.", autoClose: false });
+      showError("Network error.");
     } finally {
       setSaving(false);
     }

@@ -69,6 +69,33 @@ describe("runDrain", () => {
     };
     await expect(runDrain<number, Outcome>(rows(1), { counts: fresh(), failures: [], post })).rejects.toThrow("boom");
   });
+
+  it("tries a throttled record again once, then ends the run on the second throttle, leaving that record to post", async () => {
+    type T = Outcome | "throttled";
+    const script: T[] = ["posted", "throttled", "posted", "throttled"];
+    const counts = { ...fresh(), throttled: 0 };
+    const seen: number[] = [];
+    const stop = await runDrain<number, T>(rows(5), {
+      counts,
+      failures: ["failed"],
+      throttled: "throttled",
+      post: async (row) => {
+        seen.push(row);
+        return script.shift() ?? "posted";
+      },
+    });
+    expect(seen).toEqual([0, 1, 1, 2]);
+    expect(stop).toEqual({ by: "throttled", remaining: 3 });
+    expect(counts).toMatchObject({ posted: 2, throttled: 2, failed: 0 });
+  });
+
+  it("ends the run when the retried record is throttled again, and never counts a throttle as a failure", async () => {
+    type T = Outcome | "throttled";
+    const counts = { ...fresh(), throttled: 0 };
+    const stop = await runDrain<number, T>(rows(MAX_CONSECUTIVE_FAILURES + 2), { counts, failures: ["failed"], throttled: "throttled", post: async () => "throttled" });
+    expect(stop).toEqual({ by: "throttled", remaining: MAX_CONSECUTIVE_FAILURES + 2 });
+    expect(counts.throttled).toBe(2);
+  });
 });
 
 describe("runDrain on repeated refusal codes", () => {

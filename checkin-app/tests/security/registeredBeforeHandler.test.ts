@@ -13,11 +13,13 @@ import '@/security/registry';
 import { REGISTERED_BEFORE_HANDLER } from './registeredBeforeHandler';
 
 describe('REGISTERED_BEFORE_HANDLER', () => {
-    it.each([...REGISTERED_BEFORE_HANDLER])('%s is registered and not yet on handler()', endpoint => {
-        expect(getRoute(endpoint)).toBeDefined();
-        const [verb, routePath] = endpoint.split(' ');
-        const source = readFileSync(path.join(__dirname, '..', '..', 'src', 'app', routePath, 'route.ts'), 'utf8');
-        expect(source).toMatch(new RegExp(`export\\s+const\\s+${verb}\\s*=`));
-        expect(source).not.toMatch(new RegExp(`export\\s+const\\s+${verb}\\s*=\\s*handler\\s*\\(`));
+    it('lists only registered verbs whose route file is not yet on handler()', () => {
+        for (const endpoint of REGISTERED_BEFORE_HANDLER) {
+            expect(getRoute(endpoint)).toBeDefined();
+            const [verb, routePath] = endpoint.split(' ');
+            const source = readFileSync(path.join(__dirname, '..', '..', 'src', 'app', routePath, 'route.ts'), 'utf8');
+            expect(source).toMatch(new RegExp(`export\\s+const\\s+${verb}\\s*=`));
+            expect(source).not.toMatch(new RegExp(`export\\s+const\\s+${verb}\\s*=\\s*handler\\s*\\(`));
+        }
     });
 });

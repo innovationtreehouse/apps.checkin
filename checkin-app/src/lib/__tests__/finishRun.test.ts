@@ -3,34 +3,27 @@
  */
 import { recordCronRun } from "@/lib/cronRuns";
 import { recordFaultCodes } from "@/lib/qboFaultCodes";
-import { evaluateRun } from "@/lib/runIncidents";
-import { finishRun, inRun, laneReached, newRun, reportTo, runCrashed, stepCrashed } from "../finishRun";
+import { finishRun, inRun, newRun, reportTo, runCrashed, stepCrashed } from "../finishRun";
 
 jest.mock("@/lib/cronRuns", () => ({ recordCronRun: jest.fn() }));
-jest.mock("@/lib/runIncidents", () => ({ evaluateRun: jest.fn() }));
 jest.mock("@/lib/qboFaultCodes", () => ({ recordFaultCodes: jest.fn() }));
 
 const STARTED = new Date("2026-11-07T09:15:00Z");
-const report = () => jest.mocked(evaluateRun).mock.calls[0][0];
+const recorded = () => jest.mocked(recordCronRun).mock.calls[0][4];
 
 beforeEach(() => jest.clearAllMocks());
 
 describe("finishRun", () => {
-    it("files each library's report under the run in progress, named by library and lane", async () => {
+    it("records the run with each library report of the run in progress, counted by kind", async () => {
         const run = newRun();
         await inRun(run, async () => {
             reportTo("expense")({ lane: "posting", kind: "connection", detail: "expense 4" });
             reportTo("income")({ lane: "deposit-build", kind: "system", status: 503, detail: "payout reconciliation 9" });
-            laneReached("expense posting", "income deposit-build");
         });
 
         await finishRun("qbo-posting", STARTED, true, undefined, run);
 
-        expect(report().failures).toEqual([
-            { lane: "expense posting", cause: "quickbooks", kind: "connection", code: "connection", count: 1 },
-            { lane: "income deposit-build", cause: "quickbooks", kind: "system", code: "HTTP 503", count: 1 },
-        ]);
-        expect(report().lanes).toEqual(["qbo-posting", "expense posting", "income deposit-build"]);
+        expect(recordCronRun).toHaveBeenCalledWith("qbo-posting", STARTED, true, undefined, { connection: 1, system: 1 });
     });
 
     it("counts each item once per run however many times its lane reports it", async () => {
@@ -44,58 +37,41 @@ describe("finishRun", () => {
 
         await finishRun("reconcile-shopify", STARTED, true, undefined, run);
 
-        expect(report().failures).toEqual([{ lane: "expense intake-replay", cause: "intake", kind: "settings", code: "settings", count: 2 }]);
         expect(recordCronRun).toHaveBeenCalledWith("reconcile-shopify", STARTED, true, undefined, { settings: 2 });
     });
 
-    it("keeps a QuickBooks refusal's fault codes as its code", async () => {
+    it("counts an item again under a different code", async () => {
         const run = newRun();
-        await inRun(run, async () => reportTo("bulk-donation")({ lane: "in-kind-posting", kind: "bug", status: 400, faultCodes: ["6000", "610"] }));
-
-        await finishRun("qbo-posting", STARTED, true, undefined, run);
-
-        expect(report().failures).toEqual([expect.objectContaining({ lane: "bulk-donation in-kind-posting", kind: "bug", code: "6000+610" })]);
-    });
-
-    it("reports a crashed step on the job's own lane, a bug unless its error has a kind", async () => {
-        const run = newRun();
-        await inRun(run, async () => stepCrashed("reconcile-shopify", "income", new Error("boom")));
-
-        await finishRun("reconcile-shopify", STARTED, true, undefined, run);
-
-        expect(report().failures).toEqual([{ lane: "reconcile-shopify", cause: "reconcile-shopify", kind: "bug", code: "income crashed", count: 1 }]);
-        expect(report().lanes).toContain("reconcile-shopify");
-    });
-
-    it("covers only the lanes the run reached", async () => {
-        const run = newRun();
-        await inRun(run, async () => laneReached("expense intake"));
-
-        await finishRun("reconcile-shopify", STARTED, true, undefined, run);
-
-        expect(report().lanes).toEqual(["reconcile-shopify", "expense intake"]);
-    });
-
-    it("files a crashed step under the library lanes it runs, with their cause, and leaves them uncovered", async () => {
-        const run = newRun();
-        await inRun(run, async () => stepCrashed("qbo-posting", "expense", new Error("boom"), ["expense posting"]));
-
-        await finishRun("qbo-posting", STARTED, true, undefined, run);
-
-        expect(report()).toEqual({
-            lanes: ["qbo-posting"],
-            failures: [{ lane: "expense posting", cause: "quickbooks", kind: "bug", code: "expense crashed", count: 1 }],
+        const port = reportTo("bulk-donation");
+        await inRun(run, async () => {
+            port({ lane: "in-kind-posting", kind: "bug", status: 400, faultCodes: ["6000", "610"], detail: "gift 1" });
+            port({ lane: "in-kind-posting", kind: "bug", status: 400, faultCodes: ["6000"], detail: "gift 1" });
         });
+
+        await finishRun("qbo-posting", STARTED, true, undefined, run);
+
+        expect(recorded()).toEqual({ bug: 2 });
     });
 
-    it("a run that crashed covers no library lane", async () => {
+    it("counts a crashed step once per library lane it runs, a bug unless its error has a kind", async () => {
         const run = newRun();
-        await inRun(run, async () => laneReached("expense intake"));
+        await inRun(run, async () => {
+            stepCrashed("reconcile-shopify", "income", new Error("boom"));
+            stepCrashed("reconcile-shopify", "expense", new Error("boom"), ["expense intake", "expense intake-replay"]);
+        });
+
+        await finishRun("reconcile-shopify", STARTED, true, undefined, run);
+
+        expect(recorded()).toEqual({ bug: 3 });
+    });
+
+    it("counts a run that crashed as a failure of the job's own lane", async () => {
+        const run = newRun();
         runCrashed(run, "reconcile-shopify", new Error("boom"));
 
-        await finishRun("reconcile-shopify", STARTED, false, undefined, run);
+        await finishRun("reconcile-shopify", STARTED, false, "boom", run);
 
-        expect(report().lanes).toEqual(["reconcile-shopify"]);
+        expect(recordCronRun).toHaveBeenCalledWith("reconcile-shopify", STARTED, false, "boom", { bug: 1 });
     });
 
     it("drops a report made outside any run", async () => {
@@ -104,7 +80,6 @@ describe("finishRun", () => {
 
         await finishRun("nightly", STARTED, true, undefined, run);
 
-        expect(report()).toEqual({ lanes: ["nightly"], failures: [] });
         expect(recordCronRun).toHaveBeenCalledWith("nightly", STARTED, true, undefined, {});
     });
 

@@ -2,7 +2,7 @@ import { act, render } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import { Notifications, notifications, notificationsStore } from "@mantine/notifications";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { clearError, showError, showSuccess } from "./index";
+import { clearError, showError, showSuccess, showWarning } from "./index";
 
 const shown = () => notificationsStore.getState().notifications;
 
@@ -72,6 +72,17 @@ describe("showError", () => {
     act(() => notifications.hide("Network error"));
     act(() => showError("Network error"));
     expect(shown()).toHaveLength(1);
+  });
+});
+
+describe("showWarning", () => {
+  it("stays in yellow until dismissed, and collapses repeats under one key", () => {
+    act(() => {
+      showWarning("Two seats left", { key: "seats" });
+      showWarning("One seat left", { key: "seats", title: "Roster" });
+    });
+    wait(60_000);
+    expect(shown()).toMatchObject([{ id: "seats", message: "One seat left", title: "Roster", color: "yellow" }]);
   });
 });
 

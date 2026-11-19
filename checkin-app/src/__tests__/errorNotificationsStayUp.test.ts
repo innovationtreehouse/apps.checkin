@@ -8,7 +8,8 @@ import { join, relative, sep } from 'node:path';
  * colour red without `autoClose: false`.
  *
  * Blind spots: a colour or options object held in a variable, or a wrapper that
- * calls `notifications.show` with a colour it was passed, escapes the scan.
+ * calls `notifications.show` with a colour it was passed, escapes the scan. The
+ * kit's `showError` and `showWarning` are such wrappers; `messages.test.tsx` pins them.
  */
 
 const REPO = join(__dirname, '..', '..', '..');
@@ -76,7 +77,7 @@ describe('error notifications stay up', () => {
             (n, f) => n + showCalls(readFileSync(f, 'utf8')).length,
             0,
         );
-        expect(total).toBeGreaterThan(100);
+        expect(total).toBeGreaterThan(50);
     });
 
     it('reads a whole call when a string or comment in it holds a paren', () => {

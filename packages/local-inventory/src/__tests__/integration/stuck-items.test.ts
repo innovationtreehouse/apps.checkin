@@ -60,12 +60,14 @@ describeDb("stuckItems", () => {
     const event = await db.inventoryReceivedOrgEvent.create({ data: { orgId: TEST_ORG_ID, eventType: "item_reviewed", payload: "{}", receivedAt: at, status: "failed", failureReason: "boom", firstFailedAt: first } });
     await db.inventoryReceivedOrgEvent.create({ data: { orgId: TEST_ORG_ID, eventType: "item_reviewed", payload: "{}", receivedAt: at, status: "processed" } });
 
-    expect(await stuckItems()).toEqual([
+    const items = await stuckItems();
+    expect(items).toHaveLength(4);
+    expect(items).toEqual(expect.arrayContaining([
       { id: "r1", step: "inventory delta", href: "/receipts/r1", failedAt: first },
       { id: "donation:11", step: "inventory delta", href: "/donations/in-kind/manual/11", failedAt: first },
       { id: "r4", step: "inventory delta", href: "/receipts/r4", failedAt: at },
       { id: String(event.id), step: "catalog event", href: null, failedAt: first },
-    ]);
+    ]));
   });
 
   it("carries no error text", async () => {

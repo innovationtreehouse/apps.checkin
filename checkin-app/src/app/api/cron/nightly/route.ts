@@ -18,6 +18,7 @@ import { traceOnCommit } from "@/lib/specTrace";
 const SAME_NIGHT_MS = 12 * 60 * 60 * 1000;
 
 export const GET = withCron(() => duringNightlyRun(async () => {
+    try {
         // A keyholder's recorded close whose sweep never ran departs people at
         // the keyholder's time, so it runs before this sweep stamps them at now.
         await executePendingCloses();
@@ -95,7 +96,7 @@ export const GET = withCron(() => duringNightlyRun(async () => {
                 } catch (err) {
                     failed += 1;
                     stillOpen.push(visit);
-                    logger.error(`Failed to check out visit ${visit.id} (person ${visit.person.email}):`, err);
+                    logger.error(`Failed to check out visit ${visit.id} (person ${visit.personId}):`, err);
                 }
             }
             // After every per-visit transaction commits: the checkout's own
@@ -173,16 +174,14 @@ export const GET = withCron(() => duringNightlyRun(async () => {
         // at the membership-year boundary because an annual pass misses everyone who
         // starts qualifying after it fires. Idempotent — one per person per cycle.
         const personAgreements = await runPersonAgreementSweep(now);
+        failed += personAgreements.failed;
         if (personAgreements.opened > 0) {
             logger.info(`Nightly cron: opened ${personAgreements.opened} individual membership agreement(s).`);
         }
 
-        // 5. The receipt flow's daily Problems email.
-        await sendProblemsDigest(now);
-
         return NextResponse.json({
             success: true,
-            // Checkouts this run swallowed. withCron reads it and records the run
+            // Checkouts and agreement opens this run swallowed. withCron reads it and records the run
             // as completed-but-unclean when non-zero — a swept-nothing sweep is not
             // a green sweep, and is also not a sweep that failed to run.
             failed,
@@ -194,4 +193,8 @@ export const GET = withCron(() => duringNightlyRun(async () => {
             adultDobPurged,
             personAgreements
         });
+    } finally {
+        // The daily Problems email goes out even when a step above throws.
+        await sendProblemsDigest();
+    }
 }));

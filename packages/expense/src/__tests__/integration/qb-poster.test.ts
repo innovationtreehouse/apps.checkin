@@ -4,7 +4,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { FailureReport } from "@checkin/component-kit";
-import { MAX_CREATES_PER_DAY, QuickBooksClient, STALE_CLAIM_MS, qbKey, type QboBill, type QboPurchase } from "@checkin/quickbooks";
+import { MAX_CREATES_PER_DAY, Pacer, QuickBooksClient, STALE_CLAIM_MS, qbKey, type QboBill, type QboPurchase } from "@checkin/quickbooks";
 import { describeDb } from "../helpers/db";
 import { inertOutbound, type Outbound } from "../../contract";
 import type { Expense } from "../../db/schema";
@@ -99,7 +99,7 @@ let qbo: FakeQbo;
 let sweepAlerts: { orgId: string; since: Date }[];
 
 const posting = (prod = false) => ({
-  client: new QuickBooksClient({ current: async () => "tok" }, { env: "sandbox", realmId: "123" }),
+  client: new QuickBooksClient({ current: async () => "tok" }, { env: "sandbox", realmId: "123" }, new Pacer({ perSecond: 1e6, maxInFlight: 1e6 })),
   paymentAccountId: PAYMENT_ACCOUNT,
   paymentType: "CreditCard" as const,
   prod,

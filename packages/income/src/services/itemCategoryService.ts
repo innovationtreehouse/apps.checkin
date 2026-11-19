@@ -59,13 +59,13 @@ export const itemCategoryService = {
   },
 
   /**
-   * Book an item to a bucket, or to general income (null), and, when `quickBooksAccountId` is
-   * given, to that account (null clears it), from now on; deposits already created are never
-   * rebooked. A bucket must be live with a Class the app's copy of QuickBooks' list shows as
-   * active.
+   * Book an item to a bucket, or to general income (null), and to an account (null clears it),
+   * from now on; either left undefined stays as it is, and deposits already created are never
+   * rebooked. A bucket given must be live with a Class the app's copy of QuickBooks' list shows
+   * as active. An item with no bucket choice yet can't take an account alone.
    */
-  async setCategory(orgId: string, variantId: string, budgetOwnerId: number | null, actor: Actor, quickBooksAccountId?: string | null) {
-    if (budgetOwnerId !== null) {
+  async setCategory(orgId: string, variantId: string, budgetOwnerId: number | null | undefined, actor: Actor, quickBooksAccountId?: string | null) {
+    if (budgetOwnerId != null) {
       const { owners, savedClasses } = getIncomeConfig();
       if (!owners) throw new ServiceError(503, "Budget-owner buckets are not connected");
       const bucket = (await owners.list()).find((b) => b.id === budgetOwnerId);
@@ -80,6 +80,7 @@ export const itemCategoryService = {
 
     return db.$transaction(async (tx) => {
       const before = await tx.incomeItemCategory.findUnique({ where: { orgId_variantId: { orgId, variantId } } });
+      if (!before && budgetOwnerId === undefined) throw new ServiceError(409, "Choose the item's bucket before its account");
       const saved = await tx.incomeItemCategory.upsert({
         where: { orgId_variantId: { orgId, variantId } },
         create: { orgId, variantId, budgetOwnerId, quickBooksAccountId },

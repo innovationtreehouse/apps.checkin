@@ -109,7 +109,7 @@ export default function MembershipReviewPage() {
         notifyNavRefresh();
       } else {
         notifications.show({ color: "red", message: data.error || "Could not reset this review.", autoClose: false });
-        reloadMine();
+        await Promise.all([reload(), reloadMine()]);
       }
     } catch {
       notifications.show({ color: "red", message: "Network error.", autoClose: false });

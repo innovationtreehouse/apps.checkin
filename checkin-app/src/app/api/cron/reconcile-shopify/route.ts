@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import { withCron } from "@/lib/cronAuth";
-import { laneReached, stepCrashed } from "@/lib/finishRun";
+import { stepCrashed } from "@/lib/finishRun";
 import { runReconcile } from "@/lib/finance/reconcile";
 import { runSaleSweep } from "@/lib/programs/saleSweep";
 import { runReconcile as runIncomeReconcile } from "@checkin/income";
@@ -122,8 +122,6 @@ export const GET = withCron(async () => {
         + ("reconcileFailed" in inventoryEvents ? inventoryEvents.reconcileFailed : 0)
         + ("unreadable" in workflowEvents && workflowEvents.unreadable ? 1 : 0)
         + (receiptMail.status === "listing_failed" ? 1 : 0);
-    // Expense's replay re-runs the receipts live intake could not take, so it reaches both intake lanes.
-    if ("intake" in expense && !crashed(expense.intake)) laneReached("expense intake", "expense intake-replay");
     const reconciled = "configured" in result ? result : { reconcile: result };
     return NextResponse.json({ success: true, ...reconciled, failed, saleSweep, income, expense, programStock, inventoryEvents, workflowEvents, receivingApply, receipt, receiptStuck, receiptMail, receiptOutcomes });
 });

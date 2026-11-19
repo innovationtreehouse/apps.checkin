@@ -30,6 +30,7 @@ interface Counts {
   failed: number;
   skipped_denied: number;
   skipped_not_member: number;
+  skipped_not_audience: number;
   sending: number;
   total: number;
 }
@@ -298,7 +299,7 @@ function SendPanel({ deadlineSet }: { deadlineSet: boolean }) {
     await drain(bulkSendId);
   };
 
-  const done = (c: Counts) => c.sent + c.failed + c.skipped_denied + c.skipped_not_member;
+  const done = (c: Counts) => c.sent + c.failed + c.skipped_denied + c.skipped_not_member + c.skipped_not_audience;
   const progress = (c: Counts) => (c.total === 0 ? 100 : Math.round((done(c) / c.total) * 100));
 
   return (
@@ -345,7 +346,8 @@ function SendPanel({ deadlineSet }: { deadlineSet: boolean }) {
               Last sent: {TEMPLATE_LABEL[lastCompleted.emailType as TemplateKey] ?? lastCompleted.emailType}{" "}
               — {lastCompleted.counts.sent} sent, {lastCompleted.counts.failed} failed,{" "}
               {lastCompleted.counts.skipped_denied > 0 && `${lastCompleted.counts.skipped_denied} skipped (denied), `}
-              {lastCompleted.counts.skipped_not_member > 0 && `${lastCompleted.counts.skipped_not_member} skipped (no longer a member), `}on{" "}
+              {lastCompleted.counts.skipped_not_member > 0 && `${lastCompleted.counts.skipped_not_member} skipped (no longer a member), `}
+              {lastCompleted.counts.skipped_not_audience > 0 && `${lastCompleted.counts.skipped_not_audience} skipped (won't renew, already renewed, or no longer the lead), `}on{" "}
               {lastCompleted.completedAt ? new Date(lastCompleted.completedAt).toLocaleString() : ""}.
               {lastCompleted.counts.failed > 0 && (
                 <>

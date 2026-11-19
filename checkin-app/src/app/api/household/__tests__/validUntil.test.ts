@@ -23,7 +23,7 @@ jest.mock("@/lib/prisma", () => ({
 const VALID = new Date(Date.UTC(2026, 8, 1));
 
 async function getAs(status: string) {
-    (getServerSession as jest.Mock).mockResolvedValue({ user: { id: 1 } });
+    (getServerSession as jest.Mock).mockResolvedValue({ user: { id: 1, householdId: 10 } });
     (prisma.person.findUnique as jest.Mock).mockResolvedValue({
         id: 1,
         isHouseholdLead: true,

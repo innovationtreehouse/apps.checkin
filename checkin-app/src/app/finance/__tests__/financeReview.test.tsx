@@ -17,7 +17,7 @@ jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: mockReplace }),
 }));
 const mockShow = jest.fn();
-jest.mock("@mantine/notifications", () => ({ notifications: { show: (...args: unknown[]) => mockShow(...args) } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: (...args: unknown[]) => mockShow(...args), update: jest.fn() } }));
 jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 2, isFinance: mockIsFinance, isBoardMember: !mockIsFinance } } }) }));
 jest.mock("@checkin/receipt/components/api", () => ({
   ...jest.requireActual("@checkin/receipt/components/api"),

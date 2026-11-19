@@ -9,6 +9,7 @@ import { advanceExternalIfComplete, pickUpMissedSignature } from "@/lib/membersh
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { personActor, type AuditActor } from "@/lib/auditActor";
 import { type TxClient } from "@/lib/db-client";
+import { lockHouseholdRows } from "@/lib/household/archiveGuard";
 import { reopenYearRefusal } from "@/lib/programYear";
 
 // Loaded on use: settleHouseholdBg imports review.ts, and a static import closes that cycle at load.
@@ -82,11 +83,13 @@ const HOUSEHOLD_KINDS = ["INITIAL", "RENEWAL"] as const;
 const RESTORE_CLOSE_REASON = "household restored";
 
 /**
- * Locks a household's applications FOR UPDATE and returns the open ones, for a
- * restore to close. Taken before the household row, the order the payment and
- * reset paths lock in.
+ * Locks a household's membership, household and applications FOR UPDATE, in the
+ * order lib/lockOrder.ts states, and returns the open applications, for a restore
+ * or an archive to close.
  */
 export async function lockOpenApplications(tx: TxClient, orgMembershipId: number) {
+    const [membership] = await tx.$queryRaw<{ householdId: number }[]>`SELECT "householdId" FROM "OrgMembership" WHERE id = ${orgMembershipId} FOR UPDATE`;
+    if (membership) await lockHouseholdRows(tx, [membership.householdId]);
     await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE "orgMembershipId" = ${orgMembershipId} ORDER BY id FOR UPDATE`;
     return tx.orgMembershipProcess.findMany({
         where: { orgMembershipId, kind: { in: [...HOUSEHOLD_KINDS] }, ...openProcess.where },
