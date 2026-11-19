@@ -76,8 +76,10 @@ ocr_failed ──OCR_RETRY──▶ ocr_queued   (was: ──▶ auto_upload)
   it, as from `auto_upload` today.
 
 The reading allowance is charged when a reader claims the receipt, for uploads as
-well as mail (CR-4). Over the allowance, the receipt goes to `ocr_failed` with
-today's allowance note. Reading switched off sends a queued receipt to `ocr_failed`
+well as mail. An upload over the allowance is still saved. It goes to `ocr_failed`
+with today's allowance note, and its uploader types the details or reads it again
+the next day. The limits themselves are unchanged. The upload-count and byte limits
+still refuse an upload before it is saved. Reading switched off sends a queued receipt to `ocr_failed`
 with today's switched-off note, at insert when it is off then, or at claim.
 
 ### Upload
@@ -178,7 +180,7 @@ in every environment, before build PR 2 deploys there:
 
 ### Leases, caps and where each step runs
 
-The volume is about 400 receipts a year, one or two a day, so one lease and one run
+The volume is about 500 receipts a year, one or two a day, so one lease and one run
 cover mail.
 
 | Step | Runs | Lease | Cap per run |
@@ -264,5 +266,5 @@ Flow: upload then poll until the reading lands. Browser e2e: the upload page sho
   prefix. The lifecycle rule needs none, and the app can't delete mail early, by
   mistake or otherwise.
 - **Its own scheduled call every 15 minutes, with a separate drain lease.** Faster
-  capture, but it needs an infra schedule, a new route and a second lease, which 400
+  capture, but it needs an infra schedule, a new route and a second lease, which 500
   receipts a year don't need. The catch-up button covers a day that can't wait.

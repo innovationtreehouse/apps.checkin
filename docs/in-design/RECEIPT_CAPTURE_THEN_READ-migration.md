@@ -3,18 +3,18 @@
 Everything here stops being true once the change has run. The design is
 [`RECEIPT_CAPTURE_THEN_READ.md`](RECEIPT_CAPTURE_THEN_READ.md).
 
-## Owner questions
+## Owner decisions
 
 - **CR-1 — answered:** mail stays daily inside `reconcile-shopify`. No new route and
-  no infra schedule. Caps and thresholds are sized for about 400 receipts a year.
+  no infra schedule. Caps and thresholds are sized for about 500 receipts a year.
 - **CR-2 — answered:** 90 days after capture, by an S3 lifecycle rule on
   `mail-raw/`. The app gets put and get, never delete. The owner makes the infra
   change.
 - **CR-3 — answered:** finance and sysadmins, the same people as the mail catch-up
   button.
-- **CR-4** Charge the reading allowance when the reading starts, for uploads too? An
-  upload over the allowance is then saved and lands in "couldn't read" with the
-  allowance note, where today it is refused before saving.
+- **CR-4 — answered:** charge the allowance when a reading starts, uploads included.
+  An upload over it is saved and lands in `ocr_failed` with the allowance note. The
+  limits are unchanged, and upload-count and byte limits still refuse before saving.
 - **CR-5 — answered:** yes. The bucket exists and is on in dev, staging and prod.
 
 ## Build order
