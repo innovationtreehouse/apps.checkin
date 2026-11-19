@@ -693,6 +693,7 @@ async function readLeased(
           senderAddress: address ?? "",
           dmarcVerdict: verdict,
           status: "held",
+          heldAt: new Date(),
           holdReason: sender ? ("side_copy" satisfies HoldReason) : holdReason,
           refusal,
         }],
@@ -780,7 +781,7 @@ async function readLeased(
         try {
           await db.$transaction([
             db.receiptMailItem.create({
-              data: { ...item, status, holdReason: sender ? null : holdReason, fileKey, fileSize: bytes.length, mimeType: check.mimeType },
+              data: { ...item, status, heldAt: sender ? null : new Date(), holdReason: sender ? null : holdReason, fileKey, fileSize: bytes.length, mimeType: check.mimeType },
             }),
             oweReply(db),
           ]);
@@ -819,7 +820,7 @@ async function readLeased(
       try {
         const sender = await ports().people.submitterByEmail(row.senderAddress);
         if (!sender) {
-          await db.receiptMailItem.updateMany({ where: { id: row.id, status: "deferred" }, data: { status: "held", holdReason: "not_a_submitter" satisfies HoldReason } });
+          await db.receiptMailItem.updateMany({ where: { id: row.id, status: "deferred" }, data: { status: "held", heldAt: new Date(), holdReason: "not_a_submitter" satisfies HoldReason } });
           continue;
         }
         const item = await db.receiptMailItem.findFirst({ where: { id: row.id, status: "deferred" }, select: { id: true, fileKey: true, mimeType: true } });

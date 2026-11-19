@@ -4,7 +4,7 @@
 import { db } from "../db";
 import { audit } from "../repositories/receipt";
 import { fileStore, getOrgId } from "../runtime";
-import { deleteStoredFiles, RETENTION_FILE_DELETED } from "../lib/fileStorage";
+import { RETENTION_FILE_DELETED } from "../lib/fileStorage";
 import { BODY_COPY_DISCARDED } from "../lib/receipt-flow";
 import { CATCH_UP_CAP } from "./catchUp";
 import { closeUnreplyable } from "./mailReplies";
@@ -55,8 +55,10 @@ export function fileDeleteAfter(r: { state: string; receiptDate: string | null; 
 
 /** A held mail item nobody assigned or discarded within 90 days of being held is discarded, as a finance discard is. */
 export async function discardUnclaimedHeldMail(now = new Date()): Promise<{ discarded: number; failed: number }> {
+  const cutoff = new Date(now.getTime() - HELD_MAIL_DISCARD_AFTER_MS);
   const stale = await db.receiptMailItem.findMany({
-    where: { orgId: await getOrgId(), status: "held", createdAt: { lt: new Date(now.getTime() - HELD_MAIL_DISCARD_AFTER_MS) } },
+    // COALESCE(held_at, created_at): a hold written by code that predates held_at dates by its row.
+    where: { orgId: await getOrgId(), status: "held", OR: [{ heldAt: { lt: cutoff } }, { heldAt: null, createdAt: { lt: cutoff } }] },
     select: { id: true, gmailMessageId: true },
     orderBy: { createdAt: "asc" },
     take: CATCH_UP_CAP,
@@ -73,8 +75,9 @@ export async function discardUnclaimedHeldMail(now = new Date()): Promise<{ disc
         return moved[0].fileKey;
       });
       if (fileKey === undefined) continue;
-      await deleteStoredFiles([fileKey]);
       discarded++;
+      // A failed delete leaves the object for sweepExpiredFiles, which deletes it again when it clears the key.
+      if (fileKey) await fileStore().delete(fileKey);
     } catch (err) {
       failed++;
       console.error(`[receipt] held-mail auto-discard failed for mail item ${id}:`, err);
@@ -102,8 +105,22 @@ export async function sweepExpiredFiles(now = new Date()): Promise<{ receiptFile
     }
   };
 
+  // A coarse cut in SQL: an approved receipt is due only once its date is over 7 years old, and an
+  // ended one only once its decision is over a year old. fileDeleteAfter decides exactly.
+  const approvedBefore = addYears(now, -APPROVED_KEEP_YEARS).toISOString().slice(0, 10);
+  const endedBefore = addYears(now, -ENDED_KEEP_YEARS);
   const receipts = await db.receipt.findMany({
-    where: { orgId, fileKey: { not: null }, details: { state: { in: Object.keys(ENDING_ACTIONS) } } },
+    where: {
+      orgId,
+      fileKey: { not: null },
+      OR: [
+        { details: { state: "receipt_finalized", OR: [{ receiptDate: { lt: approvedBefore } }, { receiptDate: null }] } },
+        ...(["rejected", "discarded"] as const).map((state) => ({
+          details: { state },
+          auditLogs: { some: { action: { in: ENDING_ACTIONS[state] }, changedAt: { lt: endedBefore } } },
+        })),
+      ],
+    },
     select: {
       id: true,
       fileKey: true,

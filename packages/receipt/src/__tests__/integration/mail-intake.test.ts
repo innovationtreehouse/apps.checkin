@@ -129,7 +129,7 @@ describeDb("mail intake", () => {
     expect(await readMailbox()).toMatchObject({ receipts: 0, held: 1 });
     expect(await db.receipt.count()).toBe(0);
     const [item] = await db.receiptMailItem.findMany();
-    expect(item).toMatchObject({ status: "held", holdReason: "not_a_submitter", senderAddress: "stranger@example.org", mimeType: "application/pdf", receiptId: null });
+    expect(item).toMatchObject({ status: "held", holdReason: "not_a_submitter", senderAddress: "stranger@example.org", mimeType: "application/pdf", receiptId: null, heldAt: expect.any(Date) });
     expect(await storedBytes(item.fileKey)).toBe(pdf("m1"));
   });
 
@@ -1163,9 +1163,13 @@ describeDb("mail intake over a sender's daily upload limit", () => {
 
   it("holds a deferred file for finance once its sender is no longer a submitter", async () => {
     const id = await deferredFor("alice@example.org");
+    expect((await db.receiptMailItem.findUniqueOrThrow({ where: { id } })).heldAt).toBeNull();
     withLimits({}, {});
+    const before = new Date();
     expect(await readMailbox()).toMatchObject({ receipts: 0 });
-    expect(await db.receiptMailItem.findUniqueOrThrow({ where: { id } })).toMatchObject({ status: "held", holdReason: "not_a_submitter" });
+    const held = await db.receiptMailItem.findUniqueOrThrow({ where: { id } });
+    expect(held).toMatchObject({ status: "held", holdReason: "not_a_submitter" });
+    expect(held.heldAt?.getTime()).toBeGreaterThanOrEqual(before.getTime());
   });
 
   it("counts deferred files toward the held ceiling", async () => {

@@ -26,11 +26,11 @@ async function receiptIn(state: string, opts: { receiptDate?: string; endedBy?: 
   return { id, fileKey };
 }
 
-async function mailItem(status: string, createdAt: Date): Promise<{ id: number; fileKey: string }> {
+async function mailItem(status: string, createdAt: Date, heldAt: Date | null = status === "held" ? createdAt : null): Promise<{ id: number; fileKey: string }> {
   const n = ++seq;
   const fileKey = await storeFile(Buffer.from(`%PDF-1.4 held ${n}`));
   const { id } = await db.receiptMailItem.create({
-    data: { orgId: TEST_ORG_ID, gmailMessageId: `m${n}`, attachmentHash: `h${n}`, receivedAt: createdAt, senderAddress: "stranger@elsewhere.test", status, fileKey, mimeType: "application/pdf", createdAt },
+    data: { orgId: TEST_ORG_ID, gmailMessageId: `m${n}`, attachmentHash: `h${n}`, receivedAt: createdAt, senderAddress: "stranger@elsewhere.test", status, fileKey, mimeType: "application/pdf", createdAt, heldAt },
   });
   return { id, fileKey };
 }
@@ -58,6 +58,32 @@ describeDb("held-mail auto-discard", () => {
     expect((await itemOf(young.id)).status).toBe("held");
     expect((await itemOf(deferred.id)).status).toBe("deferred");
     expect(await discardUnclaimedHeldMail(NOW)).toEqual({ discarded: 0, failed: 0 });
+  });
+
+  it("counts 90 days from when a deferred item became held, not from when it arrived", async () => {
+    const lateHeld = await mailItem("held", new Date(NOW.getTime() - 3 * HELD_MAIL_DISCARD_AFTER_MS), new Date(NOW.getTime() - DAY));
+
+    expect(await discardUnclaimedHeldMail(NOW)).toEqual({ discarded: 0, failed: 0 });
+    expect((await itemOf(lateHeld.id)).status).toBe("held");
+  });
+
+  it("dates a hold with no heldAt, written by older code, by when its row was written", async () => {
+    const old = await mailItem("held", new Date(NOW.getTime() - HELD_MAIL_DISCARD_AFTER_MS - DAY), null);
+    const young = await mailItem("held", new Date(NOW.getTime() - HELD_MAIL_DISCARD_AFTER_MS + DAY), null);
+
+    expect(await discardUnclaimedHeldMail(NOW)).toEqual({ discarded: 1, failed: 0 });
+    expect((await itemOf(old.id)).status).toBe("discarded");
+    expect((await itemOf(young.id)).status).toBe("held");
+  });
+
+  it("counts a failed file delete as a failure; the item stays discarded and keeps its key", async () => {
+    const old = await mailItem("held", new Date(NOW.getTime() - HELD_MAIL_DISCARD_AFTER_MS - DAY));
+    vi.spyOn(fileStore(), "delete").mockRejectedValueOnce(new Error("store down"));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    expect(await discardUnclaimedHeldMail(NOW)).toEqual({ discarded: 1, failed: 1 });
+    expect(await itemOf(old.id)).toEqual({ status: "discarded", fileKey: old.fileKey });
+    vi.restoreAllMocks();
   });
 });
 
