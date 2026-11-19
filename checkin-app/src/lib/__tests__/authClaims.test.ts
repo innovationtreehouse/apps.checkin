@@ -60,9 +60,30 @@ describe('assignParticipantClaims — household login gate', () => {
             assignParticipantClaims(token, participant({ household }));
 
             expect(token.denied).toBe(false);
-            expect(token.isKeyholder).toBe(true);
+            expect(token.isSysadmin).toBe(true);
         },
     );
+});
+
+describe('assignParticipantClaims — keyholder authority follows household status', () => {
+    it.each([
+        ['ACTIVE', true],
+        ['NONE', true],
+        ['REVOKED', false],
+        ['DENIED', false],
+    ] as const)('%s household: isKeyholder=%s', (status, expected) => {
+        const token = {} as JWT;
+        assignParticipantClaims(token, participant({ household: { orgMembership: { status } } }));
+        expect(token.isKeyholder).toBe(expected);
+    });
+
+    it('a REVOKED household keeps every other role flag', () => {
+        const token = {} as JWT;
+        assignParticipantClaims(token, participant({ household: { orgMembership: { status: 'REVOKED' } } }));
+        expect(token.isBoardMember).toBe(true);
+        expect(token.isOperations).toBe(true);
+        expect(token.toolStatuses).toHaveLength(1);
+    });
 });
 
 describe('assignParticipantClaims — open household question', () => {

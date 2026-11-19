@@ -1,4 +1,4 @@
-import type { Person, Prisma } from "@/generated/prisma/client";
+import type { OrgMembershipStatus, Person, Prisma } from "@/generated/prisma/client";
 import type { DbClient } from "@/lib/db-client";
 
 /**
@@ -11,6 +11,9 @@ import type { DbClient } from "@/lib/db-client";
  */
 export const LIVE_VISIT: Prisma.VisitWhereInput = { deletedAt: null };
 
+/** Household statuses whose keyholders hold no keyholder authority. */
+export const KEYHOLDER_VOID_STATUSES: OrgMembershipStatus[] = ["DENIED", "REVOKED"];
+
 /**
  * A keyholder: the one person filter every "is a keyholder in the building"
  * question uses. A denied household holds no authority and a revoked one has lost
@@ -21,7 +24,7 @@ export const LIVE_VISIT: Prisma.VisitWhereInput = { deletedAt: null };
  */
 export const LIVE_KEYHOLDER: Prisma.PersonWhereInput = {
     isKeyholder: true,
-    NOT: { household: { orgMembership: { status: { in: ["DENIED", "REVOKED"] } } } },
+    NOT: { household: { orgMembership: { status: { in: KEYHOLDER_VOID_STATUSES } } } },
 };
 
 /** Whether this person acts as a keyholder: flagged, and {@link LIVE_KEYHOLDER} holds now. */
