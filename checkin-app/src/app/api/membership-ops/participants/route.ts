@@ -32,7 +32,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
 
     try {
         const body = await req.json();
-        const { name, email, parentEmail, parentName, dob, over25, householdId } = body;
+        const { name, email, parentEmail, parentName, parentDob, parentOver25, dob, over25, householdId } = body;
 
         // Creating a participant never creates an OrgMembership: membership comes
         // only from an application or a board Grant, both of which require a
@@ -91,9 +91,12 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                 if (!parentName?.trim()) {
                     return apiError("Parent name is required when creating a new parent", 400);
                 }
+                if (!parentDob && !parentOver25) {
+                    return NextResponse.json({ error: AGE_REQUIRED_REFUSAL, fields: ["parentDob"] }, { status: 400 });
+                }
                 parent = await withTx(prisma, async (tx) => {
                     await removeAliasesForSignInEmail(tx, parentEmail, personActor(auth.user.id), "participant_add");
-                    return createInOwnHousehold(tx, { email: parentEmail, name: parentName.trim() });
+                    return createInOwnHousehold(tx, { email: parentEmail, name: parentName.trim(), ...normalizeAdultDob(parentDob, !!parentOver25) });
                 });
             } else {
                 joinsExistingHousehold = true;

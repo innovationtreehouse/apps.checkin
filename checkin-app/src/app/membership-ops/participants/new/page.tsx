@@ -35,6 +35,8 @@ function NewParticipantForm() {
   const [email, setEmail] = useState("");
   const [parentEmail, setParentEmail] = useState("");
   const [parentName, setParentName] = useState("");
+  const [parentDob, setParentDob] = useState("");
+  const [parentOver25, setParentOver25] = useState(false);
   const [dob, setDob] = useState("");
   const [over25, setOver25] = useState(false);
 
@@ -79,6 +81,7 @@ function NewParticipantForm() {
           email: email || null,
           parentEmail: isYouthSelected ? parentEmail : null,
           parentName: isYouthSelected && parentEmail ? parentName : null,
+          ...(isYouthSelected && parentEmail && { parentDob: parentOver25 ? null : (parentDob || null), parentOver25 }),
           dob: over25 ? null : (dob || null),
           over25,
           householdId: householdId ? parseInt(householdId) : null
@@ -90,6 +93,8 @@ function NewParticipantForm() {
       setEmail("");
       setParentEmail("");
       setParentName("");
+      setParentDob("");
+      setParentOver25(false);
       setDob("");
       setOver25(false);
       setHouseholdId("");
@@ -102,7 +107,7 @@ function NewParticipantForm() {
     }
   };
 
-  const submitDisabled = saving || !name.trim() || (!dob && !over25) || (!isYouthSelected && !email && !householdId) || (isYouthSelected && !parentEmail && !householdId) || (isYouthSelected && !!parentEmail && !parentName.trim());
+  const submitDisabled = saving || !name.trim() || (!dob && !over25) || (!isYouthSelected && !email && !householdId) || (isYouthSelected && !parentEmail && !householdId) || (isYouthSelected && !!parentEmail && (!parentName.trim() || (!parentDob && !parentOver25)));
 
   return (
     <Container size="md" pb="md">
@@ -179,6 +184,25 @@ function NewParticipantForm() {
                     onChange={(e) => setParentName(e.currentTarget.value)}
                     placeholder="e.g. John Doe"
                     mt="sm"
+                  />
+                )}
+                {parentEmail && (
+                  <Checkbox
+                    label="Parent / guardian is over 25"
+                    checked={parentOver25}
+                    onChange={(e) => { setParentOver25(e.currentTarget.checked); if (e.currentTarget.checked) setParentDob(""); }}
+                    mt="sm"
+                  />
+                )}
+                {parentEmail && !parentOver25 && (
+                  <TextInput
+                    type="date"
+                    label="Parent / Guardian Date of Birth"
+                    description="Required in case this parent is not already in the system."
+                    value={parentDob}
+                    onChange={(e) => setParentDob(e.currentTarget.value)}
+                    mt="sm"
+                    maw={300}
                   />
                 )}
               </Paper>

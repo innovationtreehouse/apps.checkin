@@ -253,6 +253,8 @@ describe("membership-ops/participants/new page", () => {
     await screen.findByText("Student Detected");
     fireEvent.change(screen.getByLabelText(/Parent \/ Guardian Google Email/), { target: { value: "parent@example.com" } });
     fireEvent.change(screen.getByPlaceholderText("e.g. John Doe"), { target: { value: "Parent Name" } });
+    expect(screen.getByRole("button", { name: "Create Participant" })).toBeDisabled();
+    fireEvent.click(screen.getByLabelText("Parent / guardian is over 25"));
     expect(screen.queryByLabelText(/already a paid member/)).not.toBeInTheDocument();
 
     const submitBtn = screen.getByRole("button", { name: "Create Participant" });
@@ -265,7 +267,7 @@ describe("membership-ops/participants/new page", () => {
         expect.objectContaining({
           method: "POST",
           body: JSON.stringify({
-            name: "Kid Name", email: null, parentEmail: "parent@example.com", parentName: "Parent Name", dob: "2015-01-01", over25: false, householdId: null,
+            name: "Kid Name", email: null, parentEmail: "parent@example.com", parentName: "Parent Name", parentDob: null, parentOver25: true, dob: "2015-01-01", over25: false, householdId: null,
           }),
         }),
       ),

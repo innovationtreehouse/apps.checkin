@@ -279,6 +279,7 @@ describe('Admin Participants API Integration Tests', () => {
                     email: 'new-child-participants-test@example.com',
                     parentEmail: 'new-parent-participants-test@example.com',
                     parentName: 'New Parent',
+                    parentOver25: true,
                     dob: '2015-01-01'
                 })
             });
