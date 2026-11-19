@@ -123,6 +123,15 @@ describeDb("changing a bucket's org-level flag", () => {
     expect(await approvalOf(reimbursement.approvalId)).toMatchObject({ status: "pending" });
   });
 
+  it("an expense already in QuickBooks refuses the change to a program bucket, naming the expense", async () => {
+    const { id, approvalId } = await line({ state: "qb_pending", ownerId: 7, status: "approved" });
+    await db.expense.update({ where: { id }, data: { qbTxnId: "4242" } });
+
+    await expect(holdBucketLines(7, false, async () => {})).rejects.toMatchObject({ status: 409, message: `Expense ${id}: The expense is already in QuickBooks; correct it there` });
+
+    expect(await approvalOf(approvalId)).toMatchObject({ status: "approved", ownerId: 7 });
+  });
+
   it("a refused change keeps every approval as it was", async () => {
     const { approvalId } = await line({ state: "owner_approval", ownerId: 100, status: "pending" });
 

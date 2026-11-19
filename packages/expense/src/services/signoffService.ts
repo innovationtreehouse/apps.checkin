@@ -74,7 +74,12 @@ export async function holdBucketLines<T>(bucketId: number, orgLevel: boolean, ch
       throw new ServiceError(409, "A line entered this bucket while it was changing; try again");
     }
     const awaiting = await linesAwaitingBoardSeat(bucketId, tx);
-    for (const id of expenseIds) await deriveSystemApprovals(tx, SYSTEM_ACTOR, id, { bucketId, orgLevel });
+    for (const id of expenseIds) {
+      await deriveSystemApprovals(tx, SYSTEM_ACTOR, id, { bucketId, orgLevel }).catch((err: unknown) => {
+        if (err instanceof ServiceError) throw new ServiceError(err.status, `Expense ${id}: ${err.message}`);
+        throw err;
+      });
+    }
     return { result: await change(async () => awaiting), expenseIds };
   }, { timeout: 15_000 });
   for (const id of expenseIds) await checkApprovalAutoTransition(id, SYSTEM_ACTOR);
