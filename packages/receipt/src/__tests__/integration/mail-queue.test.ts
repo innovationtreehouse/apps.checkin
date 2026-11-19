@@ -7,7 +7,7 @@ import { REFUSAL_NOTE_KEY } from "../../services/mailIntake";
 import { intakeMailedReceipt, receiptService } from "../../services/receiptService";
 import type { ReceiptLimits } from "../../lib/limits";
 import { describeDb } from "../helpers/db";
-import { actAs, ALICE, BOB, clearAll, configure, FINANCE, okOcr, stateOf, TEST_ORG_ID, textFile } from "../helpers/setup";
+import { actAs, ALICE, BOB, clearAll, configure, FINANCE, okOcr, stateOf, storeFile, TEST_ORG_ID, textFile } from "../helpers/setup";
 
 const PEOPLE: Record<string, typeof ALICE> = { "alice@example.org": ALICE, "bob@example.org": BOB, "finn@example.org": FINANCE };
 
@@ -23,7 +23,7 @@ async function holdItem(status = "held", senderAddress = "stranger@elsewhere.tes
       senderAddress,
       status,
       dmarcVerdict,
-      fileBlob: new Uint8Array(Buffer.from(`%PDF-1.4 held ${n} ${Date.now()}`)),
+      fileKey: await storeFile(Buffer.from(`%PDF-1.4 held ${n} ${Date.now()}`)),
       mimeType: "application/pdf",
     },
   });

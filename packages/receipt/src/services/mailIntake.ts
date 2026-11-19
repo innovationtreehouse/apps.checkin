@@ -10,7 +10,7 @@ import { isNoticeMessageId, type MailboxReader, type MailMessage, type MailPart,
 import type { Prisma } from "../generated/prisma/client";
 import { ACCEPTED_TYPES, checkReceiptFile, MAX_FILE_BYTES } from "../lib/file-type";
 import { deleteStoredFiles, newMailItemFileKey, readStoredFile } from "../lib/fileStorage";
-import { fileStore, storesNewFilesInBucket, getOrgId, mailbox, ports } from "../runtime";
+import { fileStore, getOrgId, mailbox, ports } from "../runtime";
 import { discardBodyCopy, intakeMailedReceipt } from "./receiptService";
 import { OrgUploadLimitError } from "../lib/insert";
 import { byDeadline, DeadlineError } from "../lib/deadline";
@@ -462,7 +462,7 @@ export async function intakeDeferred(
     async (tx, receiptId) => {
       const claimed = await tx.receiptMailItem.updateMany({
         where: { id: item.id, status: "deferred" },
-        data: { status: "assigned", receiptId, fileBlob: null, fileKey: null },
+        data: { status: "assigned", receiptId, fileKey: null },
       });
       if (claimed.count !== 1) throw new ServiceError(409, "This mail item was already handled. Refresh and retry.");
       await onClaim?.(tx, receiptId);
@@ -775,12 +775,12 @@ async function readLeased(
           chargeHold(file, bytes);
         }
         const status = sender ? "deferred" : "held";
-        const fileKey = storesNewFilesInBucket() ? newMailItemFileKey() : null;
-        if (fileKey) await byDeadline(deadlines.read, "the file store", () => fileStore().put(fileKey, bytes, key.attachmentHash));
+        const fileKey = newMailItemFileKey();
+        await byDeadline(deadlines.read, "the file store", () => fileStore().put(fileKey, bytes, key.attachmentHash));
         try {
           await db.$transaction([
             db.receiptMailItem.create({
-              data: { ...item, status, holdReason: sender ? null : holdReason, fileBlob: fileKey ? null : new Uint8Array(bytes), fileKey, fileSize: bytes.length, mimeType: check.mimeType },
+              data: { ...item, status, holdReason: sender ? null : holdReason, fileKey, fileSize: bytes.length, mimeType: check.mimeType },
             }),
             oweReply(db),
           ]);
@@ -822,9 +822,9 @@ async function readLeased(
           await db.receiptMailItem.updateMany({ where: { id: row.id, status: "deferred" }, data: { status: "held", holdReason: "not_a_submitter" satisfies HoldReason } });
           continue;
         }
-        const item = await db.receiptMailItem.findFirst({ where: { id: row.id, status: "deferred" }, select: { id: true, fileBlob: true, fileKey: true, mimeType: true } });
+        const item = await db.receiptMailItem.findFirst({ where: { id: row.id, status: "deferred" }, select: { id: true, fileKey: true, mimeType: true } });
         if (!item?.mimeType) continue;
-        const fileBlob = await readStoredFile(item, deadlines.read);
+        const fileBlob = await readStoredFile(item.fileKey, deadlines.read);
         if (!fileBlob) {
           counts.failed++;
           console.error("[receipt] a deferred mail item's file is missing");
