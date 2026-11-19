@@ -52,6 +52,17 @@ describe("walkMergeChain", () => {
         expect(resolution).toEqual({ kind: "broken", lastId: 2 });
         expect(ids(chain)).toEqual([1, 2]);
     });
+
+    it("follows the archive again when the survivor is merged away between the reads", async () => {
+        archive = { 1: 2 };
+        rows = new Set([5]);
+        (prisma.personMerge.findUnique as jest.Mock)
+            .mockResolvedValueOnce({ toId: 2 })
+            .mockResolvedValueOnce({ toId: 5 });
+        const { resolution, chain } = await walkMergeChain(1);
+        expect(resolution).toMatchObject({ kind: "live", person: { id: 5 }, hops: 1 });
+        expect(ids(chain)).toEqual([1, 2, 5]);
+    });
 });
 
 describe("resolveMergedPerson", () => {
