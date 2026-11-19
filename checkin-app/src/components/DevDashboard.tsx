@@ -139,7 +139,11 @@ export default function DevDashboard() {
         setConfirmingReset(false);
         startTransition(async () => {
             try {
-                await resetDevInstance();
+                const res = await resetDevInstance();
+                if (!res.ok) {
+                    flash(`⚠️ Reset reseeded the databases but could not link QuickBooks and Shopify: ${res.error}`);
+                    return;
+                }
                 // The reset reseeds participants with fresh ids, so the current minted session is
                 // now stale — sign out and let the user re-pick a persona against the clean DB.
                 flash("✅ Reset complete — signing out to re-pick a persona…");

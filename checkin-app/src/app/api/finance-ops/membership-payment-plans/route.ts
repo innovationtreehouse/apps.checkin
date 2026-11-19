@@ -46,10 +46,14 @@ export const GET = handler('GET /api/finance-ops/membership-payment-plans', asyn
         },
     });
 
+    // Board and finance hold everyones:internal here, so BoardSettings stays this one column.
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
     // A request with no stored year predates the column and is approved for the live year.
     const liveYear = liveMembershipYear(settings?.orgMembershipYearBoundary, new Date());
-    return { OrgMembershipProcess: requests.map((r) => ({ ...r, paymentPlanYear: r.paymentPlanYear ?? liveYear })) };
+    return {
+        OrgMembershipProcess: requests.map((r) => ({ ...r, paymentPlanYear: r.paymentPlanYear ?? liveYear })),
+        BoardSettings: settings,
+    };
 });
 
 export const POST = withAuth(

@@ -363,16 +363,10 @@ export async function seedBaseline(prisma: Db): Promise<void> {
     }
 
     // 4. Tools & certifications
-    const tableSaw = await prisma.tool.upsert({
-        where: { id: 1 },
-        update: { name: "Table Saw" },
-        create: { name: "Table Saw", safetyGuide: "https://example.com/table-saw-safety" },
-    });
-    const drillPress = await prisma.tool.upsert({
-        where: { id: 2 },
-        update: { name: "Drill Press" },
-        create: { name: "Drill Press", safetyGuide: "https://example.com/drill-press-safety" },
-    });
+    const tool = async (name: string, safetyGuide: string) =>
+        (await prisma.tool.findFirst({ where: { name } })) ?? prisma.tool.create({ data: { name, safetyGuide } });
+    const tableSaw = await tool("Table Saw", "https://example.com/table-saw-safety");
+    const drillPress = await tool("Drill Press", "https://example.com/drill-press-safety");
     await prisma.toolStatus.upsert({
         where: { personId_toolId: { personId: certifiedAdult.id, toolId: tableSaw.id } },
         update: { level: "CERTIFIED" },

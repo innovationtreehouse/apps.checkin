@@ -41,11 +41,15 @@
  * its queue state and what it waits on, each booking side's state, when its QuickBooks
  * post first failed and the last error (both null until it fails), and, for a gift
  * without a receipt, its inventory source key, when its goods loaded, and why
- * the last load failed. All but the three donor fields are `internal`.
+ * the last load failed, and whether it met a capital threshold at accept (null
+ * until then). All but the three donor fields are `internal`.
  *
  * InKindGiftDetailLineView — one line of that gift: item and its description,
- * quantity, the value finance set, the value ops suggested, and the QuickBooks
- * account finance set by hand (null until then), all `internal`.
+ * quantity, the value finance set, the value ops suggested, the QuickBooks
+ * account finance set by hand (null until then), and finance's capital decision:
+ * whether the line is capital, its depreciation years, its owning bucket, when
+ * it was decided, and when the expense register issued its asset numbers (each
+ * null until set), all `internal`. It carries no donor and no decider.
  *
  * InKindGiftEventView — one row of that gift's history: the event, who acted
  * and when, and its payload, all `internal`. In-kind event payloads carry
@@ -165,6 +169,7 @@ export const classifications = {
     inventorySourceKey: "internal",
     inventoryLoadedAt: "internal",
     inventoryLoadFailureReason: "internal",
+    capitalReviewNeeded: "internal",
   },
   InKindGiftDetailLineView: {
     id: "internal",
@@ -174,6 +179,11 @@ export const classifications = {
     valueCents: "internal",
     suggestedValueCents: "internal",
     quickBooksAccountId: "internal",
+    isCapital: "internal",
+    depreciationYears: "internal",
+    capitalBucketId: "internal",
+    capitalDecidedAt: "internal",
+    registeredAt: "internal",
   },
   InKindGiftEventView: {
     id: "internal",

@@ -56,21 +56,28 @@ it('selects only the process, membership and household columns the queue shows',
     expect(Object.keys(select.orgMembership.select.household.select).sort()).toEqual(['householdMembers', 'id', 'name']);
 });
 
+it('ships only the year cutoff from BoardSettings', async () => {
+    const body = await (await GET(req())).json();
+
+    expect(prismaMock.boardSettings.findUnique.mock.calls[0][0].select).toEqual({ orgMembershipYearBoundary: true });
+    expect(body.BoardSettings).toEqual({ orgMembershipYearBoundary: '2000-09-01T00:00:00.000Z' });
+});
+
 it('ships finance the household-lead contact', async () => {
     const body = await (await GET(req())).json();
 
-    expect(body[0].orgMembership.household.householdMembers[0].email).toBe('lead@example.com');
+    expect(body.OrgMembershipProcess[0].orgMembership.household.householdMembers[0].email).toBe('lead@example.com');
 });
 
 it('ships the year each request is for; one with no stored year gets the live year', async () => {
     jest.useFakeTimers({ now: new Date('2027-07-15T00:00:00Z'), doNotFake: ['nextTick', 'queueMicrotask', 'setImmediate', 'setTimeout'] });
     const stored = await (await GET(req())).json();
-    expect(stored[0].paymentPlanYear).toBe(2027);
+    expect(stored.OrgMembershipProcess[0].paymentPlanYear).toBe(2027);
 
     prismaMock.orgMembershipProcess.findMany.mockResolvedValueOnce([
         { id: 8, stageEnteredAt: new Date('2026-10-01T00:00:00Z'), scholarshipRequestKind: null, paymentPlanYear: null, orgMembership: null },
     ]);
     const fallback = await (await GET(req())).json();
-    expect(fallback[0].paymentPlanYear).toBe(2027);
+    expect(fallback.OrgMembershipProcess[0].paymentPlanYear).toBe(2027);
     jest.useRealTimers();
 });

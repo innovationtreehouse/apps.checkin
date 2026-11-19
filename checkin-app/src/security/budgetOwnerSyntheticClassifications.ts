@@ -38,7 +38,11 @@
  * reads it (GET and POST /api/finance/quickbooks/catch-up): the lane asked for,
  * its `status` (POST: started or queued; GET: running, queued, stranded or
  * idle), the lane holding the slot (`heldBy`) and until when (`until`), and the
- * lanes waiting (`queued`). Lane names and times only, every field `internal`.
+ * lanes waiting (`queued`), when a QuickBooks throttle pause ends
+ * (`pausedUntil`, null when none is in force), and each lane's last run
+ * (`lastRuns`, keyed by lane: when and how it ended, entries created and
+ * matched, the cap that stopped it, throttle yields in a row). Lane names,
+ * times and counts only, every field `internal`.
  *
  * Hand-authored, not generated: this describes an API response, not a table.
  * This is a security-boundary artifact — changes ship in a boundary PR.
@@ -85,6 +89,8 @@ export const classifications = {
     heldBy: "internal",
     until: "internal",
     queued: "internal",
+    pausedUntil: "internal",
+    lastRuns: "internal",
   },
 } as const;
 

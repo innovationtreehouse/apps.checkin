@@ -211,7 +211,7 @@ function emptyTallies() {
         programParticipants: { migrated: 0, left: 0 },
         programVolunteers: { migrated: 0, deduped: 0 },
         rsvps: { migrated: 0, deduped: 0, left: 0 },
-        toolStatuses: { migrated: 0, left: 0 },
+        toolStatuses: { migrated: 0, deduped: 0, left: 0 },
         bgAttestations: { migrated: 0, left: 0 },
         corporationLeads: { migrated: 0, deduped: 0 },
         corporationMembers: { migrated: 0, deduped: 0 },
@@ -396,9 +396,9 @@ async function moveVisits(tx: TxClient, keepId: number, mergeId: number, moved: 
 
 /**
  * 4. Move join tables. Decision-bearing collisions (ProgramParticipant,
- * ToolStatus, future RSVP) were refused under the locks; a `left` row means one
- * raced in since, and refuseLeftRows refuses the merge. Bare-join collisions
- * (ProgramVolunteer) auto-dedupe.
+ * different-level ToolStatus, future RSVP) were refused under the locks; a `left`
+ * row means one raced in since, and refuseLeftRows refuses the merge. Bare-join
+ * collisions (ProgramVolunteer) and same-level ToolStatus pairs auto-dedupe.
  */
 async function moveJoinTables(tx: TxClient, keep: KeepSubject, merge: MergeSubject, moved: Tallies): Promise<void> {
     const keepId = keep.id;
@@ -449,12 +449,20 @@ async function moveJoinTables(tx: TxClient, keep: KeepSubject, merge: MergeSubje
     }
 
     for (const tool of merge.toolStatuses) {
-        if (!keep.toolStatuses.find(k => k.toolId === tool.toolId)) {
+        const kept = keep.toolStatuses.find(k => k.toolId === tool.toolId);
+        if (!kept) {
             await tx.toolStatus.update({
                 where: { personId_toolId: { toolId: tool.toolId, personId: mergeId } },
                 data: { personId: keepId },
             });
             moved.toolStatuses.migrated++;
+        } else if (kept.level === tool.level) {
+            // Matching on level too: a level changed since the read is left, and refuses the merge.
+            const { count } = await tx.toolStatus.deleteMany({
+                where: { toolId: tool.toolId, personId: mergeId, level: tool.level },
+            });
+            if (count > 0) moved.toolStatuses.deduped++;
+            else moved.toolStatuses.left++;
         } else {
             moved.toolStatuses.left++;
         }
