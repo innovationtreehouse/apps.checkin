@@ -5,6 +5,7 @@ import { Alert, Anchor, Badge, Button, Checkbox, Group, NumberInput, Paper, Sele
 import { act, api, useLoad, when } from "../components/api";
 import { formatGtinDisplay } from "@checkin/gtin";
 import { dollarsToCents, formatCents } from "@checkin/money";
+import { freeLines } from "../lib/in-kind-value";
 import { LINE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
 import { InactivePickWarning, LoadError, QuickBooksListsRefresh } from "@checkin/component-ui";
 import { IN_KIND_STATE as STATE, type InKindSource, type WaitingOn } from "../components/inKindState";
@@ -78,18 +79,19 @@ function useRoles(): { isFinance: boolean; isBoard: boolean } {
   return { isFinance: viewer?.isFinance === true, isBoard: viewer?.isBoardMember === true };
 }
 
-/** The accept screen for one gift: warnings, values for a gift without a receipt or a receipt line priced at $0, bucket, and the three outcomes. */
+/** The accept screen for one gift: warnings, values for a gift without a receipt or a receipt line that comes to $0, bucket, and the three outcomes. */
 function DecidePanel({ item, buckets, onDone }: { item: QueueItem; buckets: Bucket[]; onDone: () => void }) {
   const accepted = item.outcome === "ACCEPTED";
+  // A gift without a receipt takes a value on every line; a receipt gift only on a line that comes to $0 on it.
+  const free = item.source === "receipt" && item.receiptTotalCents !== null ? freeLines(item.lines.map((l) => l.valueCents ?? 0), item.receiptTotalCents) : [];
+  const takesValue = (l: QueueLine) => !accepted && (item.source === "manual" || free[item.lines.indexOf(l)] === true);
   const [bucketId, setBucketId] = useState<string | null>(item.budgetOwnerId === null ? null : String(item.budgetOwnerId));
   const [values, setValues] = useState<Record<number, number | "">>(
-    Object.fromEntries(item.lines.map((l) => [l.id, !l.valueCents && l.suggestedValueCents === null ? "" : (l.valueCents ?? l.suggestedValueCents ?? 0) / 100])),
+    Object.fromEntries(item.lines.map((l) => [l.id, item.source === "receipt" || (l.valueCents === null && l.suggestedValueCents === null) ? "" : (l.valueCents ?? l.suggestedValueCents ?? 0) / 100])),
   );
   const [attested, setAttested] = useState(false);
   const [goodsConfirmed, setGoodsConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
-  // A gift without a receipt takes a value on every line; a receipt gift only on a line it priced at $0.
-  const takesValue = (l: QueueLine) => !accepted && (item.source === "manual" || l.valueCents === 0);
   const valued = item.lines.filter(takesValue);
   const needsValues = valued.length > 0;
   // The large-value warning's threshold, as the server reads it; until it loads, the server's flag stands.

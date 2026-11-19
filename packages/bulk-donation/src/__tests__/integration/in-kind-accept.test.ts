@@ -242,7 +242,7 @@ describeDb("accepting", () => {
 
   it("refuses to accept a receipt gift while a line it priced at $0 has no value, naming the line", async () => {
     const { id } = await freeLineGift();
-    await expect(inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE))).rejects.toMatchObject({ status: 400, message: expect.stringContaining("Line 2 (Free bits) is $0 on the receipt") });
+    await expect(inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE))).rejects.toMatchObject({ status: 400, message: expect.stringContaining("Line 2 (Free bits) comes to $0 on the receipt") });
     expect(await db.inKindDonation.findUniqueOrThrow({ where: { id } })).toMatchObject({ decisionOutcome: null });
   });
 
@@ -271,13 +271,16 @@ describeDb("accepting", () => {
     expect((await db.inKindDonationLine.findMany({ where: { donationId: id } })).map((l) => l.financeValueCents)).toEqual([null, null]);
   });
 
-  it("refuses a priced receipt line that comes to $0 after the receipt's discount, naming the line", async () => {
-    const { id, free } = await freeLineGift(0);
+  it("a line a 100% coupon made free is a free line: finance values it, and the refusal names it until then", async () => {
+    const { id, priced, free } = await freeLineGift(0);
     await expect(inKindAcceptService.decide("receipt", id, { ...ACCEPT, lineValues: [{ lineId: free, valueCents: 500 }] }, by(FINANCE))).rejects.toMatchObject({
       status: 400,
-      message: expect.stringContaining("Line 1 (Drill) comes to $0"),
+      message: expect.stringContaining("Line 1 (Drill) comes to $0 on the receipt"),
     });
-    expect((await db.inKindDonationLine.findMany({ where: { donationId: id } })).map((l) => l.financeValueCents)).toEqual([null, null]);
+    const lineValues = [{ lineId: priced, valueCents: 1500 }, { lineId: free, valueCents: 500 }];
+    await expect(inKindAcceptService.decide("receipt", id, { ...ACCEPT, lineValues }, by(FINANCE))).resolves.toMatchObject({ totalValueCents: 2000 });
+    const lines = await db.inKindDonationLine.findMany({ where: { donationId: id }, orderBy: { lineNumber: "asc" } });
+    expect(lines.map((l) => [l.valueCents, l.financeValueCents])).toEqual([[2500, 1500], [0, 500]]);
   });
 
   it("finance sets every line's value on a gift without a receipt; ops' value stays a suggestion", async () => {

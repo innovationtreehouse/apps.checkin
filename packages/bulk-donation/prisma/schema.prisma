@@ -518,7 +518,7 @@ model InKindDonationLine {
   /// @sensitivity:internal
   /// @financeMark
   valueCents        Int            @map("value_cents")
-  /// The value finance set when accepting a line the receipt priced at $0; null on every other line.
+  /// The value finance set when accepting a line that comes to $0 on the receipt; null on every other line.
   /// @sensitivity:internal
   /// @financeMark
   financeValueCents Int?           @map("finance_value_cents")

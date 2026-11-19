@@ -12,7 +12,7 @@ import { MAX_IN_KIND_LINES, MAX_IN_KIND_LINE_VALUE_CENTS, MAX_IN_KIND_TOTAL_CENT
 import { CapitalReviewLineSchema, type CapitalReviewLine } from "../contract";
 import { ServiceError, kindOf, toHttpError, type FailureKind } from "@checkin/component-kit";
 import { formatGtinDisplay } from "@checkin/gtin";
-import { allocateCents } from "@checkin/money";
+import { freeLines, spreadToTotal } from "../lib/in-kind-value";
 
 export type InKindSource = "receipt" | "manual";
 export type InKindOutcome = "ACCEPTED" | "REFUSED" | "RETURNED";
@@ -158,19 +158,9 @@ async function loadGift(handle: DbOrTx, orgId: string, source: InKindSource, id:
 }
 
 /**
- * Spreads the difference between `totalCents` and the values (a receipt's tax, shipping or
- * discount) across them by value, so they sum to the total exactly.
- */
-export function spreadToTotal(values: number[], totalCents: number): number[] {
-  if (values.length === 0) return [];
-  const extra = allocateCents(totalCents - values.reduce((a, b) => a + b, 0), values);
-  return values.map((v, i) => v + extra[i]);
-}
-
-/**
  * Each line's booked value. A receipt's total spreads over its lines by the receipt's prices, so
- * its tax, shipping and discount land on the priced lines; a line priced at $0 then adds the value
- * finance set. The lines sum to `totalValueCents`.
+ * its tax, shipping and discount land on the priced lines; a line that comes to $0 then adds the
+ * value finance set. The lines sum to `totalValueCents`.
  */
 function bookedLineCents(g: Gift): number[] {
   const values = g.lines.map((l) => l.valueCents ?? 0);
@@ -539,18 +529,14 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
       if (source === "receipt") {
         if (gift.receiptTotalCents === null) throw new ServiceError(409, "This gift has no value yet; resolve the receipt total first");
         const values = new Map((input.lineValues ?? []).map((v) => [v.lineId, v.valueCents]));
-        const free = gift.lines.filter((l) => l.valueCents === 0);
+        const isFree = freeLines(gift.lines.map((l) => l.valueCents ?? 0), gift.receiptTotalCents);
+        const free = gift.lines.filter((_, i) => isFree[i]);
         if ([...values.keys()].some((lineId) => !free.some((l) => l.id === lineId))) {
-          throw new ServiceError(400, "A gift with a receipt keeps the receipt's values; only a line it priced at $0 takes a value");
+          throw new ServiceError(400, "A gift with a receipt keeps the receipt's values; only a line that comes to $0 on it takes a value");
         }
         const unvalued = free.find((l) => !values.has(l.id));
-        if (unvalued) throw new ServiceError(400, `${lineName(gift, unvalued)} is $0 on the receipt; set its value to accept the gift`);
+        if (unvalued) throw new ServiceError(400, `${lineName(gift, unvalued)} comes to $0 on the receipt; set its value to accept the gift`);
         lines = gift.lines.map((l) => ({ ...l, financeValueCents: values.get(l.id) ?? null }));
-        const booked = bookedLineCents({ ...gift, lines });
-        const nothing = lines.find((_, i) => booked[i] <= 0);
-        if (nothing) {
-          throw new ServiceError(400, `${lineName(gift, nothing)} comes to $0 after the receipt's discount, and the app books no $0 line; refuse or return the gift`);
-        }
         for (const [lineId, financeValueCents] of values) await tx.inKindDonationLine.update({ where: { id: lineId }, data: { financeValueCents } });
       } else {
         const values = new Map((input.lineValues ?? []).map((v) => [v.lineId, v.valueCents]));
