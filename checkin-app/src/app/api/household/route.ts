@@ -21,6 +21,7 @@ import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/arch
 import { isYouth } from "@/lib/time";
 import { noteStands } from "@/lib/membership/notRenewing";
 import { bgStatus } from "@/lib/membership/bgStatus";
+import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 
 export const GET = handler('GET /api/household', async ({ auth }) => {
     if (auth.type !== 'session') throw unauthorized();
@@ -50,6 +51,7 @@ export const GET = handler('GET /api/household', async ({ auth }) => {
     const settings = user.household
         ? await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true, bgRecheckMonths: true } })
         : null;
+    const bgTracked = !!settings?.orgMembershipYearBoundary && isRecheckPolicySet(settings.bgRecheckMonths);
     const membership = user.household?.orgMembership;
     // A note for a year that has passed means nothing, so the page never sees it.
     if (membership?.notRenewingYear != null && !noteStands(membership.notRenewingYear, settings?.orgMembershipYearBoundary, now)) {
@@ -65,9 +67,11 @@ export const GET = handler('GET /api/household', async ({ auth }) => {
                 household: _household, lastBackgroundCheck, canAccessStaging, ...peer
             } = m;
             const isAdult = m.isDeclaredAdult || (!!m.dateOfBirth && !isYouth(m.dateOfBirth));
-            // Only the computed status leaves, never the check date; the stripper keeps it for the person and their lead.
-            const status = isAdult && settings ? bgStatus(lastBackgroundCheck, settings, now) : null;
-            return { ...peer, emailLocked: isEmailLocked(m), ...(status && { bgStatus: { personId: m.id, status } }) };
+            // Every adult carries bgStatus while the policy is set, so its presence says nothing about a check
+            // on file. Only the computed status leaves, never the date; the stripper keeps it for the person and their lead.
+            if (!settings || !bgTracked || !isAdult) return { ...peer, emailLocked: isEmailLocked(m) };
+            const status = bgStatus(lastBackgroundCheck, settings, now);
+            return { ...peer, emailLocked: isEmailLocked(m), bgStatus: { personId: m.id, ...(status && { status }) } };
         }),
     };
     // Where the locked-email help text points members to change it.

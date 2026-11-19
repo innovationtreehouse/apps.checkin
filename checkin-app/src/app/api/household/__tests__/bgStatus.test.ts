@@ -21,12 +21,13 @@ jest.mock("@/lib/prisma", () => ({
 
 const NOW = new Date(Date.UTC(2026, 2, 15, 18));
 const SETTINGS = { orgMembershipYearBoundary: new Date(Date.UTC(2000, 8, 1)), bgRecheckMonths: 12 };
-const LEAD = 1, ADULT = 2, YOUTH = 3, SIBLING = 4;
-const CHECKS: Record<number, Date> = {
+const LEAD = 1, ADULT = 2, YOUTH = 3, SIBLING = 4, UNCHECKED = 5;
+const CHECKS: Record<number, Date | null> = {
     [LEAD]: new Date(Date.UTC(2025, 9, 1)),
     [ADULT]: new Date(Date.UTC(2024, 5, 1)),
     [YOUTH]: new Date(Date.UTC(2025, 9, 1)),
     [SIBLING]: new Date(Date.UTC(2025, 5, 1)),
+    [UNCHECKED]: null,
 };
 const noCounts = { roles: 0, programsLed: 0, programVolunteers: 0, bgAttestationsAsSubject: 0, personBgProcesses: 0, toolStatuses: 0 };
 const member = (id: number, adult: boolean) => ({
@@ -39,10 +40,10 @@ const member = (id: number, adult: boolean) => ({
 async function get(callerId: number, settings: object | null = SETTINGS) {
     (getServerSession as jest.Mock).mockResolvedValue({ user: { id: callerId, householdId: 10 } });
     (prisma.person.findUnique as jest.Mock).mockImplementation(({ select }) => select.household
-        ? Promise.resolve({ household: { id: 10, name: "H", householdMembers: [member(LEAD, true), member(ADULT, true), member(YOUTH, false), member(SIBLING, true)], orgMembership: null } })
+        ? Promise.resolve({ household: { id: 10, name: "H", householdMembers: [member(LEAD, true), member(ADULT, true), member(YOUTH, false), member(SIBLING, true), member(UNCHECKED, true)], orgMembership: null } })
         // householdLeadship, for the caller context.
         : Promise.resolve({ householdId: 10, isHouseholdLead: callerId === LEAD, isSysadmin: false }));
-    (prisma.person.findMany as jest.Mock).mockResolvedValue([LEAD, ADULT, YOUTH, SIBLING].map((id) => ({ id })));
+    (prisma.person.findMany as jest.Mock).mockResolvedValue([LEAD, ADULT, YOUTH, SIBLING, UNCHECKED].map((id) => ({ id })));
     (prisma.boardSettings.findUnique as jest.Mock).mockResolvedValue(settings);
     const res = await GET(new Request("http://localhost/api/household") as unknown as NextRequest);
     const body = await res.json();
@@ -65,6 +66,7 @@ describe("GET /api/household bgStatus", () => {
             [ADULT]: { personId: ADULT, status: "EXPIRED" },
             [YOUTH]: undefined,
             [SIBLING]: { personId: SIBLING, status: "EXPIRES_BEFORE_NEXT_YEAR" },
+            [UNCHECKED]: { personId: UNCHECKED },
         });
     });
 
@@ -74,6 +76,8 @@ describe("GET /api/household bgStatus", () => {
             [ADULT]: { personId: ADULT },
             [YOUTH]: undefined,
             [SIBLING]: { personId: SIBLING, status: "EXPIRES_BEFORE_NEXT_YEAR" },
+            // The same shape as an adult with a check, so a sibling cannot tell who has one on file.
+            [UNCHECKED]: { personId: UNCHECKED },
         });
     });
 
@@ -81,7 +85,7 @@ describe("GET /api/household bgStatus", () => {
         for (const caller of [LEAD, SIBLING]) {
             const { raw } = await get(caller);
             expect(raw).not.toContain("lastBackgroundCheck");
-            for (const d of Object.values(CHECKS)) expect(raw).not.toContain(d.toISOString().slice(0, 10));
+            for (const d of Object.values(CHECKS)) if (d) expect(raw).not.toContain(d.toISOString().slice(0, 10));
         }
     });
 
