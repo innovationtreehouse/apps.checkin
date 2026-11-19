@@ -4,6 +4,7 @@
 import prisma from "@/lib/prisma";
 import { DELETE } from "@/app/api/programs/[id]/participants/route";
 
+jest.mock("@/lib/prisma", () => ({ __esModule: true, default: { program: { findUnique: jest.fn() } } }));
 jest.mock("@/lib/auth", () => ({
     withAuth: (_o: unknown, h: (req: unknown, auth: unknown, ctx: unknown) => unknown) =>
         (req: unknown, ctx: unknown) => h(req, { type: "session", user: { id: 1, isBoardMember: true, isSysadmin: false } }, ctx),
