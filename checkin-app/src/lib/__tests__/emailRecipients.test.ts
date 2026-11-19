@@ -33,7 +33,7 @@ describe("emailBoardMembers delivered count", () => {
     });
 
     it("is zero, and logged, when no Board member has an address", async () => {
-        const logged = jest.spyOn(console, "error").mockImplementation();
+        const logged = jest.spyOn(console, "warn").mockImplementation();
         findPeople.mockResolvedValue([]);
         await expect(emailBoardMembers("board.unpaidClaims", CTX, "label")).resolves.toBe(0);
         expect(logged).toHaveBeenCalledWith("label", "no Board member has an email address on file");

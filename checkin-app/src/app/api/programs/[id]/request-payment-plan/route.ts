@@ -167,7 +167,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
                 // recorded and the board finalizes it. Nothing is required of them.
                 warning = "Your scholarship / payment-plan request has been recorded and the board notified. A seat-reservation step needs a board member to finish it — nothing more is required from you.";
             } else {
-                // A concurrent request placed the hold after this one's -1 failed: that request recorded it.
+                // A concurrent request placed the hold after this one's -1 failed: that request recorded it, and its kind stands.
                 const row = await prisma.programParticipant.findUnique({
                     where: { programId_personId: { programId, personId: participantId } },
                     select: { status: true, isPaymentPlanRequested: true, inventoryHeldAt: true },
