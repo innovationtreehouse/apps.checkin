@@ -92,12 +92,12 @@ function satisfy(m: Match, row: Record<string, unknown>, ctx: CallerContext): vo
     // would rightly demand a route-specific test rather than this generic guard.
 }
 
-// Scopes referenced by a token list (public/member carry none).
+// Scopes referenced by a token list (the flat tokens carry none).
 function scopesInTokens(tokens: readonly Token[]): Set<string> {
     const out = new Set<string>();
     for (const tok of tokens) {
         const parsed = parseToken(tok);
-        if (parsed && parsed !== 'public' && parsed !== 'member') out.add(parsed.scope);
+        if (parsed !== null && typeof parsed === 'object') out.add(parsed.scope);
     }
     return out;
 }

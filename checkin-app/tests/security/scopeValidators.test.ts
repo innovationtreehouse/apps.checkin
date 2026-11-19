@@ -150,7 +150,7 @@ describe('coverage-only bindings stay inert', () => {
         const returning = views.filter(v => (v.models as readonly string[]).includes(model));
         const scoped = returning.flatMap(v =>
             v.orderedView.flatMap(([, tokens]) => tokens)
-                .filter(t => t !== 'public' && t !== 'member' && !t.startsWith('everyones:'))
+                .filter(t => t !== 'public' && t !== 'member' && t !== 'roster' && !t.startsWith('everyones:'))
                 .map(t => `${v.endpoint}: ${t}`),
         );
         expect(scoped).toEqual([]);

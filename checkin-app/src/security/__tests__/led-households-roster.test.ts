@@ -30,10 +30,11 @@ const LED_ONLY: CtxNeeds = {
     activeVisitors: false,
     ledHouseholdMembers: true,
     householdMembers: false,
+    enrolledPrograms: false,
 };
 
 // The view the registry grants both /api/attendance/manual/[id] verbs.
-const VIEW: Token[] = ['their_own:personal', 'led_households:personal', 'member', 'public'];
+const VIEW: Token[] = ['their_own:personal', 'led_households:personal', 'public'];
 
 // Household 2 = people 5, 6, 9. The row under test belongs to 9, so the caller
 // (5) is never the owner — their_own can't mask what led_households grants.
