@@ -95,6 +95,9 @@ export const buildIntakePayload = (v: FormValues) => ({
     .map((c) => ({ id: c.id, name: c.name, email: c.email || null, dob: c.dob || null, allergies: c.allergies || null })),
 });
 
+const AGE_REQUIRED = "Enter a date of birth, or tick \"Individual is over 25\".";
+const CHILD_AGES_REQUIRED = "Enter a date of birth for each child.";
+
 // Required-field check for submit, mirroring the server's rules so the user
 // gets instant red-box feedback on every environment (no round-trip needed).
 export function validateIntake(v: FormValues): Record<string, string> {
@@ -108,6 +111,9 @@ export function validateIntake(v: FormValues): Record<string, string> {
   else if (!isValidPhone(v.emPhone)) errs.emPhone = PHONE_ERROR;
   if (v.emEmail.trim() && !isValidEmail(v.emEmail)) errs.emEmail = "That email address doesn't look right.";
   if (!v.primary.name.trim()) errs.primaryName = "Your name is required.";
+  if (!v.primary.over25 && !v.primary.dob) errs.primaryAge = AGE_REQUIRED;
+  if (v.hasSecondary && !v.secondary.over25 && !v.secondary.dob) errs.secondaryAge = AGE_REQUIRED;
+  if (v.children.some((c) => c.name.trim() && !c.dob && !c.over25)) errs.childAges = CHILD_AGES_REQUIRED;
   return errs;
 }
 
@@ -119,6 +125,7 @@ export function mapServerFields(fields?: string[]): Record<string, string> {
   for (const f of fields ?? []) {
     if (f === "address") errs.address = "Home address is required.";
     else if (f === "primaryName") errs.primaryName = "Your name is required.";
+    else if (f === "memberAges") errs.childAges = "Everyone in the household needs an age on file: a date of birth, or over 25 for an adult.";
     else if (f === "emergencyContact") {
       errs.emName = "Add an emergency contact who isn't in your household.";
       errs.emPhone = "Add an emergency contact who isn't in your household.";

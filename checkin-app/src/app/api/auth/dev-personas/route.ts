@@ -115,6 +115,7 @@ export async function POST() {
     const person = await createParticipantWithHousehold({
         name: `New Family ${n}`,
         email: `newfamily+${n}@example.com`,
+        ageStepPending: true,
     });
     return NextResponse.json({ personaId: person.id });
 }

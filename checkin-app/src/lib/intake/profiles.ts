@@ -13,7 +13,9 @@
  * the offending inputs unchanged.
  */
 
-export type FieldKey = "address" | "emergencyContact" | "primaryName" | "participantDob";
+import { ageBand } from "@/lib/programAge";
+
+export type FieldKey = "address" | "emergencyContact" | "primaryName" | "participantDob" | "memberAges";
 
 export interface IntakeProfile {
     context: string;
@@ -37,6 +39,8 @@ export interface IntakeSubmitContext {
     primaryName?: string | null;
     /** Enrollees whose DOB gates an age-restricted program (program-first-time). */
     participants?: { dob?: string | Date | null; ageGated?: boolean }[];
+    /** Every household member, whose age must be on file (membership-initial). */
+    members?: { dateOfBirth: Date | null; isDeclaredAdult: boolean }[];
 }
 
 /**
@@ -67,13 +71,17 @@ const FIELD_RULES: Record<FieldKey, { label: string; isSatisfied: (ctx: IntakeSu
         // Only age-gated enrollees need a DOB; no age-gated enrollees → satisfied.
         isSatisfied: (ctx) => (ctx.participants ?? []).filter((p) => p.ageGated).every((p) => !!p.dob),
     },
+    memberAges: {
+        label: "an age for everyone in the household (a date of birth for each child; a date of birth or \"over 25\" for each adult)",
+        isSatisfied: (ctx) => (ctx.members ?? []).every((m) => ageBand(m) !== "unknown"),
+    },
 };
 
 export const INTAKE_PROFILES = {
     "membership-initial": {
         context: "membership-initial",
-        shown: ["address", "emergencyContact", "primaryName"],
-        requiredAtSubmit: ["address", "emergencyContact", "primaryName"],
+        shown: ["address", "emergencyContact", "primaryName", "memberAges"],
+        requiredAtSubmit: ["address", "emergencyContact", "primaryName", "memberAges"],
     },
     "program-first-time": {
         context: "program-first-time",

@@ -7,7 +7,7 @@ import { MEMBERSHIP_OPS_ADMIN_ROLES } from '@/lib/nav/sections/membershipOps';
 import { AdminPageHeader } from '@/components/admin/AdminPageHeader';
 import { EntityPicker } from '@/components/admin/EntityPicker';
 import { isYouth } from '@/lib/time';
-import { Button, Card, Container, Paper, Stack, Text, TextInput } from '@mantine/core';
+import { Button, Card, Checkbox, Container, Paper, Stack, Text, TextInput } from '@mantine/core';
 import { errorMessage, HttpError, LoadError, showError, showSuccess } from '@checkin/component-ui';
 import { api, useLoad } from '@/lib/api';
 
@@ -35,7 +35,10 @@ function NewParticipantForm() {
   const [email, setEmail] = useState("");
   const [parentEmail, setParentEmail] = useState("");
   const [parentName, setParentName] = useState("");
+  const [parentDob, setParentDob] = useState("");
+  const [parentOver25, setParentOver25] = useState(false);
   const [dob, setDob] = useState("");
+  const [over25, setOver25] = useState(false);
 
   // Household selection state (the EntityPicker owns the transient query/results)
   const [householdId, setHouseholdId] = useState("");
@@ -78,7 +81,9 @@ function NewParticipantForm() {
           email: email || null,
           parentEmail: isYouthSelected ? parentEmail : null,
           parentName: isYouthSelected && parentEmail ? parentName : null,
-          dob: dob || null,
+          ...(isYouthSelected && parentEmail && { parentDob: parentOver25 ? null : (parentDob || null), parentOver25 }),
+          dob: over25 ? null : (dob || null),
+          over25,
           householdId: householdId ? parseInt(householdId) : null
         })
       });
@@ -88,7 +93,10 @@ function NewParticipantForm() {
       setEmail("");
       setParentEmail("");
       setParentName("");
+      setParentDob("");
+      setParentOver25(false);
       setDob("");
+      setOver25(false);
       setHouseholdId("");
       setHouseholdSearch("");
     } catch (err) {
@@ -99,7 +107,7 @@ function NewParticipantForm() {
     }
   };
 
-  const submitDisabled = saving || !name.trim() || (!isYouthSelected && !email && !householdId) || (isYouthSelected && !parentEmail && !householdId) || (isYouthSelected && !!parentEmail && !parentName.trim());
+  const submitDisabled = saving || !name.trim() || (!dob && !over25) || (!isYouthSelected && !email && !householdId) || (isYouthSelected && !parentEmail && !householdId) || (isYouthSelected && !!parentEmail && (!parentName.trim() || (!parentDob && !parentOver25)));
 
   return (
     <Container size="md" pb="md">
@@ -129,14 +137,22 @@ function NewParticipantForm() {
               placeholder="e.g. Jane Doe"
             />
 
-            <TextInput
-              type="date"
-              label="Date of Birth"
-              description={isYouthSelected ? 'Student Detected' : undefined}
-              value={dob}
-              onChange={(e) => setDob(e.currentTarget.value)}
-              maw={300}
+            <Checkbox
+              label="Individual is over 25"
+              checked={over25}
+              onChange={(e) => { setOver25(e.currentTarget.checked); if (e.currentTarget.checked) setDob(""); }}
             />
+
+            {!over25 && (
+              <TextInput
+                type="date"
+                label="Date of Birth"
+                description={isYouthSelected ? 'Student Detected' : undefined}
+                value={dob}
+                onChange={(e) => setDob(e.currentTarget.value)}
+                maw={300}
+              />
+            )}
 
             <TextInput
               type="email"
@@ -168,6 +184,25 @@ function NewParticipantForm() {
                     onChange={(e) => setParentName(e.currentTarget.value)}
                     placeholder="e.g. John Doe"
                     mt="sm"
+                  />
+                )}
+                {parentEmail && (
+                  <Checkbox
+                    label="Parent / guardian is over 25"
+                    checked={parentOver25}
+                    onChange={(e) => { setParentOver25(e.currentTarget.checked); if (e.currentTarget.checked) setParentDob(""); }}
+                    mt="sm"
+                  />
+                )}
+                {parentEmail && !parentOver25 && (
+                  <TextInput
+                    type="date"
+                    label="Parent / Guardian Date of Birth"
+                    description="Required in case this parent is not already in the system."
+                    value={parentDob}
+                    onChange={(e) => setParentDob(e.currentTarget.value)}
+                    mt="sm"
+                    maw={300}
                   />
                 )}
               </Paper>
