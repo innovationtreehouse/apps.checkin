@@ -106,7 +106,7 @@ async function applicationCheckStarted(process: { orgMembershipId: number | null
  * a human review (no still-valid prior background check), it runs in PARALLEL
  * while the applicant pays, and only the final ACTIVE flip waits on it.
  *
- * An application already paid (an order recorded while it was BLOCKED) owes no
+ * An application already paid (an order recorded while BLOCKED or unsigned) owes no
  * payment, so it goes to PENDING_BG_CLEARANCE instead, and `settleHouseholdBg`
  * converges it: activates it, or holds it and raises a refunded order.
  *

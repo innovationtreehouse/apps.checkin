@@ -65,7 +65,7 @@ describe('Nav todo-counts API', () => {
             data: { householdId: householdAId, status: 'ACTIVE' },
         });
         orgMembershipId = membership.id;
-        await prisma.orgMembershipProcess.create({ data: { orgMembershipId, kind: 'INITIAL', status: 'PENDING_PAYMENT' } });
+        await prisma.orgMembershipProcess.create({ data: { orgMembershipId, kind: 'INITIAL', status: 'PENDING_PAYMENT', contractSignedAt: new Date() } });
         // Reviewer-owned state, kind RENEWAL (not INITIAL) so it doesn't collide with
         // the membership_one_inflight_initial partial unique index above — a
         // membership can hold only one in-flight INITIAL process at a time.
@@ -344,7 +344,7 @@ describe('Nav todo-counts API', () => {
         // membership_one_inflight_renewal each allow only one per membership.
         const reviewerMembership = await prisma.orgMembership.create({ data: { householdId: householdBId, status: 'ACTIVE' } });
         const reviewerProcs = await prisma.$transaction([
-            prisma.orgMembershipProcess.create({ data: { orgMembershipId: reviewerMembership.id, kind: 'INITIAL', status: 'PENDING_BG_REVIEW' } }),
+            prisma.orgMembershipProcess.create({ data: { orgMembershipId: reviewerMembership.id, kind: 'INITIAL', status: 'PENDING_BG_REVIEW', contractSignedAt: new Date() } }),
             prisma.orgMembershipProcess.create({ data: { orgMembershipId: reviewerMembership.id, kind: 'RENEWAL', status: 'RENEWAL_PENDING_BG' } }),
         ]);
         expect(await boardMembershipCount()).toBe(before);

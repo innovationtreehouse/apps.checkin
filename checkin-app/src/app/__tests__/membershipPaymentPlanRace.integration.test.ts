@@ -99,6 +99,7 @@ describe('payment-plan approve and deny race', () => {
                 orgMembershipId: membership.id,
                 kind: 'INITIAL',
                 status: 'PENDING_PAYMENT',
+                contractSignedAt: new Date(),
                 bgClearedAt: bgCleared ? new Date() : null,
                 isPaymentPlanRequested: true,
             },

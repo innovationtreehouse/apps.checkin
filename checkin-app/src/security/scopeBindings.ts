@@ -57,6 +57,12 @@ export const SCOPE_BINDINGS = {
     // row-scoped (see ROW_SCOPE_KEY) so a row without its key fails closed.
     HouseholdPageHousehold: { their_households: { field: 'id', eqCtx: 'householdId' } },
     HouseholdPeer: { their_households: { field: 'householdId', eqCtx: 'householdId' } },
+    // A peer's background-check status: the person themself and a lead of their
+    // household. No their_households binding, so a non-lead sibling holds nothing.
+    HouseholdPeerBgStatus: {
+        their_own: { field: 'personId', eqCtx: 'selfId' },
+        led_households: { field: 'personId', inCtx: 'ledHouseholdMemberIds' },
+    },
     EmergencyContactWarning: { their_households: { field: 'householdId', eqCtx: 'householdId' } },
     Program: {
         their_program_participants: { field: 'id', inCtx: ['programsLed', 'programsCoreVolIn'] },

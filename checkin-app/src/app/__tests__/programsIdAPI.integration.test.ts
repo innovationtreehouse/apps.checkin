@@ -13,6 +13,9 @@ import prisma from '@/lib/prisma';
 import { snapshotBoardSettings, setMembershipYearBoundary } from '@/test-helpers/boardSettings';
 import { getServerSession } from 'next-auth/next';
 import { ORG_DOMAIN } from '@/lib/config';
+
+// A new leader here meets the membership and clearance requirements; leaderEligibility has its own tests.
+jest.mock('@/lib/programs/leaderEligibility', () => ({ ...jest.requireActual('@/lib/programs/leaderEligibility'), programLeaderIneligibility: jest.fn().mockResolvedValue(null) }));
 // Mock NextAuth
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
@@ -744,8 +747,21 @@ describe('Individual Program API Integration Tests', () => {
              expect(data.warning).toBeUndefined();
         });
 
-        it('should allow admins to update a program', async () => {
+        it('refuses a sysadmin who is not on the Board ending a program before its end date (403)', async () => {
              (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+
+             const req = new Request(`http://localhost:4000/api/programs/${publicProgramId}`, {
+                 method: 'PATCH',
+                 body: JSON.stringify({ phase: 'FINISHED' })
+             });
+             const res = await PATCH(req as unknown as import("next/server").NextRequest, createParams(publicProgramId) as unknown as never);
+             expect(res.status).toBe(403);
+             expect((await res.json()).error).toMatch(/Only the Board/);
+             expect((await prisma.program.findUnique({ where: { id: publicProgramId } }))?.phase).toBe('RUNNING');
+        });
+
+        it('lets the Board end a program before its end date', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true, isBoardMember: true } });
 
              const req = new Request(`http://localhost:4000/api/programs/${publicProgramId}`, {
                  method: 'PATCH',
@@ -918,7 +934,7 @@ describe('Individual Program API Integration Tests', () => {
             const res = await PATCH(req as unknown as import("next/server").NextRequest, createParams(finishedProgramId) as unknown as never);
             expect(res.status).toBe(409);
             const data = await res.json();
-            expect(data.error).toMatch(/already finished/i);
+            expect(data.error).toMatch(/has ended/i);
 
             const after = await prisma.program.findUnique({ where: { id: finishedProgramId } });
             expect(after?.phase).toBe('FINISHED');

@@ -23,6 +23,7 @@ jest.mock('@/lib/prisma', () => {
     const mock = {
         person: {
             findUnique: jest.fn(),
+            count: jest.fn().mockResolvedValue(1),
         },
         personMerge: {
             findUnique: jest.fn().mockResolvedValue(null),
@@ -905,6 +906,27 @@ describe('POST /api/scan', () => {
             expect(processCloseRequest).not.toHaveBeenCalled();
             expect(processCheckout).toHaveBeenCalled();
             expect(body).toMatchObject({ type: 'checkout', facilityClosed: false, closeRefused: true, message: 'Only a keyholder can close the building.' });
+        });
+
+        it('refuses a live close from a keyholder whose household is denied, like a non-keyholder', async () => {
+            (prisma.person.count as jest.Mock).mockResolvedValueOnce(0);
+            (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
+            (prisma.visit.findFirst as jest.Mock).mockResolvedValue({ id: 7 });
+            (processCheckout as jest.Mock).mockResolvedValue(checkedOut());
+
+            const res = await POST(kioskReq({ intent: 'OUT', close: 'alone', clientEventId: 'evt-dk', protocolVersion: 6 }));
+            const body = await res.json();
+
+            expect(processCloseRequest).not.toHaveBeenCalled();
+            expect(body).toMatchObject({ type: 'checkout', facilityClosed: false, closeRefused: true });
+        });
+
+        it('flags a late close from a keyholder whose household is denied', async () => {
+            (prisma.person.count as jest.Mock).mockResolvedValueOnce(0);
+
+            await POST(kioskReq({ intent: 'OUT', close: 'confirmed', clientEventId: 'evt-dr', scannedAt: new Date().toISOString(), replay: true }));
+
+            expect(prisma.rawBadgeLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ reviewReason: 'close_not_keyholder' }) });
         });
 
         it('re-drives recorded closes when a resend is deduped', async () => {

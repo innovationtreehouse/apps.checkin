@@ -18,6 +18,8 @@ export interface EntityPickerProps<T extends { id: number }> {
   getOptionLabel: (option: T) => string;
   /** Optional secondary line for an option (string or custom node, e.g. an age badge). */
   getOptionDescription?: (option: T) => React.ReactNode;
+  /** Why an option can't be chosen; a reason shows the option disabled with it. */
+  getOptionDisabledReason?: (option: T) => string | null;
   label?: string;
   description?: string;
   placeholder?: string;
@@ -42,6 +44,7 @@ export function EntityPicker<T extends { id: number }>({
   selectedLabel,
   getOptionLabel,
   getOptionDescription,
+  getOptionDisabledReason,
   label,
   description,
   placeholder,
@@ -118,23 +121,29 @@ export function EntityPicker<T extends { id: number }>({
           right={0}
           style={{ zIndex: 10, maxHeight: 250, overflowY: "auto" }}
         >
-          {results.map((option) => (
-            <Box
-              key={option.id}
-              p="sm"
-              style={{ cursor: "pointer", borderBottom: "1px solid var(--mantine-color-default-border)" }}
-              onClick={() => {
-                setQuery("");
-                setResults([]);
-                onSelect(option);
-              }}
-            >
-              <Text fw={500}>{getOptionLabel(option)}</Text>
-              {getOptionDescription && (
-                <Text size="xs" c="dimmed" component="div">{getOptionDescription(option)}</Text>
-              )}
-            </Box>
-          ))}
+          {results.map((option) => {
+            const disabledReason = getOptionDisabledReason?.(option) ?? null;
+            return (
+              <Box
+                key={option.id}
+                p="sm"
+                aria-disabled={disabledReason ? true : undefined}
+                style={{ cursor: disabledReason ? "not-allowed" : "pointer", opacity: disabledReason ? 0.6 : 1, borderBottom: "1px solid var(--mantine-color-default-border)" }}
+                onClick={() => {
+                  if (disabledReason) return;
+                  setQuery("");
+                  setResults([]);
+                  onSelect(option);
+                }}
+              >
+                <Text fw={500}>{getOptionLabel(option)}</Text>
+                {getOptionDescription && (
+                  <Text size="xs" c="dimmed" component="div">{getOptionDescription(option)}</Text>
+                )}
+                {disabledReason && <Text size="xs" c="red">{disabledReason}</Text>}
+              </Box>
+            );
+          })}
         </Paper>
       )}
     </Box>

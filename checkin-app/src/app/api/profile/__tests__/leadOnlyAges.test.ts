@@ -10,7 +10,7 @@ import type { NextRequest } from "next/server";
 import { getServerSession } from "next-auth/next";
 import prisma from "@/lib/prisma";
 import { PATCH } from "@/app/api/profile/route";
-import { AGE_LEAD_ONLY_REFUSAL } from "@/lib/person/adultDob";
+import { AGE_LEAD_ONLY_REFUSAL, AGE_REQUIRED_REFUSAL } from "@/lib/person/adultDob";
 
 jest.mock("next-auth/next", () => ({ getServerSession: jest.fn() }));
 jest.mock("@/lib/auth-options", () => ({ authOptions: {} }));
@@ -84,5 +84,26 @@ describe("PATCH /api/profile — own age", () => {
         findMe.mockResolvedValue({ dateOfBirth: null, isDeclaredAdult: false, householdId: null });
         expect((await patch({ dob: "1990-01-01", over25: false })).status).toBe(200);
         expect(findLeads).not.toHaveBeenCalled();
+    });
+});
+
+describe("PATCH /api/profile — an age must stay on file", () => {
+    beforeEach(() => findLeads.mockResolvedValue([{ id: ME }]));
+
+    it("refuses clearing an over-25 declaration on file, writing nothing", async () => {
+        findMe.mockResolvedValue({ dateOfBirth: null, isDeclaredAdult: true, householdId: 10 });
+        const res = await patch({ dob: "", over25: false });
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toBe(AGE_REQUIRED_REFUSAL);
+        expect(update).not.toHaveBeenCalled();
+    });
+
+    it("lets someone with no age on file save with the age still blank", async () => {
+        expect((await patch({ name: "Me", dob: null, over25: false })).status).toBe(200);
+    });
+
+    it("lets someone with no age on file declare over 25", async () => {
+        expect((await patch({ dob: null, over25: true })).status).toBe(200);
+        expect(update.mock.calls[0][0].data.isDeclaredAdult).toBe(true);
     });
 });

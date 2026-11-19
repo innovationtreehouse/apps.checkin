@@ -133,9 +133,17 @@ async function computeFullAttendance(kiosk: boolean) {
             : isYouth(v.person.dateOfBirth, { unknownIs: 'youth' }));
     }
 
-    const keyholderVisits = activeVisits.filter(v => v.person.isKeyholder);
+    // The flag alone is not authority: only those the shared keyholder filter keeps count.
+    const flagged = activeVisits.filter(v => v.person.isKeyholder).map(v => v.person.id);
+    const keyholderIds = new Set(flagged.length === 0 ? [] : (await prisma.person.findMany({
+        where: { id: { in: flagged }, ...LIVE_KEYHOLDER },
+        select: { id: true },
+    })).map(p => p.id));
+    const isKeyholder = (person: { id: number }) => keyholderIds.has(person.id);
+
+    const keyholderVisits = activeVisits.filter(v => isKeyholder(v.person));
     const youthVisits = activeVisits.filter(v => youthMap.get(v.id)!);
-    const volunteerVisits = activeVisits.filter(v => !v.person.isKeyholder && !youthMap.get(v.id));
+    const volunteerVisits = activeVisits.filter(v => !isKeyholder(v.person) && !youthMap.get(v.id));
 
     const counts = {
         keyholders: keyholderVisits.length,
@@ -156,7 +164,7 @@ async function computeFullAttendance(kiosk: boolean) {
     // adult-only room costs this poll no extra queries, as processCheckin does.
     // Keyholder visits that could cover any present non-keyholder's arrival
     // window. Asked only when a non-keyholder is present.
-    const otherArrivals = activeVisits.filter(v => !v.person.isKeyholder).map(v => v.arrivedAt.getTime());
+    const otherArrivals = activeVisits.filter(v => !isKeyholder(v.person)).map(v => v.arrivedAt.getTime());
     const keyholderCover: Span[] = otherArrivals.length === 0 ? [] : await prisma.visit.findMany({
         where: {
             ...LIVE_VISIT,
@@ -166,8 +174,8 @@ async function computeFullAttendance(kiosk: boolean) {
         },
         select: { arrivedAt: true, departedAt: true },
     });
-    const noKeyholder = (isKeyholder: boolean, arrivedAt: Date) =>
-        !isKeyholder && visitHadNoKeyholder(arrivedAt, keyholderCover);
+    const noKeyholder = (keyholder: boolean, arrivedAt: Date) =>
+        !keyholder && visitHadNoKeyholder(arrivedAt, keyholderCover);
 
     // A keyholder check-in scanned by the latest close but delivered after it
     // ran is one that close should have ended, so it does not reopen the
@@ -206,11 +214,11 @@ async function computeFullAttendance(kiosk: boolean) {
             return {
                 id: v.id,
                 arrivedAt: v.arrivedAt,
-                noKeyholder: noKeyholder(person.isKeyholder, v.arrivedAt),
+                noKeyholder: noKeyholder(isKeyholder(person), v.arrivedAt),
                 participant: {
                     id: person.id,
                     name: kioskLabels.get(person.id) || null,
-                    isKeyholder: person.isKeyholder,
+                    isKeyholder: isKeyholder(person),
                     // The kiosk splits the board into keyholder/volunteer/youth
                     // columns. It gets the classification, not the birth date.
                     isYouth: youthMap.get(v.id)!,
@@ -221,12 +229,12 @@ async function computeFullAttendance(kiosk: boolean) {
 
         return {
             ...v,
-            noKeyholder: noKeyholder(person.isKeyholder, v.arrivedAt),
+            noKeyholder: noKeyholder(isKeyholder(person), v.arrivedAt),
             participant: {
                 id: person.id,
                 name: displayName,
                 nickname: person.nickname,
-                isKeyholder: person.isKeyholder,
+                isKeyholder: isKeyholder(person),
                 isYouth: youthMap.get(v.id)!,
                 dateOfBirth: person.dateOfBirth,
                 householdId: person.householdId,

@@ -69,7 +69,7 @@ beforeEach(async () => {
 async function fillToCeiling(): Promise<void> {
   await db.receiptMailItem.createMany({
     data: Array.from({ length: MAIL_HELD_CEILING }, (_, i) => ({
-      orgId: TEST_ORG_ID, gmailMessageId: `old${i}`, attachmentHash: `h${i}`, receivedAt: new Date(), senderAddress: "x@example.org", status: "held", mimeType: "application/pdf", fileBlob: new Uint8Array([1]), dmarcVerdict: "pass",
+      orgId: TEST_ORG_ID, gmailMessageId: `old${i}`, attachmentHash: `h${i}`, receivedAt: new Date(), senderAddress: "x@example.org", status: "held", mimeType: "application/pdf", fileKey: `mail-items/old${i}`, dmarcVerdict: "pass",
     })),
   });
 }

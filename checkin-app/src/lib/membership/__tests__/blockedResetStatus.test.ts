@@ -3,7 +3,8 @@
  */
 /**
  * blockedResetStatus: the step a lifted block returns an application to. A paid
- * household application never goes back to a pay step.
+ * household application never goes back to a pay step, and an unsigned one never
+ * passes the agreement step.
  */
 import { blockedResetStatus } from '@/lib/membership/review';
 
@@ -18,9 +19,17 @@ describe('blockedResetStatus', () => {
     it.each([
         ['check started', true],
         ['check not started', false],
-    ])('holds a paid application at PENDING_BG_CLEARANCE, %s', (_label, checkStarted) => {
+    ])('holds a paid, signed application at PENDING_BG_CLEARANCE, %s', (_label, checkStarted) => {
         expect(blockedResetStatus({ kind: 'INITIAL', paidAt: paid, contractSignedAt: signed }, checkStarted)).toBe('PENDING_BG_CLEARANCE');
         expect(blockedResetStatus({ kind: 'RENEWAL', paidAt: paid, contractSignedAt: signed }, checkStarted)).toBe('PENDING_BG_CLEARANCE');
+    });
+
+    it.each([
+        ['check started', true],
+        ['check not started', false],
+    ])('sends a paid, unsigned application back to the agreement step, %s', (_label, checkStarted) => {
+        expect(blockedResetStatus({ kind: 'INITIAL', paidAt: paid, contractSignedAt: null }, checkStarted)).toBe('PENDING_EXTERNAL_ACTION');
+        expect(blockedResetStatus({ kind: 'RENEWAL', paidAt: paid, contractSignedAt: null }, checkStarted)).toBe('PENDING_EXTERNAL_ACTION');
     });
 
     it('sends an unpaid application back to the external step when its check is not started or it is unsigned', () => {

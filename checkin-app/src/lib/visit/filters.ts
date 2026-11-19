@@ -1,4 +1,5 @@
-import type { Prisma } from "@/generated/prisma/client";
+import type { Person, Prisma } from "@/generated/prisma/client";
+import type { DbClient } from "@/lib/db-client";
 
 /**
  * A live (non-tombstoned) Visit. A deleted visit keeps its row (deletedAt +
@@ -12,11 +13,21 @@ export const LIVE_VISIT: Prisma.VisitWhereInput = { deletedAt: null };
 
 /**
  * A keyholder: the one person filter every "is a keyholder in the building"
- * question uses. The flag is read on every query, so a grant or revoke takes
- * effect on the next read: no visit is touched. Drift guard:
+ * question uses. A denied household holds no authority and a revoked one has lost
+ * its facility privileges, so neither's keyholder is one. Read on every query, so
+ * a grant, revoke or denial takes effect on the next read: no visit is touched.
+ * Drift guard:
  * src/__tests__/keyholderFilterDriftGuard.test.ts.
  */
-export const LIVE_KEYHOLDER: Prisma.PersonWhereInput = { isKeyholder: true };
+export const LIVE_KEYHOLDER: Prisma.PersonWhereInput = {
+    isKeyholder: true,
+    NOT: { household: { orgMembership: { status: { in: ["DENIED", "REVOKED"] } } } },
+};
+
+/** Whether this person acts as a keyholder: flagged, and {@link LIVE_KEYHOLDER} holds now. */
+export async function actsAsKeyholder(person: Pick<Person, "id" | "isKeyholder">, db: DbClient): Promise<boolean> {
+    return person.isKeyholder && (await db.person.count({ where: { id: person.id, ...LIVE_KEYHOLDER } })) > 0;
+}
 
 /** An open, live visit by a keyholder: the building is open while one exists. */
 export const KEYHOLDER_IN_BUILDING: Prisma.VisitWhereInput = { departedAt: null, ...LIVE_VISIT, person: LIVE_KEYHOLDER };

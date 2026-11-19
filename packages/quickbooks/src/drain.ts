@@ -7,6 +7,8 @@ export const MATCH_WINDOW_DAYS = 7;
 /** The widest match window a lane may set, and the reach of a read for an entry already linked, so narrowing never hides one. */
 export const MAX_MATCH_WINDOW_DAYS = 30;
 export const MAX_CREATES_PER_RUN = 25;
+/** The most entries one run of any lane may create, whatever its setting says; a stored setting above it reads as it. */
+export const MAX_CREATES_PER_RUN_CEILING = 100;
 export const MAX_CREATES_PER_DAY = 50;
 /** Failed posts before the drain stops retrying and hands the record to finance. */
 export const MAX_POST_ATTEMPTS = 5;
@@ -62,6 +64,16 @@ export function qbGate(date: string, close: CloseRead, onAt: Date | null, arrive
   return { closedThrough, mayCreate: book || (onAt !== null && arrivedAt > onAt) };
 }
 
+/**
+ * A run's hold on the host's posting slot. `renew` extends it before each record and before a
+ * throttle's retry, answering false once another run holds it; a run that yields to a second
+ * throttle sets `yielded` so the host queues the lane again.
+ */
+export interface PostingTurn {
+  renew(): Promise<boolean>;
+  yielded: boolean;
+}
+
 /** A post's outcome, with the fault codes when QuickBooks refused the record's create. */
 export type Posted<O extends string> = O | { outcome: O; refusedCodes: readonly string[] };
 
@@ -87,9 +99,11 @@ export interface DrainLane<R, O extends string> {
    * run tries the record again once the client's pause ends; the second ends the run.
    */
   throttled?: O;
+  /** The posting slot this run holds, when the host gave it one. */
+  turn?: PostingTurn;
   /** Entries already created today, for a lane held to a daily limit. */
   createdToday?: number;
-  /** Defaults to MAX_CREATES_PER_RUN. */
+  /** Defaults to MAX_CREATES_PER_RUN; held to MAX_CREATES_PER_RUN_CEILING. */
   maxCreatesPerRun?: number;
   /** Defaults to MAX_CREATES_PER_DAY. */
   maxCreatesPerDay?: number;
@@ -97,11 +111,11 @@ export interface DrainLane<R, O extends string> {
 
 /** Why a run ended before its last record, and how many records it left unposted. */
 export type DrainStop =
-  | { by: "day" | "count" | "failures" | "post" | "stopNow" | "throttled"; remaining: number }
+  | { by: "day" | "count" | "failures" | "post" | "stopNow" | "throttled" | "slot"; remaining: number }
   /** QuickBooks refused MAX_SAME_CODE_REFUSALS creates with `code`; `returned` of them went back to try again. */
   | { by: "refusals"; code: string; returned: number; remaining: number };
 
-/** Posts each record in order until a cap, a failure streak, a stopNow outcome, a second throttle, a repeated refusal code or the lane ends the run. */
+/** Posts each record in order until a cap, a failure streak, a stopNow outcome, a second throttle, a repeated refusal code, a lost slot or the lane ends the run. */
 export async function runDrain<R, O extends string>(rows: readonly R[], lane: DrainLane<R, O>): Promise<DrainStop | null> {
   let failuresInARow = 0;
   let throttled = false;
@@ -109,17 +123,22 @@ export async function runDrain<R, O extends string>(rows: readonly R[], lane: Dr
   for (const [i, row] of rows.entries()) {
     const remaining = rows.length - i;
     if (lane.createdToday !== undefined && lane.createdToday + lane.counts.posted >= (lane.maxCreatesPerDay ?? MAX_CREATES_PER_DAY)) return { by: "day", remaining };
-    if (lane.counts.posted >= (lane.maxCreatesPerRun ?? MAX_CREATES_PER_RUN)) return { by: "count", remaining };
+    if (lane.counts.posted >= Math.min(lane.maxCreatesPerRun ?? MAX_CREATES_PER_RUN, MAX_CREATES_PER_RUN_CEILING)) return { by: "count", remaining };
+    if (lane.turn && !(await lane.turn.renew())) return { by: "slot", remaining };
     let posted = await lane.post(row);
     if (posted === lane.throttled && !throttled) {
       throttled = true;
       lane.counts[posted]++;
+      if (lane.turn && !(await lane.turn.renew())) return { by: "slot", remaining };
       posted = await lane.post(row);
     }
     if (posted === null) return { by: "post", remaining };
     const outcome = typeof posted === "string" ? posted : posted.outcome;
     lane.counts[outcome]++;
-    if (outcome === lane.throttled) return { by: "throttled", remaining };
+    if (outcome === lane.throttled) {
+      if (lane.turn) lane.turn.yielded = true;
+      return { by: "throttled", remaining };
+    }
     if (typeof posted !== "string" && lane.unrefuse) {
       // Each code a refusal carries counts on its own: the first to reach the limit stops the run.
       for (const code of new Set(posted.refusedCodes)) {

@@ -13,6 +13,7 @@
 import { archiveBudgetOwner, createBudgetOwner, findQuickBooksClass, listQuickBooksClasses, LOCAL_QUICKBOOKS_CLASSES, setBucketOwner, setBucketTreasurer, updateBudgetOwner, OWN_HOUSEHOLD_MESSAGE } from '../budgetOwners';
 import { getQuickBooks } from '@/lib/quickbooks/client';
 import { holdBucketLines, unfinishedBucketUses as expenseUses } from '@checkin/expense';
+import { ServiceError } from '@checkin/component-kit';
 import { unfinishedBucketUses as donationUses } from '@checkin/bulk-donation';
 import { unfinishedBucketUses as incomeUses } from '@checkin/income';
 
@@ -187,7 +188,7 @@ describe('updateBudgetOwner: org-level and restore', () => {
 
     beforeEach(() => {
         awaiting.mockResolvedValue(0);
-        held.mockImplementation((_id: number, change: (count: () => Promise<number>) => Promise<unknown>) => change(awaiting));
+        held.mockImplementation((_id: number, _orgLevel: boolean, change: (count: () => Promise<number>) => Promise<unknown>) => change(awaiting));
         tx.budgetOwner.update.mockResolvedValue({ id: 7 });
     });
 
@@ -217,7 +218,7 @@ describe('updateBudgetOwner: org-level and restore', () => {
                 newData: { isOrgLevel: true },
             }),
         });
-        expect(held).not.toHaveBeenCalled();
+        expect(held).toHaveBeenCalledWith(7, true, expect.any(Function));
     });
 
     test('refuses to make an org-level bucket a program bucket while a Board seat is awaited, writing nothing', async () => {
@@ -227,7 +228,7 @@ describe('updateBudgetOwner: org-level and restore', () => {
             status: 409,
             message: 'Open expenses in this bucket still need a Board signature; have them signed or recorded first.',
         });
-        expect(held).toHaveBeenCalledWith(8, expect.any(Function));
+        expect(held).toHaveBeenCalledWith(8, false, expect.any(Function));
         expect(awaiting).toHaveBeenCalled();
         nothingWritten();
     });
@@ -246,7 +247,7 @@ describe('updateBudgetOwner: org-level and restore', () => {
 
     test('takes the line hold before the bucket row lock and keeps it until the flag change commits', async () => {
         const events: string[] = [];
-        held.mockImplementation(async (_id: number, change: (count: () => Promise<number>) => Promise<unknown>) => {
+        held.mockImplementation(async (_id: number, _orgLevel: boolean, change: (count: () => Promise<number>) => Promise<unknown>) => {
             events.push('hold');
             const bucket = await change(awaiting);
             events.push('release');
@@ -270,6 +271,15 @@ describe('updateBudgetOwner: org-level and restore', () => {
         await updateBudgetOwner(1, 9, { name: 'Renamed', isOrgLevel: false });
         expect(awaiting).not.toHaveBeenCalled();
         expect(tx.budgetOwner.update).toHaveBeenCalled();
+    });
+
+    test("answers the expense library's refusal of the flip with its status, writing nothing", async () => {
+        held.mockRejectedValue(new ServiceError(409, "The expense's capital review has opened; it cannot go back"));
+        await expect(updateBudgetOwner(1, 8, { isOrgLevel: false })).rejects.toMatchObject({
+            status: 409,
+            message: "The expense's capital review has opened; it cannot go back",
+        });
+        nothingWritten();
     });
 
     test('rejects a flag that is not a boolean', async () => {

@@ -134,11 +134,9 @@ export const classifications = {
         donorLastName: 'pii',
         donorCompanyName: 'pii',
         donorRecordedAt: 'internal',
-        withdrawnAfterMoneyAt: 'internal',
         uploadedByUserId: 'internal',
         donorReplacedAt: 'internal',
         replayConflictAt: 'internal',
-        withdrawalSettledAt: 'internal',
         decisionOutcome: 'internal',
         decidedByUserId: 'internal',
         decidedAt: 'internal',
@@ -204,6 +202,7 @@ export const classifications = {
         gtin13: 'internal',
         quantity: 'internal',
         valueCents: 'internal',
+        financeValueCents: 'internal',
         quickBooksAccountId: 'internal',
         isCapital: 'internal',
         depreciationYears: 'internal',
@@ -292,7 +291,7 @@ export const marks = {
     InKindDonation: ['receiptTotalCents', 'donorFirstName', 'donorLastName', 'donorCompanyName', 'uploadedByUserId'],
     ManualInKindDonation: ['donorFirstName', 'donorLastName', 'donorCompanyName'],
     ManualInKindDonationLine: ['valueCents', 'suggestedValueCents'],
-    InKindDonationLine: ['valueCents'],
+    InKindDonationLine: ['valueCents', 'financeValueCents'],
     InKindPosting: ['bookedTotalCents'],
 } as const;
 

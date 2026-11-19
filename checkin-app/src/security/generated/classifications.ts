@@ -28,6 +28,7 @@ export const classifications = {
         isBackgroundCheckReviewer: 'internal',
         canAccessStaging: 'internal',
         householdJoinPending: 'internal',
+        ageStepPending: 'internal',
     },
     PersonMailAlias: {
         id: 'internal',
@@ -588,6 +589,20 @@ export const classifications = {
         entries: 'internal',
         refreshedAt: 'internal',
     },
+    QuickBooksPostingSlot: {
+        orgId: 'internal',
+        holder: 'internal',
+        runId: 'internal',
+        until: 'internal',
+        lastRuns: 'internal',
+    },
+    QuickBooksPostingQueue: {
+        id: 'internal',
+        orgId: 'internal',
+        lane: 'internal',
+        requestedById: 'internal',
+        requestedAt: 'internal',
+    },
 } as const;
 
 export const relations = {
@@ -798,6 +813,10 @@ export const relations = {
     BooksMapRoleAccount: {
     },
     QuickBooksList: {
+    },
+    QuickBooksPostingSlot: {
+    },
+    QuickBooksPostingQueue: {
     },
 } as const;
 

@@ -24,6 +24,7 @@ const PROGRAM_NEEDS: CtxNeeds = {
     activeVisitors: false,
     ledHouseholdMembers: false,
     householdMembers: false,
+    enrolledPrograms: false,
 };
 
 function sessionAuth(id: number): Extract<AuthResult, { type: 'session' }> {

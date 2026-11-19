@@ -368,3 +368,30 @@ describe("approvalWaitsOnBoard", () => {
     expect(approvalWaitsOnBoard(input({ facts: { approvers: [], orgLevel: true }, state: "qb_pending" }))).toBe(false);
   });
 });
+
+describe("a card charge in an org-level bucket, approved by the system", () => {
+  const org = { kind: "card_charge" as const, approvers: [], orgLevel: true };
+  const systemApproved = { ...APPROVED, filled: [] as FilledSeat[] };
+
+  it("FINANCE signs the Treasurer seat; moving the line to another bucket goes under More", () => {
+    expect(acts({ ...systemApproved, caller: 3, facts: { ...org, approver: null } })).toEqual(["assign-bucket", "*sign:TREASURER"]);
+  });
+
+  it("a conflicted FINANCE holder may still move it, never as the act the line waits on", () => {
+    expect(acts({ ...systemApproved, caller: 3, facts: { ...org, approver: null, conflicted: [1, 3, 8] } })).toEqual(["assign-bucket"]);
+  });
+
+  it("no move once the Treasurer has signed, nor on a backfill", () => {
+    expect(acts({ ...systemApproved, caller: 3, facts: { ...org, approver: null }, filled: seats(["TREASURER", 3]) })).toEqual([]);
+    expect(acts({ ...systemApproved, caller: 3, facts: { ...org, approver: null }, backfill: true })).toEqual([]);
+  });
+
+  it("no exception is raised on it, by FINANCE or anyone", () => {
+    expect(acts({ caller: 3, facts: org, filled: [] })).not.toContain("raise-exception");
+    expect(acts({ caller: 5, facts: org, filled: [] })).not.toContain("raise-exception");
+  });
+
+  it("a line a Board member approved is not the system's, and does not move", () => {
+    expect(acts({ ...systemApproved, caller: 3, facts: { ...org }, approver: 5 })).toEqual(["*sign:TREASURER"]);
+  });
+});

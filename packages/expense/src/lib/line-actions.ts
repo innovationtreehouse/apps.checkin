@@ -1,6 +1,6 @@
 // What the caller may do on each expense line, and what the line waits on otherwise. Pure: the
 // page draws only these acts, so every eligibility rule an act depends on lives here.
-import { APPROVABLE_STATUSES as APPROVABLE, CLOSED_STATES, SEATS, approvalRefusal, approvesAsStandIn, availableSigners, blockedSeats, boardAuthorizationRefusal, signoffRefusal, takesBoardSeat, type FilledSeat, type Seat, type SignoffFacts } from "./signoff";
+import { APPROVABLE_STATUSES as APPROVABLE, CLOSED_STATES, SEATS, approvalRefusal, approvesAsStandIn, availableSigners, blockedSeats, boardAuthorizationRefusal, signoffRefusal, systemApproved, systemApproves, takesBoardSeat, type FilledSeat, type Seat, type SignoffFacts } from "./signoff";
 import type { LineHold } from "./signoff-facts";
 
 export type LineAct = "approve" | "sign" | "raise-exception" | "reject-exception" | "assign-bucket" | "resolve-bucket";
@@ -69,6 +69,11 @@ function maySign(input: LineActionsInput, seat: Seat, id: number): boolean {
   return signoffRefusal(input.facts, input.filled, seat, id) === null;
 }
 
+/** FINANCE may still move a system-approved line to another bucket: until its Treasurer seat is signed. */
+function movable({ expense, facts, filled }: LineActionsInput): boolean {
+  return !expense.backfill && !CLOSED_STATES.has(expense.state) && systemApproved(facts) && !filled.some((f) => f.seat === "TREASURER");
+}
+
 /** The acts the caller may take on one line, with the main act marked. */
 function callerActs(input: LineActionsInput): LineAction[] {
   const { caller, expense, approval, facts } = input;
@@ -81,13 +86,15 @@ function callerActs(input: LineActionsInput): LineAction[] {
     const deciding = expense.state === "owner_approval";
     const approver = facts.approvers.includes(caller.id);
     // Choosing a bucket is open to a conflicted FINANCE holder; raising or rejecting an exception is not.
-    if (!conflicted && deciding && !expense.reimburseeUnknown && APPROVABLE.has(approval.status) && !approval.bucketFinal && (approver || caller.isFinance)) add("raise-exception", { noteRequired: true });
+    const excepts = !systemApproves(facts.kind, facts.orgLevel) && !approval.bucketFinal && (approver || caller.isFinance);
+    if (!conflicted && deciding && !expense.reimburseeUnknown && APPROVABLE.has(approval.status) && excepts) add("raise-exception", { noteRequired: true });
     if (caller.isFinance && deciding && approval.status === "exception_raised") {
       add("assign-bucket");
       if (!conflicted) add("reject-exception", { noteRequired: true });
     }
     if (caller.isFinance && approval.status === "unknown") add("resolve-bucket");
     else if (caller.isFinance && expense.state === "assign_ownership" && approval.ownerId === null) add("assign-bucket");
+    else if (caller.isFinance && movable(input)) add("assign-bucket");
   }
 
   if (!expense.backfill && !CLOSED_STATES.has(expense.state) && !expense.reimburseeUnknown) {
@@ -118,7 +125,8 @@ function markPrimary(input: LineActionsInput, acts: LineAction[]): void {
   const standingIn = approvesAsStandIn(input.facts, input.caller.id) && others.some((id) => approvesAsApprover(input, id));
   const part = acts.find((a) => a.act === "sign" || (a.act === "approve" && !standingIn));
   if (part) part.primary = true;
-  else if (assign) assign.primary = true;
+  // Moving a system-approved line is a fix, never the part a line waits on.
+  else if (assign && !movable(input)) assign.primary = true;
 }
 
 /** The Treasurer seat goes to a Board member standing in: no FINANCE holder can sign it. */

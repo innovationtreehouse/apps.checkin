@@ -208,7 +208,7 @@ describe('membership payment plans — Past', () => {
         const hh = await prisma.household.create({ data: { name: `${label} ${seq++} ${TAG}` } });
         const m = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE', isVolunteerFamily: false } });
         return (await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', bgClearedAt: new Date(), scholarshipRequestKind: 'SCHOLARSHIP', ...data },
+            data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', contractSignedAt: new Date(), bgClearedAt: new Date(), scholarshipRequestKind: 'SCHOLARSHIP', ...data },
         })).id;
     }
 

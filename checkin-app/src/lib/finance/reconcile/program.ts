@@ -14,7 +14,7 @@ import { isPaid, isReversed } from "./orderStatus";
  *  payload or the mirror, so both paths judge the same thing. */
 export interface EntitlementOrder extends Pick<MirrorOrder, "financialStatus" | "cancelledAt" | "totalRefundedCents" | "legacyId"> {
     /** `quantity` is the original count; `currentQuantity` excludes units an edit or refund took off. */
-    lines: { variantId: string; quantity: number; currentQuantity: number }[];
+    lines: { variantId: string; quantity: number; currentQuantity: number; unitPriceCents?: number | null }[];
     /** The order's CheckMeIn_Checkout_Sig cart attribute (lib/programs/checkoutSignature). */
     checkoutSig: string | null;
 }

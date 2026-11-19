@@ -5,6 +5,7 @@
 import { db } from "../db";
 import type { MailAcknowledgement, MailPart, MailRefusal, ReceiptReplies } from "../contract";
 import type { Prisma } from "../generated/prisma/client";
+import { byDeadline, DeadlineError } from "../lib/deadline";
 import { withLivePeople } from "../lib/livePeople";
 import { getOrgId, replies } from "../runtime";
 
@@ -108,9 +109,11 @@ async function settle(id: number, allSent: boolean, hasReceipt: boolean): Promis
 /**
  * Send each owed acknowledgement whose message now has a receipt, and each unsent refusal notice. A row is claimed before any
  * send and stays claimed once a send succeeds, so nothing is sent twice; a send that reports
- * failure releases the claim for a later run. Does nothing while the host's mail out is unbound.
+ * failure releases the claim for a later run. A send abandoned at `deadline` (epoch ms) may still
+ * deliver, so its row stays claimed and is never sent again; past the deadline no send starts.
+ * Does nothing while the host's mail out is unbound.
  */
-export async function sendMailReplies(): Promise<{ sent: number; failed: number }> {
+export async function sendMailReplies(deadline = Infinity): Promise<{ sent: number; failed: number }> {
   const out = replies();
   const counts = { sent: 0, failed: 0 };
   if (!out) return counts;
@@ -132,6 +135,7 @@ export async function sendMailReplies(): Promise<{ sent: number; failed: number 
     LIMIT ${REPLY_CAP}`;
 
   for (const { id, receiptId } of owed) {
+    if (Date.now() >= deadline) break;
     const claimed = await db.receiptMailReply.updateMany({ where: { id, claimedAt: null, doneAt: null }, data: { claimedAt: new Date() } });
     if (claimed.count !== 1) continue;
     let sends: Send[];
@@ -146,12 +150,16 @@ export async function sendMailReplies(): Promise<{ sent: number; failed: number 
     }
 
     let allSent = true;
+    let abandoned = false;
     for (const { fields, ack } of sends) {
       let ok = false;
-      try {
-        ok = await out.send(ack);
-      } catch (err) {
-        console.error("[receipt] mail acknowledgement failed for one message:", err);
+      if (Date.now() < deadline) {
+        try {
+          ok = await byDeadline(deadline, "an acknowledgement send", () => out.send(ack));
+        } catch (err) {
+          if (err instanceof DeadlineError) abandoned = true;
+          console.error("[receipt] mail acknowledgement failed for one message:", err);
+        }
       }
       if (ok) {
         await db.receiptMailReply.update({ where: { id }, data: Object.fromEntries(fields.map((f) => [f, new Date()])) });
@@ -161,8 +169,8 @@ export async function sendMailReplies(): Promise<{ sent: number; failed: number 
         counts.failed++;
       }
     }
-    // ponytail: a crash between a send and its stamp leaves the row claimed and never retried; that is the at-most-once side.
-    await settle(id, allSent, receiptId !== null);
+    // ponytail: a crash between a send and its stamp, or an abandoned send, leaves the row claimed and never retried; that is the at-most-once side.
+    if (!abandoned) await settle(id, allSent, receiptId !== null);
   }
   return counts;
 }

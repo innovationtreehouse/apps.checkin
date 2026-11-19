@@ -1,4 +1,5 @@
 import { ServiceError, type StuckItem } from "@checkin/component-kit";
+import { THROTTLED_MESSAGE } from "@checkin/quickbooks";
 import { db } from "./db";
 import { getOrgId } from "./runtime";
 import { IN_KIND_HELD_STATES, postGift, type InKindPostOutcome } from "./lib/in-kind-poster";
@@ -12,6 +13,7 @@ const RETRY_ACTOR = { actorUserId: null, actorUsername: "system:problems-retry",
 const NOT_POSTED = "Retried, and it was not posted; the gift's page shows why";
 const RETRY_REFUSALS: Record<Exclude<InKindPostOutcome, "posted" | "matched"> | "not_ready" | "busy", [number, string]> = {
   failed: [503, "Retried, and it failed again; the gift's page shows why"],
+  throttled: [503, `Not retried: ${THROTTLED_MESSAGE}`],
   waiting: [409, NOT_POSTED],
   unbooked: [409, NOT_POSTED],
   needs_finance: [409, NOT_POSTED],

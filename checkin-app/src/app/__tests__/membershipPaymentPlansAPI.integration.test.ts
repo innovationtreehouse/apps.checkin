@@ -75,6 +75,7 @@ describe('Membership payment-plan routes', () => {
                 orgMembershipId: m.id,
                 kind: 'INITIAL',
                 status: opts.status ?? 'PENDING_PAYMENT',
+                contractSignedAt: new Date(),
                 bgClearedAt: new Date(),
                 isPaymentPlanRequested: opts.requested,
             },

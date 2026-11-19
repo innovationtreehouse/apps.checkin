@@ -58,9 +58,8 @@ export function tierIsGrantable(tier: Tier, tokens: readonly Token[]): boolean {
     if (tier === 'public') return tokens.includes('public');
     if (tier === 'member') return tokens.includes('member');
     for (const tok of tokens) {
-        if (tok === 'public' || tok === 'member') continue;
         const parsed = parseToken(tok);
-        if (parsed && parsed !== 'public' && parsed !== 'member' && parsed.tier === tier) return true;
+        if (parsed !== null && typeof parsed === 'object' && parsed.tier === tier) return true;
     }
     return false;
 }

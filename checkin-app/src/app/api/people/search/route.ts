@@ -8,6 +8,7 @@ import { rolesToFlags } from "@/lib/roles";
 import { searchId } from "@/lib/searchId";
 import { IN_LIVE_HOUSEHOLD } from "@/lib/household/archived";
 import { leaderAgeCutoff } from "@/lib/programAge";
+import { leaderIneligibilities } from "@/lib/programs/leaderEligibility";
 import { membershipYearCycle, membershipYearCycleForLabel } from "@/lib/membership/renewal";
 
 export const dynamic = 'force-dynamic';
@@ -224,6 +225,12 @@ export const GET = withAuth(
                 } : null,
             }));
 
+            // The leader pickers show why someone can't be named, through the server's own rule.
+            // Ops is denied check standing, so it never sees the reason.
+            if (adultsOnly && !opsOnly) {
+                const reasons = await leaderIneligibilities(prisma, formatted.map((p) => ({ id: p.id, isMember: p.isMember, lastBackgroundCheck: p.lastBackgroundCheck ?? null })));
+                return NextResponse.json({ people: formatted.map((p) => ({ ...p, leaderIneligibility: reasons.get(p.id) ?? null })) });
+            }
             return NextResponse.json({ people: formatted });
         } catch (error) {
             logger.error("Failed to fetch people:", error);

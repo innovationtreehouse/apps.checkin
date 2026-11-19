@@ -315,21 +315,8 @@ jobs:
           echo "Service is stable."
 
       - name: Smoke test the live app
-        run: |
-          set -euo pipefail
-          # A real probe of the DEPLOYED service (CI's boot/smoke checks the
-          # image, not production). The app answers 200 or an auth redirect;
-          # retries cover target registration + first boot after scale-up.
-          for i in $(seq 1 12); do
-            CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$APP_URL" || echo 000)
-            echo "attempt $i: $APP_URL -> HTTP $CODE"
-            case "$CODE" in
-              200|301|302|307|308) echo "Smoke OK."; exit 0 ;;
-            esac
-            sleep 10
-          done
-          echo "::error::Smoke test failed: $APP_URL never answered with 200/redirect"
-          exit 1
+        # Real probe of the deployed service; waits out the waker's holding page.
+        run: ./scripts/smoke-live-app.sh "$APP_URL"
 
       # s-read rides every prod release, in THIS job — after the app is live, on
       # the same released tag (still checked out) and the same already-assumed

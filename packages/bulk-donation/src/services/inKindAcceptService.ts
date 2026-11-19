@@ -12,7 +12,7 @@ import { MAX_IN_KIND_LINES, MAX_IN_KIND_LINE_VALUE_CENTS, MAX_IN_KIND_TOTAL_CENT
 import { CapitalReviewLineSchema, type CapitalReviewLine } from "../contract";
 import { ServiceError, kindOf, toHttpError, type FailureKind } from "@checkin/component-kit";
 import { formatGtinDisplay } from "@checkin/gtin";
-import { allocateCents } from "@checkin/money";
+import { freeLines, spreadToTotal } from "../lib/in-kind-value";
 
 export type InKindSource = "receipt" | "manual";
 export type InKindOutcome = "ACCEPTED" | "REFUSED" | "RETURNED";
@@ -48,9 +48,14 @@ interface GiftLine {
   quantity: number;
   valueCents: number | null;
   suggestedValueCents: number | null;
+  /** The value finance set on a receipt line priced at $0; null on every other line. */
+  financeValueCents: number | null;
   /** The account finance set by hand on a held line; it wins over every account rule. */
   quickBooksAccountId: string | null;
 }
+
+/** A line as the screens show it: a free receipt line shows the value finance set. */
+const lineView = ({ financeValueCents, ...l }: GiftLine) => ({ ...l, valueCents: financeValueCents ?? l.valueCents });
 
 /** Both in-kind tables in one shape. `donorLastName` feeds the warnings and never leaves this file. */
 interface Gift {
@@ -97,7 +102,7 @@ const RECEIPT_SELECT = {
   replayConflictAt: true,
   uploadedByUserId: true,
   ...DECISION_SELECT,
-  lines: { select: { id: true, gtin13: true, description: true, quantity: true, valueCents: true, quickBooksAccountId: true }, orderBy: { lineNumber: "asc" } },
+  lines: { select: { id: true, gtin13: true, description: true, quantity: true, valueCents: true, financeValueCents: true, quickBooksAccountId: true }, orderBy: { lineNumber: "asc" } },
 } as const;
 
 const MANUAL_SELECT = {
@@ -143,6 +148,7 @@ function fromManual(m: ManualRow): Gift {
     donorReplacedAt: null,
     replayConflictAt: null,
     uploadedByUserId: null,
+    lines: m.lines.map((l) => ({ ...l, financeValueCents: null })),
   };
 }
 
@@ -152,19 +158,21 @@ async function loadGift(handle: DbOrTx, orgId: string, source: InKindSource, id:
 }
 
 /**
- * Spreads the difference between `totalCents` and the values (a receipt's tax, shipping or
- * discount) across them by value, so they sum to the total exactly.
+ * Each line's booked value. A receipt's total spreads over its lines by the receipt's prices, so
+ * its tax, shipping and discount land on the priced lines; a line that comes to $0 then adds the
+ * value finance set. The lines sum to `totalValueCents`.
  */
-export function spreadToTotal(values: number[], totalCents: number): number[] {
-  if (values.length === 0) return [];
-  const extra = allocateCents(totalCents - values.reduce((a, b) => a + b, 0), values);
-  return values.map((v, i) => v + extra[i]);
+function bookedLineCents(g: Gift): number[] {
+  const values = g.lines.map((l) => l.valueCents ?? 0);
+  if (g.source !== "receipt" || g.receiptTotalCents === null) return values;
+  return spreadToTotal(values, g.receiptTotalCents).map((cents, i) => cents + (g.lines[i].financeValueCents ?? 0));
 }
+
+const lineName = (g: Gift, l: GiftLine) => `Line ${g.lines.indexOf(l) + 1} (${l.description ?? (l.gtin13 ? formatGtinDisplay(l.gtin13) : "donated item")})`;
 
 /** An accepted gift's lines as capital review takes them: a receipt's lines carry its tax and shipping. */
 function capitalReviewLines(g: Gift, budgetOwnerId: number): CapitalReviewLine[] {
-  const values = g.lines.map((l) => l.valueCents ?? 0);
-  const costs = g.source === "receipt" && g.receiptTotalCents !== null ? spreadToTotal(values, g.receiptTotalCents) : values;
+  const costs = bookedLineCents(g);
   return g.lines.map((l, i) => ({
     giftSource: g.source,
     giftId: g.id,
@@ -177,9 +185,9 @@ function capitalReviewLines(g: Gift, budgetOwnerId: number): CapitalReviewLine[]
   }));
 }
 
-/** A receipt gift books at the receipt's total; one without a receipt at the values finance set. */
+/** A receipt gift books at the receipt's total plus the values finance set on its free lines; one without a receipt at the values finance set. */
 function totalValueCents(g: Gift): number | null {
-  if (g.source === "receipt") return g.receiptTotalCents;
+  if (g.source === "receipt") return g.receiptTotalCents === null ? null : g.lines.reduce((sum, l) => sum + (l.financeValueCents ?? 0), g.receiptTotalCents);
   return g.lines.every((l) => l.valueCents !== null) ? g.lines.reduce((sum, l) => sum + (l.valueCents ?? 0), 0) : null;
 }
 
@@ -390,7 +398,7 @@ function queueRow(
     ...warn,
     callerConflicted: conflict.callerConflicted,
     allFinanceConflicted: conflict.allFinanceConflicted,
-    lines: g.lines,
+    lines: g.lines.map(lineView),
   };
 }
 
@@ -519,8 +527,17 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
       if (!input.confirmGoodsReceived) throw new ServiceError(400, "Accepting a gift confirms the goods exist and arrived");
       Object.assign(decided, { budgetOwnerId: await assignableBucket(input.bucketId), bucketAssignedByUserId: callerId, bucketAssignedAt: now });
       if (source === "receipt") {
-        if (input.lineValues) throw new ServiceError(400, "A gift with a receipt keeps the receipt's values");
         if (gift.receiptTotalCents === null) throw new ServiceError(409, "This gift has no value yet; resolve the receipt total first");
+        const values = new Map((input.lineValues ?? []).map((v) => [v.lineId, v.valueCents]));
+        const isFree = freeLines(gift.lines.map((l) => l.valueCents ?? 0), gift.receiptTotalCents);
+        const free = gift.lines.filter((_, i) => isFree[i]);
+        if ([...values.keys()].some((lineId) => !free.some((l) => l.id === lineId))) {
+          throw new ServiceError(400, "A gift with a receipt keeps the receipt's values; only a line that comes to $0 on it takes a value");
+        }
+        const unvalued = free.find((l) => !values.has(l.id));
+        if (unvalued) throw new ServiceError(400, `${lineName(gift, unvalued)} comes to $0 on the receipt; set its value to accept the gift`);
+        lines = gift.lines.map((l) => ({ ...l, financeValueCents: values.get(l.id) ?? null }));
+        for (const [lineId, financeValueCents] of values) await tx.inKindDonationLine.update({ where: { id: lineId }, data: { financeValueCents } });
       } else {
         const values = new Map((input.lineValues ?? []).map((v) => [v.lineId, v.valueCents]));
         if (values.size !== gift.lines.length || gift.lines.some((l) => !values.has(l.id))) {
@@ -549,7 +566,14 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
       ...entity(gift),
       eventType: "IN_KIND_DECIDED",
       ...audit,
-      payload: { outcome, budgetOwnerId: result.budgetOwnerId, totalValueCents: totalValueCents(result), ...(outcome === "ACCEPTED" ? { goodsConfirmed: true } : {}), ...warn },
+      payload: {
+        outcome,
+        budgetOwnerId: result.budgetOwnerId,
+        totalValueCents: totalValueCents(result),
+        ...(outcome === "ACCEPTED" ? { goodsConfirmed: true } : {}),
+        ...(input.lineValues ? { lineValues: input.lineValues } : {}),
+        ...warn,
+      },
     });
     return { view: decisionView(result), send: decided.budgetOwnerId === undefined ? null : capitalReviewLines(result, decided.budgetOwnerId) };
   });
@@ -647,7 +671,7 @@ async function listByBucket(orgId: string, callerId: number, seeAll: boolean) {
     budgetOwnerId: g.budgetOwnerId,
     donationDate: g.donationDate ?? g.receiptDate,
     totalValueCents: totalValueCents(g),
-    lines: g.lines.map(({ id, gtin13, description, quantity, valueCents }) => ({ id, gtin13, description, quantity, valueCents })),
+    lines: g.lines.map(lineView).map(({ id, gtin13, description, quantity, valueCents }) => ({ id, gtin13, description, quantity, valueCents })),
   }));
 }
 
@@ -742,7 +766,7 @@ async function getGift(orgId: string, source: InKindSource, id: number) {
     inventorySourceKey: source === "manual" ? inventorySourceKey(id) : null,
     inventoryLoadedAt: extras.inventoryLoadedAt,
     inventoryLoadFailureReason: extras.inventoryLoadFailureReason,
-    lines: gift.lines,
+    lines: gift.lines.map(lineView),
     events,
   };
 }

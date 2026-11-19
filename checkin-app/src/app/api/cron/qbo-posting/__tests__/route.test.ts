@@ -3,7 +3,8 @@
  */
 /**
  * GET /api/cron/qbo-posting: admits only QBO_POSTING_CRON_SECRET, refreshes the copy of QuickBooks' lists, runs the expense, donation and
- * in-kind QuickBooks steps, income's drain and income's orphan sweep (each isolated), records the run, and answers `{}`.
+ * in-kind QuickBooks steps, income's drain and income's orphan sweep (each isolated), the three drains each under the posting slot,
+ * then any lane still queued; records the run, and answers `{}`.
  */
 import type { NextRequest as NextRequestType } from 'next/server';
 import { runExpenseQbPosting } from '@checkin/expense';
@@ -24,8 +25,8 @@ jest.mock('@/lib/components/host', () => ({ getOrg: jest.fn().mockResolvedValue(
 const { NextRequest } = jest.requireActual<{ NextRequest: typeof NextRequestType }>('next/server');
 
 const SECRET = 'qbo-posting-secret-under-test';
-const EXPENSE_DRAIN = { posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, not_sent: 0, needs_finance: 0, no_class: 0, unpostable: 0, capped: null, closeDateRead: true, sweep: { entries: 0, flagged: 0, full: false } };
-const IN_KIND_DRAIN = { posted: 0, matched: 0, unbooked: 0, needs_finance: 0, held: 0, failed: 0, waiting: 0, capped: false, closeDateRead: true, sweep: { entries: 0, flagged: 0, full: false }, drift: { checked: 0, drifted: 0 } };
+const EXPENSE_DRAIN = { posted: 0, matched: 0, queued: 0, failed: 0, throttled: 0, waiting: 0, not_sent: 0, needs_finance: 0, no_class: 0, unpostable: 0, capped: null, closeDateRead: true, sweep: { entries: 0, flagged: 0, full: false } };
+const IN_KIND_DRAIN = { posted: 0, matched: 0, unbooked: 0, needs_finance: 0, held: 0, failed: 0, throttled: 0, waiting: 0, capped: false, closeDateRead: true, sweep: { entries: 0, flagged: 0, full: false }, drift: { checked: 0, drifted: 0 } };
 const expensePosting = (qbPost: Awaited<ReturnType<typeof runExpenseQbPosting>>['qbPost']) =>
     ({ stranded: { checked: 0, failed: 0 }, qbPost, qbDrift: 'unbound' as const, outcomeNotices: { sent: 0, failed: 0 }, failedParts: [] });
 const req = (secret = SECRET) =>
@@ -42,6 +43,11 @@ describe('GET /api/cron/qbo-posting', () => {
         create = jest.fn().mockResolvedValue({});
         prisma.cronRunLog.create = create;
         prisma.cronRunLog.deleteMany = jest.fn().mockResolvedValue({ count: 0 });
+        prisma.quickBooksPostingSlot.createMany = jest.fn().mockResolvedValue({ count: 1 });
+        prisma.quickBooksPostingSlot.updateMany = jest.fn().mockResolvedValue({ count: 1 });
+        prisma.quickBooksPostingSlot.findUnique = jest.fn().mockResolvedValue(null);
+        prisma.quickBooksPostingQueue.findMany = jest.fn().mockResolvedValue([]);
+        prisma.quickBooksPostingQueue.deleteMany = jest.fn().mockResolvedValue({ count: 0 });
         jest.mocked(runExpenseQbPosting).mockResolvedValue({ stranded: { checked: 0, failed: 0 }, qbPost: 'unbound', qbDrift: 'unbound', outcomeNotices: { sent: 0, failed: 0 }, failedParts: [] });
         jest.mocked(runDonationDepositHandOver).mockResolvedValue('unbound');
         jest.mocked(runInKindQbPosting).mockResolvedValue('unbound');
@@ -73,8 +79,9 @@ describe('GET /api/cron/qbo-posting', () => {
         expect(await res.json()).toEqual({});
         expect(runExpenseQbPosting).toHaveBeenCalledTimes(1);
         expect(runDonationDepositHandOver).toHaveBeenCalledWith('org-1');
-        expect(runInKindQbPosting).toHaveBeenCalledWith('org-1');
-        expect(drainIncomeOutbox).toHaveBeenCalledWith('org-1');
+        expect(runInKindQbPosting).toHaveBeenCalledWith('org-1', expect.any(Date), expect.objectContaining({ yielded: false }));
+        expect(drainIncomeOutbox).toHaveBeenCalledWith('org-1', expect.any(Date), expect.objectContaining({ yielded: false }));
+        expect(prisma.quickBooksPostingQueue.findMany).toHaveBeenCalled();
         expect(runIncomeOrphanSweep).toHaveBeenCalledWith('org-1');
         expect(create).toHaveBeenCalledTimes(1);
         expect(create.mock.calls[0][0].data).toMatchObject({ job: 'qbo-posting', success: true, error: null });
@@ -134,7 +141,7 @@ describe('GET /api/cron/qbo-posting', () => {
         const res = await GET(req());
 
         expect(res.status).toBe(200);
-        expect(drainIncomeOutbox).toHaveBeenCalledWith('org-1');
+        expect(drainIncomeOutbox).toHaveBeenCalledTimes(1);
         expect(create.mock.calls[0][0].data).toMatchObject({ job: 'qbo-posting', success: true, error: 'failed: in-kind' });
         expect(logged).toHaveBeenCalledWith('[qbo-posting] in-kind QuickBooks posting failed:', expect.any(Error));
         logged.mockRestore();
@@ -167,6 +174,18 @@ describe('GET /api/cron/qbo-posting', () => {
         await GET(req());
 
         expect(create.mock.calls[0][0].data).toMatchObject({ success: true, error: 'failed: in-kind duplicate check' });
+    });
+
+    it('skips a lane another run holds the slot for, leaving it to that run', async () => {
+        jest.mocked(prisma.quickBooksPostingSlot.updateMany).mockResolvedValueOnce({ count: 0 });
+        prisma.quickBooksPostingSlot.findUnique = jest.fn().mockResolvedValue({ orgId: 'org-1', holder: 'expense', runId: 'catch-up', until: new Date(Date.now() + 60_000), lastRuns: null });
+        jest.spyOn(console, 'info').mockImplementation(() => {});
+
+        await GET(req());
+
+        expect(runExpenseQbPosting).not.toHaveBeenCalled();
+        expect(runInKindQbPosting).toHaveBeenCalledTimes(1);
+        expect(create.mock.calls[0][0].data).toMatchObject({ success: true, error: null });
     });
 
     it('records an unconfigured in-kind lane only while gifts wait', async () => {

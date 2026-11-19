@@ -97,11 +97,15 @@ describe('MembershipApplicationRow', () => {
 });
 
 describe.each(NOT_RENEWING)('%s', (endpoint) => {
-    it("admits any session and shows the household's membership under GET /api/household's view", () => {
+    it("admits any session and shows the household's membership under GET /api/household's view, minus the peer status scopes", () => {
         const route = spec(endpoint);
         expect(route.authorize).toBe('authenticated');
         expect(route.envelope).toBeNull();
         expect(route.returns).toEqual(['OrgMembership']);
-        expect(route.orderedView).toEqual(spec('GET /api/household').orderedView);
+        const peerStatusScopes = new Set(['their_own:internal', 'led_households:internal']);
+        const householdView = spec('GET /api/household').orderedView.map(
+            ([role, tokens]) => [role, tokens.filter((t) => !peerStatusScopes.has(t))],
+        );
+        expect(route.orderedView).toEqual(householdView);
     });
 });

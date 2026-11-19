@@ -7,7 +7,7 @@ import type { ExpensePrincipal, ExpenseSettings } from "../contract";
 import { assertOrg } from "../runtime";
 import { actorOf } from "../lib/caller";
 import { ServiceError } from "@checkin/component-kit";
-import { MATCH_WINDOW_DAYS, MAX_CREATES_PER_DAY, MAX_CREATES_PER_RUN, MAX_MATCH_WINDOW_DAYS } from "@checkin/quickbooks";
+import { MATCH_WINDOW_DAYS, MAX_CREATES_PER_DAY, MAX_CREATES_PER_RUN, MAX_CREATES_PER_RUN_CEILING, MAX_MATCH_WINDOW_DAYS } from "@checkin/quickbooks";
 import { boardOnlyChanges } from "../lib/threshold-rules";
 
 export { THRESHOLD_RULES, boardOnlyChanges } from "../lib/threshold-rules";
@@ -28,9 +28,8 @@ export const DEFAULT_EXPENSE_SETTINGS: ExpenseSettings = {
 /** A sanity ceiling on every threshold ($1,000,000), for everyone. */
 export const MAX_THRESHOLD_CENTS = 100_000_000;
 const cents = z.number().int().max(MAX_THRESHOLD_CENTS);
-/** A sanity ceiling on the QuickBooks create limits, for everyone. */
+/** A sanity ceiling on the QuickBooks per-day create limit, for everyone. */
 export const MAX_QB_CREATES = 1_000;
-const qbCreates = z.number().int().min(1).max(MAX_QB_CREATES);
 
 export const ExpenseSettingsPatchSchema = z.object({
   capitalReviewEnabled: z.boolean(),
@@ -40,8 +39,8 @@ export const ExpenseSettingsPatchSchema = z.object({
   everydayTotalLimitCents: cents.positive(),
   everydayItemLimitCents: cents.positive(),
   qbMatchWindowDays: z.number().int().min(1).max(MAX_MATCH_WINDOW_DAYS),
-  qbMaxCreatesPerRun: qbCreates,
-  qbMaxCreatesPerDay: qbCreates,
+  qbMaxCreatesPerRun: z.number().int().min(1).max(MAX_CREATES_PER_RUN_CEILING),
+  qbMaxCreatesPerDay: z.number().int().min(1).max(MAX_QB_CREATES),
 }).partial().strict();
 
 const SELECT = {
@@ -58,7 +57,8 @@ const SELECT = {
 
 /** Reads without an org assertion, for in-library callers that already hold a row's orgId. */
 export async function readExpenseSettings(client: Db, orgId: string): Promise<ExpenseSettings> {
-  return (await client.expenseOrgSettings.findUnique({ where: { orgId }, select: SELECT })) ?? DEFAULT_EXPENSE_SETTINGS;
+  const row = await client.expenseOrgSettings.findUnique({ where: { orgId }, select: SELECT });
+  return row ? { ...row, qbMaxCreatesPerRun: Math.min(row.qbMaxCreatesPerRun, MAX_CREATES_PER_RUN_CEILING) } : DEFAULT_EXPENSE_SETTINGS;
 }
 
 export async function getExpenseSettings(orgId: string): Promise<ExpenseSettings> {

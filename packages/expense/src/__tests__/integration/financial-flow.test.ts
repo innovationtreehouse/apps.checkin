@@ -83,7 +83,7 @@ describeDb("initFinancialFlow", () => {
     expect(approval).toMatchObject({ ownerId: null, status: "pending" });
   });
 
-  it("leaves a line whose bucket is org-level pending, for a Board member's approval", async () => {
+  it("the system approves a card-charge line whose bucket is org-level, naming no approver", async () => {
     bindPorts({ signoff: directory({ orgLevel: [7] }) });
     const id = await seedExpense({ state: "pending" });
     await seedLineItem(id, { gtin13: "0000000000017" });
@@ -92,7 +92,7 @@ describeDb("initFinancialFlow", () => {
     await initFinancialFlow(id, ORG);
 
     const [approval] = await db.lineItemOwnerApproval.findMany({ where: { expenseId: id } });
-    expect(approval).toMatchObject({ ownerId: 7, status: "pending", decidedByUserId: null });
+    expect(approval).toMatchObject({ ownerId: 7, status: "approved", decidedByUserId: null });
     expect(await stateOf(id)).toBe("owner_approval");
   });
 

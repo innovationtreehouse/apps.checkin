@@ -16,6 +16,7 @@ jest.mock("@/lib/prisma", () => ({
     default: {
         program: { findUnique: jest.fn(), findMany: jest.fn() },
         programVolunteer: { findMany: jest.fn() },
+        programParticipant: { findMany: jest.fn() },
         person: { findMany: jest.fn(), findFirst: jest.fn() },
         event: { findUnique: jest.fn(), findMany: jest.fn() },
     },
@@ -31,6 +32,7 @@ const mockSession = getServerSession as jest.Mock;
 const db = prisma as unknown as {
     program: { findUnique: jest.Mock; findMany: jest.Mock };
     programVolunteer: { findMany: jest.Mock };
+    programParticipant: { findMany: jest.Mock };
     person: { findMany: jest.Mock; findFirst: jest.Mock };
     event: { findUnique: jest.Mock; findMany: jest.Mock };
 };
@@ -95,6 +97,7 @@ beforeEach(() => {
     db.program.findUnique.mockResolvedValue(programRow());
     db.event.findUnique.mockResolvedValue(eventRow());
     db.programVolunteer.findMany.mockResolvedValue([]);
+    db.programParticipant.findMany.mockResolvedValue([]);
     db.event.findMany.mockResolvedValue([{ id: EVENT_ID }]);
     db.person.findMany.mockResolvedValue([{ householdId: HOUSEHOLD_ID }]);
     db.person.findFirst.mockResolvedValue({ householdId: 8 });

@@ -16,7 +16,8 @@
  * in a relation (see hideEmptyRows). Each `_count` key is gated to relations
  * the view can see (see relationVisible), and dropped when the response also
  * carries that relation's rows and one could be hidden (see rowsAlwaysShow), so
- * the count never reveals how many were.
+ * the count never reveals how many were. Rows of a model in `hidden` (the
+ * route's roster, for a view without the `roster` token) are withheld whole.
  *
  * IMPORTANT: This file is CODEOWNERS-gated.
  */
@@ -24,11 +25,13 @@ import { classifications, relations, fieldVisible, isFileOnlyField, modelVisible
 import { scopesHeld, type CallerContext } from './access-resolvers';
 
 const NO_SCOPES: ReadonlySet<Scope> = new Set();
+const NO_MODELS: ReadonlySet<string> = new Set();
 
 export function stripBag(
     bag: Record<string, unknown>,
     tokens: readonly Token[],
     callerCtx: CallerContext,
+    hidden: ReadonlySet<string> = NO_MODELS,
 ): Record<string, unknown> {
     const stripped: Record<string, unknown> = {};
     for (const [modelName, value] of Object.entries(bag)) {
@@ -36,7 +39,11 @@ export function stripBag(
             console.warn(`[security] bag key '${modelName}' is not a known model — dropping`);
             continue;
         }
-        const rows = stripValue(modelName, value, tokens, callerCtx);
+        if (hidden.has(modelName)) {
+            stripped[modelName] = Array.isArray(value) ? [] : null;
+            continue;
+        }
+        const rows = stripValue(modelName, value, tokens, callerCtx, hidden);
         stripped[modelName] = Array.isArray(rows) ? hideEmptyRows(rows) : rows;
     }
     return stripped;
@@ -47,10 +54,11 @@ export function stripValue(
     value: unknown,
     tokens: readonly Token[],
     callerCtx: CallerContext,
+    hidden: ReadonlySet<string> = NO_MODELS,
 ): unknown {
     if (value === null || value === undefined) return value;
     if (Array.isArray(value)) {
-        return value.map(item => stripValue(modelName, item, tokens, callerCtx));
+        return value.map(item => stripValue(modelName, item, tokens, callerCtx, hidden));
     }
     // A model position holds a row (or rows). A bare scalar there has no field
     // name to classify, so it cannot be tier-checked: drop it (fail-closed).
@@ -98,10 +106,10 @@ export function stripValue(
     }
 
     for (const [relName, relInfo] of Object.entries(rels)) {
-        if (!(relName in obj)) continue;
+        if (!(relName in obj) || hidden.has(relInfo.model)) continue;
         // A relation whose target shows this view no field would leave only its row count.
         if (!modelVisible(tokens, relInfo.model)) continue;
-        result[relName] = hideEmptyRows(stripValue(relInfo.model, obj[relName], tokens, callerCtx));
+        result[relName] = hideEmptyRows(stripValue(relInfo.model, obj[relName], tokens, callerCtx, hidden));
     }
     return result;
 }

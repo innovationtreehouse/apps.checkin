@@ -78,7 +78,7 @@ describe('Membership payment API', () => {
         // bgClearedAt set: the background check has already cleared, so paying
         // activates the membership (the BG-not-cleared path is covered by the
         // non-blocking flow test).
-        const p = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', bgClearedAt: new Date() } });
+        const p = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', contractSignedAt: new Date(), bgClearedAt: new Date() } });
         return { householdId: hh.id, orgMembershipId: m.id, processId: p.id };
     }
 
@@ -304,7 +304,7 @@ describe('Membership payment API', () => {
         await prisma.person.update({ where: { id: lead.id }, data: { isHouseholdLead: true } });
         const m = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE', isVolunteerFamily: false } });
         // bgClearedAt set so paying activates (and the one congrats email fires).
-        const p = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', bgClearedAt: new Date() } });
+        const p = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', contractSignedAt: new Date(), bgClearedAt: new Date() } });
 
         (sendEmail as jest.Mock).mockClear();
 

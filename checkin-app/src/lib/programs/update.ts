@@ -8,7 +8,8 @@ import { validateProgramAgeBounds, isLeaderAgeEligible, checkProgramAge } from "
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { emailBoardMembers } from "@/lib/emailRecipients";
 import { config } from "@/lib/config";
-import { parseDateOnly } from "@/lib/time";
+import { orgCalendarDay, parseDateOnly } from "@/lib/time";
+import { programLeaderIneligibility } from "@/lib/programs/leaderEligibility";
 import { classify, isSaleEnded, saleStockDelta } from "@/lib/programs/saleState";
 import { countStockTakenSeats } from "@/lib/program/capacity";
 import { membershipYearLabel, programYearsTouched } from "@/lib/programYear";
@@ -177,17 +178,13 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         return refuse("invalid", ageErr);
     }
 
-    // maxParticipants: null = uncapped (allowed). Otherwise must be a
-    // positive int and not below current enrollment.
-    if (maxParticipants !== undefined && maxParticipants !== null) {
-        if (typeof maxParticipants !== "number" || !Number.isInteger(maxParticipants) || maxParticipants <= 0) {
-            return refuse("invalid", "maxParticipants must be a positive integer");
-        }
-        const enrolled = await prisma.programParticipant.count({ where: { programId, ...ENROLLED_PARTICIPANT } });
-        if (maxParticipants < enrolled) {
-            return refuse("invalid", `maxParticipants cannot be set below the current enrollment of ${enrolled}`);
-        }
+    // maxParticipants: null = uncapped (allowed). Otherwise a positive int, and not
+    // below current enrollment, which is counted under the Program lock below.
+    if (maxParticipants !== undefined && maxParticipants !== null
+        && (typeof maxParticipants !== "number" || !Number.isInteger(maxParticipants) || maxParticipants <= 0)) {
+        return refuse("invalid", "maxParticipants must be a positive integer");
     }
+    const newCap = typeof maxParticipants === "number" ? maxParticipants : null;
 
     if (patch.hasOwnProperty('leadMentorId')) {
         if (!patch.leadMentorId) {
@@ -202,13 +199,18 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         }
         const mentor = await prisma.person.findUnique({
             where: { id: leadMentorId },
-            select: { dateOfBirth: true, isDeclaredAdult: true, householdId: true },
+            select: { dateOfBirth: true, isDeclaredAdult: true, householdId: true, lastBackgroundCheck: true },
         });
         if (!mentor) {
             return refuse("invalid", "Program Leader not found");
         }
         if (!isLeaderAgeEligible(mentor)) {
             return refuse("invalid", "Program Leader must be at least 23 years old");
+        }
+        // A leader already in place stays; only a new assignment meets the membership and clearance requirements.
+        if (leadMentorId !== currentProgram.leadMentorId) {
+            const ineligible = await programLeaderIneligibility(leadMentorId, mentor);
+            if (ineligible) return refuse("invalid", ineligible);
         }
         // Nobody names themself or their household as a program's leader (Ethics
         // Policy III.5). The edit form resends the current lead on every save, so
@@ -218,6 +220,14 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         )) {
             return refuse("forbidden", "Forbidden: You cannot make yourself or a member of your household a program lead");
         }
+    }
+
+    // An ended program stays ended: no other phase, and enrollment never reopens.
+    if (currentProgram.phase === 'FINISHED' && phase !== undefined && phase !== 'FINISHED') {
+        return refuse("conflict", "This program has ended, so it can't return to an earlier phase.");
+    }
+    if (currentProgram.phase === 'FINISHED' && enrollmentStatus === 'OPEN' && currentProgram.enrollmentStatus !== 'OPEN') {
+        return refuse("conflict", "This program has ended, so enrollment can't be opened.");
     }
 
     // Publish guards: transitioning to UPCOMING requires a lead mentor and
@@ -256,6 +266,10 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
     const effEndAt = newEndAt ?? currentProgram.endAt;
     if (effStartAt > effEndAt) {
         return refuse("invalid", "Start date must be on or before the end date");
+    }
+    // A program's leader marks it finished on or after its end date; before that, ending it is the Board's alone.
+    if (phase === 'FINISHED' && currentProgram.phase !== 'FINISHED' && !actor.isBoardMember && currentProgram.endAt > orgCalendarDay()) {
+        return refuse("forbidden", `Only the Board can end this program before its end date (${currentProgram.endAt.toISOString().slice(0, 10)}).`);
     }
 
     // Off-sale date: board-only. null follows the start date. An untouched
@@ -400,6 +414,11 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
             if (before && decisionInputsDrifted(currentProgram, before)) {
                 throw new ServiceError(409, "This program changed while you were editing. Reload and try again.");
             }
+            // Counted under the lock a claim also takes, so a cut and a claim cannot both pass on stale counts.
+            if (newCap !== null) {
+                const enrolled = await tx.programParticipant.count({ where: { programId, ...ENROLLED_PARTICIPANT } });
+                if (newCap < enrolled) throw new ServiceError(400, `maxParticipants cannot be set below the current enrollment of ${enrolled}`);
+            }
             const after = await tx.program.update({ where: { id: programId }, data: updateData });
             await recordAudit(tx, personActor(actor.id), {
                 action: 'EDIT',
@@ -411,7 +430,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
             return { before, after };
         }));
     } catch (e) {
-        if (e instanceof ServiceError) return refuse("conflict", e.message);
+        if (e instanceof ServiceError) return refuse(e.status === 400 ? "invalid" : "conflict", e.message);
         if (isProgramNameTaken(e)) return refuse("conflict", PROGRAM_NAME_TAKEN);
         throw e;
     }
@@ -489,6 +508,7 @@ function decisionInputsDrifted(read: Program, locked: Program): boolean {
         || read.enrollmentStatus !== locked.enrollmentStatus
         || read.shopifyVariantId !== locked.shopifyVariantId
         || time(read.startAt) !== time(locked.startAt)
+        || time(read.endAt) !== time(locked.endAt)
         || time(read.offSaleAt) !== time(locked.offSaleAt)
         || time(read.saleEndedAt) !== time(locked.saleEndedAt);
 }

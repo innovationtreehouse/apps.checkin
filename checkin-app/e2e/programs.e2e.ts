@@ -6,8 +6,8 @@
  */
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { addYouth, asViewer } from "./support/families";
-import { adultFamily, claim, inDays, newLeader, newProgram, newSession, paidYouth, PROGRAM_DATES } from "./support/programs";
-import { BOARD } from "./support/seedState";
+import { adultFamily, claim, inDays, LEADER, newProgram, newSession, paidYouth, PROGRAM_DATES } from "./support/programs";
+import { BOARD, recheckWindow, type Undo } from "./support/seedState";
 
 const REASON = "The family moved away.";
 
@@ -63,9 +63,14 @@ async function auditOf(page: Page, personId: number): Promise<Locator> {
 }
 
 test.describe("programs in the browser", () => {
+  // The fresh seed sets no background-check interval, and no leader is named without one.
+  let restoreWindow: Undo;
+  test.beforeAll(async () => { restoreWindow = await recheckWindow(27); });
+  test.afterAll(async () => { await restoreWindow(); });
+
   test("P1: the Board creates a program", async ({ browser }) => {
     const name = `Browser Program ${Date.now()}`;
-    const leader = await newLeader();
+    const leader = LEADER;
 
     await asViewer(browser, BOARD, async (page) => {
       await page.goto("/program-ops/new");

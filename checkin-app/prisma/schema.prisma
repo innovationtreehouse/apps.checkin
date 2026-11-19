@@ -167,13 +167,6 @@ model Person {
   /// leads/household enforced at write, not in schema. @sensitivity:public
   isHouseholdLead Boolean @default(false)
 
-  /// Unused column awaiting its drop; null on every row. Hidden from the client so
-  /// no code reads or writes it before the column goes. @sensitivity:internal
-  mergedIntoId Int?     @ignore
-  // The constraint is Person_mergedIntoId_fkey; the relation name emits no SQL.
-  mergedInto   Person?  @relation("PersonTombstone", fields: [mergedIntoId], references: [id]) @ignore
-  mergedFrom   Person[] @relation("PersonTombstone") @ignore
-
   /// Archive rows naming this person as the merge survivor (see PersonMerge).
   mergedArchive PersonMerge[] @relation("PersonMergeArchive")
 
@@ -209,6 +202,10 @@ model Person {
   /// Their first sign-in's household question is unanswered; nothing else opens until it is.
   /// @sensitivity:internal
   householdJoinPending Boolean @default(false)
+
+  /// They created a new household at sign-in and owe its first age (a date of birth or over 25).
+  /// @sensitivity:internal
+  ageStepPending Boolean @default(false)
 
   toolStatuses        ToolStatus[]
   bgAttestations      BackgroundCheckAttestation[] @relation("BgAttestations")
@@ -2210,4 +2207,42 @@ model QuickBooksList {
   entries     Json
   /// @sensitivity:internal
   refreshedAt DateTime
+}
+
+/// The org's QuickBooks posting slot: one drain run (expense, in-kind or income) posts at a time.
+/// A run holds it while `until` is in the future and renews it before each record; a crashed run frees it when `until` passes.
+model QuickBooksPostingSlot {
+  /// @sensitivity:internal
+  orgId    String   @id @map("org_id")
+  /// The lane holding or last holding the slot.
+  /// @sensitivity:internal
+  holder   String?
+  /// The holding run's id; a renew or release by any other run changes nothing.
+  /// @sensitivity:internal
+  runId    String?  @map("run_id")
+  /// @sensitivity:internal
+  until    DateTime
+  /// Each lane's last finished run, keyed by lane: when it ended and how.
+  /// @sensitivity:internal
+  lastRuns Json?    @map("last_runs")
+
+  @@map("quickbooks_posting_slot")
+}
+
+/// A lane waiting for the posting slot, one row per lane; the run that releases the slot starts the oldest.
+model QuickBooksPostingQueue {
+  /// @sensitivity:internal
+  id            Int      @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId         String   @map("org_id")
+  /// @sensitivity:internal
+  lane          String
+  /// The person who asked; null for the daily run.
+  /// @sensitivity:internal
+  requestedById Int?     @map("requested_by_id")
+  /// @sensitivity:internal
+  requestedAt   DateTime @default(now()) @map("requested_at")
+
+  @@unique([orgId, lane])
+  @@map("quickbooks_posting_queue")
 }

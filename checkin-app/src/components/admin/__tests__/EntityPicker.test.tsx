@@ -41,6 +41,20 @@ function renderPicker(props: Partial<React.ComponentProps<typeof EntityPicker<Op
 }
 
 describe("EntityPicker", () => {
+  it("shows an option it may not take disabled, with the reason, and ignores a click on it", async () => {
+    const search = jest.fn().mockResolvedValue([{ id: 5, name: "Acme" }, { id: 6, name: "Beta" }]);
+    const onSelect = jest.fn();
+    renderPicker({ search, onSelect, getOptionDisabledReason: (o: Opt) => (o.id === 5 ? "Not a member" : null) });
+
+    fireEvent.change(screen.getByPlaceholderText("Search..."), { target: { value: "a" } });
+    fireEvent.click(await screen.findByText("Acme"));
+    expect(screen.getByText("Not a member")).toBeTruthy();
+    expect(onSelect).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByText("Beta"));
+    expect(onSelect).toHaveBeenCalledWith({ id: 6, name: "Beta" });
+  });
+
   it("searches on input and selects a clicked option", async () => {
     const search = jest.fn().mockResolvedValue([{ id: 5, name: "Acme" }]);
     const onSelect = jest.fn();

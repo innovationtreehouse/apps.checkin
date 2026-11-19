@@ -132,11 +132,11 @@ function actLabel(a: LineAction): string {
   }
 }
 
-/** The approval route an act posts to; Assign bucket settles an exception or fills an unassigned line. */
+/** The approval route an act posts to; Assign bucket fills an unassigned line, or moves one: settling an exception or a system-approved card charge. */
 function approvalRoute(act: Act, approval: Approval): string {
   switch (act) {
     case "reject-exception": return "reject";
-    case "assign-bucket": return approval.status === "exception_raised" ? "finance-assign" : "assign-owner";
+    case "assign-bucket": return approval.ownerId === null ? "assign-owner" : "finance-assign";
     case "resolve-bucket": return "resolve-unknown";
     default: return act;
   }

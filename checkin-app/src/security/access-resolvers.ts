@@ -54,6 +54,9 @@ export interface CallerContext {
     /** Members of the caller's household, the caller included, lead or not. Read only by
      *  the finance-view own-record check; no scope or field grant depends on it. */
     householdMemberIds?: Set<number>;
+    /** Programs in which the caller, or a member of the caller's household, is an enrolled
+     *  participant. Fetched only for a route whose view lists programEnrolledHousehold. */
+    programsEnrolledIn?: Set<number>;
 }
 
 /**
@@ -87,7 +90,7 @@ export async function buildCallerContext(auth: AuthResult, needs: CtxNeeds): Pro
     ctx.householdId = auth.user.householdId;
     ctx.isKeyholder = auth.user.isKeyholder;
 
-    const [ledPrograms, coreVols, visits, ledHouseholdMembers, householdMembers] = await Promise.all([
+    const [ledPrograms, coreVols, visits, ledHouseholdMembers, householdMembers, enrolled] = await Promise.all([
         needs.programs
             ? prisma.program.findMany({
                   where: { leadMentorId: auth.user.id },
@@ -130,6 +133,13 @@ export async function buildCallerContext(auth: AuthResult, needs: CtxNeeds): Pro
         needs.householdMembers && ctx.householdId !== undefined
             ? prisma.person.findMany({ where: { householdId: ctx.householdId }, select: { id: true } })
             : [],
+        // The household is read from the DB, not the session, so a move applies at once.
+        needs.enrolledPrograms
+            ? prisma.programParticipant.findMany({
+                  where: { ...ENROLLED_PARTICIPANT, person: { household: { householdMembers: { some: { id: auth.user.id } } } } },
+                  select: { programId: true },
+              })
+            : [],
     ]);
 
     for (const p of ledPrograms) {
@@ -143,6 +153,7 @@ export async function buildCallerContext(auth: AuthResult, needs: CtxNeeds): Pro
     for (const v of visits) ctx.activeVisitorIds.add(v.personId);
     for (const m of ledHouseholdMembers) ctx.ledHouseholdMemberIds.add(m.id);
     if (needs.householdMembers) ctx.householdMemberIds = new Set(householdMembers.map(m => m.id));
+    if (needs.enrolledPrograms) ctx.programsEnrolledIn = new Set(enrolled.map(e => e.programId));
 
     const scopePrograms = [...ctx.programsLed, ...ctx.programsCoreVolIn];
     await Promise.all([
@@ -250,6 +261,10 @@ export function callerHoldsRole(
         case 'programCoreVolunteer': {
             const id = parseInt(params.id ?? '', 10);
             return !isNaN(id) && ctx.programsCoreVolIn.has(id);
+        }
+        case 'programEnrolledHousehold': {
+            const id = parseInt(params.id ?? '', 10);
+            return auth.type === 'session' && !isNaN(id) && ctx.programsEnrolledIn?.has(id) === true;
         }
     }
 }

@@ -38,9 +38,10 @@ jest.mock("@/lib/supervision", () => ({
 const keyholder = { id: 1, isKeyholder: true } as Person;
 const older: LegacyKiosk = { shownEmpty: null, clientEventId: "evt-replay-1" };
 
-/** Tx-shaped fake: no other keyholder recorded, `remaining` inside. */
-function fakeDb(remaining: Array<{ name: string | null; email: string | null }>): DbClient {
+/** Tx-shaped fake: no other keyholder recorded, `remaining` inside; `denied` when the badge's household is denied. */
+function fakeDb(remaining: Array<{ name: string | null; email: string | null }>, denied = false): DbClient {
     return {
+        person: { count: jest.fn().mockResolvedValue(denied ? 0 : 1) },
         visit: {
             count: jest.fn().mockResolvedValue(0),
             findMany: jest.fn().mockResolvedValue(remaining.map((person, i) => ({ id: 100 + i, person }))),
@@ -199,5 +200,25 @@ describe("from an older kiosk, what the kiosk showed decides (shownEmpty; true i
     it("follows the server's records when the kiosk does not say", async () => {
         expect((await (await badge(fakeDb([]), older)).json()).facilityClosed).toBe(true);
         expect((await (await badge(fakeDb(present), older)).json()).facilityClosed).toBe(false);
+    });
+});
+
+describe("a keyholder whose household is denied holds no keyholder authority", () => {
+    it("is offered no close by an older kiosk, with others inside", async () => {
+        const db = fakeDb(present, true);
+        const body = await (await badge(db, older)).json();
+
+        expect(body).toMatchObject({ type: "checkout", facilityClosed: false });
+        expect(body.forceCloseToken).toBeUndefined();
+        expect(body.closePrompt).toBeUndefined();
+        expect(db.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it("closes nothing from an older kiosk when nobody else is recorded", async () => {
+        const db = fakeDb([], true);
+        const body = await (await badge(db, older)).json();
+
+        expect(body.facilityClosed).toBe(false);
+        expect(db.facilityClose.create).not.toHaveBeenCalled();
     });
 });

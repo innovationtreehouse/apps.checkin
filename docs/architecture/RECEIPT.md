@@ -33,7 +33,7 @@ so work waits for a retry and nothing pretends to have been delivered.
 | `mailbox` | a Gmail reader, on the conditions under [Mail](#mail) | mail intake reports `unbound` and does nothing |
 | `replies` | checkin's outgoing mail | acknowledgements wait unsent |
 | `alerts` | checkin's alert address | logged only |
-| `fileStore`, `storeNewFilesInBucket` | see [File storage](#file-storage) | any access to a stored object throws |
+| `fileStore` | see [File storage](#file-storage) | every file read and write throws |
 
 ## Intake paths
 
@@ -266,11 +266,9 @@ is not yet paid, and a failed read shows as "status unavailable".
 
 ## File storage
 
-The S3 move is partly built. The code to write to and read from a bucket has
-shipped behind a flag that defaults to off, and so has the task that copies
-existing rows to the bucket. The steps that would empty the database column have
-not been built. Whether the buckets exist, and whether the
-flag is on in a given environment, is set outside this repo.
+Every receipt and held mail item keeps its file in the store, under the row's
+`file_key`. The `file_blob` column still exists, unread and unwritten, until its
+drop. The buckets are set up outside this repo.
 
 **Built.**
 
@@ -281,12 +279,11 @@ flag is on in a given environment, is set outside this repo.
   store also refuses a second write, and refuses bytes that miss their SHA-256.
 - `file_key` and `file_size` exist on `receipts` and `receipt_mail_items`, and
   `receipts.file_blob` is nullable.
-- `RECEIPT_FILES_S3=true` sends new files to the bucket. The object goes first and
-  the row second, and a failed insert deletes the object. Keys are
-  `receipts/<receiptId>` and `mail-items/<uuid>`, and say nothing about the file.
-- With the flag off, new files go to `file_blob`, as they always have.
-- `readStoredFile` reads from the store when a row has a key and from `file_blob`
-  otherwise, so both kinds of row are served at once.
+- Every new file goes to the store. The object goes first and the row second, and
+  a failed insert deletes the object. Keys are `receipts/<receiptId>` and
+  `mail-items/<uuid>`, and say nothing about the file.
+- `readStoredFile` reads by `file_key` only. A row with no key logs and reads as
+  missing: the file route answers 404 and OCR lands in `ocr_failed`.
 - Assigning or discarding a stored mail item deletes its object after the commit.
   A discarded item keeps its `fileKey`, to name the object for an admin restore; an
   assigned one clears it.
@@ -295,14 +292,14 @@ flag is on in a given environment, is set outside this repo.
   store and check the copy. The copy sets `file_key` and `file_size` and never
   touches `file_blob`. How and when to run it is in
   `docs/ops/receipt-files-backfill.md`.
-- Daily byte limits sum `file_size`, falling back to the column's length for older
-  rows. The config-health page reports a flag that is on with no
-  `RECEIPT_FILES_S3_BUCKET`, and with the flag on and no bucket a deployed instance
-  refuses files with a 503 rather than falling back to the database.
+- Daily byte limits sum `file_size`. The config-health page reports a deployed
+  instance with no `RECEIPT_FILES_S3_BUCKET`, and such an instance refuses files
+  with a 503 rather than falling back to the database.
 
 **Not built.**
 
-- Removing the `file_blob` reads and the flag, then dropping the column.
+- Dropping the `file_blob` column, after re-pointing both file routes' registry
+  entries from `fileBlob` to `fileKey`.
 - Retention: nothing deletes a receipt file on a schedule.
 - Automatic discard of held mail nobody acts on: a held item waits for finance.
 

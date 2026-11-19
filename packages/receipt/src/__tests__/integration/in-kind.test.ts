@@ -219,6 +219,44 @@ describeDb("in-kind mark and donor (X13)", () => {
     expect(rows.find((a) => a.action === "in_kind_updated")).toMatchObject({ valueBefore: "false", valueAfter: "true" });
     expect(JSON.stringify(rows)).not.toContain("Dana");
   });
+
+  const DANA = { firstName: "Dana", lastName: "Donor", companyName: "Donor Co" };
+  const donorRows = async (id: string) =>
+    (await db.receiptAuditLog.findMany({ where: { receiptId: id, action: "in_kind_updated", fieldChanged: { startsWith: "donor" } }, orderBy: { id: "asc" } }))
+      .map(({ userId, fieldChanged, valueBefore, valueAfter }) => ({ userId, fieldChanged, valueBefore, valueAfter }));
+
+  it.each([
+    ["donorFirstName", { firstName: "Dee" }, "Dana", "Dee"],
+    ["donorLastName", { lastName: "Doe" }, "Donor", "Doe"],
+    ["donorCompanyName", { companyName: "Acme" }, "Donor Co", "Acme"],
+    ["donorCompanyName", { companyName: "" }, "Donor Co", null],
+  ] as const)("a %s change on a receipt that stays in-kind is audited with its values", async (field, change, before, after) => {
+    const r = await receiptService.upload(textFile(), "text/plain", { details: badMath(), isInKind: true, donor: DANA });
+    await receiptService.setInKind(r.id, { isInKind: true, donor: { ...DANA, ...change } });
+    expect(await donorRows(r.id)).toEqual([{ userId: ALICE.id, fieldChanged: field, valueBefore: before, valueAfter: after }]);
+  });
+
+  it("a donor change audits each changed field in one call", async () => {
+    const r = await receiptService.upload(textFile(), "text/plain", { details: badMath(), isInKind: true, donor: DANA });
+    await receiptService.setInKind(r.id, { isInKind: true, donor: { firstName: "Dee", lastName: "Doe", companyName: "Donor Co" } });
+    expect(await donorRows(r.id)).toEqual([
+      { userId: ALICE.id, fieldChanged: "donorFirstName", valueBefore: "Dana", valueAfter: "Dee" },
+      { userId: ALICE.id, fieldChanged: "donorLastName", valueBefore: "Donor", valueAfter: "Doe" },
+    ]);
+  });
+
+  it("an unchanged donor writes no donor row", async () => {
+    const r = await receiptService.upload(textFile(), "text/plain", { details: badMath(), isInKind: true, donor: DANA });
+    await receiptService.setInKind(r.id, { isInKind: true, donor: DANA });
+    expect(await donorRows(r.id)).toEqual([]);
+  });
+
+  it("marking or clearing the mark writes no donor row", async () => {
+    const r = await receiptService.upload(textFile(), "text/plain", { details: badMath() });
+    await receiptService.setInKind(r.id, { isInKind: true, donor: DANA });
+    await receiptService.setInKind(r.id, { isInKind: false });
+    expect(await donorRows(r.id)).toEqual([]);
+  });
 });
 
 describeDb("stale donor sends (in-kind findings K2–K4)", () => {

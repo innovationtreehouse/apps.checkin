@@ -66,7 +66,7 @@ export type ProgramDetail = {
   claimantShopifyVariantId?: string | null;
 };
 
-export type ParticipantOption = { id: number; name: string | null; email: string };
+export type ParticipantOption = { id: number; name: string | null; email: string; leaderIneligibility?: string | null };
 // The eligible-participants search returns names only, plus the program's age-fit label.
 export type EligibleOption = { id: number; name: string | null; ageWarning: string | null };
 
@@ -432,6 +432,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
                             search={searchAdults}
                             getOptionLabel={(p) => p.name || 'Unnamed'}
                             getOptionDescription={(p) => p.email}
+                            getOptionDisabledReason={(p) => p.id === program.leadMentorId ? null : p.leaderIneligibility ?? null}
                             onSelect={(p) => { setLeadMentorIdInput(p.id.toString()); setMentorSearch(mentorLabel(p.name, p.email)); }}
                             onClear={() => { setLeadMentorIdInput(""); setMentorSearch(""); }}
                           />

@@ -535,22 +535,5 @@ jobs:
           echo "Service is stable."
 
       - name: Smoke test the live app
-        run: |
-          set -euo pipefail
-          # Real probe of the deployed service (mirrors deploy-prod.yml). The
-          # app answers 200 or an auth redirect; retries cover target
-          # registration + first boot after scale-up. 10 minutes, because
-          # task-start -> waker rule promote measures over 4 minutes and a window
-          # that expires first reports a succeeded deploy as failed. The 503s during the wait are
-          # the ops-stg-waker's holding page; each probe also drives the
-          # waker's health poll, so keep the 10s cadence.
-          for i in $(seq 1 60); do
-            CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$APP_URL" || echo 000)
-            echo "attempt $i: $APP_URL -> HTTP $CODE"
-            case "$CODE" in
-              200|301|302|307|308) echo "Smoke OK."; exit 0 ;;
-            esac
-            sleep 10
-          done
-          echo "::error::Smoke test failed: $APP_URL never answered with 200/redirect"
-          exit 1
+        # Real probe of the deployed service; waits out the waker's holding page.
+        run: ./scripts/smoke-live-app.sh "$APP_URL"

@@ -193,6 +193,13 @@ describe("getProblems", () => {
 });
 
 describe("sendProblemsDigest", () => {
+    it("emails the calling run's own failures, which no run record holds yet", async () => {
+        await sendProblemsDigest(NOW, ["Nightly close could not check out visit 7, person 3"]);
+
+        expect(jest.mocked(sendTemplated).mock.calls.map((c) => c[1])).toEqual(["alerts@example.org"]);
+        expect(digestCtx().items).toBe("Nightly close could not check out visit 7, person 3");
+    });
+
     it("sends nothing while nothing has been stuck more than a day", async () => {
         receipt.stuckItems.mockResolvedValue([{ id: "x", step: "flow", href: null, failedAt: hoursAgo(23) }]);
         await sendProblemsDigest(NOW);

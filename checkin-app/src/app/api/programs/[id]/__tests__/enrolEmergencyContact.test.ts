@@ -39,7 +39,7 @@ jest.mock("@/lib/shopify/stock", () => ({
 }));
 jest.mock("@/lib/program/capacity", () => ({
     ...jest.requireActual("@/lib/program/capacity"),
-    lockProgramAndCheckCapacity: jest.fn(),
+    lockProgramForClaim: jest.fn(),
 }));
 jest.mock("@/lib/household/archiveGuard", () => ({ lockLiveHouseholdsOf: jest.fn() }));
 jest.mock("@/lib/conflictOfInterest", () => ({

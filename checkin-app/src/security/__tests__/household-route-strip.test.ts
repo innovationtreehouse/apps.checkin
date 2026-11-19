@@ -36,6 +36,7 @@ function ctx(opts: Partial<CallerContext> = {}): CallerContext {
 }
 
 const VIEW: readonly Token[] = ['their_households:pii', 'their_households:personal', 'their_households:internal', 'member', 'public'];
+const GET_VIEW: readonly Token[] = ['their_households:pii', 'their_households:personal', 'their_households:internal', 'their_own:internal', 'led_households:internal', 'member', 'public'];
 
 function view(endpoint: string): readonly Token[] {
     const entry = getRoute(endpoint)?.orderedView.find(([r]) => r === 'authenticated');
@@ -82,14 +83,15 @@ const GET = 'GET /api/household';
 const PATCH = 'PATCH /api/household';
 
 describe('/api/household registry entries', () => {
-    it('admits any session on both verbs with one household-scoped view', () => {
+    it('admits any session on both verbs with a household-scoped view', () => {
         for (const endpoint of [GET, PATCH]) {
             const route = getRoute(endpoint);
             expect(route?.authorize).toBe('authenticated');
             expect(route?.envelope).toBeNull();
-            expect(route?.orderedView).toEqual([['authenticated', VIEW]]);
         }
-        expect(getRoute(GET)?.returns).toEqual(['HouseholdPage', 'HouseholdPageHousehold', 'HouseholdPeer', 'OrgMembership']);
+        expect(getRoute(GET)?.orderedView).toEqual([['authenticated', GET_VIEW]]);
+        expect(getRoute(PATCH)?.orderedView).toEqual([['authenticated', VIEW]]);
+        expect(getRoute(GET)?.returns).toEqual(['HouseholdPage', 'HouseholdPageHousehold', 'HouseholdPeer', 'HouseholdPeerBgStatus', 'OrgMembership']);
         expect(getRoute(PATCH)?.returns).toEqual(['HouseholdMemberAdded', 'HouseholdPeer', 'EmergencyContactWarning']);
     });
 

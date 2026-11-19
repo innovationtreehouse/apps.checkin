@@ -59,9 +59,9 @@ function parse<T extends z.ZodType>(schema: T, input: unknown): z.output<T> {
 async function storedItem(id: number) {
   const item = await db.receiptMailItem.findFirst({
     where: { id, orgId: await getOrgId(), status: { in: STORED_STATUSES } },
-    select: { ...ITEM_FIELDS, fileBlob: true, fileKey: true },
+    select: { ...ITEM_FIELDS, fileKey: true },
   });
-  const fileBlob = item && (await readStoredFile(item));
+  const fileBlob = item && (await readStoredFile(item.fileKey));
   if (!item || !fileBlob || !item.mimeType) throw new ServiceError(404, "Mail item not found");
   return { ...item, fileBlob, mimeType: item.mimeType };
 }
@@ -135,7 +135,7 @@ export const mailQueueService = {
     const receiptId = await intakeMailedReceipt(assignee, Buffer.from(item.fileBlob), item.mimeType, async (tx, newId) => {
       const claimed = await tx.receiptMailItem.updateMany({
         where: { id, status: { in: STORED_STATUSES } },
-        data: { status: "assigned", receiptId: newId, fileBlob: null, fileKey: null },
+        data: { status: "assigned", receiptId: newId, fileKey: null },
       });
       if (claimed.count !== 1) throw new ServiceError(409, "This mail item was already handled. Refresh and retry.");
       await auditClaim(tx, newId);
@@ -182,7 +182,7 @@ export const mailQueueService = {
     const { reason, ignoreFile } = parse(DiscardSchema, rawInput);
     const orgId = await getOrgId();
     const { item, fileKeys } = await db.$transaction(async (tx) => {
-      const done = await tx.receiptMailItem.updateMany({ where: { id, orgId, status: { in: STORED_STATUSES } }, data: { status: "discarded", fileBlob: null } });
+      const done = await tx.receiptMailItem.updateMany({ where: { id, orgId, status: { in: STORED_STATUSES } }, data: { status: "discarded" } });
       if (done.count !== 1) throw new ServiceError(404, "Mail item not found");
       await auditItem(tx, actor, id, "mail_discarded", reason);
       const { attachmentHash, gmailMessageId, fileKey, ...item } = await tx.receiptMailItem.findUniqueOrThrow({
@@ -196,7 +196,7 @@ export const mailQueueService = {
         await addIgnored(tx, actor, attachmentHash, reason, "mail_item", String(id));
         const copies = await tx.receiptMailItem.updateManyAndReturn({
           where: { orgId, attachmentHash, status: { in: STORED_STATUSES } },
-          data: { status: "discarded", fileBlob: null },
+          data: { status: "discarded" },
           select: { id: true, gmailMessageId: true, fileKey: true },
         });
         fileKeys.push(...copies.map((c) => c.fileKey));
