@@ -11,11 +11,13 @@ const mockDb = {
     trustedAdult: { findUnique: jest.fn() },
     trustedAdultReview: { findUnique: jest.fn(), findFirst: jest.fn() },
     person: { findUnique: jest.fn(), findFirst: jest.fn() },
+    auditLog: { create: jest.fn() },
     $transaction: jest.fn((fn: (t: typeof tx) => unknown) => fn(tx)),
 };
 jest.mock("@/lib/prisma", () => ({ __esModule: true, get default() { return mockDb; } }));
 jest.mock("@/lib/emailRecipients", () => ({ emailBoardMembers: jest.fn(), emailHouseholdLeads: jest.fn() }));
 
+import { emailBoardMembers, emailHouseholdLeads } from "@/lib/emailRecipients";
 import { answerInfoRequest, createTrustedAdult, decideReview, renewTrustedAdult, resubmitWithChanges } from "@/lib/trusted-adult/service";
 
 const HOUSEHOLD = 20;
@@ -72,6 +74,13 @@ const resubmitInput = { trustedAdultName: "Gran B", trustedAdultEmail: "gran@exa
 
 const deniedCheck = { where: { householdId: { in: [HOUSEHOLD, ADULT_HOUSEHOLD] }, status: "DENIED" } };
 
+const expectNoAuditOrEmail = () => {
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
+    expect(mockDb.auditLog.create).not.toHaveBeenCalled();
+    expect(emailBoardMembers).not.toHaveBeenCalled();
+    expect(emailHouseholdLeads).not.toHaveBeenCalled();
+};
+
 describe("trusted adult whose household's membership is denied", () => {
     it("createTrustedAdult refuses and creates nothing", async () => {
         tx.$queryRaw.mockResolvedValue([{ status: "DENIED" }]);
@@ -79,6 +88,7 @@ describe("trusted adult whose household's membership is denied", () => {
         // A membership-row lock on each of the two households.
         expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
         expect(tx.trustedAdult.create).not.toHaveBeenCalled();
+        expectNoAuditOrEmail();
     });
 
     it("decideReview refuses an approval and writes no decision", async () => {
@@ -87,6 +97,7 @@ describe("trusted adult whose household's membership is denied", () => {
             .rejects.toMatchObject({ code: "wrong_phase" });
         expect(tx.orgMembership.count).toHaveBeenCalledWith(deniedCheck);
         expect(tx.trustedAdultReview.update).not.toHaveBeenCalled();
+        expectNoAuditOrEmail();
     });
 
     it("renewTrustedAdult refuses and opens no review", async () => {
@@ -94,6 +105,7 @@ describe("trusted adult whose household's membership is denied", () => {
         await expect(renewTrustedAdult(3, 1)).rejects.toMatchObject({ code: "wrong_phase" });
         expect(tx.orgMembership.count).toHaveBeenCalledWith(deniedCheck);
         expect(tx.trustedAdultReview.create).not.toHaveBeenCalled();
+        expectNoAuditOrEmail();
     });
 
     it("resubmitWithChanges refuses and opens no review", async () => {
@@ -101,6 +113,7 @@ describe("trusted adult whose household's membership is denied", () => {
         await expect(resubmitWithChanges(3, 1, resubmitInput)).rejects.toMatchObject({ code: "wrong_phase" });
         expect(tx.orgMembership.count).toHaveBeenCalledWith(deniedCheck);
         expect(tx.trustedAdultReview.create).not.toHaveBeenCalled();
+        expectNoAuditOrEmail();
     });
 
     it("answerInfoRequest refuses and leaves the review with the family", async () => {
@@ -109,6 +122,7 @@ describe("trusted adult whose household's membership is denied", () => {
         await expect(answerInfoRequest(3, 1, { ...resubmitInput, reply: "Weekdays only." })).rejects.toMatchObject({ code: "wrong_phase" });
         expect(tx.orgMembership.count).toHaveBeenCalledWith(deniedCheck);
         expect(tx.trustedAdultReview.update).not.toHaveBeenCalled();
+        expectNoAuditOrEmail();
     });
 
     it("decideReview still lets the board deny", async () => {
@@ -124,6 +138,8 @@ describe("trusted adult whose household is not denied", () => {
     it("createTrustedAdult creates the adult", async () => {
         await expect(createTrustedAdult(createInput)).resolves.toMatchObject({ id: 3 });
         expect(tx.trustedAdult.create).toHaveBeenCalled();
+        expect(tx.auditLog.create).toHaveBeenCalled();
+        expect(emailBoardMembers).toHaveBeenCalled();
     });
 
     it("decideReview approves", async () => {

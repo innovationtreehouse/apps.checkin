@@ -15,7 +15,8 @@ import { TRANSITIONS as PROCESS_TX } from '../../membership/lifecycle';
  * - OrgMembership: `setHouseholdStatus`, its one status writer.
  * - OrgMembershipProcess: a status write that is a CAS on the table (`...fromWhere(<from>)`
  *   or a StateSet's `...x.where`), or a create landing on a ∅-entry state.
- * - Program: the program PATCH writer and the daily sale sweep, the sale lifecycle's guard sites.
+ * - Program: the program PATCH writer and the daily sale sweep, the sale lifecycle's guard sites,
+ *   each at the exact count PROGRAM_WRITERS pins.
  *
  * Exact counts both ways: a new raw write fails, and so does a row left behind
  * after its writes moved onto a helper.
@@ -36,8 +37,9 @@ const MACHINE_COLUMNS: Record<Table, readonly string[]> = {
     Program: ['phase', 'enrollmentStatus', 'offSaleAt', 'saleEndedAt'],
 };
 
-/** The sale lifecycle's writers (programs/saleState.ts TRANSITIONS guard sites). */
-const PROGRAM_WRITERS = new Set(['lib/programs/update.ts', 'lib/programs/saleSweep.ts']);
+/** The sale lifecycle's writers (programs/saleState.ts TRANSITIONS guard sites) and their Program write counts. */
+const PROGRAM_WRITERS: Record<string, number> = { 'lib/programs/update.ts': 1, 'lib/programs/saleSweep.ts': 1 };
+const programWriterKey = (key: string) => key.endsWith('|Program') && key.slice(0, -'|Program'.length) in PROGRAM_WRITERS;
 
 /** Files that own status writes by design, or never run in prod. */
 const EXEMPT = new Set([
@@ -133,7 +135,6 @@ function files(dir: string): string[] {
 function scan(): Map<string, number> {
     const counts = new Map<string, number>();
     const bump = (file: string, table: Table) => {
-        if (table === 'Program' && PROGRAM_WRITERS.has(file)) return;
         counts.set(`${file}|${table}`, (counts.get(`${file}|${table}`) ?? 0) + 1);
     };
     for (const path of files(SRC)) {
@@ -158,7 +159,7 @@ function scan(): Map<string, number> {
 
 describe('no raw machine-column writes', () => {
     it('every machine-column write is in a declared helper or on the allowlist, at its exact count', () => {
-        const found = Object.fromEntries([...scan()].sort());
+        const found = Object.fromEntries([...scan()].filter(([key]) => !programWriterKey(key)).sort());
         const allowed = Object.fromEntries(ALLOWLIST.map((e) => [`${e.file}|${e.table}`, e.count]).sort());
         expect(found).toEqual(allowed);
     });
@@ -206,11 +207,9 @@ describe('no raw machine-column writes', () => {
         expect(declaredEnrollmentWrite(`{ where: { id, ...w.where }, data: { ...w.data(), status: "ACTIVE" } }`, pick)).toBe(false);
     });
 
-    it('every declared sale writer writes Program', () => {
-        for (const file of PROGRAM_WRITERS) {
-            const src = readFileSync(join(SRC, file), 'utf8');
-            expect([...src.matchAll(CALL)].some((m) => m[1] === 'program')).toBe(true);
-        }
+    it('each declared sale writer makes exactly its pinned number of Program writes', () => {
+        const found = Object.fromEntries([...scan()].filter(([key]) => programWriterKey(key)).map(([key, n]) => [key.slice(0, -'|Program'.length), n]));
+        expect(found).toEqual(PROGRAM_WRITERS);
     });
 
     it('the household-status helper is the one OrgMembership status writer it claims to be', () => {
