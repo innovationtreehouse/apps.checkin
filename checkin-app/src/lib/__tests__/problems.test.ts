@@ -15,12 +15,14 @@ jest.mock("@checkin/expense", () => ({ stuckItems: jest.fn(), retryStuckItem: je
 jest.mock("@checkin/bulk-donation", () => ({ stuckItems: jest.fn(), retryStuckItem: jest.fn(), getOrgId: jest.fn(), manualInKindService: { loadInventory: jest.fn() } }));
 jest.mock("@checkin/workflow-mapping", () => ({ stuckItems: jest.fn(), problemNotices: jest.fn(), retryStuckItem: jest.fn() }));
 jest.mock("@checkin/local-inventory", () => ({ stuckItems: jest.fn(), retryStuckItem: jest.fn() }));
+jest.mock("@/lib/finance/postingRuns", () => ({ currentPostingWarnings: jest.fn() }));
 
 const receipt = jest.requireMock<{ stuckItems: jest.Mock; problemNotices: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/receipt");
 const expense = jest.requireMock<{ stuckItems: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/expense");
 const gifts = jest.requireMock<{ stuckItems: jest.Mock; retryStuckItem: jest.Mock; getOrgId: jest.Mock; manualInKindService: { loadInventory: jest.Mock } }>("@checkin/bulk-donation");
 const mapping = jest.requireMock<{ stuckItems: jest.Mock; problemNotices: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/workflow-mapping");
 const inventory = jest.requireMock<{ stuckItems: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/local-inventory");
+const { currentPostingWarnings } = jest.requireMock<{ currentPostingWarnings: jest.Mock }>("@/lib/finance/postingRuns");
 
 const NOW = new Date("2026-11-08T08:00:00Z");
 const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3600_000);
@@ -41,6 +43,7 @@ beforeEach(() => {
     findSettings.mockResolvedValue({ alertEmailAddress: "alerts@example.org", boardEmailAddress: "board@example.org" });
     jest.mocked(getCronJobStatuses).mockResolvedValue([{ job: "nightly", lastSuccessAt: hoursAgo(1), stale: false }]);
     jest.mocked(sendTemplated).mockResolvedValue(true);
+    currentPostingWarnings.mockResolvedValue([]);
 });
 
 afterAll(() => {
@@ -197,6 +200,19 @@ describe("sendProblemsDigest", () => {
         await sendProblemsDigest(NOW, ["Nightly close could not check out visit 7, person 3"]);
 
         expect(jest.mocked(sendTemplated).mock.calls.map((c) => c[1])).toEqual(["alerts@example.org"]);
+        expect(digestCtx().items).toBe("Nightly close could not check out visit 7, person 3");
+    });
+
+    it("emails the QuickBooks posting warnings in force, whichever run went first", async () => {
+        currentPostingWarnings.mockResolvedValue([{ lane: "income", cause: "throttled", text: "QuickBooks throttled the income run 3 runs in a row." }]);
+        await sendProblemsDigest(NOW);
+        expect(digestCtx().items).toBe("QuickBooks posting: QuickBooks throttled the income run 3 runs in a row.");
+    });
+
+    it("still sends when the QuickBooks posting warnings can't be read", async () => {
+        currentPostingWarnings.mockRejectedValue(new Error("db down"));
+        jest.spyOn(console, "error").mockImplementation(() => {});
+        await sendProblemsDigest(NOW, ["Nightly close could not check out visit 7, person 3"]);
         expect(digestCtx().items).toBe("Nightly close could not check out visit 7, person 3");
     });
 
