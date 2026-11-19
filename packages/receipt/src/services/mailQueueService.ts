@@ -32,10 +32,10 @@ export const CANNOT_REMEMBER = "Only mail whose sender check passed can be remem
 
 type Tx = Prisma.TransactionClient | typeof db;
 
-/** One audit row about a mail item; it belongs to no receipt, so the item id rides in valueBefore. */
-const auditItem = (tx: Tx, actor: ReceiptPrincipal, itemId: number, action: string, valueAfter: string | null = null) =>
+/** One audit row about a mail item; it belongs to no receipt, so the item id rides in valueBefore. A null actor is a system step. */
+export const auditItem = (tx: Tx, actor: ReceiptPrincipal | null, itemId: number, action: string, valueAfter: string | null = null) =>
   tx.receiptAuditLog.create({
-    data: { receiptId: null, userId: actor.id, username: actor.name, action, fieldChanged: "mail_item", valueBefore: String(itemId), valueAfter },
+    data: { receiptId: null, userId: actor?.id ?? null, username: actor?.name ?? null, action, fieldChanged: "mail_item", valueBefore: String(itemId), valueAfter },
   });
 
 /** One audit row about the ignore list; it belongs to no receipt, so no receipt's audit view returns it. */

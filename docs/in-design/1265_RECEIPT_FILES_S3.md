@@ -337,10 +337,7 @@ itself stays: it is part of the books. The file route then answers 404, as for
 any missing file (§3). The step computes the date from the receipt's current
 state each run, so a receipt that is reopened stops counting down.
 
-In prod, S3 keeps the deleted version for 30 days (§6), then removes it. Until the
-`file_blob` column is dropped (§4), the step also nulls that row's `file_blob`;
-this is the one place the plan removes bytes from the database, because the rule
-requires the file gone.
+In prod, S3 keeps the deleted version for 30 days (§6), then removes it.
 
 The step ships after the bytes have moved (§9, PR 5).
 
