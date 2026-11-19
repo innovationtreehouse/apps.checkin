@@ -892,7 +892,7 @@ async function processCaptured(row: CapturedRow, pass: Pass): Promise<CapturedOu
   try {
     const raw = await readStoredFile(row.rawKey, pass.deadlines.read);
     if (!raw) throw new KindedError("system", "This email's stored copy is missing");
-    await pass.readMessage(parseRawMail(row.gmailMessageId, String(row.receivedAt.getTime()), Buffer.from(raw)));
+    await pass.readMessage(await parseRawMail(row.gmailMessageId, String(row.receivedAt.getTime()), Buffer.from(raw)));
   } catch (err) {
     await db.receiptMailMessage
       .update({ where: { id: row.id }, data: { processError: processErrorOf(err) } })
@@ -987,10 +987,11 @@ async function readLeased(
    */
   async function captureListed(listed: string[]): Promise<boolean> {
     const finished = await finishedMessages(listed);
-    for (const files of finished.values()) counts.skipped += files;
-    const captured = new Set(
-      (await db.receiptMailMessage.findMany({ where: { orgId, gmailMessageId: { in: listed } }, select: { gmailMessageId: true } })).map((r) => r.gmailMessageId),
-    );
+    const capturedRows = await db.receiptMailMessage.findMany({ where: { orgId, gmailMessageId: { in: listed } }, select: { gmailMessageId: true, processedAt: true } });
+    const captured = new Set(capturedRows.map((r) => r.gmailMessageId));
+    // A captured message still to process counts its skipped files when it is processed.
+    const pending = new Set(capturedRows.flatMap((r) => (r.processedAt ? [] : [r.gmailMessageId])));
+    for (const [id, files] of finished) if (!pending.has(id)) counts.skipped += files;
     const ids = listed.filter((id) => !finished.has(id) && !captured.has(id));
     const capturedNow: string[] = [];
     let rawBytes = 0;

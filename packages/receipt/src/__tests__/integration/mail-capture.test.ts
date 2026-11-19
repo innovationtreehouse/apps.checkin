@@ -16,6 +16,8 @@ const b64 = (s: string) => Buffer.from(s).toString("base64url");
 
 let messages: Map<string, MailMessage>;
 let fetched: string[];
+/** Each raw message as last fetched. */
+let raws: Map<string, Buffer>;
 let store: ReturnType<typeof createMemoryFileStore>;
 
 const reader: MailboxReader = {
@@ -25,7 +27,9 @@ const reader: MailboxReader = {
     fetched.push(id);
     const msg = messages.get(id);
     if (!msg) throw new Error(`no message ${id}`);
-    return { raw: toRaw(msg), internalDate: msg.internalDate };
+    const raw = toRaw(msg);
+    raws.set(id, raw);
+    return { raw, internalDate: msg.internalDate };
   },
 };
 
@@ -58,6 +62,7 @@ beforeEach(async () => {
   await clearAll();
   messages = new Map();
   fetched = [];
+  raws = new Map();
   store = createMemoryFileStore();
   bind();
 });
@@ -67,7 +72,7 @@ describeDb("raw mail capture", () => {
     send("m1");
     expect(await readMailbox()).toMatchObject({ status: "ok", captured: 1, messages: 1, receipts: 1 });
     const row = await db.receiptMailMessage.findFirstOrThrow();
-    const raw = toRaw(messages.get("m1")!);
+    const raw = raws.get("m1")!;
     expect(row).toMatchObject({
       orgId: TEST_ORG_ID,
       gmailMessageId: "m1",

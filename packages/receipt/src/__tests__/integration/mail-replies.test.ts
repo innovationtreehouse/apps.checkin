@@ -406,17 +406,20 @@ describeDb("mailed receipt acknowledgements", () => {
   });
 
   it("still sends a refusal that arrives after the acknowledgement, on its own", async () => {
-    send("m1");
+    // m1's first file is the run's last receipt, so its acknowledgement goes out while its second file waits.
+    setup({ limits: { mailUploadsPerPersonPerDay: MAIL_CAP * 2 } });
+    for (let i = 0; i < MAIL_CAP - 1; i++) send(`a${i}`);
+    mailWith("m1", [
+      { mimeType: "application/pdf", filename: "first.pdf", body: { data: b64(`%PDF-1.4 first ${Date.now()}`), size: 30 } },
+      { mimeType: "application/pdf", filename: "later.pdf", body: { data: b64(`%PDF-1.4 later ${Date.now()}`), size: 30 } },
+      { mimeType: "application/msword", filename: "r.doc", body: { data: b64("PK"), size: 2 } },
+    ]);
     await readMailbox();
-    const [{ gmailMessageId }] = await db.receiptMailReply.findMany();
-    const msg = messages.get(gmailMessageId)!;
-    msg.payload.parts!.push({ mimeType: "application/msword", filename: "r.doc", body: { attachmentId: "b", size: 100 } });
-    // A file is read on a later pass only when an earlier one left its message at risk.
-    await db.receiptMailAtRisk.create({ data: { orgId: TEST_ORG_ID, gmailMessageId, receivedAt: new Date() } });
+    expect(sent.filter((a) => a.refused.length > 0)).toEqual([]);
+    const acknowledged = sent.length;
     await readMailbox();
     await readMailbox();
-    expect(sent).toHaveLength(2);
-    expect(sent[1]).toMatchObject({ to: "alice@example.org", receiptId: null, refused: [{ file: "r.doc", reason: "wrong_type" }] });
+    expect(sent.slice(acknowledged)).toEqual([expect.objectContaining({ to: "alice@example.org", receiptId: null, refused: [{ file: "r.doc", reason: "wrong_type" }] })]);
   });
 
   it("does not write the refusals of a message with a file put off, until a pass finishes it", async () => {

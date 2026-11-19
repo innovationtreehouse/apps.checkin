@@ -18,6 +18,7 @@ import {
   startMailRun,
 } from "../../services/mailIntake";
 import { createMemoryFileStore } from "../../lib/fileStorage";
+import { fileStore } from "../../runtime";
 import { createGmailReader } from "../../lib/gmail";
 import { mailQueueService } from "../../services/mailQueueService";
 import { OCR_INTERRUPTED_AFTER_MS, sweepInterruptedOcr } from "../../services/catchUp";
@@ -419,6 +420,7 @@ describeDb("mail intake flood limits", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   it("neither fetches nor processes a message already processed", async () => {
@@ -499,15 +501,11 @@ describeDb("mail intake flood limits", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     send("m1");
     send("m2");
-    const { getRaw } = mail.reader;
-    mail.reader.getRaw = async (id) => {
-      vi.setSystemTime(Date.now() + MAIL_TIME_BUDGET_MS);
-      return getRaw(id);
-    };
+    const spent = spendBudgetOnFirstCapture();
     // m1 is captured, m2 is not reached, and nothing is left to process m1.
     expect(await readMailbox()).toMatchObject({ captured: 1, messages: 0, receipts: 0, unread: 2 });
     expect(agingAlerts).toEqual([]);
-    mail.reader.getRaw = getRaw;
+    spent.mockRestore();
     expect(await readMailbox()).toMatchObject({ captured: 1, messages: 2, receipts: 2, unread: 0 });
   });
 });
@@ -622,6 +620,20 @@ describeDb("mail intake call deadlines", () => {
   });
 });
 
+/** Moves the clock past the run's budget once the first raw copy is stored, so that copy is kept and nothing after it starts. */
+function spendBudgetOnFirstCapture() {
+  const store = fileStore();
+  const put = store.put;
+  let first = true;
+  return vi.spyOn(store, "put").mockImplementation(async (key, bytes, sha) => {
+    await put(key, bytes, sha);
+    if (first && key.startsWith("mail-raw/")) {
+      first = false;
+      vi.setSystemTime(Date.now() + MAIL_TIME_BUDGET_MS);
+    }
+  });
+}
+
 /** Records the ids each run fetches. */
 function trackFetches(): string[] {
   const fetched: string[] = [];
@@ -704,6 +716,7 @@ describeDb("mail intake ageing alert", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   it("stays quiet about old mail put off by the cap once it is captured", async () => {
@@ -725,13 +738,7 @@ describeDb("mail intake ageing alert", () => {
     send("m1", { ageMs: old + 2_000 });
     send("m2", { ageMs: old + 1_000 });
     send("m3", { ageMs: old });
-    const { getRaw } = mail.reader;
-    let first = true;
-    mail.reader.getRaw = async (id) => {
-      if (first) vi.setSystemTime(Date.now() + MAIL_TIME_BUDGET_MS);
-      first = false;
-      return getRaw(id);
-    };
+    spendBudgetOnFirstCapture();
     expect(await readMailbox()).toMatchObject({ captured: 1, unread: 3 });
     expect(agingAlerts).toMatchObject([{ messages: 2 }]);
   });
@@ -741,13 +748,7 @@ describeDb("mail intake ageing alert", () => {
     send("m1", { ageMs: old + 1_000 });
     send("m2", { ageMs: old });
     send("newer");
-    const { getRaw } = mail.reader;
-    let first = true;
-    mail.reader.getRaw = async (id) => {
-      if (first) vi.setSystemTime(Date.now() + MAIL_TIME_BUDGET_MS);
-      first = false;
-      return getRaw(id);
-    };
+    spendBudgetOnFirstCapture();
     expect(await readMailbox()).toMatchObject({ captured: 1, unread: 3 });
     expect(agingAlerts).toMatchObject([{ messages: 1 }]);
 
@@ -766,14 +767,9 @@ describeDb("mail intake ageing alert", () => {
     const { getRaw } = mail.reader;
     const listRecent = mail.reader.listRecent;
     mail.reader.listRecent = async (days) => ["gone", ...(await listRecent(days))];
-    let first = true;
-    // "gone" cannot be fetched; the clock then runs out the budget on m1, leaving m2 uncaptured and dated.
-    mail.reader.getRaw = async (id) => {
-      if (id === "gone") throw new Error("Gmail request failed: 500");
-      if (first) vi.setSystemTime(Date.now() + MAIL_TIME_BUDGET_MS);
-      first = false;
-      return getRaw(id);
-    };
+    // "gone" cannot be fetched; capturing m1 then spends the budget, leaving m2 uncaptured and dated.
+    mail.reader.getRaw = async (id) => (id === "gone" ? Promise.reject(new Error("Gmail request failed: 500")) : getRaw(id));
+    spendBudgetOnFirstCapture();
     vi.spyOn(console, "error").mockImplementation(() => {});
     expect(await readMailbox()).toMatchObject({ failed: 1, captured: 1 });
     expect(agingAlerts).toMatchObject([{ messages: 2 }]);
@@ -891,14 +887,15 @@ describeDb("mail intake ageing alert", () => {
   });
 
   it("clears a stored message once it is captured, so it never alerts", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    const restore = failingFetches();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    send("m0");
     send("m1");
+    const spent = spendBudgetOnFirstCapture();
     await readMailbox();
     expect(await db.receiptMailAtRisk.count()).toBe(1);
 
-    restore();
-    expect(await readMailbox()).toMatchObject({ captured: 1, receipts: 1 });
+    spent.mockRestore();
+    expect(await readMailbox()).toMatchObject({ captured: 1, receipts: 2 });
     expect(await db.receiptMailAtRisk.count()).toBe(0);
     expect(agingAlerts).toEqual([]);
   });
@@ -1127,9 +1124,10 @@ describeDb("mail intake over a sender's daily upload limit", () => {
     expect(deferred).toMatchObject({ gmailMessageId: "m2", senderAddress: "alice@example.org", receiptId: null });
     expect(await storedBytes(deferred.fileKey)).toBe(pdf("m2"));
 
+    // m2 was processed from its copy; its deferred file waits for a retry, not a re-read.
     const fetched = trackFetches();
-    expect(await readMailbox()).toMatchObject({ receipts: 0, overLimit: 0, skipped: 2 });
-    expect(fetched).toEqual(["m2"]);
+    expect(await readMailbox()).toMatchObject({ messages: 0, receipts: 0, overLimit: 0, skipped: 1 });
+    expect(fetched).toEqual([]);
 
     withLimits({ mailUploadsPerPersonPerDay: 30 });
     mail.messages.clear();
