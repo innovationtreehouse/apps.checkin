@@ -118,3 +118,25 @@ describe('a save after a concurrent change of Shopify variant', () => {
         expect(tx.program.update).not.toHaveBeenCalled();
     });
 });
+
+describe('a program stored with its start after its end', () => {
+    const inverted = { ...program, startAt: new Date('2099-12-15'), endAt: new Date('2099-12-01') } as Program;
+
+    it('still saves a field other than its dates', async () => {
+        rowAtWrite = inverted;
+        expect((await updateProgram(inverted, { announceOnOpen: true }, actor)).ok).toBe(true);
+    });
+
+    it('refuses a date change that leaves the range inverted', async () => {
+        rowAtWrite = inverted;
+        expect(await updateProgram(inverted, { endAt: '2099-12-10' }, actor)).toMatchObject({ ok: false, refusal: 'invalid' });
+        expect(tx.program.update).not.toHaveBeenCalled();
+    });
+});
+
+describe('an age bound that is not a whole number', () => {
+    it('is refused before any write', async () => {
+        expect(await updateProgram(program, { minAge: '' as unknown as number }, actor)).toMatchObject({ ok: false, refusal: 'invalid' });
+        expect(tx.program.update).not.toHaveBeenCalled();
+    });
+});

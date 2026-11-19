@@ -262,9 +262,11 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         return refuse("invalid", "Invalid end date");
     }
     // Effective values (body overrides current) so a one-sided edit can't invert the range.
+    // Only a date change is checked, so a program saved with inverted dates can still save other fields.
     const effStartAt = newStartAt ?? currentProgram.startAt;
     const effEndAt = newEndAt ?? currentProgram.endAt;
-    if (effStartAt > effEndAt) {
+    const datesMoved = effStartAt.getTime() !== currentProgram.startAt.getTime() || effEndAt.getTime() !== currentProgram.endAt.getTime();
+    if (datesMoved && effStartAt > effEndAt) {
         return refuse("invalid", "Start date must be on or before the end date");
     }
     // A program's leader marks it finished on or after its end date; before that, ending it is the Board's alone.
@@ -348,7 +350,6 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
     }
 
     // Re-dating re-derives the membership year; a stated year is only supplied by the Board.
-    const datesMoved = effStartAt.getTime() !== currentProgram.startAt.getTime() || effEndAt.getTime() !== currentProgram.endAt.getTime();
     const yearSupplied = patch.appliesToYear != null && patch.appliesToYear !== currentProgram.appliesToYear;
     let newAppliesToYear: number | undefined;
     if (datesMoved || yearSupplied) {

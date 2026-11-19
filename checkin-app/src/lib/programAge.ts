@@ -99,12 +99,17 @@ export function leaderAgeCutoff(): Date {
  */
 export const MAX_PROGRAM_AGE = 25;
 
+const isAgeBound = (v: unknown): v is number | null | undefined =>
+  v == null || (typeof v === "number" && Number.isInteger(v));
+
 /**
  * Validate a program's age bounds. Returns an error message for the caller to
  * pass to apiError(400), or null when valid. Shared by every write path
  * (create, PATCH, settings) so the 25+ ceiling can't be bypassed via one route.
  */
-export function validateProgramAgeBounds(minAge?: number | null, maxAge?: number | null): string | null {
+export function validateProgramAgeBounds(minAge?: unknown, maxAge?: unknown): string | null {
+  if (!isAgeBound(minAge)) return "minAge must be a whole number";
+  if (!isAgeBound(maxAge)) return "maxAge must be a whole number";
   if (minAge != null && minAge < 0) return "minAge cannot be negative";
   if (maxAge != null && maxAge < 0) return "maxAge cannot be negative";
   if (minAge != null && minAge > MAX_PROGRAM_AGE) return `minAge cannot exceed ${MAX_PROGRAM_AGE}`;

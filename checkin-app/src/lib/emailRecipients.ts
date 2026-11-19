@@ -83,7 +83,9 @@ async function boardMemberEmails(): Promise<string[]> {
  */
 export async function emailBoardMembers<K extends TemplateKey>(key: K, ctx: TemplateCtx<K>, errorLabel: string): Promise<number> {
     try {
-        const sent = await fanOutEmails(await boardMemberEmails(), key, ctx);
+        const emails = await boardMemberEmails();
+        if (emails.length === 0) logger.error(errorLabel, "no Board member has an email address on file");
+        const sent = await fanOutEmails(emails, key, ctx);
         return sent.filter(Boolean).length;
     } catch (e) {
         logger.error(errorLabel, e);
