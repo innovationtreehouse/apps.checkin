@@ -129,22 +129,24 @@ export async function seedBaseline(prisma: Db): Promise<void> {
 
     const parentFamily = await prisma.person.upsert({
         where: { email: "parent.family@example.com" },
-        update: { name: "Parent Family", phone: "555-555-0002" },
+        update: { name: "Parent Family", phone: "555-555-0002", isDeclaredAdult: true },
         create: {
             email: "parent.family@example.com",
             name: "Parent Family",
             phone: "555-555-0002",
+            isDeclaredAdult: true,
             householdId: household1.id,
         },
     });
 
     const parent2Family = await prisma.person.upsert({
         where: { email: "parent2.family@example.com" },
-        update: { name: "Parent2 Family", phone: "555-555-0003" },
+        update: { name: "Parent2 Family", phone: "555-555-0003", isDeclaredAdult: true },
         create: {
             email: "parent2.family@example.com",
             name: "Parent2 Family",
             phone: "555-555-0003",
+            isDeclaredAdult: true,
             householdId: household1.id,
         },
     });
@@ -162,22 +164,24 @@ export async function seedBaseline(prisma: Db): Promise<void> {
 
     const parentFamily2 = await prisma.person.upsert({
         where: { email: "parent.family2@example.com" },
-        update: { name: "Parent Family2", phone: "555-555-0004" },
+        update: { name: "Parent Family2", phone: "555-555-0004", isDeclaredAdult: true },
         create: {
             email: "parent.family2@example.com",
             name: "Parent Family2",
             phone: "555-555-0004",
+            isDeclaredAdult: true,
             householdId: household2.id,
         },
     });
 
     const parentFamily3 = await prisma.person.upsert({
         where: { email: "parent.family3@example.com" },
-        update: { name: "Parent Family3", phone: "555-555-0010" },
+        update: { name: "Parent Family3", phone: "555-555-0010", isDeclaredAdult: true },
         create: {
             email: "parent.family3@example.com",
             name: "Parent Family3",
             phone: "555-555-0010",
+            isDeclaredAdult: true,
             householdId: household3.id,
         },
     });

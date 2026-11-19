@@ -72,7 +72,7 @@ async function makeFreshRenewal() {
 async function makeApplicant(status: 'PENDING_EXTERNAL_ACTION', extra: { lastBackgroundCheck?: Date } = {}) {
     const hh = await prisma.household.create({ data: { name: `Applicant ${TAG} ${Math.random()}` } });
     const lead = await prisma.person.create({
-        data: { email: `lead-${Math.random()}-${TAG}@example.com`, name: 'Lead Parent', householdId: hh.id, lastBackgroundCheck: extra.lastBackgroundCheck ?? null },
+        data: { email: `lead-${Math.random()}-${TAG}@example.com`, name: 'Lead Parent', isDeclaredAdult: true, householdId: hh.id, lastBackgroundCheck: extra.lastBackgroundCheck ?? null },
     });
     await prisma.person.update({ where: { id: lead.id }, data: { isHouseholdLead: true } });
     const m = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE' } });

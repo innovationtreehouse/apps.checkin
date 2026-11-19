@@ -140,7 +140,7 @@ describe('admin participant routes keep the own-household and denied rules', () 
         });
 
         it('adds a person to another household', async () => {
-            const res = await PARTICIPANT_POST(jsonReq('POST', { name: `Joined ${TAG}`, householdId: otherHouseholdId }));
+            const res = await PARTICIPANT_POST(jsonReq('POST', { name: `Joined ${TAG}`, householdId: otherHouseholdId, over25: true }));
             expect(res.status).toBe(200);
             expect((await prisma.person.findFirst({ where: { name: `Joined ${TAG}` } }))?.householdId).toBe(otherHouseholdId);
         });

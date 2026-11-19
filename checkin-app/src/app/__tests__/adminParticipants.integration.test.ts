@@ -148,7 +148,7 @@ describe('Admin Participants API Integration Tests', () => {
 
             const req = new Request('http://localhost:4000/api/membership-ops/participants', {
                 method: 'POST',
-                body: JSON.stringify({ name: '  Trimmed Name  ', email: 'new-lone-participants-test-trim@example.com' })
+                body: JSON.stringify({ name: '  Trimmed Name  ', email: 'new-lone-participants-test-trim@example.com', over25: true })
             });
 
             const res = await POST(req as unknown as Parameters<typeof POST>[0]);
@@ -452,6 +452,25 @@ describe('Admin Participants API Integration Tests', () => {
             expect(dbCheck?.isDeclaredAdult).toBe(false);
             // The DOB is the authoritative value — dropping the flag must not clear it.
             expect(dbCheck?.dateOfBirth).toEqual(new Date(Date.UTC(2014, 0, 15)));
+        });
+
+        it('refuses clearing the over-25 declaration on a person with no date of birth', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({
+                user: { id: testAdminId, isSysadmin: true, isBoardMember: false }
+            });
+
+            const adult = await prisma.person.create({
+                data: { email: 'edit-test-user-declared@example.com', name: 'Declared Adult', isDeclaredAdult: true, household: { create: { name: "Test HH" } } },
+            });
+
+            const req = new Request(`http://localhost:4000/api/membership-ops/participants/${adult.id}`, {
+                method: 'PUT',
+                body: JSON.stringify({ name: 'Declared Adult', isDeclaredAdult: false })
+            });
+
+            const res = await PUT(req as unknown as Parameters<typeof PUT>[0], { params: Promise.resolve({ id: adult.id.toString() }) });
+            expect(res.status).toBe(400);
+            expect((await prisma.person.findUnique({ where: { id: adult.id } }))?.isDeclaredAdult).toBe(true);
         });
 
         it('allows clearing the over-25 declaration on a person with a date of birth', async () => {

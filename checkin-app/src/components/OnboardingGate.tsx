@@ -71,7 +71,7 @@ function HouseholdQuestion() {
   );
 }
 
-/** Whether a signed-in session must give an age before any page: someone who created a new household and has no age on file yet. */
+/** Whether a signed-in session must give an age before any page. The `ageStepPending` claim is already false once an age is on file (authClaims). */
 export function needsAgeStep(user: { ageStepPending?: boolean; denied?: boolean; householdJoinPending?: boolean } | undefined): boolean {
   return user?.ageStepPending === true && !user.denied && !user.householdJoinPending;
 }
