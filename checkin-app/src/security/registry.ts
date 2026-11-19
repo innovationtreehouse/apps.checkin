@@ -1033,9 +1033,10 @@ defineRoute({
 // A household lead says the household won't renew into the year the next
 // renewal run opens (POST), or takes that back (DELETE). Any session is
 // admitted; the service refuses anyone but a lead of an active household. Each
-// returns the household's OrgMembership under GET /api/household's view.
+// returns the household's OrgMembership under GET /api/household's view, minus
+// the peer background-check status scopes.
 const NOT_RENEWING_VIEW: readonly OrderedViewEntry[] = [
-    ['authenticated', ['their_households:pii', 'their_households:personal', 'their_households:internal', 'their_own:internal', 'led_households:internal', 'member', 'public']],
+    ['authenticated', ['their_households:pii', 'their_households:personal', 'their_households:internal', 'member', 'public']],
 ];
 
 defineRoute({
