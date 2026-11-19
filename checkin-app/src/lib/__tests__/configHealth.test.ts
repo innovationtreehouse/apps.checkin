@@ -64,7 +64,9 @@ describe("getConfigHealth — prod, nothing configured", () => {
         expect(c["receipt-ocr"].detail).toContain("ANTHROPIC_API_KEY");
         expect(c["receipt-mailbox"].ok).toBe(false);
         expect(c["receipt-mailbox"].detail).toContain("RECEIPT_MAILBOX_ADDRESS");
-        expect(openConfigIssues(checks)).toBe(9);
+        expect(c["receipt-files-s3"].ok).toBe(false);
+        expect(c["receipt-files-s3"].detail).toContain("RECEIPT_FILES_S3_BUCKET");
+        expect(openConfigIssues(checks)).toBe(10);
     });
 });
 
@@ -85,6 +87,7 @@ describe("getConfigHealth — prod, all configured", () => {
         process.env.ANTHROPIC_API_KEY = "sk-key";
         process.env.GMAIL_REFRESHER_FN = "gmail-refresher";
         process.env.RECEIPT_MAILBOX_ADDRESS = "receipts@example.org";
+        process.env.RECEIPT_FILES_S3_BUCKET = "receipt-files";
         expect(openConfigIssues(getConfigHealth())).toBe(0);
     });
 });
