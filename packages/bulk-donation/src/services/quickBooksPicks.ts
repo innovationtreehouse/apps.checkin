@@ -1,15 +1,12 @@
 import { LINE_ACCOUNT_TYPES, accountTypeRefusal, type QboAccountSummary } from "@checkin/quickbooks";
 import { db } from "../db";
-import { getInKindCapital, getOrgId } from "../runtime";
+import { getOrgId } from "../runtime";
 import { QB_MATCH_STATE } from "../lib/qb-match";
-import type { InKindSource } from "./inKindAcceptService";
 
 /** A gift in one of these is in QuickBooks, or settled outside the app: its lines' accounts aren't re-checked. */
 const BOOKED: readonly string[] = [QB_MATCH_STATE.MATCHED, QB_MATCH_STATE.CREATED, QB_MATCH_STATE.POSTING, QB_MATCH_STATE.DISMISSED];
 
 const withPlace = (place: string, refusal: string | null) => refusal && `${place}: ${refusal}`;
-
-type GiftLine = { id: number; donationId: number; quickBooksAccountId: string | null };
 
 /**
  * Each stored QuickBooks pick that `accounts` lacks, shows as inactive, or lists under a type it doesn't accept, one line per pick
@@ -18,7 +15,7 @@ type GiftLine = { id: number; donationId: number; quickBooksAccountId: string | 
 export async function misTypedQuickBooksPicks(accounts: readonly QboAccountSummary[]): Promise<string[]> {
   const orgId = await getOrgId();
   const hasAccount = { quickBooksAccountId: { not: null } };
-  const select = { id: true, donationId: true, quickBooksAccountId: true };
+  const select = { id: true, donationId: true, quickBooksAccountId: true, isCapital: true };
   const [maps, receiptLines, manualLines, booked] = await Promise.all([
     db.accountMap.findMany({
       where: { orgId, OR: [{ donationAccountId: { not: null } }, { matchAccountId: { not: null } }] },
@@ -38,27 +35,13 @@ export async function misTypedQuickBooksPicks(accounts: readonly QboAccountSumma
     ];
   });
   const isBooked = new Set(booked.map((p) => `${p.source}:${p.giftId}`));
-  const gifts = new Map<string, { source: InKindSource; giftId: number; lines: GiftLine[] }>();
   for (const [source, lines] of [["receipt", receiptLines], ["manual", manualLines]] as const) {
     for (const line of lines) {
-      const key = `${source}:${line.donationId}`;
-      if (isBooked.has(key)) continue;
-      const gift = gifts.get(key) ?? { source, giftId: line.donationId, lines: [] };
-      gift.lines.push(line);
-      gifts.set(key, gift);
-    }
-  }
-  const capital = getInKindCapital();
-  const withAssets = await Promise.all(
-    [...gifts.values()].map(async (gift) => ({ ...gift, assets: await capital.assetLineIds(orgId, { giftSource: gift.source, giftId: gift.giftId }) })),
-  );
-  for (const { source, giftId, lines, assets } of withAssets) {
-    for (const line of lines) {
-      if (!line.quickBooksAccountId) continue;
-      const isAsset = assets.includes(line.id);
+      if (isBooked.has(`${source}:${line.donationId}`) || !line.quickBooksAccountId) continue;
+      const isAsset = line.isCapital === true;
       out.push(
         withPlace(
-          `Gifts of goods, ${source} gift ${giftId}, line ${line.id}`,
+          `Gifts of goods, ${source} gift ${line.donationId}, line ${line.id}`,
           refusal(line.quickBooksAccountId, isAsset ? LINE_ACCOUNT_TYPES.donatedCapital : LINE_ACCOUNT_TYPES.donatedGoods, isAsset ? "Donated equipment" : "A donated item"),
         ),
       );

@@ -3,20 +3,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { postGift } from "../../lib/in-kind-poster";
 
 type Outcome = Awaited<ReturnType<typeof postGift>>;
-const state = vi.hoisted(() => ({ outcome: "posted" as string, send: "sent" as string, resent: [] as unknown[][] }));
+const state = vi.hoisted(() => ({ outcome: "posted" as string }));
 const FAILED_AT = new Date("2026-11-02T10:00:00Z");
 
 vi.mock("../../db", () => ({
   db: { inKindPosting: { findFirst: async () => ({ id: 1 }), findMany: async () => [{ source: "manual", giftId: 3, qbFirstFailedAt: FAILED_AT }] } },
-}));
-vi.mock("../../services/inKindAcceptService", () => ({
-  inKindCapitalSend: {
-    stuckCapitalSends: async () => [{ source: "receipt", id: 5, failedAt: FAILED_AT }],
-    resendCapitalReview: async (...args: unknown[]) => {
-      state.resent.push(args);
-      return state.send;
-    },
-  },
 }));
 vi.mock("../../runtime", () => ({ getOrgId: async () => "org-1" }));
 vi.mock("../../lib/in-kind-resolve", () => ({ openRun: async () => ({}) }));
@@ -29,8 +20,6 @@ const retry = () => retryStuckItem({ id: "receipt 5", step: "QuickBooks posting"
 describe("retryStuckItem", () => {
   beforeEach(() => {
     state.outcome = "posted";
-    state.send = "sent";
-    state.resent = [];
   });
 
   it.each<Outcome>(["posted", "matched"])("returns when the gift is %s", async (outcome) => {
@@ -57,42 +46,10 @@ describe("retryStuckItem", () => {
   });
 });
 
-describe("the capital review send step", () => {
-  const resend = (id = "receipt 5") => retryStuckItem({ id, step: "capital review send" });
-
-  beforeEach(() => {
-    state.send = "sent";
-    state.resent = [];
-  });
-
-  it("is listed beside the posting step, linked to the gift and timed by its first failure", async () => {
+describe("stuckItems", () => {
+  it("lists a gift whose post failed, linked to the gift and timed by its first failure", async () => {
     expect(await stuckItems()).toEqual([
       { id: "manual 3", step: "QuickBooks posting", href: "/donations/in-kind/manual/3", failedAt: FAILED_AT },
-      { id: "receipt 5", step: "capital review send", href: "/donations/in-kind/receipt/5", failedAt: FAILED_AT },
     ]);
-  });
-
-  it("resends once and returns when the lines were taken", async () => {
-    await expect(resend()).resolves.toBeUndefined();
-    expect(state.resent).toEqual([["org-1", "receipt", 5]]);
-  });
-
-  it.each([
-    ["not_stuck", 404],
-    ["system", 503],
-    ["connection", 503],
-    ["data", 409],
-    ["bug", 409],
-    ["settings", 409],
-  ])("answers %s with %i and no error text", async (outcome, status) => {
-    state.send = outcome;
-    const failed = await resend().catch((e: unknown) => e);
-    expect(failed).toMatchObject({ status });
-    expect((failed as Error).message).toMatch(/^(Retried|No failed)/);
-  });
-
-  it("answers 404 for an unknown source without resending", async () => {
-    await expect(resend("other 5")).rejects.toMatchObject({ status: 404 });
-    expect(state.resent).toEqual([]);
   });
 });

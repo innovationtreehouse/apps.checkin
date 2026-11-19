@@ -140,8 +140,68 @@ export interface InKindDirectory {
 
 export { DonatedCapitalLineSchema as CapitalReviewLineSchema, type DonatedCapitalLine as CapitalReviewLine } from "@checkin/receipt-types";
 
-/** Donations → the expense library's capital review, for donated equipment. */
+/** A line's capital decision as the expense library's review reads and writes it; null until designated. */
+export interface CapitalLine {
+  id: number;
+  isCapital: boolean | null;
+  ownerId: number | null;
+  depreciationYears: number | null;
+}
+
+export type CapitalStep = "designated" | "period_set";
+
+/** The gift's lines bound inside its own transaction; the review writes each line through it. */
+export interface CapitalLineStore {
+  lines(): Promise<CapitalLine[]>;
+  save(step: CapitalStep, line: CapitalLine & { isCapital: boolean }, before: CapitalLine): Promise<void>;
+  afterStep(step: CapitalStep): Promise<void>;
+}
+
+/** The purchase routes' inputs, taken unchanged. */
+export interface CapitalDesignation {
+  lineItems: { lineItemId: number; isCapital: boolean; capitalOwnerId?: number | null; depreciationYears?: number | null }[];
+}
+export interface CapitalPeriodItem {
+  lineItemId: number;
+  depreciationYears: number;
+  ownerId: number;
+  seededAssetNumbers?: string[];
+}
+export interface CapitalPeriods {
+  items: CapitalPeriodItem[];
+}
+
+/** The expense library's capital review, the one implementation a purchase also runs. */
+export interface CapitalReview {
+  designationInput: z.ZodType<CapitalDesignation>;
+  periodInput: z.ZodType<CapitalPeriods>;
+  designate(store: CapitalLineStore, input: CapitalDesignation): Promise<void>;
+  setPeriod(store: CapitalLineStore, input: CapitalPeriods, register: (line: CapitalLine & { isCapital: boolean }, item: CapitalPeriodItem) => Promise<void>): Promise<void>;
+}
+
+/** A gift line as the threshold test takes it: what it books at, and how many units. */
+export interface CapitalCostLine {
+  costCents: number;
+  quantity: number;
+}
+
+/** A capital gift line as the register takes it. */
+export interface CapitalAssetLine extends CapitalCostLine {
+  giftSource: "receipt" | "manual";
+  giftId: number;
+  giftLineId: number;
+  description: string;
+  acquisitionDate: string | null;
+  depreciationYears: number;
+}
+
+/** Donations → the expense library's capital thresholds, review and register, for donated equipment. */
 export interface InKindCapital {
+  /** Whether an accepted gift meets a capital threshold, tested as a purchase is. */
+  reviewNeeded(orgId: string, gift: { totalCents: number; lines: CapitalCostLine[] }): Promise<boolean>;
+  review: CapitalReview;
+  /** Mints one asset per unit of the line; a repeat for the same line returns the same numbers. */
+  register(orgId: string, line: CapitalAssetLine): Promise<string[]>;
   /** Sends an accepted gift's lines; the callee keeps those at or over its capital thresholds. A resend does nothing. */
   submit(orgId: string, lines: DonatedCapitalLine[]): Promise<void>;
   /** The gifts with a line still waiting on capital review. */

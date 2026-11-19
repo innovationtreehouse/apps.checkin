@@ -93,7 +93,7 @@ export function seedCollision(assetNumber: string, existing: SeedColumns & { see
 
 export type AssetSource =
   | { kind: "expense_line"; expenseId: string; lineItemId: number }
-  | { kind: "gift_line"; giftSource: "receipt" | "manual"; giftId: number; giftLineId: number; donatedLineId: number };
+  | { kind: "gift_line"; giftSource: "receipt" | "manual"; giftId: number; giftLineId: number; donatedLineId?: number };
 
 export interface AssetUnit {
   costCents: number;

@@ -9,8 +9,7 @@ import { inventorySourceKey } from "../contract";
 import type { AuditContext } from "../workflows/disbursement.actor";
 import { QB_MATCH_STATE } from "../lib/qb-match";
 import { MAX_IN_KIND_LINES, MAX_IN_KIND_LINE_VALUE_CENTS, MAX_IN_KIND_TOTAL_CENTS } from "./manualInKindService";
-import { CapitalReviewLineSchema, type CapitalReviewLine } from "../contract";
-import { ServiceError, kindOf, toHttpError, type FailureKind } from "@checkin/component-kit";
+import { ServiceError } from "@checkin/component-kit";
 import { formatGtinDisplay } from "@checkin/gtin";
 import { freeLines, spreadToTotal } from "../lib/in-kind-value";
 
@@ -36,10 +35,11 @@ const OUTCOME: Record<InKindDecisionInput["outcome"], InKindOutcome> = { accept:
 const BOOKED_STATES: readonly string[] = [QB_MATCH_STATE.MATCHED, QB_MATCH_STATE.CREATED];
 
 /**
- * What a gift waits on, most urgent first. `replay` is an anomaly finance settles; `capital` means a line waits on the expense library's capital review; `booking` means
- * ready, waiting on the QuickBooks drain.
+ * What a gift waits on, most urgent first. `replay` is an anomaly finance settles; `capital` means a
+ * line waits on finance's capital review; `register` means a capital line waits on the drain for its
+ * asset numbers; `booking` means ready, waiting on the QuickBooks drain.
  */
-export type WaitingOn = "replay" | "donor" | "uploader" | "value" | "decision" | "bucket" | "capital" | "booking";
+export type WaitingOn = "replay" | "donor" | "uploader" | "value" | "decision" | "bucket" | "capital" | "register" | "booking";
 
 interface GiftLine {
   id: number;
@@ -52,6 +52,10 @@ interface GiftLine {
   financeValueCents: number | null;
   /** The account finance set by hand on a held line; it wins over every account rule. */
   quickBooksAccountId: string | null;
+  isCapital: boolean | null;
+  depreciationYears: number | null;
+  capitalBucketId: number | null;
+  registeredAt: Date | null;
 }
 
 /** A line as the screens show it: a free receipt line shows the value finance set. */
@@ -77,7 +81,7 @@ interface Gift {
   decidedAt: Date | null;
   budgetOwnerId: number | null;
   bucketAssignedAt: Date | null;
-  capitalSubmittedAt: Date | null;
+  capitalReviewNeeded: boolean | null;
   lines: GiftLine[];
 }
 
@@ -87,8 +91,10 @@ const DECISION_SELECT = {
   decidedAt: true,
   budgetOwnerId: true,
   bucketAssignedAt: true,
-  capitalSubmittedAt: true,
+  capitalReviewNeeded: true,
 } as const;
+
+const CAPITAL_LINE_SELECT = { isCapital: true, depreciationYears: true, capitalBucketId: true, registeredAt: true } as const;
 
 const RECEIPT_SELECT = {
   id: true,
@@ -102,7 +108,7 @@ const RECEIPT_SELECT = {
   replayConflictAt: true,
   uploadedByUserId: true,
   ...DECISION_SELECT,
-  lines: { select: { id: true, gtin13: true, description: true, quantity: true, valueCents: true, financeValueCents: true, quickBooksAccountId: true }, orderBy: { lineNumber: "asc" } },
+  lines: { select: { id: true, gtin13: true, description: true, quantity: true, valueCents: true, financeValueCents: true, quickBooksAccountId: true, ...CAPITAL_LINE_SELECT }, orderBy: { lineNumber: "asc" } },
 } as const;
 
 const MANUAL_SELECT = {
@@ -112,7 +118,7 @@ const MANUAL_SELECT = {
   donorLastName: true,
   recordedByUserId: true,
   ...DECISION_SELECT,
-  lines: { select: { id: true, gtin13: true, description: true, quantity: true, valueCents: true, suggestedValueCents: true, quickBooksAccountId: true }, orderBy: { id: "asc" } },
+  lines: { select: { id: true, gtin13: true, description: true, quantity: true, valueCents: true, suggestedValueCents: true, quickBooksAccountId: true, ...CAPITAL_LINE_SELECT }, orderBy: { id: "asc" } },
 } as const;
 
 type ReceiptRow = Awaited<ReturnType<typeof findReceipts>>[number];
@@ -152,7 +158,7 @@ function fromManual(m: ManualRow): Gift {
   };
 }
 
-async function loadGift(handle: DbOrTx, orgId: string, source: InKindSource, id: number): Promise<Gift | null> {
+export async function loadGift(handle: DbOrTx, orgId: string, source: InKindSource, id: number): Promise<Gift | null> {
   const [row] = source === "receipt" ? (await findReceipts(handle, { orgId, id })).map(fromReceipt) : (await findManuals(handle, { orgId, id })).map(fromManual);
   return row ?? null;
 }
@@ -170,19 +176,25 @@ function bookedLineCents(g: Gift): number[] {
 
 const lineName = (g: Gift, l: GiftLine) => `Line ${g.lines.indexOf(l) + 1} (${l.description ?? (l.gtin13 ? formatGtinDisplay(l.gtin13) : "donated item")})`;
 
-/** An accepted gift's lines as capital review takes them: a receipt's lines carry its tax and shipping. */
-function capitalReviewLines(g: Gift, budgetOwnerId: number): CapitalReviewLine[] {
+/** Each line as it books, with its description for the books and the register. */
+export function bookedLines(g: Gift): { line: GiftLine; description: string; costCents: number }[] {
   const costs = bookedLineCents(g);
-  return g.lines.map((l, i) => ({
-    giftSource: g.source,
-    giftId: g.id,
-    giftLineId: l.id,
-    description: l.description ?? (l.gtin13 ? formatGtinDisplay(l.gtin13) : "Donated item"),
-    quantity: l.quantity,
+  return g.lines.map((line, i) => ({
+    line,
+    description: line.description ?? (line.gtin13 ? formatGtinDisplay(line.gtin13) : "Donated item"),
     costCents: costs[i],
-    acquisitionDate: g.receiptDate ?? g.donationDate,
-    budgetOwnerId,
   }));
+}
+
+/**
+ * What an accepted gift's capital decision waits on, read from its own lines: finance's two steps,
+ * then the drain's registration. A gift line's `isCapital` is null until designated.
+ */
+export function capitalWaitsOn(g: Pick<Gift, "decisionOutcome" | "capitalReviewNeeded" | "lines">): "capital" | "register" | null {
+  if (g.decisionOutcome !== "ACCEPTED" || g.capitalReviewNeeded !== true) return null;
+  if (g.lines.some((l) => l.isCapital === null || (l.isCapital && l.depreciationYears === null))) return "capital";
+  if (g.lines.some((l) => l.isCapital && l.registeredAt === null)) return "register";
+  return null;
 }
 
 /** A receipt gift books at the receipt's total plus the values finance set on its free lines; one without a receipt at the values finance set. */
@@ -296,7 +308,7 @@ const sideState = (sides: { side: string; matchState: string }[], side: "revenue
 const bookedSide = (sides: { side: string; matchState: string }[], side: "revenue" | "expense") => sideState(sides, side) ?? sideState(sides, "journal");
 
 /** What the gift waits on, most urgent first; empty once both sides are booked, finance skipped it, or it will never book. */
-function waitingOn(g: Gift, buckets: Map<number, Bucket>, sides: { side: string; matchState: string }[], inCapitalReview: Set<string>, posting: Posting | undefined): WaitingOn[] {
+function waitingOn(g: Gift, buckets: Map<number, Bucket>, sides: { side: string; matchState: string }[], posting: Posting | undefined): WaitingOn[] {
   const out: WaitingOn[] = [];
   if (g.replayConflictAt) out.push("replay");
   if (g.decisionOutcome === "REFUSED" || g.decisionOutcome === "RETURNED") return out;
@@ -305,7 +317,8 @@ function waitingOn(g: Gift, buckets: Map<number, Bucket>, sides: { side: string;
   if (g.source === "receipt" && g.receiptTotalCents === null) out.push("value");
   if (!g.decisionOutcome) out.push("decision");
   else if (g.budgetOwnerId === null || buckets.get(g.budgetOwnerId)?.held !== false) out.push("bucket");
-  if (g.decisionOutcome === "ACCEPTED" && (g.capitalSubmittedAt === null || inCapitalReview.has(bookingKey(g.source, g.id)))) out.push("capital");
+  const capital = capitalWaitsOn(g);
+  if (capital) out.push(capital);
   if (!isBooked(sides, posting)) out.push("booking");
   return out;
 }
@@ -335,20 +348,18 @@ export async function unbookedGiftsIn(bucketId: number): Promise<number> {
  * money has not arrived is still being uploaded and is left out.
  */
 async function listQueue(orgId: string, callerId: number) {
-  const [receipts, manuals, buckets, bookings, postings, awaiting] = await Promise.all([
+  const [receipts, manuals, buckets, bookings, postings] = await Promise.all([
     findReceipts(db, { orgId }),
     findManuals(db, { orgId }),
     readBuckets(),
     readBookings(db, orgId),
     readPostings(db, orgId),
-    getInKindCapital().awaitingReview(orgId),
   ]);
-  const inCapitalReview = new Set(awaiting.map((a) => bookingKey(a.giftSource, a.giftId)));
   const waiting = [...receipts.filter((r) => r.moneyReceivedAt !== null).map(fromReceipt), ...manuals.map(fromManual)]
     .map((g) => {
       const sides = bookings.get(bookingKey(g.source, g.id)) ?? [];
       const posting = postings.get(bookingKey(g.source, g.id));
-      return { g, sides, posting, waits: waitingOn(g, buckets, sides, inCapitalReview, posting) };
+      return { g, sides, posting, waits: waitingOn(g, buckets, sides, posting) };
     })
     // A gift with nothing left to wait on stays while it carries a note, such as the sweep's stray entry.
     .filter((w) => w.waits.length > 0 || !!w.posting?.qbNote);
@@ -406,20 +417,19 @@ function queueRow(
 async function queueItem(orgId: string, callerId: number, source: InKindSource, id: number) {
   const g = await loadGift(db, orgId, source, id);
   if (!g) throw new ServiceError(404, "In-kind gift not found");
-  const [buckets, bookings, postings, awaiting, lk] = await Promise.all([
+  const [buckets, bookings, postings, lk] = await Promise.all([
     readBuckets(),
     readBookings(db, orgId, { source, giftId: id }),
     readPostings(db, orgId, { source, giftId: id }),
-    getInKindCapital().awaitingReview(orgId),
     readLookups([g], callerId),
   ]);
   const sides = bookings.get(bookingKey(source, id)) ?? [];
   const posting = postings.get(bookingKey(source, id));
-  const waits = waitingOn(g, buckets, sides, new Set(awaiting.map((a) => bookingKey(a.giftSource, a.giftId))), posting);
+  const waits = waitingOn(g, buckets, sides, posting);
   return queueRow({ g, sides, posting, waits }, buckets, callerId, lk);
 }
 
-async function lockGift(tx: DbOrTx, source: InKindSource, id: number): Promise<void> {
+export async function lockGift(tx: DbOrTx, source: InKindSource, id: number): Promise<void> {
   if (source === "receipt") await tx.$queryRaw`SELECT id FROM in_kind_donations WHERE id = ${id} FOR UPDATE`;
   else await tx.$queryRaw`SELECT id FROM manual_in_kind_donations WHERE id = ${id} FOR UPDATE`;
 }
@@ -461,6 +471,7 @@ interface DecisionData {
   budgetOwnerId?: number;
   bucketAssignedByUserId?: number;
   bucketAssignedAt?: Date;
+  capitalReviewNeeded?: boolean;
 }
 
 async function writeDecision(tx: DbOrTx, source: InKindSource, id: number, data: DecisionData): Promise<number> {
@@ -482,7 +493,7 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
   const callerId = audit.actorUserId;
   const entity = (g: Gift) => (source === "receipt" ? { entityType: "in_kind" as const, entityId: g.receiptId } : { entityType: "manual_in_kind" as const, entityId: g.id });
 
-  const { view, send } = await db.$transaction(async (tx) => {
+  return db.$transaction(async (tx) => {
     await lockGift(tx, source, id);
     const gift = await loadGift(tx, orgId, source, id);
     if (!gift) throw new ServiceError(404, "In-kind gift not found");
@@ -517,7 +528,7 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
         await recordEvent(tx, { orgId, ...entity(gift), eventType: "IN_KIND_BUCKET_CHANGED", ...audit, payload: { from: gift.budgetOwnerId, to } });
       }
       const result = unchanged ? gift : { ...gift, budgetOwnerId: to, bucketAssignedAt: now };
-      return { view: decisionView(result), send: null };
+      return decisionView(result);
     }
 
     const outcome = OUTCOME[input.outcome];
@@ -550,6 +561,13 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
       throw new ServiceError(400, "Refusing or returning a gift sets no bucket or value");
     }
 
+    if (outcome === "ACCEPTED") {
+      const accepted = { ...gift, lines };
+      decided.capitalReviewNeeded = await getInKindCapital().reviewNeeded(orgId, {
+        totalCents: totalValueCents(accepted) ?? 0,
+        lines: bookedLines(accepted).map((l) => ({ costCents: l.costCents, quantity: l.line.quantity })),
+      });
+    }
     if ((await writeDecision(tx, source, id, decided)) === 0) throw new ServiceError(409, "This gift is already decided");
     const result: Gift = {
       ...gift,
@@ -558,6 +576,7 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
       decidedAt: now,
       budgetOwnerId: decided.budgetOwnerId ?? null,
       bucketAssignedAt: decided.bucketAssignedAt ?? null,
+      capitalReviewNeeded: decided.capitalReviewNeeded ?? null,
       lines,
     };
     const warn = warnings(result, callerId, lk);
@@ -570,87 +589,13 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
         outcome,
         budgetOwnerId: result.budgetOwnerId,
         totalValueCents: totalValueCents(result),
-        ...(outcome === "ACCEPTED" ? { goodsConfirmed: true } : {}),
+        ...(outcome === "ACCEPTED" ? { goodsConfirmed: true, capitalReviewNeeded: result.capitalReviewNeeded } : {}),
         ...(input.lineValues ? { lineValues: input.lineValues } : {}),
         ...warn,
       },
     });
-    return { view: decisionView(result), send: decided.budgetOwnerId === undefined ? null : capitalReviewLines(result, decided.budgetOwnerId) };
+    return decisionView(result);
   });
-
-  if (send) await sendToCapitalReview(orgId, source, id, send);
-  return view;
-}
-
-/**
- * Sends an accepted gift's lines once its decision has committed: the expense library has its own
- * database, so the send cannot share the accept's transaction. It never throws, so the accept's
- * answer stands. A failed send leaves the gift stuck, with its first failure time and last error,
- * until a person retries it from the Problems list; the callee keys each line, so a resend is safe.
- * Returns the failure's kind, or null when the send succeeded.
- */
-async function sendToCapitalReview(orgId: string, source: InKindSource, id: number, lines: CapitalReviewLine[]): Promise<FailureKind | null> {
-  try {
-    await getInKindCapital().submit(orgId, CapitalReviewLineSchema.array().parse(lines));
-    await writeCapitalSend(source, id, { capitalSubmittedAt: new Date(), capitalFirstFailedAt: null, capitalLastError: null });
-    return null;
-  } catch (err) {
-    const kind = kindOf(err);
-    console.error(`[bulk-donation] in-kind ${source} gift ${id}'s capital review send failed (${kind})`);
-    await recordCapitalSendFailure(source, id, err);
-    return kind;
-  }
-}
-
-async function writeCapitalSend(source: InKindSource, id: number, data: { capitalSubmittedAt?: Date; capitalFirstFailedAt?: Date | null; capitalLastError?: string | null }, onlyFirst = false) {
-  const where = onlyFirst ? { id, capitalFirstFailedAt: null } : { id };
-  if (source === "receipt") await db.inKindDonation.updateMany({ where, data });
-  else await db.manualInKindDonation.updateMany({ where, data });
-}
-
-/** Keeps the first failure time across later failures. A failure to record it is only logged. */
-async function recordCapitalSendFailure(source: InKindSource, id: number, err: unknown): Promise<void> {
-  const answered = toHttpError(err);
-  const capitalLastError = answered?.message ?? (err instanceof Error ? err.message : String(err));
-  try {
-    await writeCapitalSend(source, id, { capitalFirstFailedAt: new Date() }, true);
-    await writeCapitalSend(source, id, { capitalLastError });
-  } catch (recordErr) {
-    console.error(`[bulk-donation] in-kind ${source} gift ${id}'s capital review failure was not recorded (${kindOf(recordErr)})`);
-  }
-}
-
-/** How long an accepted gift may wait unsent with no failure recorded before it counts as stuck. */
-const UNSENT_GRACE_MS = 60 * 60 * 1000;
-
-/**
- * An accepted gift whose lines have not reached capital review is stuck once its send failed, or,
- * when the process stopped before a failure could be recorded, an hour after its decision.
- */
-const stuckCapitalWhere = () => ({
-  decisionOutcome: "ACCEPTED",
-  capitalSubmittedAt: null,
-  OR: [{ capitalFirstFailedAt: { not: null } }, { decidedAt: { lt: new Date(Date.now() - UNSENT_GRACE_MS) } }],
-});
-
-async function stuckCapitalSends(orgId: string): Promise<{ source: InKindSource; id: number; failedAt: Date }[]> {
-  const select = { id: true, capitalFirstFailedAt: true, decidedAt: true } as const;
-  const where = { orgId, ...stuckCapitalWhere() };
-  const [receipts, manuals] = await Promise.all([db.inKindDonation.findMany({ where, select }), db.manualInKindDonation.findMany({ where, select })]);
-  const tag = (source: InKindSource) => (r: { id: number; capitalFirstFailedAt: Date | null; decidedAt: Date | null }) => {
-    const failedAt = r.capitalFirstFailedAt ?? r.decidedAt;
-    return failedAt ? [{ source, id: r.id, failedAt }] : [];
-  };
-  return [...receipts.flatMap(tag("receipt")), ...manuals.flatMap(tag("manual"))];
-}
-
-/** Resends a stuck gift's lines once, from its current bucket. "not_stuck" when it is not stuck on the send. */
-async function resendCapitalReview(orgId: string, source: InKindSource, id: number): Promise<"sent" | "not_stuck" | FailureKind> {
-  const where = { orgId, id, ...stuckCapitalWhere() };
-  const stuck = source === "receipt" ? await db.inKindDonation.count({ where }) : await db.manualInKindDonation.count({ where });
-  const gift = stuck ? await loadGift(db, orgId, source, id) : null;
-  if (!gift || gift.budgetOwnerId === null) return "not_stuck";
-  return (await sendToCapitalReview(orgId, source, id, capitalReviewLines(gift, gift.budgetOwnerId))) ?? "sent";
 }
 
 /**
@@ -722,17 +667,16 @@ async function getGift(orgId: string, source: InKindSource, id: number) {
   if (!gift) throw new ServiceError(404, "In-kind gift not found");
   const entityType = source === "receipt" ? "in_kind" : "manual_in_kind";
   const entityId = source === "receipt" && gift.receiptId ? gift.receiptId : String(id);
-  const [extras, buckets, bookings, postings, events, awaiting] = await Promise.all([
+  const [extras, buckets, bookings, postings, events] = await Promise.all([
     readPageExtras(orgId, source, id),
     readBuckets(),
     readBookings(db, orgId, { source, giftId: id }),
     readPostings(db, orgId, { source, giftId: id }),
     readHistory(orgId, entityType, entityId),
-    getInKindCapital().awaitingReview(orgId),
   ]);
   const sides = bookings.get(bookingKey(source, id)) ?? [];
   const posting = postings.get(bookingKey(source, id));
-  const waits = waitingOn(gift, buckets, sides, new Set(awaiting.map((w) => bookingKey(w.giftSource, w.giftId))), posting);
+  const waits = waitingOn(gift, buckets, sides, posting);
   const bucket = gift.budgetOwnerId === null ? undefined : buckets.get(gift.budgetOwnerId);
   return {
     id,
@@ -757,6 +701,7 @@ async function getGift(orgId: string, source: InKindSource, id: number) {
     bucketHeld: gift.budgetOwnerId !== null && bucket?.held !== false,
     bucketAssignedAt: gift.bucketAssignedAt,
     totalValueCents: totalValueCents(gift),
+    capitalReviewNeeded: gift.capitalReviewNeeded,
     state: waits[0] ?? null,
     waitingOn: waits,
     revenueBooking: bookedSide(sides, "revenue"),
@@ -783,7 +728,8 @@ export interface GiftToBook {
   createdAt: Date;
   totalCents: number;
   budgetOwnerId: number;
-  lines: { id: number; description: string; valueCents: number; gtin13: string | null; quickBooksAccountId: string | null }[];
+  /** `isCapital` is finance's decision on the line: a capital line debits a fixed-asset account. */
+  lines: { id: number; description: string; valueCents: number; gtin13: string | null; quickBooksAccountId: string | null; isCapital: boolean }[];
 }
 
 function toBook(g: Gift): GiftToBook | null {
@@ -798,30 +744,29 @@ function toBook(g: Gift): GiftToBook | null {
     createdAt: g.moneyReceivedAt,
     totalCents: total,
     budgetOwnerId: g.budgetOwnerId,
-    lines: capitalReviewLines(g, g.budgetOwnerId).map((l, i) => ({
-      id: l.giftLineId,
-      description: l.description,
-      valueCents: l.costCents,
-      gtin13: g.lines[i].gtin13,
-      quickBooksAccountId: g.lines[i].quickBooksAccountId,
+    lines: bookedLines(g).map(({ line, description, costCents }) => ({
+      id: line.id,
+      description,
+      valueCents: costCents,
+      gtin13: line.gtin13,
+      quickBooksAccountId: line.quickBooksAccountId,
+      isCapital: line.isCapital === true,
     })),
   };
 }
 
-/** What readiness reads outside the drain's transactions: buckets and capital review live in other databases. */
+/** What readiness reads outside the drain's transactions: the buckets live in checkin's database. */
 export interface ReadinessContext {
   buckets: Map<number, Bucket>;
-  inCapitalReview: Set<string>;
 }
 
-async function readReadiness(orgId: string): Promise<ReadinessContext> {
-  const [buckets, awaiting] = await Promise.all([readBuckets(), getInKindCapital().awaitingReview(orgId)]);
-  return { buckets, inCapitalReview: new Set(awaiting.map((a) => bookingKey(a.giftSource, a.giftId))) };
+async function readReadiness(): Promise<ReadinessContext> {
+  return { buckets: await readBuckets() };
 }
 
 /**
- * Every gift still to book. `ready` waits on nothing but booking, so a gift whose line is in
- * capital review is never among them; `open` adds those waiting on anything else first.
+ * Every gift still to book. `ready` waits on nothing but booking, so a gift whose capital line has
+ * no asset numbers yet is never among them; `open` adds those waiting on anything else first.
  */
 async function giftsToBook(orgId: string, ctx: ReadinessContext): Promise<{ ready: GiftToBook[]; open: GiftToBook[] }> {
   const [receipts, manuals, bookings, postings] = await Promise.all([findReceipts(db, { orgId }), findManuals(db, { orgId }), readBookings(db, orgId), readPostings(db, orgId)]);
@@ -829,7 +774,7 @@ async function giftsToBook(orgId: string, ctx: ReadinessContext): Promise<{ read
   const open: GiftToBook[] = [];
   for (const g of [...receipts.filter((r) => r.moneyReceivedAt !== null).map(fromReceipt), ...manuals.map(fromManual)]) {
     const key = bookingKey(g.source, g.id);
-    const waits = waitingOn(g, ctx.buckets, bookings.get(key) ?? [], ctx.inCapitalReview, postings.get(key));
+    const waits = waitingOn(g, ctx.buckets, bookings.get(key) ?? [], postings.get(key));
     const gift = waits.includes("booking") ? toBook(g) : null;
     if (!gift) continue;
     open.push(gift);
@@ -839,20 +784,18 @@ async function giftsToBook(orgId: string, ctx: ReadinessContext): Promise<{ read
   return { ready, open };
 }
 
-/** Locks the gift and returns it only while it waits on nothing but booking. */
+/** Locks the gift and returns it only while it waits on nothing but booking, its capital lines re-read under the lock. */
 async function lockReadyGift(tx: DbOrTx, orgId: string, source: InKindSource, id: number, ctx: ReadinessContext): Promise<GiftToBook | null> {
   await lockGift(tx, source, id);
   const gift = await loadGift(tx, orgId, source, id);
   if (!gift) return null;
   const sides = (await readBookings(tx, orgId, { source, giftId: id })).get(bookingKey(source, id)) ?? [];
   const posting = (await readPostings(tx, orgId, { source, giftId: id })).get(bookingKey(source, id));
-  const waits = waitingOn(gift, ctx.buckets, sides, ctx.inCapitalReview, posting);
+  const waits = waitingOn(gift, ctx.buckets, sides, posting);
   return waits.length === 1 && waits[0] === "booking" ? toBook(gift) : null;
 }
 
 export const inKindAcceptService = { listQueue, queueItem, decide, listByBucket, getGift };
-
-export const inKindCapitalSend = { stuckCapitalSends, resendCapitalReview };
 
 /** What the in-kind drain reads; not part of any route. */
 export const inKindReadiness = { readReadiness, giftsToBook, lockReadyGift };
