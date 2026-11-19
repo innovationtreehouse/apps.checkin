@@ -1,5 +1,5 @@
 jest.mock("next/navigation", () => jest.requireActual("@/test-helpers/rtl").navMock({ followUrl: true }));
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import AccountMappingPage, { nameOptions } from "@checkin/expense/pages/accountMapping";
 import { paged } from "@checkin/component-ui";
@@ -160,5 +160,24 @@ describe("Account mapping catalog load failure", () => {
     render(<MantineProvider><AccountMappingPage /></MantineProvider>);
     expect(screen.getByText("Couldn't load categories: HTTP 500")).toBeInTheDocument();
     expect(screen.getByText("Couldn't load subcategories: HTTP 503")).toBeInTheDocument();
+  });
+});
+
+describe("Account mapping inactive QuickBooks accounts", () => {
+  it("offers no inactive account, and warns beside a rule that books to one", () => {
+    cleanup();
+    mockLoads = {
+      ...mockLoads,
+      [paged("/account-mapping", 1)]: [{ id: 5, category: "*", subcategory: "*", partNumber: "*", isDelayed: null, isCapital: null, qbAccount: "4100" }],
+      "/qb-accounts": [...(mockLoads["/qb-accounts"] as unknown[]), { id: 3, name: "Old supplies", qbAccount: "4100" }],
+      "/api/books-map/quickbooks-accounts": [
+        ...(mockLoads["/api/books-map/quickbooks-accounts"] as unknown[]),
+        { id: "4100", name: "Old supplies", accountType: "Expense", active: false },
+      ],
+    };
+    render(<MantineProvider><AccountMappingPage /></MantineProvider>);
+    const warning = screen.getByText("Old supplies is inactive in QuickBooks. Delete it and add an active account.").closest<HTMLElement>("[role=alert]")!;
+    expect(within(warning).getByRole("button", { name: "Update now" })).toBeInTheDocument();
+    expect(offered()).toEqual(["Supplies"]);
   });
 });

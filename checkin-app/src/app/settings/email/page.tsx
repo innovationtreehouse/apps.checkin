@@ -10,7 +10,10 @@ import { api, useLoad } from "@/lib/api";
 import { SETTINGS_ADMIN_ROLES } from "@/lib/nav/sections/settings";
 import { isValidEmailHeader, parseEmailHeaderList } from "@/lib/emailHeader";
 import { isValidEmail } from "@/lib/emergencyContacts/identity";
-import { DEFAULT_ACK_SUBJECT, DEFAULT_ACK_MEMBERSHIP_BODY, DEFAULT_ACK_PROGRAM_BODY } from "@/lib/scholarshipAckCopy";
+import { REGISTRY } from "@/lib/email-templates/registry";
+
+const ACK_MEMBERSHIP = REGISTRY["scholarship.ackMembership"];
+const ACK_PROGRAM = REGISTRY["scholarship.ackProgram"];
 
 interface Settings {
   emailFromAddress: string | null;
@@ -55,9 +58,9 @@ export default function EmailSettingsPage() {
   const [ackSubject, setAckSubject] = useState("");
   const [ackMembershipBody, setAckMembershipBody] = useState("");
   const [ackProgramBody, setAckProgramBody] = useState("");
-  // Once an identity exists, editing is high-stakes (a wrong From on an unverified
-  // domain bounces all mail; a wrong Reply-To misroutes replies) — lock behind an
-  // explicit unlock, mirroring the membership-year boundary. First-time set is free.
+  // Once an identity exists, editing From/Reply-To is high-stakes (a wrong From on an
+  // unverified domain bounces all mail; a wrong Reply-To misroutes replies) — lock those
+  // two behind an explicit unlock, mirroring the membership-year boundary. First-time set is free.
   const [unlocked, setUnlocked] = useState(false);
 
   const [initial, setInitial] = useState<Record<string, string> | null>(null);
@@ -203,6 +206,10 @@ export default function EmailSettingsPage() {
               onChange={(e) => { setEmailReplyTo(e.currentTarget.value); setFieldErrors((f) => ({ ...f, replyTo: undefined })); }}
               disabled={locked}
             />
+          </Stack>
+
+          <Title order={4} mt="xl" mb="xs">Recipients and message text</Title>
+          <Stack gap="md">
             <TextInput
               label="Scholarship review notifications"
               description="Comma-separated for multiple addresses. Blank = the whole board is notified of new scholarship / payment-plan requests."
@@ -211,7 +218,6 @@ export default function EmailSettingsPage() {
               value={scholarshipNotify}
               error={fieldErrors.scholarshipNotify}
               onChange={(e) => { setScholarshipNotify(e.currentTarget.value); setFieldErrors((f) => ({ ...f, scholarshipNotify: undefined })); }}
-              disabled={locked}
             />
             <TextInput
               label={labelWithPill("Alert address", initial?.alertAddress)}
@@ -221,7 +227,6 @@ export default function EmailSettingsPage() {
               value={alertAddress}
               error={fieldErrors.alertAddress}
               onChange={(e) => { setAlertAddress(e.currentTarget.value); setFieldErrors((f) => ({ ...f, alertAddress: undefined })); }}
-              disabled={locked}
             />
             <TextInput
               label={labelWithPill("Board address", initial?.boardAddress)}
@@ -231,7 +236,6 @@ export default function EmailSettingsPage() {
               value={boardAddress}
               error={fieldErrors.boardAddress}
               onChange={(e) => { setBoardAddress(e.currentTarget.value); setFieldErrors((f) => ({ ...f, boardAddress: undefined })); }}
-              disabled={locked}
             />
             <TextInput
               label={labelWithPill("Finance contact address", initial?.financeContact)}
@@ -241,40 +245,36 @@ export default function EmailSettingsPage() {
               value={financeContact}
               error={fieldErrors.financeContact}
               onChange={(e) => { setFinanceContact(e.currentTarget.value); setFieldErrors((f) => ({ ...f, financeContact: undefined })); }}
-              disabled={locked}
             />
             <TextInput
               label="Scholarship ACK subject"
-              description={'Subject line for the applicant\'s request-received email. "{{programName}}" is replaced with the program\'s name. Blank = default shown below.'}
-              placeholder={DEFAULT_ACK_SUBJECT}
+              description={'Subject line for the applicant\'s request-received email. Blank = default shown below.'}
+              placeholder={ACK_MEMBERSHIP.defaultSubject}
               w={440}
               value={ackSubject}
               onChange={(e) => setAckSubject(e.currentTarget.value)}
-              disabled={locked}
             />
             <Textarea
               label="Scholarship ACK body — membership fee request"
               description="Plain text (blank lines separate paragraphs) — not HTML. Blank = default shown below."
-              placeholder={DEFAULT_ACK_MEMBERSHIP_BODY}
+              placeholder={ACK_MEMBERSHIP.defaultBody}
               minRows={3}
               autosize
               value={ackMembershipBody}
               onChange={(e) => setAckMembershipBody(e.currentTarget.value)}
-              disabled={locked}
             />
             <Textarea
               label="Scholarship ACK body — program request"
               description={'Plain text (blank lines separate paragraphs) — not HTML. "{{programName}}" is replaced with the program\'s name. Blank = default shown below.'}
-              placeholder={DEFAULT_ACK_PROGRAM_BODY}
+              placeholder={ACK_PROGRAM.defaultBody}
               minRows={3}
               autosize
               value={ackProgramBody}
               onChange={(e) => setAckProgramBody(e.currentTarget.value)}
-              disabled={locked}
             />
           </Stack>
 
-          <Button mt="lg" disabled={saving || locked} loading={saving} onClick={save} style={{ alignSelf: "flex-start" }}>
+          <Button mt="lg" disabled={saving} loading={saving} onClick={save} style={{ alignSelf: "flex-start" }}>
             Save settings
           </Button>
         </Card>

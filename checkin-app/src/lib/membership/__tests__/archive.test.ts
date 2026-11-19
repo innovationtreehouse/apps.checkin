@@ -5,12 +5,14 @@ import prisma from '@/lib/prisma';
 import { archiveApplication, unarchiveApplication } from '@/lib/membership/archive';
 import type { OrgMembershipProcess } from '@/generated/prisma/client';
 import { settleHouseholdBg } from '@/lib/membership/settleHouseholdBg';
+import { pickUpMissedSignature } from '@/lib/membership/external';
 
 const tx = {
     $queryRaw: jest.fn(),
+    boardSettings: { findUnique: jest.fn() },
     orgMembership: { findUnique: jest.fn() },
     orgMembershipProcess: { findFirst: jest.fn(), updateMany: jest.fn() },
-    auditLog: { create: jest.fn() },
+    auditLog: { create: jest.fn(), findFirst: jest.fn() },
 };
 
 jest.mock('@/lib/prisma', () => ({
@@ -89,5 +91,100 @@ describe('unarchiveApplication (Reopen)', () => {
         await expect(unarchiveApplication(1, 2)).resolves.toEqual({ status: 'PENDING_RENEWAL' });
         // Reopen settles the household on its people's check standing.
         expect(settleHouseholdBg).toHaveBeenCalledWith(5);
+    });
+
+    describe('signing request across a denial', () => {
+        const reopen = async () => {
+            findUnique.mockResolvedValue(row({ status: 'ARCHIVED', archivedFromStatus: 'PENDING_EXTERNAL_ACTION', zohoEnvelopeId: 'req-1', zohoActionId: 'act-1', zohoSignerPersonId: 7, contractSignedAt: null }));
+            tx.orgMembership.findUnique.mockResolvedValue({ status: 'NONE' });
+            tx.orgMembershipProcess.findFirst.mockResolvedValue(null);
+            tx.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
+            await unarchiveApplication(1, 2);
+            return tx.orgMembershipProcess.updateMany.mock.calls[0][0].data;
+        };
+        afterEach(() => tx.auditLog.findFirst.mockReset());
+
+        it('keeps the request and asks Zoho when the household was not denied since the close', async () => {
+            tx.auditLog.findFirst.mockResolvedValueOnce({ id: 40 }).mockResolvedValueOnce(null);
+            expect(await reopen()).not.toHaveProperty('zohoEnvelopeId');
+            expect(pickUpMissedSignature).toHaveBeenCalled();
+        });
+
+        it('forgets the request in the reopen write when a denial, a restore or the restore close follows the close', async () => {
+            tx.auditLog.findFirst.mockResolvedValueOnce({ id: 40 }).mockResolvedValueOnce({ id: 41 });
+            expect(await reopen()).toMatchObject({ zohoEnvelopeId: null, zohoActionId: null, zohoSignerPersonId: null });
+            expect(pickUpMissedSignature).not.toHaveBeenCalled();
+            expect(tx.auditLog.findFirst).toHaveBeenLastCalledWith(expect.objectContaining({
+                where: {
+                    OR: [
+                        { id: 40, newData: { path: ['reason'], equals: 'household restored' } },
+                        expect.objectContaining({ tableName: 'OrgMembership', secondaryAffectedEntity: 5, id: { gt: 40 } }),
+                    ],
+                },
+            }));
+            expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+                data: expect.objectContaining({ newData: expect.objectContaining({ zohoEnvelopeId: null, reason: 'household denied since close' }) }),
+            }));
+        });
+    });
+});
+
+describe('unarchiveApplication (Reopen) within the membership year', () => {
+    // Boundary Aug 1, so each renewal window opens Jun 1.
+    const boundary = new Date('2020-08-01T00:00:00.000Z');
+    const at = (iso: string) => jest.useFakeTimers({ now: new Date(iso) });
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        tx.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: boundary });
+        tx.orgMembership.findUnique.mockResolvedValue({ status: 'ACTIVE' });
+        tx.orgMembershipProcess.findFirst.mockResolvedValue(null);
+        tx.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
+    });
+    afterEach(() => jest.useRealTimers());
+
+    const renewal = (createdAt: string) =>
+        row({ kind: 'RENEWAL', status: 'ARCHIVED', archivedFromStatus: 'PENDING_RENEWAL', createdAt: new Date(createdAt) });
+
+    it('reopens inside the same year', async () => {
+        at('2026-12-01T00:00:00.000Z');
+        findUnique.mockResolvedValue(renewal('2026-07-01T00:00:00.000Z'));
+        await expect(unarchiveApplication(1, 2)).resolves.toEqual({ status: 'PENDING_RENEWAL' });
+    });
+
+    it("refuses once the next year's renewal window has opened", async () => {
+        at('2027-06-02T00:00:00.000Z');
+        findUnique.mockResolvedValue(renewal('2026-07-01T00:00:00.000Z'));
+        await expect(unarchiveApplication(1, 2)).rejects.toMatchObject({
+            code: 'wrong_phase',
+            message: "This application is for 2026-2027. The 2027-2028 renewal period has started, so it can't be reopened; use the new renewal.",
+        });
+        expect(tx.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('reopens as before when no boundary is configured', async () => {
+        at('2027-06-02T00:00:00.000Z');
+        tx.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: null });
+        findUnique.mockResolvedValue(renewal('2020-07-01T00:00:00.000Z'));
+        await expect(unarchiveApplication(1, 2)).resolves.toEqual({ status: 'PENDING_RENEWAL' });
+    });
+
+    it('dates an off-season joining application to the year live at its creation', async () => {
+        tx.orgMembership.findUnique.mockResolvedValue({ status: 'PENDING' });
+        findUnique.mockResolvedValue(row({ kind: 'INITIAL', status: 'ARCHIVED', archivedFromStatus: 'INTAKE', createdAt: new Date('2026-03-01T00:00:00.000Z') }));
+
+        at('2026-05-31T00:00:00.000Z');
+        await expect(unarchiveApplication(1, 2)).resolves.toEqual({ status: 'INTAKE' });
+
+        at('2026-06-01T00:00:00.000Z');
+        await expect(unarchiveApplication(1, 2)).rejects.toMatchObject({
+            message: "This application is for 2025-2026. The 2026-2027 renewal period has started, so it can't be reopened; start a new application.",
+        });
+    });
+
+    it('leaves per-person kinds alone', async () => {
+        at('2027-06-02T00:00:00.000Z');
+        findUnique.mockResolvedValue(row({ kind: 'PERSON_BG', orgMembershipId: null, subjectPersonId: 7, status: 'ARCHIVED', archivedFromStatus: 'PENDING_BG_REVIEW', createdAt: new Date('2020-07-01T00:00:00.000Z') }));
+        await expect(unarchiveApplication(1, 2)).resolves.toEqual({ status: 'PENDING_BG_REVIEW' });
     });
 });

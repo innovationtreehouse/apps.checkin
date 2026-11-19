@@ -53,6 +53,11 @@ export const SCOPE_BINDINGS = {
         their_program_households: { field: 'householdId', inCtx: 'householdIdsInScopePrograms' },
     },
     OrgMembership: { their_households: { field: 'householdId', eqCtx: 'householdId' } },
+    // The /api/household response models: the caller's household and its members,
+    // row-scoped (see ROW_SCOPE_KEY) so a row without its key fails closed.
+    HouseholdPageHousehold: { their_households: { field: 'id', eqCtx: 'householdId' } },
+    HouseholdPeer: { their_households: { field: 'householdId', eqCtx: 'householdId' } },
+    EmergencyContactWarning: { their_households: { field: 'householdId', eqCtx: 'householdId' } },
     Program: {
         their_program_participants: { field: 'id', inCtx: ['programsLed', 'programsCoreVolIn'] },
     },
@@ -62,6 +67,11 @@ export const SCOPE_BINDINGS = {
             inCtx: ['programsLed', 'programsCoreVolIn'],
         },
         their_own: { field: 'personId', eqCtx: 'selfId' },
+    },
+    // Same bindings as Person's on personId, so age follows dateOfBirth's grants.
+    ProgramRosterAge: {
+        their_own: { field: 'personId', eqCtx: 'selfId' },
+        their_program_participants: { field: 'personId', inCtx: 'participantIdsInScopePrograms' },
     },
     ProgramVolunteer: {
         their_program_participants: {
@@ -134,6 +144,25 @@ export const SCOPE_BINDINGS = {
     // safeguarding context. A "your own actions" view would be a conscious
     // future decision. See docs/security/auth-consistency-analysis.md §7.5.1.
     AuditLog: { their_own: { field: 'actorId', eqCtx: 'selfId' } },
+    // Bound for coverage; Board-only by tier-grant control. The roster's only
+    // view is sysadmin-or-board with everyones grants, so no route grants a
+    // their_households token on it.
+    VolunteerRosterRow: { their_households: { field: 'householdId', eqCtx: 'householdId' } },
+    // Bound for coverage; finance-or-Board-only by tier-grant control. Every
+    // route returning these grants only everyones tokens, so the bound scope
+    // never reaches them, and none carries a finance mark, so isOwnRow never
+    // reads the binding either.
+    BudgetOwnerApprover: { their_own: { field: 'personId', eqCtx: 'selfId' } },
+    BudgetOwnerTreasurer: { their_own: { field: 'personId', eqCtx: 'selfId' } },
+    PersonMailAlias: { their_own: { field: 'personId', eqCtx: 'selfId' } },
+    ExpenseReimburseeView: { their_own: { field: 'personId', eqCtx: 'selfId' } },
+    UnconfirmedStockRow: {
+        their_program_participants: { field: 'programId', inCtx: ['programsLed', 'programsCoreVolIn'] },
+    },
+    UnconfirmedStockSettlement: {
+        their_program_participants: { field: 'programId', inCtx: ['programsLed', 'programsCoreVolIn'] },
+    },
+    FinanceViewLog: { their_own: { field: 'actorId', eqCtx: 'selfId' } },
     TrustedAdult: {
         their_households: { field: 'householdId', eqCtx: 'householdId' },
         their_program_households: { field: 'householdId', inCtx: 'householdIdsInScopePrograms' },
@@ -144,6 +173,8 @@ export const SCOPE_BINDINGS = {
     Receipt: { their_own: { field: 'uploadedByUserId', eqCtx: 'selfId' } },
     ReceiptView: { their_own: { field: 'uploadedByUserId', eqCtx: 'selfId' } },
     ReceiptLineView: { their_own: { field: 'uploadedByUserId', eqCtx: 'selfId' } },
+    // The notice of a submitter's other copy belongs to that copy's uploader.
+    ReceiptDuplicateNotice: { their_own: { field: 'uploadedByUserId', eqCtx: 'selfId' } },
     // The confirmation that signs a reimbursement belongs to the person reimbursed.
     ReceiptConfirmationView: { their_own: { field: 'reimburseePersonId', eqCtx: 'selfId' } },
     ReceiptConfirmationLineView: { their_own: { field: 'reimburseePersonId', eqCtx: 'selfId' } },
@@ -164,6 +195,9 @@ export const SCOPE_BINDINGS = {
  */
 export const ROW_SCOPE_KEY: Record<string, string> = {
     EmergencyContact: 'householdId',
+    HouseholdPageHousehold: 'id',
+    HouseholdPeer: 'householdId',
+    EmergencyContactWarning: 'householdId',
 };
 
 /**
@@ -171,9 +205,14 @@ export const ROW_SCOPE_KEY: Record<string, string> = {
  * relationship) but whose scoped route is not built yet, so they are bound
  * nowhere. A route migration moves each entry OUT of this set and INTO a
  * real SCOPE_BINDINGS binding, in the same PR that ships its handler() route.
- * Done when this set is empty.
  *
- * There is NO permanent opt-out list — structurally un-scopable models (no
+ * A model whose routes exist but are finance- or Board-only gets a
+ * coverage-only binding on its natural key instead (no view grants the token).
+ * Two kinds stay here, each named "not pending" in its comment: a scopable model
+ * with no natural key, and a finance-marked model, where a their_own or
+ * their_households binding would make isOwnRow (financeView.ts) treat the row as
+ * the viewer's own and leave the view out of the finance view log. Structurally
+ * un-scopable models (no
  * actor FK) are auto-exempt by isScopable() in validateBindings; "never leaves,
  * even to admins" content is tiered `secret`.
  *
@@ -207,73 +246,28 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     // bag"). If a self-serve "emails we sent you" / suppression-audit view ever ships,
     // it earns `their_own: { field: 'personId', eqCtx: 'selfId' }`.
     'BulkSendItem',
-    // Budget-owner buckets. Not pending: its routes exist
-    // (registry/budgetOwner.ts). `ownerId` makes it scopable, but every view is
-    // finance-or-board with everyones grants and no owner-scoped view; per-line
-    // approval by a bucket's approvers is a handler query filter, not a scope.
-    'BudgetOwner',
-    // A bucket's approvers. `personId` makes it scopable, but its views are
-    // finance-or-board and Board with everyones grants; nobody reads their own row.
-    'BudgetOwnerApprover',
-    // A bucket's treasurer rows. `personId` makes it scopable; read only through
-    // BudgetOwnerApprover by finance or board.
-    'BudgetOwnerTreasurer',
-    // Receipt mail aliases (registry/receipt.ts). Not pending: `personId` makes it
-    // scopable, but every route is finance-or-board with everyones grants, and the
-    // person an alias belongs to never reads it, so it never earns `their_own`.
-    'PersonMailAlias',
-    // Local inventory audit logs. Their `userId` is in SCOPABLE_FIELDS,
+    // Not pending: local inventory audit logs. Their `userId` is in SCOPABLE_FIELDS,
     // but it is a local-inventory actor id — not checkin's `selfId` — so it never
     // earns a `their_own` binding; the internal attribution fields stay with the
     // INVENTORY_MANAGER view.
     'InventoryLog',
     'LocationLog',
+    // Not pending: finance-marked, finance- or Board-only rows. Their owner key
+    // (the uploader or audit actor, or the family a decision or queue row names)
+    // would make isOwnRow treat the row as the viewer's own, so a staff member's
+    // views of rows naming them would drop out of the finance view log.
+    'UploadedFile',
+    'InKindQueueItemView',
+    'ReceiptAuditLog',
+    'InKindDonation',
+    'ProgramPaymentPlanDecision',
+    'MembershipPaymentPlanDecision',
+    'PaymentQueueRow',
+    'MatchAuditEnrollmentRow',
     // Expense audit log. Its `userId` is the acting checkin Person.id, read
     // only by FINANCE/BOARD (everyones:pii). A "my expense history" view is the
     // plausible future reader; that is when it earns `their_own` on `userId`.
     'ExpenseAuditLog',
-    // Receipt audit log. Its `userId` is the acting Person.id, but only
-    // FINANCE and BOARD read the log (everyones grants, GET /api/receipts/[id]/
-    // audit-logs); a submitter never reads audit rows, so no `their_own` binding
-    // is planned.
-    'ReceiptAuditLog',
-    // Bulk-donation CSV uploads. Not pending: its routes exist
-    // (registry/donation.ts). `uploadedByUserId` makes it scopable, but every route
-    // is finance-or-board (GET list and blob file route; FINANCE writes) with
-    // everyones grants and no owner-scoped view, so it never earns `their_own`.
-    'UploadedFile',
-    // The in-kind finance queue row (registry/donation.ts). `uploadedByUserId`
-    // makes it scopable, but its only route is finance-or-board with everyones
-    // grants: the uploader and recorder ids feed the accept screen's conflict
-    // warnings, and no uploader-facing view reads the queue.
-    'InKindQueueItemView',
-    // In-kind receipt gifts gain an uploader id (the accept step), which makes the
-    // model scopable, but every route that returns it is finance-or-board with
-    // everyones grants: the uploader id feeds the accept step's conflict check, and
-    // no uploader-facing view reads it.
-    'InKindDonation',
-    // Shopify-mirror response rows (registry/shopifyRead.ts). Their `personId` makes
-    // them scopable, but every route is board-only with everyones grants: the payment
-    // queue and the match audit are board bookkeeping, with no person-facing view.
-    'PaymentQueueRow',
-    'MatchAuditEnrollmentRow',
-    // The unconfirmed Shopify stock screen's rows (registry.ts). Their `programId`
-    // makes them scopable, but every route is board-only with everyones grants:
-    // settling stock is board bookkeeping, with no program-facing view.
-    'UnconfirmedStockRow',
-    'UnconfirmedStockSettlement',
-    // The payment-plan Past views' rows (registry.ts). Their `personId` and
-    // `householdId` make them scopable, but both routes are finance-or-board with
-    // everyones grants: no family reads the board's decision history.
-    'ProgramPaymentPlanDecision',
-    'MembershipPaymentPlanDecision',
-    // The reimbursee named on the QuickBooks Vendor link screen (registry/expense.ts).
-    // Its `personId` makes it scopable, but the only route is FINANCE with everyones
-    // grants, and the reimbursee never reads their own Vendor link.
-    'ExpenseReimburseeView',
-    // The finance view log (B11). Its `actorId` makes it scopable, but it is
-    // Board-only with everyones grants; nobody reads their own view rows.
-    'FinanceViewLog',
 ]);
 
 /**

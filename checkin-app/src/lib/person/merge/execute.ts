@@ -182,7 +182,6 @@ function emptyTallies() {
         personBgArchived: 0,
         rawBadgeLogs: 0,
         presenceEvents: 0,
-        noteAcks: 0,
         zohoSigners: 0,
         attendanceConfirmations: 0,
         facilityCloses: 0,
@@ -218,7 +217,8 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
     const keepId = keep.id;
     const mergeId = merge.id;
 
-    const personMergeId = await prisma.$transaction(async (tx) => {
+    // The timeout also covers the waits in lockMergeRows.
+    const { personMergeId, lockedKeeper } = await prisma.$transaction(async (tx) => {
         await lockMergeRows(tx, keepId, mergeId, [keep.householdId, merge.householdId]);
         const live = await recheckSubjects(tx, plan, actor);
         await clearMergedIdentity(tx, mergeId);
@@ -242,8 +242,8 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
         const archiveId = await archiveMerge(tx, keepId, live.merge);
         await deleteMergedPerson(tx, mergeId);
         await auditMerge(tx, plan, live, actor, moved);
-        return archiveId;
-    });
+        return { personMergeId: archiveId, lockedKeeper: live.keep };
+    }, { maxWait: 5_000, timeout: 15_000 });
 
     // The keeper may now carry a newer check date or another person's review, and the
     // merged-away record has left its household: settle both on their people's checks.
@@ -255,7 +255,7 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
             await logBackendError(error, "household background-check settle after merge", { householdId, keepId, mergeId });
         }
     }
-    await notifyBoardOfYouthLeads([keep]);
+    await notifyBoardOfYouthLeads([lockedKeeper]);
 
     invalidateAttendanceCache();
 }
@@ -272,7 +272,7 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
 async function lockMergeRows(tx: TxClient, keepId: number, mergeId: number, householdIds: number[]): Promise<void> {
     await lockBoardRoles(tx);
     await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess"
-        WHERE "subjectPersonId" IN (${keepId}, ${mergeId}) OR "zohoSignerPersonId" = ${mergeId} OR "noteAckById" = ${mergeId}
+        WHERE "subjectPersonId" IN (${keepId}, ${mergeId}) OR "zohoSignerPersonId" = ${mergeId}
         ORDER BY id FOR UPDATE`;
     await lockAndFindDeniedHousehold(tx, householdIds);
     try {
@@ -465,7 +465,6 @@ async function moveRemainingRelations(tx: TxClient, keepId: number, mergeId: num
 
     // "Which staff member did this" facts, all SET NULL — left behind they
     // read as nobody once the row is deleted.
-    moved.noteAcks = (await tx.orgMembershipProcess.updateMany({ where: { noteAckById: mergeId }, data: { noteAckById: keepId } })).count;
     moved.zohoSigners = (await tx.orgMembershipProcess.updateMany({ where: { zohoSignerPersonId: mergeId }, data: { zohoSignerPersonId: keepId } })).count;
     moved.attendanceConfirmations = (await tx.event.updateMany({ where: { attendanceConfirmedById: mergeId }, data: { attendanceConfirmedById: keepId } })).count;
     moved.facilityCloses = (await tx.facilityClose.updateMany({ where: { closedById: mergeId }, data: { closedById: keepId } })).count;
@@ -484,30 +483,36 @@ async function moveRemainingRelations(tx: TxClient, keepId: number, mergeId: num
  * PersonRole.personId is CASCADE — a role left on the tombstone is a security
  * grant a later delete destroys. Each role moves through setRoleFlag, the role
  * routes' choke point, so it runs their guards and writes one audit row per
- * change: granted to the keeper first (a no-op when the keeper already holds
- * it), then revoked from the tombstone, so a moving BOARD never counts down to
- * zero. A moved row keeps its original grant metadata; the audit rows name the
+ * change: every role is granted to the keeper first (a no-op when the keeper
+ * already holds it), then revoked from the tombstone, so a moving BOARD never
+ * counts down to zero. KEY_VOLUNTEER is granted first and revoked last, the
+ * order its rules need; the move is not a new grant, so the Key Volunteer
+ * agreement check is skipped (the agreements moved with the other relations).
+ * A moved row keeps its original grant metadata; the audit rows name the
  * merging actor. Read in the transaction so a role granted after the pre-tx
  * read still moves.
  */
 async function moveRoles(tx: TxClient, keepId: number, mergeId: number, actor: AuthenticatedUser | null, moved: Tallies): Promise<void> {
-    const tombstoneRoles = await tx.personRole.findMany({
+    const tombstoneRoles = (await tx.personRole.findMany({
         where: { personId: mergeId },
         select: { role: true, grantedById: true, grantedAt: true },
-    });
-    for (const { role, grantedById, grantedAt } of tombstoneRoles) {
-        if (!actor) throw new RoleMatrixError("Forbidden");
-        const flag = KIND_TO_FLAG[role];
-        const granted = await setRoleFlag(tx, keepId, flag, true, actor);
-        await setRoleFlag(tx, mergeId, flag, false, actor);
-        if (granted.changed) {
-            await tx.personRole.update({
-                where: { personId_role: { personId: keepId, role } },
-                data: { grantedById, grantedAt },
-            });
-            moved.roles.migrated++;
-        } else {
-            moved.roles.deduped++;
+    })).sort((a, b) => Number(b.role === "KEY_VOLUNTEER") - Number(a.role === "KEY_VOLUNTEER"));
+    if (tombstoneRoles.length > 0 && !actor) throw new RoleMatrixError("Forbidden");
+    if (actor) {
+        for (const { role, grantedById, grantedAt } of tombstoneRoles) {
+            const granted = await setRoleFlag(tx, keepId, KIND_TO_FLAG[role], true, actor, { move: true });
+            if (granted.changed) {
+                await tx.personRole.update({
+                    where: { personId_role: { personId: keepId, role } },
+                    data: { grantedById, grantedAt },
+                });
+                moved.roles.migrated++;
+            } else {
+                moved.roles.deduped++;
+            }
+        }
+        for (const { role } of [...tombstoneRoles].reverse()) {
+            await setRoleFlag(tx, mergeId, KIND_TO_FLAG[role], false, actor);
         }
     }
     // After the holder pass, so a granter stamp on a deduped row isn't counted.

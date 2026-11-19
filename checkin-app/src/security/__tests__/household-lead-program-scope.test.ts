@@ -15,8 +15,8 @@
  * in the same household (no isHouseholdLead) and a household lead in a family
  * with no child in the program each hold nothing.
  *
- * The same pii token must NOT reach Household.intakeNotes — Household binds no
- * scope but their_households, so it resolves to nothing on a Household row.
+ * The same pii token must NOT reach the Household row — Household binds no
+ * scope but their_households, so it resolves to nothing there.
  * Pulls live view tokens from the registry so this tracks future policy edits.
  */
 import { stripValue } from '@/security/stripper';
@@ -140,17 +140,15 @@ describe('Parent field-stripping on GET /api/programs/[id]', () => {
     });
 
     it('the Household model stays bound to their_households only', () => {
-        // The intakeNotes GUARD in schema.prisma rests on this: a program- or
-        // keyholder-scoped token must never resolve on a Household row.
+        // A program- or keyholder-scoped token must never resolve on a Household row.
         expect(Object.keys(SCOPE_BINDINGS.Household)).toEqual(['their_households']);
     });
 
-    it('the pii grant does NOT reach Household.intakeNotes or the address', () => {
+    it('the pii grant does NOT reach the household address', () => {
         const tokens = tokensFor(ENDPOINT, 'programLeadMentor');
-        const household = { id: 42, name: 'Smith', intakeNotes: 'please call mom first', line1: '1 Main St', city: 'Austin' };
+        const household = { id: 42, name: 'Smith', line1: '1 Main St', city: 'Austin' };
         const out = stripValue('Household', household, tokens, lead) as Record<string, unknown>;
         expect(out.name).toBe('Smith');
-        expect(out.intakeNotes).toBeUndefined();
         expect(out.line1).toBeUndefined();
         expect(out.city).toBeUndefined();
     });

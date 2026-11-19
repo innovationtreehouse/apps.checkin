@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useSession } from "next-auth/react";
 import { Alert, Button, Card, Checkbox, Container, Group, Radio, Stack, Text, Textarea, Title } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import { LoadError } from "@checkin/component-ui";
+import { LoadError, showSuccess } from "@checkin/component-ui";
 import { modals } from "@mantine/modals";
 import { type AlertTone } from "@/components/admin/AlertBanner";
 import { useLoad } from "@/lib/api";
@@ -23,7 +23,7 @@ interface Person {
 interface QueueItem {
   id: number;
   subjectPerson: { id: number; name: string | null; householdId: number | null; household: { name: string | null } | null } | null;
-  requestedForHousehold: { name: string | null; intakeNotes: string | null; householdMembers: Person[] } | null;
+  requestedForHousehold: { name: string | null; householdMembers: Person[] } | null;
   _count: { attestations: number };
 }
 
@@ -62,7 +62,7 @@ export default function MembershipReviewPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        notifications.show({ message: "Your answer is now an approval. The review needs one more reviewer to clear." });
+        showSuccess("Your answer is now an approval. The review needs one more reviewer to clear.");
         notifyNavRefresh();
       } else {
         notifications.show({ color: "red", message: data.error || "Could not change your answer.", autoClose: false });
@@ -93,17 +93,17 @@ export default function MembershipReviewPage() {
       onConfirm: () => changeToApprove(item.id),
     });
 
-  const resetReview = async (processId: number, reason: string, wrongPerson: boolean) => {
+  const resetReview = async (processId: number, reason: string, wrongPerson: boolean, closeAsWrongPerson = false) => {
     setBusyId(processId);
     try {
       const res = await fetch("/api/membership-ops/applications/review-override", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processId, action: "reset", reason, wrongPerson }),
+        body: JSON.stringify({ processId, action: "reset", reason, wrongPerson, closeAsWrongPerson }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        notifications.show({ message: "Review started over — reviewers have been notified." });
+        showSuccess(closeAsWrongPerson ? "Review closed as opened for the wrong person." : "Review started over — reviewers have been notified.");
         // A repeated reset passes the server's check once the review is open, so the row stays busy until it re-reads.
         await Promise.all([reload(), reloadMine()]);
         notifyNavRefresh();
@@ -153,6 +153,34 @@ export default function MembershipReviewPage() {
     });
   };
 
+  // B27: the Board closes a review opened for the wrong person; its decisions stay on record and stop counting.
+  const confirmCloseWrongPerson = (item: QueueItem) => {
+    let reason = "";
+    const modalId = modals.openConfirmModal({
+      title: "Close this check review as opened for the wrong person?",
+      children: (
+        <Stack gap="xs">
+          <Text size="sm">
+            This closes the review of <strong>{applicantLabel(item)}</strong>. Its decisions stay on record
+            against it but no longer count against anyone. The Board can reopen it.
+          </Text>
+          <Textarea label="Reason" required autosize minRows={2} onChange={(e) => { reason = e.currentTarget.value; }} />
+        </Stack>
+      ),
+      labels: { confirm: "Close review", cancel: "Cancel" },
+      confirmProps: { color: "red" },
+      closeOnConfirm: false,
+      onConfirm: () => {
+        if (!reason.trim()) {
+          notifications.show({ color: "red", message: "A reason is required to close a review as opened for the wrong person.", autoClose: false });
+          return;
+        }
+        modals.close(modalId);
+        resetReview(item.id, reason.trim(), false, true);
+      },
+    });
+  };
+
   const undoApproval = async (processId: number, reason: string) => {
     setBusyId(processId);
     try {
@@ -163,7 +191,7 @@ export default function MembershipReviewPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        notifications.show({ message: "Your approval was withdrawn. The review is waiting for reviewers again." });
+        showSuccess("Your approval was withdrawn. The review is waiting for reviewers again.");
         notifyNavRefresh();
       } else {
         notifications.show({ color: "red", message: data.error || "Could not undo your approval.", autoClose: false });
@@ -265,7 +293,7 @@ export default function MembershipReviewPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        notifications.show({ message: result === "APPROVE" ? "Attestation recorded — thank you." : "Recorded. The board has been notified." });
+        showSuccess(result === "APPROVE" ? "Attestation recorded — thank you." : "Recorded. The board has been notified.");
         setSubjects((s) => { const next = { ...s }; delete next[processId]; return next; });
         reload();
         notifyNavRefresh();
@@ -424,9 +452,14 @@ export default function MembershipReviewPage() {
                   Undo my approval
                 </Button>
                 {canReset ? (
-                  <Button size="xs" variant="default" loading={busyId === item.id} onClick={() => confirmReset(item)}>
-                    Start review over
-                  </Button>
+                  <>
+                    <Button size="xs" variant="default" loading={busyId === item.id} onClick={() => confirmReset(item)}>
+                      Start review over
+                    </Button>
+                    <Button size="xs" variant="default" color="red" loading={busyId === item.id} onClick={() => confirmCloseWrongPerson(item)}>
+                      Close: opened for the wrong person
+                    </Button>
+                  </>
                 ) : (
                   <Text size="xs" c="dimmed">A board member can start this review over.</Text>
                 )}
@@ -448,7 +481,6 @@ export default function MembershipReviewPage() {
             const subject = item.subjectPerson;
             const requested = item.requestedForHousehold;
             const leads = requested?.householdMembers ?? [];
-            const notes = requested?.intakeNotes?.trim();
             return (
             <Card key={item.id} withBorder radius="md" padding="lg">
               <Text fw={700} fz="lg">{applicantLabel(item)}</Text>
@@ -485,13 +517,7 @@ export default function MembershipReviewPage() {
                 </Stack>
               )}
 
-              {/* The intake note belongs to the household that asked for the check; the volunteer-only mark is offered only on a review of one of its leads. */}
-              {requested && notes && (
-                <Alert color="yellow" variant="light" mt="md" title="From the applicant — “Anything else we should know?”">
-                  <Text style={{ whiteSpace: "pre-wrap" }}>{notes}</Text>
-                </Alert>
-              )}
-
+              {/* The volunteer-only mark is offered only on a review of one of the requesting household's leads. */}
               {requested && (!subject || leads.some((p) => p.id === subject.id)) && (
                 <Checkbox
                   my="md"

@@ -1,3 +1,4 @@
+import { dollarsToCents } from "@checkin/money";
 import prisma from "@/lib/prisma";
 import { config } from "@/lib/config";
 import { logger } from "@/lib/logger";
@@ -61,7 +62,7 @@ async function readLiveReversal(shopifyOrderId: string): Promise<PaymentExceptio
     const state = {
         financialStatus: order.displayFinancialStatus,
         cancelledAt: order.cancelledAt ? new Date(order.cancelledAt) : null,
-        totalRefundedCents: Math.round(Number(order.totalRefundedSet.shopMoney.amount) * 100),
+        totalRefundedCents: dollarsToCents(order.totalRefundedSet.shopMoney.amount),
     };
     if (state.cancelledAt) return "CANCELLED";
     return isReversed(state) ? "REFUND" : null;

@@ -3,7 +3,7 @@ import { useState } from "react";
 import { ActionIcon, Badge, Button, Group, Select, Table, Text, Title } from "@mantine/core";
 import { IconTrash } from "@tabler/icons-react";
 import { send, useLoad, useRoles } from "../components/api";
-import { LoadError, QuickBooksListsRefresh } from "@checkin/component-ui";
+import { InactivePickWarning, LoadError, QuickBooksListsRefresh } from "@checkin/component-ui";
 import { LINE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
 
 interface QbAccount {
@@ -52,7 +52,8 @@ export default function QbAccountsPage() {
               <Table.Tr key={a.id}>
                 <Table.Td>{a.name}</Table.Td>
                 <Table.Td>
-                  {inQb && (inQb.active ? inQb.name : `${inQb.name} (inactive)`)}
+                  {inQb?.active && inQb.name}
+                  {inQb && <InactivePickWarning saved={a.qbAccount} options={live.data} advice="Delete it and add an active account." />}
                   {live.data && !inQb && <Badge color="red" variant="light">Not in QuickBooks</Badge>}
                 </Table.Td>
                 <Table.Td>

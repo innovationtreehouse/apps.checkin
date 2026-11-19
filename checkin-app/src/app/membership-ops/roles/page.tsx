@@ -1,12 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Card, Group, Stack, Text, UnstyledButton } from "@mantine/core";
+import { LoadError } from "@checkin/component-ui";
+import { useLoad } from "@/lib/api";
 import { EntityPicker } from "@/components/admin/EntityPicker";
 import { RoleBadge, roleLabel } from "@/components/ui/RoleBadge";
 import { RolesEditModal, type RolesEditTarget } from "@/components/roles/RolesEditModal";
 import { ROLE_FLAGS } from "@/lib/roles";
 import { useRequireRole } from "@/hooks/useRequireRole";
+import { useOrgTime } from "@/components/TimezoneProvider";
 import { MEMBERSHIP_OPS_ADMIN_ROLES } from "@/lib/nav/sections/membershipOps";
 
 type PersonRow = RolesEditTarget & { isYouth?: boolean };
@@ -19,32 +22,17 @@ type PersonRow = RolesEditTarget & { isYouth?: boolean };
  */
 export default function RolesPage() {
   const { user: me, loading, ready } = useRequireRole(MEMBERSHIP_OPS_ADMIN_ROLES);
-  const [people, setPeople] = useState<PersonRow[]>([]);
-  const [fetching, setFetching] = useState(true);
+  const { data, error: loadError, reload } = useLoad<{ people: PersonRow[] }>(ready ? "/api/roles" : null);
+  const people = data?.people ?? [];
   const [target, setTarget] = useState<PersonRow | null>(null);
+  const { formatDate } = useOrgTime();
 
-  const fetchPeople = () => fetch('/api/roles')
-    .then(async (res) => {
-      const data = await res.json();
-      if (data.people) setPeople(data.people);
-    })
-    .catch((err) => {
-      console.error("Failed to load roles:", err);
-    })
-    .finally(() => {
-      setFetching(false);
-    });
-
-  useEffect(() => {
-    if (ready) fetchPeople();
-  }, [ready]);
-
-  const handleSaved = (updated: RolesEditTarget) => {
-    setPeople((prev) => {
-      const exists = prev.some((p) => p.id === updated.id);
-      const merged = { ...updated } as PersonRow;
-      return exists ? prev.map((p) => (p.id === updated.id ? { ...p, ...merged } : p)) : [...prev, merged];
-    });
+  const holderLabel = (p: PersonRow, flag: string) => {
+    const name = p.name || p.email || `Person #${p.id}`;
+    if (flag !== 'isKeyVolunteer') return name;
+    return p.kvaSignedCurrent
+      ? `${name} · signed${p.kvaSignedAt ? ` ${formatDate(p.kvaSignedAt)}` : ''}`
+      : `${name} · not signed`;
   };
 
   if (loading) return null;
@@ -69,12 +57,14 @@ export default function RolesPage() {
           }}
           getOptionLabel={(p) => p.name || p.email || `Person #${p.id}`}
           getOptionDescription={(p) => p.email}
-          onSelect={(p) => setTarget(p)}
+          onSelect={(p) => setTarget(people.find((row) => row.id === p.id) ?? p)}
           onClear={() => {}}
         />
       </Card>
 
-      {fetching && people.length === 0 ? (
+      {loadError ? (
+        <LoadError what="roles" message={loadError} onRetry={reload} />
+      ) : data === null ? (
         <Text c="dimmed">Loading...</Text>
       ) : (
         ROLE_FLAGS.map((flag) => {
@@ -93,7 +83,7 @@ export default function RolesPage() {
                 <Group gap="xs" wrap="wrap">
                   {holders.map((p) => (
                     <UnstyledButton key={p.id} onClick={() => setTarget(p)}>
-                      <RoleBadge role={flag} label={p.name || p.email || `Person #${p.id}`} size="lg" />
+                      <RoleBadge role={flag} label={holderLabel(p, flag)} size="lg" />
                     </UnstyledButton>
                   ))}
                 </Group>
@@ -106,8 +96,9 @@ export default function RolesPage() {
       <RolesEditModal
         target={target}
         me={me}
+        noBoard={!people.some((p) => p.isBoardMember)}
         onClose={() => setTarget(null)}
-        onSaved={handleSaved}
+        onSaved={() => { void reload(); }}
       />
     </Stack>
   );

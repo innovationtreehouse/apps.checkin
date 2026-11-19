@@ -6,7 +6,7 @@ import { errorMessage, LoadError, showError, showSuccess } from '@checkin/compon
 import { useRequireRole } from '@/hooks/useRequireRole';
 import { useSeedForm } from '@/hooks/useSeedForm';
 import { api, useLoad } from '@/lib/api';
-import { Alert, Badge, Button, Card, Checkbox, Group, Paper, SimpleGrid, Stack, Text, Textarea, TextInput, Title, Tooltip } from '@mantine/core';
+import { Alert, Badge, Button, Card, Checkbox, Group, Paper, SimpleGrid, Stack, Text, TextInput, Title, Tooltip } from '@mantine/core';
 import { AlertBanner, type AlertTone } from '@/components/admin/AlertBanner';
 import { PageContainer } from '@/components/ui/PageContainer';
 import EmergencyContactNotice from '@/components/ui/EmergencyContactNotice';
@@ -20,8 +20,8 @@ import { pickAddress, validateAddress, type StructuredAddress, type AddressField
 import { isValidPhone, formatPhone, PHONE_ERROR } from '@/lib/phone';
 import { isValidEmail } from '@/lib/emergencyContacts/identity';
 import { useUnsavedGuard, shallowEqual } from '@/components/UnsavedChangesProvider';
-import { signInEmailHelp } from '@/lib/person/signInEmail';
-import { UNDER_18_DECLARATION_REFUSAL } from '@/lib/person/adultDob';
+import { lockedEmailHelp } from '@/lib/person/signInEmail';
+import { AGE_LEAD_ONLY_REFUSAL, mayDeclareAges, UNDER_18_DECLARATION_REFUSAL } from '@/lib/person/adultDob';
 
 import { PageLoader } from "@/components/ui/PageLoader";
 const blankAddress: StructuredAddress = { line1: "", line2: "", city: "", state: "", postalCode: "" };
@@ -51,14 +51,13 @@ function ageBadge(p: HouseholdMember): { label: string; color: string; variant: 
   return { label: 'Age Unavailable', color: 'red', variant: 'filled' };
 }
 
-type HouseholdMember = { id: number; name?: string; nickname?: string | null; email?: string; dateOfBirth?: string; phone?: string; isDeclaredAdult?: boolean; allergies?: string | null; isHouseholdLead?: boolean; hasSignIn?: boolean };
+type HouseholdMember = { id: number; name?: string; nickname?: string | null; email?: string; dateOfBirth?: string; phone?: string; isDeclaredAdult?: boolean; allergies?: string | null; isHouseholdLead?: boolean; emailLocked?: boolean };
 type EmergencyContact = { id: number; name: string; phone: string; email?: string | null; relationship?: string | null; priority: number; invalid: boolean };
 type HouseholdData = {
   id?: number;
   name?: string;
   householdMembers?: HouseholdMember[];
   orgMembership?: { status?: string; memberSince?: string; isVolunteerFamily?: boolean } | null;
-  intakeNotes?: string | null;
 } & Partial<StructuredAddress> | null;
 type HouseholdAnswer = { household: HouseholdData; boardReplyTo?: string | null; validUntil?: string | null };
 
@@ -97,9 +96,6 @@ export default function HouseholdPage() {
   // Snapshot of the address as last loaded/saved; isDirty compares it to current
   // state to drive the unsaved-changes guard.
   const [initialAddress, setInitialAddress] = useState<StructuredAddress>(blankAddress);
-  // "Anything else we should know?" — saved alongside the address on this card.
-  const [notes, setNotes] = useState("");
-  const [initialNotes, setInitialNotes] = useState("");
   const [addressErrors, setAddressErrors] = useState<Partial<Record<AddressField, string>>>({});
   const [savingSettings, setSavingSettings] = useState(false);
   // Transient "Updated" confirmation shown in the Address card header for 5s.
@@ -115,7 +111,7 @@ export default function HouseholdPage() {
   // Address" button). The member add/edit forms, emergency-contact form, and the
   // receipts toggle all submit instantly — intentionally excluded so they never
   // raise a spurious unsaved-changes prompt.
-  const isDirty = !shallowEqual({ ...initialAddress }, { ...address }) || notes !== initialNotes;
+  const isDirty = !shallowEqual({ ...initialAddress }, { ...address });
   useUnsavedGuard(isDirty);
 
   useSeedForm(householdAnswer, isDirty, (answer) => {
@@ -123,12 +119,12 @@ export default function HouseholdPage() {
     const loaded = { line1: a.line1 ?? "", line2: a.line2 ?? "", city: a.city ?? "", state: a.state ?? "", postalCode: a.postalCode ?? "" };
     setAddress(loaded);
     setInitialAddress(loaded);
-    setNotes(answer.household?.intakeNotes ?? "");
-    setInitialNotes(answer.household?.intakeNotes ?? "");
   });
 
   const userId = (sessionUser as { id: number } | undefined)?.id;
   const viewerIsLead = household?.householdMembers?.find((m) => m.id === userId)?.isHouseholdLead ?? false;
+  const agesLocked = userId !== undefined
+    && !mayDeclareAges(userId, (household?.householdMembers ?? []).filter((m) => m.isHouseholdLead).map((m) => m.id));
   // The contacts card, and the API behind it, are the household lead's.
   const { data: contactsAnswer, error: contactsError, reload: fetchContacts } = useLoad<{ contacts?: EmergencyContact[] }>(
     viewerIsLead ? '/api/household/emergency-contacts' : null,
@@ -141,10 +137,9 @@ export default function HouseholdPage() {
     if (Object.keys(errors).length > 0) return;
     setSavingSettings(true);
     try {
-      await api('/api/household/settings', { method: 'PATCH', body: JSON.stringify({ ...address, notes: notes || null }) });
+      await api('/api/household/settings', { method: 'PATCH', body: JSON.stringify(address) });
       showSuccess("Settings updated successfully!");
       setInitialAddress(address);
-      setInitialNotes(notes);
       notifyNavRefresh();
     } catch (e) {
       showError(errorMessage(e));
@@ -358,14 +353,14 @@ export default function HouseholdPage() {
                   return (
                     <Card key={p.id} withBorder radius="md" padding="md" bg={leadMissingPhone ? 'var(--mantine-color-red-light)' : undefined}>
                       {editingHouseholdMemberId === p.id ? (
-                        <form onSubmit={(e) => handleEditHouseholdMember(e, p.id, !!p.hasSignIn)}>
+                        <form onSubmit={(e) => handleEditHouseholdMember(e, p.id, !!p.emailLocked)}>
                           <Stack gap="xs">
                             <TextInput size="xs" label="Name" description="Printed on name badges exactly as typed — please double-check the spelling." value={editForm.name} error={editErrors.name} onChange={(e) => { setEditForm({ ...editForm, name: e.currentTarget.value }); setEditErrors({ ...editErrors, name: undefined }); }} />
                             <TextInput size="xs" label="Nickname (optional)" description="Printed on the name badge in place of the first name." value={editForm.nickname} onChange={(e) => setEditForm({ ...editForm, nickname: e.currentTarget.value })} />
-                            <TextInput size="xs" inputMode="email" label="Email" value={editForm.email} disabled={p.hasSignIn} description={p.hasSignIn ? signInEmailHelp(boardReplyTo) : undefined} error={editErrors.email} onChange={(e) => { setEditForm({ ...editForm, email: e.currentTarget.value }); setEditErrors({ ...editErrors, email: undefined }); }} />
-                            <Checkbox size="xs" label="Individual is over 25" disabled={isYouth(p.dateOfBirth)} description={isYouth(p.dateOfBirth) ? UNDER_18_DECLARATION_REFUSAL : undefined} checked={editForm.over25} onChange={(e) => { setEditForm({ ...editForm, over25: e.currentTarget.checked, dob: e.currentTarget.checked ? "" : editForm.dob }); setEditErrors({ ...editErrors, dob: undefined }); }} />
+                            <TextInput size="xs" inputMode="email" label="Email" value={editForm.email} disabled={p.emailLocked} description={p.emailLocked ? lockedEmailHelp(boardReplyTo) : undefined} error={editErrors.email} onChange={(e) => { setEditForm({ ...editForm, email: e.currentTarget.value }); setEditErrors({ ...editErrors, email: undefined }); }} />
+                            <Checkbox size="xs" label="Individual is over 25" disabled={agesLocked || isYouth(p.dateOfBirth)} description={agesLocked ? AGE_LEAD_ONLY_REFUSAL : isYouth(p.dateOfBirth) ? UNDER_18_DECLARATION_REFUSAL : undefined} checked={editForm.over25} onChange={(e) => { setEditForm({ ...editForm, over25: e.currentTarget.checked, dob: e.currentTarget.checked ? "" : editForm.dob }); setEditErrors({ ...editErrors, dob: undefined }); }} />
                             {!editForm.over25 && (
-                              <TextInput size="xs" type="date" label="Date of Birth" value={editForm.dob} error={editErrors.dob} onChange={(e) => { setEditForm({ ...editForm, dob: e.currentTarget.value }); setEditErrors({ ...editErrors, dob: undefined }); }} />
+                              <TextInput size="xs" type="date" label="Date of Birth" value={editForm.dob} disabled={agesLocked} error={editErrors.dob} onChange={(e) => { setEditForm({ ...editForm, dob: e.currentTarget.value }); setEditErrors({ ...editErrors, dob: undefined }); }} />
                             )}
                             <TextInput size="xs" type="tel" label="Phone" value={editForm.phone} error={editErrors.phone} onChange={(e) => { setEditForm({ ...editForm, phone: e.currentTarget.value }); setEditErrors({ ...editErrors, phone: undefined }); }} />
                             <TextInput size="xs" label="Allergies (optional)" value={editForm.allergies} onChange={(e) => setEditForm({ ...editForm, allergies: e.currentTarget.value })} />
@@ -454,14 +449,6 @@ export default function HouseholdPage() {
                 <TextInput label="State" required maxLength={2} value={address.state ?? ""} error={addressErrors.state} onChange={(e) => { setAddress({ ...address, state: e.currentTarget.value }); setAddressErrors({ ...addressErrors, state: undefined }); }} placeholder="TX" />
                 <TextInput label="ZIP" required value={address.postalCode ?? ""} error={addressErrors.postalCode} onChange={(e) => { setAddress({ ...address, postalCode: e.currentTarget.value }); setAddressErrors({ ...addressErrors, postalCode: undefined }); }} placeholder="78701" />
               </SimpleGrid>
-              <Textarea
-                label="Anything else we should know?"
-                description="Optional — e.g. if your household is here to volunteer only, with no students enrolled."
-                autosize
-                minRows={2}
-                value={notes}
-                onChange={(e) => setNotes(e.currentTarget.value)}
-              />
             </Stack>
             <Button onClick={handleSaveSettings} disabled={savingSettings} loading={savingSettings} fullWidth mt="md">
               Save household details

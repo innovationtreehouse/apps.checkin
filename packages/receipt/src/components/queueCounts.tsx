@@ -36,7 +36,7 @@ export interface QueueBadge {
 
 /**
  * The badge on `queue`'s tab. FINANCE acts on its queues and on undelivered receipts whose
- * delivery failed, so those show green with the actionable count; every other non-empty queue
+ * delivery is stuck, so those show green with the actionable count; every other non-empty queue
  * shows its total in gray. All has no badge.
  */
 export function queueBadge(queue: string, counts: QueueCounts | null, isFinance: boolean): QueueBadge | null {
@@ -67,7 +67,7 @@ export function QueueCount({ badge, selected = false }: { badge: QueueBadge | nu
         : { color: "treehouseGreen", c: "black" };
   return (
     <Badge size="sm" variant="filled" {...look} aria-label={`${badge.count} ${badge.intent === "action" ? "to act on" : "in this queue"}`}>
-      {badge.count}
+      {badge.count > 99 ? "99+" : badge.count}
     </Badge>
   );
 }

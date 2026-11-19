@@ -1,4 +1,5 @@
 import type { Prisma } from "@/generated/prisma/client";
+import { EMAIL_LOCK_SELECT } from "@/lib/person/emailLock";
 
 /**
  * Fields of a household peer's Person row that are safe to send to any
@@ -29,8 +30,8 @@ export const HOUSEHOLD_PEER_SELECT = {
     isHouseholdLead: true,
 } satisfies Prisma.PersonSelect;
 
-/** The peer projection plus a linked-sign-in count, mapped to a `hasSignIn` boolean before it leaves. */
-export const HOUSEHOLD_PEER_WITH_SIGN_IN_SELECT = {
+/** The peer projection plus the email-lock inputs, mapped to an `emailLocked` boolean before it leaves. */
+export const HOUSEHOLD_PEER_WITH_EMAIL_LOCK_SELECT = {
     ...HOUSEHOLD_PEER_SELECT,
-    _count: { select: { accounts: true } },
+    ...EMAIL_LOCK_SELECT,
 } satisfies Prisma.PersonSelect;

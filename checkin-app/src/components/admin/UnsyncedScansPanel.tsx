@@ -40,6 +40,7 @@ const REASON_COPY: Record<string, string> = {
   close_not_keyholder: "building closed by someone who was not a keyholder when the close arrived — the close was applied",
   facility_closed: "badge scanned while no keyholder was present",
   "client_dead:unresolvable": "badge number matches no one on record — often two badges read as one",
+  "client_dead:no_scan_time": "queued scan arrived with no usable scan time — the time shown is when it reached the server; it was scanned earlier",
   conflict_double_in: "check-in while already checked in — they may have been leaving; fix the visit in the manual visits tool",
   conflict_out_no_in: "check-out with no open visit — they may have been arriving; fix the visit in the manual visits tool",
 };

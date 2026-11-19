@@ -1,6 +1,6 @@
 /**
  * A family joining, in the browser: the family, the reviewers and the Board each see their part
- * of an application (docs/rules/membership.md). Every test mints its own family, so a rerun on the
+ * of an application. Every test mints its own family, so a rerun on the
  * same stack starts clean. The dev mocks stand in for signing, the background-check tool and payment.
  */
 import { expect, test, type Locator, type Page, type Request } from "@playwright/test";
@@ -66,11 +66,12 @@ test.describe("membership onboarding in the browser", () => {
       await expect(heading(page, "Sign & start your background check")).toBeVisible();
       await signAgreement(page);
 
-      const checks = page.locator(".mantine-Card-root").filter({ has: page.getByRole("heading", { name: "Background checks" }) });
-      const [averity] = await Promise.all([page.waitForEvent("popup"), checks.getByRole("link", { name: "Open the background-check tool →" }).click()]);
+      const ownCheck = page.locator(".mantine-Card-root").filter({ has: page.getByRole("heading", { name: "Background checks" }) })
+        .locator(".mantine-Stack-root > .mantine-Stack-root").filter({ has: page.getByText("You", { exact: true }) });
+      const [averity] = await Promise.all([page.waitForEvent("popup"), ownCheck.getByRole("link", { name: "Open the background-check tool →" }).click()]);
       await averity.close();
-      await checks.getByLabel("I've started my check in the background-check tool").check();
-      await checks.getByRole("button", { name: "Mark check started" }).click();
+      await ownCheck.getByLabel("I've started my check in the background-check tool").check();
+      await ownCheck.getByRole("button", { name: "Mark check started" }).click();
       await expect(heading(page, "Membership fee")).toBeVisible();
       await expect(page.getByText(STILL_REVIEWING)).toBeVisible();
     });

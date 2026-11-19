@@ -10,8 +10,7 @@ export const dynamic = "force-dynamic";
  * Program-context household intake. Lets an auth-first program registrant fill
  * the household details (address, emergency contact, primary parent, children)
  * that the enroll step needs, when they arrive with a fresh single-person
- * household. The sign-in-before-intake rule is in docs/rules/programs.md
- * (Enrollment).
+ * household.
  *
  * Deliberately PROCESS-FREE: it calls the membership intake service's
  * getIntakeState / saveIntake WITHOUT opening or advancing an

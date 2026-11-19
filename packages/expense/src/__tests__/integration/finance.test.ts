@@ -2,10 +2,10 @@
  * Sign-off hold, capital register, flags and QuickBooks match inputs against the real
  * database.
  */
-import { describe, it, expect } from "vitest";
+import { beforeEach, describe, it, expect } from "vitest";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
-import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, signAllLines, ORG, seedSubmitterSeat } from "../helpers/seed";
+import { bindPorts, directory, principal, seedApproval, seedExpense, seedLineItem, signAllLines, seedOrgSettings, ORG, seedSubmitterSeat } from "../helpers/seed";
 import { reimburseeOptions, setReimbursee, signLine, signoffStatus } from "../../services/signoffService";
 import { checkAndProcessExpense } from "../../lib/expense-qb-processor";
 import { checkApprovalAutoTransition } from "../../lib/financial-flow";
@@ -18,6 +18,9 @@ import { inertQbReader, type QbTxn } from "../../contract";
 
 const FINANCE = principal(3, { isFinance: true });
 const BOARD = principal(5, { isBoard: true });
+
+// These suites are not about capital review; with it off, no expense stops at that step.
+beforeEach(() => seedOrgSettings({ capitalReviewEnabled: false }));
 
 describeDb("sign-off seats", () => {
   async function heldLine(opts: { reimbursement?: boolean } = {}) {

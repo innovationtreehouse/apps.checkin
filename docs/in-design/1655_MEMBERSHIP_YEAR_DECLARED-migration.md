@@ -178,7 +178,7 @@ Shopify products.
     transition row becomes the grant's; `grantableRenewalWhere` widens to "an
     application awaiting payment, joining or renewing", which the list route's
     probe uses to show the coming-year button. Regenerate
-    `checkin-app/docs/generated/lifecycle/membership.md`.
+    `docs/generated/lifecycle/membership.md`.
   - `checkin-app/src/app/api/membership-ops/households/route.ts`: the list response
     carries the years a grant may record now, each with its label (the year in
     progress; inside the window, the coming year too). `POST` takes `year` and
@@ -258,7 +258,7 @@ variant, so a local instance with the Shopify mock active still opens renewals.
 - **Files:** `runRenewalSweep` in `checkin-app/src/lib/membership/renewal.ts`: a
   second early return when the coming year has no row, with a reason naming it.
 - **Rules:** applies the sweep line in the Destination, then confirms every block
-  there is in `docs/rules/membership.md`.
+  there is recorded.
 - **Tests:** unit (`renewal.test.ts`) and integration (`membershipBulkRenewalAPI`).
 - **Migration safety:** none.
 - **Blocked on:** PR 8.
@@ -277,7 +277,7 @@ variant, so a local instance with the Shopify mock active still opens renewals.
   this lands and goes to the board; confirm first that no such process is still
   awaiting payment. If the boundary-isolation check flags the removed
   classifications, follow the decommission shape in
-  `checkin-app/docs/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md` rule 7.
+  `docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md` rule 7.
 - **Rules:** none; then the Last step below.
 - **Blocked on:** PR 9 deployed and drained.
 
@@ -291,7 +291,7 @@ which PR 4 moves to the recorded year.
 not equality between a settlement's year and the program's (design, "Program
 pricing needs nothing new").
 
-## Destination: `docs/rules/membership.md`
+## Destination
 
 **Replace** the Renewal line beginning "Settling inside the renewal window buys the
 coming membership year" with (PR 4):
@@ -326,5 +326,5 @@ into the rules file.
 
 ## Last step
 
-In PR 10: confirm every block above is in `docs/rules/membership.md`, then delete
+In PR 10: confirm every block above is recorded as a standing rule, then delete
 both files in this directory.

@@ -2,8 +2,9 @@ import prisma from "@/lib/prisma";
 import type { Prisma } from "@/generated/prisma/client";
 import { config } from "@/lib/config";
 import { quickBooks } from "@/lib/components/ports";
+import { logger } from "@/lib/logger";
 
-// The app's read-only copy of QuickBooks' account and Class lists (docs/rules/revenue.md).
+// The app's read-only copy of QuickBooks' account and Class lists.
 // Pickers and save-time checks read only this copy; posting and System Status read QuickBooks live.
 
 export type SavedAccount = { id: string; name: string; accountType: string; active: boolean };
@@ -14,7 +15,8 @@ type ListName = "account" | "class";
 const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name);
 
 /**
- * Reads both lists from QuickBooks and replaces both rows together; a failed read throws and leaves the old copy as it was.
+ * Reads both lists from QuickBooks and replaces both rows together, then checks the buckets' Classes against the new copy.
+ * A failed read throws and leaves the old copy as it was; a failed check is logged and leaves its last findings standing.
  * Null while QuickBooks is off, and under CHECKIN_ENV=local, whose pickers read stand-in lists.
  */
 export async function refreshQuickBooksLists() {
@@ -29,6 +31,11 @@ export async function refreshQuickBooksLists() {
     const write = (list: ListName, entries: Prisma.InputJsonValue) =>
         prisma.quickBooksList.upsert({ where: { list }, create: { list, entries, refreshedAt }, update: { entries, refreshedAt } });
     await prisma.$transaction([write("account", account), write("class", klass)]);
+    try {
+        await (await import("@/lib/finance/bucketClassCheck")).checkBucketClasses(klass);
+    } catch (err) {
+        logger.error("[quickbooks-lists] bucket Class check failed:", err);
+    }
     return { refreshedAt, accounts: account.length, classes: klass.length };
 }
 

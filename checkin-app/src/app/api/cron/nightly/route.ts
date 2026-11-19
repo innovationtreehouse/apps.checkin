@@ -12,6 +12,7 @@ import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { lockFacility } from "@/lib/facilityLock";
 import { duringNightlyRun } from "@/lib/attendance/nightlyClose";
 import { sendProblemsDigest } from "@/lib/problems";
+import { traceOnCommit } from "@/lib/specTrace";
 
 /** A nightly run this soon after the last one is a retry of the same night. */
 const SAME_NIGHT_MS = 12 * 60 * 60 * 1000;
@@ -72,7 +73,7 @@ export const GET = withCron(() => duringNightlyRun(async () => {
                 // may be hours earlier. Correcting one of these is expected by
                 // construction and never flags (lib/visit/significance.ts).
                 try {
-                    const segments = await prisma.$transaction(async (tx) => {
+                    const segments = await traceOnCommit(() => prisma.$transaction(async (tx) => {
                         await tx.$executeRaw`SELECT pg_advisory_xact_lock(${visit.personId})`;
                         await lockFacility(tx);
                         // Empty: someone else departed the visit first, so this close set nothing.
@@ -89,7 +90,7 @@ export const GET = withCron(() => duringNightlyRun(async () => {
                         }] : []);
                         await logCloseDepartures(tx, closeId, systemActor("cron:nightly"), departures, "NIGHTLY_SWEEP");
                         return segments;
-                    });
+                    }));
                     if (segments.length > 0) forceClosed.push(visit);
                 } catch (err) {
                     failed += 1;
@@ -141,19 +142,18 @@ export const GET = withCron(() => duringNightlyRun(async () => {
         // a 26+ person is dead weight on our most-sensitive field. Strip it and set the
         // declared-adult flag so age gates / search / UI still see them as an adult.
         // Runs nightly to catch members as they age in. Raw SQL so age is judged in the DB, tombstones included.
-        const purgedPeople = await prisma.$queryRaw<{ id: number }[]>`
-            UPDATE "Person"
-            SET "dateOfBirth" = NULL, "isDeclaredAdult" = true
-            WHERE "dateOfBirth" IS NOT NULL
-              AND "dateOfBirth" <= (CURRENT_DATE - INTERVAL '26 years')
-            RETURNING "id"`;
-        const adultDobPurged = purgedPeople.length;
-        if (adultDobPurged > 0) {
+        const purgedPeople = await prisma.$transaction(async (tx) => {
+            const purged = await tx.$queryRaw<{ id: number }[]>`
+                UPDATE "Person"
+                SET "dateOfBirth" = NULL, "isDeclaredAdult" = true
+                WHERE "dateOfBirth" IS NOT NULL
+                  AND "dateOfBirth" <= (CURRENT_DATE - INTERVAL '26 years')
+                RETURNING "id"`;
             // The row records that a date of birth was removed, never the date
             // itself: retention forbids keeping it past 25, and an audit row
             // outlives the Person field it would be copied from.
-            await prisma.auditLog.createMany({
-                data: purgedPeople.map(({ id }) => ({
+            await tx.auditLog.createMany({
+                data: purged.map(({ id }) => ({
                     ...systemActor("cron:nightly"),
                     action: 'DELETE' as const,
                     tableName: 'Person',
@@ -161,6 +161,10 @@ export const GET = withCron(() => duringNightlyRun(async () => {
                     newData: { field: 'dateOfBirth', reason: 'aged_out_over_25' }
                 }))
             });
+            return purged;
+        }, { maxWait: 5_000, timeout: 15_000 });
+        const adultDobPurged = purgedPeople.length;
+        if (adultDobPurged > 0) {
             logger.info(`Nightly cron: purged DoB for ${adultDobPurged} member(s) now over 25 (#1165).`);
         }
 

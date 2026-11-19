@@ -10,7 +10,6 @@ import { archivedPeople } from "@/lib/person/archivedPeople";
 /**
  * Board/sysadmin review of attendance corrections. Reads the
  * AuditLog trail for tableName='Visit' — nothing new is stored.
- * Governing rules: docs/rules/attendance-checkin.md, "The visit record".
  *
  * The bag is SYNTHESIZED, not passed through:
  * `oldData`/`newData` are internal-tier JSON blobs that carry personal-tier

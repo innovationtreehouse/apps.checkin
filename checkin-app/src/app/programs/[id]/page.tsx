@@ -13,7 +13,7 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
   const { id } = use(params);
   const router = useRouter();
   const {
-    session, status, program, programLoad, successMessage, startEnrollmentProcess, showEnrollmentSelection, picker,
+    session, status, program, programLoad, successMessage, startEnrollmentProcess, signInToProgram, showEnrollmentSelection, picker,
   } = useProgramEnrollment(id);
 
   if ((!program && (programLoad.loading || programLoad.retrying)) || status === "loading") {
@@ -32,6 +32,8 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
         <Title order={3}>{programLoad.status === 404 ? "Program not found." : "Not Found"}</Title>
         <Group justify="center" mt="lg">
           <Button onClick={() => router.push('/programs')}>Back to Directory</Button>
+          {/* A members-only program reads as not found until the visitor signs in. */}
+          {!session && <Button variant="default" onClick={signInToProgram}>Sign in</Button>}
         </Group>
       </Card>
     </Container>
@@ -52,7 +54,7 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
     }));
   const hasPrice = !!(program.orgMemberPriceCents || program.nonOrgMemberPriceCents);
   // A youth is shown no payment obligation, action, or status — their own or
-  // their household's (docs/rules/programs.md). An unverifiable age is NOT a
+  // their household's. An unverifiable age is NOT a
   // youth: they keep every affordance so they can reach the intake panel and
   // establish an age.
   const viewerIsYouth = user?.ageBand === 'youth';
@@ -137,7 +139,7 @@ export default function ProgramEnrollmentPage({ params }: { params: Promise<{ id
                 // existence is resolved by NextAuth, never leaked by a public API
                 // response. First-time users are then filled in by the intake
                 // panel below.
-                <Button size="md" onClick={() => router.push(`/signin?callbackUrl=/programs/${program.id}`)} disabled={isClosed}>
+                <Button size="md" onClick={signInToProgram} disabled={isClosed}>
                   {isClosed ? <>Enrollment Closed{closedSuffix}</> : "Sign in to enroll"}
                 </Button>
               )}

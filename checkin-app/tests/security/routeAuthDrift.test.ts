@@ -64,14 +64,6 @@ const ALLOWLIST = new Set<string>([
     // getOptionalSessionUser doesn't apply. Abuse is bounded by IP + email rate
     // limits inside the handler (see the "email-bomb / DB-spam target" comment).
     'programs/[id]/public-register/route.ts',
-    // Session-less, self-verifying via a signed HMAC token in the URL (?p=&sig=),
-    // NOT a shared-secret family like withCron/withWebhook/withKiosk (no header,
-    // no config-held secret to check) — see lib/outreach/unsubscribeToken.ts. GET
-    // must not flip the flag (mail scanners prefetch GET links) and POST verifies
-    // the token itself, so neither handler fits withAuth/withCron/withWebhook/
-    // withKiosk, and it's genuinely public so getOptionalSessionUser doesn't apply
-    // either. Bad/missing/tampered tokens get a neutral page, no info leak.
-    'unsubscribe/route.ts',
     // Enters through handler() on every call; POST only re-sends the stripped
     // body under the library's refusal status (404/409/503), which handler()
     // cannot set. Justified in-file at POST ("DRIFT-GUARD ALLOWLIST").
@@ -476,7 +468,6 @@ const EDGE_INCLUDE_ALLOWLIST: Record<string, string> = {
     'cron/pending-participants': 'cron-gated — withCron, no user-facing response',
     'cron/post-event': 'cron-gated — withCron (shared CRON_SECRET); response is the run summary counts (processedEvents/emailsSent), no rows or person ids',
     'cron/reconcile-shopify': 'cron-gated — withCron (shared CRON_SECRET); response is per-sweep summary counts/status, no rows or person ids',
-    'cron/scholarship-grace-expiry': 'cron-gated — withCron, no user-facing response',
     'events/[id]': 'admission-gated — handler GET throws notFound() unless staff (sysadmin/board/leadMentor/coreVol)',
     'events/mine': 'query-shaped — self + own household only (activityMembers → where participantId in memberIds)',
     'facility/trends': 'admin-role-gated — sysadmin/board',
@@ -540,8 +531,7 @@ const FIX_4 =
     '`undefined` shape as a genuinely anonymous visitor. Add ' +
     '`if (config.isStaging() && !user) return apiError("Unauthorized", 401);` right after the ' +
     'getOptionalSessionUser call, or add this file to ALLOWLIST with a note on why it is safe ' +
-    'to stay public even on staging (e.g. unsubscribe — no sensitive data, must stay reachable ' +
-    'for mail scanners).';
+    'to stay public even on staging.';
 
 describe('route auth drift-guard — every app/api/**/route.ts', () => {
     it('has route files to scan (guard is not vacuous)', () => {

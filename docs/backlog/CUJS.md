@@ -20,12 +20,12 @@ Status: **ALL 7 chips folded (V1–V7).** Every step tagged vs live code at base
 ### A1. Prospective family → active member (onboarding)  [bucket M/SA]  — validated V1
 0a. ❌ Pre-membership: prospect logs in, subscribes to newsletter, gets program notifications; open house on public calendar (`CM14`)
 0b. ❌ Preview the membership agreement as view-only PDF without triggering Zoho Sign (`M20`)
-1. ✅ Intake application incl "anything else" note (captured + surfaced to reviewers)
+1. ✅ Intake application
 2. ✅ Board pre-designation of volunteer household — but drives **dues only**, NOT skip-review→payment (that's a separate `bgFresh` path)
 3. ✅ Contract sent + signed (Zoho, embedded)
 4. ✅ BG sent + check started (marked on the person: self, a household lead, or the Board; no Averity API)
 5. ✅ BG review (2-of-N, anti-collusion gates, board override w/ COI gate)
-6. ✅ Reviewer volunteer bit; intake note shown to reviewers (does NOT gate payment — review runs in parallel)
+6. ✅ Reviewer volunteer bit (does NOT gate payment — review runs in parallel)
 7. ✅ Payment via Shopify (member vs volunteer price + discount code)
 8. ✅ Webhook validates payment→activation (HMAC + variant-id check; H2 no-item → stays PENDING + board alert). NOTE: volunteer discount-code entitlement still NOT validated (`CO2`/#278)
 9. 🟡 Post-activation fan-out: welcome/congrats ✅ · **mailing-list `CM1` ❌ + badge-print `AT11` ❌ NOT wired to activation**
@@ -48,7 +48,7 @@ Status: **ALL 7 chips folded (V1–V7).** Every step tagged vs live code at base
 5. ✅ View membership status
 6. 🟡 BLOCKED recovery (`M16` — left-rail alert only, no right-column card)
 7. n/a household-merge (doesn't exist; M18 is the **person/record merge** #1103, confirmed)
-8. ❌ Archive family (`M4`/#959 parked; `archive.ts` archives *applications* not families; `M19` moot until M4)
+8. ✅ Archive family — a Board act, not the lead's (`docs/rules/people-households.md` § Archived households)
 9. ❌ Set/maintain each person's t-shirt size (+staleness re-confirm, `P21`)
 10. ❌ See own family's tool certs (`SA9`)
 11. ❌ Re-read the membership agreement PDF (`M20`)
@@ -199,7 +199,7 @@ _For each loop: does the whole thing close, and can staff SEE/FIX it? These over
 - Reframe (owner): receipt toil = **inventory cataloging** (thousands of receipts) NOT reimbursement (~10/yr) → the high-volume driver is card-receipt intake, so #7 upload/line-count cap is a real throughput+DoS concern, not theoretical.
 
 ### B2. Membership lifecycle loop  [M/SA]  — validated V1
-- 🟡 application → activation ✅ (closes fully) → **grace → lapse → archive-family = MISSING** (`M1`/`M4`)
+- 🟡 application → activation ✅ (closes fully) → **grace → lapse = MISSING** (`M1`)
 - Oversight/breakage: ❌ unpaid dashboard (`M1`) · ✅ **orphaned-payment reconcile queue DOES exist** (V5 corrects V1's understatement): `PaymentException` engine + board-alert + resolution screen `finance-ops/payments` — an actionable queue, not just a log → **narrow item D21 = BUILT** (close it); the broad **`PL1`** aggregate-exception-queue stays open (payment-exception slice now covered, but stuck-processes + failed-sends still live on separate screens) · 🟡 stale-application purge (`M3` — manual archive exists, no auto-purge) · 🟡 BLOCKED contradiction (`M16`)
 - **Real oversight surface FOUND (would've missed on happy pass):** `lifecycle-reconcile` cron + `system-status/lifecycle` board page report off-diagram rows — BUT only catch illegal flag combos, **not legitimately-stalled in-flight rows** (5 soft-stick states have no time-based exit). Exception signals are fire-and-forget (log-only). See `sources/cuj_validation_v1_error_paths.md`.
 

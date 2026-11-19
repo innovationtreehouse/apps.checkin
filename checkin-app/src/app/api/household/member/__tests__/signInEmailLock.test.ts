@@ -11,7 +11,7 @@ import type { NextRequest } from "next/server";
 import { getServerSession } from "next-auth/next";
 import prisma from "@/lib/prisma";
 import { PATCH } from "@/app/api/household/member/route";
-import { signInEmailHelp } from "@/lib/person/signInEmail";
+import { lockedEmailHelp } from "@/lib/person/signInEmail";
 
 // The archived-household guard has its own tests; here every household is live.
 jest.mock("@/lib/household/archiveGuard", () => ({
@@ -29,6 +29,7 @@ jest.mock("@/lib/emergencyContacts/service", () => ({ reconcileAndWarn: jest.fn(
 jest.mock("@/lib/household/leads", () => ({
     ...jest.requireActual("@/lib/household/leads"),
     householdLeadship: jest.fn(),
+    setsHouseholdAges: jest.fn().mockResolvedValue(true),
 }));
 
 const tx = {
@@ -94,7 +95,7 @@ describe("PATCH /api/household/member — sign-in email lock", () => {
         const res = await patch({ participantId: LEAD, email: "new@example.com" });
         expect(res.status).toBe(400);
         expect((await res.json()).error).toBe(
-            "This is the address you sign in with. To change it, email the board at board@example.org.",
+            "To change this email, contact the Board at board@example.org.",
         );
         expect(tx.person.update).not.toHaveBeenCalled();
     });
@@ -125,7 +126,7 @@ describe("PATCH /api/household/member — sign-in email lock", () => {
         tx.person.findUnique.mockResolvedValueOnce({ ...target(CO_LEAD, 0), roles: [{ role: "KEYHOLDER" }] });
         const res = await patch({ participantId: CO_LEAD, email: "new@example.com" });
         expect(res.status).toBe(400);
-        expect((await res.json()).error).toContain("can only be changed by the board");
+        expect((await res.json()).error).toBe("To change this email, contact the Board at board@example.org.");
     });
 
     it("refuses a lead editing a signed-in co-lead's email", async () => {
@@ -142,12 +143,12 @@ describe("PATCH /api/household/member — sign-in email lock", () => {
         expect(tx.person.update).not.toHaveBeenCalled();
     });
 
-    it("says to contact the board when no reply-to address is set", async () => {
+    it("says to contact the Board when no reply-to address is set", async () => {
         findSettings.mockResolvedValue({ emailFromAddress: null, emailReplyToAddress: null });
         findPerson.mockResolvedValue(target(LEAD, 1));
         const res = await patch({ participantId: LEAD, email: "new@example.com" });
-        expect((await res.json()).error).toBe(signInEmailHelp(null));
-        expect(signInEmailHelp(null)).toBe("This is the address you sign in with. To change it, contact the board.");
+        expect((await res.json()).error).toBe(lockedEmailHelp(null));
+        expect(lockedEmailHelp(null)).toBe("To change this email, contact the Board.");
     });
 
     it("saves a signed-in member's other fields when email is left out", async () => {
@@ -166,7 +167,7 @@ describe("PATCH /api/household/member — sign-in email lock", () => {
 });
 
 describe("PATCH /api/household/member — granted-authority email lock", () => {
-    const GRANT_HELP = "This member's email can only be changed by the board. To change it, email the board at board@example.org.";
+    const GRANT_HELP = "To change this email, contact the Board at board@example.org.";
 
     it.each([
         ["a role", { roles: 1 }],

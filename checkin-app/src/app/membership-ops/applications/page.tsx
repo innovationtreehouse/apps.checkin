@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, Suspense } from "react";
+import { useRef, useState, Suspense } from "react";
 import { Alert, Button, Card, Center, Group, Loader, Modal, Select, Stack, Switch, Text, Textarea } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { errorMessage, HttpError, LoadError, showError, showSuccess } from "@checkin/component-ui";
@@ -12,7 +12,9 @@ import { sharesHousehold } from "@/lib/conflictOfInterest";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { ReasonConfirm } from "@/components/ReasonConfirm";
 import { StatusFilterBadge, ActiveFilterNotice, useStatusFilter } from "@/components/StatusFilter";
-import { CLOSABLE_STATUSES, awaitingBgReview, refundLandsIn, type ProcessKind, type ProcessStatus } from "@/lib/membership/lifecycle";
+import { reopenYearRefusal } from "@/lib/programYear";
+import { useMembershipYearBoundary } from "@/app/program-ops/ProgramYearField";
+import { CLOSABLE_STATUSES, awaitingBgReview, refundableApplication, type ProcessKind, type ProcessStatus } from "@/lib/membership/lifecycle";
 
 interface Person {
   id: number;
@@ -77,6 +79,43 @@ const awaitingBg = (r: ProcessRow) =>
 
 const leadsOf = (r: ProcessRow) => (r.orgMembership?.household?.householdMembers ?? []).filter((p) => p.isHouseholdLead);
 
+// The body of the mark-check-started dialog: confirming with no lead picked flags the Lead field.
+function LeadPickConfirm({ leads, onCancel, onConfirm }: {
+  leads: Person[];
+  onCancel: () => void;
+  onConfirm: (personId: number) => void;
+}) {
+  const [personId, setPersonId] = useState<string | null>(leads.length === 1 ? String(leads[0].id) : null);
+  const [error, setError] = useState<string | null>(null);
+  const field = useRef<HTMLInputElement>(null);
+  const confirm = () => {
+    if (personId === null) {
+      setError("Pick a lead.");
+      field.current?.focus();
+      return;
+    }
+    onConfirm(Number(personId));
+  };
+  return (
+    <Stack gap="xs">
+      <Text size="sm">Pick the lead whose check was started in the background-check tool. Their review goes to the reviewers.</Text>
+      <Select
+        ref={field}
+        label="Lead"
+        required
+        data={leads.map((p) => ({ value: String(p.id), label: p.name || p.email || `Person #${p.id}` }))}
+        value={personId}
+        error={error}
+        onChange={(v) => { setPersonId(v); setError(null); }}
+      />
+      <Group justify="flex-end" mt="sm">
+        <Button variant="default" onClick={onCancel}>Cancel</Button>
+        <Button onClick={confirm}>Mark check started</Button>
+      </Group>
+    </Stack>
+  );
+}
+
 // A household's check is started when an open review has a lead's check started, or a
 // review it asked for waits to be named, or the application carries the legacy flag.
 // Mirrors householdCheckStarted on the server, from rows this page already has.
@@ -96,7 +135,7 @@ const waitingOnCheckReview = (r: ProcessRow, rows: readonly ProcessRow[]) =>
 
 // Mirror archiveApplication's and recordRefund's gates; the server re-checks.
 const closable = (r: ProcessRow) => !r.paidAt && (CLOSABLE_STATUSES as readonly string[]).includes(r.status);
-const refundable = (r: ProcessRow) => !!r.paidAt && refundLandsIn(r.status as ProcessStatus) != null;
+const refundable = (r: ProcessRow) => refundableApplication.has({ status: r.status, paidAt: !!r.paidAt });
 
 export default function AdminMembershipPage() {
   return (
@@ -121,6 +160,9 @@ function ApplicationsBoard() {
   const [pendingCertify, setPendingCertify] = useState<number | null>(null);
   const [certifyReason, setCertifyReason] = useState("");
   const [showArchived, setShowArchived] = useState(false);
+  // Mirrors the server's same-year Reopen refusal; the server stays the enforcement.
+  const { boundary } = useMembershipYearBoundary(showArchived);
+  const yearRefusal = (r: ProcessRow) => reopenYearRefusal(r.kind, new Date(r.createdAt), boundary, new Date());
   const [refundOpened, { open: openRefund, close: closeRefund }] = useDisclosure(false);
   const [pendingRefund, setPendingRefund] = useState<number | null>(null);
   const [refundReason, setRefundReason] = useState("");
@@ -154,6 +196,10 @@ function ApplicationsBoard() {
     post(processId, "review-override", { action: "reset", reason, wrongPerson }, "Sent back for re-review.");
   const releaseApplication = (processId: number, reason: string) =>
     post(processId, "review-override", { action: "release", reason }, "Released — the application moves on.");
+  const closeWrongPerson = (processId: number, reason: string) =>
+    post(processId, "review-override", { action: "reset", reason, closeAsWrongPerson: true }, "Closed as opened for the wrong person.");
+  const reopenWrongPerson = (processId: number, reason: string) =>
+    post(processId, "review-override", { action: "reopen", reason }, "Check review reopened.");
   const archive = (processId: number) => post(processId, "archive", {}, "Application closed.");
   const markLeadCheckStarted = (processId: number, personId: number) =>
     post(processId, "/api/membership-audit/person-bg", { personId }, "Check marked started.");
@@ -161,58 +207,44 @@ function ApplicationsBoard() {
     post(processId, "/api/membership/reviews/dismiss", { reason }, "Dismissed: the check is no longer marked started.");
 
   const confirmMarkLead = (r: ProcessRow) => {
-    const leads = leadsOf(r);
-    let personId: number | null = leads.length === 1 ? leads[0].id : null;
-    const modalId = modals.openConfirmModal({
+    const modalId = `mark-lead-${r.id}`;
+    modals.open({
+      modalId,
       title: "Mark a lead's check started",
       children: (
-        <Stack gap="xs">
-          <Text size="sm">Pick the lead whose check was started in the background-check tool. Their review goes to the reviewers.</Text>
-          <Select
-            label="Lead"
-            required
-            data={leads.map((p) => ({ value: String(p.id), label: p.name || p.email || `Person #${p.id}` }))}
-            defaultValue={personId === null ? null : String(personId)}
-            onChange={(v) => { personId = v ? Number(v) : null; }}
-          />
-        </Stack>
+        <LeadPickConfirm
+          leads={leadsOf(r)}
+          onCancel={() => modals.close(modalId)}
+          onConfirm={(personId) => {
+            modals.close(modalId);
+            markLeadCheckStarted(r.id, personId);
+          }}
+        />
       ),
-      labels: { confirm: "Mark check started", cancel: "Cancel" },
-      closeOnConfirm: false,
-      onConfirm: () => {
-        if (personId === null) {
-          showError("Pick a lead.");
-          return;
-        }
-        modals.close(modalId);
-        markLeadCheckStarted(r.id, personId);
-      },
     });
   };
 
   const confirmDismiss = (r: ProcessRow) => {
-    let reason = "";
-    const modalId = modals.openConfirmModal({
+    const modalId = `dismiss-${r.id}`;
+    modals.open({
+      modalId,
       title: "Dismiss: opened by mistake",
       children: (
-        <Stack gap="xs">
+        <ReasonConfirm
+          confirmLabel="Dismiss"
+          missingReason="A reason is required to dismiss a check review."
+          onCancel={() => modals.close(modalId)}
+          onConfirm={(reason) => {
+            modals.close(modalId);
+            dismissReview(r.id, reason);
+          }}
+        >
           <Text size="sm">
             This undoes the &quot;check started&quot; mark on <strong>{processLabel(r)}</strong>. It decides nothing:
             no approval, no rejection. Check the background-check tool first.
           </Text>
-          <Textarea label="Reason" required autosize minRows={2} onChange={(e) => { reason = e.currentTarget.value; }} />
-        </Stack>
+        </ReasonConfirm>
       ),
-      labels: { confirm: "Dismiss", cancel: "Cancel" },
-      closeOnConfirm: false,
-      onConfirm: () => {
-        if (!reason.trim()) {
-          showError("A reason is required to dismiss a check review.");
-          return;
-        }
-        modals.close(modalId);
-        dismissReview(r.id, reason.trim());
-      },
     });
   };
 
@@ -251,6 +283,63 @@ function ApplicationsBoard() {
       ),
     });
   };
+
+  // B27: the Board closes a check review opened for the wrong person. Its decisions stay
+  // on record, and its rejection stops counting.
+  const confirmCloseWrongPerson = (r: ProcessRow) => {
+    const modalId = `close-wrong-person-${r.id}`;
+    modals.open({
+      modalId,
+      title: "Close this check review as opened for the wrong person?",
+      children: (
+        <ReasonConfirm
+          confirmLabel="Close review"
+          missingReason="A reason is required to close a review as opened for the wrong person."
+          onCancel={() => modals.close(modalId)}
+          onConfirm={(reason) => {
+            modals.close(modalId);
+            closeWrongPerson(r.id, reason);
+          }}
+        >
+          <Text size="sm">
+            This closes the review of <strong>{processLabel(r)}</strong>. Its {r.attestations.length} decision(s),
+            any rejection included, stay on record against it but no longer count against anyone. The Board can reopen it.
+          </Text>
+        </ReasonConfirm>
+      ),
+    });
+  };
+
+  const confirmReopenWrongPerson = (r: ProcessRow) => {
+    const modalId = `reopen-wrong-person-${r.id}`;
+    modals.open({
+      modalId,
+      title: "Reopen this check review?",
+      children: (
+        <ReasonConfirm
+          confirmLabel="Reopen review"
+          missingReason="A reason is required to reopen a review."
+          onCancel={() => modals.close(modalId)}
+          onConfirm={(reason) => {
+            modals.close(modalId);
+            reopenWrongPerson(r.id, reason);
+          }}
+        >
+          <Text size="sm">
+            Only for a review the Board closed as opened for the wrong person. It returns to where it was
+            closed, and any rejection on it counts again.
+          </Text>
+        </ReasonConfirm>
+      ),
+    });
+  };
+
+  const wrongPersonClose = (r: ProcessRow) =>
+    me?.isBoardMember && r.kind === "PERSON_BG" && (
+      <Button size="xs" fz={15} variant="default" color="red" disabled={busyId === r.id || ownHousehold(r)} onClick={() => confirmCloseWrongPerson(r)}>
+        Close: opened for the wrong person
+      </Button>
+    );
 
   // A blocked household application with nobody in its household under a blocked check
   // review: whoever's rejection blocked it has left. The server re-checks.
@@ -471,6 +560,7 @@ function ApplicationsBoard() {
                       Dismiss: opened by mistake
                     </Button>
                   )}
+                  {wrongPersonClose(r)}
                 </Group>
               )}
 
@@ -485,7 +575,7 @@ function ApplicationsBoard() {
                   <Text size="sm" c="dimmed">Awaiting payment.</Text>
                   {me?.isBoardMember && (
                     <Button size="xs" fz={15} disabled={busyId === r.id || ownHousehold(r)} onClick={() => handleCertify(r.id)}>
-                      Certify payment plan → {r.bgClearedAt ? "activate" : "(holds for background check)"}
+                      Activate without payment{r.bgClearedAt ? "" : " (holds for background check)"}
                     </Button>
                   )}
                   {me?.isBoardMember && ownHousehold(r) && (
@@ -518,6 +608,7 @@ function ApplicationsBoard() {
                         <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => confirmResetReview(r)}>
                           Reset for re-review
                         </Button>
+                        {wrongPersonClose(r)}
                         {releasable(r) && (
                           <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => confirmRelease(r)}>
                             Release
@@ -554,9 +645,17 @@ function ApplicationsBoard() {
 
               <Group justify="flex-end" mt="md">
                 {showArchived ? (
-                  <Button size="xs" fz={15} disabled={busyId === r.id || ownHousehold(r)} onClick={() => unarchive(r.id)}>
-                    Reopen
-                  </Button>
+                  <Group gap="md" wrap="wrap" align="center">
+                    {yearRefusal(r) && <Text size="xs" c="dimmed">{yearRefusal(r)}</Text>}
+                    {me?.isBoardMember && r.kind === "PERSON_BG" && (
+                      <Button size="xs" fz={15} variant="default" disabled={busyId === r.id || ownHousehold(r)} onClick={() => confirmReopenWrongPerson(r)}>
+                        Reopen: closed as wrong person
+                      </Button>
+                    )}
+                    <Button size="xs" fz={15} disabled={busyId === r.id || ownHousehold(r) || !!yearRefusal(r)} onClick={() => unarchive(r.id)}>
+                      Reopen
+                    </Button>
+                  </Group>
                 ) : closable(r) && (
                   <Button size="xs" fz={15} variant="subtle" color="red" disabled={busyId === r.id || ownHousehold(r)} onClick={() => confirmArchive(r)}>
                     Close application
@@ -571,12 +670,13 @@ function ApplicationsBoard() {
       <Modal
         opened={certifyOpened}
         onClose={closeCertify}
-        title={<Text span fw={700} fz="lg">Certify Payment Plan</Text>}
+        title={<Text span fw={700} fz="lg">Activate Without Payment</Text>}
         centered
       >
         <Text mb="sm">
-          Certify this payment plan? This activates the household&apos;s membership without a
-          Shopify payment (holding for background clearance if it isn&apos;t done yet).
+          Activate this household&apos;s membership without a Shopify payment? Use this when the
+          board has agreed payment outside Shopify. It holds for background clearance if that
+          isn&apos;t done yet.
         </Text>
         <Textarea
           value={certifyReason}

@@ -1,10 +1,12 @@
-import { ServiceError } from "@checkin/component-kit";
+import { KindedError, ServiceError } from "@checkin/component-kit";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { db, getPrisma } from "../../db";
 import { CATCH_UP_CAP, sweepInterruptedOcr, sweepStuckUploaded } from "../../services/catchUp";
 import { insertReceiptsTogether } from "../../lib/insert";
+import { pushReceipt } from "../../lib/receipt-flow";
 import { DEFAULT_LIMITS } from "../../lib/limits";
 import { importReceipts } from "../../services/importService";
+import { inertPersonIds } from "../../runtime";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
 import { ALICE, FINANCE, TEST_ORG_ID, actAs, actions, clearAll, configure, manualDetails, okOcr, recordingPorts, stateOf, textFile } from "../helpers/setup";
@@ -213,6 +215,36 @@ const importRow = (importSourceId: string, over: Record<string, unknown> = {}) =
   fileBase64: Buffer.from(`historical ${importSourceId}`).toString("base64"),
   lineItems: [{ lineNumber: 1, description: "Old thing", quantity: 1, unitPriceCents: 500, totalPriceCents: 500, isDelayed: false }],
   ...over,
+});
+
+describeDb("a push whose finance decider cannot be looked up", () => {
+  it("sends nothing and records push_failed with the lookup's kind and message", async () => {
+    let peopleDown = false;
+    configure({
+      receiptSink: ports.receiptSink,
+      personIds: {
+        ...inertPersonIds,
+        liveIds: async (ids) => {
+          if (peopleDown && ids.length === 1 && ids[0] === FINANCE.id) throw new KindedError("system", "people down");
+          return inertPersonIds.liveIds(ids);
+        },
+      },
+    });
+    ports.fail.push = true;
+    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptDate: "2999-01-01" }) });
+    actAs(FINANCE);
+    await receiptService.approveFinancial(r.id);
+    expect(await stateOf(r.id)).toBe("receipt_finalized");
+    ports.fail.push = false;
+    const pushesBefore = ports.calls.pushes.length;
+
+    peopleDown = true;
+    expect(await pushReceipt(r.id, null)).toBe(false);
+    expect(ports.calls.pushes).toHaveLength(pushesBefore);
+    const failed = await db.receiptAuditLog.findFirst({ where: { receiptId: r.id, action: "push_failed" }, orderBy: { id: "desc" } });
+    expect(failed).toMatchObject({ valueBefore: "system", valueAfter: "people down" });
+    expect(await db.receipt.findUniqueOrThrow({ where: { id: r.id }, select: { pushedAt: true } })).toEqual({ pushedAt: null });
+  });
 });
 
 describeDb("historical import", () => {

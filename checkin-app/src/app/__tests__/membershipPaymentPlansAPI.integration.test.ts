@@ -19,7 +19,7 @@ import { POST as RequestPost } from '@/app/api/membership/request-payment-plan/r
 import prisma from '@/lib/prisma';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { liveMembershipYear } from '@/lib/membership/renewal';
-import { DEFAULT_ACK_SUBJECT, DEFAULT_ACK_MEMBERSHIP_BODY, renderAckBody } from '@/lib/scholarshipEmails';
+import { REGISTRY } from '@/lib/email-templates/registry';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 jest.mock('@/lib/email');
@@ -447,21 +447,15 @@ describe('Membership payment-plan routes', () => {
         });
     });
 
-    describe('scholarship ACK settings (subject + membership body)', () => {
-        let restoreBoardSettings: () => Promise<void> = async () => {};
-        beforeAll(async () => {
-            restoreBoardSettings = await snapshotBoardSettings();
-            await prisma.boardSettings.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } });
-        });
-        afterAll(async () => {
-            await restoreBoardSettings();
+    describe('scholarship ACK template (scholarship.ackMembership)', () => {
+        const KEY = 'scholarship.ackMembership';
+        const DEFAULT = REGISTRY[KEY];
+        afterEach(async () => {
+            await prisma.emailTemplate.deleteMany({ where: { key: KEY } });
         });
 
-        it('a configured subject + body are used for the membership ACK', async () => {
-            await prisma.boardSettings.update({
-                where: { id: 1 },
-                data: { scholarshipAckSubject: 'Custom ACK Subject', scholarshipAckMembershipBody: 'Custom ACK body text.' },
-            });
+        it("the Board's saved subject + body are used for the membership ACK", async () => {
+            await prisma.emailTemplate.create({ data: { key: KEY, subject: 'Custom ACK Subject', body: 'Custom ACK body text.' } });
             const fresh = await makeProc('AckConfigured', { requested: false, withLead: true });
             mockSession.mockResolvedValue({ user: { id: fresh.personId } });
 
@@ -470,39 +464,32 @@ describe('Membership payment-plan routes', () => {
 
             const ack = __getSentEmails().find((e) => e.subject === 'Custom ACK Subject');
             expect(ack).toBeTruthy();
-            expect(ack!.html).toBe('<p>Custom ACK body text.</p>');
+            expect(ack!.html).toContain('<p>Custom ACK body text.</p>');
         });
 
-        it('unset ACK settings fall back verbatim to the default subject + body', async () => {
-            await prisma.boardSettings.update({
-                where: { id: 1 },
-                data: { scholarshipAckSubject: null, scholarshipAckMembershipBody: null },
-            });
+        it('with no saved row the ACK sends the default subject + body', async () => {
             const fresh = await makeProc('AckDefault', { requested: false, withLead: true });
             mockSession.mockResolvedValue({ user: { id: fresh.personId } });
 
             const res = await RequestPost(requestReq({ processId: fresh.processId }));
             expect(res.status).toBe(200);
 
-            const ack = __getSentEmails().find((e) => e.subject === DEFAULT_ACK_SUBJECT);
+            const ack = __getSentEmails().find((e) => e.subject === DEFAULT.defaultSubject);
             expect(ack).toBeTruthy();
-            expect(ack!.html).toBe(renderAckBody(DEFAULT_ACK_MEMBERSHIP_BODY));
+            expect(ack!.html).toContain("we&#39;ve received your household&#39;s scholarship / payment-plan request");
         });
 
-        it('blank/whitespace ACK settings fall back the same as unset', async () => {
-            await prisma.boardSettings.update({
-                where: { id: 1 },
-                data: { scholarshipAckSubject: '   ', scholarshipAckMembershipBody: '\n  ' },
-            });
+        it('a blank saved subject + body fall back the same as no row', async () => {
+            await prisma.emailTemplate.create({ data: { key: KEY, subject: '   ', body: '\n  ' } });
             const fresh = await makeProc('AckBlank', { requested: false, withLead: true });
             mockSession.mockResolvedValue({ user: { id: fresh.personId } });
 
             const res = await RequestPost(requestReq({ processId: fresh.processId }));
             expect(res.status).toBe(200);
 
-            const ack = __getSentEmails().find((e) => e.subject === DEFAULT_ACK_SUBJECT);
+            const ack = __getSentEmails().find((e) => e.subject === DEFAULT.defaultSubject);
             expect(ack).toBeTruthy();
-            expect(ack!.html).toBe(renderAckBody(DEFAULT_ACK_MEMBERSHIP_BODY));
+            expect(ack!.html).toContain('The Scholarship Review Team will review it and follow up.');
         });
     });
 });

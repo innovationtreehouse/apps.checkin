@@ -5,6 +5,7 @@ import SafetyLayout from "../layout";
 const push = jest.fn();
 let mockPathname = "/safety/emergency-contacts";
 let mockSession: { data: unknown; status: string };
+let mockCounts: unknown = null;
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push }),
@@ -14,7 +15,7 @@ jest.mock("next-auth/react", () => ({
   useSession: () => mockSession,
 }));
 jest.mock("@/hooks/useTodoCounts", () => ({
-  useTodoCounts: () => null,
+  useTodoCounts: () => mockCounts,
 }));
 
 beforeAll(() => {
@@ -55,6 +56,7 @@ const renderLayout = (pathname: string, session: { data: unknown; status: string
 
 beforeEach(() => {
   push.mockClear();
+  mockCounts = null;
 });
 
 describe("SafetyLayout role gate", () => {
@@ -89,5 +91,16 @@ describe("SafetyLayout role gate", () => {
   it("redirects unauthenticated callers", () => {
     renderLayout("/safety/emergency-contacts", { data: null, status: "unauthenticated" });
     expect(push).toHaveBeenCalledWith("/");
+  });
+});
+
+describe("SafetyLayout Trusted Adults badge", () => {
+  it("caps the pill at 99+ and keeps the exact count in its accessible name", () => {
+    mockCounts = { admin: { trustedAdults: 250 } };
+    renderLayout("/safety/emergency-contacts", {
+      data: { user: { id: 2, isBoardMember: true } },
+      status: "authenticated",
+    });
+    expect(screen.getByLabelText("250 trusted-adult disclosures to review")).toHaveTextContent(/^99\+$/);
   });
 });

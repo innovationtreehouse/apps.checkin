@@ -1,25 +1,87 @@
 import { sharesHousehold } from "@/lib/conflictOfInterest";
+import { canonicalizeEmail } from "@/lib/emailNormalize";
+import { normalizePhone } from "@/lib/phone";
+
+/** Contact details of one person in the actor's household. */
+export interface HouseholdContact {
+    email: string | null;
+    phone: string | null;
+}
+
+/** The trusted adult's identity facts the conflict rule reads. */
+export interface TrustedAdultIdentity {
+    personId: number | null | undefined;
+    personHouseholdId: number | null | undefined;
+    email: string | null | undefined;
+    phone: string | null | undefined;
+}
+
+/** Digits only, with a leading US country code dropped, so "+1 555…" matches "555…". */
+function phoneKey(phone: string | null | undefined): string {
+    const d = normalizePhone(phone);
+    return d.length === 11 && d.startsWith("1") ? d.slice(1) : d;
+}
+
+/**
+ * Whether the trusted adult belongs to the actor's household: by the linked
+ * person's household when there is one, otherwise by email or phone matching
+ * someone in the actor's household. Never by name.
+ */
+function adultInActorHousehold(
+    actorHouseholdId: number | null | undefined,
+    actorHouseholdContacts: readonly HouseholdContact[],
+    adult: TrustedAdultIdentity,
+): boolean {
+    if (adult.personId != null) return sharesHousehold(actorHouseholdId, adult.personHouseholdId);
+    const email = adult.email?.trim() ? canonicalizeEmail(adult.email) : null;
+    const phone = phoneKey(adult.phone) || null;
+    return actorHouseholdContacts.some(
+        (c) =>
+            (email !== null && c.email != null && canonicalizeEmail(c.email) === email) ||
+            (phone !== null && phoneKey(c.phone) === phone),
+    );
+}
+
+export interface TrustedAdultConflictArgs {
+    actorParticipantId: number | null | undefined;
+    actorHouseholdId: number | null | undefined;
+    actorHouseholdContacts: readonly HouseholdContact[];
+    taHouseholdId: number | null | undefined;
+    adult: TrustedAdultIdentity;
+    /** A pending change's proposed contact, which approval would make the adult's own. */
+    proposed?: HouseholdContact | null;
+}
+
+/** Which leg of the rule bars the actor. */
+export type TrustedAdultConflictReason =
+    | "own_household"
+    | "is_trusted_adult"
+    | "adult_in_household"
+    | "household_contact_match";
 
 /**
  * Conflict-of-interest rule for trusted-adult reviews. A board member may not decide
- * (or appear able to decide) a review tied to their own household, nor one where they
- * are the counterparty (the trusted adult themselves). Another board member must.
- *
- * The same-household leg is the shared {@link sharesHousehold} rule; the counterparty
- * leg (actor IS the trusted adult) is trusted-adult-specific and stays here. Pure +
- * dependency-free on purpose: the server (decideReview) enforces it and the client (the
- * board review page) gates the buttons off the SAME rule, so the two can't drift.
- * Callers pass scalars they already have; ids are participant ids.
+ * a review for their own household, one where they are the trusted adult, or one
+ * whose trusted adult is in their household (their spouse, say), whichever family
+ * asked. Pure, so the server (decideReview, resetReview, revokeReview) and the board review
+ * page gate off the same rule. Ids are person ids. Null when nothing bars the actor.
  */
-export function isTrustedAdultConflict(args: {
-    actorParticipantId: number | null | undefined;
-    actorHouseholdId: number | null | undefined;
-    taHouseholdId: number | null | undefined;
-    taTrustedAdultPersonId: number | null | undefined;
-}): boolean {
-    const { actorParticipantId, actorHouseholdId, taHouseholdId, taTrustedAdultPersonId } = args;
-    return (
-        sharesHousehold(actorHouseholdId, taHouseholdId) ||
-        (actorParticipantId != null && actorParticipantId === taTrustedAdultPersonId)
-    );
+export function trustedAdultConflictReason(args: TrustedAdultConflictArgs): TrustedAdultConflictReason | null {
+    const { actorParticipantId, actorHouseholdId, actorHouseholdContacts, taHouseholdId, adult, proposed } = args;
+    if (sharesHousehold(actorHouseholdId, taHouseholdId)) return "own_household";
+    if (actorParticipantId != null && actorParticipantId === adult.personId) return "is_trusted_adult";
+    const inHousehold =
+        adultInActorHousehold(actorHouseholdId, actorHouseholdContacts, adult) ||
+        (proposed != null && adultInActorHousehold(actorHouseholdId, actorHouseholdContacts, { ...adult, ...proposed }));
+    if (!inHousehold) return null;
+    return adult.personId != null ? "adult_in_household" : "household_contact_match";
+}
+
+export function isTrustedAdultConflict(args: TrustedAdultConflictArgs): boolean {
+    return trustedAdultConflictReason(args) !== null;
+}
+
+/** True when only a name identifies the adult, so the household check cannot run. */
+export function cannotConfirmNoConflict(adult: TrustedAdultIdentity): boolean {
+    return adult.personId == null && !adult.email?.trim() && !phoneKey(adult.phone);
 }

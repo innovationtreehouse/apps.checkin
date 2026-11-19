@@ -92,8 +92,11 @@
  * Receipt.id is; the rejected marker describes other submitters' receipts, so it
  * is `pii`.
  *
- * On ReceiptView, `duplicateNotice` names the viewer's own other copy of the
- * receipt and never another person's, so its uploader reads it (`internal`).
+ * ReceiptDuplicateNotice — on ReceiptView, the viewer's own other copy of the
+ * receipt: its id (`matchId`), when it was uploaded, and its uploader
+ * (`uploadedByUserId`), which scopes the notice `their_own`. A submitter reads
+ * the notice only when that copy is theirs, so the stripper never hands them
+ * another person's receipt (design Q6). All `internal`.
  * `copyOfId` names the receipt kept in place of one rejected as a copy and is
  * `public`, as Receipt.id is, so the uploader reads it. `copyOfLabel` names
  * that receipt, which may be another person's, as "receipt <id>"; it is `pii`.
@@ -144,7 +147,6 @@ export const classifications = {
     lastError: "personal",
     purchaseOutcome: "personal",
     rejectionUnacknowledged: "internal",
-    duplicateNotice: "internal",
     copyOfId: "public",
     copyOfLabel: "pii",
     rotation: "internal",
@@ -230,6 +232,11 @@ export const classifications = {
   ReceiptOcrAllowance: {
     personId: "public",
   },
+  ReceiptDuplicateNotice: {
+    matchId: "internal",
+    uploadedAt: "internal",
+    uploadedByUserId: "internal",
+  },
   ReceiptDuplicateGroup: {
     dismissed: "public",
   },
@@ -263,6 +270,7 @@ export const classifications = {
 export const relations = {
   ReceiptView: {
     lineItems: { model: "ReceiptLineView", isList: true },
+    duplicateNotice: { model: "ReceiptDuplicateNotice", isList: false },
   },
   ReceiptConfirmationView: {
     lineItems: { model: "ReceiptConfirmationLineView", isList: true },

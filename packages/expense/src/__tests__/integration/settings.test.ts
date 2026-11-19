@@ -6,8 +6,10 @@ import { financeQueueRows } from "../../services/financeQueueService";
 import { principal, ORG } from "../helpers/seed";
 import { DEFAULT_EXPENSE_SETTINGS, getExpenseSettings, updateExpenseSettings } from "../../services/settingsService";
 import { receiveCompletedReceipt } from "../../services/intakeService";
+import { switchQbPostingOn } from "../../lib/expense-qb-poster";
 
 const FINANCE = principal(3, { isFinance: true });
+const BOARD = principal(5, { isBoard: true });
 
 describe("updateExpenseSettings — guards", () => {
   it("asserts the org", async () => {
@@ -87,5 +89,42 @@ describeDb("expense settings", () => {
     const rows = await financeQueueRows(principal(3, { isFinance: true }), "board");
     expect(rows.map((r) => r.expenseId)).toEqual(["r-thresholds"]);
     expect(rows[0].reasons.map((x) => x.code)).toContain("BOARD_APPROVAL");
+  });
+
+  it("a missing row has capital review on with both thresholds unset, never $0", async () => {
+    expect(await getExpenseSettings(ORG)).toMatchObject({ capitalReviewEnabled: true, capitalTotalThresholdCents: null, capitalLineItemThresholdCents: null });
+  });
+
+  it("switching QuickBooks posting on creates a row with the thresholds unset, not $0", async () => {
+    await switchQbPostingOn(ORG);
+    expect(await db.expenseOrgSettings.findUniqueOrThrow({ where: { orgId: ORG } })).toMatchObject({
+      capitalReviewEnabled: true,
+      capitalTotalThresholdCents: null,
+      capitalLineItemThresholdCents: null,
+    });
+  });
+
+  it("turning capital review off is the Board's and is recorded", async () => {
+    await expect(updateExpenseSettings(ORG, { capitalReviewEnabled: false }, FINANCE)).rejects.toMatchObject({ status: 403 });
+    await updateExpenseSettings(ORG, { capitalReviewEnabled: false }, BOARD);
+    await updateExpenseSettings(ORG, { capitalReviewEnabled: true }, FINANCE);
+
+    const changes = await db.expenseOrgSettingsChange.findMany({ where: { orgId: ORG }, orderBy: { id: "asc" } });
+    expect(changes.map((c) => [c.actorUserId, JSON.parse(c.before!), JSON.parse(c.after)])).toEqual([
+      [5, { capitalReviewEnabled: true }, { capitalReviewEnabled: false }],
+      [3, { capitalReviewEnabled: false }, { capitalReviewEnabled: true }],
+    ]);
+  });
+
+  it("refuses a threshold change while capital review is off, or in the same save that turns it off", async () => {
+    await updateExpenseSettings(ORG, { capitalTotalThresholdCents: 500_000, capitalLineItemThresholdCents: 250_000 }, BOARD);
+    await expect(updateExpenseSettings(ORG, { capitalReviewEnabled: false, capitalTotalThresholdCents: 100_000 }, BOARD)).rejects.toMatchObject({ status: 409 });
+    await updateExpenseSettings(ORG, { capitalReviewEnabled: false }, BOARD);
+    await expect(updateExpenseSettings(ORG, { capitalTotalThresholdCents: 100_000 }, BOARD)).rejects.toMatchObject({ status: 409 });
+    await expect(updateExpenseSettings(ORG, { capitalLineItemThresholdCents: 100_000 }, FINANCE)).rejects.toMatchObject({ status: 409 });
+    expect(await getExpenseSettings(ORG)).toMatchObject({ capitalReviewEnabled: false, capitalTotalThresholdCents: 500_000, capitalLineItemThresholdCents: 250_000 });
+
+    await updateExpenseSettings(ORG, { capitalReviewEnabled: true, capitalTotalThresholdCents: 400_000 }, BOARD);
+    expect(await getExpenseSettings(ORG)).toMatchObject({ capitalReviewEnabled: true, capitalTotalThresholdCents: 400_000 });
   });
 });

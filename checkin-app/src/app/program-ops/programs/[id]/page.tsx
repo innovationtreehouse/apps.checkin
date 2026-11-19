@@ -14,6 +14,7 @@ import { ProgramRosterTab } from './ProgramRosterTab';
 import { notifications } from '@mantine/notifications';
 import { ProgramEventsTab } from './ProgramEventsTab';
 import { isProgramCheckoutBroken } from '@/lib/programCheckout';
+import { useProgramStoreClosed } from '../../useProgramStoreClosed';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
 
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -39,9 +40,14 @@ export type ProgramDetail = {
     personId: number;
     status: string;
     pendingSince: string | null;
+    // Age in whole years at the program's start; null when the date of birth is unknown.
+    age?: number | null;
     person: {
       name: string | null;
       email: string;
+      // Present for an adult participant only, and only to a viewer granted it.
+      phone?: string | null;
+      householdId: number;
       // householdMembers is the household's leads (the parents) only. Contact
       // fields are optional because the response stripper drops them for a
       // viewer without the grant.
@@ -173,6 +179,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
 
   const canStateYear = !!sessionUser?.isBoardMember;
   const yearBoundary = useMembershipYearBoundary(!!(sessionUser?.isSysadmin || sessionUser?.isBoardMember));
+  const storeClosed = useProgramStoreClosed(!!(sessionUser?.isSysadmin || sessionUser?.isBoardMember));
   const { boundary } = yearBoundary;
   const years = formYearsTouched(boundary, startAt, endAt);
   const crossing = years.length > 1;
@@ -192,7 +199,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
     }
     setSaving(true);
     try {
-      await api(`/api/programs/${id}`, {
+      const saved = await api<{ warning?: string; notice?: string }>(`/api/programs/${id}`, {
         method: 'PATCH',
         body: JSON.stringify({
           startAt: startAt || null,
@@ -209,7 +216,9 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
           nonMemberPrice: nonMemberPrice || null,
         })
       });
-      showSuccess("Saved.");
+      const followUps = [saved?.warning, saved?.notice].filter((m): m is string => !!m);
+      for (const message of followUps) notifications.show({ color: "yellow", message, autoClose: false });
+      if (followUps.length === 0) showSuccess("Saved.");
       notifyNavRefresh();
       setSeededGeneral(generalForm);
       await reload();
@@ -348,7 +357,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
                   </Group>
                 </Card>
 
-                {isProgramCheckoutBroken(program) ? (
+                {isProgramCheckoutBroken(program, storeClosed) ? (
                   <Alert color="red" variant="light" title="⚠️ Broken checkout">
                     <Stack gap="xs" align="flex-start">
                       <Text size="sm">
@@ -390,7 +399,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
                     <Text size="xs" c="dimmed">
                       A hidden (unlisted, untracked) product the app&apos;s checkout links to, so a family holding a seat can pay even when the store shows the program sold out.
                     </Text>
-                    {!program.claimantShopifyVariantId && !isProgramCheckoutBroken(program)
+                    {!program.claimantShopifyVariantId && !isProgramCheckoutBroken(program, storeClosed)
                       && ((program.nonOrgMemberPriceCents ?? program.orgMemberPriceCents ?? 0) > 0) && (
                       <Group mt="xs">
                         <Button type="button" variant="light" size="xs" loading={syncing} onClick={handleSyncShopify}>
@@ -515,6 +524,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
               program={program}
               isSysAdminOrBoard={!!isSysAdminOrBoard}
               isBoardMember={!!user?.isBoardMember}
+              viewerHouseholdId={sessionUser?.householdId ?? null}
               fetchProgram={reload}
             />
           </Tabs.Panel>

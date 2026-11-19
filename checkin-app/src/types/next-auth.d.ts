@@ -18,12 +18,13 @@ declare module "next-auth" {
       isOperations?: boolean;
       isInventoryManager?: boolean;
       isFinance?: boolean;
+      isKeyVolunteer?: boolean;
       householdJoinPending?: boolean;
       householdId?: number | null;
       householdLead?: boolean;
       // adult / youth / unknown — the derived band only, never the date
-      // (dateOfBirth is @sensitivity:personal). Gates the youth surfaces in
-      // docs/rules/programs.md ("What a youth sees of money"); the routes are
+      // (dateOfBirth is @sensitivity:personal). Gates the youth surfaces (what a youth sees of money);
+      // the routes are
       // the boundary.
       ageBand?: AgeBand;
       // Program ids this user is the lead mentor of. Client-side row gate only
@@ -57,6 +58,7 @@ declare module "next-auth" {
     isOperations?: boolean;
     isInventoryManager?: boolean;
     isFinance?: boolean;
+    isKeyVolunteer?: boolean;
     householdJoinPending?: boolean;
     householdId?: number | null;
     householdLead?: boolean;
@@ -87,6 +89,7 @@ declare module "next-auth/jwt" {
     isOperations?: boolean;
     isInventoryManager?: boolean;
     isFinance?: boolean;
+    isKeyVolunteer?: boolean;
     householdJoinPending?: boolean;
     householdId?: number | null;
     householdLead?: boolean;

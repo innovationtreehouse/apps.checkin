@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useState } from 'react';
-import { Alert, Badge, Box, Button, Card, Checkbox, Flex, Group, Modal, SimpleGrid, Stack, Text, Textarea, Title } from '@mantine/core';
+import { ActionIcon, Alert, Badge, Box, Button, Card, Checkbox, Flex, Group, Menu, Modal, SimpleGrid, Stack, Text, Textarea, Title } from '@mantine/core';
+import { IconDotsVertical } from '@tabler/icons-react';
 import { useDisclosure } from '@mantine/hooks';
 import { notifications } from '@mantine/notifications';
 import { errorMessage, HttpError, showError } from '@checkin/component-ui';
@@ -22,6 +23,10 @@ function parentsOf(p: Participant) {
   return (p.person.household?.householdMembers ?? []).filter(m => m.id !== p.personId);
 }
 
+function ageLabel(age: Participant['age']) {
+  return age == null ? 'age unknown' : String(age);
+}
+
 // Contact fields are absent for a viewer the stripper denied them to, so a
 // parent can legitimately render as a bare name.
 function formatParent(m: ReturnType<typeof parentsOf>[number]) {
@@ -29,15 +34,32 @@ function formatParent(m: ReturnType<typeof parentsOf>[number]) {
   return contact ? `${m.name || 'Unnamed'} - ${contact}` : (m.name || 'Unnamed');
 }
 
+// A row menu keeps Remove a deliberate second click away from the roster.
+function RowActions({ name, onRemove }: { name: string; onRemove: () => void }) {
+  return (
+    <Menu position="bottom-end" withinPortal>
+      <Menu.Target>
+        <ActionIcon variant="subtle" color="gray" aria-label={`Actions for ${name}`}>
+          <IconDotsVertical size={16} />
+        </ActionIcon>
+      </Menu.Target>
+      <Menu.Dropdown>
+        <Menu.Item color="red" onClick={onRemove}>Remove</Menu.Item>
+      </Menu.Dropdown>
+    </Menu>
+  );
+}
+
 type ProgramRosterTabProps = {
   programId: string;
   program: Pick<ProgramDetail, 'volunteers' | 'participants' | 'startAt' | 'minAge' | 'maxAge' | 'orgMemberPriceCents' | 'nonOrgMemberPriceCents'>;
   isSysAdminOrBoard: boolean;
   isBoardMember: boolean;
+  viewerHouseholdId: number | null;
   fetchProgram: () => Promise<void>;
 };
 
-export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoardMember, fetchProgram }: ProgramRosterTabProps) {
+export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoardMember, viewerHouseholdId, fetchProgram }: ProgramRosterTabProps) {
   const { formatDateTime } = useOrgTime();
   const [saving, setSaving] = useState(false);
   const [newVolId, setNewVolId] = useState("");
@@ -59,6 +81,9 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
   // The roster carries no payment fields, so the Board gives a reason for every active
   // place; one paid before the price was zeroed is refused for others by the server.
   const isPriced = (program.orgMemberPriceCents ?? 0) > 0 || (program.nonOrgMemberPriceCents ?? 0) > 0;
+  // Only a Board member outside the household removes a paid place; nobody else is offered it.
+  const mayRemoveActive = (p: Participant) =>
+    !isPriced || (isBoardMember && (viewerHouseholdId == null || p.person.householdId !== viewerHouseholdId));
 
   // A rejected roster change must say so: otherwise the row just stays put, as if it worked.
   const mutate = async (path: string, init: RequestInit): Promise<{ data: ApiFeedback } | null> => {
@@ -257,15 +282,12 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
               return (
               <Card key={p.personId} withBorder radius="sm" padding="sm">
                 <Group justify="space-between">
-                  <Text fw={700} c="blue">{p.person.name || 'Unnamed'}</Text>
-                  {isPriced && !isBoardMember ? (
-                    <Button size="compact-xs" variant="subtle" color="red" disabled title="Only the Board removes a paid place">Remove</Button>
-                  ) : (
-                    <Button size="compact-xs" variant="subtle" color="red" onClick={() => handleRemoveParticipant(p, isBoardMember)}>Remove</Button>
-                  )}
+                  <Text fw={700} c="blue">{p.person.name || 'Unnamed'}{p.age !== undefined && <Text component="span" c="dimmed" size="sm"> ({ageLabel(p.age)})</Text>}</Text>
+                  {mayRemoveActive(p) && <RowActions name={p.person.name || 'Unnamed'} onRemove={() => handleRemoveParticipant(p, isBoardMember)} />}
                 </Group>
                 <SimpleGrid cols={{ base: 1, sm: 2 }} mt="xs" spacing="xs">
                   <Text size="sm" c="dimmed"><strong>Email:</strong> {p.person.email}</Text>
+                  {p.person.phone && <Text size="sm" c="dimmed"><strong>Phone:</strong> {formatPhone(p.person.phone)}</Text>}
                   {p.person.household && (
                     <>
                       <Text size="sm" c="dimmed" style={{ gridColumn: '1 / -1' }}>
@@ -296,8 +318,8 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
             {pendingParticipants.map(p => (
               <Card key={p.personId} withBorder radius="sm" padding="sm">
                 <Group justify="space-between">
-                  <Text fw={700} c="yellow">{p.person.name || 'Unnamed'}</Text>
-                  <Button size="compact-xs" variant="subtle" color="red" onClick={() => handleRemoveParticipant(p)}>Remove</Button>
+                  <Text fw={700} c="yellow">{p.person.name || 'Unnamed'}{p.age !== undefined && <Text component="span" c="dimmed" size="sm"> ({ageLabel(p.age)})</Text>}</Text>
+                  <RowActions name={p.person.name || 'Unnamed'} onRemove={() => handleRemoveParticipant(p)} />
                 </Group>
                 <SimpleGrid cols={{ base: 1, sm: 2 }} mt="xs" spacing="xs">
                   <Text size="sm" c="dimmed"><strong>Email:</strong> {p.person.email}</Text>

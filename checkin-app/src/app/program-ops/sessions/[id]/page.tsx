@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, use } from 'react';
+import { useState, use, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useRequireRole } from '@/hooks/useRequireRole';
 import { Alert, Badge, Button, Card, Checkbox, Container, Group, Modal, Select, SimpleGrid, Stack, Table, Text, TextInput, Title } from '@mantine/core';
@@ -68,7 +68,8 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
 
   const { data: eventData, error: loadError, reload } = useLoad<EventData>(ready ? `/api/events/${id}` : null);
   const [actionLoading, setActionLoading] = useState(false);
-  const [manualInputError, setManualInputError] = useState("");
+  const [manualDepartedError, setManualDepartedError] = useState<string | undefined>();
+  const manualDepartedRef = useRef<HTMLInputElement>(null);
 
   // Edit states
   const [editMode, setEditMode] = useState(false);
@@ -130,22 +131,17 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
   const handleSaveManualAttendance = async () => {
     if (!editingAttendance) return;
     // Instant feedback only — server remains the trust boundary.
-    if (manualStatus === 'Present' && !manualDeparted) {
-      setManualInputError("Departure time is required for Present status");
-      return;
-    }
-    if (manualStatus === 'Present' && manualArrived && manualDeparted &&
-        Date.parse(manualDeparted) <= Date.parse(manualArrived)) {
-      setManualInputError("Departure time must be after arrival time");
-      return;
-    }
-    if (manualStatus === 'Present' && manualArrived && manualDeparted &&
-        Date.parse(manualDeparted) - Date.parse(manualArrived) > MAX_VISIT_MS) {
-      setManualInputError("A visit cannot be longer than 24 hours.");
+    const departedError = manualStatus !== 'Present' ? undefined
+      : !manualDeparted ? "Departure time is required for Present status"
+      : manualArrived && Date.parse(manualDeparted) <= Date.parse(manualArrived) ? "Departure time must be after arrival time"
+      : manualArrived && Date.parse(manualDeparted) - Date.parse(manualArrived) > MAX_VISIT_MS ? "A visit cannot be longer than 24 hours."
+      : undefined;
+    setManualDepartedError(departedError);
+    if (departedError) {
+      manualDepartedRef.current?.focus();
       return;
     }
     setActionLoading(true);
-    setManualInputError("");
     try {
       await api(`/api/events/${id}`, {
         method: 'PATCH',
@@ -260,7 +256,7 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
                       {statusEl}
                       {canManageAttendance && (
                         <Button size="compact-xs" variant="light" onClick={() => {
-                          setManualInputError("");
+                          setManualDepartedError(undefined);
                           setEditingAttendance(member);
                           if (visit) {
                             setManualStatus("Present");
@@ -452,7 +448,7 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
 
       <Modal
         opened={!!editingAttendance}
-        onClose={() => !actionLoading && (setEditingAttendance(null), setManualInputError(""))}
+        onClose={() => !actionLoading && (setEditingAttendance(null), setManualDepartedError(undefined))}
         title={<Text span fw={700} fz="lg">Manual Edit: {editingAttendance?.person.name}</Text>}
         centered
       >
@@ -473,14 +469,16 @@ export default function EventAdminPage({ params }: { params: Promise<{ id: strin
           })()}
           {manualStatus === "Present" && (
             <>
-              <TextInput type="datetime-local" label="Arrived Time" value={manualArrived} onChange={(e) => setManualArrived(e.currentTarget.value)} />
-              <TextInput type="datetime-local" label="Departed Time" value={manualDeparted} onChange={(e) => setManualDeparted(e.currentTarget.value)} />
+              <TextInput type="datetime-local" label="Arrived Time" value={manualArrived} onChange={(e) => { setManualArrived(e.currentTarget.value); setManualDepartedError(undefined); }} />
+              <TextInput
+                ref={manualDepartedRef}
+                type="datetime-local"
+                label="Departed Time"
+                value={manualDeparted}
+                error={manualDepartedError}
+                onChange={(e) => { setManualDeparted(e.currentTarget.value); setManualDepartedError(undefined); }}
+              />
             </>
-          )}
-          {manualInputError && (
-            <Alert color="red" variant="light" withCloseButton onClose={() => setManualInputError("")}>
-              {manualInputError}
-            </Alert>
           )}
           <Group justify="flex-end">
             <Button variant="default" onClick={() => setEditingAttendance(null)} disabled={actionLoading}>Cancel</Button>

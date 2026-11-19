@@ -33,9 +33,21 @@ export function scheduleRetry(url: string, delayMs: number, retry: () => void): 
   retries.set(url, setTimeout(retry, delayMs));
 }
 
-/** Re-reads every cached load: mounted ones now, the rest when next opened, even inside the dedupe window. */
+const held = new Map<string, number>();
+
+/** Keeps `invalidateLoads` off `url` until the returned release runs; holds on one key stack. */
+export function holdFromInvalidation(url: string): () => void {
+  held.set(url, (held.get(url) ?? 0) + 1);
+  return () => {
+    const left = (held.get(url) ?? 1) - 1;
+    if (left > 0) held.set(url, left);
+    else held.delete(url);
+  };
+}
+
+/** Re-reads every cached load not held: mounted ones now, the rest when next opened, even inside the dedupe window. */
 export function invalidateLoads(): void {
-  void mutate(() => true);
+  void mutate((key) => typeof key !== "string" || !held.has(key));
 }
 
 /** Empties every cached load. It revalidates so SWR also drops its dedupe markers, which would otherwise bring an earlier answer back. */

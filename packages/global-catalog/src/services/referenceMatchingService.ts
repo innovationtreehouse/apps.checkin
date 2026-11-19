@@ -94,8 +94,11 @@ export async function lookupMany(retailer: string, lookups: LookupEntry[]): Prom
  * highest id (most recently created) as the tie-break. No active reference →
  * {1, 1} ("each", the default unit).
  */
-export async function getCanonicalConversion(gtin13: string): Promise<{ conversionFactor: number; conversionVersion: number }> {
-  const refs = await itemRefRepo.listByGtin13(gtin13);
+export async function getCanonicalConversion(tx: Prisma.TransactionClient, gtin13: string): Promise<{ conversionFactor: number; conversionVersion: number }> {
+  // Holds the item's references until the caller's transaction commits, so an accepted
+  // conversion challenge lands either before this read or after the caller's event.
+  await tx.$queryRaw`SELECT 1 FROM item_references WHERE gtin13 = ${gtin13} ORDER BY id FOR UPDATE`;
+  const refs = await createItemReferenceRepository(tx).listByGtin13(gtin13);
   if (refs.length === 0) return { conversionFactor: 1, conversionVersion: 1 };
   const best = refs.reduce((a, b) => {
     if (b.conversionVersion !== a.conversionVersion) return b.conversionVersion > a.conversionVersion ? b : a;

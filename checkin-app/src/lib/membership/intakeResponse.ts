@@ -18,6 +18,7 @@ const STATUS_FOR: Record<IntakeError["code"], number> = {
     email_designated: 400,
     email_in_use: 400,
     under_18_declared: 400,
+    age_lead_only: 403,
 };
 
 /**

@@ -86,6 +86,27 @@ describeDb("submitChallenge", () => {
     const ch = await submitChallenge({ ...BASE_SUBMIT, itemReferenceId: refId, reason: "  spaces  " });
     expect(ch.reason).toBe("spaces");
   });
+
+  it("refuses an archived reference with 409", async () => {
+    await resetDb();
+    const { refId } = await seedRef();
+    await prisma.itemReference.update({ where: { id: refId }, data: { archivedAt: new Date() } });
+    await expect(submitChallenge({ ...BASE_SUBMIT, itemReferenceId: refId }))
+      .rejects.toMatchObject({ status: 409 });
+    expect(await prisma.conversionChallenge.count()).toBe(0);
+  });
+
+  it.each([
+    ["a fractional factor", { proposedFactor: 2.5 }],
+    ["a blank reason", { reason: "   " }],
+    ["the current factor", { proposedFactor: 1 }],
+  ])("refuses %s with 400 and files nothing", async (_label, override) => {
+    await resetDb();
+    const { refId } = await seedRef();
+    await expect(submitChallenge({ ...BASE_SUBMIT, itemReferenceId: refId, ...override }))
+      .rejects.toMatchObject({ status: 400 });
+    expect(await prisma.conversionChallenge.count()).toBe(0);
+  });
 });
 
 describeDb("acceptChallenge", () => {
@@ -110,6 +131,16 @@ describeDb("acceptChallenge", () => {
     await resetDb();
     await seedRef();
     await expect(acceptChallenge(99999, 1)).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("lets the manager who filed a challenge accept it", async () => {
+    await resetDb();
+    const { refId } = await seedRef();
+    const ch = await seedPending(refId);
+    await acceptChallenge(ch.id, BASE_SUBMIT.localUserId);
+    const updated = await prisma.conversionChallenge.findFirst({ where: { id: ch.id } });
+    expect(updated).toMatchObject({ status: "accepted", localUserId: BASE_SUBMIT.localUserId, reviewedByUserId: BASE_SUBMIT.localUserId });
+    expect((await prisma.itemReference.findFirst({ where: { id: refId } }))?.conversionFactor).toBe(3);
   });
 
   it("throws 409 when challenge is not pending (already reviewed)", async () => {

@@ -168,6 +168,15 @@ describe('receipt runtime: mail intake bindings', () => {
         expect(await boundConfig().people?.submitterByEmail('pat@example.org')).toMatchObject({ id: 7 });
     });
 
+    it('matches a mixed-case address against the lowercase stored alias', async () => {
+        prisma.person.findMany = jest.fn().mockResolvedValue([person({ mailAliases: [{ id: 1 }] })]);
+        await boundConfig().people?.submitterByEmail(' Pat.Personal@Gmail.com ');
+        expect(jest.mocked(prisma.person.findMany).mock.calls[0][0]).toMatchObject({
+            where: { OR: [{ email: { equals: 'pat.personal@gmail.com' } }, { mailAliases: { some: { address: 'pat.personal@gmail.com' } } }] },
+            include: { mailAliases: { where: { address: 'pat.personal@gmail.com' } } },
+        });
+    });
+
     it('alerts finance when mail is about to leave the window unread', async () => {
         await boundConfig().alerts?.mailAgingOut({ orgId: 'org', messages: 4, oldestReceivedAt: new Date('2026-10-25T09:00:00Z') });
         const [key, values] = jest.mocked(emailAlert).mock.calls[0];
@@ -203,6 +212,7 @@ describe('receipt runtime: reimbursee bindings', () => {
         const query = jest.mocked(prisma.person.findMany).mock.calls[0][0];
         expect(query).toMatchObject({ where: { name: { contains: 'sam', mode: 'insensitive' }, household: { archivedAt: null } } });
         expect(Object.keys(query?.where ?? {}).sort()).toEqual(['household', 'name']);
+        expect(query?.take).toBe(500);
     });
 
     it('caps the search after dropping anyone not known to be an adult', async () => {

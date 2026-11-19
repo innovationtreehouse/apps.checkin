@@ -43,8 +43,8 @@ for the deploy drain, so a table is dropped only after no release reads it.
    `awaitingReview` and `assetLineIds` port methods. Shipped under the
    decommission exception in `docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`
    rule 7, only after step 5 has been deployed to production.
-7. **Extract the rules, delete both files.** The settled rules in section 6 of
-   the design go into `docs/rules/expenses.md`.
+7. **Record the rules, delete both files.** Record the settled rules in section 6 of
+   the design as standing rules.
 
 ## What each step must be safe against
 

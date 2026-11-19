@@ -15,20 +15,12 @@ export const PATCH = withAuth(
             const userId = auth.user.id;
 
             const body = await req.json();
-            const { emergencyContactName, emergencyContactPhone, notes } = body;
+            const { emergencyContactName, emergencyContactPhone } = body;
             const addressData = normalizeAddressInput(body);
             // Address is optional on this route (emergency-contact-only PATCHes
             // send no address keys); when any address field is supplied, the
             // whole address must be complete + valid.
             if (Object.keys(addressData).length > 0) assertValidAddress(addressData);
-            // Optional "anything else we should know?" note rides along on the same
-            // household.update. Trimmed to null so an emptied box clears it; only
-            // touched when the key is present.
-            const householdData = {
-                ...addressData,
-                ...(notes !== undefined && { intakeNotes: typeof notes === "string" && notes.trim() ? notes.trim() : null }),
-            };
-
             const user = await prisma.person.findUnique({
                 where: { id: userId },
                 select: { householdId: true, isHouseholdLead: true, isSysadmin: true }
@@ -47,7 +39,7 @@ export const PATCH = withAuth(
                 await lockLiveHouseholds(tx, [householdId]);
                 const updated = await tx.household.update({
                     where: { id: householdId },
-                    data: householdData,
+                    data: addressData,
                 });
 
                 // Emergency contact is a separate entity; the settings form edits the
@@ -71,9 +63,7 @@ export const PATCH = withAuth(
                 return updated;
             });
 
-            // Only a lead reads the note back, matching GET /api/household.
-            const household = user.isHouseholdLead ? updatedHousehold : { ...updatedHousehold, intakeNotes: null };
-            return NextResponse.json({ household }, { status: 200 });
+            return NextResponse.json({ household: updatedHousehold }, { status: 200 });
 
         } catch (error: unknown) {
             if (error instanceof ArchivedHouseholdError) return apiError(error.message, error.status);

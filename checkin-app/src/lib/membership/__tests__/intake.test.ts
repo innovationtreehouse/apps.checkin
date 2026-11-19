@@ -267,7 +267,6 @@ describe('getIntakeState', () => {
             householdId: 7,
             household: {
                 name: 'Test Household',
-                intakeNotes: 'volunteer only, no students',
                 line1: '1 Main St', line2: null, city: 'Austin', state: 'TX', postalCode: '78701',
                 householdMembers: [
                     { id: 1, name: 'Primary', email: 'p@x.com', dateOfBirth: dob, allergies: null, isHouseholdLead: true },
@@ -299,55 +298,6 @@ describe('getIntakeState', () => {
         expect(state.prefill.children).toHaveLength(1);
         expect(state.prefill.children[0].id).toBe(3);
         expect(state.prefill.household?.emergencyContactName).toBe('Aunt');
-        expect(state.prefill.household?.notes).toBe('volunteer only, no students');
-    });
-
-    it('a non-lead household member (e.g. a youth) gets no intake note in the prefill', async () => {
-        prisma.person.findUnique.mockResolvedValue({
-            id: 3,
-            householdId: 7,
-            household: {
-                name: 'Test Household',
-                intakeNotes: 'we are volunteer only; dad lost his job',
-                line1: '1 Main St', line2: null, city: 'Austin', state: 'TX', postalCode: '78701',
-                householdMembers: [
-                    { id: 1, name: 'Primary', email: 'p@x.com', dateOfBirth: null, allergies: null, isHouseholdLead: true },
-                    { id: 3, name: 'Kid', email: null, dateOfBirth: null, allergies: null, isHouseholdLead: false },
-                ],
-                orgMembership: { status: 'ACTIVE', processes: [] },
-                emergencyContacts: [],
-            },
-        });
-
-        const state = await getIntakeState(3);
-
-        expect(state.isLead).toBe(false);
-        expect(state.prefill.household?.notes).toBeNull();
-        // The rest of the household prefill is family-authored shared data.
-        expect(state.prefill.household?.name).toBe('Test Household');
-    });
-
-    it('a sysadmin who is not a lead gets no intake note in the prefill', async () => {
-        prisma.person.findUnique.mockResolvedValue({
-            id: 3,
-            householdId: 7,
-            isSysadmin: true,
-            household: {
-                name: 'Test Household',
-                intakeNotes: 'we are volunteer only; dad lost his job',
-                line1: null, line2: null, city: null, state: null, postalCode: null,
-                householdMembers: [
-                    { id: 1, name: 'Primary', email: null, dateOfBirth: null, allergies: null, isHouseholdLead: true },
-                    { id: 3, name: 'Admin', email: null, dateOfBirth: null, allergies: null, isHouseholdLead: false },
-                ],
-                orgMembership: { status: 'ACTIVE', processes: [] },
-                emergencyContacts: [],
-            },
-        });
-
-        const state = await getIntakeState(3);
-
-        expect(state.prefill.household?.notes).toBeNull();
     });
 
     it('every process ACTIVE → process is null, no external lookup', async () => {
@@ -506,7 +456,7 @@ describe('saveIntake', () => {
     // Designated addresses are set on a person only by the board.
     it('refuses a new second parent with a designated address, saving nothing', async () => {
         await expect(saveIntake(1, {
-            household: { notes: 'n' },
+            household: { line1: '1 Main St' },
             secondaryParent: { name: 'New Parent', email: 'Volun.teer+x@gmail.com' },
         })).rejects.toMatchObject({
             code: 'email_designated',
@@ -565,15 +515,6 @@ describe('saveIntake', () => {
             email: undefined,
         });
         expect(reconcileHouseholdConflicts).toHaveBeenCalledWith(tx, 7);
-    });
-
-    it('household notes persist as intakeNotes (trimmed; empty → null)', async () => {
-        await saveIntake(1, { household: { notes: '  we volunteer only, no students  ' } });
-        expect(prisma.household.update).toHaveBeenCalledWith({ where: { id: 7 }, data: { intakeNotes: 'we volunteer only, no students' } });
-
-        prisma.household.update.mockClear();
-        await saveIntake(1, { household: { notes: '' } });
-        expect(prisma.household.update).toHaveBeenCalledWith({ where: { id: 7 }, data: { intakeNotes: null } });
     });
 
     it('no address keys and no emergency-contact keys → neither household.update nor upsertPrimaryContact is called', async () => {
@@ -706,6 +647,39 @@ describe('saveIntake', () => {
         expect(recordSelfGrantRefusal).toHaveBeenCalledWith(prisma, refusal);
         expect(addHouseholdLead).not.toHaveBeenCalled();
         expect(result.rejections).toEqual([{ section: 'secondaryParent', code: 'not_lead', message: expect.stringContaining('only a lead') }]);
+    });
+
+    describe('ages when the caller does not lead the household', () => {
+        const ledByAnother = {
+            ...baseUser,
+            isHouseholdLead: false,
+            isSysadmin: true,
+            household: { ...baseUser.household, householdMembers: [{ id: 2, isHouseholdLead: true }, { id: 4, isHouseholdLead: false, dateOfBirth: null, isDeclaredAdult: false }] },
+        };
+
+        it.each([
+            ['an existing child\'s date of birth', { children: [{ id: 4, dob: '2015-01-01' }] }, 'children'],
+            ['a new child\'s date of birth', { children: [{ name: 'New Kid', dob: '2015-01-01' }] }, 'children'],
+            ['their own over-25 declaration', { primaryParent: { dob: '', over25: true } }, 'primaryParent'],
+        ])('refuses %s, saving nothing', async (_label, input, field) => {
+            prisma.person.findUnique.mockResolvedValueOnce(ledByAnother);
+            await expect(saveIntake(1, input)).rejects.toMatchObject({ code: 'age_lead_only', fields: [field] });
+        });
+
+        it('saves other fields while an unchanged age is resent', async () => {
+            prisma.person.findUnique.mockResolvedValueOnce(ledByAnother);
+            await saveIntake(1, { children: [{ id: 4, name: 'Kid', dob: '' }] });
+            expect(mockPerson.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 4 } }));
+        });
+
+        it('lets a sysadmin set ages in a household with no lead', async () => {
+            prisma.person.findUnique.mockResolvedValueOnce({
+                ...ledByAnother,
+                household: { ...baseUser.household, householdMembers: [{ id: 4, isHouseholdLead: false, dateOfBirth: null, isDeclaredAdult: false }] },
+            });
+            await saveIntake(1, { children: [{ id: 4, dob: '2015-01-01' }] });
+            expect(mockPerson.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 4 } }));
+        });
     });
 
     it('a lead promotion in a DENIED household is a rejection raised to the board', async () => {

@@ -31,7 +31,6 @@ GET /api/cron/pending-participants
 GET /api/cron/person-bg-annual
 GET /api/cron/post-event
 GET /api/cron/reconcile-shopify
-GET /api/cron/scholarship-grace-expiry
 GET /api/cron/trusted-adult-expiry
 POST /api/dev/bg-consent/complete
 POST /api/dev/shopify/orders-paid
@@ -149,8 +148,6 @@ POST /api/trusted-adults/[id]/renew
 POST /api/trusted-adults/[id]/resubmit
 POST /api/trusted-adults/[id]/withdraw
 POST /api/trusted-adults
-GET /api/unsubscribe
-POST /api/unsubscribe
 POST /api/webhooks/resend
 POST /api/webhooks/shopify/reversals
 POST /api/webhooks/shopify

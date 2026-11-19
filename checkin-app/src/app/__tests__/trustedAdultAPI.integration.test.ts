@@ -192,17 +192,18 @@ describe('Trusted Adults API', () => {
         expect(decisionLog.actorId).toBe(boardId);
         expect(auditJson(decisionLog.newData).decision).toBe('APPROVE');
 
-        // Override negative: force-approve with no shared note -> 400 (STATUS_FOR[bad_input]).
+        // Override negatives: an action other than reset or revoke, and a reset with no reason -> 400.
         as(boardId, boardHh, { isBoardMember: true });
-        expect((await OVERRIDE(post('/api/safety/trusted-adults/override', { reviewId, action: 'approve' }))).status).toBe(400);
+        expect((await OVERRIDE(post('/api/safety/trusted-adults/override', { reviewId, action: 'approve', sharedNote: SHARED }))).status).toBe(400);
+        expect((await OVERRIDE(post('/api/safety/trusted-adults/override', { reviewId, action: 'reset' }))).status).toBe(400);
 
-        // Override route binds the same board actor on the review + a fresh audit row.
-        const ok = await OVERRIDE(post('/api/safety/trusted-adults/override', { reviewId, action: 'approve', sharedNote: SHARED }));
+        // Reset binds the same board actor on a fresh audit row and reopens the review.
+        const ok = await OVERRIDE(post('/api/safety/trusted-adults/override', { reviewId, action: 'reset', reason: 'Second look.' }));
         expect(ok.status).toBe(200);
-        expect((await prisma.trustedAdultReview.findUnique({ where: { id: reviewId } }))?.decidedById).toBe(boardId);
+        expect(await ok.json()).toEqual({ status: 'PENDING_BOARD_REVIEW' });
         const overrideLog = await expectAuditRow(prisma, { action: 'EDIT', tableName: 'TrustedAdult', affectedEntityId: ta.id });
         expect(overrideLog.actorId).toBe(boardId);
-        expect(auditJson(overrideLog.newData).override).toBe('approve');
+        expect(auditJson(overrideLog.newData)).toMatchObject({ override: 'reset', reason: 'Second look.' });
     });
 
     // The override route's gate accepts a sysadmin in place of a board member, but the
@@ -221,7 +222,7 @@ describe('Trusted Adults API', () => {
 
         for (const roles of [{ isSysadmin: true }, { isSysadmin: true, isBoardMember: true }]) {
             as(leadId, familyHh, roles);
-            const res = await OVERRIDE(post('/api/safety/trusted-adults/override', { reviewId, action: 'approve', sharedNote: SHARED }));
+            const res = await OVERRIDE(post('/api/safety/trusted-adults/override', { reviewId, action: 'revoke' }));
             expect(res.status).toBe(403);
             expect((await res.json()).code).toBe('forbidden');
         }

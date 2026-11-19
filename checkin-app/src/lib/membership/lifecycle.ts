@@ -47,6 +47,21 @@ export type ProcessStatus =
 
 export type ProcessKind = "INITIAL" | "RENEWAL" | "PERSON_BG" | "PERSON_AGREEMENT" | "KEY_VOLUNTEER_AGREEMENT";
 
+/**
+ * Narrows a household process (INITIAL/RENEWAL) to one whose orgMembershipId is set.
+ * The per-person kinds (PERSON_BG, PERSON_AGREEMENT, KEY_VOLUNTEER_AGREEMENT) carry
+ * none, so reaching a household-only step with one throws here.
+ */
+export function asHouseholdProcess<P extends { id: number; kind: ProcessKind; orgMembershipId: number | null }>(
+    process: P,
+): P & { orgMembershipId: number } {
+    const { orgMembershipId } = process;
+    if (orgMembershipId === null) {
+        throw new Error(`Membership process #${process.id} (${process.kind}) has no household membership.`);
+    }
+    return { ...process, orgMembershipId };
+}
+
 /** Every declared status (for reachability's `unreachable` computation). */
 export const ALL_STATUSES: readonly ProcessStatus[] = [
     "INTAKE",
@@ -204,7 +219,7 @@ const recordedYear = (year: number | null) => year ?? { in: [] as number[] };
  * "Settled for the live membership year" — the MONEY question: a process whose
  * membership fee is paid: terminal ACTIVE, or paid and only waiting on background
  * clearance ({@link membershipFeeSettledAwaitingBg}) — that records the live year,
- * INITIAL and RENEWAL alike (docs/rules/membership.md). ARCHIVED (a closed
+ * INITIAL and RENEWAL alike. ARCHIVED (a closed
  * application) is deliberately absent: only unpaid applications can be closed, so
  * it must not extend a horizon. Read by the households valid-until,
  * membershipValidThrough and the outreach audiences. No live year matches nothing.
@@ -257,9 +272,9 @@ export function fromWhere(from: ProcessStatus): Where {
  */
 export type ClassifyRow = { status: ProcessStatus; kind: ProcessKind } & ProcessFlags;
 
-/** The one kind that reaches ACTIVE on a signature, owing no clearance stamp. An
+/** The kinds that reach ACTIVE on a signature, owing no clearance stamp. An
  *  exemption list, not an allowlist: a kind added later owes the stamp by default. */
-const SETTLES_ON_SIGNATURE: readonly ProcessKind[] = ["PERSON_AGREEMENT"];
+export const SETTLES_ON_SIGNATURE: readonly ProcessKind[] = ["PERSON_AGREEMENT", "KEY_VOLUNTEER_AGREEMENT"];
 
 /**
  * Name a row's lifecycle state, or null when it's off-diagram. Total over the
@@ -274,7 +289,7 @@ export function classify(row: ClassifyRow): ProcessStatus | null {
             return row.paidAt ? null : "INTAKE";
         case "ACTIVE":
             // Convergence stamps bgClearedAt before flipping ACTIVE (payment.ts / review.ts).
-            // A PERSON_AGREEMENT has no convergence to stamp — see SETTLES_ON_SIGNATURE.
+            // A per-person agreement has no convergence to stamp — see SETTLES_ON_SIGNATURE.
             return row.bgClearedAt || SETTLES_ON_SIGNATURE.includes(row.kind) ? "ACTIVE" : null;
         case "PENDING_EXTERNAL_ACTION":
             return "PENDING_EXTERNAL_ACTION";
@@ -302,7 +317,7 @@ export const INVARIANTS: readonly Invariant<ClassifyRow>[] = [
     // Payment is stamped no earlier than PENDING_PAYMENT; INTAKE is pre-external.
     { name: "intake-is-unpaid", holds: (r) => r.status !== "INTAKE" || !r.paidAt },
     // ACTIVE is only reached through the two-track convergence, which stamps bgClearedAt —
-    // for the kinds that HAVE one. markContractSigned settles a PERSON_AGREEMENT outright
+    // for the kinds that HAVE one. markContractSigned settles a per-person agreement outright
     // (the kind-tagged PENDING_EXTERNAL_ACTION→ACTIVE edge below), owing no clearance.
     { name: "active-is-bg-cleared", holds: (r) => r.status !== "ACTIVE" || SETTLES_ON_SIGNATURE.includes(r.kind) || r.bgClearedAt },
 ];
@@ -367,6 +382,12 @@ export function refundLandsIn(status: ProcessStatus): ProcessStatus | null {
     return REFUND_LANDS_IN[status] ?? null;
 }
 
+/** A paid application the board can "Record refund" on: paid, at a step `REFUND_LANDS_IN` names. */
+export const refundableApplication = defineStateSet<Where>()({
+    statuses: Object.keys(REFUND_LANDS_IN) as ProcessStatus[],
+    flags: { paidAt: true },
+});
+
 /**
  * Steps a row closed before the unpaid-only rule may still hold in
  * `archivedFromStatus`. Reopening restores them (a BLOCKED row comes back blocked);
@@ -402,6 +423,7 @@ export const TRANSITIONS: readonly Transition<TState, string, ProcessKind>[] = [
     { from: "∅", to: "PENDING_BG_REVIEW", event: "markCheckStarted", actor: "person/lead/board", guardSite: "checkStarted.ts markCheckStarted: Person FOR UPDATE", kind: "PERSON_BG" },
     { from: "∅", to: "PENDING_BG_REVIEW", event: "legacy household flag (no subject)", actor: "system", guardSite: "settleHouseholdBg.ts openRequestedReview: application FOR UPDATE", kind: "PERSON_BG", legacy: true },
     { from: "∅", to: "PENDING_EXTERNAL_ACTION", event: "personAgreementTriggers", actor: "system/board", guardSite: "personAgreementTriggers.ts openPersonAgreement: Person FOR UPDATE + handled-this-cycle guard", kind: "PERSON_AGREEMENT" },
+    { from: "∅", to: "PENDING_EXTERNAL_ACTION", event: "openKvaIfNeeded", actor: "board", guardSite: "keyVolunteerProcess.ts openKvaIfNeeded (in setRoleFlag, under the BOARD role lock) / createKva (version bump)", kind: "KEY_VOLUNTEER_AGREEMENT" },
     // External step
     { from: "INTAKE", to: "PENDING_EXTERNAL_ACTION", event: "submitIntake", actor: "applicant", guardSite: "intake.ts submitIntake: updateMany CAS from INTAKE", kind: "INITIAL" },
     { from: "PENDING_RENEWAL", to: "PENDING_EXTERNAL_ACTION", event: "beginRenewal", actor: "member", guardSite: "renewal.ts beginRenewal: OrgMembership FOR UPDATE (refuses DENIED/BLOCKED) + updateMany CAS from PENDING_RENEWAL", kind: "RENEWAL" },
@@ -409,6 +431,7 @@ export const TRANSITIONS: readonly Transition<TState, string, ProcessKind>[] = [
     { from: "PENDING_EXTERNAL_ACTION", to: "PENDING_PAYMENT", event: "advanceExternalIfComplete", actor: "system", guardSite: "external.ts advanceExternalIfComplete: updateMany CAS (signed + check started or cleared)" },
     // Signature completes a person-scoped agreement outright — no payment, no BG gate
     { from: "PENDING_EXTERNAL_ACTION", to: "ACTIVE", event: "markContractSigned", actor: "subject", guardSite: "external.ts markContractSigned: updateMany where contractSignedAt=null + fromWhere", kind: "PERSON_AGREEMENT" },
+    { from: "PENDING_EXTERNAL_ACTION", to: "ACTIVE", event: "markContractSigned", actor: "subject/board", guardSite: "external.ts markContractSigned: updateMany where contractSignedAt=null + fromWhere", kind: "KEY_VOLUNTEER_AGREEMENT" },
     // Payment convergence
     { from: "PENDING_PAYMENT", to: "ACTIVE", event: "activate", actor: "shopify/board", guardSite: "payment.ts settle: process + OrgMembership FOR UPDATE, DENIED changes nothing (bgClearedAt set)" },
     { from: "PENDING_PAYMENT", to: "PENDING_BG_CLEARANCE", event: "activate", actor: "shopify/board", guardSite: "payment.ts settle: process + OrgMembership FOR UPDATE, DENIED changes nothing (not cleared)" },

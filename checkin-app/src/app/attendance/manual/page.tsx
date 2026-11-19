@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Button, Card, Select, Stack, Text, TextInput, Title } from "@mantine/core";
-import { errorMessage, showError, showSuccess } from "@checkin/component-ui";
-import { api } from "@/lib/api";
+import { errorMessage, LoadError, showError, showSuccess } from "@checkin/component-ui";
+import { api, useLoad } from "@/lib/api";
 import { PageContainer } from "@/components/ui/PageContainer";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { notifyNavRefresh } from "@/lib/nav-refresh";
@@ -21,22 +21,12 @@ export default function ManualAttendance() {
   const [fieldErrors, setFieldErrors] = useState<{ arrivedAt?: string; departedAt?: string }>({});
   // A household lead records for any member of their household — the only way a
   // minor's visit gets entered at all. Everyone else records for themselves.
-  const [members, setMembers] = useState<HouseholdMember[]>([]);
   const [personId, setPersonId] = useState<string | null>(null);
 
   const isLead = !!user?.householdLead;
 
-  useEffect(() => {
-    if (!ready || !isLead) return;
-    let active = true;
-    (async () => {
-      const res = await fetch("/api/household");
-      if (!res.ok) return;
-      const data = await res.json().catch(() => ({}));
-      if (active) setMembers(data.household?.householdMembers ?? []);
-    })();
-    return () => { active = false; };
-  }, [ready, isLead]);
+  const household = useLoad<{ household?: { householdMembers?: HouseholdMember[] } | null }>(ready && isLead ? "/api/household" : null);
+  const members = household.data?.household?.householdMembers ?? [];
 
   const validateTimes = () => {
     const now = Date.now();
@@ -105,6 +95,8 @@ export default function ManualAttendance() {
           in the building now, badge at the kiosk instead.
           {members.length > 1 && " As a household lead you can also record a visit for another member of your household."}
         </Text>
+
+        {household.error && <LoadError what="your household" message={household.error} onRetry={household.reload} />}
 
         <form onSubmit={handleSubmit}>
           <Stack>

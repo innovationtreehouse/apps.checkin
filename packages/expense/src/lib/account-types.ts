@@ -1,4 +1,4 @@
-// Which QuickBooks account types expense books to (docs/rules/expenses.md): a capital rule or
+// Which QuickBooks account types expense books to: a capital rule or
 // line takes Fixed Asset, every other rule or line an expense type. Saves read the app's copy of QuickBooks' accounts.
 import { ServiceError } from "@checkin/component-kit";
 import { LINE_ACCOUNT_TYPES, QUICKBOOKS_LIST_STALE, staleListRefusal } from "@checkin/quickbooks";
@@ -13,7 +13,7 @@ export const bookableTypes = (capital: boolean | null): readonly string[] => (ca
 /** The types expense's QuickBooks account list admits: every type a rule or line may book to. */
 export const LISTED_TYPES: readonly string[] = [...LINE_ACCOUNT_TYPES.donatedGoods, ...LINE_ACCOUNT_TYPES.donatedCapital];
 
-/** Refuses (400, QUICKBOOKS_LIST_STALE) an account the app's QuickBooks list doesn't hold under one of `allowed`. */
+/** Refuses (400, QUICKBOOKS_LIST_STALE) an account the app's QuickBooks list doesn't hold, active, under one of `allowed`. */
 export async function refuseWrongType(qbAccount: string, allowed: readonly string[], what: string): Promise<void> {
   const refusal = staleListRefusal(await getExpenseRuntime().quickbooks.accounts(), qbAccount, allowed, what);
   if (refusal) throw new ServiceError(400, refusal, QUICKBOOKS_LIST_STALE);

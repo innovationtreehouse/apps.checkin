@@ -16,7 +16,9 @@ export const GET = withAuth(
         try {
             const households = await prisma.household.findMany({
                 where: BROKEN_HOUSEHOLD_WHERE,
-                include: {
+                select: {
+                    id: true,
+                    name: true,
                     householdMembers: {
                         select: { id: true, name: true, dateOfBirth: true },
                         orderBy: { id: "asc" },

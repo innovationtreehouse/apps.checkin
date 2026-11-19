@@ -5,7 +5,7 @@ const label = "QuickBooks picks: account types";
 
 /**
  * The System Status row for every stored QuickBooks pick outside the books map, checked against the app's
- * copy of QuickBooks' account list (docs/rules/revenue.md). Reads the copy, never QuickBooks.
+ * copy of QuickBooks' account list. Reads the copy, never QuickBooks.
  */
 export async function quickBooksPicksCheck(): Promise<ConfigCheck> {
     try {

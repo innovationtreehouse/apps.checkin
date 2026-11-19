@@ -20,6 +20,7 @@ export const INCOME_NAV_LINKS: readonly IncomeNavLink[] = [
   { name: "Reconciliation", href: "/income/reconciliation", icon: "⚠️", badge: "openReconciliation" },
   { name: "Item Categories", href: "/income/items", icon: "🏷️" },
   { name: "QB Exclusions", href: "/income/exclusions", icon: "🚫" },
+  { name: "Settings", href: "/income/settings", icon: "⚙️" },
 ];
 
 /** The host-level tab that opens the income screens. */

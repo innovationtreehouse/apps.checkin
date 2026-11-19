@@ -362,6 +362,24 @@ describe("ProgramEnrollmentPage", () => {
         expect(router.push).toHaveBeenCalledWith("/programs");
     });
 
+    it("offers a signed-out visitor on a not-found program a sign-in that returns to it", async () => {
+        setSession(null, "unauthenticated");
+        mockFetchJson({});
+        renderPage();
+
+        fireEvent.click(await screen.findByRole("button", { name: "Sign in" }));
+        expect(router.push).toHaveBeenCalledWith("/signin?callbackUrl=%2Fprograms%2F10");
+    });
+
+    it("offers no sign-in on a not-found program to a signed-in visitor", async () => {
+        setSession({ id: 101 });
+        mockFetchJson({ "/api/household/intake": intakeWithContact, "/api/household": household });
+        renderPage();
+
+        expect(await screen.findByText("Program not found.")).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Sign in" })).not.toBeInTheDocument();
+    });
+
     it("routes a logged-out visitor through /signin (carrying the return URL) before enrolling (auth-first)", async () => {
         setSession(null, "unauthenticated");
         mockFetchJson({ "/api/programs/10": baseProgram() });
@@ -375,7 +393,7 @@ describe("ProgramEnrollmentPage", () => {
         fireEvent.click(screen.getByRole("button", { name: "Sign in to enroll" }));
         // LOCAL never calls Google directly; /signin decides Google vs. the dev picker by env.
         expect(signIn).not.toHaveBeenCalled();
-        expect(router.push).toHaveBeenCalledWith("/signin?callbackUrl=/programs/10");
+        expect(router.push).toHaveBeenCalledWith("/signin?callbackUrl=%2Fprograms%2F10");
     });
 
     it("navigates back and to the manage screen for authorized managers", async () => {
@@ -592,7 +610,7 @@ describe("ProgramEnrollmentPage", () => {
         await toggleMember("Kid One");
         fireEvent.click(screen.getByRole("button", { name: "Complete Enrollment" }));
 
-        await errorShown("Too young for this program.");
+        await errorShown("Kid One: Too young for this program.");
         expect(screen.queryByText("Warning: Enrollment rules not met.")).not.toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Force Enroll (Override)" })).not.toBeInTheDocument();
         expect(bodies.every(b => !JSON.parse(b).override)).toBe(true);
@@ -695,6 +713,77 @@ describe("ProgramEnrollmentPage", () => {
         expect(screen.queryByText("Redirecting to Shopify for secure payment...")).not.toBeInTheDocument();
         const discountCall = fetchMock.mock.calls.find(([input]) => String(input).includes("/discount-code"));
         expect(JSON.parse(String(discountCall?.[1]?.body)).participantIds).toHaveLength(1);
+    });
+
+    describe("a priced checkout where some children are refused", () => {
+        const pricedProgram = baseProgram({ nonOrgMemberPriceCents: 5000, minAge: null, maxAge: null, shopifyVariantId: "gid://variant" });
+
+        function routesRefusing(refusedIds: number[]) {
+            const routes = mockFetchJson({
+                "/api/programs/10/discount-code": { code: null, signature: "sig" },
+                "/api/household/intake": intakeWithContact, "/api/household": household,
+                "/api/programs/10": pricedProgram,
+                "/api/programs/10/participants": { ok: true },
+            });
+            const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+                if (String(input).includes("/participants") && init?.method === "POST"
+                    && refusedIds.includes(JSON.parse(String(init.body)).participantId)) {
+                    return res({ error: "Program has reached maximum capacity." }, 400);
+                }
+                return routes(input, init);
+            });
+            global.fetch = fetchMock as unknown as typeof fetch;
+            return fetchMock;
+        }
+
+        const discountCalls = (fetchMock: jest.Mock) =>
+            fetchMock.mock.calls.filter(([input]) => String(input).includes("/discount-code"));
+
+        async function payFor(...names: string[]) {
+            setSession({ id: 100, ageBand: 'adult' });
+            setShopifyStoreDomain("shop.example.com");
+            renderPage();
+            await screen.findByText("Robotics Club");
+            fireEvent.click(screen.getByRole("button", { name: "Enroll" }));
+            for (const name of names) await toggleMember(name);
+            fireEvent.click(screen.getByRole("button", { name: "Pay on Shopify" }));
+        }
+
+        it("pauses with the refusal named, then checks out only the accepted child", async () => {
+            const fetchMock = routesRefusing([102]);
+            await payFor("Kid One", "Too Young");
+
+            expect(await screen.findByText("Too Young: Program has reached maximum capacity.")).toBeInTheDocument();
+            expect(screen.getByText("Continue to checkout for Kid One?")).toBeInTheDocument();
+            expect(discountCalls(fetchMock)).toHaveLength(0);
+            expect(screen.queryByText("Redirecting to Shopify for secure payment...")).not.toBeInTheDocument();
+
+            fireEvent.click(screen.getByRole("button", { name: "Continue to checkout" }));
+            expect(await screen.findByText("Redirecting to Shopify for secure payment...")).toBeInTheDocument();
+            const calls = discountCalls(fetchMock);
+            expect(calls).toHaveLength(1);
+            expect(JSON.parse(String(calls[0][1]?.body)).participantIds).toEqual([101]);
+        });
+
+        it("offers no checkout when every child is refused", async () => {
+            const fetchMock = routesRefusing([101, 102]);
+            await payFor("Kid One", "Too Young");
+
+            expect(await screen.findByText("Kid One: Program has reached maximum capacity.")).toBeInTheDocument();
+            expect(screen.getByText("Too Young: Program has reached maximum capacity.")).toBeInTheDocument();
+            expect(screen.queryByRole("button", { name: "Continue to checkout" })).not.toBeInTheDocument();
+            expect(discountCalls(fetchMock)).toHaveLength(0);
+            expect(screen.queryByText("Redirecting to Shopify for secure payment...")).not.toBeInTheDocument();
+        });
+
+        it("goes straight to checkout when nobody is refused", async () => {
+            const fetchMock = routesRefusing([]);
+            await payFor("Kid One", "Too Young");
+
+            expect(await screen.findByText("Redirecting to Shopify for secure payment...")).toBeInTheDocument();
+            expect(screen.queryByRole("button", { name: "Continue to checkout" })).not.toBeInTheDocument();
+            expect(JSON.parse(String(discountCalls(fetchMock)[0][1]?.body)).participantIds).toEqual([101, 102]);
+        });
     });
 
     // Without the server's checkout signature the order would activate nobody, so

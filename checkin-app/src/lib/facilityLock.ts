@@ -1,9 +1,10 @@
 import { withTx, type DbClient, type TxClient } from "@/lib/db-client";
 
 /**
- * Two-argument advisory-lock space. Independent of the per-person
- * `pg_advisory_xact_lock(personId)` locks: a 1-arg lock never conflicts
- * with a 2-arg lock, so this cannot deadlock against a person lock.
+ * Two-argument advisory lock, a different key from every per-person
+ * `pg_advisory_xact_lock(personId)` lock. Lock order: a transaction takes all
+ * its person locks first, then the facility lock, and no person lock after it.
+ * That order is what keeps the two from deadlocking.
  *
  * Taken by every check-in that depends on facility-open state and by the
  * facility-wide close sweep, so a concurrent non-keyholder check-in cannot

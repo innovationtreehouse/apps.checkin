@@ -25,22 +25,26 @@ export async function tryAutoProceedApply(
 
   const nextState = assertWorkflowMappingTransition(received.state as ReceivedReceiptState, "PROCEED");
 
-  // Compare-and-set: of concurrent callers that saw the last line resolve, only one pushes.
-  const { count } = await db.receivedReceipt.updateMany({
-    where: { id: receiptId, state: received.state },
-    data: { state: nextState, matchingPendingSince: null },
-  });
-  if (count !== 1) return;
+  const moved = await db.$transaction(async (tx) => {
+    // Compare-and-set: of concurrent callers that saw the last line resolve, only one pushes.
+    const { count } = await tx.receivedReceipt.updateMany({
+      where: { id: receiptId, state: received.state },
+      data: { state: nextState, matchingPendingSince: null },
+    });
+    if (count !== 1) return false;
 
-  await insertAuditEvent(db, {
-    orgId: received.orgId,
-    actorUserId: actor?.id ?? null,
-    actorUsername: actor?.name ?? null,
-    eventType: "auto_proceed_triggered",
-    receivedReceiptId: receiptId,
-    fromState: received.state,
-    toState: nextState,
+    await insertAuditEvent(tx, {
+      orgId: received.orgId,
+      actorUserId: actor?.id ?? null,
+      actorUsername: actor?.name ?? null,
+      eventType: "auto_proceed_triggered",
+      receivedReceiptId: receiptId,
+      fromState: received.state,
+      toState: nextState,
+    });
+    return true;
   });
+  if (!moved) return;
 
   await executePushAndSettle(receiptId, received, actor?.id ?? null, actor?.name ?? null);
 }

@@ -6,6 +6,7 @@ import { type DbClient, withTx } from "@/lib/db-client";
 import { lockLiveHouseholds } from "@/lib/household/archiveGuard";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { openProcess } from "@/lib/membership/lifecycle";
+import { householdHasValidContact } from "./valid";
 
 /**
  * Emergency-contact write/read model. Enforces the not-a-household-member rule
@@ -291,11 +292,13 @@ export async function getPrimaryValidContact(db: Db, householdId: number): Promi
     return (await listValidContacts(db, householdId))[0] ?? null;
 }
 
-export async function householdHasValidContact(db: Db, householdId: number): Promise<boolean> {
-    const count = await db.emergencyContact.count({
-        where: { householdId, conflictParticipantId: null, name: { not: "" }, phone: { not: "" } },
-    });
-    return count > 0;
+export { householdHasValidContact };
+
+export const NO_EMERGENCY_CONTACT_TO_ENROL = "Add an emergency contact, with a name and a phone number, before enrolling.";
+
+/** Whether a family may enrol: their household has a valid emergency contact. No household fails. */
+export async function householdMayEnrol(db: Db, householdId: number | null | undefined): Promise<boolean> {
+    return householdId != null && householdHasValidContact(db, householdId);
 }
 
 /**

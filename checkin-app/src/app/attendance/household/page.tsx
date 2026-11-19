@@ -16,7 +16,7 @@ import { PageLoader } from "@/components/ui/PageLoader";
 type Visit = { id: number; person?: { name: string }; event?: { name: string }; arrivedAt: string; departedAt?: string };
 
 // A household lead corrects their household members' visits on the same
-// trust-first terms as their own (docs/rules/attendance-checkin.md) — the server flags significant changes to the board.
+// trust-first terms as their own — the server flags significant changes to the board.
 export default function HouseholdCheckins() {
   const { formatVisitRange, formatDateTime } = useOrgTime();
   const { ready, loading: authLoading, user } = useRequireRole([]);

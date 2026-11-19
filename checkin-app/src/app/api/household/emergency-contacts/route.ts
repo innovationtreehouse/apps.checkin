@@ -7,6 +7,8 @@ import { isValidEmail } from "@/lib/emergencyContacts/identity";
 import { leadHousehold } from "@/lib/household/leads";
 import { apiError } from "@/lib/api-response";
 import { ArchivedHouseholdError } from "@/lib/household/archiveGuard";
+import { personActor, recordAudit } from "@/lib/auditActor";
+import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 
 export const GET = withAuth({}, async (_req, auth) => {
     if (auth.type !== "session") return apiError("Unauthorized", 401);
@@ -26,17 +28,18 @@ export const POST = withAuth({}, async (req, auth) => {
         if (email && !isValidEmail(email)) {
             return apiError("Invalid email format", 400);
         }
-        const contact = await createContact(prisma, hh, { name, phone, email, relationship, priority });
-        await prisma.auditLog.create({
-            data: {
-                actorId: auth.user.id,
+        const contact = await prisma.$transaction(async (tx) => {
+            const contact = await createContact(tx, hh, { name, phone, email, relationship, priority });
+            await recordAudit(tx, personActor(auth.user.id), {
                 action: "CREATE",
                 tableName: "EmergencyContact",
                 affectedEntityId: contact.id,
                 secondaryAffectedEntity: hh,
                 newData: { name: contact.name, phone: contact.phone },
-            },
+            });
+            return contact;
         });
+        invalidateAttendanceCache();
         return NextResponse.json({ contact: present(contact) }, { status: 201 });
     } catch (error) {
         if (error instanceof EmergencyContactError) return apiError(error.message, 400);

@@ -9,10 +9,11 @@ export const GET = handler('GET /api/facility/badges', async () => {
     const badges = await prisma.rawBadgeLog.findMany({
         take: 200,
         orderBy: { timestamp: "desc" },
-        include: {
-            person: {
-                select: { name: true, email: true },
-            },
+        select: {
+            id: true,
+            timestamp: true,
+            location: true,
+            person: { select: { name: true, email: true } },
         },
     });
 

@@ -61,8 +61,11 @@ account:
 1. An account finance set by hand on a held line wins.
 2. A part-numbered inventory line is looked up in the catalog and matched against
    the `AccountMapping` rules, where `*` is a wildcard and a rule naming the exact
-   item beats the others. Catalog inputs are snapshotted on the line, so a later
-   catalog edit cannot move the account.
+   item beats the others. Catalog inputs are snapshotted on the line at sign-off,
+   so a later catalog edit cannot move the first post's account. A person's Retry
+   or Resubmit before the expense is in QuickBooks reads the live catalog instead,
+   replaces the snapshot, and writes a `qb_account_reresolved` audit row for each
+   line whose category or account moved.
 3. Any other line needs a hand-set account.
 
 A line that resolves to no account or to several raises an `ExpenseHold`
@@ -274,7 +277,7 @@ expense's state.
 |---|---|---|
 | Pick a candidate | `matchExpenseToQb` | `MATCHED`; needs every sign-off |
 | Book it | `bookExpenseToQb` | One post with creating allowed; still matches first and stops at the closing date |
-| Retry | `retryQbPost` | Re-resolves accounts from the current mappings, posts once |
+| Retry | `retryQbPost` | Re-resolves accounts from the current mappings and the live catalog, posts once |
 | Skip, with a reason | `skipExpenseQb` | `SKIPPED` for good; refused to a conflicted person |
 | Exclude an entry, with a reason | `excludeQbTxn` | That id is never a candidate again |
 | Link or create a Vendor | `reimburseeVendorService` | The reimbursee's Vendor is set; a same-name Vendor must be confirmed by picking it |
@@ -295,7 +298,10 @@ windowed reader around its receipt date. A created entry is compared with what t
 app posted (amount, date, key, accounts, Vendor). A matched entry is compared with
 its baseline, and the accounts on it are compared only when the baseline recorded
 them, because they are finance's. Any difference, or a missing entry, raises
-`QB_DRIFT` with what QuickBooks showed. The check only reads QuickBooks; its writes
+`QB_DRIFT` with what QuickBooks showed. An open `QB_DRIFT` whose entry matches again
+is checked off by the system with "Resolved in QuickBooks" and the date, counted as
+`resolved`; the close matches the `observed` it read, so a finance check-off or a new
+drift landing first wins. The check only reads QuickBooks; its writes
 are in the expense database, where it raises the flags and stores a baseline for a
 matched entry that has none, raising nothing for that entry on that run.
 

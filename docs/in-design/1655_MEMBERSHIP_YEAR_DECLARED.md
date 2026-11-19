@@ -58,17 +58,17 @@ the year a settlement bought is recorded and read.
 
 ## Rules this relies on and intends to change
 
-Relied on, from `docs/rules/membership.md`, Policy and unchanged: the membership
+Relied on, Policy and unchanged: the membership
 year runs 1 September to 31 August, one boundary for the organisation; the fee is
 per family per membership year, and a family joining partway through pays for the
 year it joins in.
 
-Relied on, from `docs/rules/membership.md`, Procedure: *coverage is what was
+Relied on, Procedure: *coverage is what was
 bought*. A household settled for the membership year now in effect is covered to
 the boundary that closes it; otherwise only to the boundary that opened it. This
 design keeps that rule and changes how "settled for the year" is decided.
 
-Changed, in `docs/rules/membership.md` under Renewal: the line saying that
+Changed, under Renewal: the line saying that
 settling inside the renewal window buys the coming year. Its intent stays: a family
 that buys the coming year is covered for it and is not asked to renew it. Its
 mechanism goes. "Settled inside the window" stood in for "bought the coming year";
@@ -76,7 +76,7 @@ it holds for renewals and fails for the summer join. The replacement says the
 settlement states its year, and that the checkout offered from the day the window
 opens sells the coming year.
 
-Relied on, from `docs/rules/principles.md`: *missing or ambiguous data resolves to
+Relied on, a principle: *missing or ambiguous data resolves to
 the more restrictive reading*. A settlement with no recorded year reads as not
 settled for the year in effect, which is the reading today's rule gives any row it
 cannot place.

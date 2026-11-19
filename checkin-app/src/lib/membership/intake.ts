@@ -17,7 +17,7 @@ import { addHouseholdLead, HouseholdLeadLimitError, HouseholdLeadDeniedError, Ho
 import { upsertPrimaryContact, reconcileHouseholdConflicts } from "@/lib/emergencyContacts/service";
 import { normalizeAddressInput, pickAddress, type StructuredAddress } from "@/lib/address";
 import { INTAKE_PROFILES, missingRequiredFields } from "@/lib/intake/profiles";
-import { normalizeAdultDob, replacesUnder18Date, UNDER_18_DECLARATION_REFUSAL } from "@/lib/person/adultDob";
+import { AGE_LEAD_ONLY_REFUSAL, changesAge, mayDeclareAges, normalizeAdultDob, replacesUnder18Date, UNDER_18_DECLARATION_REFUSAL } from "@/lib/person/adultDob";
 import { isYouth } from "@/lib/time";
 import { mintPersonId } from "@/lib/person/mintId";
 import { nameWrite } from "@/lib/person/name";
@@ -47,7 +47,7 @@ export class IntakeError extends Error {
      *                "primaryName".
      */
     constructor(
-        public readonly code: "no_household" | "not_lead" | "already_member" | "denied" | "blocked" | "renewal_open" | "no_process" | "incomplete" | "lead_limit" | "name_required" | "email_designated" | "email_in_use" | "under_18_declared",
+        public readonly code: "no_household" | "not_lead" | "already_member" | "denied" | "blocked" | "renewal_open" | "no_process" | "incomplete" | "lead_limit" | "name_required" | "email_designated" | "email_in_use" | "under_18_declared" | "age_lead_only",
         message: string,
         public readonly fields?: string[],
     ) {
@@ -71,7 +71,7 @@ type ParentInput = { id?: number; name?: string; email?: string; dob?: string | 
 type ChildInput = { id?: number; name?: string; email?: string | null; dob?: string | null; allergies?: string | null };
 
 export interface IntakeSaveInput {
-    household?: Partial<StructuredAddress> & { emergencyContactName?: string; emergencyContactPhone?: string; emergencyContactEmail?: string; notes?: string | null };
+    household?: Partial<StructuredAddress> & { emergencyContactName?: string; emergencyContactPhone?: string; emergencyContactEmail?: string };
     primaryParent?: ParentInput;
     secondaryParent?: ParentInput | null;
     children?: ChildInput[];
@@ -129,7 +129,6 @@ export async function getIntakeState(userId: number) {
         allergies: p.allergies,
     });
 
-    const canSeeNotes = leadIds.has(userId);
     const external = process ? await getExternalStatus(process) : null;
 
     // The caller's own individual agreement, if they have one open. Person-scoped,
@@ -151,11 +150,6 @@ export async function getIntakeState(userId: number) {
             household: household
                 ? {
                       name: household.name,
-                      // intakeNotes is the lead's free-text note TO the board
-                      // (pii); household peers — including youth with their own
-                      // logins — must not read it. Same lead gate as
-                      // GET /api/household, and only a lead can write it back.
-                      notes: canSeeNotes ? household.intakeNotes : null,
                       ...pickAddress(household),
                       // The primary (lowest-priority) contact backs the single-field
                       // form. Shown even when flagged invalid so the lead can fix it.
@@ -312,6 +306,12 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
         }
         return true;
     };
+    const leadIds = (user.household?.householdMembers ?? []).filter((p) => p.isHouseholdLead).map((p) => p.id);
+    const declaresAges = user.isHouseholdLead || mayDeclareAges(userId, leadIds);
+    const ageWrite = (age: ReturnType<typeof normalizeAdultDob>, onFile: Parameters<typeof changesAge>[1], field: string) => {
+        if (!declaresAges && changesAge(age, onFile)) throw new IntakeError("age_lead_only", AGE_LEAD_ONLY_REFUSAL, [field]);
+        return age;
+    };
     const addLeadOrRecord = async (tx: TxClient, participantId: number, refusalSubject: GrantSubject) => {
         // A sysadmin manages their household's intake without leading it, so making
         // someone its lead that way is a grant to their own household.
@@ -365,12 +365,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
             await lockLiveHouseholds(tx, [householdId]);
 
             if (input.household) {
-                // Address + the optional "anything else we should know?" note share one
-                // household.update. Note is trimmed to null so an empty box clears it.
-                const householdData = {
-                    ...normalizeAddressInput(input.household),
-                    ...(input.household.notes !== undefined && { intakeNotes: input.household.notes?.trim() || null }),
-                };
+                const householdData = normalizeAddressInput(input.household);
                 if (Object.keys(householdData).length > 0) {
                     await tx.household.update({ where: { id: householdId }, data: householdData });
                 }
@@ -402,7 +397,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                     where: { id: userId },
                     data: {
                         ...(input.primaryParent.name !== undefined && { name: nameWrite(input.primaryParent.name) }),
-                        ...normalizeAdultDob(input.primaryParent.dob, input.primaryParent.over25, user.dateOfBirth),
+                        ...ageWrite(normalizeAdultDob(input.primaryParent.dob, input.primaryParent.over25, user.dateOfBirth), user, "primaryParent"),
                         ...(input.primaryParent.allergies !== undefined && { allergies: input.primaryParent.allergies }),
                     },
                 });
@@ -419,7 +414,8 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                     if (sp.name !== undefined && sp.name !== null && !nameWrite(sp.name)) {
                         throw new IntakeError("name_required", "A name is required for the second parent / guardian.", ["secondaryParent"]);
                     }
-                    const spDobOnFile = user.household?.householdMembers.find((p) => p.id === sp.id)?.dateOfBirth;
+                    const spOnFile = user.household?.householdMembers.find((p) => p.id === sp.id);
+                    const spDobOnFile = spOnFile?.dateOfBirth;
                     if (replacesUnder18Date(sp.dob, sp.over25, spDobOnFile)) {
                         throw new IntakeError("under_18_declared", UNDER_18_DECLARATION_REFUSAL, ["secondaryParent"]);
                     }
@@ -427,7 +423,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                         where: { id: sp.id },
                         data: {
                             ...(sp.name !== undefined && sp.name !== null && { name: nameWrite(sp.name) }),
-                            ...normalizeAdultDob(sp.dob, sp.over25, spDobOnFile),
+                            ...ageWrite(normalizeAdultDob(sp.dob, sp.over25, spDobOnFile), spOnFile, "secondaryParent"),
                             ...(sp.allergies !== undefined && { allergies: sp.allergies }),
                         },
                     });
@@ -442,7 +438,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                             householdId,
                             name: newSpName,
                             ...(sp.email && { email: sp.email.toLowerCase() }),
-                            ...normalizeAdultDob(sp.dob, sp.over25),
+                            ...ageWrite(normalizeAdultDob(sp.dob, sp.over25), null, "secondaryParent"),
                             allergies: sp.allergies ?? null,
                         },
                     });
@@ -472,7 +468,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                         where: { id: child.id },
                         data: {
                             ...(child.name !== undefined && { name: nameWrite(child.name) }),
-                            ...normalizeAdultDob(child.dob),
+                            ...ageWrite(normalizeAdultDob(child.dob), user.household?.householdMembers.find((p) => p.id === child.id), "children"),
                             ...(child.allergies !== undefined && { allergies: child.allergies }),
                         },
                     });
@@ -485,7 +481,7 @@ export async function saveIntake(userId: number, input: IntakeSaveInput) {
                             householdId,
                             name: newChildName,
                             ...(child.email && { email: child.email.toLowerCase() }),
-                            ...normalizeAdultDob(child.dob),
+                            ...ageWrite(normalizeAdultDob(child.dob), null, "children"),
                             allergies: child.allergies ?? null,
                         },
                     });

@@ -14,6 +14,14 @@ const CERTIFIER_LEVEL = ToolLevel.MAY_CERTIFY_OTHERS;
 /** Audit table for a refused change to a certifier's level, kept apart from ToolStatus edits. */
 const CERTIFIER_CHANGE_REFUSAL_TABLE = "CertifierChangeRefusal";
 
+// The columns the certification views read; a column added later stays out until selected here.
+const CERT_COLUMNS = {
+    personId: true,
+    toolId: true,
+    level: true,
+    tool: { select: { id: true, name: true } },
+} as const;
+
 type CertWrite = { kind: 'written'; cert: ToolStatus } | { kind: 'certifier' } | { kind: 'conflict' };
 
 function isToolLevel(value: unknown): value is ToolLevel {
@@ -47,10 +55,7 @@ export const GET = handler('GET /api/shop/certifications', async ({ req, auth })
         if (!isAuthorized) throw forbidden();
         const certifications = await prisma.toolStatus.findMany({
             orderBy: [{ tool: { name: 'asc' } }, { person: { name: 'asc' } }],
-            include: {
-                tool: true,
-                person: { select: { id: true, name: true } },
-            },
+            select: { ...CERT_COLUMNS, person: { select: { id: true, name: true } } },
         });
         return { ToolStatus: certifications };
     }
@@ -62,8 +67,8 @@ export const GET = handler('GET /api/shop/certifications', async ({ req, auth })
 
     const certifications = await prisma.toolStatus.findMany({
         where: whereClause,
-        include: {
-            tool: true,
+        select: {
+            ...CERT_COLUMNS,
             person: toolIdParam ? { select: { id: true, name: true } } : false,
         },
     });

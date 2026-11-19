@@ -133,7 +133,7 @@ const ALLOWLIST: Record<string, string> = {
 
     // ── multi-status read / query filters (not on a StateSet.where) ──
     'lib/nav/todoCounts.ts':
-        'Dashboard counts: status+flag probes — {PENDING,isPaymentPlanRequested,inventoryHeldAt,paymentPlanDeniedAt} and {PENDING_PAYMENT,isPaymentPlanRequested}.',
+        'Dashboard counts: status+flag probes — {PENDING,isPaymentPlanRequested,inventoryHeldAt,paymentPlanDeniedAt} and {PENDING_PAYMENT,isPaymentPlanRequested}; the incomplete-applications count excludes {INTAKE,PENDING_RENEWAL,BLOCKED}.',
     'lib/finance/reconcile/reversals.ts':
         'Reconciler paid-order set: where status in {ACTIVE,PENDING_BG_CLEARANCE} on OrgMembershipProcess.',
     'lib/finance/matchAudit.ts':

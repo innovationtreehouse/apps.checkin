@@ -4,7 +4,7 @@ import { ServiceError } from "@checkin/component-kit";
 import { RENEWAL_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { logger, logBackendError } from "@/lib/logger";
-import { IN_FLIGHT_INITIAL, IN_FLIGHT_RENEWAL, handledThisCycleWhere, fromWhere } from "@/lib/membership/lifecycle";
+import { IN_FLIGHT_INITIAL, IN_FLIGHT_RENEWAL, asHouseholdProcess, handledThisCycleWhere, fromWhere } from "@/lib/membership/lifecycle";
 import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { personActor, systemActor } from "@/lib/auditActor";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
@@ -200,8 +200,7 @@ export async function beginRenewal(processId: number, actorId: number) {
     if (!process) throw new RenewalError("not_found", "Renewal not found.");
     if (process.status !== "PENDING_RENEWAL") throw new RenewalError("wrong_phase", "This renewal is not awaiting your confirmation.");
 
-    // A RENEWAL always has a membership (orgMembershipId is only null for PERSON_BG).
-    const orgMembershipId = process.orgMembershipId!;
+    const { orgMembershipId } = asHouseholdProcess(process);
     const membership = await prisma.orgMembership.findUnique({
         where: { id: orgMembershipId },
         select: { householdId: true },

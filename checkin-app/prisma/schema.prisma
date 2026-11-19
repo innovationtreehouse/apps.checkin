@@ -34,8 +34,7 @@ enum AuditAction {
   BECOME_ADMIN
 }
 
-/// How a visit arrival/departure was recorded. Five non-overlapping meanings
-/// (docs/rules/attendance-checkin.md, "The visit record"):
+/// How a visit arrival/departure was recorded. Five non-overlapping meanings:
 ///   SCANNER        = physical kiosk badge — measured, exact.
 ///   TYPED          = a clock typed into a form (manual/dashboard entry) —
 ///                    asserted, not measured.
@@ -84,8 +83,8 @@ enum ProgramParticipantStatus {
 /// the moment of the request, because the two asks need different conversations
 /// and the review team cannot tell them apart from the request alone — offering
 /// a comp to a family that only needed more time is the failure this prevents.
-/// The terms themselves are still settled by finance out of band
-/// (docs/rules/finance-payments.md); this is only which door they knocked on.
+/// The terms themselves are still settled by finance out of band;
+/// this is only which door they knocked on.
 enum ScholarshipRequestKind {
   // Asking for the amount itself to be reduced or waived (a board comp).
   SCHOLARSHIP
@@ -144,12 +143,8 @@ model Person {
   /// @sensitivity:personal
   notificationSettings Json?
 
-  /// Self- or board-set suppression of outreach (join-invitation) email to this
-  /// person. Set via the unsubscribe link (join-variant only) or the member's own
-  /// communication-page toggle. Renew-variant outreach ignores this — see
-  /// lib/outreach/recipients.ts. 'personal' (not 'internal'): the member reads/writes
-  /// their own via their_own:personal; board/ops see it on the directory pill via
-  /// everyones:personal. @sensitivity:personal
+  /// Unused: nothing reads or writes it. Kept until the column drop.
+  /// @sensitivity:personal
   emailSuppressed Boolean @default(false)
 
   /// @sensitivity:public
@@ -209,7 +204,7 @@ model Person {
   bgAttestations      BackgroundCheckAttestation[] @relation("BgAttestations")
   bgAttestationsAsSubject BackgroundCheckAttestation[] @relation("BgAttestationSubject")
   personBgProcesses   OrgMembershipProcess[]       @relation("PersonBgSubject")
-  intakeNoteAcks      OrgMembershipProcess[]       @relation("IntakeNoteReads")
+  intakeNoteAcks      OrgMembershipProcess[]       @relation("IntakeNoteReads") @ignore
   zohoSigningRequests OrgMembershipProcess[]       @relation("ZohoSigner")
   corporationLeads    CorporationLead[]
   corporationMembers  CorporationMember[]
@@ -350,19 +345,9 @@ model Household {
   /// @sensitivity:internal
   postalCode String?
 
-  /// Freeform "Anything else we should know?" captured at intake. Where a
-  /// volunteer-only household types the note that tells a background-check
-  /// reviewer to mark them volunteer. Stays 'pii' (NOT internal like the other
-  /// narrative fields) because reviewers hold exactly everyones:pii on
-  /// GET /api/membership/reviews and must read it. GUARD: what keeps it away
-  /// from leads/keyholders is that Household binds NO scope but their_households
-  /// (scopeBindings.ts) — a household-scoped token like
-  /// their_program_households:pii resolves to nothing on a Household row, which
-  /// is why GET /api/programs/[id] can grant one for the parents' Person rows
-  /// without exposing this. Never bind Household to a program- or
-  /// keyholder-scoped scope, or the narrative leaks with it.
-  /// @sensitivity:pii
-  intakeNotes String?
+  /// Unused column awaiting its drop. Hidden from the client so no code reads or
+  /// writes it before the column goes. @sensitivity:pii
+  intakeNotes String? @ignore
 
   /// When the family left the organisation permanently; null means active.
   /// @sensitivity:public
@@ -498,7 +483,7 @@ enum TrustedAdultReviewStatus {
   DENIED
   EXPIRED
   REVOKED
-  // A later review on the same adult was approved in its place. Nothing writes it yet.
+  // A later review on the same adult was approved in its place.
   SUPERSEDED
 }
 
@@ -629,20 +614,14 @@ model OrgMembershipProcess {
   /// @sensitivity:hardship
   /// @financeMark
   scholarshipRequestKind ScholarshipRequestKind?
-  /// The household's intake note as submitted with this application. A snapshot, not
-  /// a live read: the household may edit or clear Household.intakeNotes afterwards,
-  /// and the audit question is what the applicant actually said. Disclosure-equivalent
-  /// to the note itself, so it carries the note's tier; deleted with the process.
-  /// @sensitivity:pii
-  intakeNoteSnapshot    String?
-  /// Who read the snapshot, and when. Staff-action audit metadata like every other
-  /// actor/stamp pair on this model (manualPaymentById, bgClearedAt) — internal, not
-  /// public: who has read a family's note is not a fact the row publishes.
+  /// Unused columns awaiting their drop. Hidden from the client so no code reads or
+  /// writes them before the columns go. @sensitivity:pii
+  intakeNoteSnapshot    String?                 @ignore
   /// @sensitivity:internal
-  noteAckById           Int?
-  noteAckBy             Person?                 @relation("IntakeNoteReads", fields: [noteAckById], references: [id])
+  noteAckById           Int?                    @ignore
+  noteAckBy             Person?                 @relation("IntakeNoteReads", fields: [noteAckById], references: [id]) @ignore
   /// @sensitivity:internal
-  noteAckAt             DateTime?
+  noteAckAt             DateTime?               @ignore
 
   attestations BackgroundCheckAttestation[]
 
@@ -819,23 +798,21 @@ model BoardSettings {
   /// orders changed after this are re-scanned each run. Null = scan from the start.
   /// @sensitivity:internal
   shopifyReconcileCursorAt   DateTime?
-  /// Grace period (days) a denied scholarship applicant keeps their held seat
-  /// before the grace-period expiry cron auto-withdraws them and releases it.
-  /// NULL = the expiry feature is OFF (a denied hold is only ever released by
-  /// withdrawal or payment; it never auto-expires).
-  /// @sensitivity:public
-  scholarshipDenialGraceDays Int?
+  /// Unused column awaiting its drop. Hidden from the client so no code reads or
+  /// writes it before the column goes. @sensitivity:public
+  scholarshipDenialGraceDays Int?      @ignore
   /// Library keys (lib/libraryRelease.ts) the board has released: their nav
   /// entries show to everyone with access, not just board members. UI-only.
   /// @sensitivity:public
   releasedLibraries          String[]  @default([])
+  /// When the Board closed the store to program seats, so seats are claimed in the
+  /// app only. NULL = the store sells seats. @sensitivity:internal
+  programStoreClosedAt       DateTime?
   /// @sensitivity:internal
   updatedAt                  DateTime  @updatedAt
-  /// QuickBooks company (realm) id prod may reach, set by the Board on Settings → QuickBooks.
-  /// NULL = QuickBooks is off in prod. Off prod it is refused as a target, which keeps a
-  /// prod-data copy off the real company (packages/quickbooks/src/guard.ts).
-  /// @sensitivity:internal
-  qboProductionRealmId       String?
+  /// Unused column awaiting its drop. Hidden from the client so no code reads or
+  /// writes it before the column goes. @sensitivity:internal
+  qboProductionRealmId       String?   @ignore
 }
 
 /// Board-edited override of one email's copy (docs/in-design/1333-EMAIL_TEMPLATES.md).
@@ -998,6 +975,10 @@ model TrustedAdultReview {
   /// Narrative safeguarding content — same band as TrustedAdult.familyContext.
   /// @sensitivity:internal
   proposedContext      String?
+  /// The family's answer to the board's request for more information. Narrative
+  /// safeguarding content — same band as proposedContext.
+  /// @sensitivity:internal
+  familyReply          String?
   /// @sensitivity:public
   createdAt            DateTime               @default(now())
   /// @sensitivity:internal
@@ -1129,7 +1110,7 @@ model Program {
   /// @sensitivity:public
   /// Hidden (UNLISTED, inventory-untracked) "reserved seat" product every app
   /// checkout links to, so a family holding a claim can pay when the public
-  /// variant shows 0. The app's seat count is its only gate. docs/rules/programs.md.
+  /// variant shows 0. The app's seat count is its only gate.
   claimantShopifyProductId  String?
   /// @sensitivity:public
   claimantShopifyVariantId  String?
@@ -1278,8 +1259,7 @@ model ProgramParticipant {
   /// Hold-ledger state: stamped when a board member denies a pending
   /// scholarship/payment-plan request (the seat stays held — see
   /// inventoryHeldAt — so the applicant may still pay normally). Cleared on
-  /// re-application. Drives the grace-period expiry sweep alongside
-  /// BoardSettings.scholarshipDenialGraceDays. A refusal says a request existed,
+  /// re-application. A refusal says a request existed,
   /// so it carries the request's tier.
   /// @sensitivity:hardship
   /// @financeMark
@@ -1407,7 +1387,7 @@ enum PresenceDirection {
 }
 
 /// Every presence-affecting surface appends an intent-carrying event; Visits
-/// project from the ordered log (docs/rules/attendance-checkin.md, kiosk resilience).
+/// project from the ordered log.
 model PresenceEvent {
   /// @sensitivity:internal
   id             Int               @id @default(autoincrement())
@@ -1589,7 +1569,7 @@ model AuditLog {
   @@index([tableName, timestamp])
 }
 
-/// One view of finance records other than the viewer's own (docs/rules/revenue.md).
+/// One view of finance records other than the viewer's own.
 /// Records who looked at which records, on which page or through which API call,
 /// and which marked fields of each, never what the records said. Written by
 /// lib/finance/financeViewLog.ts; read only by the Board. Kept indefinitely.
@@ -2116,7 +2096,7 @@ model BulkSendItem {
   /// "renew"; older rows may hold "join" from before outreach was renewal-only.
   /// @sensitivity:internal
   variant    String
-  /// "queued" | "sending" | "sent" | "failed" | "skipped_unsubscribed" | "skipped_denied" | "skipped_not_member"
+  /// "queued" | "sending" | "sent" | "failed" | "skipped_denied" | "skipped_not_member"
   /// @sensitivity:internal
   status     String
   /// @sensitivity:internal

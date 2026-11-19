@@ -6,14 +6,15 @@ import { addHouseholdLead, removeHouseholdLead, HouseholdLeadLimitError, Househo
 import { reconcileAndWarn } from "@/lib/emergencyContacts/service";
 import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import { HOUSEHOLD_PEER_SELECT } from "@/lib/household/participantProjection";
-import { householdLeadship } from "@/lib/household/leads";
-import { normalizeAdultDob, replacesUnder18Date, UNDER_18_DECLARATION_REFUSAL } from "@/lib/person/adultDob";
+import { householdLeadship, setsHouseholdAges } from "@/lib/household/leads";
+import { AGE_LEAD_ONLY_REFUSAL, changesAge, normalizeAdultDob, replacesUnder18Date, UNDER_18_DECLARATION_REFUSAL } from "@/lib/person/adultDob";
 import { nameWrite, nicknameWrite, isNicknameWrite } from "@/lib/person/name";
 import { isYouth } from "@/lib/time";
 import { apiError } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { getEmailSenderIdentity } from "@/lib/emailIdentity";
-import { signInEmailHelp, grantedAuthorityEmailHelp } from "@/lib/person/signInEmail";
+import { lockedEmailHelp } from "@/lib/person/signInEmail";
+import { EMAIL_LOCK_RELATIONS, holdsEmailGrant } from "@/lib/person/emailLock";
 import { isDesignatedEmail, designatedEmailRefusalForBoard } from "@/lib/membership/volunteerDesignation";
 import { canonicalizeEmail } from "@/lib/emailNormalize";
 import { normalizeEmail } from "@/lib/prismaEmailNormalize";
@@ -72,20 +73,7 @@ export const PATCH = withAuth(
 
             const targetHouseholdMember = await prisma.person.findUnique({
                 where: { id: participantId },
-                include: {
-                    _count: {
-                        select: {
-                            accounts: true,
-                            roles: true,
-                            programsLed: true,
-                            programVolunteers: true,
-                            bgAttestationsAsSubject: true,
-                            personBgProcesses: true,
-                            toolStatuses: true,
-                        },
-                    },
-                    household: { select: { orgMembership: { select: { isVolunteerFamily: true } } } },
-                },
+                include: EMAIL_LOCK_RELATIONS,
             });
             if (!targetHouseholdMember || targetHouseholdMember.householdId !== householdId) {
                 return apiError("That household member was not found", 404);
@@ -97,6 +85,11 @@ export const PATCH = withAuth(
 
             if (replacesUnder18Date(dob, over25, targetHouseholdMember.dateOfBirth)) {
                 return apiError(UNDER_18_DECLARATION_REFUSAL, 400);
+            }
+
+            const age = normalizeAdultDob(dob, over25, targetHouseholdMember.dateOfBirth);
+            if (changesAge(age, targetHouseholdMember) && !(await setsHouseholdAges(prisma, userId, householdId))) {
+                return apiError(AGE_LEAD_ONLY_REFUSAL, 403);
             }
 
             // A sysadmin manages their own household without leading it, so making
@@ -114,7 +107,7 @@ export const PATCH = withAuth(
             // A linked sign-in's email is its sign-in address; only the board changes it.
             if (email !== undefined && targetHouseholdMember._count.accounts > 0) {
                 const { replyTo } = await getEmailSenderIdentity();
-                return apiError(signInEmailHelp(replyTo?.[0]), 400);
+                return apiError(lockedEmailHelp(replyTo?.[0]), 400);
             }
 
             if (isBadEmailChange(email, targetHouseholdMember.email)) {
@@ -124,16 +117,10 @@ export const PATCH = withAuth(
             // The email is the sign-in key, so a member holding board-granted authority keeps
             // the address the board granted it to. The form resends it on every save, so an
             // equivalent address passes the check but is never written over the stored one.
-            const { _count: held } = targetHouseholdMember;
-            const holdsGrant = held.roles + held.programsLed + held.programVolunteers
-                + held.bgAttestationsAsSubject + held.personBgProcesses + held.toolStatuses > 0
-                || Boolean(targetHouseholdMember.lastBackgroundCheck)
-                || targetHouseholdMember.canAccessStaging
-                || Boolean(targetHouseholdMember.household?.orgMembership?.isVolunteerFamily)
-                || (email !== undefined && (await trustStatus(prisma, participantId)).isTrusted);
+            const holdsGrant = holdsEmailGrant(targetHouseholdMember);
             if (holdsGrant && email !== undefined && canonicalizeEmail(email ?? "") !== canonicalizeEmail(targetHouseholdMember.email ?? "")) {
                 const { replyTo } = await getEmailSenderIdentity();
-                return apiError(grantedAuthorityEmailHelp(replyTo?.[0]), 400);
+                return apiError(lockedEmailHelp(replyTo?.[0]), 400);
             }
 
             // The form resends an unchanged email on every save; only a change is refused.
@@ -154,7 +141,7 @@ export const PATCH = withAuth(
                         nickname: nicknameWrite(nickname),
                         email: email !== undefined && !holdsGrant ? (email === "" ? null : normalizeEmail(email)) : undefined,
                         phone: phone !== undefined ? (phone === "" ? null : formatPhone(phone)) : undefined,
-                        ...normalizeAdultDob(dob, over25, targetHouseholdMember.dateOfBirth),
+                        ...age,
                         allergies: allergies !== undefined ? (allergies === "" ? null : allergies) : undefined,
                     },
                     select: HOUSEHOLD_PEER_SELECT,
@@ -264,7 +251,7 @@ export const PATCH = withAuth(
             }
             if (error instanceof BecameTrustedError) {
                 const { replyTo } = await getEmailSenderIdentity();
-                return apiError(grantedAuthorityEmailHelp(replyTo?.[0]), 400);
+                return apiError(lockedEmailHelp(replyTo?.[0]), 400);
             }
             if (isEmailInUseError(error, requestedEmail)) {
                 return apiError(EMAIL_IN_USE_REFUSAL, 400);

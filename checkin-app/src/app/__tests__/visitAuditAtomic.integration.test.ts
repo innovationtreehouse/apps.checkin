@@ -2,7 +2,7 @@
  * @jest-environment node
  */
 /**
- * A visit change and its audit row commit together (docs/rules/attendance-checkin.md).
+ * A visit change and its audit row commit together.
  * A trigger makes Postgres refuse this suite's audit rows, whichever client writes
  * them, so each route's visit change must roll back with the refused row.
  */

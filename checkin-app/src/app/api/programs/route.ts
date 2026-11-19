@@ -3,6 +3,7 @@ import { withAuth, getOptionalSessionUser } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { sendNotification } from "@/lib/notifications";
 import { createClaimantProduct, createShopifySingleVariantProgram } from "@/lib/shopify/products";
+import { isProgramStoreClosed } from "@/lib/programs/storeClosed";
 import { adjustProgramInventory } from "@/lib/shopify/stock";
 import { logBackendError, logger } from "@/lib/logger";
 import { isMembershipFeeSettled } from "@/lib/orgMembership";
@@ -13,11 +14,12 @@ import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { staleWhileRevalidate } from "@/lib/staleCache";
 import { validateProgramAgeBounds, isLeaderAgeEligible } from "@/lib/programAge";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
-import { resolveProgramYear } from "@/lib/programs/update";
+import { parseProgramName, resolveProgramYear } from "@/lib/programs/update";
 import { enrollmentClosedBy } from "@/lib/programs/saleState";
 import { isLiveHousehold } from "@/lib/household/archived";
 import { ARCHIVED_HOUSEHOLD_REFUSAL, lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
 import { ServiceError } from "@checkin/component-kit";
+import { personActor, recordAudit } from "@/lib/auditActor";
 
 
 // Public catalog projection: every Program column whose `/// @sensitivity:` tier
@@ -190,11 +192,11 @@ export const POST = withAuth({ roles: ['isBoardMember'] }, async (req, auth) => 
 
     try {
         const body = await req.json();
-        const { name, leadMentorId, startAt, endAt, appliesToYear, orgMemberOnly, publiclyVisible, minAge, maxAge, memberPrice, nonMemberPrice, maxParticipants } = body;
+        const { leadMentorId, startAt, endAt, appliesToYear, orgMemberOnly, publiclyVisible, minAge, maxAge, memberPrice, nonMemberPrice, maxParticipants } = body;
 
-        if (!name) {
-            return apiError("Program name is required", 400);
-        }
+        const parsedName = parseProgramName(body.name ?? "");
+        if (!parsedName.ok) return apiError(parsedName.message, 400);
+        const { name } = parsedName;
 
         if (!leadMentorId) {
             return apiError("Program Leader is required", 400);
@@ -263,14 +265,14 @@ export const POST = withAuth({ roles: ['isBoardMember'] }, async (req, auth) => 
         // price there is no store product (sync-shopify mints it once one is set).
         const basePriceCents = nmPrice;
         if (basePriceCents && basePriceCents > 0) {
-            shopifyData = await createShopifySingleVariantProgram(name, basePriceCents, maxPart);
+            shopifyData = await createShopifySingleVariantProgram(name, basePriceCents, maxPart, undefined, !(await isProgramStoreClosed()));
             // Without it checkout falls back to the public variant; the board can mint it later via sync-shopify.
             if (shopifyData) claimantData = await createClaimantProduct(name, basePriceCents);
         }
 
         const newProgram = await prisma.$transaction(async (tx) => {
             await lockLiveHouseholdsOf(tx, [mentorId]);
-            return tx.program.create({
+            const created = await tx.program.create({
                 data: {
                     name,
                     leadMentorId: mentorId,
@@ -293,16 +295,13 @@ export const POST = withAuth({ roles: ['isBoardMember'] }, async (req, auth) => 
                     claimantShopifyVariantId: claimantData?.claimantShopifyVariantId || null,
                 }
             });
-        });
-
-        await prisma.auditLog.create({
-            data: {
-                actorId: auth.user.id,
+            await recordAudit(tx, personActor(auth.user.id), {
                 action: 'CREATE',
                 tableName: 'Program',
-                affectedEntityId: newProgram.id,
-                newData: newProgram
-            }
+                affectedEntityId: created.id,
+                newData: created
+            });
+            return created;
         });
 
         if (newProgram.leadMentorId) {

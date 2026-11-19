@@ -63,7 +63,6 @@ export const classifications = {
         city: 'internal',
         state: 'internal',
         postalCode: 'internal',
-        intakeNotes: 'pii',
         archivedAt: 'public',
     },
     EmergencyContact: {
@@ -116,9 +115,6 @@ export const classifications = {
         renewalReminderSentAt: 'internal',
         isPaymentPlanRequested: 'hardship',
         scholarshipRequestKind: 'hardship',
-        intakeNoteSnapshot: 'pii',
-        noteAckById: 'internal',
-        noteAckAt: 'internal',
     },
     MembershipYearVariant: {
         membershipYear: 'public',
@@ -168,10 +164,9 @@ export const classifications = {
         shopifyOrgMembershipProductId: 'internal',
         shopifyPriceSyncedAt: 'internal',
         shopifyReconcileCursorAt: 'internal',
-        scholarshipDenialGraceDays: 'public',
         releasedLibraries: 'public',
+        programStoreClosedAt: 'internal',
         updatedAt: 'internal',
-        qboProductionRealmId: 'internal',
     },
     EmailTemplate: {
         key: 'public',
@@ -217,6 +212,7 @@ export const classifications = {
         proposedPhone: 'personal',
         proposedEmail: 'personal',
         proposedContext: 'internal',
+        familyReply: 'internal',
         createdAt: 'public',
         updatedAt: 'internal',
     },
@@ -602,7 +598,6 @@ export const relations = {
         bgAttestations: { model: 'BackgroundCheckAttestation', isList: true },
         bgAttestationsAsSubject: { model: 'BackgroundCheckAttestation', isList: true },
         personBgProcesses: { model: 'OrgMembershipProcess', isList: true },
-        intakeNoteAcks: { model: 'OrgMembershipProcess', isList: true },
         zohoSigningRequests: { model: 'OrgMembershipProcess', isList: true },
         corporationLeads: { model: 'CorporationLead', isList: true },
         corporationMembers: { model: 'CorporationMember', isList: true },
@@ -658,7 +653,6 @@ export const relations = {
         subjectPerson: { model: 'Person', isList: false },
         requestedForHousehold: { model: 'Household', isList: false },
         zohoSigner: { model: 'Person', isList: false },
-        noteAckBy: { model: 'Person', isList: false },
         attestations: { model: 'BackgroundCheckAttestation', isList: true },
     },
     MembershipYearVariant: {

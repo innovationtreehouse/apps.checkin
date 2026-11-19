@@ -137,6 +137,13 @@ it:
 | Refresher alarms and schedule | Weekly keepalive invoke; alarms on `QBO_INVALID_GRANT` and on any other principal reading the secret |
 | Posting schedule | The daily rule that calls `/api/cron/qbo-posting` with `QBO_POSTING_CRON_SECRET` |
 
+Production has neither the posting secret nor its schedule until you create them,
+and steps 5 to 7 wait on the daily run they start. Create `QBO_POSTING_CRON_SECRET`
+in production Secrets Manager and wire it to the app task the same way dev has it.
+Then add the daily EventBridge schedule for `/api/cron/qbo-posting` to the infra
+repository's cron schedules, sending the same secret. The route answers only to
+that secret, so a schedule with any other secret fails every run.
+
 The app reads these at boot, so they take effect when a new task rolls out. Leave
 `INCOME_MIRROR_NEWEST_WINS` unset until step 7.
 
@@ -165,7 +172,11 @@ repeats step 3 with the infra operator.
 
 The pickers read the app's copy of QuickBooks' account and Class lists. The
 daily `qbo-posting` run fills it once the app is connected, so this follows
-step 4 and that run. Each save is audited. Each pick can switch a lane on at the next daily run, and that
+step 4 and that run. To fill it sooner, press "Update now" at the top of the
+Books map. The "QuickBooks lists" status row reads "Refreshed <time>." once the
+copy is filled, and a save that needs the copy is refused until then. After
+adding or changing an account or Class in QuickBooks, press "Update now" again
+before picking it. Each save is audited. Each pick can switch a lane on at the next daily run, and that
 can't be undone, so don't pick an account to try it out. Clearing a role later
 stops the lane from posting, but the switch-on date stays.
 

@@ -328,7 +328,7 @@ describeDb("what finance reads about a group", () => {
     const file = textFile();
     const a = await uploadForReview(file);
     const b = await upload(file);
-    expect((await receiptService.get(b.id, "submitter")).duplicateNotice).toMatchObject({ matchId: a.id });
+    expect((await receiptService.get(b.id, "submitter")).duplicateNotice).toMatchObject({ matchId: a.id, uploadedByUserId: ALICE.id });
 
     const purchase = { details: manualDetails({ retailer: "Other Store" }) };
     actAs(BOB);

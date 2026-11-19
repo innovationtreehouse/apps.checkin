@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import { buildGtin13 } from "@checkin/gtin";
 import ExpenseDetailPage from "@checkin/expense/pages/expenseDetail";
@@ -37,7 +37,7 @@ beforeAll(() => {
 interface LineOpts { id: number; description: string; manualQbAccount?: string | null; nonInventory?: boolean; isCapital?: boolean }
 interface HoldOpts { lineItemId: number; reason: string; matchedRows?: unknown[]; status?: string }
 
-function renderWith(lines: LineOpts[], holds: HoldOpts[]) {
+function renderWith(lines: LineOpts[], holds: HoldOpts[], inactive: string[] = []) {
   mockLoads = {
     "/expenses/e1": {
       id: "e1", vendorName: "Acme", receiptDate: null, receiptTotalCents: 1000, taxCents: 0, shippingCents: 0, discountCents: 0,
@@ -60,7 +60,7 @@ function renderWith(lines: LineOpts[], holds: HoldOpts[]) {
       { id: "4000", name: "Supplies", accountType: "Expense", active: true },
       { id: "4100", name: "Tools", accountType: "Cost of Goods Sold", active: true },
       { id: "1500", name: "Equipment", accountType: "Fixed Asset", active: true },
-    ],
+    ].map((a) => ({ ...a, active: !inactive.includes(a.id) })),
   };
   render(<MantineProvider><ExpenseDetailPage id="e1" /></MantineProvider>);
 }
@@ -140,7 +140,7 @@ describe("Account holds panel", () => {
       [{ lineItemId: 1, reason: "NO_MATCH" }, { lineItemId: 2, reason: "NO_PART_NUMBER" }],
     );
     expect(resubmit()).toBeEnabled();
-    expect(screen.getByText("1 held line has no account yet. Resubmit checks the account rules again and holds it if it still matches none.")).toBeInTheDocument();
+    expect(screen.getByText("1 held line has no account yet. Resubmit re-reads the catalog, checks the account rules again, and holds it if it still matches none.")).toBeInTheDocument();
   });
 
   it("counts several held lines with no account", () => {
@@ -148,7 +148,7 @@ describe("Account holds panel", () => {
       [{ id: 1, description: "Cable" }, { id: 2, description: "Tape" }],
       [{ lineItemId: 1, reason: "NO_MATCH" }, { lineItemId: 2, reason: "NO_PART_NUMBER" }],
     );
-    expect(screen.getByText("2 held lines have no account yet. Resubmit checks the account rules again and holds each one that still matches none.")).toBeInTheDocument();
+    expect(screen.getByText("2 held lines have no account yet. Resubmit re-reads the catalog, checks the account rules again, and holds each one that still matches none.")).toBeInTheDocument();
   });
 
   it("says nothing about missing accounts once every held line has one", () => {
@@ -172,5 +172,15 @@ describe("Account holds panel", () => {
   it("hides the panel when no hold is pending", () => {
     renderWith([{ id: 1, description: "Cable" }], [{ lineItemId: 1, reason: "NO_MATCH", status: "RESOLVED" }]);
     expect(screen.queryByText("Account holds")).not.toBeInTheDocument();
+  });
+
+  it("offers no inactive account, and warns beside a held line set to one", () => {
+    renderWith([{ id: 1, description: "Cable", manualQbAccount: "4100" }], [{ lineItemId: 1, reason: "NO_MATCH" }], ["4100"]);
+    const warning = screen.getByText("Tools is inactive in QuickBooks. Pick an active one.").closest<HTMLElement>("[role=alert]")!;
+    expect(within(warning).getByRole("button", { name: "Update now" })).toBeInTheDocument();
+    const picker = screen.getByRole("textbox", { name: "QuickBooks account" });
+    expect(picker).toHaveValue("");
+    fireEvent.click(picker);
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(["Supplies (4000)"]);
   });
 });

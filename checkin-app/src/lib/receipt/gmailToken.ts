@@ -9,6 +9,8 @@ import { invokeRefresher } from "@/lib/tokenRefresher";
 
 /** Re-ask the refresher this long before the token it handed out expires. */
 const TOKEN_MARGIN_MS = 5 * 60_000;
+/** A failed refresh is answered from memory this long, so reloading System Status re-invokes nothing. */
+const FAILURE_RETRY_MS = 60_000;
 
 /** Shown on System Status and carried by mail intake's failure while the login is revoked. */
 export const GMAIL_RECONNECT = "The receipt mailbox needs reconnecting: its Gmail login was revoked. Ops reconnects it by re-running the Gmail consent.";
@@ -26,14 +28,25 @@ const invokeLambda: InvokeGmailRefresher = (functionName) =>
 /** A token getter for one refresher and mailbox; `invoke` is for tests. */
 export function gmailTokenSource(functionName: string, mailboxAddress: string, invoke: InvokeGmailRefresher = invokeLambda): () => Promise<string> {
   let cached: z.infer<typeof RefresherAnswer> | null = null;
-  return async () => {
-    if (cached && Date.now() < cached.expiresAt - TOKEN_MARGIN_MS) return cached.accessToken;
+  let failed: { error: unknown; until: number } | null = null;
+  const fetchToken = async () => {
     const parsed = RefresherAnswer.safeParse(await invoke(functionName));
     if (!parsed.success) throw new KindedError("settings", GMAIL_MALFORMED);
     const answer = parsed.data;
     if (answer.mailbox.toLowerCase() !== mailboxAddress.toLowerCase()) throw new KindedError("settings", GMAIL_WRONG_MAILBOX);
-    cached = answer;
-    return answer.accessToken;
+    return answer;
+  };
+  return async () => {
+    if (cached && Date.now() < cached.expiresAt - TOKEN_MARGIN_MS) return cached.accessToken;
+    if (failed && Date.now() < failed.until) throw failed.error;
+    try {
+      cached = await fetchToken();
+      failed = null;
+      return cached.accessToken;
+    } catch (error) {
+      failed = { error, until: Date.now() + FAILURE_RETRY_MS };
+      throw error;
+    }
   };
 }
 

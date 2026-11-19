@@ -93,3 +93,45 @@ describe('cronSecret authorize', () => {
         expect(ran).not.toHaveBeenCalled();
     });
 });
+
+describe('cronSecret authorize: bg-settle', () => {
+    const SETTLE_ENDPOINT = 'GET /api/cron/bg-settle';
+    const SETTLE_SECRET = 'settle-secret-value';
+    const saved = { settle: process.env.BG_SETTLE_CRON_SECRET, posting: process.env.QBO_POSTING_CRON_SECRET };
+    const settleRan = jest.fn();
+    const SETTLE_GET = handler(SETTLE_ENDPOINT, async () => {
+        settleRan();
+        return {};
+    });
+    const settleCall = (authorization: string) =>
+        SETTLE_GET(new NextRequest('http://localhost/api/cron/bg-settle', { headers: { authorization } }));
+
+    beforeEach(() => {
+        settleRan.mockClear();
+        mockAuth.mockResolvedValue(unauthenticated);
+        process.env.BG_SETTLE_CRON_SECRET = SETTLE_SECRET;
+        process.env.QBO_POSTING_CRON_SECRET = POSTING_SECRET;
+    });
+
+    afterAll(() => {
+        process.env.BG_SETTLE_CRON_SECRET = saved.settle;
+        process.env.QBO_POSTING_CRON_SECRET = saved.posting;
+    });
+
+    it('registers the settle route on its own secret, with no view', () => {
+        const route = getRoute(SETTLE_ENDPOINT);
+        expect(route?.authorize).toEqual({ cronSecret: 'bg-settle' });
+        expect(route?.envelope).toBeNull();
+        expect(route?.orderedView).toEqual([]);
+    });
+
+    it('admits a Bearer of BG_SETTLE_CRON_SECRET', async () => {
+        expect((await settleCall(`Bearer ${SETTLE_SECRET}`)).status).toBe(200);
+        expect(settleRan).toHaveBeenCalledTimes(1);
+    });
+
+    it('refuses a Bearer of QBO_POSTING_CRON_SECRET with 401', async () => {
+        expect((await settleCall(`Bearer ${POSTING_SECRET}`)).status).toBe(401);
+        expect(settleRan).not.toHaveBeenCalled();
+    });
+});

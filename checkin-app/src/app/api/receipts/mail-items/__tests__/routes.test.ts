@@ -67,6 +67,7 @@ describe("mail queue routes admit FINANCE only", () => {
   const calls = [
     () => list(req(""), noParams),
     () => assign(req("/3/assign", "POST", { email: "a@example.org" }), params()),
+    () => assign(req("/3/assign", "POST", { email: "a@example.org", remember: true }), params()),
     () => discard(req("/3/discard", "POST", { reason: "spam" }), params()),
     () => file(req("/3/file"), params()),
     () => catchUp(req("/catch-up", "POST"), noParams),

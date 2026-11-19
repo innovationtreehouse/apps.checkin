@@ -24,7 +24,6 @@ interface Profile {
     notifyNewPrograms?: boolean;
     emailPurchaseOutcomes?: boolean;
   } | null;
-  emailSuppressed?: boolean;
 }
 
 export default function CommunicationPage() {
@@ -39,7 +38,6 @@ export default function CommunicationPage() {
     notifyNewPrograms: true,
     emailPurchaseOutcomes: true,
   });
-  const [emailSuppressed, setEmailSuppressed] = useState(false);
 
   // Counts toggles still saving; a refetch landing meanwhile must not flip them back.
   const [saving, setSaving] = useState(0);
@@ -52,7 +50,6 @@ export default function CommunicationPage() {
       notifyNewPrograms: s.notifyNewPrograms !== undefined ? s.notifyNewPrograms : true,
       emailPurchaseOutcomes: s.emailPurchaseOutcomes !== false,
     });
-    setEmailSuppressed(!!profile.emailSuppressed);
   });
 
   useEffect(() => {
@@ -70,22 +67,6 @@ export default function CommunicationPage() {
       await api('/api/profile', { method: 'PATCH', body: JSON.stringify({ notificationSettings: next }) });
     } catch (e) {
       setSettings(prev);
-      showError(errorMessage(e));
-    } finally {
-      setSaving((n) => n - 1);
-    }
-  };
-
-  // Same immediate-persist / revert-on-failure pattern as the checkboxes above, for the
-  // one field that isn't inside notificationSettings.
-  const persistSuppression = async (value: boolean) => {
-    const prev = emailSuppressed;
-    setEmailSuppressed(value);
-    setSaving((n) => n + 1);
-    try {
-      await api('/api/profile', { method: 'PATCH', body: JSON.stringify({ emailSuppressed: value }) });
-    } catch (e) {
-      setEmailSuppressed(prev);
       showError(errorMessage(e));
     } finally {
       setSaving((n) => n - 1);
@@ -125,13 +106,6 @@ export default function CommunicationPage() {
           ))}
         </Stack>
 
-        <Stack mt="lg">
-          <Checkbox
-            checked={emailSuppressed}
-            onChange={(e) => persistSuppression(e.currentTarget.checked)}
-            label="Don't email me membership join/renewal invitations"
-          />
-        </Stack>
         </>)}
 
       </Card>

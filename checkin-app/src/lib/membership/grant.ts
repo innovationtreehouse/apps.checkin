@@ -70,17 +70,8 @@ export async function grantMembership(
         if (existing.status !== "PENDING_PAYMENT") {
             throw new PaymentError("wrong_phase", `The household's application is at ${existing.status}; it can be granted once it reaches payment.`);
         }
+        // The certify row records the reason and the granted year in its own transaction.
         await certifyPaymentPlan(existing.id, actor.actorId, { reason: actor.reason, year });
-        await prisma.auditLog.create({
-            data: {
-                actorId: actor.actorId,
-                action: "EDIT",
-                tableName: "OrgMembershipProcess",
-                affectedEntityId: existing.id,
-                secondaryAffectedEntity: householdId,
-                newData: { grantedYear: year, reason: actor.reason },
-            },
-        });
         return { paid: true, process: await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: existing.id } }) };
     }
 

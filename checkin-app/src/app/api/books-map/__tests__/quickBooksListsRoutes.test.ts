@@ -3,7 +3,7 @@
  */
 /**
  * GET /api/books-map/quickbooks-lists and POST /api/books-map/quickbooks-lists/refresh: who the registry admits,
- * the 503 wording when QuickBooks is off or fails its read, and the status rows a success answers with.
+ * the 503 wording when QuickBooks is off or fails its read, the status rows a success answers with, and the 30 s gap between QuickBooks reads.
  */
 import type { NextRequest as NextRequestType } from 'next/server';
 import { getServerSession } from 'next-auth/next';
@@ -80,7 +80,22 @@ describe('POST /api/books-map/quickbooks-lists/refresh', () => {
         const res = await press(FINANCE);
         expect(res.status).toBe(503);
         expect((await res.json()).error).toBe('QuickBooks is not connected.');
-        expect(status).not.toHaveBeenCalled();
+        expect(status).toHaveBeenCalledTimes(1);
+    });
+
+    test('a press within 30 s of the last refresh answers with the saved status and never calls QuickBooks', async () => {
+        const recent = new Date(Date.now() - 10_000);
+        status.mockResolvedValue(STATUS.map((s) => ({ ...s, refreshedAt: recent })));
+        const res = await press(FINANCE);
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual(STATUS.map((s) => ({ ...s, refreshedAt: recent.toISOString() })));
+        expect(refresh).not.toHaveBeenCalled();
+    });
+
+    test('a press 30 s or more after the last refresh calls QuickBooks', async () => {
+        status.mockResolvedValue(STATUS.map((s) => ({ ...s, refreshedAt: new Date(Date.now() - 31_000) })));
+        expect((await press(FINANCE)).status).toBe(200);
+        expect(refresh).toHaveBeenCalledTimes(1);
     });
 
     test('answers 503 "try again" when QuickBooks fails its read, and never its exception text', async () => {

@@ -20,8 +20,8 @@ beforeEach(() => {
 });
 
 /**
- * The scope behind every self-service visit write
- * (docs/rules/attendance-checkin.md): yourself always, your household
+ * The scope behind every self-service visit write:
+ * yourself always, your household
  * members if you lead the household, nobody else — and the household comes from
  * the actor's own row, never from the request.
  */

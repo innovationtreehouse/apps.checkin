@@ -1,8 +1,8 @@
 /**
  * Part mapping in the browser: a confirmed receipt waits here until each line is
- * linked to a catalog item, proposed as a new one, or marked not inventory
- * (docs/rules/inventory.md → Receiving). Only inventory managers act on it; finance and the
- * Board only see it, and nobody else reaches it (→ Access).
+ * linked to a catalog item, proposed as a new one, or marked not inventory.
+ * Only inventory managers act on it; finance and the
+ * Board only see it, and nobody else reaches it.
  */
 import { expect, test, type Page } from "@playwright/test";
 import { loginAs } from "../flow-tests/helpers";
