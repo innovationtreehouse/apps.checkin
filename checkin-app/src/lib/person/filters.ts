@@ -1,4 +1,5 @@
 import type { Prisma } from "@/generated/prisma/client";
+import { orgCalendarDay } from "@/lib/time";
 
 /** An enrollment that still counts: a WITHDRAWN row is kept for history only. */
 export const ENROLLED_PARTICIPANT: Prisma.ProgramParticipantWhereInput = { status: { not: "WITHDRAWN" } };
@@ -25,12 +26,14 @@ export const ATTACHMENT_LOOKBACK_MONTHS = 12;
  * ago every cycle forever.
  */
 export function recentProgramWhere(now: Date): Prisma.ProgramWhereInput {
-    const since = new Date(now);
+    // startAt and endAt are calendar days, so the bounds are the org's day, not the UTC instant.
+    const today = orgCalendarDay(now);
+    const since = new Date(today);
     since.setUTCMonth(since.getUTCMonth() - ATTACHMENT_LOOKBACK_MONTHS);
     return {
         AND: [
             { endAt: { gte: since } },
-            { startAt: { lte: now } },
+            { startAt: { lte: today } },
         ],
     };
 }
