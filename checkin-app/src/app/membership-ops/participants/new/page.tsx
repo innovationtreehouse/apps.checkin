@@ -217,12 +217,8 @@ function NewParticipantForm() {
                 placeholder="Search households..."
                 selectedId={householdId || null}
                 selectedLabel={householdSearch}
-                search={async (q) => {
-                  const res = await fetch(`/api/membership-ops/households?q=${encodeURIComponent(q)}`);
-                  if (!res.ok) return [];
-                  const data = await res.json();
-                  return data.households || [];
-                }}
+                search={(q) => api<{ households?: HouseholdOption[] }>(`/api/membership-ops/households?q=${encodeURIComponent(q)}`)
+                  .then((data) => data.households ?? [], () => [])}
                 getOptionLabel={(h) => h.name || `Household #${h.id}`}
                 getOptionDescription={(h) => h.householdMembers.map((p) => p.name || p.email || 'Unnamed').join(', ') || 'Empty'}
                 onSelect={(h) => { setHouseholdId(h.id.toString()); setHouseholdSearch(h.name || `Household #${h.id}`); setLinkCleared(false); }}

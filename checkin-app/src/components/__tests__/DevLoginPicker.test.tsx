@@ -2,7 +2,8 @@ type Rtl = typeof import("@/test-helpers/rtl");
 jest.mock("next/navigation", () => jest.requireActual<Rtl>("@/test-helpers/rtl").navMock());
 jest.mock("next-auth/react", () => jest.requireActual<Rtl>("@/test-helpers/rtl").authMock());
 
-import { screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { notifications, notificationsStore } from "@mantine/notifications";
 import { renderWithProviders, mockFetchJson, resetRtl, setCheckinEnv } from "@/test-helpers/rtl";
 import DevLoginPicker from "../DevLoginPicker";
 
@@ -21,6 +22,7 @@ beforeEach(() => {
   resetRtl();
   setCheckinEnv("local");
 });
+afterEach(() => act(() => notifications.clean()));
 
 describe("DevLoginPicker", () => {
   it("lists the dev personas", async () => {
@@ -50,5 +52,20 @@ describe("DevLoginPicker", () => {
     const fetchMock = mockFetchJson({});
     renderWithProviders(<DevLoginPicker />);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("shows the route's words when minting a new registrant is refused", async () => {
+    global.fetch = jest.fn(async (_input: RequestInfo | URL, init?: RequestInit) =>
+      init?.method === "POST"
+        ? new Response(JSON.stringify({ error: "Local instance only" }), { status: 403 })
+        : new Response(JSON.stringify({ personas: [persona] })),
+    ) as unknown as typeof fetch;
+    renderWithProviders(<DevLoginPicker />);
+
+    fireEvent.click(await screen.findByText(/New registrant/));
+    await waitFor(() =>
+      expect(notificationsStore.getState().notifications[0]).toMatchObject({ message: "Local instance only", color: "red" }),
+    );
+    expect(screen.getByText(/＋ New registrant/)).toBeInTheDocument();
   });
 });
