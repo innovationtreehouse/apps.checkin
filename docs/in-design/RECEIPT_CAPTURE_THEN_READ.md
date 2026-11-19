@@ -36,7 +36,7 @@ Taking a receipt in and reading it are two separate steps.
 | Uploader | The upload answers at once with "Saved. Reading it now"; the page fills in when the reading lands, usually within a minute. "Read it again" answers at once the same way. | Failures, their notes, typing the details by hand, the daily reading allowance. |
 | Emailing a receipt | The daily run captures the mail and makes the receipt, then reads it minutes later, after the run's request has answered. The acknowledgement goes out as today. | Sender checks, holds, daily limits, refusal notices. |
 | Finance | A receipt waiting to be read has its own state. The Problems list gets one line when reading falls behind, and one stuck item per captured email that could not be processed, with Retry. | Held mail, deferred mail, the mail page's catch-up button. |
-| Sysadmins | A captured email can be processed again from our copy. | No new way to download mail. |
+| Finance and sysadmins | A captured email can be processed again from our copy. | No new way to download mail. |
 
 Cost: one table, one state and a MIME parser, plus raw email in the bucket for 90
 days. The lease and the daily schedule stay as they are. Infra adds one lifecycle
