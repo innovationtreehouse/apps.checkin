@@ -225,3 +225,9 @@ POST /api/finance-ops/s-read/sync
 GET /api/finance-ops/s-read/diagnose
 GET /api/finance-ops/s-read/match-audit
 POST /api/finance-ops/s-read/match-audit/track
+
+# Key Volunteer — agreement, signing, sync and version bump via handler().
+GET /api/membership/key-volunteer
+POST /api/membership/key-volunteer/sign
+POST /api/membership/key-volunteer/sync
+POST /api/settings/membership/key-volunteer-version
