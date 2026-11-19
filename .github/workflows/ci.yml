@@ -165,10 +165,10 @@ jobs:
             echo "No packages/** or *-function/** change — skipping the Vitest tier."
             echo "packages=false" >> "$GITHUB_OUTPUT"
           fi
-          # dump-task-logs.sh redacts row data before task logs reach the public
-          # Actions log; its check runs when it, its test, or this workflow changes.
-          if printf '%s\n' "$changed" | grep -qE '^(scripts/(test-)?dump-task-logs\.sh|\.github/workflows/ci\.yml)$'; then
-            echo "dump-task-logs.sh (or this workflow) changed — running its check."
+          # The deploy scripts' checks (dump-task-logs.sh, smoke-live-app.sh) run
+          # when a script, its test, or this workflow changes.
+          if printf '%s\n' "$changed" | grep -qE '^(scripts/(test-)?(dump-task-logs|smoke-live-app)\.sh|\.github/workflows/ci\.yml)$'; then
+            echo "A deploy script (or this workflow) changed — running the script checks."
             echo "scripts=true" >> "$GITHUB_OUTPUT"
           else
             echo "scripts=false" >> "$GITHUB_OUTPUT"
@@ -802,6 +802,10 @@ jobs:
       - name: Run dump-task-logs check
         if: needs.changes.outputs.scripts == 'true'
         run: bash scripts/test-dump-task-logs.sh
+
+      - name: Run smoke-live-app check
+        if: needs.changes.outputs.scripts == 'true'
+        run: bash scripts/test-smoke-live-app.sh
 
       - name: Run AI-review router self-tests
         if: needs.changes.outputs.aireview == 'true'
