@@ -172,8 +172,8 @@ function configure() {
 }
 
 let receiptSeq = 0;
-/** An accepted receipt gift: lines of 10.00 and 20.00 on a receipt totalling 33.00 with tax. */
-async function acceptedGift(opts: { totalCents?: number; date?: string } = {}): Promise<number> {
+/** An accepted receipt gift: lines of 10.00 and 20.00 on a receipt totalling 33.00 with tax, and with `freeValueCents` a third line priced at $0 that finance values. */
+async function acceptedGift(opts: { totalCents?: number; date?: string; freeValueCents?: number } = {}): Promise<number> {
   const receiptId = `33333333-3333-4333-8333-${String(++receiptSeq).padStart(12, "0")}`;
   const receipt: CompletedReceipt = {
     receiptId,
@@ -196,17 +196,22 @@ async function acceptedGift(opts: { totalCents?: number; date?: string } = {}): 
     lineItems: [
       { receiptLineItemId: 1, lineNumber: 1, description: "Paper", gtin13: PAPER_GTIN, partNumber: null, manufacturer: null, quantity: 1, unitPriceCents: 1000, totalPriceCents: 1000, isDelayed: false },
       { receiptLineItemId: 2, lineNumber: 2, description: "Lathe", gtin13: LATHE_GTIN, partNumber: null, manufacturer: null, quantity: 1, unitPriceCents: 2000, totalPriceCents: 2000, isDelayed: false },
+      ...(opts.freeValueCents === undefined
+        ? []
+        : [{ receiptLineItemId: 3, lineNumber: 3, description: "Free paper", gtin13: PAPER_GTIN, partNumber: null, manufacturer: null, quantity: 1, unitPriceCents: 0, totalPriceCents: 0, isDelayed: false }]),
     ],
   };
   await ingestInKind(receipt);
   await recordInKindDonor(orgId, receiptId, { firstName: "Jane", lastName: "Doe", companyName: null }, 0);
   const { id } = await db.inKindDonation.findUniqueOrThrow({ where: { orgId_receiptId: { orgId, receiptId } } });
-  await inKindAcceptService.decide("receipt", id, ACCEPT, { actorUserId: FINANCE, actorUsername: "finance" });
+  const free = await db.inKindDonationLine.findMany({ where: { donationId: id, valueCents: 0 } });
+  const lineValues = opts.freeValueCents === undefined ? undefined : free.map((l) => ({ lineId: l.id, valueCents: opts.freeValueCents as number }));
+  await inKindAcceptService.decide("receipt", id, { ...ACCEPT, lineValues }, { actorUserId: FINANCE, actorUsername: "finance" });
   return id;
 }
 
-/** An accepted gift without a receipt, one of its lines valued at $0, which the drain holds for finance without calling QuickBooks. */
-async function zeroLineManualGift(): Promise<number> {
+/** An accepted gift without a receipt with lines at `values`, a $0 among them as accepting never leaves one: written straight to the database. */
+async function zeroLineManualGift(values = [3000, 0]): Promise<number> {
   const now = new Date();
   const { id } = await db.manualInKindDonation.create({
     data: {
@@ -223,7 +228,7 @@ async function zeroLineManualGift(): Promise<number> {
       bucketAssignedByUserId: FINANCE,
       bucketAssignedAt: now,
       capitalSubmittedAt: now,
-      lines: { create: [{ gtin13: "0011111111116", quantity: 1, valueCents: 3000 }, { gtin13: "0011111111116", quantity: 1, valueCents: 0 }] },
+      lines: { create: values.map((valueCents) => ({ gtin13: "0011111111116", quantity: 1, valueCents })) },
     },
   });
   return id;
@@ -310,13 +315,23 @@ describeDb("in-kind drain", () => {
     expect(await db.inKindPosting.count()).toBe(0);
   });
 
-  it("a gift without a receipt accepted with a $0 line goes to finance, never booked", async () => {
+  it("a $0 line that reaches the drain is a bug: the post fails for finance, never booked", async () => {
     await switchOn();
     const id = await zeroLineManualGift();
-    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 0, held: 1 });
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 0, failed: 1 });
     expect(qbo.posts).toHaveLength(0);
     const held = await db.inKindPosting.findUniqueOrThrow({ where: { orgId_source_giftId: { orgId, source: "manual", giftId: id } } });
-    expect(held).toMatchObject({ matchState: "NEEDS_FINANCE", qbNote: expect.stringContaining("no value") });
+    expect(held).toMatchObject({ matchState: "NEEDS_FINANCE", qbLastError: expect.stringContaining("has no value to book") });
+  });
+
+  it("a receipt line priced at $0 books at finance's value; the receipt's tax stays on its priced lines and the entry balances", async () => {
+    await switchOn();
+    await acceptedGift({ freeValueCents: 500 });
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1 });
+    const [{ body }] = qbo.posts;
+    const amounts = (type: string) => body.Line.filter((l) => l.JournalEntryLineDetail.PostingType === type).map((l) => [l.Description, Math.round(l.Amount * 100)]);
+    expect(amounts("Credit")).toEqual([["In-kind contribution", 3800]]);
+    expect(amounts("Debit")).toEqual([["Paper", 1100], ["Lathe", 2200], ["Free paper", 500]]);
   });
 
   it("before switch-on it only matches: a gift it cannot match waits for finance, unbooked", async () => {
@@ -599,7 +614,7 @@ describeDb("in-kind drain", () => {
 
     it("a gift held without calling QuickBooks is not stuck", async () => {
       await switchOn();
-      const noValue = await zeroLineManualGift();
+      const noValue = await zeroLineManualGift([0]);
 
       await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ held: 1, failed: 0 });
       expect(await db.inKindPosting.findUniqueOrThrow({ where: { orgId_source_giftId: { orgId, source: "manual", giftId: noValue } } })).toMatchObject({ matchState: "NEEDS_FINANCE", qbFirstFailedAt: null });

@@ -271,7 +271,7 @@ async function journalLines(run: Run, gift: GiftToBook): Promise<InKindJournalLi
   if (!classId) return heldNoCall("The gift's bucket has no QuickBooks Class in the books map");
   const income = run.accounts.INKIND_INCOME;
   if (!income) return heldNoCall("The books map has no in-kind income account");
-  const lines = gift.lines.filter((l) => l.valueCents > 0);
+  const { lines } = gift;
   const assets = new Set(await getInKindCapital().assetLineIds(run.orgId, { giftSource: gift.source, giftId: gift.id }));
   const parts = lines.flatMap((l) => (l.quickBooksAccountId || !l.gtin13 ? [] : [{ lineId: l.id, gtin13: l.gtin13, isCapital: assets.has(l.id) }]));
   const [ruled, qb] = await Promise.all([getInKindAccounts().resolve(run.orgId, parts), run.qbAccounts()]);
@@ -312,10 +312,9 @@ function fromJournal(r: FindOrCreateResult, gift: GiftToBook, txnDate: string): 
 async function call(run: Run, gift: GiftToBook, txnDate: string, gate: { closedThrough: string; mayCreate: boolean }, attemptedBefore: Date | null): Promise<Settlement> {
   try {
     if (gift.totalCents <= 0) return heldNoCall("This gift has no value to book; skip it");
-    // A receipt's free line is real; a gift without one was valued line by line by finance.
-    if (gift.source === "manual" && gift.lines.some((l) => l.valueCents <= 0)) {
-      return heldNoCall("A line of this gift has no value; the app will not book it, so finance books it by hand or skips it");
-    }
+    // Accepting refuses a line that would book at $0, so one here is a bug.
+    const unvalued = gift.lines.find((l) => l.valueCents <= 0);
+    if (unvalued) throw new Error(`Line ${unvalued.id} of in-kind gift ${gift.source} ${gift.id} has no value to book`);
     if (attemptedBefore) {
       const own = await lookupOwnJournal(run, gift, attemptedBefore);
       if (own) return own;

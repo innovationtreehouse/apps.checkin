@@ -1,6 +1,6 @@
 /** A receipt's tax, shipping or discount spreads across its lines by value and sums to the total. */
 import { describe, it, expect } from "vitest";
-import { spreadToTotal } from "../../services/inKindAcceptService";
+import { freeLines, spreadToTotal } from "../../lib/in-kind-value";
 
 describe("spreadToTotal", () => {
   it.each([
@@ -12,6 +12,15 @@ describe("spreadToTotal", () => {
     [[], 0, []],
   ])("spreads %j to %i", (values, total, expected) => {
     expect(spreadToTotal(values, total)).toEqual(expected);
+  });
+
+  it.each([
+    [[1000, 0], 1100, [false, true]],
+    [[2500], 0, [true]],
+    [[1, 10000], 5000, [true, false]],
+    [[0, 0], 101, [true, true]],
+  ])("finance values the lines of %j that come to $0 of %i", (prices, total, expected) => {
+    expect(freeLines(prices, total)).toEqual(expected);
   });
 
   it("always sums to the total", () => {

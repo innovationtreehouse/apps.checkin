@@ -1,7 +1,8 @@
 /**
  * The in-kind accept step: a finance holder outside the uploader's or recorder's household
  * accepts, refuses or returns each gift; the Board decides only when every finance holder is
- * conflicted. Accepting sets the bucket (and, without a receipt, the value); the warnings only warn.
+ * conflicted. Accepting sets the bucket (and, without a receipt or on a receipt line priced at $0,
+ * the value); the warnings only warn.
  */
 import { it, expect, beforeEach, vi } from "vitest";
 import type { CompletedReceipt } from "@checkin/receipt-types";
@@ -98,6 +99,17 @@ async function receiptGift(totalCents = 2500): Promise<number> {
   await ingestInKind(receipt(totalCents));
   await recordInKindDonor(orgId, R1, { firstName: "Jane", lastName: "Doe", companyName: null }, 0);
   return (await db.inKindDonation.findUniqueOrThrow({ where: { orgId_receiptId: { orgId, receiptId: R1 } } })).id;
+}
+
+/** A receipt gift whose second line the receipt priced at $0. */
+async function freeLineGift(receiptTotalCents = 2500): Promise<{ id: number; priced: number; free: number }> {
+  const r = receipt(2500);
+  const free = { ...r.lineItems[0], receiptLineItemId: 2, lineNumber: 2, description: "Free bits", unitPriceCents: 0, totalPriceCents: 0 };
+  await ingestInKind({ ...r, receiptTotalCents, lineItems: [...r.lineItems, free] });
+  await recordInKindDonor(orgId, R1, { firstName: "Jane", lastName: "Doe", companyName: null }, 0);
+  const { id } = await db.inKindDonation.findUniqueOrThrow({ where: { orgId_receiptId: { orgId, receiptId: R1 } } });
+  const [priced, freeId] = (await db.inKindDonationLine.findMany({ where: { donationId: id }, orderBy: { lineNumber: "asc" } })).map((l) => l.id);
+  return { id, priced, free: freeId };
 }
 
 async function manualGift(): Promise<{ id: number; lineIds: number[] }> {
@@ -226,6 +238,49 @@ describeDb("accepting", () => {
     const id = await receiptGift();
     const [line] = await db.inKindDonationLine.findMany({ where: { donationId: id } });
     await expect(inKindAcceptService.decide("receipt", id, { ...ACCEPT, lineValues: [{ lineId: line.id, valueCents: 1 }] }, by(FINANCE))).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("refuses to accept a receipt gift while a line it priced at $0 has no value, naming the line", async () => {
+    const { id } = await freeLineGift();
+    await expect(inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE))).rejects.toMatchObject({ status: 400, message: expect.stringContaining("Line 2 (Free bits) comes to $0 on the receipt") });
+    expect(await db.inKindDonation.findUniqueOrThrow({ where: { id } })).toMatchObject({ decisionOutcome: null });
+  });
+
+  it("only a line the receipt priced at $0 takes a value", async () => {
+    const { id, priced, free } = await freeLineGift();
+    const lineValues = [{ lineId: priced, valueCents: 100 }, { lineId: free, valueCents: 500 }];
+    await expect(inKindAcceptService.decide("receipt", id, { ...ACCEPT, lineValues }, by(FINANCE))).rejects.toMatchObject({ status: 400 });
+    expect((await db.inKindDonationLine.findMany({ where: { donationId: id } })).map((l) => l.financeValueCents)).toEqual([null, null]);
+  });
+
+  it("finance values a receipt's free line: the gift books at the receipt total plus that value, and the history says who set it", async () => {
+    const { id, free } = await freeLineGift();
+    const lineValues = [{ lineId: free, valueCents: 500 }];
+    await expect(inKindAcceptService.decide("receipt", id, { ...ACCEPT, lineValues }, by(FINANCE))).resolves.toMatchObject({ totalValueCents: 3000 });
+    const lines = await db.inKindDonationLine.findMany({ where: { donationId: id }, orderBy: { lineNumber: "asc" } });
+    expect(lines.map((l) => [l.valueCents, l.financeValueCents])).toEqual([[2500, null], [0, 500]]);
+    expect((await queueFor(FINANCE))[0].lines.map((l) => l.valueCents)).toEqual([2500, 500]);
+    const [event] = await db.workflowEvent.findMany({ where: { orgId, eventType: "IN_KIND_DECIDED" } });
+    expect(event).toMatchObject({ actorUserId: FINANCE });
+    expect(JSON.parse(event.payload ?? "{}")).toMatchObject({ totalValueCents: 3000, lineValues });
+  });
+
+  it("a conflicted finance holder cannot value a receipt's free line", async () => {
+    const { id, free } = await freeLineGift();
+    await expect(inKindAcceptService.decide("receipt", id, { ...ACCEPT, lineValues: [{ lineId: free, valueCents: 500 }] }, by(FINANCE_IN_UPLOADER_HOUSEHOLD))).rejects.toMatchObject({ status: 403 });
+    expect((await db.inKindDonationLine.findMany({ where: { donationId: id } })).map((l) => l.financeValueCents)).toEqual([null, null]);
+  });
+
+  it("a line a 100% coupon made free is a free line: finance values it, and the refusal names it until then", async () => {
+    const { id, priced, free } = await freeLineGift(0);
+    await expect(inKindAcceptService.decide("receipt", id, { ...ACCEPT, lineValues: [{ lineId: free, valueCents: 500 }] }, by(FINANCE))).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining("Line 1 (Drill) comes to $0 on the receipt"),
+    });
+    const lineValues = [{ lineId: priced, valueCents: 1500 }, { lineId: free, valueCents: 500 }];
+    await expect(inKindAcceptService.decide("receipt", id, { ...ACCEPT, lineValues }, by(FINANCE))).resolves.toMatchObject({ totalValueCents: 2000 });
+    const lines = await db.inKindDonationLine.findMany({ where: { donationId: id }, orderBy: { lineNumber: "asc" } });
+    expect(lines.map((l) => [l.valueCents, l.financeValueCents])).toEqual([[2500, 1500], [0, 500]]);
   });
 
   it("finance sets every line's value on a gift without a receipt; ops' value stays a suggestion", async () => {
