@@ -40,6 +40,7 @@ export const LOCAL_QUICKBOOKS_CLASSES = [
     { id: "9003", name: "Programs:Robotics", active: true },
     { id: "9004", name: "Programs:Woodshop", active: true },
     { id: "9005", name: "Retired", active: false },
+    { id: "9006", name: "Woodworking 101", active: true },
 ];
 
 /** Every Class in the app's QuickBooks list by its full name, inactive ones flagged, for the bucket form's picker. */
