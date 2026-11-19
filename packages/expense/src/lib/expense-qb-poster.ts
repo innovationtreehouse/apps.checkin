@@ -4,7 +4,7 @@ import { ServiceError } from "@checkin/component-kit";
 import { sumCents } from "@checkin/money";
 import {
   STALE_CLAIM_MS, SWEEP_DAYS, TEST_PREFIX, THROTTLED_MESSAGE, findOrCreate, postFailure, postFailureError, qbGate, qbKey, readCloseDate, runDrain, shiftDate,
-  type CloseRead, type FindOrCreateResult, type PostFailure, type PostGate, type QboPurchase, type TxnWrite,
+  type CloseRead, type FindOrCreateResult, type PostFailure, type PostGate, type PostingTurn, type QboPurchase, type TxnWrite,
 } from "@checkin/quickbooks";
 import { db, type Db } from "../db";
 import type { ExpensePosting, OutboundBag } from "../contract";
@@ -566,7 +566,7 @@ export async function sweepExpenseQbStrays(orgId: string, posting: ExpensePostin
  * stuck and the run goes on. A throttled expense is tried once more after the pause; a second
  * throttle ends the run. Returns counts only.
  */
-export async function drainExpenseOutbox(now = new Date()): Promise<DrainCounts | "unbound"> {
+export async function drainExpenseOutbox(now = new Date(), turn?: PostingTurn): Promise<DrainCounts | "unbound"> {
   const posting = await getExpenseRuntime().quickbooks.posting();
   if (!posting) return "unbound";
   const orgId = await getOrgId();
@@ -593,6 +593,7 @@ export async function drainExpenseOutbox(now = new Date()): Promise<DrainCounts 
     createdToday: await qbCreatesToday(),
     failures: [],
     throttled: "throttled",
+    turn,
     post: async (e) => {
       try {
         const result = await postExpenseToQb(e.orgId, e.id, { close, settings });

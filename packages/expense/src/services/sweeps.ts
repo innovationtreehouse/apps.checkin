@@ -1,4 +1,5 @@
 import { recoverStrandedQbExpenses } from "../lib/expense-qb-processor";
+import type { PostingTurn } from "@checkin/quickbooks";
 import { drainExpenseOutbox } from "../lib/expense-qb-poster";
 import { checkQbDrift } from "../lib/expense-qb-drift";
 import { logError } from "../lib/logger";
@@ -27,9 +28,9 @@ export async function runExpenseCatchUp() {
  * retry of outcome emails still owed. Each part fails on its own. Returns counts only, and the names
  * of the parts that failed so the host can record them on the cron run.
  */
-export async function runExpenseQbPosting() {
+export async function runExpenseQbPosting(turn?: PostingTurn) {
   const stranded = await recoverStrandedQbExpenses().catch(failed("stranded"));
-  const qbPost = await drainExpenseOutbox().catch(failed("qbPost"));
+  const qbPost = await drainExpenseOutbox(new Date(), turn).catch(failed("qbPost"));
   const qbDrift = await checkQbDrift().catch(failed("qbDrift"));
   const outcomeNotices = await sweepOutcomeNotices().catch(failed("outcomeNotices"));
   const parts = { stranded, qbPost, qbDrift, outcomeNotices };

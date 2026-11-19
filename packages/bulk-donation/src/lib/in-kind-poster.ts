@@ -19,6 +19,7 @@ import {
   type CloseRead,
   type FindOrCreateResult,
   type InKindJournalLine,
+  type PostingTurn,
   type QboAccount,
   type QboDeposit,
   type QboJournalEntry,
@@ -574,7 +575,7 @@ export interface InKindUnconfigured {
  * per-run create limit. A gift whose post fails is stuck and the run goes on; the drain never takes
  * a stuck gift. The orphan sweep and the drift check run last.
  */
-export async function runInKindQbPosting(orgId: string, now = new Date()): Promise<InKindDrainCounts | "unbound" | InKindUnconfigured> {
+export async function runInKindQbPosting(orgId: string, now = new Date(), turn?: PostingTurn): Promise<InKindDrainCounts | "unbound" | InKindUnconfigured> {
   const posting = getInKindQbPosting();
   const client = await posting?.client();
   if (!posting || !client) return "unbound";
@@ -600,6 +601,7 @@ export async function runInKindQbPosting(orgId: string, now = new Date()): Promi
     maxCreatesPerRun: settings.qbMaxCreatesPerRun,
     failures: [],
     throttled: "throttled",
+    turn,
     post: async (gift) => {
       try {
         const outcome = await postGift(run, gift.source, gift.id);

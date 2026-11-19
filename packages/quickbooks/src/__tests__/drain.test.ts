@@ -96,6 +96,27 @@ describe("runDrain", () => {
     expect(stop).toEqual({ by: "throttled", remaining: MAX_CONSECUTIVE_FAILURES + 2 });
     expect(counts.throttled).toBe(2);
   });
+
+  it("renews the posting slot before each record and before a throttle's retry, and marks a second throttle as a yield", async () => {
+    type T = Outcome | "throttled";
+    const script: T[] = ["posted", "throttled", "throttled"];
+    let renews = 0;
+    const turn = { yielded: false, renew: async () => (renews++, true) };
+    const stop = await runDrain<number, T>(rows(3), { counts: { ...fresh(), throttled: 0 }, failures: [], throttled: "throttled", turn, post: async () => script.shift() ?? "posted" });
+    expect(stop).toEqual({ by: "throttled", remaining: 2 });
+    expect(renews).toBe(3);
+    expect(turn.yielded).toBe(true);
+  });
+
+  it("stops before the next record once another run holds the slot", async () => {
+    let held = 2;
+    const turn = { yielded: false, renew: async () => held-- > 0 };
+    const counts = fresh();
+    const stop = await runDrain<number, Outcome>(rows(5), { counts, failures: [], turn, post: async () => "posted" });
+    expect(stop).toEqual({ by: "slot", remaining: 3 });
+    expect(counts.posted).toBe(2);
+    expect(turn.yielded).toBe(false);
+  });
 });
 
 describe("runDrain on repeated refusal codes", () => {

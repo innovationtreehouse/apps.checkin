@@ -1,4 +1,4 @@
-import { SWEEP_DAYS, appKeyOf, findOrCreate, isThrottled, postFailure, postFailureError, type BooksMapRole, type PostFailure, type FindOrCreateResult, type QuickBooksClient, type TxnWrite, type WriteLine } from "@checkin/quickbooks";
+import { SWEEP_DAYS, appKeyOf, findOrCreate, isThrottled, postFailure, postFailureError, type BooksMapRole, type PostFailure, type PostingTurn, type FindOrCreateResult, type QuickBooksClient, type TxnWrite, type WriteLine } from "@checkin/quickbooks";
 import { db, isUniqueConstraintError } from "../db";
 import type { PayoutReconciliation } from "../generated/prisma/client";
 import type { MirrorBalanceTxn, MirrorOrderLine, MirrorPayout, PayoutMirror, QbDeposit } from "../contract";
@@ -590,7 +590,7 @@ export function closedThroughOf(closeDate: string | null, onAt: Date | null): st
  * fire the finance alert; failures and amount matches do not count. The host calls it in a
  * try/catch; it returns counts only.
  */
-export async function drainIncomeOutbox(orgId: string, now: Date = new Date()): Promise<DrainResult> {
+export async function drainIncomeOutbox(orgId: string, now: Date = new Date(), turn?: PostingTurn): Promise<DrainResult> {
   const reconcile = await runReconcile(orgId, now);
   if (reconcile.status !== "ran") return { reconcile, post: reconcile.status };
   const { mirror, posting, alerts } = getIncomeConfig();
@@ -679,16 +679,23 @@ export async function drainIncomeOutbox(orgId: string, now: Date = new Date()): 
     }
     const closedThrough = closedThroughOf(closeDate, onAt);
     const postIt = () => postPayout(orgId, r.id, { closedThrough, mayCreate }, false, { problem, sales, accounts, benevityWindowDays: caps.benevityMatchWindowDays });
-    let turn = await postIt();
+    // A run that lost the posting slot stops before its next post; another run holds it.
+    const holds = async () => !turn || (await turn.renew());
+    if (!(await holds())) break;
+    let result = await postIt();
     // The first throttle in a run tries the payout again once the client's pause ends; the second ends the run.
-    if (turn?.outcome === "throttled" && post.throttled === 0) {
+    if (result?.outcome === "throttled" && post.throttled === 0) {
       post.throttled++;
-      turn = await postIt();
+      if (!(await holds())) break;
+      result = await postIt();
     }
-    if (!turn) return { reconcile, post: "busy" };
-    post[turn.outcome]++;
-    if (turn.outcome === "throttled") break;
-    if (turn.outcome === "posted") createdCents[r.source] = sofar + cents;
+    if (!result) return { reconcile, post: "busy" };
+    post[result.outcome]++;
+    if (result.outcome === "throttled") {
+      if (turn) turn.yielded = true;
+      break;
+    }
+    if (result.outcome === "posted") createdCents[r.source] = sofar + cents;
   }
   return { reconcile, post };
 }

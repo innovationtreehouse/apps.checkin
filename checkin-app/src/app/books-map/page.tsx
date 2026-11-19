@@ -9,6 +9,7 @@ import { useRequireRole } from "@/hooks/useRequireRole";
 import { api, useLoad } from "@/lib/api";
 import { FINANCE_ROLES } from "@/lib/nav/sections/finance";
 import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
+import QuickBooksCatchUp from "@/components/finance/QuickBooksCatchUp";
 
 interface ClassRow {
   budgetOwnerId: number;
@@ -74,6 +75,7 @@ export default function BooksMapPage() {
     <Stack>
       <Title order={2}>Books map</Title>
       <QuickBooksListsRefresh />
+      <QuickBooksCatchUp />
       <Text c="dimmed">
         Which QuickBooks account each kind of incoming money books to, and which QuickBooks Class each budget bucket
         books to. Income reads the Shopify and Benevity accounts and the Classes from here, gifts of goods read their four
