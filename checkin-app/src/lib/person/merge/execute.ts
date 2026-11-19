@@ -823,7 +823,7 @@ async function archiveDuplicateKva(tx: TxClient, personId: number, actorId: numb
     for (const loser of losers) {
         // CAS on the open set: a signature that just landed on this row wins.
         const { count } = await tx.orgMembershipProcess.updateMany({
-            where: { id: loser.id, ...openWhere },
+            where: { id: loser.id, kind: KVA_KIND, contractSignedAt: null, ...fromWhere("PENDING_EXTERNAL_ACTION") },
             data: { status: "ARCHIVED", archivedFromStatus: "PENDING_EXTERNAL_ACTION", stageEnteredAt: new Date() },
         });
         if (count !== 1) continue;
