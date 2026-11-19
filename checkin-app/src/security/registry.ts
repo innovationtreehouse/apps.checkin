@@ -652,12 +652,13 @@ defineRoute({
 // membership + household nested. Board/finance only, no sysadmin, and they hold
 // everyones:* so they see every field — the win is the declared policy: any role
 // later added to this view is field-stripped automatically. everyones:hardship is
-// the request itself; only Board and finance views hold it.
+// the request itself; only Board and finance views hold it. BoardSettings carries
+// orgMembershipYearBoundary alone, the year cutoff after which approval is refused.
 defineRoute({
     endpoint: 'GET /api/finance-ops/membership-payment-plans',
     authorize: 'finance-or-board',
     envelope: null,
-    returns: ['OrgMembershipProcess', 'OrgMembership', 'Household', 'Person'],
+    returns: ['OrgMembershipProcess', 'OrgMembership', 'Household', 'Person', 'BoardSettings'],
     orderedView: [
         ['isFinance',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
         ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
