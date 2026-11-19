@@ -17,6 +17,7 @@ type ParticipantOption = {
   id: number;
   name: string | null;
   email: string;
+  leaderIneligibility?: string | null;
 };
 
 export default function CreateProgramPage() {
@@ -131,6 +132,7 @@ export default function CreateProgramPage() {
               }}
               getOptionLabel={(p) => p.name || 'Unnamed'}
               getOptionDescription={(p) => p.email}
+              getOptionDisabledReason={(p) => p.leaderIneligibility ?? null}
               onSelect={(p) => { setLeadMentorId(p.id.toString()); setMentorSearch(`${p.name || 'Unnamed'} (${p.email})`); }}
               onClear={() => { setLeadMentorId(""); setMentorSearch(""); }}
             />

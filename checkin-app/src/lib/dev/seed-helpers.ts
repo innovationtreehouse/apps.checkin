@@ -111,7 +111,7 @@ export async function seedBaseline(prisma: Db): Promise<void> {
     // 2. The debug personas (solo personas get a single-person household of their own)
     const isBoardMember = await prisma.person.upsert({
         where: { email: "boardmember@example.com" },
-        update: { name: "Board Member", phone: "555-555-0001", isSysadmin: true, isBoardMember: true, isDeclaredAdult: true },
+        update: { name: "Board Member", phone: "555-555-0001", isSysadmin: true, isBoardMember: true, isDeclaredAdult: true, lastBackgroundCheck: new Date() },
         create: {
             email: "boardmember@example.com",
             name: "Board Member",
@@ -119,6 +119,7 @@ export async function seedBaseline(prisma: Db): Promise<void> {
             isSysadmin: true,
             isBoardMember: true,
             isDeclaredAdult: true,
+            lastBackgroundCheck: new Date(),
             household: { create: { name: "Board Member Household" } },
         },
     });
@@ -538,21 +539,23 @@ async function seedProgramSpread(prisma: Db): Promise<void> {
     }
 }
 
-// The spread's own people, apart from the flow-test personas: a lead, and a
-// member household whose two youths fill the enrolled programs.
+// The spread's own people: a lead, an ACTIVE member cleared today who may be named
+// to a new program, and a member household whose two youths fill the enrolled programs.
 async function seedProgramPeople(prisma: Db): Promise<{ leadId: number; youthIds: number[] }> {
     const lead = await prisma.person.upsert({
         where: { email: "program.lead@example.com" },
-        update: {},
+        update: { lastBackgroundCheck: new Date() },
         create: {
             email: "program.lead@example.com",
             name: "Program Lead",
             phone: "555-555-0014",
             dateOfBirth: yearsAgo(45),
+            lastBackgroundCheck: new Date(),
             household: { create: { name: "Program Lead Household", orgMembership: { create: { status: "ACTIVE" } } } },
         },
     });
     await addHouseholdLead(prisma, lead.householdId, lead.id);
+    await seedEmergencyContact(prisma, lead.householdId);
 
     const parent = await prisma.person.upsert({
         where: { email: "program.family@example.com" },
