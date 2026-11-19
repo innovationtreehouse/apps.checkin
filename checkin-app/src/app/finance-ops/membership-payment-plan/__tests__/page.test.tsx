@@ -16,7 +16,7 @@ beforeEach(() => {
 });
 afterEach(() => jest.useRealTimers());
 
-const requests = [
+const rows = [
   {
     id: 1,
     stageEnteredAt: "2026-01-15T00:00:00.000Z",
@@ -31,6 +31,8 @@ const requests = [
     },
   },
 ];
+const BOUNDARY = { orgMembershipYearBoundary: "2000-09-01T00:00:00.000Z" };
+const requests = { OrgMembershipProcess: rows, BoardSettings: BOUNDARY };
 
 describe("finance-ops/membership-payment-plan page", () => {
   it("renders household name and lead email", async () => {
@@ -75,7 +77,7 @@ describe("finance-ops/membership-payment-plan page", () => {
     let denied = false;
     const fetchMock = mockFetchJson({
       [`${LIST}/refuse`]: () => { denied = true; return { success: true }; },
-      [LIST]: () => (denied ? [] : requests),
+      [LIST]: () => (denied ? { ...requests, OrgMembershipProcess: [] } : requests),
     });
     renderWithProviders(<MembershipPaymentPlansPage />);
     await screen.findByText("Smith Family");
@@ -86,6 +88,27 @@ describe("finance-ops/membership-payment-plan page", () => {
 
     expect(await screen.findByText("No pending membership scholarship or payment plan requests.")).toBeInTheDocument();
     expect(readsOf(fetchMock, LIST)).toHaveLength(2);
+  });
+
+  it("disables Approve for a request whose year has ended, with the reason", async () => {
+    jest.useFakeTimers({ now: new Date("2027-09-02T00:00:00Z"), doNotFake: ["nextTick", "queueMicrotask", "setImmediate", "setTimeout"] });
+    mockFetchJson({ [LIST]: requests });
+    renderWithProviders(<MembershipPaymentPlansPage />);
+    await screen.findByText("Smith Family");
+
+    const approve = screen.getByRole("button", { name: "Approve & Activate" });
+    expect(approve).toBeDisabled();
+    expect(approve).toHaveAttribute("title", expect.stringContaining("2026-2027, which has ended"));
+    expect(screen.getByRole("button", { name: "Deny" })).toBeEnabled();
+  });
+
+  it("keeps Approve enabled while the request's year is current", async () => {
+    jest.useFakeTimers({ now: new Date("2027-08-31T00:00:00Z"), doNotFake: ["nextTick", "queueMicrotask", "setImmediate", "setTimeout"] });
+    mockFetchJson({ [LIST]: requests });
+    renderWithProviders(<MembershipPaymentPlansPage />);
+    await screen.findByText("Smith Family");
+
+    expect(screen.getByRole("button", { name: "Approve & Activate" })).toBeEnabled();
   });
 
   it("shows a failed load in place of the table, not an empty list", async () => {
