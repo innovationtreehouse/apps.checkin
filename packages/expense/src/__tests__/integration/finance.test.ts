@@ -574,6 +574,24 @@ describeDb("capital register", () => {
     expect(await seedCapitalAssets(FINANCE, rows)).toMatchObject({ created: 0, skipped: 1, errors: 1 });
     expect(await db.capitalAsset.findMany({ select: { assetNumber: true } })).toEqual([{ assetNumber: "ITFA03" }]);
   });
+
+  it("a seed refuses a number the app already minted, naming it, and leaves the minted asset alone", async () => {
+    expect(await mint(await expenseLine())).toEqual(["ITFA01"]);
+    const result = await seedCapitalAssets(FINANCE, [{ assetNumber: "ITFA01", description: "Old saw" }, { assetNumber: "ITFA02", description: "Old drill" }]);
+    expect(result).toMatchObject({ created: 1, skipped: 0, errors: 1 });
+    expect(result.results[0]).toMatchObject({ assetNumber: "ITFA01", status: "error", error: expect.stringContaining("ITFA01 was already issued") });
+    expect(await db.capitalAsset.findMany({ select: { assetNumber: true, seeded: true }, orderBy: { assetNumber: "asc" } }))
+      .toEqual([{ assetNumber: "ITFA01", seeded: false }, { assetNumber: "ITFA02", seeded: true }]);
+    expect(await db.expenseOrgAuditLog.count({ where: { action: "seeded" } })).toBe(1);
+  });
+
+  it("a seed refuses a seeded number given different details, and skips an exact repeat", async () => {
+    await seedCapitalAssets(FINANCE, [{ assetNumber: "ITFA04", description: "Lathe", costCents: 100 }]);
+    expect(await seedCapitalAssets(FINANCE, [{ assetNumber: "ITFA4", description: "Lathe", costCents: 100 }])).toMatchObject({ created: 0, skipped: 1, errors: 0 });
+    const result = await seedCapitalAssets(FINANCE, [{ assetNumber: "ITFA04", description: "Drill press" }]);
+    expect(result.results).toEqual([{ assetNumber: "ITFA04", status: "error", error: expect.stringContaining("ITFA04 was already issued") }]);
+    expect(await db.capitalAsset.findMany({ select: { description: true, costCents: true } })).toEqual([{ description: "Lathe", costCents: 100 }]);
+  });
 });
 
 describeDb("flags", () => {
