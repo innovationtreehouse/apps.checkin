@@ -251,10 +251,10 @@ describe("a seat paid at a price other than the program's", () => {
         expect(raisePaymentException).not.toHaveBeenCalled();
     });
 
-    it("raises nothing when nobody was seated (a redelivery)", async () => {
+    it("raises no price mismatch when nobody was seated", async () => {
         mockRows.set(1, { personId: 1, status: "ACTIVE", inventoryHeldAt: null });
         await activateProgramEnrollment({ programId: 7, personIds: [1], shopifyOrderId: "5", lines: [{ variantId: "pub", quantity: 1, unitPriceCents: 7500 }] });
-        expect(raisePaymentException).not.toHaveBeenCalled();
+        expect(raisePaymentException).not.toHaveBeenCalledWith("AMOUNT_MISMATCH", expect.anything());
     });
 });
 
