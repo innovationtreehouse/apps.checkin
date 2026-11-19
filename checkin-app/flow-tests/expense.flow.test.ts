@@ -246,12 +246,12 @@ describe("expense — FINANCE journey", () => {
     expect((await send(f, "PUT", "/api/expense/ownership-map", { gtin13: "0000000000017", ownerId: facility.id })).status).toBe(400);
     expect((await send(f, "PUT", "/api/expense/ownership-map", { gtin13: part, ownerId: facility.id })).status).toBe(200);
 
-    // Assign the unassigned line to the org-level bucket: assigning is not the approval, so it waits for a Board member's.
+    // Assign the unassigned card-charge line to the org-level bucket: such a line takes no approval step, so the system approves it.
     const U = `/api/expense/expenses/${UNASSIGNED_EXPENSE}`;
     const [unassigned] = (await api<{ LineItemOwnerApproval: Approval[] }>(f, `${U}/line-item-approvals`)).json.LineItemOwnerApproval;
     const assigned = await send(f, "POST", `${U}/line-item-approvals/${unassigned.id}/assign-owner`, { ownerId: facility.id });
     expect(assigned.status).toBe(200);
-    expect(assigned.json).toMatchObject({ ownerId: facility.id, status: "pending" });
+    expect(assigned.json).toMatchObject({ ownerId: facility.id, status: "approved", decidedByUserId: null });
 
     // Finance queue: the unknown reimbursee and the unreviewed tax are reasons read from the expense.
     type QueueRow = { expenseId: string | null; reasons: { code: string }[] };
