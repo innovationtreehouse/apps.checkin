@@ -10,7 +10,8 @@ Everything here stops being true once the change has run. The design is
 - **CR-2 — answered:** 90 days after capture, by an S3 lifecycle rule on
   `mail-raw/`. The app gets put and get, never delete. The owner makes the infra
   change.
-- **CR-3** Who may press "Process again": finance and sysadmins, or sysadmins only?
+- **CR-3 — answered:** finance and sysadmins, the same people as the mail catch-up
+  button.
 - **CR-4** Charge the reading allowance when the reading starts, for uploads too? An
   upload over the allowance is then saved and lands in "couldn't read" with the
   allowance note, where today it is refused before saving.

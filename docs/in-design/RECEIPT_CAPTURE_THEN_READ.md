@@ -139,7 +139,8 @@ inserted in the same transaction as their ledger row, and a reply is owed once p
 message. A replay creates what is missing and nothing twice.
 
 - **A person**: the stuck item on the Problems list, and "Process again" on the mail
-  page's captured-message list, for finance and sysadmins (CR-3). Each replay is
+  page's captured-message list, for finance and sysadmins: the people who may press
+  the mail catch-up button. Each replay is
   audited with who asked. Neither shows or downloads the email.
 - **A test**: an `.eml` fixture is captured into the memory store and processed, with
   no Gmail.
