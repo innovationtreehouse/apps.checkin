@@ -251,6 +251,8 @@ export function configureRuntime(): void {
     reimbursees: { search: searchReimbursees, byId: reimburseeById, hasAccount: reimburseeHasAccount, addNonMemberAdult: addNonMemberReimbursee },
     alerts,
     mailbox: receiptMailbox(),
+    // Matches the mail-raw/ lifecycle rule on each environment's receipt bucket: 90 days in prod, 30 in dev and staging.
+    rawMailRetentionDays: config.isProd() && !config.isStaging() ? 90 : 30,
     replies,
     outcomeMail,
     reimbursementStatus,

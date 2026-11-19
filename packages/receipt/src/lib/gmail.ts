@@ -1,6 +1,6 @@
 import { KindedError, type FailureKind } from "@checkin/component-kit";
 import { z } from "zod";
-import { MailMessageSchema, type MailboxReader } from "../contract";
+import type { MailboxReader } from "../contract";
 
 // Gmail API host for the receipt mailbox; the poller calls it with a gmail.readonly access token.
 export const GMAIL_API_HOST = "gmail.googleapis.com";
@@ -9,7 +9,7 @@ const ListSchema = z.object({
   messages: z.array(z.object({ id: z.string().min(1) })).optional(),
   nextPageToken: z.string().optional(),
 });
-const AttachmentSchema = z.object({ data: z.string() });
+const RawSchema = z.object({ raw: z.string(), internalDate: z.string().regex(/^\d+$/) });
 
 /**
  * A read-only reader for one mailbox. Requests name the mailbox as the Gmail user, so a token
@@ -45,10 +45,9 @@ export function createGmailReader(mailboxAddress: string, accessToken: () => Pro
       // Gmail lists newest first.
       return ids.reverse();
     },
-    getMessage: (id) => get(`${base}/${encodeURIComponent(id)}?format=full`, MailMessageSchema),
-    async getAttachment(messageId, attachmentId) {
-      const { data } = await get(`${base}/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`, AttachmentSchema);
-      return Buffer.from(data, "base64url");
+    async getRaw(id) {
+      const { raw, internalDate } = await get(`${base}/${encodeURIComponent(id)}?format=raw`, RawSchema);
+      return { raw: Buffer.from(raw, "base64url"), internalDate };
     },
   };
 }

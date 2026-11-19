@@ -10,6 +10,9 @@ export const receiptFileKey = (receiptId: string): string => `receipts/${receipt
 /** A mail item's id is assigned at insert, after its object is written, so its key is a fresh UUID. */
 export const newMailItemFileKey = (): string => `mail-items/${randomUUID()}`;
 
+/** A captured email's raw copy; the key says nothing about the message. */
+export const newRawMailKey = (): string => `mail-raw/${randomUUID()}`;
+
 /**
  * A held item's key when the backfill moves it. Derived from what makes the row unique, so a re-run
  * finds the object an interrupted run wrote; hashed, so the key says nothing about the file.

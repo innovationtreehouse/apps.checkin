@@ -234,7 +234,7 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
 
     it('records the cron run as failed when the mailbox could not be listed, on top of reconcile failures', async () => {
         jest.mocked(runReconcile).mockResolvedValue({ ...RECONCILED, failed: 2 });
-        jest.mocked(takeInMailbox).mockResolvedValue({ status: 'listing_failed', messages: 0, receipts: 0, held: 0, skipped: 0, rejected: 0, failed: 0, deferred: 0, overLimit: 0, overCeiling: 0, unread: 0, ignored: 0, replied: 1, replyFailed: 0 });
+        jest.mocked(takeInMailbox).mockResolvedValue({ status: 'listing_failed', messages: 0, captured: 0, receipts: 0, held: 0, skipped: 0, rejected: 0, failed: 0, deferred: 0, overLimit: 0, overCeiling: 0, unread: 0, ignored: 0, replied: 1, replyFailed: 0 });
 
         const body = await (await GET(req())).json();
 

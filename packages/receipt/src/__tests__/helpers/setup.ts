@@ -65,6 +65,7 @@ export function configure(overrides: Partial<ReceiptConfig> = {}): void {
     auth: { getPrincipal: async () => current },
     org: async () => ({ id: TEST_ORG_ID, name: "Test Org" }),
     fileStore: testStore,
+    rawMailRetentionDays: 30,
     ...overrides,
   });
 }
@@ -96,6 +97,7 @@ export async function clearAll(): Promise<void> {
   await db.receiptIgnoredFile.deleteMany();
   await db.receiptMailReply.deleteMany();
   await db.receiptMailAtRisk.deleteMany();
+  await db.receiptMailMessage.deleteMany();
   await db.receiptMailLease.deleteMany();
   await db.receiptOutcomeNotice.deleteMany();
 }

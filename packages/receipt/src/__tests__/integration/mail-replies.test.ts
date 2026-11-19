@@ -1,11 +1,13 @@
-import { beforeEach, expect, it } from "vitest";
-import { db } from "../../db";
+import { createHash } from "node:crypto";
+import { beforeEach, expect, it, vi } from "vitest";
+import { db, getPrisma } from "../../db";
 import type { MailAcknowledgement, MailboxReader, MailMessage, MailPart, ReceiptConfig } from "../../contract";
 import { noticeMessageId } from "../../contract";
 import { MAIL_CAP, MAIL_HELD_CEILING, readMailbox } from "../../services/mailIntake";
 import { mailQueueService } from "../../services/mailQueueService";
 import { REPLY_ATTEMPTS, sendMailReplies } from "../../services/mailReplies";
 import { describeDb } from "../helpers/db";
+import { toRaw } from "../helpers/mime";
 import { actAs, ALICE, BOB, clearAll, configure, FINANCE, okOcr, TEST_ORG_ID } from "../helpers/setup";
 
 const GOOGLE_PASS = "mx.google.com; dkim=pass header.i=@example.org; spf=pass; dmarc=pass header.from=example.org";
@@ -19,13 +21,15 @@ const CONTACTS: Record<number, { email: string; name: string }> = {
 let messages: Map<string, MailMessage>;
 let sent: MailAcknowledgement[];
 let failSends: boolean;
-let attachment: () => Promise<Buffer>;
 
 const reader: MailboxReader = {
   address: "receipts@example.org",
   listRecent: async () => [...messages.keys()],
-  getMessage: async (id) => messages.get(id) ?? Promise.reject(new Error(`no message ${id}`)),
-  getAttachment: async () => attachment(),
+  getRaw: async (id) => {
+    const msg = messages.get(id);
+    if (!msg) throw new Error(`no message ${id}`);
+    return { raw: toRaw(msg), internalDate: msg.internalDate };
+  },
 };
 
 /** A message holding one PDF; `headers` adds to Google's verdict and the From. */
@@ -62,7 +66,6 @@ beforeEach(async () => {
   messages = new Map();
   sent = [];
   failSends = false;
-  attachment = async () => Buffer.alloc(0);
   setup();
 });
 
@@ -467,16 +470,25 @@ describeDb("mailed receipt acknowledgements", () => {
   it("still names a file refused at the ceiling when a later file's read failed on that pass", async () => {
     setup({ limits: { mailUploadsPerPersonPerDay: 0 } });
     await fillToCeiling();
+    const b = Buffer.from(`%PDF-1.4 b ${Date.now()}`);
+    const bHash = createHash("sha256").update(b).digest("hex");
     mailWith("m1", [
       { mimeType: "application/pdf", filename: "a.pdf", body: { data: b64(`%PDF-1.4 a ${Date.now()}`), size: 30 } },
-      { mimeType: "application/pdf", filename: "b.pdf", body: { attachmentId: "b", size: 30 } },
+      { mimeType: "application/pdf", filename: "b.pdf", body: { data: b.toString("base64url"), size: b.length } },
     ]);
-    attachment = () => Promise.reject(new Error("read failed"));
+    // b's ledger lookup fails on this pass, after a was refused at the ceiling.
+    const ledger = getPrisma().receiptMailItem;
+    const findUnique = ledger.findUnique;
+    const lookup = vi.spyOn(ledger, "findUnique").mockImplementation(function (this: typeof ledger, args) {
+      if (args.where.gmailMessageId_attachmentHash?.attachmentHash === bHash) throw new Error("read failed");
+      return findUnique.call(this, args);
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
     expect(await readMailbox()).toMatchObject({ overCeiling: 1, failed: 1 });
     expect(sent).toEqual([]);
 
+    lookup.mockRestore();
     setup();
-    attachment = async () => Buffer.from(`%PDF-1.4 b ${Date.now()}`);
     await readMailbox();
     const [receipt] = await db.receipt.findMany();
     expect(sent).toEqual([expect.objectContaining({ receiptId: receipt.id, refused: [{ file: "a.pdf", reason: "ceiling" }] })]);
