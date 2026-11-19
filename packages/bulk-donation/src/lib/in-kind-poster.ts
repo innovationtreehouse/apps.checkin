@@ -19,6 +19,7 @@ import {
   type CloseRead,
   type FindOrCreateResult,
   type InKindJournalLine,
+  type PostingTurn,
   type QboAccount,
   type QboDeposit,
   type QboJournalEntry,
@@ -573,7 +574,7 @@ export interface InKindUnconfigured {
  * per-run create limit. A gift whose post fails is stuck and the run goes on; the drain never takes
  * a stuck gift. The orphan sweep and the drift check run last.
  */
-export async function runInKindQbPosting(orgId: string, now = new Date()): Promise<InKindDrainCounts | "unbound" | InKindUnconfigured> {
+export async function runInKindQbPosting(orgId: string, now = new Date(), turn?: PostingTurn): Promise<InKindDrainCounts | "unbound" | InKindUnconfigured> {
   const posting = getInKindQbPosting();
   const client = await posting?.client();
   if (!posting || !client) return "unbound";
@@ -599,6 +600,7 @@ export async function runInKindQbPosting(orgId: string, now = new Date()): Promi
     maxCreatesPerRun: settings.qbMaxCreatesPerRun,
     failures: [],
     throttled: "throttled",
+    turn,
     post: async (gift) => {
       try {
         const outcome = await postGift(run, gift.source, gift.id);
@@ -613,7 +615,8 @@ export async function runInKindQbPosting(orgId: string, now = new Date()): Promi
   });
   counts.capped = stop?.by === "count";
   // After the posts, so a gift this run linked to its own entry is not reported as a stray.
-  counts.sweep = await sweepInKindQbStrays(orgId, client, posting.sweepIncomplete, now);
-  counts.drift = await checkInKindQbDrift(orgId, client, now);
+  // Each read renews the posting slot first; once another run holds it, the rest are skipped.
+  if (!turn || (await turn.renew())) counts.sweep = await sweepInKindQbStrays(orgId, client, posting.sweepIncomplete, now);
+  if (!turn || (await turn.renew())) counts.drift = await checkInKindQbDrift(orgId, client, now);
   return counts;
 }

@@ -2211,3 +2211,41 @@ model QuickBooksList {
   /// @sensitivity:internal
   refreshedAt DateTime
 }
+
+/// The org's QuickBooks posting slot: one drain run (expense, in-kind or income) posts at a time.
+/// A run holds it while `until` is in the future and renews it before each record; a crashed run frees it when `until` passes.
+model QuickBooksPostingSlot {
+  /// @sensitivity:internal
+  orgId    String   @id @map("org_id")
+  /// The lane holding or last holding the slot.
+  /// @sensitivity:internal
+  holder   String?
+  /// The holding run's id; a renew or release by any other run changes nothing.
+  /// @sensitivity:internal
+  runId    String?  @map("run_id")
+  /// @sensitivity:internal
+  until    DateTime
+  /// Each lane's last finished run, keyed by lane: when it ended and how.
+  /// @sensitivity:internal
+  lastRuns Json?    @map("last_runs")
+
+  @@map("quickbooks_posting_slot")
+}
+
+/// A lane waiting for the posting slot, one row per lane; the run that releases the slot starts the oldest.
+model QuickBooksPostingQueue {
+  /// @sensitivity:internal
+  id            Int      @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId         String   @map("org_id")
+  /// @sensitivity:internal
+  lane          String
+  /// The person who asked; null for the daily run.
+  /// @sensitivity:internal
+  requestedById Int?     @map("requested_by_id")
+  /// @sensitivity:internal
+  requestedAt   DateTime @default(now()) @map("requested_at")
+
+  @@unique([orgId, lane])
+  @@map("quickbooks_posting_queue")
+}
