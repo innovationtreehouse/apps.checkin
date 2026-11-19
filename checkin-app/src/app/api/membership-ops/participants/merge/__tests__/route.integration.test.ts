@@ -587,6 +587,27 @@ describe("Merge Participants API", () => {
         expect(newData.moved.corporationMembers).toEqual({ migrated: 0, deduped: 1 });
     });
 
+    it("dedupes a same-tool, same-level certification pair onto the keeper", async () => {
+        const tool = await prisma.tool.create({ data: { name: "Same Level Tool" } });
+        createdToolId = tool.id;
+        await prisma.toolStatus.create({ data: { toolId: tool.id, personId: pKeepId, level: "CERTIFIED" } });
+        await prisma.toolStatus.create({ data: { toolId: tool.id, personId: pMergeId, level: "CERTIFIED" } });
+
+        const analyzed = await (await analyzeGET(analyzeReq(pKeepId, pMergeId))).json();
+        expect(analyzed.collisions).toEqual([]);
+
+        const res = await POST(mergeReq(pKeepId, pMergeId));
+        expect(res.status).toBe(200);
+        await expectMergedAway(pMergeId, pKeepId);
+
+        const rows = await prisma.toolStatus.findMany({ where: { toolId: tool.id } });
+        expect(rows).toEqual([expect.objectContaining({ personId: pKeepId, level: "CERTIFIED" })]);
+
+        const log = await prisma.auditLog.findFirst({ where: { tableName: "Person", affectedEntityId: pKeepId, secondaryAffectedEntity: pMergeId } });
+        const newData = log?.newData as { moved: Record<string, { migrated: number; deduped: number; left: number }> };
+        expect(newData.moved.toolStatuses).toEqual({ migrated: 0, deduped: 1, left: 0 });
+    });
+
     it("repoints a bucket owner and moves or dedupes bucket treasurer rows", async () => {
         const owned = await prisma.budgetOwner.create({ data: { name: "Merge Owned Bucket", ownerId: pMergeId } });
         const shared = await prisma.budgetOwner.create({ data: { name: "Merge Shared Bucket" } });
