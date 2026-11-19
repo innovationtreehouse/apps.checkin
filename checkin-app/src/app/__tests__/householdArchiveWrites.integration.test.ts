@@ -14,11 +14,17 @@ import type * as Archived from '@/lib/household/archived';
 import type * as ArchiveAction from '@/lib/household/archiveAction';
 import type * as Roles from '@/lib/roles';
 import type * as Guard from '@/lib/household/archiveGuard';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaClient } from '@/generated/prisma/client';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 jest.mock('@/lib/notifications', () => ({ sendNotification: jest.fn() }));
 
 process.env.DATABASE_URL = process.env.DML_DATABASE_URL;
+
+// The test's own held transaction runs on this connection, so the app's single connection waits on the lock, not on the pool.
+const holder = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
+afterAll(() => holder.$disconnect());
 
 const TAG = `household-archive-writes-${Date.now()}`;
 
@@ -111,7 +117,7 @@ describe('a role grant racing an archive', () => {
         let signalLocked!: () => void;
         const locked = new Promise<void>((resolve) => { signalLocked = resolve; });
 
-        const grant = prisma.$transaction(async (tx) => {
+        const grant = holder.$transaction(async (tx) => {
             await setRoleFlag(tx, personId, 'isKeyholder', true, boardActor());
             signalLocked();
             await gate;

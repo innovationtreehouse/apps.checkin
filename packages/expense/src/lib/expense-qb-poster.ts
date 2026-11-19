@@ -563,7 +563,8 @@ export async function sweepExpenseQbStrays(orgId: string, posting: ExpensePostin
  * closing date once for the run. Then every outboxed expense not yet in QuickBooks, oldest receipt
  * first, plus any claim gone stale, and last the orphan sweep. Stops at the daily and per-run count
  * caps and logs the hit (the alarm hook); the rest waits for the next run. A failed expense is
- * stuck and the run goes on; a QuickBooks throttle ends the run. Returns counts only.
+ * stuck and the run goes on. A throttled expense is tried once more after the pause; a second
+ * throttle ends the run. Returns counts only.
  */
 export async function drainExpenseOutbox(now = new Date()): Promise<DrainCounts | "unbound"> {
   const posting = await getExpenseRuntime().quickbooks.posting();
@@ -591,7 +592,7 @@ export async function drainExpenseOutbox(now = new Date()): Promise<DrainCounts 
     maxCreatesPerDay: settings.qbMaxCreatesPerDay,
     createdToday: await qbCreatesToday(),
     failures: [],
-    stopNow: ["throttled"],
+    throttled: "throttled",
     post: async (e) => {
       try {
         const result = await postExpenseToQb(e.orgId, e.id, { close, settings });
@@ -602,7 +603,7 @@ export async function drainExpenseOutbox(now = new Date()): Promise<DrainCounts 
       }
     },
   });
-  if (stop?.by === "stopNow") logWarn("qb_drain_throttled", { remaining: stop.remaining });
+  if (stop?.by === "throttled") logWarn("qb_drain_throttled", { remaining: stop.remaining });
   if (stop?.by === "day") {
     counts.capped = "day";
     logWarn("qb_daily_cap", { cap: settings.qbMaxCreatesPerDay, remaining: stop.remaining });

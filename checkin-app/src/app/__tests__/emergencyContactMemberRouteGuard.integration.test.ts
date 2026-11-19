@@ -26,8 +26,8 @@ jest.mock("next-auth/next", () => ({ getServerSession: jest.fn() }));
 
 const TAG = "ec-member-route-guard";
 
-function asUser(id: number) {
-    (getServerSession as jest.Mock).mockResolvedValue({ user: { id, isSysadmin: false } });
+function asUser(id: number, householdId?: number) {
+    (getServerSession as jest.Mock).mockResolvedValue({ user: { id, householdId, isSysadmin: false } });
 }
 function settingsReq(body: unknown) {
     return new Request("http://localhost:4000/api/household/settings", {
@@ -152,7 +152,7 @@ describe("PATCH /api/household — Direction B: adding a member that collides wi
     });
 
     it("surfaces the reconcile warning in the 200 body and flags the contact invalid", async () => {
-        asUser(leadId);
+        asUser(leadId, householdId);
         // memberOver25 is required or the route 400s
         // before ever reaching the reconcile-warning path under test here.
         const res = await PATCH_HOUSEHOLD(householdReq({ memberName: "Grandma Ext", memberOver25: true }));

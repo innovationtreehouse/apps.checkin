@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { QuickBooksClient, appKeyOf, qbKey, type QboDeposit } from "@checkin/quickbooks";
+import { Pacer, QuickBooksClient, appKeyOf, qbKey, type QboDeposit } from "@checkin/quickbooks";
 import { ServiceError, type FailureReport } from "@checkin/component-kit";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
@@ -140,7 +140,7 @@ function bind(over: Partial<IncomeConfig> = {}) {
     deposits: quickBooksDepositSource(tokens, realm),
     owners: { list: async () => owners },
     booksMap: shopifyMap,
-    posting: { client: new QuickBooksClient(tokens, realm), mirrorNewestWins: true },
+    posting: { client: new QuickBooksClient(tokens, realm, new Pacer({ perSecond: 1e6, maxInFlight: 1e6 })), mirrorNewestWins: true },
     classes: { activeClassIds: async () => activeClasses },
     savedClasses: { activeClassIds: async () => activeClasses },
     alerts: {
@@ -1460,7 +1460,7 @@ describeDb("drainIncomeOutbox — mirror reverts and binding", () => {
   });
 
   it("creates nothing until the mirror is declared newest-wins", async () => {
-    bind({ posting: { client: new QuickBooksClient(tokens, realm), mirrorNewestWins: false } });
+    bind({ posting: { client: new QuickBooksClient(tokens, realm, new Pacer({ perSecond: 1e6, maxInFlight: 1e6 })), mirrorNewestWins: false } });
     const p = payout(2, "2026-06-28", 500);
     expect(await drain()).toMatchObject({ reconcile: { status: "ran" }, post: "gated" });
     expect(await rowFor(p)).toMatchObject({ status: "WAITING" });
@@ -1940,7 +1940,7 @@ describeDb("a second source: Benevity deposits handed over through expectDeposit
   const settings = () => db.incomeOrgSettings.findUniqueOrThrow({ where: { orgId: ORG_A } });
 
   it("a Benevity row due while Shopify posting is gated stamps only Benevity; a Shopify payout seen later still ages out to finance", async () => {
-    bind({ booksMap, org: async () => ({ id: ORG_A, name: "A" }), posting: { client: new QuickBooksClient(tokens, realm), mirrorNewestWins: false } });
+    bind({ booksMap, org: async () => ({ id: ORG_A, name: "A" }), posting: { client: new QuickBooksClient(tokens, realm, new Pacer({ perSecond: 1e6, maxInFlight: 1e6 })), mirrorNewestWins: false } });
     await expect1();
     await drain();
     expect(await settings()).toMatchObject({ qbPostingOnAt: null, benevityQbPostingOnAt: NOW });
@@ -1984,14 +1984,14 @@ describeDb("drainIncomeOutbox — a QuickBooks throttle", () => {
       init?.method === "POST" ? new Response("", { status: 429, headers: { "Retry-After": "0" } }) : qbo.handle(input, init),
     );
 
-  it("ends the run at the first throttle and leaves every payout waiting, never POST_FAILED; the next run posts them", async () => {
+  it("tries a throttled payout once more, ends the run at the second throttle, and leaves every payout waiting, never POST_FAILED; the next run posts them", async () => {
     const reports: FailureReport[] = [];
     bind({ onFailure: (r) => void reports.push(r) });
     const p = payout(2, "2026-06-28", 500);
     const q = payout(3, "2026-06-29", 700);
     throttleCreates();
 
-    expect(await drain()).toMatchObject({ post: { throttled: 1, failed: 0, posted: 0 } });
+    expect(await drain()).toMatchObject({ post: { throttled: 2, failed: 0, posted: 0 } });
     for (const g of [p, q]) expect(await rowFor(g)).toMatchObject({ status: "WAITING", postClaimedAt: null });
     expect(await db.incomeAuditLog.count({ where: { action: "reconciliation.post_failed" } })).toBe(0);
     expect(reports).toEqual([]);

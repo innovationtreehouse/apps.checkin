@@ -678,10 +678,15 @@ export async function drainIncomeOutbox(orgId: string, now: Date = new Date()): 
       }
     }
     const closedThrough = closedThroughOf(closeDate, onAt);
-    const turn = await postPayout(orgId, r.id, { closedThrough, mayCreate }, false, { problem, sales, accounts, benevityWindowDays: caps.benevityMatchWindowDays });
+    const postIt = () => postPayout(orgId, r.id, { closedThrough, mayCreate }, false, { problem, sales, accounts, benevityWindowDays: caps.benevityMatchWindowDays });
+    let turn = await postIt();
+    // The first throttle in a run tries the payout again once the client's pause ends; the second ends the run.
+    if (turn?.outcome === "throttled" && post.throttled === 0) {
+      post.throttled++;
+      turn = await postIt();
+    }
     if (!turn) return { reconcile, post: "busy" };
     post[turn.outcome]++;
-    // A throttle would refuse the rest of the run's posts too; they wait for the next run.
     if (turn.outcome === "throttled") break;
     if (turn.outcome === "posted") createdCents[r.source] = sofar + cents;
   }

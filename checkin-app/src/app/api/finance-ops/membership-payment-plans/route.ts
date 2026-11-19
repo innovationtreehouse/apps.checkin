@@ -6,6 +6,7 @@ import { handler } from "@/security/handler";
 import { apiError } from "@/lib/api-response";
 import { PAYMENT_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { certifyPaymentPlan, PaymentError } from "@/lib/membership/payment";
+import { liveMembershipYear } from "@/lib/membership/renewal";
 import { fromWhere } from "@/lib/membership/lifecycle";
 
 export const GET = handler('GET /api/finance-ops/membership-payment-plans', async () => {
@@ -22,6 +23,7 @@ export const GET = handler('GET /api/finance-ops/membership-payment-plans', asyn
             id: true,
             stageEnteredAt: true,
             scholarshipRequestKind: true,
+            paymentPlanYear: true,
             orgMembership: {
                 select: {
                     id: true,
@@ -44,7 +46,10 @@ export const GET = handler('GET /api/finance-ops/membership-payment-plans', asyn
         },
     });
 
-    return { OrgMembershipProcess: requests };
+    const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
+    // A request with no stored year predates the column and is approved for the live year.
+    const liveYear = liveMembershipYear(settings?.orgMembershipYearBoundary, new Date());
+    return { OrgMembershipProcess: requests.map((r) => ({ ...r, paymentPlanYear: r.paymentPlanYear ?? liveYear })) };
 });
 
 export const POST = withAuth(

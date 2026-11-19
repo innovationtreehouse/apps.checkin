@@ -4,7 +4,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { FailureReport } from "@checkin/component-kit";
-import { MAX_CREATES_PER_DAY, QuickBooksClient, STALE_CLAIM_MS, qbKey, type QboBill, type QboPurchase } from "@checkin/quickbooks";
+import { MAX_CREATES_PER_DAY, Pacer, QuickBooksClient, STALE_CLAIM_MS, qbKey, type QboBill, type QboPurchase } from "@checkin/quickbooks";
 import { describeDb } from "../helpers/db";
 import { inertOutbound, type Outbound } from "../../contract";
 import type { Expense } from "../../db/schema";
@@ -99,7 +99,7 @@ let qbo: FakeQbo;
 let sweepAlerts: { orgId: string; since: Date }[];
 
 const posting = (prod = false) => ({
-  client: new QuickBooksClient({ current: async () => "tok" }, { env: "sandbox", realmId: "123" }),
+  client: new QuickBooksClient({ current: async () => "tok" }, { env: "sandbox", realmId: "123" }, new Pacer({ perSecond: 1e6, maxInFlight: 1e6 })),
   paymentAccountId: PAYMENT_ACCOUNT,
   paymentType: "CreditCard" as const,
   prod,
@@ -1952,13 +1952,13 @@ describeDb("QB-2 posting — a QuickBooks throttle", () => {
     expect(qbo.posts).toHaveLength(1);
   });
 
-  it("ends the drain at the first throttle; the rest wait for the next run untouched", async () => {
+  it("tries a throttled expense once more, ends the drain at the second throttle; the rest wait for the next run untouched", async () => {
     await handMatched("2026-08-01");
     const ids = [await outboxed("2026-09-10"), await outboxed("2026-09-11"), await outboxed("2026-09-12")].map((o) => o.id);
     throttleCreates();
 
-    expect(await drainExpenseOutbox()).toMatchObject({ throttled: 1, failed: 0, posted: 0 });
-    expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(2);
+    expect(await drainExpenseOutbox()).toMatchObject({ throttled: 2, failed: 0, posted: 0 });
+    expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(4);
     for (const id of ids) expect(await expenseRow(id)).toMatchObject({ qbMatchState: "UNMATCHED", qbFirstFailedAt: null });
 
     vi.mocked(fetch).mockImplementation(qbo.handle);

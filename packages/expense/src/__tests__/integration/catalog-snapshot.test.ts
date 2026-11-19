@@ -14,7 +14,7 @@ import { checkAndProcessExpense, retryQbPost } from "../../lib/expense-qb-proces
 import { postExpenseToQb } from "../../lib/expense-qb-poster";
 import { resubmitHeldExpense } from "../../services/holdService";
 import { retryStuckItem } from "../../stuckItems";
-import { QuickBooksClient } from "@checkin/quickbooks";
+import { Pacer, QuickBooksClient } from "@checkin/quickbooks";
 
 vi.mock("../../lib/expense-qb-poster", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../lib/expense-qb-poster")>()),
@@ -66,7 +66,7 @@ const snapshot = async (li: number) =>
   db.expenseLineItem.findUniqueOrThrow({ where: { id: li }, select: { signedGtin13: true, signedCategory: true, signedSubcategory: true } });
 
 const posting = {
-  client: new QuickBooksClient({ current: async () => "tok" }, { env: "sandbox", realmId: "123" }),
+  client: new QuickBooksClient({ current: async () => "tok" }, { env: "sandbox", realmId: "123" }, new Pacer({ perSecond: 1e6, maxInFlight: 1e6 })),
   paymentAccountId: "35",
   paymentType: "CreditCard" as const,
   prod: false,

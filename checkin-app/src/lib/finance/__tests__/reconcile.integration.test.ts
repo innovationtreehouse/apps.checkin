@@ -252,9 +252,9 @@ describe("forward recovery", () => {
     });
 
     it.each([
-        ["a closed application", "ARCHIVED", false],
-        ["a second order on an already-paid application", "ACTIVE", true],
-    ] as const)("raises a paid order on %s instead of ignoring it", async (_label, status, paid) => {
+        ["a closed application", "ARCHIVED", false, "UNMATCHED_ORDER"],
+        ["a second order on an already-paid application", "ACTIVE", true, "DUPLICATE_MEMBERSHIP_PAYMENT"],
+    ] as const)("raises a paid order on %s instead of ignoring it", async (_label, status, paid, kind) => {
         const oid = `${TAG}-nothing-due-${status}`;
         const { processId } = await makeApplicant({ email: `nothing-due-${status}-${TAG}@ex.com`, status, paid, shopifyOrderId: paid ? `${TAG}-first` : undefined });
         orderLineVariantIds.mockResolvedValue([MEMBERSHIP_VARIANT]);
@@ -262,7 +262,7 @@ describe("forward recovery", () => {
 
         await runReconcile();
         expect((await prisma.orgMembershipProcess.findUnique({ where: { id: processId } }))?.status).toBe(status);
-        expect(await prisma.paymentException.count({ where: { kind: "UNMATCHED_ORDER", shopifyOrderId: oid, processId } })).toBe(1);
+        expect(await prisma.paymentException.count({ where: { kind, shopifyOrderId: oid, processId } })).toBe(1);
     });
 
     it("never activates a DENIED household: nothing changes", async () => {

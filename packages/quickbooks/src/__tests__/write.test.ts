@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { kindOf } from "@checkin/component-kit";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { QboRequestError, QuickBooksClient, WRITABLE_ENTITIES, appKeyOf, assertAppKey, isThrottled, qbKey, type TxnWrite, type WriteRequest } from "../client";
+import { QboRequestError, QboThrottledError, QuickBooksClient, WRITABLE_ENTITIES, appKeyOf, assertAppKey, isThrottled, qbKey, type TxnWrite, type WriteRequest } from "../client";
 import { createVendor, findOrCreate, findOrCreateInKindJournal, postFailure, postFailureError, type FindOrCreateRequest, type InKindJournalRequest } from "../write";
 import type { AccessTokenSource, QboDeposit } from "../types";
 import { CREATE } from "../internal";
@@ -205,7 +205,7 @@ describe("request limits", () => {
     for (const [, init] of fetchMock.mock.calls) expect((init as RequestInit).signal).toBeInstanceOf(AbortSignal);
   });
 
-  it("retries a 429 once after Retry-After, with the same requestid", async () => {
+  it("retries a 429 once after the pacer's Retry-After pause, with the same requestid", async () => {
     fetchMock
       .mockResolvedValueOnce(new Response("", { status: 429, headers: { "Retry-After": "0" } }))
       .mockResolvedValueOnce(json({ Deposit: { Id: "5" } }));
@@ -213,13 +213,15 @@ describe("request limits", () => {
     expect(posts().map((c) => c.url.searchParams.get("requestid"))).toEqual([KEY, KEY]);
   });
 
-  it("fails on a second 429, as a system failure", async () => {
+  it("throws QboThrottledError on a second 429, as a system failure with its resume time", async () => {
     fetchMock
       .mockResolvedValueOnce(new Response("", { status: 429, headers: { "Retry-After": "0" } }))
       .mockResolvedValueOnce(new Response("", { status: 429, headers: { "Retry-After": "0" } }));
     const err = await client()[CREATE](deposit, KEY).catch((e: unknown) => e);
     expect(String(err)).toMatch(/failed 429/);
     expect(kindOf(err)).toBe("system");
+    expect(err).toBeInstanceOf(QboThrottledError);
+    expect(err).toMatchObject({ status: 429, resumeAt: expect.any(Date) });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 

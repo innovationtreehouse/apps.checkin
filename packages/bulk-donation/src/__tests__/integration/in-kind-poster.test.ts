@@ -5,7 +5,7 @@
  * Finance books, skips or matches by id what the drain hands over.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { MAX_DRIFT_CHECKS_PER_RUN, QuickBooksClient, STALE_CLAIM_MS, appKeyOf, type BooksMapRole, type QboAccount, type QboDeposit, type QboJournalEntry, type QboPurchase } from "@checkin/quickbooks";
+import { MAX_DRIFT_CHECKS_PER_RUN, Pacer, QuickBooksClient, STALE_CLAIM_MS, appKeyOf, type BooksMapRole, type QboAccount, type QboDeposit, type QboJournalEntry, type QboPurchase } from "@checkin/quickbooks";
 import type { FailureReport } from "@checkin/component-kit";
 import type { CompletedReceipt } from "@checkin/receipt-types";
 import { describeDb } from "../helpers/db";
@@ -81,7 +81,7 @@ class FakeQbo {
 
   handle = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = new URL(String(input));
-    const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { intuit_tid: "tid" } });
+    const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { intuit_tid: "tid", ...(status === 429 && { "Retry-After": "0" }) } });
     if (this.outage && !(url.searchParams.get("query") ?? "").startsWith("SELECT * FROM Preferences")) return json({ Fault: { Error: [] } }, 503);
     if ((init?.method ?? "GET") === "GET") {
       const query = url.searchParams.get("query") ?? "";
@@ -139,7 +139,7 @@ let rulesThrow: Error | null;
 let failures: FailureReport[];
 
 function configure() {
-  const client = new QuickBooksClient({ current: async () => "tok" }, { env: "sandbox", realmId: "123" });
+  const client = new QuickBooksClient({ current: async () => "tok" }, { env: "sandbox", realmId: "123" }, new Pacer({ perSecond: 1e6, maxInFlight: 1e6 }));
   const capital: InKindCapital = { submit: async () => {}, awaitingReview: async () => awaiting, assetLineIds: async () => assets };
   const rules: InKindAccounts = {
     resolve: async (_org, parts) => {
@@ -1190,6 +1190,76 @@ describeDb("in-kind QuickBooks drift", () => {
     await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ drift: { checked: 0 } });
   });
 
+  const strayEntry = (id: number, entryId: string) => {
+    qbo.journals.push({ Id: entryId, TxnDate: "2026-10-20", TotalAmt: 33, PrivateNote: `[checkin-test] [checkin:${inKindKey(orgId, "receipt", id)}]` });
+    qbo.createTimes.set(entryId, new Date());
+  };
+
+  it("a drifted gift with a stray entry shows both the drift and the stray entry, run after run", async () => {
+    const id = await booked();
+    qbo.journals[0].TotalAmt = 30;
+    strayEntry(id, "9100");
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ sweep: { flagged: 1 }, drift: { drifted: 1 } });
+    const note = (await posting(id)).qbNote;
+    expect(note).toMatch(/Changed in QuickBooks since booking \(JournalEntry \S+ amount\)/);
+    expect(note).toMatch(/JournalEntry 9100 carries this gift's key but is not linked/);
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ sweep: { flagged: 0 } });
+    expect((await posting(id)).qbNote).toBe(note);
+  });
+
+  it("skip answers the stray entry its note named: the sweep never notes it again, and still notes a new one", async () => {
+    const id = await booked();
+    qbo.journals[0].TotalAmt = 30;
+    strayEntry(id, "9100");
+    await runInKindQbPosting(orgId);
+    await expect(resolve(id, { action: "skip", reason: "Voided 9100 and corrected the value" })).resolves.toMatchObject({ qbState: "DISMISSED", qbNote: null });
+    const settled = (await events("IN_KIND_QB_SETTLED")).at(-1);
+    expect(JSON.parse(settled?.payload ?? "{}")).toMatchObject({ manual: true, answeredEntries: ["JournalEntry:9100"] });
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ sweep: { flagged: 0 } });
+    expect((await posting(id)).qbNote).toBeNull();
+
+    strayEntry(id, "9101");
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ sweep: { flagged: 1 } });
+    expect((await posting(id)).qbNote).toBe("QuickBooks JournalEntry 9101 carries this gift's key but is not linked to it; void it or link it");
+  });
+
+  it("match leaves the stray entry it does not link unanswered, so the next sweep notes it again", async () => {
+    const id = await booked();
+    qbo.journals[0].TxnDate = "2026-10-25";
+    strayEntry(id, "9100");
+    await runInKindQbPosting(orgId);
+    const entry = qbo.journals[0];
+    entry.Line = [{ JournalEntryLineDetail: { PostingType: "Credit", AccountRef: { value: "400" } } }];
+    await expect(resolve(id, { action: "match", journalEntryId: entry.Id })).resolves.toMatchObject({ qbState: "CREATED", qbNote: null });
+    expect(JSON.parse((await events("IN_KIND_QB_SETTLED")).at(-1)?.payload ?? "{}")).not.toHaveProperty("answeredEntries");
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ sweep: { flagged: 1 } });
+    expect((await posting(id)).qbNote).toBe("QuickBooks JournalEntry 9100 carries this gift's key but is not linked to it; void it or link it");
+  });
+
+  it("match answers no stray entry, so an entry a re-match lets go of is noted again", async () => {
+    const id = await booked();
+    const [own] = qbo.journals;
+    const value = own.TotalAmt;
+    const credit = [{ JournalEntryLineDetail: { PostingType: "Credit" as const, AccountRef: { value: "400" } } }];
+    own.TotalAmt = 30;
+    strayEntry(id, "9100");
+    const stray = qbo.journals[1];
+    Object.assign(stray, { TotalAmt: value, Line: credit });
+    await runInKindQbPosting(orgId);
+    await expect(resolve(id, { action: "match", journalEntryId: "9100" })).resolves.toMatchObject({ qbState: "CREATED", qbNote: null });
+    expect(JSON.parse((await events("IN_KIND_QB_SETTLED")).at(-1)?.payload ?? "{}")).not.toHaveProperty("answeredEntries");
+
+    Object.assign(own, { TotalAmt: value, Line: credit });
+    stray.TotalAmt = 30;
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ drift: { drifted: 1 } });
+    await expect(resolve(id, { action: "match", journalEntryId: own.Id })).resolves.toMatchObject({ qbState: "CREATED" });
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ sweep: { flagged: 1 } });
+    expect((await posting(id)).qbNote).toMatch(/JournalEntry 9100 carries this gift's key but is not linked/);
+  });
+
   it("match relinks a drifted gift to its own re-dated entry, with the new date as the baseline", async () => {
     const id = await booked();
     qbo.journals[0].TxnDate = "2026-10-25";
@@ -1216,12 +1286,12 @@ describeDb("in-kind QuickBooks drift", () => {
 });
 
 describeDb("in-kind drain — a QuickBooks throttle", () => {
-  it("ends the run at the first throttle and leaves every gift unstuck; the next run books them", async () => {
+  it("tries a throttled gift once more, ends the run at the second throttle, and leaves every gift unstuck; the next run books them", async () => {
     await switchOn();
     const gifts = [await acceptedGift(), await acceptedGift()];
     qbo.createAnswer = () => ({ status: 429 });
 
-    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ throttled: 1, failed: 0, posted: 0 });
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ throttled: 2, failed: 0, posted: 0 });
     for (const id of gifts) expect((await posting(id).catch(() => null))?.qbFirstFailedAt ?? null).toBeNull();
     expect(failures).toEqual([]);
     expect(await stuckItems()).toEqual([]);

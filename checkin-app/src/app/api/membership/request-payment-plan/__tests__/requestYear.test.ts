@@ -1,0 +1,61 @@
+/**
+ * @jest-environment node
+ *
+ * A membership payment-plan request records the membership year live when the family asks.
+ */
+import type { NextRequest } from "next/server";
+import prisma from "@/lib/prisma";
+import { POST } from "../route";
+
+jest.mock("@/lib/auth", () => ({
+    withAuth: (_o: unknown, h: (req: unknown, auth: unknown) => unknown) =>
+        (req: unknown) => h(req, { type: "session", user: { id: 2, isSysadmin: false, isBoardMember: false } }),
+}));
+jest.mock("@/lib/prisma", () => ({
+    __esModule: true,
+    default: {
+        orgMembershipProcess: { findUnique: jest.fn(), updateMany: jest.fn() },
+        boardSettings: { findUnique: jest.fn() },
+    },
+}));
+jest.mock("@/lib/scholarshipEmails", () => ({
+    resolveScholarshipRecipients: jest.fn().mockResolvedValue([]), notifyReviewTeam: jest.fn(), sendScholarshipAck: jest.fn(),
+}));
+
+const process = {
+    id: 7, status: "PENDING_PAYMENT", isPaymentPlanRequested: false,
+    orgMembership: { householdId: 5, household: { householdMembers: [{ id: 2 }] } },
+};
+
+const post = () => (POST as unknown as (req: NextRequest) => Promise<Response>)(
+    new Request("http://localhost/api/membership/request-payment-plan", {
+        method: "POST",
+        body: JSON.stringify({ processId: 7, kind: "PAYMENT_PLAN" }),
+    }) as unknown as NextRequest,
+);
+
+beforeEach(() => {
+    jest.mocked(prisma.orgMembershipProcess.findUnique).mockResolvedValue(process as never);
+    jest.mocked(prisma.orgMembershipProcess.updateMany).mockResolvedValue({ count: 1 });
+});
+afterEach(() => jest.useRealTimers());
+
+it.each([
+    ["the day before the renewal window opens", new Date(Date.UTC(2027, 5, 30)), 2026],
+    ["the day the renewal window opens", new Date(Date.UTC(2027, 6, 1)), 2027],
+])("records the live year on %s, in the write that flips the request", async (_label, now, year) => {
+    jest.useFakeTimers({ now, doNotFake: ["nextTick", "queueMicrotask", "setImmediate", "setTimeout"] });
+    jest.mocked(prisma.boardSettings.findUnique).mockResolvedValue({ orgMembershipYearBoundary: new Date(Date.UTC(2000, 8, 1)) } as never);
+
+    expect((await post()).status).toBe(200);
+    const { where, data } = jest.mocked(prisma.orgMembershipProcess.updateMany).mock.calls.at(-1)![0];
+    expect(where).toMatchObject({ isPaymentPlanRequested: false });
+    expect(data).toMatchObject({ isPaymentPlanRequested: true, paymentPlanYear: year });
+});
+
+it("records no year when no boundary is set", async () => {
+    jest.mocked(prisma.boardSettings.findUnique).mockResolvedValue(null);
+
+    expect((await post()).status).toBe(200);
+    expect(jest.mocked(prisma.orgMembershipProcess.updateMany).mock.calls.at(-1)![0].data).toMatchObject({ paymentPlanYear: null });
+});

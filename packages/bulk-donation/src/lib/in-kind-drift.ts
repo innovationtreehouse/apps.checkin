@@ -4,7 +4,7 @@ import { dollarsToCents } from "@checkin/money";
 import { MAX_DRIFT_CHECKS_PER_RUN, appKeyOf, todaysSlice, type QuickBooksClient } from "@checkin/quickbooks";
 import { db } from "../db";
 import { recordEvent } from "../repositories/audit";
-import { inKindKey, lockPosting } from "./in-kind-poster";
+import { inKindKey, lockPosting, strayLinesOf } from "./in-kind-poster";
 import { QB_MATCH_STATE } from "./qb-match";
 
 const SYSTEM = { actorUserId: null, actorUsername: "system:qb-drift", correlationId: null };
@@ -68,7 +68,10 @@ export async function checkInKindQbDrift(orgId: string, client: QuickBooksClient
       await tx.inKindBooking.updateMany({ where: { orgId, source: p.source, giftId: p.giftId }, data: { matchState: QB_MATCH_STATE.DRIFT } });
       await tx.inKindPosting.update({
         where: { id: p.id },
-        data: { matchState: QB_MATCH_STATE.DRIFT, qbNote: `Changed in QuickBooks since booking (${changes.join("; ")}): match the gift again or skip it with a reason` },
+        data: {
+          matchState: QB_MATCH_STATE.DRIFT,
+          qbNote: [`Changed in QuickBooks since booking (${changes.join("; ")}): match the gift again or skip it with a reason`, ...strayLinesOf(current.qbNote)].join("\n"),
+        },
       });
       const receiptId = p.source === "receipt" ? receiptOf.get(p.giftId)?.receiptId : null;
       await recordEvent(tx, {
