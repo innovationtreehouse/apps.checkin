@@ -15,6 +15,8 @@ jest.mock("@/lib/roles", () => ({ ...jest.requireActual("@/lib/roles"), lockBoar
 const KEEP_ID = 1;
 const MERGE_ID = 2;
 const HOUSEHOLD_ID = 10;
+const ACTOR_ID = 99;
+const ACTOR_HOUSEHOLD_ID = 20;
 
 function subject(id: number, overrides: Record<string, unknown> = {}) {
     return {
@@ -71,7 +73,7 @@ describe("executeMerge youth-lead notice", () => {
         const planned = subject(KEEP_ID);
         const locked = subject(KEEP_ID, { dateOfBirth: underEighteen });
         const merge = subject(MERGE_ID);
-        const tx = emptyTx(new Map([[KEEP_ID, locked], [MERGE_ID, merge]]));
+        const tx = emptyTx(new Map([[KEEP_ID, locked], [MERGE_ID, merge], [ACTOR_ID, subject(ACTOR_ID, { householdId: ACTOR_HOUSEHOLD_ID })]]));
         jest.mocked(prisma.$transaction).mockImplementation(((fn: (client: unknown) => Promise<unknown>) => fn(tx)) as unknown as typeof prisma.$transaction);
         const plan: MergePlan = {
             keep: planned as unknown as KeepSubject,
@@ -79,7 +81,7 @@ describe("executeMerge youth-lead notice", () => {
             choices: {},
             emailChangeReason: "",
         };
-        const actor = { id: 99, isBoardMember: true, isSysadmin: true } as unknown as AuthenticatedUser;
+        const actor = { id: ACTOR_ID, isBoardMember: true, isSysadmin: true } as unknown as AuthenticatedUser;
 
         await executeMerge(plan, actor);
 

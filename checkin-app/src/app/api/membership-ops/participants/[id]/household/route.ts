@@ -5,7 +5,8 @@ import { logBackendError, logger } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { addHouseholdLead, HouseholdLeadLimitError, HouseholdLeadMismatchError, HouseholdLeadYouthError, removeHouseholdLead } from "@/lib/household/leads";
-import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
+import type { DbClient } from "@/lib/db-client";
+import { findSelfGrantRefusal, recordSelfGrantRefusal, type SelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
 import { lockBoardRoles } from "@/lib/roles";
 import { lockAndFindDeniedHousehold, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
@@ -25,6 +26,31 @@ class DeniedHouseholdMoveError extends Error {
     constructor(public readonly householdId: number, public readonly personId: number) {
         super(`household ${householdId} is denied`);
     }
+}
+
+/** The actor shares either end's household, found under the Household locks; recorded after the rollback. */
+class SelfGrantMoveError extends Error {
+    constructor(public readonly refusal: SelfGrantRefusal) {
+        super("own household");
+    }
+}
+
+const OWN_HOUSEHOLD_MOVE = "You cannot move someone out of or into your own household — someone outside your household must.";
+
+/**
+ * Moving someone out of or into the actor's own household would let a role be granted
+ * around the own-household rule in lib/roles.ts, so neither end may be it. An actor
+ * whose household can't be resolved is refused. Writes nothing.
+ */
+async function moveSelfGrantRefusal(
+    db: DbClient,
+    actorId: number,
+    person: { id: number; householdId: number },
+    to: { householdId: number | null; createNew: boolean },
+): Promise<SelfGrantRefusal | null> {
+    const attempt = { table: "Person" as const, attempted: { householdId: to.householdId, createNew: to.createNew } };
+    return await findSelfGrantRefusal(db, actorId, { personId: person.id, householdId: person.householdId }, attempt)
+        ?? (to.householdId !== null ? await findSelfGrantRefusal(db, actorId, { householdId: to.householdId }, attempt) : null);
 }
 
 export const POST = withAuth<{ params: Promise<{ id: string }> }>(
@@ -66,15 +92,11 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
             }
         }
 
-        // Moving someone out of or into the actor's own household would let a role be
-        // granted around the own-household rule in lib/roles.ts, so neither end may be it.
-        // Each refusal is audited, and an actor whose household can't be resolved is refused.
-        const attempt = { table: "Person" as const, attempted: { householdId: requestedHouseholdId, createNew: Boolean(createNew) } };
-        if (
-            await refuseSelfGrant(prisma, auth.user.id, { personId: participantId, householdId: participant.householdId }, attempt)
-            || (requestedHouseholdId !== null && await refuseSelfGrant(prisma, auth.user.id, { householdId: requestedHouseholdId }, attempt))
-        ) {
-            return apiError("You cannot move someone out of or into your own household — someone outside your household must.", 403);
+        const to = { householdId: requestedHouseholdId, createNew: Boolean(createNew) };
+        const selfGrant = await moveSelfGrantRefusal(prisma, auth.user.id, participant, to);
+        if (selfGrant) {
+            await recordSelfGrantRefusal(prisma, selfGrant);
+            return apiError(OWN_HOUSEHOLD_MOVE, 403);
         }
 
         // A person leads their OWN household, so a change of household
@@ -96,6 +118,9 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
             if (denied !== null) throw new DeniedHouseholdMoveError(denied, participantId);
             // Nobody moves into or out of an archived household.
             await lockLiveHouseholds(tx, requestedHouseholdId === null ? [participant.householdId] : [participant.householdId, requestedHouseholdId]);
+            // Re-read under the Household locks, so an actor who joined either household since the check above is refused.
+            const lockedRefusal = await moveSelfGrantRefusal(tx, auth.user.id, participant, to);
+            if (lockedRefusal) throw new SelfGrantMoveError(lockedRefusal);
 
             // New household starts as a visitor (no membership) — membership is
             // earned via the application process or set on the households page.
@@ -150,6 +175,10 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
             participant: updatedParticipant,
         });
     } catch (error) {
+        if (error instanceof SelfGrantMoveError) {
+            await recordSelfGrantRefusal(prisma, error.refusal);
+            return apiError(OWN_HOUSEHOLD_MOVE, 403);
+        }
         if (error instanceof PersonGoneError) {
             return apiError("This person's record no longer exists; they may have been merged into another. Reload and try again.", 404);
         }
