@@ -18,7 +18,9 @@ import { isDesignatedEmail, designatedEmailRefusalForBoard } from "@/lib/members
 import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
 import { personActor } from "@/lib/auditActor";
 import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
+import { isYouth } from "@/lib/time";
 import { noteStands } from "@/lib/membership/notRenewing";
+import { bgStatus } from "@/lib/membership/bgStatus";
 
 export const GET = handler('GET /api/household', async ({ auth }) => {
     if (auth.type !== 'session') throw unauthorized();
@@ -44,11 +46,14 @@ export const GET = handler('GET /api/household', async ({ auth }) => {
 
     if (!user) throw notFound("User not found");
 
+    const now = new Date();
+    const settings = user.household
+        ? await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true, bgRecheckMonths: true } })
+        : null;
     const membership = user.household?.orgMembership;
-    if (membership?.notRenewingYear != null) {
-        const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
-        // A note for a year that has passed means nothing, so the page never sees it.
-        if (!noteStands(membership.notRenewingYear, settings?.orgMembershipYearBoundary, new Date())) membership.notRenewingYear = null;
+    // A note for a year that has passed means nothing, so the page never sees it.
+    if (membership?.notRenewingYear != null && !noteStands(membership.notRenewingYear, settings?.orgMembershipYearBoundary, now)) {
+        membership.notRenewingYear = null;
     }
 
     const household = user.household && {
@@ -59,7 +64,10 @@ export const GET = handler('GET /api/household', async ({ auth }) => {
                 _count, budgetOwnersOwned, budgetOwnerTreasurerships, instancesLed,
                 household: _household, lastBackgroundCheck, canAccessStaging, ...peer
             } = m;
-            return { ...peer, emailLocked: isEmailLocked(m) };
+            const isAdult = m.isDeclaredAdult || (!!m.dateOfBirth && !isYouth(m.dateOfBirth));
+            // Only the computed status leaves, never the check date; the stripper keeps it for the person and their lead.
+            const status = isAdult && settings ? bgStatus(lastBackgroundCheck, settings, now) : null;
+            return { ...peer, emailLocked: isEmailLocked(m), ...(status && { bgStatus: { personId: m.id, status } }) };
         }),
     };
     // Where the locked-email help text points members to change it.
