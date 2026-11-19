@@ -216,7 +216,7 @@ describe('Full Program Signup Integration Flow', () => {
             _count: { participants: 0 }
         });
         (prisma.person.findUnique as jest.Mock).mockResolvedValue({ id: childParticipantId, householdId, dateOfBirth: new Date('2015-01-01') });
-        (prisma.person.findFirst as jest.Mock).mockResolvedValue({ id: leadUserId });
+        (prisma.person.findFirst as jest.Mock).mockResolvedValue({ id: leadUserId, dateOfBirth: null, isDeclaredAdult: true });
         (prisma.programParticipant.create as jest.Mock).mockResolvedValue({ programId, personId: childParticipantId, status: 'PENDING' });
 
         const enrollReq = new Request(`http://localhost/api/programs/${programId}/participants`, {

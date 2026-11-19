@@ -66,21 +66,26 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         const isSelf = currentUserId === participantId;
         const isSysAdminOrBoard = auth.user.isSysadmin || auth.user.isBoardMember;
 
-        let isHouseholdLead = false;
-        if (!isSelf && !isSysAdminOrBoard && participant.person?.householdId) {
-            const leadRecord = await prisma.person.findFirst({
+        const leadRecord = !isSelf && !isSysAdminOrBoard && participant.person?.householdId
+            ? await prisma.person.findFirst({
                 where: {
                     id: currentUserId,
                     householdId: participant.person.householdId,
                     isHouseholdLead: true
                 },
-                select: { id: true }
-            });
-            isHouseholdLead = !!leadRecord;
+                select: { dateOfBirth: true, isDeclaredAdult: true }
+            })
+            : null;
+
+        if (!isSelf && !isSysAdminOrBoard && !leadRecord) {
+            return apiError("Forbidden: Not authorized to request a payment plan for this participant", 403);
         }
 
-        if (!isSelf && !isSysAdminOrBoard && !isHouseholdLead) {
-            return apiError("Forbidden: Not authorized to request a payment plan for this participant", 403);
+        // Same rule as the enroll route's lead path: only a known adult lead takes on a payment.
+        if (leadRecord && !isKnownAdult(leadRecord)) {
+            return apiError(leadRecord.dateOfBirth
+                ? "A household lead under 18 can't request a payment plan."
+                : "Add your date of birth (or confirm you are over 25) before requesting a payment plan.", 403);
         }
 
         // A scholarship request IS a payment situation, so it is not a youth's to

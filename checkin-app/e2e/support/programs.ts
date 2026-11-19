@@ -13,6 +13,15 @@ export const PROGRAM_DATES = { startAt: inDays(14), endAt: inDays(28) };
 
 export interface Named { id: number; name: string }
 
+/** A new adult in a household of their own who has declared themself over 25; returns their email. A program page shows payment only to a lead of known age. */
+export async function adultFamily(): Promise<string> {
+  const email = await settledFamily();
+  const lead = await loginAs(email);
+  const declared = await send(lead, "PATCH", "/api/household/member", { participantId: lead.personaId, over25: true });
+  if (declared.status !== 200) throw new Error(`declare lead over 25: ${declared.status}`);
+  return email;
+}
+
 /** The seeded ACTIVE member with a current background-check clearance, whom the Board may name to lead a program. */
 export const LEADER = "program.lead@example.com";
 
@@ -75,7 +84,7 @@ export async function pay(email: string, programId: number, youthIds: number[]):
 
 /** A new family whose youth holds a paid place in the program. */
 export async function paidYouth(programId: number): Promise<{ email: string; youth: Named }> {
-  const email = await settledFamily();
+  const email = await adultFamily();
   const youth = await addYouth(email);
   await claim(email, programId, [youth.id]);
   await pay(email, programId, [youth.id]);

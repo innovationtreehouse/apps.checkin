@@ -6,13 +6,13 @@ import { formatCents } from '@checkin/money';
 import type { ProgramDetail } from './useProgramEnrollment';
 
 /** The program's dates, enrollment state, eligibility, the household's enrollments and prices. */
-export default function ProgramDetailsCard({ program, ageRange, enrolledCount, isFull, myEnrolled, viewerIsYouth, isClosed, hasEnded, onPayNow }: {
+export default function ProgramDetailsCard({ program, ageRange, enrolledCount, isFull, myEnrolled, seesPayment, isClosed, hasEnded, onPayNow }: {
   program: ProgramDetail;
   ageRange: string | null;
   enrolledCount: number;
   isFull: boolean;
   myEnrolled: { name: string; unpaid: boolean }[];
-  viewerIsYouth: boolean;
+  seesPayment: boolean;
   isClosed: boolean;
   hasEnded: boolean;
   onPayNow: () => void;
@@ -48,7 +48,7 @@ export default function ProgramDetailsCard({ program, ageRange, enrolledCount, i
             {program.orgMemberOnly && <Text><strong>Eligibility:</strong> Treehouse Members only</Text>}
           </>
         )}
-        {myEnrolled.length > 0 && !viewerIsYouth && (
+        {myEnrolled.length > 0 && seesPayment && (
           <>
             <Divider />
             <Text><strong>Already enrolled from your household:</strong></Text>
