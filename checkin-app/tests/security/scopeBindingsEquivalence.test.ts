@@ -280,8 +280,9 @@ function eq(a: Set<string>, b: Set<string>): boolean {
  * Key Volunteer Agreement models. Each is bound `their_own` on personId === selfId,
  * so on such a row the resolver adds their_own.
  *
- * CheckStartedRow.their_own / led_households: the oracle has no case for the
- * check-started rows. Bound like Visit: their_own on personId === selfId, and
+ * CheckStartedRow / HouseholdPeerBgStatus.their_own / led_households: the oracle
+ * has no case for the check-started rows or a household peer's background-check
+ * status. Bound like Visit: their_own on personId === selfId, and
  * led_households on personId ∈ ctx.ledHouseholdMemberIds.
  *
  * ProgramRosterAge.their_own / their_program_participants: the oracle has no case
@@ -373,7 +374,7 @@ function expectedFromSnapshot(
     ) {
         expected.add('their_own');
     }
-    if (model === 'CheckStartedRow' && row && typeof row === 'object' && typeof row.personId === 'number') {
+    if ((model === 'CheckStartedRow' || model === 'HouseholdPeerBgStatus') && row && typeof row === 'object' && typeof row.personId === 'number') {
         if (row.personId === callerCtx.selfId) expected.add('their_own');
         if (callerCtx.ledHouseholdMemberIds.has(row.personId)) expected.add('led_households');
     }
@@ -437,6 +438,6 @@ describe('scopesHeld ≡ frozen switch + intentional deltas (personas × models 
     it('covers every bound model', () => {
         // Guard against the row set silently not exercising a model.
         expect(MODELS).toEqual(expect.arrayContaining(Object.keys(SCOPE_BINDINGS)));
-        expect(Object.keys(SCOPE_BINDINGS).length).toBe(39);
+        expect(Object.keys(SCOPE_BINDINGS).length).toBe(40);
     });
 });

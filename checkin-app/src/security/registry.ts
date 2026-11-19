@@ -997,17 +997,22 @@ defineRoute({
 
 // My Household: the caller's household, its members and its membership status.
 // Any session is admitted, a caller with no household included (household null);
-// every sensitive field is gated to the caller's own household.
+// every sensitive field is gated to the caller's own household. A peer's
+// background-check status reaches only that person and a lead of their household
+// (their_own / led_households on HouseholdPeerBgStatus). A sysadmin counts as a
+// lead of their own household (householdLeadship's canManage), so a non-lead
+// sysadmin member reads it there too.
 defineRoute({
     endpoint: 'GET /api/household',
     authorize: 'authenticated',
     envelope: null,
     // Bag: { HouseholdPage } with household (HouseholdPageHousehold →
-    // householdMembers HouseholdPeer, orgMembership OrgMembership).
-    returns: ['HouseholdPage', 'HouseholdPageHousehold', 'HouseholdPeer', 'OrgMembership'],
+    // householdMembers HouseholdPeer → bgStatus HouseholdPeerBgStatus,
+    // orgMembership OrgMembership).
+    returns: ['HouseholdPage', 'HouseholdPageHousehold', 'HouseholdPeer', 'HouseholdPeerBgStatus', 'OrgMembership'],
     orderedView: [
         // 'member' carries HouseholdPage.boardReplyTo, the address a locked email's help names.
-        ['authenticated', ['their_households:pii', 'their_households:personal', 'their_households:internal', 'member', 'public']],
+        ['authenticated', ['their_households:pii', 'their_households:personal', 'their_households:internal', 'their_own:internal', 'led_households:internal', 'member', 'public']],
     ],
 });
 
@@ -1029,7 +1034,8 @@ defineRoute({
 // A household lead says the household won't renew into the year the next
 // renewal run opens (POST), or takes that back (DELETE). Any session is
 // admitted; the service refuses anyone but a lead of an active household. Each
-// returns the household's OrgMembership under GET /api/household's view.
+// returns the household's OrgMembership under GET /api/household's view, minus
+// the peer background-check status scopes.
 const NOT_RENEWING_VIEW: readonly OrderedViewEntry[] = [
     ['authenticated', ['their_households:pii', 'their_households:personal', 'their_households:internal', 'member', 'public']],
 ];
