@@ -2,7 +2,7 @@ import prisma from "@/lib/prisma";
 import type { AuthenticatedUser } from "@/types/auth";
 import type { DbClient, TxClient } from "@/lib/db-client";
 import { fromWhere, personBgOpen } from "@/lib/membership/lifecycle";
-import { KVA_KIND } from "@/lib/membership/keyVolunteerProcess";
+import { KVA_KIND, findSignedCurrentKva } from "@/lib/membership/keyVolunteerProcess";
 import { recallSigningRequests } from "@/lib/membership/keyVolunteer";
 import { disputingReviews, loadCheckReviews } from "@/lib/membership/checkStanding";
 import { settleHouseholdBg } from "@/lib/membership/settleHouseholdBg";
@@ -794,14 +794,17 @@ async function archiveDuplicatePersonBg(tx: TxClient, personId: number, actorId:
 }
 
 /**
- * One human has at most ONE open Key Volunteer agreement. Both merge subjects can
- * hold one, and re-pointing both leaves the survivor two. Keep the furthest-along
- * row, archive the rest, as archiveDuplicatePersonBg does.
+ * One human has at most ONE open Key Volunteer agreement, and none once they have
+ * signed the current version. Both merge subjects can hold one, and re-pointing
+ * both leaves the survivor two, or an open one beside a signed current one. Keep
+ * the signed current row or else the furthest-along open row, and archive the
+ * rest, as archiveDuplicatePersonBg does. An open row beside a signature below the
+ * current version is the person's re-sign, so it stays.
  *
- * Rank: the newer agreement version, then a Zoho request already sent (the person
- * has begun signing), then the older row. The losers' Zoho requests are returned
- * for the caller to recall after commit; an archived process never matches the
- * Zoho webhook, so a signature landing first changes nothing.
+ * Rank of open rows: the newer agreement version, then a Zoho request already sent
+ * (the person has begun signing), then the older row. The losers' Zoho requests are
+ * returned for the caller to recall after commit; an archived process never matches
+ * the Zoho webhook, so a signature landing first changes nothing.
  */
 async function archiveDuplicateKva(tx: TxClient, personId: number, actorId: number): Promise<{ archived: number; recallRequestIds: string[] }> {
     const openWhere = { kind: KVA_KIND, contractSignedAt: null, ...fromWhere("PENDING_EXTERNAL_ACTION") };
@@ -809,14 +812,18 @@ async function archiveDuplicateKva(tx: TxClient, personId: number, actorId: numb
         where: { subjectPersonId: personId, ...openWhere },
         select: { id: true, agreementVersion: true, zohoEnvelopeId: true },
     });
-    if (open.length < 2) return { archived: 0, recallRequestIds: [] };
+    if (open.length === 0) return { archived: 0, recallRequestIds: [] };
+    const signed = await findSignedCurrentKva(tx, personId);
+    if (!signed && open.length < 2) return { archived: 0, recallRequestIds: [] };
 
     const rank = (p: (typeof open)[number]) => [p.agreementVersion ?? 0, p.zohoEnvelopeId ? 1 : 0, -p.id];
-    const [survivor, ...losers] = [...open].sort((a, b) => {
+    const ranked = [...open].sort((a, b) => {
         const [ra, rb] = [rank(a), rank(b)];
         for (let i = 0; i < ra.length; i++) if (ra[i] !== rb[i]) return rb[i] - ra[i];
         return 0;
     });
+    const survivor = signed ?? ranked[0];
+    const losers = signed ? ranked : ranked.slice(1);
 
     let archived = 0;
     const recallRequestIds: string[] = [];
@@ -834,7 +841,13 @@ async function archiveDuplicateKva(tx: TxClient, personId: number, actorId: numb
                 tableName: "OrgMembershipProcess",
                 affectedEntityId: loser.id,
                 oldData: { status: "PENDING_EXTERNAL_ACTION" },
-                newData: { status: "ARCHIVED", reason: "duplicate Key Volunteer agreement resolved by participant merge", survivorProcessId: survivor.id },
+                newData: {
+                    status: "ARCHIVED",
+                    reason: signed
+                        ? "open Key Volunteer agreement superseded by a signed current one on participant merge"
+                        : "duplicate Key Volunteer agreement resolved by participant merge",
+                    survivorProcessId: survivor.id,
+                },
             },
         });
         if (loser.zohoEnvelopeId) recallRequestIds.push(loser.zohoEnvelopeId);

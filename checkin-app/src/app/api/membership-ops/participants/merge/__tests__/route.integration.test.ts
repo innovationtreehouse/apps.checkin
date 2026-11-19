@@ -1925,6 +1925,81 @@ describe("Merge Participants API", () => {
             expect((await openForKeeper()).map(p => p.id)).toEqual([tombstoneProc.id]);
             expect(mockRecallSigningRequests).toHaveBeenCalledWith([]);
         });
+
+        describe("beside an agreement already signed", () => {
+            const CURRENT = 3;
+            let savedVersion: number | null = null;
+
+            beforeAll(async () => {
+                const prev = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { keyVolunteerAgreementVersion: true } });
+                savedVersion = prev ? prev.keyVolunteerAgreementVersion : null;
+                await prisma.boardSettings.upsert({
+                    where: { id: 1 },
+                    create: { id: 1, keyVolunteerAgreementVersion: CURRENT },
+                    update: { keyVolunteerAgreementVersion: CURRENT },
+                });
+            });
+
+            afterAll(async () => {
+                if (savedVersion !== null) await prisma.boardSettings.update({ where: { id: 1 }, data: { keyVolunteerAgreementVersion: savedVersion } });
+                else await prisma.boardSettings.delete({ where: { id: 1 } }).catch(() => {});
+            });
+
+            const signedKva = (personId: number, agreementVersion: number) =>
+                prisma.orgMembershipProcess.create({
+                    data: { kind: "KEY_VOLUNTEER_AGREEMENT", subjectPersonId: personId, status: "ACTIVE", agreementVersion, contractSignedAt: new Date() },
+                });
+
+            const statusOf = async (id: number) => (await prisma.orgMembershipProcess.findUnique({ where: { id } }))?.status;
+
+            it("archives the open agreement and recalls its request when the other is signed at the current version", async () => {
+                const envelope = `kva-merge-signed-${Date.now()}`;
+                const signedProc = await signedKva(pKeepId, CURRENT);
+                const tombstoneProc = await openKva(pMergeId, { agreementVersion: CURRENT, zohoEnvelopeId: envelope });
+                createdProcessIds.push(signedProc.id, tombstoneProc.id);
+
+                const res = await POST(mergeReq(pKeepId, pMergeId));
+                expect(res.status).toBe(200);
+
+                expect(await openForKeeper()).toEqual([]);
+                expect(await statusOf(signedProc.id)).toBe("ACTIVE");
+                const loser = await prisma.orgMembershipProcess.findUnique({ where: { id: tombstoneProc.id } });
+                expect(loser?.status).toBe("ARCHIVED");
+                expect(loser?.archivedFromStatus).toBe("PENDING_EXTERNAL_ACTION");
+                const log = await prisma.auditLog.findFirst({ where: { tableName: "OrgMembershipProcess", affectedEntityId: tombstoneProc.id } });
+                expect(log?.newData).toMatchObject({ status: "ARCHIVED", survivorProcessId: signedProc.id });
+                expect(mockRecallSigningRequests).toHaveBeenCalledWith([envelope]);
+            });
+
+            it("keeps the open agreement as the re-sign when the signed one is below the current version", async () => {
+                const signedProc = await signedKva(pMergeId, CURRENT - 1);
+                const keeperProc = await openKva(pKeepId, { agreementVersion: CURRENT });
+                createdProcessIds.push(signedProc.id, keeperProc.id);
+
+                const res = await POST(mergeReq(pKeepId, pMergeId));
+                expect(res.status).toBe(200);
+
+                expect((await openForKeeper()).map(p => p.id)).toEqual([keeperProc.id]);
+                expect(await statusOf(signedProc.id)).toBe("ACTIVE");
+                expect(mockRecallSigningRequests).toHaveBeenCalledWith([]);
+            });
+
+            it("leaves two agreements signed at the current version unchanged", async () => {
+                const keeperProc = await signedKva(pKeepId, CURRENT);
+                const tombstoneProc = await signedKva(pMergeId, CURRENT);
+                createdProcessIds.push(keeperProc.id, tombstoneProc.id);
+
+                const res = await POST(mergeReq(pKeepId, pMergeId));
+                expect(res.status).toBe(200);
+
+                const keeperKvas = await prisma.orgMembershipProcess.findMany({
+                    where: { kind: "KEY_VOLUNTEER_AGREEMENT", subjectPersonId: pKeepId },
+                    orderBy: { id: "asc" },
+                });
+                expect(keeperKvas.map(p => [p.id, p.status])).toEqual([[keeperProc.id, "ACTIVE"], [tombstoneProc.id, "ACTIVE"]]);
+                expect(mockRecallSigningRequests).toHaveBeenCalledWith([]);
+            });
+        });
     });
 
     // A merge that would change a
