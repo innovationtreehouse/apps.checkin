@@ -2,7 +2,7 @@ import prisma from "@/lib/prisma";
 import { adjustProgramInventory } from "@/lib/shopify/stock";
 import { isOrderReversed, raisePaymentException, recordReversal } from "@/lib/finance/reconcile/exceptions";
 import { takeBackRestockedSeats } from "@/lib/finance/reconcile/reversals";
-import { activateProgramEnrollment, publicStockDelta } from "../activateEnrollment";
+import { activateProgramEnrollment, priceMismatch, publicStockDelta } from "../activateEnrollment";
 
 type Row = { personId: number; status: "PENDING" | "ACTIVE"; inventoryHeldAt: Date | null; shopifyOrderId?: string | null };
 // The participant rows the guarded writes act on; findUnique serves a separate
@@ -219,5 +219,53 @@ describe("activateProgramEnrollment public stock", () => {
         seat(2, false);
         await activateProgramEnrollment({ programId: 7, personIds: [1, 2], shopifyOrderId: "5", lines: [{ variantId: "pub", quantity: 2 }] });
         expect(raisePaymentException).not.toHaveBeenCalled();
+    });
+});
+
+describe("a seat paid at a price other than the program's", () => {
+    const priced = { ...program, nonOrgMemberPriceCents: 8000 };
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockRows.clear();
+        mockSnapshots.clear();
+        mockStock.length = 0;
+        mockSpent.length = 0;
+        (prisma.program.findUnique as jest.Mock).mockResolvedValue(priced);
+    });
+
+    it("seats the family and raises the difference for the Board", async () => {
+        seat(1, false);
+        seat(2, false);
+        const res = await activateProgramEnrollment({ programId: 7, personIds: [1, 2], shopifyOrderId: "5", lines: [{ variantId: "claim", quantity: 2, unitPriceCents: 7500 }] });
+        expect(res.activatedCount).toBe(2);
+        expect(raisePaymentException).toHaveBeenCalledTimes(1);
+        expect(raisePaymentException).toHaveBeenCalledWith("AMOUNT_MISMATCH", {
+            shopifyOrderId: "5", programId: 7, personId: 1, evidence: expect.stringContaining("$75.00 per seat; the program's price is $80.00"),
+        });
+    });
+
+    it("raises nothing when the order pays the program's price", async () => {
+        seat(1, false);
+        await activateProgramEnrollment({ programId: 7, personIds: [1], shopifyOrderId: "5", lines: [{ variantId: "pub", quantity: 1, unitPriceCents: 8000 }] });
+        expect(raisePaymentException).not.toHaveBeenCalled();
+    });
+
+    it("raises no price mismatch when nobody was seated", async () => {
+        mockRows.set(1, { personId: 1, status: "ACTIVE", inventoryHeldAt: null });
+        await activateProgramEnrollment({ programId: 7, personIds: [1], shopifyOrderId: "5", lines: [{ variantId: "pub", quantity: 1, unitPriceCents: 7500 }] });
+        expect(raisePaymentException).not.toHaveBeenCalledWith("AMOUNT_MISMATCH", expect.anything());
+    });
+});
+
+describe("priceMismatch", () => {
+    const p = { shopifyVariantId: "pub", claimantShopifyVariantId: "claim", nonOrgMemberPriceCents: 8000 };
+
+    it("ignores lines that are not this program's seats, and lines with no known price", () => {
+        expect(priceMismatch(p, [{ variantId: "merch", quantity: 1, unitPriceCents: 100 }, { variantId: "pub", quantity: 1 }])).toBeNull();
+    });
+
+    it("is null when the program has no full price", () => {
+        expect(priceMismatch({ ...p, nonOrgMemberPriceCents: null }, [{ variantId: "pub", quantity: 1, unitPriceCents: 7500 }])).toBeNull();
     });
 });

@@ -14,6 +14,7 @@ import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { uniqueViolationFields } from "@/lib/prismaUniqueViolation";
 import { resolveMergedPerson } from "@/lib/person/mergeChain";
 import { isLiveHousehold } from "@/lib/household/archived";
+import { actsAsKeyholder } from "@/lib/visit/filters";
 import { specTrace, traceOnCommit } from "@/lib/specTrace";
 import type { Prisma } from "@/generated/prisma/client";
 import { lastNightlyCloseAt } from "@/lib/attendance/nightlyClose";
@@ -311,14 +312,15 @@ export const POST = withKiosk(
             // so a non-keyholder's close is refused and the scan is an ordinary
             // checkout; a late delivery can't know the role at its scan time, so
             // it still closes and is flagged.
-            closeRefused = closeKind !== null && !participant.isKeyholder && !isReplay && !isDead;
+            const keyholder = closeKind !== null && await actsAsKeyholder(participant, tx);
+            closeRefused = closeKind !== null && !keyholder && !isReplay && !isDead;
             // A close request is never debounced, parked or held: it is the
             // keyholder's decision, applied at its own time however late. A
             // closer who is no longer a keyholder (on a late delivery), or a
             // suspect clock, still closes and is flagged for review.
             if (closeKind && !closeRefused) {
                 const flag = isDead ? `client_dead:${deadStatus}`
-                    : !participant.isKeyholder ? "close_not_keyholder"
+                    : !keyholder ? "close_not_keyholder"
                     : (clockSuspect || clockAhead) ? "clock_suspect"
                     : nearClose ? "close_time_uncertain"
                     : null;

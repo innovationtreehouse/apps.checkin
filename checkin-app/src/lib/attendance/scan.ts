@@ -3,7 +3,7 @@ import { findAssociatedEventAt, processVisitCheckout } from "@/lib/attendanceTra
 import type { Person, Visit } from "@/generated/prisma/client";
 import type { DbClient, TxClient } from "@/lib/db-client";
 import { withFacilityLock } from "@/lib/facilityLock";
-import { KEYHOLDER_IN_BUILDING, LIVE_VISIT } from "@/lib/visit/filters";
+import { KEYHOLDER_IN_BUILDING, LIVE_VISIT, actsAsKeyholder } from "@/lib/visit/filters";
 import { LATE_CLOSE_SKEW_MS, MAX_VISIT_MS } from "@/lib/visitTimes";
 import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits, youthIsPresent } from "@/lib/supervision";
 import { isYouth } from "@/lib/time";
@@ -213,7 +213,7 @@ export async function processCheckout(
     /** The last recorded keyholder's single-badge leave, with how many it left inside. */
     let leave: { othersInside: number } | null = null;
 
-    if (participant.isKeyholder) {
+    if (await actsAsKeyholder(participant, db)) {
         const remainingKeyholders = await db.visit.count({
             where: {
                 ...KEYHOLDER_IN_BUILDING,

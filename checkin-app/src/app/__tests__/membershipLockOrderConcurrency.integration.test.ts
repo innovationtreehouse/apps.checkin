@@ -12,6 +12,7 @@ import { POST as mergePeople } from '@/app/api/membership-ops/participants/merge
 import { attest, boardReopenWrongPersonClose, boardResetReview } from '@/lib/membership/review';
 import { settleHouseholdBg } from '@/lib/membership/settleHouseholdBg';
 import { archiveHousehold } from '@/lib/household/archiveAction';
+import { SELF_GRANT_REFUSAL_TABLE } from '@/lib/membership/selfGrantGuard';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
@@ -243,5 +244,54 @@ describe('A person merge against a Board act on a review of a merged person', ()
         expect(reset).toEqual({ status: 'PENDING_BG_REVIEW' });
         expect({ status: merged.status, body: await merged.json() }).toMatchObject({ status: 200 });
         expect(await prisma.person.findUnique({ where: { id: f.subjectId } })).toBeNull();
+    });
+});
+
+describe('An actor who joins the subject household while the action waits on its lock', () => {
+    /** A sysadmin outside every fixture household, signed in. */
+    async function joiner() {
+        const id = await staff(`Joiner ${seq++}`, { isSysadmin: true });
+        jest.mocked(getServerSession).mockResolvedValue({ user: { id, isSysadmin: true, isBoardMember: false } });
+        return id;
+    }
+
+    /** Holds `householdId`'s row and moves `actorId` into it, uncommitted, until `act` waits on the row. */
+    async function joinWhileWaiting<T>(householdId: number, actorId: number, act: () => Promise<T>): Promise<T> {
+        let result!: Promise<T>;
+        await holding(async (holder) => {
+            await holder.query('SELECT id FROM "Household" WHERE id = $1 FOR UPDATE', [householdId]);
+            await holder.query('UPDATE "Person" SET "householdId" = $1 WHERE id = $2', [householdId, actorId]);
+            result = act();
+            result.catch(() => {});
+            await waitForBlocked(holder, 1);
+        });
+        return result;
+    }
+
+    const refusals = (actorId: number) => prisma.auditLog.count({ where: { actorId, tableName: SELF_GRANT_REFUSAL_TABLE } });
+
+    it('refuses the move of a person, with an audit row', async () => {
+        const f = await fixture();
+        const actor = await joiner();
+
+        const res = await joinWhileWaiting(f.homeId, actor, () => movePerson(moveReq(f.subjectId, f.awayId), { params: Promise.resolve({ id: String(f.subjectId) }) }));
+
+        expect(res.status).toBe(403);
+        expect(await refusals(actor)).toBe(1);
+        expect((await prisma.person.findUniqueOrThrow({ where: { id: f.subjectId } })).householdId).toBe(f.homeId);
+    });
+
+    it('refuses the merge of two of its people, with an audit row', async () => {
+        const f = await fixture();
+        const actor = await joiner();
+
+        const res = await joinWhileWaiting(f.homeId, actor, () => mergePeople(new Request('http://localhost:4000/api/membership-ops/participants/merge', {
+            method: 'POST',
+            body: JSON.stringify({ keepId: f.leadId, mergeId: f.subjectId, fieldChoices: { name: 'keep', identity: 'keep' } }),
+        }) as never));
+
+        expect(res.status).toBe(403);
+        expect(await refusals(actor)).toBe(1);
+        expect(await prisma.person.findUnique({ where: { id: f.subjectId } })).not.toBeNull();
     });
 });

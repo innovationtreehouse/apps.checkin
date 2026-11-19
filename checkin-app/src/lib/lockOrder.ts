@@ -1,10 +1,10 @@
 import type { TxClient } from "@/lib/db-client";
 
 /*
- * The one row-lock order every membership transaction takes, so no two of them wait
- * on each other in a cycle:
+ * The one row-lock order every membership and program transaction takes, so no two
+ * of them wait on each other in a cycle:
  *
- *   BOARD role rows → OrgMembership → Household → Person → OrgMembershipProcess / TrustedAdult
+ *   Program → BOARD role rows → OrgMembership → Household → Person → OrgMembershipProcess / TrustedAdult
  *
  * Each set is locked by ascending id. A path that already holds the OrgMembership
  * or Person rows a process belongs to may lock that process after its own, in any

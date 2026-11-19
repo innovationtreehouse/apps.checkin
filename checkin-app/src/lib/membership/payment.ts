@@ -137,9 +137,10 @@ export type ActivateOutcome =
  * household ACTIVE and send one congrats email; otherwise hold the process at
  * PENDING_BG_CLEARANCE until two reviewers approve (review.ts › clearBackgroundCheck).
  *
- * FOR UPDATE on the process row, then the household row, serializes against the
- * review path's attest() transaction and a board deny, and every status write is
- * still conditional on the status it read.
+ * FOR UPDATE on the membership row, then the process row, in the order
+ * lib/lockOrder.ts states, serializes against the review path's attest()
+ * transaction and a board deny, and every status write is still conditional on
+ * the status it read.
  *
  * - A board certify (via "manual") must find the process awaiting payment under
  *   the lock; otherwise it throws. With `requireRequested` it must also find the

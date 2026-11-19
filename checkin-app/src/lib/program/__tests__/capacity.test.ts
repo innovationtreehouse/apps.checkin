@@ -1,27 +1,28 @@
-import { lockProgramAndCheckCapacity, ProgramCapacityError } from "@/lib/program/capacity";
+import { lockProgramForClaim, PROGRAM_ENDED_NO_CLAIMS, ProgramCapacityError } from "@/lib/program/capacity";
 import type { Prisma } from "@/generated/prisma/client";
 
 /**
- * Builds a minimal mock TransactionClient: the FOR UPDATE lock is a no-op and
- * the participant count is fixed. Only the surface lockProgramAndCheckCapacity
- * touches is implemented.
+ * A minimal TransactionClient: the FOR UPDATE lock is recorded, the program row
+ * and participant count are fixed. `order` records the calls, so a test can see
+ * the row was read after the lock.
  */
-function mockTx(count: number): Prisma.TransactionClient {
-    return {
-        $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
-        programParticipant: { count: jest.fn().mockResolvedValue(count) },
-    } as unknown as Prisma.TransactionClient;
+function mockTx(count: number, program: { phase: string; maxParticipants: number | null } | null) {
+    const order: string[] = [];
+    const tx = {
+        $queryRaw: jest.fn(async () => { order.push("lock"); return [{ id: 1 }]; }),
+        program: { findUnique: jest.fn(async () => { order.push("read"); return program; }) },
+        programParticipant: { count: jest.fn(async () => { order.push("count"); return count; }) },
+    };
+    return { tx: tx as unknown as Prisma.TransactionClient, mocks: tx, order };
 }
 
-describe("lockProgramAndCheckCapacity", () => {
-    // No caller enrolls more than one seat per request today (the authenticated
-    // enroll flow is one participant per request), but the lock takes a seat
-    // count, so exercise the multi-seat overflow branch directly here.
+const running = (maxParticipants: number | null) => ({ phase: "RUNNING", maxParticipants });
+
+describe("lockProgramForClaim", () => {
     it("throws ProgramCapacityError when a multi-seat request overflows the cap", async () => {
-        // count=0, seats=3, max=2 -> 0+3 > 2 -> reject, 2 spots left.
         expect.assertions(2);
         try {
-            await lockProgramAndCheckCapacity(mockTx(0), 1, 3, 2);
+            await lockProgramForClaim(mockTx(0, running(2)).tx, 1, 3, true);
         } catch (e) {
             expect(e).toBeInstanceOf(ProgramCapacityError);
             expect((e as ProgramCapacityError).spotsLeft).toBe(2);
@@ -29,17 +30,32 @@ describe("lockProgramAndCheckCapacity", () => {
     });
 
     it("returns without throwing when seats fit", async () => {
-        await expect(
-            lockProgramAndCheckCapacity(mockTx(0), 1, 2, 2),
-        ).resolves.toBeUndefined();
+        await expect(lockProgramForClaim(mockTx(0, running(2)).tx, 1, 2, true)).resolves.toBeUndefined();
     });
 
-    it("is a no-op for an uncapped (null max) program", async () => {
-        const tx = mockTx(99);
-        await expect(
-            lockProgramAndCheckCapacity(tx, 1, 5, null),
-        ).resolves.toBeUndefined();
-        // Short-circuits before counting.
-        expect(tx.programParticipant.count).not.toHaveBeenCalled();
+    it("judges the cap read under the lock, not one the caller read earlier", async () => {
+        // The caller saw a cap of 2; a cut to 1 committed before the lock was taken.
+        const { tx, order } = mockTx(1, running(1));
+        await expect(lockProgramForClaim(tx, 1, 1, true)).rejects.toBeInstanceOf(ProgramCapacityError);
+        expect(order).toEqual(["lock", "read", "count"]);
+    });
+
+    it("is a no-op on capacity for an uncapped program", async () => {
+        const { tx, mocks } = mockTx(99, running(null));
+        await expect(lockProgramForClaim(tx, 1, 5, true)).resolves.toBeUndefined();
+        expect(mocks.programParticipant.count).not.toHaveBeenCalled();
+    });
+
+    it("skips capacity when the caller does not enforce it", async () => {
+        const { tx, mocks } = mockTx(5, running(1));
+        await expect(lockProgramForClaim(tx, 1, 1, false)).resolves.toBeUndefined();
+        expect(mocks.programParticipant.count).not.toHaveBeenCalled();
+    });
+
+    it("refuses any claim on an ended program, even one that skips capacity", async () => {
+        for (const enforce of [true, false]) {
+            await expect(lockProgramForClaim(mockTx(0, { phase: "FINISHED", maxParticipants: null }).tx, 1, 1, enforce))
+                .rejects.toMatchObject({ status: 409, message: PROGRAM_ENDED_NO_CLAIMS });
+        }
     });
 });

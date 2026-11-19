@@ -956,25 +956,20 @@ async function applicationCheckStarted(db: DbClient, orgMembershipId: number | n
 
 /**
  * The step a BLOCKED review or application resumes at when its block is lifted. A
- * check review returns to waiting for review. A paid household application waits at
- * PENDING_BG_CLEARANCE whatever its check track says: payment is never asked for
- * again, and settleHouseholdBg opens a review if none is under way. An unpaid one
+ * check review returns to waiting for review. A paid, signed household application
+ * waits at PENDING_BG_CLEARANCE whatever its check track says: payment is never asked
+ * for again, and settleHouseholdBg opens a review if none is under way. Any other
  * goes back to the external step when its check is not started
- * (`householdCheckStarted`) or the agreement is missing, so it never reaches
- * payment unsigned; otherwise to PENDING_PAYMENT.
+ * (`householdCheckStarted`) or the agreement is missing, so it never reaches payment
+ * or activation unsigned; an unpaid one otherwise goes to PENDING_PAYMENT.
  */
 export function blockedResetStatus(process: BlockedResetRow, checkStarted: boolean): OrgMembershipProcessStatus {
     return process.kind === "PERSON_BG" ? "PENDING_BG_REVIEW"
-        : process.paidAt ? "PENDING_BG_CLEARANCE"
+        : process.paidAt && process.contractSignedAt ? "PENDING_BG_CLEARANCE"
         : !checkStarted || !process.contractSignedAt ? "PENDING_EXTERNAL_ACTION"
         : "PENDING_PAYMENT";
 }
 
-/**
- * The check cleared but the membership fee isn't paid — the process just (re)entered
- * PENDING_PAYMENT. The status cards/banner promise an email at clearance.
- * Best-effort (send failures log).
- */
 /**
  * Payment opened because a check the household already held was recognised, not
  * because anyone reviewed one. The notice above would tell a family a review

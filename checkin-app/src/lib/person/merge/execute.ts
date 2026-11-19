@@ -5,7 +5,7 @@ import { personBgOpen } from "@/lib/membership/lifecycle";
 import { disputingReviews, loadCheckReviews } from "@/lib/membership/checkStanding";
 import { settleHouseholdBg } from "@/lib/membership/settleHouseholdBg";
 import { logBackendError } from "@/lib/logger";
-import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
+import { findSelfGrantRefusal, recordSelfGrantRefusal, type SelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
 import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
 import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
 import { KIND_TO_FLAG, setRoleFlag, lockBoardRoles, RoleMatrixError, trustStatus } from "@/lib/roles";
@@ -39,6 +39,15 @@ export class MergeRefusedError extends Error {
         super(refusal.error);
     }
 }
+
+/** A self-grant refusal found under the lock; executeMerge records it after the rollback. */
+class SelfGrantMergeRefusedError extends MergeRefusedError {
+    constructor(public readonly selfGrant: SelfGrantRefusal) {
+        super(OWN_HOUSEHOLD);
+    }
+}
+
+const OWN_HOUSEHOLD: MergeRefusal = { status: 403, error: "You cannot merge a record in your own household — someone outside your household must." };
 
 const ALREADY_MERGED: MergeRefusal = { status: 409, error: "Cannot merge: one of these participants has already been merged." };
 
@@ -109,12 +118,10 @@ export async function prepareMerge(
     // two need not be the same household. No role bypasses this, and an actor
     // whose household can't be resolved is refused (fail closed).
     if (actor) {
-        const attempt = { table: "Person" as const, attempted: { keepId: keep.id, mergeId: merge.id } };
-        if (
-            await refuseSelfGrant(prisma, actor.id, { personId: keep.id, householdId: keep.householdId }, attempt)
-            || await refuseSelfGrant(prisma, actor.id, { personId: merge.id, householdId: merge.householdId }, attempt)
-        ) {
-            return { refused: { status: 403, error: "You cannot merge a record in your own household — someone outside your household must." } };
+        const selfGrant = await ownHouseholdRefusal(prisma, actor, keep, merge);
+        if (selfGrant) {
+            await recordSelfGrantRefusal(prisma, selfGrant);
+            return { refused: OWN_HOUSEHOLD };
         }
     }
 
@@ -138,6 +145,13 @@ export async function prepareMerge(
     if (trustBlock) return { refused: trustBlock };
 
     return { plan: { keep, merge, choices: parsed.choices, emailChangeReason: reason } };
+}
+
+/** The self-grant refusal for either subject, or null. Writes nothing. */
+async function ownHouseholdRefusal(db: DbClient, actor: AuthenticatedUser, keep: KeepSubject, merge: MergeSubject): Promise<SelfGrantRefusal | null> {
+    const attempt = { table: "Person" as const, attempted: { keepId: keep.id, mergeId: merge.id } };
+    return await findSelfGrantRefusal(db, actor.id, { personId: keep.id, householdId: keep.householdId }, attempt)
+        ?? await findSelfGrantRefusal(db, actor.id, { personId: merge.id, householdId: merge.householdId }, attempt);
 }
 
 /** A merge that would change a disputed person's check facts, as a refusal, or null. */
@@ -243,7 +257,10 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
         await deleteMergedPerson(tx, mergeId);
         await auditMerge(tx, plan, live, actor, moved);
         return { personMergeId: archiveId, lockedKeeper: live.keep };
-    }, { maxWait: 5_000, timeout: 15_000 });
+    }, { maxWait: 5_000, timeout: 15_000 }).catch(async (e: unknown) => {
+        if (e instanceof SelfGrantMergeRefusedError) await recordSelfGrantRefusal(prisma, e.selfGrant);
+        throw e;
+    });
 
     // The keeper may now carry a newer check date or another person's review, and the
     // merged-away record has left its household: settle both on their people's checks.
@@ -310,6 +327,9 @@ async function recheckSubjects(tx: TxClient, plan: MergePlan, actor: Authenticat
     if (keep.householdId !== plan.keep.householdId || merge.householdId !== plan.merge.householdId) {
         throw new MergeRefusedError({ status: 409, error: "One of these participants changed household while merging. Reload and try again." });
     }
+    // The actor's household is re-read under the Household locks, so an actor who joined either household since the plan is refused.
+    const selfGrant = actor ? await ownHouseholdRefusal(tx, actor, keep, merge) : null;
+    if (selfGrant) throw new SelfGrantMergeRefusedError(selfGrant);
     const refusal = subjectRefusal(keep, merge, actor) ?? await collisionRefusal(tx, keep, merge);
     if (refusal) throw new MergeRefusedError(refusal);
     const parsed = parseFieldChoices(keep, merge, plan.choices);

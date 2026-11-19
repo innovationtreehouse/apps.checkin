@@ -27,7 +27,7 @@ jest.mock("next-auth/next", () => ({ getServerSession: jest.fn() }));
 jest.mock("@/lib/auth-options", () => ({ authOptions: {} }));
 jest.mock("@/lib/logger", () => ({ logger: { error: jest.fn() }, logBackendError: jest.fn() }));
 jest.mock("@/lib/getFullAttendance", () => ({ invalidateAttendanceCache: jest.fn() }));
-jest.mock("@/lib/membership/selfGrantGuard", () => ({ refuseSelfGrant: jest.fn().mockResolvedValue(false), SELF_GRANT_REFUSAL_MESSAGE: "refused" }));
+jest.mock("@/lib/membership/selfGrantGuard", () => ({ refuseSelfGrant: jest.fn().mockResolvedValue(false), findSelfGrantRefusal: jest.fn().mockResolvedValue(null), recordSelfGrantRefusal: jest.fn(), SELF_GRANT_REFUSAL_MESSAGE: "refused" }));
 jest.mock("@/lib/roles", () => ({ ...jest.requireActual("@/lib/roles"), lockBoardRoles: jest.fn() }));
 jest.mock("@/lib/membership/householdStatus", () => ({
     ...jest.requireActual("@/lib/membership/householdStatus"),
