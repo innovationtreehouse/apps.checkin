@@ -11,15 +11,17 @@ before the construction ceiling:
 1. **Decide the design's open issues**; several change what gets built.
 2. **Vocabulary PRs**, registry/schema-only, boundary-isolation
    compliant: graduate leak-critical business rules to scopes
-   (`org_members` first), split the **`deliberative` tier** out of
+   (`org_members` first, then `their_enrolled_programs`, which reuses
+   #3629's `programsEnrolledIn` prefetch), define **per-view `rows:`**
+   in the declaration grammar, split the **`deliberative` tier** out of
    `internal`, and land the **declared field withholds** for the routes
    whose hand-written selects are the only control today (see "The tier
-   split" in the design). These share a hard deadline: each must merge
-   before step 5 reaches its routes, because the generated select is what
-   replaces the hand-written one protecting those fields today. (One
-   boundary PR may batch multiple registry entries;
-   `security-boundary-isolation.yml` checks companionship, not
-   cardinality, so no separate batch lane is needed.)
+   split" and "Rows attach to the view" in the design). These share a
+   hard deadline: each must merge before step 5 reaches its routes,
+   because the generated select is what replaces the hand-written one
+   protecting those fields today. (One boundary PR may batch multiple
+   registry entries; `security-boundary-isolation.yml` checks
+   companionship, not cardinality, so no separate batch lane is needed.)
 3. **Persona row-contract walker** (#1134 Step 1) with ceiling semantics
    over registered GET routes; convert `EDGE_INCLUDE_ALLOWLIST` prose to
    `rows:` declarations as routes gain them. The **governance report
@@ -40,23 +42,26 @@ before the construction ceiling:
    equivalence tests must include the `where`-composition collision cases
    the design pins (key shadowing on spread, empty fragments; "wrap,
    never spread").
-6. **Registry conversion as a tracked program: one hop, all of
-   `withAuth`.** The endgame is decided in the design: every `withAuth`
-   route migrates (reads first), each **once, directly to the facade
-   form**, not `withAuth` → bare `handler()` → facade in two passes.
-   Bulk conversion *waits for step 5*, then proceeds as one wave per
-   route; the routes already on `handler()` pick up the facade as part
-   of that wave. The census (design, "What exists"): 116 `withAuth`
-   caller files, 123 distinct session-authenticated files, 7
-   dual-wrapper files that migrate per-verb. Constraints carried from
-   the design: **computed-envelope routes migrate only after their
-   fields exist in the projection catalog** (the `derive`-hook DECISION
-   RECORD in `auth-consistency-analysis.md` stays binding until then),
-   and the non-session wrappers plus the hand-rolled
-   `GET /api/attendance` are excluded; their treatment is designed in
-   "Surfaces without a session caller", with `/api/attendance`
-   converting deliberately alongside the kiosk-principal declaration,
-   never in the bulk wave.
+6. **Registry conversion as a tracked program: two migrations.** The
+   repo's field-policy adoption ran ahead of this plan (272 of 376 route
+   files reached bare `handler()` by 2026-11-19), so the conversion is
+   now two lanes, both waiting for step 5:
+   - **Legacy to facade**: the ~133 method keys in
+     `scripts/legacy-authz-routes.txt` (about 98 `withAuth` files)
+     convert directly to the facade form, never to interim bare
+     `handler()`.
+   - **`handler()` to facade**: the ~272 files already registered swap
+     raw prisma for the scoped `db`; declarations already exist, so each
+     is a route-body change under an unchanged registry entry.
+   Constraints carried from the design: **computed-envelope routes
+   migrate only after their fields exist in the projection catalog**
+   (the `derive`-hook DECISION RECORD in `auth-consistency-analysis.md`
+   stays binding until then); dual-wrapper files migrate per-verb; the
+   non-session wrappers plus the hand-rolled `GET /api/attendance` are
+   excluded, with `/api/attendance` converting deliberately alongside
+   the kiosk-principal declaration, never in the bulk wave; and each
+   `roster` declaration converts to per-view `rows:` when its route
+   reaches the facade.
 7. **Outbound adoption**: route production mail through `outboundCall`
    (today it has zero production call sites), then add the recipient
    declaration and enforce the recipient-scope rule. This step exists so

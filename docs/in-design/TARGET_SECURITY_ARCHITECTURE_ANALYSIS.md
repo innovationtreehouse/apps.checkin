@@ -82,16 +82,16 @@ rather than tuning:
   human review, and a prose allowlist (`EDGE_INCLUDE_ALLOWLIST`). P0-C and
   #575 shipped through this gap. #1134's diagnosis, that rows must be
   filtered query-side, is correct and is half of the verdict.
-- **Coverage is the binding constraint.** About 19 registered endpoints
-  across 14 of 142 route files; **116** files call `withAuth` (measured by
-  call sites, not string mentions; 5 use the generic `withAuth<T>(` form
-  that naive greps miss), **7** files are dual-wrapper (a `handler()` GET
-  beside `withAuth` write verbs, so they migrate per-verb), and the
-  distinct session-authenticated surface is **123** files, guarded outside
-  the registry by a regex scan, a guard class this repo has already
-  watched fail three times (`livePersonDriftGuard`, per #1456). Every
-  guarantee any of this machinery provides applies only to the registered
-  surface.
+- **Coverage is the binding constraint, and it moved while this document
+  sat.** At writing (2026-08): 19 registered endpoints across 14 of 142
+  route files, 116 `withAuth` caller files. Re-measured 2026-11-19: 376
+  route files, **272** on `handler()`, 321 registry entries, about 98
+  `withAuth` files plus 133 legacy method keys. The field half of the
+  registry arrived at scale; every one of those routes still hand-writes
+  its queries, and the legacy remainder is guarded by a regex scan, a
+  guard class this repo has already watched fail three times
+  (`livePersonDriftGuard`, per #1456). The register's census and
+  two-migration Coverage section carry the current numbers.
 - **Aggregates are dishonest.** `_count` values are computed over the
   unfiltered relation; the stripper gates only whether the number is
   shown. Only query-side filtering can make a count true.
@@ -365,15 +365,7 @@ change what gets built.
    the very subverted app layer T4 posits, so RLS **narrows** T4 rather
    than surviving it outright; the claim must be stated at that strength
    and the system-context path kept as small as the `asSystem` inventory.
-2. **Second-party confirmation on the highest-stakes relationship edges.**
-   The audit trail and governance-report section for access-granting
-   edges are decided (register, "Relationship edges are policy writes");
-   still open is whether creating the highest-stakes edges, household
-   membership and household lead, additionally requires a second person's
-   confirmation, and if so which roles may confirm. A
-   friction-versus-safety call on front-desk workflows that the board,
-   not this document, should make.
-3. **Provenance fields on the family's trusted-adult view.** `/mine`'s
+2. **Provenance fields on the family's trusted-adult view.** `/mine`'s
    hand-written select also withholds `origin`, `disclosedById`,
    `hiddenAt`, and `updatedAt`: all `internal`, all granted on paper, and
    provenance rather than deliberation, so the `deliberative` split does

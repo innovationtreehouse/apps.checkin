@@ -110,14 +110,16 @@ the analysis companion.
 - **Fail-closed defaults**: unregistered endpoint → 500; row-scoped model
   missing its scope key → no scopes at all.
 
-One deviation stays here because the coverage mandate depends on it:
-**about 19 registered endpoints across 14 of 142 route files; 116 files
-call `withAuth` (by call sites; 5 use the generic `withAuth<T>(` form),
-7 files are dual-wrapper and migrate per-verb, and the distinct
-session-authenticated surface is 123 files**, guarded outside the registry
-only by a regex scan. Every guarantee this design provides applies only to
-the registered surface, which is why Coverage below is a mandate rather
-than an aspiration.
+One fact stays here because the coverage mandate depends on it, and it
+has two halves. The registry's **field half arrived at scale**: 272 of
+376 route files now enter through `handler()`, with 321 registry entries
+(measured 2026-11-19). The **query half exists nowhere**: every one of
+those routes still hand-writes its `select` and `where`, enforced by the
+stripper after the fetch, and about 98 files plus 133 legacy method keys
+(`scripts/legacy-authz-routes.txt`) still enter through `withAuth`,
+guarded only by a regex scan. So the migration this design mandates is no
+longer "adopt the registry"; it is "move the registered surface from
+response-side to compiled queries," which Coverage below states.
 
 ## The target design
 
@@ -136,9 +138,10 @@ than an aspiration.
 The registry already contains everything needed to construct a route's
 query, not merely to check its output:
 
-- `rows:` (per #1134) + `SCOPE_BINDINGS` + `CallerContext` → the **`where`
-  fragment** for each returned model (`rowsWhere`, fail-closed: an unbound
-  scope throws).
+- `rows:` (per #1134, **attached to the view, not the route**; see "Rows
+  attach to the view") + `SCOPE_BINDINGS` + `CallerContext` → the
+  **`where` fragment** for each returned model (`rowsWhere`, fail-closed:
+  an unbound scope throws).
 - The **caller's resolved view** (first-match on roles, known before the
   query runs), unioned over the scopes that view can hold, intersected with
   the model's classifications, plus the scope-key FK columns the bindings
@@ -183,13 +186,15 @@ Properties this buys, none of which subtraction-after-fetch can:
   exclusions remain, not a dependency in either direction.
 - Every governed read passes one point that knows the caller, the model,
   the admitting scope, and the row count, so **the facade records reads of
-  the highest-tier models**, and a per-caller daily volume threshold raises
-  a review. Access control answers "who could see"; a safeguarding inquiry
-  always asks "who *did* look." A program lead paging through every
-  household in their program is fully authorized on every request; only an
-  access log distinguishes that from looking up one emergency contact
-  because a child is hurt, and the log's value is entirely in history that
-  must exist before the question is asked.
+  the highest-tier models**. Access control answers "who could see"; a
+  safeguarding inquiry always asks "who *did* look." A program lead paging
+  through every household in their program is fully authorized on every
+  request; only an access log distinguishes that from looking up one
+  emergency contact because a child is hurt, and the log's value is
+  entirely in history that must exist before the question is asked. The
+  log is doctrine; **automated volume thresholds on it are deferred**: at
+  this organization's scale a human reading the log answers the question,
+  and alerting machinery is built when scale demands it, not before.
 
 **`asSystem()` is a governed door, not a greppable one.** Every escape from
 the scoped facade names a **registered entry in a CODEOWNERS-gated
@@ -201,6 +206,18 @@ into the governance report under an explicit heading: these reads are not
 governed by the policy. If that list is uncomfortable to show the board, the
 discomfort is the control working. Cron jobs are system-context by nature
 and appear in the same inventory.
+
+The protected set extends past the boundary files to **the libraries that
+derive who holds what**: the claims and admission code (`roles`,
+`authClaims`, `orgAccount`, `acceptedSession` and their siblings) decides
+which flags a session carries, yet sits outside both CODEOWNERS and the
+ship-alone rule, which today cover only `auth.ts`, `auth-options.ts` and
+`middleware.ts`. A claims-derivation bug is a leak class the registry
+cannot see: #3668 shipped exactly this, a revoked household's keyholder
+keeping `isKeyholder`. These libraries join the CODEOWNERS/ship-alone
+set, and the walker's persona world covers **every household status**
+(active, lapsed, revoked, denied) per role-holding persona, because that
+is the axis such bugs vary on.
 
 **The stripper is retained as the second, independent evaluation, and its
 disagreement is the tripwire.** In the target, **one declaration is
@@ -266,7 +283,9 @@ criterion restated: **if forgetting the rule is a leak, it is policy and
 must be a scope**; if forgetting it is a product bug, it stays route code
 with per-route tests.
 
-The first graduations are decided: **two membership scopes, not one**.
+The first graduations are decided: **two membership scopes and one
+enrollment scope** (`their_enrolled_programs`, defined in "Rows attach to
+the view"). On membership:
 `org_members` (membership ACTIVE: dues paid *and* background check cleared)
 gates member benefits. `dues_settled` (the wider #1397 predicate covering
 paid-awaiting-review households) is valid for program visibility and
@@ -355,6 +374,61 @@ transition alongside the overlap resolution, and the governance report's
 per-route appendix marks which class each route is in, so the downgrade
 is a reviewed fact rather than a side effect.
 
+### Rows attach to the view, not the route
+
+The `rows:` declaration's attachment point was unstated, and the program
+roster rule decides it. That rule reads: staff and the enrolled household
+see the participant rows; everyone else sees counts only. A single
+per-route row list cannot say that; `everyones` is held on every keyed
+row for every caller, so a per-route `rows: ['everyones', …]` would admit
+the anonymous catalog browser to the roster. The natural unit is the
+view, and the grammar follows:
+
+- **Each `orderedView` entry carries its own `rows:`.** The view already
+  decides the field bands; it also decides the row set.
+- **When omitted, a view's rows default to the scopes of its own
+  scope-qualified tokens.** A view granting `their_own:pii` sees its own
+  rows; nothing needs restating. The explicit form exists for the cases
+  the default cannot express, and the roster rule is the canonical one: a
+  view whose field tokens are only `member` and `public` may still
+  declare `rows: ['everyones']` (the enrolled household sees every row's
+  public band), while the anonymous view declares no rows and gets only
+  the declared public counts.
+- **The tripwire class stays view-derived.** Expected removals were
+  already computed per view; per-view rows change nothing there, and the
+  walker asserts each view's row set separately.
+
+The roster rule also needs a relationship the vocabulary lacked, and it
+is the third decided graduation: **`their_enrolled_programs`**, held on a
+row whose program the caller's household is enrolled in, bound as
+`ProgramParticipant.programId ∈ ctx.programsEnrolledIn` (and
+`Program.id` against the same set). The `CallerContext.programsEnrolledIn`
+prefetch shipped with #3629 and is reused as-is.
+
+That places #3629's `roster` token: it is a **holding pattern, not the
+grammar**. It declared the right policy content (these views see these
+models' rows) at the wrong enforcement point (the stripper, after the
+full roster is fetched), which is this design's non-goal. It stays under
+two binding conditions, and converts rather than spreads: `roster`
+remains limited to whole-model, `params.id`-keyed cases, and the
+`programs/[id]` follow-up keeps a second check by shaping the roster
+fetch on the resolved view (the view is known pre-query; a view without
+`roster` never fetches the participant models) instead of deleting the
+inline gate and fetching the full bag for every caller. When per-view
+`rows:` lands, each `roster` declaration converts mechanically: views
+holding it get `rows: ['everyones']` or the enrolled scope, views
+without it get none, and `programEnrolledHousehold` stays what it is, a
+role that selects a view, while the scope picks the rows on
+multi-program routes the `params.id`-keyed role cannot serve.
+
+One boundary of the compiled grammar is stated rather than discovered:
+**synthetic models compile to nothing.** A hand-authored, non-table model
+(`ProgramRosterAge`) has no rows in the database, so no `where` can
+exist for it; until the projection catalog expresses it as a declared
+projection, the stripper's response-side drop is the mechanism for
+synthetic rows, and that is an accepted, named use of the second engine,
+not a violation of the first.
+
 ### Relationship edges are policy writes
 
 A consequence of choosing a relationship-based model, and one no registry
@@ -390,10 +464,11 @@ already exists:
   question is who can see a child's home address; the honest answer
   includes who can *arrange* to see it.
 
-Second-party confirmation on the highest-stakes edges (household
-membership, household lead) is an open decision tracked in the analysis
-companion; the audit trail
-and the report section are not optional.
+Second-party confirmation on the highest-stakes edges was considered and
+**not adopted**: at front-desk scale the friction lands on every
+legitimate action, and the audit trail plus the report section are the
+controls fitted to this organization. The audit trail and the report
+section are not optional.
 
 ### Writes (I4): same vocabulary, separate design
 
@@ -457,6 +532,17 @@ rather than the blanket convention. It is also expected to become moot:
 the product direction is for non-members to see member-only programs
 without being able to act on them, at which point the exception is
 deleted rather than carried.
+
+The broader rule those routes expose: **an admission rule enforced only
+inline is undeclared policy, and every admission rule must be declared.**
+Two shipped routes gate in route code while the registry says otherwise:
+`events/[id]` 404s non-staff inline under `authorize: 'authenticated'`,
+and the members-only gate on `programs/[id]` runs inline under
+`authorize: 'public'`. The registry is the audit surface; a gate it
+cannot see is invisible to the walker, the report, and the board. Each
+inline gate graduates to the declaration grammar (an `authorize`
+predicate, per-view `rows:`, or a recorded exception) as its route
+converts, and no new route may add one.
 
 ### Aggregates can disclose by shape
 
@@ -843,26 +929,43 @@ in the analysis companion; the rule itself:
   database, per-caller row policy on a shared DB re-opens the RLS
   decision in its favor (analysis, open issue 1).
 
+This whole section is **conditional doctrine**: portfolio adoption is
+unscheduled, no sequencing step builds any of it, and the rules bind only
+if and when an Inventory app adopts the model.
+
 ### Coverage
 
-The design applies to the entire session-authenticated read/write surface:
-**every `withAuth` route is in scope, and each migrates once, directly to
-the facade form**, with no interim bare-`handler()` generation. Two
-qualifications keep the mandate honest:
+The design applies to the entire session-authenticated read/write
+surface, and the path there is **two migrations**, because the repo's
+field-policy adoption ran ahead of this document: most routes already
+converted to bare `handler()`, which gave them registry field policy
+while leaving their queries hand-written.
+
+- **Legacy to facade**: the ~133 method keys in
+  `scripts/legacy-authz-routes.txt` (about 98 `withAuth` files) convert
+  directly to the facade form, never to interim bare `handler()`.
+- **`handler()` to facade**: the ~272 files already on `handler()`
+  convert by swapping raw prisma for the scoped `db`; their registry
+  entries already exist, so each conversion is a route-body change under
+  an unchanged declaration.
+
+Three qualifications keep the mandate honest:
 
 - **Computed-envelope routes wait for projections.** The standing
   DECISION RECORD in `auth-consistency-analysis.md` blocks the `withAuth`
   collapse on a `derive` hook: `handler()`'s strip path silently drops
   computed and derived response fields (`isMember`, `isPresent`, fallback
   names), so those routes "must not be force-migrated." The projection
-  catalog is this design's `derive` answer, so the one-hop rule stands
-  with an ordering constraint: a route returning computed envelopes
-  migrates only after its fields exist in the projection catalog, never
-  before.
-- The **7 dual-wrapper files** migrate per-verb, and the non-session
-  wrappers (`withKiosk`, `withCron`, `withWebhook`) plus the hand-rolled
+  catalog is this design's `derive` answer: a route returning computed
+  envelopes migrates only after its fields exist in the projection
+  catalog, never before.
+- **Dual-wrapper files migrate per-verb**, and the non-session wrappers
+  (`withKiosk`, `withCron`, `withWebhook`) plus the hand-rolled
   `GET /api/attendance` are outside the mandate; their treatment is
   designed in "Surfaces without a session caller" above.
+- **`roster` routes convert with the grammar**: each `roster`
+  declaration becomes per-view `rows:` when its route reaches the
+  facade (see "Rows attach to the view").
 
 Build order and migration mechanics are in
 `docs/in-design/TARGET_ARCHITECTURE_SEQUENCING.md`,
