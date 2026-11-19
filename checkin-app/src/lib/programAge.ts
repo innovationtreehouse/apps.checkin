@@ -17,10 +17,9 @@ export function isKnownAdult(person: { dateOfBirth: Date | string | null; isDecl
 
 /**
  * The three age states the youth rules act on, as one value so an impossible
- * pair can't be represented. `youth` and `unknown` are treated OPPOSITELY: a
- * youth has the enrollment and payment surfaces hidden, while an unverifiable
- * age keeps them and is routed to age capture — hiding from the latter would
- * strand a brand-new adult who has no other household lead.
+ * pair can't be represented. Only `adult` sees payment status, obligations and
+ * pay actions. A `youth` is told a household lead must act; an `unknown` age is
+ * sent to the intake panel to add a DOB (or "over 25"), which settles the band.
  */
 export type AgeBand = "adult" | "youth" | "unknown";
 

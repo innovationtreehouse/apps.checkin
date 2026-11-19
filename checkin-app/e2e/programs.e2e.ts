@@ -5,8 +5,8 @@
  * stack starts clean. The local dev mock pays the checkout in place of Shopify.
  */
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { addYouth, asViewer, settledFamily } from "./support/families";
-import { claim, inDays, newLeader, newProgram, newSession, paidYouth, PROGRAM_DATES } from "./support/programs";
+import { addYouth, asViewer } from "./support/families";
+import { adultFamily, claim, inDays, newLeader, newProgram, newSession, paidYouth, PROGRAM_DATES } from "./support/programs";
 import { BOARD } from "./support/seedState";
 
 const REASON = "The family moved away.";
@@ -96,7 +96,7 @@ test.describe("programs in the browser", () => {
 
   test("P2: a family claims a seat and pays", async ({ browser }) => {
     const program = await newProgram();
-    const email = await settledFamily();
+    const email = await adultFamily();
     const youth = await addYouth(email);
     await claim(email, program.id, [youth.id]);
 
@@ -118,7 +118,7 @@ test.describe("programs in the browser", () => {
 
   test("P3: a scholarship is requested, denied, asked again and approved", async ({ browser }) => {
     const program = await newProgram();
-    const email = await settledFamily();
+    const email = await adultFamily();
     const youth = await addYouth(email);
     const request = (page: Page) => page.getByRole("row").filter({ hasText: youth.name });
 
@@ -234,7 +234,7 @@ test.describe("programs in the browser", () => {
     const program = await newProgram();
     await paidYouth(program.id);
     await paidYouth(program.id);
-    const email = await settledFamily();
+    const email = await adultFamily();
     const youth = await addYouth(email);
     const full = "Program has reached maximum capacity.";
 
@@ -304,7 +304,7 @@ test.describe("programs in the browser", () => {
 
   test("P9: the off-sale date closes enrollment at once", async ({ browser }) => {
     const program = await newProgram();
-    const email = await settledFamily();
+    const email = await adultFamily();
     const youth = await addYouth(email);
     const ended = "Sales for this program have ended.";
 
