@@ -111,7 +111,7 @@ const DISPOSITIONS: Record<string, string> = {
 
     // ── pre-refused: a collision here is a decision the merge must not make ───
     'ProgramParticipant.personId': 'pre-refused (RESTRICT) — a shared enrollment carries a seat and a payment. Refused before the transaction and again under the locks; a `left` row from a later race refuses the merge.',
-    'ToolStatus.personId': 'pre-refused (RESTRICT) — two certification levels for one human is a decision an operator makes, not a merge.',
+    'ToolStatus.personId': 'repointed/deduped/pre-refused (RESTRICT) — moved when only one side has it; a same-level duplicate is deleted; two different levels for one human is a decision an operator makes, not a merge.',
 
     // ── deliberately left ─────────────────────────────────────────────────────
     'OrgMembershipProcess.noteAckById': 'deliberately-left (SET NULL) — the merge neither reads nor writes it, and nothing sets it. The column awaits its drop.',

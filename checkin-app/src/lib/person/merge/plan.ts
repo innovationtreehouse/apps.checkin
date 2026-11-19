@@ -239,12 +239,12 @@ export function findCollisions(
         collisions.push({ type: 'programParticipant', message: `Both enrolled in ${pp.program.name}. Unenroll one first.` });
     }
 
-    // ToolStatus — certification levels
+    // ToolStatus — certification levels; a same-level pair dedupes in the transaction
     const tsCollisions = merge.toolStatuses.filter(ts =>
-        keep.toolStatuses.some(k => k.toolId === ts.toolId)
+        keep.toolStatuses.some(k => k.toolId === ts.toolId && k.level !== ts.level)
     );
     for (const ts of tsCollisions) {
-        collisions.push({ type: 'toolStatus', message: `Both hold a ${ts.tool.name} certification. Remove one first.` });
+        collisions.push({ type: 'toolStatus', message: `Both hold a ${ts.tool.name} certification at different levels. Remove one first.` });
     }
 
     // BackgroundCheckAttestation — same human reviewed under two identities
