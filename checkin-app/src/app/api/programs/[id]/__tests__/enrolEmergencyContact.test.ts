@@ -93,7 +93,7 @@ beforeEach(() => {
     mockSession.user = LEAD;
     db.program.findUnique.mockResolvedValue(program);
     db.person.findUnique.mockResolvedValue({ dateOfBirth: new Date("2015-01-01"), isDeclaredAdult: false, householdId: HOUSEHOLD });
-    db.person.findFirst.mockResolvedValue({ id: LEAD.id });
+    db.person.findFirst.mockResolvedValue({ id: LEAD.id, dateOfBirth: null, isDeclaredAdult: true });
     db.person.findMany.mockResolvedValue([{ householdId: HOUSEHOLD }]);
     db.programParticipant.findUnique.mockResolvedValue(null);
     db.programParticipant.create.mockResolvedValue({ programId: program.id, personId: CHILD, status: "ACTIVE" });
@@ -188,5 +188,39 @@ describe("POST /api/programs/[id]/discount-code", () => {
         const res = await discountCode(post({ participantIds: [CHILD] }), params);
         expect(res.status).toBe(200);
         expect((await res.json()).signature).toEqual(expect.any(String));
+    });
+});
+
+// A lead acting for a child takes on a payment, so only a known adult lead may.
+describe("a household lead who isn't a known adult", () => {
+    beforeEach(() => {
+        db.emergencyContact.count.mockResolvedValue(1);
+        db.programParticipant.findUnique.mockResolvedValue({
+            programId: program.id, personId: CHILD, status: "PENDING", program,
+            person: { id: CHILD, name: "Kid", householdId: HOUSEHOLD, dateOfBirth: new Date("2015-01-01"), isDeclaredAdult: false },
+        });
+    });
+
+    it.each([
+        ["unknown age", { dateOfBirth: null, isDeclaredAdult: false }, /Add your date of birth/],
+        ["a youth", { dateOfBirth: new Date("2012-01-01"), isDeclaredAdult: false }, /under 18/],
+    ])("refuses to enroll a child for a lead of %s", async (_label, lead, message) => {
+        db.programParticipant.findUnique.mockResolvedValue(null);
+        db.person.findFirst.mockResolvedValue(lead);
+        const res = await enrol(post({ participantId: CHILD }), params);
+        expect(res.status).toBe(403);
+        expect((await res.json()).error).toMatch(message);
+        expect(db.programParticipant.create).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ["unknown age", { dateOfBirth: null, isDeclaredAdult: false }, /Add your date of birth/],
+        ["a youth", { dateOfBirth: new Date("2012-01-01"), isDeclaredAdult: false }, /under 18/],
+    ])("refuses a payment-plan request from a lead of %s", async (_label, lead, message) => {
+        db.person.findFirst.mockResolvedValue(lead);
+        const res = await requestPlan(post({ participantId: CHILD, kind: "SCHOLARSHIP" }), params);
+        expect(res.status).toBe(403);
+        expect((await res.json()).error).toMatch(message);
+        expect(db.programParticipant.updateMany).not.toHaveBeenCalled();
     });
 });

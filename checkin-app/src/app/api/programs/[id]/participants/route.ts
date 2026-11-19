@@ -70,28 +70,34 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             select: { dateOfBirth: true, isDeclaredAdult: true, householdId: true }
         });
 
-        let isHouseholdLead = false;
-        if (participantData?.householdId) {
-            const leadRecord = await prisma.person.findFirst({
+        const leadRecord = participantData?.householdId
+            ? await prisma.person.findFirst({
                 where: {
                     id: currentUserId,
                     householdId: participantData.householdId,
                     isHouseholdLead: true
                 },
-                select: { id: true }
-            });
-            isHouseholdLead = !!leadRecord;
+                select: { dateOfBirth: true, isDeclaredAdult: true }
+            })
+            : null;
+
+        if (!isSelfEnrollment && !isSysAdminOrBoard && !leadRecord && !(basis && isBoardOrFinance)) {
+            return apiError("Forbidden: Not authorized to enroll this participant. Program leads cannot manually add participants.", 403);
         }
 
-        if (!isSelfEnrollment && !isSysAdminOrBoard && !isHouseholdLead && !(basis && isBoardOrFinance)) {
-            return apiError("Forbidden: Not authorized to enroll this participant. Program leads cannot manually add participants.", 403);
+        // Enrolling someone takes on their payment, so a household lead acting for
+        // them must be a known adult; a youth or unknown-age lead stays a lead.
+        if (!isSelfEnrollment && !isSysAdminOrBoard && !basis && leadRecord && !isKnownAdult(leadRecord)) {
+            return apiError(leadRecord.dateOfBirth
+                ? "A household lead under 18 can't enroll a participant."
+                : "Add your date of birth (or confirm you are over 25) before enrolling someone.", 403);
         }
 
         // Conflict of interest: an override and a hand enrollment are both one-actor
         // decisions, so neither may be spent on yourself or your own household.
         // Self is its own leg — an actor with no household is not caught by the
         // household comparison, but is still enrolling themselves. This is the
-        // route's single notion of "own household"; `isHouseholdLead` above
+        // route's single notion of "own household"; `leadRecord` above
         // answers a different question (may you act for this person at all).
         const isConflicted = isSelfEnrollment
             || await hasHouseholdConflict(prisma, currentUserId, participantData?.householdId);
