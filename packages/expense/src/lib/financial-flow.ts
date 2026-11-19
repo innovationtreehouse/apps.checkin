@@ -6,8 +6,10 @@ import { classifyCapital, isTerminalApproval, anyRejected } from "./expense-rule
 import { advanceWorkflow, advanceWorkflowInTx, unlessRaceLost, type Actor } from "./workflow-engine";
 import { SYSTEM_ACTOR } from "./system-actor";
 import { logError } from "./logger";
-import { lockBucketLines } from "./signoff-facts";
-import { reimburseeUnknown } from "./signoff";
+import { clearFrom, lockBucketLines } from "./signoff-facts";
+import { APPROVABLE_STATUSES, CLOSED_STATES, reimburseeUnknown } from "./signoff";
+import { writeAudit } from "./audit";
+import type { Prisma } from "../generated/prisma/client";
 import { unitCosts, unitsOf } from "./capital-register";
 import { bookedLineCents } from "../qb-write";
 import { readExpenseSettings } from "../services/settingsService";
@@ -17,6 +19,37 @@ const partOwners = createPartOwnerRepository(db);
 /** Buckets a line may be assigned to: listed by the host, not archived. */
 export async function liveBucketIds(): Promise<Set<number>> {
   return new Set((await getExpenseRuntime().budgetOwners.list()).filter((b) => !b.archivedAt).map((b) => b.id));
+}
+
+/** A bucket whose org-level flag is being changed, read as its new value before the change commits. */
+export interface BucketFlip {
+  bucketId: number;
+  orgLevel: boolean;
+}
+
+/**
+ * Gives or takes back the system's approval on each card-charge line of the expense, inside a
+ * transaction holding its expense lock: a line in an org-level bucket is approved with no approver;
+ * a system-approved line now in a program bucket reopens, with its later seats, for the program
+ * approver. Reimbursements and backfills keep their approvals.
+ */
+export async function deriveSystemApprovals(tx: Prisma.TransactionClient, actor: Actor, expenseId: string, flip?: BucketFlip): Promise<void> {
+  const expense = (await tx.expense.findUnique({ where: { id: expenseId }, select: { needsReimbursement: true, backfill: true, state: true } }))!;
+  if (expense.needsReimbursement || expense.backfill || CLOSED_STATES.has(expense.state)) return;
+  const approvals = await tx.lineItemOwnerApproval.findMany({ where: { expenseId, ownerId: { not: null } }, orderBy: { id: "asc" } });
+  const orgLevel = async (bucketId: number) =>
+    flip?.bucketId === bucketId ? flip.orgLevel : (await getExpenseRuntime().signoff.bucketApprovers(bucketId)).orgLevel;
+  const reopen: number[] = [];
+  for (const a of approvals) {
+    const org = await orgLevel(a.ownerId!);
+    if (org && APPROVABLE_STATUSES.has(a.status)) {
+      await tx.lineItemOwnerApproval.update({ where: { id: a.id }, data: { status: "approved", decidedAt: new Date(), decidedByUserId: null, notes: null } });
+      await writeAudit(tx, actor, { expenseId, action: "line_item_approved_org_level", lineItemId: a.lineItemId, valueBefore: a.status, valueAfter: "approved" });
+    } else if (!org && a.status === "approved" && a.decidedByUserId === null) {
+      reopen.push(a.lineItemId);
+    }
+  }
+  if (reopen.length > 0) await clearFrom(tx, actor, expenseId, reopen, "APPROVAL", "the line's bucket is a program bucket; its approver approves it");
 }
 
 /** Creates the line approvals and leaves `pending`. A no-op when another call already started the flow. */
@@ -48,7 +81,7 @@ export async function initFinancialFlow(expenseId: string, orgId: string, backfi
       await lockBucketLines(tx, bucketId);
     }
     for (const li of lineItems) {
-      // Every line, an org-level one included, waits for its approval; a backfill takes none.
+      // Every line waits for its approval, unless the system gives it below; a backfill takes none.
       await tx.lineItemOwnerApproval.create({
         data: {
           expenseId,
@@ -60,6 +93,7 @@ export async function initFinancialFlow(expenseId: string, orgId: string, backfi
         },
       });
     }
+    await deriveSystemApprovals(tx, SYSTEM_ACTOR, expenseId);
     await advanceWorkflowInTx(tx, {
       expenseId,
       currentState: "pending",

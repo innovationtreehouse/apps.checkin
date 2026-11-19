@@ -6,9 +6,9 @@ import type { ExpensePrincipal } from "../contract";
 import { getExpenseRuntime, getOrgId } from "../runtime";
 import { actorOf, callerId } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
-import { checkApprovalAutoTransition, checkOwnershipAutoTransition, liveBucketIds } from "../lib/financial-flow";
-import { isConflicted, filledSeatsByLine, lockBucketLines, lockExpense, signoffFactsByLine } from "../lib/signoff-facts";
-import { APPROVABLE_STATUSES, approvalRefusal, approvesAsStandIn, reimburseeUnknown } from "../lib/signoff";
+import { checkApprovalAutoTransition, checkOwnershipAutoTransition, deriveSystemApprovals, liveBucketIds } from "../lib/financial-flow";
+import { clearFrom, isConflicted, filledSeatsByLine, lockBucketLines, lockExpense, signoffFactsByLine } from "../lib/signoff-facts";
+import { APPROVABLE_STATUSES, CLOSED_STATES, approvalRefusal, approvesAsStandIn, lineKind, reimburseeUnknown, systemApproves } from "../lib/signoff";
 import { createExpenseRepository } from "../repositories/expense";
 import { createPartOwnerRepository } from "../repositories/partOwner";
 import { ServiceError } from "@checkin/component-kit";
@@ -71,6 +71,12 @@ async function transition(tx: Prisma.TransactionClient, read: ApprovalRead, data
 }
 
 const BUCKET_FINAL = "Finance made this line's bucket final; its approver approves it, or a Board member stands in";
+
+/** Whether the line's bucket is one where the system gives a card charge's approval. */
+async function systemApprovesLine(expense: { needsReimbursement: boolean; backfill: boolean }, ownerId: number | null): Promise<boolean> {
+  if (expense.backfill || ownerId === null) return false;
+  return systemApproves(lineKind(expense), (await getExpenseRuntime().signoff.bucketApprovers(ownerId)).orgLevel);
+}
 
 /**
  * The program approver's sign-off on one line, inside a transaction holding the expense lock. A
@@ -193,9 +199,12 @@ export async function raiseException(
   notes: string,
 ): Promise<void> {
   const actor = actorOf(principal);
-  const { approval } = await loadApproval(expenseId, approvalId, "owner_approval");
+  const { expense, approval } = await loadApproval(expenseId, approvalId, "owner_approval");
   if (!APPROVABLE_STATUSES.has(approval.status)) throw new ServiceError(400, "Item is not in pending status");
   if (approval.bucketFinal) throw new ServiceError(409, BUCKET_FINAL);
+  if (await systemApprovesLine(expense, approval.ownerId)) {
+    throw new ServiceError(409, "A card charge in an org-level bucket takes no approval to except; FINANCE moves it to another bucket instead");
+  }
   if (!principal.isFinance && !(await isBucketApprover(principal, approval.ownerId))) {
     throw new ServiceError(403, "This line item is not in a bucket you approve");
   }
@@ -234,10 +243,12 @@ export async function rejectException(
 }
 
 /**
- * FINANCE settles an exception by moving the line to another bucket; it is not an approval, so the
- * line waits for that bucket's approver. Made `final`, with a required note kept on the approval
- * and its audit row, the line takes no further exception; made final by a FINANCE holder conflicted
- * on the expense, the line also takes the Board seat (signoff-facts reads the audit row).
+ * FINANCE moves a line to another bucket: settling an exception, or moving a system-approved
+ * card charge before its Treasurer seat is signed, which takes the system's approval back first.
+ * It is not an approval, so the line waits for the new bucket's approver, or the system approves it
+ * again in an org-level bucket. Made `final`, with a required note kept on the approval and its
+ * audit row, the line takes no further exception; made final by a FINANCE holder conflicted on the
+ * expense, the line also takes the Board seat (signoff-facts reads the audit row).
  */
 export async function financeAssign(
   principal: ExpensePrincipal,
@@ -252,13 +263,30 @@ export async function financeAssign(
   const finalNote = note?.trim() || null;
   if (final && !finalNote) throw new ServiceError(400, "Say why finance makes this bucket final");
   await requireLiveBuckets([ownerId]);
-  const { approval } = await loadApproval(expenseId, approvalId, "owner_approval");
-  requireStatus(approval, "exception_raised");
+  const { expense, approval } = await loadApproval(expenseId, approvalId);
+  const moving = approval.status === "approved" && approval.decidedByUserId === null && (await systemApprovesLine(expense, approval.ownerId));
+  if (!moving) {
+    if (expense.state !== "owner_approval") throw new ServiceError(400, "Expense is not in owner_approval state");
+    requireStatus(approval, "exception_raised");
+  }
 
   await db.$transaction(async (tx) => {
     await lockExpense(tx, expenseId);
     await lockBucketLines(tx, ownerId);
-    await transition(tx, approval, {
+    let read: ApprovalRead = approval;
+    if (moving) {
+      const current = await tx.expense.findUniqueOrThrow({ where: { id: expenseId }, select: { state: true } });
+      if (CLOSED_STATES.has(current.state)) throw new ServiceError(400, `Expense is ${current.state}`);
+      if ((await tx.expenseLineSignoff.count({ where: { lineItemId: approval.lineItemId, seat: "TREASURER" } })) > 0) {
+        throw new ServiceError(409, "The Treasurer has signed this line; its bucket no longer moves");
+      }
+      if ((await tx.lineItemOwnerApproval.count({ where: { id: approval.id, status: "approved", decidedByUserId: null, ownerId: approval.ownerId } })) === 0) {
+        throw new ServiceError(409, "This line changed; reload");
+      }
+      await clearFrom(tx, actor, expenseId, [approval.lineItemId], "APPROVAL", "FINANCE moved the line to another bucket");
+      read = { ...approval, status: "pending" };
+    }
+    await transition(tx, read, {
       ownerId,
       status: "finance_assigned",
       decidedAt: new Date(),
@@ -267,14 +295,15 @@ export async function financeAssign(
     });
     await writeAudit(tx, actor, {
       expenseId,
-      action: "finance_assigned_exception",
+      action: moving ? "finance_moved_line" : "finance_assigned_exception",
       lineItemId: approval.lineItemId,
-      valueBefore: "exception_raised",
+      valueBefore: moving ? String(approval.ownerId) : "exception_raised",
       valueAfter: String(ownerId),
     });
     if (final) {
       await writeAudit(tx, actor, { expenseId, action: "bucket_made_final", lineItemId: approval.lineItemId, fieldChanged: "bucketFinal", valueAfter: String(ownerId), notes: finalNote });
     }
+    await deriveSystemApprovals(tx, actor, expenseId);
   });
 
   await checkApprovalAutoTransition(expenseId, actor);
@@ -337,6 +366,7 @@ export async function assignOwner(
     }
 
     if (gtin13) await createPartOwnerRepository(tx).updateItemOwner(expense.orgId, gtin13, ownerId);
+    for (const id of new Set([expenseId, ...siblings.map((s) => s.expenseId)])) await deriveSystemApprovals(tx, actor, id);
   });
 
   for (const id of new Set([expenseId, ...siblings.map((s) => s.expenseId)])) {
@@ -367,6 +397,7 @@ export async function resolveUnknown(
       valueBefore: "unknown",
       valueAfter: String(ownerId),
     });
+    await deriveSystemApprovals(tx, actor, expenseId);
   });
 
   await checkOwnershipAutoTransition(expenseId, actor);
