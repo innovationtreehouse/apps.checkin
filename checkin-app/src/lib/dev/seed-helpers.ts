@@ -537,6 +537,7 @@ async function seedProgramPeople(prisma: Db): Promise<{ leadId: number; youthIds
         },
     });
     await addHouseholdLead(prisma, lead.householdId, lead.id);
+    await seedEmergencyContact(prisma, lead.householdId);
 
     const parent = await prisma.person.upsert({
         where: { email: "program.family@example.com" },
