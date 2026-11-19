@@ -998,7 +998,9 @@ defineRoute({
 // Any session is admitted, a caller with no household included (household null);
 // every sensitive field is gated to the caller's own household. A peer's
 // background-check status reaches only that person and a lead of their household
-// (their_own / led_households on HouseholdPeerBgStatus).
+// (their_own / led_households on HouseholdPeerBgStatus). A sysadmin counts as a
+// lead of their own household (householdLeadship's canManage), so a non-lead
+// sysadmin member reads it there too.
 defineRoute({
     endpoint: 'GET /api/household',
     authorize: 'authenticated',

@@ -91,7 +91,7 @@ describe('HouseholdPeerBgStatus', () => {
         });
     });
 
-    it('shows a non-lead adult their own status only', () => {
+    it('shows a non-lead adult who is not a sysadmin their own status only', () => {
         expect(statuses(adultSelf)).toEqual({
             [LEAD]: { personId: LEAD },
             [ADULT]: { personId: ADULT, status: 'VALID' },
