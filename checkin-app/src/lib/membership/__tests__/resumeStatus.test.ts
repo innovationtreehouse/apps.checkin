@@ -23,6 +23,10 @@ describe('resumeStatus', () => {
         expect(resumeStatus(from, { kind: 'INITIAL', paidAt: paid, contractSignedAt: null }, true)).toBe(from);
     });
 
+    it.each(['PENDING_PAYMENT', 'PENDING_BG_REVIEW', 'PENDING_BG_CLEARANCE'])('sends a paid, unsigned application blocked from %s to PENDING_EXTERNAL_ACTION', (from) => {
+        expect(resumeStatus(from, { kind: 'INITIAL', paidAt: paid, contractSignedAt: null }, true)).toBe('PENDING_EXTERNAL_ACTION');
+    });
+
     it('sends an unpaid application blocked from a later step where blockedResetStatus does', () => {
         expect(resumeStatus('PENDING_PAYMENT', { kind: 'INITIAL', paidAt: null, contractSignedAt: paid }, true)).toBe('PENDING_PAYMENT');
     });

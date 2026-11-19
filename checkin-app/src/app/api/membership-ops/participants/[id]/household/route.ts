@@ -104,9 +104,11 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
             })).id;
 
             // The same locked demote the lead routes use, so a move never leaves the source household without a lead.
+            let leadCleared = false;
             if (participant.householdId !== targetHouseholdId) {
                 const demoted = await removeHouseholdLead(tx, participant.householdId, participantId);
                 if (!demoted.removed && demoted.reason === "last_lead") throw new LastLeadMoveError();
+                leadCleared = demoted.removed;
             }
 
             // Conditional on the person still being in the household locked above, so a
@@ -127,8 +129,8 @@ export const POST = withAuth<{ params: Promise<{ id: string }> }>(
                 action: "EDIT",
                 tableName: "Person",
                 affectedEntityId: participantId,
-                oldData: { householdId: participant.householdId },
-                newData: { householdId: targetHouseholdId, createNew: Boolean(createNew) },
+                oldData: { householdId: participant.householdId, ...(leadCleared ? { isHouseholdLead: true } : {}) },
+                newData: { householdId: targetHouseholdId, ...(leadCleared ? { isHouseholdLead: false } : {}), createNew: Boolean(createNew) },
             });
 
             if (!createNew) return { updatedParticipant: updated, targetHouseholdId };

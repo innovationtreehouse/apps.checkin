@@ -455,14 +455,16 @@ export const TRANSITIONS: readonly Transition<TState, string, ProcessKind>[] = [
     { from: "PENDING_BG_REVIEW", to: "ACTIVE", event: "settleHouseholdBg", actor: "system", guardSite: "settleHouseholdBg.ts: process FOR UPDATE + denied lock (paid legacy row)", legacy: true },
     { from: "PENDING_BG_REVIEW", to: "PENDING_BG_CLEARANCE", event: "settleHouseholdBg", actor: "system", guardSite: "settleHouseholdBg.ts: process FOR UPDATE (paid on a refunded order)", legacy: true },
     { from: "PENDING_BG_CLEARANCE", to: "ACTIVE", event: "settleHouseholdBg", actor: "system", guardSite: "settleHouseholdBg.ts: process FOR UPDATE + denied lock" },
+    { from: "PENDING_BG_CLEARANCE", to: "PENDING_EXTERNAL_ACTION", event: "settleHouseholdBg", actor: "system", guardSite: "settleHouseholdBg.ts: process FOR UPDATE + denied lock (paid, agreement unsigned)" },
+    { from: "PENDING_BG_REVIEW", to: "PENDING_EXTERNAL_ACTION", event: "settleHouseholdBg", actor: "system", guardSite: "settleHouseholdBg.ts: process FOR UPDATE + denied lock (paid legacy row, agreement unsigned)", legacy: true },
     ...SETTLE_BLOCKABLE_STATUSES.flatMap((from): Transition<TState, string, ProcessKind>[] => [
         { from, to: "BLOCKED", event: "settleHouseholdBg", actor: "system", guardSite: "settleHouseholdBg.ts: process FOR UPDATE, a person in the household has a BLOCKED check review" },
         { from: "BLOCKED", to: from, event: "settleHouseholdBg", actor: "system", guardSite: "settleHouseholdBg.ts resumeStatus: process FOR UPDATE, every recorded blocking review no longer BLOCKED" },
     ]),
     // A household row blocked by a household attestation before cutover: Board reset only.
     { from: "BLOCKED", to: "PENDING_PAYMENT", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI (legacy household row, unpaid)", legacy: true },
-    { from: "BLOCKED", to: "PENDING_BG_CLEARANCE", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI (legacy household row, paid)", legacy: true },
-    { from: "BLOCKED", to: "PENDING_EXTERNAL_ACTION", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI (legacy household row, unpaid, check not started or unsigned)", legacy: true },
+    { from: "BLOCKED", to: "PENDING_BG_CLEARANCE", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI (legacy household row, paid and signed)", legacy: true },
+    { from: "BLOCKED", to: "PENDING_EXTERNAL_ACTION", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI (legacy household row, unsigned, or unpaid with its check not started)", legacy: true },
     // Refund recorded by the board, or by a denied household's store refund: money undone, background check untouched. Every
     // other step only loses paidAt (flag-only, no status edge).
     ...ALL_STATUSES.flatMap((from): Transition<TState, string, ProcessKind>[] => {

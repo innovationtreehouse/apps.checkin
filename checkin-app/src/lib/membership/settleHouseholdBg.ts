@@ -188,6 +188,17 @@ async function settleInTx(tx: TxClient, processId: number, householdId: number, 
     if (!CONVERGES.includes(status)) return { steps };
 
     const paid = !!process.paidAt;
+    if (paid && !process.contractSignedAt) {
+        // A paid row activates only once signed: it waits, cleared, at the agreement step, whose advance brings it back here.
+        const { count } = await tx.orgMembershipProcess.updateMany({
+            where: { id: processId, bgClearedAt: null, contractSignedAt: null, ...fromWhere(status) },
+            data: { bgClearedAt: now, status: "PENDING_EXTERNAL_ACTION", stageEnteredAt: now },
+        });
+        if (!count) return { steps };
+        await applyVolunteerFamilyStatus(tx, orgMembershipId, householdId, false);
+        await record({ status }, { status: "PENDING_EXTERNAL_ACTION", bgCleared: true, reason: "household qualifies on its people's checks; paid but the agreement is unsigned" });
+        return { steps: [...steps, "cleared"] };
+    }
     const refunded = paid && !!process.shopifyOrderId && (await isOrderReversed(tx, process.shopifyOrderId));
     const to: OrgMembershipProcessStatus = refunded ? "PENDING_BG_CLEARANCE" : paid ? "ACTIVE" : "PENDING_PAYMENT";
     const { count } = await tx.orgMembershipProcess.updateMany({
@@ -317,7 +328,8 @@ async function departedRejections(db: DbClient, processId: number, householdId: 
  * Where a lifted block returns the application. A paid, signed one goes to
  * PENDING_BG_CLEARANCE whatever step it was blocked from. Any other returns to a step
  * before review and payment as it was, so an unsigned row keeps its agreement step,
- * and otherwise goes where `blockedResetStatus` sends it.
+ * and otherwise goes where `blockedResetStatus` sends it: a paid, unsigned one to the
+ * agreement step.
  */
 export function resumeStatus(from: Prisma.JsonValue | undefined, process: Parameters<typeof blockedResetStatus>[0], checkStarted: boolean): OrgMembershipProcessStatus {
     const step = process.paidAt && process.contractSignedAt ? undefined : RETURNS_AS_WAS.find((s) => s === from);

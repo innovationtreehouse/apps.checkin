@@ -35,6 +35,7 @@ stateDiagram-v2
     INTAKE --> PENDING_EXTERNAL_ACTION: submitIntake · INITIAL
     PENDING_BG_CLEARANCE --> ACTIVE: settleHouseholdBg
     PENDING_BG_CLEARANCE --> BLOCKED: settleHouseholdBg
+    PENDING_BG_CLEARANCE --> PENDING_EXTERNAL_ACTION: settleHouseholdBg
     PENDING_BG_CLEARANCE --> PENDING_PAYMENT: recordRefund
     PENDING_BG_REVIEW --> ACTIVE: clearBackgroundCheck · PERSON_BG
     PENDING_BG_REVIEW --> ACTIVE: settleHouseholdBg · legacy
@@ -45,6 +46,7 @@ stateDiagram-v2
     PENDING_BG_REVIEW --> BLOCKED: attest REJECT · PERSON_BG
     PENDING_BG_REVIEW --> BLOCKED: settleHouseholdBg
     PENDING_BG_REVIEW --> PENDING_BG_CLEARANCE: settleHouseholdBg · legacy
+    PENDING_BG_REVIEW --> PENDING_EXTERNAL_ACTION: settleHouseholdBg · legacy
     PENDING_BG_REVIEW --> PENDING_PAYMENT: settleHouseholdBg · legacy
     PENDING_EXTERNAL_ACTION --> ACTIVE: markContractSigned · KEY_VOLUNTEER_AGREEMENT
     PENDING_EXTERNAL_ACTION --> ACTIVE: markContractSigned · PERSON_AGREEMENT
@@ -81,9 +83,9 @@ A blank (`—`) cell is a **deliberate** absent edge — a decision to ratify, n
 | ∅ | — | — | — | — | — | — | — | — | — | — | PENDING_RENEWAL | — | — | PENDING_BG_REVIEW | PENDING_BG_REVIEW | — | PENDING_EXTERNAL_ACTION | PENDING_EXTERNAL_ACTION | PENDING_BG_REVIEW | — | — | — | INTAKE | — | — |
 | INTAKE | — | — | ARCHIVED | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | BLOCKED | — | — | PENDING_EXTERNAL_ACTION | — |
 | PENDING_EXTERNAL_ACTION | — | PENDING_BG_CLEARANCE, PENDING_PAYMENT | ARCHIVED | — | — | — | — | — | — | — | — | — | — | — | — | ACTIVE | — | — | — | — | BLOCKED | — | — | — | — |
-| PENDING_BG_REVIEW | — | — | ARCHIVED | BLOCKED | — | ARCHIVED | — | — | ACTIVE | — | — | ARCHIVED | — | — | — | — | — | — | — | — | ACTIVE, BLOCKED, PENDING_BG_CLEARANCE, PENDING_PAYMENT | ARCHIVED | — | — | — |
+| PENDING_BG_REVIEW | — | — | ARCHIVED | BLOCKED | — | ARCHIVED | — | — | ACTIVE | — | — | ARCHIVED | — | — | — | — | — | — | — | — | ACTIVE, BLOCKED, PENDING_BG_CLEARANCE, PENDING_EXTERNAL_ACTION, PENDING_PAYMENT | ARCHIVED | — | — | — |
 | PENDING_PAYMENT | ACTIVE, PENDING_BG_CLEARANCE | — | ARCHIVED | — | — | — | — | — | — | — | — | — | ACTIVE | — | — | — | — | — | — | — | BLOCKED | — | — | — | — |
-| PENDING_BG_CLEARANCE | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | PENDING_PAYMENT | ACTIVE, BLOCKED | — | — | — | — |
+| PENDING_BG_CLEARANCE | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | PENDING_PAYMENT | ACTIVE, BLOCKED, PENDING_EXTERNAL_ACTION | — | — | — | — |
 | ACTIVE | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — | — |
 | BLOCKED | — | — | — | — | PENDING_BG_REVIEW | — | — | PENDING_BG_CLEARANCE, PENDING_BG_REVIEW, PENDING_EXTERNAL_ACTION, PENDING_PAYMENT | — | ARCHIVED | — | — | — | — | — | — | — | — | — | — | INTAKE, PENDING_BG_CLEARANCE, PENDING_BG_REVIEW, PENDING_EXTERNAL_ACTION, PENDING_PAYMENT, PENDING_RENEWAL | — | — | — | — |
 | PENDING_RENEWAL | — | — | ARCHIVED | — | — | — | PENDING_EXTERNAL_ACTION | — | — | — | — | — | — | — | — | — | — | — | — | — | BLOCKED | — | — | — | — |
