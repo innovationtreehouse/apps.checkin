@@ -8,6 +8,7 @@ import { isOrderReversed, raisePaymentException, recordReversal } from "@/lib/fi
 import { takeBackRestockedSeats } from "@/lib/finance/reconcile/reversals";
 import { peopleSpentBy, surplusSeats, type Surplus } from "@/lib/finance/reconcile/program";
 import { programVariantIds } from "@/lib/programs/variants";
+import { formatCents } from "@checkin/money";
 
 /**
  * Activate paid program enrollments — the single choke point the Shopify
@@ -26,7 +27,8 @@ import { programVariantIds } from "@/lib/programs/variants";
  * Under the order's lock it activates no more people than the order has unspent seats,
  * and raises the rest for the Board (see {@link unspentSeats}). Seats it leaves unspent
  * are raised as a surplus, so a person activated another way since the order was judged
- * is still raised as a duplicate payment.
+ * is still raised as a duplicate payment. A seat paid at a price other than the
+ * program's still seats its person and is raised (see {@link priceMismatch}).
  */
 export interface ActivateEnrollmentInput {
     programId: number;
@@ -35,7 +37,7 @@ export interface ActivateEnrollmentInput {
     /** Numeric Shopify order id, stored on each activated participant for reversal joins. */
     shopifyOrderId: string;
     /** The paying order's lines; seats on the claimant variant never touched public stock. Omitted = all public, uncounted. */
-    lines?: { variantId: string; quantity: number; currentQuantity?: number }[];
+    lines?: { variantId: string; quantity: number; currentQuantity?: number; unitPriceCents?: number | null }[];
 }
 
 export interface ActivateEnrollmentResult {
@@ -102,11 +104,29 @@ export async function refuseReversedActivation(programId: number, personIds: num
     await takeBackRestockedSeats(shopifyOrderId, { id: programId, shopifyVariantId: program?.shopifyVariantId ?? null });
 }
 
+/**
+ * The order's seat price set against the program's price, when a seat line differs
+ * from it: the Board may have changed the price while the family's checkout was
+ * open. Both variants sell at the full price (members pay through a code), so the
+ * line's unit price before discounts is compared with the full price. Null when
+ * they agree or either price is unknown.
+ */
+export function priceMismatch(
+    program: { shopifyVariantId: string | null; claimantShopifyVariantId: string | null; nonOrgMemberPriceCents: number | null },
+    lines: ActivateEnrollmentInput["lines"] = [],
+): string | null {
+    const price = program.nonOrgMemberPriceCents;
+    if (price == null) return null;
+    const variantIds = new Set(programVariantIds(program));
+    const paid = lines.find((l) => variantIds.has(l.variantId) && l.unitPriceCents != null && l.unitPriceCents !== price)?.unitPriceCents;
+    return paid == null ? null : `Paid ${formatCents(paid)} per seat; the program's price is ${formatCents(price)}. The family is seated; settle the difference by hand.`;
+}
+
 export async function activateProgramEnrollment(input: ActivateEnrollmentInput): Promise<ActivateEnrollmentResult> {
     const { programId, personIds, shopifyOrderId, lines = [] } = input;
     const program = await prisma.program.findUnique({
         where: { id: programId },
-        select: { shopifyVariantId: true, claimantShopifyVariantId: true, maxParticipants: true, startAt: true, offSaleAt: true, saleEndedAt: true },
+        select: { shopifyVariantId: true, claimantShopifyVariantId: true, maxParticipants: true, startAt: true, offSaleAt: true, saleEndedAt: true, nonOrgMemberPriceCents: true },
     });
 
     const claimantVariantId = program?.claimantShopifyVariantId;
@@ -119,10 +139,11 @@ export async function activateProgramEnrollment(input: ActivateEnrollmentInput):
     const { result, landed } = await changeProgramStockWith({ id: programId, shopifyVariantId: program?.shopifyVariantId ?? null }, "activation", async (tx) => {
         // Holds the order's reversal lock to commit: a refund is either seen here, or waits and then finds the flipped rows.
         if (shopifyOrderId && (await isOrderReversed(tx, shopifyOrderId))) {
-            return { result: { activatedCount: 0, releasedHoldCount: 0, claimantSeatCount: 0, delta: 0, reversed: true, refusedPersonIds: [], surplus: undefined as Surplus | undefined }, delta: 0 };
+            return { result: { activatedCount: 0, activatedPersonIds: [] as number[], releasedHoldCount: 0, claimantSeatCount: 0, delta: 0, reversed: true, refusedPersonIds: [], surplus: undefined as Surplus | undefined }, delta: 0 };
         }
         const cap = program ? await unspentSeats(tx, program, programId, shopifyOrderId, lines) : null;
         let activatedCount = 0;
+        const activatedPersonIds: number[] = [];
         let releasedHoldCount = 0;
         const refusedPersonIds: number[] = [];
         for (const personId of personIds) {
@@ -148,6 +169,7 @@ export async function activateProgramEnrollment(input: ActivateEnrollmentInput):
                 continue;
             }
             activatedCount += 1;
+            activatedPersonIds.push(personId);
             releasedHoldCount += released;
             logger.info(`[enroll] Marked participant ${personId} ACTIVE for program ${programId}`);
         }
@@ -156,10 +178,10 @@ export async function activateProgramEnrollment(input: ActivateEnrollmentInput):
         const claimantSeatCount = program?.maxParticipants != null ? Math.min(claimantPaid, activatedCount) : 0;
         // Once the sale has ended only a reduction goes through, so no seat goes back on sale.
         const delta = program ? saleStockDelta(program, publicStockDelta(releasedHoldCount, claimantSeatCount)) : 0;
-        return { result: { activatedCount, releasedHoldCount, claimantSeatCount, delta, reversed: false, refusedPersonIds, surplus }, delta };
+        return { result: { activatedCount, activatedPersonIds, releasedHoldCount, claimantSeatCount, delta, reversed: false, refusedPersonIds, surplus }, delta };
     }, { deferred: true });
 
-    const { activatedCount, releasedHoldCount, claimantSeatCount, delta, reversed, refusedPersonIds, surplus } = result;
+    const { activatedCount, activatedPersonIds, releasedHoldCount, claimantSeatCount, delta, reversed, refusedPersonIds, surplus } = result;
     // After commit: the refusal records the reversal on its own connection, which needs the order's lock released.
     if (reversed) {
         await refuseReversedActivation(programId, personIds, shopifyOrderId);
@@ -175,6 +197,8 @@ export async function activateProgramEnrollment(input: ActivateEnrollmentInput):
     }
     // Keyed like the order check's own raise (kind, order, person), so a surplus it already raised is not raised twice.
     if (surplus) await raisePaymentException(surplus.kind, { shopifyOrderId, programId, personId: surplus.personId ?? personIds[0] ?? null });
+    const mismatch = program && activatedPersonIds.length > 0 ? priceMismatch(program, lines) : null;
+    if (mismatch) await raisePaymentException("AMOUNT_MISMATCH", { shopifyOrderId, programId, personId: activatedPersonIds[0], evidence: mismatch });
     if (!landed) logger.error(`[enroll] Failed to adjust public stock by ${delta} for program ${programId} (${releasedHoldCount} hold(s) released, ${claimantSeatCount} claimant seat(s)) — capacity may be out of sync.`);
 
     return { activatedCount, releasedHoldCount, claimantSeatCount, ...(refusedPersonIds.length > 0 && { refusedPersonIds }) };

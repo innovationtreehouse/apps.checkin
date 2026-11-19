@@ -228,16 +228,18 @@ export async function orderLineVariantIds(orderGid: string): Promise<string[]> {
 
 /** One order's attributable lines with their quantities — the program seat count.
  *  Lines an order edit removed are excluded; they were not paid for. `quantity` is the
- *  original count; `currentQuantity` excludes units an edit or refund took off the line. */
-export async function orderLines(orderGid: string): Promise<{ variantId: string; quantity: number; currentQuantity: number }[]> {
+ *  original count; `currentQuantity` excludes units an edit or refund took off the line.
+ *  `unitPriceCents` is the unit price before discounts, absent where the mirror holds none. */
+export async function orderLines(orderGid: string): Promise<{ variantId: string; quantity: number; currentQuantity: number; unitPriceCents?: number }[]> {
     const db = await getClient();
     if (!db) return [];
     const rows = await db.shopOrderLine.findMany({
         where: { orderGid, variantLegacyId: { not: null }, removed: false },
-        select: { variantLegacyId: true, quantity: true, currentQuantity: true },
+        select: { variantLegacyId: true, quantity: true, currentQuantity: true, priceCents: true },
     });
     return rows.flatMap((r) =>
-        r.variantLegacyId === null ? [] : [{ variantId: r.variantLegacyId, quantity: r.quantity, currentQuantity: r.currentQuantity ?? r.quantity }],
+        // ponytail: the price column defaults to 0, so 0 reads as unknown rather than as a free seat.
+        r.variantLegacyId === null ? [] : [{ variantId: r.variantLegacyId, quantity: r.quantity, currentQuantity: r.currentQuantity ?? r.quantity, ...(r.priceCents && { unitPriceCents: r.priceCents }) }],
     );
 }
 
