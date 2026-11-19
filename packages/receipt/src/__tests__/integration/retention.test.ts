@@ -5,7 +5,8 @@ import { db } from "../../db";
 import { fileStore } from "../../runtime";
 import { AUTO_DISCARD_REASON, HELD_MAIL_DISCARD_AFTER_MS, RESTORE_WINDOW_MS, discardUnclaimedHeldMail, sweepExpiredFiles } from "../../services/retention";
 import { describeDb } from "../helpers/db";
-import { ALICE, TEST_ORG_ID, clearAll, configure, storeFile, storedBytes } from "../helpers/setup";
+import { ALICE, FINANCE, TEST_ORG_ID, actAs, clearAll, configure, storeFile, storedBytes } from "../helpers/setup";
+import { receiptService } from "../../services/receiptService";
 
 const NOW = new Date("2034-01-01T00:00:00Z");
 const DAY = 24 * 60 * 60 * 1000;
@@ -89,6 +90,21 @@ describeDb("file retention", () => {
     expect(await keyOf(rejected.id)).toBeNull();
     expect(await keyOf(discarded.id)).toBeNull();
     for (const r of [recent, waiting, otherOrg]) expect(await keyOf(r.id)).toBe(r.fileKey);
+  });
+
+  it("answers 404 for a file retention deleted without logging an error, and still logs a key missing otherwise", async () => {
+    const retired = await receiptIn("discarded", { endedBy: ["discarded", new Date(0)] });
+    const lost = await receiptIn("discarded", { endedBy: ["discarded", new Date(NOW.getTime() - DAY)] });
+    await sweepExpiredFiles(NOW);
+    await db.receipt.update({ where: { id: lost.id }, data: { fileKey: null } });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    actAs(FINANCE);
+
+    await expect(receiptService.getFile(retired.id, "finance")).rejects.toMatchObject({ status: 404 });
+    expect(logged).not.toHaveBeenCalled();
+    await expect(receiptService.getFile(lost.id, "finance")).rejects.toMatchObject({ status: 404 });
+    expect(logged).toHaveBeenCalledTimes(1);
+    vi.restoreAllMocks();
   });
 
   it("keeps the key when the store delete fails, so the next run tries again", async () => {

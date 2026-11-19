@@ -22,7 +22,7 @@ import { checkReceiptFile } from "../lib/file-type";
 import { insertReceipt, toLineRows, type NewLine } from "../lib/insert";
 import { liveIds } from "../lib/livePeople";
 import { lineTotalAfterEdit } from "../lib/lineMath";
-import { deleteStoredFiles, readStoredFile } from "../lib/fileStorage";
+import { deleteStoredFiles, readStoredFile, RETENTION_FILE_DELETED } from "../lib/fileStorage";
 import { listFilterWhere, type ReceiptListFilter } from "../lib/listFilter";
 import { oweOutcomeNotice, sendOutcomeNotices } from "./outcomeNotices";
 import { BODY_COPY_DISCARDED, checkDuplicate, financialReviewReasons, getOrgSettings, pushReceipt, runFullFlow, SUBMITTER_CORRECTION_FIELDS } from "../lib/receipt-flow";
@@ -1449,7 +1449,9 @@ export const receiptService = {
     const actor = await requireActor();
     const row = await load(id, access, actor);
     const file = await db.receipt.findUniqueOrThrow({ where: { id }, select: { fileKey: true, mimeType: true } });
-    const fileBlob = await readStoredFile(file.fileKey);
+    // A file retention deleted is expected to be gone, so it answers 404 without logging an error.
+    const retired = !file.fileKey && (await db.receiptAuditLog.count({ where: { receiptId: id, action: RETENTION_FILE_DELETED } })) > 0;
+    const fileBlob = retired ? null : await readStoredFile(file.fileKey);
     if (!fileBlob) throw new ServiceError(404, "Receipt file not found");
     await audit(db, id, actor, { action: "file_viewed" });
     return { fileBlob, mimeType: file.mimeType, uploadedByUserId: row.uploadedByUserId };

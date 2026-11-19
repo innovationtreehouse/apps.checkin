@@ -4,7 +4,7 @@
 import { db } from "../db";
 import { audit } from "../repositories/receipt";
 import { fileStore, getOrgId } from "../runtime";
-import { deleteStoredFiles } from "../lib/fileStorage";
+import { deleteStoredFiles, RETENTION_FILE_DELETED } from "../lib/fileStorage";
 import { BODY_COPY_DISCARDED } from "../lib/receipt-flow";
 import { CATCH_UP_CAP } from "./catchUp";
 import { closeUnreplyable } from "./mailReplies";
@@ -122,7 +122,7 @@ export async function sweepExpiredFiles(now = new Date()): Promise<{ receiptFile
     const cleared = await deleteThen(fileKey, () => db.$transaction(async (tx) => {
       const done = await tx.receipt.updateMany({ where: { id, fileKey }, data: { fileKey: null } });
       if (done.count === 0) return false;
-      await audit(tx, id, null, { action: "file_deleted", fieldChanged: "fileKey", valueAfter: "retention period ended" });
+      await audit(tx, id, null, { action: RETENTION_FILE_DELETED, fieldChanged: "fileKey", valueAfter: "retention period ended" });
       return true;
     }), `receipt ${id}`);
     if (cleared) receiptFiles++;
