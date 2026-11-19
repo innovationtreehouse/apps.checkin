@@ -166,9 +166,7 @@ mail that is no receipt at all. So:
 - The bucket's policy already admits only the app's role and the admin role.
 - Replay of a message captured more than 90 days ago answers "This email's stored
   copy expired 90 days after capture", decided by `capturedAt`, with no store call.
-  The role may not list the bucket, so S3 answers a missing object with 403, not
-  404, and the date is the plain test. Inside 90 days, a missing object is an error,
-  shown as one.
+  Inside 90 days, a missing object (404) is an error, shown as one.
 
 **Prerequisite, made by the owner in infra** (the receipt-files bucket module),
 in every environment, before build PR 2 deploys there:
