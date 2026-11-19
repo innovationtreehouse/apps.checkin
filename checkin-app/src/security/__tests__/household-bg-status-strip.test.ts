@@ -99,9 +99,28 @@ describe('HouseholdPeerBgStatus', () => {
         });
     });
 
-    it("keeps a non-lead sibling's view of other adults to personId", () => {
-        expect(statuses(sibling)[ADULT]).toEqual({ personId: ADULT });
-        expect(statuses(sibling)[LEAD]).toEqual({ personId: LEAD });
+    it('shows a non-lead sibling no status but their own', () => {
+        expect(statuses(sibling)).toEqual({
+            [LEAD]: { personId: LEAD },
+            [ADULT]: { personId: ADULT },
+            [SIBLING]: { personId: SIBLING, status: 'VALID' },
+        });
+    });
+
+    it('never ships a clearance date, even to the person themself or their lead', () => {
+        const view = getRoute(GET)?.orderedView[0][1] ?? [];
+        const dated = {
+            ...peer(ADULT),
+            bgClearedAt: '2026-01-01',
+            bgStatus: { personId: ADULT, status: 'VALID', bgClearedAt: '2026-01-01', expiresAt: '2027-01-01' },
+        };
+        const bag = () => ({ HouseholdPage: { household: { id: HH, name: 'H', householdMembers: [dated], orgMembership: null }, boardReplyTo: null, validUntil: null } });
+        for (const caller of [adultSelf, lead]) {
+            const out = stripBag(bag(), view, caller) as { HouseholdPage: { household: { householdMembers: Record<string, unknown>[] } } };
+            const member = out.HouseholdPage.household.householdMembers[0];
+            expect(member).not.toHaveProperty('bgClearedAt');
+            expect(member.bgStatus).toEqual({ personId: ADULT, status: 'VALID' });
+        }
     });
 
     it('shows no status to another household or a sysadmin outside the household', () => {
