@@ -129,24 +129,22 @@ export async function seedBaseline(prisma: Db): Promise<void> {
 
     const parentFamily = await prisma.person.upsert({
         where: { email: "parent.family@example.com" },
-        update: { name: "Parent Family", phone: "555-555-0002", isDeclaredAdult: true },
+        update: { name: "Parent Family", phone: "555-555-0002" },
         create: {
             email: "parent.family@example.com",
             name: "Parent Family",
             phone: "555-555-0002",
-            isDeclaredAdult: true,
             householdId: household1.id,
         },
     });
 
     const parent2Family = await prisma.person.upsert({
         where: { email: "parent2.family@example.com" },
-        update: { name: "Parent2 Family", phone: "555-555-0003", isDeclaredAdult: true },
+        update: { name: "Parent2 Family", phone: "555-555-0003" },
         create: {
             email: "parent2.family@example.com",
             name: "Parent2 Family",
             phone: "555-555-0003",
-            isDeclaredAdult: true,
             householdId: household1.id,
         },
     });
@@ -164,36 +162,33 @@ export async function seedBaseline(prisma: Db): Promise<void> {
 
     const parentFamily2 = await prisma.person.upsert({
         where: { email: "parent.family2@example.com" },
-        update: { name: "Parent Family2", phone: "555-555-0004", isDeclaredAdult: true },
+        update: { name: "Parent Family2", phone: "555-555-0004" },
         create: {
             email: "parent.family2@example.com",
             name: "Parent Family2",
             phone: "555-555-0004",
-            isDeclaredAdult: true,
             householdId: household2.id,
         },
     });
 
     const parentFamily3 = await prisma.person.upsert({
         where: { email: "parent.family3@example.com" },
-        update: { name: "Parent Family3", phone: "555-555-0010", isDeclaredAdult: true },
+        update: { name: "Parent Family3", phone: "555-555-0010" },
         create: {
             email: "parent.family3@example.com",
             name: "Parent Family3",
             phone: "555-555-0010",
-            isDeclaredAdult: true,
             householdId: household3.id,
         },
     });
 
     const keyholder1 = await prisma.person.upsert({
         where: { email: "keyholder1@example.com" },
-        update: { name: "Keyholder One", phone: "555-555-0005", isKeyholder: true, isDeclaredAdult: true },
+        update: { name: "Keyholder One", phone: "555-555-0005", isKeyholder: true },
         create: {
             email: "keyholder1@example.com",
             name: "Keyholder One",
             phone: "555-555-0005",
-            isDeclaredAdult: true,
             isKeyholder: true,
             household: { create: { name: "Keyholder One Household" } },
         },
@@ -202,12 +197,11 @@ export async function seedBaseline(prisma: Db): Promise<void> {
 
     const keyholder2 = await prisma.person.upsert({
         where: { email: "keyholder2@example.com" },
-        update: { name: "Keyholder Two", phone: "555-555-0006", isKeyholder: true, isDeclaredAdult: true },
+        update: { name: "Keyholder Two", phone: "555-555-0006", isKeyholder: true },
         create: {
             email: "keyholder2@example.com",
             name: "Keyholder Two",
             phone: "555-555-0006",
-            isDeclaredAdult: true,
             isKeyholder: true,
             household: { create: { name: "Keyholder Two Household" } },
         },
@@ -216,12 +210,11 @@ export async function seedBaseline(prisma: Db): Promise<void> {
 
     const certifiedAdult = await prisma.person.upsert({
         where: { email: "certified.adult@example.com" },
-        update: { name: "Certified Adult", phone: "555-555-0007", isDeclaredAdult: true },
+        update: { name: "Certified Adult", phone: "555-555-0007" },
         create: {
             email: "certified.adult@example.com",
             name: "Certified Adult",
             phone: "555-555-0007",
-            isDeclaredAdult: true,
             household: { create: { name: "Certified Adult Household" } },
         },
     });
@@ -234,12 +227,11 @@ export async function seedBaseline(prisma: Db): Promise<void> {
     // below), exercising the per-tool certifier path.
     const toolCertifier = await prisma.person.upsert({
         where: { email: "tool.certifier@example.com" },
-        update: { name: "Tool Certifier", phone: "555-555-0008", isDeclaredAdult: true },
+        update: { name: "Tool Certifier", phone: "555-555-0008" },
         create: {
             email: "tool.certifier@example.com",
             name: "Tool Certifier",
             phone: "555-555-0008",
-            isDeclaredAdult: true,
             household: { create: { name: "Tool Certifier Household", orgMembership: { create: { status: "ACTIVE" } } } },
         },
     });
@@ -247,12 +239,11 @@ export async function seedBaseline(prisma: Db): Promise<void> {
 
     const bgReviewer = await prisma.person.upsert({
         where: { email: "bg.reviewer@example.com" },
-        update: { name: "BG Reviewer", phone: "555-555-0009", isBackgroundCheckReviewer: true, isDeclaredAdult: true },
+        update: { name: "BG Reviewer", phone: "555-555-0009", isBackgroundCheckReviewer: true },
         create: {
             email: "bg.reviewer@example.com",
             name: "BG Reviewer",
             phone: "555-555-0009",
-            isDeclaredAdult: true,
             isBackgroundCheckReviewer: true,
             household: { create: { name: "BG Reviewer Household" } },
         },
@@ -302,19 +293,6 @@ export async function seedBaseline(prisma: Db): Promise<void> {
             household: { create: { name: "Member Pricing Family" } },
         },
     });
-
-    // The one persona with no age on file: signing in as them shows the age step.
-    const ageUnknown = await prisma.person.upsert({
-        where: { email: "age.unknown@example.com" },
-        update: { name: "Age Unknown", dateOfBirth: null, isDeclaredAdult: false },
-        create: {
-            email: "age.unknown@example.com",
-            name: "Age Unknown",
-            phone: "555-555-0016",
-            household: { create: { name: "Age Unknown Household" } },
-        },
-    });
-    await addHouseholdLead(prisma, ageUnknown.householdId, ageUnknown.id);
 
     // 3. Household assignments & leads
     await prisma.person.update({ where: { id: parentFamily.id }, data: { householdId: household1.id } });

@@ -198,7 +198,7 @@ describe('Admin Participants API Integration Tests', () => {
 
             const req = new Request('http://localhost:4000/api/membership-ops/participants', {
                 method: 'POST',
-                body: JSON.stringify({ name: 'Lone Adult', email: 'new-lone-participants-test@example.com' })
+                body: JSON.stringify({ name: 'Lone Adult', email: 'new-lone-participants-test@example.com', over25: true })
             });
 
             const res = await POST(req as unknown as Parameters<typeof POST>[0]);
@@ -226,6 +226,22 @@ describe('Admin Participants API Integration Tests', () => {
                 where: { householdId: updatedParticipant!.householdId! }
             });
             expect(membership).toBeNull();
+        });
+
+        it('should refuse a participant with neither a date of birth nor an over-25 declaration, creating nothing', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({
+                user: { id: testAdminId, isSysadmin: true, isBoardMember: false }
+            });
+
+            const req = new Request('http://localhost:4000/api/membership-ops/participants', {
+                method: 'POST',
+                body: JSON.stringify({ name: 'Ageless Adult', email: 'new-ageless-participants-test@example.com' })
+            });
+
+            const res = await POST(req as unknown as Parameters<typeof POST>[0]);
+            expect(res.status).toBe(400);
+            expect((await res.json()).fields).toEqual(['dob']);
+            expect(await prisma.person.findUnique({ where: { email: 'new-ageless-participants-test@example.com' } })).toBeNull();
         });
 
         it('should reject alreadyMember with 400 and create no participant or membership', async () => {
@@ -262,7 +278,8 @@ describe('Admin Participants API Integration Tests', () => {
                     name: 'Child User',
                     email: 'new-child-participants-test@example.com',
                     parentEmail: 'new-parent-participants-test@example.com',
-                    parentName: 'New Parent'
+                    parentName: 'New Parent',
+                    dob: '2015-01-01'
                 })
             });
 
@@ -293,7 +310,8 @@ describe('Admin Participants API Integration Tests', () => {
                 body: JSON.stringify({
                     name: 'Child User',
                     email: 'reject-child-participants-test@example.com',
-                    parentEmail: 'reject-parent-participants-test@example.com'
+                    parentEmail: 'reject-parent-participants-test@example.com',
+                    dob: '2015-01-01'
                 })
             });
 

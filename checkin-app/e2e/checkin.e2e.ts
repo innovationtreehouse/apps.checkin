@@ -162,6 +162,7 @@ test.describe.serial("check-in and check-out in the browser", () => {
     const keyholderName = await nameOf(KEYHOLDER);
     await asViewer(browser, BOARD, async (page) => {
       await roster(page);
+      // A keyholder of unknown age is also listed under Students, so the name can show twice.
       await expect(personCard(page, keyholderName).first()).toBeVisible();
       await expect(personCard(page, member.name)).toHaveCount(0);
     });

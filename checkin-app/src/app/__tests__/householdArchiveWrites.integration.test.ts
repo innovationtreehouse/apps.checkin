@@ -175,7 +175,7 @@ describe('writes to an archived household answer 409', () => {
     it('POST /api/membership-ops/participants: adding someone to it', async () => {
         const { POST } = await import('@/app/api/membership-ops/participants/route');
         const { householdId } = await archivedHousehold();
-        await expectArchivedRefusal(await POST(request('/api/membership-ops/participants', 'POST', { name: `Added ${TAG}`, householdId })));
+        await expectArchivedRefusal(await POST(request('/api/membership-ops/participants', 'POST', { name: `Added ${TAG}`, householdId, over25: true })));
         expect(await prisma.person.count({ where: { householdId } })).toBe(1);
     });
 

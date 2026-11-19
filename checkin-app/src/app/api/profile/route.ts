@@ -63,9 +63,8 @@ export const PATCH = withAuth(
 
             // The profile form always submits both age fields, so either one
             // stands for both; notification-only PATCHes leave them unchanged.
-            const agesSubmitted = dob !== undefined || over25 !== undefined;
-            const age = agesSubmitted ? normalizeAdultDob(dob || null, !!over25) : {};
-            if (agesSubmitted && leavesAgeUnknown(age, me)) {
+            const age = dob !== undefined || over25 !== undefined ? normalizeAdultDob(dob || null, !!over25) : {};
+            if (changesAge(age, me) && leavesAgeUnknown(age, me)) {
                 return apiError(AGE_REQUIRED_REFUSAL, 400);
             }
             if (me?.householdId && changesAge(age, me) && !(await setsHouseholdAges(prisma, userId, me.householdId))) {

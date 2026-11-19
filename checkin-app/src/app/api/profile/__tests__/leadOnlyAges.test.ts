@@ -90,16 +90,16 @@ describe("PATCH /api/profile — own age", () => {
 describe("PATCH /api/profile — an age must stay on file", () => {
     beforeEach(() => findLeads.mockResolvedValue([{ id: ME }]));
 
-    it("refuses a save that leaves no date of birth and no over-25 declaration, writing nothing", async () => {
-        const res = await patch({ dob: null, over25: false });
+    it("refuses clearing an over-25 declaration on file, writing nothing", async () => {
+        findMe.mockResolvedValue({ dateOfBirth: null, isDeclaredAdult: true, householdId: 10 });
+        const res = await patch({ dob: "", over25: false });
         expect(res.status).toBe(400);
         expect((await res.json()).error).toBe(AGE_REQUIRED_REFUSAL);
         expect(update).not.toHaveBeenCalled();
     });
 
-    it("refuses clearing an over-25 declaration on file", async () => {
-        findMe.mockResolvedValue({ dateOfBirth: null, isDeclaredAdult: true, householdId: 10 });
-        expect((await patch({ dob: "", over25: false })).status).toBe(400);
+    it("lets someone with no age on file save with the age still blank", async () => {
+        expect((await patch({ name: "Me", dob: null, over25: false })).status).toBe(200);
     });
 
     it("lets someone with no age on file declare over 25", async () => {

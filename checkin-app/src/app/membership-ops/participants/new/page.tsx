@@ -7,7 +7,7 @@ import { MEMBERSHIP_OPS_ADMIN_ROLES } from '@/lib/nav/sections/membershipOps';
 import { AdminPageHeader } from '@/components/admin/AdminPageHeader';
 import { EntityPicker } from '@/components/admin/EntityPicker';
 import { isYouth } from '@/lib/time';
-import { Button, Card, Container, Paper, Stack, Text, TextInput } from '@mantine/core';
+import { Button, Card, Checkbox, Container, Paper, Stack, Text, TextInput } from '@mantine/core';
 import { errorMessage, HttpError, LoadError, showError, showSuccess } from '@checkin/component-ui';
 import { api, useLoad } from '@/lib/api';
 
@@ -36,6 +36,7 @@ function NewParticipantForm() {
   const [parentEmail, setParentEmail] = useState("");
   const [parentName, setParentName] = useState("");
   const [dob, setDob] = useState("");
+  const [over25, setOver25] = useState(false);
 
   // Household selection state (the EntityPicker owns the transient query/results)
   const [householdId, setHouseholdId] = useState("");
@@ -78,7 +79,8 @@ function NewParticipantForm() {
           email: email || null,
           parentEmail: isYouthSelected ? parentEmail : null,
           parentName: isYouthSelected && parentEmail ? parentName : null,
-          dob: dob || null,
+          dob: over25 ? null : (dob || null),
+          over25,
           householdId: householdId ? parseInt(householdId) : null
         })
       });
@@ -89,6 +91,7 @@ function NewParticipantForm() {
       setParentEmail("");
       setParentName("");
       setDob("");
+      setOver25(false);
       setHouseholdId("");
       setHouseholdSearch("");
     } catch (err) {
@@ -99,7 +102,7 @@ function NewParticipantForm() {
     }
   };
 
-  const submitDisabled = saving || !name.trim() || (!isYouthSelected && !email && !householdId) || (isYouthSelected && !parentEmail && !householdId) || (isYouthSelected && !!parentEmail && !parentName.trim());
+  const submitDisabled = saving || !name.trim() || (!dob && !over25) || (!isYouthSelected && !email && !householdId) || (isYouthSelected && !parentEmail && !householdId) || (isYouthSelected && !!parentEmail && !parentName.trim());
 
   return (
     <Container size="md" pb="md">
@@ -129,14 +132,22 @@ function NewParticipantForm() {
               placeholder="e.g. Jane Doe"
             />
 
-            <TextInput
-              type="date"
-              label="Date of Birth"
-              description={isYouthSelected ? 'Student Detected' : undefined}
-              value={dob}
-              onChange={(e) => setDob(e.currentTarget.value)}
-              maw={300}
+            <Checkbox
+              label="Individual is over 25"
+              checked={over25}
+              onChange={(e) => { setOver25(e.currentTarget.checked); if (e.currentTarget.checked) setDob(""); }}
             />
+
+            {!over25 && (
+              <TextInput
+                type="date"
+                label="Date of Birth"
+                description={isYouthSelected ? 'Student Detected' : undefined}
+                value={dob}
+                onChange={(e) => setDob(e.currentTarget.value)}
+                maw={300}
+              />
+            )}
 
             <TextInput
               type="email"

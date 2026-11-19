@@ -4,7 +4,7 @@ import { withAuth } from "@/lib/auth";
 import { logBackendError } from "@/lib/logger";
 import { HouseholdLeadLimitError } from "@/lib/household/leads";
 import { isValidEmail } from "@/lib/emergencyContacts/identity";
-import { normalizeAdultDob } from "@/lib/person/adultDob";
+import { AGE_REQUIRED_REFUSAL, normalizeAdultDob } from "@/lib/person/adultDob";
 import { mintPersonId } from "@/lib/person/mintId";
 import { nameWrite } from "@/lib/person/name";
 import { createInOwnHousehold } from "@/lib/person/ownHousehold";
@@ -32,7 +32,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
 
     try {
         const body = await req.json();
-        const { name, email, parentEmail, parentName, dob, householdId } = body;
+        const { name, email, parentEmail, parentName, dob, over25, householdId } = body;
 
         // Creating a participant never creates an OrgMembership: membership comes
         // only from an application or a board Grant, both of which require a
@@ -65,6 +65,10 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
             if (existingUser) {
                 return NextResponse.json({ error: "A participant with this email already exists", fields: ["email"] }, { status: 409 });
             }
+        }
+
+        if (!dob && !over25) {
+            return NextResponse.json({ error: AGE_REQUIRED_REFUSAL, fields: ["dob"] }, { status: 400 });
         }
 
         // Every participant must belong to a household, so resolve it before
@@ -127,7 +131,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                         id: await mintPersonId(tx),
                         name: nameWrite(name),
                         ...(email && { email }),
-                        ...normalizeAdultDob(dob),
+                        ...normalizeAdultDob(dob, !!over25),
                         householdId: targetHouseholdId
                     }
                 });
@@ -138,7 +142,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                 return createInOwnHousehold(tx, {
                     name: nameWrite(name)!,
                     ...(email && { email }),
-                    ...normalizeAdultDob(dob),
+                    ...normalizeAdultDob(dob, !!over25),
                 });
             });
         }

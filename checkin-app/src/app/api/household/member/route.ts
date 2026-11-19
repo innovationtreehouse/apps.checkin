@@ -88,7 +88,7 @@ export const PATCH = withAuth(
             }
 
             const age = normalizeAdultDob(dob, over25, targetHouseholdMember.dateOfBirth);
-            if ((dob !== undefined || over25 !== undefined) && leavesAgeUnknown(age, targetHouseholdMember)) {
+            if (changesAge(age, targetHouseholdMember) && leavesAgeUnknown(age, targetHouseholdMember)) {
                 return apiError(AGE_REQUIRED_REFUSAL, 400);
             }
             if (changesAge(age, targetHouseholdMember) && !(await setsHouseholdAges(prisma, userId, householdId))) {

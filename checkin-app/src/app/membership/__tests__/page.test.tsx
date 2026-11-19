@@ -123,6 +123,7 @@ describe("membership page", () => {
     fireEvent.change(screen.getByLabelText(/Emergency contact name/), { target: { value: "Aunt Jo" } });
     fireEvent.change(screen.getByLabelText(/Emergency contact phone/), { target: { value: "512-555-1234" } });
     fireEvent.change(screen.getByLabelText("Full name", { exact: false }), { target: { value: "Pat Parent" } });
+    fireEvent.click(screen.getByLabelText("Individual is over 25"));
 
     fireEvent.click(screen.getByRole("button", { name: "Submit & continue" }));
 
@@ -958,6 +959,7 @@ describe("membership page", () => {
     expect(screen.getByText("Emergency contact name is required.")).toBeInTheDocument();
     expect(screen.getByText("Emergency contact phone is required.")).toBeInTheDocument();
     expect(screen.getByText("Your name is required.")).toBeInTheDocument();
+    expect(screen.getByText('Enter a date of birth, or tick "Individual is over 25".')).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([u]) => String(u).includes("/api/membership/intake"))).toBe(false);
   });
 
@@ -972,6 +974,7 @@ describe("membership page", () => {
     fireEvent.change(screen.getByLabelText(/Emergency contact phone/), { target: { value: "512-555-1234" } });
     fireEvent.change(screen.getByLabelText("Emergency contact email (optional)"), { target: { value: "not-an-email" } });
     fireEvent.change(screen.getByLabelText("Full name", { exact: false }), { target: { value: "Pat Parent" } });
+    fireEvent.click(screen.getByLabelText("Individual is over 25"));
 
     fireEvent.click(screen.getByRole("button", { name: "Submit & continue" }));
 
@@ -1013,6 +1016,7 @@ describe("membership page", () => {
     fireEvent.change(screen.getByLabelText(/Emergency contact name/), { target: { value: "Aunt Jo" } });
     fireEvent.change(screen.getByLabelText(/Emergency contact phone/), { target: { value: "512-555-1234" } });
     fireEvent.change(screen.getByLabelText("Full name", { exact: false }), { target: { value: "Pat Parent" } });
+    fireEvent.click(screen.getByLabelText("Individual is over 25"));
 
     fireEvent.click(screen.getByRole("button", { name: "Submit & continue" }));
 
@@ -1044,6 +1048,7 @@ describe("membership page", () => {
     fireEvent.change(screen.getByLabelText(/Emergency contact name/), { target: { value: "Aunt Jo" } });
     fireEvent.change(screen.getByLabelText(/Emergency contact phone/), { target: { value: "512-555-1234" } });
     fireEvent.change(screen.getByLabelText("Full name", { exact: false }), { target: { value: "Pat Parent" } });
+    fireEvent.click(screen.getByLabelText("Individual is over 25"));
 
     fireEvent.click(screen.getByRole("button", { name: "Submit & continue" }));
 
@@ -1071,6 +1076,7 @@ describe("membership page", () => {
     fireEvent.change(screen.getByLabelText(/Emergency contact name/), { target: { value: "Aunt Jo" } });
     fireEvent.change(screen.getByLabelText(/Emergency contact phone/), { target: { value: "512-555-1234" } });
     fireEvent.change(screen.getByLabelText("Full name", { exact: false }), { target: { value: "Pat Parent" } });
+    fireEvent.click(screen.getByLabelText("Individual is over 25"));
 
     fireEvent.click(screen.getByRole("button", { name: "Submit & continue" }));
 
