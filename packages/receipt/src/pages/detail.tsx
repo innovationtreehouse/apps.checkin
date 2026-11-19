@@ -22,6 +22,7 @@ import { missingDetails } from "../lib/missingDetails";
 import { OCR_OFF_NOTE } from "../lib/ocrOff";
 import { DAILY_LIMIT_REACHED } from "../lib/ocrAllowance";
 import AllowanceReset from "../components/AllowanceReset";
+import ReadingNotice, { READING_STATES } from "../components/ReadingNotice";
 import { describeCorrection, editsSinceReading, submitterCorrections, type SubmitterCorrection } from "../lib/submitterCorrections";
 
 const REVIEW_REASON_LABELS: Record<string, string> = {
@@ -386,6 +387,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
       ) : (
         r.validationNotes && <Alert color="yellow">{r.validationNotes}</Alert>
       )}
+      {READING_STATES.has(r.state) && <ReadingNotice reload={reloadReceipt} />}
       <PurchaseOutcomePanel receipt={r} />
       {r.financialReviewReasons.length > 0 && (
         <Alert color="blue">Finance review: {r.financialReviewReasons.map(reasonLabel).join("; ")}</Alert>

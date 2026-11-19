@@ -151,6 +151,9 @@ model ReceiptDetail {
   state                      String    @default("uploaded")
   /// @sensitivity:internal
   ocrStartedAt               DateTime? @map("ocr_started_at")
+  // When the receipt last entered `ocr_queued`; the drain reads the oldest first.
+  /// @sensitivity:internal
+  ocrQueuedAt                DateTime? @map("ocr_queued_at")
   /// @sensitivity:internal
   duplicateFlaggedAt         DateTime? @map("duplicate_flagged_at")
   /// @sensitivity:personal
@@ -441,6 +444,35 @@ model ReceiptMailLease {
   lastRun   Json?     @map("last_run")
 
   @@map("receipt_mail_lease")
+}
+
+// One captured email: its raw copy in the file store under rawKey, kept 90 days by the bucket's
+// lifecycle rule. The row outlives the copy, so a message is never captured twice.
+model ReceiptMailMessage {
+  /// @sensitivity:internal
+  id             Int       @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId          String    @map("org_id")
+  /// @sensitivity:internal
+  gmailMessageId String    @map("gmail_message_id")
+  /// @sensitivity:internal
+  receivedAt     DateTime  @map("received_at")
+  /// @sensitivity:internal
+  capturedAt     DateTime  @default(now()) @map("captured_at")
+  /// @sensitivity:pii
+  rawKey         String    @map("raw_key")
+  /// @sensitivity:internal
+  rawSha256      String    @map("raw_sha256")
+  /// @sensitivity:internal
+  rawSize        Int       @map("raw_size")
+  /// @sensitivity:internal
+  processedAt    DateTime? @map("processed_at")
+  // The latest processing error's kind and short reason; never message content.
+  /// @sensitivity:pii
+  processError   String?   @map("process_error")
+
+  @@unique([orgId, gmailMessageId])
+  @@map("receipt_mail_message")
 }
 
 // One email owed per receipt outcome: to its uploader, and to the person reimbursed when that

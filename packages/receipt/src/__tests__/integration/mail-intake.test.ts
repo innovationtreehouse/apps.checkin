@@ -21,10 +21,11 @@ import { createMemoryFileStore } from "../../lib/fileStorage";
 import { createGmailReader } from "../../lib/gmail";
 import { mailQueueService } from "../../services/mailQueueService";
 import { OCR_INTERRUPTED_AFTER_MS, sweepInterruptedOcr } from "../../services/catchUp";
+import { DRAIN_BUDGET_MS } from "../../services/ocrDrain";
 import { describeDb } from "../helpers/db";
 import type { ReceiptLimits } from "../../lib/limits";
 import { receiptService } from "../../services/receiptService";
-import { actAs, ALICE, BOB, clearAll, configure, FINANCE, manualDetails, okOcr, stateOf, storedBytes, storeFile, TEST_ORG_ID, textFile } from "../helpers/setup";
+import { actAs, ALICE, BOB, clearAll, configure, FINANCE, manualDetails, okOcr, stateOf, storedBytes, storeFile, TEST_ORG_ID, textFile, uploadRead } from "../helpers/setup";
 
 const GOOGLE_PASS = "mx.google.com; dkim=pass header.i=@example.org; spf=pass; dmarc=pass (p=NONE sp=NONE) header.from=example.org";
 const b64 = (s: string) => Buffer.from(s).toString("base64url");
@@ -517,7 +518,13 @@ describeDb("mail intake flood limits", () => {
 
 /** A call that never answers, after moving the clock past the run's reading deadline but not its lease. */
 const hangPastReadingDeadline = (): Promise<never> => {
-  vi.setSystemTime(Date.now() + MAIL_TIME_BUDGET_MS + 8 * 60_000);
+  vi.setSystemTime(Date.now() + MAIL_TIME_BUDGET_MS + DRAIN_BUDGET_MS + 8 * 60_000);
+  return new Promise(() => {});
+};
+
+/** A reading that never answers, after moving the clock past the drain's deadline but not the lease's. */
+const hangPastDrainDeadline = (): Promise<never> => {
+  vi.setSystemTime(Date.now() + DRAIN_BUDGET_MS + 60_000);
   return new Promise(() => {});
 };
 
@@ -526,14 +533,14 @@ describeDb("mail intake call deadlines", () => {
     vi.useRealTimers();
   });
 
-  it("abandons a hung reading at its deadline, sends the replies owed, releases the lease, and leaves the receipt for the sweep", async () => {
+  it("abandons a hung reading in the drain at its deadline, releases the lease, and leaves the receipt for the sweep", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.spyOn(console, "error").mockImplementation(() => {});
     send("m1");
     send("m2");
     const sent: string[] = [];
     configure({
-      ocr: { extract: hangPastReadingDeadline },
+      ocr: { extract: hangPastDrainDeadline },
       mailbox: mail.reader,
       alerts: testAlerts(),
       people: { submitterByEmail: async () => ALICE },
@@ -546,13 +553,13 @@ describeDb("mail intake call deadlines", () => {
       },
     });
 
-    expect(await readMailbox()).toMatchObject({ status: "ok", messages: 1, receipts: 1, unread: 1, replied: 1 });
-    expect(sent).toEqual(["alice@example.org"]);
-    expect((await mailRunState()).running).toBe(false);
-    const [receipt] = await db.receipt.findMany();
-    expect(await stateOf(receipt.id)).toBe("auto_upload");
+    expect(await readMailbox()).toMatchObject({ status: "ok", messages: 2, receipts: 2, unread: 0, replied: 2 });
+    expect(sent).toEqual(["alice@example.org", "alice@example.org"]);
+    expect(await mailRunState()).toMatchObject({ running: false, lastRun: { status: "ok", drain: { read: 0, failed: 1, waiting: 1 } } });
+    const states = await db.receiptDetail.findMany({ select: { id: true, state: true }, orderBy: { ocrQueuedAt: "asc" } });
+    expect(states.map((r) => r.state)).toEqual(["auto_upload", "ocr_queued"]);
     await sweepInterruptedOcr(new Date(Date.now() + OCR_INTERRUPTED_AFTER_MS + 1));
-    expect(await stateOf(receipt.id)).toBe("ocr_failed");
+    expect(await stateOf(states[0].id)).toBe("ocr_failed");
   });
 
   it("ends the run as a listing failure when a mailbox fetch hangs, and releases the lease", async () => {
@@ -600,7 +607,7 @@ describeDb("mail intake call deadlines", () => {
         send: async (ack) => {
           if (hang) {
             // Past the run's end-of-run deadline, short of its lease.
-            vi.setSystemTime(Date.now() + MAIL_TIME_BUDGET_MS + 9.5 * 60_000);
+            vi.setSystemTime(Date.now() + MAIL_TIME_BUDGET_MS + DRAIN_BUDGET_MS + 9.5 * 60_000);
             return new Promise<boolean>(() => {});
           }
           sent.push(ack.to);
@@ -1197,12 +1204,12 @@ describeDb("mail intake over a sender's daily upload limit", () => {
     withLimits({ uploadsPerPersonPerDay: 1 });
     send("m1");
     expect(await readMailbox()).toMatchObject({ receipts: 1 });
-    await expect(receiptService.upload(textFile(), "text/plain", { details: manualDetails() })).rejects.toMatchObject({ status: 429 });
+    await expect(uploadRead(textFile(), "text/plain", { details: manualDetails() })).rejects.toMatchObject({ status: 429 });
   });
 
   it("counts only mailed receipts toward the mail limit", async () => {
     withLimits({ uploadsPerPersonPerDay: 2, mailUploadsPerPersonPerDay: 1 });
-    await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     send("m1");
     send("m2");
     expect(await readMailbox()).toMatchObject({ receipts: 1, overLimit: 1 });

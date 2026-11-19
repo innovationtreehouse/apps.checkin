@@ -89,7 +89,7 @@ describe('intake pipeline transitions', () => {
 
   it('REJECT reaches rejected from every open state', () => {
     const open = [
-      'uploaded', 'auto_upload', 'ocr_failed', 'duplicate_flagged',
+      'uploaded', 'ocr_queued', 'auto_upload', 'ocr_failed', 'duplicate_flagged',
       'validation_failed', 'submitter_review', 'financial_review', 'flow_error',
     ];
     for (const state of open) {
@@ -111,8 +111,22 @@ describe('intake pipeline transitions', () => {
     expect(transition('submitter_review', 'SUBMITTER_DISCARDED')).toBe('discarded');
   });
 
-  it('ocr_failed → OCR_RETRY → auto_upload', () => {
-    expect(transition('ocr_failed', 'OCR_RETRY')).toBe('auto_upload');
+  it('ocr_failed → OCR_RETRY → ocr_queued', () => {
+    expect(transition('ocr_failed', 'OCR_RETRY')).toBe('ocr_queued');
+  });
+
+  it('ocr_queued → OCR_STARTED → auto_upload: only a claim starts a reading', () => {
+    expect(transition('ocr_queued', 'OCR_STARTED')).toBe('auto_upload');
+    expect(isLegalTransition('auto_upload', 'OCR_STARTED')).toBe(false);
+    expect(isLegalTransition('ocr_failed', 'OCR_STARTED')).toBe(false);
+  });
+
+  it('ocr_queued → OCR_FAILED → ocr_failed (reading switched off)', () => {
+    expect(transition('ocr_queued', 'OCR_FAILED')).toBe('ocr_failed');
+  });
+
+  it('a queued receipt has no reading result to apply', () => {
+    expect(isLegalTransition('ocr_queued', 'OCR_SUCCEEDED')).toBe(false);
   });
 
   it('ocr_failed → RESUBMIT → uploaded', () => {
@@ -132,7 +146,7 @@ describe('intake pipeline transitions', () => {
 
 describe('DISCARD universal event', () => {
   const discardableStates = [
-    'uploaded', 'auto_upload', 'ocr_failed', 'duplicate_flagged',
+    'uploaded', 'ocr_queued', 'auto_upload', 'ocr_failed', 'duplicate_flagged',
     'validation_failed', 'submitter_review', 'financial_review',
   ];
 

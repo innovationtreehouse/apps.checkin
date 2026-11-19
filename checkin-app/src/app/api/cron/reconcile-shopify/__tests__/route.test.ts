@@ -9,7 +9,7 @@ import { runExpenseCatchUp } from '@checkin/expense';
 import { catchUpOrgEvents as catchUpInventoryEvents } from '@checkin/local-inventory';
 import { catchUpOrgEvents as catchUpWorkflowEvents, sweepStuckApplying } from '@checkin/workflow-mapping';
 import { runReconcile as runIncomeReconcile } from '@checkin/income';
-import { readMailbox, sweepInterruptedOcr, sweepOutcomeNotices, sweepStuckUploaded } from '@checkin/receipt';
+import { takeInMailbox, sweepInterruptedOcr, sweepOutcomeNotices, sweepStuckUploaded } from '@checkin/receipt';
 import { runReconcile } from '@/lib/finance/reconcile';
 import { runSaleSweep } from '@/lib/programs/saleSweep';
 import { healProgramStock } from '@/lib/shopify/stock';
@@ -22,7 +22,7 @@ jest.mock('@checkin/expense', () => ({ runExpenseCatchUp: jest.fn() }));
 jest.mock('@checkin/income', () => ({ runReconcile: jest.fn() }));
 jest.mock('@checkin/local-inventory', () => ({ catchUpOrgEvents: jest.fn() }));
 jest.mock('@checkin/workflow-mapping', () => ({ catchUpOrgEvents: jest.fn(), sweepStuckApplying: jest.fn() }));
-jest.mock('@checkin/receipt', () => ({ sweepInterruptedOcr: jest.fn(), sweepStuckUploaded: jest.fn(), readMailbox: jest.fn(), sweepOutcomeNotices: jest.fn() }));
+jest.mock('@checkin/receipt', () => ({ sweepInterruptedOcr: jest.fn(), sweepStuckUploaded: jest.fn(), takeInMailbox: jest.fn(), sweepOutcomeNotices: jest.fn() }));
 jest.mock('@/lib/programs/saleSweep', () => ({ runSaleSweep: jest.fn() }));
 jest.mock('@/lib/shopify/stock', () => ({ healProgramStock: jest.fn() }));
 jest.mock('@/lib/components/host', () => ({ getOrg: jest.fn().mockResolvedValue({ id: 'org-1', name: 'Org' }) }));
@@ -65,7 +65,7 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
         jest.mocked(sweepStuckApplying).mockResolvedValue(RECEIVING_APPLY);
         jest.mocked(sweepInterruptedOcr).mockResolvedValue(RECEIPT);
         jest.mocked(sweepStuckUploaded).mockResolvedValue(RECEIPT_STUCK);
-        jest.mocked(readMailbox).mockResolvedValue(RECEIPT_MAIL);
+        jest.mocked(takeInMailbox).mockResolvedValue(RECEIPT_MAIL);
         jest.mocked(sweepOutcomeNotices).mockResolvedValue(RECEIPT_OUTCOMES);
     });
 
@@ -108,7 +108,7 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
     });
 
     it('runs every step in order when each one throws, logging each and reporting it as an error', async () => {
-        const steps = [runIncomeReconcile, runExpenseCatchUp, healProgramStock, catchUpInventoryEvents, catchUpWorkflowEvents, sweepStuckApplying, sweepInterruptedOcr, sweepStuckUploaded, readMailbox, sweepOutcomeNotices].map((step) => jest.mocked(step));
+        const steps = [runIncomeReconcile, runExpenseCatchUp, healProgramStock, catchUpInventoryEvents, catchUpWorkflowEvents, sweepStuckApplying, sweepInterruptedOcr, sweepStuckUploaded, takeInMailbox, sweepOutcomeNotices].map((step) => jest.mocked(step));
         for (const step of steps) step.mockRejectedValue(new Error('step down'));
         const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -198,7 +198,7 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
     });
 
     it('a throwing mail intake still answers 200 with every other step', async () => {
-        jest.mocked(readMailbox).mockRejectedValue(new Error('gmail down'));
+        jest.mocked(takeInMailbox).mockRejectedValue(new Error('gmail down'));
         const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
 
         const res = await GET(req());
@@ -222,7 +222,7 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
     });
 
     it('records the cron run as failed when mail intake throws', async () => {
-        jest.mocked(readMailbox).mockRejectedValue(new Error('gmail down'));
+        jest.mocked(takeInMailbox).mockRejectedValue(new Error('gmail down'));
         const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
 
         const body = await (await GET(req())).json();
@@ -234,7 +234,7 @@ describe('GET /api/cron/reconcile-shopify — expense catch-up step', () => {
 
     it('records the cron run as failed when the mailbox could not be listed, on top of reconcile failures', async () => {
         jest.mocked(runReconcile).mockResolvedValue({ ...RECONCILED, failed: 2 });
-        jest.mocked(readMailbox).mockResolvedValue({ status: 'listing_failed', messages: 0, receipts: 0, held: 0, skipped: 0, rejected: 0, failed: 0, deferred: 0, overLimit: 0, overCeiling: 0, unread: 0, ignored: 0, replied: 1, replyFailed: 0 });
+        jest.mocked(takeInMailbox).mockResolvedValue({ status: 'listing_failed', messages: 0, receipts: 0, held: 0, skipped: 0, rejected: 0, failed: 0, deferred: 0, overLimit: 0, overCeiling: 0, unread: 0, ignored: 0, replied: 1, replyFailed: 0 });
 
         const body = await (await GET(req())).json();
 

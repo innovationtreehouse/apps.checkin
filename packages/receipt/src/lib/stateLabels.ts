@@ -1,5 +1,6 @@
 /** A receipt state in plain words. A plain module, so server code can read it as well as the screens. */
 export const STATE_LABELS: Record<string, string> = {
+  ocr_queued: "Waiting to be read",
   auto_upload: "Reading",
   uploaded: "Processing",
   ocr_failed: "Couldn't read",
