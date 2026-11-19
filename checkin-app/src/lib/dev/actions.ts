@@ -49,10 +49,17 @@ export async function macroCheckins(): Promise<ActionResult> {
 export async function resetDevInstance(): Promise<ActionResult> {
     const real = await assertDevActor();
 
-    const { skipped } = await truncateDevDatabases(prisma, () => seedBaseline(prisma));
-
-    await recordLedger("reset", real, skipped.length ? `not configured: ${skipped.join(", ")}` : null);
-    revalidatePath("/", "layout");
+    let detail: string | null = null;
+    try {
+        const { skipped } = await truncateDevDatabases(prisma, () => seedBaseline(prisma));
+        if (skipped.length) detail = `not configured: ${skipped.join(", ")}`;
+    } catch (e) {
+        detail = `failed: ${e instanceof Error ? e.message : String(e)}`;
+        throw e;
+    } finally {
+        await recordLedger("reset", real, detail);
+        revalidatePath("/", "layout");
+    }
     return { ok: true, summary: "Dev instance reset to baseline" };
 }
 

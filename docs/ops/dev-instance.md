@@ -184,7 +184,8 @@ Truncates every table in checkin, then in each library database listed in
 `checkin-app/libraries.json`, then in the Shopify-read mirror, and reseeds
 checkin's baseline. Each table list is read from the catalog at runtime, so a
 new model is picked up automatically and nobody maintains a list. A library or
-mirror with no connection configured is skipped and named in the ledger row.
+mirror with no connection configured is skipped and named in the ledger row,
+and a reset that fails records its error there.
 
 Before anything is truncated, every connection must name the environment's own
 database (`<name>_dev` on dev; the local name on a local host), or the reset

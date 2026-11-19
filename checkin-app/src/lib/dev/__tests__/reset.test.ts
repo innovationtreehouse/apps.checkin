@@ -51,7 +51,7 @@ describe("truncateDevDatabases", () => {
         return { reseed, done: truncateDevDatabases(checkin, reseed, targets, connect) };
     }
 
-    it("truncates checkin, then each configured library, then Shopify-read, keeping migrations and the ledger, and restarts their sequences", async () => {
+    it("truncates checkin, then each configured library, then Shopify-read, keeping migrations and the ledger, and restarts sequences outside the mirror", async () => {
         const log: string[] = [];
         const { done } = run({}, log);
 
@@ -62,7 +62,6 @@ describe("truncateDevDatabases", () => {
             'expense_dev: TRUNCATE TABLE "rows" CASCADE',
             'expense_dev: setval "rows_id_seq"',
             'shopify_read_dev: TRUNCATE TABLE "rows" CASCADE',
-            'shopify_read_dev: setval "rows_id_seq"',
             "reseed",
             "expense_dev: end",
             "shopify_read_dev: end",
