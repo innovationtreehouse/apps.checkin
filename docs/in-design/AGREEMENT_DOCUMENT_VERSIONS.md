@@ -210,18 +210,32 @@ Then, by document:
 - **Membership, "at next renewal".** Nothing more opens. Each household signs the
   current version at its next renewal.
 - **Membership, "now".** Each household whose current-cycle signature is below
-  the minimum gets a re-sign request, and each adult who signs their own
-  `PERSON_AGREEMENT` gets a fresh one. Nothing is blocked: membership, check-in
-  and programs carry on. Everyone who still owes a signature appears on a
-  needs-to-re-sign list on the membership compliance page, for the Board to
-  chase in person (owner's decision).
+  the minimum gets a `MEMBERSHIP_RESIGN` request for a lead's signature. Each
+  adult whose own `PERSON_AGREEMENT` this cycle is below the minimum re-signs
+  through a fresh `PERSON_AGREEMENT`, not through the household's re-sign.
+  Nothing is blocked: membership, check-in and programs carry on. Everyone who
+  still owes a signature appears on a needs-to-re-sign list on the membership
+  compliance page, for the Board to chase in person (owner's decision).
 
-The household re-sign is a new process kind, `MEMBERSHIP_RESIGN`, signed by any
-household lead and complete on the signature alone, like `PERSON_AGREEMENT`. A
-new kind is needed because the household's signature is otherwise part of its
-`INITIAL` or `RENEWAL` application, which a re-sign must not reopen, and a
+The household re-sign is a new process kind, `MEMBERSHIP_RESIGN` (owner's
+decision). It collects one household lead's signature on the current version,
+completes on that signature alone, like `PERSON_AGREEMENT`, and blocks nothing
+while open. It leaves the household's settled `INITIAL` or `RENEWAL` application
+untouched. A new kind is needed because the household's signature is otherwise
+part of that application, which a re-sign must not reopen, and a
 `PERSON_AGREEMENT` on a lead is refused because it would shadow the household's
 signing flow.
+
+The `PERSON_AGREEMENT` triggers skip anyone whose agreement was "handled this
+cycle": one still open, or one settled since the cycle's floor
+(`handledThisCycleWhere` in
+`checkin-app/src/lib/membership/personAgreementTriggers.ts`). Left as it is,
+that guard would skip an adult who signed this cycle at a version below the
+new minimum. The guard therefore counts a settled agreement as handled only
+when its `agreementVersion` is at or above the membership minimum. An open one
+still counts: if its request is below the minimum, the adoption has already
+cancelled it. The nightly sweep and the "now" fan-out share that guard, so the
+sweep also catches anyone the fan-out missed.
 
 Lowering the minimum opens and cancels nothing; signatures back in range simply
 count again.
@@ -306,7 +320,8 @@ expand/contract order in `docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md`
    `BoardSettings` for code still serving during the deploy.
 5. **Board adoption and follow-up.** The adopt route and settings card
    (replacing the bump button), the open-request cancellation, the membership
-   "now" fan-out with `MEMBERSHIP_RESIGN`, the needs-to-re-sign list, the nightly
+   "now" fan-out with `MEMBERSHIP_RESIGN` and fresh `PERSON_AGREEMENT`s, the
+   "handled this cycle" guard compared against the minimum, the needs-to-re-sign list, the nightly
    fingerprint check and the System status rows. Based on `main` after PR 2
    merges, not stacked on its branch.
 6. **Contract.** In a later release: drop `BoardSettings.keyVolunteerAgreementVersion`,
