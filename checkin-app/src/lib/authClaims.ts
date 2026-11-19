@@ -10,6 +10,8 @@ export type ClaimSourceParticipant = {
     name?: string | null;
     // Their first sign-in's household question is open (lib/household/joinQuestion.ts).
     householdJoinPending?: boolean;
+    // They created a new household at sign-in; the age step shows while no age is on file.
+    ageStepPending?: boolean;
     // Source of truth for the five authority booleans (see lib/roles.ts rolesToFlags).
     roles: { role: PersonRoleKind }[];
     householdId: number;
@@ -60,6 +62,7 @@ export function assignParticipantClaims(token: JWT, p: ClaimSourceParticipant): 
     // Derived band, never the DOB itself. Not a role, so DENIED doesn't clear
     // it — age is a fact about the person, not an authority grant.
     token.ageBand = pending ? "unknown" : ageBand(p);
+    token.ageStepPending = !pending && p.ageStepPending === true && token.ageBand === "unknown";
     token.toolStatuses = locked ? [] : p.toolStatuses;
     token.programsLed = locked ? [] : (p.programsLed?.map((prog) => prog.id) ?? []);
     // ops-stg access gate escape hatch — forced false on DENIED, same as every role flag.

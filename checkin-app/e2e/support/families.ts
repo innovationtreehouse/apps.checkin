@@ -18,8 +18,8 @@ export function youthBirthDate(): string {
   return date.toISOString().slice(0, 10);
 }
 
-/** Mints a one-person household with no membership and returns its lead's email. */
-export async function newFamily(): Promise<string> {
+/** Mints a one-person household with no membership and no age on file, as a first sign-in leaves it; returns its lead's email. */
+export async function mintFamily(): Promise<string> {
   const minted = await api<{ personaId: number }>(null, "/api/auth/dev-personas", { method: "POST" });
   if (minted.status !== 200) throw new Error(`mint family: ${minted.status}`);
   const { personaId } = minted.json;
@@ -28,6 +28,14 @@ export async function newFamily(): Promise<string> {
   const person = json.people.find((p) => p.id === personaId);
   if (!person) throw new Error(`minted family ${personaId} not in the directory`);
   return person.email;
+}
+
+/** A minted family whose lead has declared themself over 25, so nothing asks for their age. */
+export async function newFamily(): Promise<string> {
+  const email = await mintFamily();
+  const declared = await send(await loginAs(email), "PATCH", "/api/profile", { dob: null, over25: true });
+  if (declared.status !== 200) throw new Error(`declare family over 25: ${declared.status}`);
+  return email;
 }
 
 /** A new family that has given its phone and emergency contact, so nothing prompts for them. */

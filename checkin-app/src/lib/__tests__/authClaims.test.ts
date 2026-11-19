@@ -82,6 +82,32 @@ describe('assignParticipantClaims — open household question', () => {
     });
 });
 
+describe('assignParticipantClaims — age step', () => {
+    it('asks for an age while someone who created a household has none on file', () => {
+        const token = {} as JWT;
+        assignParticipantClaims(token, participant({ ageStepPending: true, dateOfBirth: null, isDeclaredAdult: false }));
+        expect(token.ageStepPending).toBe(true);
+    });
+
+    it('stops asking once an age is on file', () => {
+        const token = {} as JWT;
+        assignParticipantClaims(token, participant({ ageStepPending: true, dateOfBirth: null, isDeclaredAdult: true }));
+        expect(token.ageStepPending).toBe(false);
+    });
+
+    it('never asks someone who did not create a household at sign-in', () => {
+        const token = {} as JWT;
+        assignParticipantClaims(token, participant({ dateOfBirth: null, isDeclaredAdult: false }));
+        expect(token.ageStepPending).toBe(false);
+    });
+
+    it('waits for an open household question first', () => {
+        const token = {} as JWT;
+        assignParticipantClaims(token, participant({ ageStepPending: true, householdJoinPending: true, dateOfBirth: null, isDeclaredAdult: false }));
+        expect(token.ageStepPending).toBe(false);
+    });
+});
+
 describe('assignParticipantClaims — claims derive from PersonRole rows', () => {
     it('no rows ⇒ every authority flag false', () => {
         const token = {} as JWT;

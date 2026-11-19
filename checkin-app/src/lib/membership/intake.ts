@@ -557,6 +557,7 @@ export async function submitIntake(userId: number) {
         addressPostalCode: household.postalCode,
         emergencyContacts: household.emergencyContacts,
         primaryName: primary?.name,
+        members: household.householdMembers,
     });
     if (missing.length) {
         throw new IntakeError(

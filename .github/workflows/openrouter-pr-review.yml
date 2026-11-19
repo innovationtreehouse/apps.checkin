@@ -63,7 +63,7 @@ jobs:
           EVENT_ACTION: ${{ github.event.action }}
           GH_TOKEN: ${{ github.token }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          DECISION_MODEL: baseten/mammoth-1:free
+          DECISION_MODEL: baseten/mammoth-1
           DECISION_STATE_MAX: "48000"
           # "true" sends a PR's first review (no earlier bot review) to the lowest tier unless the
           # fixed ladder says high; "false" lets the decision model pick. The judge can still order a rerun.
@@ -104,7 +104,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           GH_TOKEN: ${{ github.token }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          DECISION_MODEL: baseten/mammoth-1:free
+          DECISION_MODEL: baseten/mammoth-1
           DECISION_STATE_MAX: "48000"
           TIER: ${{ steps.route.outputs.tier }}
           PROFILES: ${{ steps.route.outputs.profiles }}

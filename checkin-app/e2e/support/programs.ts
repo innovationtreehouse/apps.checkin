@@ -1,7 +1,7 @@
 /** Programs, their sessions and their places, set up over HTTP as the Board and the family would. */
 import { api, loginAs } from "../../flow-tests/helpers";
 import { addYouth, settledFamily } from "./families";
-import { BOARD, send } from "./seedState";
+import { BOARD, recheckWindow, send } from "./seedState";
 
 const MINUTE = 60_000;
 
@@ -13,33 +13,28 @@ export const PROGRAM_DATES = { startAt: inDays(14), endAt: inDays(28) };
 
 export interface Named { id: number; name: string }
 
-/** A new adult in a household of their own who has declared themself over 25, old enough to lead a program; returns their email. */
-export async function newLeader(): Promise<string> {
-  const email = await settledFamily();
-  const leader = await loginAs(email);
-  const declared = await send(leader, "PATCH", "/api/household/member", { participantId: leader.personaId, over25: true });
-  if (declared.status !== 200) throw new Error(`declare leader over 25: ${declared.status}`);
-  return email;
-}
+/** The seeded ACTIVE member with a current background-check clearance, whom the Board may name to lead a program. */
+export const LEADER = "program.lead@example.com";
 
-/** A priced program the Board created with a new leader, still in planning and open for enrollment. */
+/** A priced program the Board created with the seeded leader, still in planning and open for enrollment. */
 export async function newProgram(capacity = 2): Promise<Named & { leader: string }> {
   const board = await loginAs(BOARD);
   const name = `Browser Program ${Date.now()}`;
-  const leader = await newLeader();
+  // The fresh seed sets no background-check interval, and no leader is named without one.
+  const restoreWindow = await recheckWindow(27);
   const created = await send(board, "POST", "/api/programs", {
     name,
-    leadMentorId: (await loginAs(leader)).personaId,
+    leadMentorId: (await loginAs(LEADER)).personaId,
     ...PROGRAM_DATES,
     memberPrice: "40",
     nonMemberPrice: "50",
     maxParticipants: capacity,
-  });
+  }).finally(restoreWindow);
   if (created.status !== 200) throw new Error(`create program: ${created.status}`);
   const { id } = (created.json as { program: { id: number } }).program;
   const opened = await send(board, "PATCH", `/api/programs/${id}`, { enrollmentStatus: "OPEN" });
   if (opened.status !== 200) throw new Error(`open program: ${opened.status}`);
-  return { id, name, leader };
+  return { id, name, leader: LEADER };
 }
 
 /** A session of the program running from `startMinutes` to `endMinutes` from now; negative is in the past. */

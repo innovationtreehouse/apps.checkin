@@ -49,9 +49,9 @@ export default async function RootLayout({
               <DialogFocusGuard />
               <EnvProvider value={{ checkinEnv: config.checkinEnv(), shopifyStoreDomain: config.shopifyStoreDomain(), isStaging: config.isStaging(), devMocks: { shopify: config.shopifyMockActive(), bgConsent: config.bgMockActive() } }}>
                 <AuthProvider>
+                  <StagingBar />
+                  <DevImpersonationBar />
                   <OnboardingGate>
-                    <StagingBar />
-                    <DevImpersonationBar />
                     <UnsavedChangesProvider>
                       <AppFrame>
                         <DbWakeNotice />
@@ -59,8 +59,8 @@ export default async function RootLayout({
                         {children}
                       </AppFrame>
                     </UnsavedChangesProvider>
-                    <DevDashboard />
                   </OnboardingGate>
+                  <DevDashboard />
                 </AuthProvider>
               </EnvProvider>
             </ModalsProvider>

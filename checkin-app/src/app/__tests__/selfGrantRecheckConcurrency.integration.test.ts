@@ -99,7 +99,7 @@ it('refuses adding a person to a household the actor joined while the add waited
 
     const res = await joinWhileWaiting(f.homeId, actor, () => addParticipant(new Request('http://localhost:4000/api/membership-ops/participants', {
         method: 'POST',
-        body: JSON.stringify({ name, householdId: f.homeId }),
+        body: JSON.stringify({ name, householdId: f.homeId, over25: true }),
     }) as unknown as Parameters<typeof addParticipant>[0]));
 
     expect(res.status).toBe(403);

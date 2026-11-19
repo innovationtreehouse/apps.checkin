@@ -87,7 +87,7 @@ const DISPOSITIONS: Record<string, string> = {
     'Event.attendanceConfirmedById': 'repointed (SET NULL) — who confirmed attendance is a staff-action audit fact; left behind it reads as nobody.',
     'FacilityClose.closedById': 'repointed (SET NULL) — who closed the facility is an audit fact; left behind it reads as a deleted closer.',
     'OrgMembershipProcess.zohoSignerPersonId': 'repointed (SET NULL) — who the agreement request is addressed to, and who signed; the same human follows the survivor.',
-    'OrgMembershipProcess.subjectPersonId': 'repointed (SET NULL) — step 5 updateMany, then archiveDuplicatePersonBg leaves the survivor exactly one open PERSON_BG.',
+    'OrgMembershipProcess.subjectPersonId': 'repointed (SET NULL) — step 5 updateMany, then archiveDuplicatePersonBg and archiveDuplicateKva leave the survivor exactly one open PERSON_BG and one open Key Volunteer agreement.',
     'PresenceEvent.personId': 'repointed (CASCADE) — the append-only presence log projects visits, so events left on a tombstone would flush against a person the projection can no longer treat as live; the log follows the survivor like RawBadgeLog does.',
     'PersonMerge.toId': 'repointed (RESTRICT) — an earlier merge\'s archive row naming this record as ITS survivor. Repointed, not chained: the archive answers "where is this person now", and RESTRICT means a row left here would block the delete.',
     'PersonRole.grantedById': 'repointed (SET NULL) — swept AFTER the holder pass, so a granter stamp on a row the dedupe just deleted is not counted as moved.',
@@ -114,7 +114,6 @@ const DISPOSITIONS: Record<string, string> = {
     'ToolStatus.personId': 'repointed/deduped/pre-refused (RESTRICT) — moved when only one side has it; a same-level duplicate is deleted; two different levels for one human is a decision an operator makes, not a merge.',
 
     // ── deliberately left ─────────────────────────────────────────────────────
-    'Person.mergedIntoId': 'deliberately-left (SET NULL) — the merge neither reads nor writes it, and no Person row sets it: a merged-away record is archived in PersonMerge and deleted. The column awaits its drop.',
     'OrgMembershipProcess.noteAckById': 'deliberately-left (SET NULL) — the merge neither reads nor writes it, and nothing sets it. The column awaits its drop.',
     'Session.userId': 'deliberately-left (CASCADE) — deleted, not moved: a session is an auth artifact, and there is no reason for the survivor to inherit the merged-away login.',
 };

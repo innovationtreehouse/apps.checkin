@@ -17,6 +17,8 @@ export default function ProgramDetailsCard({ program, ageRange, enrolledCount, i
   hasEnded: boolean;
   onPayNow: () => void;
 }) {
+  // Nobody outside a membership can enroll in a members-only program, whatever price is stored.
+  const nonMemberPriceCents = program.orgMemberOnly ? null : program.nonOrgMemberPriceCents;
   return (
     <Card withBorder radius="md" padding="lg" mb="lg">
       <Title order={4} c="dimmed" mb="md">Details</Title>
@@ -61,12 +63,12 @@ export default function ProgramDetailsCard({ program, ageRange, enrolledCount, i
             ))}
           </>
         )}
-        {(program.orgMemberPriceCents !== null || program.nonOrgMemberPriceCents !== null) && (
+        {(program.orgMemberPriceCents !== null || nonMemberPriceCents !== null) && (
           <>
             <Divider />
             {program.orgMemberPriceCents !== null && <Text><strong>Treehouse Member Price:</strong> {formatCents(program.orgMemberPriceCents)}</Text>}
-            {program.nonOrgMemberPriceCents !== null && <Text><strong>Non-Member Price:</strong> {formatCents(program.nonOrgMemberPriceCents)}</Text>}
-            {(!program.orgMemberPriceCents && !program.nonOrgMemberPriceCents) && <Text><strong>Cost:</strong> Free</Text>}
+            {nonMemberPriceCents !== null && <Text><strong>Non-Member Price:</strong> {formatCents(nonMemberPriceCents)}</Text>}
+            {(!program.orgMemberPriceCents && !nonMemberPriceCents) && <Text><strong>Cost:</strong> Free</Text>}
           </>
         )}
       </Stack>

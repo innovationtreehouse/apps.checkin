@@ -4,7 +4,7 @@ import { withAuth } from "@/lib/auth";
 import { logBackendError } from "@/lib/logger";
 import { HouseholdLeadLimitError } from "@/lib/household/leads";
 import { isValidEmail } from "@/lib/emergencyContacts/identity";
-import { normalizeAdultDob } from "@/lib/person/adultDob";
+import { AGE_REQUIRED_REFUSAL, normalizeAdultDob } from "@/lib/person/adultDob";
 import { mintPersonId } from "@/lib/person/mintId";
 import { nameWrite } from "@/lib/person/name";
 import { createInOwnHousehold } from "@/lib/person/ownHousehold";
@@ -41,7 +41,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
 
     try {
         const body = await req.json();
-        const { name, email, parentEmail, parentName, dob, householdId } = body;
+        const { name, email, parentEmail, parentName, parentDob, parentOver25, dob, over25, householdId } = body;
 
         // Creating a participant never creates an OrgMembership: membership comes
         // only from an application or a board Grant, both of which require a
@@ -76,6 +76,10 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
             }
         }
 
+        if (!dob && !over25) {
+            return NextResponse.json({ error: AGE_REQUIRED_REFUSAL, fields: ["dob"] }, { status: 400 });
+        }
+
         // Every participant must belong to a household, so resolve it before
         // creating: parent's household > explicitly provided household > a new
         // household of their own.
@@ -96,9 +100,12 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                 if (!parentName?.trim()) {
                     return apiError("Parent name is required when creating a new parent", 400);
                 }
+                if (!parentDob && !parentOver25) {
+                    return NextResponse.json({ error: AGE_REQUIRED_REFUSAL, fields: ["parentDob"] }, { status: 400 });
+                }
                 parent = await withTx(prisma, async (tx) => {
                     await removeAliasesForSignInEmail(tx, parentEmail, personActor(auth.user.id), "participant_add");
-                    return createInOwnHousehold(tx, { email: parentEmail, name: parentName.trim() });
+                    return createInOwnHousehold(tx, { email: parentEmail, name: parentName.trim(), ...normalizeAdultDob(parentDob, !!parentOver25) });
                 });
             } else {
                 joinsExistingHousehold = true;
@@ -141,7 +148,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                         id: await mintPersonId(tx),
                         name: nameWrite(name),
                         ...(email && { email }),
-                        ...normalizeAdultDob(dob),
+                        ...normalizeAdultDob(dob, !!over25),
                         householdId: targetHouseholdId
                     }
                 });
@@ -152,7 +159,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
                 return createInOwnHousehold(tx, {
                     name: nameWrite(name)!,
                     ...(email && { email }),
-                    ...normalizeAdultDob(dob),
+                    ...normalizeAdultDob(dob, !!over25),
                 });
             });
         }

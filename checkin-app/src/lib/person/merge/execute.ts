@@ -1,7 +1,9 @@
 import prisma from "@/lib/prisma";
 import type { AuthenticatedUser } from "@/types/auth";
 import type { DbClient, TxClient } from "@/lib/db-client";
-import { personBgOpen } from "@/lib/membership/lifecycle";
+import { fromWhere, personBgOpen } from "@/lib/membership/lifecycle";
+import { KVA_KIND, findSignedCurrentKva } from "@/lib/membership/keyVolunteerProcess";
+import { recallSigningRequests } from "@/lib/membership/keyVolunteer";
 import { disputingReviews, loadCheckReviews } from "@/lib/membership/checkStanding";
 import { settleHouseholdBg } from "@/lib/membership/settleHouseholdBg";
 import { logBackendError } from "@/lib/logger";
@@ -194,6 +196,7 @@ function emptyTallies() {
     return {
         visits: 0,
         personBgArchived: 0,
+        kvaArchived: 0,
         rawBadgeLogs: 0,
         presenceEvents: 0,
         zohoSigners: 0,
@@ -232,7 +235,7 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
     const mergeId = merge.id;
 
     // The timeout also covers the waits in lockMergeRows.
-    const { personMergeId, lockedKeeper } = await prisma.$transaction(async (tx) => {
+    const { personMergeId, lockedKeeper, recallRequestIds } = await prisma.$transaction(async (tx) => {
         await lockMergeRows(tx, keepId, mergeId, [keep.householdId, merge.householdId]);
         const live = await recheckSubjects(tx, plan, actor);
         await clearMergedIdentity(tx, mergeId);
@@ -241,7 +244,7 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
         const moved = emptyTallies();
         await moveVisits(tx, keepId, mergeId, moved);
         await moveJoinTables(tx, live.keep, live.merge, moved);
-        await moveRemainingRelations(tx, keepId, mergeId, actor, moved);
+        const recallRequestIds = await moveRemainingRelations(tx, keepId, mergeId, actor, moved);
         await moveRoles(tx, keepId, mergeId, actor, moved);
         await moveAttestations(tx, live.keep, live.merge, moved);
         await moveCorporations(tx, live.keep, live.merge, moved);
@@ -256,7 +259,7 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
         const archiveId = await archiveMerge(tx, keepId, live.merge);
         await deleteMergedPerson(tx, mergeId);
         await auditMerge(tx, plan, live, actor, moved);
-        return { personMergeId: archiveId, lockedKeeper: live.keep };
+        return { personMergeId: archiveId, lockedKeeper: live.keep, recallRequestIds };
     }, { maxWait: 5_000, timeout: 15_000 }).catch(async (e: unknown) => {
         if (e instanceof SelfGrantMergeRefusedError) await recordSelfGrantRefusal(prisma, e.selfGrant);
         throw e;
@@ -273,6 +276,7 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
         }
     }
     await notifyBoardOfYouthLeads([lockedKeeper]);
+    await recallSigningRequests(recallRequestIds);
 
     invalidateAttendanceCache();
 }
@@ -465,8 +469,11 @@ async function moveJoinTables(tx: TxClient, keep: KeepSubject, merge: MergeSubje
     }
 }
 
-/** 5. Move the remaining MOVE relations — single updateMany each, no delete. */
-async function moveRemainingRelations(tx: TxClient, keepId: number, mergeId: number, actor: AuthenticatedUser | null, moved: Tallies): Promise<void> {
+/**
+ * 5. Move the remaining MOVE relations — single updateMany each, no delete.
+ * Returns the Zoho request ids of archived duplicate agreements, to recall after commit.
+ */
+async function moveRemainingRelations(tx: TxClient, keepId: number, mergeId: number, actor: AuthenticatedUser | null, moved: Tallies): Promise<string[]> {
     await tx.account.updateMany({ where: { userId: mergeId }, data: { userId: keepId } });
     // Sessions are auth artifacts, not person data, and there's no reason for
     // the keeper to inherit the merged-away login session. Sessions are
@@ -477,6 +484,8 @@ async function moveRemainingRelations(tx: TxClient, keepId: number, mergeId: num
     await tx.orgMembershipProcess.updateMany({ where: { subjectPersonId: mergeId }, data: { subjectPersonId: keepId } });
     // Both sides can have owed a check — the survivor keeps exactly one.
     moved.personBgArchived = await archiveDuplicatePersonBg(tx, keepId, actor ? actor.id : 0);
+    const kva = await archiveDuplicateKva(tx, keepId, actor ? actor.id : 0);
+    moved.kvaArchived = kva.archived;
     await tx.program.updateMany({ where: { leadMentorId: mergeId }, data: { leadMentorId: keepId } });
     await tx.programInstance.updateMany({ where: { leadMentorId: mergeId }, data: { leadMentorId: keepId } });
     await tx.trustedAdult.updateMany({ where: { trustedAdultPersonId: mergeId }, data: { trustedAdultPersonId: keepId } });
@@ -502,6 +511,7 @@ async function moveRemainingRelations(tx: TxClient, keepId: number, mergeId: num
     // constraint on toId, so a plain updateMany.
     moved.archivedMerges = (await tx.personMerge.updateMany({ where: { toId: mergeId }, data: { toId: keepId } })).count;
     moved.bucketOwners = (await tx.budgetOwner.updateMany({ where: { ownerId: mergeId }, data: { ownerId: keepId } })).count;
+    return kva.recallRequestIds;
 }
 
 /**
@@ -789,4 +799,67 @@ async function archiveDuplicatePersonBg(tx: TxClient, personId: number, actorId:
         archived++;
     }
     return archived;
+}
+
+/**
+ * One human has at most ONE open Key Volunteer agreement, and none once they have
+ * signed the current version. Both merge subjects can hold one, and re-pointing
+ * both leaves the survivor two, or an open one beside a signed current one. Keep
+ * the signed current row or else the furthest-along open row, and archive the
+ * rest, as archiveDuplicatePersonBg does. An open row beside a signature below the
+ * current version is the person's re-sign, so it stays.
+ *
+ * Rank of open rows: the newer agreement version, then a Zoho request already sent
+ * (the person has begun signing), then the older row. The losers' Zoho requests are
+ * returned for the caller to recall after commit; an archived process never matches
+ * the Zoho webhook, so a signature landing first changes nothing.
+ */
+async function archiveDuplicateKva(tx: TxClient, personId: number, actorId: number): Promise<{ archived: number; recallRequestIds: string[] }> {
+    const openWhere = { kind: KVA_KIND, contractSignedAt: null, ...fromWhere("PENDING_EXTERNAL_ACTION") };
+    const open = await tx.orgMembershipProcess.findMany({
+        where: { subjectPersonId: personId, ...openWhere },
+        select: { id: true, agreementVersion: true, zohoEnvelopeId: true },
+    });
+    if (open.length === 0) return { archived: 0, recallRequestIds: [] };
+    const signed = await findSignedCurrentKva(tx, personId);
+    if (!signed && open.length < 2) return { archived: 0, recallRequestIds: [] };
+
+    const rank = (p: (typeof open)[number]) => [p.agreementVersion ?? 0, p.zohoEnvelopeId ? 1 : 0, -p.id];
+    const ranked = [...open].sort((a, b) => {
+        const [ra, rb] = [rank(a), rank(b)];
+        for (let i = 0; i < ra.length; i++) if (ra[i] !== rb[i]) return rb[i] - ra[i];
+        return 0;
+    });
+    const survivor = signed ?? ranked[0];
+    const losers = signed ? ranked : ranked.slice(1);
+
+    let archived = 0;
+    const recallRequestIds: string[] = [];
+    for (const loser of losers) {
+        // CAS on the open set: a signature that just landed on this row wins.
+        const { count } = await tx.orgMembershipProcess.updateMany({
+            where: { id: loser.id, kind: KVA_KIND, contractSignedAt: null, ...fromWhere("PENDING_EXTERNAL_ACTION") },
+            data: { status: "ARCHIVED", archivedFromStatus: "PENDING_EXTERNAL_ACTION", stageEnteredAt: new Date() },
+        });
+        if (count !== 1) continue;
+        await tx.auditLog.create({
+            data: {
+                actorId,
+                action: "EDIT",
+                tableName: "OrgMembershipProcess",
+                affectedEntityId: loser.id,
+                oldData: { status: "PENDING_EXTERNAL_ACTION" },
+                newData: {
+                    status: "ARCHIVED",
+                    reason: signed
+                        ? "open Key Volunteer agreement superseded by a signed current one on participant merge"
+                        : "duplicate Key Volunteer agreement resolved by participant merge",
+                    survivorProcessId: survivor.id,
+                },
+            },
+        });
+        if (loser.zohoEnvelopeId) recallRequestIds.push(loser.zohoEnvelopeId);
+        archived++;
+    }
+    return { archived, recallRequestIds };
 }

@@ -35,6 +35,13 @@ jest.mock("@/lib/shopifyRead/client", () => ({
     ordersByLegacyIds: async () => [],
     minRealOrderLegacyId: async () => null,
 }));
+// The merge recalls an archived duplicate agreement's Zoho request after commit; spy on it.
+jest.mock("@/lib/membership/keyVolunteer", () => ({
+    ...jest.requireActual("@/lib/membership/keyVolunteer"),
+    recallSigningRequests: jest.fn().mockResolvedValue(undefined),
+}));
+import { recallSigningRequests } from "@/lib/membership/keyVolunteer";
+const mockRecallSigningRequests = recallSigningRequests as jest.Mock;
 import { runMatchAudit } from "@/lib/finance/matchAudit";
 import { orgMembershipStatusBlocksLogin } from "@/lib/orgMembership";
 import { canReviewBackgroundChecks } from "@/lib/membership/review";
@@ -1857,6 +1864,162 @@ describe("Merge Participants API", () => {
 
             const open = await openForKeeper();
             expect(open.map(p => ({ id: p.id, status: p.status }))).toEqual([{ id: tombstoneProc.id, status: "PENDING_BG_REVIEW" }]);
+        });
+    });
+
+    // One human holds ONE open Key Volunteer agreement: re-pointing both sides' open
+    // agreements at the survivor would leave two.
+    describe("duplicate open Key Volunteer agreement on both merge subjects", () => {
+        const openKva = (personId: number, extra: { agreementVersion?: number; zohoEnvelopeId?: string } = {}) =>
+            prisma.orgMembershipProcess.create({
+                data: {
+                    kind: "KEY_VOLUNTEER_AGREEMENT",
+                    subjectPersonId: personId,
+                    status: "PENDING_EXTERNAL_ACTION",
+                    agreementVersion: extra.agreementVersion ?? 1,
+                    zohoEnvelopeId: extra.zohoEnvelopeId ?? null,
+                },
+            });
+
+        const openForKeeper = () =>
+            prisma.orgMembershipProcess.findMany({
+                where: { kind: "KEY_VOLUNTEER_AGREEMENT", subjectPersonId: pKeepId, status: "PENDING_EXTERNAL_ACTION" },
+            });
+
+        beforeEach(() => mockRecallSigningRequests.mockClear());
+
+        it("leaves the survivor exactly one open agreement, archiving and recalling the less-advanced row", async () => {
+            const envelope = `kva-merge-${Date.now()}`;
+            const keeperProc = await openKva(pKeepId, { zohoEnvelopeId: envelope });
+            const tombstoneProc = await openKva(pMergeId, { agreementVersion: 2 }); // newer version wins
+            createdProcessIds.push(keeperProc.id, tombstoneProc.id);
+
+            const res = await POST(mergeReq(pKeepId, pMergeId));
+            expect(res.status).toBe(200);
+
+            const open = await openForKeeper();
+            expect(open.map(p => p.id)).toEqual([tombstoneProc.id]);
+
+            const loser = await prisma.orgMembershipProcess.findUnique({ where: { id: keeperProc.id } });
+            expect(loser?.status).toBe("ARCHIVED");
+            expect(loser?.archivedFromStatus).toBe("PENDING_EXTERNAL_ACTION");
+            const log = await prisma.auditLog.findFirst({ where: { tableName: "OrgMembershipProcess", affectedEntityId: keeperProc.id } });
+            expect(log?.oldData).toMatchObject({ status: "PENDING_EXTERNAL_ACTION" });
+            expect(log?.newData).toMatchObject({ status: "ARCHIVED", survivorProcessId: tombstoneProc.id });
+
+            const mergeLog = await prisma.auditLog.findFirst({ where: { tableName: "Person", affectedEntityId: pKeepId, secondaryAffectedEntity: pMergeId } });
+            expect((mergeLog?.newData as { moved: { kvaArchived: number } }).moved.kvaArchived).toBe(1);
+            expect(mockRecallSigningRequests).toHaveBeenCalledWith([envelope]);
+        });
+
+        it("keeps the row with a Zoho request at the same version", async () => {
+            const keeperProc = await openKva(pKeepId);
+            const tombstoneProc = await openKva(pMergeId, { zohoEnvelopeId: `kva-merge-${Date.now()}` });
+            createdProcessIds.push(keeperProc.id, tombstoneProc.id);
+
+            const res = await POST(mergeReq(pKeepId, pMergeId));
+            expect(res.status).toBe(200);
+
+            expect((await openForKeeper()).map(p => p.id)).toEqual([tombstoneProc.id]);
+            // The archived row never reached Zoho, so there is nothing to recall.
+            expect(mockRecallSigningRequests).toHaveBeenCalledWith([]);
+        });
+
+        it("keeps the older row when neither is further along", async () => {
+            const keeperProc = await openKva(pKeepId);
+            const tombstoneProc = await openKva(pMergeId);
+            createdProcessIds.push(keeperProc.id, tombstoneProc.id);
+
+            const res = await POST(mergeReq(pKeepId, pMergeId));
+            expect(res.status).toBe(200);
+
+            expect((await openForKeeper()).map(p => p.id)).toEqual([keeperProc.id]);
+        });
+
+        it("leaves a single open agreement alone (nothing to resolve)", async () => {
+            const tombstoneProc = await openKva(pMergeId);
+            createdProcessIds.push(tombstoneProc.id);
+
+            const res = await POST(mergeReq(pKeepId, pMergeId));
+            expect(res.status).toBe(200);
+
+            expect((await openForKeeper()).map(p => p.id)).toEqual([tombstoneProc.id]);
+            expect(mockRecallSigningRequests).toHaveBeenCalledWith([]);
+        });
+
+        describe("beside an agreement already signed", () => {
+            const CURRENT = 3;
+            let savedVersion: number | null = null;
+
+            beforeAll(async () => {
+                const prev = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { keyVolunteerAgreementVersion: true } });
+                savedVersion = prev ? prev.keyVolunteerAgreementVersion : null;
+                await prisma.boardSettings.upsert({
+                    where: { id: 1 },
+                    create: { id: 1, keyVolunteerAgreementVersion: CURRENT },
+                    update: { keyVolunteerAgreementVersion: CURRENT },
+                });
+            });
+
+            afterAll(async () => {
+                if (savedVersion !== null) await prisma.boardSettings.update({ where: { id: 1 }, data: { keyVolunteerAgreementVersion: savedVersion } });
+                else await prisma.boardSettings.delete({ where: { id: 1 } }).catch(() => {});
+            });
+
+            const signedKva = (personId: number, agreementVersion: number) =>
+                prisma.orgMembershipProcess.create({
+                    data: { kind: "KEY_VOLUNTEER_AGREEMENT", subjectPersonId: personId, status: "ACTIVE", agreementVersion, contractSignedAt: new Date() },
+                });
+
+            const statusOf = async (id: number) => (await prisma.orgMembershipProcess.findUnique({ where: { id } }))?.status;
+
+            it("archives the open agreement and recalls its request when the other is signed at the current version", async () => {
+                const envelope = `kva-merge-signed-${Date.now()}`;
+                const signedProc = await signedKva(pKeepId, CURRENT);
+                const tombstoneProc = await openKva(pMergeId, { agreementVersion: CURRENT, zohoEnvelopeId: envelope });
+                createdProcessIds.push(signedProc.id, tombstoneProc.id);
+
+                const res = await POST(mergeReq(pKeepId, pMergeId));
+                expect(res.status).toBe(200);
+
+                expect(await openForKeeper()).toEqual([]);
+                expect(await statusOf(signedProc.id)).toBe("ACTIVE");
+                const loser = await prisma.orgMembershipProcess.findUnique({ where: { id: tombstoneProc.id } });
+                expect(loser?.status).toBe("ARCHIVED");
+                expect(loser?.archivedFromStatus).toBe("PENDING_EXTERNAL_ACTION");
+                const log = await prisma.auditLog.findFirst({ where: { tableName: "OrgMembershipProcess", affectedEntityId: tombstoneProc.id } });
+                expect(log?.newData).toMatchObject({ status: "ARCHIVED", survivorProcessId: signedProc.id });
+                expect(mockRecallSigningRequests).toHaveBeenCalledWith([envelope]);
+            });
+
+            it("keeps the open agreement as the re-sign when the signed one is below the current version", async () => {
+                const signedProc = await signedKva(pMergeId, CURRENT - 1);
+                const keeperProc = await openKva(pKeepId, { agreementVersion: CURRENT });
+                createdProcessIds.push(signedProc.id, keeperProc.id);
+
+                const res = await POST(mergeReq(pKeepId, pMergeId));
+                expect(res.status).toBe(200);
+
+                expect((await openForKeeper()).map(p => p.id)).toEqual([keeperProc.id]);
+                expect(await statusOf(signedProc.id)).toBe("ACTIVE");
+                expect(mockRecallSigningRequests).toHaveBeenCalledWith([]);
+            });
+
+            it("leaves two agreements signed at the current version unchanged", async () => {
+                const keeperProc = await signedKva(pKeepId, CURRENT);
+                const tombstoneProc = await signedKva(pMergeId, CURRENT);
+                createdProcessIds.push(keeperProc.id, tombstoneProc.id);
+
+                const res = await POST(mergeReq(pKeepId, pMergeId));
+                expect(res.status).toBe(200);
+
+                const keeperKvas = await prisma.orgMembershipProcess.findMany({
+                    where: { kind: "KEY_VOLUNTEER_AGREEMENT", subjectPersonId: pKeepId },
+                    orderBy: { id: "asc" },
+                });
+                expect(keeperKvas.map(p => [p.id, p.status])).toEqual([[keeperProc.id, "ACTIVE"], [tombstoneProc.id, "ACTIVE"]]);
+                expect(mockRecallSigningRequests).toHaveBeenCalledWith([]);
+            });
         });
     });
 

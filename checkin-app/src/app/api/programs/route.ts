@@ -15,6 +15,7 @@ import { staleWhileRevalidate } from "@/lib/staleCache";
 import { validateProgramAgeBounds, isLeaderAgeEligible } from "@/lib/programAge";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { parseProgramName, resolveProgramYear } from "@/lib/programs/update";
+import { programLeaderIneligibility } from "@/lib/programs/leaderEligibility";
 import { isProgramNameTaken, PROGRAM_NAME_TAKEN, programNameFields } from "@/lib/programs/nameKey";
 import { enrollmentClosedBy } from "@/lib/programs/saleState";
 import { isLiveHousehold } from "@/lib/household/archived";
@@ -206,7 +207,7 @@ export const POST = withAuth({ roles: ['isBoardMember'] }, async (req, auth) => 
         const mentorId = parseInt(leadMentorId, 10);
         const mentor = await prisma.person.findUnique({
             where: { id: mentorId },
-            select: { dateOfBirth: true, isDeclaredAdult: true, householdId: true },
+            select: { dateOfBirth: true, isDeclaredAdult: true, householdId: true, lastBackgroundCheck: true },
         });
         if (!mentor) {
             return apiError("Program Leader not found", 400);
@@ -214,6 +215,8 @@ export const POST = withAuth({ roles: ['isBoardMember'] }, async (req, auth) => 
         if (!isLeaderAgeEligible(mentor)) {
             return apiError("Program Leader must be at least 23 years old", 400);
         }
+        const ineligible = await programLeaderIneligibility(mentorId, mentor);
+        if (ineligible) return apiError(ineligible, 400);
         // Nobody names themself or their household as a program's leader (Ethics Policy III.5).
         if (mentorId === auth.user.id || await hasHouseholdConflict(prisma, auth.user.id, mentor.householdId)) {
             return apiError("Forbidden: You cannot make yourself or a member of your household a program lead", 403);

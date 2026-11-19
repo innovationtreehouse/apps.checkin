@@ -18,6 +18,9 @@ import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
 import { setMembershipYearBoundary } from '@/test-helpers/boardSettings';
 
+// A new leader here meets the membership and clearance requirements; leaderEligibility has its own tests.
+jest.mock('@/lib/programs/leaderEligibility', () => ({ ...jest.requireActual('@/lib/programs/leaderEligibility'), programLeaderIneligibility: jest.fn().mockResolvedValue(null) }));
+
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
 }));

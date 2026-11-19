@@ -93,7 +93,6 @@ describe('bulk-donation field-stripping (comment rules)', () => {
             receiptDate: '2026-09-01',
             moneyReceivedAt: '2026-09-02T00:00:00.000Z',
             donorRecordedAt: null,
-            withdrawnAfterMoneyAt: null,
             donorFirstName: 'Pat',
             donorLastName: 'Doe',
             donorCompanyName: 'Acme',
@@ -106,7 +105,6 @@ describe('bulk-donation field-stripping (comment rules)', () => {
             receiptDate: '2026-09-01',
             moneyReceivedAt: '2026-09-02T00:00:00.000Z',
             donorRecordedAt: null,
-            withdrawnAfterMoneyAt: null,
         });
     });
 
@@ -135,7 +133,6 @@ describe('bulk-donation field-stripping (comment rules)', () => {
             bucketHeld: false,
             revenueBooking: 'unbooked',
             expenseBooking: 'unbooked',
-            withdrawalSettledAt: null,
             donationDate: '2026-10-01',
             qbState: 'unmatched',
             qbNote: 'no clearing-account entry on 2026-10-01',

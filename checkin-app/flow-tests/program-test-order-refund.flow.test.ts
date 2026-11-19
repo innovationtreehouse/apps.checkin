@@ -8,7 +8,7 @@
  * a program of capacity 2, so the shortfall left in the carry shows what was on sale.
  */
 import crypto from "crypto";
-import { loginAs, api, BASE, type Session } from "./helpers";
+import { loginAs, api, BASE, setBgRecheckMonths, type Session } from "./helpers";
 
 type ProgramCreate = { program: { id: number; shopifyVariantId: string } };
 type ProgramEdit = { program: { shopifyStockCarry: number } };
@@ -57,9 +57,11 @@ async function carrySettlesAt(board: Session, programId: number, expected: numbe
 describe("flow: test order refunded before its paid webhook", () => {
     it("adds no store seat", async () => {
         const board = await loginAs("boardmember@example.com");
-        const lead = await loginAs("inventory.manager@example.com");
+        const lead = await loginAs("program.lead@example.com");
         const tag = Date.now().toString(36);
 
+        // The fresh seed sets no background-check interval, and no leader is named without one.
+        const restoreWindow = await setBgRecheckMonths(board, 27);
         const created = await api<ProgramCreate>(board, "/api/programs", {
             method: "POST",
             body: JSON.stringify({
@@ -72,7 +74,7 @@ describe("flow: test order refunded before its paid webhook", () => {
                 nonMemberPrice: "50",
                 maxParticipants: 2,
             }),
-        });
+        }).finally(restoreWindow);
         expect(created.status).toBe(200);
         const { id: programId, shopifyVariantId: variantId } = created.json.program;
 
