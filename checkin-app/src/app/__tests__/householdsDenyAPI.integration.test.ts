@@ -175,10 +175,10 @@ describe('POST /api/membership-ops/households — Deny Membership', () => {
         const membership = await prisma.orgMembership.create({ data: { householdId: lead.householdId, status: 'DENIED' } });
         // Decided before the denial: the check cleared and the payment link is open.
         await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: membership.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', bgClearedAt: new Date() },
+            data: { orgMembershipId: membership.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', contractSignedAt: new Date(), bgClearedAt: new Date() },
         });
         const paid = await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: membership.id, kind: 'RENEWAL', status: 'PENDING_BG_CLEARANCE', paidAt: new Date() },
+            data: { orgMembershipId: membership.id, kind: 'RENEWAL', status: 'PENDING_BG_CLEARANCE', contractSignedAt: new Date(), paidAt: new Date() },
         });
         try {
             const refused = await post({ householdId: lead.householdId, deny: false });
@@ -207,7 +207,7 @@ describe('POST /api/membership-ops/households — Deny Membership', () => {
             data: { orgMembershipId: membership.id, kind: 'INITIAL', status: 'BLOCKED', paidAt: new Date() },
         });
         const unclosable = await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: membership.id, kind: 'RENEWAL', status: 'PENDING_BG_CLEARANCE' },
+            data: { orgMembershipId: membership.id, kind: 'RENEWAL', status: 'PENDING_BG_CLEARANCE', contractSignedAt: new Date() },
         });
         try {
             const paid = await post({ householdId: lead.householdId, deny: false });

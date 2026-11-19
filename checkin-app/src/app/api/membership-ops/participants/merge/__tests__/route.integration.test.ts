@@ -275,7 +275,7 @@ describe("Merge Participants API", () => {
         await prisma.person.update({ where: { id: pMergeId }, data: { householdId: otherHh } });
         const membership = await prisma.orgMembership.findUniqueOrThrow({ where: { householdId: otherHh } });
         const process = await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: membership.id, kind: "INITIAL", status: "PENDING_PAYMENT", zohoSignerPersonId: pMergeId },
+            data: { orgMembershipId: membership.id, kind: "INITIAL", status: "PENDING_PAYMENT", contractSignedAt: new Date(), zohoSignerPersonId: pMergeId },
         });
         createdProcessIds.push(process.id);
         let release!: () => void;

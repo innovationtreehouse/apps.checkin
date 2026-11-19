@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { ReceiptFileStore } from "../contract";
 import { fileStore } from "../runtime";
+import { byDeadline } from "./deadline";
 
 export const sha256Hex = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
 
@@ -19,22 +20,26 @@ export const backfilledMailItemFileKey = (gmailMessageId: string, attachmentHash
 };
 
 /**
- * A row's bytes: from the store when it has a key, else from its own column. Null when neither
- * holds them, including a key whose object is gone.
+ * A row's bytes from the store. Null for a row with no key or a key whose object is gone.
+ * A store read still out at `deadline` (epoch ms) throws DeadlineError.
  */
-export async function readStoredFile(row: { fileKey: string | null; fileBlob: Uint8Array | null }): Promise<Uint8Array | null> {
-  return row.fileKey ? fileStore().get(row.fileKey) : row.fileBlob;
+export async function readStoredFile(fileKey: string | null, deadline = Infinity): Promise<Uint8Array | null> {
+  if (!fileKey) {
+    console.error("[receipt] a stored file was read from a row with no file key");
+    return null;
+  }
+  return byDeadline(deadline, "the file store", () => fileStore().get(fileKey));
 }
 
 /**
  * Deletes objects no row serves any more. Never throws: the database has already committed, and
- * a leftover object is never served.
+ * a leftover object is never served. A delete still out at `deadline` (epoch ms) is abandoned.
  */
-export async function deleteStoredFiles(keys: (string | null)[]): Promise<void> {
+export async function deleteStoredFiles(keys: (string | null)[], deadline = Infinity): Promise<void> {
   for (const key of keys) {
     if (!key) continue;
     try {
-      await fileStore().delete(key);
+      await byDeadline(deadline, "the file store", () => fileStore().delete(key));
     } catch (err) {
       console.error("[receipt] could not delete a stored file:", err);
     }

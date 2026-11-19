@@ -1930,3 +1930,51 @@ describeDb("QB posting — an entry finance voided", () => {
     expect(await expenseRow(id)).toMatchObject({ qbMatchState: "CREATED", qbTxnId: first.Id });
   });
 });
+
+describeDb("QB-2 posting — a QuickBooks throttle", () => {
+  /** QuickBooks answers every create with 429, even after the client's own retry. */
+  const throttleCreates = () =>
+    vi.mocked(fetch).mockImplementation(async (input, init) =>
+      init?.method === "POST" ? new Response("", { status: 429, headers: { "Retry-After": "0" } }) : qbo.handle(input, init),
+    );
+
+  it("leaves the expense as it was: no NEEDS_FINANCE, no failure recorded, and the next post books it", async () => {
+    await handMatched("2026-08-01");
+    const { id } = await outboxed("2026-09-10");
+    throttleCreates();
+
+    expect(await postExpenseToQb(ORG, id)).toBe("throttled");
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "UNMATCHED", qbClaimedAt: null, qbFirstFailedAt: null, qbLastError: null });
+    expect(await db.expenseAuditLog.count({ where: { expenseId: id, action: "qb_needs_finance" } })).toBe(0);
+
+    vi.mocked(fetch).mockImplementation(qbo.handle);
+    expect(await postExpenseToQb(ORG, id)).toBe("posted");
+    expect(qbo.posts).toHaveLength(1);
+  });
+
+  it("tries a throttled expense once more, ends the drain at the second throttle; the rest wait for the next run untouched", async () => {
+    await handMatched("2026-08-01");
+    const ids = [await outboxed("2026-09-10"), await outboxed("2026-09-11"), await outboxed("2026-09-12")].map((o) => o.id);
+    throttleCreates();
+
+    expect(await drainExpenseOutbox()).toMatchObject({ throttled: 2, failed: 0, posted: 0 });
+    expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(4);
+    for (const id of ids) expect(await expenseRow(id)).toMatchObject({ qbMatchState: "UNMATCHED", qbFirstFailedAt: null });
+
+    vi.mocked(fetch).mockImplementation(qbo.handle);
+    expect(await drainExpenseOutbox()).toMatchObject({ throttled: 0, posted: 3 });
+  });
+
+  it("a throttled retry answers 503 and keeps the first failure time; the expense waits for the drain", async () => {
+    await handMatched("2026-08-01");
+    const { id } = await outboxed("2026-09-10");
+    qbo.mode = "down";
+    expect(await postExpenseToQb(ORG, id)).toBe("failed");
+    const { qbFirstFailedAt } = await expenseRow(id);
+    qbo.mode = "ok";
+    throttleCreates();
+
+    await expect(retryStuckItem({ id, step: "QuickBooks posting" }, RETRIER)).rejects.toMatchObject({ status: 503, message: expect.stringContaining("slow down") });
+    expect(await expenseRow(id)).toMatchObject({ qbMatchState: "POST_FAILED", qbFirstFailedAt, qbClaimedAt: null });
+  });
+});

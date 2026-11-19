@@ -89,6 +89,7 @@ async function applicant(email: string, status: "PENDING_PAYMENT" | "ACTIVE", sh
             orgMembershipId: m.id,
             kind: "INITIAL",
             status,
+            contractSignedAt: new Date(),
             bgClearedAt: new Date(),
             shopifyOrderId: shopifyOrderId ?? null,
             paidAt: status === "ACTIVE" ? new Date() : null,

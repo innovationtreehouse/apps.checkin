@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { dollarsToCentsOrNull } from "@checkin/money";
 import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { activateByProcessId } from "@/lib/membership/payment";
@@ -17,7 +18,7 @@ interface ShopifyOrder {
     id?: number | string;
     note_attributes?: { name: string; value: string }[];
     /** `quantity` is the original count; `current_quantity` excludes units an edit or refund removed. */
-    line_items?: { variant_id?: number | string; quantity?: number; current_quantity?: number | null }[];
+    line_items?: { variant_id?: number | string; quantity?: number; current_quantity?: number | null; price?: string | null }[];
     financial_status?: string | null;
     cancelled_at?: string | null;
     processed_at?: string | null;
@@ -44,7 +45,7 @@ export const POST = withWebhook({ provider: "shopify", verify: (req, rawBody) =>
             totalRefundedCents: 0,
             lines: (order.line_items ?? []).map((li) => {
                 const quantity = li.quantity ?? 1;
-                return { variantId: String(li.variant_id), quantity, currentQuantity: li.current_quantity ?? quantity };
+                return { variantId: String(li.variant_id), quantity, currentQuantity: li.current_quantity ?? quantity, ...(li.price && { unitPriceCents: dollarsToCentsOrNull(li.price) }) };
             }),
             checkoutSig: order.note_attributes?.find((a) => a.name === "CheckMeIn_Checkout_Sig")?.value ?? null,
         };

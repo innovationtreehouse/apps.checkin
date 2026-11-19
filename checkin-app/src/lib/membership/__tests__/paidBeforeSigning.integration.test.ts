@@ -6,7 +6,8 @@
  * the application is BLOCKED at the agreement step. Once the block lifts and the
  * agreement is signed, it goes to PENDING_BG_CLEARANCE, never to the pay step, and
  * the clearance then activates it, or holds it and raises the refund. An unpaid
- * application still goes to PENDING_PAYMENT.
+ * application still goes to PENDING_PAYMENT. An unsigned application never activates
+ * on payment or settle: it waits at the agreement step until signed.
  */
 import prisma from '@/lib/prisma';
 import { settleHouseholdBg } from '@/lib/membership/settleHouseholdBg';
@@ -70,6 +71,23 @@ async function clearChecks(f: Family) {
     await prisma.orgMembershipProcess.updateMany({ where: { id: { in: [f.leadReviewId, f.otherReviewId] } }, data: { status: 'ACTIVE', bgClearedAt: now } });
     await prisma.person.updateMany({ where: { id: { in: [f.leadId, f.otherId] } }, data: { lastBackgroundCheck: now } });
     return settleHouseholdBg(f.householdId);
+}
+
+/** A one-adult household whose lead's check has cleared, and an unsigned application at `status`. */
+async function clearedUnsignedFamily(status: 'PENDING_PAYMENT' | 'PENDING_BG_CLEARANCE', bgCleared: boolean) {
+    const n = seq++;
+    const now = new Date();
+    const shopifyOrderId = `${TAG}-${n}-${Math.random().toString(36).slice(2)}`;
+    const household = await prisma.household.create({ data: { name: `${TAG} ${n}` } });
+    const lead = await prisma.person.create({ data: { name: `Lead ${n}`, email: `lead-${n}-${TAG}@example.com`, householdId: household.id, isHouseholdLead: true, lastBackgroundCheck: now } });
+    const membership = await prisma.orgMembership.create({ data: { householdId: household.id, status: 'NONE' } });
+    const app = await prisma.orgMembershipProcess.create({
+        data: { orgMembershipId: membership.id, kind: 'INITIAL', status, bgConsentAt: now, bgClearedAt: bgCleared ? now : null },
+    });
+    await prisma.orgMembershipProcess.create({
+        data: { kind: 'PERSON_BG', subjectPersonId: lead.id, requestedForHouseholdId: household.id, status: 'ACTIVE', bgConsentAt: now, bgClearedAt: now },
+    });
+    return { householdId: household.id, orgMembershipId: membership.id, appId: app.id, shopifyOrderId };
 }
 
 const row = (id: number) => prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id } });
@@ -162,5 +180,38 @@ describe('an application paid while blocked, before its agreement is signed', ()
         const app = await row(f.appId);
         expect(app.status).toBe('PENDING_PAYMENT');
         expect(app.paidAt).toBeNull();
+    });
+});
+
+describe('an unsigned application never activates unsigned', () => {
+    it('paid at PENDING_PAYMENT waits at the agreement step, and activates once signed', async () => {
+        const f = await clearedUnsignedFamily('PENDING_PAYMENT', true);
+
+        expect((await activateByProcessId(f.appId, f.shopifyOrderId, { appliesToYear: 2026 })).outcome).toBe('held');
+        let app = await row(f.appId);
+        expect(app.status).toBe('PENDING_EXTERNAL_ACTION');
+        expect(app.paidAt).not.toBeNull();
+        expect(await membershipStatus(f.orgMembershipId)).toBe('NONE');
+
+        await markContractSigned(f.appId);
+        app = await row(f.appId);
+        expect(app.status).toBe('ACTIVE');
+        expect(app.bgClearedAt).not.toBeNull();
+        expect(await membershipStatus(f.orgMembershipId)).toBe('ACTIVE');
+    });
+
+    it('unpaid, cleared by settle, waits at the agreement step and goes to PENDING_PAYMENT once signed', async () => {
+        const f = await clearedUnsignedFamily('PENDING_BG_CLEARANCE', false);
+
+        expect(await settleHouseholdBg(f.householdId)).toEqual(['cleared']);
+        let app = await row(f.appId);
+        expect(app.status).toBe('PENDING_EXTERNAL_ACTION');
+        expect(app.bgClearedAt).not.toBeNull();
+        expect(app.paidAt).toBeNull();
+
+        await markContractSigned(f.appId);
+        app = await row(f.appId);
+        expect(app.status).toBe('PENDING_PAYMENT');
+        expect(await membershipStatus(f.orgMembershipId)).toBe('NONE');
     });
 });

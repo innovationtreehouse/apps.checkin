@@ -45,6 +45,7 @@ import { getOrgId, limits, ports, requireActor } from "../runtime";
 import { OCR_OFF_NOTE } from "../lib/ocrOff";
 import { DAILY_LIMIT_REACHED } from "../lib/ocrAllowance";
 import { DAY_MS } from "../lib/limits";
+import { byDeadline } from "../lib/deadline";
 import { assertExpectedState, assertLegalTransition, NEUTRAL_CONTEXT, WorkflowTransitionError } from "../workflows/receipt.invariants";
 import type { ReceiptEvent } from "../workflows/receipt.events";
 import { FINANCE_ACTION_STATES, SUBMITTER_ACTION_STATES } from "../nav";
@@ -394,18 +395,24 @@ export function ocrFailureNote({ kind, error }: OcrFailure): string {
   }
 }
 
-/** Read the file from `auto_upload` and land in `uploaded` (then the pipeline) or `ocr_failed`. */
-async function applyOcr(id: string, actor: ReceiptPrincipal): Promise<void> {
-  const file = await db.receipt.findUniqueOrThrow({ where: { id }, select: { fileBlob: true, fileKey: true, mimeType: true, rotation: true } });
+/**
+ * Read the file from `auto_upload` and land in `uploaded` (then the pipeline) or `ocr_failed`. A reader
+ * call still out at `deadline` (epoch ms) throws DeadlineError and leaves the receipt in `auto_upload`;
+ * a store read still out then is a store failure.
+ */
+async function applyOcr(id: string, actor: ReceiptPrincipal, deadline = Infinity): Promise<void> {
+  const file = await db.receipt.findUniqueOrThrow({ where: { id }, select: { fileKey: true, mimeType: true, rotation: true } });
   // A missing file reads as null; a store outage throws.
-  const stored = await readStoredFile(file).then(
+  const stored = await readStoredFile(file.fileKey, deadline).then(
     (bytes): Uint8Array | OcrFailure => bytes ?? { success: false, kind: "data", error: "the receipt file is missing" },
     (err: unknown): OcrFailure => {
       console.error(`[receipt] could not read the file of ${id}:`, err);
       return { success: false, kind: "system", error: "the receipt file could not be fetched from storage" };
     },
   );
-  const raw: OcrResult = stored instanceof Uint8Array ? await ports().ocr.extract(Buffer.from(stored), file.mimeType, file.rotation) : stored;
+  const raw: OcrResult = stored instanceof Uint8Array
+      ? await byDeadline(deadline, "the receipt reader", () => ports().ocr.extract(Buffer.from(stored), file.mimeType, file.rotation))
+      : stored;
   const parsed = raw.success ? OcrDataSchema.safeParse(raw.data) : null;
   const result: OcrResult = !raw.success
     ? raw
@@ -465,6 +472,7 @@ async function failOcr(id: string, actor: ReceiptPrincipal, { notes, action, rea
  * skips the daily upload limits for this one file, for a deferred file finance releases.
  * `mailAllowance: false` checks the manual upload limits in place of the mail limit, for a file
  * finance assigns. `heldFileKey` names the mail item's object, deleted once the insert has committed.
+ * Outside calls still out at `deadline` (epoch ms) are abandoned; a reading abandoned so leaves the receipt in `auto_upload`.
  */
 export async function intakeMailedReceipt(
   actor: ReceiptPrincipal,
@@ -476,7 +484,8 @@ export async function intakeMailedReceipt(
     mailAllowance = true,
     heldFileKey = null,
     aroundInsert = (insert) => insert(),
-  }: { uploadLimits?: boolean; mailAllowance?: boolean; heldFileKey?: string | null; aroundInsert?: (insert: () => Promise<string>) => Promise<string> } = {},
+    deadline = Infinity,
+  }: { uploadLimits?: boolean; mailAllowance?: boolean; heldFileKey?: string | null; aroundInsert?: (insert: () => Promise<string>) => Promise<string>; deadline?: number } = {},
 ): Promise<string> {
   const id = await aroundInsert(async () => insertReceipt({
     orgId: await getOrgId(),
@@ -496,7 +505,7 @@ export async function intakeMailedReceipt(
         : undefined,
     afterInsert: ledger,
   }));
-  await deleteStoredFiles([heldFileKey]);
+  await deleteStoredFiles([heldFileKey], deadline);
   if (!(await ocrIsOn())) {
     await failOcrSwitchedOff(id, actor);
     return id;
@@ -513,7 +522,7 @@ export async function intakeMailedReceipt(
     return id;
   }
   // A failed read leaves the receipt in auto_upload, where the interrupted-OCR sweep finds it.
-  await applyOcr(id, actor).catch((err: unknown) => console.error(`[receipt] OCR failed for ${id}:`, err));
+  await applyOcr(id, actor, deadline).catch((err: unknown) => console.error(`[receipt] OCR failed for ${id}:`, err));
   return id;
 }
 
@@ -1431,8 +1440,8 @@ export const receiptService = {
   async getFile(id: string, access: Access): Promise<{ fileBlob: Uint8Array; mimeType: string; uploadedByUserId: number }> {
     const actor = await requireActor();
     const row = await load(id, access, actor);
-    const file = await db.receipt.findUniqueOrThrow({ where: { id }, select: { fileBlob: true, fileKey: true, mimeType: true } });
-    const fileBlob = await readStoredFile(file);
+    const file = await db.receipt.findUniqueOrThrow({ where: { id }, select: { fileKey: true, mimeType: true } });
+    const fileBlob = await readStoredFile(file.fileKey);
     if (!fileBlob) throw new ServiceError(404, "Receipt file not found");
     await audit(db, id, actor, { action: "file_viewed" });
     return { fileBlob, mimeType: file.mimeType, uploadedByUserId: row.uploadedByUserId };

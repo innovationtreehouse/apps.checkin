@@ -254,7 +254,7 @@ export function validateRouteGrants(
         for (const [, tokens] of spec.orderedView) {
             for (const tok of tokens) {
                 const parsed = parseToken(tok);
-                if (parsed && parsed !== 'public' && parsed !== 'member') {
+                if (parsed !== null && typeof parsed === 'object') {
                     grantedScopes.add(parsed.scope);
                 }
             }

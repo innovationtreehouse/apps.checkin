@@ -53,7 +53,7 @@ async function searchAdmits(flags: Partial<AuthenticatedUser>, programsLed: numb
 
 describe('Finance on a program roster', () => {
     it('reads the roster, not the internal tier the Board also reads', () => {
-        expect(view(PROGRAM, 'isFinance')).toEqual(['everyones:pii', 'everyones:personal', 'member', 'public']);
+        expect(view(PROGRAM, 'isFinance')).toEqual(['everyones:pii', 'everyones:personal', 'member', 'public', 'roster']);
         expect(view(PROGRAM, 'isBoardMember')).toContain('everyones:internal');
     });
 

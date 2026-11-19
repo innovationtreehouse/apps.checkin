@@ -115,6 +115,7 @@ async function addHouseholdLeadTx(
     tx: TxClient,
     householdId: number,
     participantId: number,
+    whileLocked?: (tx: TxClient) => Promise<void>,
 ): Promise<{ created: boolean }> {
     // The OrgMembership lock comes before the Household lock, the order every
     // caller that also checks for a deny takes them in, so a deny of this
@@ -125,6 +126,7 @@ async function addHouseholdLeadTx(
     // Read Committed isolation does NOT prevent two transactions from both
     // counting N and both flagging — the explicit lock is what does.
     await lockLiveHouseholds(tx, [householdId]);
+    await whileLocked?.(tx);
 
     const person = await tx.person.findUnique({
         where: { id: participantId },
@@ -169,6 +171,9 @@ async function addHouseholdLeadTx(
  * Does not write an audit log — callers own that, since the actor varies (and is
  * absent for system flows like sign-up).
  *
+ * `whileLocked` runs once the household's locks are held, before anything is
+ * read or written, so a caller can re-check a rule that a household change decides.
+ *
  * @returns `{ created: true }` if a lead row was inserted, `{ created: false }`
  *          if the participant was already a lead.
  */
@@ -176,8 +181,9 @@ export async function addHouseholdLead(
     db: DbClient,
     householdId: number,
     participantId: number,
+    whileLocked?: (tx: TxClient) => Promise<void>,
 ): Promise<{ created: boolean }> {
-    return withTx(db, (tx) => addHouseholdLeadTx(tx, householdId, participantId));
+    return withTx(db, (tx) => addHouseholdLeadTx(tx, householdId, participantId, whileLocked));
 }
 
 /** Result of a demote attempt. `not_lead`: wasn't a lead. `last_lead`: refused —

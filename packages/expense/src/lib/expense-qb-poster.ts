@@ -3,7 +3,7 @@
 import { ServiceError } from "@checkin/component-kit";
 import { sumCents } from "@checkin/money";
 import {
-  STALE_CLAIM_MS, SWEEP_DAYS, TEST_PREFIX, findOrCreate, postFailure, postFailureError, qbGate, qbKey, readCloseDate, runDrain, shiftDate,
+  STALE_CLAIM_MS, SWEEP_DAYS, TEST_PREFIX, THROTTLED_MESSAGE, findOrCreate, postFailure, postFailureError, qbGate, qbKey, readCloseDate, runDrain, shiftDate,
   type CloseRead, type FindOrCreateResult, type PostFailure, type PostGate, type QboPurchase, type TxnWrite,
 } from "@checkin/quickbooks";
 import { db, type Db } from "../db";
@@ -47,8 +47,11 @@ function notSendable(posting: ExpensePosting, e: { isTestData: boolean; vendorNa
     : { qbMatchState: "NOT_TEST_DATA", note: "not sent to QuickBooks: not test data" };
 }
 
-/** `failed`: the post failed and the expense is stuck at NEEDS_FINANCE until a person retries it. */
-export type PostOutcome = "posted" | "matched" | "queued" | "failed" | "waiting" | "not_sent" | "needs_finance" | "no_class" | "unpostable";
+/**
+ * `failed`: the post failed and the expense is stuck at NEEDS_FINANCE until a person retries it.
+ * `throttled`: QuickBooks throttled the post; the expense is as it was before the claim.
+ */
+export type PostOutcome = "posted" | "matched" | "queued" | "failed" | "throttled" | "waiting" | "not_sent" | "needs_finance" | "no_class" | "unpostable";
 
 /** When the lane's posting switched on, or null while it is off. */
 export async function qbPostingOnAt(orgId: string, client: Db = db): Promise<Date | null> {
@@ -104,9 +107,14 @@ const reportFailure = (f: PostFailure, expenseId: string) => expenseRuntime.fail
 
 /**
  * Records a failed post: the expense is stuck at NEEDS_FINANCE with the error, and keeps the time
- * of its first failure, until a person retries it.
+ * of its first failure, until a person retries it. A throttled post only releases the claim.
  */
-async function recordFailure(tx: Db, current: Expense, f: PostFailure, note = failureNote(f)): Promise<"failed"> {
+async function recordFailure(tx: Db, current: Expense, f: PostFailure, note = failureNote(f)): Promise<"failed" | "throttled"> {
+  if (f.throttled) {
+    logWarn("qb_post_throttled", { expenseId: current.id, requestId: f.requestId ?? null });
+    await tx.expense.update({ where: { id: current.id }, data: { qbMatchState: current.qbMatchState, qbClaimedAt: null } });
+    return "throttled";
+  }
   reportFailure(f, current.id);
   await tx.expense.update({
     where: { id: current.id },
@@ -212,7 +220,7 @@ async function settle(tx: Db, before: Expense, outcome: PostOutcome, data: Settl
  * unmapped reimbursee → AMBIGUOUS; dated in closed books (by the closing date read for the run,
  * re-read before the create, or refused as fault 6210), or not allowed to create → UNBOOKED for
  * finance; any failure → NEEDS_FINANCE, stuck with its error until a person retries it
- * (recordFailure); an expense the test-data gate stops → NOT_TEST_DATA / TEST_DATA_REFUSED, re-checked each run. An expense whose
+ * (recordFailure), except a QuickBooks throttle, which leaves the expense as it was; an expense the test-data gate stops → NOT_TEST_DATA / TEST_DATA_REFUSED, re-checked each run. An expense whose
  * own data cannot make an entry (no receipt date, no lines, a line with no account) → NEEDS_FINANCE
  * at once with the reason, no attempt counted. A line whose bucket
  * has no QuickBooks Class → no_class, state unchanged (a stale claim goes back to POST_FAILED),
@@ -468,6 +476,7 @@ export async function lastPostError(expenseId: string): Promise<string | null> {
 
 /** The refusal for a "book it" that left the expense in `state`; `detail` is why a NEEDS_FINANCE expense waits. */
 export function bookRefusal(state: string, outcome: PostOutcome, detail: string | null): ServiceError {
+  if (outcome === "throttled") return new ServiceError(503, `Not booked: ${THROTTLED_MESSAGE}`);
   switch (state) {
     case "UNBOOKED":
       return new ServiceError(
@@ -554,7 +563,8 @@ export async function sweepExpenseQbStrays(orgId: string, posting: ExpensePostin
  * closing date once for the run. Then every outboxed expense not yet in QuickBooks, oldest receipt
  * first, plus any claim gone stale, and last the orphan sweep. Stops at the daily and per-run count
  * caps and logs the hit (the alarm hook); the rest waits for the next run. A failed expense is
- * stuck and the run goes on. Returns counts only.
+ * stuck and the run goes on. A throttled expense is tried once more after the pause; a second
+ * throttle ends the run. Returns counts only.
  */
 export async function drainExpenseOutbox(now = new Date()): Promise<DrainCounts | "unbound"> {
   const posting = await getExpenseRuntime().quickbooks.posting();
@@ -573,7 +583,7 @@ export async function drainExpenseOutbox(now = new Date()): Promise<DrainCounts 
   ).filter((e) => outboxed.has(e.id) && isPostable(e, now.getTime()));
 
   const counts: DrainCounts = {
-    posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, not_sent: 0, needs_finance: 0, no_class: 0, unpostable: 0,
+    posted: 0, matched: 0, queued: 0, failed: 0, throttled: 0, waiting: 0, not_sent: 0, needs_finance: 0, no_class: 0, unpostable: 0,
     capped: null, closeDateRead: close.ok, sweep: { entries: 0, flagged: 0, full: false },
   };
   const stop = await runDrain<Expense, PostOutcome>(due, {
@@ -582,6 +592,7 @@ export async function drainExpenseOutbox(now = new Date()): Promise<DrainCounts 
     maxCreatesPerDay: settings.qbMaxCreatesPerDay,
     createdToday: await qbCreatesToday(),
     failures: [],
+    throttled: "throttled",
     post: async (e) => {
       try {
         const result = await postExpenseToQb(e.orgId, e.id, { close, settings });
@@ -592,6 +603,7 @@ export async function drainExpenseOutbox(now = new Date()): Promise<DrainCounts 
       }
     },
   });
+  if (stop?.by === "throttled") logWarn("qb_drain_throttled", { remaining: stop.remaining });
   if (stop?.by === "day") {
     counts.capped = "day";
     logWarn("qb_daily_cap", { cap: settings.qbMaxCreatesPerDay, remaining: stop.remaining });

@@ -3,7 +3,7 @@
 import { db } from "../db";
 import { recordAudit, type TxClient } from "../lib/audit";
 import { ServiceError } from "@checkin/component-kit";
-import { MAX_MATCH_WINDOW_DAYS } from "@checkin/quickbooks";
+import { MAX_CREATES_PER_RUN_CEILING, MAX_MATCH_WINDOW_DAYS } from "@checkin/quickbooks";
 import { BENEVITY_MATCH_WINDOW_DAYS } from "../lib/sources";
 import type { Actor } from "./reconciliationService";
 
@@ -32,12 +32,8 @@ const SELECT = { maxCreatesPerRun: true, maxCreateCentsPerRun: true, benevityMax
 const MAX_INT = 2_147_483_647;
 
 export async function readIncomeSettings(client: TxClient | typeof db, orgId: string): Promise<IncomeSettings> {
-  return (
-    (await client.incomeOrgSettings.findUnique({
-      where: { orgId },
-      select: SELECT,
-    })) ?? DEFAULT_INCOME_SETTINGS
-  );
+  const row = await client.incomeOrgSettings.findUnique({ where: { orgId }, select: SELECT });
+  return row ? { ...row, maxCreatesPerRun: Math.min(row.maxCreatesPerRun, MAX_CREATES_PER_RUN_CEILING) } : DEFAULT_INCOME_SETTINGS;
 }
 
 /** The validated changes in `patch` against `current`; throws a 400 or 403 the route returns as is. */
@@ -51,6 +47,7 @@ export function settingsChanges(current: IncomeSettings, patch: unknown, actor: 
       throw new ServiceError(400, `${key} must be a positive whole number`);
     }
     const k = key as keyof IncomeSettings;
+    if (k === "maxCreatesPerRun" && value > MAX_CREATES_PER_RUN_CEILING) throw new ServiceError(400, `${key} must be at most ${MAX_CREATES_PER_RUN_CEILING}`);
     if (k === "benevityMatchWindowDays" && value > MAX_MATCH_WINDOW_DAYS) throw new ServiceError(400, `${key} must be at most ${MAX_MATCH_WINDOW_DAYS}`);
     if (value === current[k]) continue;
     if (k !== "benevityMatchWindowDays" && value > current[k] && !actor.isBoard) throw new ServiceError(403, `Raising ${key} takes the board`);

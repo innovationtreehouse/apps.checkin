@@ -266,9 +266,8 @@ export const config = {
     // unavailable (503), the same failure as a missing object. The key has a
     // default so only the bucket must be wired per-env.
     agreementPdfBucket: (): string | null => process.env.AGREEMENT_PDF_S3_BUCKET || null,
-    // Receipt files: the private bucket, and the flag sending new files to it.
+    // Receipt files: the private bucket.
     receiptFilesBucket: (): string | null => process.env.RECEIPT_FILES_S3_BUCKET || null,
-    receiptFilesS3: (): boolean => process.env.RECEIPT_FILES_S3 === 'true',
     agreementPdfKey: (): string => process.env.AGREEMENT_PDF_S3_KEY || 'membership-agreement.pdf',
     // The Key Volunteer Agreement PDF, a second object in the same bucket.
     kvaPdfKey: (): string => process.env.KVA_PDF_S3_KEY || 'key-volunteer-agreement.pdf',

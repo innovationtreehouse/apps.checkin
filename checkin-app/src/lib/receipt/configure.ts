@@ -262,6 +262,5 @@ export function configureRuntime(): void {
     // without the key reads nothing and lands auto uploads in ocr_failed.
     ocr: config.isLocal() ? fixtureOcr : createAnthropicOcr(config.anthropicApiKey() ?? undefined),
     fileStore: receiptFileStore(),
-    storeNewFilesInBucket: config.receiptFilesS3(),
   });
 }

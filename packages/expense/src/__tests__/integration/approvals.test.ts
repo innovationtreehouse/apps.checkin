@@ -378,16 +378,13 @@ describeDb("assignOwner", () => {
     expect(await approval(pizzaApproval)).toMatchObject({ ownerId: 100 });
   });
 
-  it("a line assigned an org-level bucket waits for a Board member's approval", async () => {
+  it("a card charge assigned an org-level bucket is approved by the system, with no Board approval", async () => {
     bindPorts({ signoff: directory({ orgLevel: [7], board: [5] }) });
     const { id, approvalId } = await lineInApproval(null);
 
     await assignOwner(FINANCE, id, approvalId, 7);
 
-    expect(await approval(approvalId)).toMatchObject({ ownerId: 7, status: "pending" });
-    expect(await state(id)).toBe("owner_approval");
-    await approveLine(BOARD, id, approvalId);
-    expect(await approval(approvalId)).toMatchObject({ status: "approved", decidedByUserId: 5 });
+    expect(await approval(approvalId)).toMatchObject({ ownerId: 7, status: "approved", decidedByUserId: null });
     expect(await state(id)).toBe("qb_pending");
   });
 

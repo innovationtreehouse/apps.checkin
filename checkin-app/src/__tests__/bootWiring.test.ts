@@ -74,7 +74,6 @@ const DEPLOYED_ENV = {
   ANTHROPIC_API_KEY: "sk-ant-test",
   DATABASE_URL: "postgresql://app:secret@db.example.org:5432/checkin",
   SHOPIFY_READ_DB: "shopify_read",
-  RECEIPT_FILES_S3: "true",
   RECEIPT_FILES_S3_BUCKET: "receipt-files",
   INCOME_MIRROR_NEWEST_WINS: "true",
 };
@@ -158,7 +157,6 @@ const RECEIPT: Decided<receipt.ReceiptConfig> = {
   outcomeMail: "port",
   limits: "setting",
   fileStore: "port",
-  storeNewFilesInBucket: "setting",
 };
 
 /** The library's own inert adapters, which a bound port must not be. */

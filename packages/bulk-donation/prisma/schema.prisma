@@ -518,6 +518,10 @@ model InKindDonationLine {
   /// @sensitivity:internal
   /// @financeMark
   valueCents        Int            @map("value_cents")
+  /// The value finance set when accepting a line that comes to $0 on the receipt; null on every other line.
+  /// @sensitivity:internal
+  /// @financeMark
+  financeValueCents Int?           @map("finance_value_cents")
   /// The QuickBooks account finance set by hand on a held line; null until then. It wins over every account rule.
   /// @sensitivity:internal
   quickBooksAccountId String?      @map("quick_books_account_id")

@@ -5,6 +5,7 @@ import { changeProgramStockWith, type StockWriteOptions } from "@/lib/shopify/st
 import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { isSaleEnded } from "@/lib/programs/saleState";
 import { ENROLLMENT_WRITES, STATES as ENROLLMENT_STATES } from "@/lib/programs/enrollmentState";
+import { ServiceError } from "@checkin/component-kit";
 
 /** Seats Shopify counts as taken out of public stock: every ACTIVE seat and every held PENDING seat. */
 export function countStockTakenSeats(programId: number, db: TxClient = prisma): Promise<number> {
@@ -16,7 +17,7 @@ export function countStockTakenSeats(programId: number, db: TxClient = prisma): 
     });
 }
 
-/** Thrown by {@link lockProgramAndCheckCapacity} when a program is full. */
+/** Thrown by {@link lockProgramForClaim} when a program is full. */
 export class ProgramCapacityError extends Error {
     constructor(public readonly spotsLeft: number) {
         super("Program has reached maximum capacity.");
@@ -24,34 +25,33 @@ export class ProgramCapacityError extends Error {
     }
 }
 
+/** Refusal text for a new claim on a program that has ended. */
+export const PROGRAM_ENDED_NO_CLAIMS = "This program has ended, so it takes no new enrollments.";
+
 /**
- * Lock the Program row and verify it has room for `seats` more enrollments,
- * run inside a transaction. Mirrors the lead cap in
- * {@link file://./../household/leads.ts}: a bare count-then-create
- * is a TOCTOU race — under Postgres' default Read Committed
- * isolation two concurrent enrollers both count N and both insert, overfilling
- * the program. The `FOR UPDATE` lock serializes enrollers for this program: the
- * second blocks until the first commits, then re-counts and is rejected.
- *
- * No-op when `maxParticipants` is null (uncapped program). Throws
- * {@link ProgramCapacityError} (carrying remaining spots) when full. The lock
- * auto-releases on commit/rollback.
+ * Lock the Program row, then judge a new claim on what the row holds under the
+ * lock: an ended program takes no claim ({@link ServiceError} 409), and a capped
+ * one must have room for `seats` more ({@link ProgramCapacityError}, carrying the
+ * spots left). The cap is read under the lock too, so a capacity cut committed
+ * before the lock is honoured and one waiting on it counts this claim. A count
+ * outside the lock is a TOCTOU race under Read Committed; the `FOR UPDATE`
+ * serializes claims and cap edits for the program until commit.
  */
-export async function lockProgramAndCheckCapacity(
+export async function lockProgramForClaim(
     tx: TxClient,
     programId: number,
     seats: number,
-    maxParticipants: number | null,
+    enforceCapacity: boolean,
 ): Promise<void> {
-    // FOR UPDATE serializes enrollments for this program. The lock — not the
-    // count — is what closes the race; Read Committed alone does not.
     await tx.$queryRaw`SELECT id FROM "Program" WHERE id = ${programId} FOR UPDATE`;
-
-    if (maxParticipants === null) return;
+    const program = await tx.program.findUnique({ where: { id: programId }, select: { phase: true, maxParticipants: true } });
+    if (!program) throw new ServiceError(404, "Program not found");
+    if (program.phase === "FINISHED") throw new ServiceError(409, PROGRAM_ENDED_NO_CLAIMS);
+    if (!enforceCapacity || program.maxParticipants === null) return;
 
     const count = await tx.programParticipant.count({ where: { programId, ...ENROLLED_PARTICIPANT } });
-    if (count + seats > maxParticipants) {
-        throw new ProgramCapacityError(Math.max(0, maxParticipants - count));
+    if (count + seats > program.maxParticipants) {
+        throw new ProgramCapacityError(Math.max(0, program.maxParticipants - count));
     }
 }
 

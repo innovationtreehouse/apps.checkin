@@ -212,6 +212,7 @@ describe('Admin Participant Household API Integration Tests', () => {
             expect(log.actorId).toBe(testAdminId);
             expect(auditJson(log.oldData).householdId).toBe(priorHouseholdId);
             expect(auditJson(log.newData).householdId).toBe(testHouseholdId);
+            expect(auditJson(log.oldData)).not.toHaveProperty('isHouseholdLead');
         });
 
         it('clears the lead flag when a lead is moved to another household (a1 de-lead-on-transfer)', async () => {
@@ -236,6 +237,10 @@ describe('Admin Participant Household API Integration Tests', () => {
             // their own household", and this is now a different household — they
             // must be re-promoted to lead it.
             expect(moved?.isHouseholdLead).toBe(false);
+
+            const log = await expectAuditRow(prisma, { action: 'EDIT', tableName: 'Person', affectedEntityId: testParticipantId });
+            expect(auditJson(log.oldData)).toMatchObject({ isHouseholdLead: true });
+            expect(auditJson(log.newData)).toMatchObject({ householdId: testHouseholdId, isHouseholdLead: false });
         });
 
         it('should successfully create a new household for the participant', async () => {

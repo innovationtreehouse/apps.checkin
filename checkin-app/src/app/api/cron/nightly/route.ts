@@ -13,11 +13,15 @@ import { lockFacility } from "@/lib/facilityLock";
 import { duringNightlyRun } from "@/lib/attendance/nightlyClose";
 import { sendProblemsDigest } from "@/lib/problems";
 import { traceOnCommit } from "@/lib/specTrace";
+import { reportTo } from "@/lib/finishRun";
+import { kindOf } from "@checkin/component-kit";
 
 /** A nightly run this soon after the last one is a retry of the same night. */
 const SAME_NIGHT_MS = 12 * 60 * 60 * 1000;
 
 export const GET = withCron(() => duringNightlyRun(async () => {
+    // Each one stays open until the next run departs it, so tonight's email names it.
+    const failedCheckouts: string[] = [];
     try {
         // A keyholder's recorded close whose sweep never ran departs people at
         // the keyholder's time, so it runs before this sweep stamps them at now.
@@ -97,6 +101,9 @@ export const GET = withCron(() => duringNightlyRun(async () => {
                     failed += 1;
                     stillOpen.push(visit);
                     logger.error(`Failed to check out visit ${visit.id} (person ${visit.personId}):`, err);
+                    const detail = `visit ${visit.id}, person ${visit.personId}`;
+                    reportTo("attendance")({ lane: "nightly-close", kind: kindOf(err), detail });
+                    failedCheckouts.push(`Nightly close could not check out ${detail}; it stays open until the next run`);
                 }
             }
             // After every per-visit transaction commits: the checkout's own
@@ -195,6 +202,6 @@ export const GET = withCron(() => duringNightlyRun(async () => {
         });
     } finally {
         // The daily Problems email goes out even when a step above throws.
-        await sendProblemsDigest();
+        await sendProblemsDigest(new Date(), failedCheckouts);
     }
 }));

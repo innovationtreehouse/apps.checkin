@@ -183,7 +183,7 @@ describe('PERSON_BG triggers + subject-scoped clear + gate', () => {
         await attachToProgram('joiner', joiner.id);
         const membership = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE' } });
         const proc = await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: membership.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', bgClearedAt: new Date() },
+            data: { orgMembershipId: membership.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', contractSignedAt: new Date(), bgClearedAt: new Date() },
         });
 
         await activate(proc.id, { via: 'manual', actorId: lead.id });
@@ -254,7 +254,7 @@ describe('PERSON_BG triggers + subject-scoped clear + gate', () => {
         await prisma.person.update({ where: { id: appLead.id }, data: { isHouseholdLead: true } });
         const appMembership = await prisma.orgMembership.create({ data: { householdId: appHh.id, status: 'NONE' } });
         const household = await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: appMembership.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', bgConsentAt: new Date() },
+            data: { orgMembershipId: appMembership.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', contractSignedAt: new Date(), bgConsentAt: new Date() },
         });
 
         expect(await eligibleReviewProcessIds(rev1)).not.toContain(personBg.id); // not submitted yet
@@ -278,7 +278,7 @@ describe('PERSON_BG triggers + subject-scoped clear + gate', () => {
         const unnamed = await makeLead('secondlead-unnamed', hh.id, { dateOfBirth: ADULT_DOB });
         const membership = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE' } });
         const proc = await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: membership.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', bgClearedAt: new Date() },
+            data: { orgMembershipId: membership.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', contractSignedAt: new Date(), bgClearedAt: new Date() },
         });
 
         await activate(proc.id, { via: 'manual', actorId: named.id });

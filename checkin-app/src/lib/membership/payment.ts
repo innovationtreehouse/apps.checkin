@@ -136,10 +136,13 @@ export type ActivateOutcome =
  * background check: if it has already cleared (bgClearedAt set), flip the
  * household ACTIVE and send one congrats email; otherwise hold the process at
  * PENDING_BG_CLEARANCE until two reviewers approve (review.ts › clearBackgroundCheck).
+ * An application whose agreement is unsigned never activates here: it is held at
+ * PENDING_EXTERNAL_ACTION, and signing it moves it on (external.ts › advanceExternalIfComplete).
  *
- * FOR UPDATE on the process row, then the household row, serializes against the
- * review path's attest() transaction and a board deny, and every status write is
- * still conditional on the status it read.
+ * FOR UPDATE on the membership row, then the process row, in the order
+ * lib/lockOrder.ts states, serializes against the review path's attest()
+ * transaction and a board deny, and every status write is still conditional on
+ * the status it read.
  *
  * - A board certify (via "manual") must find the process awaiting payment under
  *   the lock; otherwise it throws. With `requireRequested` it must also find the
@@ -255,7 +258,10 @@ async function settle(
         // Every adult's standing is re-read under the locks: a rejection since the check
         // was stamped holds the payment unactivated, and settle then blocks it.
         const disputed = !!process.bgClearedAt && (await householdHasDisputedCheck(tx, membership.householdId));
-        const activating = !!process.bgClearedAt && !disputed;
+        // An unsigned application never activates: it is held at the agreement step, whose signing advances it.
+        const unsigned = !process.contractSignedAt;
+        const activating = !!process.bgClearedAt && !disputed && !unsigned;
+        const heldAt = unsigned ? "PENDING_EXTERNAL_ACTION" : "PENDING_BG_CLEARANCE";
         if (activating) {
             const applied = await setHouseholdStatus(tx, process.orgMembershipId, {
                 from: ["NONE", "REVOKED", "ACTIVE"],
@@ -268,7 +274,7 @@ async function settle(
         const { count } = await tx.orgMembershipProcess.updateMany({
             where: { id: processId, ...fromWhere("PENDING_PAYMENT"), paidAt: null, ...(closesRequest ? { isPaymentPlanRequested: true } : {}) },
             // Leaving PENDING_PAYMENT ends any payment-plan request, approved or not.
-            data: { paidAt: now, stageEnteredAt: now, appliesToYear, ...payMeta, status: activating ? "ACTIVE" : "PENDING_BG_CLEARANCE", isPaymentPlanRequested: false, ...(disputed ? { bgClearedAt: null } : {}) },
+            data: { paidAt: now, stageEnteredAt: now, appliesToYear, ...payMeta, status: activating ? "ACTIVE" : heldAt, isPaymentPlanRequested: false, ...(disputed ? { bgClearedAt: null } : {}) },
         });
         // Under the row lock the status can't have moved; if it did, roll the household write back.
         if (count === 0) throw new PaymentError("wrong_phase", "This application is not awaiting payment.");
@@ -282,7 +288,7 @@ async function settle(
                 oldData: { status: process.status },
                 newData: activating
                     ? { status: "ACTIVE", via: opts.via, ...(certificationNote ? { certificationNote } : {}), ...approvalAudit, ...grantAudit }
-                    : { status: "PENDING_BG_CLEARANCE", via: opts.via, paid: true, ...(disputed ? { bgCleared: false, reason: "a person in the household has a disputed background check" } : {}), ...(certificationNote ? { certificationNote } : {}), ...approvalAudit, ...grantAudit },
+                    : { status: heldAt, via: opts.via, paid: true, ...(unsigned ? { contractSigned: false } : {}), ...(disputed ? { bgCleared: false, reason: "a person in the household has a disputed background check" } : {}), ...(certificationNote ? { certificationNote } : {}), ...approvalAudit, ...grantAudit },
             },
         });
         return activating

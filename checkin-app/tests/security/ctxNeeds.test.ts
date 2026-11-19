@@ -65,6 +65,9 @@ function ctx(opts: Partial<CallerContext> = {}): CallerContext {
         ledHouseholdMemberIds: new Set(),
         // Populated in every full context, so masking it away must leave the stripped output unchanged.
         householdMemberIds: new Set([5, 6]),
+        // Every persona reads as enrolled in programs 100 and 101, so masking it away must
+        // change a role walk only where a view lists programEnrolledHousehold.
+        programsEnrolledIn: new Set([100, 101]),
         ...opts,
     };
 }
@@ -190,6 +193,7 @@ function maskToNeeds(full: CallerContext, needs: CtxNeeds): CallerContext {
             ? full.ledHouseholdMemberIds
             : new Set(),
         householdMemberIds: needs.householdMembers ? full.householdMemberIds : undefined,
+        programsEnrolledIn: needs.enrolledPrograms ? full.programsEnrolledIn : undefined,
     };
 }
 
@@ -303,6 +307,7 @@ describe('deriveCtxNeeds — spot checks against the live registry', () => {
             activeVisitors: false,
             ledHouseholdMembers: false,
             householdMembers: false,
+            enrolledPrograms: false,
         });
     });
 
@@ -314,6 +319,7 @@ describe('deriveCtxNeeds — spot checks against the live registry', () => {
             activeVisitors: false,
             ledHouseholdMembers: true,
             householdMembers: false,
+            enrolledPrograms: false,
         });
     });
 
@@ -325,6 +331,7 @@ describe('deriveCtxNeeds — spot checks against the live registry', () => {
             activeVisitors: false,
             ledHouseholdMembers: false,
             householdMembers: false,
+            enrolledPrograms: false,
         });
     });
 
@@ -336,6 +343,7 @@ describe('deriveCtxNeeds — spot checks against the live registry', () => {
             activeVisitors: false,
             ledHouseholdMembers: false,
             householdMembers: true,
+            enrolledPrograms: true,
         });
     });
 

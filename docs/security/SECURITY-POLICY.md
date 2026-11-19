@@ -57,6 +57,8 @@ Schema annotations classify *data*. Registry views grant *access* in the form of
 **Token grammar:**
 - `'public'` — bare. Public-tier fields, no row gate.
 - `'<scope>:<tier>'` — `tier ∈ {pii, personal, internal, hardship}`. Grant applies on rows where the caller holds `<scope>`.
+- `'member'` — bare. Member-tier fields (`ToolStatus.level`, `HouseholdPage.boardReplyTo`), no row gate. Signed-in views hold it; anonymous and kiosk views do not.
+- `'roster'` — bare. The view receives the rows of the route's `rosterModels`: rows whose every field is public but whose existence says who is enrolled. A view without it gets none of those rows (a relation key is left out, a top-level key is empty); counts stay. Registration refuses the token without `rosterModels`, `rosterModels` with no view holding the token, and the token on a file route.
 - `'secret'` — never appears in any view (type error at registration).
 
 **Field visibility per row:** a field is exposed iff one of:

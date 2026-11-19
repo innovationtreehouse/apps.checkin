@@ -7,7 +7,7 @@ import type { TxClient } from "@/lib/db-client";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { sendNotification } from "@/lib/notifications";
 import { ENROLLMENT_WRITES } from "@/lib/programs/enrollmentState";
-import { deleteAndReleaseHold, type ExitOptions, lockProgramAndCheckCapacity, ProgramCapacityError, withdrawParticipant } from "@/lib/program/capacity";
+import { deleteAndReleaseHold, type ExitOptions, lockProgramForClaim, PROGRAM_ENDED_NO_CLAIMS, ProgramCapacityError, withdrawParticipant } from "@/lib/program/capacity";
 import { checkProgramAge, isKnownAdult } from "@/lib/programAge";
 import { hasHouseholdConflict, sharesHousehold } from "@/lib/conflictOfInterest";
 import { householdLeadship } from "@/lib/household/leads";
@@ -128,6 +128,9 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             return apiError("Participant is already enrolled in this program.", 409);
         }
 
+        // Re-judged under the lock below; this answers the common case before any other check.
+        if (currentProgram.phase === 'FINISHED') return apiError(PROGRAM_ENDED_NO_CLAIMS, 409);
+
         const override = body.override === true;
 
         // Staff adding from the roster are exempt, so the front desk can fix the contact afterwards.
@@ -231,11 +234,9 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             : null;
         const { result: enrollment, landed: stockLanded } = await changeProgramStockWith(currentProgram, "enroll", async (tx) => {
             await lockLiveHouseholdsOf(tx, [participantId]);
-            // Re-check capacity under a row lock right before insert, so
-            // concurrent enrollers can't both pass a stale count and overfill.
-            if (enforceLimits) {
-                await lockProgramAndCheckCapacity(tx, programId, 1, currentProgram.maxParticipants);
-            }
+            // Phase and capacity are judged under the row lock right before insert, so neither
+            // a concurrent end, a cap cut nor another enroller can be raced past.
+            await lockProgramForClaim(tx, programId, 1, enforceLimits);
             if (existingClaim?.status !== 'WITHDRAWN') {
                 const row = await tx.programParticipant.create({
                     data: {

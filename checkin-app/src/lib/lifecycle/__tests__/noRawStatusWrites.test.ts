@@ -6,7 +6,7 @@ import { TRANSITIONS as PROCESS_TX } from '../../membership/lifecycle';
  * Ratchet: no machine-column write outside the declared helpers, flag-only writes included.
  *
  * Scans src/ for every Prisma write that sets a machine column on ProgramParticipant,
- * OrgMembership or OrgMembershipProcess, or whose data the scan cannot read (a variable
+ * OrgMembership, OrgMembershipProcess or Program, or whose data the scan cannot read (a variable
  * or a spread), and fails on any (file, table) whose count isn't what ALLOWLIST says.
  *
  * Declared, so not counted:
@@ -15,6 +15,7 @@ import { TRANSITIONS as PROCESS_TX } from '../../membership/lifecycle';
  * - OrgMembership: `setHouseholdStatus`, its one status writer.
  * - OrgMembershipProcess: a status write that is a CAS on the table (`...fromWhere(<from>)`
  *   or a StateSet's `...x.where`), or a create landing on a ∅-entry state.
+ * - Program: the program PATCH writer and the daily sale sweep, the sale lifecycle's guard sites.
  *
  * Exact counts both ways: a new raw write fails, and so does a row left behind
  * after its writes moved onto a helper.
@@ -25,14 +26,18 @@ import { TRANSITIONS as PROCESS_TX } from '../../membership/lifecycle';
 
 const SRC = join(__dirname, '../../..'); // .../src
 
-type Table = 'ProgramParticipant' | 'OrgMembership' | 'OrgMembershipProcess';
+type Table = 'ProgramParticipant' | 'OrgMembership' | 'OrgMembershipProcess' | 'Program';
 type Entry = { file: string; table: Table; count: number; reason: string };
 
 const MACHINE_COLUMNS: Record<Table, readonly string[]> = {
     ProgramParticipant: ['status', 'inventoryHeldAt', 'isPaymentPlanRequested', 'paymentPlanDeniedAt'],
     OrgMembership: ['status'],
     OrgMembershipProcess: ['status', 'contractSignedAt', 'bgConsentAt', 'bgClearedAt', 'paidAt'],
+    Program: ['phase', 'enrollmentStatus', 'offSaleAt', 'saleEndedAt'],
 };
+
+/** The sale lifecycle's writers (programs/saleState.ts TRANSITIONS guard sites). */
+const PROGRAM_WRITERS = new Set(['lib/programs/update.ts', 'lib/programs/saleSweep.ts']);
 
 /** Files that own status writes by design, or never run in prod. */
 const EXEMPT = new Set([
@@ -42,16 +47,19 @@ const EXEMPT = new Set([
 
 const ALLOWLIST: Entry[] = [
     { file: 'app/api/membership/request-payment-plan/route.ts', table: 'OrgMembershipProcess', count: 1, reason: 'data spread; slice 2 declares it' },
+    { file: 'app/api/programs/[id]/sync-shopify/route.ts', table: 'Program', count: 1, reason: 'spread of Shopify ids and stock bookkeeping; no sale column' },
     { file: 'app/api/programs/[id]/participants/route.ts', table: 'ProgramParticipant', count: 1, reason: 'T1/T2 create at the entry status' },
+    { file: 'app/api/programs/route.ts', table: 'Program', count: 2, reason: 'create spreads the name fields, then stores Shopify ids; the sale starts at its schema defaults' },
     { file: 'lib/lifecycleDrift.ts', table: 'ProgramParticipant', count: 1, reason: 'repairs an off-diagram ACTIVE row, which no guard admits' },
     { file: 'lib/membership/checkStarted.ts', table: 'OrgMembershipProcess', count: 1, reason: 'flag-only bgConsentAt stamp on a waiting check review' },
     { file: 'lib/membership/payment.ts', table: 'OrgMembershipProcess', count: 1, reason: 'flag-only or unreadable write; slice 2 declares it' },
     { file: 'lib/membership/settleHouseholdBg.ts', table: 'OrgMembershipProcess', count: 1, reason: 'flag-only bgClearedAt stamp on a waiting step' },
+    { file: 'lib/shopify/stock.ts', table: 'Program', count: 2, reason: 'stock bookkeeping passed as data; no sale column' },
 ];
 
-const CALL = /\b(programParticipant|orgMembership|orgMembershipProcess)\.(update|updateMany|upsert|create|createMany)\s*\(/g;
-const NESTED = /\b(programParticipants?|orgMembership|orgMembershipProcess|processes)\s*:\s*\{\s*(create|createMany|upsert|update|updateMany|connectOrCreate)\s*:/g;
-const RAW = /UPDATE\s+"(ProgramParticipant|OrgMembership|OrgMembershipProcess)"/g;
+const CALL = /\b(programParticipant|orgMembership|orgMembershipProcess|program)\.(update|updateMany|upsert|create|createMany)\s*\(/g;
+const NESTED = /\b(programParticipants?|program|orgMembership|orgMembershipProcess|processes)\s*:\s*\{\s*(create|createMany|upsert|update|updateMany|connectOrCreate)\s*:/g;
+const RAW = /UPDATE\s+"(ProgramParticipant|OrgMembership|OrgMembershipProcess|Program)"/g;
 
 /** The balanced `(...)`/`{...}` block opening at `open`, exclusive of the delimiters. */
 function block(src: string, open: number): string {
@@ -110,7 +118,9 @@ function declaredProcessWrite(method: string, args: string): boolean {
     return method === 'create' && status !== undefined && PROCESS_ENTRY.has(status);
 }
 const tableOf = (name: string): Table =>
-    name.startsWith('programParticipant') ? 'ProgramParticipant' : name === 'orgMembership' ? 'OrgMembership' : 'OrgMembershipProcess';
+    name.startsWith('programParticipant') ? 'ProgramParticipant'
+        : name === 'program' ? 'Program'
+        : name === 'orgMembership' ? 'OrgMembership' : 'OrgMembershipProcess';
 
 function files(dir: string): string[] {
     return readdirSync(dir).flatMap((name) => {
@@ -122,7 +132,10 @@ function files(dir: string): string[] {
 
 function scan(): Map<string, number> {
     const counts = new Map<string, number>();
-    const bump = (file: string, table: Table) => counts.set(`${file}|${table}`, (counts.get(`${file}|${table}`) ?? 0) + 1);
+    const bump = (file: string, table: Table) => {
+        if (table === 'Program' && PROGRAM_WRITERS.has(file)) return;
+        counts.set(`${file}|${table}`, (counts.get(`${file}|${table}`) ?? 0) + 1);
+    };
     for (const path of files(SRC)) {
         const file = relative(SRC, path);
         if (EXEMPT.has(file)) continue;
@@ -191,6 +204,13 @@ describe('no raw machine-column writes', () => {
         expect(declaredEnrollmentWrite(write)).toBe(false);
         expect(declaredEnrollmentWrite(`{ where: { id, ...w.where }, data: { ...x.data() } }`, pick)).toBe(false);
         expect(declaredEnrollmentWrite(`{ where: { id, ...w.where }, data: { ...w.data(), status: "ACTIVE" } }`, pick)).toBe(false);
+    });
+
+    it('every declared sale writer writes Program', () => {
+        for (const file of PROGRAM_WRITERS) {
+            const src = readFileSync(join(SRC, file), 'utf8');
+            expect([...src.matchAll(CALL)].some((m) => m[1] === 'program')).toBe(true);
+        }
     });
 
     it('the household-status helper is the one OrgMembership status writer it claims to be', () => {

@@ -62,7 +62,7 @@ describeDb("holding a bucket against new lines", () => {
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
     let counted = -1;
-    const hold = holdBucketLines(BUCKET, async (awaiting) => {
+    const hold = holdBucketLines(BUCKET, false, async (awaiting) => {
       counted = await awaiting();
       await gate;
     });
