@@ -77,9 +77,9 @@ export type SeedColumns = Pick<
   "parentAssetNumber" | "description" | "acquisitionDate" | "costCents" | "depreciationYears" | "sourceQbTxnId" | "sourceQbTxnEntity"
 >;
 
-const SEED_COLUMNS: (keyof SeedColumns)[] = [
-  "parentAssetNumber", "description", "acquisitionDate", "costCents", "depreciationYears", "sourceQbTxnId", "sourceQbTxnEntity",
-];
+const SEED_COLUMNS = Object.keys({
+  parentAssetNumber: true, description: true, acquisitionDate: true, costCents: true, depreciationYears: true, sourceQbTxnId: true, sourceQbTxnEntity: true,
+} satisfies Record<keyof SeedColumns, true>) as (keyof SeedColumns)[];
 
 /**
  * Why a seed row cannot take a number an asset already holds, or null when the row repeats that
