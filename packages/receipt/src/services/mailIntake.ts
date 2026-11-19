@@ -544,11 +544,27 @@ export async function startMailRun({
       return counts;
     },
     async (err: unknown) => {
+      // A failed intake still leaves the receipts queued before it to be read.
+      await drainOcrQueue(drainDeadline(until.getTime())).catch((drainErr: unknown) => console.error("[receipt] OCR drain crashed:", drainErr));
       await release(null);
       throw err;
     },
   );
   return { status: "started", intake, done };
+}
+
+/** The drain under the mail lease with no mailbox bound, so a receipt left queued is still read; null while a run holds the lease. */
+export async function drainAlone(): Promise<DrainCounts | null> {
+  const orgId = await getOrgId();
+  const until = new Date(mailLeaseUntil(Date.now(), 0));
+  if (!(await takeLease(orgId, until))) return null;
+  try {
+    return await drainOcrQueue(drainDeadline(until.getTime()));
+  } finally {
+    await db.receiptMailLease
+      .updateMany({ where: { orgId, until }, data: { until: new Date(0) } })
+      .catch((err: unknown) => console.error("[receipt] mail lease release failed; it expires on its own:", err));
+  }
 }
 
 /** When a run started at `started` with `budgetMs` releases its lease at the latest: its intake, its drain and the slack. */
@@ -575,10 +591,12 @@ export async function readMailbox(): Promise<MailIntakeResult> {
 
 /**
  * The daily cron's intake pass: answers once the mail is taken in, and leaves the drain reading
- * waiting receipts after the request has answered. `busy` while another run holds the lease.
+ * waiting receipts after the request has answered, with or without a mailbox bound. `busy` while
+ * another run holds the lease.
  */
 export async function takeInMailbox(): Promise<MailIntakeResult> {
   const run = await startMailRun();
+  if (run.status === "unbound") drainAlone().catch((err: unknown) => console.error("[receipt] OCR drain crashed:", err));
   if (run.status !== "started") return run;
   run.done.catch((err: unknown) => console.error("[receipt] mail run failed:", err));
   return run.intake;

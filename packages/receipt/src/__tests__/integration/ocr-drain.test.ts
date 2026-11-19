@@ -1,6 +1,7 @@
-import { beforeEach, expect, it } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 import { db } from "../../db";
 import { drainOcrQueue, DRAIN_CAP } from "../../services/ocrDrain";
+import { mailRunState, takeInMailbox } from "../../services/mailIntake";
 import { intakeMailedReceipt, readQueued } from "../../services/receiptService";
 import type { OcrProvider } from "../../contract";
 import { describeDb } from "../helpers/db";
@@ -73,5 +74,12 @@ describeDb("the reading drain", () => {
     const over = await queue("receipt over the daily allowance");
     expect(await drainOcrQueue(later())).toEqual({ read: 2, failed: 0, waiting: 0 });
     expect(await db.receiptDetail.findUnique({ where: { id: over } })).toMatchObject({ state: "ocr_failed", validationNotes: expect.stringMatching(/allowance is used up/) });
+  });
+
+  it("runs from the daily step with no mailbox bound, under the mail lease", async () => {
+    const id = await queue("receipt waiting where no mailbox is bound");
+    expect(await takeInMailbox()).toEqual({ status: "unbound" });
+    await vi.waitFor(async () => expect(await stateOf(id)).toBe("submitter_review"), { timeout: 10_000 });
+    await vi.waitFor(async () => expect((await mailRunState()).running).toBe(false), { timeout: 10_000 });
   });
 });

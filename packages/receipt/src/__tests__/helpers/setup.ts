@@ -83,6 +83,8 @@ export async function storedBytes(fileKey: string | null): Promise<string> {
 }
 
 export async function clearAll(): Promise<void> {
+  // A reading the last test left running would write audit rows after they are cleared.
+  await settleReads();
   testStore.objects.clear();
   await db.receiptAuditLog.deleteMany();
   await db.receiptPairDecision.deleteMany();
@@ -156,9 +158,10 @@ export async function uploadRead(...args: Parameters<typeof receiptService.uploa
   return view;
 }
 
-/** "Read it again", then waits for that reading to land. */
+/** "Read it again", waits for that reading to land, and answers the receipt as it then stands. */
 export async function retryRead(...args: Parameters<typeof receiptService.retryOcr>) {
-  const r = await receiptService.retryOcr(...args);
+  const [id, access] = args;
+  await receiptService.retryOcr(...args);
   await settleReads();
-  return r;
+  return receiptService.get(id, access);
 }

@@ -556,7 +556,7 @@ describeDb("mail intake call deadlines", () => {
     expect(await readMailbox()).toMatchObject({ status: "ok", messages: 2, receipts: 2, unread: 0, replied: 2 });
     expect(sent).toEqual(["alice@example.org", "alice@example.org"]);
     expect(await mailRunState()).toMatchObject({ running: false, lastRun: { status: "ok", drain: { read: 0, failed: 1, waiting: 1 } } });
-    const states = await db.receiptDetail.findMany({ select: { id: true, state: true }, orderBy: { ocrQueuedAt: "asc" } });
+    const states = await db.receiptDetail.findMany({ select: { id: true, state: true }, orderBy: [{ ocrQueuedAt: "asc" }, { id: "asc" }] });
     expect(states.map((r) => r.state)).toEqual(["auto_upload", "ocr_queued"]);
     await sweepInterruptedOcr(new Date(Date.now() + OCR_INTERRUPTED_AFTER_MS + 1));
     expect(await stateOf(states[0].id)).toBe("ocr_failed");

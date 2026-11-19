@@ -7,7 +7,7 @@ const READING_POLL_EVERY_MS = 3_000;
 const READING_POLL_FOR_MS = 3 * 60_000;
 
 /** Shown while the receipt waits to be read or is being read: reloads it every 3 seconds for 3 minutes. */
-export default function ReadingNotice({ reload }: { reload: () => unknown }) {
+export default function ReadingNotice({ state, reload }: { state: string; reload: () => unknown }) {
   const [stopped, setStopped] = useState(false);
   useEffect(() => {
     const started = Date.now();
@@ -18,5 +18,6 @@ export default function ReadingNotice({ reload }: { reload: () => unknown }) {
     }, READING_POLL_EVERY_MS);
     return () => clearInterval(timer);
   }, [reload]);
-  return <Alert color="blue">{stopped ? "Still reading. This page updates when you reload it." : "Saved. Reading it now."}</Alert>;
+  const now = state === "ocr_queued" ? "Saved. Waiting to be read." : "Saved. Reading it now.";
+  return <Alert color="blue">{stopped ? "Still reading. This page updates when you reload it." : now}</Alert>;
 }

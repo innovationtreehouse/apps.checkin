@@ -48,10 +48,13 @@ afterEach(() => jest.useRealTimers());
 const page = () => render(<MantineProvider><ReceiptDetailPage /></MantineProvider>);
 
 describe("a receipt waiting to be read", () => {
-  it.each(["ocr_queued", "auto_upload"])("in %s says it is saved and reloads every 3 seconds", (state) => {
+  it.each([
+    ["ocr_queued", "Saved. Waiting to be read."],
+    ["auto_upload", "Saved. Reading it now."],
+  ])("in %s says %s and reloads every 3 seconds", (state, text) => {
     mockState = state;
     page();
-    expect(screen.getByText("Saved. Reading it now.")).toBeTruthy();
+    expect(screen.getByText(text)).toBeTruthy();
     const before = mockReload.mock.calls.length;
     act(() => jest.advanceTimersByTime(EVERY_MS * 3));
     expect(mockReload.mock.calls.length - before).toBe(3);
@@ -69,7 +72,7 @@ describe("a receipt waiting to be read", () => {
   it("shows no notice and polls nothing once the reading has landed", () => {
     mockState = "submitter_review";
     page();
-    expect(screen.queryByText("Saved. Reading it now.")).toBeNull();
+    expect(screen.queryByText(/^Saved\./)).toBeNull();
     act(() => jest.advanceTimersByTime(EVERY_MS * 3));
     expect(mockReload).not.toHaveBeenCalled();
   });

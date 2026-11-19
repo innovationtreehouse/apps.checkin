@@ -387,7 +387,7 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
       ) : (
         r.validationNotes && <Alert color="yellow">{r.validationNotes}</Alert>
       )}
-      {READING_STATES.has(r.state) && <ReadingNotice reload={reloadReceipt} />}
+      {READING_STATES.has(r.state) && <ReadingNotice state={r.state} reload={reloadReceipt} />}
       <PurchaseOutcomePanel receipt={r} />
       {r.financialReviewReasons.length > 0 && (
         <Alert color="blue">Finance review: {r.financialReviewReasons.map(reasonLabel).join("; ")}</Alert>
