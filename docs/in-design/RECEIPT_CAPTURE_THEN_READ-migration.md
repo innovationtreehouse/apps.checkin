@@ -5,8 +5,8 @@ Everything here stops being true once the change has run. The design is
 
 ## Owner questions
 
-- **CR-1** Run capture from its own scheduled call every 15 minutes (infra adds the
-  schedule), or keep it daily inside `reconcile-shopify`?
+- **CR-1 — answered:** mail stays daily inside `reconcile-shopify`. No new route and
+  no infra schedule. Caps and thresholds are sized for about 400 receipts a year.
 - **CR-2** Keep raw mail for 90 days after capture, then delete it? Or longer, or
   for as long as receipt files?
 - **CR-3** Who may press "Process again": finance and sysadmins, or sysadmins only?
@@ -18,13 +18,11 @@ Everything here stops being true once the change has run. The design is
 
 ## Build order
 
-1. Schema (additive: `ocrQueuedAt`, `ReceiptMailMessage`, `ReceiptReadLease`),
-   machine, drain, upload background read, page polling.
+1. Schema (additive: `ocrQueuedAt`, `ReceiptMailMessage`), machine, drain, upload
+   background read, page polling.
 2. Raw capture, parser, processing from raw, replay, purge sweep.
-3. Registry entries for the `receipt-mail` cron route and the replay route, in their
-   own PR. Then the routes and the Problems lines.
-4. Infra adds the 15-minute schedule (CR-1). Until then the step stays in
-   `reconcile-shopify`; PR 3 removes it from there only once the schedule runs.
+3. The registry entry for the replay route, in its own PR. Then the route and the
+   Problems lines.
 
 ## In-flight rows
 
