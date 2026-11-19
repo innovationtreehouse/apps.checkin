@@ -13,14 +13,15 @@ export const LIVE_VISIT: Prisma.VisitWhereInput = { deletedAt: null };
 
 /**
  * A keyholder: the one person filter every "is a keyholder in the building"
- * question uses. A denied household holds no authority, so its keyholder is none.
- * Read on every query, so a grant, revoke or denial takes effect on the next
- * read: no visit is touched. Drift guard:
+ * question uses. A denied household holds no authority and a revoked one has lost
+ * its facility privileges, so neither's keyholder is one. Read on every query, so
+ * a grant, revoke or denial takes effect on the next read: no visit is touched.
+ * Drift guard:
  * src/__tests__/keyholderFilterDriftGuard.test.ts.
  */
 export const LIVE_KEYHOLDER: Prisma.PersonWhereInput = {
     isKeyholder: true,
-    NOT: { household: { orgMembership: { status: "DENIED" } } },
+    NOT: { household: { orgMembership: { status: { in: ["DENIED", "REVOKED"] } } } },
 };
 
 /** Whether this person acts as a keyholder: flagged, and {@link LIVE_KEYHOLDER} holds now. */
