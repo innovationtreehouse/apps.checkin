@@ -7,20 +7,21 @@ Everything here stops being true once the change has run. The design is
 
 - **CR-1 — answered:** mail stays daily inside `reconcile-shopify`. No new route and
   no infra schedule. Caps and thresholds are sized for about 400 receipts a year.
-- **CR-2** Keep raw mail for 90 days after capture, then delete it? Or longer, or
-  for as long as receipt files?
+- **CR-2 — answered:** 90 days after capture, by an S3 lifecycle rule on
+  `mail-raw/`. The app gets put and get, never delete. The owner makes the infra
+  change.
 - **CR-3** Who may press "Process again": finance and sysadmins, or sysadmins only?
 - **CR-4** Charge the reading allowance when the reading starts, for uploads too? An
   upload over the allowance is then saved and lands in "couldn't read" with the
   allowance note, where today it is refused before saving.
-- **CR-5** Is the receipt bucket live in prod before receipts go live? Capture needs
-  it in every environment.
+- **CR-5 — answered:** yes. The bucket exists and is on in dev, staging and prod.
 
 ## Build order
 
 1. Schema (additive: `ocrQueuedAt`, `ReceiptMailMessage`), machine, drain, upload
    background read, page polling.
-2. Raw capture, parser, processing from raw, replay, purge sweep.
+2. Raw capture, parser, processing from raw, replay. In each environment it waits on
+   the owner's lifecycle rule and grant for `mail-raw/`.
 3. The registry entry for the replay route, in its own PR. Then the route and the
    Problems lines.
 

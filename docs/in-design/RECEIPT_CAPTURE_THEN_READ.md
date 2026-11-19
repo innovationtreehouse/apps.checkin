@@ -38,8 +38,10 @@ Taking a receipt in and reading it are two separate steps.
 | Finance | A receipt waiting to be read has its own state. The Problems list gets one line when reading falls behind, and one stuck item per captured email that could not be processed, with Retry. | Held mail, deferred mail, the mail page's catch-up button. |
 | Sysadmins | A captured email can be processed again from our copy. | No new way to download mail. |
 
-Cost: one table, one state and a MIME parser; raw email in the bucket for 90 days
-(CR-2). The lease, the daily schedule and the infra stay as they are. Reading calls and their price are unchanged.
+Cost: one table, one state and a MIME parser, plus raw email in the bucket for 90
+days. The lease and the daily schedule stay as they are. Infra adds one lifecycle
+rule and one grant on the receipt bucket (see Storage). Reading calls and their price
+are unchanged.
 
 This builds on the merged per-call deadlines (#3613): every outside call in the
 capture run and the drain still races a deadline taken from its lease. It replaces
@@ -148,10 +150,10 @@ message. A replay creates what is missing and nothing twice.
 |---|---|
 | Bucket | the receipt bucket, which every deployed instance binds |
 | Key | `mail-raw/<uuid>`, which says nothing about the message |
-| Write | write-once with SHA-256, object first, then the row; a failed insert deletes the object |
-| Row | `ReceiptMailMessage`: `orgId`, `gmailMessageId` (unique per org), `receivedAt`, `capturedAt`, `rawKey`, `rawSha256`, `rawSize`, `processedAt`, `processError`, `purgedAt` |
+| Write | write-once with SHA-256, object first, then the row. The app never deletes raw mail: an object whose row failed to insert expires with the rest. |
+| Row | `ReceiptMailMessage`: `orgId`, `gmailMessageId` (unique per org), `receivedAt`, `capturedAt`, `rawKey`, `rawSha256`, `rawSize`, `processedAt`, `processError` |
 | Tiers | `rawKey` and `processError` are `pii`; the rest `internal` |
-| Retention | 90 days after capture (CR-2), by a daily sweep that deletes the object, then clears `rawKey` and stamps `purgedAt`. The row stays, so the message is never captured again. |
+| Retention | 90 days after capture, by the bucket's lifecycle rule. The row stays, so the message is never captured again. |
 
 A raw message is the whole email: other recipients, signatures, quoted threads, and
 mail that is no receipt at all. So:
@@ -159,10 +161,21 @@ mail that is no receipt at all. So:
 - No route serves it, and no response or log carries its bytes, key or headers.
   Errors record their kind and a short reason only, as the mail run's do now.
 - Files taken from it are stored as today: as receipts, or as held and deferred
-  items with their own objects and lifetimes. Purging the raw copy changes none of
+  items with their own objects and lifetimes. The raw copy expiring changes none of
   them.
 - The bucket's policy already admits only the app's role and the admin role.
-- Replay after purge answers "The stored copy has been deleted".
+- Replay of a message captured more than 90 days ago answers "This email's stored
+  copy expired 90 days after capture", decided by `capturedAt`, with no store call.
+  The role may not list the bucket, so S3 answers a missing object with 403, not
+  404, and the date is the plain test. Inside 90 days, a missing object is an error,
+  shown as one.
+
+**Prerequisite, made by the owner in infra** (the receipt-files bucket module),
+in every environment, before build PR 2 deploys there:
+
+1. A lifecycle rule on prefix `mail-raw/`: `expiration { days = 90 }`.
+2. For the app's task role on `mail-raw/*`: `s3:PutObject` and `s3:GetObject`, and
+   no `s3:DeleteObject`.
 
 ### Leases, caps and where each step runs
 
@@ -201,7 +214,8 @@ catch-up button.
 ### Duplicates and idempotency
 
 - **Capture**: one row per org and Gmail message. Two runs racing on one message: the
-  loser's insert fails on the unique key and it deletes its own object.
+  loser's insert fails on the unique key, and its object goes unnamed until it
+  expires.
 - **Processing**: the ledger's unique (message, file hash) key, with the receipt and
   its ledger row in one transaction, as today. Replay relies on it.
 - **Reading**: the claim is a compare-and-set, and the result writes only from
@@ -226,12 +240,12 @@ Integration (database, CI):
 - processing from raw makes the same ledger rows, receipts, holds and replies as
   today's fixtures;
 - replay of a processed message changes nothing; replay after a crash between two
-  files makes only the missing one; replay after purge answers its error;
+  files makes only the missing one; replay of a message past 90 days answers expired with no store call;
 - the drain reads oldest first, stops at its cap, and skips a receipt the upload read
   claimed;
 - upload answers at `ocr_queued`; the background read lands `uploaded` or
   `ocr_failed`; a crash before the claim leaves it for the drain;
-- the allowance charged at claim, the switched-off note, and the purge sweep;
+- the allowance charged at claim, and the switched-off note;
 - the Problems line and the stuck mail message with its Retry.
 
 Flow: upload then poll until the reading lands. Browser e2e: the upload page shows
@@ -247,8 +261,9 @@ Flow: upload then poll until the reading lands. Browser e2e: the upload page sho
 - **Keep reading Gmail's parsed form and store the raw copy only for replay.** Normal
   processing and replay would read different inputs, so a replay could disagree with
   what happened.
-- **A bucket lifecycle rule for retention.** That lives in the infra repo where no
-  test reaches it, and it can't stamp the row.
+- **An app sweep that deletes raw mail.** That would need a delete grant on the
+  prefix. The lifecycle rule needs none, and the app can't delete mail early, by
+  mistake or otherwise.
 - **Its own scheduled call every 15 minutes, with a separate drain lease.** Faster
   capture, but it needs an infra schedule, a new route and a second lease, which 400
   receipts a year don't need. The catch-up button covers a day that can't wait.
