@@ -262,6 +262,22 @@ describe('facility close record and departure log (real DB)', () => {
             expect(close.closerVisitId).toBe(kv.id);
         });
 
+        it('a keyholder whose household is denied cannot close: the scan is an ordinary checkout', async () => {
+            asKiosk();
+            const denial = await prisma.orgMembership.create({ data: { householdId: keyholder2.householdId, status: 'DENIED' } });
+            try {
+                await open(keyholder2);
+                await open(member);
+
+                const res = await scanPOST(v6({ participantId: keyholder2.id, intent: 'OUT', close: 'alone' }));
+                expect(await res.json()).toMatchObject({ type: 'checkout', facilityClosed: false, closeRefused: true });
+                expect(await prisma.facilityClose.count({ where: { id: { gt: closeIdFloor } } })).toBe(0);
+                expect((await visitOf(member)).departedAt).toBeNull();
+            } finally {
+                await prisma.orgMembership.delete({ where: { id: denial.id } });
+            }
+        });
+
         it('a plain OUT with others recorded only leaves; the confirmed close then writes one KIOSK close', async () => {
             asKiosk();
             await open(keyholder);
