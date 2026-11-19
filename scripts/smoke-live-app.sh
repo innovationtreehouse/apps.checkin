@@ -6,7 +6,8 @@
 # Passes on 200 or an auth redirect from the app itself. While the service
 # wakes, the waker serves a "<service> is waking up" holding page with a 503;
 # that page (any status) and any 503 are retried, as are the 502/504 the load
-# balancer returns while tasks register. Anything else fails at once.
+# balancer returns while tasks register and a failed connection (000) from a
+# task slow to answer its first request. Anything else fails at once.
 #
 # Bound: 60 probes x 10s = 10 minutes. Task start to waker rule promote
 # measures over 4 minutes, and a window that expires first reports a
@@ -26,11 +27,11 @@ for i in $(seq 1 60); do
   if [ "$WAKING" = no ]; then
     case "$CODE" in
       200|301|302|307|308) echo "Smoke OK."; exit 0 ;;
-      502|503|504) ;;
+      000|502|503|504) ;;
       *) echo "::error::Smoke test failed: $URL answered HTTP $CODE, not the app or its wake page"; exit 1 ;;
     esac
   fi
   sleep "$INTERVAL"
 done
-echo "::error::Smoke test failed: $URL was still waking (502/503/504) after 10 minutes"
+echo "::error::Smoke test failed: $URL was still waking (000/502/503/504) after 10 minutes"
 exit 1
