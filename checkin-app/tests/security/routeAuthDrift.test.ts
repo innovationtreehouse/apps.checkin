@@ -489,7 +489,7 @@ const EDGE_INCLUDE_ALLOWLIST: Record<string, string> = {
     'profile': "query-shaped — authorize 'self'; visits are the caller's own",
     'profile/visits': 'query-shaped — self only (where participantId = caller)',
     'programs': 'query-shaped — public catalog exposes _count of participants/volunteers (roster SIZE only, no identities/rows); member-only + draft visibility is gated',
-    'programs/[id]': 'query-shaped — participants/volunteers included only for staff/enrolled (#575)',
+    'programs/[id]': "query-shaped — participants/volunteers fetched only when the resolved view holds 'roster' (staff, enrolled household); the stripper drops rosterModels from any other view",
     'programs/mine': 'query-shaped — self + household only (where participantId in memberIds)',
     'safety/emergency-contacts': 'admin-role-gated — sysadmin/board/keyholder',
     'system-status/lifecycle': 'admin-role-gated — withAuth roles [sysadmin, board]; lifecycle-violation scan over enrollments',
