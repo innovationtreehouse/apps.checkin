@@ -13,15 +13,16 @@ import { initFinancialFlow } from "../../lib/financial-flow";
 
 const FINANCE = principal(3, { isFinance: true });
 const GTIN = "0000000000017";
-// Bucket 7 is org-level, 8 another org-level one, 100 a program's with approver 2.
-const ports = () => bindPorts({ signoff: directory({ orgLevel: [7, 8], approvers: { 100: [2] }, finance: [3, 4], board: [5] }) });
+// Bucket 7 is org-level, 101 another org-level one, 100 a program's with approver 2.
+const ports = () => bindPorts({ signoff: directory({ orgLevel: [7, 101], approvers: { 100: [2] }, finance: [3, 4], board: [5] }) });
 
 const approvalOf = (id: number) => db.lineItemOwnerApproval.findUniqueOrThrow({ where: { id } });
 const state = async (id: string) => (await db.expense.findUniqueOrThrow({ where: { id } })).state;
 const audits = (expenseId: string, action: string) => db.expenseAuditLog.count({ where: { expenseId, action } });
 
+// Not Everyday and with no Board authorization, so a signed Treasurer seat still leaves the Board seat open.
 async function line(opts: { state: string; ownerId: number | null; status: string; needsReimbursement?: boolean }) {
-  const id = await seedExpense({ state: opts.state, needsReimbursement: opts.needsReimbursement, reimburseePersonId: opts.needsReimbursement ? 1 : undefined });
+  const id = await seedExpense({ state: opts.state, receiptTotalCents: 60_000, needsReimbursement: opts.needsReimbursement, reimburseePersonId: opts.needsReimbursement ? 1 : undefined });
   const li = await seedLineItem(id, { gtin13: GTIN, partNumber: null, manualQbAccount: "5000" });
   return { id, li, approvalId: await seedApproval(id, li, { ownerId: opts.ownerId, status: opts.status }) };
 }
@@ -84,9 +85,9 @@ describeDb("FINANCE moving a system-approved line", () => {
   it("into another org-level bucket, the system approves it again", async () => {
     const { id, approvalId } = await line({ state: "qb_pending", ownerId: 7, status: "approved" });
 
-    await financeAssign(FINANCE, id, approvalId, 8);
+    await financeAssign(FINANCE, id, approvalId, 101);
 
-    expect(await approvalOf(approvalId)).toMatchObject({ status: "approved", ownerId: 8, decidedByUserId: null });
+    expect(await approvalOf(approvalId)).toMatchObject({ status: "approved", ownerId: 101, decidedByUserId: null });
     expect(await state(id)).toBe("qb_pending");
   });
 
