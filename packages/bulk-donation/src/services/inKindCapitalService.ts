@@ -1,6 +1,6 @@
 // A gift's capital decision, taken on its own lines after it is accepted: the expense library's two
 // review steps bound to the gift's lines and history, and the drain's registration of each capital line.
-import { ServiceError, kindOf } from "@checkin/component-kit";
+import { ServiceError, kindOf, toHttpError, type FailureKind } from "@checkin/component-kit";
 import { db, type DbOrTx } from "../db";
 import { bulkDonationRuntime, getInKindCapital, getOrgId } from "../runtime";
 import { recordEvent } from "../repositories/audit";
@@ -121,10 +121,65 @@ export interface RegisterCounts {
   failed: number;
 }
 
+async function writeFailure(source: InKindSource, id: number, data: { capitalFirstFailedAt?: Date | null; capitalLastError?: string | null }, onlyFirst = false) {
+  const where = onlyFirst ? { id, capitalFirstFailedAt: null } : { id };
+  if (source === "receipt") await db.inKindDonation.updateMany({ where, data });
+  else await db.manualInKindDonation.updateMany({ where, data });
+}
+
+/** Keeps the first failure time across later failures; a failure to record it is only logged. */
+async function recordFailure(source: InKindSource, id: number, err: unknown): Promise<void> {
+  const capitalLastError = (toHttpError(err)?.message ?? (err instanceof Error ? err.message : String(err))).slice(0, 500);
+  try {
+    await writeFailure(source, id, { capitalFirstFailedAt: new Date() }, true);
+    await writeFailure(source, id, { capitalLastError });
+  } catch (recordErr) {
+    console.error(`[bulk-donation] ${source} gift ${id}'s registration failure was not recorded (${kindOf(recordErr)})`);
+  }
+}
+
+/** Registers and stamps each capital line whose period is set and that has no asset numbers yet. */
+async function registerLines(orgId: string, gift: Gift): Promise<number> {
+  if (capitalWaitsOn(gift) !== "register") return 0;
+  let registered = 0;
+  for (const { line, description, costCents } of bookedLines(gift)) {
+    if (!line.isCapital || line.registeredAt || line.depreciationYears === null) continue;
+    const assetNumbers = await getInKindCapital().register(orgId, {
+      giftSource: gift.source,
+      giftId: gift.id,
+      giftLineId: line.id,
+      description,
+      costCents,
+      quantity: line.quantity,
+      acquisitionDate: gift.receiptDate ?? gift.donationDate,
+      depreciationYears: line.depreciationYears,
+    });
+    await stamp(orgId, gift, line.id, assetNumbers);
+    registered++;
+  }
+  return registered;
+}
+
 /**
- * Registers each capital line whose period is set and that has no asset numbers yet, then stamps
- * it. A crash between the two is safe: the register returns the same numbers on the next run.
+ * Registers the gift's capital lines. A failure is recorded on the gift, which the Problems list
+ * shows until a run registers it; a crash between minting and stamping is safe, as the register
+ * returns the same numbers. Returns how many lines it registered, or the failure's kind.
  */
+async function registerGift(orgId: string, source: InKindSource, id: number): Promise<number | FailureKind> {
+  try {
+    const gift = await loadGift(db, orgId, source, id);
+    const registered = gift ? await registerLines(orgId, gift) : 0;
+    await writeFailure(source, id, { capitalFirstFailedAt: null, capitalLastError: null });
+    return registered;
+  } catch (err) {
+    const kind = bulkDonationRuntime.failed("in-kind-capital-register", err, `${source} gift ${id}`);
+    console.warn(`[bulk-donation] registering ${source} gift ${id}'s capital lines failed (${kind}); the next run tries again`);
+    await recordFailure(source, id, err);
+    return kind;
+  }
+}
+
+/** Registers every gift's capital lines that wait on their asset numbers. */
 export async function registerCapitalLines(orgId: string): Promise<RegisterCounts> {
   const where = { isCapital: true, depreciationYears: { not: null }, registeredAt: null, donation: { orgId, decisionOutcome: "ACCEPTED" } };
   const select = { donationId: true } as const;
@@ -138,31 +193,31 @@ export async function registerCapitalLines(orgId: string): Promise<RegisterCount
   ];
   const counts: RegisterCounts = { registered: 0, failed: 0 };
   for (const { source, id } of pending) {
-    try {
-      const gift = await loadGift(db, orgId, source, id);
-      if (!gift || capitalWaitsOn(gift) !== "register") continue;
-      for (const { line, description, costCents } of bookedLines(gift)) {
-        if (!line.isCapital || line.registeredAt || line.depreciationYears === null) continue;
-        const assetNumbers = await getInKindCapital().register(orgId, {
-          giftSource: source,
-          giftId: id,
-          giftLineId: line.id,
-          description,
-          costCents,
-          quantity: line.quantity,
-          acquisitionDate: gift.receiptDate ?? gift.donationDate,
-          depreciationYears: line.depreciationYears,
-        });
-        await stamp(orgId, gift, line.id, assetNumbers);
-        counts.registered++;
-      }
-    } catch (err) {
-      console.warn(`[bulk-donation] registering ${source} gift ${id}'s capital lines failed (${kindOf(err)}); the next run tries again`);
-      bulkDonationRuntime.failed("in-kind-capital-register", err, `${source} gift ${id}`);
-      counts.failed++;
-    }
+    const outcome = await registerGift(orgId, source, id);
+    if (typeof outcome === "number") counts.registered += outcome;
+    else counts.failed++;
   }
   return counts;
 }
+
+/** The gifts whose registration failed, timed by their first failure. */
+async function stuckRegistrations(orgId: string): Promise<{ source: InKindSource; id: number; failedAt: Date }[]> {
+  const where = { orgId, capitalFirstFailedAt: { not: null } };
+  const select = { id: true, capitalFirstFailedAt: true } as const;
+  const [receipts, manuals] = await Promise.all([db.inKindDonation.findMany({ where, select }), db.manualInKindDonation.findMany({ where, select })]);
+  const tag = (source: InKindSource) => (r: { id: number; capitalFirstFailedAt: Date | null }) => (r.capitalFirstFailedAt ? [{ source, id: r.id, failedAt: r.capitalFirstFailedAt }] : []);
+  return [...receipts.flatMap(tag("receipt")), ...manuals.flatMap(tag("manual"))];
+}
+
+/** Registers a stuck gift once. "not_stuck" when its registration has not failed. */
+async function retryRegistration(orgId: string, source: InKindSource, id: number): Promise<"registered" | "not_stuck" | FailureKind> {
+  const where = { orgId, id, capitalFirstFailedAt: { not: null } };
+  const stuck = source === "receipt" ? await db.inKindDonation.count({ where }) : await db.manualInKindDonation.count({ where });
+  if (!stuck) return "not_stuck";
+  const outcome = await registerGift(orgId, source, id);
+  return typeof outcome === "number" ? "registered" : outcome;
+}
+
+export const inKindRegistration = { stuckRegistrations, retryRegistration };
 
 export const inKindCapitalService = { designate, setPeriod };

@@ -14,6 +14,7 @@ import { inKindAcceptService, InKindDecisionInputSchema, type InKindDecisionInpu
 import type { CapitalAssetLine, CapitalCostLine, CapitalReview, InKindCapital, InKindDirectory, OwnerInfo } from "../../contract";
 import { TEST_ORG_ID } from "../helpers/factories";
 import { inKindCapitalService, registerCapitalLines } from "../../services/inKindCapitalService";
+import { retryStuckItem, stuckItems } from "../../stuckItems";
 import { ServiceError } from "@checkin/component-kit";
 import { z } from "zod";
 
@@ -702,7 +703,7 @@ describeDb("capital review", () => {
     expect(JSON.parse(events[3].payload!)).toEqual({ lineId: lineIds[1], assetNumbers: [`ITFA${lineIds[1]}`] });
   });
 
-  it("a failed registration leaves the line unstamped, and the next run stamps it", async () => {
+  it("a failed registration is on the Problems list until a run registers the line, which clears it", async () => {
     let fail = true;
     captureCapital(true, async (l) => {
       if (fail) throw new ServiceError(503, "expense down");
@@ -715,11 +716,44 @@ describeDb("capital review", () => {
 
     const logged = vi.spyOn(console, "warn").mockImplementation(() => {});
     expect(await registerCapitalLines(orgId)).toEqual({ registered: 0, failed: 1 });
-    logged.mockRestore();
     expect((await queueFor(FINANCE))[0]).toMatchObject({ waitingOn: ["register", "booking"] });
+    const { capitalFirstFailedAt } = await db.inKindDonation.findUniqueOrThrow({ where: { id } });
+    const item = { id: `receipt ${id}`, step: "capital asset registration" };
+    expect(await stuckItems()).toEqual([{ ...item, href: `/donations/in-kind/receipt/${id}`, failedAt: capitalFirstFailedAt }]);
+
+    expect(await registerCapitalLines(orgId)).toEqual({ registered: 0, failed: 1 });
+    const again = await retryStuckItem(item).catch((e: unknown) => e);
+    expect(again).toMatchObject({ status: 503 });
+    expect((again as Error).message).not.toContain("expense down");
+    expect(await db.inKindDonation.findUniqueOrThrow({ where: { id } })).toMatchObject({ capitalFirstFailedAt, capitalLastError: "expense down" });
+    logged.mockRestore();
 
     fail = false;
     expect(await registerCapitalLines(orgId)).toEqual({ registered: 1, failed: 0 });
     expect(await db.inKindDonationLine.findUniqueOrThrow({ where: { id: lineIds[0] } })).toMatchObject({ registeredAt: expect.any(Date) });
+    expect(await db.inKindDonation.findUniqueOrThrow({ where: { id } })).toMatchObject({ capitalFirstFailedAt: null, capitalLastError: null });
+    expect(await stuckItems()).toEqual([]);
+    await expect(retryStuckItem(item)).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("a Problems-list retry registers a stuck gift", async () => {
+    let fail = true;
+    captureCapital(true, async (l) => {
+      if (fail) throw new ServiceError(503, "expense down");
+      return [`ITFA${l.giftLineId}`];
+    });
+    const { id, lineIds } = await twoLineGift();
+    await inKindAcceptService.decide("receipt", id, ACCEPT, by(FINANCE));
+    await inKindCapitalService.designate("receipt", id, designation(lineIds, [lineIds[1]]), by(FINANCE));
+    await inKindCapitalService.setPeriod("receipt", id, { items: [{ lineItemId: lineIds[1], depreciationYears: 5, ownerId: 1 }] }, by(FINANCE));
+    const logged = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await registerCapitalLines(orgId);
+    logged.mockRestore();
+
+    fail = false;
+    await expect(retryStuckItem({ id: `receipt ${id}`, step: "capital asset registration" })).resolves.toBeUndefined();
+    expect(await db.inKindDonationLine.findUniqueOrThrow({ where: { id: lineIds[1] } })).toMatchObject({ registeredAt: expect.any(Date) });
+    expect(await stuckItems()).toEqual([]);
+    expect((await queueFor(FINANCE))[0]).toMatchObject({ waitingOn: ["booking"] });
   });
 });
