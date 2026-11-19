@@ -50,7 +50,7 @@ const owner = ctx({ selfId: 9, householdId: 2 });
 const stranger = ctx({ selfId: 77, householdId: 8 });
 
 // The view the registry grants both /api/attendance/manual/[id] verbs.
-const VIEW: Token[] = ['their_own:personal', 'led_households:personal', 'member', 'public'];
+const VIEW: Token[] = ['their_own:personal', 'led_households:personal', 'public'];
 
 const memberVisit = { id: 1, personId: 9, arrivedAt: new Date(0), departedAt: new Date(1), deletedAt: null };
 

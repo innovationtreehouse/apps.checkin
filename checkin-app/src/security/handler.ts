@@ -30,7 +30,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { authenticateRequest } from '@/lib/auth';
 import { apiError } from '@/lib/api-response';
 import type { AuthResult } from '@/types/auth';
-import { getRoute, type Role, type Token } from './core';
+import { getRoute, hiddenRosterModels, type Role, type Token } from './core';
 import { buildCallerContext, callerHoldsRole, resolveAccess } from './access-resolvers';
 import { stripBag } from './stripper';
 import { pageViewFoldErrors, recordView, viewedRecords } from './financeView';
@@ -146,7 +146,7 @@ export function handler<P extends Record<string, string> = Record<string, string
             return apiError('Internal Server Error', 500);
         }
 
-        const stripped = stripBag(bag, viewTokens, callerCtx);
+        const stripped = stripBag(bag, viewTokens, callerCtx, hiddenRosterModels(spec, viewTokens));
 
         if (endpoint.startsWith('GET ')) {
             const records = viewedRecords(stripped, spec.financeView, callerCtx, params);
