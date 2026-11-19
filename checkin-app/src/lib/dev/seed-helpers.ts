@@ -111,7 +111,7 @@ export async function seedBaseline(prisma: Db): Promise<void> {
     // 2. The debug personas (solo personas get a single-person household of their own)
     const isBoardMember = await prisma.person.upsert({
         where: { email: "boardmember@example.com" },
-        update: { name: "Board Member", phone: "555-555-0001", isSysadmin: true, isBoardMember: true, isDeclaredAdult: true },
+        update: { name: "Board Member", phone: "555-555-0001", isSysadmin: true, isBoardMember: true, isDeclaredAdult: true, lastBackgroundCheck: new Date() },
         create: {
             email: "boardmember@example.com",
             name: "Board Member",
@@ -119,6 +119,7 @@ export async function seedBaseline(prisma: Db): Promise<void> {
             isSysadmin: true,
             isBoardMember: true,
             isDeclaredAdult: true,
+            lastBackgroundCheck: new Date(),
             household: { create: { name: "Board Member Household" } },
         },
     });

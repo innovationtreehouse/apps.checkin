@@ -1,7 +1,7 @@
 /** Programs, their sessions and their places, set up over HTTP as the Board and the family would. */
 import { api, loginAs } from "../../flow-tests/helpers";
 import { addYouth, settledFamily } from "./families";
-import { BOARD, send } from "./seedState";
+import { BOARD, recheckWindow, send } from "./seedState";
 
 const MINUTE = 60_000;
 
@@ -20,6 +20,8 @@ export const LEADER = "program.lead@example.com";
 export async function newProgram(capacity = 2): Promise<Named & { leader: string }> {
   const board = await loginAs(BOARD);
   const name = `Browser Program ${Date.now()}`;
+  // The fresh seed sets no background-check interval, and no leader is named without one.
+  const restoreWindow = await recheckWindow(27);
   const created = await send(board, "POST", "/api/programs", {
     name,
     leadMentorId: (await loginAs(LEADER)).personaId,
@@ -27,7 +29,7 @@ export async function newProgram(capacity = 2): Promise<Named & { leader: string
     memberPrice: "40",
     nonMemberPrice: "50",
     maxParticipants: capacity,
-  });
+  }).finally(restoreWindow);
   if (created.status !== 200) throw new Error(`create program: ${created.status}`);
   const { id } = (created.json as { program: { id: number } }).program;
   const opened = await send(board, "PATCH", `/api/programs/${id}`, { enrollmentStatus: "OPEN" });

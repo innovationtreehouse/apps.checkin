@@ -86,7 +86,7 @@ describe('programLeaderIneligibility', () => {
 
     it('refuses everyone while the Board has set no recheck window', async () => {
         (liveBgThreshold as jest.Mock).mockResolvedValue(null);
-        expect(await programLeaderIneligibility(9, fresh)).toMatch(/background-check clearance/);
+        expect(await programLeaderIneligibility(9, fresh)).toMatch(/Board must set the background-check interval/);
     });
 });
 

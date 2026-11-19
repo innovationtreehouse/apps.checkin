@@ -13,16 +13,22 @@ jest.mock('@/lib/membership/checkStanding', () => ({
 
 const db = {} as DbClient;
 
+const window = new Date('2099-01-01');
+
 describe('leaderIneligibilityReason', () => {
     it('admits a cleared ACTIVE member', () => {
-        expect(leaderIneligibilityReason(true, 'CLEARED')).toBeNull();
+        expect(leaderIneligibilityReason(true, 'CLEARED', window)).toBeNull();
     });
 
     it('names the membership first, then the clearance', () => {
-        expect(leaderIneligibilityReason(false, 'CLEARED')).toMatch(/active Treehouse Membership/);
+        expect(leaderIneligibilityReason(false, 'CLEARED', window)).toMatch(/active Treehouse Membership/);
         for (const standing of ['NONE', 'PENDING', 'DISPUTED'] as const) {
-            expect(leaderIneligibilityReason(true, standing)).toMatch(/background-check clearance/);
+            expect(leaderIneligibilityReason(true, standing, window)).toMatch(/background-check clearance/);
         }
+    });
+
+    it('tells the Board to set the interval while none is set', () => {
+        expect(leaderIneligibilityReason(true, 'NONE', null)).toMatch(/Board must set the background-check interval/);
     });
 });
 

@@ -17,12 +17,12 @@ import prisma from '@/lib/prisma';
 import { ArchivedHouseholdError, lockLiveHouseholdsOf } from '@/lib/household/archiveGuard';
 
 // The archived-household guard has its own tests; here every household is live.
-// A new leader here meets the membership and clearance requirements; programLeaderIneligibility has its own tests.
+// A new leader here meets the membership and clearance requirements; leaderEligibility has its own tests.
 jest.mock('@/lib/orgMembership', () => ({ ...jest.requireActual('@/lib/orgMembership'), isActiveOrgMember: jest.fn().mockResolvedValue(true) }));
 jest.mock('@/lib/membership/checkStanding', () => ({
     ...jest.requireActual('@/lib/membership/checkStanding'),
     checkStanding: jest.fn().mockReturnValue('CLEARED'),
-    liveBgThreshold: jest.fn().mockResolvedValue(null),
+    liveBgThreshold: jest.fn().mockResolvedValue(new Date('2000-01-01')),
     loadCheckReviews: jest.fn().mockResolvedValue(new Map()),
 }));
 jest.mock("@/lib/household/archiveGuard", () => ({
