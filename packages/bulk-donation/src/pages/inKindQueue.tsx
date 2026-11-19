@@ -40,6 +40,7 @@ interface QueueItem {
   moneyReceivedAt: string | null;
   budgetOwnerId: number | null;
   budgetOwnerName: string | null;
+  receiptTotalCents: number | null;
   totalValueCents: number | null;
   outcome: string | null;
   /** Null once the gift waits on nothing and stays only for its QuickBooks note. */
@@ -77,25 +78,29 @@ function useRoles(): { isFinance: boolean; isBoard: boolean } {
   return { isFinance: viewer?.isFinance === true, isBoard: viewer?.isBoardMember === true };
 }
 
-/** The accept screen for one gift: warnings, values for a gift without a receipt, bucket, and the three outcomes. */
+/** The accept screen for one gift: warnings, values for a gift without a receipt or a receipt line priced at $0, bucket, and the three outcomes. */
 function DecidePanel({ item, buckets, onDone }: { item: QueueItem; buckets: Bucket[]; onDone: () => void }) {
   const accepted = item.outcome === "ACCEPTED";
   const [bucketId, setBucketId] = useState<string | null>(item.budgetOwnerId === null ? null : String(item.budgetOwnerId));
   const [values, setValues] = useState<Record<number, number | "">>(
-    Object.fromEntries(item.lines.map((l) => [l.id, l.valueCents === null && l.suggestedValueCents === null ? "" : (l.valueCents ?? l.suggestedValueCents ?? 0) / 100])),
+    Object.fromEntries(item.lines.map((l) => [l.id, !l.valueCents && l.suggestedValueCents === null ? "" : (l.valueCents ?? l.suggestedValueCents ?? 0) / 100])),
   );
   const [attested, setAttested] = useState(false);
   const [goodsConfirmed, setGoodsConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
-  const needsValues = item.source === "manual" && !accepted;
+  // A gift without a receipt takes a value on every line; a receipt gift only on a line it priced at $0.
+  const takesValue = (l: QueueLine) => !accepted && (item.source === "manual" || l.valueCents === 0);
+  const valued = item.lines.filter(takesValue);
+  const needsValues = valued.length > 0;
   // The large-value warning's threshold, as the server reads it; until it loads, the server's flag stands.
   const settings = useLoad<{ capitalLineItemThresholdCents: number | null }>(needsValues ? "/api/expense/org-settings" : null);
   const valueCents = (lineId: number) => dollarsToCents(values[lineId] || 0);
-  const allValued = item.lines.every((l) => valueCents(l.id) > 0);
+  const allValued = valued.every((l) => valueCents(l.id) > 0);
+  const liveTotalCents = valued.reduce((sum, l) => sum + valueCents(l.id), item.source === "receipt" ? (item.receiptTotalCents ?? 0) : 0);
   // An unset threshold warns on every gift, as the server does.
   const threshold = settings.data ? (settings.data.capitalLineItemThresholdCents ?? 0) : undefined;
   const warnLargeValue =
-    needsValues && threshold !== undefined ? item.lines.reduce((sum, l) => sum + valueCents(l.id), 0) >= threshold : item.warnLargeValue;
+    needsValues && threshold !== undefined ? liveTotalCents >= threshold : item.warnLargeValue;
   const bucketOptions = buckets.map((b) => ({ value: String(b.id), label: b.name }));
   if (item.budgetOwnerId !== null && !buckets.some((b) => b.id === item.budgetOwnerId)) {
     bucketOptions.unshift({ value: String(item.budgetOwnerId), label: item.budgetOwnerName ?? "Current bucket" });
@@ -107,7 +112,7 @@ function DecidePanel({ item, buckets, onDone }: { item: QueueItem; buckets: Buck
       confirmOutsideDonorHousehold: true,
       ...(outcome === "accept" ? { bucketId: Number(bucketId) } : {}),
       ...(outcome === "accept" && !accepted ? { confirmGoodsReceived: true } : {}),
-      ...(outcome === "accept" && needsValues ? { lineValues: item.lines.map((l) => ({ lineId: l.id, valueCents: valueCents(l.id) })) } : {}),
+      ...(outcome === "accept" && needsValues ? { lineValues: valued.map((l) => ({ lineId: l.id, valueCents: valueCents(l.id) })) } : {}),
     };
     setBusy(true);
     const label = accepted ? "Bucket changed" : outcome === "accept" ? "Gift accepted" : outcome === "refuse" ? "Gift refused" : "Gift marked returned";
@@ -134,7 +139,7 @@ function DecidePanel({ item, buckets, onDone }: { item: QueueItem; buckets: Buck
                 <Table.Td>{l.description ?? (l.gtin13 ? formatGtinDisplay(l.gtin13) : "—")}</Table.Td>
                 <Table.Td>{l.quantity}</Table.Td>
                 <Table.Td>
-                  {needsValues ? (
+                  {takesValue(l) ? (
                     <NumberInput aria-label={`Value of line ${l.id}`} min={0} decimalScale={2} value={values[l.id]} onChange={(v) => setValues({ ...values, [l.id]: v === "" ? "" : Number(v) || 0 })} w={140} />
                   ) : (
                     formatCents(l.valueCents)

@@ -48,9 +48,14 @@ interface GiftLine {
   quantity: number;
   valueCents: number | null;
   suggestedValueCents: number | null;
+  /** The value finance set on a receipt line priced at $0; null on every other line. */
+  financeValueCents: number | null;
   /** The account finance set by hand on a held line; it wins over every account rule. */
   quickBooksAccountId: string | null;
 }
+
+/** A line as the screens show it: a free receipt line shows the value finance set. */
+const lineView = ({ financeValueCents, ...l }: GiftLine) => ({ ...l, valueCents: financeValueCents ?? l.valueCents });
 
 /** Both in-kind tables in one shape. `donorLastName` feeds the warnings and never leaves this file. */
 interface Gift {
@@ -97,7 +102,7 @@ const RECEIPT_SELECT = {
   replayConflictAt: true,
   uploadedByUserId: true,
   ...DECISION_SELECT,
-  lines: { select: { id: true, gtin13: true, description: true, quantity: true, valueCents: true, quickBooksAccountId: true }, orderBy: { lineNumber: "asc" } },
+  lines: { select: { id: true, gtin13: true, description: true, quantity: true, valueCents: true, financeValueCents: true, quickBooksAccountId: true }, orderBy: { lineNumber: "asc" } },
 } as const;
 
 const MANUAL_SELECT = {
@@ -143,6 +148,7 @@ function fromManual(m: ManualRow): Gift {
     donorReplacedAt: null,
     replayConflictAt: null,
     uploadedByUserId: null,
+    lines: m.lines.map((l) => ({ ...l, financeValueCents: null })),
   };
 }
 
@@ -161,10 +167,22 @@ export function spreadToTotal(values: number[], totalCents: number): number[] {
   return values.map((v, i) => v + extra[i]);
 }
 
+/**
+ * Each line's booked value. A receipt's total spreads over its lines by the receipt's prices, so
+ * its tax, shipping and discount land on the priced lines; a line priced at $0 then adds the value
+ * finance set. The lines sum to `totalValueCents`.
+ */
+function bookedLineCents(g: Gift): number[] {
+  const values = g.lines.map((l) => l.valueCents ?? 0);
+  if (g.source !== "receipt" || g.receiptTotalCents === null) return values;
+  return spreadToTotal(values, g.receiptTotalCents).map((cents, i) => cents + (g.lines[i].financeValueCents ?? 0));
+}
+
+const lineName = (g: Gift, l: GiftLine) => `Line ${g.lines.indexOf(l) + 1} (${l.description ?? (l.gtin13 ? formatGtinDisplay(l.gtin13) : "donated item")})`;
+
 /** An accepted gift's lines as capital review takes them: a receipt's lines carry its tax and shipping. */
 function capitalReviewLines(g: Gift, budgetOwnerId: number): CapitalReviewLine[] {
-  const values = g.lines.map((l) => l.valueCents ?? 0);
-  const costs = g.source === "receipt" && g.receiptTotalCents !== null ? spreadToTotal(values, g.receiptTotalCents) : values;
+  const costs = bookedLineCents(g);
   return g.lines.map((l, i) => ({
     giftSource: g.source,
     giftId: g.id,
@@ -177,9 +195,9 @@ function capitalReviewLines(g: Gift, budgetOwnerId: number): CapitalReviewLine[]
   }));
 }
 
-/** A receipt gift books at the receipt's total; one without a receipt at the values finance set. */
+/** A receipt gift books at the receipt's total plus the values finance set on its free lines; one without a receipt at the values finance set. */
 function totalValueCents(g: Gift): number | null {
-  if (g.source === "receipt") return g.receiptTotalCents;
+  if (g.source === "receipt") return g.receiptTotalCents === null ? null : g.lines.reduce((sum, l) => sum + (l.financeValueCents ?? 0), g.receiptTotalCents);
   return g.lines.every((l) => l.valueCents !== null) ? g.lines.reduce((sum, l) => sum + (l.valueCents ?? 0), 0) : null;
 }
 
@@ -390,7 +408,7 @@ function queueRow(
     ...warn,
     callerConflicted: conflict.callerConflicted,
     allFinanceConflicted: conflict.allFinanceConflicted,
-    lines: g.lines,
+    lines: g.lines.map(lineView),
   };
 }
 
@@ -519,8 +537,21 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
       if (!input.confirmGoodsReceived) throw new ServiceError(400, "Accepting a gift confirms the goods exist and arrived");
       Object.assign(decided, { budgetOwnerId: await assignableBucket(input.bucketId), bucketAssignedByUserId: callerId, bucketAssignedAt: now });
       if (source === "receipt") {
-        if (input.lineValues) throw new ServiceError(400, "A gift with a receipt keeps the receipt's values");
         if (gift.receiptTotalCents === null) throw new ServiceError(409, "This gift has no value yet; resolve the receipt total first");
+        const values = new Map((input.lineValues ?? []).map((v) => [v.lineId, v.valueCents]));
+        const free = gift.lines.filter((l) => l.valueCents === 0);
+        if ([...values.keys()].some((lineId) => !free.some((l) => l.id === lineId))) {
+          throw new ServiceError(400, "A gift with a receipt keeps the receipt's values; only a line it priced at $0 takes a value");
+        }
+        const unvalued = free.find((l) => !values.has(l.id));
+        if (unvalued) throw new ServiceError(400, `${lineName(gift, unvalued)} is $0 on the receipt; set its value to accept the gift`);
+        lines = gift.lines.map((l) => ({ ...l, financeValueCents: values.get(l.id) ?? null }));
+        const booked = bookedLineCents({ ...gift, lines });
+        const nothing = lines.find((_, i) => booked[i] <= 0);
+        if (nothing) {
+          throw new ServiceError(400, `${lineName(gift, nothing)} comes to $0 after the receipt's discount, and the app books no $0 line; refuse or return the gift`);
+        }
+        for (const [lineId, financeValueCents] of values) await tx.inKindDonationLine.update({ where: { id: lineId }, data: { financeValueCents } });
       } else {
         const values = new Map((input.lineValues ?? []).map((v) => [v.lineId, v.valueCents]));
         if (values.size !== gift.lines.length || gift.lines.some((l) => !values.has(l.id))) {
@@ -549,7 +580,14 @@ async function decide(source: InKindSource, id: number, input: InKindDecisionInp
       ...entity(gift),
       eventType: "IN_KIND_DECIDED",
       ...audit,
-      payload: { outcome, budgetOwnerId: result.budgetOwnerId, totalValueCents: totalValueCents(result), ...(outcome === "ACCEPTED" ? { goodsConfirmed: true } : {}), ...warn },
+      payload: {
+        outcome,
+        budgetOwnerId: result.budgetOwnerId,
+        totalValueCents: totalValueCents(result),
+        ...(outcome === "ACCEPTED" ? { goodsConfirmed: true } : {}),
+        ...(input.lineValues ? { lineValues: input.lineValues } : {}),
+        ...warn,
+      },
     });
     return { view: decisionView(result), send: decided.budgetOwnerId === undefined ? null : capitalReviewLines(result, decided.budgetOwnerId) };
   });
@@ -647,7 +685,7 @@ async function listByBucket(orgId: string, callerId: number, seeAll: boolean) {
     budgetOwnerId: g.budgetOwnerId,
     donationDate: g.donationDate ?? g.receiptDate,
     totalValueCents: totalValueCents(g),
-    lines: g.lines.map(({ id, gtin13, description, quantity, valueCents }) => ({ id, gtin13, description, quantity, valueCents })),
+    lines: g.lines.map(lineView).map(({ id, gtin13, description, quantity, valueCents }) => ({ id, gtin13, description, quantity, valueCents })),
   }));
 }
 
@@ -742,7 +780,7 @@ async function getGift(orgId: string, source: InKindSource, id: number) {
     inventorySourceKey: source === "manual" ? inventorySourceKey(id) : null,
     inventoryLoadedAt: extras.inventoryLoadedAt,
     inventoryLoadFailureReason: extras.inventoryLoadFailureReason,
-    lines: gift.lines,
+    lines: gift.lines.map(lineView),
     events,
   };
 }
