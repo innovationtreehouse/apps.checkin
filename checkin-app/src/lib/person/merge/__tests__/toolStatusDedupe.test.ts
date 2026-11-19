@@ -1,3 +1,9 @@
+/**
+ * @jest-environment node
+ *
+ * Node, not jsdom: execute.ts reaches @aws-sdk/client-s3 (via keyVolunteer.ts ->
+ * agreementDocument), whose browser build jest cannot transform.
+ */
 import prisma from "@/lib/prisma";
 import type { AuthenticatedUser } from "@/types/auth";
 import { executeMerge, MergeRefusedError, type MergePlan } from "../execute";
