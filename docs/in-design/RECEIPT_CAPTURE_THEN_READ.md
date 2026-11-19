@@ -39,7 +39,7 @@ Taking a receipt in and reading it are two separate steps.
 | Finance and sysadmins | A captured email can be processed again from our copy. | No new way to download mail. |
 
 Cost: one table, one state and a MIME parser, plus raw email in the bucket for 90
-days. The mail lease stays, held longer to cover the drain, and the daily schedule
+days in prod and 30 in dev and staging. The mail lease stays, held longer to cover the drain, and the daily schedule
 stays as it is. Infra adds one lifecycle
 rule and one grant on the receipt bucket (see Storage). Reading calls and their price
 are unchanged.
@@ -157,7 +157,7 @@ message. A replay creates what is missing and nothing twice.
 | Write | write-once with SHA-256, object first, then the row. The app never deletes raw mail: an object whose row failed to insert expires with the rest. |
 | Row | `ReceiptMailMessage`: `orgId`, `gmailMessageId` (unique per org), `receivedAt`, `capturedAt`, `rawKey`, `rawSha256`, `rawSize`, `processedAt`, `processError` |
 | Tiers | `rawKey` and `processError` are `pii`; the rest `internal` |
-| Retention | 90 days after capture, by the bucket's lifecycle rule. The row stays, so the message is never captured again. |
+| Retention | Per environment, by the bucket's lifecycle rule: 90 days after capture in prod, 30 in dev and staging. The row stays, so the message is never captured again. |
 
 A raw message is the whole email: other recipients, signatures, quoted threads, and
 mail that is no receipt at all. So:
@@ -168,14 +168,20 @@ mail that is no receipt at all. So:
   items with their own objects and lifetimes. The raw copy expiring changes none of
   them.
 - The bucket's policy already admits only the app's role and the admin role.
-- Replay of a message captured more than 90 days ago answers "This email's stored
-  copy expired 90 days after capture", decided by `capturedAt`, with no store call.
-  Inside 90 days, a missing object (404) is an error, shown as one.
+- Retention is set per environment, for disk and cost: 90 days in prod, 30 in dev
+  and staging. The app holds the same number as a setting (`rawMailRetentionDays`,
+  chosen by `CHECKIN_ENV`) and matches it to the bucket's rule.
+- Replay of a message captured at least its environment's retention ago answers
+  "This email's stored copy expired N days after capture", decided by `capturedAt`,
+  with no store call. Inside the window, a missing object is an error, shown as one.
+  The daily run skips an unprocessed message past the window the same way.
 
 **Prerequisite, made by the owner in infra** (the receipt-files bucket module),
 in every environment, before build PR 2 deploys there:
 
-1. A lifecycle rule on prefix `mail-raw/`: `expiration { days = 90 }`.
+1. Expiry of `mail-raw/`: in prod, a lifecycle rule on the prefix with
+   `expiration { days = 90 }`; in dev and staging, the existing rule that expires
+   the whole bucket at 30 days covers it.
 2. For the app's task role on `mail-raw/*`: `s3:PutObject` and `s3:GetObject`, and
    no `s3:DeleteObject`.
 
@@ -194,14 +200,16 @@ The lease runs from the start of capture to the end of the drain, so the cron an
 catch-up never overlap and a crashed run blocks the next only until it expires. Its
 length is the capture budget plus the drain's 10 minutes plus today's 10 minutes of
 slack: 20½ minutes for the daily run, 30 for a catch-up. The deadlines from #3613
-are taken per step, not from the lease alone: capture's calls end when its budget
-does, and the drain's calls end 10 minutes after the drain starts. Both fall before
+are taken per step, not from the lease alone: capture's calls, processing's included,
+end when its budget does, its end-of-run calls (dating unread mail, alerts,
+acknowledgements) 15 seconds after, and the drain's calls end 10 minutes after the
+drain starts. Both fall before
 the lease's 3-minute read margin, and the slack covers the last reading call and the
 release.
 
 The scheduler waits 60 seconds for the whole `reconcile-shopify` request. Capture is
 its only mail work inside the request: 30 seconds at most, with each outside call's
-deadline inside that. Its counts go in the response, so the cron log records a failed
+deadline inside that, and the end-of-run calls within 15 seconds more. Its counts go in the response, so the cron log records a failed
 listing as today. The drain starts after the response and leaves its counts in the
 lease's last-run summary.
 

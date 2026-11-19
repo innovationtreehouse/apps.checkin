@@ -153,6 +153,7 @@ const RECEIPT: Decided<receipt.ReceiptConfig> = {
   reimbursees: "port",
   alerts: "port",
   mailbox: "port",
+  rawMailRetentionDays: "setting",
   replies: "port",
   outcomeMail: "port",
   limits: "setting",
