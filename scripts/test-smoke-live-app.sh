@@ -10,15 +10,15 @@ T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 # The stub answers each call with the next "<code> <body>" line of $T/replies;
-# a "000" line makes it fail like a timeout.
+# a "000" line makes it fail like a timeout, writing no body.
 cat > "$T/curl" <<'EOF'
 #!/usr/bin/env bash
 n=$(cat "$STUB/n" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$STUB/n"
 line=$(sed -n "${n}p" "$STUB/replies"); [ -n "$line" ] || line=$(tail -n 1 "$STUB/replies")
 code=${line%% *}; body=${line#* }
 out=""; while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done
+[ "$code" = 000 ] && { printf 000; exit 28; }  # real curl leaves the file untouched
 printf '%s' "$body" > "$out"
-[ "$code" = 000 ] && { printf 000; exit 28; }
 printf '%s' "$code"
 EOF
 chmod +x "$T/curl"
@@ -40,5 +40,6 @@ run 0 4  "502 " "504 " "503 " "200 ok"
 run 1 2  "503 waking up" "500 boom"
 run 1 1  "404 nope"
 run 1 1  "000 "
+run 1 2  "503 checkin-prod is waking up" "000 "
 run 1 60 "503 checkin-prod is waking up"
 echo "smoke-live-app.sh: all checks passed"

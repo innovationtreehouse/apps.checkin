@@ -18,6 +18,7 @@ INTERVAL="${SMOKE_INTERVAL:-10}"
 BODY="$(mktemp)"; trap 'rm -f "$BODY"' EXIT
 
 for i in $(seq 1 60); do
+  : > "$BODY"
   CODE=$(curl -s -o "$BODY" -w '%{http_code}' --max-time 10 "$URL") || CODE=000
   WAKING=no
   grep -qi 'waking up' "$BODY" && WAKING=yes
