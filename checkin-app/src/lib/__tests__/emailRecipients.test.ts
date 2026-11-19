@@ -1,11 +1,11 @@
 import prisma from "@/lib/prisma";
 import { sendTemplated } from "@/lib/email-templates/send";
-import { logBackendError } from "@/lib/logger";
+import { logBackendError, logIntegrationError } from "@/lib/logger";
 import { emailAlert, emailBoardMembers } from "@/lib/emailRecipients";
 
 jest.mock("@/lib/prisma", () => ({ __esModule: true, default: { person: { findMany: jest.fn() }, boardSettings: { findUnique: jest.fn() } } }));
 jest.mock("@/lib/email-templates/send", () => ({ sendTemplated: jest.fn() }));
-jest.mock("@/lib/logger", () => ({ ...jest.requireActual("@/lib/logger"), logBackendError: jest.fn() }));
+jest.mock("@/lib/logger", () => ({ ...jest.requireActual("@/lib/logger"), logBackendError: jest.fn(), logIntegrationError: jest.fn() }));
 
 const findPeople = prisma.person.findMany as jest.Mock;
 const send = jest.mocked(sendTemplated);
@@ -32,9 +32,11 @@ describe("emailBoardMembers delivered count", () => {
         await expect(emailBoardMembers("board.unpaidClaims", CTX, "label")).resolves.toBe(0);
     });
 
-    it("is zero when no Board member has an address", async () => {
+    it("is zero when no Board member has an address, and logs it as an email failure", async () => {
         findPeople.mockResolvedValue([]);
         await expect(emailBoardMembers("board.unpaidClaims", CTX, "label")).resolves.toBe(0);
+        expect(send).not.toHaveBeenCalled();
+        expect(logIntegrationError).toHaveBeenCalledWith("email", expect.stringContaining("No Board member"), { template: "board.unpaidClaims" });
     });
 
     it("is zero when the recipient query fails, and does not reject", async () => {
