@@ -338,6 +338,12 @@ model InKindDonation {
   // Set when a money-side replay differed from the first; cleared when finance settles it.
   /// @sensitivity:internal
   replayConflictAt           DateTime?  @map("replay_conflict_at")
+  // Unused columns awaiting their drop; null on every row. Hidden from the client so no code
+  // reads or writes them before the columns go.
+  /// @sensitivity:internal
+  withdrawnAfterMoneyAt      DateTime?  @map("withdrawn_after_money_at") @ignore
+  /// @sensitivity:internal
+  withdrawalSettledAt        DateTime?  @map("withdrawal_settled_at") @ignore
   // The accept step: one decision per gift (ACCEPTED, REFUSED or RETURNED), its decider, and
   // when the decider attested to being outside the donor's household.
   /// @sensitivity:internal
