@@ -77,7 +77,7 @@ beforeEach(() => {
 
 it('holds a cleared payment unactivated, unstamped, when someone in the household is disputed, then settles the household', async () => {
     prisma.orgMembershipProcess.findUnique.mockResolvedValue({
-        id: PROCESS_ID, kind: 'INITIAL', status: 'PENDING_PAYMENT', paidAt: null, bgClearedAt: new Date(), orgMembershipId: MEMBERSHIP_ID,
+        id: PROCESS_ID, kind: 'INITIAL', status: 'PENDING_PAYMENT', paidAt: null, contractSignedAt: new Date(), bgClearedAt: new Date(), orgMembershipId: MEMBERSHIP_ID,
     });
     jest.mocked(householdHasDisputedCheck).mockResolvedValue(true);
 
@@ -95,9 +95,39 @@ it('holds a cleared payment unactivated, unstamped, when someone in the househol
     expect(settleHouseholdBg).toHaveBeenCalledWith(household.householdId);
 });
 
+it('holds a cleared, unsigned payment at the agreement step instead of activating it', async () => {
+    prisma.orgMembershipProcess.findUnique.mockResolvedValue({
+        id: PROCESS_ID, kind: 'INITIAL', status: 'PENDING_PAYMENT', paidAt: null, contractSignedAt: null, bgClearedAt: new Date(), orgMembershipId: MEMBERSHIP_ID,
+    });
+
+    const { outcome } = await activateByProcessId(PROCESS_ID, 'order-unsigned', { appliesToYear: 2026 });
+
+    expect(outcome).toBe('held');
+    expect(setHouseholdStatus).not.toHaveBeenCalled();
+    expect(prisma.orgMembershipProcess.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: 'PENDING_EXTERNAL_ACTION' }) }),
+    );
+    expect(prisma.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ newData: expect.objectContaining({ status: 'PENDING_EXTERNAL_ACTION', paid: true, contractSigned: false }) }),
+    }));
+});
+
+it('an unsigned, disputed payment keeps the dispute reason on its audit row', async () => {
+    prisma.orgMembershipProcess.findUnique.mockResolvedValue({
+        id: PROCESS_ID, kind: 'INITIAL', status: 'PENDING_PAYMENT', paidAt: null, contractSignedAt: null, bgClearedAt: new Date(), orgMembershipId: MEMBERSHIP_ID,
+    });
+    jest.mocked(householdHasDisputedCheck).mockResolvedValue(true);
+
+    expect((await activateByProcessId(PROCESS_ID, 'order-unsigned-disputed', { appliesToYear: 2026 })).outcome).toBe('held');
+    expect(prisma.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ newData: expect.objectContaining({ status: 'PENDING_EXTERNAL_ACTION', contractSigned: false, bgCleared: false, reason: expect.stringContaining('disputed') }) }),
+    }));
+    expect(settleHouseholdBg).toHaveBeenCalledWith(household.householdId);
+});
+
 it('does NOT activate a PENDING_PAYMENT process when the order has no membership item', async () => {
     prisma.orgMembershipProcess.findUnique.mockResolvedValue({
-        id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, bgClearedAt: null, orgMembershipId: MEMBERSHIP_ID,
+        id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, contractSignedAt: new Date(), bgClearedAt: null, orgMembershipId: MEMBERSHIP_ID,
     });
 
     const { outcome } = await activateByProcessId(PROCESS_ID, 'order-1', null);
@@ -116,7 +146,7 @@ it('does NOT activate a PENDING_PAYMENT process when the order has no membership
 
 it('activates a PENDING_PAYMENT process when the order contains the membership item', async () => {
     prisma.orgMembershipProcess.findUnique.mockResolvedValue({
-        id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, bgClearedAt: new Date(), orgMembershipId: MEMBERSHIP_ID,
+        id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, contractSignedAt: new Date(), bgClearedAt: new Date(), orgMembershipId: MEMBERSHIP_ID,
     });
 
     const { outcome } = await activateByProcessId(PROCESS_ID, 'order-2', { appliesToYear: 2026 });
@@ -136,7 +166,7 @@ it('activates a PENDING_PAYMENT process when the order contains the membership i
 
 it('welcomes an INITIAL household on activation', async () => {
     prisma.orgMembershipProcess.findUnique.mockResolvedValue({
-        id: PROCESS_ID, kind: 'INITIAL', status: 'PENDING_PAYMENT', paidAt: null, bgClearedAt: new Date(), orgMembershipId: MEMBERSHIP_ID,
+        id: PROCESS_ID, kind: 'INITIAL', status: 'PENDING_PAYMENT', paidAt: null, contractSignedAt: new Date(), bgClearedAt: new Date(), orgMembershipId: MEMBERSHIP_ID,
     });
 
     await activateByProcessId(PROCESS_ID, 'order-3', { appliesToYear: 2026 });
@@ -146,7 +176,7 @@ it('welcomes an INITIAL household on activation', async () => {
 
 it('thanks a RENEWAL household for renewing instead of welcoming it', async () => {
     prisma.orgMembershipProcess.findUnique.mockResolvedValue({
-        id: PROCESS_ID, kind: 'RENEWAL', status: 'PENDING_PAYMENT', paidAt: null, bgClearedAt: new Date(), orgMembershipId: MEMBERSHIP_ID,
+        id: PROCESS_ID, kind: 'RENEWAL', status: 'PENDING_PAYMENT', paidAt: null, contractSignedAt: new Date(), bgClearedAt: new Date(), orgMembershipId: MEMBERSHIP_ID,
     });
 
     await activateByProcessId(PROCESS_ID, 'order-4', { appliesToYear: 2026 });
@@ -165,7 +195,7 @@ describe('work after the payment commits', () => {
 
     it('a failed trigger leaves the activation reported, logs it, and still runs the next trigger', async () => {
         prisma.orgMembershipProcess.findUnique.mockResolvedValue({
-            id: PROCESS_ID, kind: 'INITIAL', status: 'PENDING_PAYMENT', paidAt: null, bgClearedAt: new Date(), orgMembershipId: MEMBERSHIP_ID,
+            id: PROCESS_ID, kind: 'INITIAL', status: 'PENDING_PAYMENT', paidAt: null, contractSignedAt: new Date(), bgClearedAt: new Date(), orgMembershipId: MEMBERSHIP_ID,
         });
         const failure = new Error('trigger failed');
         openBg.mockRejectedValue(failure);
@@ -179,7 +209,7 @@ describe('work after the payment commits', () => {
 
     it('a board certify succeeds when a trigger fails', async () => {
         prisma.orgMembershipProcess.findUnique.mockResolvedValue({
-            id: PROCESS_ID, kind: 'INITIAL', status: 'PENDING_PAYMENT', paidAt: null, bgClearedAt: new Date(), orgMembershipId: MEMBERSHIP_ID,
+            id: PROCESS_ID, kind: 'INITIAL', status: 'PENDING_PAYMENT', paidAt: null, contractSignedAt: new Date(), bgClearedAt: new Date(), orgMembershipId: MEMBERSHIP_ID,
         });
         openAgreement.mockRejectedValue(new Error('trigger failed'));
 
@@ -188,7 +218,7 @@ describe('work after the payment commits', () => {
 
     it('a failed raise on a DENIED household still throws, so the webhook redelivers', async () => {
         prisma.orgMembershipProcess.findUnique.mockResolvedValue({
-            id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, bgClearedAt: null, orgMembershipId: MEMBERSHIP_ID,
+            id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, contractSignedAt: new Date(), bgClearedAt: null, orgMembershipId: MEMBERSHIP_ID,
         });
         household.status = 'DENIED';
         const failure = new Error('raise failed');
@@ -202,7 +232,7 @@ it('a manual (board) activation is exempt from the membership-item check', async
     // certifyPaymentPlan never has a Shopify order to check (via !== "payment"),
     // so it activates with no membership line to check.
     prisma.orgMembershipProcess.findUnique.mockResolvedValue({
-        id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, bgClearedAt: new Date(), orgMembershipId: MEMBERSHIP_ID,
+        id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, contractSignedAt: new Date(), bgClearedAt: new Date(), orgMembershipId: MEMBERSHIP_ID,
     });
 
     await activate(PROCESS_ID, { via: 'manual', actorId: 1 });
@@ -214,7 +244,7 @@ it('a manual (board) activation is exempt from the membership-item check', async
 });
 
 describe('payments that land on nothing awaiting them', () => {
-    const proc = (over: object) => ({ id: PROCESS_ID, kind: 'INITIAL', status: 'PENDING_PAYMENT', paidAt: null, bgClearedAt: new Date(), orgMembershipId: MEMBERSHIP_ID, shopifyOrderId: null, ...over });
+    const proc = (over: object) => ({ id: PROCESS_ID, kind: 'INITIAL', status: 'PENDING_PAYMENT', paidAt: null, contractSignedAt: new Date(), bgClearedAt: new Date(), orgMembershipId: MEMBERSHIP_ID, shopifyOrderId: null, ...over });
 
     it('a redelivery of the recorded order is a plain noop', async () => {
         prisma.orgMembershipProcess.findUnique.mockResolvedValue(proc({ status: 'ACTIVE', paidAt: new Date(), shopifyOrderId: 'order-1' }));
@@ -302,7 +332,7 @@ describe('certifyPaymentPlan checks under the row lock', () => {
     });
 
     it("refuses the actor's own household", async () => {
-        prisma.orgMembershipProcess.findUnique.mockResolvedValue({ id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, orgMembershipId: MEMBERSHIP_ID, orgMembership: { householdId: 3 } });
+        prisma.orgMembershipProcess.findUnique.mockResolvedValue({ id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, contractSignedAt: new Date(), orgMembershipId: MEMBERSHIP_ID, orgMembership: { householdId: 3 } });
         hasHouseholdConflict.mockResolvedValue(true);
         await expect(certifyPaymentPlan(PROCESS_ID, 1)).rejects.toMatchObject({ code: 'forbidden' });
         expect(hasHouseholdConflict).toHaveBeenCalledWith(prisma, 1, 3);
@@ -310,7 +340,7 @@ describe('certifyPaymentPlan checks under the row lock', () => {
     });
 
     it('reads the household status with FOR UPDATE, before the process lock', async () => {
-        prisma.orgMembershipProcess.findUnique.mockResolvedValue({ id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, orgMembershipId: MEMBERSHIP_ID, orgMembership: { householdId: 3 } });
+        prisma.orgMembershipProcess.findUnique.mockResolvedValue({ id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, contractSignedAt: new Date(), orgMembershipId: MEMBERSHIP_ID, orgMembership: { householdId: 3 } });
         await certifyPaymentPlan(PROCESS_ID, 1);
         const sqls = prisma.$queryRaw.mock.calls.map(([sql]: [TemplateStringsArray]) => sql.join('?'));
         expect(sqls).toEqual([
@@ -320,7 +350,7 @@ describe('certifyPaymentPlan checks under the row lock', () => {
     });
 
     it('refuses a DENIED household', async () => {
-        prisma.orgMembershipProcess.findUnique.mockResolvedValue({ id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, orgMembershipId: MEMBERSHIP_ID });
+        prisma.orgMembershipProcess.findUnique.mockResolvedValue({ id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, contractSignedAt: new Date(), orgMembershipId: MEMBERSHIP_ID });
         household.status = 'DENIED';
         await expect(certifyPaymentPlan(PROCESS_ID, 1)).rejects.toMatchObject({ code: 'wrong_phase' });
         expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
@@ -328,7 +358,7 @@ describe('certifyPaymentPlan checks under the row lock', () => {
 });
 
 describe('the year a settlement records', () => {
-    const awaiting = { id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, bgClearedAt: null, orgMembershipId: MEMBERSHIP_ID };
+    const awaiting = { id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, contractSignedAt: new Date(), bgClearedAt: null, orgMembershipId: MEMBERSHIP_ID };
     const recordedYear = () => prisma.orgMembershipProcess.updateMany.mock.calls[0][0].data.appliesToYear;
 
     beforeEach(() => {
@@ -382,7 +412,7 @@ describe('the year a settlement records', () => {
 
 describe('a payment-plan approval certifies the request year', () => {
     // Boundary 1 Sep: the renewal window opens 1 Jul, so 15 Jul 2027 is live year 2027 inside 2026-2027.
-    const request = { id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, bgClearedAt: null, orgMembershipId: MEMBERSHIP_ID, isPaymentPlanRequested: true, createdAt: new Date(Date.UTC(2027, 0, 10)) };
+    const request = { id: PROCESS_ID, status: 'PENDING_PAYMENT', paidAt: null, contractSignedAt: new Date(), bgClearedAt: null, orgMembershipId: MEMBERSHIP_ID, isPaymentPlanRequested: true, createdAt: new Date(Date.UTC(2027, 0, 10)) };
     const recordedYear = () => prisma.orgMembershipProcess.updateMany.mock.calls[0][0].data.appliesToYear;
     const at = (date: Date) => jest.useFakeTimers({ now: date, doNotFake: ['nextTick', 'queueMicrotask', 'setImmediate', 'setTimeout'] });
 

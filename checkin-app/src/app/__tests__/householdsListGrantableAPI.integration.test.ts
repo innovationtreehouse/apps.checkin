@@ -77,7 +77,7 @@ describe('GET /api/membership-ops/households — awaitingPayment + dates', () =>
         });
         grantableHouseholdId = grantable.householdId;
         const grantableMembership = await prisma.orgMembership.create({ data: { householdId: grantableHouseholdId, status: 'ACTIVE' } });
-        await prisma.orgMembershipProcess.create({ data: { orgMembershipId: grantableMembership.id, kind: 'RENEWAL', status: 'PENDING_PAYMENT', bgClearedAt: new Date() } });
+        await prisma.orgMembershipProcess.create({ data: { orgMembershipId: grantableMembership.id, kind: 'RENEWAL', status: 'PENDING_PAYMENT', contractSignedAt: new Date(), bgClearedAt: new Date() } });
 
         // Stale-lead-BG case: PENDING_PAYMENT + bgClearedAt set, but the lead's own
         // check is stale. Grant comps payment and BG (already cleared on the process)
@@ -88,7 +88,7 @@ describe('GET /api/membership-ops/households — awaitingPayment + dates', () =>
         });
         staleBgHouseholdId = staleBg.householdId;
         const staleBgMembership = await prisma.orgMembership.create({ data: { householdId: staleBgHouseholdId, status: 'ACTIVE' } });
-        await prisma.orgMembershipProcess.create({ data: { orgMembershipId: staleBgMembership.id, kind: 'RENEWAL', status: 'PENDING_PAYMENT', bgClearedAt: new Date() } });
+        await prisma.orgMembershipProcess.create({ data: { orgMembershipId: staleBgMembership.id, kind: 'RENEWAL', status: 'PENDING_PAYMENT', contractSignedAt: new Date(), bgClearedAt: new Date() } });
 
         // Parallel-track case: PENDING_PAYMENT with bgClearedAt NULL (BG still in review,
         // consent recorded). Under (a) the button shows — grant comps payment and the row
@@ -98,7 +98,7 @@ describe('GET /api/membership-ops/households — awaitingPayment + dates', () =>
         });
         parallelTrackHouseholdId = parallel.householdId;
         const parallelMembership = await prisma.orgMembership.create({ data: { householdId: parallelTrackHouseholdId, status: 'ACTIVE' } });
-        await prisma.orgMembershipProcess.create({ data: { orgMembershipId: parallelMembership.id, kind: 'RENEWAL', status: 'PENDING_PAYMENT', bgClearedAt: null, bgConsentAt: new Date() } });
+        await prisma.orgMembershipProcess.create({ data: { orgMembershipId: parallelMembership.id, kind: 'RENEWAL', status: 'PENDING_PAYMENT', contractSignedAt: new Date(), bgClearedAt: null, bgConsentAt: new Date() } });
     });
 
     afterAll(async () => {
@@ -150,7 +150,7 @@ describe('GET /api/membership-ops/households — awaitingPayment + dates', () =>
             data: { email: `joining-${TAG}@example.com`, name: 'Joining Lead', isHouseholdLead: true, household: { create: { name: `Joining HH ${TAG}` } } },
         });
         const m = await prisma.orgMembership.create({ data: { householdId: lead.householdId } });
-        await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', bgConsentAt: new Date() } });
+        await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', contractSignedAt: new Date(), bgConsentAt: new Date() } });
 
         const data = await (await get()).json();
         expect(data.households.find((x: { id: number }) => x.id === lead.householdId).awaitingPayment).toBe(true);
