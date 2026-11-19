@@ -18,6 +18,8 @@ import type { FacilityCloseVia, Person, Visit } from '@/generated/prisma/client'
 import type { NextRequest } from 'next/server';
 import { SCAN_PROTOCOL_VERSION } from '@/lib/scanProtocol';
 import { lockFacility } from '@/lib/facilityLock';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaClient } from '@/generated/prisma/client';
 
 jest.mock('@/lib/auth', () => ({
     ...jest.requireActual('@/lib/auth'),
@@ -35,6 +37,10 @@ jest.mock('@/lib/email', () => ({
 jest.mock('@/lib/postEventEmails', () => ({
     processPostEventEmails: jest.fn().mockResolvedValue({ processed: 0, sent: 0 }),
 }));
+
+// The test's own held transaction runs on this connection, so the app's single connection waits on the lock, not on the pool.
+const holder = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
+afterAll(() => holder.$disconnect());
 
 const TAG = 'facility-close-record-test';
 const HOUR = 3_600_000;
@@ -537,7 +543,7 @@ describe('facility close record and departure log (real DB)', () => {
 
             it('waits for a check-in holding the facility lock, then sweeps it', async () => {
                 let nightly: ReturnType<typeof nightlyGET> | undefined;
-                const visit = await prisma.$transaction(async (tx) => {
+                const visit = await holder.$transaction(async (tx) => {
                     await lockFacility(tx);
                     const visit = await tx.visit.create({ data: { personId: member.id, arrivedAt: new Date() } });
                     nightly = nightlyGET(cronReq());

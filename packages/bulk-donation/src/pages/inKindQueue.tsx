@@ -326,7 +326,7 @@ export default function InKindQueuePage() {
                   <Table.Td>{q.budgetOwnerName ?? "—"}</Table.Td>
                   <Table.Td>
                     {q.revenueBooking || q.expenseBooking ? `Revenue ${q.revenueBooking ?? "—"}, expense ${q.expenseBooking ?? "—"}` : q.qbState ?? "—"}
-                    {q.qbNote && <Text size="xs" c="dimmed">{q.qbNote}</Text>}
+                    {q.qbNote && <Text size="xs" c="dimmed" style={{ whiteSpace: "pre-line" }}>{q.qbNote}</Text>}
                   </Table.Td>
                   <Table.Td>
                     {decidable(q) && mayDecide(q) && (

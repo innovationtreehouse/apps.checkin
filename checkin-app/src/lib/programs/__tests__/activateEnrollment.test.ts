@@ -4,7 +4,7 @@ import { isOrderReversed, raisePaymentException, recordReversal } from "@/lib/fi
 import { takeBackRestockedSeats } from "@/lib/finance/reconcile/reversals";
 import { activateProgramEnrollment, priceMismatch, publicStockDelta } from "../activateEnrollment";
 
-type Row = { personId: number; status: "PENDING" | "ACTIVE"; inventoryHeldAt: Date | null };
+type Row = { personId: number; status: "PENDING" | "ACTIVE"; inventoryHeldAt: Date | null; shopifyOrderId?: string | null };
 // The participant rows the guarded writes act on; findUnique serves a separate
 // snapshot so a test can make a read go stale.
 const mockRows = new Map<number, Row>();
@@ -18,7 +18,13 @@ jest.mock("@/lib/prisma", () => {
         program: { findUnique: jest.fn() },
         auditLog: { findMany: jest.fn(async () => []) },
         programParticipant: {
-            findMany: jest.fn(async () => mockSpent),
+            // peopleSpentBy asks by order; surplusSeats asks for the named people who are active.
+            findMany: jest.fn(async ({ where }: { where: { shopifyOrderId?: string; personId?: { in: number[] } } }) =>
+                where.shopifyOrderId !== undefined
+                    ? mockSpent
+                    : [...mockRows.values()]
+                        .filter((r) => r.status === "ACTIVE" && where.personId?.in.includes(r.personId))
+                        .map((r) => ({ personId: r.personId, shopifyOrderId: r.shopifyOrderId ?? null }))),
             findUnique: jest.fn(async ({ where }: { where: { programId_personId: { personId: number } } }) => {
                 const id = where.programId_personId.personId;
                 return mockSnapshots.get(id) ?? mockRows.get(id) ?? null;
@@ -27,7 +33,7 @@ jest.mock("@/lib/prisma", () => {
                 const row = mockRows.get(where.personId);
                 if (!row || row.status !== "PENDING") return { count: 0 };
                 if ("inventoryHeldAt" in where && (where.inventoryHeldAt === null) !== (row.inventoryHeldAt === null)) return { count: 0 };
-                Object.assign(row, { status: data.status, inventoryHeldAt: data.inventoryHeldAt });
+                Object.assign(row, { status: data.status, inventoryHeldAt: data.inventoryHeldAt, shopifyOrderId: data.shopifyOrderId });
                 return { count: 1 };
             }),
         },
@@ -115,10 +121,13 @@ describe("activateProgramEnrollment public stock", () => {
     });
 
     it("a redelivery activates nobody and moves no stock", async () => {
-        mockRows.set(1, { personId: 1, status: "ACTIVE", inventoryHeldAt: null });
+        mockRows.set(1, { personId: 1, status: "ACTIVE", inventoryHeldAt: null, shopifyOrderId: "1" });
+        mockSpent.push({ personId: 1 });
         const res = await activateProgramEnrollment({ programId: 7, personIds: [1], shopifyOrderId: "1", lines: [{ variantId: "claim", quantity: 1 }] });
-        expect(res).toEqual({ activatedCount: 0, releasedHoldCount: 0, claimantSeatCount: 0 });
+        expect(res).toMatchObject({ activatedCount: 0, releasedHoldCount: 0, claimantSeatCount: 0 });
         expect(mockStock).toEqual([]);
+        expect(raisePaymentException).not.toHaveBeenCalledWith("UNCLAIMED_SEATS", expect.anything());
+        expect(raisePaymentException).not.toHaveBeenCalledWith("DUPLICATE_PAYMENT", expect.anything());
     });
 
     it("an uncapped program tracks no public stock to take a claimant seat from", async () => {
@@ -183,6 +192,33 @@ describe("activateProgramEnrollment public stock", () => {
         seat(2, false);
         const res = await activateProgramEnrollment({ programId: 7, personIds: [1, 2], shopifyOrderId: "5", lines: [{ variantId: "pub", quantity: 2, currentQuantity: 1 }] });
         expect(res.activatedCount).toBe(1);
+    });
+
+    it("takes no claimant seat from public stock for a claimant line refunded to nothing", async () => {
+        seat(1, false);
+        const res = await activateProgramEnrollment({
+            programId: 7,
+            personIds: [1],
+            shopifyOrderId: "5",
+            lines: [{ variantId: "pub", quantity: 1, currentQuantity: 1 }, { variantId: "claim", quantity: 1, currentQuantity: 0 }],
+        });
+        expect(res).toEqual({ activatedCount: 1, releasedHoldCount: 0, claimantSeatCount: 0 });
+        expect(mockStock).toEqual([]);
+    });
+
+    it("raises the seat it leaves unspent when someone it names was activated another way meanwhile", async () => {
+        mockRows.set(1, { personId: 1, status: "ACTIVE", inventoryHeldAt: null, shopifyOrderId: null }); // approved by the Board
+        seat(2, true);
+        const res = await activateProgramEnrollment({ programId: 7, personIds: [1, 2], shopifyOrderId: "5", lines: [{ variantId: "pub", quantity: 2 }] });
+        expect(res.activatedCount).toBe(1);
+        expect(raisePaymentException).toHaveBeenCalledWith("DUPLICATE_PAYMENT", { shopifyOrderId: "5", programId: 7, personId: 1 });
+    });
+
+    it("raises nothing when every seat it was paid for is filled", async () => {
+        seat(1, false);
+        seat(2, false);
+        await activateProgramEnrollment({ programId: 7, personIds: [1, 2], shopifyOrderId: "5", lines: [{ variantId: "pub", quantity: 2 }] });
+        expect(raisePaymentException).not.toHaveBeenCalled();
     });
 });
 
