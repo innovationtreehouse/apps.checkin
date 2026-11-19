@@ -13,8 +13,8 @@ interface SeedResult {
 /**
  * /expense/capital-seed — FINANCE seeds the capital register from historical QuickBooks asset
  * numbers. Paste a JSON array of { assetNumber, description, acquisitionDate?, costCents?,
- * depreciationYears?, parentAssetNumber?, sourceQbTxnId?, sourceQbTxnEntity? ("Bill" | "Purchase") };
- * re-running skips existing assets.
+ * depreciationYears?, parentAssetNumber?, sourceQbTxnId?, sourceQbTxnEntity? ("Bill" | "Purchase") }.
+ * An exact repeat of a seeded row is skipped; a number already issued is refused, row by row.
  */
 export default function CapitalSeedPage() {
   const [text, setText] = useState("");
@@ -42,7 +42,7 @@ export default function CapitalSeedPage() {
       <Title order={3} mb="md">Capital register seed</Title>
       <Paper withBorder p="md" maw={720}>
         <Stack>
-          <Text size="sm" c="dimmed">One record per physical asset (ITFA numbers). Existing asset numbers are skipped.</Text>
+          <Text size="sm" c="dimmed">One record per physical asset (ITFA numbers). Seed all history before new expenses take numbers. An exact repeat of a seeded row is skipped; a number already issued is refused.</Text>
           <Textarea autosize minRows={8} placeholder='[{"assetNumber":"ITFA001","description":"Table saw"}]' value={text} onChange={(e) => setText(e.currentTarget.value)} />
           <Button onClick={() => void submit()} disabled={!text.trim()}>Seed</Button>
           {error && <Text c="red" size="sm">{error}</Text>}
@@ -50,11 +50,13 @@ export default function CapitalSeedPage() {
       </Paper>
       {result && (
         <>
-          <Text mt="md">Created {result.created} · skipped {result.skipped} · errors {result.errors}</Text>
+          <Text mt="md" c={result.errors ? "red" : undefined}>Created {result.created} · skipped {result.skipped} · refused {result.errors}</Text>
           <Table maw={720}>
             <Table.Tbody>
-              {result.results.map((r) => (
-                <Table.Tr key={r.assetNumber}><Table.Td>{r.assetNumber}</Table.Td><Table.Td>{r.status}</Table.Td><Table.Td>{r.error ?? ""}</Table.Td></Table.Tr>
+              {result.results.map((r, i) => (
+                <Table.Tr key={i} c={r.status === "error" ? "red" : undefined}>
+                  <Table.Td>{r.assetNumber}</Table.Td><Table.Td>{r.status === "error" ? "refused" : r.status}</Table.Td><Table.Td>{r.error ?? ""}</Table.Td>
+                </Table.Tr>
               ))}
             </Table.Tbody>
           </Table>
