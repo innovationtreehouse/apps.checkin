@@ -90,8 +90,8 @@ defineRoute({ endpoint: 'POST /api/donations/in-kind/manual/[id]/decision', auth
 defineRoute({ endpoint: 'GET /api/donations/settings', authorize: 'finance-or-board', envelope: null, returns: ['DonationOrgSettings'], orderedView: FINANCE_OR_BOARD_NO_PII_VIEW });
 defineRoute({ endpoint: 'PATCH /api/donations/settings', authorize: 'finance-or-board', envelope: null, returns: ['DonationOrgSettings'], orderedView: FINANCE_OR_BOARD_NO_PII_VIEW });
 
-// Settling a receipt gift's anomaly (a withdrawal or a replay conflict) —
-// FINANCE only. Settling a withdrawal clears the donor, so no view grants `pii`.
+// Settling a receipt gift's replay conflict — FINANCE only. The reply carries no
+// donor, so no view grants `pii`.
 defineRoute({ endpoint: 'POST /api/donations/in-kind/receipt/[id]/settle', authorize: 'finance', envelope: null, returns: ['InKindSettleResult'], orderedView: FINANCE_NO_PII_VIEW });
 
 // Resolving a gift's QuickBooks match (book, skip or match an existing entry) —
