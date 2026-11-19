@@ -262,9 +262,9 @@ describe('facility close record and departure log (real DB)', () => {
             expect(close.closerVisitId).toBe(kv.id);
         });
 
-        it('a keyholder whose household is denied cannot close: the scan is an ordinary checkout', async () => {
+        it.each(['DENIED', 'REVOKED'] as const)('a keyholder whose household is %s cannot close: the scan is an ordinary checkout', async (status) => {
             asKiosk();
-            const denial = await prisma.orgMembership.create({ data: { householdId: keyholder2.householdId, status: 'DENIED' } });
+            const denial = await prisma.orgMembership.create({ data: { householdId: keyholder2.householdId, status } });
             try {
                 await open(keyholder2);
                 await open(member);
