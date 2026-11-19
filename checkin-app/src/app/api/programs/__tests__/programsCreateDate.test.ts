@@ -17,6 +17,14 @@ import prisma from '@/lib/prisma';
 import { ArchivedHouseholdError, lockLiveHouseholdsOf } from '@/lib/household/archiveGuard';
 
 // The archived-household guard has its own tests; here every household is live.
+// A new leader here meets the membership and clearance requirements; programLeaderIneligibility has its own tests.
+jest.mock('@/lib/orgMembership', () => ({ ...jest.requireActual('@/lib/orgMembership'), isActiveOrgMember: jest.fn().mockResolvedValue(true) }));
+jest.mock('@/lib/membership/checkStanding', () => ({
+    ...jest.requireActual('@/lib/membership/checkStanding'),
+    checkStanding: jest.fn().mockReturnValue('CLEARED'),
+    liveBgThreshold: jest.fn().mockResolvedValue(null),
+    loadCheckReviews: jest.fn().mockResolvedValue(new Map()),
+}));
 jest.mock("@/lib/household/archiveGuard", () => ({
     ...jest.requireActual("@/lib/household/archiveGuard"),
     lockLiveHouseholds: jest.fn(),
@@ -346,6 +354,35 @@ describe('POST /api/programs — a leader in an archived household', () => {
         (lockLiveHouseholdsOf as jest.Mock).mockRejectedValueOnce(new ArchivedHouseholdError());
         const res = await create();
         expect(res.status).toBe(409);
+        expect(mockProgramCreate).not.toHaveBeenCalled();
+    });
+});
+
+describe('POST /api/programs — a leader who does not meet the policy', () => {
+    const create = () => POST(new Request('http://localhost/api/programs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Test Program', leadMentorId: 7, startAt: '2024-09-01', endAt: '2024-12-15', maxParticipants: 50 }),
+    }) as unknown as import('next/server').NextRequest);
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: 1, isBoardMember: true } });
+    });
+
+    it('is refused when not in an ACTIVE household membership, before anything is created', async () => {
+        (jest.requireMock('@/lib/orgMembership').isActiveOrgMember as jest.Mock).mockResolvedValueOnce(false);
+        const res = await create();
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toMatch(/active Treehouse Membership/);
+        expect(mockProgramCreate).not.toHaveBeenCalled();
+    });
+
+    it('is refused without a current background-check clearance', async () => {
+        (jest.requireMock('@/lib/membership/checkStanding').checkStanding as jest.Mock).mockReturnValueOnce('NONE');
+        const res = await create();
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toMatch(/background-check clearance/);
         expect(mockProgramCreate).not.toHaveBeenCalled();
     });
 });

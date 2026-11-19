@@ -520,17 +520,18 @@ async function seedProgramSpread(prisma: Db): Promise<void> {
     }
 }
 
-// The spread's own people, apart from the flow-test personas: a lead, and a
-// member household whose two youths fill the enrolled programs.
+// The spread's own people: a lead, an ACTIVE member cleared today who may be named
+// to a new program, and a member household whose two youths fill the enrolled programs.
 async function seedProgramPeople(prisma: Db): Promise<{ leadId: number; youthIds: number[] }> {
     const lead = await prisma.person.upsert({
         where: { email: "program.lead@example.com" },
-        update: {},
+        update: { lastBackgroundCheck: new Date() },
         create: {
             email: "program.lead@example.com",
             name: "Program Lead",
             phone: "555-555-0014",
             dateOfBirth: yearsAgo(45),
+            lastBackgroundCheck: new Date(),
             household: { create: { name: "Program Lead Household", orgMembership: { create: { status: "ACTIVE" } } } },
         },
     });

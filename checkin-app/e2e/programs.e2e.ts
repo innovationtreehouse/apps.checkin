@@ -6,7 +6,7 @@
  */
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { addYouth, asViewer, settledFamily } from "./support/families";
-import { claim, inDays, newLeader, newProgram, newSession, paidYouth, PROGRAM_DATES } from "./support/programs";
+import { claim, inDays, LEADER, newProgram, newSession, paidYouth, PROGRAM_DATES } from "./support/programs";
 import { BOARD } from "./support/seedState";
 
 const REASON = "The family moved away.";
@@ -65,7 +65,7 @@ async function auditOf(page: Page, personId: number): Promise<Locator> {
 test.describe("programs in the browser", () => {
   test("P1: the Board creates a program", async ({ browser }) => {
     const name = `Browser Program ${Date.now()}`;
-    const leader = await newLeader();
+    const leader = LEADER;
 
     await asViewer(browser, BOARD, async (page) => {
       await page.goto("/program-ops/new");

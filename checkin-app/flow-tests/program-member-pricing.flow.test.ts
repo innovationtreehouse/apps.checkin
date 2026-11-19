@@ -26,7 +26,7 @@ describe("flow: program purchase with member pricing", () => {
         const board = await loginAs("boardmember@example.com");
         const member = await loginAs("member.pricing@example.com");
         const nonMember = await loginAs("certified.adult@example.com");
-        const lead = await loginAs("inventory.manager@example.com");
+        const lead = await loginAs("program.lead@example.com");
 
         const memberId = member.personaId;
 

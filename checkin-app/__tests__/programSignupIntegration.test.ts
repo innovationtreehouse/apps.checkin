@@ -12,6 +12,8 @@ process.env.NEXTAUTH_SECRET ||= 'integration-test-nextauth-secret';
 
 // Mocking dependencies
 // The archived-household guard has its own tests; here every household is live.
+// A new leader here meets the membership and clearance requirements; leaderEligibility has its own tests.
+jest.mock('@/lib/programs/leaderEligibility', () => ({ ...jest.requireActual('@/lib/programs/leaderEligibility'), programLeaderIneligibility: jest.fn().mockResolvedValue(null) }));
 jest.mock("@/lib/household/archiveGuard", () => ({
     ...jest.requireActual("@/lib/household/archiveGuard"),
     lockLiveHouseholds: jest.fn(),

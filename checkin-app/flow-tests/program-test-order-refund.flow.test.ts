@@ -57,7 +57,7 @@ async function carrySettlesAt(board: Session, programId: number, expected: numbe
 describe("flow: test order refunded before its paid webhook", () => {
     it("adds no store seat", async () => {
         const board = await loginAs("boardmember@example.com");
-        const lead = await loginAs("inventory.manager@example.com");
+        const lead = await loginAs("program.lead@example.com");
         const tag = Date.now().toString(36);
 
         const created = await api<ProgramCreate>(board, "/api/programs", {

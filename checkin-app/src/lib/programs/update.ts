@@ -9,6 +9,7 @@ import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { emailBoardMembers } from "@/lib/emailRecipients";
 import { config } from "@/lib/config";
 import { orgCalendarDay, parseDateOnly } from "@/lib/time";
+import { programLeaderIneligibility } from "@/lib/programs/leaderEligibility";
 import { classify, isSaleEnded, saleStockDelta } from "@/lib/programs/saleState";
 import { countStockTakenSeats } from "@/lib/program/capacity";
 import { membershipYearLabel, programYearsTouched } from "@/lib/programYear";
@@ -198,13 +199,18 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         }
         const mentor = await prisma.person.findUnique({
             where: { id: leadMentorId },
-            select: { dateOfBirth: true, isDeclaredAdult: true, householdId: true },
+            select: { dateOfBirth: true, isDeclaredAdult: true, householdId: true, lastBackgroundCheck: true },
         });
         if (!mentor) {
             return refuse("invalid", "Program Leader not found");
         }
         if (!isLeaderAgeEligible(mentor)) {
             return refuse("invalid", "Program Leader must be at least 23 years old");
+        }
+        // A leader already in place stays; only a new assignment meets the membership and clearance requirements.
+        if (leadMentorId !== currentProgram.leadMentorId) {
+            const ineligible = await programLeaderIneligibility(leadMentorId, mentor);
+            if (ineligible) return refuse("invalid", ineligible);
         }
         // Nobody names themself or their household as a program's leader (Ethics
         // Policy III.5). The edit form resends the current lead on every save, so
