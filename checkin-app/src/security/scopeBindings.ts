@@ -270,7 +270,7 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     'MembershipPaymentPlanDecision',
     'PaymentQueueRow',
     'MatchAuditEnrollmentRow',
-    // Read only nested in Expense; a binding would drop staff views only from a top-level read.
+    // Served only nested in Expense. A their_own binding on userId would drop staff views only from a top-level response.
     'ExpenseAuditLog',
 ]);
 
