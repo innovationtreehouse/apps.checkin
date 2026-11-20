@@ -526,10 +526,7 @@ export async function postPayout(
       case "failed":
         // The post failed whether or not this update commits, so the report stands either way.
         reportFailed(result);
-        if (current.kind === RECON_KIND.POST_FAILED) {
-          return { outcome: "failed" as const, row: await tx.payoutReconciliation.update({ where: { id }, data: { postClaimedAt: null } }) };
-        }
-        return settle("failed", "reconciliation.post_failed", { status: RECON_STATUS.OPEN, kind: RECON_KIND.POST_FAILED, reason: null }, result.error);
+        return settle("failed", "reconciliation.post_failed", { status: RECON_STATUS.OPEN, kind: RECON_KIND.POST_FAILED, reason: failureNote(result) }, result.error);
     }
   });
 
@@ -543,6 +540,13 @@ export async function postPayout(
     result = { kind: "conflict", note: `deposit ${depositId} is already held by payout ${holder?.id ?? "unknown"}` };
     return settleIn();
   }
+}
+
+/** What finance reads on a failed post: a refusal's fault codes and request id, never the fault text; else the error. */
+function failureNote(f: PostFailure): string {
+  if (!f.codes) return f.error.slice(0, 500);
+  const codes = f.codes.length ? `code ${f.codes.join(", ")}` : "no fault code";
+  return `QuickBooks refused: ${codes} (request ${f.requestId ?? "unknown"})`;
 }
 
 /** Park a row larger than its source's per-run cents cap for finance; it is never auto-created. */

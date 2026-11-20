@@ -1,8 +1,10 @@
 // Read-only catalog reference data for the host's CatalogReader adapters (X3, X10).
 import { db } from "../db";
 import { createCatalogRepository } from "../repositories/catalog";
+import { createProposalRepository } from "../repositories/proposal";
 
 const catalogRepo = createCatalogRepository(db);
+const proposalRepo = createProposalRepository(db);
 
 const SEARCH_LIMIT = 25;
 
@@ -27,6 +29,12 @@ export function getItemNames(gtin13s: string[]) {
 /** The approved, non-archived item with this GTIN, or null. */
 export function getActiveItem(gtin13: string) {
   return catalogRepo.findActiveItemByGtin13(gtin13);
+}
+
+/** This org's provisional part with this GTIN, with the real part it resolved to; null for another org's or an unknown GTIN. */
+export async function getOrgProvisionalItem(orgId: string, gtin13: string) {
+  const row = await proposalRepo.findOrgProvisionalItemByGtin13(orgId, gtin13);
+  return row ? { status: row.status, proposedName: row.proposedName, resolvedToGtin13: row.resultGtin13 } : null;
 }
 
 /** Up to `take` active items whose name, GTIN, active reference part number, category or subcategory name contains the query in any case; a blank query matches nothing. */
