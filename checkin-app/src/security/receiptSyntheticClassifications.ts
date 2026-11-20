@@ -42,6 +42,10 @@
  * run's counts (`lastRun`: messages read, receipts made, held, still waiting,
  * failed, and whether work remains). Counts only, `internal`.
  *
+ * ReceiptMailReplay — one captured email processed again: its `status`
+ * (processed, waiting or expired) and, when expired, the `message` saying so.
+ * No email content, key or header. `internal`.
+ *
  * ReceiptFlowStatus — how many records sit in each state of the receipt flow:
  * receipts (plus finalized ones not yet delivered), receiving records and
  * expenses, each a list of `{ state, label, count }`, and when they were read.
@@ -265,6 +269,7 @@ export const classifications = {
     createdAt: "internal",
   },
   ReceiptMailCatchUp: { status: "internal", lastRunAt: "internal", lastRun: "internal" },
+  ReceiptMailReplay: { status: "internal", message: "internal" },
 } as const;
 
 export const relations = {

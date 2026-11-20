@@ -84,6 +84,7 @@ const REIMBURSED_ROUTE = 'GET /api/receipts/reimbursements';
 const REIMBURSEE_ROUTES = [...CONFIRMATION_ROUTES, REIMBURSED_ROUTE];
 /** The automatic-reading switch: sysadmin, FINANCE and BOARD (expenses.md). */
 const OCR_SWITCH = 'PUT /api/receipts/settings/ocr';
+const MAIL_REPLAY = 'POST /api/receipts/mail-messages/[id]/replay';
 const jsonRoutes = [...allRoutes()].map(([e]) => e).filter(e => RECEIPT.test(e));
 const fileRoutes = [...allFileRoutes()].map(([e]) => e).filter(e => RECEIPT.test(e));
 
@@ -105,7 +106,7 @@ describe('receipt routes are registered', () => {
     });
 
     it('never admits public, kiosk or plain authenticated callers, except to the reimbursee\'s own routes', () => {
-        for (const e of [...jsonRoutes, ...fileRoutes].filter((e) => !REIMBURSEE_ROUTES.includes(e) && e !== OCR_SWITCH)) {
+        for (const e of [...jsonRoutes, ...fileRoutes].filter((e) => !REIMBURSEE_ROUTES.includes(e) && e !== OCR_SWITCH && e !== MAIL_REPLAY)) {
             const spec = getRoute(e) ?? getFileRoute(e);
             expect(['receipt-submitter', 'finance', 'finance-or-board']).toContain(spec?.authorize);
         }
@@ -113,6 +114,10 @@ describe('receipt routes are registered', () => {
 
     it('opens only the automatic-reading switch to sysadmin, FINANCE and BOARD', () => {
         expect(getRoute(OCR_SWITCH)?.authorize).toEqual({ anyRole: ['isSysadmin', 'isFinance', 'isBoardMember'] });
+    });
+
+    it('opens mail replay to FINANCE and sysadmins only', () => {
+        expect(getRoute(MAIL_REPLAY)?.authorize).toEqual({ anyRole: ['isFinance', 'isSysadmin'] });
     });
 });
 
@@ -229,8 +234,8 @@ describe('role admission', () => {
         }
     });
 
-    it('no receipt view grants a sysadmin anything', () => {
-        for (const e of [...jsonRoutes, ...fileRoutes]) {
+    it('no receipt view but mail replay grants a sysadmin anything', () => {
+        for (const e of [...jsonRoutes, ...fileRoutes].filter((e) => e !== MAIL_REPLAY)) {
             const spec = getRoute(e) ?? getFileRoute(e);
             expect(spec?.orderedView.map(([role]) => role)).not.toContain('isSysadmin');
         }
