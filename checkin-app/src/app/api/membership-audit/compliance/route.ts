@@ -8,6 +8,7 @@ import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { bgFreshThreshold, personBgVerdict } from "@/lib/membership/personBgCheck";
 import { agreementCycleFloor, autoPopulationWhere } from "@/lib/membership/personAgreementTriggers";
 import { bgObligatedWhere, ENROLLED_PARTICIPANT } from "@/lib/person/filters";
+import { positionHolders } from "@/lib/membership/positionHolders";
 
 export const dynamic = "force-dynamic";
 
@@ -48,6 +49,10 @@ function mergeSourceIdentities(s: { mergedArchive: { fromId: number; snapshot: u
  *   peopleWithDisputedCheck — people whose own check review is rejected, or whose
  *                          rejection was sent back and has not cleared (BG_DISPUTED).
  *                          Listed whatever the policy: a dispute ignores the window.
+ *   positionHolders      — everyone holding a volunteer, program-leader, bucket or
+ *                          role position, one row per person with their positions
+ *                          and whether their check is valid at the start of the
+ *                          year they serve. Skipped when the policy is unset.
  * Check-obligated = bgObligatedWhere: program-attached, or a signing adult (lead)
  * of an ACTIVE member household.
  *
@@ -183,6 +188,11 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
         programName: null,
         reason: "BG_DISPUTED",
     }));
+
+    // 4c. Position holders, judged against the start of the year each serves in.
+    const positionHolderRows = isRecheckPolicySet(bgRecheckMonths) && settings?.orgMembershipYearBoundary
+        ? await positionHolders(prisma, settings.orgMembershipYearBoundary, bgRecheckMonths, now)
+        : [];
 
     // 5. Blanket-stamped background checks: a household clearance with no per-adult
     //    subject, where EVERY lead carries the same `new Date()` that set the
@@ -369,7 +379,7 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
     const agreementLists = { peopleAwaitingAgreement, peopleNeedingAgreement };
 
     if (reasons.size === 0) {
-        return NextResponse.json({ households: [], peopleNeedingBgCheck, peopleMissingDob, peopleWithDisputedCheck, blanketStamped, mergeInheritedBgChecks, ...agreementLists });
+        return NextResponse.json({ households: [], peopleNeedingBgCheck, peopleMissingDob, peopleWithDisputedCheck, positionHolders: positionHolderRows, blanketStamped, mergeInheritedBgChecks, ...agreementLists });
     }
 
     const households = await prisma.household.findMany({
@@ -407,5 +417,5 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
         };
     });
 
-    return NextResponse.json({ households: result, peopleNeedingBgCheck, peopleMissingDob, peopleWithDisputedCheck, blanketStamped, mergeInheritedBgChecks, ...agreementLists });
+    return NextResponse.json({ households: result, peopleNeedingBgCheck, peopleMissingDob, peopleWithDisputedCheck, positionHolders: positionHolderRows, blanketStamped, mergeInheritedBgChecks, ...agreementLists });
 });
