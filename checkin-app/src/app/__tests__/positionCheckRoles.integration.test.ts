@@ -92,6 +92,17 @@ describe('a grantee without a current check', () => {
         expect(await checkEmailStuckItems()).not.toContainEqual(expect.objectContaining({ id: String(ack.id) }));
     });
 
+    it('gets one email naming every role granted in one save', async () => {
+        const grantee = await person();
+        expect((await patch({ targetUserId: grantee.id, isKeyholder: true, isOperations: true, acknowledgeCheck: true })).status).toBe(200);
+
+        expect((await acks(grantee.id)).map((a) => (a.newData as { position: string }).position).sort()).toEqual(['KEYHOLDER', 'OPERATIONS']);
+        expect(sendEmail).toHaveBeenCalledTimes(1);
+        const html = jest.mocked(sendEmail).mock.calls[0][2];
+        expect(html).toContain('Keyholder');
+        expect(html).toContain('Operations');
+    });
+
     it('is warned when the check lapsed before the yardstick date, by one day', async () => {
         const threshold = await positionCheckThreshold(prisma);
         const grantee = await person({ lastBackgroundCheck: dateOnly(new Date(threshold!.getTime() - DAY)) });

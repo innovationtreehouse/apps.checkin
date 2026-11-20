@@ -118,10 +118,10 @@ export const REGISTRY = {
         defaultBody: "Good news — your household already holds a current background check, so no new one is needed. The last step is paying your membership fee: {{actionLink}}",
     },
     "membership.positionNeedsCheck": {
-        allowedTokens: { name: text, position: text, actionLink: link("Start your background check") },
-        sampleCtx: { name: "Jordan Rivera", position: "Board member", actionLink: SAMPLE_URL },
+        allowedTokens: { name: text, positions: text, actionLink: link("Start your background check") },
+        sampleCtx: { name: "Jordan Rivera", positions: "Board member, Finance", actionLink: SAMPLE_URL },
         defaultSubject: "Your new position needs a current background check",
-        defaultBody: "Hi {{name}},\n\nYou've been given the {{position}} position at the Innovation Treehouse. It needs a current background check, and yours isn't current.\n\nYou can start one yourself from your membership page: {{actionLink}}",
+        defaultBody: "Hi {{name}},\n\nYou've been given a position at the Innovation Treehouse that needs a current background check: {{positions}}. Yours isn't current.\n\nYou can start one yourself from your membership page: {{actionLink}}",
     },
     "membership.welcome": {
         allowedTokens: { actionLink: link("Visit your dashboard") },

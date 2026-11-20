@@ -68,63 +68,74 @@ export async function gatePositionCheck(
     return row.id;
 }
 
+type EmailOutcome = { ok?: boolean; ackIds?: number[] };
+
 /**
- * Sends the assignee the one email an acknowledgement owes and records the outcome,
- * attributed to `actorId`. A failed send leaves the acknowledgement stuck on the
- * Problems list until someone presses Retry. Never throws.
+ * Sends the assignee one email naming every position in `ackIds` (one assignment's
+ * acknowledgements, all for the same person) and records the outcome under the first
+ * id, attributed to `actorId`. A failed send stays stuck on the Problems list until
+ * someone presses Retry. Never throws.
  */
-export async function sendCheckEmail(ackId: number, actorId: number): Promise<boolean> {
+export async function sendCheckEmail(ackIds: readonly number[], actorId: number): Promise<boolean> {
     let ok = false;
     try {
-        const ack = await prisma.auditLog.findFirst({ where: { id: ackId, tableName: ACK_TABLE }, select: { affectedEntityId: true, newData: true } });
-        const position = (ack?.newData as { position?: Position } | null)?.position;
-        const person = ack ? await prisma.person.findUnique({ where: { id: ack.affectedEntityId }, select: { name: true, email: true } }) : null;
-        if (person?.email && position && position in POSITION_LABELS) {
+        const acks = await prisma.auditLog.findMany({ where: { id: { in: [...ackIds] }, tableName: ACK_TABLE }, select: { affectedEntityId: true, newData: true }, orderBy: { id: "asc" } });
+        const positions = acks
+            .map((a) => (a.newData as { position?: string } | null)?.position)
+            .filter((p): p is Position => !!p && p in POSITION_LABELS)
+            .map((p) => POSITION_LABELS[p]);
+        const person = acks.length ? await prisma.person.findUnique({ where: { id: acks[0].affectedEntityId }, select: { name: true, email: true } }) : null;
+        if (person?.email && positions.length) {
             ok = await sendTemplated("membership.positionNeedsCheck", person.email, {
                 name: person.name,
-                position: POSITION_LABELS[position],
+                positions: positions.join(", "),
                 actionLink: `${config.baseUrl()}/membership`,
             });
         }
     } catch (err) {
-        logger.error(`[position check] email for acknowledgement ${ackId} failed:`, err);
+        logger.error(`[position check] email for acknowledgements ${ackIds.join(", ")} failed:`, err);
     }
     try {
         await prisma.auditLog.create({
-            data: { ...personActor(actorId), action: "CREATE", tableName: EMAIL_TABLE, affectedEntityId: ackId, newData: { ok } },
+            data: { ...personActor(actorId), action: "CREATE", tableName: EMAIL_TABLE, affectedEntityId: ackIds[0], newData: { ok, ackIds: [...ackIds] } },
         });
     } catch (err) {
-        logger.error(`[position check] could not record the email outcome for acknowledgement ${ackId}:`, err);
+        logger.error(`[position check] could not record the email outcome for acknowledgements ${ackIds.join(", ")}:`, err);
     }
     return ok;
 }
 
-/** Sends each acknowledgement's email, once its assignment has committed. */
+/** Sends the one email an assignment's acknowledgements owe, once the assignment has committed. */
 export async function emailAfterAssignment(ackIds: readonly number[], actorId: number): Promise<void> {
-    for (const id of ackIds) await sendCheckEmail(id, actorId);
+    if (ackIds.length) await sendCheckEmail(ackIds, actorId);
 }
 
-/** Each acknowledgement whose email has failed and not since gone out, timed by its first failure. */
-export async function checkEmailStuckItems(): Promise<StuckItem[]> {
+/** Each failed email not since sent, as its acknowledgement ids, keyed by the first, with its first failure. */
+async function stuckEmails(): Promise<Map<number, { ackIds: number[]; failedAt: Date }>> {
     const rows = await prisma.auditLog.findMany({
         where: { tableName: EMAIL_TABLE },
         select: { affectedEntityId: true, newData: true, timestamp: true },
         orderBy: { id: "asc" },
     });
-    const firstFailure = new Map<number, Date>();
+    const failed = new Map<number, { ackIds: number[]; failedAt: Date }>();
     const sent = new Set<number>();
     for (const r of rows) {
-        if ((r.newData as { ok?: boolean } | null)?.ok === true) sent.add(r.affectedEntityId);
-        else if (!firstFailure.has(r.affectedEntityId)) firstFailure.set(r.affectedEntityId, r.timestamp);
+        const outcome = (r.newData ?? {}) as EmailOutcome;
+        if (outcome.ok === true) sent.add(r.affectedEntityId);
+        else if (!failed.has(r.affectedEntityId)) failed.set(r.affectedEntityId, { ackIds: outcome.ackIds ?? [r.affectedEntityId], failedAt: r.timestamp });
     }
-    return [...firstFailure]
-        .filter(([ackId]) => !sent.has(ackId))
-        .map(([ackId, failedAt]) => ({ id: String(ackId), step: CHECK_EMAIL_STEP, href: "/membership-ops/roles", failedAt }));
+    for (const id of sent) failed.delete(id);
+    return failed;
+}
+
+/** Each email that failed and has not since gone out, timed by its first failure. */
+export async function checkEmailStuckItems(): Promise<StuckItem[]> {
+    return [...(await stuckEmails())].map(([id, { failedAt }]) => ({ id: String(id), step: CHECK_EMAIL_STEP, href: "/membership-ops/roles", failedAt }));
 }
 
 /** Retry for a stuck check email: 404 when it isn't stuck, 409 when it fails again. */
 export async function retryCheckEmail(item: { id: string; step: string }, by: { userId: number }): Promise<void> {
-    const stuck = (await checkEmailStuckItems()).some((i) => i.id === item.id && i.step === item.step);
+    const stuck = item.step === CHECK_EMAIL_STEP ? (await stuckEmails()).get(Number(item.id)) : undefined;
     if (!stuck) throw new ServiceError(404, "No such stuck item");
-    if (!(await sendCheckEmail(Number(item.id), by.userId))) throw new ServiceError(409, "The email failed again");
+    if (!(await sendCheckEmail(stuck.ackIds, by.userId))) throw new ServiceError(409, "The email failed again");
 }
