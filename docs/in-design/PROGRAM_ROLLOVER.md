@@ -249,7 +249,9 @@ membership-sync population once it ships) and decides each one.
 **Decided (owner, Q19):** a reserved person is on the roster, marked
 "reserved", and may check in at the kiosk for the program's sessions: by the
 first session they hold a badge. On team lists (Q29), someone carried over
-stays on in any state and drops off if declined or released; someone new to the
+stays on in any state; if declined or released they stop counting on the new
+run but leave the list only when the run they are on ends (or, if it is
+ongoing, when the next run starts); someone new to the
 chain joins only once paid. Membership sync is not built; this is a
 requirement on its design. They may also sign up for sessions; a declined or
 released reservation loses its sign-ups for sessions not yet started, through
@@ -532,7 +534,7 @@ Numbers are fixed; a settled question is struck, not renumbered.
 | ~~Q26~~ | ~~Moving people between teams.~~ **Decided:** (a) reserve on the new team, then unreserve on the old; a GitHub issue for (b) is opened once the design is built (§5, §9 step 7). | — | — |
 | ~~Q27~~ | ~~Telling the family about an unreserve.~~ **Decided:** no immediate emails; a nightly per-household summary of net changes from a notice table (A → B → C same day reads "moved from A to C"); late reservations warned, never refused (§7). | — | — |
 | Q28 | **Board: deadline vs budget approval.** May a leader move the confirmation deadline after the Board approves the program's budget, or is it fixed in that approval? Put to the Board. | Leader and Board both edit (owner's position) | Championships results land late; the leader moves the deadline a week. |
-| ~~Q29~~ | ~~Team lists for reserved people.~~ **Decided:** someone carried over from the previous run stays on the team list in any state (reserved, confirmed, paid) and drops off if declined or released; someone new to the chain joins only once paid (`ACTIVE`, or a free place). A requirement on the membership-sync design. | — | — |
+| ~~Q29~~ | ~~Team lists for reserved people.~~ **Decided:** someone carried over from the previous run stays on the team list in any state (reserved, confirmed, paid); if declined or released they stop counting on the new run and leave the list when the run they are on ends or hands over (a family declining Fall Training 2027 in July while on Summer 2026 stays on through Summer); someone new to the chain joins only once paid (`ACTIVE`, or a free place). A requirement on the membership-sync design. | — | — |
 | ~~Q30~~ | ~~Treasurer.~~ **Decided:** the policies' "program treasurer" is the budget bucket's treasurer in the software. The bucket outlasts every run, so the copy has nothing to carry; no program-to-bucket link is added. | — | — |
 | Q31 | **Board: who sees lapsed staff checks.** The Board's compliance dashboard already lists them. Should a program leader also see their own runs' staff (volunteers, administrators) whose check has lapsed, name and "check lapsed" only? A balance of privacy and security; put to the Board. | Board only until the Board answers | A core volunteer's check lapsed in October; the Fall Training leader sees it on their program page and reminds them. |
 | Q32 | **Ongoing checkbox.** Who sets it (Board only, or the leader too)? Does "Start next run" copy it? The Board reminder for an ended ongoing run with no next run: how many days after the end does it start, and does it repeat (each night, weekly) or ride an existing Board digest? | Board and leader set it; copied; reminder from 7 days after the end, weekly, in the Board's problems digest | Summer ends 31 August; on 7 September the Board is reminded to start Fall Training or turn ongoing off. |
