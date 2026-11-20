@@ -554,7 +554,10 @@ async function pushProgramStock(
             },
         });
 
-        if (result.error) {
+        if (result.error instanceof StockLeaseLostError) {
+            // Another writer, or a variant change, took the lease: what is still owed is theirs to land.
+            console.warn(`[SHOPIFY] Program ${programId} stock push stopped: ${result.error.message}`);
+        } else if (result.error) {
             console.error(`[Shopify Error] Failed to push stock for program ${programId}:`, result.error);
             await alertStockPush(programId, variantId, reason, result.error);
         } else if (carryAfter < Math.min(0, carryBefore) && !(await isProgramStoreClosed())) {

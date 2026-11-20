@@ -516,6 +516,7 @@ describe('adjustProgramInventory (the one program-stock writer)', () => {
 
         expect(s.adjusts()).toHaveLength(1);
         expect(after()).toMatchObject({ carry: 0, pending: null, leased: false });
+        expect(sendEmail).not.toHaveBeenCalled();
     });
 
     it('stops at the top of the loop once the cap has passed, leaving the rest owed', async () => {

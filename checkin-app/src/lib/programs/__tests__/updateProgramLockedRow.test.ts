@@ -51,6 +51,7 @@ jest.mock('@/lib/prisma', () => ({
         auditLog: { create: jest.fn().mockResolvedValue({}) },
         programParticipant: { findMany: jest.fn().mockResolvedValue([]), count: jest.fn().mockResolvedValue(0) },
         person: { findUnique: jest.fn().mockResolvedValue({ dateOfBirth: null, isDeclaredAdult: true, householdId: 3 }) },
+        event: { count: jest.fn().mockResolvedValue(1) },
     },
 }));
 
@@ -125,6 +126,13 @@ describe('a program stored with its start after its end', () => {
     it('still saves a field other than its dates', async () => {
         rowAtWrite = inverted;
         expect((await updateProgram(inverted, { announceOnOpen: true }, actor)).ok).toBe(true);
+    });
+
+    it('refuses a publish until its dates are fixed', async () => {
+        const planning = { ...inverted, phase: 'PLANNING' } as Program;
+        rowAtWrite = planning;
+        expect(await updateProgram(planning, { phase: 'UPCOMING' }, actor)).toMatchObject({ ok: false, refusal: 'invalid' });
+        expect(tx.program.update).not.toHaveBeenCalled();
     });
 
     it('refuses a date change that leaves the range inverted', async () => {
