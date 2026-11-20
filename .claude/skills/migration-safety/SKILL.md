@@ -125,7 +125,8 @@ check on every already-migrated database and needs the same
 on each one — that's expected, not a sign something's broken.
 
 ## Done criteria
-- [ ] Destructive change, if any, is either split into a follow-up release or
+- [ ] Destructive change, if any, is either split into a follow-up release
+      (its PR unopened or in draft until the earlier one is in prod) or
       justified in the PR description as provably safe to ship together
 - [ ] Non-TS readers/writers grepped to zero (scripts, VOCABULARY.md, audit
       `tableName` literals, seed.ts)
