@@ -125,13 +125,23 @@ starts, and takes a run not marked ongoing off at its end, so a team is not
 dropped and re-added across a short gap.
 
 ```prisma
-ongoing Boolean @default(false)   // on Program: a next run is expected
+ongoing                 Boolean   @default(false)  // on Program: a next run is expected
+ongoingReminderSentAt   DateTime?                  // last "no next run" reminder to the Board
 ```
 
-The nightly sweep reminds the Board about an ongoing run that has ended and has
-no next run: "Robotics — Summer 2026 is ongoing, ended N days ago and has no next
-run. Start it, or turn off ongoing." Who sets the checkbox, whether "Start next
-run" copies it, and when and how often the reminder fires are Q32.
+The nightly sweep reminds the Board about an ongoing run with no next run,
+starting 30 days before the run ends and then weekly until a next run exists or
+the Board turns ongoing off: "Robotics — Summer 2026 is ongoing, ends 31 August
+and has no next run. Start it, or turn off ongoing." It is its own Board email
+(`program.ongoingNoNextRun`); the problems digest goes to operations, not the
+Board. Each reminder sent is recorded on the run so the weekly cadence survives
+a missed night.
+
+**Decided (owner, Q32):** only the Board (or a sysadmin) sets the checkbox. It
+already appears in the budget template a program leader gets approved, so the
+Board records what it approved. "Start next run" copies it; the Board turns it
+off if the new run's budget says otherwise. The reminder above is Q32's last
+part.
 
 ## 4. Starting the next run, and the Board's switches
 
@@ -143,7 +153,7 @@ carries people over.
 
 | Copied | Not copied | Reset |
 |---|---|---|
-| name, age band, `orgMemberOnly`, `publiclyVisible`, `maxParticipants`, `announceOnOpen`, `reservationsEnabled`, `ongoing` (Q32) | prices, Shopify ids and every stock/sale-sweep column, `offSaleAt`, `confirmationDeadline` | `phase = PLANNING`, `enrollmentStatus = CLOSED`, dates and `appliesToYear` from the form, `announcedAt = null` |
+| name, age band, `orgMemberOnly`, `publiclyVisible`, `maxParticipants`, `announceOnOpen`, `reservationsEnabled`, `ongoing` | prices, Shopify ids and every stock/sale-sweep column, `offSaleAt`, `confirmationDeadline` | `phase = PLANNING`, `enrollmentStatus = CLOSED`, dates and `appliesToYear` from the form, `announcedAt = null` |
 | program leader, program administrators, core and ordinary volunteers, as they stand. Nobody is dropped: a lapsed background check or eligibility shows on the audit screen (§4a), never as an automatic removal | | |
 
 New columns on `Program`:
@@ -446,6 +456,7 @@ Email templates, new keys in `lib/email-templates/registry.ts`:
 | `program.reservation.changes` | nightly, when a household has unsent notices | `{{changes}}` (one line per person: reserved / moved / released, with run, price, deadline), `{{link}}` |
 | `program.reservation.reminder` | each scheduled reminder | `{{programName}}`, `{{people}}`, `{{price}}`, `{{deadline}}`, `{{daysLeft}}`, `{{link}}` |
 | `program.reservation.released` | at the deadline | `{{programName}}`, `{{people}}`, `{{link}}` |
+| `program.ongoingNoNextRun` | to the Board, weekly from 30 days before an ongoing run ends with no next run | `{{programName}}`, `{{endDate}}`, `{{link}}` |
 
 ## 8. Security and routes
 
@@ -461,7 +472,7 @@ Each a registry entry before its route (boundary isolation):
 | `GET/POST/DELETE api/programs/[id]/administrators` | the run's program leader; Board, sysadmin |
 | `POST api/programs/[id]/reservations/[personId]/confirm`, `/decline` | the person (adult) or their household lead |
 | `PATCH api/programs/[id]` gains `reservationsEnabled` | Board, sysadmin |
-| `PATCH api/programs/[id]` gains `ongoing` | per Q32 |
+| `PATCH api/programs/[id]` gains `ongoing` | Board, sysadmin |
 | `PATCH api/programs/[id]` gains `confirmationDeadline` | Board, sysadmin; the run's program leader while the run holds no `RESERVED` row |
 
 `reservedById`, `reservedAt`: `personal`, the roster's tier. A leader's grant on
@@ -474,7 +485,7 @@ the roster gate does.
 Each line is one PR. `[mig]` migration, `[sec]` boundary-only, `[app]` feature.
 
 1. `[app]` P9 copy (#156): copy a program, no price.
-2. `[mig]` `Program.previousRunId`, `Program.ongoing`, the reservation columns, the two
+2. `[mig]` `Program.previousRunId`, `Program.ongoing` and `ongoingReminderSentAt`, the reservation columns, the two
    `ProgramParticipant` columns, `ProgramAdministrator`, `ReservationNotice`,
    and `RESERVED` added to the enum. Additive. It ships a release ahead of
    anything that writes `RESERVED`: an old task in the drain window that reads
@@ -487,10 +498,10 @@ Each line is one PR. `[mig]` migration, `[sec]` boundary-only, `[app]` feature.
 5. `[app]` "Start next run", the Board's switch, the deadline and reminder
    schedule with their gates and warnings, administrators, reserve (single and
    carry-over), unreserve, confirm/decline, the program-page panel, and the
-   compliance dashboard changes (§4a), the ongoing checkbox and its Board
-   reminder.
+   compliance dashboard changes (§4a), the ongoing checkbox.
 6. `[app]` The nightly reservation summary (netting function and its tests),
-   reminders and release in the nightly sweep; the three email templates.
+   reminders and release in the nightly sweep; the ongoing-run Board reminder;
+   the four email templates.
 7. Once 1–6 have merged: open a GitHub issue for a one-step "move to team"
    action (Q26 option b): `POST api/programs/[toId]/reservations` with a
    `fromProgramId`, both program rows locked in id order, the target's capacity
@@ -537,4 +548,4 @@ Numbers are fixed; a settled question is struck, not renumbered.
 | ~~Q29~~ | ~~Team lists for reserved people.~~ **Decided:** someone carried over from the previous run stays on the team list in any state (reserved, confirmed, paid); if declined or released they stop counting on the new run and leave the list when the run they are on ends or hands over (a family declining Fall Training 2027 in July while on Summer 2026 stays on through Summer); someone new to the chain joins only once paid (`ACTIVE`, or a free place). A requirement on the membership-sync design. | — | — |
 | ~~Q30~~ | ~~Treasurer.~~ **Decided:** the policies' "program treasurer" is the budget bucket's treasurer in the software. The bucket outlasts every run, so the copy has nothing to carry; no program-to-bucket link is added. | — | — |
 | Q31 | **Board: who sees lapsed staff checks.** The Board's compliance dashboard already lists them. Should a program leader also see their own runs' staff (volunteers, administrators) whose check has lapsed, name and "check lapsed" only? A balance of privacy and security; put to the Board. | Board only until the Board answers | A core volunteer's check lapsed in October; the Fall Training leader sees it on their program page and reminds them. |
-| Q32 | **Ongoing checkbox.** Who sets it (Board only, or the leader too)? Does "Start next run" copy it? The Board reminder for an ended ongoing run with no next run: how many days after the end does it start, and does it repeat (each night, weekly) or ride an existing Board digest? | Board and leader set it; copied; reminder from 7 days after the end, weekly, in the Board's problems digest | Summer ends 31 August; on 7 September the Board is reminded to start Fall Training or turn ongoing off. |
+| ~~Q32~~ | ~~Ongoing checkbox.~~ **Decided:** Board only, from the approved budget template; "Start next run" copies it; the Board is reminded from 30 days before an ongoing run ends while it has no next run, then weekly (§3). | — | — |
