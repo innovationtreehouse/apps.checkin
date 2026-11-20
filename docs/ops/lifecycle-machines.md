@@ -1,6 +1,6 @@
 # Lifecycle machines — running and regenerating
 
-Three machines are written down, each as one declarative definition with its
+Four machines are written down, each as one declarative definition with its
 legal states and its transition table:
 
 - **Enrollment** (`ProgramParticipant.status`): a participant's place in a program, from
@@ -12,6 +12,9 @@ legal states and its transition table:
   (paid and check cleared) makes it ACTIVE; DENIED's one exit is the board's
   restore to NONE. `setHouseholdStatus` is its one writer, and
   `noRawStatusWrites.test.ts` fails CI on a status write anywhere else.
+- **Program sale** (`Program` start, off-sale and sale-ended dates): a program's time
+  on sale — NOT_ON_SALE, ON_SALE, SALE_ENDED, then FINISHED. The state is
+  classified from the dates, not stored in a column of its own.
 
 Enrollment and the membership process also name the query filter for each state
 set and a `validate()` that flags rows sitting off the diagram.
@@ -33,6 +36,7 @@ Run everything below from `checkin-app/`.
 | Enrollment machine | `src/lib/programs/enrollmentState.ts` |
 | Membership process machine | `src/lib/membership/lifecycle.ts` |
 | Household status machine and its writer | `src/lib/membership/householdStatus.ts` |
+| Program sale machine | `src/lib/programs/saleState.ts` |
 | Generated diagrams, coverage matrix, reachability | `docs/generated/lifecycle/` |
 | Off-diagram sweep | `src/lib/lifecycleDrift.ts`, `src/app/api/cron/lifecycle-reconcile/` |
 
