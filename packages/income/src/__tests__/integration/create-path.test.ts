@@ -1995,8 +1995,11 @@ describeDb("drainIncomeOutbox — a QuickBooks throttle", () => {
     const p = payout(2, "2026-06-28", 500);
     const q = payout(3, "2026-06-29", 700);
     throttleCreates();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     expect(await drain()).toMatchObject({ post: { throttled: 2, failed: 0, posted: 0 } });
+    expect(warn).toHaveBeenCalledWith("[income] qb_drain_throttled", { remaining: 2 });
+    warn.mockRestore();
     for (const g of [p, q]) expect(await rowFor(g)).toMatchObject({ status: "WAITING", postClaimedAt: null });
     expect(await db.incomeAuditLog.count({ where: { action: "reconciliation.post_failed" } })).toBe(0);
     expect(reports).toEqual([]);
