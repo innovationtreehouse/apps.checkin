@@ -162,10 +162,18 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
                 where: { programId, personId: participantId, ...ENROLLMENT_WRITES.retryWithoutHold.where },
                 data: { ...ENROLLMENT_WRITES.retryWithoutHold.data(), ...kindData },
             })).count > 0;
-            if (!retried) throw error;
-            // Applicant-facing: never tell them to retry — the request is
-            // recorded and the board finalizes it. Nothing is required of them.
-            warning = "Your scholarship / payment-plan request has been recorded and the board notified. A seat-reservation step needs a board member to finish it — nothing more is required from you.";
+            if (retried) {
+                // Applicant-facing: never tell them to retry — the request is
+                // recorded and the board finalizes it. Nothing is required of them.
+                warning = "Your scholarship / payment-plan request has been recorded and the board notified. A seat-reservation step needs a board member to finish it — nothing more is required from you.";
+            } else {
+                // A concurrent request placed the hold after this one's -1 failed: that request recorded it, and its kind stands.
+                const row = await prisma.programParticipant.findUnique({
+                    where: { programId_personId: { programId, personId: participantId } },
+                    select: { status: true, isPaymentPlanRequested: true, inventoryHeldAt: true },
+                });
+                if (!(row?.status === 'PENDING' && row.isPaymentPlanRequested && row.inventoryHeldAt)) throw error;
+            }
         }
         // Keyed on the flip: true for a fresh hold or a recorded hold-failed request, false for a
         // hold-failed retry whose request was already recorded and for the losing half of a double-submit.

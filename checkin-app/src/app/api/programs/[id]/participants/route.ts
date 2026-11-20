@@ -322,6 +322,8 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
     }
 });
 
+const REMOVAL_REASON_MAX_LEN = 2000;
+
 const STOCK_WARNING = "Participant enrolled, but the Shopify inventory change failed. Capacity may be out of sync — check System Status > Link Status.";
 
 async function owesShortfall(programId: number): Promise<boolean> {
@@ -352,6 +354,9 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
 
         if (!participantId) {
             return apiError("participantId is required", 400);
+        }
+        if (reason.length > REMOVAL_REASON_MAX_LEN) {
+            return apiError(`reason must be ${REMOVAL_REASON_MAX_LEN} characters or fewer`, 400);
         }
         if (body.mode !== undefined && body.mode !== 'remove' && body.mode !== 'withdraw') {
             return apiError("mode must be 'remove' or 'withdraw'", 400);

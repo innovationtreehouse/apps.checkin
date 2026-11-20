@@ -51,6 +51,7 @@ jest.mock('@/lib/prisma', () => ({
         auditLog: { create: jest.fn().mockResolvedValue({}) },
         programParticipant: { findMany: jest.fn().mockResolvedValue([]), count: jest.fn().mockResolvedValue(0) },
         person: { findUnique: jest.fn().mockResolvedValue({ dateOfBirth: null, isDeclaredAdult: true, householdId: 3 }) },
+        event: { count: jest.fn().mockResolvedValue(1) },
     },
 }));
 
@@ -115,6 +116,46 @@ describe('a save after a concurrent change of Shopify variant', () => {
         rowAtWrite = { ...program, shopifyVariantId: 'gid://variant/2' } as Program;
         const result = await updateProgram(program, { shopifyVariantId: 'gid://variant/1' }, actor);
         expect(result).toMatchObject({ ok: false, refusal: 'conflict' });
+        expect(tx.program.update).not.toHaveBeenCalled();
+    });
+});
+
+describe('a program stored with its start after its end', () => {
+    const inverted = { ...program, startAt: new Date('2099-12-15'), endAt: new Date('2099-12-01') } as Program;
+
+    it('still saves a field other than its dates', async () => {
+        rowAtWrite = inverted;
+        expect((await updateProgram(inverted, { announceOnOpen: true }, actor)).ok).toBe(true);
+    });
+
+    it('refuses a publish until its dates are fixed', async () => {
+        const planning = { ...inverted, phase: 'PLANNING' } as Program;
+        rowAtWrite = planning;
+        expect(await updateProgram(planning, { phase: 'UPCOMING' }, actor)).toMatchObject({ ok: false, refusal: 'invalid' });
+        expect(tx.program.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses a move to running until its dates are fixed', async () => {
+        rowAtWrite = inverted;
+        expect(await updateProgram(inverted, { phase: 'RUNNING' }, actor)).toMatchObject({ ok: false, refusal: 'invalid' });
+        expect(tx.program.update).not.toHaveBeenCalled();
+    });
+
+    it('still saves when the form resends the current phase', async () => {
+        rowAtWrite = inverted;
+        expect((await updateProgram(inverted, { phase: 'UPCOMING', announceOnOpen: true }, actor)).ok).toBe(true);
+    });
+
+    it('refuses a date change that leaves the range inverted', async () => {
+        rowAtWrite = inverted;
+        expect(await updateProgram(inverted, { endAt: '2099-12-10' }, actor)).toMatchObject({ ok: false, refusal: 'invalid' });
+        expect(tx.program.update).not.toHaveBeenCalled();
+    });
+});
+
+describe('an age bound that is not a whole number', () => {
+    it('is refused before any write', async () => {
+        expect(await updateProgram(program, { minAge: '' as unknown as number }, actor)).toMatchObject({ ok: false, refusal: 'invalid' });
         expect(tx.program.update).not.toHaveBeenCalled();
     });
 });

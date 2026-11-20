@@ -44,6 +44,7 @@ const tx = {
 const threshold = new Date('2099-01-01');
 const fresh = { dateOfBirth: null, isDeclaredAdult: true, householdId: 3, lastBackgroundCheck: new Date('2099-06-01') };
 const mockPerson = jest.fn();
+const mockRefusalAudit = jest.fn().mockResolvedValue({});
 
 jest.mock('@/lib/prisma', () => ({
     __esModule: true,
@@ -51,6 +52,7 @@ jest.mock('@/lib/prisma', () => ({
         $transaction: (fn: (t: unknown) => unknown) => fn(tx),
         programParticipant: { findMany: jest.fn().mockResolvedValue([]) },
         person: { findUnique: (...a: unknown[]) => mockPerson(...a) },
+        auditLog: { create: (...a: unknown[]) => mockRefusalAudit(...a) },
     },
 }));
 
@@ -107,5 +109,19 @@ describe('assigning a leader on edit', () => {
     it('saves a new leader who meets every requirement', async () => {
         expect((await updateProgram(program, { leadMentorId: 9 }, board)).ok).toBe(true);
         expect(tx.program.update.mock.calls[0][0].data).toMatchObject({ leadMentorId: 9 });
+    });
+});
+
+describe('naming oneself the leader', () => {
+    it('is refused, and the refused attempt is audited', async () => {
+        const result = await updateProgram(program, { leadMentorId: board.id }, board);
+        expect(result).toMatchObject({ ok: false, refusal: 'forbidden' });
+        expect(tx.program.update).not.toHaveBeenCalled();
+        expect(mockRefusalAudit).toHaveBeenCalledWith({
+            data: expect.objectContaining({
+                actorId: board.id, affectedEntityId: board.id, action: 'EDIT', tableName: 'SelfGrantRefusal',
+                newData: expect.objectContaining({ table: 'Program', attempted: { programId: 5, leadMentorId: board.id } }),
+            }),
+        });
     });
 });
