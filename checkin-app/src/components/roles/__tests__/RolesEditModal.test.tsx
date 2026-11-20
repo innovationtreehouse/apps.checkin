@@ -272,6 +272,41 @@ describe("RolesEditModal", () => {
         expect(onClose).not.toHaveBeenCalled();
     });
 
+    it("warns when the grantee's check isn't current, and saves with the acknowledgement on Got it", async () => {
+        const onSaved = jest.fn();
+        renderWithProviders(<RolesEditModal target={jane} me={{ isBoardMember: true }} onClose={jest.fn()} onSaved={onSaved} />);
+
+        fireEvent.click(screen.getByLabelText("Operations"));
+        fireEvent.click(screen.getByRole("button", { name: "Save" }));
+        const confirm = (modals.openConfirmModal as jest.Mock).mock.calls[0][0];
+
+        const warning = { error: "This person isn't current on their background check.", code: "CHECK_ACKNOWLEDGEMENT_REQUIRED" };
+        const updatedUser = { ...jane, isOperations: true };
+        const patchFetch = jest.fn()
+            .mockResolvedValueOnce({ ok: false, status: 409, text: async () => JSON.stringify(warning) })
+            .mockResolvedValueOnce({ ok: true, status: 200, text: async () => JSON.stringify({ user: updatedUser }) });
+        global.fetch = patchFetch as unknown as typeof fetch;
+
+        await act(async () => {
+            await confirm.onConfirm();
+        });
+
+        expect(modals.openConfirmModal).toHaveBeenCalledTimes(2);
+        const ack = (modals.openConfirmModal as jest.Mock).mock.calls[1][0];
+        expect(ack.labels.confirm).toBe("Got it");
+        expect(notifications.show).not.toHaveBeenCalled();
+        expect(onSaved).not.toHaveBeenCalled();
+
+        await act(async () => {
+            await ack.onConfirm();
+        });
+
+        const body = (call: number) => JSON.parse((patchFetch.mock.calls[call][1] as RequestInit).body as string);
+        expect(body(0)).toEqual({ targetUserId: 1, isOperations: true });
+        expect(body(1)).toEqual({ targetUserId: 1, isOperations: true, acknowledgeCheck: true });
+        expect(onSaved).toHaveBeenCalledWith(updatedUser);
+    });
+
     it("toasts a network error and reverts when the PATCH fetch rejects", async () => {
         const onSaved = jest.fn();
         const onClose = jest.fn();

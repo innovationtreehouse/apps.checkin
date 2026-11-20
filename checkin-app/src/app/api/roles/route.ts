@@ -4,6 +4,7 @@ import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
 import {
+    FLAG_TO_KIND,
     ROLE_FLAGS,
     type RoleFlag,
     rolesToFlags,
@@ -19,6 +20,7 @@ import {
 } from "@/lib/roles";
 import { currentKvaVersion, KVA_KIND } from "@/lib/membership/keyVolunteerProcess";
 import { recallSigningRequests } from "@/lib/membership/keyVolunteer";
+import { emailAfterAssignment, gatePositionCheck } from "@/lib/membership/positionCheck";
 import { personActor } from "@/lib/auditActor";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { isYouth } from "@/lib/time";
@@ -121,7 +123,7 @@ export const PATCH = withAuth(
             // roles-table "only sysadmins may modify isSysadmin" guard this route used
             // to have — so leaving it in `roleUpdates` would either 400 as an unknown
             // flag or (worse) let a board-only actor set it via the symmetric matrix.
-            const { targetUserId, canAccessStaging, ...roleUpdates } = body;
+            const { targetUserId, canAccessStaging, acknowledgeCheck, ...roleUpdates } = body;
 
             if (!targetUserId) {
                 return apiError("Missing 'targetUserId'", 400);
@@ -157,9 +159,14 @@ export const PATCH = withAuth(
 
                 // setRoleFlag writes one PersonRole audit row per changed flag.
                 const recallRequestIds: string[] = [];
+                const checkAcknowledgementIds: number[] = [];
                 for (const [field, on] of orderRoleChanges(requested)) {
                     const written = await setRoleFlag(tx, targetUserId, field, on, actor);
                     recallRequestIds.push(...written.recallRequestIds);
+                    if (on && written.changed) {
+                        const ackId = await gatePositionCheck(tx, { personId: targetUserId, position: FLAG_TO_KIND[field], actorId: actor.id, acknowledged: acknowledgeCheck === true });
+                        if (ackId !== null) checkAcknowledgementIds.push(ackId);
+                    }
                 }
 
                 // canAccessStaging is a Person column, so it is audited under tableName "Person".
@@ -202,6 +209,7 @@ export const PATCH = withAuth(
                 });
                 return {
                     recallRequestIds,
+                    checkAcknowledgementIds,
                     user: {
                         id: target.id, email: target.email, name: target.name,
                         ...rolesToFlags(rows),
@@ -212,6 +220,7 @@ export const PATCH = withAuth(
             // isKeyholder drives the roster's keyholder count and the close logic.
             invalidateAttendanceCache();
             await recallSigningRequests(result.recallRequestIds);
+            await emailAfterAssignment(result.checkAcknowledgementIds, actor.id);
 
             return NextResponse.json({ message: "Roles updated successfully", user: result.user });
         } catch (error) {
@@ -237,7 +246,7 @@ export const PATCH = withAuth(
                 return apiError("This person's household has been denied membership. Restore the household's membership before granting the board role.", 409);
             }
             if (error instanceof ServiceError) {
-                return apiError(error.message, error.status);
+                return NextResponse.json({ error: error.message, ...(error.code ? { code: error.code } : {}) }, { status: error.status });
             }
             logger.error("Error updating role:", error);
             return apiError("Internal server error", 500);
