@@ -468,11 +468,18 @@ model ExpenseOutcomeNotice {
   uploaderSentAt   DateTime? @map("uploader_sent_at")
   /// @sensitivity:internal
   reimburseeSentAt DateTime? @map("reimbursee_sent_at")
-  // Set once every owed copy is sent, given up after OUTCOME_ATTEMPTS, or at creation when nothing is owed.
+  // Set once every owed copy is sent, or at creation when nothing is owed.
   /// @sensitivity:internal
   doneAt           DateTime? @map("done_at")
+  // Read and written by nothing.
   /// @sensitivity:internal
   attempts         Int       @default(0)
+  // When a send first failed; set while null. A failed notice is stuck until a person retries it.
+  /// @sensitivity:internal
+  firstFailedAt    DateTime? @map("first_failed_at")
+  // The latest failure's error text.
+  /// @sensitivity:internal
+  failureReason    String?   @map("failure_reason")
   /// @sensitivity:internal
   createdAt        DateTime  @default(now()) @map("created_at")
 
