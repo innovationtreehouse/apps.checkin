@@ -2013,3 +2013,20 @@ describeDb("drainIncomeOutbox — a QuickBooks throttle", () => {
     expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "POST_FAILED", postClaimedAt: null });
   });
 });
+
+describeDb("drainIncomeOutbox — a post that throws", () => {
+  beforeEach(switchOn);
+
+  it("reports the payout whose post throws and posts the next one", async () => {
+    const reports: FailureReport[] = [];
+    const p = payout(2, "2026-06-28", 500);
+    const q = payout(3, "2026-06-29", 700);
+    bind({ onFailure: (r) => void reports.push(r), mirror: { ...mirror, payout: async (g) => (g === p ? Promise.reject(new Error("mirror read failed")) : mirror.payout(g)) } });
+
+    expect(await drain()).toMatchObject({ post: { failed: 1, posted: 1 } });
+    expect(await rowFor(p)).toMatchObject({ status: "WAITING", depositId: null });
+    expect(await rowFor(q)).toMatchObject({ status: "POSTED" });
+    expect(reports).toHaveLength(1);
+    expect(reports[0]).toMatchObject({ detail: `payout reconciliation ${(await rowFor(p)).id}` });
+  });
+});
