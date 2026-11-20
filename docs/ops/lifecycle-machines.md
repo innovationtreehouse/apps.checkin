@@ -71,7 +71,8 @@ Seven guards cover this area, and each fails for a different reason:
 - **Enum parity** — a status was added to or removed from the Prisma enum without
   the machine's local union following.
 - **No raw status writes** — code writes a machine column on `ProgramParticipant`,
-  `OrgMembership` or `OrgMembershipProcess` outside a declared helper, flag-only
+  `OrgMembership`, `OrgMembershipProcess` or `Program` (`phase`,
+  `enrollmentStatus`, `offSaleAt`, `saleEndedAt`) outside a declared helper, flag-only
   writes included, or an allowlisted file's write count changed. Route the write
   through the machine's helper, or drop the allowlist row once its file has moved
   onto it.

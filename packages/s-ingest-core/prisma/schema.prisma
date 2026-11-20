@@ -304,7 +304,7 @@ model ShopOrderLine {
   /// before the variant columns shipped — a backfill run repopulates those.
   /// @sensitivity:internal
   variantGid        String? @map("variant_gid")
-  /// Numeric variant id — checkin's BoardSettings/Program shopify*VariantId join key,
+  /// Numeric variant id — checkin's MembershipYearVariant/Program shopify*VariantId join key,
   /// which is what makes an order line attributable to a membership or program.
   /// @sensitivity:internal
   variantLegacyId   String? @map("variant_legacy_id")
