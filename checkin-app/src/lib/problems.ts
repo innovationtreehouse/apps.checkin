@@ -20,9 +20,9 @@ type Retry = (item: { id: string; step: string }, by: ProblemRetrier) => Promise
 
 /**
  * Each receipt-flow library's "stuck items" and "retry" ports, and its own Problems lines where it
- * has them; one with no database configured is not read.
+ * has them; one with no database configured is not read. Membership lives in the app's own database.
  */
-const SOURCES: { library: string; env: string; read: () => Promise<StuckItem[]>; retry: Retry; notices?: () => Promise<Notice[]> }[] = [
+const SOURCES: { library: string; env?: string; read: () => Promise<StuckItem[]>; retry: Retry; notices?: () => Promise<Notice[]> }[] = [
     {
         library: "receipt",
         env: "RECEIPT_DATABASE_URL",
@@ -50,6 +50,11 @@ const SOURCES: { library: string; env: string; read: () => Promise<StuckItem[]>;
         retry: async (item) => (await import("@checkin/bulk-donation")).retryStuckItem(item),
     },
     {
+        library: "membership",
+        read: async () => (await import("@/lib/membership/settleHouseholdBg")).stuckSettles(),
+        retry: async (item) => (await import("@/lib/membership/settleHouseholdBg")).retryStuckSettle(item),
+    },
+    {
         library: "local inventory",
         env: "LOCAL_INVENTORY_DATABASE_URL",
         read: async () => (await import("@checkin/local-inventory")).stuckItems(),
@@ -75,8 +80,10 @@ async function markGiftLoaded(id: string): Promise<void> {
     }
 }
 
+const wired = (s: { env?: string }) => !s.env || Boolean(process.env[s.env]);
+
 /** The database env var of each library the Problems list reads. */
-export const LIBRARY_DB_VARS = SOURCES.map((s) => s.env);
+export const LIBRARY_DB_VARS = SOURCES.flatMap((s) => (s.env ? [s.env] : []));
 
 /** A count line on the Problems list, with the page that shows its detail where there is one. */
 export interface Notice {
@@ -98,19 +105,19 @@ async function emailFailureNotices(now: Date): Promise<Notice[]> {
  * that is not listed or has no database answers 404; the library's own retry answers the rest.
  */
 export async function retryProblem({ library, step, id }: { library: string; step: string; id: string }, by: ProblemRetrier): Promise<void> {
-    const source = SOURCES.find((s) => s.library === library && process.env[s.env]);
+    const source = SOURCES.find((s) => s.library === library && wired(s));
     if (!source) throw new ServiceError(404, "No such library on the Problems list");
     await source.retry({ id, step }, by);
 }
 
 /**
- * Every stuck item across the receipt flow, oldest first, and the count lines (`notices`): the
+ * Every stuck item across the receipt flow and membership, oldest first, and the count lines (`notices`): the
  * libraries' own and failed email sends. A source whose read fails is named in `unread`.
  */
 export async function getProblems(now = new Date()): Promise<{ items: Problem[]; unread: string[]; notices: Notice[] }> {
-    const wired = SOURCES.filter((s) => process.env[s.env]);
+    const sources = SOURCES.filter(wired);
     const results = await Promise.allSettled([
-        ...wired.map(async (s) => ({
+        ...sources.map(async (s) => ({
             items: await s.read(),
             notices: s.notices ? await s.notices() : [],
         })),
@@ -120,7 +127,7 @@ export async function getProblems(now = new Date()): Promise<{ items: Problem[];
     const unread: string[] = [];
     const notices: Notice[] = [];
     results.forEach((result, i) => {
-        const library = wired[i]?.library ?? "email";
+        const library = sources[i]?.library ?? "email";
         if (result.status === "fulfilled") {
             items.push(...result.value.items.map((item) => ({ ...item, library })));
             notices.push(...result.value.notices);
