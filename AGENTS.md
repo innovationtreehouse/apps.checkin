@@ -232,6 +232,7 @@ where it is:
 | Implementation being written | implementer | none |
 | Implementation in review | none | implementation PR |
 | Done | none | none; the implementation PR merged and closed the issue |
+| Not planned | none | none; the issue was closed as not planned |
 
 **Assignment means one thing: someone is working the issue right now.** Only
 the two "being written" stages carry an assignee. Never leave one standing as a
