@@ -4,10 +4,10 @@ import { Alert, Button, Group, Pagination, Text } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import useSWR from "swr";
 import { clearLoads, countFailure, endRetryChain, forgetFailures, holdFromInvalidation, invalidateLoads, loadGeneration, scheduleRetry } from "./loadCache";
-import { errorMessage, FAILURE_TEXT, HttpError, request, type RequestOptions } from "./http";
+import { errorMessage, FAILURE_TEXT, HttpError, NETWORK_FAILURE_TEXT, request, type RequestOptions } from "./http";
 
 export { invalidateLoads };
-export { errorMessage, FAILURE_TEXT, HttpError, request, type RequestOptions };
+export { errorMessage, FAILURE_TEXT, HttpError, NETWORK_FAILURE_TEXT, request, type RequestOptions };
 
 /** The signed-in person as package UIs see them. The host maps its session onto this once. */
 export interface Viewer {
