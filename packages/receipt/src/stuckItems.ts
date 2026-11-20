@@ -4,10 +4,12 @@ import { db } from "./db";
 import { pushReceipt, runFullFlow } from "./lib/receipt-flow";
 import { DAY_MS } from "./lib/limits";
 import { getOrgId } from "./runtime";
+import { retryOutcomeNotice, STUCK_NOTICE } from "./services/outcomeNotices";
 import { stuckSince, stuckUndelivered } from "./repositories/receipt";
 
 const FLOW = "flow";
 const PUSH = "push to mapping";
+const OUTCOME_EMAIL = "outcome email";
 
 const STUCK_IN = {
   [FLOW]: () => ({ firstFailedAt: { not: null }, details: { state: "flow_error" } }),
@@ -17,12 +19,21 @@ const STUCK_IN = {
 /** What a retry that left the receipt stuck answers; the error itself stays on the receipt's page. */
 export const STILL_STUCK = "Retried, and it failed again; the receipt's page shows why";
 
-/** Receipts stuck in the flow (`flow_error`) or finalized and not delivered to mapping, timed by `stuckSince`. */
+/**
+ * Receipts stuck in the flow (`flow_error`) or finalized and not delivered to mapping, timed by
+ * `stuckSince`, and outcome emails that failed to send, timed by their first failure.
+ */
 export async function stuckItems(): Promise<StuckItem[]> {
   const orgId = await getOrgId();
   const steps = [FLOW, PUSH] as const;
-  const since = await Promise.all(steps.map((step) => stuckSince({ orgId, ...STUCK_IN[step]() })));
-  return steps.flatMap((step, i) => [...since[i]].map(([id, failedAt]) => ({ id, step, href: `/receipts/${id}`, failedAt })));
+  const [since, notices] = await Promise.all([
+    Promise.all(steps.map((step) => stuckSince({ orgId, ...STUCK_IN[step]() }))),
+    db.receiptOutcomeNotice.findMany({ where: { orgId, ...STUCK_NOTICE }, select: { id: true, receiptId: true, firstFailedAt: true } }),
+  ]);
+  return [
+    ...steps.flatMap((step, i) => [...since[i]].map(([id, failedAt]) => ({ id, step, href: `/receipts/${id}`, failedAt }))),
+    ...notices.flatMap((n) => (n.firstFailedAt ? [{ id: String(n.id), step: OUTCOME_EMAIL, href: `/receipts/${n.receiptId}`, failedAt: n.firstFailedAt }] : [])),
+  ];
 }
 
 async function isStuck(id: string, step: keyof typeof STUCK_IN): Promise<boolean> {
@@ -30,11 +41,13 @@ async function isStuck(id: string, step: keyof typeof STUCK_IN): Promise<boolean
 }
 
 /**
- * Runs `step` once for one stuck receipt. Safe to repeat: the flow runs only from `uploaded` or
- * `flow_error`, and a push only for a finalized receipt not yet delivered. A receipt not stuck in
- * `step` answers 404; one still stuck afterwards answers 409, with no error text.
+ * Runs `step` once for one stuck item. Safe to repeat: the flow runs only from `uploaded` or
+ * `flow_error`, a push only for a finalized receipt not yet delivered, and an outcome email only to
+ * a recipient not yet sent. An item not stuck in `step` answers 404; one still stuck afterwards
+ * answers 409, with no error text.
  */
 export async function retryStuckItem({ id, step }: { id: string; step: string }): Promise<void> {
+  if (step === OUTCOME_EMAIL) return retryOutcomeNotice(Number(id));
   if (step !== FLOW && step !== PUSH) throw new ServiceError(404, `No step ${step} in receipt`);
   if (!(await isStuck(id, step))) throw new ServiceError(404, "No receipt stuck in this step");
   // A failure is recorded on the receipt, which the check below reads.
