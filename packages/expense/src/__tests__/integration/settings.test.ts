@@ -48,6 +48,11 @@ describeDb("expense settings", () => {
     await expect(updateExpenseSettings(ORG, { qbMatchWindowDays: 0 }, FINANCE)).rejects.toThrow();
   });
 
+  it("answers a save with the per-run limit as read, a stored one above 100 as 100", async () => {
+    await db.expenseOrgSettings.create({ data: { orgId: ORG, qbMaxCreatesPerRun: 1_000, qbMaxCreatesPerDay: 1_000 } });
+    await expect(updateExpenseSettings(ORG, { boardReviewTotalCents: 100_000 }, FINANCE)).resolves.toMatchObject({ qbMaxCreatesPerRun: 100, boardReviewTotalCents: 100_000 });
+  });
+
   it("a missing row reads as the defaults", async () => {
     expect(await getExpenseSettings(ORG)).toEqual(DEFAULT_EXPENSE_SETTINGS);
     expect(DEFAULT_EXPENSE_SETTINGS).toMatchObject({

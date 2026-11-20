@@ -1706,6 +1706,11 @@ describeDb("income settings", () => {
     });
   });
 
+  it("answers a save with the per-run count as read, a stored one above 100 as 100", async () => {
+    await db.incomeOrgSettings.upsert({ where: { orgId: ORG_A }, create: { orgId: ORG_A, maxCreatesPerRun: 1_000 }, update: { maxCreatesPerRun: 1_000 } });
+    await expect(updateIncomeSettings(ORG_A, { benevityMatchWindowDays: 3 }, finance)).resolves.toMatchObject({ maxCreatesPerRun: 100, benevityMatchWindowDays: 3 });
+  });
+
   it("finance may lower a cap; raising one takes the board; each change is audited", async () => {
     await updateIncomeSettings(ORG_A, { maxCreatesPerRun: 10 }, finance);
     await expect(updateIncomeSettings(ORG_A, { maxCreatesPerRun: 20 }, finance)).rejects.toMatchObject({ status: 403 });

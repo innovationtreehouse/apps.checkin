@@ -618,6 +618,7 @@ export async function runInKindQbPosting(orgId: string, now = new Date(), turn?:
     },
   });
   counts.capped = stop?.by === "count";
+  if (stop?.by === "throttled") console.warn("[bulk-donation] qb_drain_throttled", { remaining: stop.remaining });
   // After the posts, so a gift this run linked to its own entry is not reported as a stray.
   // Each read renews the posting slot first; once another run holds it, the rest are skipped.
   if (!turn || (await turn.renew())) counts.sweep = await sweepInKindQbStrays(orgId, client, posting.sweepIncomplete, now);
