@@ -1,7 +1,7 @@
 import type { DbClient } from "@/lib/db-client";
 
-/** A merged-away person as the merge archive remembers them; `mergedIntoId` is the survivor. */
-export type ArchivedPerson = { id: number; name: string | null; mergedIntoId: number };
+/** A merged-away person as the merge archive remembers them; `survivorId` is the person they were merged into. */
+export type ArchivedPerson = { id: number; name: string | null; survivorId: number };
 
 function snapshotName(snapshot: unknown): string | null {
     if (typeof snapshot !== "object" || snapshot === null) return null;
@@ -21,7 +21,7 @@ export async function archivedPeople(db: DbClient, ids: number[]): Promise<Archi
         where: { fromId: { in: ids } },
         select: { fromId: true, toId: true, snapshot: true },
     });
-    return rows.map((r) => ({ id: r.fromId, name: snapshotName(r.snapshot), mergedIntoId: r.toId }));
+    return rows.map((r) => ({ id: r.fromId, name: snapshotName(r.snapshot), survivorId: r.toId }));
 }
 
 /** Whether any of `ids` names a person a merge has archived and deleted. */

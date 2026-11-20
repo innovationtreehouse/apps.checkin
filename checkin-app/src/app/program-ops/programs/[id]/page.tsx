@@ -4,14 +4,13 @@ import { use, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useRequireRole } from '@/hooks/useRequireRole';
 import { Alert, Badge, Box, Button, Card, Checkbox, Container, Divider, Group, NumberInput, Select, SimpleGrid, Stack, Tabs, Text, TextInput, Title } from '@mantine/core';
-import { errorMessage, LoadError, showError, showSuccess } from '@checkin/component-ui';
+import { errorMessage, LoadError, showError, showSuccess, showWarning } from '@checkin/component-ui';
 import { shallowEqual } from '@/components/UnsavedChangesProvider';
 import { useSeedForm } from '@/hooks/useSeedForm';
 import { api, useLoad } from '@/lib/api';
 import { EntityPicker } from '@/components/admin/EntityPicker';
 import { ScrollableTabsList } from '@/components/ui/ScrollableTabsList';
 import { ProgramRosterTab } from './ProgramRosterTab';
-import { notifications } from '@mantine/notifications';
 import { ProgramEventsTab } from './ProgramEventsTab';
 import { isProgramCheckoutBroken } from '@/lib/programCheckout';
 import { useProgramStoreClosed } from '../../useProgramStoreClosed';
@@ -67,7 +66,7 @@ export type ProgramDetail = {
   claimantShopifyVariantId?: string | null;
 };
 
-export type ParticipantOption = { id: number; name: string | null; email: string };
+export type ParticipantOption = { id: number; name: string | null; email: string; leaderIneligibility?: string | null };
 // The eligible-participants search returns names only, plus the program's age-fit label.
 export type EligibleOption = { id: number; name: string | null; ageWarning: string | null };
 
@@ -170,12 +169,9 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
   });
 
   // Lead-mentor picker searches adult members.
-  const searchAdults = useCallback(async (query: string): Promise<ParticipantOption[]> => {
-    const res = await fetch(`/api/people/search?q=${encodeURIComponent(query)}&filter=adults`);
-    if (!res.ok) return [];
-    const data = await res.json();
-    return data.people || [];
-  }, []);
+  const searchAdults = useCallback((query: string): Promise<ParticipantOption[]> =>
+    api<{ people?: ParticipantOption[] }>(`/api/people/search?q=${encodeURIComponent(query)}&filter=adults`)
+      .then((data) => data.people ?? [], () => []), []);
 
   const canStateYear = !!sessionUser?.isBoardMember;
   const yearBoundary = useMembershipYearBoundary(!!(sessionUser?.isSysadmin || sessionUser?.isBoardMember));
@@ -217,7 +213,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
         })
       });
       const followUps = [saved?.warning, saved?.notice].filter((m): m is string => !!m);
-      for (const message of followUps) notifications.show({ color: "yellow", message, autoClose: false });
+      for (const message of followUps) showWarning(message);
       if (followUps.length === 0) showSuccess("Saved.");
       notifyNavRefresh();
       setSeededGeneral(generalForm);
@@ -254,7 +250,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
     setSyncing(true);
     try {
       const data = await api<{ warning?: string }>(`/api/programs/${id}/sync-shopify`, { method: 'POST' });
-      if (data?.warning) notifications.show({ color: "yellow", message: data.warning, autoClose: false });
+      if (data?.warning) showWarning(data.warning);
       else showSuccess("Shopify checkout configured.");
       notifyNavRefresh();
       await reload();
@@ -287,8 +283,8 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
 
   // Ownership gate stays inline — it needs the loaded program (lead-mentor id)
   // to decide, which useRequireRole (a static role gate) can't express.
-  const user = sessionUser as unknown as { id: number; isSysadmin?: boolean; isBoardMember?: boolean };
-  const isAuthorized = program.leadMentorId === user?.id || user?.isSysadmin || user?.isBoardMember;
+  const user = sessionUser as unknown as { id: number; isSysadmin?: boolean; isBoardMember?: boolean; isFinance?: boolean };
+  const isAuthorized = program.leadMentorId === user?.id || user?.isSysadmin || user?.isBoardMember || user?.isFinance;
 
   if (!isAuthorized) {
     return (
@@ -302,6 +298,9 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
   }
 
   const isSysAdminOrBoard = user?.isSysadmin || user?.isBoardMember;
+  // Finance reaches only the roster, to enroll places paid outside the store.
+  const rosterOnly = !isSysAdminOrBoard && program.leadMentorId !== user?.id;
+  const tab = rosterOnly ? 'roster' : activeTab;
   const phaseBadge = PHASE_BADGE[program.phase];
   // Pricing is fixed at creation; derive rather than track as state.
   const isFree = program.orgMemberPriceCents === null && program.nonOrgMemberPriceCents === null;
@@ -331,15 +330,15 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
 
         {loadError && <LoadError what="the program" message={loadError} onRetry={reload} />}
 
-        <Tabs value={activeTab} onChange={(v) => setActiveTab((v as typeof activeTab) ?? 'general')}>
+        <Tabs value={tab} onChange={(v) => setActiveTab((v as typeof activeTab) ?? 'general')}>
           <ScrollableTabsList mb="lg">
-            <Tabs.Tab value="general">General</Tabs.Tab>
+            {!rosterOnly && <Tabs.Tab value="general">General</Tabs.Tab>}
             <Tabs.Tab value="roster">Roster</Tabs.Tab>
-            <Tabs.Tab value="events">Events</Tabs.Tab>
+            {!rosterOnly && <Tabs.Tab value="events">Events</Tabs.Tab>}
           </ScrollableTabsList>
 
           {/* GENERAL */}
-          <Tabs.Panel value="general">
+          {!rosterOnly && <Tabs.Panel value="general">
             <form onSubmit={handleSaveGeneral}>
               <Stack mb="lg">
                 <Group wrap="wrap">
@@ -430,6 +429,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
                             search={searchAdults}
                             getOptionLabel={(p) => p.name || 'Unnamed'}
                             getOptionDescription={(p) => p.email}
+                            getOptionDisabledReason={(p) => p.id === program.leadMentorId ? null : p.leaderIneligibility ?? null}
                             onSelect={(p) => { setLeadMentorIdInput(p.id.toString()); setMentorSearch(mentorLabel(p.name, p.email)); }}
                             onClear={() => { setLeadMentorIdInput(""); setMentorSearch(""); }}
                           />
@@ -515,7 +515,7 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
                 </Group>
               </Stack>
             </form>
-          </Tabs.Panel>
+          </Tabs.Panel>}
 
           {/* ROSTER */}
           <Tabs.Panel value="roster">
@@ -524,15 +524,16 @@ export default function ProgramDetailsPage({ params }: { params: Promise<{ id: s
               program={program}
               isSysAdminOrBoard={!!isSysAdminOrBoard}
               isBoardMember={!!user?.isBoardMember}
+              canEnrollByHand={!!(user?.isBoardMember || user?.isFinance)}
               viewerHouseholdId={sessionUser?.householdId ?? null}
               fetchProgram={reload}
             />
           </Tabs.Panel>
 
           {/* EVENTS */}
-          <Tabs.Panel value="events">
+          {!rosterOnly && <Tabs.Panel value="events">
             <ProgramEventsTab programId={program.id} events={program.events} />
-          </Tabs.Panel>
+          </Tabs.Panel>}
         </Tabs>
       </Card>
     </Container>

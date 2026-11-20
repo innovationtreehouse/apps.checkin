@@ -10,7 +10,10 @@ import { processCloseRequest, executePendingCloses } from '@/lib/attendance/clos
 import { notifyScanOutcome } from '@/lib/attendance/scanNotify';
 import { KIOSK_DEBOUNCE_PROTOCOL_VERSION, SCAN_PROTOCOL_VERSION } from '@/lib/scanProtocol';
 import { recordKioskProtocolSeen } from '@/lib/kioskProtocolSeen';
-import { specTrace } from '@/lib/specTrace';
+import { specTrace, startSpecTrace } from '@/lib/specTrace';
+import { mkdtempSync, readFileSync, existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 jest.mock('@/lib/auth', () => ({
     authenticateRequest: jest.fn(),
@@ -20,6 +23,7 @@ jest.mock('@/lib/prisma', () => {
     const mock = {
         person: {
             findUnique: jest.fn(),
+            count: jest.fn().mockResolvedValue(1),
         },
         personMerge: {
             findUnique: jest.fn().mockResolvedValue(null),
@@ -61,7 +65,11 @@ jest.mock('@/lib/kioskProtocolSeen', () => ({
     recordKioskProtocolSeen: jest.fn().mockResolvedValue(undefined),
 }));
 
-jest.mock('@/lib/specTrace', () => ({ specTrace: jest.fn() }));
+// The real recorder, spied: it writes only once a test starts a sink.
+jest.mock('@/lib/specTrace', () => {
+    const actual = jest.requireActual('@/lib/specTrace');
+    return { ...actual, specTrace: jest.fn(actual.specTrace) };
+});
 
 jest.mock('@/lib/logger', () => ({
     logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
@@ -900,6 +908,27 @@ describe('POST /api/scan', () => {
             expect(body).toMatchObject({ type: 'checkout', facilityClosed: false, closeRefused: true, message: 'Only a keyholder can close the building.' });
         });
 
+        it('refuses a live close from a keyholder whose household is denied, like a non-keyholder', async () => {
+            (prisma.person.count as jest.Mock).mockResolvedValueOnce(0);
+            (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
+            (prisma.visit.findFirst as jest.Mock).mockResolvedValue({ id: 7 });
+            (processCheckout as jest.Mock).mockResolvedValue(checkedOut());
+
+            const res = await POST(kioskReq({ intent: 'OUT', close: 'alone', clientEventId: 'evt-dk', protocolVersion: 6 }));
+            const body = await res.json();
+
+            expect(processCloseRequest).not.toHaveBeenCalled();
+            expect(body).toMatchObject({ type: 'checkout', facilityClosed: false, closeRefused: true });
+        });
+
+        it('flags a late close from a keyholder whose household is denied', async () => {
+            (prisma.person.count as jest.Mock).mockResolvedValueOnce(0);
+
+            await POST(kioskReq({ intent: 'OUT', close: 'confirmed', clientEventId: 'evt-dr', scannedAt: new Date().toISOString(), replay: true }));
+
+            expect(prisma.rawBadgeLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ reviewReason: 'close_not_keyholder' }) });
+        });
+
         it('re-drives recorded closes when a resend is deduped', async () => {
             (prisma.rawBadgeLog.findUnique as jest.Mock).mockResolvedValue({ id: 5, clientEventId: 'evt-c' });
 
@@ -1150,6 +1179,73 @@ describe('POST /api/scan', () => {
             expect(processCheckin).toHaveBeenCalled();
             await settle();
             expect(logger.error).toHaveBeenCalledWith('Failed to record kiosk protocol version:', expect.any(Error));
+        });
+    });
+    describe('trace lines inside the scan transaction', () => {
+        let sink: string;
+        const traced = () => existsSync(sink)
+            ? readFileSync(sink, 'utf8').trim().split('\n').map(l => JSON.parse(l).event.name)
+            : [];
+        const scan = () => POST(new Request('http://localhost/api/scan', {
+            method: 'POST',
+            body: JSON.stringify({ participantId: 1 }),
+        }) as unknown as import('next/server').NextRequest);
+
+        beforeEach(() => {
+            sink = join(mkdtempSync(join(tmpdir(), 'scan-trace-')), 'trace.ndjson');
+            startSpecTrace(sink);
+            (authenticateRequest as jest.Mock).mockResolvedValue({ type: 'kiosk' });
+            (prisma.person.findUnique as jest.Mock).mockResolvedValue({ id: 1 });
+            (prisma.rawBadgeLog.findFirst as jest.Mock).mockResolvedValue(null);
+            (processCheckin as jest.Mock).mockImplementation(async () => {
+                specTrace('VisitOpen', { p: 1, visitId: 9 });
+                return checkedIn;
+            });
+            (processCheckout as jest.Mock).mockImplementation(async () => {
+                specTrace('VisitDepart', { p: 1, visitId: 9 });
+                return checkedOut();
+            });
+        });
+
+        afterEach(() => {
+            startSpecTrace(null);
+            (prisma.presenceEvent.create as jest.Mock).mockResolvedValue({ id: 1 });
+        });
+
+        it.each([
+            ['arrival', null, 'VisitOpen'],
+            ['departure', { id: 9 }, 'VisitDepart'],
+        ])('drops the %s trace when the transaction rolls back', async (_label, activeVisit, event) => {
+            (prisma.visit.findFirst as jest.Mock).mockResolvedValue(activeVisit);
+            (prisma.presenceEvent.create as jest.Mock).mockRejectedValue(new Error('rollback'));
+            const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+            const res = await scan();
+
+            expect(res.status).toBe(500);
+            expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('POST /api/scan'), expect.any(Error));
+            consoleError.mockRestore();
+            expect(specTrace).toHaveBeenCalledWith(event, expect.anything());
+            expect(traced()).not.toContain(event);
+            expect(traced()).not.toContain('ScanCommit');
+        });
+
+        it.each([
+            ['arrival', null, 'VisitOpen'],
+            ['departure', { id: 9 }, 'VisitDepart'],
+        ])('writes the %s trace only once the transaction commits, before ScanCommit', async (_label, activeVisit, event) => {
+            (prisma.visit.findFirst as jest.Mock).mockResolvedValue(activeVisit);
+            let beforeCommit: string[] = [];
+            (prisma.presenceEvent.create as jest.Mock).mockImplementation(async () => {
+                beforeCommit = traced();
+                return { id: 1 };
+            });
+
+            const res = await scan();
+
+            expect(res.status).toBe(200);
+            expect(beforeCommit).not.toContain(event);
+            expect(traced()).toEqual(['ScanRequest', event, 'ScanCommit']);
         });
     });
 });

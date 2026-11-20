@@ -16,6 +16,13 @@
  * inputs, which are `internal` and so is it. No other Person field exists here,
  * so a role flag or a background-check date cannot leave whatever the route selects.
  *
+ * HouseholdPeerBgStatus — a peer's `bgStatus`: whether their background check
+ * is valid, expires before the upcoming membership year, or has expired,
+ * computed on the server so no clearance date leaves. `personId` is the
+ * their_own / led_households binding key in scopeBindings.ts; `status` is
+ * `internal` and reaches only the person themself and a lead of their
+ * household, never a non-lead sibling.
+ *
  * HouseholdMemberAdded / EmergencyContactWarning — the PATCH response: the new
  * `member` and the emergency-contact `warning` raised when that member is
  * already one of the household's emergency contacts. The warning's contact
@@ -54,6 +61,10 @@ export const classifications = {
     isHouseholdLead: "public",
     emailLocked: "internal",
   },
+  HouseholdPeerBgStatus: {
+    personId: "public",
+    status: "internal",
+  },
   HouseholdMemberAdded: {},
   EmergencyContactWarning: {
     code: "public",
@@ -71,6 +82,9 @@ export const relations = {
   HouseholdPageHousehold: {
     householdMembers: { model: "HouseholdPeer", isList: true },
     orgMembership: { model: "OrgMembership", isList: false },
+  },
+  HouseholdPeer: {
+    bgStatus: { model: "HouseholdPeerBgStatus", isList: false },
   },
   HouseholdMemberAdded: {
     member: { model: "HouseholdPeer", isList: false },

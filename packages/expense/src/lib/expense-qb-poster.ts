@@ -3,23 +3,22 @@
 import { ServiceError } from "@checkin/component-kit";
 import { sumCents } from "@checkin/money";
 import {
-  STALE_CLAIM_MS, SWEEP_DAYS, TEST_PREFIX, findOrCreate, postFailure, postFailureError, qbGate, qbKey, readCloseDate, runDrain, shiftDate,
-  type CloseRead, type FindOrCreateResult, type PostFailure, type PostGate, type QboPurchase, type TxnWrite,
+  STALE_CLAIM_MS, SWEEP_DAYS, TEST_PREFIX, THROTTLED_MESSAGE, findOrCreate, postFailure, postFailureError, qbGate, qbKey, readCloseDate, runDrain, shiftDate,
+  type CloseRead, type FindOrCreateResult, type PostFailure, type PostGate, type PostingTurn, type QboPurchase, type TxnWrite,
 } from "@checkin/quickbooks";
 import { db, type Db } from "../db";
 import type { ExpensePosting, OutboundBag } from "../contract";
 import type { Expense } from "../db/schema";
 import { assertOrg, expenseRuntime, getExpenseRuntime, getOrgId } from "../runtime";
 import {
-  appKeysOf, claimQbTxn, claimedQbTxnIds, lookupOwnEntry, type OwnEntry, type QbMatchEntity,
+  appKeysOf, claimQbTxn, claimedQbTxnIds, excludedQbTxnIds, lookupOwnEntry, type OwnEntry, type QbMatchEntity,
 } from "../services/qbMatchService";
 import { writeAudit } from "./audit";
 import type { Actor } from "./workflow-engine";
 import { matchedBaseline } from "./expense-qb-drift";
 import { composeWrite, type Built } from "../qb-write";
 import { logError, logWarn } from "./logger";
-import { reimburseeUnknown } from "./signoff";
-import { unsignedLines } from "./signoff-facts";
+import { outboxHolds } from "./signoff-facts";
 import { SYSTEM_ACTOR } from "./system-actor";
 import type { ExpenseSettings } from "../contract";
 import { readExpenseSettings } from "../services/settingsService";
@@ -48,8 +47,11 @@ function notSendable(posting: ExpensePosting, e: { isTestData: boolean; vendorNa
     : { qbMatchState: "NOT_TEST_DATA", note: "not sent to QuickBooks: not test data" };
 }
 
-/** `failed`: the post failed and the expense is stuck at NEEDS_FINANCE until a person retries it. */
-export type PostOutcome = "posted" | "matched" | "queued" | "failed" | "waiting" | "not_sent" | "needs_finance" | "no_class" | "unpostable";
+/**
+ * `failed`: the post failed and the expense is stuck at NEEDS_FINANCE until a person retries it.
+ * `throttled`: QuickBooks throttled the post; the expense is as it was before the claim.
+ */
+export type PostOutcome = "posted" | "matched" | "queued" | "failed" | "throttled" | "waiting" | "not_sent" | "needs_finance" | "no_class" | "unpostable";
 
 /** When the lane's posting switched on, or null while it is off. */
 export async function qbPostingOnAt(orgId: string, client: Db = db): Promise<Date | null> {
@@ -90,14 +92,8 @@ export async function qbCreatesToday(client: Db = db): Promise<number> {
 
 /** QuickBooks ids are unique per entity type only, so claims are read for the entity being posted. */
 async function claimedAndExcluded(orgId: string, entity: "Purchase" | "Bill") {
-  const [claimed, excluded] = await Promise.all([
-    claimedQbTxnIds(orgId, entity),
-    db.expenseQbMatchExclusion.findMany({ where: { orgId }, select: { qbTxnId: true } }),
-  ]);
-  return {
-    claimedIds: new Set(claimed),
-    excludedIds: new Set(excluded.map((e) => e.qbTxnId)),
-  };
+  const [claimed, excluded] = await Promise.all([claimedQbTxnIds(orgId, entity), excludedQbTxnIds(orgId, entity)]);
+  return { claimedIds: new Set(claimed), excludedIds: new Set(excluded) };
 }
 
 /** What finance reads on a failed post: a refusal's fault codes and request id, never the fault text; else the error. */
@@ -111,9 +107,14 @@ const reportFailure = (f: PostFailure, expenseId: string) => expenseRuntime.fail
 
 /**
  * Records a failed post: the expense is stuck at NEEDS_FINANCE with the error, and keeps the time
- * of its first failure, until a person retries it.
+ * of its first failure, until a person retries it. A throttled post only releases the claim.
  */
-async function recordFailure(tx: Db, current: Expense, f: PostFailure, note = failureNote(f)): Promise<"failed"> {
+async function recordFailure(tx: Db, current: Expense, f: PostFailure, note = failureNote(f)): Promise<"failed" | "throttled"> {
+  if (f.throttled) {
+    logWarn("qb_post_throttled", { expenseId: current.id, requestId: f.requestId ?? null });
+    await tx.expense.update({ where: { id: current.id }, data: { qbMatchState: current.qbMatchState, qbClaimedAt: null } });
+    return "throttled";
+  }
   reportFailure(f, current.id);
   await tx.expense.update({
     where: { id: current.id },
@@ -219,10 +220,11 @@ async function settle(tx: Db, before: Expense, outcome: PostOutcome, data: Settl
  * unmapped reimbursee → AMBIGUOUS; dated in closed books (by the closing date read for the run,
  * re-read before the create, or refused as fault 6210), or not allowed to create → UNBOOKED for
  * finance; any failure → NEEDS_FINANCE, stuck with its error until a person retries it
- * (recordFailure); an expense the test-data gate stops → NOT_TEST_DATA / TEST_DATA_REFUSED, re-checked each run. An expense whose
+ * (recordFailure), except a QuickBooks throttle, which leaves the expense as it was; an expense the test-data gate stops → NOT_TEST_DATA / TEST_DATA_REFUSED, re-checked each run. An expense whose
  * own data cannot make an entry (no receipt date, no lines, a line with no account) → NEEDS_FINANCE
  * at once with the reason, no attempt counted. A line whose bucket
- * has no QuickBooks Class → no_class, state unchanged, re-checked each run. At the daily create limit the
+ * has no QuickBooks Class → no_class, state unchanged (a stale claim goes back to POST_FAILED),
+ * re-checked each run. At the daily create limit the
  * expense waits for the next UTC day, nothing recorded. With the closing date unread nothing is
  * created, and a miss leaves the expense as it is.
  *
@@ -268,12 +270,14 @@ type Claimed = {
 type ClaimInputs = { close: CloseRead; onAt: Date | null; book: boolean; settings: ExpenseSettings };
 
 /**
- * Why an expense may not post: an unknown reimbursee, an unfilled seat or Board approval, or a
- * line not approved. The approval is the program approver's sign-off.
+ * Why an expense may not post: an unknown reimbursee, tax waiting on finance, an unfilled seat or
+ * Board approval, or a line not approved. The approval is the program approver's sign-off.
  */
 async function postingHold(tx: Db, e: Expense): Promise<string | null> {
-  if (reimburseeUnknown(e)) return "the reimbursee is unknown";
-  const holds = new Set([...(await unsignedLines(tx, e)).values()].flat());
+  const hold = (await outboxHolds(tx, [e])).get(e.id)!;
+  if (hold.reimburseeUnknown) return "the reimbursee is unknown";
+  if (hold.taxWaits) return "the expense's tax waits on finance";
+  const holds = new Set(hold.lines);
   const approval = holds.delete("BOARD_APPROVAL");
   const reasons = [...(holds.size > 0 ? ["a line is missing a sign-off seat"] : []), ...(approval ? ["the Board's approval of a purchase at or over the Board-review total is not recorded"] : [])];
   if (reasons.length > 0) return reasons.join(", and ");
@@ -299,13 +303,18 @@ async function claimForPost(orgId: string, expenseId: string, posting: ExpensePo
   return withPostable(orgId, expenseId, async (tx, locked): Promise<PostOutcome | Claimed> => {
     // A stale claim is a post that died mid-call; it settles as a retry of a failed post.
     const current = locked.qbMatchState === POSTING ? { ...locked, qbMatchState: "POST_FAILED" } : locked;
+    // State stays postable, so the next drain posts it; a stale claim is released.
+    const release = async <O extends PostOutcome>(outcome: O, note: string): Promise<O> => {
+      if (locked.qbMatchState === POSTING) await settle(tx, locked, "waiting", { qbMatchState: current.qbMatchState }, note);
+      return outcome;
+    };
     if (!(await tx.expenseEvent.findFirst({ where: { orgId, expenseId }, select: { id: true } }))) return "waiting";
     const held = await postingHold(tx, current);
     if (held) {
       logWarn("qb_post_held", { expenseId, orgId });
       // A closed expense takes no further sign-off or decision, so finance has to be told.
       if (current.state === "qb_complete") await flagHeld(tx, expenseId, `closed but not posted: ${held}`);
-      return "waiting";
+      return release("waiting", held);
     }
 
     const refused = notSendable(posting, current);
@@ -324,11 +333,10 @@ async function claimForPost(orgId: string, expenseId: string, posting: ExpensePo
     // Retrying cannot fix the expense's own data, so it waits for finance.
     if ("unpostable" in built) return settle(tx, current, "unpostable", { qbMatchState: "NEEDS_FINANCE" }, built.unpostable);
     if ("queue" in built) return settle(tx, current, "queued", { qbMatchState: "AMBIGUOUS" }, built.queue);
-    // State stays postable, so the next drain posts it once the bucket has a Class.
-    if ("noClass" in built) return "no_class";
+    if ("noClass" in built) return release("no_class", "a line's bucket has no QuickBooks Class");
 
     // ponytail: concurrent posts can each see the count under the ceiling, so a day may overshoot by the in-flight posts.
-    if ((await qbCreatesToday(tx)) >= inputs.settings.qbMaxCreatesPerDay) return "waiting";
+    if ((await qbCreatesToday(tx)) >= inputs.settings.qbMaxCreatesPerDay) return release("waiting", "the daily QuickBooks create limit is reached");
 
     const date = built.write.fields.txnDate;
     const gate = qbGate(date, inputs.close, inputs.onAt, current.submittedAt, inputs.book);
@@ -468,6 +476,7 @@ export async function lastPostError(expenseId: string): Promise<string | null> {
 
 /** The refusal for a "book it" that left the expense in `state`; `detail` is why a NEEDS_FINANCE expense waits. */
 export function bookRefusal(state: string, outcome: PostOutcome, detail: string | null): ServiceError {
+  if (outcome === "throttled") return new ServiceError(503, `Not booked: ${THROTTLED_MESSAGE}`);
   switch (state) {
     case "UNBOOKED":
       return new ServiceError(
@@ -554,9 +563,10 @@ export async function sweepExpenseQbStrays(orgId: string, posting: ExpensePostin
  * closing date once for the run. Then every outboxed expense not yet in QuickBooks, oldest receipt
  * first, plus any claim gone stale, and last the orphan sweep. Stops at the daily and per-run count
  * caps and logs the hit (the alarm hook); the rest waits for the next run. A failed expense is
- * stuck and the run goes on. Returns counts only.
+ * stuck and the run goes on. A throttled expense is tried once more after the pause; a second
+ * throttle ends the run. Returns counts only.
  */
-export async function drainExpenseOutbox(now = new Date()): Promise<DrainCounts | "unbound"> {
+export async function drainExpenseOutbox(now = new Date(), turn?: PostingTurn): Promise<DrainCounts | "unbound"> {
   const posting = await getExpenseRuntime().quickbooks.posting();
   if (!posting) return "unbound";
   const orgId = await getOrgId();
@@ -573,7 +583,7 @@ export async function drainExpenseOutbox(now = new Date()): Promise<DrainCounts 
   ).filter((e) => outboxed.has(e.id) && isPostable(e, now.getTime()));
 
   const counts: DrainCounts = {
-    posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, not_sent: 0, needs_finance: 0, no_class: 0, unpostable: 0,
+    posted: 0, matched: 0, queued: 0, failed: 0, throttled: 0, waiting: 0, not_sent: 0, needs_finance: 0, no_class: 0, unpostable: 0,
     capped: null, closeDateRead: close.ok, sweep: { entries: 0, flagged: 0, full: false },
   };
   const stop = await runDrain<Expense, PostOutcome>(due, {
@@ -582,6 +592,8 @@ export async function drainExpenseOutbox(now = new Date()): Promise<DrainCounts 
     maxCreatesPerDay: settings.qbMaxCreatesPerDay,
     createdToday: await qbCreatesToday(),
     failures: [],
+    throttled: "throttled",
+    turn,
     post: async (e) => {
       try {
         const result = await postExpenseToQb(e.orgId, e.id, { close, settings });
@@ -592,6 +604,7 @@ export async function drainExpenseOutbox(now = new Date()): Promise<DrainCounts 
       }
     },
   });
+  if (stop?.by === "throttled") logWarn("qb_drain_throttled", { remaining: stop.remaining });
   if (stop?.by === "day") {
     counts.capped = "day";
     logWarn("qb_daily_cap", { cap: settings.qbMaxCreatesPerDay, remaining: stop.remaining });
@@ -600,6 +613,6 @@ export async function drainExpenseOutbox(now = new Date()): Promise<DrainCounts 
     logWarn("qb_drain_capped", { cap: settings.qbMaxCreatesPerRun, remaining: stop.remaining });
   }
   // After the posts, so an expense this run linked to its own entry is not reported as a stray.
-  counts.sweep = await sweepExpenseQbStrays(orgId, posting, now);
+  if (!turn || (await turn.renew())) counts.sweep = await sweepExpenseQbStrays(orgId, posting, now);
   return counts;
 }

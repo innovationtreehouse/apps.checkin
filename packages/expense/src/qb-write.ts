@@ -2,13 +2,42 @@
 // database: the poster reads the rows and the host's gateway strips them before this runs.
 import { isQuickBooksId, type TxnWrite } from "@checkin/quickbooks";
 import type { ExpensePosting, OutboundBag } from "./contract";
-import type { ExpenseLineItem } from "./db/schema";
+import { allocateCents } from "@checkin/money";
+import type { Expense, ExpenseLineItem } from "./db/schema";
 
 export type LineAmounts = Pick<ExpenseLineItem, "totalPriceCents" | "allocatedTaxCents" | "allocatedShippingCents" | "allocatedDiscountCents">;
 
 /** What a line posts: its price plus its share of tax and shipping, less its share of the discount. */
 export function lineCents(l: LineAmounts): number {
   return l.totalPriceCents + (l.allocatedTaxCents ?? 0) + (l.allocatedShippingCents ?? 0) - (l.allocatedDiscountCents ?? 0);
+}
+
+type AllocationLine = Pick<ExpenseLineItem, "id" | "totalPriceCents">;
+
+/** The expense's tax, shipping and discount split over its lines by price; lines in id order, so a tie goes to the earlier line. */
+export function allocationsFor(expense: Pick<Expense, "taxCents" | "shippingCents" | "discountCents">, lineItems: AllocationLine[]) {
+  const lines = [...lineItems].sort((a, b) => a.id - b.id);
+  const weights = lines.map((li) => li.totalPriceCents);
+  const allocate = (totalCents: number) => {
+    const parts = allocateCents(totalCents, weights);
+    return new Map(lines.map((li, i) => [li.id, parts[i]]));
+  };
+  return {
+    taxAlloc: allocate(expense.taxCents),
+    shippingAlloc: allocate(expense.shippingCents),
+    discountAlloc: allocate(expense.discountCents),
+  };
+}
+
+/** What each of the expense's lines books at, by line id, before QuickBooks processing stores the allocations. */
+export function bookedLineCents(expense: Pick<Expense, "taxCents" | "shippingCents" | "discountCents">, lineItems: AllocationLine[]): Map<number, number> {
+  const { taxAlloc, shippingAlloc, discountAlloc } = allocationsFor(expense, lineItems);
+  return new Map(lineItems.map((li) => [li.id, lineCents({
+    totalPriceCents: li.totalPriceCents,
+    allocatedTaxCents: taxAlloc.get(li.id)!,
+    allocatedShippingCents: shippingAlloc.get(li.id)!,
+    allocatedDiscountCents: discountAlloc.get(li.id)!,
+  })]));
 }
 
 /**

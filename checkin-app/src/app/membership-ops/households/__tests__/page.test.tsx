@@ -143,6 +143,30 @@ describe("membership-ops/households page", () => {
     expect(shown.autoClose).not.toBe(false);
   });
 
+  it("shows the route's words when a revoke is refused, and re-reads the list once on success", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    let refuse = true;
+    const fetchMock = jest.fn(async (_input: RequestInfo | URL, init?: RequestInit) =>
+      init?.method === "POST"
+        ? new Response(JSON.stringify(refuse ? { error: "That household has an open review." } : {}), { status: refuse ? 409 : 200 })
+        : new Response(JSON.stringify(households)),
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+    renderWithProviders(<AdminHouseholdsPage />);
+    await screen.findByText("The Smiths");
+
+    fireEvent.click(screen.getByRole("button", { name: "Revoke Membership" }));
+    await waitFor(() =>
+      expect(notificationsStore.getState().notifications[0]).toMatchObject({ message: "That household has an open review.", color: "red" }),
+    );
+
+    refuse = false;
+    const reads = () => fetchMock.mock.calls.filter(([, init]) => init?.method === undefined).length;
+    const before = reads();
+    fireEvent.click(screen.getByRole("button", { name: "Revoke Membership" }));
+    await waitFor(() => expect(reads()).toBe(before + 1));
+  });
+
   it("posts the year on the button pressed, with a required reason", async () => {
     setSession({ id: 1, isSysadmin: true });
     const fetchMock = mockFetchJson({ "/api/membership-ops/households": households });
@@ -207,6 +231,21 @@ describe("membership-ops/households page", () => {
     expect(screen.getByText("✉ undeliverable")).toBeInTheDocument();
     // Households with all-deliverable emails carry neither.
     expect(screen.getAllByText("✉ Broken email")).toHaveLength(1);
+  });
+
+  it("labels a household that said it won't renew with the year and the date it said so", async () => {
+    setSession({ id: 1, isBoardMember: true });
+    mockFetchJson({
+      "/api/membership-ops/households": {
+        ...households,
+        households: [{ ...households.households[0], notRenewing: { year: 2026, since: "2026-07-03T15:00:00.000Z" } }, households.households[1]],
+      },
+    });
+    renderWithProviders(<AdminHouseholdsPage />);
+    await screen.findByText("The Smiths");
+
+    expect(screen.getByText(/Not renewing 2026-2027 · said .*2026/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Not renewing/)).toHaveLength(1);
   });
 
   it("navigates to the add-participant page for a household", async () => {

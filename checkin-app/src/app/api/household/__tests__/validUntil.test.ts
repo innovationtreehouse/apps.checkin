@@ -17,13 +17,13 @@ jest.mock("@/lib/orgMembership", () => ({ membershipValidThrough: jest.fn() }));
 jest.mock("@/lib/emailIdentity", () => ({ getEmailSenderIdentity: jest.fn().mockResolvedValue({ replyTo: null }) }));
 jest.mock("@/lib/prisma", () => ({
     __esModule: true,
-    default: { person: { findUnique: jest.fn() } },
+    default: { person: { findUnique: jest.fn() }, boardSettings: { findUnique: jest.fn() } },
 }));
 
 const VALID = new Date(Date.UTC(2026, 8, 1));
 
 async function getAs(status: string) {
-    (getServerSession as jest.Mock).mockResolvedValue({ user: { id: 1 } });
+    (getServerSession as jest.Mock).mockResolvedValue({ user: { id: 1, householdId: 10 } });
     (prisma.person.findUnique as jest.Mock).mockResolvedValue({
         id: 1,
         isHouseholdLead: true,

@@ -13,11 +13,16 @@ import { lockFacility } from "@/lib/facilityLock";
 import { duringNightlyRun } from "@/lib/attendance/nightlyClose";
 import { sendProblemsDigest } from "@/lib/problems";
 import { traceOnCommit } from "@/lib/specTrace";
+import { reportTo } from "@/lib/finishRun";
+import { kindOf } from "@checkin/component-kit";
 
 /** A nightly run this soon after the last one is a retry of the same night. */
 const SAME_NIGHT_MS = 12 * 60 * 60 * 1000;
 
 export const GET = withCron(() => duringNightlyRun(async () => {
+    // Each one stays open until the next run departs it, so tonight's email names it.
+    const failedCheckouts: string[] = [];
+    try {
         // A keyholder's recorded close whose sweep never ran departs people at
         // the keyholder's time, so it runs before this sweep stamps them at now.
         await executePendingCloses();
@@ -90,12 +95,15 @@ export const GET = withCron(() => duringNightlyRun(async () => {
                         }] : []);
                         await logCloseDepartures(tx, closeId, systemActor("cron:nightly"), departures, "NIGHTLY_SWEEP");
                         return segments;
-                    }));
+                    }, { maxWait: 5_000, timeout: 15_000 }));
                     if (segments.length > 0) forceClosed.push(visit);
                 } catch (err) {
                     failed += 1;
                     stillOpen.push(visit);
-                    logger.error(`Failed to check out visit ${visit.id} (person ${visit.person.email}):`, err);
+                    logger.error(`Failed to check out visit ${visit.id} (person ${visit.personId}):`, err);
+                    const detail = `visit ${visit.id}, person ${visit.personId}`;
+                    reportTo("attendance")({ lane: "nightly-close", kind: kindOf(err), detail });
+                    failedCheckouts.push(`Nightly close could not check out ${detail}; it stays open until the next run`);
                 }
             }
             // After every per-visit transaction commits: the checkout's own
@@ -137,11 +145,11 @@ export const GET = withCron(() => duringNightlyRun(async () => {
         // 2. Process all pending post-event emails immediately, regardless of 1-hour delay
         const emailResult = await processPostEventEmails({ forceImmediate: true });
 
-        // 3. Delete DoB for anyone who has crossed 26 since the last run. No
+        // 3. Delete DoB for everyone aged 26 or over. No
         // age-gated program can target anyone over 25 (MAX_PROGRAM_AGE), so a DoB for
         // a 26+ person is dead weight on our most-sensitive field. Strip it and set the
         // declared-adult flag so age gates / search / UI still see them as an adult.
-        // Runs nightly to catch members as they age in. Raw SQL so age is judged in the DB, tombstones included.
+        // Runs nightly to catch members as they age in. Raw SQL so age is judged in the DB.
         const purgedPeople = await prisma.$transaction(async (tx) => {
             const purged = await tx.$queryRaw<{ id: number }[]>`
                 UPDATE "Person"
@@ -173,16 +181,14 @@ export const GET = withCron(() => duringNightlyRun(async () => {
         // at the membership-year boundary because an annual pass misses everyone who
         // starts qualifying after it fires. Idempotent — one per person per cycle.
         const personAgreements = await runPersonAgreementSweep(now);
+        failed += personAgreements.failed;
         if (personAgreements.opened > 0) {
             logger.info(`Nightly cron: opened ${personAgreements.opened} individual membership agreement(s).`);
         }
 
-        // 5. The receipt flow's daily Problems email.
-        await sendProblemsDigest(now);
-
         return NextResponse.json({
             success: true,
-            // Checkouts this run swallowed. withCron reads it and records the run
+            // Checkouts and agreement opens this run swallowed. withCron reads it and records the run
             // as completed-but-unclean when non-zero — a swept-nothing sweep is not
             // a green sweep, and is also not a sweep that failed to run.
             failed,
@@ -194,4 +200,8 @@ export const GET = withCron(() => duringNightlyRun(async () => {
             adultDobPurged,
             personAgreements
         });
+    } finally {
+        // The daily Problems email goes out even when a step above throws.
+        await sendProblemsDigest(new Date(), failedCheckouts);
+    }
 }));

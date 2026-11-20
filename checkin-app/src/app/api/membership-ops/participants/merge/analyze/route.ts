@@ -56,9 +56,8 @@ export const GET = withAuth(
                                 // enforces (see @/lib/person/merge/guard.ts).
                                 orgMembership: { select: { status: true } },
                                 householdMembers: {
-                                    // Tombstones are not members: the page's
-                                    // isLeadWithOthers guard must match the POST's, and
-                                    // the membership block counts live members only.
+                                    // The same member set the POST reads, so the page's
+                                    // isLeadWithOthers guard and membership block match it.
                                     select: { id: true, name: true, isHouseholdLead: true }
                                 }
                             }
@@ -126,7 +125,7 @@ export const GET = withAuth(
                             { toolStatuses: { some: { personId: bId } } },
                         ],
                     },
-                    select: { name: true },
+                    select: { name: true, toolStatuses: { where: { personId: { in: [aId, bId] } }, select: { level: true } } },
                 }),
                 prisma.event.findMany({
                     where: {
@@ -150,8 +149,9 @@ export const GET = withAuth(
             for (const p of sharedPrograms) {
                 collisions.push({ type: 'programParticipant', message: `Both enrolled in ${p.name}. Unenroll one first.` });
             }
-            for (const t of sharedTools) {
-                collisions.push({ type: 'toolStatus', message: `Both hold a ${t.name} certification. Remove one first.` });
+            // A same-level pair is a duplicate the merge dedupes, not a collision.
+            for (const t of sharedTools.filter(t => new Set(t.toolStatuses.map(s => s.level)).size > 1)) {
+                collisions.push({ type: 'toolStatus', message: `Both hold a ${t.name} certification at different levels. Remove one first.` });
             }
             // Reviewer side: both records attested under the same process.
             const aReviewedProcesses = new Set(attestations.filter(x => x.reviewerId === aId).map(x => x.processId));

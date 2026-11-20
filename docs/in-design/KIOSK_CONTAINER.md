@@ -80,7 +80,7 @@ Only the kiosk's view of the building is missing.
 | Server's protocol version | Resets; scans queue until it answers | Leave: this fails safe |
 | "Known empty" flag | Resets until a real roster | Leave: "unknown" must never read as empty |
 | 15-second close prompt | Lost | Leave; updates avoid it (below) |
-| 3-second repeat filter | Lost | Leave; updates avoid it (below) |
+| 2-second repeat filter | Lost | Leave; updates avoid it (below) |
 
 The loss is live today. Any restart during an outage triggers it, including the
 reboot escalation, which fires because of the outage. This phase is worth doing

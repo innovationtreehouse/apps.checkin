@@ -864,7 +864,7 @@ describe('submitIntake', () => {
             state: 'TX',
             postalCode: '78701',
             emergencyContacts: [{ conflictParticipantId: null, name: 'Aunt May', phone: '555-555-2000' }],
-            householdMembers: [{ id: 1, name: 'Primary' }],
+            householdMembers: [{ id: 1, name: 'Primary', dateOfBirth: null, isDeclaredAdult: true }],
             orgMembership: { processes: [{ id: 11, orgMembershipId: 42, kind: 'INITIAL', status: 'INTAKE' }] },
         },
     };
@@ -917,6 +917,19 @@ describe('submitIntake', () => {
             code: 'incomplete',
             fields: expect.arrayContaining(['address', 'emergencyContact']),
         });
+    });
+
+    it('incomplete: a household member with no age on file blocks the submit', async () => {
+        prisma.person.findUnique.mockResolvedValue({
+            ...inFlightUser,
+            household: {
+                ...inFlightUser.household,
+                householdMembers: [...inFlightUser.household.householdMembers, { id: 4, name: 'Kid', dateOfBirth: null, isDeclaredAdult: false }],
+            },
+        });
+
+        await expect(submitIntake(1)).rejects.toMatchObject({ code: 'incomplete', fields: ['memberAges'] });
+        expect(prisma.orgMembershipProcess.updateMany).not.toHaveBeenCalled();
     });
 
     it('lands at PENDING_EXTERNAL_ACTION without stamping, then settles the household before the external advance', async () => {

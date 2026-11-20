@@ -126,7 +126,7 @@ export default function AuditLogPage() {
                   </Table.Td>
                   <Table.Td>{lineCell(e)}</Table.Td>
                   <Table.Td>{e.fromState || e.toState ? `${e.fromState ?? "—"} → ${e.toState ?? "—"}` : ""}</Table.Td>
-                  <Table.Td>{e.details ? <Code>{JSON.stringify(e.details)}</Code> : ""}</Table.Td>
+                  <Table.Td>{e.details ? <Code>{typeof e.details === "string" ? e.details : JSON.stringify(e.details)}</Code> : ""}</Table.Td>
                 </Table.Tr>
               ))}
             </Table.Tbody>

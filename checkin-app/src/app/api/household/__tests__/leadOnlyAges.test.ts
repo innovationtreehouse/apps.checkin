@@ -11,7 +11,7 @@ import { getServerSession } from "next-auth/next";
 import prisma from "@/lib/prisma";
 import { PATCH as householdPATCH } from "@/app/api/household/route";
 import { PATCH as memberPATCH } from "@/app/api/household/member/route";
-import { AGE_LEAD_ONLY_REFUSAL } from "@/lib/person/adultDob";
+import { AGE_LEAD_ONLY_REFUSAL, AGE_REQUIRED_REFUSAL } from "@/lib/person/adultDob";
 
 // The archived-household guard has its own tests; here every household is live.
 jest.mock("@/lib/household/archiveGuard", () => ({
@@ -75,11 +75,11 @@ function person(id: number, dateOfBirth: Date | null, isDeclaredAdult = false) {
 }
 
 function signInAs(id: number, canManage: boolean) {
-    mockSession.mockResolvedValue({ user: { id, email: `p${id}@example.com` } });
+    mockSession.mockResolvedValue({ user: { id, householdId: 10, email: `p${id}@example.com` } });
     householdLeadship.mockResolvedValue({ householdId: 10, canManage });
 }
 
-function call(handler: typeof memberPATCH, path: string, body: Record<string, unknown>) {
+function call(handler: (req: NextRequest) => Promise<Response>, path: string, body: Record<string, unknown>) {
     return handler(new Request(`http://localhost${path}`, { method: "PATCH", body: JSON.stringify(body) }) as unknown as NextRequest);
 }
 const editMember = (body: Record<string, unknown>) => call(memberPATCH, "/api/household/member", body);
@@ -125,6 +125,21 @@ describe("PATCH /api/household/member — ages in a household with a lead", () =
         expect(tx.person.update.mock.calls[0][0].data.name).toBe("New Name");
     });
 
+    it("refuses the lead clearing a member's date of birth with no over-25 declaration, writing nothing", async () => {
+        signInAs(LEAD, true);
+        findPerson.mockResolvedValue(person(CHILD, CHILD_DOB));
+        const res = await editMember({ participantId: CHILD, dob: "", over25: false });
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toBe(AGE_REQUIRED_REFUSAL);
+        expect(tx.person.update).not.toHaveBeenCalled();
+    });
+
+    it("lets the lead edit other fields when the age fields are left out", async () => {
+        signInAs(LEAD, true);
+        findPerson.mockResolvedValue(person(CHILD, null));
+        expect((await editMember({ participantId: CHILD, name: "Renamed" })).status).toBe(200);
+    });
+
     it("refuses a sysadmin who does not lead the household changing a member's date of birth", async () => {
         signInAs(SYSADMIN, true);
         findPerson.mockResolvedValue(person(CHILD, CHILD_DOB));
@@ -157,6 +172,19 @@ describe("PATCH /api/household — adding a member", () => {
         signInAs(LEAD, true);
         expect((await addMember(NEW_KID)).status).toBe(200);
         expect(tx.person.create).toHaveBeenCalled();
+    });
+
+    it("refuses the lead adding a member with neither a date of birth nor an over-25 declaration, creating nothing", async () => {
+        signInAs(LEAD, true);
+        const res = await addMember({ memberName: "New Kid" });
+        expect(res.status).toBe(400);
+        expect(tx.person.create).not.toHaveBeenCalled();
+    });
+
+    it("lets the lead add an adult declared over 25", async () => {
+        signInAs(LEAD, true);
+        expect((await addMember({ memberName: "New Adult", memberOver25: true })).status).toBe(200);
+        expect(tx.person.create.mock.calls[0][0].data.isDeclaredAdult).toBe(true);
     });
 
     it("refuses a sysadmin who does not lead the household, creating nothing", async () => {

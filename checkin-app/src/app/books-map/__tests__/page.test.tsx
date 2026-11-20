@@ -1,7 +1,7 @@
 type Rtl = typeof import("@/test-helpers/rtl");
 jest.mock("next/navigation", () => jest.requireActual<Rtl>("@/test-helpers/rtl").navMock());
 jest.mock("next-auth/react", () => jest.requireActual<Rtl>("@/test-helpers/rtl").authMock());
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), hide: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
 
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { notifications } from "@mantine/notifications";
@@ -20,6 +20,7 @@ const map = {
 };
 
 let write: () => Promise<Response>;
+let catchUp: (init?: RequestInit) => unknown;
 let fetchMock: jest.Mock;
 
 beforeEach(() => {
@@ -28,8 +29,10 @@ beforeEach(() => {
   // jsdom has no scrollIntoView, which Mantine's combobox calls on open with a value picked.
   window.HTMLElement.prototype.scrollIntoView = jest.fn();
   write = async () => jsonResponse(200, { role: "SHOPIFY_BANK", quickBooksAccountId: "8001" });
+  catchUp = () => ({ lane: "expense", status: "idle", heldBy: null, until: null, queued: [], pausedUntil: null, lastRuns: {} });
   fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input.toString();
+    if (url.startsWith("/api/finance/quickbooks/catch-up")) return jsonResponse(200, catchUp(init));
     if (init?.method) return write();
     if (url.includes("/quickbooks-classes")) return jsonResponse(200, [{ id: "9003", name: "Programs:Robotics", active: true }]);
     if (url.includes("/quickbooks-accounts")) return jsonResponse(200, [
@@ -118,6 +121,18 @@ describe("books map page", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/books-map/quickbooks-lists/refresh", expect.objectContaining({ method: "POST" }));
   });
 
+  it("asks for a lane's QuickBooks catch-up and shows the lane posting", async () => {
+    setSession({ id: 1, isFinance: true });
+    renderWithProviders(<BooksMapPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Catch up gifts of goods" }));
+    catchUp = () => ({ lane: "expense", status: "idle", heldBy: "in-kind", until: "2026-11-18T14:05:00.000Z", queued: ["income"], pausedUntil: null, lastRuns: {} });
+
+    expect(await screen.findByRole("button", { name: "Gifts of goods: posting…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Income: waiting" })).toBeDisabled();
+    expect(screen.getByText("Posting Gifts of goods to QuickBooks now. Waiting: Income.")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("/api/finance/quickbooks/catch-up", expect.objectContaining({ method: "POST", body: JSON.stringify({ lane: "in-kind" }) }));
+  });
+
   it("offers Update now beside a save refused against an out-of-date QuickBooks list", async () => {
     setSession({ id: 1, isFinance: true });
     const refusal = "QuickBooks' list in the app doesn't have an account with id 8001. If you changed it in QuickBooks, press Update now, then save again.";
@@ -162,7 +177,7 @@ describe("books map page", () => {
       const base = fetchMock.getMockImplementation()!;
       fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = input.toString();
-        if (init?.method) return base(input, init);
+        if (init?.method || url.includes("/quickbooks/catch-up")) return base(input, init);
         if (url.includes("/quickbooks-classes")) return jsonResponse(200, [
           { id: "9003", name: "Programs:Robotics", active: true },
           { id: "9005", name: "Retired", active: false },
@@ -198,6 +213,14 @@ describe("books map page", () => {
       expect(picker).toHaveValue("");
       fireEvent.click(picker);
       expect((await screen.findAllByRole("option")).map((o) => o.textContent)).toEqual(["Checking"]);
+    });
+
+    it("tells the board Finance fixes an inactive pick", async () => {
+      setSession({ id: 1, isBoardMember: true });
+      renderWithProviders(<BooksMapPage />);
+      expect(await screen.findByText("Retired is inactive in QuickBooks. Finance can fix this.")).toBeInTheDocument();
+      expect(screen.getByText("Old savings is inactive in QuickBooks. Finance can fix this.")).toBeInTheDocument();
+      expect(screen.queryByText(/Pick an active one/)).not.toBeInTheDocument();
     });
   });
 

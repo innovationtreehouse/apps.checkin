@@ -35,6 +35,13 @@ jest.mock("@/lib/shopifyRead/client", () => ({
     ordersByLegacyIds: async () => [],
     minRealOrderLegacyId: async () => null,
 }));
+// The merge recalls an archived duplicate agreement's Zoho request after commit; spy on it.
+jest.mock("@/lib/membership/keyVolunteer", () => ({
+    ...jest.requireActual("@/lib/membership/keyVolunteer"),
+    recallSigningRequests: jest.fn().mockResolvedValue(undefined),
+}));
+import { recallSigningRequests } from "@/lib/membership/keyVolunteer";
+const mockRecallSigningRequests = recallSigningRequests as jest.Mock;
 import { runMatchAudit } from "@/lib/finance/matchAudit";
 import { orgMembershipStatusBlocksLogin } from "@/lib/orgMembership";
 import { canReviewBackgroundChecks } from "@/lib/membership/review";
@@ -270,24 +277,24 @@ describe("Merge Participants API", () => {
         await expectNotMerged(pMergeId);
     });
 
-    it("takes an application row before the household row, so a payment holding the application does not deadlock it", async () => {
+    it("takes the household's membership row before its application row, so a payment holding the membership does not deadlock it", async () => {
         const otherHh = await makeHousehold("Merge Test Payment In Flight Household", "NONE");
         await prisma.person.update({ where: { id: pMergeId }, data: { householdId: otherHh } });
         const membership = await prisma.orgMembership.findUniqueOrThrow({ where: { householdId: otherHh } });
         const process = await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: membership.id, kind: "INITIAL", status: "PENDING_PAYMENT", zohoSignerPersonId: pMergeId },
+            data: { orgMembershipId: membership.id, kind: "INITIAL", status: "PENDING_PAYMENT", contractSignedAt: new Date(), zohoSignerPersonId: pMergeId },
         });
         createdProcessIds.push(process.id);
         let release!: () => void;
         const released = new Promise<void>((r) => (release = r));
         let lockHeld!: (pid: number) => void;
         const locked = new Promise<number>((r) => (lockHeld = r));
-        // Stands in for settle(): the application row, then the household row.
+        // Stands in for settle(): the membership row, then the application row.
         const payment = prisma.$transaction(async (tx) => {
-            await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${process.id} FOR UPDATE`;
+            await tx.$queryRaw`SELECT id FROM "OrgMembership" WHERE id = ${membership.id} FOR UPDATE`;
             lockHeld(await backendPid(tx));
             await released;
-            await tx.$queryRaw`SELECT id FROM "OrgMembership" WHERE id = ${membership.id} FOR UPDATE`;
+            await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${process.id} FOR UPDATE`;
         }, { timeout: 20_000 });
         const holderPid = await locked;
 
@@ -339,7 +346,7 @@ describe("Merge Participants API", () => {
         // The snapshot is taken BEFORE step 1's CAS, which mangles the email to
         // merged-*@deleted.invalid and zeroes the role mirrors. Archiving the
         // post-CAS row would record the sentinel address as the person's identity.
-        it("snapshots the pre-merge identity, not the mangled tombstone", async () => {
+        it("snapshots the pre-merge identity, not the cleared merged-away record", async () => {
             await POST(mergeReq(pKeepId, pMergeId));
 
             const row = await prisma.personMerge.findUnique({ where: { fromId: pMergeId } });
@@ -437,7 +444,7 @@ describe("Merge Participants API", () => {
 
     it("should write an AuditLog row capturing the merge (matrix 15)", async () => {
         await prisma.visit.create({ data: { personId: pMergeId, arrivedAt: new Date() } });
-        // Authority the tombstone held: the merge zeroes it, so the audit row is the
+        // Authority the merged-away record held: the merge zeroes it, so the audit row is the
         // only place it survives.
         await prisma.personRole.create({ data: { personId: pMergeId, role: "KEYHOLDER" } });
         await prisma.person.update({ where: { id: pMergeId }, data: { isKeyholder: true } });
@@ -458,10 +465,10 @@ describe("Merge Participants API", () => {
         expect(newData.moved.programParticipants).toEqual({ migrated: 0, left: 0 });
 
         // Full pre-image of the merged-away Person: every field the merge
-        // rewrites (tombstone) or moves (backfill), captured before either update.
+        // rewrites (merged-away record) or moves (backfill), captured before either update.
         // The four role mirrors are in here because the merge rewrites them on both
-        // sides — nothing is deleted, so this row is the only record of what
-        // authority the merged-away record held.
+        // sides and then deletes the merged-away row, so this row is the only record
+        // of what authority it held.
         const PRE_IMAGE_KEYS = [
             "dateOfBirth", "email", "emailVerified", "googleId",
             "householdId", "id", "image", "isHouseholdLead", "lastBackgroundCheck",
@@ -485,7 +492,7 @@ describe("Merge Participants API", () => {
     });
 
     it("should succeed when the MERGED side holds googleId+email and the keeper holds neither (prod P2002 repro)", async () => {
-        // The tombstone clears googleId/email off the merge-side row BEFORE the keeper
+        // The merge clears googleId/email off the merge-side row BEFORE the keeper
         // backfill copies them; the other order trips the @unique constraint and
         // surfaces as a generic 500.
         // Keeper starts with no email/googleId of its own (beforeEach gives it one
@@ -587,6 +594,27 @@ describe("Merge Participants API", () => {
         expect(newData.moved.corporationMembers).toEqual({ migrated: 0, deduped: 1 });
     });
 
+    it("dedupes a same-tool, same-level certification pair onto the keeper", async () => {
+        const tool = await prisma.tool.create({ data: { name: "Same Level Tool" } });
+        createdToolId = tool.id;
+        await prisma.toolStatus.create({ data: { toolId: tool.id, personId: pKeepId, level: "CERTIFIED" } });
+        await prisma.toolStatus.create({ data: { toolId: tool.id, personId: pMergeId, level: "CERTIFIED" } });
+
+        const analyzed = await (await analyzeGET(analyzeReq(pKeepId, pMergeId))).json();
+        expect(analyzed.collisions).toEqual([]);
+
+        const res = await POST(mergeReq(pKeepId, pMergeId));
+        expect(res.status).toBe(200);
+        await expectMergedAway(pMergeId, pKeepId);
+
+        const rows = await prisma.toolStatus.findMany({ where: { toolId: tool.id } });
+        expect(rows).toEqual([expect.objectContaining({ personId: pKeepId, level: "CERTIFIED" })]);
+
+        const log = await prisma.auditLog.findFirst({ where: { tableName: "Person", affectedEntityId: pKeepId, secondaryAffectedEntity: pMergeId } });
+        const newData = log?.newData as { moved: Record<string, { migrated: number; deduped: number; left: number }> };
+        expect(newData.moved.toolStatuses).toEqual({ migrated: 0, deduped: 1, left: 0 });
+    });
+
     it("repoints a bucket owner and moves or dedupes bucket treasurer rows", async () => {
         const owned = await prisma.budgetOwner.create({ data: { name: "Merge Owned Bucket", ownerId: pMergeId } });
         const shared = await prisma.budgetOwner.create({ data: { name: "Merge Shared Bucket" } });
@@ -681,7 +709,7 @@ describe("Merge Participants API", () => {
     });
 
     // Non-collision move — the row relinks to the keeper, not duplicated.
-    it("moves a tombstone-only enrollment/tool/rsvp to the keeper (no collision)", async () => {
+    it("moves a merged-away-only enrollment/tool/rsvp to the keeper (no collision)", async () => {
         const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Non-Collision Program" } });
         createdProgramId = program.id;
         const tool = await prisma.tool.create({ data: { name: "Tool" } });
@@ -714,8 +742,8 @@ describe("Merge Participants API", () => {
         expect(data.error).toContain("lead of a household with other members");
     });
 
-    // OrgMembership is 1:1 with Household and the merge never moves it: the tombstone
-    // keeps its householdId, the keeper stays in its own household. Both resulting
+    // OrgMembership is 1:1 with Household and the merge never moves it: the merged-away
+    // record's household keeps its membership, the keeper stays in its own household. Both resulting
     // harms depend on which side is merged away, so the guard is asymmetric.
     describe("household membership guard", () => {
         it("400s when the merged-away record is the last live member of an ACTIVE household (value stranded)", async () => {
@@ -851,8 +879,8 @@ describe("Merge Participants API", () => {
     // subjects are checked: the two need not share a household.
     describe("conflict of interest", () => {
         it("403s when the actor shares a household with the kept record", async () => {
-            const tombstoneHh = await makeHousehold("Tombstone Household");
-            await prisma.person.update({ where: { id: pMergeId }, data: { householdId: tombstoneHh } });
+            const mergedAwayHh = await makeHousehold("Merged-Away Household");
+            await prisma.person.update({ where: { id: pMergeId }, data: { householdId: mergedAwayHh } });
             await prisma.person.update({ where: { id: actorId }, data: { householdId } });
 
             const res = await POST(mergeReq(pKeepId, pMergeId));
@@ -901,8 +929,8 @@ describe("Merge Participants API", () => {
         });
 
         it("allows the merge when the actor is outside both households", async () => {
-            const tombstoneHh = await makeHousehold("Unrelated Household");
-            await prisma.person.update({ where: { id: pMergeId }, data: { householdId: tombstoneHh } });
+            const mergedAwayHh = await makeHousehold("Unrelated Household");
+            await prisma.person.update({ where: { id: pMergeId }, data: { householdId: mergedAwayHh } });
 
             const res = await POST(mergeReq(pKeepId, pMergeId));
             expect(res.status).toBe(200);
@@ -976,7 +1004,7 @@ describe("Merge Participants API", () => {
         expect(data.error).toBe("Invalid participant IDs provided.");
     });
 
-    it("409s on double-merge / merging a tombstone, both directions, and on analyze", async () => {
+    it("409s on double-merge / merging a merged-away record, both directions, and on analyze", async () => {
         const res1 = await POST(mergeReq(pKeepId, pMergeId));
         expect(res1.status).toBe(200);
 
@@ -1134,7 +1162,7 @@ describe("Merge Participants API", () => {
             expect(data.error).toContain("name");
         });
 
-        it("identity 'merge' adopts the tombstone's email with no P2002 (clear-first ordering proven)", async () => {
+        it("identity 'merge' adopts the merged-away record's email with no P2002 (clear-first ordering proven)", async () => {
             const res = await POST(mergeReq(pKeepId, pMergeId, { name: "keep", identity: "merge" }));
             expect(res.status).toBe(200);
             const kept = await prisma.person.findUnique({ where: { id: pKeepId } });
@@ -1322,7 +1350,7 @@ describe("Merge Participants API", () => {
         });
     });
 
-    it("single-sided auto-backfill: keeper null, tombstone set -> keeper backfilled", async () => {
+    it("single-sided auto-backfill: keeper null, merged-away record set -> keeper backfilled", async () => {
         // A null-name Person is unrepresentable, so a set keeper name must survive;
         // the five nullable fields prove the null-backfill behavior.
         const kA = await prisma.person.create({ data: { name: "Keeper Name", phone: null, dateOfBirth: null, image: null, googleId: null, email: null, householdId } });
@@ -1405,7 +1433,7 @@ describe("Merge Participants API", () => {
         };
 
         // RESTRICT: this row is what makes `DELETE FROM "Person"` fail for essentially
-        // every real tombstone.
+        // every real merged-away record.
         it("moves RawBadgeLog scans to the survivor", async () => {
             await prisma.rawBadgeLog.create({ data: { personId: pMergeId, location: "front-desk" } });
 
@@ -1473,7 +1501,7 @@ describe("Merge Participants API", () => {
             expect(await movedTallies()).toMatchObject({ trustedAdultDecisions: 1 });
         });
 
-        // CASCADE: a role left on the tombstone is a security grant a later delete
+        // CASCADE: a role left on the merged-away record is a security grant its delete
         // would take with it, with no audit row.
         it("moves a PersonRole the survivor lacks, dedupes one it already holds, and loses none silently", async () => {
             await prisma.personRole.create({ data: { personId: pKeepId, role: "BOARD" } });
@@ -1777,14 +1805,14 @@ describe("Merge Participants API", () => {
 
         it("leaves the survivor exactly one open PERSON_BG, archiving the less-advanced row", async () => {
             const keeperProc = await openPersonBg(pKeepId);
-            const tombstoneProc = await openPersonBg(pMergeId, { bgConsentAt: new Date() }); // further along: submitted for review
-            createdProcessIds.push(keeperProc.id, tombstoneProc.id);
+            const mergedAwayProc = await openPersonBg(pMergeId, { bgConsentAt: new Date() }); // further along: submitted for review
+            createdProcessIds.push(keeperProc.id, mergedAwayProc.id);
 
             const res = await POST(mergeReq(pKeepId, pMergeId));
             expect(res.status).toBe(200);
 
             const open = await openForKeeper();
-            expect(open.map(p => p.id)).toEqual([tombstoneProc.id]);
+            expect(open.map(p => p.id)).toEqual([mergedAwayProc.id]);
 
             // The loser is ARCHIVED (not deleted), with archiveApplication's audit shape
             // so the board can unarchive it if the merge picked wrong.
@@ -1793,7 +1821,7 @@ describe("Merge Participants API", () => {
             expect(loser?.subjectPersonId).toBe(pKeepId);
             const log = await prisma.auditLog.findFirst({ where: { tableName: "OrgMembershipProcess", affectedEntityId: keeperProc.id } });
             expect(log?.oldData).toMatchObject({ status: "PENDING_BG_REVIEW" });
-            expect(log?.newData).toMatchObject({ status: "ARCHIVED", survivorProcessId: tombstoneProc.id });
+            expect(log?.newData).toMatchObject({ status: "ARCHIVED", survivorProcessId: mergedAwayProc.id });
 
             const mergeLog = await prisma.auditLog.findFirst({ where: { tableName: "Person", affectedEntityId: pKeepId, secondaryAffectedEntity: pMergeId } });
             expect((mergeLog?.newData as { moved: { personBgArchived: number } }).moved.personBgArchived).toBe(1);
@@ -1801,8 +1829,8 @@ describe("Merge Participants API", () => {
 
         it("keeps the row with attestations when neither has consent", async () => {
             const keeperProc = await openPersonBg(pKeepId);
-            const tombstoneProc = await openPersonBg(pMergeId);
-            createdProcessIds.push(keeperProc.id, tombstoneProc.id);
+            const mergedAwayProc = await openPersonBg(pMergeId);
+            createdProcessIds.push(keeperProc.id, mergedAwayProc.id);
             await prisma.backgroundCheckAttestation.create({ data: { processId: keeperProc.id, reviewerId: actorId, result: "APPROVE" } });
 
             const res = await POST(mergeReq(pKeepId, pMergeId));
@@ -1816,26 +1844,182 @@ describe("Merge Participants API", () => {
 
         it("refuses to meet a BLOCKED row with an open review, archiving neither", async () => {
             const keeperProc = await openPersonBg(pKeepId, { bgConsentAt: new Date() });
-            const tombstoneProc = await openPersonBg(pMergeId, { status: "BLOCKED" });
-            createdProcessIds.push(keeperProc.id, tombstoneProc.id);
+            const mergedAwayProc = await openPersonBg(pMergeId, { status: "BLOCKED" });
+            createdProcessIds.push(keeperProc.id, mergedAwayProc.id);
 
             const res = await POST(mergeReq(pKeepId, pMergeId));
             expect(res.status).toBe(409);
 
             await expectNotMerged(pMergeId);
-            const statuses = await prisma.orgMembershipProcess.findMany({ where: { id: { in: [keeperProc.id, tombstoneProc.id] } }, select: { status: true }, orderBy: { id: "asc" } });
+            const statuses = await prisma.orgMembershipProcess.findMany({ where: { id: { in: [keeperProc.id, mergedAwayProc.id] } }, select: { status: true }, orderBy: { id: "asc" } });
             expect(statuses.map(p => p.status)).toEqual(["PENDING_BG_REVIEW", "BLOCKED"]);
         });
 
         it("leaves a single open PERSON_BG alone (nothing to resolve)", async () => {
-            const tombstoneProc = await openPersonBg(pMergeId);
-            createdProcessIds.push(tombstoneProc.id);
+            const mergedAwayProc = await openPersonBg(pMergeId);
+            createdProcessIds.push(mergedAwayProc.id);
 
             const res = await POST(mergeReq(pKeepId, pMergeId));
             expect(res.status).toBe(200);
 
             const open = await openForKeeper();
-            expect(open.map(p => ({ id: p.id, status: p.status }))).toEqual([{ id: tombstoneProc.id, status: "PENDING_BG_REVIEW" }]);
+            expect(open.map(p => ({ id: p.id, status: p.status }))).toEqual([{ id: mergedAwayProc.id, status: "PENDING_BG_REVIEW" }]);
+        });
+    });
+
+    // One human holds ONE open Key Volunteer agreement: re-pointing both sides' open
+    // agreements at the survivor would leave two.
+    describe("duplicate open Key Volunteer agreement on both merge subjects", () => {
+        const openKva = (personId: number, extra: { agreementVersion?: number; zohoEnvelopeId?: string } = {}) =>
+            prisma.orgMembershipProcess.create({
+                data: {
+                    kind: "KEY_VOLUNTEER_AGREEMENT",
+                    subjectPersonId: personId,
+                    status: "PENDING_EXTERNAL_ACTION",
+                    agreementVersion: extra.agreementVersion ?? 1,
+                    zohoEnvelopeId: extra.zohoEnvelopeId ?? null,
+                },
+            });
+
+        const openForKeeper = () =>
+            prisma.orgMembershipProcess.findMany({
+                where: { kind: "KEY_VOLUNTEER_AGREEMENT", subjectPersonId: pKeepId, status: "PENDING_EXTERNAL_ACTION" },
+            });
+
+        beforeEach(() => mockRecallSigningRequests.mockClear());
+
+        it("leaves the survivor exactly one open agreement, archiving and recalling the less-advanced row", async () => {
+            const envelope = `kva-merge-${Date.now()}`;
+            const keeperProc = await openKva(pKeepId, { zohoEnvelopeId: envelope });
+            const mergedAwayProc = await openKva(pMergeId, { agreementVersion: 2 }); // newer version wins
+            createdProcessIds.push(keeperProc.id, mergedAwayProc.id);
+
+            const res = await POST(mergeReq(pKeepId, pMergeId));
+            expect(res.status).toBe(200);
+
+            const open = await openForKeeper();
+            expect(open.map(p => p.id)).toEqual([mergedAwayProc.id]);
+
+            const loser = await prisma.orgMembershipProcess.findUnique({ where: { id: keeperProc.id } });
+            expect(loser?.status).toBe("ARCHIVED");
+            expect(loser?.archivedFromStatus).toBe("PENDING_EXTERNAL_ACTION");
+            const log = await prisma.auditLog.findFirst({ where: { tableName: "OrgMembershipProcess", affectedEntityId: keeperProc.id } });
+            expect(log?.oldData).toMatchObject({ status: "PENDING_EXTERNAL_ACTION" });
+            expect(log?.newData).toMatchObject({ status: "ARCHIVED", survivorProcessId: mergedAwayProc.id });
+
+            const mergeLog = await prisma.auditLog.findFirst({ where: { tableName: "Person", affectedEntityId: pKeepId, secondaryAffectedEntity: pMergeId } });
+            expect((mergeLog?.newData as { moved: { kvaArchived: number } }).moved.kvaArchived).toBe(1);
+            expect(mockRecallSigningRequests).toHaveBeenCalledWith([envelope]);
+        });
+
+        it("keeps the row with a Zoho request at the same version", async () => {
+            const keeperProc = await openKva(pKeepId);
+            const mergedAwayProc = await openKva(pMergeId, { zohoEnvelopeId: `kva-merge-${Date.now()}` });
+            createdProcessIds.push(keeperProc.id, mergedAwayProc.id);
+
+            const res = await POST(mergeReq(pKeepId, pMergeId));
+            expect(res.status).toBe(200);
+
+            expect((await openForKeeper()).map(p => p.id)).toEqual([mergedAwayProc.id]);
+            // The archived row never reached Zoho, so there is nothing to recall.
+            expect(mockRecallSigningRequests).toHaveBeenCalledWith([]);
+        });
+
+        it("keeps the older row when neither is further along", async () => {
+            const keeperProc = await openKva(pKeepId);
+            const mergedAwayProc = await openKva(pMergeId);
+            createdProcessIds.push(keeperProc.id, mergedAwayProc.id);
+
+            const res = await POST(mergeReq(pKeepId, pMergeId));
+            expect(res.status).toBe(200);
+
+            expect((await openForKeeper()).map(p => p.id)).toEqual([keeperProc.id]);
+        });
+
+        it("leaves a single open agreement alone (nothing to resolve)", async () => {
+            const mergedAwayProc = await openKva(pMergeId);
+            createdProcessIds.push(mergedAwayProc.id);
+
+            const res = await POST(mergeReq(pKeepId, pMergeId));
+            expect(res.status).toBe(200);
+
+            expect((await openForKeeper()).map(p => p.id)).toEqual([mergedAwayProc.id]);
+            expect(mockRecallSigningRequests).toHaveBeenCalledWith([]);
+        });
+
+        describe("beside an agreement already signed", () => {
+            const CURRENT = 3;
+            let savedVersion: number | null = null;
+
+            beforeAll(async () => {
+                const prev = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { keyVolunteerAgreementVersion: true } });
+                savedVersion = prev ? prev.keyVolunteerAgreementVersion : null;
+                await prisma.boardSettings.upsert({
+                    where: { id: 1 },
+                    create: { id: 1, keyVolunteerAgreementVersion: CURRENT },
+                    update: { keyVolunteerAgreementVersion: CURRENT },
+                });
+            });
+
+            afterAll(async () => {
+                if (savedVersion !== null) await prisma.boardSettings.update({ where: { id: 1 }, data: { keyVolunteerAgreementVersion: savedVersion } });
+                else await prisma.boardSettings.delete({ where: { id: 1 } }).catch(() => {});
+            });
+
+            const signedKva = (personId: number, agreementVersion: number) =>
+                prisma.orgMembershipProcess.create({
+                    data: { kind: "KEY_VOLUNTEER_AGREEMENT", subjectPersonId: personId, status: "ACTIVE", agreementVersion, contractSignedAt: new Date() },
+                });
+
+            const statusOf = async (id: number) => (await prisma.orgMembershipProcess.findUnique({ where: { id } }))?.status;
+
+            it("archives the open agreement and recalls its request when the other is signed at the current version", async () => {
+                const envelope = `kva-merge-signed-${Date.now()}`;
+                const signedProc = await signedKva(pKeepId, CURRENT);
+                const mergedAwayProc = await openKva(pMergeId, { agreementVersion: CURRENT, zohoEnvelopeId: envelope });
+                createdProcessIds.push(signedProc.id, mergedAwayProc.id);
+
+                const res = await POST(mergeReq(pKeepId, pMergeId));
+                expect(res.status).toBe(200);
+
+                expect(await openForKeeper()).toEqual([]);
+                expect(await statusOf(signedProc.id)).toBe("ACTIVE");
+                const loser = await prisma.orgMembershipProcess.findUnique({ where: { id: mergedAwayProc.id } });
+                expect(loser?.status).toBe("ARCHIVED");
+                expect(loser?.archivedFromStatus).toBe("PENDING_EXTERNAL_ACTION");
+                const log = await prisma.auditLog.findFirst({ where: { tableName: "OrgMembershipProcess", affectedEntityId: mergedAwayProc.id } });
+                expect(log?.newData).toMatchObject({ status: "ARCHIVED", survivorProcessId: signedProc.id });
+                expect(mockRecallSigningRequests).toHaveBeenCalledWith([envelope]);
+            });
+
+            it("keeps the open agreement as the re-sign when the signed one is below the current version", async () => {
+                const signedProc = await signedKva(pMergeId, CURRENT - 1);
+                const keeperProc = await openKva(pKeepId, { agreementVersion: CURRENT });
+                createdProcessIds.push(signedProc.id, keeperProc.id);
+
+                const res = await POST(mergeReq(pKeepId, pMergeId));
+                expect(res.status).toBe(200);
+
+                expect((await openForKeeper()).map(p => p.id)).toEqual([keeperProc.id]);
+                expect(await statusOf(signedProc.id)).toBe("ACTIVE");
+                expect(mockRecallSigningRequests).toHaveBeenCalledWith([]);
+            });
+
+            it("leaves two agreements signed at the current version unchanged", async () => {
+                const keeperProc = await signedKva(pKeepId, CURRENT);
+                const mergedAwayProc = await signedKva(pMergeId, CURRENT);
+                createdProcessIds.push(keeperProc.id, mergedAwayProc.id);
+
+                const res = await POST(mergeReq(pKeepId, pMergeId));
+                expect(res.status).toBe(200);
+
+                const keeperKvas = await prisma.orgMembershipProcess.findMany({
+                    where: { kind: "KEY_VOLUNTEER_AGREEMENT", subjectPersonId: pKeepId },
+                    orderBy: { id: "asc" },
+                });
+                expect(keeperKvas.map(p => [p.id, p.status])).toEqual([[keeperProc.id, "ACTIVE"], [mergedAwayProc.id, "ACTIVE"]]);
+                expect(mockRecallSigningRequests).toHaveBeenCalledWith([]);
+            });
         });
     });
 
@@ -2223,7 +2407,7 @@ describe("Merge Participants API", () => {
         expect(data.error).toContain("Cap Gate Program");
     });
 
-    // A non-colliding enrollment moves to the keeper, leaving no tombstone residue to audit.
+    // A non-colliding enrollment moves to the keeper, leaving no residue on the merged-away record to audit.
     it("match-audit: a non-colliding enrollment migrates to the keeper normally", async () => {
         const program = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: "Match Audit Program", shopifyVariantId: "variant-match-audit" } });
         createdProgramId = program.id;

@@ -1,5 +1,5 @@
 import { resetTokenCache, SHOPIFY_INVENTORY_API_VERSION } from '../shopify/client';
-import { adjustProgramInventory, changeProgramStock, changeProgramStockWith, healProgramStock, listUnconfirmedStock, programStockTiming, setProgramInventory, settleUnconfirmedStock } from '../shopify/stock';
+import { adjustProgramInventory, changeProgramStock, changeProgramStockWith, healProgramStock, listUnconfirmedStock, programStockTiming, setProgramInventory, settleUnconfirmedStock, STOCK_BOOKKEEPING_RESET } from '../shopify/stock';
 import { sendEmail } from '../email';
 import prisma from '../prisma';
 import crypto from 'crypto';
@@ -390,6 +390,17 @@ describe('adjustProgramInventory (the one program-stock writer)', () => {
         expect(after()).toEqual(clean);
     });
 
+    it('after the sale has ended, a deferred test-order give-back is dropped instead of going back on sale', async () => {
+        setRow({ saleEndedAt: new Date() });
+        const s = shopify({ ProgramStockRead: [readReply(0)] });
+
+        expect(await adjustProgramInventory(program, 2, 'test-order', { deferred: true })).toBe(true);
+
+        await new Promise((r) => setTimeout(r, 50));
+        expect(s.adjusts()).toHaveLength(0);
+        expect(after()).toEqual(clean);
+    });
+
     it('a pending +1 resent after the sale has ended lands, then goes straight back off sale', async () => {
         setRow({ saleEndedAt: new Date(), shopifyStockPendingWrite: pendingWrite({ key: 'program-42-hold-release-old', reason: 'hold-release', delta: 1, owedPart: 1 }) });
         const s = shopify({ ProgramStockAdjust: [adjustOk, adjustOk], ProgramStockRead: [readReply(1)] });
@@ -479,6 +490,33 @@ describe('adjustProgramInventory (the one program-stock writer)', () => {
         expect(await adjustProgramInventory(program, -1, 'comp')).toBe(false);
 
         expect(after()).toEqual({ ...clean, carry: -1, flagged: true });
+    });
+
+    it('a resent pending write meeting a 401 may have landed on its first send: it stays pending under its key', async () => {
+        programStockTiming.capMs = 30;
+        programStockTiming.maxBackoffMs = 5;
+        setRow({ shopifyStockPendingWrite: pendingWrite() });
+        const s = shopify({ ProgramStockAdjust: Array.from({ length: 500 }, (): Reply => ({ status: 401 })) });
+
+        expect(await adjustProgramInventory(program, 1, 'hold-release')).toBe(false);
+
+        expect(s.adjusts().length).toBeGreaterThan(1);
+        expect(new Set(s.adjusts().map((c) => c.variables.idempotencyKey))).toEqual(new Set(['program-42-comp-old']));
+        expect(after()).toMatchObject({ carry: 1, flagged: true, pending: { key: 'program-42-comp-old' } });
+    });
+
+    it('a variant change mid-push (STOCK_BOOKKEEPING_RESET) takes the lease, so the old push books nothing after it', async () => {
+        // The old variant's write fails after the reset: what it owed must not land on the new variant's carry.
+        const s = shopify({ ProgramStockRead: [readReply(5)], ProgramStockAdjust: [{ ...(adjustUserError('INVALID_LOCATION') as object), delayMs: 20 }] });
+        const push = adjustProgramInventory(program, -1, 'comp');
+        await new Promise((r) => setTimeout(r, 10));
+        Object.assign(db.__state.row!, STOCK_BOOKKEEPING_RESET);
+
+        expect(await push).toBe(false);
+
+        expect(s.adjusts()).toHaveLength(1);
+        expect(after()).toMatchObject({ carry: 0, pending: null, leased: false });
+        expect(sendEmail).not.toHaveBeenCalled();
     });
 
     it('stops at the top of the loop once the cap has passed, leaving the rest owed', async () => {

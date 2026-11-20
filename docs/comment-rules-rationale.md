@@ -50,26 +50,18 @@ rule was buried in it gets routed.
 
 The first draft of C1b routed a surviving rule to `docs/designs/`. That was written against a
 checkout a long way behind `main`, in which the docs tree had since been reorganised:
-`docs/designs/` and `checkin-app/docs/` no longer exist, and `docs/rules/` had arrived without
-my knowing, because the `AGENTS.md` docs map I was reading was equally stale.
+`docs/designs/` and `checkin-app/docs/` no longer exist, which I missed because the `AGENTS.md`
+docs map I was reading was equally stale.
 
 The correction is worth recording, because the failure is the one C21 warns about. A document
 telling people not to cite locations that rot was itself built on rotted locations, and the
 examples survived the move while every path and every count did not.
 
-Two consequences of the real destination:
-
-- **Provenance does not travel.** The register forbids issue numbers, dates and line-number
-  citations outright, as `AGENTS.md` does for comments. A rule moving out of a comment sheds its
-  provenance at the boundary, by design, and the PR that moves it is where that history lives.
-- **The register's rules already converge with these.** `DOCUMENTATION_STANDARD.md` §3.1
-  excludes anything a reader could derive from the code, which is C2; §3.5 forbids page numbers
-  and filesystem paths, which is C21 and C25; §6 rule 15 says a rule restated in a second file
-  is one that will be updated in only one of them, which is C18. Where the standard says
-  something, the rules cite it rather than restating it.
+**Provenance does not travel.** A rule moving out of a comment sheds its provenance at the
+boundary, by design, and the PR that moves it is where that history lives.
 
 **Why C1b restates C26 anyway.** C1b's routing table is C26's three-way split with two rows
-added, for enforced-by-construction and for rules belonging to a register. That duplication is
+added, for enforced-by-construction and for how-we-build conventions. That duplication is
 C18's point-of-temptation exception used deliberately: C1 is where someone holds a piece of
 history wondering what to do with it, and C26 sits several sections away under a heading about
 cross-file rules, which an archaeology residue frequently is not. Do not collapse C1b into a

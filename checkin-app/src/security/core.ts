@@ -8,6 +8,8 @@
  *                             Granted to authenticated-session views, NOT to
  *                             anonymous/kiosk views. A member view holds BOTH
  *                             'member' and 'public'; anon holds only 'public'.
+ *   'roster'                — flat; the view receives the rows of the route's
+ *                             `rosterModels`. A view without it gets none of them.
  *   '<scope>:<tier>'        — tier ∈ {pii, personal, internal, hardship}; the
  *                             grant applies on rows where the caller holds <scope>
  *
@@ -80,7 +82,7 @@ const SCOPES = [
 
 export type Scope = (typeof SCOPES)[number];
 
-export type Token = 'public' | 'member' | `${Scope}:${SensitiveTier}`;
+export type Token = 'public' | 'member' | 'roster' | `${Scope}:${SensitiveTier}`;
 
 /**
  * Role vocabulary. Roles are properties of the caller (sometimes parameterised
@@ -108,6 +110,9 @@ export const ROLES = [
     'householdLead',
     'programLeadMentor',
     'programCoreVolunteer',
+    // The caller, or someone in the caller's household, is enrolled in program
+    // params.id. Read from the DB (CallerContext.programsEnrolledIn).
+    'programEnrolledHousehold',
 ] as const;
 
 export type Role = (typeof ROLES)[number];
@@ -117,9 +122,10 @@ const VALID_SENSITIVE_TIERS = new Set<SensitiveTier>(['pii', 'personal', 'intern
 
 export function parseToken(
     t: string,
-): { scope: Scope; tier: SensitiveTier } | 'public' | 'member' | null {
+): { scope: Scope; tier: SensitiveTier } | 'public' | 'member' | 'roster' | null {
     if (t === 'public') return 'public';
     if (t === 'member') return 'member';
+    if (t === 'roster') return 'roster';
     const colon = t.indexOf(':');
     if (colon < 1) return null;
     const scope = t.slice(0, colon);
@@ -260,6 +266,11 @@ export interface RouteSpec {
     financeView?: FinanceViewSpec;
     /** Admits a session with an open household question, which every other route refuses. */
     allowJoinPending?: true;
+    /**
+     * Models whose rows reveal who is enrolled, though every field on them is public.
+     * Only a view holding the `roster` token receives them; see {@link hiddenRosterModels}.
+     */
+    rosterModels?: readonly Models[];
 }
 
 /**
@@ -299,6 +310,8 @@ export interface CtxNeeds {
     ledHouseholdMembers: boolean;
     /** householdMemberIds: the finance-view own-record check for household-owned records */
     householdMembers: boolean;
+    /** programsEnrolledIn (the programEnrolledHousehold role) */
+    enrolledPrograms: boolean;
 }
 
 export const ALL_CTX_NEEDS: CtxNeeds = Object.freeze({
@@ -308,6 +321,7 @@ export const ALL_CTX_NEEDS: CtxNeeds = Object.freeze({
     activeVisitors: true,
     ledHouseholdMembers: true,
     householdMembers: true,
+    enrolledPrograms: true,
 });
 
 function scopeNeeds(scope: Scope): Partial<CtxNeeds> {
@@ -355,6 +369,8 @@ function roleNeeds(role: Role): Partial<CtxNeeds> {
         case 'programLeadMentor':
         case 'programCoreVolunteer':
             return { programs: true };
+        case 'programEnrolledHousehold':
+            return { enrolledPrograms: true };
         default:
             return assertNever(role);
     }
@@ -403,6 +419,7 @@ export function deriveCtxNeeds(
         activeVisitors: false,
         ledHouseholdMembers: false,
         householdMembers: (spec.returns ?? []).some(model => HOUSEHOLD_OWNED_FINANCE_MODELS.has(model)),
+        enrolledPrograms: false,
     };
     Object.assign(needs, authorizeNeeds(spec.authorize));
     for (const [role, tokens] of spec.orderedView) {
@@ -484,6 +501,8 @@ function assertValidRegistration(endpoint: string, orderedView: readonly Ordered
 
 export function defineRoute(spec: RouteSpec): RouteSpec {
     assertValidRegistration(spec.endpoint, spec.orderedView);
+    const rosterError = rosterDeclarationError(spec);
+    if (rosterError) throw new Error(`Route ${spec.endpoint}: ${rosterError}`);
     const declarationErrors = financeViewErrors(spec);
     if (declarationErrors.length > 0) {
         throw new Error(`Route ${spec.endpoint}: bad finance-view declaration:\n  ${declarationErrors.join('\n  ')}`);
@@ -503,6 +522,9 @@ export function defineFileRoute(spec: FileRouteSpec): FileRouteSpec {
         throw new Error(`File route ${endpoint}: authorize '${authorize}' is not allowed`);
     }
     assertValidRegistration(endpoint, spec.orderedView);
+    if (spec.orderedView.some(([, tokens]) => tokens.includes('roster'))) {
+        throw new Error(`File route ${endpoint}: the 'roster' token has no meaning on a file route`);
+    }
     const tiers = classifications[file.model] as Record<string, Tier> | undefined;
     const tier = tiers?.[file.field];
     if (tier === undefined) {
@@ -514,6 +536,25 @@ export function defineFileRoute(spec: FileRouteSpec): FileRouteSpec {
     _fileRoutes.set(endpoint, { ...spec, ctxNeeds: deriveCtxNeeds({ ...spec, returns: [file.model] }) });
     _fileOnlyFields.add(`${file.model}.${file.field}`);
     return spec;
+}
+
+/** Why a route's roster declaration is unsound, or null: the token and `rosterModels` come together. */
+export function rosterDeclarationError(spec: Pick<RouteSpec, 'orderedView' | 'rosterModels'>): string | null {
+    const models = spec.rosterModels ?? [];
+    const granted = spec.orderedView.some(([, tokens]) => tokens.includes('roster'));
+    if (granted && models.length === 0) return "a view holds 'roster' but the route declares no rosterModels";
+    if (!granted && models.length > 0) return "rosterModels is declared but no view holds 'roster'";
+    const unknown = models.filter(m => !(m in classifications));
+    if (unknown.length > 0) return `rosterModels names unclassified models: ${unknown.join(', ')}`;
+    return null;
+}
+
+const NO_MODELS: ReadonlySet<string> = new Set();
+
+/** The models the stripper withholds from a view: the route's roster, unless the view holds 'roster'. */
+export function hiddenRosterModels(spec: Pick<RouteSpec, 'rosterModels'>, tokens: readonly Token[]): ReadonlySet<string> {
+    if (!spec.rosterModels || tokens.includes('roster')) return NO_MODELS;
+    return new Set(spec.rosterModels);
 }
 
 /** True iff a registered file route serves this field — the stripper drops it. */
@@ -571,9 +612,8 @@ export function fieldVisible(
     if (tier === 'public') return tokens.includes('public');
     if (tier === 'member') return tokens.includes('member');
     for (const tok of tokens) {
-        if (tok === 'public' || tok === 'member') continue;
         const parsed = parseToken(tok);
-        if (parsed === null || parsed === 'public' || parsed === 'member') continue;
+        if (parsed === null || typeof parsed !== 'object') continue;
         if (parsed.tier !== tier) continue;
         // 'everyones' is a normal scope here: scopesHeld() seeds it for every
         // row EXCEPT a row-scoped model whose scope key is absent, which fails

@@ -21,7 +21,7 @@ const HOUR = 60 * 60 * 1000;
  */
 function stubGroupBy(
     rows: { job: string; finishedAt: Date | null }[],
-    latest?: { job: string; success: boolean; error: string | null; finishedAt?: Date | null }[],
+    latest?: { job: string; success: boolean; error: string | null; finishedAt?: Date | null; failuresByKind?: Record<string, number> | null }[],
 ) {
     prisma.cronRunLog.groupBy = jest.fn().mockResolvedValue(
         rows.map((r) => ({ job: r.job, _max: { finishedAt: r.finishedAt } })),
@@ -113,6 +113,22 @@ describe('getCronJobStatuses', () => {
 
         expect((await getCronJobStatuses(NOW))[0].lastError).toBe('unknown error');
     });
+
+    it('lists a job that has runs but never completed one as failing, first', async () => {
+        stubGroupBy(
+            [{ job: 'nightly', finishedAt: ago(2 * HOUR) }],
+            [
+                { job: 'new-job', success: false, error: 'boom', finishedAt: ago(HOUR) },
+                { job: 'nightly', success: true, error: null, finishedAt: ago(2 * HOUR) },
+            ],
+        );
+
+        expect(await getCronJobStatuses(NOW)).toEqual([
+            { job: 'new-job', lastSuccessAt: null, stale: false, lastError: 'boom', lastErrorAt: ago(HOUR) },
+            { job: 'nightly', lastSuccessAt: ago(2 * HOUR), stale: false },
+        ]);
+        expect(await countUnhealthyCronJobs(NOW)).toBe(1);
+    });
 });
 
 /**
@@ -163,5 +179,20 @@ describe('a run that completed but could not do all of its work', () => {
         );
 
         expect(await countUnhealthyCronJobs(NOW)).toBe(1);
+    });
+
+    it('is failing when its lanes reported failures other than data, even with no error', async () => {
+        const run = (failuresByKind: Record<string, number>) => stubGroupBy(
+            [{ job: 'qbo-posting', finishedAt: ago(2 * HOUR) }],
+            [{ job: 'qbo-posting', success: true, error: null, finishedAt: ago(2 * HOUR), failuresByKind }],
+        );
+
+        run({ connection: 2, system: 1, data: 5 });
+        expect((await getCronJobStatuses(NOW))[0].lastError).toBe('3 item(s) failed: connection 2, system 1');
+        expect(await countUnhealthyCronJobs(NOW)).toBe(1);
+
+        run({ data: 5 });
+        expect((await getCronJobStatuses(NOW))[0].lastError).toBeUndefined();
+        expect(await countUnhealthyCronJobs(NOW)).toBe(0);
     });
 });

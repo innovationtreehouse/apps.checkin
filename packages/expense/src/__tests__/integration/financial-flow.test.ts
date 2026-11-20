@@ -83,7 +83,7 @@ describeDb("initFinancialFlow", () => {
     expect(approval).toMatchObject({ ownerId: null, status: "pending" });
   });
 
-  it("leaves a line whose bucket is org-level pending, for a Board member's approval", async () => {
+  it("the system approves a card-charge line whose bucket is org-level, naming no approver", async () => {
     bindPorts({ signoff: directory({ orgLevel: [7] }) });
     const id = await seedExpense({ state: "pending" });
     await seedLineItem(id, { gtin13: "0000000000017" });
@@ -92,7 +92,7 @@ describeDb("initFinancialFlow", () => {
     await initFinancialFlow(id, ORG);
 
     const [approval] = await db.lineItemOwnerApproval.findMany({ where: { expenseId: id } });
-    expect(approval).toMatchObject({ ownerId: 7, status: "pending", decidedByUserId: null });
+    expect(approval).toMatchObject({ ownerId: 7, status: "approved", decidedByUserId: null });
     expect(await stateOf(id)).toBe("owner_approval");
   });
 
@@ -201,9 +201,9 @@ describeDb("checkApprovalAutoTransition", () => {
     expect(checkAndProcessExpense).not.toHaveBeenCalled();
   });
 
-  it("routes to capital_review when a single line item's unit price is at the line threshold", async () => {
+  it("routes to capital_review when a single line item's unit cost is at the line threshold", async () => {
     const id = await seedExpense({ state: "owner_approval", receiptTotalCents: 100 });
-    const li = await seedLineItem(id, { unitPriceCents: 2500 });
+    const li = await seedLineItem(id, { unitPriceCents: 2500, totalPriceCents: 2500 });
     await seedApproval(id, li, { ownerId: 5, status: "approved" });
 
     await checkApprovalAutoTransition(id, ACTOR);
@@ -238,6 +238,16 @@ describeDb("checkApprovalAutoTransition — capital review switch", () => {
     await checkApprovalAutoTransition(id, ACTOR);
 
     expect(await stateOf(id)).toBe("qb_pending");
+  });
+
+  it("sends every expense to capital review while it is on with zero thresholds", async () => {
+    await seedOrgSettings({ capitalReviewEnabled: true, capitalTotalThresholdCents: 0, capitalLineItemThresholdCents: 0 });
+    const id = await approvedExpense(1);
+
+    await checkApprovalAutoTransition(id, ACTOR);
+
+    expect(await stateOf(id)).toBe("capital_review");
+    expect(checkAndProcessExpense).not.toHaveBeenCalled();
   });
 
   it.each([

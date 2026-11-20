@@ -378,22 +378,32 @@ describeDb("assignOwner", () => {
     expect(await approval(pizzaApproval)).toMatchObject({ ownerId: 100 });
   });
 
-  it("a line assigned an org-level bucket waits for a Board member's approval", async () => {
+  it("a card charge assigned an org-level bucket is approved by the system, with no Board approval", async () => {
     bindPorts({ signoff: directory({ orgLevel: [7], board: [5] }) });
     const { id, approvalId } = await lineInApproval(null);
 
     await assignOwner(FINANCE, id, approvalId, 7);
 
-    expect(await approval(approvalId)).toMatchObject({ ownerId: 7, status: "pending" });
-    expect(await state(id)).toBe("owner_approval");
-    await approveLine(BOARD, id, approvalId);
-    expect(await approval(approvalId)).toMatchObject({ status: "approved", decidedByUserId: 5 });
+    expect(await approval(approvalId)).toMatchObject({ ownerId: 7, status: "approved", decidedByUserId: null });
     expect(await state(id)).toBe("qb_pending");
   });
 
   it("only FINANCE assigns", async () => {
     const { id, approvalId } = await lineInApproval(null);
     await expect(assignOwner(LEADER, id, approvalId, 100)).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("refuses a line that already has an owner, even one still pending", async () => {
+    const { id, approvalId } = await lineInApproval(100);
+    await db.expense.update({ where: { id }, data: { state: "assign_ownership" } });
+    await expect(assignOwner(FINANCE, id, approvalId, 101)).rejects.toMatchObject({ status: 400 });
+    expect(await approval(approvalId)).toMatchObject({ ownerId: 100, status: "pending" });
+  });
+
+  it("refuses an ownerless line that is not pending", async () => {
+    const { id, approvalId } = await lineInApproval(null, "unknown");
+    await expect(assignOwner(FINANCE, id, approvalId, 100)).rejects.toMatchObject({ status: 400 });
+    expect(await approval(approvalId)).toMatchObject({ ownerId: null, status: "unknown" });
   });
 });
 
@@ -437,22 +447,21 @@ describeDb("racing decisions", () => {
     expect(decided).toBe(1);
   });
 
-  it("a stale assignment never undoes a racing bucket move, and the submitter seat stays", async () => {
+  it("of two racing assignments on one line, exactly one lands; the other gets 409 and the submitter seat stays", async () => {
     bindPorts({ signoff: directory({ approvers: { 100: [2], 101: [4] }, finance: [3, 6] }) });
-    const { id, li, approvalId } = await lineInApproval(100);
-    await db.expense.update({ where: { id }, data: { state: "assign_ownership", needsReimbursement: true, reimburseePersonId: 1 } });
+    const { id, li, approvalId } = await lineInApproval(null);
+    await db.expense.update({ where: { id }, data: { needsReimbursement: true, reimburseePersonId: 1 } });
     await seedSubmitterSeat(li, 1);
 
-    const [same, moved] = await race(
+    const [first, second] = await race(
       `SELECT id FROM expenses WHERE id = '${id}' FOR UPDATE`,
       () => assignOwner(FINANCE, id, approvalId, 100),
       () => assignOwner(principal(6, { isFinance: true }), id, approvalId, 101),
     );
 
-    // The no-op assignment changes nothing, so the move lands after it; landing after the move, it is refused.
-    expect(moved.status).toBe("fulfilled");
-    if (same.status === "rejected") expect(same.reason).toMatchObject({ status: 409 });
-    expect((await approval(approvalId))!.ownerId).toBe(101);
+    expect([first.status, second.status].sort()).toEqual(["fulfilled", "rejected"]);
+    expect(rejection(first, second)).toMatchObject({ status: 409 });
+    expect((await approval(approvalId))!.ownerId).toBe(first.status === "fulfilled" ? 100 : 101);
     expect((await db.expenseLineSignoff.findMany({ where: { lineItemId: li } })).map((s) => s.seat)).toEqual(["SUBMITTER"]);
   });
 });
@@ -475,6 +484,30 @@ describeDb("the submitter's and reimbursee's households approve, raise and rejec
     bindPorts({ signoff: directory({ households: [[1, 6]] }) });
     const { id, approvalId } = await lineInApproval(100, "exception_raised");
     await expect(rejectException(HOUSEMATE_FINANCE, id, approvalId, "no")).rejects.toMatchObject({ status: 403 });
+    await untouched(approvalId, "exception_raised");
+  });
+
+  it("rejecting an exception, when the reimbursee becomes a housemate while the reject waits on the lock", async () => {
+    bindPorts({ signoff: directory({ households: [[4, 7]] }) });
+    const { id, approvalId } = await lineInApproval(100, "exception_raised");
+
+    let commit!: () => void;
+    const gate = new Promise<void>((r) => (commit = r));
+    let moved!: (pid: number) => void;
+    const rowHeld = new Promise<number>((r) => (moved = r));
+    const rival = db.$transaction(async (tx) => {
+      await tx.expense.update({ where: { id }, data: { needsReimbursement: true, reimburseePersonId: 4 } });
+      moved(await backendPid(tx));
+      await gate;
+    }, { timeout: 20_000 });
+    const holderPid = await rowHeld;
+
+    const outcome = rejectException(principal(7, { isFinance: true }), id, approvalId, "no").then(() => "committed", (err: unknown) => err);
+    await waitersBehind(db, holderPid);
+    commit();
+    await rival;
+
+    expect(await outcome).toMatchObject({ status: 403 });
     await untouched(approvalId, "exception_raised");
   });
 

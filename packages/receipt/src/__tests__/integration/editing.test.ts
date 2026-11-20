@@ -3,7 +3,7 @@ import { db } from "../../db";
 import { orgSettingsService } from "../../services/orgSettingsService";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
-import { BOB, FINANCE, actAs, actions, clearAll, configure, manualDetails, okOcr, recordingPorts, stateOf, textFile } from "../helpers/setup";
+import { BOB, FINANCE, actAs, actions, clearAll, configure, manualDetails, okOcr, recordingPorts, stateOf, textFile, uploadRead } from "../helpers/setup";
 
 beforeEach(async () => {
   await clearAll();
@@ -11,7 +11,7 @@ beforeEach(async () => {
 });
 
 /** A receipt whose total does not match its lines: validation_failed, so editable. */
-const invalid = () => receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptTotal: "25.00" }) });
+const invalid = () => uploadRead(textFile(), "text/plain", { details: manualDetails({ receiptTotal: "25.00" }) });
 
 describeDb("editing a receipt", () => {
   it("edits fields with one audit row per changed field, then resubmits to finalized", async () => {
@@ -40,7 +40,7 @@ describeDb("editing a receipt", () => {
   });
 
   it("refuses edits outside validation_failed / submitter_review", async () => {
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     // Not yet delivered, so the state rule answers rather than the received-receipt lock.
     await db.receipt.update({ where: { id: r.id }, data: { pushedAt: null } });
     await expect(receiptService.edit(r.id, "submitter", { retailer: "x" })).rejects.toMatchObject({ status: 400 });
@@ -114,7 +114,7 @@ describeDb("editing a receipt", () => {
     const hinges = (quantity: number, unitPrice: number, totalPrice?: number) => ({ description: "Hinge", quantity, unitPrice, totalPrice, isDelayed: false });
     const scan = async (receiptTotal: number, lineItems: ReturnType<typeof hinges>[]) => {
       configure({ receiptSink: recordingPorts().receiptSink, ocr: okOcr({ receiptTotal, lineItems }) });
-      return receiptService.upload(textFile(), "text/plain", {});
+      return uploadRead(textFile(), "text/plain", {});
     };
     const totalEdits = (id: string) =>
       db.receiptAuditLog.findMany({ where: { receiptId: id, action: "field_edit", fieldChanged: "totalPrice" }, orderBy: { id: "asc" } });
@@ -168,7 +168,7 @@ describeDb("editing a receipt", () => {
 
   it("a line of another receipt is not found", async () => {
     const a = await invalid();
-    const b = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptTotal: "26", retailer: "B" }) });
+    const b = await uploadRead(textFile(), "text/plain", { details: manualDetails({ receiptTotal: "26", retailer: "B" }) });
     const [bLine] = await db.receiptLineItem.findMany({ where: { receiptId: b.id } });
     await expect(receiptService.editLine(a.id, "submitter", bLine.id, { description: "x" })).rejects.toMatchObject({ status: 404 });
     await expect(receiptService.deleteLine(a.id, "submitter", bLine.id)).rejects.toMatchObject({ status: 404 });

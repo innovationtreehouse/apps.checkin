@@ -23,6 +23,20 @@ interface ProcessPostEventEmailsOptions {
 }
 
 /**
+ * Clears a capped event's claim and notes the Board. A claim still set at the cap means
+ * no note yet, so only the run whose clear lands writes one.
+ */
+async function giveUp(event: { id: number; name: string }, where: Prisma.EventWhereInput, data: Prisma.EventUpdateManyMutationInput = {}) {
+    const cleared = await prisma.event.updateMany({ where, data: { ...data, postEventEmailClaimedAt: null } });
+    if (cleared.count !== 1) return;
+    await logIntegrationError(
+        "post-event-email",
+        `Post-event email for "${event.name}" (event ${event.id}) failed ${POST_EVENT_EMAIL_MAX_ATTEMPTS} times; no more attempts. Remind the program lead to confirm attendance.`,
+        { eventId: event.id },
+    );
+}
+
+/**
  * Sweeps the database for finished events that haven't had their confirmation emails sent
  * to the program lead. By default, it waits 1 hour after the event ends to ensure all
  * attendance data has settled.
@@ -157,31 +171,32 @@ export async function processPostEventEmails(options: ProcessPostEventEmailsOpti
                 continue;
             }
 
-            // Release the claim so the next run retries now, not after the stale window.
             // A takeover already counted this attempt.
+            const counted = tookOver ? {} : { postEventEmailAttempts: { increment: 1 } };
+            const mine = { id: event.id, postEventEmailClaimedAt: claimedAt };
+            // Below the cap: release the claim so the next run retries now, not after the stale window.
             const released = await prisma.event.updateMany({
-                where: { id: event.id, postEventEmailClaimedAt: claimedAt },
-                data: { postEventEmailClaimedAt: null, ...(tookOver ? {} : { postEventEmailAttempts: { increment: 1 } }) },
+                where: { ...mine, postEventEmailAttempts: { lt: POST_EVENT_EMAIL_MAX_ATTEMPTS - (tookOver ? 0 : 1) } },
+                data: { postEventEmailClaimedAt: null, ...counted },
             });
-            if (released.count !== 1) continue;
-            // Re-read: other runs may have counted failures since this batch was fetched.
-            const current = await prisma.event.findUnique({
-                where: { id: event.id },
-                select: { postEventEmailAttempts: true },
-            });
-            if (!current) continue; // Deleted since the release.
-            const attempts = current.postEventEmailAttempts;
-            if (attempts >= POST_EVENT_EMAIL_MAX_ATTEMPTS) {
-                await logIntegrationError(
-                    "post-event-email",
-                    `Post-event email for "${event.name}" (event ${event.id}) failed ${attempts} times; no more attempts. Remind the program lead to confirm attendance.`,
-                    { eventId: event.id },
-                );
-            }
+            if (released.count === 0) await giveUp(event, mine, counted);
         }
 
         // Update cursor to the last fetched event ID
         cursorId = finishedEvents[finishedEvents.length - 1].id;
+    }
+
+    // A run that died holding the claim on the last attempt left no note.
+    const stranded = await prisma.event.findMany({
+        where: {
+            postEventEmailSent: false,
+            postEventEmailAttempts: { gte: POST_EVENT_EMAIL_MAX_ATTEMPTS },
+            postEventEmailClaimedAt: { lt: new Date(now.getTime() - CLAIM_STALE_AFTER_MS) },
+        },
+        select: { id: true, name: true, postEventEmailClaimedAt: true },
+    });
+    for (const event of stranded) {
+        await giveUp(event, { id: event.id, postEventEmailClaimedAt: event.postEventEmailClaimedAt });
     }
 
     return { processedEvents: processedEventsCount, emailsSent };

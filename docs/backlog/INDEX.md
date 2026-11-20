@@ -156,7 +156,7 @@ Legend of drops: see [§ Dropped — confirmed built](#dropped--confirmed-built-
 
 | id | item | origin | readiness | size | Workaround | src | GH |
 |----|------|--------|-----------|------|----|-----|-----|
-| CI1 | **Global catalog**: GTIN items, categories, vendor-alias references, 3-pass matcher, proposals/supersession, provisional allocation, conversion challenges | PORT | IN-DESIGN | XL | ? | A,B | #1286 (closed); design distilled → `docs/rules/inventory.md` + `docs/architecture/COMPONENT_ARCHITECTURE.md` (#1814) |
+| CI1 | **Global catalog**: GTIN items, categories, vendor-alias references, 3-pass matcher, proposals/supersession, provisional allocation, conversion challenges | PORT | IN-DESIGN | XL | ? | A,B | #1286 (closed); design distilled → `docs/architecture/COMPONENT_ARCHITECTURE.md` (#1814) |
 | CI2 | **Org inventory**: locations, receive queue, delta apply, merge-conflict resolution, provisional resolution | PORT | NEEDS-DESIGN | L | ? | A,B | #1287 (open) |
 | CI3 | Receipt line-item → **part association** (auto + manual exceptions); UoM conversion/quantity challenge | PORT | NEEDS-DESIGN | L | ? | A,B | #1288 (open) |
 | CI4 | **workflow-mapping** orchestrator (receipt→catalog→inventory→expense glue; collapses in monolith) | PORT | NEEDS-DESIGN | M | ? | A | #1289 (open) |
@@ -168,15 +168,12 @@ _Note: FR+FE+CI (+CI4 glue) are ONE dependency-chained pipeline — little value
 
 | id | item | origin | readiness | size | Workaround | src | GH |
 |----|------|--------|-----------|------|----|-----|-----|
-| CO1 | **Shopify member-segment pricing** (#929): auto-managed customer segment gates who redeems member/volunteer variants. NOTE: unentitled redemption of the minted `PRG{programId}-XXXXXXXX` member-discount code is now flagged `DISCOUNT_UNAUTHORIZED` at the money event — the orders/paid webhook, and the reconciler's forward pass recovering a missed one (`lib/programs/memberDiscountCode.ts`); flagged orders are not activated, and entitlement is never re-judged afterwards, so a later deactivation doesn't retro-flag settled orders. Interim, detection-only stand-in for this segment-gated design. Accepted window: codes live 48h, so entitlement can move between mint and checkout — judged at checkout | ENHANCE | IN-DESIGN | L | ? | C,D2,F | #270, #278 (open) |
-| CO2 | **Validate payment webhook** before activation: amount/discount/product/code gate (`Membership_Process_ID` customer-controlled, tracked in #2694). **Design MERGED to main (#929 segment-pricing, which scopes #278 = segment-gated discount + webhook validation).** | FIX/ENHANCE | IN-DESIGN | M | honor system (the current state) | C,D,D2,F | #278 (open, security), #2694 (open) |
-| CO3 | Guest-checkout failure: member charged full price silently — nudge / post-purchase refund path. **DECIDED: accept risk FOR NOW** (2026-07-22), low priority; may revisit (nudge/refund) later — stays in backlog, not near-term | ENHANCE | NEEDS-DESIGN | S | member re-checks out / board refunds by hand | C | #1291 (open) |
 | CO4 | In-flight-checkout cutover: old cart permalinks never expire; dual variant-id recognition + deprecation window | ENHANCE | NEEDS-DESIGN | S | ? | C | #1292 (open) |
 | CO5 | **DiscountCodeRule registry** (board-managed coupon eligibility rules) | CREATE | NEEDS-DESIGN | M | ? | D2 | #1085-ref |
 | CO6 | Pricing **drift auto-check**: our pricing settings vs Shopify actual (discounts/timing) | CREATE | NEEDS-DESIGN | M | ? | C,F | #625 (open) |
 | CO7 | Shopify config-drift reconciliation (dev↔prod variant/config) + archive-status contract (#955) | CREATE | NEEDS-DESIGN | M | ? | D2 | #1293 (open) |
 | CO8 | **Remove legacy 2-variant product-shape references** — the 2-variant shape is a problem; lingering references = a bug (not a keep/kill call). **Removal-plan design MERGED to main (#1327).** | FIX | IN-DESIGN | S | ? | F | #975 (open) |
-| CO9 | Real-dev-store checkout testing promoted optional→required before segment-pricing phase 2 | CHORE | READY-FOR-DEV | S | ? | C | #1294 (open) |
+| CO9 | Real-dev-store checkout testing promoted optional→required: the in-process mock never runs Shopify's checkout or discount engine, so a minted member code is only exercised for real on the dev store | CHORE | READY-FOR-DEV | S | ? | C | #1294 (open) |
 
 ## 10. Communications & Mailing Lists  (prefix CM)
 
@@ -228,6 +225,7 @@ _Note: FR+FE+CI (+CI4 glue) are ONE dependency-chained pipeline — little value
 | PL24 | **Response caching for the remaining read-heavy, low-churn routes** (tools, past events) — the active-programs list already uses `staleWhileRevalidate` (`api/programs/route.ts`, via `lib/staleCache.ts`) and current attendance uses `invalidatableCache` (`lib/getFullAttendance.ts`), so this row covers only the uncached routes; extend one of those rather than adding a third mechanism. Build when load says so | ENHANCE | COND | S | none needed yet | arch-ideas | none |
 | PL25 | **Role rejection in middleware** — `src/middleware.ts` gates the dev and staging instances and caps body size; it does no per-section role check before the route runs. A boundary file: any change ships in its own PR | ENHANCE | DECISION | M | route-level `withAuth`/`handler()` gates | arch-ideas | none |
 | PL26 | **Push `"use client"` down to interactive leaves** — 76 of 140 pages are client components at the page root, so whole views ship to the browser and fetch after load | CHORE | NEEDS-DESIGN | L | none | arch-ideas | none |
+| PL27 | **Audit rows in four library packages are not checked to commit with their change** — the app guard (`auditInTransaction.test.ts`) scans `checkin-app/src` only; receipt and workflow-mapping have their own audit-in-transaction tests, but `packages/expense`, `packages/income`, `packages/bulk-donation` and `packages/global-catalog` (`orgEvent`) write audit rows with no such test. Add one per package, fixing any row written outside its change's transaction | CHORE | NEEDS-DESIGN | M | none | arch-ideas | none |
 
 ## 12. Auth, RBAC & Security  (prefix RB)  — one item per proposed role (Q3)
 
@@ -270,7 +268,7 @@ Owner-assigned relative priority. Not a schedule — a lean. Still high-level (d
 - **Soon / near-top:** **M6** per-≥18-child agreement · **M1** board "who hasn't paid since Sept 1" dashboard · **SA6** delete-DOB for all adults (#1165) · **M15** enforce certifier ∈ member-family (#164, HIGH — certifier can grant tool use).
 - **Short term:** **P1** program→instance restructure · **P4/#82** auto-close enrollment · **M13** settings-400 bug (#1130) · **M16** BLOCKED-recovery flow · **P14** program calendar load (Google Calendar).
 - **Short–medium:** **P9** copy-program (#156) · **P13** manual-only-program flag (ops/leader manual-add bypassing Shopify cap).
-- **Medium term:** **CO1** Shopify segment-pricing · **P2/P3** seat reservation + waitlist (#942) · **P10** member-visibility timing (#152) · **CO2/#278** honor-system discount / process-ID (exploiting it is an ethics violation → unlikely short-term).
+- **Medium term:** **P2/P3** seat reservation + waitlist (#942) · **P10** member-visibility timing (#152).
 - **Medium-ish, other-dev-owned** (may land in passing): comms — **CM11** event-cancel-notify (#472) · **CM8/CM9** program-email controls + batching (#1153/#1154).
 - **Discuss / tee up:** **RB7** admin-role ambiguity (a decision conversation).
 - **Soon, pending buy-in:** **RB8** declarative row-visibility (#1134) — owner advocating with others.
@@ -319,7 +317,9 @@ Not dropped (they're valid), not backlog (no plan to build). Revisit only if pri
 
 ## Dropped — confirmed built (not backlog)
 
-**RB5** — Key Volunteer role → BUILT (#1317): `KEY_VOLUNTEER` is Board-granted, opens the Key Volunteer Agreement, and gates the grant of Board, BG reviewer and Finance. Rules in `docs/rules/membership.md` § Key Volunteers.
+**Segment pricing retired (2026-11-19), removed from buckets:** **CO1** member-segment pricing (#270, #278) · **CO2** payment-webhook validation (#278, #2694) · **CO3** guest-checkout full price (#1291). All four issues are closed. Program member pricing is gated by household-bound minted codes judged at the money event (`docs/architecture/PROGRAM_CAPACITY_AND_SCHOLARSHIPS.md` §2), the webhook checks the product, the amount check was dropped by decision, and the volunteer membership code stays redeemable by anyone holding it, with reconciliation flagging unentitled use, by register rule. CO3 only arose under segment pricing.
+
+**RB5** — Key Volunteer role → BUILT (#1317): `KEY_VOLUNTEER` is Board-granted, opens the Key Volunteer Agreement, and gates the grant of Board, BG reviewer and Finance.
 
 **RB19** — pentest email-enumeration oracle: verified **already closed / not exploitable** (fix-chip made no code change, 2026-07-21). Dropped.
 
@@ -329,16 +329,15 @@ Not dropped (they're valid), not backlog (no plan to build). Revisit only if pri
 
 **SA1 blanket-stamp→per-adult BG subjects — SHIPPED (#1470, 2026-08-07):** a household
 clearance now stamps only the adult the reviewers named, and the board gets a worklist for the
-stamps the old blanket write left behind. Rules live in `docs/rules/membership.md` § background
-checks.
+stamps the old blanket write left behind.
 
 **Verified built during triage (2026-07-21), removed from buckets:** M10 volunteer-household pre-designation (`/membership-ops/volunteer-memberships`) · M11 intake-notes → surfaced to reviewer (`membership-ops/review`, `Household.intakeNotes`) · SA5 BG posture (29mo, enforced at renewal) · SA8 dual-relationship = Trusted Adults · RB10 dual-email = 2-account model (#286 closed) · FD5 banker = board (no role).
 
 **Merged to main (verified via rebase 2026-07-25), removed from buckets:** **AT10** unknown-DOB fails-open in two-deep → FIXED, now fails closed (#1353/#300) · **AT13** visit-edit UI/API mismatch → FIXED, board reaches the visit-edit UI (#1350/#1259) · **M18** person-merge orphaned/non-controlled email → FIXED via 3 merge-fixes: emailSuppressed carry (#1332), login-identity unit (#1329), tombstone `.invalid` domain (#1331); #1225 closed · **SA6** delete-DoB for adults → BUILT (#1326 "delete DoB for all adults (26+)"; #1356 declared-adults-still-supervise follow-up); #1165 closed · **P17** staff-household enrollment ban server-side → BUILT (#1009 "disable Add Participant & Grant Membership for staff households").
 
-**Attendance correction surface — SHIPPED, removed from buckets:** **AT3** staff visit management (#1478/#1254) · **AT5** self-correction of own hours (#1357/#1256) · **AT12** correction-review screen (#1560/#1258) · the legacy `SYSTEM` visit source dropped (#1256 contract stage). Residuals are AT15–AT17; rules live in `docs/rules/attendance-checkin.md` § The visit record.
+**Attendance correction surface — SHIPPED, removed from buckets:** **AT3** staff visit management (#1478/#1254) · **AT5** self-correction of own hours (#1357/#1256) · **AT12** correction-review screen (#1560/#1258) · the legacy `SYSTEM` visit source dropped (#1256 contract stage). Residuals are AT15–AT17.
 
-**Household archive — SHIPPED, removed from buckets:** **M4** archive family (#1228) · **M19** archived households hidden from active views (#1232). The Board archives and unarchives a household; archiving is refused while anything still ties it to the organisation, and an archived household refuses every change. The owner's rulings superseded the interview's two-state model (invalid/duplicate vs idle/aged-out, self-reactivation) and list unsubscribe on archive. Rules live in `docs/rules/people-households.md` § Archived households.
+**Household archive — SHIPPED, removed from buckets:** **M4** archive family (#1228) · **M19** archived households hidden from active views (#1232). The Board archives and unarchives a household; archiving is refused while anything still ties it to the organisation, and an archived household refuses every change. The owner's rulings superseded the interview's two-state model (invalid/duplicate vs idle/aged-out, self-reactivation) and list unsubscribe on archive.
 
 **Merged/resolved (2026-08-01):** **RB16** boundary-isolation required-check → DONE — #1132 (CODEOWNERS gate) + #1133 (isolation job now a required status check on main) both closed. Was Q38.
 
@@ -347,8 +346,7 @@ From chip E (verified in code) + D2 (landed): renewal BG re-trigger + no-email-l
 ## Epics (span buckets)
 - **E-PIPELINE** — Receipt→Catalog→Inventory→Expense (FR* + CI* + FE* + CI4). PORT, XL, needs-design. Ships bundled or not at all.
 - **E-FINANCE-INDEP** — Benevity donations (FD1) + income QB-recon (FD4). The two independently shippable finance ports.
-- **E-PROGRAM-INSTANCE** — P1 restructure + dependents (P7, P10, capacity). IN-DESIGN, don't-start; gated on CO1.
-- **E-SEGMENT-PRICING** — CO1/CO2/CO3/CO4 + CO9. Shopify member/volunteer entitlement enforcement.
+- **E-PROGRAM-INSTANCE** — P1 restructure + dependents (P7, P10, capacity). IN-DESIGN, don't-start.
 - **E-MAILING** — CM1..CM6 (Google-Group foundation + rules + cleanup). Gated on CM1.
 - **E-BG-AUTOMATION** — SA1..SA4. Board-gated by SA5 decisions.
 - **E-MEMBERSHIP-LIFECYCLE** — M1/M2/M3/M5 state machine + maintenance.

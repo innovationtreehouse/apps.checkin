@@ -321,6 +321,13 @@ describe("expense posting binding", () => {
     expect(emailAlert.mock.calls[0][1].since).toBe("2026-10-01");
   });
 
+  it("throws when the sweep alert is not sent, so the sweep logs it", async () => {
+    getQuickBooks.mockResolvedValue(clientWith("sandbox", "Bank"));
+    const bound = await (await ports()).posting();
+    emailAlert.mockResolvedValueOnce(false);
+    await expect(bound!.sweepIncomplete({ orgId: "org", since: new Date("2026-10-01T08:00:00Z") })).rejects.toThrow("Expense sweep alert was not sent");
+  });
+
   it("matches Purchases against the same books-map account", async () => {
     await expect((await ports()).refs.paymentAccountId()).resolves.toBe("41");
     booksMapAccounts.mockResolvedValue({});

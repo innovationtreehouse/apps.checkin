@@ -8,11 +8,14 @@ import { getExpenseRuntime, getOrgId } from "../runtime";
 import { writeAudit, writeOrgAudit } from "../lib/audit";
 import { matchedBaseline } from "../lib/expense-qb-drift";
 import { actorOf, callerId } from "../lib/caller";
-import { isConflicted, lockExpense, unsignedLines } from "../lib/signoff-facts";
+import { isConflicted, lockExpense, storedTaxWaits, unsignedLines } from "../lib/signoff-facts";
 import { reimburseeUnknown } from "../lib/signoff";
 import { requireFinance } from "./approvalService";
 import { SKIPPED_CHECK_OFF, checkOffHeldOnPost, checkOffOnLink } from "./flagService";
 import { ServiceError } from "@checkin/component-kit";
+
+/** Finance approves an expense's waiting tax before the expense is matched or linked. */
+const TAX_WAITS = "The expense's tax waits on finance; approve the tax first";
 
 /** A reimbursement matches a Bill; every other line matches a Purchase. */
 export type QbMatchEntity = "Bill" | "Purchase";
@@ -88,27 +91,35 @@ export interface QbMatchInputs {
   skipIds: string[];
 }
 
+/** QuickBooks ids of one entity type finance excluded from matching; a row without a type excludes both. */
+export async function excludedQbTxnIds(orgId: string, qbTxnEntity: string): Promise<string[]> {
+  const rows = await db.expenseQbMatchExclusion.findMany({
+    where: { orgId, OR: [{ qbTxnEntity }, { qbTxnEntity: null }] },
+    select: { qbTxnId: true },
+  });
+  return rows.map((r) => r.qbTxnId);
+}
+
 export async function qbMatchInputs(entity: QbMatchEntity): Promise<QbMatchInputs> {
   const orgId = await getOrgId();
-  const [claimed, excluded] = await Promise.all([
-    claimedQbTxnIds(orgId, entity),
-    db.expenseQbMatchExclusion.findMany({ where: { orgId }, select: { qbTxnId: true } }),
-  ]);
-  return { skipIds: [...claimed, ...excluded.map((e) => e.qbTxnId)] };
+  const [claimed, excluded] = await Promise.all([claimedQbTxnIds(orgId, entity), excludedQbTxnIds(orgId, entity)]);
+  return { skipIds: [...claimed, ...excluded] };
 }
 
 /** Finance permanently removes a QuickBooks transaction from matching, with a reason. */
-export async function excludeQbTxn(principal: ExpensePrincipal, qbTxnId: string, reason: string): Promise<void> {
+export async function excludeQbTxn(principal: ExpensePrincipal, qbTxnEntity: QbMatchEntity, qbTxnId: string, reason: string): Promise<void> {
   requireFinance(principal);
   const actor = actorOf(principal);
   if (!reason.trim()) throw new ServiceError(400, "A reason is required");
   const orgId = await getOrgId();
+  // A row without a type does not trip the unique index, so it is checked here.
+  if ((await excludedQbTxnIds(orgId, qbTxnEntity)).includes(qbTxnId)) throw new ServiceError(409, "Already excluded");
   try {
     await db.$transaction(async (tx) => {
       await tx.expenseQbMatchExclusion.create({
-        data: { orgId, qbTxnId, reason: reason.trim(), excludedByUserId: actor.userId, excludedByUsername: actor.username },
+        data: { orgId, qbTxnEntity, qbTxnId, reason: reason.trim(), excludedByUserId: actor.userId, excludedByUsername: actor.username },
       });
-      await writeOrgAudit(tx, orgId, actor, { entityType: "qb_txn", entityId: qbTxnId, action: "excluded", after: { reason: reason.trim() } });
+      await writeOrgAudit(tx, orgId, actor, { entityType: "qb_txn", entityId: `${qbTxnEntity}:${qbTxnId}`, action: "excluded", after: { reason: reason.trim() } });
     });
   } catch (err) {
     if (isUniqueConstraintError(err)) throw new ServiceError(409, "Already excluded");
@@ -194,12 +205,13 @@ async function linkOwnFirst(expense: Awaited<ReturnType<typeof loadExpense>>, en
   const qbTxnId = own.entry.Id;
   try {
     await db.$transaction(async (tx) => {
-      // Linking books the expense as much as a match does, so it takes the same sign-offs, read under the lock.
+      // Linking books the expense as much as a match does, so it takes the same sign-offs and tax check, read under the lock.
       await lockExpense(tx, expense.id);
       const current = await tx.expense.findUniqueOrThrow({ where: { id: expense.id } });
       if (reimburseeUnknown(current) || (await unsignedLines(tx, current)).size > 0) {
         throw new ServiceError(409, "Expense is missing a required sign-off or the Board's approval");
       }
+      if (await storedTaxWaits(tx, expense.id)) throw new ServiceError(409, TAX_WAITS);
       const linked = await tx.expense.updateMany({
         where: { id: expense.id, qbTxnId: null, qbMatchState: { in: MATCHABLE_STATES } },
         data: { qbMatchState: "CREATED", qbFirstFailedAt: null, qbLastError: null, qbTxnId, qbTxnEntity: entity, qbVendorId: entity === "Bill" ? own.entry.VendorRef?.value ?? null : null },
@@ -225,7 +237,7 @@ async function linkOwnFirst(expense: Awaited<ReturnType<typeof loadExpense>>, en
 
 /**
  * Finance links an expense to an existing QuickBooks entry; an entry is claimed once across expenses and lines.
- * The entry must be one of the expense's own candidates, and every line fully signed off. An
+ * The entry must be one of the expense's own candidates, every line fully signed off, and no tax waiting on finance. An
  * expense whose create may already have landed links to the app's own entry first, when there is one.
  * A matched expense holds a qbTxnId, so the poster never books it again.
  */
@@ -251,6 +263,7 @@ export async function matchExpenseToQb(principal: ExpensePrincipal, expenseId: s
       if (reimburseeUnknown(current) || (await unsignedLines(tx, current)).size > 0) {
         throw new ServiceError(409, "Expense is missing a required sign-off or the Board's approval");
       }
+      if (await storedTaxWaits(tx, expenseId)) throw new ServiceError(409, TAX_WAITS);
       const linked = await tx.expense.updateMany({
         where: { id: expenseId, qbTxnId: null, qbMatchState: { in: MATCHABLE_STATES } },
         data: { qbMatchState: "MATCHED", qbFirstFailedAt: null, qbLastError: null, qbTxnId, qbTxnEntity: entity, qbMatchBaseline },
@@ -288,7 +301,8 @@ async function refuseConflictedSkip(principal: ExpensePrincipal, expense: { subm
 /**
  * Finance skips an expense with a reason: it leaves the queue for good, and the drain never posts or
  * matches it again. An expense whose create may have landed looks for the app's own entry first;
- * found, it is linked in place of the skip and the refusal names the entry. Every post writes an
+ * found, it is linked in place of the skip and the refusal names the entry, unless the expense's tax
+ * waits on finance, when the skip is refused with nothing linked. Every post writes an
  * audit row, so a new one, a changed state or a moved attempt stamp since the read means a create
  * may have landed meanwhile, and the skip is refused.
  */

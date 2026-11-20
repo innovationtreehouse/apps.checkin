@@ -2,7 +2,7 @@ import { beforeEach, expect, it } from "vitest";
 import type { DuplicateMember } from "../../lib/duplicateGroup";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
-import { ALICE, BOB, FINANCE, actAs, clearAll, configure, manualDetails, okOcr, recordingPorts, stateOf, textFile } from "../helpers/setup";
+import { ALICE, BOB, FINANCE, actAs, clearAll, configure, manualDetails, okOcr, recordingPorts, stateOf, textFile, uploadRead } from "../helpers/setup";
 
 // Three receipts for one purchase, A uploaded first, then B, then C. Each test drives finance's
 // decisions through the service and asserts the group behaviour.
@@ -15,9 +15,9 @@ beforeEach(async () => {
   configure({ receiptSink: ports.receiptSink, ocr: okOcr() });
 });
 
-const upload = (file: Buffer) => receiptService.upload(file, "text/plain", { details: manualDetails() });
+const upload = (file: Buffer) => uploadRead(file, "text/plain", { details: manualDetails() });
 /** An OCR'd upload with no typed details, which waits in submitter review. */
-const uploadForReview = (file: Buffer) => receiptService.upload(file, "text/plain", {});
+const uploadForReview = (file: Buffer) => uploadRead(file, "text/plain", {});
 
 async function groupOf(id: string): Promise<string[]> {
   return (await receiptService.duplicateGroup(id)).members.map((m) => m.id);
@@ -141,7 +141,7 @@ describeDb("three copies of one purchase", () => {
 
   it("copies of a rejected receipt are held in one group with it, labelled rejected with its reason", async () => {
     const file = textFile();
-    const a = await receiptService.upload(file, "text/plain", { details: manualDetails({ receiptDate: "2999-01-01" }) });
+    const a = await uploadRead(file, "text/plain", { details: manualDetails({ receiptDate: "2999-01-01" }) });
     expect(a.state).toBe("financial_review");
     actAs(FINANCE);
     await receiptService.rejectFinancial(a.id, "personal purchase");
@@ -275,8 +275,8 @@ describeDb("what finance reads about a group", () => {
   it("the queue has one row per group, and the tab and the pill both count groups", async () => {
     const { a, b, c } = await sameFileThrice();
     const otherPurchase = { details: manualDetails({ retailer: "Other Store" }) };
-    await receiptService.upload(textFile(), "text/plain", otherPurchase);
-    await receiptService.upload(textFile(), "text/plain", otherPurchase);
+    await uploadRead(textFile(), "text/plain", otherPurchase);
+    await uploadRead(textFile(), "text/plain", otherPurchase);
 
     actAs(FINANCE);
     const rows = await receiptService.duplicateQueue();
@@ -291,7 +291,7 @@ describeDb("what finance reads about a group", () => {
 
   it("a queue row says when its group includes a rejected receipt", async () => {
     const file = textFile();
-    const a = await receiptService.upload(file, "text/plain", { details: manualDetails({ receiptDate: "2999-01-01" }) });
+    const a = await uploadRead(file, "text/plain", { details: manualDetails({ receiptDate: "2999-01-01" }) });
     actAs(FINANCE);
     await receiptService.rejectFinancial(a.id, "personal purchase");
     actAs(ALICE);
@@ -332,9 +332,9 @@ describeDb("what finance reads about a group", () => {
 
     const purchase = { details: manualDetails({ retailer: "Other Store" }) };
     actAs(BOB);
-    await receiptService.upload(textFile(), "text/plain", purchase);
+    await uploadRead(textFile(), "text/plain", purchase);
     actAs(ALICE);
-    const mine = await receiptService.upload(textFile(), "text/plain", purchase);
+    const mine = await uploadRead(textFile(), "text/plain", purchase);
     expect(mine.state).toBe("duplicate_flagged");
     expect((await receiptService.get(mine.id, "submitter")).duplicateNotice).toBeNull();
   });

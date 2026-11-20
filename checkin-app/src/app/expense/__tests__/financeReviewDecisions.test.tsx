@@ -185,7 +185,7 @@ describe("the QuickBooks panel for a post waiting on finance", () => {
     fireEvent.change(screen.getByLabelText(/Why this entry belongs to no expense/), { target: { value: "hand-booked rent" } });
     fireEvent.click(confirm);
     await waitFor(() =>
-      expect(mockSend).toHaveBeenCalledWith("/qb-exclusions", "POST", { qbTxnId: "77", reason: "hand-booked rent" }, "Entry excluded from matching"),
+      expect(mockSend).toHaveBeenCalledWith("/qb-exclusions", "POST", { qbTxnEntity: "Purchase", qbTxnId: "77", reason: "hand-booked rent" }, "Entry excluded from matching"),
     );
   });
 

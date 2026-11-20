@@ -14,6 +14,7 @@ const REFUSAL_TEXT: Record<MailRefusalReason, string> = {
   forwarded: "it is an email attached as a file, which we do not open. Forward the receipt itself instead",
   ceiling: "our receipt queue is full. Please send it again in a few days",
   no_receipt: "We found no receipt file or receipt text in it",
+  no_amount: "We found text in it but no amount, so we did not take it as a receipt",
 };
 
 /** RFC 3834: marks our mail as automatic, so a well-behaved responder never answers it. */
@@ -24,10 +25,12 @@ const day = (d: Date) => d.toLocaleDateString("en-US", { month: "long", day: "nu
 /** Fixed text outside the editable templates, so a Board edit can never drop what was refused. */
 function refusedText(ack: MailAcknowledgement): string | undefined {
   if (ack.refused.length === 0) return undefined;
-  if (ack.refused.some((r) => r.reason === "no_receipt")) {
-    return `${REFUSAL_TEXT.no_receipt}. To send a receipt, send a new email with the receipt attached as a PDF or image file, or upload it at ${config.baseUrl()}/receipts/upload.`;
+  const whole = ack.refused.find((r) => r.reason === "no_receipt" || r.reason === "no_amount");
+  if (whole) {
+    return `${REFUSAL_TEXT[whole.reason]}. To send a receipt, send a new email with the receipt attached as a PDF or image file, or with its total (such as $40.00) in the text, or upload it at ${config.baseUrl()}/receipts/upload.`;
   }
-  const lines = ack.refused.map((r) => `${r.file}: ${REFUSAL_TEXT[r.reason]}`);
+  // A reason this instance does not know, stored by a newer one, reads as unreadable rather than "undefined".
+  const lines = ack.refused.map((r) => `${r.file}: ${REFUSAL_TEXT[r.reason] ?? REFUSAL_TEXT.wrong_type}`);
   return `We could not accept these files from your email of ${day(ack.receivedAt)}:\n${lines.join("\n")}`;
 }
 

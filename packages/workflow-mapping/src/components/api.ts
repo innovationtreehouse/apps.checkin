@@ -15,6 +15,12 @@ export function useCanManage(): boolean {
   return useViewer()?.isInventoryManager === true;
 }
 
+/** Mirrors the close-out route's gate: inventory managers and the board. */
+export function useCanCloseOut(): boolean {
+  const viewer = useViewer();
+  return viewer?.isInventoryManager === true || viewer?.isBoardMember === true;
+}
+
 export { STATE_LABEL, stateLabel } from "../lib/stateLabels";
 
 export const STATE_COLOR: Record<string, string> = {
@@ -22,6 +28,7 @@ export const STATE_COLOR: Record<string, string> = {
   applying: "blue",
   apply_failed: "red",
   resolved: "green",
+  closed_by_hand: "gray",
 };
 
 /** The state colour; a resolved receipt with lines still on backorder is neutral, not green. */

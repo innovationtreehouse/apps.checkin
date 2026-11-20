@@ -87,4 +87,34 @@ describe('self-grant refusal audit rows', () => {
 
         expect(await refusalSubjects(leadId, 'override', 'reset')).toEqual([householdId]);
     });
+
+    it('refuses a board reset when the actor joins the household while it waits on the household lock', async () => {
+        const { processId, householdId } = await makeOwnHouseholdReview('BLOCKED');
+        const boardHh = await prisma.household.create({ data: { name: `Board ${TAG}` } });
+        const board = await prisma.person.create({ data: { name: `Board ${TAG}`, householdId: boardHh.id, isBoardMember: true } });
+
+        // The holder is a move of the board member into the review's household: it holds
+        // the household's membership row, as the move route does, until the reset queues on it.
+        const holder = prisma.$transaction(async (tx) => {
+            await tx.$queryRaw`SELECT id FROM "OrgMembership" WHERE "householdId" = ${householdId} FOR UPDATE`;
+            for (let i = 0; ; i++) {
+                if (i === 100) throw new Error('The action never queued on the OrgMembership lock.');
+                // Postgres caches pg_stat_activity for the transaction unless the snapshot is cleared.
+                await tx.$queryRaw`SELECT pg_stat_clear_snapshot()::text`;
+                const [{ waiting }] = await tx.$queryRaw<{ waiting: number }[]>`
+                    SELECT count(*)::int AS waiting FROM pg_stat_activity
+                    WHERE datname = current_database() AND pid <> pg_backend_pid()
+                      AND wait_event_type = 'Lock' AND query LIKE '%"OrgMembership"%'`;
+                if (waiting > 0) break;
+                await new Promise((r) => setTimeout(r, 50));
+            }
+            await tx.person.update({ where: { id: board.id }, data: { householdId } });
+        }, { timeout: 15_000 });
+        const reset = boardResetReview(processId, board.id, { reason: 'x' });
+
+        const [, outcome] = await Promise.allSettled([holder, reset]);
+        expect(outcome).toMatchObject({ status: 'rejected', reason: { code: 'same_household_applicant' } });
+        expect(await refusalSubjects(board.id, 'override', 'reset')).toEqual([householdId]);
+        expect((await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: processId } })).status).toBe('BLOCKED');
+    });
 });

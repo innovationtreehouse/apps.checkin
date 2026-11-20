@@ -1,10 +1,12 @@
 /** Queue, counts, detail and audit-log reads. */
 import { beforeEach, expect, it } from "vitest";
+import { db } from "../../db";
 import { APPLY_FAILED_QUEUE_STATES } from "../../db/schema";
+import { insertAuditEvent } from "../../lib/audit";
 import { receiptService } from "../../services/receiptService";
 import { receivingOutcomes } from "../../services/receivingOutcomes";
 import { describeDb } from "../helpers/db";
-import { OTHER_ORG_ID, clearAll, configure, makeLineStatus, makeReceipt } from "../helpers/setup";
+import { OTHER_ORG_ID, TEST_ORG_ID, clearAll, configure, makeLineStatus, makeReceipt } from "../helpers/setup";
 
 beforeEach(async () => {
   await clearAll();
@@ -78,6 +80,13 @@ describeDb("audit log", () => {
     expect(rows.map((x) => x.eventType)).toEqual(["receipt_proceeded"]);
     expect(rows[0]).toMatchObject({ actorUserId: 7, fromState: "pending_review", toState: "applying" });
     expect(await receiptService.auditLog({ receiptId: r.id + 1000 })).toEqual([]);
+  });
+
+  it("reads a plain-text details note back as the string", async () => {
+    const r = await makeReceipt();
+    await insertAuditEvent(db, { orgId: TEST_ORG_ID, actorUserId: null, eventType: "receipt_created", receivedReceiptId: r.id, details: "catalog not connected" });
+    const rows = await receiptService.auditLog({ receiptId: r.id });
+    expect(rows.map((x) => x.details)).toEqual(["catalog not connected"]);
   });
 });
 

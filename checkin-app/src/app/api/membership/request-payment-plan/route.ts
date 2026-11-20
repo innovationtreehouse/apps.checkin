@@ -6,6 +6,7 @@ import { apiError } from "@/lib/api-response";
 import { resolveScholarshipRecipients, notifyReviewTeam, sendScholarshipAck } from "@/lib/scholarshipEmails";
 import { config } from "@/lib/config";
 import { fromWhere } from "@/lib/membership/lifecycle";
+import { liveMembershipYear } from "@/lib/membership/renewal";
 import { ScholarshipRequestKind } from "@/generated/prisma/client";
 import { scholarshipRequestKindLabel } from "@/lib/scholarshipRequestKind";
 
@@ -59,10 +60,14 @@ export const POST = withAuth({}, async (req, auth) => {
             return NextResponse.json({ success: true });
         }
 
+        // The request is for the year live now; approval certifies that year.
+        const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
+        const paymentPlanYear = liveMembershipYear(settings?.orgMembershipYearBoundary, new Date());
+
         // Compare-and-set on the flag, so of two concurrent submits only one sends the emails.
         const flipped = await prisma.orgMembershipProcess.updateMany({
             where: { id: processId, ...fromWhere('PENDING_PAYMENT'), isPaymentPlanRequested: false },
-            data: { isPaymentPlanRequested: true, ...(kind ? { scholarshipRequestKind: kind as ScholarshipRequestKind } : {}) },
+            data: { isPaymentPlanRequested: true, paymentPlanYear, ...(kind ? { scholarshipRequestKind: kind as ScholarshipRequestKind } : {}) },
         });
         if (flipped.count === 0) return NextResponse.json({ success: true });
 

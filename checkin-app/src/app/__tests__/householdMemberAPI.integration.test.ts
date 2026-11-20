@@ -8,6 +8,7 @@
 
 import { PATCH } from '@/app/api/household/member/route';
 import prisma from '@/lib/prisma';
+import { AGE_REQUIRED_REFUSAL } from '@/lib/person/adultDob';
 import { getServerSession } from 'next-auth/next';
 
 // Mock NextAuth
@@ -210,17 +211,12 @@ describe('Household Member API Integration Tests', () => {
             expect(updatedProfile?.name).toBe('Updated Child');
         });
 
-        it('should blank out email and dob if empty strings are sent', async () => {
+        it('should blank out email and phone if empty strings are sent', async () => {
             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testLeadId } });
 
             const req = new Request('http://localhost:4000/api/household/member', {
                 method: 'PATCH',
-                body: JSON.stringify({ 
-                    participantId: testMemberId, 
-                    email: '',
-                    dob: '',
-                    phone: ''
-                })
+                body: JSON.stringify({ participantId: testMemberId, email: '', phone: '' })
             });
 
             const res = await PATCH(req as unknown as import("next/server").NextRequest);
@@ -228,8 +224,22 @@ describe('Household Member API Integration Tests', () => {
 
             const updatedProfile = await prisma.person.findUnique({ where: { id: testMemberId } });
             expect(updatedProfile?.email).toBeNull();
-            expect(updatedProfile?.dateOfBirth).toBeNull();
             expect(updatedProfile?.phone).toBeNull();
+        });
+
+        it('refuses clearing a date of birth on file with no over-25 declaration', async () => {
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testLeadId } });
+            const before = await prisma.person.findUnique({ where: { id: testMemberId }, select: { dateOfBirth: true, isDeclaredAdult: true } });
+
+            const req = new Request('http://localhost:4000/api/household/member', {
+                method: 'PATCH',
+                body: JSON.stringify({ participantId: testMemberId, dob: '' })
+            });
+
+            const res = await PATCH(req as unknown as import("next/server").NextRequest);
+            expect(res.status).toBe(400);
+            expect((await res.json()).error).toBe(AGE_REQUIRED_REFUSAL);
+            expect(await prisma.person.findUnique({ where: { id: testMemberId }, select: { dateOfBirth: true, isDeclaredAdult: true } })).toEqual(before);
         });
 
         // This form stores DoB at UTC midnight, like every

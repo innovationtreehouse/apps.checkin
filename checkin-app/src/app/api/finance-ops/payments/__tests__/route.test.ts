@@ -96,9 +96,20 @@ it('returns the queue with live mirror amounts for a board member, and no buyer 
             familyName: 'Pat',
             familyEmail: 'pat@example.com',
             programName: 'Robotics',
+            detail: null,
             live: { financialStatus: 'REFUNDED', totalCents: 5000, totalRefundedCents: 5000, cancelledAt: null },
         },
     ]);
+});
+
+it('shows a duplicate membership payment with its wording, and no other kind\'s evidence', async () => {
+    mockSession.mockResolvedValue({ user: { id: 5, isBoardMember: true } });
+    prismaMock.paymentException.findMany.mockResolvedValue([
+        { id: 1, kind: 'DUPLICATE_MEMBERSHIP_PAYMENT', severity: 'WARN', status: 'OPEN', shopifyOrderId: '900', processId: null, programId: null, personId: null, detectedAt, evidence: 'the household paid twice in the store for the same year: a refund may be needed' },
+        { id: 2, kind: 'REFUND', severity: 'WARN', status: 'OPEN', shopifyOrderId: '900', processId: null, programId: null, personId: null, detectedAt, evidence: 'refunded=5000;disputes=0;cancelled=' },
+    ]);
+    const rows = await (await GET(req())).json();
+    expect(rows.map((r: { detail: string | null }) => r.detail)).toEqual(['the household paid twice in the store for the same year: a refund may be needed', null]);
 });
 
 it('lists the row without a live block when the mirror read fails', async () => {

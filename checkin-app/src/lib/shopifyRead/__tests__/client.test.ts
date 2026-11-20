@@ -222,6 +222,17 @@ describe('order reads', () => {
         expect(whereOf(db.shopOrder.findMany)).toEqual({ test: false, ...API_SOURCE, legacyId: { in: ['123'] } });
     });
 
+    it('orderLines carries a line\'s unit price, and reads a stored 0 as no price', async () => {
+        db.shopOrderLine.findMany.mockResolvedValue([
+            { variantLegacyId: '9', quantity: 1, currentQuantity: 1, priceCents: 7500 },
+            { variantLegacyId: '8', quantity: 1, currentQuantity: 1, priceCents: 0 },
+        ]);
+        expect(await freshClient().orderLines('gid://shopify/Order/1')).toEqual([
+            { variantId: '9', quantity: 1, currentQuantity: 1, unitPriceCents: 7500 },
+            { variantId: '8', quantity: 1, currentQuantity: 1 },
+        ]);
+    });
+
     it('orderLines drops removed and variant-less lines', async () => {
         db.shopOrderLine.findMany.mockResolvedValue([{ variantLegacyId: '9', quantity: 2, currentQuantity: 1 }]);
         expect(await freshClient().orderLines('gid://shopify/Order/1')).toEqual([{ variantId: '9', quantity: 2, currentQuantity: 1 }]);

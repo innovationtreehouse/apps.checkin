@@ -559,7 +559,7 @@ describe('adapter — createUser / getUser (Participant.id is an Int, NextAuth I
 
         expect(prismaMockTx.household.create).toHaveBeenCalledWith({ data: { name: 'New Person' } });
         expect(prismaMockTx.person.create).toHaveBeenCalledWith({
-            data: { name: 'New Person', email: 'new@x.org', id: 2503, householdId: 55 },
+            data: { name: 'New Person', email: 'new@x.org', ageStepPending: true, id: 2503, householdId: 55 },
         });
         expect(addHouseholdLead).toHaveBeenCalledWith(expect.anything(), 55, 9);
         expect(created).toEqual({ id: '9', email: 'new@x.org', name: 'New Person' });

@@ -11,6 +11,7 @@ import { AlertBanner, type AlertTone } from '@/components/admin/AlertBanner';
 import { PageContainer } from '@/components/ui/PageContainer';
 import EmergencyContactNotice from '@/components/ui/EmergencyContactNotice';
 import { calculateAge, formatDateOnly, isYouth } from '@/lib/time';
+import type { BgStatus } from '@/lib/membership/bgStatus';
 import { isMembershipLapsed } from '@/lib/membership/lapsed';
 import TrustedAdultPanel from '@/components/TrustedAdultPanel';
 import TodoCard from '@/components/TodoCard';
@@ -51,13 +52,20 @@ function ageBadge(p: HouseholdMember): { label: string; color: string; variant: 
   return { label: 'Age Unavailable', color: 'red', variant: 'filled' };
 }
 
-type HouseholdMember = { id: number; name?: string; nickname?: string | null; email?: string; dateOfBirth?: string; phone?: string; isDeclaredAdult?: boolean; allergies?: string | null; isHouseholdLead?: boolean; emailLocked?: boolean };
+// The background-check status the route sends only to the person and their household lead.
+const BG_STATUS_BADGE: Record<BgStatus, { label: string; color: string }> = {
+  VALID: { label: 'Background check: Valid', color: 'green' },
+  EXPIRES_BEFORE_NEXT_YEAR: { label: 'Background check: Expires before upcoming year', color: 'yellow' },
+  EXPIRED: { label: 'Background check: Expired', color: 'red' },
+};
+
+type HouseholdMember = { id: number; name?: string; nickname?: string | null; email?: string; dateOfBirth?: string; phone?: string; isDeclaredAdult?: boolean; allergies?: string | null; isHouseholdLead?: boolean; emailLocked?: boolean; bgStatus?: { personId: number; status?: BgStatus } };
 type EmergencyContact = { id: number; name: string; phone: string; email?: string | null; relationship?: string | null; priority: number; invalid: boolean };
 type HouseholdData = {
   id?: number;
   name?: string;
   householdMembers?: HouseholdMember[];
-  orgMembership?: { status?: string; memberSince?: string; isVolunteerFamily?: boolean } | null;
+  orgMembership?: { status?: string; memberSince?: string; isVolunteerFamily?: boolean; notRenewingYear?: number | null } | null;
 } & Partial<StructuredAddress> | null;
 type HouseholdAnswer = { household: HouseholdData; boardReplyTo?: string | null; validUntil?: string | null };
 
@@ -330,6 +338,10 @@ export default function HouseholdPage() {
             )
           )}
 
+          {viewerIsLead && household?.orgMembership?.status === 'ACTIVE' && (
+            <NotRenewingControl noted={household.orgMembership.notRenewingYear != null} validUntil={validUntil} />
+          )}
+
           <AlertBanner message={message?.text} tone={message?.tone} mb="lg" />
 
           {householdError && <LoadError what="your household" message={householdError} onRetry={fetchHousehold} />}
@@ -383,6 +395,7 @@ export default function HouseholdPage() {
                           {p.phone && <Text size="sm" c="dimmed" style={{ wordBreak: 'break-word' }}>{formatPhone(p.phone)}</Text>}
                           {p.allergies && <Text size="sm" c="dimmed" style={{ wordBreak: 'break-word' }}>Allergies: {p.allergies}</Text>}
                           {leadMissingPhone && <Badge color="red" variant="filled" mt="xs">Add a phone number</Badge>}
+                          {p.bgStatus?.status && <Badge color={BG_STATUS_BADGE[p.bgStatus.status].color} variant="light" mt="xs" style={{ whiteSpace: 'normal', height: 'auto' }}>{BG_STATUS_BADGE[p.bgStatus.status].label}</Badge>}
                           <Group gap="xs" mt="sm">
                             {householdMemberIsLead && <Badge color="grape" variant="light">Household Lead</Badge>}
                             {!householdMemberIsLead && isAdult && viewerIsLead && (
@@ -542,5 +555,59 @@ export default function HouseholdPage() {
 
       </Stack>
     </PageContainer>
+  );
+}
+
+/** A lead says the household won't renew, or takes it back; the membership itself is untouched. */
+function NotRenewingControl({ noted, validUntil }: { noted: boolean; validUntil: string | null }) {
+  const [confirming, setConfirming] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const send = async (method: 'POST' | 'DELETE') => {
+    setSaving(true);
+    try {
+      await api('/api/membership/not-renewing', { method });
+      showSuccess(method === 'POST' ? "We've told the Board you won't be renewing." : "Your renewal reminders will resume.");
+      setConfirming(false);
+    } catch (e) {
+      showError(errorMessage(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (noted) {
+    return (
+      <Alert color="gray" mb="lg">
+        <Group justify="space-between" align="center" wrap="wrap">
+          <Text>You&apos;ve told the Board you won&apos;t be renewing. You can still renew at any time.</Text>
+          <Button size="xs" fz={15} variant="default" loading={saving} onClick={() => send('DELETE')}>Undo</Button>
+        </Group>
+      </Alert>
+    );
+  }
+
+  if (!confirming) {
+    return (
+      <Group mb="lg">
+        <Button size="xs" fz={15} variant="subtle" color="gray" onClick={() => setConfirming(true)}>We won&apos;t be renewing</Button>
+      </Group>
+    );
+  }
+
+  const through = validUntil ? formatDateOnly(validUntil, { year: 'numeric', month: 'short', day: 'numeric' }) : null;
+  return (
+    <Alert color="gray" mb="lg" title="Tell the Board you won't be renewing?">
+      <Stack gap="xs">
+        <Text size="sm">
+          Your membership continues {through ? `through ${through}` : 'to the end of the year you have paid for'}, and
+          renewal emails stop. You can change your mind and renew at any time from this page.
+        </Text>
+        <Group>
+          <Button size="xs" fz={15} color="gray" loading={saving} onClick={() => send('POST')}>Yes, tell the Board</Button>
+          <Button size="xs" fz={15} variant="default" disabled={saving} onClick={() => setConfirming(false)}>Cancel</Button>
+        </Group>
+      </Stack>
+    </Alert>
   );
 }

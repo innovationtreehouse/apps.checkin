@@ -9,7 +9,7 @@ import { PUSH_GRACE_MS, receiptRepo } from "../../repositories/receipt";
 import { receiptService } from "../../services/receiptService";
 import { READING_FAILURES_NOTICE_AT, STILL_STUCK, problemNotices, retryStuckItem, stuckItems } from "../../stuckItems";
 import { describeDb } from "../helpers/db";
-import { ALICE, FINANCE, TEST_ORG_ID, actAs, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile } from "../helpers/setup";
+import { ALICE, FINANCE, TEST_ORG_ID, actAs, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile, uploadRead } from "../helpers/setup";
 
 let ports: ReturnType<typeof recordingPorts>;
 
@@ -21,7 +21,7 @@ async function makeReceipt(state: string, opts: { orgId?: string; pushed?: boole
       id,
       orgId,
       uploadedByUserId: ALICE.id,
-      fileBlob: Buffer.from("receipt"),
+      fileKey: `receipts/${id}`,
       fileHash: randomUUID(),
       mimeType: "text/plain",
       pushedAt: opts.pushed ? new Date() : null,
@@ -68,7 +68,7 @@ describeDb("stuckItems", () => {
 
   it("keeps the first failure's time through a second failure, which records its own error", async () => {
     ports.fail.push = new Error("first");
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     const first = await failure(r.id);
     expect(first).toMatchObject({ lastError: "first" });
     expect(first.firstFailedAt).toBeInstanceOf(Date);
@@ -82,7 +82,7 @@ describeDb("stuckItems", () => {
 
   it("a delivered push clears the failure and leaves the list", async () => {
     ports.fail.push = true;
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     ports.fail.push = false;
 
     await retryStuckItem({ id: r.id, step: "push to mapping" });
@@ -93,7 +93,7 @@ describeDb("stuckItems", () => {
 
   it("a retry of a receipt already delivered sends nothing", async () => {
     ports.fail.push = true;
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     ports.fail.push = false;
     await retryStuckItem({ id: r.id, step: "push to mapping" });
     const sent = ports.calls.pushes.length;
@@ -104,7 +104,7 @@ describeDb("stuckItems", () => {
   });
 
   it("a flow retry reruns the checks, and the receipt leaves flow_error with its failure cleared", async () => {
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     await db.receiptDetail.update({ where: { id: r.id }, data: { state: "flow_error" } });
     await db.receipt.update({ where: { id: r.id }, data: { pushedAt: null, firstFailedAt: new Date(), lastError: "boom" } });
 
@@ -156,7 +156,7 @@ async function history(receiptId: string, rows: Array<[action: string, at: strin
 /** A receipt finalized by the flow whose push never ran or never recorded its failure, finalized `agoMs` before now. */
 async function undeliveredSilently(agoMs: number): Promise<{ id: string; finalizedAt: Date }> {
   ports.fail.push = true;
-  const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+  const r = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
   ports.fail.push = false;
   const finalizedAt = new Date(Date.now() - agoMs);
   await db.receipt.update({ where: { id: r.id }, data: { firstFailedAt: null, lastError: null } });

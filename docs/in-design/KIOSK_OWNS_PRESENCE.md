@@ -117,7 +117,7 @@ keyholder closes; the kiosk's one-badge and two-badge close; nothing on the
 web stops a kiosk close; a close never ends a later visit; open is derived
 from a keyholder being in; a kiosk badge always checks in and no-keyholder
 visits are marked; never lose a scan; the direction shown is the record; the
-3-second repeat-read filter at the kiosk; late scans apply at scan time and
+2-second repeat-read filter at the kiosk; late scans apply at scan time and
 are flagged; a queued close applies however late; never blank; fail-closed
 safety display; "can't confirm" without a kiosk heartbeat; the kiosk rests
 only when the building is known empty; two-deep math stays on the server; the
@@ -325,7 +325,7 @@ The mechanism exists and stays. It is named here so nothing in the cleanup
 cuts it.
 
 1. **Write before send.** The badge read is filtered for a repeat of the same
-   badge within 3 seconds, then written to the kiosk's local SQLite queue
+   badge within 2 seconds, then written to the kiosk's local SQLite queue
    (`client/outbox.py`, WAL with full sync) with a fresh scan id
    (`clientEventId`, a UUID), the scan time, the direction the screen showed,
    and the close decision if any. Only then is it sent.
@@ -368,7 +368,7 @@ queue and the 11 PM close, both of which the fence and pull-back rules already
 handle. The hold stays for closed records a member inserted (they still may,
 decision Q1), and gets rarer.
 
-**Duplicate badge reads** are one scan by the kiosk's 3-second filter; the
+**Duplicate badge reads** are one scan by the kiosk's 2-second filter; the
 server keeps only exact-duplicate dedup by scan id.
 
 ### Scan times
@@ -492,7 +492,7 @@ same PR).
 `client/kiosk.sh` keeps the process up, pulls the newest release tag and
 starts `client.py` and full-screen Chromium. `client.py` runs:
 
-- a badge reader thread (USB, with a 3-second repeat filter);
+- a badge reader thread (USB, with a 2-second repeat filter);
 - a local web server that serves the frame page, proxies **every** request the
   screen makes to the server and signs it with the kiosk's key;
 - the close decision (one badge when it shows nobody else inside; otherwise a

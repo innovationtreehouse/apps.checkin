@@ -7,6 +7,8 @@ import {
     extractRegistryFirstMarkers,
     findBareIncludeLegs,
     findDirectJsonCalls,
+    findRegisteredNotHandlerServed,
+    extractHandlerServedEndpoints,
     findStaleDirectJsonEntries,
     findOrphanRegistryEntries,
     findRegistryFirstMarkerErrors,
@@ -243,6 +245,53 @@ describe("registry-first markers", () => {
         expect(found).toHaveLength(1);
         expect(found[0].severity).toBe("error");
         expect(found[0].message).toContain("registry-first: POST");
+    });
+});
+
+describe("registered verb served by the old wrapper", () => {
+    const key = "GET /api/thing";
+    const old = `export const GET = withAuth(async () => ok());`;
+    const run = (src: string, legacy: string[]) =>
+        findRegisteredNotHandlerServed("route.ts", extractExportedVerbs(src), "/api/thing", src, new Set([key]), new Set(legacy));
+
+    it("warns while the key is still in the legacy baseline", () => {
+        expect(run(old, [key]).map(f => [f.severity, f.rule])).toEqual([["warn", "registered-not-handler"]]);
+    });
+
+    it("errors once the key is out of the legacy baseline", () => {
+        expect(run(old, []).map(f => f.severity)).toEqual(["error"]);
+    });
+
+    it("passes a verb served by handler(), literal or typed", () => {
+        expect(run(`export const GET = handler("${key}", async () => x);`, [])).toEqual([]);
+        expect(run(`export const GET = handler<{ id: string }>(\n  '${key}',\n  async () => x);`, [])).toEqual([]);
+    });
+
+    it("passes a handler() call inside a wrapper function, endpoint held in a constant", () => {
+        const src = `const ENDPOINT = "${key}";\nexport async function GET(req) {\n  const res = await handler(ENDPOINT, async () => x);\n  return res(req);\n}`;
+        expect(run(src, [])).toEqual([]);
+        expect(extractHandlerServedEndpoints(src)).toEqual(new Map([["GET", new Set([key])]]));
+    });
+
+    it("passes a fileHandler() route", () => {
+        expect(run(`export const GET = fileHandler("${key}", async () => x);`, [])).toEqual([]);
+    });
+
+    it("checks each verb: handler() on one does not cover another", () => {
+        const src = `export const GET = handler("${key}", h);\nexport const POST = withAuth(h);`;
+        const found = findRegisteredNotHandlerServed("route.ts", ["GET", "POST"], "/api/thing", src,
+            new Set([key, "POST /api/thing"]), new Set());
+        expect(found.map(f => f.message)).toEqual([expect.stringContaining("POST /api/thing is in the security registry")]);
+    });
+
+    it("does not let another export's handler() call cover a verb", () => {
+        const src = `export const POST = handler("${key}", h);\nexport const GET = withAuth(h);`;
+        expect(run(src, []).map(f => f.message)).toEqual([expect.stringContaining(`${key} is in the security registry`)]);
+    });
+
+    it("ignores an unregistered verb and a commented-out handler()", () => {
+        expect(findRegisteredNotHandlerServed("r.ts", ["GET"], "/api/thing", old, new Set(), new Set())).toEqual([]);
+        expect(run(`// handler("${key}", h)\n${old}`, [key]).map(f => f.severity)).toEqual(["warn"]);
     });
 });
 

@@ -21,8 +21,7 @@ INACTIVE state and nothing moves an ACTIVE household on when its year runs out
 unpaid. Lapse is a manual board revoke until M1 is designed. The membership
 process ends at ACTIVE or ARCHIVED and does not cover it either.
 
-The rules those machines exist to hold are in `docs/rules/`; the discipline they
-are built on is in `docs/conventions.md`. This file is how you operate them.
+The discipline those machines are built on is in `docs/conventions.md`. This file is how you operate them.
 
 ## Where things are
 

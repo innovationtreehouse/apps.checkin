@@ -91,7 +91,7 @@ describe('POST /api/membership-ops/households — grant/revoke audit logging', (
         boardHouseholdId = board.householdId;
         const boardMembership = await prisma.orgMembership.create({ data: { householdId: boardHouseholdId, status: 'NONE' } });
         boardProcessId = (await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: boardMembership.id, kind: 'RENEWAL', status: 'PENDING_PAYMENT', bgClearedAt: new Date() },
+            data: { orgMembershipId: boardMembership.id, kind: 'RENEWAL', status: 'PENDING_PAYMENT', contractSignedAt: new Date(), bgClearedAt: new Date() },
         })).id;
 
         // A household with no membership row → will be granted (ACTIVE).
@@ -122,7 +122,7 @@ describe('POST /api/membership-ops/households — grant/revoke audit logging', (
         midFlowHouseholdId = await makeHousehold('midflow');
         const midMembership = await prisma.orgMembership.create({ data: { householdId: midFlowHouseholdId, status: 'ACTIVE' } });
         midFlowProcessId = (await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: midMembership.id, kind: 'RENEWAL', status: 'PENDING_PAYMENT', bgConsentAt: new Date() },
+            data: { orgMembershipId: midMembership.id, kind: 'RENEWAL', status: 'PENDING_PAYMENT', contractSignedAt: new Date(), bgConsentAt: new Date() },
         })).id;
         await setLead(midFlowHouseholdId, new Date());
 
@@ -131,7 +131,7 @@ describe('POST /api/membership-ops/households — grant/revoke audit logging', (
         bgNotFreshHouseholdId = await makeHousehold('bgnotfresh');
         const bnfMembership = await prisma.orgMembership.create({ data: { householdId: bgNotFreshHouseholdId, status: 'ACTIVE' } });
         bgNotFreshProcessId = (await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: bnfMembership.id, kind: 'RENEWAL', status: 'PENDING_PAYMENT', bgClearedAt: new Date() },
+            data: { orgMembershipId: bnfMembership.id, kind: 'RENEWAL', status: 'PENDING_PAYMENT', contractSignedAt: new Date(), bgClearedAt: new Date() },
         })).id;
         await setLead(bgNotFreshHouseholdId, null);
 
@@ -140,7 +140,7 @@ describe('POST /api/membership-ops/households — grant/revoke audit logging', (
         const grMembership = await prisma.orgMembership.create({ data: { householdId: grantableHouseholdId, status: 'ACTIVE' } });
         grantableMembershipId = grMembership.id;
         grantableProcessId = (await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: grMembership.id, kind: 'RENEWAL', status: 'PENDING_PAYMENT', bgClearedAt: new Date() },
+            data: { orgMembershipId: grMembership.id, kind: 'RENEWAL', status: 'PENDING_PAYMENT', contractSignedAt: new Date(), bgClearedAt: new Date() },
         })).id;
         await setLead(grantableHouseholdId, new Date());
     });
@@ -192,7 +192,7 @@ describe('POST /api/membership-ops/households — grant/revoke audit logging', (
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
         const householdId = await makeHousehold('grantpending');
         const m = await prisma.orgMembership.create({ data: { householdId } });
-        const p = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', bgConsentAt: new Date() } });
+        const p = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', contractSignedAt: new Date(), bgConsentAt: new Date() } });
 
         const res = await post({ householdId, year: YEAR, reason: 'Paid by check' });
         expect(res.status).toBe(200);
@@ -209,14 +209,14 @@ describe('POST /api/membership-ops/households — grant/revoke audit logging', (
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
         const householdId = await makeHousehold('grantrevoked');
         const m = await prisma.orgMembership.create({ data: { householdId, status: 'REVOKED' } });
-        await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', bgClearedAt: new Date() } });
+        await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', contractSignedAt: new Date(), bgClearedAt: new Date() } });
 
         const res = await post({ householdId, year: YEAR, reason: 'Paid by check' });
         expect(res.status).toBe(200);
         expect((await prisma.orgMembership.findUniqueOrThrow({ where: { id: m.id } })).status).toBe('ACTIVE');
     });
 
-    it('grant on a DENIED household changes nothing and raises a board exception', async () => {
+    it('grant on a DENIED household changes nothing and raises no board exception', async () => {
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
         const householdId = await makeHousehold('grantdenied');
         const m = await prisma.orgMembership.create({ data: { householdId, status: 'DENIED' } });
@@ -226,22 +226,23 @@ describe('POST /api/membership-ops/households — grant/revoke audit logging', (
         expect((await prisma.orgMembership.findUniqueOrThrow({ where: { id: m.id } })).status).toBe('DENIED');
         expect(await prisma.orgMembershipProcess.count({ where: { orgMembershipId: m.id } })).toBe(0);
         const person = await prisma.person.findFirstOrThrow({ where: { householdId } });
-        const exception = await prisma.paymentException.findFirst({ where: { kind: 'DENIED_HOUSEHOLD_ACTIVITY', personId: person.id } });
-        expect(exception).toMatchObject({ status: 'OPEN', severity: 'CRITICAL' });
+        expect(await prisma.paymentException.count({ where: { kind: 'DENIED_HOUSEHOLD_ACTIVITY', personId: person.id } })).toBe(0);
     });
 
-    it('grant on a DENIED household with a payable renewal changes nothing and raises a board exception', async () => {
+    it('grant on a DENIED household with a payable renewal changes nothing and raises no board exception', async () => {
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
         const householdId = await makeHousehold('comingyeardenied');
         const m = await prisma.orgMembership.create({ data: { householdId, status: 'DENIED' } });
-        const p = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'RENEWAL', status: 'PENDING_PAYMENT', bgClearedAt: new Date() } });
+        const p = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'RENEWAL', status: 'PENDING_PAYMENT', contractSignedAt: new Date(), bgClearedAt: new Date() } });
 
         const res = await post({ householdId, year: YEAR, reason: 'Paid by check' });
         expect(res.status).toBe(409);
         expect((await prisma.orgMembership.findUniqueOrThrow({ where: { id: m.id } })).status).toBe('DENIED');
         expect(await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: p.id } })).toMatchObject({ status: 'PENDING_PAYMENT', paidAt: null });
         const person = await prisma.person.findFirstOrThrow({ where: { householdId } });
-        expect(await prisma.paymentException.findFirst({ where: { kind: 'DENIED_HOUSEHOLD_ACTIVITY', personId: person.id } })).not.toBeNull();
+        expect(await prisma.paymentException.count({
+            where: { kind: 'DENIED_HOUSEHOLD_ACTIVITY', OR: [{ personId: person.id }, { processId: p.id }] },
+        })).toBe(0);
     });
 
     it('grant on a lapsed ACTIVE household with nothing in flight opens its renewal, in or out of season', async () => {
@@ -414,7 +415,7 @@ describe('POST /api/membership-ops/households — grant/revoke audit logging', (
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
         const householdId = await makeHousehold(`badyear${typeof year}${String(year)}`);
         const m = await prisma.orgMembership.create({ data: { householdId } });
-        const p = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', bgConsentAt: new Date() } });
+        const p = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', contractSignedAt: new Date(), bgConsentAt: new Date() } });
 
         const res = await post({ householdId, year, reason: 'Paid by check' });
         expect(res.status).toBe(400);
@@ -425,7 +426,7 @@ describe('POST /api/membership-ops/households — grant/revoke audit logging', (
         (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
         const householdId = await makeHousehold('activeandyear');
         const m = await prisma.orgMembership.create({ data: { householdId } });
-        const p = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', bgConsentAt: new Date() } });
+        const p = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', contractSignedAt: new Date(), bgConsentAt: new Date() } });
 
         expect((await post({ householdId, active: true, year: YEAR, reason: 'Paid by check' })).status).toBe(200);
         expect((await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: p.id } })).appliesToYear).toBe(YEAR);
@@ -460,7 +461,7 @@ describe('POST /api/membership-ops/households — grant/revoke audit logging', (
         async function application(label: string, kind: 'INITIAL' | 'RENEWAL') {
             const householdId = await makeHousehold(label);
             const m = await prisma.orgMembership.create({ data: { householdId, status: kind === 'RENEWAL' ? 'ACTIVE' : 'NONE' } });
-            const p = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind, status: 'PENDING_PAYMENT', bgConsentAt: new Date() } });
+            const p = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind, status: 'PENDING_PAYMENT', contractSignedAt: new Date(), bgConsentAt: new Date() } });
             return { householdId, processId: p.id };
         }
 

@@ -6,18 +6,17 @@ import type { ReceiptLimits } from "../../lib/limits";
 import { mailQueueService } from "../../services/mailQueueService";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
-import { actAs, actions, ALICE, clearAll, configure, FINANCE, manualDetails, okOcr, stateOf, TEST_ORG_ID, textFile } from "../helpers/setup";
+import { actAs, actions, ALICE, clearAll, configure, FINANCE, manualDetails, okOcr, stateOf, TEST_ORG_ID, textFile, uploadRead } from "../helpers/setup";
 
 let store: ReturnType<typeof createMemoryFileStore>;
 let seq = 0;
 
-function configureStore(flag: boolean, limits: Partial<ReceiptLimits> = {}): void {
+function configureStore(limits: Partial<ReceiptLimits> = {}): void {
   store = createMemoryFileStore();
   configure({
     ocr: okOcr(),
     limits,
     fileStore: store,
-    storeNewFilesInBucket: flag,
     people: { submitterByEmail: async (address) => (address === "alice@example.org" ? ALICE : null) },
   });
 }
@@ -34,23 +33,13 @@ async function heldInStore(bytes = textFile(), attachmentHash = sha256Hex(bytes)
 
 beforeEach(async () => {
   await clearAll();
-  configureStore(true);
+  configureStore();
 });
 
 describeDb("receipt file store", () => {
-  it("flag off: the bytes stay in the row and the store is untouched", async () => {
-    configureStore(false);
+  it("the object is stored, the row has no bytes, and the file route reads it back", async () => {
     const file = textFile();
-    const r = await receiptService.upload(file, "text/plain", { details: manualDetails() });
-    const row = await db.receipt.findUniqueOrThrow({ where: { id: r.id } });
-    expect(row).toMatchObject({ fileKey: null, fileSize: file.length });
-    expect(Buffer.from(row.fileBlob ?? []).equals(file)).toBe(true);
-    expect(store.objects.size).toBe(0);
-  });
-
-  it("flag on: the object is stored, the row has no bytes, and the file route reads it back", async () => {
-    const file = textFile();
-    const r = await receiptService.upload(file, "text/plain", { details: manualDetails() });
+    const r = await uploadRead(file, "text/plain", { details: manualDetails() });
     const row = await db.receipt.findUniqueOrThrow({ where: { id: r.id } });
     expect(row).toMatchObject({ fileBlob: null, fileKey: `receipts/${r.id}`, fileSize: file.length });
     expect(r).not.toHaveProperty("fileKey");
@@ -59,16 +48,17 @@ describeDb("receipt file store", () => {
     expect(Buffer.from(served.fileBlob).equals(file)).toBe(true);
   });
 
-  it("a row with bytes and no key still serves, with the flag on", async () => {
-    configureStore(false);
+  it("a row with no key answers 404 and logs, whatever its file_blob holds", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const file = textFile();
-    const r = await receiptService.upload(file, "text/plain", { details: manualDetails() });
-    configureStore(true);
-    expect(Buffer.from((await receiptService.getFile(r.id, "submitter")).fileBlob).equals(file)).toBe(true);
+    const r = await uploadRead(file, "text/plain", { details: manualDetails() });
+    await db.receipt.update({ where: { id: r.id }, data: { fileKey: null, fileBlob: new Uint8Array(file) } });
+    await expect(receiptService.getFile(r.id, "submitter")).rejects.toMatchObject({ status: 404 });
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("no file key"));
   });
 
   it("a missing object answers 404 on the file route", async () => {
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     store.objects.clear();
     await expect(receiptService.getFile(r.id, "submitter")).rejects.toMatchObject({ status: 404 });
   });
@@ -77,14 +67,14 @@ describeDb("receipt file store", () => {
     const extracted: string[] = [];
     const ocr = okOcr();
     const spy = { extract: (f: Buffer, m: string) => (extracted.push(f.toString()), ocr.extract(f, m)) };
-    configure({ ocr: spy, fileStore: store, storeNewFilesInBucket: true });
+    configure({ ocr: spy, fileStore: store });
     const file = textFile();
-    await receiptService.upload(file, "text/plain", {});
+    await uploadRead(file, "text/plain", {});
     expect(extracted).toEqual([file.toString()]);
 
     const failing = createMemoryFileStore();
-    configure({ ocr, storeNewFilesInBucket: true, fileStore: { ...failing, put: async () => {}, get: async () => null } });
-    const r = await receiptService.upload(textFile(), "text/plain", {});
+    configure({ ocr, fileStore: { ...failing, put: async () => {}, get: async () => null } });
+    const r = await uploadRead(textFile(), "text/plain", {});
     expect(await stateOf(r.id)).toBe("ocr_failed");
     expect(await actions(r.id)).toContain("ocr_failed:data");
   });
@@ -95,8 +85,8 @@ describeDb("receipt file store", () => {
     const down = async () => {
       throw new Error("store unreachable");
     };
-    configure({ ocr: okOcr(), storeNewFilesInBucket: true, fileStore: { ...failing, put: async () => {}, get: down } });
-    const r = await receiptService.upload(textFile(), "text/plain", {});
+    configure({ ocr: okOcr(), fileStore: { ...failing, put: async () => {}, get: down } });
+    const r = await uploadRead(textFile(), "text/plain", {});
     expect(await stateOf(r.id)).toBe("ocr_failed");
     expect(await actions(r.id)).toContain("ocr_failed:system");
   });
@@ -123,9 +113,9 @@ describeDb("receipt file store", () => {
 
   it("a refused upload stores nothing, and the byte limit counts file_size", async () => {
     const file = textFile();
-    configureStore(true, { uploadBytesPerPersonPerDay: file.length + 5 });
-    await receiptService.upload(file, "text/plain", { details: manualDetails() });
-    await expect(receiptService.upload(textFile("x".repeat(20)), "text/plain", { details: manualDetails() })).rejects.toMatchObject({ status: 429 });
+    configureStore({ uploadBytesPerPersonPerDay: file.length + 5 });
+    await uploadRead(file, "text/plain", { details: manualDetails() });
+    await expect(uploadRead(textFile("x".repeat(20)), "text/plain", { details: manualDetails() })).rejects.toMatchObject({ status: 429 });
     expect(store.objects.size).toBe(1);
   });
 
@@ -136,7 +126,7 @@ describeDb("receipt file store", () => {
     const shown = await mailQueueService.assign(id, { email: "alice@example.org" });
     expect(shown).not.toHaveProperty("fileKey");
     expect(store.objects.has(key)).toBe(false);
-    expect(await db.receiptMailItem.findUniqueOrThrow({ where: { id } })).toMatchObject({ status: "assigned", fileKey: null, fileBlob: null });
+    expect(await db.receiptMailItem.findUniqueOrThrow({ where: { id } })).toMatchObject({ status: "assigned", fileKey: null });
     expect(Buffer.from(store.objects.get(`receipts/${shown.receiptId}`) ?? []).equals(file)).toBe(true);
   });
 
@@ -165,7 +155,7 @@ describeDb("receipt file store", () => {
 
   it("a store that fails on delete does not fail the discard", async () => {
     const { id } = await heldInStore();
-    configure({ fileStore: { ...store, delete: async () => { throw new Error("s3 down"); } }, storeNewFilesInBucket: true });
+    configure({ fileStore: { ...store, delete: async () => { throw new Error("s3 down"); } } });
     actAs(FINANCE);
     await expect(mailQueueService.discard(id, { reason: "spam" })).resolves.toMatchObject({ status: "discarded" });
   });

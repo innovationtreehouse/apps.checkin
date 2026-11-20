@@ -7,7 +7,8 @@ import type { ExpensePrincipal, SetReimbursee } from "../contract";
 import { assertOrg, getExpenseRuntime, getOrgId } from "../runtime";
 import { actorOf } from "../lib/caller";
 import { writeAudit } from "../lib/audit";
-import { drainExpense } from "../lib/financial-flow";
+import { checkApprovalAutoTransition, deriveSystemApprovals, drainExpense } from "../lib/financial-flow";
+import { SYSTEM_ACTOR } from "../lib/system-actor";
 import { boardApprovalNeeded, clearFrom, isConflicted, filledSeatsByLine, lineHolds, lockBucketLines, lockExpense, signoffFactsByLine, signoffFactsForExpenses, unsignedLines } from "../lib/signoff-facts";
 import { APPROVABLE_STATUSES, CLOSED_STATES, approvesAsStandIn, blockedSeats, boardAuthorizationRefusal, missingSeats, reimburseeUnknown, signoffRefusal, type FilledSeat, type Seat, type SignoffFacts } from "../lib/signoff";
 import { approvalWaitsOnBoard, lineActions, mayRecordBoardAuthorization, signatureTab, type LineActionsInput } from "../lib/line-actions";
@@ -47,16 +48,42 @@ export async function linesAwaitingBoardSeat(bucketId: number, client: Db = db):
   return count;
 }
 
+/** Open card-charge expenses with a line in the bucket, by id. */
+async function openCardChargesIn(client: Db, bucketId: number): Promise<string[]> {
+  const rows = await client.expense.findMany({
+    where: { orgId: await getOrgId(), backfill: false, needsReimbursement: false, state: { notIn: [...CLOSED_STATES] }, approvals: { some: { ownerId: bucketId } } },
+    select: { id: true },
+    orderBy: { id: "asc" },
+  });
+  return rows.map((r) => r.id);
+}
+
 /**
- * Runs `change` holding the bucket against new lines; `awaiting` counts its lines that wait on a
- * Board seat. The host commits its flag change inside `change`, so no line enters the bucket
- * between the count and that commit.
+ * Runs `change`, the host's commit of the bucket's org-level flag as `orgLevel`, holding the bucket
+ * against new lines. `awaiting` counts its lines that wait on a Board seat, as they stood before the
+ * change. The system's approvals on its open card charges are derived again for the new flag first;
+ * a refusal by `change` rolls them back. Lock order: the expense rows, sorted, then the bucket's line
+ * hold, as every path that puts a line in a bucket takes them.
  */
-export async function holdBucketLines<T>(bucketId: number, change: (awaiting: () => Promise<number>) => Promise<T>): Promise<T> {
-  return db.$transaction(async (tx) => {
+export async function holdBucketLines<T>(bucketId: number, orgLevel: boolean, change: (awaiting: () => Promise<number>) => Promise<T>): Promise<T> {
+  const { result, expenseIds } = await db.$transaction(async (tx) => {
+    const expenseIds = await openCardChargesIn(tx, bucketId);
+    for (const id of expenseIds) await lockExpense(tx, id);
     await lockBucketLines(tx, bucketId, "exclusive");
-    return change(() => linesAwaitingBoardSeat(bucketId, tx));
+    if ((await openCardChargesIn(tx, bucketId)).some((id) => !expenseIds.includes(id))) {
+      throw new ServiceError(409, "A line entered this bucket while it was changing; try again");
+    }
+    const awaiting = await linesAwaitingBoardSeat(bucketId, tx);
+    for (const id of expenseIds) {
+      await deriveSystemApprovals(tx, SYSTEM_ACTOR, id, { bucketId, orgLevel }).catch((err: unknown) => {
+        if (err instanceof ServiceError) throw new ServiceError(err.status, `Expense ${id}: ${err.message}`);
+        throw err;
+      });
+    }
+    return { result: await change(async () => awaiting), expenseIds };
   }, { timeout: 15_000 });
+  for (const id of expenseIds) await checkApprovalAutoTransition(id, SYSTEM_ACTOR);
+  return result;
 }
 
 /** Refuses an expense that takes no sign-off now. */
@@ -245,6 +272,7 @@ export const setReimbursee: SetReimbursee = async (orgId, expenseId, choice, pri
   });
 
   if (state === "qb_pending") await drainExpense(orgId, expenseId);
+  if (state === "owner_approval") await checkApprovalAutoTransition(expenseId, actor);
 };
 
 /** The expense, locked and open to change, or the refusal. */

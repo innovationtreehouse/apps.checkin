@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { logBackendError } from "@/lib/logger";
 import { personActor } from "@/lib/auditActor";
 import { calculateAge } from "@/lib/time";
 import { backgroundCheckProvider } from "@/lib/membership/background-check/manual-adapter";
@@ -110,7 +111,11 @@ export async function markCheckStarted(subjectPersonId: number, actorId: number)
 
     if (outcome.stamped) await notifyReviewers();
     if (outcome.settles && subject.householdId !== null) {
-        await settleHouseholdBg(subject.householdId);
+        try {
+            await settleHouseholdBg(subject.householdId);
+        } catch (error) {
+            await logBackendError(error, "household background-check settle after check started", { householdId: subject.householdId, processId: outcome.processId });
+        }
         const app = await prisma.orgMembershipProcess.findFirst({
             where: { orgMembership: { householdId: subject.householdId }, kind: { in: ["INITIAL", "RENEWAL"] }, ...openProcess.where },
             orderBy: { id: "desc" },

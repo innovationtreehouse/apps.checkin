@@ -32,7 +32,7 @@ type State = {
     process: { id: number; kind: string; status: string } | null;
     external: { bgCleared: boolean } | null;
 };
-type RenewalStatus = { renewalDue: boolean; dueDate?: string | null };
+type RenewalStatus = { renewalDue: boolean; dueDate?: string | null; notRenewing?: boolean };
 type Settings = { settings: { BoardSettings: { orgMembershipYearBoundary: string | null } } };
 type Sweep = { opened: number; skipped: number };
 
@@ -86,7 +86,7 @@ describe("flow: annual membership renewal (CUJS A2)", () => {
 
         // The lead sees the renew-by banner, due at the boundary; the non-lead does not.
         const banner = await api<RenewalStatus>(lead, "/api/membership/renewal-status");
-        expect(banner.json).toEqual({ renewalDue: true, dueDate: boundary });
+        expect(banner.json).toEqual({ renewalDue: true, dueDate: boundary, notRenewing: false });
         expect((await api<RenewalStatus>(partner, "/api/membership/renewal-status")).json.renewalDue).toBe(false);
 
         const opened = await api<State>(lead, "/api/membership");

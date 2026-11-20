@@ -198,15 +198,15 @@ export function QuickBooksListsRefresh({ onRefreshed }: { onRefreshed?: () => vo
 }
 
 /**
- * A saved QuickBooks pick the app's copy shows as inactive or no longer holds, as a warning beside its picker
- * with "Update now"; the picker never offers it. Nothing while the pick is active, unset, or the list isn't loaded.
+ * A saved QuickBooks pick the app's copy shows as inactive or no longer holds, as a warning with `advice` and
+ * "Update now"; pickers never offer it. Nothing while the pick is active, unset, or the list isn't loaded.
  */
-export function InactivePickWarning({ saved, options, onRefreshed, advice = "Pick an active one." }: {
+export function InactivePickWarning({ saved, options, onRefreshed, advice }: {
   saved: string | null | undefined;
   options: readonly { id: string; name: string; active: boolean }[] | null | undefined;
   onRefreshed?: () => void;
-  /** What to do about it; rows with no picker say so here. */
-  advice?: string;
+  /** What to do about it: "Pick an active one." beside a picker; a row with no picker names its own fix. */
+  advice: string;
 }) {
   if (!saved || !options?.length) return null;
   const entry = options.find((o) => o.id === saved);
@@ -264,14 +264,27 @@ export function showSuccess(message: string, { title }: { title?: string } = {})
   notifications.show({ color: "green", role: "status", title, message });
 }
 
+type StickyOptions = { key?: string; title?: string };
+
 /**
- * An action that failed: stays until dismissed or cleared. `message` is the server's chosen words or
- * fixed text, never exception text. The same `key` changes the message in place, so a repeat from a
- * poll neither animates nor announces again; `show` ignores an id already on screen.
+ * A message that stays until dismissed or cleared. The same `key` changes the message in place, so a
+ * repeat from a poll neither animates nor announces again; `show` ignores an id already on screen.
+ * A string message is its own key when none is given.
  */
-export function showError(message: string, { key = message, title }: { key?: string; title?: string } = {}): void {
-  notifications.update({ id: key, title, message });
-  notifications.show({ id: key, color: "red", title, message, autoClose: false });
+function showSticky(color: string, message: ReactNode, { key, title }: StickyOptions): void {
+  const id = key ?? (typeof message === "string" ? message : undefined);
+  if (id) notifications.update({ id, title, message });
+  notifications.show({ id, color, title, message, autoClose: false });
+}
+
+/** An action that failed. `message` is the server's chosen words or fixed text, never exception text. */
+export function showError(message: ReactNode, options: StickyOptions = {}): void {
+  showSticky("red", message, options);
+}
+
+/** Something a save leaves the person to read that is not a failure: yellow, and stays until dismissed. */
+export function showWarning(message: ReactNode, options: StickyOptions = {}): void {
+  showSticky("yellow", message, options);
 }
 
 /** Removes the standing error under `key`, once a retry or a later attempt worked. */

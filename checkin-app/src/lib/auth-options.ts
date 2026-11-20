@@ -79,6 +79,7 @@ export async function createParticipantWithHousehold(data: {
     image?: string | null;
     googleId?: string | null;
     emailVerified?: Date | null;
+    ageStepPending?: boolean;
 }, db: DbClient = prisma) {
     return withTx(db, async (tx) => {
         if (data.email) await removeAliasesForSignInEmail(tx, data.email, systemActor("system:google-sign-in"), "first_sign_in");
@@ -110,7 +111,7 @@ const patchedAdapter = {
     // First Google sign-in also provisions the household (base createUser would
     // create only the Person). googleId rides along at runtime.
     createUser: async (user: Parameters<typeof createParticipantWithHousehold>[0]) =>
-        toAdapterUser(await createParticipantWithHousehold(user)),
+        toAdapterUser(await createParticipantWithHousehold({ ...user, ageStepPending: true })),
 
     getUser: async (id: string) => {
         const dbId = toDbId(id);
@@ -521,6 +522,7 @@ export const authOptions: NextAuthOptions = {
                 session.user.id = token.id;
                 session.user.denied = token.denied ?? false;
                 session.user.householdJoinPending = token.householdJoinPending ?? false;
+                session.user.ageStepPending = token.ageStepPending ?? false;
                 for (const flag of ROLE_FLAGS) {
                     session.user[flag] = token[flag];
                 }

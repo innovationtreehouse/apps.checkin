@@ -40,6 +40,9 @@ write null to, a rename of anything old code touches.
   `Household.name SET NOT NULL` shipped in one migration because every write
   path already always wrote a name. If you can't make that case in the PR
   description, split the release.
+  Two PRs merged before the same published release still reach prod
+  together; the follow-up PR stays unopened or in draft until the earlier
+  one is in prod (`AGENTS.md` § Your own open PRs).
 
 ### 2. Grep every non-TS reader/writer, not just the TypeScript ones
 A schema change isn't cut over until these are all updated too — #917's own
@@ -122,7 +125,8 @@ check on every already-migrated database and needs the same
 on each one — that's expected, not a sign something's broken.
 
 ## Done criteria
-- [ ] Destructive change, if any, is either split into a follow-up release or
+- [ ] Destructive change, if any, is either split into a follow-up release
+      (its PR unopened or in draft until the earlier one is in prod) or
       justified in the PR description as provably safe to ship together
 - [ ] Non-TS readers/writers grepped to zero (scripts, VOCABULARY.md, audit
       `tableName` literals, seed.ts)

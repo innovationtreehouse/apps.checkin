@@ -22,11 +22,17 @@ import { beginRenewal } from '@/lib/membership/renewal';
 import prisma from '@/lib/prisma';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { sendEmail } from '@/lib/email';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaClient } from '@/generated/prisma/client';
 
 jest.mock('@/lib/email', () => ({
     sendEmail: jest.fn().mockResolvedValue(true),
     runPaced: (tasks: Array<() => Promise<unknown>>) => Promise.all(tasks.map((t) => t())),
 }));
+
+// The test's own held transaction runs on this connection, so the app's single connection waits on the lock, not on the pool.
+const holder = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
+afterAll(() => holder.$disconnect());
 
 const TAG = 'bg-nonblocking-test';
 
@@ -66,7 +72,7 @@ async function makeFreshRenewal() {
 async function makeApplicant(status: 'PENDING_EXTERNAL_ACTION', extra: { lastBackgroundCheck?: Date } = {}) {
     const hh = await prisma.household.create({ data: { name: `Applicant ${TAG} ${Math.random()}` } });
     const lead = await prisma.person.create({
-        data: { email: `lead-${Math.random()}-${TAG}@example.com`, name: 'Lead Parent', householdId: hh.id, lastBackgroundCheck: extra.lastBackgroundCheck ?? null },
+        data: { email: `lead-${Math.random()}-${TAG}@example.com`, name: 'Lead Parent', isDeclaredAdult: true, householdId: hh.id, lastBackgroundCheck: extra.lastBackgroundCheck ?? null },
     });
     await prisma.person.update({ where: { id: lead.id }, data: { isHouseholdLead: true } });
     const m = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE' } });
@@ -202,7 +208,7 @@ describe('background check is non-blocking', () => {
         expect(await statusOf(processId)).toBe('PENDING_PAYMENT');
 
         let certify!: Promise<unknown>;
-        await prisma.$transaction(async (tx) => {
+        await holder.$transaction(async (tx) => {
             await tx.$queryRaw`SELECT id FROM "OrgMembership" WHERE id = ${orgMembershipId} FOR UPDATE`;
             certify = certifyPaymentPlan(processId, board).catch((e: unknown) => e);
             // Let certify take the process lock and block on the household row.
@@ -398,7 +404,7 @@ describe('background check is non-blocking', () => {
         expect(await prisma.backgroundCheckAttestation.count({ where: { processId: reviewId } })).toBe(1);
     });
 
-    it('a check that clears on a DENIED household converges nothing and raises a board item', async () => {
+    it('a second approval on a DENIED household is refused and changes nothing', async () => {
         const { processId, leadId, orgMembershipId } = await makeApplicant('PENDING_EXTERNAL_ACTION');
         await markContractSigned(processId);
         await markLeadCheckStarted(processId);
@@ -406,13 +412,13 @@ describe('background check is non-blocking', () => {
         await prisma.orgMembership.update({ where: { id: orgMembershipId }, data: { status: 'DENIED' } });
 
         const reviewId = await reviewOf(processId);
-        await attest(revB, reviewId, { result: 'APPROVE', subjectPersonIds: [leadId] });
+        await expect(attest(revB, reviewId, { result: 'APPROVE', subjectPersonIds: [leadId] })).rejects.toMatchObject({ code: 'wrong_phase' });
         const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
         expect(proc?.status).toBe('PENDING_PAYMENT');
         expect(proc?.bgClearedAt).toBeNull();
         expect((await prisma.person.findUnique({ where: { id: leadId } }))?.lastBackgroundCheck).toBeNull();
-        expect(await membershipStatusOf(orgMembershipId)).toBe('DENIED');
-        expect(await prisma.paymentException.count({ where: { kind: 'DENIED_HOUSEHOLD_ACTIVITY', processId: reviewId } })).toBe(1);
+        expect(await prisma.backgroundCheckAttestation.count({ where: { processId: reviewId } })).toBe(1);
+        expect(await prisma.paymentException.count({ where: { kind: 'DENIED_HOUSEHOLD_ACTIVITY', processId: reviewId } })).toBe(0);
     });
 
     it('an approver moved into the applicant household before the second approval does not count', async () => {

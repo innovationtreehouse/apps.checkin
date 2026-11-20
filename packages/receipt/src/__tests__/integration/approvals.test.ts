@@ -4,7 +4,7 @@ import { orgSettingsService } from "../../services/orgSettingsService";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
 import type { ReceiptPrincipal } from "../../contract";
-import { ALICE, BOB, FINANCE, actAs, clearAll, configure, manualDetails, okOcr, recordingPorts, stateOf, textFile } from "../helpers/setup";
+import { ALICE, BOB, FINANCE, actAs, clearAll, configure, manualDetails, okOcr, recordingPorts, stateOf, textFile, uploadRead } from "../helpers/setup";
 
 const taxed = () => manualDetails({ tax: "1.00", receiptTotal: "21.00" });
 
@@ -18,14 +18,14 @@ beforeEach(async () => {
 
 describeDb("financial review", () => {
   it("tax on a tax-exempt org goes to financial_review with reason 'tax'", async () => {
-    const r = await receiptService.upload(textFile(), "text/plain", { details: taxed() });
+    const r = await uploadRead(textFile(), "text/plain", { details: taxed() });
     expect(r.state).toBe("financial_review");
     actAs(FINANCE);
     expect((await receiptService.get(r.id, "finance")).financialReviewReasons).toEqual(["tax"]);
   });
 
   it("approves a tax exception without a note", async () => {
-    const r = await receiptService.upload(textFile(), "text/plain", { details: taxed() });
+    const r = await uploadRead(textFile(), "text/plain", { details: taxed() });
     actAs(FINANCE);
     await receiptService.approveFinancial(r.id);
     expect(await stateOf(r.id)).toBe("receipt_finalized");
@@ -36,7 +36,7 @@ describeDb("financial review", () => {
   it("an approval is kept on the receipt and carried in the pushed CompletedReceipt", async () => {
     const ports = recordingPorts();
     configure({ receiptSink: ports.receiptSink });
-    const r = await receiptService.upload(textFile(), "text/plain", { details: taxed() });
+    const r = await uploadRead(textFile(), "text/plain", { details: taxed() });
     actAs(FINANCE);
     await receiptService.approveFinancial(r.id);
     const review = await db.receiptFinanceReview.findUnique({ where: { receiptId: r.id } });
@@ -65,7 +65,7 @@ describeDb("financial review", () => {
     actAs(ALICE);
     const ports = recordingPorts();
     configure({ receiptSink: ports.receiptSink });
-    const r = await receiptService.upload(textFile(), "text/plain", { details: taxed() });
+    const r = await uploadRead(textFile(), "text/plain", { details: taxed() });
     expect(r.state).toBe("receipt_finalized");
     expect(ports.calls.pushes[0].financeReview).toBeUndefined();
     expect(ports.calls.pushes[0].taxReviewRequired).toBe(false);
@@ -73,7 +73,7 @@ describeDb("financial review", () => {
   });
 
   it("a non-tax exception (future date) approves without a note", async () => {
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptDate: "2999-01-01" }) });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails({ receiptDate: "2999-01-01" }) });
     expect(r.state).toBe("financial_review");
     actAs(FINANCE);
     await receiptService.approveFinancial(r.id);
@@ -82,14 +82,14 @@ describeDb("financial review", () => {
 
   it("refuses a finance user deciding their own receipt", async () => {
     actAs(FINANCE);
-    const r = await receiptService.upload(textFile(), "text/plain", { details: taxed() });
+    const r = await uploadRead(textFile(), "text/plain", { details: taxed() });
     await expect(receiptService.approveFinancial(r.id)).rejects.toMatchObject({ status: 403 });
     await expect(receiptService.rejectFinancial(r.id, "mine")).rejects.toMatchObject({ status: 403 });
     expect(await stateOf(r.id)).toBe("financial_review");
   });
 
   it("reject records the reason", async () => {
-    const r = await receiptService.upload(textFile(), "text/plain", { details: taxed() });
+    const r = await uploadRead(textFile(), "text/plain", { details: taxed() });
     actAs(FINANCE);
     await receiptService.rejectFinancial(r.id, "  personal purchase ");
     expect(await stateOf(r.id)).toBe("rejected");
@@ -104,7 +104,7 @@ describeDb("financial review", () => {
   });
 
   it("refuses a reject without a reason", async () => {
-    const r = await receiptService.upload(textFile(), "text/plain", { details: taxed() });
+    const r = await uploadRead(textFile(), "text/plain", { details: taxed() });
     actAs(FINANCE);
     await expect(receiptService.rejectFinancial(r.id, "   ")).rejects.toMatchObject({ status: 400 });
     expect(await stateOf(r.id)).toBe("financial_review");
@@ -112,7 +112,7 @@ describeDb("financial review", () => {
 
   it("a submitter's tax correction drops the earlier finance decision", async () => {
     configure({ ocr: okOcr() });
-    const r = await receiptService.upload(textFile(), "text/plain", {});
+    const r = await uploadRead(textFile(), "text/plain", {});
     expect(r.state).toBe("submitter_review");
     await db.receiptFinanceReview.create({
       data: { receiptId: r.id, outcome: "approved", reasons: ["tax"], decidedByUserId: FINANCE.id, note: "ok" },
@@ -122,12 +122,12 @@ describeDb("financial review", () => {
   });
 
   it("the tax check does not apply to an in-kind receipt", async () => {
-    const r = await receiptService.upload(textFile(), "text/plain", { details: taxed(), isInKind: true, donor: { self: true } });
+    const r = await uploadRead(textFile(), "text/plain", { details: taxed(), isInKind: true, donor: { self: true } });
     expect(r.state).toBe("receipt_finalized");
   });
 
   it("the age limit still applies to an in-kind receipt", async () => {
-    const r = await receiptService.upload(textFile(), "text/plain", {
+    const r = await uploadRead(textFile(), "text/plain", {
       details: manualDetails({ receiptDate: "2020-01-01" }),
       isInKind: true,
       donor: { self: true },
@@ -138,12 +138,12 @@ describeDb("financial review", () => {
 
 describeDb("receipts awaiting finance", () => {
   it("counts the org's receipts in the queues only FINANCE can clear, across uploaders", async () => {
-    expect((await receiptService.upload(textFile("A"), "text/plain", { details: taxed() })).state).toBe("financial_review");
+    expect((await uploadRead(textFile("A"), "text/plain", { details: taxed() })).state).toBe("financial_review");
     actAs(BOB);
-    expect((await receiptService.upload(textFile("B"), "text/plain", { details: taxed() })).state).toBe("duplicate_flagged");
-    const off = await receiptService.upload(textFile("C"), "text/plain", { details: manualDetails({ receiptTotal: "1" }) });
+    expect((await uploadRead(textFile("B"), "text/plain", { details: taxed() })).state).toBe("duplicate_flagged");
+    const off = await uploadRead(textFile("C"), "text/plain", { details: manualDetails({ receiptTotal: "1" }) });
     expect(off.state).toBe("validation_failed");
-    const stuck = await receiptService.upload(textFile("D"), "text/plain", { details: manualDetails({ retailer: "Stuck", receiptDate: "2999-01-01" }) });
+    const stuck = await uploadRead(textFile("D"), "text/plain", { details: manualDetails({ retailer: "Stuck", receiptDate: "2999-01-01" }) });
     await db.receiptDetail.update({ where: { id: stuck.id }, data: { state: "flow_error" } });
     expect(await receiptService.countAwaitingFinance(FINANCE.id)).toEqual({
       total: 3,
@@ -179,18 +179,18 @@ describeDb("receipts awaiting a conflicted finance viewer", () => {
 
   it("leaves out receipts the viewer uploaded, is reimbursed for, or shares a household with as uploader or reimbursee", async () => {
     actAs(FINANCE);
-    expect((await receiptService.upload(textFile(), "text/plain", future("Uploaded by finance"))).state).toBe("financial_review");
+    expect((await uploadRead(textFile(), "text/plain", future("Uploaded by finance"))).state).toBe("financial_review");
     actAs(ALICE);
-    const reimbursed = await receiptService.upload(textFile(), "text/plain", future("Reimbursed to finance"));
+    const reimbursed = await uploadRead(textFile(), "text/plain", future("Reimbursed to finance"));
     expect(reimbursed.state).toBe("financial_review");
     await db.receipt.update({ where: { id: reimbursed.id }, data: { reimburseePersonId: REIMBURSEE.id } });
-    const forBob = await receiptService.upload(textFile(), "text/plain", future("Reimbursed to Bob"));
+    const forBob = await uploadRead(textFile(), "text/plain", future("Reimbursed to Bob"));
     expect(forBob.state).toBe("financial_review");
     await db.receipt.update({ where: { id: forBob.id }, data: { reimburseePersonId: BOB.id } });
     actAs(BOB);
     const file = textFile();
-    await receiptService.upload(file, "text/plain", { details: manualDetails() });
-    expect((await receiptService.upload(file, "text/plain", { details: manualDetails() })).state).toBe("duplicate_flagged");
+    await uploadRead(file, "text/plain", { details: manualDetails() });
+    expect((await uploadRead(file, "text/plain", { details: manualDetails() })).state).toBe("duplicate_flagged");
 
     const counts = (total: number, financial_review: number, duplicate_flagged: number) => ({
       total,

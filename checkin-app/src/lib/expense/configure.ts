@@ -200,21 +200,24 @@ async function alertRefusedAccount(accountId: string, accountType: string | unde
   refusedAlerted = accountId;
   const { emailAlert } = await import("@/lib/emailRecipients");
   const { config } = await import("@/lib/config");
-  await emailAlert("finance.expensePaymentAccount", {
+  const sent = await emailAlert("finance.expensePaymentAccount", {
     accountId,
     accountKind: accountType ? `a ${accountType} account` : "not in QuickBooks",
     actionLink: `${config.baseUrl()}/books-map`,
   });
+  // An unsent alert is tried again the next time the account is refused.
+  if (!sent && refusedAlerted === accountId) refusedAlerted = null;
 }
 
 /** The daily orphan sweep read a full page, so an entry the app created may sit in QuickBooks unchecked. */
 async function alertSweepIncomplete({ since }: { since: Date }): Promise<void> {
   const { emailAlert } = await import("@/lib/emailRecipients");
   const { config } = await import("@/lib/config");
-  await emailAlert("finance.expenseSweepIncomplete", {
+  const sent = await emailAlert("finance.expenseSweepIncomplete", {
     since: since.toISOString().slice(0, 10),
     actionLink: `${config.baseUrl()}/expense/expenses`,
   });
+  if (!sent) throw new Error("Expense sweep alert was not sent");
 }
 
 type PostingResolution = { posting: ExpensePosting } | { missing: string; refused?: { accountId: string; accountType: string | undefined } };

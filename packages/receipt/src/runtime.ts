@@ -126,7 +126,7 @@ export function limits(): ReceiptLimits {
   return { ...DEFAULT_LIMITS, ...requireRuntime().limits };
 }
 
-export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits" | "mailbox" | "replies" | "outcomeMail" | "fileStore" | "storeNewFilesInBucket">> {
+export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits" | "rawMailRetentionDays" | "mailbox" | "replies" | "outcomeMail" | "fileStore">> {
   const r = requireRuntime();
   return {
     receiptSink: r.receiptSink ?? inertReceiptSink,
@@ -148,13 +148,14 @@ export function fileStore(): ReceiptFileStore {
   return requireRuntime().fileStore ?? inertFileStore;
 }
 
-export function storesNewFilesInBucket(): boolean {
-  return requireRuntime().storeNewFilesInBucket === true;
-}
-
 /** The receipt mailbox, or null when mail intake is unbound. */
 export function mailbox(): MailboxReader | null {
   return requireRuntime().mailbox ?? null;
+}
+
+/** Days a captured message's raw copy is kept before the store expires it. */
+export function rawMailRetentionDays(): number {
+  return requireRuntime().rawMailRetentionDays;
 }
 
 /** The host's mail out for acknowledgements, or null when unbound. */

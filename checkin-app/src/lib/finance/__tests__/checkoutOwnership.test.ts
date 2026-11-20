@@ -29,6 +29,7 @@ import * as mirror from "@/lib/shopifyRead/client";
 import { activateProgramEnrollment } from "@/lib/programs/activateEnrollment";
 import { signCheckout } from "@/lib/programs/checkoutSignature";
 import { runReconcile } from "../reconcile";
+import { reconcileForwardProgram } from "../reconcile/program";
 
 const PROGRAM = 7;
 const CHILD = 41;
@@ -97,5 +98,58 @@ describe("runReconcile — program checkout ownership", () => {
         await reconcile(order(null), OWN_HOUSEHOLD);
         expect(activate).not.toHaveBeenCalled();
         expect(raisedKinds()).toEqual(["UNMATCHED_ORDER"]);
+    });
+
+    it("names every child an unmatched order names", async () => {
+        const twoChildren = { ...order(null), noteAttributes: [{ key: "CheckMeIn_Account_ID", value: `${CHILD},42` }, { key: "Program_ID", value: String(PROGRAM) }] };
+        await reconcile(twoChildren, OWN_HOUSEHOLD);
+        expect(activate).not.toHaveBeenCalled();
+        expect(exceptionCreate.mock.calls.map((c) => [c[0].data.kind, c[0].data.personId])).toEqual([
+            ["UNMATCHED_ORDER", CHILD],
+            ["UNMATCHED_ORDER", 42],
+        ]);
+    });
+
+    it("says which child an unmatched order pays for is unknown when it could be any of several", async () => {
+        const twoChildren = { ...order(null), noteAttributes: [{ key: "CheckMeIn_Account_ID", value: `${CHILD},42` }, { key: "Program_ID", value: String(PROGRAM) }] };
+        await reconcile(twoChildren, OWN_HOUSEHOLD);
+        for (const [call] of exceptionCreate.mock.calls) expect(call.data.evidence).toMatch(/which one it pays for is unknown/);
+    });
+
+    it("adds no such note when the order names one child", async () => {
+        await reconcile(order(null), OWN_HOUSEHOLD);
+        expect(exceptionCreate.mock.calls[0][0].data.evidence ?? null).toBeNull();
+    });
+
+    describe("an order someone already holds", () => {
+        const held = (lines: number) => {
+            (prisma.programParticipant.findFirst as jest.Mock).mockResolvedValue({ programId: PROGRAM });
+            (prisma.programParticipant.findMany as jest.Mock).mockResolvedValue([{ personId: 50 }]); // matched by hand
+            (mirror.orderLines as jest.Mock).mockResolvedValue([{ variantId: "V1", quantity: lines, currentQuantity: lines }]);
+        };
+        afterEach(() => (mirror.orderLines as jest.Mock).mockResolvedValue([{ variantId: "V1", quantity: 1, currentQuantity: 1 }]));
+
+        it("is left alone once every seat it carries is spent", async () => {
+            held(1);
+            childHouseholds.mockResolvedValue([{ householdId: OWN_HOUSEHOLD }]);
+            expect(await reconcileForwardProgram(order(signCheckout(PROGRAM, [CHILD], OWN_HOUSEHOLD)))).toBe(true);
+            expect(activate).not.toHaveBeenCalled();
+            expect(raisedKinds()).toEqual([]);
+        });
+
+        it("raises the seats left on an order no checkout tied to anyone, for the Board to place", async () => {
+            held(2);
+            const noCart = { ...order(null), noteAttributes: null };
+            expect(await reconcileForwardProgram(noCart)).toBe(true);
+            expect(activate).not.toHaveBeenCalled();
+            expect(raisedKinds()).toEqual(["UNCLAIMED_SEATS"]);
+        });
+
+        it("is judged again while a seat it carries is unspent, so the rest of it is not lost", async () => {
+            held(2);
+            childHouseholds.mockResolvedValue([{ householdId: OWN_HOUSEHOLD }]);
+            expect(await reconcileForwardProgram(order(signCheckout(PROGRAM, [CHILD], OWN_HOUSEHOLD)))).toBe(true);
+            expect(activate).toHaveBeenCalledWith(expect.objectContaining({ programId: PROGRAM, personIds: [CHILD] }));
+        });
     });
 });

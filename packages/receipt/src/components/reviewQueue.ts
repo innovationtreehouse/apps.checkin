@@ -13,6 +13,7 @@ export const NOT_PUSHED = "not_pushed";
 
 /** The states FINANCE does not work, listed so finance and the Board can still find every receipt. */
 export const OTHER_QUEUES = [
+  { value: "ocr_queued", label: "Waiting to be read" },
   { value: "auto_upload", label: "Reading (OCR in progress)" },
   { value: "uploaded", label: "Uploaded" },
   { value: "submitter_review", label: "Submitter review" },

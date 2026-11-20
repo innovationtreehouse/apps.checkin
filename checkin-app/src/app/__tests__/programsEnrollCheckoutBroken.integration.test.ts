@@ -86,8 +86,8 @@ describe('Enroll into a priced-but-unsellable program is rejected', () => {
         expect(await prisma.programParticipant.count({ where: { programId: brokenProgramId } })).toBe(0);
     });
 
-    it('an admin comp (external, confirmed override) still enrolls ACTIVE', async () => {
-        const res = await enroll(brokenProgramId, { id: adminId, isBoardMember: true }, userId, { override: true });
+    it('a Board comp still enrolls ACTIVE', async () => {
+        const res = await enroll(brokenProgramId, { id: adminId, isBoardMember: true }, userId, { basis: 'COMP' });
         expect(res.status).toBe(200);
         const row = await prisma.programParticipant.findFirst({ where: { programId: brokenProgramId, personId: userId } });
         expect(row?.status).toBe('ACTIVE');

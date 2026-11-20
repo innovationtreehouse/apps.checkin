@@ -53,7 +53,7 @@ beforeEach(() => {
 
 describe("Participant PII minimization (M1, M2)", () => {
     it("GET /api/household does not leak a peer's internal-tier fields", async () => {
-        mockSession.mockResolvedValue({ user: { id: 1 } });
+        mockSession.mockResolvedValue({ user: { id: 1, householdId: 10 } });
 
         // Full raw row as it exists in the DB, including everything a household
         // peer must never see. The mock applies whatever `select` the route
@@ -85,6 +85,8 @@ describe("Participant PII minimization (M1, M2)", () => {
         } as Record<string, unknown>;
 
         (prisma.person.findUnique as jest.Mock).mockImplementation((args) => {
+            // The caller-context leadership lookup selects no household.
+            if (!args.select.household) return Promise.resolve({ householdId: 10, isHouseholdLead: false, isSysadmin: false });
             const peerSelect = args.select.household.select.householdMembers.select as Record<string, boolean>;
             const projected = Object.fromEntries(
                 Object.keys(peerSelect).filter((k) => peerSelect[k]).map((k) => [k, rawPeer[k]])
@@ -111,6 +113,7 @@ describe("Participant PII minimization (M1, M2)", () => {
         // Safe fields survive.
         expect(peer.name).toBe("Kid Two");
         expect(peer.email).toBe("kid2@example.com");
+        expect(peer.householdId).toBe(10);
 
         // INTERNAL-tier fields do not.
         expect(peer.isSysadmin).toBeUndefined();
@@ -130,14 +133,14 @@ describe("Participant PII minimization (M1, M2)", () => {
         }
 
         // Pin the actual query shape, not just this test's mock.
-        const callArgs = (prisma.person.findUnique as jest.Mock).mock.calls[0][0];
+        const callArgs = (prisma.person.findUnique as jest.Mock).mock.calls.map(([a]) => a).find((a) => a.select.household);
         expect(callArgs).not.toHaveProperty("include");
         expect(Object.keys(callArgs.select).sort()).toEqual(["household"]);
         expect(Object.keys(callArgs.select.household.select).sort()).toEqual(
             ["city", "householdMembers", "id", "line1", "line2", "name", "orgMembership", "postalCode", "state"],
         );
-        expect(callArgs.select.household.select.orgMembership).toEqual({ select: { status: true, memberSince: true, isVolunteerFamily: true } });
-        expect(callArgs.select.household.select.householdMembers).toEqual({ select: HOUSEHOLD_PEER_WITH_EMAIL_LOCK_SELECT });
+        expect(callArgs.select.household.select.orgMembership).toEqual({ select: { status: true, memberSince: true, isVolunteerFamily: true, householdId: true, notRenewingYear: true } });
+        expect(callArgs.select.household.select.householdMembers).toEqual({ select: { ...HOUSEHOLD_PEER_WITH_EMAIL_LOCK_SELECT, householdId: true } });
     });
 
     it("GET /api/attendance (full access) does not leak email/googleId", async () => {

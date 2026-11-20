@@ -19,13 +19,14 @@ jest.mock("@/lib/prisma", () => ({
         orgMembershipProcess: { findMany: (...a: unknown[]) => findProcesses(...a) },
         programParticipant: { findMany: async () => [] },
         orgMembership: { findMany: (...a: unknown[]) => findMemberships(...a) },
-        membershipYearVariant: { findMany: async () => [] },
+        membershipYearVariant: { findMany: async () => [{ shopifyVariantId: "variant-membership", membershipYear: 2026 }] },
         boardSettings: {
-            findUnique: async () => ({ orgMembershipVariantId: "variant-membership", orgMembershipYearBoundary: null, volunteerFamilyDiscountCode: "VOLFAM" }),
+            findUnique: async () => ({ standardMembershipFeeCents: 5000, orgMembershipYearBoundary: null, volunteerFamilyDiscountCode: "VOLFAM" }),
         },
     },
 }));
 jest.mock("@/lib/membership/payment", () => ({ activateByProcessId: jest.fn() }));
+jest.mock("@/lib/membership/refund", () => ({ recordDeniedStoreRefund: async () => false }));
 jest.mock("@/lib/shopifyRead/client", () => ({
     ordersByLegacyIds: (...a: unknown[]) => ordersByLegacyIds(...a),
     orderDisputeCounts: async () => new Map<string, number>(),

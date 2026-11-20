@@ -1,4 +1,5 @@
 import { catalogSettingsMessage, defineRuntime, NotWiredError, ServiceError } from "@checkin/component-kit";
+import { z } from "zod";
 import type { QboAccountList } from "@checkin/quickbooks";
 import type {
   BulkDonationConfig,
@@ -40,8 +41,24 @@ const INERT_IN_KIND: InKindDirectory = {
   largeValueCents: async () => 50_000,
 };
 
-/** Unbound, no line goes to capital review and none waits on it. */
-const INERT_CAPITAL: InKindCapital = { submit: async () => {}, awaitingReview: async () => [], assetLineIds: async () => [] };
+const notWired = (what: string) => async (): Promise<never> => {
+  throw new NotWiredError(what);
+};
+
+/** Unbound, no gift goes to capital review; a review step or a registration says it is not wired. */
+const INERT_CAPITAL: InKindCapital = {
+  reviewNeeded: async () => false,
+  review: {
+    designationInput: z.never(),
+    periodInput: z.never(),
+    designate: notWired("InKindCapital.review.designate"),
+    setPeriod: notWired("InKindCapital.review.setPeriod"),
+  },
+  register: notWired("InKindCapital.register"),
+  submit: async () => {},
+  awaitingReview: async () => [],
+  assetLineIds: async () => [],
+};
 
 /** Unbound, no part resolves, so every gift line waits for finance to set its account. */
 const INERT_ACCOUNTS: InKindAccounts = { resolve: async (_orgId, parts) => parts.map((p) => ({ lineId: p.lineId, reason: "The expense account rules are not connected" })) };

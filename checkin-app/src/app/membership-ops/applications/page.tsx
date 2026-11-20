@@ -46,6 +46,8 @@ interface ProcessRow {
     isVolunteerFamily: boolean;
     household: { name: string | null; householdMembers: Person[] } | null;
   } | null;
+  // A renewal for the year its household has said it won't renew into.
+  notRenewing: boolean;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -70,7 +72,10 @@ const KIND_LABELS: Record<string, string> = {
 const kindLabel = (kind: string) => KIND_LABELS[kind] ?? kind;
 
 const statusColor = (status: string) => STATUS_COLORS[status] || "gray";
-const statusLabel = (status: string) => (status === "ARCHIVED" ? "CLOSED" : status.replace(/_/g, " "));
+// The "Not renewing" tag filters through the status filter's param, under a value no status takes.
+const NOT_RENEWING = "not-renewing";
+const statusLabel = (status: string) =>
+  status === NOT_RENEWING ? "Not renewing" : status === "ARCHIVED" ? "CLOSED" : status.replace(/_/g, " ");
 
 // A check review in the reviewer queue. ONE definition, shared with the server:
 // awaitingBgReview.has — client-safe (booleans in, no Prisma).
@@ -437,7 +442,8 @@ function ApplicationsBoard() {
   const statusCounts = rows.reduce<Record<string, number>>((acc, r) => { acc[r.status] = (acc[r.status] || 0) + 1; return acc; }, {});
   // The status-filter badges/notice are meaningless on the closed view (every
   // row is ARCHIVED) — the filter itself is ignored there too.
-  const visibleRows = rows.filter((r) => showArchived || !active || r.status === active);
+  const notRenewingCount = rows.filter((r) => r.notRenewing).length;
+  const visibleRows = rows.filter((r) => showArchived || !active || (active === NOT_RENEWING ? r.notRenewing : r.status === active));
 
   return (
     <Stack>
@@ -474,6 +480,11 @@ function ApplicationsBoard() {
                 {statusLabel(status)}: {count}
               </StatusFilterBadge>
             ))}
+            {notRenewingCount > 0 && (
+              <StatusFilterBadge value={NOT_RENEWING} active={active} onToggle={toggle} color="gray">
+                Not renewing: {notRenewingCount}
+              </StatusFilterBadge>
+            )}
           </Group>
         </>
       )}
@@ -509,9 +520,16 @@ function ApplicationsBoard() {
                     {r.orgMembership?.isVolunteerFamily && <Text component="span" c="green"> · volunteer</Text>}
                   </Text>
                 </div>
-                <StatusFilterBadge value={r.status} active={active} onToggle={toggle} color={statusColor(r.status)}>
-                  {statusLabel(r.status)}
-                </StatusFilterBadge>
+                <Group gap="xs">
+                  {r.notRenewing && (
+                    <StatusFilterBadge value={NOT_RENEWING} active={active} onToggle={toggle} color="gray">
+                      Not renewing
+                    </StatusFilterBadge>
+                  )}
+                  <StatusFilterBadge value={r.status} active={active} onToggle={toggle} color={statusColor(r.status)}>
+                    {statusLabel(r.status)}
+                  </StatusFilterBadge>
+                </Group>
               </Group>
 
               {r.status === "PENDING_EXTERNAL_ACTION" && (

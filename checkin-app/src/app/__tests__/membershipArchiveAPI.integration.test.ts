@@ -344,7 +344,7 @@ describe('Membership application archive API', () => {
     it('refuses to unarchive when a second in-flight process of the same kind now exists (409 wrong_phase)', async () => {
         const hh = await prisma.household.create({ data: { name: `Conflict ${TAG}` } });
         const m = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE' } });
-        const p1 = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_PAYMENT' } });
+        const p1 = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', contractSignedAt: new Date() } });
         asBoard(boardId);
         await ARCHIVE(req({ processId: p1.id }) as never);
 
@@ -437,13 +437,27 @@ describe('Membership application archive API', () => {
 
     it('after a recorded refund, a new payment from the family matches normally', async () => {
         const { processId } = await makeProcess('RefundRepay', 'PENDING_BG_CLEARANCE', { paidAt: new Date() });
-        await prisma.orgMembershipProcess.update({ where: { id: processId }, data: { shopifyOrderId: 'ord-old' } });
+        await prisma.orgMembershipProcess.update({ where: { id: processId }, data: { shopifyOrderId: 'ord-old', contractSignedAt: new Date() } });
         await recordRefund(processId, boardId, 'Refunded in Shopify');
 
         await activateByProcessId(processId, 'ord-new', { appliesToYear: 2026 });
         const after = await prisma.orgMembershipProcess.findUnique({ where: { id: processId } });
         expect({ status: after?.status, paid: !!after?.paidAt, order: after?.shopifyOrderId })
             .toEqual({ status: 'PENDING_BG_CLEARANCE', paid: true, order: 'ord-new' });
+    });
+
+    it('an unsigned application refunded from clearance and paid again waits, unsigned, at the agreement step', async () => {
+        const { processId, membershipId } = await makeProcess('RefundRepayUnsigned', 'PENDING_BG_CLEARANCE', { paidAt: new Date() });
+        await prisma.orgMembershipProcess.update({ where: { id: processId }, data: { shopifyOrderId: 'ord-old-u', bgClearedAt: new Date() } });
+        await recordRefund(processId, boardId, 'Refunded in Shopify');
+
+        expect(await activateByProcessId(processId, 'ord-new-u', { appliesToYear: 2026 })).toMatchObject({ outcome: 'held' });
+        const after = await prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id: processId } });
+        expect({ status: after.status, paid: !!after.paidAt, signed: !!after.contractSignedAt })
+            .toEqual({ status: 'PENDING_EXTERNAL_ACTION', paid: true, signed: false });
+        expect((await prisma.orgMembership.findUniqueOrThrow({ where: { id: membershipId } })).status).toBe('NONE');
+        const audit = await prisma.auditLog.findFirst({ where: { tableName: 'OrgMembershipProcess', affectedEntityId: processId }, orderBy: { id: 'desc' } });
+        expect(audit?.newData).toMatchObject({ status: 'PENDING_EXTERNAL_ACTION', paid: true, contractSigned: false });
     });
 
     it('record refund: a paid BLOCKED application loses paidAt but stays BLOCKED', async () => {

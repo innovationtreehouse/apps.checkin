@@ -65,8 +65,8 @@ export const TRANSITIONS: readonly Transition<SaleLifecycleState>[] = [
     { event: 'board closes (off-sale date set to today)', from: 'ON_SALE', to: 'SALE_ENDED', actor: 'board', guardSite: 'api/programs/[id] PATCH offSaleAt' },
     { event: 'off-sale date moved later', from: 'SALE_ENDED', to: 'NOT_ON_SALE', actor: 'board', guardSite: 'api/programs/[id] PATCH offSaleAt — board only; clears the sweep markers, sets Shopify stock absolutely; never re-lists the product; enrollment stays closed' },
     { event: 'board reopens (date moved later + open)', from: 'SALE_ENDED', to: 'ON_SALE', actor: 'board', guardSite: 'api/programs/[id] PATCH offSaleAt + enrollmentStatus in one save; opening while ended without moving the date is refused (409)' },
-    { event: 'program ends', from: 'SALE_ENDED', to: 'FINISHED', actor: 'board/lead', guardSite: 'api/programs/[id] PATCH phase' },
-    { event: 'cancelled', from: 'NOT_ON_SALE', to: 'FINISHED', actor: 'board/lead', guardSite: 'api/programs/[id] PATCH phase' },
+    { event: 'program ends', from: 'SALE_ENDED', to: 'FINISHED', actor: 'board/lead', guardSite: 'api/programs/[id] PATCH phase — a lead only on or after the end date' },
+    { event: 'cancelled', from: 'NOT_ON_SALE', to: 'FINISHED', actor: 'board/lead', guardSite: 'api/programs/[id] PATCH phase — a lead only on or after the end date' },
 ] as const;
 
 export type EnrollmentClosedBy = 'FULL' | 'SALE_ENDED' | 'CLOSED';

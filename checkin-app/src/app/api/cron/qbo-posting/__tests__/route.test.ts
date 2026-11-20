@@ -3,7 +3,8 @@
  */
 /**
  * GET /api/cron/qbo-posting: admits only QBO_POSTING_CRON_SECRET, refreshes the copy of QuickBooks' lists, runs the expense, donation and
- * in-kind QuickBooks steps, income's drain and income's orphan sweep (each isolated), records the run, and answers `{}`.
+ * in-kind QuickBooks steps, income's drain and income's orphan sweep (each isolated), the three drains each under the posting slot,
+ * then any lane still queued; records the run, and answers `{}`.
  */
 import type { NextRequest as NextRequestType } from 'next/server';
 import { runExpenseQbPosting } from '@checkin/expense';
@@ -12,13 +13,10 @@ import { drainIncomeOutbox, runIncomeOrphanSweep } from '@checkin/income';
 import { authenticateRequest } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { reportTo } from '@/lib/finishRun';
-import { evaluateRun } from '@/lib/runIncidents';
 import { refreshQuickBooksLists } from '@/lib/finance/quickBooksLists';
 import { GET } from '../route';
 
 jest.mock('@/lib/auth', () => ({ authenticateRequest: jest.fn() }));
-// The incident engine has its own tests; here a run only reaches it.
-jest.mock('@/lib/runIncidents', () => ({ evaluateRun: jest.fn() }));
 jest.mock('@checkin/expense', () => ({ runExpenseQbPosting: jest.fn() }));
 jest.mock('@checkin/bulk-donation', () => ({ runDonationDepositHandOver: jest.fn(), runInKindQbPosting: jest.fn() }));
 jest.mock('@checkin/income', () => ({ drainIncomeOutbox: jest.fn(), runIncomeOrphanSweep: jest.fn() }));
@@ -27,8 +25,8 @@ jest.mock('@/lib/components/host', () => ({ getOrg: jest.fn().mockResolvedValue(
 const { NextRequest } = jest.requireActual<{ NextRequest: typeof NextRequestType }>('next/server');
 
 const SECRET = 'qbo-posting-secret-under-test';
-const EXPENSE_DRAIN = { posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, not_sent: 0, needs_finance: 0, no_class: 0, unpostable: 0, capped: null, closeDateRead: true, sweep: { entries: 0, flagged: 0, full: false } };
-const IN_KIND_DRAIN = { posted: 0, matched: 0, unbooked: 0, needs_finance: 0, held: 0, failed: 0, waiting: 0, capped: false, closeDateRead: true, sweep: { entries: 0, flagged: 0, full: false }, drift: { checked: 0, drifted: 0 } };
+const EXPENSE_DRAIN = { posted: 0, matched: 0, queued: 0, failed: 0, throttled: 0, waiting: 0, not_sent: 0, needs_finance: 0, no_class: 0, unpostable: 0, capped: null, closeDateRead: true, sweep: { entries: 0, flagged: 0, full: false } };
+const IN_KIND_DRAIN = { posted: 0, matched: 0, unbooked: 0, needs_finance: 0, held: 0, failed: 0, throttled: 0, waiting: 0, capped: false, closeDateRead: true, sweep: { entries: 0, flagged: 0, full: false }, drift: { checked: 0, drifted: 0 }, capital: { registered: 0, failed: 0 } };
 const expensePosting = (qbPost: Awaited<ReturnType<typeof runExpenseQbPosting>>['qbPost']) =>
     ({ stranded: { checked: 0, failed: 0 }, qbPost, qbDrift: 'unbound' as const, outcomeNotices: { sent: 0, failed: 0 }, failedParts: [] });
 const req = (secret = SECRET) =>
@@ -45,6 +43,11 @@ describe('GET /api/cron/qbo-posting', () => {
         create = jest.fn().mockResolvedValue({});
         prisma.cronRunLog.create = create;
         prisma.cronRunLog.deleteMany = jest.fn().mockResolvedValue({ count: 0 });
+        prisma.quickBooksPostingSlot.createMany = jest.fn().mockResolvedValue({ count: 1 });
+        prisma.quickBooksPostingSlot.updateMany = jest.fn().mockResolvedValue({ count: 1 });
+        prisma.quickBooksPostingSlot.findUnique = jest.fn().mockResolvedValue(null);
+        prisma.quickBooksPostingQueue.findMany = jest.fn().mockResolvedValue([]);
+        prisma.quickBooksPostingQueue.deleteMany = jest.fn().mockResolvedValue({ count: 0 });
         jest.mocked(runExpenseQbPosting).mockResolvedValue({ stranded: { checked: 0, failed: 0 }, qbPost: 'unbound', qbDrift: 'unbound', outcomeNotices: { sent: 0, failed: 0 }, failedParts: [] });
         jest.mocked(runDonationDepositHandOver).mockResolvedValue('unbound');
         jest.mocked(runInKindQbPosting).mockResolvedValue('unbound');
@@ -76,14 +79,15 @@ describe('GET /api/cron/qbo-posting', () => {
         expect(await res.json()).toEqual({});
         expect(runExpenseQbPosting).toHaveBeenCalledTimes(1);
         expect(runDonationDepositHandOver).toHaveBeenCalledWith('org-1');
-        expect(runInKindQbPosting).toHaveBeenCalledWith('org-1');
-        expect(drainIncomeOutbox).toHaveBeenCalledWith('org-1');
+        expect(runInKindQbPosting).toHaveBeenCalledWith('org-1', expect.any(Date), expect.objectContaining({ yielded: false }));
+        expect(drainIncomeOutbox).toHaveBeenCalledWith('org-1', expect.any(Date), expect.objectContaining({ yielded: false }));
+        expect(prisma.quickBooksPostingQueue.findMany).toHaveBeenCalled();
         expect(runIncomeOrphanSweep).toHaveBeenCalledWith('org-1');
         expect(create).toHaveBeenCalledTimes(1);
         expect(create.mock.calls[0][0].data).toMatchObject({ job: 'qbo-posting', success: true, error: null });
     });
 
-    it("hands the lanes' reports to the engine and counts them by kind; expense's drain never stops its lane", async () => {
+    it("records the lanes' reports counted by kind; expense's drain never stops its lane", async () => {
         jest.mocked(runExpenseQbPosting).mockImplementation(async () => {
             reportTo('expense')({ lane: 'posting', kind: 'system', status: 503, detail: 'expense 1' });
             return expensePosting(EXPENSE_DRAIN);
@@ -91,74 +95,18 @@ describe('GET /api/cron/qbo-posting', () => {
 
         await GET(req());
 
-        expect(jest.mocked(evaluateRun).mock.calls[0][0]).toEqual({
-            lanes: ['qbo-posting', 'expense posting'],
-            failures: [{ lane: 'expense posting', cause: 'quickbooks', kind: 'system', code: 'HTTP 503', count: 1, stopped: false }],
-        });
-        expect(create.mock.calls[0][0].data).toMatchObject({ failuresByKind: { system: 1 } });
+        expect(create.mock.calls[0][0].data).toMatchObject({ success: true, error: null, failuresByKind: { system: 1 } });
     });
 
-    it("leaves expense posting uncovered when its drain could not run, so an open QuickBooks incident stays open", async () => {
-        jest.mocked(runExpenseQbPosting).mockResolvedValue(expensePosting({ error: true }));
-
-        await GET(req());
-
-        expect(jest.mocked(evaluateRun).mock.calls[0][0].lanes).toEqual(['qbo-posting']);
-    });
-
-    it('covers in-kind and income only when their drains ran', async () => {
-        jest.mocked(runInKindQbPosting).mockResolvedValue(IN_KIND_DRAIN);
-        jest.mocked(drainIncomeOutbox).mockResolvedValue({ reconcile: { status: 'unbound' }, post: { posted: 0, matched: 0, queued: 0, failed: 0, waiting: 0, over_cap: 0, held: 0, capped: null } });
-
-        await GET(req());
-
-        expect(jest.mocked(evaluateRun).mock.calls[0][0].lanes).toEqual(['qbo-posting', 'bulk-donation in-kind-posting', 'income deposit-build']);
-    });
-
-    it('covers the lists refresh when it ran', async () => {
-        jest.mocked(refreshQuickBooksLists).mockResolvedValue({ refreshedAt: new Date(), accounts: 3, classes: 2 });
-
-        await GET(req());
-
-        expect(jest.mocked(evaluateRun).mock.calls[0][0].lanes).toEqual(['qbo-posting', 'quickbooks lists-refresh']);
-    });
-
-    it('files a failed lists refresh under its lane and the QuickBooks cause, and still runs every posting step', async () => {
+    it('records a failed lists refresh as a bug, and still runs every posting step', async () => {
         jest.mocked(refreshQuickBooksLists).mockRejectedValue(new Error('QuickBooks down'));
         const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
 
         await GET(req());
 
-        const run = jest.mocked(evaluateRun).mock.calls[0][0];
-        expect(run.lanes).toEqual(['qbo-posting']);
-        expect(run.failures).toEqual([{ lane: 'quickbooks lists-refresh', cause: 'quickbooks', kind: 'bug', code: 'lists crashed', count: 1, stopped: false }]);
         expect(runExpenseQbPosting).toHaveBeenCalledTimes(1);
         expect(runIncomeOrphanSweep).toHaveBeenCalledTimes(1);
-        expect(create.mock.calls[0][0].data).toMatchObject({ success: true, error: 'failed: lists' });
-        logged.mockRestore();
-    });
-
-    it('files a crashed drain under its lane and cause, leaving the lane uncovered', async () => {
-        jest.mocked(runExpenseQbPosting).mockRejectedValue(Object.assign(new Error('QuickBooks down'), { status: 503 }));
-        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
-
-        await GET(req());
-
-        const run = jest.mocked(evaluateRun).mock.calls[0][0];
-        expect(run.lanes).toEqual(['qbo-posting']);
-        expect(run.failures).toEqual([{ lane: 'expense posting', cause: 'quickbooks', kind: 'bug', code: 'expense crashed', count: 1, stopped: false }]);
-        logged.mockRestore();
-    });
-
-    it('reports a throwing step to the engine as a failure of the job', async () => {
-        jest.mocked(runIncomeOrphanSweep).mockRejectedValue(new Error('income db down'));
-        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
-
-        await GET(req());
-
-        expect(jest.mocked(evaluateRun).mock.calls[0][0].failures).toEqual([
-            { lane: 'qbo-posting', cause: 'qbo-posting', kind: 'bug', code: 'income sweep crashed', count: 1, stopped: false },
-        ]);
+        expect(create.mock.calls[0][0].data).toMatchObject({ success: true, error: 'failed: lists', failuresByKind: { bug: 1 } });
         logged.mockRestore();
     });
 
@@ -193,7 +141,7 @@ describe('GET /api/cron/qbo-posting', () => {
         const res = await GET(req());
 
         expect(res.status).toBe(200);
-        expect(drainIncomeOutbox).toHaveBeenCalledWith('org-1');
+        expect(drainIncomeOutbox).toHaveBeenCalledTimes(1);
         expect(create.mock.calls[0][0].data).toMatchObject({ job: 'qbo-posting', success: true, error: 'failed: in-kind' });
         expect(logged).toHaveBeenCalledWith('[qbo-posting] in-kind QuickBooks posting failed:', expect.any(Error));
         logged.mockRestore();
@@ -228,6 +176,18 @@ describe('GET /api/cron/qbo-posting', () => {
         expect(create.mock.calls[0][0].data).toMatchObject({ success: true, error: 'failed: in-kind duplicate check' });
     });
 
+    it('skips a lane another run holds the slot for, leaving it to that run', async () => {
+        jest.mocked(prisma.quickBooksPostingSlot.updateMany).mockResolvedValueOnce({ count: 0 });
+        prisma.quickBooksPostingSlot.findUnique = jest.fn().mockResolvedValue({ orgId: 'org-1', holder: 'expense', runId: 'catch-up', until: new Date(Date.now() + 60_000), lastRuns: null });
+        jest.spyOn(console, 'info').mockImplementation(() => {});
+
+        await GET(req());
+
+        expect(runExpenseQbPosting).not.toHaveBeenCalled();
+        expect(runInKindQbPosting).toHaveBeenCalledTimes(1);
+        expect(create.mock.calls[0][0].data).toMatchObject({ success: true, error: null });
+    });
+
     it('records an unconfigured in-kind lane only while gifts wait', async () => {
         jest.mocked(runInKindQbPosting).mockResolvedValueOnce({ unconfigured: true, waiting: 0 }).mockResolvedValueOnce({ unconfigured: true, waiting: 2 });
 
@@ -236,5 +196,22 @@ describe('GET /api/cron/qbo-posting', () => {
 
         expect(create.mock.calls[0][0].data).toMatchObject({ success: true, error: null });
         expect(create.mock.calls[1][0].data).toMatchObject({ success: true, error: 'failed: in-kind unconfigured' });
+    });
+
+    it('records a lane throttled three runs in a row and a run that lapsed holding the slot as failures of the run', async () => {
+        const lastRuns = {
+            income: { endedAt: '2026-11-18T13:58:00.000Z', ended: 'yielded', created: 0, matched: 0, capped: null, yieldsInRow: 3 },
+            expense: { endedAt: '2026-11-18T13:00:00.000Z', ended: 'expired', created: 0, matched: 0, capped: null, yieldsInRow: 0 },
+            'in-kind': { endedAt: '2026-11-18T13:00:00.000Z', ended: 'yielded', created: 0, matched: 0, capped: null, yieldsInRow: 2 },
+        };
+        prisma.quickBooksPostingSlot.findUnique = jest.fn().mockResolvedValue({ orgId: 'org-1', holder: null, runId: null, until: new Date(0), lastRuns });
+
+        await GET(req());
+
+        expect(create.mock.calls[0][0].data).toMatchObject({
+            success: true,
+            error: 'failed: expense posting warning, income posting warning',
+            failuresByKind: { system: 1, connection: 1 },
+        });
     });
 });

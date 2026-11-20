@@ -8,8 +8,7 @@ purchasing pipeline. It runs in the checkin process against its own database,
 private S3 bucket is partly built, and [File storage](#file-storage) says exactly
 how far it has got.
 
-This file describes the shape of the code. The rules a change must not violate,
-such as who may approve or discard a receipt, are in `docs/rules/expenses.md`.
+This file describes the shape of the code.
 
 ---
 
@@ -34,7 +33,7 @@ so work waits for a retry and nothing pretends to have been delivered.
 | `mailbox` | a Gmail reader, on the conditions under [Mail](#mail) | mail intake reports `unbound` and does nothing |
 | `replies` | checkin's outgoing mail | acknowledgements wait unsent |
 | `alerts` | checkin's alert address | logged only |
-| `fileStore`, `storeNewFilesInBucket` | see [File storage](#file-storage) | any access to a stored object throws |
+| `fileStore` | see [File storage](#file-storage) | every file read and write throws |
 
 ## Intake paths
 
@@ -109,8 +108,7 @@ reimbursee, the vendor or `needsReimbursement`.
 lines in one transaction with the move to `uploaded`. Any failure moves the receipt
 to `ocr_failed` with the reason in `validationNotes` and writes nothing from the
 reading. A reading with lines but no retailer, date or total counts as good; the
-pipeline sends it to `submitter_review` to be filled in. The rule is in
-`docs/rules/expenses.md`.
+pipeline sends it to `submitter_review` to be filled in.
 
 From `ocr_failed` a person can type the details and resubmit, retry the reading,
 discard the receipt or reject it. A good reading replaces whatever was typed, so the
@@ -168,8 +166,12 @@ up to 30 days without losing mail.
 
 **Files in a message**, in reading order: each attachment of an accepted type, each
 inline part of an accepted non-text type at 5 KB or more, then the body stored as
-text. A body with no amount written to two decimals is skipped. A message attached
-whole is never opened, only counted. Finance's ignore list, which finance adds to from
+text. The body is measured as its visible text with trailer lines (`-- `, "Sent from
+my …") deleted, never cut below them. Under 100 bytes it is skipped. Otherwise it is
+read when it holds an amount (`$` before a digit, or a number with two decimals). A
+long body with no amount is skipped beside any other file, accepted or refused; alone,
+it gets a "no amount" notice for a resolved sender and is held for anyone else. A
+message attached whole is never opened, only counted. Finance's ignore list, which finance adds to from
 a discarded or rejected receipt, skips a file by exact hash, and upload never consults that list.
 
 **Sender.** The address counts only when the message has one `From` with one
@@ -184,6 +186,7 @@ shows a DMARC pass for that domain and a DKIM pass signed by exactly that domain
 | Resolved sender, within limits | a receipt, at `auto_upload`, with its ledger row in the same insert |
 | Resolved sender, over their daily limit | `deferred`: stored, retried first on later runs, and finance may release it early |
 | Anyone else | `held`, with a reason, until finance assigns or discards it |
+| Anyone else, file refused | `held` with no file, naming the file and why, until finance discards it |
 
 **Per-run budgets.**
 
@@ -202,7 +205,7 @@ lists it.
 
 ## Daily steps
 
-There are no schedules of the library's own and nothing runs at boot. Four steps
+There are no schedules of the library's own and nothing runs at boot. Six steps
 run inside the host's existing daily `/api/cron/reconcile-shopify`, in this order,
 each in its own `try/catch` and each returning counts only. None retries a failed step:
 
@@ -210,8 +213,10 @@ each in its own `try/catch` and each returning counts only. None retries a faile
 |---|---|---|
 | `sweepInterruptedOcr` | `auto_upload` older than ten minutes to `ocr_failed` | 50 |
 | `sweepStuckUploaded` | `uploaded` idle for over an hour to `flow_error` | 50 |
-| `readMailbox` | the mailbox, the only slow step | as above |
+| `takeInMailbox` | the mailbox: answers once the mail is taken in; the reading drain (`drainOcrQueue`, 20 readings, oldest first) runs on under the mail lease after the request answers | as above |
 | `sweepOutcomeNotices` | sends the outcome emails still owed to a receipt's uploader and the person reimbursed; a notice is given up after three failed sends | 50 |
+| `discardUnclaimedHeldMail` | a `held` mail item 90 days after it was held to `discarded`, audited as a finance discard is, with no actor; deletes its object | 50 |
+| `sweepExpiredFiles` | deletes a receipt's object once its retention has ended and clears `file_key`; clears a discarded mail item's `file_key` 30 days after the discard, once its restore window has closed. Each is audited | 50 of each |
 
 ## Stuck receipts
 
@@ -263,11 +268,9 @@ is not yet paid, and a failed read shows as "status unavailable".
 
 ## File storage
 
-The S3 move is partly built. The code to write to and read from a bucket has
-shipped behind a flag that defaults to off, and so has the task that copies
-existing rows to the bucket. The steps that would empty the database column have
-not been built. Whether the buckets exist, and whether the
-flag is on in a given environment, is set outside this repo.
+Every receipt and held mail item keeps its file in the store, under the row's
+`file_key`. The `file_blob` column still exists, unread and unwritten, until its
+drop. The buckets are set up outside this repo.
 
 **Built.**
 
@@ -278,12 +281,11 @@ flag is on in a given environment, is set outside this repo.
   store also refuses a second write, and refuses bytes that miss their SHA-256.
 - `file_key` and `file_size` exist on `receipts` and `receipt_mail_items`, and
   `receipts.file_blob` is nullable.
-- `RECEIPT_FILES_S3=true` sends new files to the bucket. The object goes first and
-  the row second, and a failed insert deletes the object. Keys are
-  `receipts/<receiptId>` and `mail-items/<uuid>`, and say nothing about the file.
-- With the flag off, new files go to `file_blob`, as they always have.
-- `readStoredFile` reads from the store when a row has a key and from `file_blob`
-  otherwise, so both kinds of row are served at once.
+- Every new file goes to the store. The object goes first and the row second, and
+  a failed insert deletes the object. Keys are `receipts/<receiptId>` and
+  `mail-items/<uuid>`, and say nothing about the file.
+- `readStoredFile` reads by `file_key` only. A row with no key logs and reads as
+  missing: the file route answers 404 and OCR lands in `ocr_failed`.
 - Assigning or discarding a stored mail item deletes its object after the commit.
   A discarded item keeps its `fileKey`, to name the object for an admin restore; an
   assigned one clears it.
@@ -292,16 +294,19 @@ flag is on in a given environment, is set outside this repo.
   store and check the copy. The copy sets `file_key` and `file_size` and never
   touches `file_blob`. How and when to run it is in
   `docs/ops/receipt-files-backfill.md`.
-- Daily byte limits sum `file_size`, falling back to the column's length for older
-  rows. The config-health page reports a flag that is on with no
-  `RECEIPT_FILES_S3_BUCKET`, and with the flag on and no bucket a deployed instance
-  refuses files with a 503 rather than falling back to the database.
+- Retention (`src/services/retention.ts`): an approved receipt's file is kept until
+  7 years after its fiscal year's Form 990 deadline (November 15; the fiscal year
+  ends June 30), dated by the receipt's date, else its approval; a rejected or
+  discarded receipt's for 1 year after that decision; an undecided receipt's for
+  good. The receipt row stays, and its file route answers 404.
+- Daily byte limits sum `file_size`. The config-health page reports a deployed
+  instance with no `RECEIPT_FILES_S3_BUCKET`, and such an instance refuses files
+  with a 503 rather than falling back to the database.
 
 **Not built.**
 
-- Removing the `file_blob` reads and the flag, then dropping the column.
-- Retention: nothing deletes a receipt file on a schedule.
-- Automatic discard of held mail nobody acts on: a held item waits for finance.
+- Dropping the `file_blob` column, after re-pointing both file routes' registry
+  entries from `fileBlob` to `fileKey`.
 
 **Serving a file.** `GET /api/receipts/[id]/file` and
 `GET /api/receipts/mail-items/[id]/file` are the only way a file's bytes leave, and

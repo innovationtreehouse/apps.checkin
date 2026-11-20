@@ -40,6 +40,7 @@ export const LOCAL_QUICKBOOKS_CLASSES = [
     { id: "9003", name: "Programs:Robotics", active: true },
     { id: "9004", name: "Programs:Woodshop", active: true },
     { id: "9005", name: "Retired", active: false },
+    { id: "9006", name: "Woodworking 101", active: true },
 ];
 
 /** Every Class in the app's QuickBooks list by its full name, inactive ones flagged, for the bucket form's picker. */
@@ -153,10 +154,13 @@ export async function updateBudgetOwner(actorId: number, id: number, body: Recor
         });
         return bucket;
     });
-    if (data.isOrgLevel !== false) return change(async () => 0);
+    if (data.isOrgLevel === undefined) return change(async () => 0);
     // Lock order: the expense library's bucket line hold, then the BudgetOwner row. No line enters the bucket until this commits.
     const { holdBucketLines } = await import("@checkin/expense");
-    return holdBucketLines(id, change);
+    return holdBucketLines(id, data.isOrgLevel, change).catch((e: unknown) => {
+        if (e instanceof ServiceError) throw new ApiResponseError(e.status, e.message);
+        throw e;
+    });
 }
 
 /** Every kind of unfinished work the libraries still point at bucket `id`; 503 when one can't be read. */

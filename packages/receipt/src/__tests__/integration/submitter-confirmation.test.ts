@@ -4,7 +4,7 @@ import { db } from "../../db";
 import type { AwaitedConfirmation, PurchaseOutcome, PurchaseOutcomes, ReceiptReimbursees, SubmitterConfirmations } from "../../contract";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
-import { ALICE, BOB, FINANCE, actAs, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile } from "../helpers/setup";
+import { ALICE, BOB, FINANCE, actAs, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile, uploadRead } from "../helpers/setup";
 
 // 101 Alice uploads · 102 Bob is reimbursed · 104 Lee's membership lapsed · 300 has no account · 500 and 501 are on the Board
 const NO_ACCOUNT = { id: 300, name: "Nora Noaccount" };
@@ -56,7 +56,7 @@ const voids = (id: string) => db.receiptAuditLog.findMany({ where: { receiptId: 
 
 /** A reimbursement its submitter confirmed with a total the lines don't match, so it waits in validation_failed. */
 async function confirmedInValidation() {
-  const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });
+  const r = await uploadRead(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });
   await receiptService.edit(r.id, "submitter", { receiptTotal: 25 });
   await receiptService.submitterConfirm(r.id);
   expect(await stateOf(r.id)).toBe("validation_failed");
@@ -67,20 +67,20 @@ async function confirmedInValidation() {
 
 describeDb("the submitter's confirmation of a reimbursement", () => {
   it("is required whatever the intake path: a manual reimbursement waits for it", async () => {
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });
     expect(r.state).toBe("submitter_review");
     expect(ports.calls.pushes).toHaveLength(0);
   });
 
   it("travels to expense naming who confirmed and when", async () => {
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });
     await receiptService.submitterConfirm(r.id);
     const at = await reviewedAt(r.id);
     expect(ports.calls.pushes[0].submitterConfirmation).toEqual({ confirmedByPersonId: ALICE.id, onBehalfByPersonId: undefined, confirmedAt: at!.toISOString() });
   });
 
   it("is absent from a manual card charge, which its submitter never reviews", async () => {
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     expect(r.state).toBe("receipt_finalized");
     expect(ports.calls.pushes[0].submitterConfirmation).toBeUndefined();
   });
@@ -140,7 +140,7 @@ describeDb("the submitter's confirmation of a reimbursement", () => {
   });
 
   it("a finance change to a card charge never involves its submitter", async () => {
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptTotal: "25.00" }) });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails({ receiptTotal: "25.00" }) });
     expect(r.state).toBe("validation_failed");
     actAs(FINANCE);
     await receiptService.edit(r.id, "finance", { receiptTotal: 20 });
@@ -156,7 +156,7 @@ async function uploadFor(reimburseePersonId: number) {
   actAs(ALICE);
   // A retailer of its own, so a second upload is not flagged as a duplicate of the first.
   const details = manualDetails({ retailer: `Acme Hardware ${++uploads}` });
-  const r = await receiptService.upload(textFile(), "text/plain", { details, needsReimbursement: true, reimburseePersonId });
+  const r = await uploadRead(textFile(), "text/plain", { details, needsReimbursement: true, reimburseePersonId });
   expect(r.state).toBe("submitter_review");
   return r.id;
 }
@@ -215,7 +215,7 @@ describeDb("the person reimbursed confirms, not the uploader", () => {
   });
 
   it("an uploader reimbursing themself confirms in their own review, as before", async () => {
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });
     await receiptService.submitterConfirm(r.id);
     expect(ports.calls.pushes[0].submitterConfirmation).toMatchObject({ confirmedByPersonId: ALICE.id, onBehalfByPersonId: undefined });
   });

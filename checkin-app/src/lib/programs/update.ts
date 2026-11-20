@@ -5,16 +5,19 @@ import { adjustProgramInventory, setProgramInventory, STOCK_BOOKKEEPING_RESET, s
 import { dollarsToCentsOrNull } from "@checkin/money";
 import { ENROLLED_PARTICIPANT } from "@/lib/person/filters";
 import { validateProgramAgeBounds, isLeaderAgeEligible, checkProgramAge } from "@/lib/programAge";
+import { recordSelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { emailBoardMembers } from "@/lib/emailRecipients";
 import { config } from "@/lib/config";
-import { parseDateOnly } from "@/lib/time";
+import { orgCalendarDay, parseDateOnly } from "@/lib/time";
+import { programLeaderIneligibility } from "@/lib/programs/leaderEligibility";
 import { classify, isSaleEnded, saleStockDelta } from "@/lib/programs/saleState";
 import { countStockTakenSeats } from "@/lib/program/capacity";
 import { membershipYearLabel, programYearsTouched } from "@/lib/programYear";
 import { ProgramPhase, EnrollmentStatus, type Program } from "@/generated/prisma/client";
 import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
 import { ServiceError } from "@checkin/component-kit";
+import { isProgramNameTaken, PROGRAM_NAME_TAKEN, programNameFields } from "@/lib/programs/nameKey";
 import { personActor, recordAudit } from "@/lib/auditActor";
 
 export interface ProgramEditor {
@@ -176,17 +179,13 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         return refuse("invalid", ageErr);
     }
 
-    // maxParticipants: null = uncapped (allowed). Otherwise must be a
-    // positive int and not below current enrollment.
-    if (maxParticipants !== undefined && maxParticipants !== null) {
-        if (typeof maxParticipants !== "number" || !Number.isInteger(maxParticipants) || maxParticipants <= 0) {
-            return refuse("invalid", "maxParticipants must be a positive integer");
-        }
-        const enrolled = await prisma.programParticipant.count({ where: { programId, ...ENROLLED_PARTICIPANT } });
-        if (maxParticipants < enrolled) {
-            return refuse("invalid", `maxParticipants cannot be set below the current enrollment of ${enrolled}`);
-        }
+    // maxParticipants: null = uncapped (allowed). Otherwise a positive int, and not
+    // below current enrollment, which is counted under the Program lock below.
+    if (maxParticipants !== undefined && maxParticipants !== null
+        && (typeof maxParticipants !== "number" || !Number.isInteger(maxParticipants) || maxParticipants <= 0)) {
+        return refuse("invalid", "maxParticipants must be a positive integer");
     }
+    const newCap = typeof maxParticipants === "number" ? maxParticipants : null;
 
     if (patch.hasOwnProperty('leadMentorId')) {
         if (!patch.leadMentorId) {
@@ -201,7 +200,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         }
         const mentor = await prisma.person.findUnique({
             where: { id: leadMentorId },
-            select: { dateOfBirth: true, isDeclaredAdult: true, householdId: true },
+            select: { dateOfBirth: true, isDeclaredAdult: true, householdId: true, lastBackgroundCheck: true },
         });
         if (!mentor) {
             return refuse("invalid", "Program Leader not found");
@@ -209,14 +208,32 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         if (!isLeaderAgeEligible(mentor)) {
             return refuse("invalid", "Program Leader must be at least 23 years old");
         }
+        // A leader already in place stays; only a new assignment meets the membership and clearance requirements.
+        if (leadMentorId !== currentProgram.leadMentorId) {
+            const ineligible = await programLeaderIneligibility(leadMentorId, mentor);
+            if (ineligible) return refuse("invalid", ineligible);
+        }
         // Nobody names themself or their household as a program's leader (Ethics
         // Policy III.5). The edit form resends the current lead on every save, so
         // only a change is refused.
         if (leadMentorId !== currentProgram.leadMentorId && (
             leadMentorId === actor.id || await hasHouseholdConflict(prisma, actor.id, mentor.householdId)
         )) {
+            await recordSelfGrantRefusal(prisma, {
+                actorId: actor.id,
+                affectedEntityId: leadMentorId,
+                newData: { reason: "own_household", table: "Program", subject: { personId: leadMentorId, householdId: mentor.householdId }, attempted: { programId, leadMentorId } },
+            });
             return refuse("forbidden", "Forbidden: You cannot make yourself or a member of your household a program lead");
         }
+    }
+
+    // An ended program stays ended: no other phase, and enrollment never reopens.
+    if (currentProgram.phase === 'FINISHED' && phase !== undefined && phase !== 'FINISHED') {
+        return refuse("conflict", "This program has ended, so it can't return to an earlier phase.");
+    }
+    if (currentProgram.phase === 'FINISHED' && enrollmentStatus === 'OPEN' && currentProgram.enrollmentStatus !== 'OPEN') {
+        return refuse("conflict", "This program has ended, so enrollment can't be opened.");
     }
 
     // Publish guards: transitioning to UPCOMING requires a lead mentor and
@@ -251,10 +268,17 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         return refuse("invalid", "Invalid end date");
     }
     // Effective values (body overrides current) so a one-sided edit can't invert the range.
+    // Checked on a date change or a move into a live phase, so a program saved with inverted dates can still save other fields.
     const effStartAt = newStartAt ?? currentProgram.startAt;
     const effEndAt = newEndAt ?? currentProgram.endAt;
-    if (effStartAt > effEndAt) {
+    const datesMoved = effStartAt.getTime() !== currentProgram.startAt.getTime() || effEndAt.getTime() !== currentProgram.endAt.getTime();
+    const goesLive = (phase === 'UPCOMING' || phase === 'RUNNING') && phase !== currentProgram.phase;
+    if ((datesMoved || goesLive) && effStartAt > effEndAt) {
         return refuse("invalid", "Start date must be on or before the end date");
+    }
+    // A program's leader marks it finished on or after its end date; before that, ending it is the Board's alone.
+    if (phase === 'FINISHED' && currentProgram.phase !== 'FINISHED' && !actor.isBoardMember && currentProgram.endAt > orgCalendarDay()) {
+        return refuse("forbidden", `Only the Board can end this program before its end date (${currentProgram.endAt.toISOString().slice(0, 10)}).`);
     }
 
     // Off-sale date: board-only. null follows the start date. An untouched
@@ -333,7 +357,6 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
     }
 
     // Re-dating re-derives the membership year; a stated year is only supplied by the Board.
-    const datesMoved = effStartAt.getTime() !== currentProgram.startAt.getTime() || effEndAt.getTime() !== currentProgram.endAt.getTime();
     const yearSupplied = patch.appliesToYear != null && patch.appliesToYear !== currentProgram.appliesToYear;
     let newAppliesToYear: number | undefined;
     if (datesMoved || yearSupplied) {
@@ -349,7 +372,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
     }
 
     const updateData: Record<string, unknown> = {
-        ...(newName !== undefined && { name: newName }),
+        ...(newName !== undefined && programNameFields(newName)),
         ...(leadMentorId !== undefined && { leadMentorId }),
         ...(newStartAt !== undefined && { startAt: newStartAt }),
         ...(newEndAt !== undefined && { endAt: newEndAt }),
@@ -395,6 +418,15 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
             await tx.$queryRaw`SELECT id FROM "Program" WHERE id = ${programId} FOR UPDATE`;
             if (newLeader !== null) await lockLiveHouseholdsOf(tx, [newLeader]);
             const before = await tx.program.findUnique({ where: { id: programId } });
+            // The refusals, re-arm and variant reset above were decided on the caller's read.
+            if (before && decisionInputsDrifted(currentProgram, before)) {
+                throw new ServiceError(409, "This program changed while you were editing. Reload and try again.");
+            }
+            // Counted under the lock a claim also takes, so a cut and a claim cannot both pass on stale counts.
+            if (newCap !== null) {
+                const enrolled = await tx.programParticipant.count({ where: { programId, ...ENROLLED_PARTICIPANT } });
+                if (newCap < enrolled) throw new ServiceError(400, `maxParticipants cannot be set below the current enrollment of ${enrolled}`);
+            }
             const after = await tx.program.update({ where: { id: programId }, data: updateData });
             await recordAudit(tx, personActor(actor.id), {
                 action: 'EDIT',
@@ -406,7 +438,8 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
             return { before, after };
         }));
     } catch (e) {
-        if (e instanceof ServiceError) return refuse("conflict", e.message);
+        if (e instanceof ServiceError) return refuse(e.status === 400 ? "invalid" : "conflict", e.message);
+        if (isProgramNameTaken(e)) return refuse("conflict", PROGRAM_NAME_TAKEN);
         throw e;
     }
 
@@ -429,7 +462,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
     // Only fires when the program already has Shopify checkout wired up;
     // creation and sync-shopify set the initial stock themselves.
     let warning: string | undefined;
-    const oldMax = currentProgram.maxParticipants;
+    const oldMax = before.maxParticipants;
     const newMax = updatedProgram.maxParticipants;
     const hasShopifyVariant = !!updatedProgram.shopifyVariantId;
 
@@ -461,7 +494,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
     // store: a cleared or $0 full price is reported to admins and Shopify keeps its
     // old price. Only admin/board can change prices.
     const newBase = updatedProgram.nonOrgMemberPriceCents;
-    if (newBase !== currentProgram.nonOrgMemberPriceCents) {
+    if (newBase !== before.nonOrgMemberPriceCents) {
         const ok = await syncProgramPrice(updatedProgram, newBase);
         if (!ok) {
             const priceWarning = "Program saved, but the Shopify price is out of date — admins have been emailed. Set the price by hand in Shopify on both the public and reserved-seat products.";
@@ -470,10 +503,22 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
     }
 
     // The sweep hid the public product; reopening never re-lists it (automatic changes only reduce visibility).
-    const notice = rearmSale && currentProgram.productHiddenAt
+    const notice = rearmSale && before.productHiddenAt
         ? "Sale reopened. The public store product stays hidden: re-list it in Shopify by hand if it should sell again."
         : undefined;
     return { ok: true, program: updatedProgram, warning, notice };
+}
+
+/** Whether a field the pre-lock refusals, re-arm or variant reset read differs between two reads of a program. */
+function decisionInputsDrifted(read: Program, locked: Program): boolean {
+    const time = (d: Date | null) => d?.getTime() ?? null;
+    return read.phase !== locked.phase
+        || read.enrollmentStatus !== locked.enrollmentStatus
+        || read.shopifyVariantId !== locked.shopifyVariantId
+        || time(read.startAt) !== time(locked.startAt)
+        || time(read.endAt) !== time(locked.endAt)
+        || time(read.offSaleAt) !== time(locked.offSaleAt)
+        || time(read.saleEndedAt) !== time(locked.saleEndedAt);
 }
 
 // A start-date or age-bound edit can leave enrolled people outside the program's

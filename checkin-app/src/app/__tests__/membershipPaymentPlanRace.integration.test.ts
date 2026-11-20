@@ -78,7 +78,8 @@ async function waitForBlockedBackend(tx: Pick<typeof prisma, '$queryRaw'>) {
         await tx.$queryRaw`SELECT pg_stat_clear_snapshot()::text`;
         const [{ blocked }] = await tx.$queryRaw<{ blocked: number }[]>`
             SELECT count(*)::int AS blocked FROM pg_stat_activity
-            WHERE datname = current_database() AND wait_event_type = 'Lock'`;
+            WHERE datname = current_database() AND pid <> pg_backend_pid() AND wait_event_type = 'Lock'
+              AND query LIKE '%"OrgMembershipProcess"%FOR UPDATE%'`;
         if (blocked > 0) return;
         await new Promise((r) => setTimeout(r, 50));
     }
@@ -98,6 +99,7 @@ describe('payment-plan approve and deny race', () => {
                 orgMembershipId: membership.id,
                 kind: 'INITIAL',
                 status: 'PENDING_PAYMENT',
+                contractSignedAt: new Date(),
                 bgClearedAt: bgCleared ? new Date() : null,
                 isPaymentPlanRequested: true,
             },

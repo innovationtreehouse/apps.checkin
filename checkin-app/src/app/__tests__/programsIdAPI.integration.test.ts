@@ -13,6 +13,9 @@ import prisma from '@/lib/prisma';
 import { snapshotBoardSettings, setMembershipYearBoundary } from '@/test-helpers/boardSettings';
 import { getServerSession } from 'next-auth/next';
 import { ORG_DOMAIN } from '@/lib/config';
+
+// A new leader here meets the membership and clearance requirements; leaderEligibility has its own tests.
+jest.mock('@/lib/programs/leaderEligibility', () => ({ ...jest.requireActual('@/lib/programs/leaderEligibility'), programLeaderIneligibility: jest.fn().mockResolvedValue(null) }));
 // Mock NextAuth
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
@@ -744,8 +747,21 @@ describe('Individual Program API Integration Tests', () => {
              expect(data.warning).toBeUndefined();
         });
 
-        it('should allow admins to update a program', async () => {
+        it('refuses a sysadmin who is not on the Board ending a program before its end date (403)', async () => {
              (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true } });
+
+             const req = new Request(`http://localhost:4000/api/programs/${publicProgramId}`, {
+                 method: 'PATCH',
+                 body: JSON.stringify({ phase: 'FINISHED' })
+             });
+             const res = await PATCH(req as unknown as import("next/server").NextRequest, createParams(publicProgramId) as unknown as never);
+             expect(res.status).toBe(403);
+             expect((await res.json()).error).toMatch(/Only the Board/);
+             expect((await prisma.program.findUnique({ where: { id: publicProgramId } }))?.phase).toBe('RUNNING');
+        });
+
+        it('lets the Board end a program before its end date', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: adminId, isSysadmin: true, isBoardMember: true } });
 
              const req = new Request(`http://localhost:4000/api/programs/${publicProgramId}`, {
                  method: 'PATCH',
@@ -918,7 +934,7 @@ describe('Individual Program API Integration Tests', () => {
             const res = await PATCH(req as unknown as import("next/server").NextRequest, createParams(finishedProgramId) as unknown as never);
             expect(res.status).toBe(409);
             const data = await res.json();
-            expect(data.error).toMatch(/already finished/i);
+            expect(data.error).toMatch(/has ended/i);
 
             const after = await prisma.program.findUnique({ where: { id: finishedProgramId } });
             expect(after?.phase).toBe('FINISHED');
@@ -1660,8 +1676,9 @@ describe('Individual Program API Integration Tests', () => {
     });
 
     // Payment status (status: PENDING = not paid yet, ACTIVE = paid): staff see
-    // every row's; a household lead sees their own household's; nobody else —
-    // not a youth, not a non-lead member, not another family — receives it.
+    // every row's; an adult household lead sees their own household's; nobody
+    // else — not a youth, not a lead of unknown age, not a non-lead member, not
+    // another family — receives it.
     describe('payment status visibility', () => {
         let programId: number;
         let leadAId: number, kidAId: number, kidA2Id: number, leadBId: number, kidBId: number;
@@ -1681,7 +1698,7 @@ describe('Individual Program API Integration Tests', () => {
             const hhB = await prisma.household.create({ data: { name: 'Pay HH B' } });
             householdAId = hhA.id;
             const mk = (email: string, householdId: number, isHouseholdLead = false) =>
-                prisma.person.create({ data: { email: `${email}-prog-id-api-test@example.com`, name: email, householdId, isHouseholdLead } });
+                prisma.person.create({ data: { email: `${email}-prog-id-api-test@example.com`, name: email, householdId, isHouseholdLead, isDeclaredAdult: isHouseholdLead } });
             leadAId = (await mk('pay-lead-a', hhA.id, true)).id;
             kidAId = (await mk('pay-kid-a', hhA.id)).id;
             kidA2Id = (await mk('pay-kid-a2', hhA.id)).id;
@@ -1727,6 +1744,16 @@ describe('Individual Program API Integration Tests', () => {
             const rows = await getAs({ id: kidAId, householdId: householdAId, householdLead: false, ageBand: 'youth' });
             expect(rows.length).toBe(3);
             expect(rows.every(r => r.status === undefined && r.pendingSince === undefined)).toBe(true);
+        });
+
+        it('a household lead of unknown age receives no status', async () => {
+            await prisma.person.update({ where: { id: leadAId }, data: { isDeclaredAdult: false } });
+            try {
+                const rows = await getAs({ id: leadAId, householdId: householdAId, householdLead: true, ageBand: 'unknown' });
+                expect(rows.every(r => r.status === undefined && r.pendingSince === undefined)).toBe(true);
+            } finally {
+                await prisma.person.update({ where: { id: leadAId }, data: { isDeclaredAdult: true } });
+            }
         });
 
         it('a non-lead adult household member receives no status', async () => {

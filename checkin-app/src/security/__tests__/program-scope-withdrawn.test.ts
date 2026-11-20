@@ -35,6 +35,7 @@ const PROGRAMS_ONLY: CtxNeeds = {
     activeVisitors: false,
     ledHouseholdMembers: false,
     householdMembers: false,
+    enrolledPrograms: false,
 };
 
 const ENROLLED_PERSON_IDS = { where: ENROLLED_PARTICIPANT, select: { personId: true } };

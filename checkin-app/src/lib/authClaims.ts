@@ -3,6 +3,7 @@ import type { OrgMembershipStatus, PersonRoleKind } from "@/generated/prisma/cli
 import { orgMembershipStatusBlocksLogin, personRecordIsActiveOrgMember } from "@/lib/orgMembership";
 import { ageBand } from "@/lib/programAge";
 import { ROLE_FLAGS, rolesToFlags } from "@/lib/roles";
+import { KEYHOLDER_VOID_STATUSES } from "@/lib/visit/filters";
 
 /** The participant fields the JWT carries, plus the household membership the login gate reads. */
 export type ClaimSourceParticipant = {
@@ -10,6 +11,8 @@ export type ClaimSourceParticipant = {
     name?: string | null;
     // Their first sign-in's household question is open (lib/household/joinQuestion.ts).
     householdJoinPending?: boolean;
+    // They created a new household at sign-in; the age step shows while no age is on file.
+    ageStepPending?: boolean;
     // Source of truth for the five authority booleans (see lib/roles.ts rolesToFlags).
     roles: { role: PersonRoleKind }[];
     householdId: number;
@@ -39,11 +42,14 @@ export type ClaimSourceParticipant = {
  * refresh). When the household membership is DENIED the account is locked out: the id is kept
  * (so the session still resolves and the /access-denied gate can identify the state) but every
  * authority flag is forced false and tool statuses are cleared, so nothing downstream honors it.
+ * A REVOKED household keeps app access but its keyholders lose keyholder authority (LIVE_KEYHOLDER).
  */
 export function assignParticipantClaims(token: JWT, p: ClaimSourceParticipant): void {
-    const denied = orgMembershipStatusBlocksLogin(p.household?.orgMembership?.status);
+    const status = p.household?.orgMembership?.status;
+    const denied = orgMembershipStatusBlocksLogin(status);
     const pending = p.householdJoinPending === true;
     const f = rolesToFlags(p.roles);
+    if (status && KEYHOLDER_VOID_STATUSES.includes(status)) f.isKeyholder = false;
 
     token.id = p.id;
     token.denied = denied;
@@ -60,6 +66,7 @@ export function assignParticipantClaims(token: JWT, p: ClaimSourceParticipant): 
     // Derived band, never the DOB itself. Not a role, so DENIED doesn't clear
     // it — age is a fact about the person, not an authority grant.
     token.ageBand = pending ? "unknown" : ageBand(p);
+    token.ageStepPending = !pending && p.ageStepPending === true && token.ageBand === "unknown";
     token.toolStatuses = locked ? [] : p.toolStatuses;
     token.programsLed = locked ? [] : (p.programsLed?.map((prog) => prog.id) ?? []);
     // ops-stg access gate escape hatch — forced false on DENIED, same as every role flag.

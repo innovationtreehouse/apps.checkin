@@ -3,10 +3,11 @@ import { db } from "../../db";
 import { ServiceError } from "@checkin/component-kit";
 import type { ReceiptPeople } from "../../contract";
 import { CANNOT_ASSIGN, CANNOT_REMEMBER, mailQueueService } from "../../services/mailQueueService";
+import { REFUSAL_NOTE_KEY } from "../../services/mailIntake";
 import { intakeMailedReceipt, receiptService } from "../../services/receiptService";
 import type { ReceiptLimits } from "../../lib/limits";
 import { describeDb } from "../helpers/db";
-import { actAs, ALICE, BOB, clearAll, configure, FINANCE, okOcr, stateOf, TEST_ORG_ID, textFile } from "../helpers/setup";
+import { actAs, ALICE, BOB, clearAll, configure, FINANCE, okOcr, settleReads, stateOf, storeFile, TEST_ORG_ID, textFile } from "../helpers/setup";
 
 const PEOPLE: Record<string, typeof ALICE> = { "alice@example.org": ALICE, "bob@example.org": BOB, "finn@example.org": FINANCE };
 
@@ -22,7 +23,7 @@ async function holdItem(status = "held", senderAddress = "stranger@elsewhere.tes
       senderAddress,
       status,
       dmarcVerdict,
-      fileBlob: new Uint8Array(Buffer.from(`%PDF-1.4 held ${n} ${Date.now()}`)),
+      fileKey: await storeFile(Buffer.from(`%PDF-1.4 held ${n} ${Date.now()}`)),
       mimeType: "application/pdf",
     },
   });
@@ -59,6 +60,7 @@ describeDb("finance mail queue", () => {
   it("assigns a held item as exactly one emailed receipt uploaded by the assignee", async () => {
     const id = await holdItem();
     const out = await mailQueueService.assign(id, { email: "Alice@Example.org" });
+    await settleReads();
 
     const receipts = await db.receipt.findMany();
     expect(receipts).toHaveLength(1);
@@ -288,6 +290,16 @@ describeDb("mailbox ignore list", () => {
     const entry = await mailQueueService.ignoreReceiptFile(r.id, { reason: "logo" });
     const { fileHash } = await db.receipt.findUniqueOrThrow({ where: { id: r.id } });
     expect(entry).toMatchObject({ fileHash, reason: "logo", addedByUserId: FINANCE.id });
+  });
+
+  it("refuses to ignore a refusal note, leaving it and every other note held", async () => {
+    const id = await holdItem("held", "a@elsewhere.test", REFUSAL_NOTE_KEY);
+    const other = await holdItem("held", "b@elsewhere.test", REFUSAL_NOTE_KEY);
+    await expect(mailQueueService.discard(id, { reason: "junk", ignoreFile: true })).rejects.toMatchObject({ status: 409 });
+    expect(await db.receiptMailItem.count({ where: { id: { in: [id, other] }, status: "held" } })).toBe(2);
+    expect(await mailQueueService.listIgnored()).toEqual([]);
+    expect(await mailQueueService.discard(id, { reason: "junk" })).toMatchObject({ id, status: "discarded" });
+    expect(await db.receiptMailItem.findUniqueOrThrow({ where: { id: other } })).toMatchObject({ status: "held" });
   });
 
   it("removes an entry, audited like an add", async () => {

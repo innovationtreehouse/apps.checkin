@@ -5,7 +5,7 @@
  * Finance books, skips or matches by id what the drain hands over.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { MAX_DRIFT_CHECKS_PER_RUN, QuickBooksClient, STALE_CLAIM_MS, appKeyOf, type BooksMapRole, type QboAccount, type QboDeposit, type QboJournalEntry, type QboPurchase } from "@checkin/quickbooks";
+import { MAX_DRIFT_CHECKS_PER_RUN, Pacer, QuickBooksClient, STALE_CLAIM_MS, appKeyOf, type BooksMapRole, type QboAccount, type QboDeposit, type QboJournalEntry, type QboPurchase } from "@checkin/quickbooks";
 import type { FailureReport } from "@checkin/component-kit";
 import type { CompletedReceipt } from "@checkin/receipt-types";
 import { describeDb } from "../helpers/db";
@@ -19,6 +19,14 @@ import { DEFAULT_DONATION_SETTINGS, readDonationSettings, updateDonationSettings
 import type { InKindAccounts, InKindCapital, OwnerInfo } from "../../contract";
 import { TEST_ORG_ID } from "../helpers/factories";
 import { retryStuckItem, stuckItems } from "../../stuckItems";
+import { z } from "zod";
+
+/** Finance's capital decision on a gift's lines, as its two review steps leave it. */
+async function decideCapital(giftId: number, capitalLineIds: number[], registeredAt: Date | null = new Date()) {
+  await db.inKindDonation.update({ where: { id: giftId }, data: { capitalReviewNeeded: true } });
+  await db.inKindDonationLine.updateMany({ where: { donationId: giftId }, data: { isCapital: false } });
+  await db.inKindDonationLine.updateMany({ where: { id: { in: capitalLineIds } }, data: { isCapital: true, depreciationYears: 5, capitalBucketId: 1, registeredAt } });
+}
 
 const orgId = TEST_ORG_ID;
 const FINANCE = 10;
@@ -81,7 +89,7 @@ class FakeQbo {
 
   handle = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = new URL(String(input));
-    const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { intuit_tid: "tid" } });
+    const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { intuit_tid: "tid", ...(status === 429 && { "Retry-After": "0" }) } });
     if (this.outage && !(url.searchParams.get("query") ?? "").startsWith("SELECT * FROM Preferences")) return json({ Fault: { Error: [] } }, 503);
     if ((init?.method ?? "GET") === "GET") {
       const query = url.searchParams.get("query") ?? "";
@@ -129,8 +137,8 @@ class FakeQbo {
 
 let qbo: FakeQbo;
 let accounts: Partial<Record<BooksMapRole, string>>;
-let awaiting: { giftSource: string; giftId: number }[];
-let assets: number[];
+/** What the register was asked to mint, by gift line. */
+let registered: number[];
 /** The expense account rules: supplies for any part, equipment for an asset; a GTIN here has no rule. */
 let unruled: Set<string>;
 let alerts: number;
@@ -139,8 +147,21 @@ let rulesThrow: Error | null;
 let failures: FailureReport[];
 
 function configure() {
-  const client = new QuickBooksClient({ current: async () => "tok" }, { env: "sandbox", realmId: "123" });
-  const capital: InKindCapital = { submit: async () => {}, awaitingReview: async () => awaiting, assetLineIds: async () => assets };
+  const client = new QuickBooksClient({ current: async () => "tok" }, { env: "sandbox", realmId: "123" }, new Pacer({ perSecond: 1e6, maxInFlight: 1e6 }));
+  const notCalled = async (): Promise<never> => {
+    throw new Error("the drain reads capital from the gift's lines");
+  };
+  const capital: InKindCapital = {
+    reviewNeeded: async () => false,
+    review: { designationInput: z.never(), periodInput: z.never(), designate: notCalled, setPeriod: notCalled },
+    register: async (_org, line) => {
+      registered.push(line.giftLineId);
+      return [`ITFA${line.giftLineId}`];
+    },
+    submit: notCalled,
+    awaitingReview: notCalled,
+    assetLineIds: notCalled,
+  };
   const rules: InKindAccounts = {
     resolve: async (_org, parts) => {
       if (rulesThrow) throw rulesThrow;
@@ -172,8 +193,8 @@ function configure() {
 }
 
 let receiptSeq = 0;
-/** An accepted receipt gift: lines of 10.00 and 20.00 on a receipt totalling 33.00 with tax. */
-async function acceptedGift(opts: { totalCents?: number; date?: string } = {}): Promise<number> {
+/** An accepted receipt gift: lines of 10.00 and 20.00 on a receipt totalling 33.00 with tax, and with `freeValueCents` a third line priced at $0 that finance values. */
+async function acceptedGift(opts: { totalCents?: number; date?: string; freeValueCents?: number } = {}): Promise<number> {
   const receiptId = `33333333-3333-4333-8333-${String(++receiptSeq).padStart(12, "0")}`;
   const receipt: CompletedReceipt = {
     receiptId,
@@ -196,17 +217,22 @@ async function acceptedGift(opts: { totalCents?: number; date?: string } = {}): 
     lineItems: [
       { receiptLineItemId: 1, lineNumber: 1, description: "Paper", gtin13: PAPER_GTIN, partNumber: null, manufacturer: null, quantity: 1, unitPriceCents: 1000, totalPriceCents: 1000, isDelayed: false },
       { receiptLineItemId: 2, lineNumber: 2, description: "Lathe", gtin13: LATHE_GTIN, partNumber: null, manufacturer: null, quantity: 1, unitPriceCents: 2000, totalPriceCents: 2000, isDelayed: false },
+      ...(opts.freeValueCents === undefined
+        ? []
+        : [{ receiptLineItemId: 3, lineNumber: 3, description: "Free paper", gtin13: PAPER_GTIN, partNumber: null, manufacturer: null, quantity: 1, unitPriceCents: 0, totalPriceCents: 0, isDelayed: false }]),
     ],
   };
   await ingestInKind(receipt);
   await recordInKindDonor(orgId, receiptId, { firstName: "Jane", lastName: "Doe", companyName: null }, 0);
   const { id } = await db.inKindDonation.findUniqueOrThrow({ where: { orgId_receiptId: { orgId, receiptId } } });
-  await inKindAcceptService.decide("receipt", id, ACCEPT, { actorUserId: FINANCE, actorUsername: "finance" });
+  const free = await db.inKindDonationLine.findMany({ where: { donationId: id, valueCents: 0 } });
+  const lineValues = opts.freeValueCents === undefined ? undefined : free.map((l) => ({ lineId: l.id, valueCents: opts.freeValueCents as number }));
+  await inKindAcceptService.decide("receipt", id, { ...ACCEPT, lineValues }, { actorUserId: FINANCE, actorUsername: "finance" });
   return id;
 }
 
-/** An accepted gift without a receipt, one of its lines valued at $0, which the drain holds for finance without calling QuickBooks. */
-async function zeroLineManualGift(): Promise<number> {
+/** An accepted gift without a receipt with lines at `values`, a $0 among them as accepting never leaves one: written straight to the database. */
+async function zeroLineManualGift(values = [3000, 0]): Promise<number> {
   const now = new Date();
   const { id } = await db.manualInKindDonation.create({
     data: {
@@ -223,7 +249,7 @@ async function zeroLineManualGift(): Promise<number> {
       bucketAssignedByUserId: FINANCE,
       bucketAssignedAt: now,
       capitalSubmittedAt: now,
-      lines: { create: [{ gtin13: "0011111111116", quantity: 1, valueCents: 3000 }, { gtin13: "0011111111116", quantity: 1, valueCents: 0 }] },
+      lines: { create: values.map((valueCents) => ({ gtin13: "0011111111116", quantity: 1, valueCents })) },
     },
   });
   return id;
@@ -248,8 +274,7 @@ beforeEach(async () => {
   qbo.closeDate = "2026-06-30";
   globalThis.fetch = qbo.handle as typeof fetch;
   accounts = { ...ACCOUNTS };
-  awaiting = [];
-  assets = [];
+  registered = [];
   unruled = new Set();
   alerts = 0;
   failures = [];
@@ -277,7 +302,7 @@ describeDb("in-kind drain", () => {
     await switchOn();
     const id = await acceptedGift();
     const [, lathe] = await lineIds(id);
-    assets = [lathe];
+    await decideCapital(id, [lathe]);
 
     await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1 });
 
@@ -304,19 +329,42 @@ describeDb("in-kind drain", () => {
   it("never books a gift while a line waits on capital review", async () => {
     await switchOn();
     const id = await acceptedGift();
-    awaiting = [{ giftSource: "receipt", giftId: id }];
+    await db.inKindDonation.update({ where: { id }, data: { capitalReviewNeeded: true } });
     await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 0 });
     expect(qbo.posts).toHaveLength(0);
     expect(await db.inKindPosting.count()).toBe(0);
   });
 
-  it("a gift without a receipt accepted with a $0 line goes to finance, never booked", async () => {
+  it("registers a capital line before its gift books, in the same run, and never again", async () => {
+    await switchOn();
+    const id = await acceptedGift();
+    const [, lathe] = await lineIds(id);
+    await decideCapital(id, [lathe], null);
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1, capital: { registered: 1, failed: 0 } });
+    expect(registered).toEqual([lathe]);
+    expect(qbo.posts[0].body.Line.map((l) => l.JournalEntryLineDetail.AccountRef.value)).toEqual(["400", "600", "150"]);
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ capital: { registered: 0, failed: 0 } });
+    expect(registered).toEqual([lathe]);
+  });
+
+  it("a $0 line that reaches the drain is a bug: the post fails for finance, never booked", async () => {
     await switchOn();
     const id = await zeroLineManualGift();
-    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 0, held: 1 });
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 0, failed: 1 });
     expect(qbo.posts).toHaveLength(0);
     const held = await db.inKindPosting.findUniqueOrThrow({ where: { orgId_source_giftId: { orgId, source: "manual", giftId: id } } });
-    expect(held).toMatchObject({ matchState: "NEEDS_FINANCE", qbNote: expect.stringContaining("no value") });
+    expect(held).toMatchObject({ matchState: "NEEDS_FINANCE", qbLastError: expect.stringContaining("has no value to book") });
+  });
+
+  it("a receipt line priced at $0 books at finance's value; the receipt's tax stays on its priced lines and the entry balances", async () => {
+    await switchOn();
+    await acceptedGift({ freeValueCents: 500 });
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1 });
+    const [{ body }] = qbo.posts;
+    const amounts = (type: string) => body.Line.filter((l) => l.JournalEntryLineDetail.PostingType === type).map((l) => [l.Description, Math.round(l.Amount * 100)]);
+    expect(amounts("Credit")).toEqual([["In-kind contribution", 3800]]);
+    expect(amounts("Debit")).toEqual([["Paper", 1100], ["Lathe", 2200], ["Free paper", 500]]);
   });
 
   it("before switch-on it only matches: a gift it cannot match waits for finance, unbooked", async () => {
@@ -599,7 +647,7 @@ describeDb("in-kind drain", () => {
 
     it("a gift held without calling QuickBooks is not stuck", async () => {
       await switchOn();
-      const noValue = await zeroLineManualGift();
+      const noValue = await zeroLineManualGift([0]);
 
       await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ held: 1, failed: 0 });
       expect(await db.inKindPosting.findUniqueOrThrow({ where: { orgId_source_giftId: { orgId, source: "manual", giftId: noValue } } })).toMatchObject({ matchState: "NEEDS_FINANCE", qbFirstFailedAt: null });
@@ -796,7 +844,7 @@ describeDb("finance's QuickBooks actions on an in-kind gift", () => {
 
   it("book is refused while a line waits on capital review", async () => {
     const id = await unbookedGift();
-    awaiting = [{ giftSource: "receipt", giftId: id }];
+    await db.inKindDonation.update({ where: { id }, data: { capitalReviewNeeded: true } });
     await expect(resolve(id, { action: "book" })).rejects.toMatchObject({ status: 409 });
     expect(qbo.posts).toHaveLength(0);
     expect((await posting(id)).matchState).toBe("UNBOOKED");
@@ -1005,7 +1053,7 @@ describeDb("finance's QuickBooks actions on an in-kind gift", () => {
     unruled.add(LATHE_GTIN);
     const id = await acceptedGift();
     const [, lathe] = await lineIds(id);
-    assets = [lathe];
+    await decideCapital(id, [lathe]);
     await runInKindQbPosting(orgId);
 
     await expect(resolve(id, { action: "set-account", lineId: lathe, quickBooksAccountId: "600" })).rejects.toMatchObject({
@@ -1190,6 +1238,76 @@ describeDb("in-kind QuickBooks drift", () => {
     await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ drift: { checked: 0 } });
   });
 
+  const strayEntry = (id: number, entryId: string) => {
+    qbo.journals.push({ Id: entryId, TxnDate: "2026-10-20", TotalAmt: 33, PrivateNote: `[checkin-test] [checkin:${inKindKey(orgId, "receipt", id)}]` });
+    qbo.createTimes.set(entryId, new Date());
+  };
+
+  it("a drifted gift with a stray entry shows both the drift and the stray entry, run after run", async () => {
+    const id = await booked();
+    qbo.journals[0].TotalAmt = 30;
+    strayEntry(id, "9100");
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ sweep: { flagged: 1 }, drift: { drifted: 1 } });
+    const note = (await posting(id)).qbNote;
+    expect(note).toMatch(/Changed in QuickBooks since booking \(JournalEntry \S+ amount\)/);
+    expect(note).toMatch(/JournalEntry 9100 carries this gift's key but is not linked/);
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ sweep: { flagged: 0 } });
+    expect((await posting(id)).qbNote).toBe(note);
+  });
+
+  it("skip answers the stray entry its note named: the sweep never notes it again, and still notes a new one", async () => {
+    const id = await booked();
+    qbo.journals[0].TotalAmt = 30;
+    strayEntry(id, "9100");
+    await runInKindQbPosting(orgId);
+    await expect(resolve(id, { action: "skip", reason: "Voided 9100 and corrected the value" })).resolves.toMatchObject({ qbState: "DISMISSED", qbNote: null });
+    const settled = (await events("IN_KIND_QB_SETTLED")).at(-1);
+    expect(JSON.parse(settled?.payload ?? "{}")).toMatchObject({ manual: true, answeredEntries: ["JournalEntry:9100"] });
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ sweep: { flagged: 0 } });
+    expect((await posting(id)).qbNote).toBeNull();
+
+    strayEntry(id, "9101");
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ sweep: { flagged: 1 } });
+    expect((await posting(id)).qbNote).toBe("QuickBooks JournalEntry 9101 carries this gift's key but is not linked to it; void it or link it");
+  });
+
+  it("match leaves the stray entry it does not link unanswered, so the next sweep notes it again", async () => {
+    const id = await booked();
+    qbo.journals[0].TxnDate = "2026-10-25";
+    strayEntry(id, "9100");
+    await runInKindQbPosting(orgId);
+    const entry = qbo.journals[0];
+    entry.Line = [{ JournalEntryLineDetail: { PostingType: "Credit", AccountRef: { value: "400" } } }];
+    await expect(resolve(id, { action: "match", journalEntryId: entry.Id })).resolves.toMatchObject({ qbState: "CREATED", qbNote: null });
+    expect(JSON.parse((await events("IN_KIND_QB_SETTLED")).at(-1)?.payload ?? "{}")).not.toHaveProperty("answeredEntries");
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ sweep: { flagged: 1 } });
+    expect((await posting(id)).qbNote).toBe("QuickBooks JournalEntry 9100 carries this gift's key but is not linked to it; void it or link it");
+  });
+
+  it("match answers no stray entry, so an entry a re-match lets go of is noted again", async () => {
+    const id = await booked();
+    const [own] = qbo.journals;
+    const value = own.TotalAmt;
+    const credit = [{ JournalEntryLineDetail: { PostingType: "Credit" as const, AccountRef: { value: "400" } } }];
+    own.TotalAmt = 30;
+    strayEntry(id, "9100");
+    const stray = qbo.journals[1];
+    Object.assign(stray, { TotalAmt: value, Line: credit });
+    await runInKindQbPosting(orgId);
+    await expect(resolve(id, { action: "match", journalEntryId: "9100" })).resolves.toMatchObject({ qbState: "CREATED", qbNote: null });
+    expect(JSON.parse((await events("IN_KIND_QB_SETTLED")).at(-1)?.payload ?? "{}")).not.toHaveProperty("answeredEntries");
+
+    Object.assign(own, { TotalAmt: value, Line: credit });
+    stray.TotalAmt = 30;
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ drift: { drifted: 1 } });
+    await expect(resolve(id, { action: "match", journalEntryId: own.Id })).resolves.toMatchObject({ qbState: "CREATED" });
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ sweep: { flagged: 1 } });
+    expect((await posting(id)).qbNote).toMatch(/JournalEntry 9100 carries this gift's key but is not linked/);
+  });
+
   it("match relinks a drifted gift to its own re-dated entry, with the new date as the baseline", async () => {
     const id = await booked();
     qbo.journals[0].TxnDate = "2026-10-25";
@@ -1212,5 +1330,47 @@ describeDb("in-kind QuickBooks drift", () => {
     qbo.purchases[0].TxnDate = "2026-10-26";
     await runInKindQbPosting(orgId);
     await expect(resolve(id, { action: "match", depositId: "700", purchaseId: "7001" })).resolves.toMatchObject({ qbState: "MATCHED" });
+  });
+});
+
+describeDb("in-kind drain — a QuickBooks throttle", () => {
+  it("tries a throttled gift once more, ends the run at the second throttle, and leaves every gift unstuck; the next run books them", async () => {
+    await switchOn();
+    const gifts = [await acceptedGift(), await acceptedGift()];
+    qbo.createAnswer = () => ({ status: 429 });
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ throttled: 2, failed: 0, posted: 0 });
+    for (const id of gifts) expect((await posting(id).catch(() => null))?.qbFirstFailedAt ?? null).toBeNull();
+    expect(failures).toEqual([]);
+    expect(await stuckItems()).toEqual([]);
+
+    qbo.createAnswer = null;
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 2, throttled: 0 });
+  });
+
+  it("a throttled book answers 503 and leaves the gift where finance had it", async () => {
+    await switchOn();
+    const id = await acceptedGift();
+    rulesThrow = new Error("rules exploded");
+    await runInKindQbPosting(orgId);
+    const { qbFirstFailedAt, qbNote } = await posting(id);
+    rulesThrow = null;
+    qbo.createAnswer = () => ({ status: 429 });
+
+    await expect(resolve(id, { action: "book" })).rejects.toMatchObject({ status: 503, message: expect.stringContaining("slow down") });
+    expect(await posting(id)).toMatchObject({ matchState: "NEEDS_FINANCE", qbFirstFailedAt, qbNote, claimedAt: null });
+  });
+
+  it("a throttled read for the gift's own earlier entry leaves it as it was, not stuck", async () => {
+    await switchOn();
+    const id = await acceptedGift();
+    qbo.dropAfterCreate = true;
+    await runInKindQbPosting(orgId);
+    qbo.dropAfterCreate = false;
+    const before = await posting(id);
+    qbo.sinceReadStatus = 429;
+
+    await expect(retryStuckItem({ id: `receipt ${id}`, step: "QuickBooks posting" })).rejects.toMatchObject({ status: 503 });
+    expect(await posting(id)).toMatchObject({ matchState: before.matchState, qbFirstFailedAt: before.qbFirstFailedAt, claimedAt: null });
   });
 });

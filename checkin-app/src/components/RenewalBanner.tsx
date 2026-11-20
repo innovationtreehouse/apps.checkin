@@ -9,13 +9,14 @@ import { useLoad } from "@/lib/api";
 /**
  * Non-blocking login-time nudge for household leads whose membership is up for
  * renewal. Distinct from OnboardingGate (a hard modal) — renewal is a reminder,
- * not a gate. Dismissable for the session. Best-effort on every page: a failed read
+ * not a gate. A household that has said it won't renew is told it still can.
+ * Dismissable for the session. Best-effort on every page: a failed read
  * shows nothing, retries nothing and moves nobody.
  */
 export default function RenewalBanner() {
   const { status } = useSession();
   const [dismissed, setDismissed] = useState(false);
-  const { data } = useLoad<{ renewalDue: boolean; dueDate?: string | null }>(
+  const { data } = useLoad<{ renewalDue: boolean; dueDate?: string | null; notRenewing?: boolean }>(
     status === "authenticated" ? "/api/membership/renewal-status" : null,
     { retry: false, expireOn401: false },
   );
@@ -30,11 +31,18 @@ export default function RenewalBanner() {
   };
 
   return (
-    <Alert color="yellow" variant="light" radius={0} withCloseButton onClose={dismiss} title="Membership renewal due">
+    <Alert color="yellow" variant="light" radius={0} withCloseButton onClose={dismiss}
+      title={data.notRenewing ? "You've told the Board you won't be renewing" : "Membership renewal due"}>
       <Group justify="space-between" align="center" wrap="wrap" gap="sm">
         <Text size="sm">
-          Your household membership is up for renewal{dueDate ? ` by ${dueDate}` : ""}. You&apos;re
-          still active — confirm to continue for another year.
+          {data.notRenewing ? (
+            <>You can still renew{dueDate ? ` by ${dueDate}` : ""} if you change your mind.</>
+          ) : (
+            <>
+              Your household membership is up for renewal{dueDate ? ` by ${dueDate}` : ""}. You&apos;re
+              still active — confirm to continue for another year.
+            </>
+          )}
         </Text>
         <Button component={Link} href="/membership" size="xs" fz={15} color="yellow" variant="filled">
           Renew now

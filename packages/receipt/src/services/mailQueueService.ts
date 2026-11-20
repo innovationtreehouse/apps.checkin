@@ -8,13 +8,14 @@ import { db } from "../db";
 import type { Prisma } from "../generated/prisma/client";
 import type { ReceiptPrincipal } from "../contract";
 import { getOrgId, ports, requireActor } from "../runtime";
-import { intakeDeferred, MAIL_CATCH_UP_BUDGET_MS, MAIL_CATCH_UP_CAP, mailRunState, startMailRun, STORED_STATUSES, type DmarcVerdict } from "./mailIntake";
-import { intakeMailedReceipt } from "./receiptService";
+import { intakeDeferred, isRefusalNote, MAIL_CATCH_UP_BUDGET_MS, MAIL_CATCH_UP_CAP, mailRunState, startMailRun, STORED_STATUSES, type DmarcVerdict } from "./mailIntake";
+import { intakeMailedReceipt, readInBackground } from "./receiptService";
+import { settleMailedBody } from "./ocrDrain";
 import { closeUnreplyable } from "./mailReplies";
 import { deleteStoredFiles, readStoredFile } from "../lib/fileStorage";
 import { ServiceError } from "@checkin/component-kit";
 
-const ITEM_FIELDS = { id: true, receivedAt: true, senderAddress: true, status: true, holdReason: true, dmarcVerdict: true, mimeType: true, receiptId: true } as const;
+const ITEM_FIELDS = { id: true, receivedAt: true, senderAddress: true, status: true, holdReason: true, dmarcVerdict: true, mimeType: true, receiptId: true, refusal: true } as const;
 
 const AssignSchema = z.union([
   z.object({ email: z.string().trim().min(1).max(320), remember: z.literal(true).optional() }).strict(),
@@ -32,10 +33,10 @@ export const CANNOT_REMEMBER = "Only mail whose sender check passed can be remem
 
 type Tx = Prisma.TransactionClient | typeof db;
 
-/** One audit row about a mail item; it belongs to no receipt, so the item id rides in valueBefore. */
-const auditItem = (tx: Tx, actor: ReceiptPrincipal, itemId: number, action: string, valueAfter: string | null = null) =>
+/** One audit row about a mail item; it belongs to no receipt, so the item id rides in valueBefore. A null actor is a system step. */
+export const auditItem = (tx: Tx, actor: ReceiptPrincipal | null, itemId: number, action: string, valueAfter: string | null = null) =>
   tx.receiptAuditLog.create({
-    data: { receiptId: null, userId: actor.id, username: actor.name, action, fieldChanged: "mail_item", valueBefore: String(itemId), valueAfter },
+    data: { receiptId: null, userId: actor?.id ?? null, username: actor?.name ?? null, action, fieldChanged: "mail_item", valueBefore: String(itemId), valueAfter },
   });
 
 /** One audit row about the ignore list; it belongs to no receipt, so no receipt's audit view returns it. */
@@ -59,9 +60,9 @@ function parse<T extends z.ZodType>(schema: T, input: unknown): z.output<T> {
 async function storedItem(id: number) {
   const item = await db.receiptMailItem.findFirst({
     where: { id, orgId: await getOrgId(), status: { in: STORED_STATUSES } },
-    select: { ...ITEM_FIELDS, fileBlob: true, fileKey: true },
+    select: { ...ITEM_FIELDS, fileKey: true },
   });
-  const fileBlob = item && (await readStoredFile(item));
+  const fileBlob = item && (await readStoredFile(item.fileKey));
   if (!item || !fileBlob || !item.mimeType) throw new ServiceError(404, "Mail item not found");
   return { ...item, fileBlob, mimeType: item.mimeType };
 }
@@ -130,12 +131,13 @@ export const mailQueueService = {
     const { fileBlob: _file, fileKey: _key, ...shown } = item;
     if (release) {
       const receiptId = await intakeDeferred(item, assignee, { uploadLimits: false, onClaim: auditClaim });
+      void readInBackground(receiptId, assignee, () => settleMailedBody(receiptId));
       return { ...shown, status: "assigned", receiptId };
     }
     const receiptId = await intakeMailedReceipt(assignee, Buffer.from(item.fileBlob), item.mimeType, async (tx, newId) => {
       const claimed = await tx.receiptMailItem.updateMany({
         where: { id, status: { in: STORED_STATUSES } },
-        data: { status: "assigned", receiptId: newId, fileBlob: null, fileKey: null },
+        data: { status: "assigned", receiptId: newId, fileKey: null },
       });
       if (claimed.count !== 1) throw new ServiceError(409, "This mail item was already handled. Refresh and retry.");
       await auditClaim(tx, newId);
@@ -146,6 +148,7 @@ export const mailQueueService = {
         ? (insert) => rememberAlias({ actorId: actor.id, personId: assignee.id, address: item.senderAddress, mailItemId: id }, insert)
         : undefined,
     });
+    void readInBackground(receiptId, assignee, () => settleMailedBody(receiptId));
     return { ...shown, status: "assigned", receiptId };
   },
 
@@ -174,27 +177,29 @@ export const mailQueueService = {
   /**
    * Discard a stored item with a reason. With `ignoreFile`, the same transaction lists its file
    * and discards every other stored item with that file, each audited with the same reason.
-   * A discarded row keeps its fileKey, naming the deleted object for an admin restore.
+   * A discarded row keeps its fileKey, naming the deleted object for an admin restore. A refusal note keeps no file, so
+   * it cannot be ignored: its ledger key is shared by every note.
    */
   async discard(id: number, rawInput: unknown) {
     const actor = await requireActor();
     const { reason, ignoreFile } = parse(DiscardSchema, rawInput);
     const orgId = await getOrgId();
     const { item, fileKeys } = await db.$transaction(async (tx) => {
-      const done = await tx.receiptMailItem.updateMany({ where: { id, orgId, status: { in: STORED_STATUSES } }, data: { status: "discarded", fileBlob: null } });
+      const done = await tx.receiptMailItem.updateMany({ where: { id, orgId, status: { in: STORED_STATUSES } }, data: { status: "discarded" } });
       if (done.count !== 1) throw new ServiceError(404, "Mail item not found");
       await auditItem(tx, actor, id, "mail_discarded", reason);
       const { attachmentHash, gmailMessageId, fileKey, ...item } = await tx.receiptMailItem.findUniqueOrThrow({
         where: { id },
         select: { ...ITEM_FIELDS, attachmentHash: true, gmailMessageId: true, fileKey: true },
       });
+      if (ignoreFile && isRefusalNote({ attachmentHash })) throw new ServiceError(409, "This item keeps no file to ignore");
       const messages = [gmailMessageId];
       const fileKeys = [fileKey];
       if (ignoreFile) {
         await addIgnored(tx, actor, attachmentHash, reason, "mail_item", String(id));
         const copies = await tx.receiptMailItem.updateManyAndReturn({
           where: { orgId, attachmentHash, status: { in: STORED_STATUSES } },
-          data: { status: "discarded", fileBlob: null },
+          data: { status: "discarded" },
           select: { id: true, gmailMessageId: true, fileKey: true },
         });
         fileKeys.push(...copies.map((c) => c.fileKey));

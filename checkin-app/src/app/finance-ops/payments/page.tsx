@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Badge, Button, Group, Modal, Stack, Text, Textarea } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { notifications } from '@mantine/notifications';
 import { errorMessage, HttpError, showError, showSuccess } from '@checkin/component-ui';
 import { api } from '@/lib/api';
 import { AlertBanner } from '@/components/admin/AlertBanner';
@@ -31,6 +30,7 @@ type PaymentException = {
   familyName: string | null;
   familyEmail: string | null;
   programName: string | null;
+  detail: string | null;
   live: {
     financialStatus: string | null;
     totalCents: number;
@@ -120,7 +120,7 @@ export default function PaymentProblemsPage() {
       }
     })
     .catch(() => {
-      notifications.show({ color: "red", message: "Network error loading payment problems.", autoClose: false });
+      showError("Network error loading payment problems.");
     })
     .finally(() => {
       setLoading(false);
@@ -236,6 +236,7 @@ export default function PaymentProblemsPage() {
         <>
           <Text fw={500}>{row.kind.replace(/_/g, ' ')}</Text>
           {row.programName && <Text size="sm" c="dimmed">{row.programName}</Text>}
+          {row.detail && <Text size="sm" c="dimmed">{row.detail}</Text>}
         </>
       ),
     },

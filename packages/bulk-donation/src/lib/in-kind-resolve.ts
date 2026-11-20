@@ -4,12 +4,12 @@
 // Set-account names a held line's account by hand, which the next book uses over every rule.
 import { ServiceError } from "@checkin/component-kit";
 import { dollarsToCents } from "@checkin/money";
-import { LINE_ACCOUNT_TYPES, QUICKBOOKS_LIST_STALE, staleListRefusal, appKeyOf, roleAccountIds, readCloseDate } from "@checkin/quickbooks";
+import { LINE_ACCOUNT_TYPES, QUICKBOOKS_LIST_STALE, THROTTLED_MESSAGE, staleListRefusal, appKeyOf, roleAccountIds, readCloseDate } from "@checkin/quickbooks";
 import { z } from "zod";
 import { db, isUniqueConstraintError } from "../db";
 import { readDonationSettings } from "../services/settingsService";
 import { recordEvent } from "../repositories/audit";
-import { getInKindCapital, getInKindQbPosting, getQuickBooksAccounts } from "../runtime";
+import { getInKindQbPosting, getQuickBooksAccounts } from "../runtime";
 import { inKindAcceptService, inKindReadiness, type GiftToBook, type InKindSource } from "../services/inKindAcceptService";
 import type { AuditContext } from "../workflows/disbursement.actor";
 import {
@@ -63,7 +63,7 @@ export async function openRun(orgId: string, actor: AuditContext, mode: "book" |
   if (!binding || !client) throw new ServiceError(503, "QuickBooks is not connected");
   const [accounts, classes] = await Promise.all([binding.booksMap.accounts(), binding.booksMap.classes()]);
   if (!inKindAccountsReady(accounts)) throw new ServiceError(409, "The books map does not name every in-kind account yet");
-  const [close, onAt, ctx] = await Promise.all([readCloseDate(client), inKindPostingOnAt(orgId), inKindReadiness.readReadiness(orgId)]);
+  const [close, onAt, ctx] = await Promise.all([readCloseDate(client), inKindPostingOnAt(orgId), inKindReadiness.readReadiness()]);
   const { open } = await inKindReadiness.giftsToBook(orgId, ctx);
   return { orgId, book: mode === "book", retry: mode === "retry", actor, client, accounts, classes, close, onAt, ctx, open, settings: await readDonationSettings(db, orgId), qbAccounts: chartOfAccounts(client) };
 }
@@ -78,9 +78,11 @@ async function readyGift(run: Run, source: InKindSource, id: number): Promise<Gi
 /**
  * Saves a settlement finance made, while the gift is still finance's and its posting is unchanged
  * since `read`: every claim moves `updatedAt`, so a create attempted meanwhile, first or retry, is
- * refused (it may have landed). Another gift holding an entry is refused too.
+ * refused (it may have landed). Another gift holding an entry is refused too. A skip answers
+ * every stray entry the note named; a match answers none, since the gift holds what it links and
+ * a later re-match may let go of it.
  */
-async function settleByFinance(orgId: string, gift: GiftRef, read: HeldPosting, s: Settlement, actor: Actor, payload: Record<string, unknown>): Promise<void> {
+async function settleByFinance(orgId: string, gift: GiftRef, read: HeldPosting, s: Settlement, actor: Actor, payload: Record<string, unknown>, answersEveryStray = false): Promise<void> {
   try {
     await db.$transaction(async (tx) => {
       const posting = await lockPosting(tx, orgId, gift.source, gift.id);
@@ -90,7 +92,8 @@ async function settleByFinance(orgId: string, gift: GiftRef, read: HeldPosting, 
       if (posting.matchState === QB_MATCH_STATE.DRIFT && s.entries.length > 0) {
         await tx.inKindBooking.deleteMany({ where: { orgId, source: gift.source, giftId: gift.id } });
       }
-      await writeSettlement(tx, orgId, gift, posting, s, actor, { from: posting.matchState, manual: true, ...payload });
+      const answered = answersEveryStray ? { answeredEntries: strayEntriesOf(posting.qbNote).map(answeredEntryRef) } : {};
+      await writeSettlement(tx, orgId, gift, posting, s, actor, { from: posting.matchState, manual: true, ...payload, ...answered });
     });
   } catch (err) {
     if (isUniqueConstraintError(err)) throw new ServiceError(409, `QuickBooks ${s.entries.map((e) => `${e.entity} ${e.id}`).join(", ")} is already held by another gift`);
@@ -109,6 +112,7 @@ async function linkOwnFirst(orgId: string, gift: GiftRef, read: HeldPosting, act
   if (!client) throw new ServiceError(503, "QuickBooks is not connected");
   const own = await lookupOwnJournal({ orgId, client }, gift, read.qbCreateAttemptedAt);
   if (!own) return false;
+  if (own.throttled) throw new ServiceError(503, THROTTLED_MESSAGE);
   if (own.failure) throw new ServiceError(503, "The QuickBooks check for the app's own entry failed; try again shortly");
   if (own.state !== QB_MATCH_STATE.CREATED) throw new ServiceError(409, own.note ?? "The app may already have booked this gift");
   await settleByFinance(orgId, gift, read, own, actor, { note: "the app had already booked this gift" });
@@ -183,7 +187,7 @@ async function skip(orgId: string, source: InKindSource, id: number, reason: str
   const ref = await giftRef(orgId, source, id);
   const posting = await heldPosting(orgId, source, id);
   if (await linkOwnFirst(orgId, ref, posting, actor)) return;
-  await settleByFinance(orgId, ref, posting, { state: QB_MATCH_STATE.DISMISSED, note: null, entries: [] }, actor, { reason: why });
+  await settleByFinance(orgId, ref, posting, { state: QB_MATCH_STATE.DISMISSED, note: null, entries: [] }, actor, { reason: why }, true);
 }
 
 /**
@@ -205,6 +209,7 @@ async function book(orgId: string, source: InKindSource, id: number, actor: Acto
   if (outcome === "not_ready") throw new ServiceError(409, "This gift waits on more than booking");
   if (outcome === "busy") throw new ServiceError(409, "The gift is being posted; try again shortly");
   if (outcome === "failed") throw new ServiceError(503, "QuickBooks failed while booking; the gift can be booked again");
+  if (outcome === "throttled") throw new ServiceError(503, `Not booked: ${THROTTLED_MESSAGE}`);
   const saved = await db.inKindPosting.findUniqueOrThrow({ where: { orgId_source_giftId: { orgId, source, giftId: id } } });
   switch (saved.matchState) {
     case QB_MATCH_STATE.CREATED:
@@ -213,7 +218,7 @@ async function book(orgId: string, source: InKindSource, id: number, actor: Acto
     case QB_MATCH_STATE.UNBOOKED:
       throw new ServiceError(409, "The gift is dated in closed books; it can only be skipped");
     default:
-      throw new ServiceError(409, `Not booked: the gift now waits as ${saved.matchState}${saved.qbNote ? ` (${saved.qbNote})` : ""}`);
+      throw new ServiceError(409, `Not booked: the gift now waits as ${saved.matchState}${saved.qbNote ? ` (${saved.qbNote.replaceAll("\n", ", ")})` : ""}`);
   }
 }
 
@@ -241,9 +246,13 @@ async function clearNote(orgId: string, source: InKindSource, id: number, reason
   });
 }
 
-/** Refuses (400) an account of a type the line can't book to: Fixed Asset for donated equipment, else an expense type. */
+/** Refuses (400) an account of a type the line can't book to: Fixed Asset for a line finance made capital, else an expense type. */
 async function refuseWrongType(orgId: string, source: InKindSource, id: number, lineId: number, quickBooksAccountId: string): Promise<void> {
-  const capital = (await getInKindCapital().assetLineIds(orgId, { giftSource: source, giftId: id })).includes(lineId);
+  const where = { id: lineId, donationId: id, donation: { orgId } };
+  const select = { isCapital: true } as const;
+  const line = source === "receipt" ? await db.inKindDonationLine.findFirst({ where, select }) : await db.manualInKindDonationLine.findFirst({ where, select });
+  if (!line) throw new ServiceError(404, "This gift has no such line");
+  const capital = line.isCapital === true;
   const allowed = capital ? LINE_ACCOUNT_TYPES.donatedCapital : LINE_ACCOUNT_TYPES.donatedGoods;
   const refusal = staleListRefusal(await getQuickBooksAccounts()(), quickBooksAccountId, allowed, capital ? "Donated equipment" : "A donated item");
   if (refusal) throw new ServiceError(400, refusal, QUICKBOOKS_LIST_STALE);

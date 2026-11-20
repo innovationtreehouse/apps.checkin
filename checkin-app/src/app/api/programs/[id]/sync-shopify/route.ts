@@ -7,6 +7,7 @@ import { setProgramInventory, STOCK_BOOKKEEPING_RESET } from "@/lib/shopify/stoc
 import { countStockTakenSeats } from "@/lib/program/capacity";
 import { isProgramCheckoutBroken } from "@/lib/programCheckout";
 import { isProgramStoreClosed } from "@/lib/programs/storeClosed";
+import { isSaleEnded } from "@/lib/programs/saleState";
 import { logBackendError } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
 
@@ -57,8 +58,10 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
             return apiError("Set a full (non-member) price before syncing to Shopify; the member price is never sent to the store.", 400);
         }
 
+        // An ended sale or program never goes back on sale: its public item is created hidden, with no stock.
+        const ended = program.phase === "FINISHED" || isSaleEnded(program);
         const publicData = needsPublic && basePriceCents
-            ? await createShopifySingleVariantProgram(program.name, basePriceCents, program.maxParticipants, programProductHandle(program, "public"), !(await isProgramStoreClosed()))
+            ? await createShopifySingleVariantProgram(program.name, basePriceCents, program.maxParticipants, programProductHandle(program, "public"), !ended && !(await isProgramStoreClosed()))
             : null;
         if (needsPublic && !publicData) {
             return apiError("Shopify sync failed or is not configured. Check Shopify credentials.", 502);
@@ -74,7 +77,11 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
             const { count } = await tx.program.updateMany({
                 where: { id: programId, shopifySyncToken: token },
                 // A new public variant starts its stock bookkeeping afresh.
-                data: { ...publicData, ...claimantData, ...(publicData && STOCK_BOOKKEEPING_RESET), shopifySyncStartedAt: null, shopifySyncToken: null },
+                data: {
+                    ...publicData, ...claimantData, ...(publicData && STOCK_BOOKKEEPING_RESET),
+                    ...(publicData && ended && { productHiddenAt: new Date() }),
+                    shopifySyncStartedAt: null, shopifySyncToken: null,
+                },
             });
             if (count !== 1) return null;
             const row = await tx.program.findUniqueOrThrow({ where: { id: programId } });
@@ -99,7 +106,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
         // After the sync's transaction commits: the stock writer updates this Program row itself.
         // A new capped variant starts sold out (0 available); lift it to capacity less the seats already taken.
         const max = updated.maxParticipants;
-        const stockOk = !publicCreated || max === null
+        const stockOk = !publicCreated || max === null || ended
             || await setProgramInventory(updated, async (db) => max - await countStockTakenSeats(programId, db), "initial-stock");
 
         const warning = claimantFailed

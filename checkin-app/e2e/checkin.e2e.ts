@@ -96,8 +96,7 @@ test.describe.serial("check-in and check-out in the browser", () => {
       await roster(page);
       await expect(page.getByText("Can't confirm building state")).toBeVisible();
       await expect(columnListing(page, "Keyholders", keyholderName)).toBeVisible();
-      // A minted family has no date of birth, and an unknown age counts as a youth.
-      await expect(columnListing(page, "Students", member.name)).toBeVisible();
+      await expect(columnListing(page, "Volunteers/Adults", member.name)).toBeVisible();
 
       expect((await scan(member.email, { intent: "OUT" })).json.type).toBe("checkout");
       await roster(page);

@@ -27,7 +27,7 @@ Status: **ALL 7 chips folded (V1–V7).** Every step tagged vs live code at base
 5. ✅ BG review (2-of-N, anti-collusion gates, board override w/ COI gate)
 6. ✅ Reviewer volunteer bit (does NOT gate payment — review runs in parallel)
 7. ✅ Payment via Shopify (member vs volunteer price + discount code)
-8. ✅ Webhook validates payment→activation (HMAC + variant-id check; H2 no-item → stays PENDING + board alert). NOTE: volunteer discount-code entitlement still NOT validated (`CO2`/#278)
+8. ✅ Webhook validates payment→activation (HMAC + variant-id check; H2 no-item → stays PENDING + board alert). NOTE: the webhook does not check volunteer discount-code entitlement; by register rule anyone holding the code can redeem it, and the daily reconcile flags unentitled use (`DISCOUNT_UNAUTHORIZED`)
 9. 🟡 Post-activation fan-out: welcome/congrats ✅ · **mailing-list `CM1` ❌ + badge-print `AT11` ❌ NOT wired to activation**
 10. ✅ 18+ student BG trigger on activation (`SA1` Trigger C)
 11. ✅ Scholarship/payment-plan request — the **ask** is now modeled distinctly (`scholarshipRequestKind`: SCHOLARSHIP / PAYMENT_PLAN / UNSURE, stated by the family, shown on the queue); the **grant** still rides the board payment-plan-certify override, and granted terms stay out of the app by decision
@@ -48,7 +48,7 @@ Status: **ALL 7 chips folded (V1–V7).** Every step tagged vs live code at base
 5. ✅ View membership status
 6. 🟡 BLOCKED recovery (`M16` — left-rail alert only, no right-column card)
 7. n/a household-merge (doesn't exist; M18 is the **person/record merge** #1103, confirmed)
-8. ✅ Archive family — a Board act, not the lead's (`docs/rules/people-households.md` § Archived households)
+8. ✅ Archive family — a Board act, not the lead's
 9. ❌ Set/maintain each person's t-shirt size (+staleness re-confirm, `P21`)
 10. ❌ See own family's tool certs (`SA9`)
 11. ❌ Re-read the membership agreement PDF (`M20`)

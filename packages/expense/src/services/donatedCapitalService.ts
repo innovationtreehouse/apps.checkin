@@ -7,11 +7,10 @@ import { assertOrg, getOrgId } from "../runtime";
 import { actorOf, callerId } from "../lib/caller";
 import { writeOrgAudit } from "../lib/audit";
 import { classifyCapital } from "../lib/expense-rules";
-import { formatItfa, fullyDepreciatedDate, nextItfaSeq } from "../lib/capital-register";
+import { registerAssets, unitCosts, unitsOf } from "../lib/capital-register";
 import { requireFinance, requireLiveBuckets } from "./approvalService";
 import { readExpenseSettings } from "./settingsService";
 import { ServiceError } from "@checkin/component-kit";
-import { allocateCents } from "@checkin/money";
 import { DonatedCapitalLineSchema, type DonatedCapitalLine } from "@checkin/receipt-types";
 
 /** What finance's screen reads: the line and its review. */
@@ -32,20 +31,13 @@ const VIEW_SELECT = {
   reviewedAt: true,
 } as const;
 
-const unitsOf = (quantity: number) => Math.max(1, Math.round(quantity));
-
-/** Each unit's share of the line's cost; the shares sum to the cost exactly, the first units taking the odd cents. */
-export function unitCosts(costCents: number, units: number): number[] {
-  return allocateCents(costCents, Array.from({ length: units }, () => 1));
-}
-
 /** Keeps the lines at or over the org's capital thresholds for review. A resend does nothing. */
 export async function submitDonatedLines(orgId: string, sent: DonatedCapitalLine[]): Promise<void> {
   await assertOrg(orgId);
   const lines = DonatedCapitalLineSchema.array().parse(sent);
   const settings = await readExpenseSettings(db, orgId);
   const candidates = lines.filter((l) =>
-    classifyCapital(l.costCents, [{ unitPriceCents: unitCosts(l.costCents, unitsOf(l.quantity))[0] }], settings),
+    classifyCapital(l.costCents, [unitCosts(l.costCents, unitsOf(l.quantity))[0]], settings),
   );
   if (candidates.length === 0) return;
   await db.donatedCapitalLine.createMany({ data: candidates.map((l) => ({ orgId, ...l })), skipDuplicates: true });
@@ -111,25 +103,11 @@ export async function reviewDonatedLine(
     if (reviewed.count === 0) throw new ServiceError(409, "This line is already reviewed");
 
     if (input.isCapital) {
-      const costs = unitCosts(line.costCents, unitsOf(line.quantity));
-      const fdd = fullyDepreciatedDate(line.acquisitionDate, input.depreciationYears);
-      let seq = await nextItfaSeq(tx, orgId);
-      for (const costCents of costs) {
-        await tx.capitalAsset.create({
-          data: {
-            orgId,
-            assetNumber: formatItfa(seq++),
-            description: line.description,
-            acquisitionDate: line.acquisitionDate,
-            costCents,
-            depreciationYears: input.depreciationYears,
-            fullyDepreciatedDate: fdd,
-            status: "tracked",
-            sourceDonatedLineId: line.id,
-            seeded: false,
-          },
-        });
-      }
+      const { depreciationYears } = input;
+      const units = unitCosts(line.costCents, unitsOf(line.quantity)).map((costCents) => ({ costCents, acquisitionDate: line.acquisitionDate, depreciationYears, description: line.description }));
+      const { giftSource } = line;
+      if (giftSource !== "receipt" && giftSource !== "manual") throw new ServiceError(409, `Donated line ${line.id} names an unknown gift source, ${giftSource}`);
+      await registerAssets(tx, actor, orgId, { kind: "gift_line", giftSource, giftId: line.giftId, giftLineId: line.giftLineId, donatedLineId: line.id }, units);
     }
     await writeOrgAudit(tx, orgId, actor, {
       entityType: "donated_capital_line",

@@ -55,11 +55,11 @@ export async function setBooksMapAccount(actorId: number, role: string, body: Re
     if (!isBooksMapRole(role)) throw badRequest(`Unknown books-map role "${role}"`);
     if (body.quickBooksAccountId === undefined) throw badRequest("quickBooksAccountId is required");
     const quickBooksAccountId = readQuickBooksId(body.quickBooksAccountId, "quickBooksAccountId");
-    if (quickBooksAccountId !== null) await refuseWrongType(role, quickBooksAccountId);
     return prisma.$transaction(async (tx) => {
         const before = await tx.booksMapRoleAccount.findUnique({ where: { role }, select: { quickBooksAccountId: true } });
         const oldId = before?.quickBooksAccountId ?? null;
         if (oldId === quickBooksAccountId) return { role, quickBooksAccountId };
+        if (quickBooksAccountId !== null) await refuseWrongType(role, quickBooksAccountId);
         if (quickBooksAccountId === null) {
             // A concurrent clear may have removed the row first; the loser writes nothing.
             const { count } = await tx.booksMapRoleAccount.deleteMany({ where: { role } });
@@ -91,6 +91,8 @@ export const LOCAL_QUICKBOOKS_ACCOUNTS = [
     { id: "8007", name: "Equipment repairs", accountType: "Other Expense", active: true },
     { id: "8008", name: "Kit materials", accountType: "Cost of Goods Sold", active: true },
     { id: "8009", name: "Equipment", accountType: "Fixed Asset", active: true },
+    { id: "8010", name: "Donations:In-kind", accountType: "Income", active: true },
+    { id: "8011", name: "In-kind clearing", accountType: "Other Current Asset", active: true },
 ];
 
 /** Every account in the app's QuickBooks list by its full name, inactive ones flagged, for the role picker and every account check. */

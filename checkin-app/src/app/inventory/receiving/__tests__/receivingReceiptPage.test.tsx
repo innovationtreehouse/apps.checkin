@@ -10,11 +10,12 @@ const mockApi = jest.fn();
 
 jest.mock("@mantine/notifications", () => ({ notifications: { show: (...args: unknown[]) => mockShow(...args) } }));
 let mockIsManager = true;
-jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 1, isInventoryManager: mockIsManager } } }) }));
+let mockIsBoard = false;
+jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 1, isInventoryManager: mockIsManager, isBoardMember: mockIsBoard } } }) }));
 
 const receipt = {
   id: 7, state: "pending_review", validationNotes: null, createdAt: "2026-10-02T15:30:00Z",
-  inventoryAppliedAt: null, expenseAppliedAt: null, donationAppliedAt: null, matchingPendingSince: null as string | null, matchingPendingReason: null as string | null,
+  inventoryAppliedAt: null as string | null, expenseAppliedAt: null, donationAppliedAt: null, matchingPendingSince: null as string | null, matchingPendingReason: null as string | null,
   applyFirstFailedAt: null as string | null,
 };
 const baseDetail = {
@@ -33,11 +34,12 @@ const baseDetail = {
   ],
 };
 let detail = baseDetail;
+let auditRows: unknown[] = [];
 
 jest.mock("@checkin/workflow-mapping/components/api", () => ({
   ...jest.requireActual("@checkin/workflow-mapping/components/api"),
   api: (...args: unknown[]) => mockApi(...args),
-  useLoad: (path: string) => ({ data: path === "/receipts/7" ? detail : [], error: null, reload: jest.fn() }),
+  useLoad: (path: string) => ({ data: path === "/receipts/7" ? detail : path.startsWith("/audit-log") ? auditRows : [], error: null, reload: jest.fn() }),
 }));
 
 beforeAll(() => {
@@ -53,7 +55,9 @@ beforeAll(() => {
 beforeEach(() => {
   jest.clearAllMocks();
   detail = baseDetail;
+  auditRows = [];
   mockIsManager = true;
+  mockIsBoard = false;
 });
 
 const wrap = () => render(<MantineProvider><ReceiptPage /></MantineProvider>);
@@ -550,5 +554,82 @@ describe("the receiving page for one receipt", () => {
     await waitFor(() =>
       expect(mockShow).toHaveBeenCalledWith(expect.objectContaining({ message: "Receipt is already being applied", color: "red", autoClose: false })),
     );
+  });
+});
+
+describe("Close out", () => {
+  /** An apply_failed receipt whose expense failed; `inventoryApplied` stamps its inventory leg. */
+  const failed = (inventoryApplied = false) => ({
+    ...baseDetail,
+    ReceivedReceipt: { ...receipt, state: "apply_failed", inventoryAppliedAt: inventoryApplied ? "2026-11-08T10:00:00Z" : null },
+    ReceivedReceiptLineStatus: [
+      { ...baseDetail.ReceivedReceiptLineStatus[0], recognitionStatus: "recognized", assignedGtin13: "0000000000017" },
+      baseDetail.ReceivedReceiptLineStatus[1],
+    ],
+  });
+  const closeOut = () => screen.getByRole("button", { name: "Close out" });
+  /** Renders, then lets the mapped part's name lookup settle. */
+  const wrapSettled = async () => {
+    const view = wrap();
+    await act(async () => {});
+    return view;
+  };
+
+  it.each([
+    ["an inventory manager", true, false],
+    ["a board member", false, true],
+  ])("is offered to %s on an apply_failed receipt", async (_who, manager, board) => {
+    mockIsManager = manager;
+    mockIsBoard = board;
+    detail = failed();
+    await wrapSettled();
+    expect(closeOut()).toBeInTheDocument();
+  });
+
+  it("is not offered to anyone else, or on a receipt that isn't apply_failed", async () => {
+    mockIsManager = false;
+    detail = failed();
+    const { unmount } = await wrapSettled();
+    expect(screen.queryByRole("button", { name: "Close out" })).not.toBeInTheDocument();
+    unmount();
+    mockIsManager = true;
+    detail = { ...failed(), ReceivedReceipt: { ...failed().ReceivedReceipt, state: "applying", applyFirstFailedAt: "2026-11-08T10:00:00Z" } };
+    await wrapSettled();
+    expect(screen.queryByRole("button", { name: "Close out" })).not.toBeInTheDocument();
+  });
+
+  it("sends only once each unapplied part has a disposition and the note isn't blank", async () => {
+    detail = failed(true);
+    mockApi.mockResolvedValue({ id: 7, state: "closed_by_hand" });
+    await wrapSettled();
+    fireEvent.click(closeOut());
+    const form = screen.getByRole("region", { name: "Close out" });
+    const send = within(form).getByRole("button", { name: "Close out" });
+    expect(within(form).queryByText("Inventory (not applied)")).not.toBeInTheDocument();
+    expect(send).toBeDisabled();
+    fireEvent.click(within(form).getByLabelText("Done by hand"));
+    fireEvent.change(within(form).getByLabelText(/Note/), { target: { value: "   " } });
+    expect(send).toBeDisabled();
+    fireEvent.change(within(form).getByLabelText(/Note/), { target: { value: " Entered in QuickBooks " } });
+    expect(send).toBeEnabled();
+    fireEvent.click(send);
+    await waitFor(() => expect(mockApi).toHaveBeenCalledWith("/receipts/7/close-out", {
+      method: "POST",
+      body: JSON.stringify({ note: "Entered in QuickBooks", legs: { expense: "done_by_hand" } }),
+    }));
+  });
+
+  it("shows which parts applied, how the rest were settled, and the note once closed", async () => {
+    detail = { ...failed(true), ReceivedReceipt: { ...failed(true).ReceivedReceipt, state: "closed_by_hand" } };
+    auditRows = [{
+      eventType: "receipt_closed_by_hand", actorUsername: "Pat", createdAt: "2026-11-09T10:00:00Z",
+      details: { note: "Entered in QuickBooks", legs: { expense: "done_by_hand", inventory: "applied" } },
+    }];
+    await wrapSettled();
+    expect(screen.getByText("Expense: Done by hand")).toBeInTheDocument();
+    expect(screen.getByText("Inventory: Applied")).toBeInTheDocument();
+    expect(screen.getByText("Note: Entered in QuickBooks")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Close out" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry apply" })).not.toBeInTheDocument();
   });
 });

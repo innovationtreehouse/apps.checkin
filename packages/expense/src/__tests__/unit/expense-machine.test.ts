@@ -142,8 +142,8 @@ describe("invariants — legal vs illegal transitions", () => {
     expect(legalEventTypes("owner_approval")).toContain("ALL_APPROVALS_TERMINAL");
   });
 
-  it("returns an expense past owner approval to it when an approval reopens", () => {
-    for (const state of ["capital_review", "set_depreciation_cycle", "qb_pending", "qb_on_hold", "qb_error"]) {
+  it("returns an expense in a QuickBooks step to owner approval when an approval reopens", () => {
+    for (const state of ["qb_pending", "qb_on_hold", "qb_error"]) {
       expect(isLegalTransition(state, "APPROVAL_REOPENED")).toBe(true);
     }
     expect(
@@ -153,7 +153,7 @@ describe("invariants — legal vs illegal transitions", () => {
         { type: "APPROVAL_REOPENED" },
       ]),
     ).toBe("owner_approval");
-    for (const state of ["pending", "assign_ownership", "owner_approval", "qb_complete", "qb_skipped", "rejected"]) {
+    for (const state of ["pending", "assign_ownership", "owner_approval", "capital_review", "set_depreciation_cycle", "qb_complete", "qb_skipped", "rejected"]) {
       expect(isLegalTransition(state, "APPROVAL_REOPENED")).toBe(false);
     }
   });

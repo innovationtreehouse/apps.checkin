@@ -7,6 +7,7 @@ import { lockReconciliation } from "./reconcile";
 const BUCKET_ENTITY = "budget_owner";
 const UNUSABLE = "bucket.unusable";
 const RESTORED = "bucket.restored";
+const UNSENT = "bucket.alert_unsent";
 
 /** Why a bucket can't take sales, or null when it can. */
 export function bucketIssue(bucket: OwnerInfo | undefined, activeClassIds: ReadonlySet<string>): string | null {
@@ -77,21 +78,36 @@ async function assignedBucketItemCounts(orgId: string): Promise<Map<number, numb
   return new Map(rows.flatMap((r) => (r.budgetOwnerId === null ? [] : [[r.budgetOwnerId, r._count._all] as const])));
 }
 
-/** Buckets the last run found unusable and not yet restored, with the reason. Reads the audit log only. */
-export async function openBucketIssues(orgId: string): Promise<Map<number, string>> {
+/** Buckets the last run found unusable and not yet restored, with the reason, and those whose alert was not sent. Reads the audit log only. */
+async function bucketEvents(orgId: string): Promise<{ open: Map<number, string>; unsent: Set<number> }> {
   const events = await db.incomeAuditLog.findMany({
-    where: { orgId, entityType: BUCKET_ENTITY, action: { in: [UNUSABLE, RESTORED] } },
+    where: { orgId, entityType: BUCKET_ENTITY, action: { in: [UNUSABLE, RESTORED, UNSENT] } },
     orderBy: { id: "asc" },
     select: { entityId: true, action: true, reason: true },
   });
   const open = new Map<number, string>();
+  const unsent = new Set<number>();
   for (const e of events) {
     const id = Number(e.entityId);
+    if (e.action === UNSENT) {
+      unsent.add(id);
+      continue;
+    }
+    unsent.delete(id);
     if (e.action === UNUSABLE) open.set(id, e.reason ?? "");
     else open.delete(id);
   }
-  return open;
+  return { open, unsent };
 }
+
+/** Buckets the last run found unusable and not yet restored, with the reason. Reads the audit log only. */
+export async function openBucketIssues(orgId: string): Promise<Map<number, string>> {
+  return (await bucketEvents(orgId)).open;
+}
+
+/** Buckets whose break still needs an alert: newly unusable, or recorded but not alerted. */
+const toAlert = (unusable: Map<number, string>, { open, unsent }: Awaited<ReturnType<typeof bucketEvents>>) =>
+  [...unusable].filter(([id]) => !open.has(id) || unsent.has(id));
 
 /**
  * The run's bucket check: alert finance once for each assigned bucket that has become
@@ -102,30 +118,37 @@ export async function openBucketIssues(orgId: string): Promise<Map<number, strin
 export async function checkBuckets(orgId: string): Promise<BucketProblem> {
   const alerts = getIncomeConfig().alerts;
   if (!alerts) throw new Error("income alerts are not bound");
-  const [{ unusable, itemCounts, names }, open] = await Promise.all([assess(orgId), openBucketIssues(orgId)]);
+  const [{ unusable, itemCounts, names }, events] = await Promise.all([assess(orgId), bucketEvents(orgId)]);
   if (!unusable) return problemOf(null);
-  const fresh = [...unusable].filter(([id]) => !open.has(id));
-  const restored = [...open.keys()].filter((id) => !unusable.has(id));
+  const fresh = toAlert(unusable, events);
+  const restored = [...events.open.keys()].filter((id) => !unusable.has(id));
   if (!fresh.length && !restored.length) return problemOf(unusable);
 
   const recorded = await db.$transaction(async (tx) => {
     // Held with the run's lock so two runs never record the same bucket.
     await lockReconciliation(tx, orgId, true);
-    const current = await openBucketIssues(orgId);
-    const newly = fresh.filter(([id]) => !current.has(id));
+    const current = await bucketEvents(orgId);
+    const newly = toAlert(new Map(fresh), current);
     for (const [id, issue] of newly) {
       await recordAudit(tx, { orgId, actorUserId: null, action: UNUSABLE, entityType: BUCKET_ENTITY, entityId: id, reason: issue });
     }
-    for (const id of restored.filter((r) => current.has(r))) {
+    for (const id of restored.filter((r) => current.open.has(r))) {
       await recordAudit(tx, { orgId, actorUserId: null, action: RESTORED, entityType: BUCKET_ENTITY, entityId: id });
     }
     return newly;
   });
-  // Sent after commit, outside the lock: a failed send loses that email, never doubles it.
-  await Promise.allSettled(
+  // Sent after commit, outside the lock; a bucket whose alert is not sent is alerted again by the next run.
+  const sent = await Promise.allSettled(
     recorded.map(([id, issue]) =>
       alerts.bucketUnusable({ orgId, budgetOwnerId: id, bucketName: names.get(id) ?? null, issue, itemCount: itemCounts.get(id) ?? 0 }),
     ),
   );
+  const unsent = recorded.filter((_, i) => {
+    const r = sent[i];
+    return r.status === "rejected" || !r.value;
+  });
+  for (const [id] of unsent) {
+    await recordAudit(db, { orgId, actorUserId: null, action: UNSENT, entityType: BUCKET_ENTITY, entityId: id });
+  }
   return problemOf(unusable);
 }

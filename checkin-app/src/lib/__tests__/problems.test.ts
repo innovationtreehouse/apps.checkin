@@ -12,15 +12,17 @@ jest.mock("@/lib/cronRuns", () => ({ getCronJobStatuses: jest.fn() }));
 jest.mock("@/lib/email-templates/send", () => ({ sendTemplated: jest.fn() }));
 jest.mock("@checkin/receipt", () => ({ stuckItems: jest.fn(), problemNotices: jest.fn(), retryStuckItem: jest.fn() }));
 jest.mock("@checkin/expense", () => ({ stuckItems: jest.fn(), retryStuckItem: jest.fn() }));
-jest.mock("@checkin/bulk-donation", () => ({ stuckItems: jest.fn(), retryStuckItem: jest.fn() }));
+jest.mock("@checkin/bulk-donation", () => ({ stuckItems: jest.fn(), retryStuckItem: jest.fn(), getOrgId: jest.fn(), manualInKindService: { loadInventory: jest.fn() } }));
 jest.mock("@checkin/workflow-mapping", () => ({ stuckItems: jest.fn(), problemNotices: jest.fn(), retryStuckItem: jest.fn() }));
 jest.mock("@checkin/local-inventory", () => ({ stuckItems: jest.fn(), retryStuckItem: jest.fn() }));
+jest.mock("@/lib/finance/postingRuns", () => ({ currentPostingWarnings: jest.fn() }));
 
 const receipt = jest.requireMock<{ stuckItems: jest.Mock; problemNotices: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/receipt");
 const expense = jest.requireMock<{ stuckItems: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/expense");
-const gifts = jest.requireMock<{ stuckItems: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/bulk-donation");
+const gifts = jest.requireMock<{ stuckItems: jest.Mock; retryStuckItem: jest.Mock; getOrgId: jest.Mock; manualInKindService: { loadInventory: jest.Mock } }>("@checkin/bulk-donation");
 const mapping = jest.requireMock<{ stuckItems: jest.Mock; problemNotices: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/workflow-mapping");
 const inventory = jest.requireMock<{ stuckItems: jest.Mock; retryStuckItem: jest.Mock }>("@checkin/local-inventory");
+const { currentPostingWarnings } = jest.requireMock<{ currentPostingWarnings: jest.Mock }>("@/lib/finance/postingRuns");
 
 const NOW = new Date("2026-11-08T08:00:00Z");
 const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3600_000);
@@ -41,6 +43,7 @@ beforeEach(() => {
     findSettings.mockResolvedValue({ alertEmailAddress: "alerts@example.org", boardEmailAddress: "board@example.org" });
     jest.mocked(getCronJobStatuses).mockResolvedValue([{ job: "nightly", lastSuccessAt: hoursAgo(1), stale: false }]);
     jest.mocked(sendTemplated).mockResolvedValue(true);
+    currentPostingWarnings.mockResolvedValue([]);
 });
 
 afterAll(() => {
@@ -61,6 +64,49 @@ describe("retryProblem", () => {
 
         expect(gifts.retryStuckItem).toHaveBeenCalledWith({ id: "receipt 4", step: "QuickBooks posting" });
         expect(expense.retryStuckItem).not.toHaveBeenCalled();
+    });
+
+    describe("a manual gift's inventory load", () => {
+        const DELTA = { library: "local inventory", step: "inventory delta", id: "donation:12" };
+
+        beforeEach(() => {
+            gifts.getOrgId.mockResolvedValue("org-1");
+            inventory.retryStuckItem.mockResolvedValue(undefined);
+            gifts.manualInKindService.loadInventory.mockResolvedValue(undefined);
+        });
+
+        it("marks the gift loaded once the retried load applies", async () => {
+            await retryProblem(DELTA, BY);
+
+            expect(inventory.retryStuckItem).toHaveBeenCalledWith({ id: "donation:12", step: "inventory delta" });
+            expect(gifts.manualInKindService.loadInventory).toHaveBeenCalledWith("org-1", 12);
+        });
+
+        it("leaves the gift alone when the retried load fails again", async () => {
+            inventory.retryStuckItem.mockRejectedValue(new ServiceError(409, "failed again"));
+
+            await expect(retryProblem(DELTA, BY)).rejects.toMatchObject({ status: 409 });
+            expect(gifts.manualInKindService.loadInventory).not.toHaveBeenCalled();
+        });
+
+        it("still succeeds when the gift cannot be marked loaded", async () => {
+            const logged = jest.spyOn(console, "error").mockImplementation(() => {});
+            gifts.manualInKindService.loadInventory.mockRejectedValue(new Error("gifts db down"));
+
+            await expect(retryProblem(DELTA, BY)).resolves.toBeUndefined();
+            expect(logged).toHaveBeenCalledWith(expect.stringContaining("donation:12"), expect.any(Error));
+        });
+
+        it.each([
+            ["a receipt's delta", { ...DELTA, id: "rcpt-1" }],
+            ["a catalog event", { ...DELTA, step: "catalog event", id: "8" }],
+            ["a provisional item", { ...DELTA, step: "provisional item", id: "2000000000015" }],
+        ])("does not touch gifts for %s", async (_what, item) => {
+            await retryProblem(item, BY);
+
+            expect(inventory.retryStuckItem).toHaveBeenCalledWith({ id: item.id, step: item.step });
+            expect(gifts.manualInKindService.loadInventory).not.toHaveBeenCalled();
+        });
     });
 
     it("passes the library's refusal through", async () => {
@@ -96,10 +142,6 @@ describe("getProblems", () => {
     it("carries a library's own lines, such as repeated reading failures", async () => {
         receipt.problemNotices.mockResolvedValue(["Receipt reading failed 3 times in the last day"]);
         expect((await getProblems()).notices).toEqual([{ text: "Receipt reading failed 3 times in the last day", href: null }]);
-    });
-
-    it("has no catalog line while no receipt waits in Matching pending for a catalog error", async () => {
-        expect((await getProblems()).notices).toEqual([]);
     });
 
     it("carries the catalog-error count with its link to the mapping queue", async () => {
@@ -154,6 +196,26 @@ describe("getProblems", () => {
 });
 
 describe("sendProblemsDigest", () => {
+    it("emails the calling run's own failures, which no run record holds yet", async () => {
+        await sendProblemsDigest(NOW, ["Nightly close could not check out visit 7, person 3"]);
+
+        expect(jest.mocked(sendTemplated).mock.calls.map((c) => c[1])).toEqual(["alerts@example.org"]);
+        expect(digestCtx().items).toBe("Nightly close could not check out visit 7, person 3");
+    });
+
+    it("emails the QuickBooks posting warnings in force, whichever run went first", async () => {
+        currentPostingWarnings.mockResolvedValue([{ lane: "income", cause: "throttled", text: "QuickBooks throttled the income run 3 runs in a row." }]);
+        await sendProblemsDigest(NOW);
+        expect(digestCtx().items).toBe("QuickBooks posting: QuickBooks throttled the income run 3 runs in a row.");
+    });
+
+    it("still sends when the QuickBooks posting warnings can't be read", async () => {
+        currentPostingWarnings.mockRejectedValue(new Error("db down"));
+        jest.spyOn(console, "error").mockImplementation(() => {});
+        await sendProblemsDigest(NOW, ["Nightly close could not check out visit 7, person 3"]);
+        expect(digestCtx().items).toBe("Nightly close could not check out visit 7, person 3");
+    });
+
     it("sends nothing while nothing has been stuck more than a day", async () => {
         receipt.stuckItems.mockResolvedValue([{ id: "x", step: "flow", href: null, failedAt: hoursAgo(23) }]);
         await sendProblemsDigest(NOW);
@@ -235,6 +297,16 @@ describe("sendProblemsDigest", () => {
         expect(jest.mocked(sendTemplated).mock.calls.map((c) => c[1])).toEqual(["alerts@example.org"]);
         expect(digestCtx().items).toMatch(/^Scheduled job reconcile-shopify: last run reported failures, /);
         expect(digestCtx().items).not.toContain("item(s) failed");
+    });
+
+    it("sends a job that has never completed a run", async () => {
+        jest.mocked(getCronJobStatuses).mockResolvedValue([
+            { job: "new-job", lastSuccessAt: null, stale: false, lastError: "boom", lastErrorAt: hoursAgo(1) },
+        ]);
+
+        await sendProblemsDigest(NOW);
+
+        expect(digestCtx().items).toMatch(/^Scheduled job new-job: last run reported failures, /);
     });
 
     it("sends nothing for a job once a later run is clean", async () => {

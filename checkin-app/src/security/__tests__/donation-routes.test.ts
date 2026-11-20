@@ -55,11 +55,12 @@ const DECISIONS = endpoints.filter(e => e.endsWith('/decision'));
 const BY_BUCKET = 'GET /api/donations/in-kind/by-bucket';
 const SETTLE = 'POST /api/donations/in-kind/receipt/[id]/settle';
 const QB_RESOLVES = endpoints.filter(e => e.endsWith('/qb-resolve'));
+const CAPITAL = endpoints.filter(e => e.endsWith('/capital-review') || e.endsWith('/set-depreciation-cycle'));
 const DETAILS = ['GET /api/donations/in-kind/receipt/[id]', 'GET /api/donations/in-kind/manual/[id]'];
 const SETTINGS_PATCH = 'PATCH /api/donations/settings';
 const SETTINGS = ['GET /api/donations/settings', SETTINGS_PATCH];
 const financeWrites = writes.filter(e => !DECISIONS.includes(e) && e !== SETTINGS_PATCH);
-const IN_KIND_MANUAL = endpoints.filter(e => e.includes('/api/donations/in-kind/manual') && !DECISIONS.includes(e) && !DETAILS.includes(e) && !QB_RESOLVES.includes(e));
+const IN_KIND_MANUAL = endpoints.filter(e => e.includes('/api/donations/in-kind/manual') && !DECISIONS.includes(e) && !DETAILS.includes(e) && !QB_RESOLVES.includes(e) && !CAPITAL.includes(e));
 const OPS = [{ isOperations: true }, { isInventoryManager: true }];
 
 async function callJson(endpoint: string) {
@@ -86,10 +87,10 @@ beforeEach(() => {
 });
 
 describe('donation registry — shape', () => {
-    it('registers 32 JSON routes (14 reads, 18 writes) and the blob file route', () => {
-        expect(endpoints).toHaveLength(32);
+    it('registers 36 JSON routes (14 reads, 22 writes) and the blob file route', () => {
+        expect(endpoints).toHaveLength(36);
         expect(reads).toHaveLength(14);
-        expect(writes).toHaveLength(18);
+        expect(writes).toHaveLength(22);
         expect(DECISIONS).toEqual([
             'POST /api/donations/in-kind/receipt/[id]/decision',
             'POST /api/donations/in-kind/manual/[id]/decision',
@@ -97,6 +98,12 @@ describe('donation registry — shape', () => {
         expect(QB_RESOLVES).toEqual([
             'POST /api/donations/in-kind/receipt/[id]/qb-resolve',
             'POST /api/donations/in-kind/manual/[id]/qb-resolve',
+        ]);
+        expect(CAPITAL).toEqual([
+            'POST /api/donations/in-kind/receipt/[id]/capital-review',
+            'POST /api/donations/in-kind/manual/[id]/capital-review',
+            'POST /api/donations/in-kind/receipt/[id]/set-depreciation-cycle',
+            'POST /api/donations/in-kind/manual/[id]/set-depreciation-cycle',
         ]);
         expect(IN_KIND_MANUAL).toHaveLength(3);
         expect(endpoints.filter(e => e.includes('/qb-candidates') || e.includes('/qb-exclusions'))).toEqual([]);
@@ -284,8 +291,8 @@ describe('UploadedFile.fileBlob is file-only', () => {
     });
 });
 
-describe('in-kind decision, settle, qb-resolve, by-bucket and settings routes never grant pii', () => {
-    it.each([...DECISIONS, SETTLE, ...QB_RESOLVES, BY_BUCKET, ...SETTINGS])('%s: no view holds a pii token', endpoint => {
+describe('in-kind decision, settle, qb-resolve, capital, by-bucket and settings routes never grant pii', () => {
+    it.each([...DECISIONS, SETTLE, ...QB_RESOLVES, ...CAPITAL, BY_BUCKET, ...SETTINGS])('%s: no view holds a pii token', endpoint => {
         const tokens = (getRoute(endpoint)?.orderedView ?? []).flatMap(([, t]) => [...t]);
         expect(tokens.length).toBeGreaterThan(0);
         expect(tokens.some(t => t.endsWith(':pii'))).toBe(false);
@@ -401,6 +408,23 @@ describe('in-kind qb-resolve routes', () => {
     });
 });
 
+describe('in-kind capital routes', () => {
+    it.each(CAPITAL)('%s replies to finance with the gift lines and no donor', async endpoint => {
+        signIn(7, { isFinance: true });
+        const model = endpoint.includes('/manual/') ? 'ManualInKindDonationLine' : 'InKindDonationLine';
+        const line = { id: 2, donationId: 1, description: 'Laser cutter', quantity: 1, valueCents: 280000, isCapital: true, depreciationYears: 5, capitalBucketId: 4 };
+        const impl = jest.fn(async () => ({
+            [model]: [{ ...line, donorLastName: 'Doe', donation: { id: 1, donorFirstName: 'Pat', donorLastName: 'Doe', donorCompanyName: 'Acme' } }],
+        }));
+        const res = await handler(endpoint, impl)(
+            new NextRequest('http://localhost/api/donations/in-kind/x/1/capital-review', { method: 'POST' }),
+            { params: Promise.resolve({ id: '1' }) },
+        );
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual([{ ...line, donation: { id: 1 } }]);
+    });
+});
+
 describe('in-kind gift detail routes', () => {
     const gift = {
         id: 1,
@@ -415,7 +439,11 @@ describe('in-kind gift detail routes', () => {
         inventoryLoadedAt: '2026-10-01T12:00:00.000Z',
         qbFirstFailedAt: '2026-10-03T00:00:00.000Z',
         qbLastError: 'QuickBooks 500',
-        lines: [{ id: 2, gtin13: '0000000000017', description: 'Bench vise', quantity: 3, valueCents: 900, suggestedValueCents: 800 }],
+        capitalReviewNeeded: true,
+        lines: [{
+            id: 2, gtin13: '0000000000017', description: 'Bench vise', quantity: 3, valueCents: 900, suggestedValueCents: 800,
+            isCapital: true, depreciationYears: 5, capitalBucketId: 4, capitalDecidedAt: '2026-10-04T00:00:00.000Z', registeredAt: '2026-10-05T00:00:00.000Z',
+        }],
         events: [{ id: 5, eventType: 'IN_KIND_DECIDED', actorUsername: 'fin', occurredAt: '2026-10-02T00:00:00.000Z', payload: '{"outcome":"ACCEPTED"}' }],
     };
     const donor = { donorFirstName: 'Pat', donorLastName: 'Doe', donorCompanyName: 'Acme' };
@@ -427,7 +455,7 @@ describe('in-kind gift detail routes', () => {
                 ...gift,
                 ...donor,
                 uploadedByUserId: 9,
-                lines: [{ ...gift.lines[0], donorLastName: 'Doe' }],
+                lines: [{ ...gift.lines[0], donorLastName: 'Doe', capitalDecidedByUserId: 7 }],
                 events: [{ ...gift.events[0], actorUserId: 7, orgId: 'treehouse' }],
             },
         }));

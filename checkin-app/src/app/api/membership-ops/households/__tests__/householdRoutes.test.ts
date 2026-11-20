@@ -27,7 +27,7 @@ jest.mock("next-auth/next", () => ({ getServerSession: jest.fn() }));
 jest.mock("@/lib/auth-options", () => ({ authOptions: {} }));
 jest.mock("@/lib/logger", () => ({ logger: { error: jest.fn() }, logBackendError: jest.fn() }));
 jest.mock("@/lib/getFullAttendance", () => ({ invalidateAttendanceCache: jest.fn() }));
-jest.mock("@/lib/membership/selfGrantGuard", () => ({ refuseSelfGrant: jest.fn().mockResolvedValue(false), SELF_GRANT_REFUSAL_MESSAGE: "refused" }));
+jest.mock("@/lib/membership/selfGrantGuard", () => ({ refuseSelfGrant: jest.fn().mockResolvedValue(false), findSelfGrantRefusal: jest.fn().mockResolvedValue(null), recordSelfGrantRefusal: jest.fn(), SELF_GRANT_REFUSAL_MESSAGE: "refused" }));
 jest.mock("@/lib/roles", () => ({ ...jest.requireActual("@/lib/roles"), lockBoardRoles: jest.fn() }));
 jest.mock("@/lib/membership/householdStatus", () => ({
     ...jest.requireActual("@/lib/membership/householdStatus"),
@@ -45,7 +45,7 @@ jest.mock("@/lib/prisma", () => {
     const household = { findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn() };
     const tx = {
         household,
-        person: { update: jest.fn(), updateMany: jest.fn(), findUniqueOrThrow: jest.fn() },
+        person: { update: jest.fn(), updateMany: jest.fn(), findUnique: jest.fn(), findUniqueOrThrow: jest.fn(), count: jest.fn() },
         auditLog: { create: jest.fn() },
         account: { deleteMany: jest.fn() },
         $executeRaw: jest.fn(),
@@ -57,7 +57,7 @@ jest.mock("@/lib/prisma", () => {
             household,
             boardSettings: { findUnique: jest.fn().mockResolvedValue(null) },
             person: { findUnique: jest.fn() },
-            auditLog: { create: jest.fn() },
+            auditLog: { create: jest.fn(), findMany: jest.fn() },
             $transaction: jest.fn((fn: (t: typeof tx) => unknown) => fn(tx)),
             tx,
         },
@@ -70,7 +70,9 @@ const mockSession = getServerSession as jest.Mock;
 const db = prisma as unknown as {
     household: { findUnique: jest.Mock; findMany: jest.Mock; update: jest.Mock };
     person: { findUnique: jest.Mock };
-    tx: { person: { update: jest.Mock; updateMany: jest.Mock; findUniqueOrThrow: jest.Mock } };
+    boardSettings: { findUnique: jest.Mock };
+    auditLog: { findMany: jest.Mock };
+    tx: { person: { update: jest.Mock; updateMany: jest.Mock; findUnique: jest.Mock; findUniqueOrThrow: jest.Mock; count: jest.Mock } };
 };
 
 function signIn(user: Record<string, unknown>) {
@@ -120,10 +122,37 @@ describe("GET /api/membership-ops/households", () => {
         const args = db.household.findMany.mock.calls[0][0];
         expect(args).not.toHaveProperty("include");
         expect(Object.keys(args.select).sort()).toEqual(["householdMembers", "id", "name", "orgMembership"]);
-        expect(Object.keys(args.select.orgMembership.select).sort()).toEqual(["memberSince", "processes", "status"]);
+        expect(Object.keys(args.select.orgMembership.select).sort()).toEqual(["id", "memberSince", "notRenewingYear", "processes", "status"]);
         const [row] = (await res.json()).households;
-        expect(Object.keys(row).sort()).toEqual(["awaitingPayment", "bgValidUntil", "householdMembers", "id", "name", "orgMembership", "settledForComingYear", "validUntil"]);
+        expect(Object.keys(row).sort()).toEqual(["awaitingPayment", "bgValidUntil", "householdMembers", "id", "name", "notRenewing", "orgMembership", "settledForComingYear", "validUntil"]);
         expect(row.orgMembership).toEqual({ status: "ACTIVE", memberSince: null });
+        expect(row.notRenewing).toBeNull();
+    });
+
+    it("labels a household that said it won't renew into the noted year, with the date it said so", async () => {
+        signIn({ isBoardMember: true });
+        jest.useFakeTimers({ now: new Date(Date.UTC(2026, 6, 15)), doNotFake: ["nextTick", "setImmediate"] });
+        try {
+            db.boardSettings.findUnique.mockResolvedValueOnce({ orgMembershipYearBoundary: new Date(Date.UTC(2020, 8, 1)), bgRecheckMonths: 0 });
+            const said = new Date(Date.UTC(2026, 6, 3));
+            db.auditLog.findMany.mockResolvedValueOnce([
+                { affectedEntityId: 9, timestamp: new Date(Date.UTC(2025, 6, 3)), newData: { notRenewingYear: 2025 } },
+                { affectedEntityId: 9, timestamp: said, newData: { notRenewingYear: 2026 } },
+                { affectedEntityId: 9, timestamp: new Date(Date.UTC(2026, 6, 4)), newData: { status: "ACTIVE" } },
+            ]);
+            db.household.findMany.mockResolvedValue([
+                { id: 10, name: "Noted", householdMembers: [], orgMembership: { id: 9, status: "ACTIVE", memberSince: null, notRenewingYear: 2026, processes: [] } },
+                { id: 11, name: "Old note", householdMembers: [], orgMembership: { id: 8, status: "ACTIVE", memberSince: null, notRenewingYear: 2025, processes: [] } },
+            ]);
+            const res = await GET(request("http://localhost/api/membership-ops/households"));
+            const [noted, old] = (await res.json()).households;
+            expect(noted.notRenewing).toEqual({ year: 2026, since: said.toISOString() });
+            expect(noted.orgMembership).toEqual({ status: "ACTIVE", memberSince: null });
+            expect(old.notRenewing).toBeNull();
+            expect(db.auditLog.findMany.mock.calls[0][0].where).toMatchObject({ tableName: "OrgMembership", affectedEntityId: { in: [9] } });
+        } finally {
+            jest.useRealTimers();
+        }
     });
 });
 
@@ -161,12 +190,25 @@ describe("admin routes returning a Household row", () => {
         signIn(SYSADMIN_ONLY);
         db.person.findUnique.mockResolvedValue({ id: 5, name: "Mover", householdId: 20 });
         db.household.findUnique.mockResolvedValue(HOUSEHOLD);
+        db.tx.person.findUnique.mockResolvedValue({ householdId: 20, isHouseholdLead: false });
         db.tx.person.updateMany.mockResolvedValue({ count: 1 });
         db.tx.person.findUniqueOrThrow.mockResolvedValue({ id: 5, name: "Mover", householdId: 10, isHouseholdLead: false, household: HOUSEHOLD });
         const res = await reassignPOST(request("http://localhost/api/membership-ops/participants/5/household", "POST", { householdId: 10 }), { params: Promise.resolve({ id: "5" }) });
         expect(res.status).toBe(200);
         const { participant } = await res.json();
         expect(participant.household.id).toBe(10);
+    });
+
+    it("POST /api/membership-ops/participants/[id]/household refuses moving the household's only lead", async () => {
+        signIn(SYSADMIN_ONLY);
+        db.person.findUnique.mockResolvedValue({ id: 5, name: "Mover", householdId: 20 });
+        db.household.findUnique.mockResolvedValue(HOUSEHOLD);
+        db.tx.person.findUnique.mockResolvedValue({ householdId: 20, isHouseholdLead: true });
+        db.tx.person.count.mockResolvedValue(1);
+        const res = await reassignPOST(request("http://localhost/api/membership-ops/participants/5/household", "POST", { householdId: 10 }), { params: Promise.resolve({ id: "5" }) });
+        expect(res.status).toBe(409);
+        expect(db.tx.person.updateMany).not.toHaveBeenCalled();
+        expect(db.tx.person.update).not.toHaveBeenCalled();
     });
 });
 

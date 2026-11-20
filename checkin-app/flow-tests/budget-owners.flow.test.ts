@@ -188,6 +188,7 @@ describe("bucket approvers", () => {
       name: "Board Household Member",
       email: memberEmail,
       parentEmail: BOARD,
+      over25: true,
     });
     expect(adminAdd.status).toBe(403);
 

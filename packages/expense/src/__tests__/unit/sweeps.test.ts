@@ -63,4 +63,20 @@ describe("expense sweeps", () => {
     vi.mocked(drainExpenseOutbox).mockResolvedValue("unbound");
     expect((await runExpenseQbPosting()).failedParts).toEqual([]);
   });
+
+  it("renews the posting slot before each QuickBooks step and skips the rest once another run holds it", async () => {
+    vi.mocked(recoverStrandedQbExpenses).mockResolvedValue({ checked: 0, failed: 0 });
+    vi.mocked(drainExpenseOutbox).mockResolvedValue("unbound");
+    vi.mocked(checkQbDrift).mockResolvedValue("unbound");
+    vi.mocked(sweepOutcomeNotices).mockResolvedValue({ sent: 0, failed: 0 });
+    vi.mocked(checkQbDrift).mockClear();
+    const turn = { yielded: false, renew: vi.fn().mockResolvedValueOnce(true).mockResolvedValue(false) };
+
+    const result = await runExpenseQbPosting(turn);
+
+    expect(turn.renew).toHaveBeenCalledTimes(2);
+    expect(drainExpenseOutbox).toHaveBeenCalledWith(expect.any(Date), turn);
+    expect(checkQbDrift).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ qbPost: "unbound", qbDrift: "slot_lost", failedParts: [] });
+  });
 });

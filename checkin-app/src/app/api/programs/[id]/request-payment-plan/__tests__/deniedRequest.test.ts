@@ -45,7 +45,7 @@ const post = () => (POST as unknown as (req: NextRequest, ctx: unknown) => Promi
 describe("request-payment-plan on a denied place", () => {
     beforeEach(() => {
         jest.mocked(prisma.programParticipant.findUnique).mockResolvedValue(deniedRow as never);
-        jest.mocked(prisma.person.findFirst).mockResolvedValue({ id: 2 } as never); // the household lead
+        jest.mocked(prisma.person.findFirst).mockResolvedValue({ id: 2, dateOfBirth: null, isDeclaredAdult: true } as never); // the household lead, a declared adult
     });
 
     it.each([

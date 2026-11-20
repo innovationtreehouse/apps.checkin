@@ -1,11 +1,13 @@
 import prisma from "@/lib/prisma";
 import type { AuthenticatedUser } from "@/types/auth";
 import type { DbClient, TxClient } from "@/lib/db-client";
-import { personBgOpen } from "@/lib/membership/lifecycle";
+import { fromWhere, personBgOpen } from "@/lib/membership/lifecycle";
+import { KVA_KIND, findSignedCurrentKva } from "@/lib/membership/keyVolunteerProcess";
+import { recallSigningRequests } from "@/lib/membership/keyVolunteer";
 import { disputingReviews, loadCheckReviews } from "@/lib/membership/checkStanding";
 import { settleHouseholdBg } from "@/lib/membership/settleHouseholdBg";
 import { logBackendError } from "@/lib/logger";
-import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
+import { findSelfGrantRefusal, recordSelfGrantRefusal, type SelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
 import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
 import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
 import { KIND_TO_FLAG, setRoleFlag, lockBoardRoles, RoleMatrixError, trustStatus } from "@/lib/roles";
@@ -39,6 +41,15 @@ export class MergeRefusedError extends Error {
         super(refusal.error);
     }
 }
+
+/** A self-grant refusal found under the lock; executeMerge records it after the rollback. */
+class SelfGrantMergeRefusedError extends MergeRefusedError {
+    constructor(public readonly selfGrant: SelfGrantRefusal) {
+        super(OWN_HOUSEHOLD);
+    }
+}
+
+const OWN_HOUSEHOLD: MergeRefusal = { status: 403, error: "You cannot merge a record in your own household — someone outside your household must." };
 
 const ALREADY_MERGED: MergeRefusal = { status: 409, error: "Cannot merge: one of these participants has already been merged." };
 
@@ -104,17 +115,15 @@ export async function prepareMerge(
     // The merge takes the newer of the two lastBackgroundCheck dates
     // (resolveKeeperUpdate), so without this an actor can seat a background-check
     // date on their own family with no second actor — the thing attest() and
-    // boardResetReview refuse. Both subjects count: the tombstone's household is
+    // boardResetReview refuse. Both subjects count: the merged-away record's household is
     // where the carried date comes from, the keeper's is where it lands, and the
     // two need not be the same household. No role bypasses this, and an actor
     // whose household can't be resolved is refused (fail closed).
     if (actor) {
-        const attempt = { table: "Person" as const, attempted: { keepId: keep.id, mergeId: merge.id } };
-        if (
-            await refuseSelfGrant(prisma, actor.id, { personId: keep.id, householdId: keep.householdId }, attempt)
-            || await refuseSelfGrant(prisma, actor.id, { personId: merge.id, householdId: merge.householdId }, attempt)
-        ) {
-            return { refused: { status: 403, error: "You cannot merge a record in your own household — someone outside your household must." } };
+        const selfGrant = await ownHouseholdRefusal(prisma, actor, keep, merge);
+        if (selfGrant) {
+            await recordSelfGrantRefusal(prisma, selfGrant);
+            return { refused: OWN_HOUSEHOLD };
         }
     }
 
@@ -138,6 +147,13 @@ export async function prepareMerge(
     if (trustBlock) return { refused: trustBlock };
 
     return { plan: { keep, merge, choices: parsed.choices, emailChangeReason: reason } };
+}
+
+/** The self-grant refusal for either subject, or null. Writes nothing. */
+async function ownHouseholdRefusal(db: DbClient, actor: AuthenticatedUser, keep: KeepSubject, merge: MergeSubject): Promise<SelfGrantRefusal | null> {
+    const attempt = { table: "Person" as const, attempted: { keepId: keep.id, mergeId: merge.id } };
+    return await findSelfGrantRefusal(db, actor.id, { personId: keep.id, householdId: keep.householdId }, attempt)
+        ?? await findSelfGrantRefusal(db, actor.id, { personId: merge.id, householdId: merge.householdId }, attempt);
 }
 
 /** A merge that would change a disputed person's check facts, as a refusal, or null. */
@@ -180,6 +196,7 @@ function emptyTallies() {
     return {
         visits: 0,
         personBgArchived: 0,
+        kvaArchived: 0,
         rawBadgeLogs: 0,
         presenceEvents: 0,
         zohoSigners: 0,
@@ -194,7 +211,7 @@ function emptyTallies() {
         programParticipants: { migrated: 0, left: 0 },
         programVolunteers: { migrated: 0, deduped: 0 },
         rsvps: { migrated: 0, deduped: 0, left: 0 },
-        toolStatuses: { migrated: 0, left: 0 },
+        toolStatuses: { migrated: 0, deduped: 0, left: 0 },
         bgAttestations: { migrated: 0, left: 0 },
         corporationLeads: { migrated: 0, deduped: 0 },
         corporationMembers: { migrated: 0, deduped: 0 },
@@ -218,7 +235,7 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
     const mergeId = merge.id;
 
     // The timeout also covers the waits in lockMergeRows.
-    const { personMergeId, lockedKeeper } = await prisma.$transaction(async (tx) => {
+    const { personMergeId, lockedKeeper, recallRequestIds } = await prisma.$transaction(async (tx) => {
         await lockMergeRows(tx, keepId, mergeId, [keep.householdId, merge.householdId]);
         const live = await recheckSubjects(tx, plan, actor);
         await clearMergedIdentity(tx, mergeId);
@@ -227,7 +244,7 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
         const moved = emptyTallies();
         await moveVisits(tx, keepId, mergeId, moved);
         await moveJoinTables(tx, live.keep, live.merge, moved);
-        await moveRemainingRelations(tx, keepId, mergeId, actor, moved);
+        const recallRequestIds = await moveRemainingRelations(tx, keepId, mergeId, actor, moved);
         await moveRoles(tx, keepId, mergeId, actor, moved);
         await moveAttestations(tx, live.keep, live.merge, moved);
         await moveCorporations(tx, live.keep, live.merge, moved);
@@ -242,8 +259,11 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
         const archiveId = await archiveMerge(tx, keepId, live.merge);
         await deleteMergedPerson(tx, mergeId);
         await auditMerge(tx, plan, live, actor, moved);
-        return { personMergeId: archiveId, lockedKeeper: live.keep };
-    }, { maxWait: 5_000, timeout: 15_000 });
+        return { personMergeId: archiveId, lockedKeeper: live.keep, recallRequestIds };
+    }, { maxWait: 5_000, timeout: 15_000 }).catch(async (e: unknown) => {
+        if (e instanceof SelfGrantMergeRefusedError) await recordSelfGrantRefusal(prisma, e.selfGrant);
+        throw e;
+    });
 
     // The keeper may now carry a newer check date or another person's review, and the
     // merged-away record has left its household: settle both on their people's checks.
@@ -256,24 +276,19 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
         }
     }
     await notifyBoardOfYouthLeads([lockedKeeper]);
+    await recallSigningRequests(recallRequestIds);
 
     invalidateAttendanceCache();
 }
 
 /**
- * Lock order: BOARD roles, then the application rows this merge writes, then both
- * households' membership rows, then both Household rows (an archived one refuses the
- * merge), then both Person rows in id order. BOARD first is the order a role
- * change takes. Application before membership is the order payment, clearance
- * and reset take, so a merge never holds a household row while it waits on an
- * application. The membership rows serialize a deny with the merge even when
- * there are no BOARD rows to lock.
+ * Locks, in the order lib/lockOrder.ts states: BOARD roles, both households'
+ * membership rows, both Household rows (an archived one refuses the merge), both
+ * Person rows, then the application rows this merge writes. The membership rows
+ * serialize a deny with the merge even when there are no BOARD rows to lock.
  */
 async function lockMergeRows(tx: TxClient, keepId: number, mergeId: number, householdIds: number[]): Promise<void> {
     await lockBoardRoles(tx);
-    await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess"
-        WHERE "subjectPersonId" IN (${keepId}, ${mergeId}) OR "zohoSignerPersonId" = ${mergeId}
-        ORDER BY id FOR UPDATE`;
     await lockAndFindDeniedHousehold(tx, householdIds);
     try {
         await lockLiveHouseholds(tx, householdIds);
@@ -282,6 +297,9 @@ async function lockMergeRows(tx: TxClient, keepId: number, mergeId: number, hous
         throw e;
     }
     await lockBothSubjects(tx, keepId, mergeId);
+    await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess"
+        WHERE "subjectPersonId" IN (${keepId}, ${mergeId}) OR "zohoSignerPersonId" = ${mergeId}
+        ORDER BY id FOR UPDATE`;
 }
 
 /**
@@ -313,6 +331,9 @@ async function recheckSubjects(tx: TxClient, plan: MergePlan, actor: Authenticat
     if (keep.householdId !== plan.keep.householdId || merge.householdId !== plan.merge.householdId) {
         throw new MergeRefusedError({ status: 409, error: "One of these participants changed household while merging. Reload and try again." });
     }
+    // The actor's household is re-read under the Household locks, so an actor who joined either household since the plan is refused.
+    const selfGrant = actor ? await ownHouseholdRefusal(tx, actor, keep, merge) : null;
+    if (selfGrant) throw new SelfGrantMergeRefusedError(selfGrant);
     const refusal = subjectRefusal(keep, merge, actor) ?? await collisionRefusal(tx, keep, merge);
     if (refusal) throw new MergeRefusedError(refusal);
     const parsed = parseFieldChoices(keep, merge, plan.choices);
@@ -375,9 +396,9 @@ async function moveVisits(tx: TxClient, keepId: number, mergeId: number, moved: 
 
 /**
  * 4. Move join tables. Decision-bearing collisions (ProgramParticipant,
- * ToolStatus, future RSVP) were refused under the locks; a `left` row means one
- * raced in since, and refuseLeftRows refuses the merge. Bare-join collisions
- * (ProgramVolunteer) auto-dedupe.
+ * different-level ToolStatus, future RSVP) were refused under the locks; a `left`
+ * row means one raced in since, and refuseLeftRows refuses the merge. Bare-join
+ * collisions (ProgramVolunteer) and same-level ToolStatus pairs auto-dedupe.
  */
 async function moveJoinTables(tx: TxClient, keep: KeepSubject, merge: MergeSubject, moved: Tallies): Promise<void> {
     const keepId = keep.id;
@@ -428,20 +449,31 @@ async function moveJoinTables(tx: TxClient, keep: KeepSubject, merge: MergeSubje
     }
 
     for (const tool of merge.toolStatuses) {
-        if (!keep.toolStatuses.find(k => k.toolId === tool.toolId)) {
+        const kept = keep.toolStatuses.find(k => k.toolId === tool.toolId);
+        if (!kept) {
             await tx.toolStatus.update({
                 where: { personId_toolId: { toolId: tool.toolId, personId: mergeId } },
                 data: { personId: keepId },
             });
             moved.toolStatuses.migrated++;
+        } else if (kept.level === tool.level) {
+            // Matching on level too: a level changed since the read is left, and refuses the merge.
+            const { count } = await tx.toolStatus.deleteMany({
+                where: { toolId: tool.toolId, personId: mergeId, level: tool.level },
+            });
+            if (count > 0) moved.toolStatuses.deduped++;
+            else moved.toolStatuses.left++;
         } else {
             moved.toolStatuses.left++;
         }
     }
 }
 
-/** 5. Move the remaining MOVE relations — single updateMany each, no delete. */
-async function moveRemainingRelations(tx: TxClient, keepId: number, mergeId: number, actor: AuthenticatedUser | null, moved: Tallies): Promise<void> {
+/**
+ * 5. Move the remaining MOVE relations — single updateMany each, no delete.
+ * Returns the Zoho request ids of archived duplicate agreements, to recall after commit.
+ */
+async function moveRemainingRelations(tx: TxClient, keepId: number, mergeId: number, actor: AuthenticatedUser | null, moved: Tallies): Promise<string[]> {
     await tx.account.updateMany({ where: { userId: mergeId }, data: { userId: keepId } });
     // Sessions are auth artifacts, not person data, and there's no reason for
     // the keeper to inherit the merged-away login session. Sessions are
@@ -452,6 +484,8 @@ async function moveRemainingRelations(tx: TxClient, keepId: number, mergeId: num
     await tx.orgMembershipProcess.updateMany({ where: { subjectPersonId: mergeId }, data: { subjectPersonId: keepId } });
     // Both sides can have owed a check — the survivor keeps exactly one.
     moved.personBgArchived = await archiveDuplicatePersonBg(tx, keepId, actor ? actor.id : 0);
+    const kva = await archiveDuplicateKva(tx, keepId, actor ? actor.id : 0);
+    moved.kvaArchived = kva.archived;
     await tx.program.updateMany({ where: { leadMentorId: mergeId }, data: { leadMentorId: keepId } });
     await tx.programInstance.updateMany({ where: { leadMentorId: mergeId }, data: { leadMentorId: keepId } });
     await tx.trustedAdult.updateMany({ where: { trustedAdultPersonId: mergeId }, data: { trustedAdultPersonId: keepId } });
@@ -477,14 +511,15 @@ async function moveRemainingRelations(tx: TxClient, keepId: number, mergeId: num
     // constraint on toId, so a plain updateMany.
     moved.archivedMerges = (await tx.personMerge.updateMany({ where: { toId: mergeId }, data: { toId: keepId } })).count;
     moved.bucketOwners = (await tx.budgetOwner.updateMany({ where: { ownerId: mergeId }, data: { ownerId: keepId } })).count;
+    return kva.recallRequestIds;
 }
 
 /**
- * PersonRole.personId is CASCADE — a role left on the tombstone is a security
- * grant a later delete destroys. Each role moves through setRoleFlag, the role
+ * PersonRole.personId is CASCADE — a role left on the merged-away record is a
+ * security grant its delete destroys. Each role moves through setRoleFlag, the role
  * routes' choke point, so it runs their guards and writes one audit row per
  * change: every role is granted to the keeper first (a no-op when the keeper
- * already holds it), then revoked from the tombstone, so a moving BOARD never
+ * already holds it), then revoked from the merged-away record, so a moving BOARD never
  * counts down to zero. KEY_VOLUNTEER is granted first and revoked last, the
  * order its rules need; the move is not a new grant, so the Key Volunteer
  * agreement check is skipped (the agreements moved with the other relations).
@@ -493,13 +528,13 @@ async function moveRemainingRelations(tx: TxClient, keepId: number, mergeId: num
  * read still moves.
  */
 async function moveRoles(tx: TxClient, keepId: number, mergeId: number, actor: AuthenticatedUser | null, moved: Tallies): Promise<void> {
-    const tombstoneRoles = (await tx.personRole.findMany({
+    const mergedAwayRoles = (await tx.personRole.findMany({
         where: { personId: mergeId },
         select: { role: true, grantedById: true, grantedAt: true },
     })).sort((a, b) => Number(b.role === "KEY_VOLUNTEER") - Number(a.role === "KEY_VOLUNTEER"));
-    if (tombstoneRoles.length > 0 && !actor) throw new RoleMatrixError("Forbidden");
+    if (mergedAwayRoles.length > 0 && !actor) throw new RoleMatrixError("Forbidden");
     if (actor) {
-        for (const { role, grantedById, grantedAt } of tombstoneRoles) {
+        for (const { role, grantedById, grantedAt } of mergedAwayRoles) {
             const granted = await setRoleFlag(tx, keepId, KIND_TO_FLAG[role], true, actor, { move: true });
             if (granted.changed) {
                 await tx.personRole.update({
@@ -511,7 +546,7 @@ async function moveRoles(tx: TxClient, keepId: number, mergeId: number, actor: A
                 moved.roles.deduped++;
             }
         }
-        for (const { role } of [...tombstoneRoles].reverse()) {
+        for (const { role } of [...mergedAwayRoles].reverse()) {
             await setRoleFlag(tx, mergeId, KIND_TO_FLAG[role], false, actor);
         }
     }
@@ -764,4 +799,67 @@ async function archiveDuplicatePersonBg(tx: TxClient, personId: number, actorId:
         archived++;
     }
     return archived;
+}
+
+/**
+ * One human has at most ONE open Key Volunteer agreement, and none once they have
+ * signed the current version. Both merge subjects can hold one, and re-pointing
+ * both leaves the survivor two, or an open one beside a signed current one. Keep
+ * the signed current row or else the furthest-along open row, and archive the
+ * rest, as archiveDuplicatePersonBg does. An open row beside a signature below the
+ * current version is the person's re-sign, so it stays.
+ *
+ * Rank of open rows: the newer agreement version, then a Zoho request already sent
+ * (the person has begun signing), then the older row. The losers' Zoho requests are
+ * returned for the caller to recall after commit; an archived process never matches
+ * the Zoho webhook, so a signature landing first changes nothing.
+ */
+async function archiveDuplicateKva(tx: TxClient, personId: number, actorId: number): Promise<{ archived: number; recallRequestIds: string[] }> {
+    const openWhere = { kind: KVA_KIND, contractSignedAt: null, ...fromWhere("PENDING_EXTERNAL_ACTION") };
+    const open = await tx.orgMembershipProcess.findMany({
+        where: { subjectPersonId: personId, ...openWhere },
+        select: { id: true, agreementVersion: true, zohoEnvelopeId: true },
+    });
+    if (open.length === 0) return { archived: 0, recallRequestIds: [] };
+    const signed = await findSignedCurrentKva(tx, personId);
+    if (!signed && open.length < 2) return { archived: 0, recallRequestIds: [] };
+
+    const rank = (p: (typeof open)[number]) => [p.agreementVersion ?? 0, p.zohoEnvelopeId ? 1 : 0, -p.id];
+    const ranked = [...open].sort((a, b) => {
+        const [ra, rb] = [rank(a), rank(b)];
+        for (let i = 0; i < ra.length; i++) if (ra[i] !== rb[i]) return rb[i] - ra[i];
+        return 0;
+    });
+    const survivor = signed ?? ranked[0];
+    const losers = signed ? ranked : ranked.slice(1);
+
+    let archived = 0;
+    const recallRequestIds: string[] = [];
+    for (const loser of losers) {
+        // CAS on the open set: a signature that just landed on this row wins.
+        const { count } = await tx.orgMembershipProcess.updateMany({
+            where: { id: loser.id, kind: KVA_KIND, contractSignedAt: null, ...fromWhere("PENDING_EXTERNAL_ACTION") },
+            data: { status: "ARCHIVED", archivedFromStatus: "PENDING_EXTERNAL_ACTION", stageEnteredAt: new Date() },
+        });
+        if (count !== 1) continue;
+        await tx.auditLog.create({
+            data: {
+                actorId,
+                action: "EDIT",
+                tableName: "OrgMembershipProcess",
+                affectedEntityId: loser.id,
+                oldData: { status: "PENDING_EXTERNAL_ACTION" },
+                newData: {
+                    status: "ARCHIVED",
+                    reason: signed
+                        ? "open Key Volunteer agreement superseded by a signed current one on participant merge"
+                        : "duplicate Key Volunteer agreement resolved by participant merge",
+                    survivorProcessId: survivor.id,
+                },
+            },
+        });
+        if (loser.zohoEnvelopeId) recallRequestIds.push(loser.zohoEnvelopeId);
+        archived++;
+    }
+    return { archived, recallRequestIds };
 }

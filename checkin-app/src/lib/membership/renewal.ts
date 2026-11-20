@@ -8,7 +8,9 @@ import { IN_FLIGHT_INITIAL, IN_FLIGHT_RENEWAL, asHouseholdProcess, handledThisCy
 import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { personActor, systemActor } from "@/lib/auditActor";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
+import { clearNotRenewingInTx } from "@/lib/membership/notRenewing";
 import { membershipYearLabel, membershipYearOf, nextBoundary, monthsBefore, renewalWindow, membershipYearCycle, liveMembershipYear, RENEWAL_LEAD_MONTHS } from "@/lib/programYear";
+import { lockProcessRows } from "@/lib/lockOrder";
 
 export { nextBoundary, monthsBefore, renewalWindow, membershipYearCycle, liveMembershipYear };
 
@@ -208,7 +210,9 @@ export async function beginRenewal(processId: number, actorId: number) {
     if (!membership) throw new RenewalError("not_found", "Membership not found.");
 
     const outcome = await prisma.$transaction(async (tx) => {
+        // Membership, then application: the order lib/lockOrder.ts states.
         const [locked] = await tx.$queryRaw<{ status: string }[]>`SELECT status FROM "OrgMembership" WHERE id = ${orgMembershipId} FOR UPDATE`;
+        await lockProcessRows(tx, [processId]);
         if (locked?.status === "DENIED") return "denied" as const;
         const blocked = await tx.orgMembershipProcess.findFirst({
             where: { orgMembershipId, kind: { in: ["INITIAL", "RENEWAL"] }, status: "BLOCKED" },
@@ -226,6 +230,8 @@ export async function beginRenewal(processId: number, actorId: number) {
             await tx.auditLog.create({
                 data: { ...personActor(actorId), action: "EDIT", tableName: "OrgMembershipProcess", affectedEntityId: processId, oldData: { status: "PENDING_RENEWAL" }, newData: { status: "PENDING_EXTERNAL_ACTION" } },
             });
+            // Confirming the renewal takes back a "won't renew" note.
+            await clearNotRenewingInTx(tx, orgMembershipId, actorId);
         }
         return count === 1 ? ("moved" as const) : null;
     });

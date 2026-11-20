@@ -3,6 +3,7 @@ import { KindedError, type FailureKind } from "@checkin/component-kit";
 import { centsToDollars } from "@checkin/money";
 import { CREATE, CREATE_JOURNAL } from "./internal";
 import { TEST_NOTE_MARKER, assertPayloadMarked } from "./guard";
+import { qbPacer, type Pacer } from "./pacer";
 import type {
   AccessTokenSource,
   QboAccount,
@@ -29,7 +30,6 @@ const DAY_MS = 86_400_000;
 const CREATED_SINCE_MARGIN_MS = 3_600_000;
 const CREATED_SINCE_MAX_PAGES = 10;
 const REQUEST_TIMEOUT_MS = 30_000;
-const MAX_RETRY_AFTER_S = 10;
 
 /** The numeric fault codes of a QBO Fault body, or none; never the fault's free text. */
 async function faultCodes(res: Response): Promise<string[]> {
@@ -60,6 +60,22 @@ export class QboRequestError extends KindedError {
     this.name = "QboRequestError";
   }
 }
+
+/** QuickBooks refused a request for its rate limit (429); every request waits until `resumeAt`. */
+export class QboThrottledError extends QboRequestError {
+  constructor(message: string, requestId: string | null, readonly resumeAt: Date) {
+    super(message, 429, requestId, []);
+    this.name = "QboThrottledError";
+  }
+}
+
+/** QuickBooks refused the call for its rate limit (429), after the client's own retry. */
+export function isThrottled(e: unknown): boolean {
+  return e instanceof QboRequestError && e.status === 429;
+}
+
+/** What finance reads when a post it asked for was throttled. */
+export const THROTTLED_MESSAGE = "QuickBooks asked the app to slow down, so nothing was changed; try again in a minute";
 
 function apiBase(env: QboEnv): string {
   return env === "production"
@@ -330,7 +346,8 @@ export class QuickBooksClient {
   /** intuit_tid of the most recent API response — quote it when contacting Intuit support. */
   lastTid: string | null = null;
 
-  constructor(tokens: AccessTokenSource, realm: QboRealm) {
+  /** `pacer` defaults to the process's shared one; only a test passes its own. */
+  constructor(tokens: AccessTokenSource, realm: QboRealm, private readonly pacer: Pacer = qbPacer) {
     assertRealmAllowed(realm);
     this.tokens = tokens;
     this.realm = realm;
@@ -504,34 +521,41 @@ export class QuickBooksClient {
   }
 
   /**
-   * One QBO request with a timeout and one Retry-After retry on 429. An error names the
-   * status, intuit_tid and QBO fault codes only; the fault text can echo names and memos.
+   * One QBO request through the shared pacer, with a timeout. A 429 starts the pacer's pause and
+   * the request is tried once more after it; a second 429 throws QboThrottledError. An error names
+   * the status, intuit_tid and QBO fault codes only; the fault text can echo names and memos.
    */
   private async send(what: string, url: string, init: { method?: "POST"; body?: string }): Promise<unknown> {
     const token = await this.tokens.current();
     const headers: Record<string, string> = { Authorization: `Bearer ${token}`, Accept: "application/json" };
     if (init.body !== undefined) headers["Content-Type"] = "application/json";
     for (let attempt = 1; ; attempt++) {
-      let res: Response;
+      const done = await this.pacer.acquire();
       try {
-        res = await fetch(url, { ...init, headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
-      } catch (e) {
-        throw new KindedError("system", `QBO ${what} failed: ${e instanceof Error ? e.message : String(e)}`, { cause: e });
+        let res: Response;
+        try {
+          res = await fetch(url, { ...init, headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+        } catch (e) {
+          throw new KindedError("system", `QBO ${what} failed: ${e instanceof Error ? e.message : String(e)}`, { cause: e });
+        }
+        // intuit_tid is Intuit's per-request trace id — capture it for support/debugging every call.
+        this.lastTid = res.headers.get("intuit_tid");
+        if (res.status === 429) {
+          const resumeAt = this.pacer.throttle(res.headers.get("Retry-After"));
+          console.warn("[quickbooks] qb_throttled", { operation: what, resumeAt: resumeAt.toISOString(), requestId: this.lastTid });
+          if (attempt === 1) continue;
+          throw new QboThrottledError(`QBO ${what} failed 429 (intuit_tid=${this.lastTid})`, this.lastTid, resumeAt);
+        }
+        if (!res.ok) {
+          const codes = await faultCodes(res);
+          const lane = new URL(url).searchParams.get("requestid")?.split(":")[0] ?? null;
+          console.warn("[quickbooks] request failed", { lane, operation: what, status: res.status, codes, requestId: this.lastTid });
+          throw new QboRequestError(`QBO ${what} failed ${res.status} (intuit_tid=${this.lastTid})`, res.status, this.lastTid, codes);
+        }
+        return await res.json();
+      } finally {
+        done();
       }
-      // intuit_tid is Intuit's per-request trace id — capture it for support/debugging every call.
-      this.lastTid = res.headers.get("intuit_tid");
-      if (res.status === 429 && attempt === 1) {
-        const wait = Number(res.headers.get("Retry-After") ?? "1");
-        await new Promise((r) => setTimeout(r, Math.min(Number.isFinite(wait) ? wait : 1, MAX_RETRY_AFTER_S) * 1000));
-        continue;
-      }
-      if (!res.ok) {
-        const codes = await faultCodes(res);
-        const lane = new URL(url).searchParams.get("requestid")?.split(":")[0] ?? null;
-        console.warn("[quickbooks] request failed", { lane, operation: what, status: res.status, codes, requestId: this.lastTid });
-        throw new QboRequestError(`QBO ${what} failed ${res.status} (intuit_tid=${this.lastTid})`, res.status, this.lastTid, codes);
-      }
-      return res.json();
     }
   }
 

@@ -21,7 +21,8 @@ import {
   rejectException,
   resolveUnknown,
 } from "../services/approvalService";
-import { CapitalReviewSchema, SetDepreciationCycleSchema, setDepreciationCycle, submitCapitalReview } from "../services/capitalService";
+import { setDepreciationCycle, submitCapitalReview } from "../services/capitalService";
+import { CapitalReviewSchema, SetDepreciationCycleSchema } from "../services/capitalReview";
 import { linkReimburseeVendor, reimburseeVendorFor, vendorOptions } from "../services/reimburseeVendorService";
 import { recordBoardAuthorization, reimburseeOptions, setReimbursee, signLine, signLines, signoffStatusFor } from "../services/signoffService";
 import { setTestData } from "../services/testDataService";

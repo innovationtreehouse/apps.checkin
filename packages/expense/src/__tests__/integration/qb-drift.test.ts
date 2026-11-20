@@ -3,7 +3,7 @@
  * readers, over an in-memory QBO company, and flags finance on edits. It only ever reads.
  */
 import { it, expect, beforeEach, afterEach, vi } from "vitest";
-import { QuickBooksClient, qbKey, type QboBill, type QboPurchase } from "@checkin/quickbooks";
+import { Pacer, QuickBooksClient, qbKey, type QboBill, type QboPurchase } from "@checkin/quickbooks";
 import { describeDb } from "../helpers/db";
 import { db } from "../../db";
 import { bindPorts, seedExpense, seedLineItem, ORG } from "../helpers/seed";
@@ -40,7 +40,7 @@ beforeEach(() => {
   bindPorts({
     quickbooks: {
       posting: async () => ({
-        client: new QuickBooksClient({ current: async () => "tok" }, { env: "sandbox", realmId: "123" }),
+        client: new QuickBooksClient({ current: async () => "tok" }, { env: "sandbox", realmId: "123" }, new Pacer({ perSecond: 1e6, maxInFlight: 1e6 })),
         paymentAccountId: "41",
         paymentType: "CreditCard",
         prod: false,
@@ -236,6 +236,20 @@ describeDb("QB-3 drift", () => {
 
     await raiseFlag(id, "QB_POST_HELD", "same detail");
     expect(await db.expenseFlag.findFirst({ where: { expenseId: id, kind: "QB_POST_HELD" } })).toMatchObject({ checkedOffAt: null });
+  });
+
+  it("leaves a matched entry's checked-off drift closed, and reopens on different drift", async () => {
+    const { id, entry } = await matched("2026-09-10");
+    entry.TotalAmt = 12;
+    await checkQbDrift();
+    await checkOff(id);
+
+    await checkQbDrift();
+    expect((await driftFlag(id))?.checkedOffAt).not.toBeNull();
+
+    entry.Line = [line(7, "60"), line(5, "62")];
+    await checkQbDrift();
+    expect(await driftFlag(id)).toMatchObject({ detail: "amount, accounts", checkedOffAt: null });
   });
 
   it("raises nothing for a matched entry still as it was at match", async () => {

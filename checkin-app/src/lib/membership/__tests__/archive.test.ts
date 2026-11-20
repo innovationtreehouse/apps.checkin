@@ -5,13 +5,14 @@ import prisma from '@/lib/prisma';
 import { archiveApplication, unarchiveApplication } from '@/lib/membership/archive';
 import type { OrgMembershipProcess } from '@/generated/prisma/client';
 import { settleHouseholdBg } from '@/lib/membership/settleHouseholdBg';
+import { logBackendError } from '@/lib/logger';
 import { pickUpMissedSignature } from '@/lib/membership/external';
 
 const tx = {
     $queryRaw: jest.fn(),
     boardSettings: { findUnique: jest.fn() },
     orgMembership: { findUnique: jest.fn() },
-    orgMembershipProcess: { findFirst: jest.fn(), updateMany: jest.fn() },
+    orgMembershipProcess: { findFirst: jest.fn(), findUnique: jest.fn(), updateMany: jest.fn() },
     auditLog: { create: jest.fn(), findFirst: jest.fn() },
 };
 
@@ -28,6 +29,7 @@ jest.mock('@/lib/membership/review', () => ({
     reviewHouseholds: jest.fn().mockResolvedValue([5]),
 }));
 jest.mock('@/lib/membership/settleHouseholdBg', () => ({ settleHouseholdBg: jest.fn().mockResolvedValue([]) }));
+jest.mock('@/lib/logger', () => ({ ...jest.requireActual('@/lib/logger'), logBackendError: jest.fn() }));
 jest.mock('@/lib/conflictOfInterest', () => ({ hasHouseholdConflict: jest.fn().mockResolvedValue(false) }));
 jest.mock('@/lib/membership/external', () => ({
     advanceExternalIfComplete: jest.fn().mockResolvedValue(null),
@@ -68,7 +70,16 @@ describe('archiveApplication (Close application)', () => {
     it('loses to a payment that lands between the read and the write: refuses, no audit row', async () => {
         findUnique.mockResolvedValue(row({ status: 'PENDING_PAYMENT' }));
         tx.orgMembershipProcess.updateMany.mockResolvedValue({ count: 0 });
+        tx.orgMembershipProcess.findUnique.mockResolvedValue({ status: 'PENDING_BG_CLEARANCE' });
         await expect(archiveApplication(1, 2)).rejects.toMatchObject({ code: 'wrong_phase' });
+        expect(tx.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('loses to a concurrent close of the same application: succeeds as a no-op, no second audit row', async () => {
+        findUnique.mockResolvedValue(row({ status: 'PENDING_PAYMENT' }));
+        tx.orgMembershipProcess.updateMany.mockResolvedValue({ count: 0 });
+        tx.orgMembershipProcess.findUnique.mockResolvedValue({ status: 'ARCHIVED' });
+        await expect(archiveApplication(1, 2)).resolves.toEqual({ status: 'ARCHIVED' });
         expect(tx.auditLog.create).not.toHaveBeenCalled();
     });
 });
@@ -91,6 +102,17 @@ describe('unarchiveApplication (Reopen)', () => {
         await expect(unarchiveApplication(1, 2)).resolves.toEqual({ status: 'PENDING_RENEWAL' });
         // Reopen settles the household on its people's check standing.
         expect(settleHouseholdBg).toHaveBeenCalledWith(5);
+    });
+
+    it('a failed settle is logged and the reopen still succeeds', async () => {
+        findUnique.mockResolvedValue(row({ kind: 'RENEWAL', status: 'ARCHIVED', archivedFromStatus: 'PENDING_RENEWAL' }));
+        tx.orgMembership.findUnique.mockResolvedValue({ status: 'ACTIVE' });
+        tx.orgMembershipProcess.findFirst.mockResolvedValue(null);
+        tx.orgMembershipProcess.updateMany.mockResolvedValue({ count: 1 });
+        const failure = new Error('Shopify unavailable');
+        jest.mocked(settleHouseholdBg).mockRejectedValueOnce(failure);
+        await expect(unarchiveApplication(1, 2)).resolves.toEqual({ status: 'PENDING_RENEWAL' });
+        expect(logBackendError).toHaveBeenCalledWith(failure, expect.any(String), { householdId: 5, processId: 1 });
     });
 
     describe('signing request across a denial', () => {

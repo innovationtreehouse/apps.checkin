@@ -61,8 +61,6 @@ export const classifications = {
         qbTxnId: 'internal',
         qbTxnEntity: 'internal',
         qbVendorId: 'internal',
-        qbPostAttempts: 'internal',
-        qbFailureKind: 'internal',
         qbFirstFailedAt: 'internal',
         qbLastError: 'personal',
         qbClaimedAt: 'internal',
@@ -226,7 +224,6 @@ export const classifications = {
         status: 'internal',
         failureReason: 'personal',
         receivedAt: 'internal',
-        replayAttempts: 'internal',
         firstFailedAt: 'internal',
     },
     ExpenseReceivedOrgEvent: {
@@ -254,9 +251,19 @@ export const classifications = {
         sourceLineItemId: 'internal',
         sourceReceiptId: 'internal',
         sourceQbTxnId: 'internal',
+        sourceQbTxnEntity: 'internal',
         sourceDonatedLineId: 'internal',
+        sourceKind: 'internal',
+        sourceGiftSource: 'internal',
+        sourceGiftId: 'internal',
+        sourceGiftLineId: 'internal',
+        unitIndex: 'internal',
         seeded: 'internal',
         createdAt: 'internal',
+    },
+    CapitalAssetSequence: {
+        orgId: 'internal',
+        highestIssued: 'internal',
     },
     DonatedCapitalLine: {
         id: 'internal',
@@ -279,6 +286,7 @@ export const classifications = {
         id: 'internal',
         orgId: 'internal',
         qbTxnId: 'internal',
+        qbTxnEntity: 'internal',
         reason: 'personal',
         excludedByUserId: 'pii',
         excludedByUsername: 'pii',
@@ -383,6 +391,8 @@ export const relations = {
     ExpenseReceivedOrgEvent: {
     },
     CapitalAsset: {
+    },
+    CapitalAssetSequence: {
     },
     DonatedCapitalLine: {
     },

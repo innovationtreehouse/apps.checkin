@@ -1,5 +1,6 @@
 import type { Prisma, OrgMembershipProcess } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
+import { logBackendError } from "@/lib/logger";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { ReviewError, applicantHousehold, reviewHouseholds, wrongPersonClosedAt } from "@/lib/membership/review";
 import { reviewHoldsRejection } from "@/lib/membership/checkStanding";
@@ -8,6 +9,7 @@ import { advanceExternalIfComplete, pickUpMissedSignature } from "@/lib/membersh
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { personActor, type AuditActor } from "@/lib/auditActor";
 import { type TxClient } from "@/lib/db-client";
+import { lockHouseholdRows } from "@/lib/household/archiveGuard";
 import { reopenYearRefusal } from "@/lib/programYear";
 
 // Loaded on use: settleHouseholdBg imports review.ts, and a static import closes that cycle at load.
@@ -61,7 +63,12 @@ export async function archiveApplication(processId: number, actorId: number) {
             where: { id: processId, ...fromWhere(process.status), paidAt: null },
             data: { status: "ARCHIVED", archivedFromStatus: process.status, stageEnteredAt: new Date(), isPaymentPlanRequested: false },
         });
-        if (count !== 1) throw new ReviewError("wrong_phase", "This application changed while you were looking at it. Reload and try again.");
+        if (count !== 1) {
+            // A concurrent close of this application won; it wrote the audit row.
+            const now = await tx.orgMembershipProcess.findUnique({ where: { id: processId }, select: { status: true } });
+            if (now?.status === "ARCHIVED") return;
+            throw new ReviewError("wrong_phase", "This application changed while you were looking at it. Reload and try again.");
+        }
         await tx.auditLog.create({
             data: {
                 ...personActor(actorId),
@@ -81,11 +88,13 @@ const HOUSEHOLD_KINDS = ["INITIAL", "RENEWAL"] as const;
 const RESTORE_CLOSE_REASON = "household restored";
 
 /**
- * Locks a household's applications FOR UPDATE and returns the open ones, for a
- * restore to close. Taken before the household row, the order the payment and
- * reset paths lock in.
+ * Locks a household's membership, household and applications FOR UPDATE, in the
+ * order lib/lockOrder.ts states, and returns the open applications, for a restore
+ * or an archive to close.
  */
 export async function lockOpenApplications(tx: TxClient, orgMembershipId: number) {
+    const [membership] = await tx.$queryRaw<{ householdId: number }[]>`SELECT "householdId" FROM "OrgMembership" WHERE id = ${orgMembershipId} FOR UPDATE`;
+    if (membership) await lockHouseholdRows(tx, [membership.householdId]);
     await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE "orgMembershipId" = ${orgMembershipId} ORDER BY id FOR UPDATE`;
     return tx.orgMembershipProcess.findMany({
         where: { orgMembershipId, kind: { in: [...HOUSEHOLD_KINDS] }, ...openProcess.where },
@@ -261,7 +270,13 @@ export async function unarchiveApplication(processId: number, actorId: number) {
     }
     if (reopened && !reopened.forgotRequest) await pickUpMissedSignature(process);
     const { settleHouseholdBg } = await settleModule();
-    for (const id of await reviewHouseholds(prisma, process)) await settleHouseholdBg(id);
+    for (const id of await reviewHouseholds(prisma, process)) {
+        try {
+            await settleHouseholdBg(id);
+        } catch (error) {
+            await logBackendError(error, "household background-check settle after reopen", { householdId: id, processId });
+        }
+    }
     const advanced = await advanceExternalIfComplete(processId);
     return { status: advanced?.status ?? target };
 }

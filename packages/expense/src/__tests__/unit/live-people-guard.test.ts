@@ -46,12 +46,13 @@ const REVIEWED = [
   "services/submitterSeatService.ts: select: { id: true, reimburseePersonId: true },",
   "services/submitterSeatService.ts: return expenses.map((e) => ({ receiptId: e.id, reimburseePersonId: e.reimburseePersonId!, changedFields: latest.get(e.id) ?? [] }));",
   // Handed to signoffFactsForExpenses, which resolves them; reimburseeUnknown reads only whether one is set.
-  "services/waitingOnService.ts: submitterId: true,",
-  "services/waitingOnService.ts: reimburseePersonId: true,",
   // A prefilter that only excludes; the resolved facts decide on what stays.
   'services/badgeCounts.ts: where: { orgId: await getOrgId(), state: "qb_pending", backfill: false, submitterId: { not: me } },',
   // Skips redoing one's own approval; a merged approver's line falls through to approveLocked, which refuses it.
   'services/approvalService.ts: const todo = approvals.filter((a) => a.status !== "approved" || a.decidedByUserId !== actor.userId);',
+  // A system approval names nobody; a null approver is null whoever was merged.
+  'lib/financial-flow.ts: } else if (!org && a.status === "approved" && a.decidedByUserId === null) {',
+  'services/approvalService.ts: const moving = approval.status === "approved" && approval.decidedByUserId === null && (await systemApprovesLine(expense, approval.ownerId));',
   // Nothing reads these: the summary list and the sibling approvals' parties.
   "repositories/expense.ts: submitterId: true,",
   "repositories/expense.ts: select: { id: true, expenseId: true, lineItemId: true, expense: { select: { submitterId: true, reimburseePersonId: true } } },",

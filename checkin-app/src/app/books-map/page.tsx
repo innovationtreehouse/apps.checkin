@@ -1,9 +1,7 @@
 "use client";
 
-import type { ReactNode } from "react";
 import { Select, Stack, Table, Text, Title } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
-import { InactivePickWarning, LoadError, QuickBooksListsRefresh, refusalMessage } from "@checkin/component-ui";
+import { clearError, InactivePickWarning, LoadError, QuickBooksListsRefresh, refusalMessage, showError, showSuccess } from "@checkin/component-ui";
 import type { BooksMapRole } from "@checkin/quickbooks";
 import { BOOKS_MAP_ROLE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -11,6 +9,7 @@ import { useRequireRole } from "@/hooks/useRequireRole";
 import { api, useLoad } from "@/lib/api";
 import { FINANCE_ROLES } from "@/lib/nav/sections/finance";
 import { BOOKS_MAP_ROLE_LABELS } from "@/lib/finance/booksMapLabels";
+import QuickBooksCatchUp from "@/components/finance/QuickBooksCatchUp";
 
 interface ClassRow {
   budgetOwnerId: number;
@@ -31,11 +30,6 @@ interface Option {
 
 interface AccountOption extends Option {
   accountType: string;
-}
-
-function showError(title: string, message: ReactNode) {
-  notifications.hide(title);
-  notifications.show({ id: title, color: "red", title, message, autoClose: false });
 }
 
 /** Options for a picker: active entries only; a saved inactive or missing one shows as a warning instead. */
@@ -63,23 +57,25 @@ export default function BooksMapPage() {
 
   // A successful write re-reads every load on the page, so a save needs no reload of its own.
   const save = async (url: string, body: unknown, failed: string) => {
-    notifications.hide(failed);
+    clearError(failed);
     try {
       await api(url, { method: "PUT", body: JSON.stringify(body) });
     } catch (e) {
-      showError(failed, refusalMessage(e));
+      showError(refusalMessage(e), { key: failed, title: failed });
       return;
     }
-    notifications.show({ message: "Saved." });
+    showSuccess("Saved.");
   };
 
   if (authLoading) return <PageLoader />;
   if (!ready) return null;
 
+  const pickAdvice = isFinance ? "Pick an active one." : "Finance can fix this.";
   return (
     <Stack>
       <Title order={2}>Books map</Title>
       <QuickBooksListsRefresh />
+      <QuickBooksCatchUp />
       <Text c="dimmed">
         Which QuickBooks account each kind of incoming money books to, and which QuickBooks Class each budget bucket
         books to. Income reads the Shopify and Benevity accounts and the Classes from here, gifts of goods read their four
@@ -113,7 +109,7 @@ export default function BooksMapPage() {
                       disabled={!isFinance}
                       onChange={(v) => void save(`/api/books-map/accounts/${r.role}`, { quickBooksAccountId: v }, "Account not saved")}
                     />
-                    <InactivePickWarning saved={r.quickBooksAccountId} options={accounts.data} />
+                    <InactivePickWarning saved={r.quickBooksAccountId} options={accounts.data} advice={pickAdvice} />
                   </Table.Td>
                 </Table.Tr>
               ))}
@@ -137,7 +133,7 @@ export default function BooksMapPage() {
                       disabled={!isFinance}
                       onChange={(v) => void save(`/api/books-map/classes/${r.budgetOwnerId}`, { quickBooksClassId: v }, "Class not saved")}
                     />
-                    <InactivePickWarning saved={r.quickBooksClassId} options={classes.data} />
+                    <InactivePickWarning saved={r.quickBooksClassId} options={classes.data} advice={pickAdvice} />
                   </Table.Td>
                 </Table.Tr>
               ))}

@@ -5,7 +5,7 @@
  * line and the receipt in its review lists. Only routes with no external integration: the local OCR
  * mock reads the upload. Real HTTP against the running dev server.
  */
-import { api, BASE, differentPurchases, loginAs, newClassId, type Session } from "./helpers";
+import { api, BASE, differentPurchases, loginAs, newClassId, untilRead, type Session } from "./helpers";
 
 const SUBMITTER = "inventory.manager@example.com";
 const FINANCE = "finance@example.com";
@@ -20,15 +20,16 @@ type ExpenseRow = { id: string; state: string };
 
 const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
+/** Uploads a text receipt and answers it once its background reading has landed. */
 async function upload(s: Session, text: string) {
   const form = new FormData();
   form.append("file", new Blob([text], { type: "text/plain" }), "receipt.txt");
   const req = new Request(BASE, { method: "POST", body: form });
-  return api<Receipt>(s, "/api/receipts/upload", {
+  return untilRead(s, await api<Receipt>(s, "/api/receipts/upload", {
     method: "POST",
     body: await req.arrayBuffer(),
     headers: { "content-type": req.headers.get("content-type") ?? "" },
-  });
+  }));
 }
 
 const send = <T = unknown>(s: Session, method: string, path: string, body?: unknown) =>

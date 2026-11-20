@@ -85,8 +85,8 @@ export default function EmailSettingsPage() {
     const board = boardAddress.trim();
     const contact = financeContact.trim();
     const fe: FieldErrors = {};
-    if (from && !isValidEmailHeader(from)) fe.from = HEADER_ERROR;
-    if (replyTo && !parseEmailHeaderList(replyTo)) fe.replyTo = REPLY_TO_ERROR;
+    if (!locked && from && !isValidEmailHeader(from)) fe.from = HEADER_ERROR;
+    if (!locked && replyTo && !parseEmailHeaderList(replyTo)) fe.replyTo = REPLY_TO_ERROR;
     if (notify && !parseEmailHeaderList(notify)) fe.scholarshipNotify = REPLY_TO_ERROR;
     if (alert && !isValidEmail(alert)) fe.alertAddress = ADDRESS_ERROR;
     if (board && !isValidEmail(board)) fe.boardAddress = ADDRESS_ERROR;
@@ -94,12 +94,14 @@ export default function EmailSettingsPage() {
     if (Object.keys(fe).length > 0) { setFieldErrors(fe); return; }
     setFieldErrors({});
     setSaving(true);
+    // A locked save leaves the sender alone: the route skips absent fields.
+    const sender = locked ? {} : { emailFromAddress: from || null, emailReplyToAddress: replyTo || null };
+    const saved = locked && initial ? { ...current, emailFrom: initial.emailFrom, emailReplyTo: initial.emailReplyTo } : current;
     try {
       await api("/api/settings/email", {
         method: "PUT",
         body: JSON.stringify({
-          emailFromAddress: emailFrom.trim() || null,
-          emailReplyToAddress: emailReplyTo.trim() || null,
+          ...sender,
           scholarshipNotifyEmail: notify || null,
           alertEmailAddress: alert || null,
           boardEmailAddress: board || null,
@@ -111,7 +113,9 @@ export default function EmailSettingsPage() {
       });
       showSuccess("Email settings saved.");
       setUnlocked(false);
-      setInitial(current);
+      setEmailFrom(saved.emailFrom);
+      setEmailReplyTo(saved.emailReplyTo);
+      setInitial(saved);
     } catch (e) { showError(errorMessage(e)); }
     finally { setSaving(false); }
   };

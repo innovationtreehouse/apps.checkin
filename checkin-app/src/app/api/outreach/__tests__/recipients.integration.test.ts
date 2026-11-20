@@ -90,6 +90,34 @@ describe('outreach recipient snapshot', () => {
         }
     });
 
+    it("skips a household that said it won't renew into the noted year, for both email types", async () => {
+        await setBoundary(BOUNDARY);
+        const notedId = await makeMember('Noted', `noted-${TAG}@example.com`);
+        await prisma.orgMembership.update({ where: { id: notedId }, data: { notRenewingYear: 2026 } });
+        const staleId = await makeMember('StaleNote', `stale-note-${TAG}@example.com`);
+        await prisma.orgMembership.update({ where: { id: staleId }, data: { notRenewingYear: 2025 } });
+
+        for (const type of ['opening', 'reminder'] as const) {
+            const got = emails(await computeRecipientSnapshot(type, IN_SEASON_NOW));
+            expect(got).not.toContain(`noted-${TAG}@example.com`);
+            expect(got).toContain(`stale-note-${TAG}@example.com`);
+        }
+    });
+
+    it("before the window, skips a note for the next year, the one the email is about, and not one for the live year", async () => {
+        await setBoundary(BOUNDARY);
+        const nextId = await makeMember('NotedNext', `noted-next-${TAG}@example.com`);
+        await prisma.orgMembership.update({ where: { id: nextId }, data: { notRenewingYear: 2027 } });
+        const liveId = await makeMember('NotedLive', `noted-live-${TAG}@example.com`);
+        await prisma.orgMembership.update({ where: { id: liveId }, data: { notRenewingYear: 2026 } });
+
+        for (const type of ['opening', 'reminder'] as const) {
+            const got = emails(await computeRecipientSnapshot(type, PAST_BOUNDARY_NOW));
+            expect(got).not.toContain(`noted-next-${TAG}@example.com`);
+            expect(got).toContain(`noted-live-${TAG}@example.com`);
+        }
+    });
+
     it('opening goes to every member-household lead, renewed or not; a non-lead member gets nothing', async () => {
         await setBoundary(BOUNDARY);
         await makeMember('OpenUnrenewed', `open-unrenewed-${TAG}@example.com`);
@@ -106,7 +134,7 @@ describe('outreach recipient snapshot', () => {
         expect(got).not.toContain(`open-nonlead-${TAG}@example.com`);
     });
 
-    it('reminder skips a household that completed renewal for the coming year, in season and after the boundary', async () => {
+    it('reminder skips a household that completed renewal for the year the email is about', async () => {
         await setBoundary(BOUNDARY);
         const id = await makeMember('Renewed', `renewed-${TAG}@example.com`);
         await prisma.orgMembershipProcess.create({
@@ -117,11 +145,18 @@ describe('outreach recipient snapshot', () => {
             data: { orgMembershipId: joinedId, kind: 'INITIAL', status: 'ACTIVE', stageEnteredAt: IN_SEASON_NOW, appliesToYear: 2026 },
         });
 
-        for (const now of [IN_SEASON_NOW, PAST_BOUNDARY_NOW]) {
-            const got = emails(await computeRecipientSnapshot('reminder', now));
-            expect(got).not.toContain(`renewed-${TAG}@example.com`);
-            expect(got).not.toContain(`joined-${TAG}@example.com`);
-        }
+        const inSeason = emails(await computeRecipientSnapshot('reminder', IN_SEASON_NOW));
+        expect(inSeason).not.toContain(`renewed-${TAG}@example.com`);
+        expect(inSeason).not.toContain(`joined-${TAG}@example.com`);
+
+        // After the boundary the email is about 2027, which neither has renewed for.
+        const nextId = await makeMember('RenewedNext', `renewed-next-${TAG}@example.com`);
+        await prisma.orgMembershipProcess.create({
+            data: { orgMembershipId: nextId, kind: 'RENEWAL', status: 'ACTIVE', stageEnteredAt: PAST_BOUNDARY_NOW, appliesToYear: 2027 },
+        });
+        const pastBoundary = emails(await computeRecipientSnapshot('reminder', PAST_BOUNDARY_NOW));
+        expect(pastBoundary).toContain(`renewed-${TAG}@example.com`);
+        expect(pastBoundary).not.toContain(`renewed-next-${TAG}@example.com`);
     });
 
     it('reminder still goes to a household whose renewal is in progress, or settled only for the prior year', async () => {

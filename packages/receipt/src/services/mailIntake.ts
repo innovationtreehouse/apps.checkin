@@ -3,39 +3,46 @@
 // daily upload limit, or a held mail item for finance.
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { isServiceError, kindOf, ServiceError } from "@checkin/component-kit";
+import { isServiceError, KindedError, kindOf, ServiceError } from "@checkin/component-kit";
 import { isUniqueConstraintError } from "@checkin/pg-kit";
 import { db } from "../db";
-import { isNoticeMessageId, type MailboxReader, type MailMessage, type MailPart, type MailRefusal, type ReceiptPrincipal } from "../contract";
+import { isNoticeMessageId, type MailboxReader, type MailMessage, type MailPart, type MailRefusal, type MailRefusalReason, type ReceiptPrincipal } from "../contract";
 import type { Prisma } from "../generated/prisma/client";
 import { ACCEPTED_TYPES, checkReceiptFile, MAX_FILE_BYTES } from "../lib/file-type";
-import { deleteStoredFiles, newMailItemFileKey, readStoredFile } from "../lib/fileStorage";
-import { fileStore, storesNewFilesInBucket, getOrgId, mailbox, ports } from "../runtime";
-import { discardBodyCopy, intakeMailedReceipt } from "./receiptService";
+import { deleteStoredFiles, newMailItemFileKey, newRawMailKey, readStoredFile, sha256Hex } from "../lib/fileStorage";
+import { parseRawMail } from "../lib/rawMail";
+import { fileStore, getOrgId, mailbox, ports, rawMailRetentionDays } from "../runtime";
+import { intakeMailedReceipt } from "./receiptService";
+import { DRAIN_BUDGET_MS, drainOcrQueue, type DrainCounts } from "./ocrDrain";
 import { OrgUploadLimitError } from "../lib/insert";
+import { byDeadline, DeadlineError } from "../lib/deadline";
 import { isAutomated, sendMailReplies } from "./mailReplies";
 
-// ponytail: no stored cursor; the ledger makes re-reads free. Ceiling is a cron outage longer than 30 days,
-// or a flood bigger than the per-run caps drain inside 30 days; widen the window or the caps then.
+// ponytail: no stored cursor; the ledger and the captured rows make re-listing free. Ceiling is a cron outage
+// longer than 30 days, or a flood bigger than a run's capture budget drains inside 30 days; widen the window then.
 export const MAIL_WINDOW_DAYS = 30;
-/** New receipts (OCR calls) per run, oldest mail first; the rest wait for the next run, inside the window. Held items do not count. */
+/** New receipts per run, oldest mail first; the rest wait for the next run, inside the window. Held items do not count. */
 export const MAIL_CAP = 10;
-/** Downloads charged to held mail per run (see chargeHold); the rest wait for the next run. */
+/** Files charged to held mail per run (see chargeHold); the rest wait for the next run. */
 export const MAIL_HELD_CAP = 50;
-/** Bytes charged to held mail per run (see chargeHold), checked before each download. */
+/** Bytes charged to held mail per run (see chargeHold), checked before each file is taken. */
 export const MAIL_HELD_BYTES = 50 * 1024 * 1024;
 /** Held and deferred items past which nothing more is stored; finance is alerted once per run while over it. */
 export const MAIL_HELD_CEILING = 500;
-// ponytail: a finished message is skipped unfetched, but every unfinished one, and every message that left no
-// ledger row (no file, or every file refused), is fetched each run; a flood of those larger than this budget's
-// worth of fetches inside 30 days can still push a later receipt past the window, with an alert; widen the budget then.
-/** Wall time per run; messages not reached wait for the next run. */
-export const MAIL_TIME_BUDGET_MS = 2 * 60_000;
+/** Wall time of the daily run's mail step, inside the scheduler's 60-second wait; messages not reached wait for the next run. */
+export const MAIL_TIME_BUDGET_MS = 30_000;
 export { MAIL_CATCH_UP_CAP } from "../lib/mailCatchUpCap";
 /** Wall time of one catch-up run, which runs after its request has answered. */
 export const MAIL_CATCH_UP_BUDGET_MS = 10 * 60_000;
-/** How long a run's lease outlasts its budget, covering its last OCR call, alerts and replies; a crashed run blocks the next for this long at most. */
+/** How long a run's lease outlasts its budget and its drain, covering the drain's last reading and the release; a crashed run blocks the next for this long at most. */
 const LEASE_SLACK_MS = 10 * 60_000;
+/** The drain's reading calls end this long before the lease, and capture's never later, leaving the run's end its time. */
+const READ_MARGIN_MS = 3 * 60_000;
+/**
+ * The run's end-of-run calls (dating mail, alerts, acknowledgements) end this long before the lease, leaving its release time.
+ * A timed-out alert is sent again next run, so finance may see it twice; a timed-out acknowledgement is never sent again.
+ */
+const END_MARGIN_MS = 60_000;
 const DAY_MS = 24 * 60 * 60_000;
 
 export type MailIntakeResult =
@@ -45,9 +52,12 @@ export type MailIntakeResult =
   | MailRunCounts;
 
 export type MailRunCounts = {
-      /** `listing_failed`: the mailbox could not be listed, so no message was read this run. */
+      /** `listing_failed`: the mailbox could not be listed, or an outside call ran past its deadline and ended the run's reading. */
       status: "ok" | "listing_failed";
+      /** Captured messages processed this run, from their stored copies. */
       messages: number;
+      /** New messages whose raw copy was stored this run. */
+      captured: number;
       receipts: number;
       held: number;
       skipped: number;
@@ -59,7 +69,7 @@ export type MailRunCounts = {
       overLimit: number;
       /** Files not held because the held ceiling was reached. */
       overCeiling: number;
-      /** Messages not reached, past the time budget or with every cap spent; read again next run. */
+      /** Messages not captured or not processed, past the time budget, the raw byte cap or with every cap spent; taken up next run. */
       unread: number;
       /** Files never receipts: inline images under the floor, trivial bodies, and files on the ignore list. */
       ignored: number;
@@ -336,32 +346,41 @@ const FILE_NAME_MAX = 200;
 const fileName = (p: MailPart, fallback: string) => (p.filename || fallback).slice(0, FILE_NAME_MAX);
 
 // ponytail: a legible receipt image under the floor is skipped silently; lower it if one is ever found.
-/** Inline images under this declared size (tracking pixels, icons, small logos) are skipped without a download. */
+/** Inline images under this size (tracking pixels, icons, small logos) are skipped unread. */
 export const INLINE_FLOOR_BYTES = 5 * 1024;
 
-// ponytail: a body printing its total without cents reads as trivial; widen the pattern if one is found.
-/** A money amount: a number with two decimal places. A body without one is trivial. */
-const MONEY_AMOUNT = /\d\.\d{2}(?!\d)/;
+/** A body under this many bytes, as `bodyText` measures it, is never a receipt. */
+export const BODY_MIN_BYTES = 100;
+
+/** A money amount: `$` before a digit, or a number with two decimal places. */
+export const MONEY_AMOUNT = /\$\s?\d|\d\.\d{2}(?!\d)/;
+
+/**
+ * A signature separator or a mail client's trailer line holding no digit, so a line naming an amount stays. Only the
+ * line goes: a forwarded receipt often sits below it.
+ */
+const TRAILER_LINE = /^(?:-- |sent from (?:my |yahoo mail|mail for windows)[^\d\r\n]*)\r?$/gim;
 
 /** An HTML body's visible text: its style blocks and tags (with their style attributes) hold CSS numbers, never amounts. */
 const visibleText = (html: string) => html.replace(/<style\b[\s\S]*?<\/style\s*>/gi, " ").replace(/<[^>]*>/g, " ");
 
+/** The body's visible text without trailer lines, its whitespace collapsed: what the size and money checks read. */
+export const bodyText = (text: string, html: boolean): string =>
+  (html ? visibleText(text) : text).replace(TRAILER_LINE, "").replace(/[ \t]+/g, " ").replace(/\s*\n\s*/g, "\n").trim();
+
 /**
  * A message's candidate files, read in this order: each attachment of an accepted type, each inline
- * part of an accepted non-text type at or over the floor, then the body, stored as text, unless it
- * holds no money amount. `ignored` counts the inline parts under the floor, a trivial body and
- * each message attached whole. `refused` names the attachments never read: an unaccepted type or
- * a message attached whole.
+ * part of an accepted non-text type at or over the floor, then the body, stored as text. The body
+ * counts only at BODY_MIN_BYTES or more, and is a file only when it holds a money amount. A
+ * significant body without one, in a message with no other file, read or refused, is returned as `unpriced` for the
+ * caller to bounce or hold. `ignored` counts the inline parts under the floor, a body that is no
+ * file, and each message attached whole. `refused` names the attachments never read: an
+ * unaccepted type or a message attached whole.
  */
-export function mailFiles(msg: MailMessage, reader: MailboxReader): { files: MailFile[]; ignored: number; refused: MailRefusal[] } {
+export function mailFiles(msg: MailMessage): { files: MailFile[]; ignored: number; refused: MailRefusal[]; unpriced?: MailFile } {
   const parts = ownParts(msg.payload);
   const typeOf = (p: MailPart) => p.mimeType.toLowerCase();
-  const read = (p: MailPart) => async () =>
-    p.body?.data !== undefined
-      ? Buffer.from(p.body.data, "base64url")
-      : p.body?.attachmentId
-        ? reader.getAttachment(msg.id, p.body.attachmentId)
-        : Buffer.alloc(0);
+  const read = (p: MailPart) => async () => Buffer.from(p.body?.data ?? "", "base64url");
   const file = (p: MailPart, declaredType = typeOf(p)): MailFile => ({ name: fileName(p, declaredType === "text/plain" ? "the text of your email" : "an image in your email"), declaredType, size: p.body?.size ?? 0, read: read(p) });
 
   const attachments = parts.filter((p) => isAttachment(p) && ACCEPTED_TYPES.has(typeOf(p)));
@@ -378,35 +397,37 @@ export function mailFiles(msg: MailMessage, reader: MailboxReader): { files: Mai
   // HTML is stored as its source text: a receipt file is never served as a page.
   const body = bodyPart("text/plain") ?? bodyPart("text/html");
   const files = [...attachments, ...sized].map((p) => file(p));
-  if (body) {
-    const text = Buffer.from(body.body?.data ?? "", "base64url").toString();
-    if (MONEY_AMOUNT.test(typeOf(body) === "text/html" ? visibleText(text) : text)) files.push({ ...file(body, "text/plain"), body: true });
-    else ignored++;
-  }
+  if (!body) return { files, ignored, refused };
+  const text = bodyText(Buffer.from(body.body?.data ?? "", "base64url").toString(), typeOf(body) === "text/html");
+  const bodyFile: MailFile = { ...file(body, "text/plain"), body: true };
+  const significant = Buffer.byteLength(text) >= BODY_MIN_BYTES;
+  if (significant && MONEY_AMOUNT.test(text)) files.push(bodyFile);
+  else if (significant && files.length === 0 && refused.length === 0) return { files, ignored, refused, unpriced: bodyFile };
+  else ignored++;
   return { files, ignored, refused };
 }
 
 const isStatus = (err: unknown, code: number) => isServiceError(err) && err.status === code;
 
-/** Why a file was held for finance: no sender passed the sender check, or the verified sender may not submit receipts. */
-export type HoldReason = "unverified_sender" | "not_a_submitter";
+/**
+ * Why a file was held for finance: no sender passed the sender check, the verified sender may not submit receipts, or a
+ * submitter's reply to a notice or Cc-only copy held text with no amount, which gets no reply.
+ */
+export type HoldReason = "unverified_sender" | "not_a_submitter" | "side_copy";
+
+/** Refused files finance is told about, in a held note with no file, when no submitter sent the mail. */
+const HELD_REFUSALS = new Set<MailRefusalReason>(["wrong_type", "forwarded", "too_large", "empty"]);
+
+/** The ledger key of a message's one refusal note, which names what finance should hear of and keeps no file. */
+export const REFUSAL_NOTE_KEY = createHash("sha256").update("receipt mail refusal note").digest("hex");
+
+/** A message's refusal note, held or since discarded: never the ledger row of a file. */
+export const isRefusalNote = (row: { attachmentHash: string }) => row.attachmentHash === REFUSAL_NOTE_KEY;
+
+const sameRefusal = (a: MailRefusal) => (b: MailRefusal) => a.file === b.file && a.reason === b.reason;
 
 /** The statuses whose items keep their file in the ledger, awaiting finance or a later run. */
 export const STORED_STATUSES = ["held", "deferred"];
-
-/** A body read beside its message's other receipts is discarded when its reading repeats one of them. */
-async function discardIfCopy(gmailMessageId: string, receiptId: string): Promise<void> {
-  const siblings = await db.receiptMailItem.findMany({
-    where: { gmailMessageId, receiptId: { not: null }, NOT: { receiptId } },
-    select: { receiptId: true },
-  });
-  try {
-    await discardBodyCopy(receiptId, siblings.flatMap((s) => (s.receiptId ? [s.receiptId] : [])));
-  } catch (err) {
-    // The body stays its own receipt; finance discards it the ordinary way.
-    console.error("[receipt] body copy check failed for one receipt:", err);
-  }
-}
 
 /**
  * Make a deferred item a receipt uploaded by its sender. The item flips to `assigned` in the
@@ -415,7 +436,7 @@ async function discardIfCopy(gmailMessageId: string, receiptId: string): Promise
 export async function intakeDeferred(
   item: { id: number; fileBlob: Uint8Array; fileKey: string | null; mimeType: string },
   sender: ReceiptPrincipal,
-  { uploadLimits, onClaim }: { uploadLimits: boolean; onClaim?: (tx: Prisma.TransactionClient, receiptId: string) => Promise<unknown> },
+  { uploadLimits, onClaim, deadline }: { uploadLimits: boolean; onClaim?: (tx: Prisma.TransactionClient, receiptId: string) => Promise<unknown>; deadline?: number },
 ): Promise<string> {
   const receiptId = await intakeMailedReceipt(
     sender,
@@ -424,18 +445,13 @@ export async function intakeDeferred(
     async (tx, receiptId) => {
       const claimed = await tx.receiptMailItem.updateMany({
         where: { id: item.id, status: "deferred" },
-        data: { status: "assigned", receiptId, fileBlob: null, fileKey: null },
+        data: { status: "assigned", receiptId, fileKey: null },
       });
       if (claimed.count !== 1) throw new ServiceError(409, "This mail item was already handled. Refresh and retry.");
       await onClaim?.(tx, receiptId);
     },
-    { uploadLimits, heldFileKey: item.fileKey },
+    { uploadLimits, heldFileKey: item.fileKey, deadline },
   );
-  // A deferred text item is a body; its message's attachments are retried first, oldest first.
-  if (item.mimeType === "text/plain") {
-    const { gmailMessageId } = await db.receiptMailItem.findUniqueOrThrow({ where: { id: item.id }, select: { gmailMessageId: true } });
-    await discardIfCopy(gmailMessageId, receiptId);
-  }
   return receiptId;
 }
 
@@ -457,21 +473,37 @@ const MailRunSummarySchema = z.object({
   failed: z.number(),
   /** Put-off files or unread messages remain, which another run would read now. */
   more: z.boolean(),
+  /** The drain after the run; absent on a run that crashed before it, or that predates it. */
+  drain: z.object({ read: z.number(), failed: z.number(), waiting: z.number() }).optional(),
 });
 export type MailRunSummary = z.infer<typeof MailRunSummarySchema>;
 
-function summarize(counts: MailRunCounts | null): MailRunSummary {
+function summarize(counts: MailRunCounts | null, drain?: DrainCounts): MailRunSummary {
   if (!counts) return { status: "crashed", messages: 0, receipts: 0, held: 0, waiting: 0, failed: 0, more: false };
   const { status, messages, receipts, held, failed, deferred, unread, overLimit } = counts;
-  return { status, messages, receipts, held, waiting: deferred + unread + overLimit, failed, more: deferred + unread > 0 };
+  return { status, messages, receipts, held, waiting: deferred + unread + overLimit, failed, more: deferred + unread > 0, drain };
 }
 
-export type MailRun = { status: "unbound" } | { status: "busy" } | { status: "started"; done: Promise<MailRunCounts> };
+/** The deadlines (epoch ms) a run's outside calls must answer by, from its lease's expiry: always before it. */
+export const callDeadlines = (leaseUntil: number) => ({ read: leaseUntil - READ_MARGIN_MS, end: leaseUntil - END_MARGIN_MS });
+
+/** The reader with each call rejecting with DeadlineError once `deadline` passes. */
+const readerBy = (reader: MailboxReader, deadline: number): MailboxReader => ({
+  address: reader.address,
+  listRecent: (days) => byDeadline(deadline, "the mailbox listing", () => reader.listRecent(days)),
+  getRaw: (id) => byDeadline(deadline, "a mailbox fetch", () => reader.getRaw(id)),
+});
+
+export type MailRun =
+  | { status: "unbound" }
+  | { status: "busy" }
+  | { status: "started"; intake: Promise<MailRunCounts>; done: Promise<MailRunCounts> };
 
 /**
  * Takes the org's mail lease and starts one intake pass, `busy` when another run holds the lease.
  * `beforeRun` runs while the lease is held; if it throws, the lease is freed and no pass starts.
- * `done` settles when the pass ends and the lease is released with its summary.
+ * `intake` settles when the mail is taken in. The drain then reads waiting receipts under the same
+ * lease, and `done` settles once the lease is released with the run's summary.
  */
 export async function startMailRun({
   cap = MAIL_CAP,
@@ -482,7 +514,7 @@ export async function startMailRun({
   if (!reader) return { status: "unbound" };
   const orgId = await getOrgId();
   const started = Date.now();
-  const until = new Date(started + budgetMs + LEASE_SLACK_MS);
+  const until = new Date(mailLeaseUntil(started, budgetMs));
   if (!(await takeLease(orgId, until))) return { status: "busy" };
   try {
     await beforeRun?.();
@@ -492,22 +524,49 @@ export async function startMailRun({
       .catch((releaseErr: unknown) => console.error("[receipt] mail lease release failed; it expires on its own:", releaseErr));
     throw err;
   }
-  const release = (counts: MailRunCounts | null) =>
+  const release = (counts: MailRunCounts | null, drain?: DrainCounts) =>
     db.receiptMailLease
-      .updateMany({ where: { orgId, until }, data: { until: new Date(0), lastRunAt: new Date(), lastRun: summarize(counts) } })
+      .updateMany({ where: { orgId, until }, data: { until: new Date(0), lastRunAt: new Date(), lastRun: summarize(counts, drain) } })
       .catch((err: unknown) => console.error("[receipt] mail lease release failed; it expires on its own:", err));
-  const done = readLeased(reader, orgId, started, cap, budgetMs).then(
+  const intake = readLeased(reader, orgId, started, cap, budgetMs, until.getTime());
+  const done = intake.then(
     async (counts) => {
-      await release(counts);
+      const drain = await drainOcrQueue(drainDeadline(until.getTime())).catch((err: unknown) => {
+        console.error("[receipt] OCR drain crashed:", err);
+        return undefined;
+      });
+      await release(drain ? counts : null, drain);
       return counts;
     },
     async (err: unknown) => {
+      // A failed intake still leaves the receipts queued before it to be read.
+      await drainOcrQueue(drainDeadline(until.getTime())).catch((drainErr: unknown) => console.error("[receipt] OCR drain crashed:", drainErr));
       await release(null);
       throw err;
     },
   );
-  return { status: "started", done };
+  return { status: "started", intake, done };
 }
+
+/** The drain under the mail lease with no mailbox bound, so a receipt left queued is still read; null while a run holds the lease. */
+export async function drainAlone(): Promise<DrainCounts | null> {
+  const orgId = await getOrgId();
+  const until = new Date(mailLeaseUntil(Date.now(), 0));
+  if (!(await takeLease(orgId, until))) return null;
+  try {
+    return await drainOcrQueue(drainDeadline(until.getTime()));
+  } finally {
+    await db.receiptMailLease
+      .updateMany({ where: { orgId, until }, data: { until: new Date(0) } })
+      .catch((err: unknown) => console.error("[receipt] mail lease release failed; it expires on its own:", err));
+  }
+}
+
+/** When a run started at `started` with `budgetMs` releases its lease at the latest: its intake, its drain and the slack. */
+export const mailLeaseUntil = (started: number, budgetMs: number) => started + budgetMs + DRAIN_BUDGET_MS + LEASE_SLACK_MS;
+
+/** The drain's deadline (epoch ms): its budget from now, and never past the lease's reading deadline. */
+export const drainDeadline = (leaseUntil: number, now = Date.now()) => Math.min(now + DRAIN_BUDGET_MS, callDeadlines(leaseUntil).read);
 
 /** The org's mail lease: whether a run holds it now, and the last finished run's summary. */
 export async function mailRunState(): Promise<{ running: boolean; lastRunAt: Date | null; lastRun: MailRunSummary | null }> {
@@ -519,27 +578,47 @@ export async function mailRunState(): Promise<{ running: boolean; lastRunAt: Dat
   };
 }
 
-/** The cron's intake pass, run to its end; `busy` while another run holds the lease. */
+/** One intake pass and its drain, run to their end; `busy` while another run holds the lease. */
 export async function readMailbox(): Promise<MailIntakeResult> {
   const run = await startMailRun();
   return run.status === "started" ? run.done : run;
 }
 
-async function readLeased(reader: MailboxReader, orgId: string, started: number, cap: number, budgetMs: number): Promise<MailRunCounts> {
+/**
+ * The daily cron's intake pass: answers once the mail is taken in, and leaves the drain reading
+ * waiting receipts after the request has answered, with or without a mailbox bound. `busy` while
+ * another run holds the lease.
+ */
+export async function takeInMailbox(): Promise<MailIntakeResult> {
+  const run = await startMailRun();
+  if (run.status === "unbound") drainAlone().catch((err: unknown) => console.error("[receipt] OCR drain crashed:", err));
+  if (run.status !== "started") return run;
+  run.done.catch((err: unknown) => console.error("[receipt] mail run failed:", err));
+  return run.intake;
+}
+
+type Pass = Awaited<ReturnType<typeof createPass>>;
+
+/**
+ * One pass's processing state: its counts, caps and held budget, and the per-message logic that
+ * turns a message's files into receipts, held and deferred items, refusals and owed replies.
+ * `budgetEnds` (epoch ms) is when the pass stops starting new work.
+ */
+async function createPass(orgId: string, cap: number, deadlines: { read: number; end: number }, mailboxAddress: string, budgetEnds: number) {
   const unresolved = await db.receiptMailItem.count({ where: { orgId, status: { in: STORED_STATUSES } } });
-  const counts = { messages: 0, receipts: 0, held: 0, skipped: 0, rejected: 0, failed: 0, deferred: 0, overLimit: 0, overCeiling: 0, unread: 0, ignored: 0 };
+  const counts = { messages: 0, captured: 0, receipts: 0, held: 0, skipped: 0, rejected: 0, failed: 0, deferred: 0, overLimit: 0, overCeiling: 0, unread: 0, ignored: 0 };
   const ignoredHashes = new Set(
     (await db.receiptIgnoredFile.findMany({ where: { orgId }, select: { fileHash: true } })).map((r) => r.fileHash),
   );
   let heldFiles = 0;
   let heldBytes = 0;
   const capped = () => counts.receipts >= cap;
-  const outOfTime = () => Date.now() - started >= budgetMs;
+  const outOfTime = () => Date.now() >= budgetEnds;
   const stored = () => unresolved + counts.held + counts.overLimit;
   const holdsSpent = () => heldFiles >= MAIL_HELD_CAP || stored() >= MAIL_HELD_CEILING;
 
   /**
-   * The one charging rule for the held budget: each file downloaded from an unknown sender, and each
+   * The one charging rule for the held budget: each file taken from an unknown sender, and each
    * file deferred for a known one, costs one file and its larger stated or actual size, whatever comes of it.
    */
   function chargeHold(file: MailFile, bytes: Buffer): void {
@@ -560,22 +639,35 @@ async function readLeased(reader: MailboxReader, orgId: string, started: number,
     return true;
   }
 
-  async function readMessage(msg: MailMessage, reader: MailboxReader): Promise<void> {
-    const { files, ignored, refused } = mailFiles(msg, reader);
-    // Nothing to read and nothing refused: the sender is told no receipt was found, unless the mail was a reply or side copy.
-    if (files.length === 0 && refused.length === 0 && !isSideCopy(msg.payload.headers, reader.address)) {
-      refused.push({ file: "your email", reason: "no_receipt" });
-    }
-    // Every file already in the ledger: nothing to download.
-    const rows = await db.receiptMailItem.findMany({ where: { gmailMessageId: msg.id }, select: { refusal: true } });
-    const ledgered = files.length > 0 && rows.length >= files.length;
-    // A file refused on an earlier pass is never read again, so its row carries it into the notice.
-    refused.push(...rows.flatMap((r) => (r.refusal ? [r.refusal as unknown as MailRefusal] : [])));
+  async function readMessage(msg: MailMessage): Promise<void> {
+    const { files, ignored, refused, unpriced } = mailFiles(msg);
     const headers = msg.payload.headers;
     const address = fromAddress(headers);
     const verdict = dmarcVerdict(headers, address);
     const aligned = verdict === "pass";
-    const sender: ReceiptPrincipal | null = address && aligned && (!ledgered || refused.length > 0) ? await ports().people.submitterByEmail(address) : null;
+    const submitter = () => (address && aligned ? ports().people.submitterByEmail(address) : Promise.resolve(null));
+    // A significant body with no amount: a submitter is told, or, on a side copy, finance holds a note of it with no
+    // reply; a submitter's automated mail keeps it as their receipt unless it is a side copy; anyone else's is held.
+    const known = unpriced ? await submitter() : undefined;
+    const sideCopy = isSideCopy(headers, mailboxAddress);
+    let sideCopyNote = false;
+    if (unpriced) {
+      const automated = isAutomated(msg.payload, address);
+      if (known && sideCopy) sideCopyNote = !automated;
+      else if (known && !automated) refused.push({ file: "your email", reason: "no_amount" });
+      else files.push(unpriced);
+    }
+    // Nothing to read and nothing refused: the sender is told no receipt was found, unless the mail was a reply or side copy.
+    if (files.length === 0 && refused.length === 0 && !sideCopy) {
+      refused.push({ file: "your email", reason: "no_receipt" });
+    }
+    // Every file already in the ledger: nothing to take.
+    const rows = await db.receiptMailItem.findMany({ where: { gmailMessageId: msg.id }, select: { id: true, attachmentHash: true, status: true, refusal: true } });
+    const note = rows.find(isRefusalNote);
+    const ledgered = files.length > 0 && rows.length - (note ? 1 : 0) >= files.length;
+    // A file refused on an earlier pass is never read again, so its row carries it into the notice.
+    refused.push(...rows.flatMap((r) => (r.refusal && !isRefusalNote(r) ? [r.refusal as unknown as MailRefusal] : [])));
+    const sender: ReceiptPrincipal | null = known !== undefined ? known : !ledgered || refused.length > 0 ? await submitter() : null;
     const holdReason: HoldReason = aligned ? "not_a_submitter" : "unverified_sender";
     // Owed in the same transaction as each stored file, so a reply is owed exactly when the message has one.
     const reply = { orgId, gmailMessageId: msg.id, senderAddress: address ?? "", receivedAt: new Date(Number(msg.internalDate)), replyToSender: aligned && !isAutomated(msg.payload, address) };
@@ -593,8 +685,45 @@ async function readLeased(reader: MailboxReader, orgId: string, started: number,
         data: { refusals, doneAt: null, claimedAt: null, attempts: 0 },
       });
     };
+    /**
+     * Without a submitter to tell, the message's refused files go to finance as one held note that keeps no file, and so
+     * does a submitter's side copy with no amount. The note is charged one held file against the run's budget and the
+     * ceiling; with no room, the message stays open for a later run. A discarded note is never reopened.
+     */
+    const holdRefusals = async () => {
+      const toNote: MailRefusal[] = sender
+        ? sideCopyNote ? [{ file: "your email", reason: "no_amount" }] : []
+        : refused.filter((r) => HELD_REFUSALS.has(r.reason));
+      const noted = (note?.refusal ?? []) as unknown as MailRefusal[];
+      const fresh = toNote.filter((r, i) => !noted.some(sameRefusal(r)) && toNote.findIndex(sameRefusal(r)) === i);
+      if (fresh.length === 0 || (note && note.status !== "held")) return;
+      const refusal = [...noted, ...fresh] as unknown as Prisma.InputJsonValue;
+      if (note) {
+        await db.receiptMailItem.update({ where: { id: note.id }, data: { refusal } });
+        return;
+      }
+      if (!roomToHold(0)) return;
+      heldFiles++;
+      const { count } = await db.receiptMailItem.createMany({
+        data: [{
+          orgId,
+          gmailMessageId: msg.id,
+          attachmentHash: REFUSAL_NOTE_KEY,
+          receivedAt: new Date(Number(msg.internalDate)),
+          senderAddress: address ?? "",
+          dmarcVerdict: verdict,
+          status: "held",
+          heldAt: new Date(),
+          holdReason: sender ? ("side_copy" satisfies HoldReason) : holdReason,
+          refusal,
+        }],
+        skipDuplicates: true,
+      });
+      counts.held += count;
+    };
     if (ledgered) {
       counts.skipped += files.length;
+      await holdRefusals();
       await oweRefusals();
       return;
     }
@@ -628,7 +757,7 @@ async function readLeased(reader: MailboxReader, orgId: string, started: number,
         continue;
       }
       try {
-        // An ignored file gets a discarded ledger row, so later runs skip its message without a download.
+        // An ignored file gets a discarded ledger row, so a replay skips it.
         if (!check) {
           await db.receiptMailItem.create({ data: { ...item, status: "discarded" } });
           counts.ignored++;
@@ -636,12 +765,17 @@ async function readLeased(reader: MailboxReader, orgId: string, started: number,
         }
         if (sender) {
           try {
-            const receiptId = await intakeMailedReceipt(sender, bytes, check.mimeType, async (tx, newId) => {
-              await tx.receiptMailItem.create({ data: { ...item, status: "assigned", receiptId: newId } });
-              await oweReply(tx);
-            });
+            await intakeMailedReceipt(
+              sender,
+              bytes,
+              check.mimeType,
+              async (tx, newId) => {
+                await tx.receiptMailItem.create({ data: { ...item, status: "assigned", receiptId: newId } });
+                await oweReply(tx);
+              },
+              { deadline: deadlines.read },
+            );
             counts.receipts++;
-            if (file.body) await discardIfCopy(msg.id, receiptId);
             continue;
           } catch (err) {
             // Over the sender's daily upload limit: stored to retry on a later run.
@@ -661,17 +795,17 @@ async function readLeased(reader: MailboxReader, orgId: string, started: number,
           chargeHold(file, bytes);
         }
         const status = sender ? "deferred" : "held";
-        const fileKey = storesNewFilesInBucket() ? newMailItemFileKey() : null;
-        if (fileKey) await fileStore().put(fileKey, bytes, key.attachmentHash);
+        const fileKey = newMailItemFileKey();
+        await byDeadline(deadlines.read, "the file store", () => fileStore().put(fileKey, bytes, key.attachmentHash));
         try {
           await db.$transaction([
             db.receiptMailItem.create({
-              data: { ...item, status, holdReason: sender ? null : holdReason, fileBlob: fileKey ? null : new Uint8Array(bytes), fileKey, fileSize: bytes.length, mimeType: check.mimeType },
+              data: { ...item, status, heldAt: sender ? null : new Date(), holdReason: sender ? null : holdReason, fileKey, fileSize: bytes.length, mimeType: check.mimeType },
             }),
             oweReply(db),
           ]);
         } catch (err) {
-          await deleteStoredFiles([fileKey]);
+          await deleteStoredFiles([fileKey], deadlines.read);
           throw err;
         }
         counts[sender ? "overLimit" : "held"]++;
@@ -681,6 +815,7 @@ async function readLeased(reader: MailboxReader, orgId: string, started: number,
         counts.skipped++;
       }
     }
+    await holdRefusals();
     // A put-off file may be refused yet, so the one notice waits for the pass that finishes the message.
     if (!putOff) await oweRefusals();
   }
@@ -704,18 +839,18 @@ async function readLeased(reader: MailboxReader, orgId: string, started: number,
       try {
         const sender = await ports().people.submitterByEmail(row.senderAddress);
         if (!sender) {
-          await db.receiptMailItem.updateMany({ where: { id: row.id, status: "deferred" }, data: { status: "held", holdReason: "not_a_submitter" satisfies HoldReason } });
+          await db.receiptMailItem.updateMany({ where: { id: row.id, status: "deferred" }, data: { status: "held", heldAt: new Date(), holdReason: "not_a_submitter" satisfies HoldReason } });
           continue;
         }
-        const item = await db.receiptMailItem.findFirst({ where: { id: row.id, status: "deferred" }, select: { id: true, fileBlob: true, fileKey: true, mimeType: true } });
+        const item = await db.receiptMailItem.findFirst({ where: { id: row.id, status: "deferred" }, select: { id: true, fileKey: true, mimeType: true } });
         if (!item?.mimeType) continue;
-        const fileBlob = await readStoredFile(item);
+        const fileBlob = await readStoredFile(item.fileKey, deadlines.read);
         if (!fileBlob) {
           counts.failed++;
           console.error("[receipt] a deferred mail item's file is missing");
           continue;
         }
-        await intakeDeferred({ ...item, fileBlob, mimeType: item.mimeType }, sender, { uploadLimits: true });
+        await intakeDeferred({ ...item, fileBlob, mimeType: item.mimeType }, sender, { uploadLimits: true, deadline: deadlines.read });
         counts.receipts++;
       } catch (err) {
         if (err instanceof OrgUploadLimitError) return;
@@ -729,7 +864,97 @@ async function readLeased(reader: MailboxReader, orgId: string, started: number,
     }
   }
 
-  await retryDeferred();
+  return { orgId, counts, deadlines, capped, outOfTime, stored, holdsSpent, readMessage, retryDeferred };
+}
+
+/** What processing a captured message came to: done, put off in part for a later pass, or past its stored copy's retention. */
+export type CapturedOutcome = { status: "processed" | "waiting" } | { status: "expired"; message: string };
+
+/** The kind and a short reason of a processing failure; never message content. */
+function processErrorOf(err: unknown): string {
+  const reason = isServiceError(err) || err instanceof KindedError ? `: ${err.message.slice(0, 200)}` : "";
+  return `${kindOf(err)}${reason}`;
+}
+
+type CapturedRow = { id: number; gmailMessageId: string; receivedAt: Date; capturedAt: Date; rawKey: string; processedAt: Date | null };
+
+/**
+ * Processes one captured message from its stored copy: the only processing code, for the run and for
+ * replay alike. Past the environment's retention it answers `expired` without asking the store; inside
+ * it, a missing copy is an error. A message the ledger already covers creates nothing twice.
+ */
+async function processCaptured(row: CapturedRow, pass: Pass): Promise<CapturedOutcome> {
+  const days = rawMailRetentionDays();
+  if (Date.now() - row.capturedAt.getTime() >= days * DAY_MS) {
+    return { status: "expired", message: `This email's stored copy expired ${days} days after capture.` };
+  }
+  const deferredBefore = pass.counts.deferred;
+  const overCeilingBefore = pass.counts.overCeiling;
+  try {
+    const raw = await readStoredFile(row.rawKey, pass.deadlines.read);
+    if (!raw) throw new KindedError("system", "This email's stored copy is missing");
+    await pass.readMessage(await parseRawMail(row.gmailMessageId, String(row.receivedAt.getTime()), Buffer.from(raw)));
+  } catch (err) {
+    await db.receiptMailMessage
+      .update({ where: { id: row.id }, data: { processError: processErrorOf(err) } })
+      .catch((saveErr: unknown) => console.error("[receipt] recording a mail processing error failed:", saveErr));
+    throw err;
+  }
+  // A file put off by a cap or the held ceiling leaves the message for a later pass.
+  const waiting = pass.counts.deferred !== deferredBefore || pass.counts.overCeiling !== overCeilingBefore;
+  await db.receiptMailMessage.update({
+    where: { id: row.id },
+    data: { processedAt: waiting ? row.processedAt : (row.processedAt ?? new Date()), processError: null },
+  });
+  return { status: waiting ? "waiting" : "processed" };
+}
+
+/** Replay's budget for its outside calls. */
+export const REPLAY_BUDGET_MS = 30_000;
+
+/**
+ * Processes one captured message again from its stored copy, creating only what is missing. Answers
+ * `expired`, with no store call, once the copy is past the environment's retention.
+ */
+export async function processCapturedMessage(id: number): Promise<CapturedOutcome> {
+  const orgId = await getOrgId();
+  const row = await db.receiptMailMessage.findFirst({ where: { id, orgId } });
+  if (!row) throw new ServiceError(404, "No such captured email.");
+  const reader = mailbox();
+  if (!reader) throw new ServiceError(409, "The receipt mailbox is not set up.");
+  const deadline = Date.now() + REPLAY_BUDGET_MS;
+  return processCaptured(row, await createPass(orgId, MAIL_CAP, { read: deadline, end: deadline }, reader.address, deadline));
+}
+
+/** Raw mail captured per run at most; a message that would start past it waits for the next run. */
+export const MAIL_RAW_BYTES = 100 * 1024 * 1024;
+/** How long after the capture budget the run's end-of-run calls (dating mail, alerts, acknowledgements) may run. */
+const CAPTURE_END_MS = 15_000;
+
+/**
+ * The deadlines (epoch ms) of a run's capture and processing calls: they end with its budget, and its
+ * end-of-run calls shortly after, never past the lease's own call deadlines.
+ */
+export const captureDeadlines = (started: number, budgetMs: number, leaseUntil: number) => {
+  const lease = callDeadlines(leaseUntil);
+  return { read: Math.min(started + budgetMs, lease.read), end: Math.min(started + budgetMs + CAPTURE_END_MS, lease.end) };
+};
+
+async function readLeased(
+  mailboxReader: MailboxReader,
+  orgId: string,
+  started: number,
+  cap: number,
+  budgetMs: number,
+  leaseUntil: number,
+): Promise<MailRunCounts> {
+  const deadlines = captureDeadlines(started, budgetMs, leaseUntil);
+  const reader = readerBy(mailboxReader, deadlines.read);
+  const endReader = readerBy(mailboxReader, deadlines.end);
+  const pass = await createPass(orgId, cap, deadlines, mailboxReader.address, started + budgetMs);
+  const { counts, capped, outOfTime, holdsSpent, stored } = pass;
+
+  await pass.retryDeferred();
 
   // Mail received before this is out of the window by the next daily run.
   const lastChance = started - (MAIL_WINDOW_DAYS - 1) * DAY_MS;
@@ -742,9 +967,8 @@ async function readLeased(reader: MailboxReader, orgId: string, started: number,
     });
 
   /**
-   * Listed messages the ledger shows finished, which are not fetched again: at least one ledger row, none of
-   * them deferred, and no at-risk row. A message is marked at risk before it is read and cleared only once
-   * every file was read, held, ignored, discarded or refused, so one left partly read, even by a crash, stays open.
+   * Listed messages the ledger shows finished from before capture, which are not fetched: at least one
+   * ledger row, none of them deferred, and no at-risk row.
    */
   async function finishedMessages(ids: string[]): Promise<Map<string, number>> {
     const [items, open] = await Promise.all([
@@ -757,46 +981,101 @@ async function readLeased(reader: MailboxReader, orgId: string, started: number,
     return files;
   }
 
-  async function readListed(listed: string[], reader: MailboxReader): Promise<void> {
+  /**
+   * Captures each listed message not captured and not finished, oldest first: its raw copy to the store,
+   * then its row. A message not captured stays at risk for the ageing alert. False when an outside call
+   * ran past its deadline, which ends the run's reading.
+   */
+  async function captureListed(listed: string[]): Promise<boolean> {
     const finished = await finishedMessages(listed);
-    for (const files of finished.values()) counts.skipped += files;
-    const ids = listed.filter((id) => !finished.has(id));
-    const readClean: string[] = [];
+    const capturedRows = await db.receiptMailMessage.findMany({ where: { orgId, gmailMessageId: { in: listed } }, select: { gmailMessageId: true, processedAt: true } });
+    const captured = new Set(capturedRows.map((r) => r.gmailMessageId));
+    // A captured message still to process counts its skipped files when it is processed.
+    const pending = new Set(capturedRows.flatMap((r) => (r.processedAt ? [] : [r.gmailMessageId])));
+    for (const [id, files] of finished) if (!pending.has(id)) counts.skipped += files;
+    const ids = listed.filter((id) => !finished.has(id) && !captured.has(id));
+    const capturedNow: string[] = [];
+    let rawBytes = 0;
+    /** Stores the messages from `from` on as unread and at risk, for the next run and the ageing alert. */
+    const leaveRestUnread = async (from: number) => {
+      const unread = ids.slice(from);
+      counts.unread += unread.length;
+      if (unread.length === 0) return;
+      // Oldest first, so the first unread message dates them all.
+      const receivedAt = await endReader.getRaw(unread[0]).then((m) => new Date(Number(m.internalDate)), () => null);
+      await db.receiptMailAtRisk.createMany({ data: unread.map((gmailMessageId) => ({ orgId, gmailMessageId, receivedAt })), skipDuplicates: true });
+    };
+    let timedOut = false;
     for (const [i, id] of ids.entries()) {
-      if ((capped() && holdsSpent()) || outOfTime()) {
-        const unread = ids.slice(i);
-        counts.unread = unread.length;
-        // Oldest first, so the first unread message dates them all.
-        const receivedAt = await reader.getMessage(id).then((m) => new Date(Number(m.internalDate)), () => null);
-        await db.receiptMailAtRisk.createMany({ data: unread.map((gmailMessageId) => ({ orgId, gmailMessageId, receivedAt })), skipDuplicates: true });
+      if (rawBytes >= MAIL_RAW_BYTES || outOfTime()) {
+        await leaveRestUnread(i);
         break;
       }
-      counts.messages++;
-      const deferredBefore = counts.deferred;
-      const overCeilingBefore = counts.overCeiling;
-      let msg: MailMessage | null = null;
+      let receivedAt: Date | null = null;
       try {
-        msg = await reader.getMessage(id);
-        await leftUnread(id, new Date(Number(msg.internalDate)));
-        await readMessage(msg, reader);
+        const { raw, internalDate } = await reader.getRaw(id);
+        receivedAt = new Date(Number(internalDate));
+        rawBytes += raw.length;
+        const rawKey = newRawMailKey();
+        const rawSha256 = sha256Hex(raw);
+        await byDeadline(deadlines.read, "the file store", () => fileStore().put(rawKey, raw, rawSha256));
+        try {
+          await db.receiptMailMessage.create({ data: { orgId, gmailMessageId: id, receivedAt, rawKey, rawSha256, rawSize: raw.length } });
+        } catch (err) {
+          // A concurrent run captured it first; this copy expires with the rest.
+          if (!isUniqueConstraintError(err)) throw err;
+        }
+        counts.captured++;
+        capturedNow.push(id);
       } catch (err) {
         counts.failed++;
-        console.error("[receipt] mail intake failed for one message:", err);
-        await leftUnread(id, msg && new Date(Number(msg.internalDate)));
-        continue;
+        console.error(`[receipt] mail capture failed for one message (${kindOf(err)}):`, err);
+        await leftUnread(id, receivedAt);
+        if (err instanceof DeadlineError) {
+          // An outside call is not answering, so the reading ends here.
+          timedOut = true;
+          await leaveRestUnread(i + 1);
+          break;
+        }
       }
-      if (counts.deferred === deferredBefore && counts.overCeiling === overCeilingBefore) readClean.push(id);
     }
     await db.receiptMailAtRisk.deleteMany({
-      where: { orgId, OR: [{ gmailMessageId: { in: readClean } }, { alertedAt: { not: null }, gmailMessageId: { notIn: listed } }] },
+      where: { orgId, OR: [{ gmailMessageId: { in: capturedNow } }, { alertedAt: { not: null }, gmailMessageId: { notIn: listed } }] },
     });
+    return !timedOut;
+  }
+
+  /** Processes captured messages not yet done, oldest first, inside retention; false when an outside call ran past its deadline. */
+  async function processPending(): Promise<boolean> {
+    const pending = await db.receiptMailMessage.findMany({
+      where: { orgId, processedAt: null, capturedAt: { gt: new Date(Date.now() - rawMailRetentionDays() * DAY_MS) } },
+      orderBy: [{ receivedAt: "asc" }, { id: "asc" }],
+    });
+    for (const [i, row] of pending.entries()) {
+      if ((capped() && holdsSpent()) || outOfTime()) {
+        counts.unread += pending.length - i;
+        return true;
+      }
+      counts.messages++;
+      try {
+        await processCaptured(row, pass);
+      } catch (err) {
+        counts.failed++;
+        console.error(`[receipt] mail processing failed for one message (${kindOf(err)}):`, err);
+        if (err instanceof DeadlineError) {
+          counts.unread += pending.length - i - 1;
+          return false;
+        }
+      }
+    }
+    return true;
   }
 
   /**
    * One alert for stored messages not yet alerted, past lastChance or of unknown age; stamped only once it is sent.
    * Overlapping runs can each send it. One duplicate email is accepted: claiming rows before the send would lose the alert if the run died in between.
    */
-  async function alertAtRisk(reader: MailboxReader): Promise<void> {
+  async function alertAtRisk(): Promise<void> {
     const due = await db.receiptMailAtRisk.findMany({
       where: { orgId, alertedAt: null, OR: [{ receivedAt: null }, { receivedAt: { lt: new Date(lastChance) } }] },
       select: { id: true, gmailMessageId: true, receivedAt: true },
@@ -804,7 +1083,7 @@ async function readLeased(reader: MailboxReader, orgId: string, started: number,
     // A capped run stores only a lower bound, so each due row is re-dated from its own message, one at a time to spare Gmail; one that cannot be fetched keeps its stored date.
     const dated: typeof due = [];
     for (const row of due) {
-      const message = await reader.getMessage(row.gmailMessageId).catch(() => null);
+      const message = await endReader.getRaw(row.gmailMessageId).catch(() => null);
       if (!message) {
         dated.push(row);
         continue;
@@ -819,11 +1098,11 @@ async function readLeased(reader: MailboxReader, orgId: string, started: number,
     if (rows.length === 0) return;
     const dates = rows.flatMap((r) => (r.receivedAt ? [r.receivedAt.getTime()] : []));
     try {
-      await ports().alerts.mailAgingOut({
+      await byDeadline(deadlines.end, "the mail ageing alert", () => ports().alerts.mailAgingOut({
         orgId,
         messages: rows.length,
         oldestReceivedAt: dates.length > 0 ? new Date(Math.min(...dates)) : null,
-      });
+      }));
       await db.receiptMailAtRisk.updateMany({ where: { id: { in: rows.map((r) => r.id) } }, data: { alertedAt: new Date() } });
     } catch (err) {
       console.error("[receipt] mail ageing alert failed:", err);
@@ -838,22 +1117,25 @@ async function readLeased(reader: MailboxReader, orgId: string, started: number,
     // The cron run counts `listing_failed` as a failure, so the Problems list shows it.
     console.error(`[receipt] mailbox listing failed (${kind}):`, err);
   }
-  if (ids) await readListed(ids, reader);
-  await alertAtRisk(reader);
+  const listedAll = ids ? await captureListed(ids) : false;
+  const processedAll = await processPending();
+  await alertAtRisk();
 
   let replies = { sent: 0, failed: 0 };
   try {
-    replies = await sendMailReplies();
+    replies = await sendMailReplies(deadlines.end);
   } catch (err) {
     console.error("[receipt] mail acknowledgements failed:", err);
   }
 
   if (counts.overCeiling > 0) {
     try {
-      await ports().alerts.mailHoldCeilingReached({ orgId, unresolved: stored(), refused: counts.overCeiling });
+      await byDeadline(deadlines.end, "the mail hold ceiling alert", () =>
+        ports().alerts.mailHoldCeilingReached({ orgId, unresolved: stored(), refused: counts.overCeiling }),
+      );
     } catch (err) {
       console.error("[receipt] mail hold ceiling alert failed:", err);
     }
   }
-  return { status: ids ? "ok" : "listing_failed", ...counts, replied: replies.sent, replyFailed: replies.failed };
+  return { status: listedAll && processedAll ? "ok" : "listing_failed", ...counts, replied: replies.sent, replyFailed: replies.failed };
 }

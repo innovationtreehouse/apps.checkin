@@ -4,16 +4,15 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Alert, Box, Button, Card, Group, Modal, Paper, Stack, Switch, Table, Text, Textarea, TextInput, UnstyledButton } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
 import { useDebouncedValue } from "@mantine/hooks";
-import { LoadError } from "@checkin/component-ui";
+import { clearError, errorMessage, HttpError, LoadError, showError, showSuccess } from "@checkin/component-ui";
 import { IconChevronDown, IconChevronUp, IconSelector } from "@tabler/icons-react";
 import { EntityPicker } from "@/components/admin/EntityPicker";
 import { AdminEditHouseholdModal } from "@/components/admin/AdminEditHouseholdModal";
 import { RoleBadge } from "@/components/ui/RoleBadge";
 import { ROLE_FLAGS } from "@/lib/roles";
 import { useRequireRole } from "@/hooks/useRequireRole";
-import { useLoad } from "@/lib/api";
+import { api, useLoad } from "@/lib/api";
 import { MEMBERSHIP_PARTICIPANTS_ROLES } from "@/lib/nav/sections/membershipOps";
 
 type HouseholdRef = {
@@ -120,10 +119,6 @@ export default function AdminParticipantsIndex() {
   const [addContactSaving, setAddContactSaving] = useState(false);
   const [addContactFieldErrors, setAddContactFieldErrors] = useState<{ email?: string }>({});
 
-  const showNotification = (message: string, type: 'success' | 'error' = 'success') => {
-    notifications.show({ message, color: type === 'error' ? 'red' : 'green', autoClose: type === 'error' ? false : 4000 });
-  };
-
   const closeAssign = () => {
     setAssignModalOpen(false);
     setSelectedParticipant(null);
@@ -143,26 +138,19 @@ export default function AdminParticipantsIndex() {
     }
 
     setAssigning(true);
+    clearError("assign-household");
     try {
-      const res = await fetch(`/api/membership-ops/participants/${selectedParticipant.id}/household`, {
+      await api(`/api/membership-ops/participants/${selectedParticipant.id}/household`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           householdId: householdId ? parseInt(householdId) : undefined,
           createNew: !householdId
         })
       });
-      if (res.ok) {
-        void search.reload();
-        closeAssign();
-        showNotification("Household assigned successfully!");
-      } else {
-        const data = await res.json().catch(() => ({}));
-        showNotification(data.error || "Failed to assign household", "error");
-      }
-    } catch (err) {
-      console.error("Participants page action failed:", err);
-      showNotification("Network error", "error");
+      closeAssign();
+      showSuccess("Household assigned successfully!");
+    } catch (e) {
+      showError(errorMessage(e), { key: "assign-household" });
     } finally {
       setAssigning(false);
     }
@@ -179,24 +167,17 @@ export default function AdminParticipantsIndex() {
   const saveParticipant = async () => {
     if (!editingParticipant) return;
     setSavingDetails(true);
+    clearError("save-person");
     try {
-      const res = await fetch(`/api/membership-ops/participants/${editingParticipant.id}`, {
+      await api(`/api/membership-ops/participants/${editingParticipant.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(editForm)
       });
-      if (res.ok) {
-        void search.reload();
-        setEditModalOpen(false);
-        setEditingParticipant(null);
-        showNotification("Person updated successfully!");
-      } else {
-        const data = await res.json().catch(() => ({}));
-        showNotification(data.error || "Failed to update person", "error");
-      }
-    } catch (err) {
-      console.error("Participants page action failed:", err);
-      showNotification("Network error", "error");
+      setEditModalOpen(false);
+      setEditingParticipant(null);
+      showSuccess("Person updated successfully!");
+    } catch (e) {
+      showError(errorMessage(e), { key: "save-person" });
     } finally {
       setSavingDetails(false);
     }
@@ -213,25 +194,18 @@ export default function AdminParticipantsIndex() {
     e.preventDefault();
     setAddContactSaving(true);
     setAddContactFieldErrors({});
+    clearError("add-contact");
     try {
-      const res = await fetch('/api/membership-ops/contacts', {
+      const { participant } = await api<{ participant: PersonRow }>('/api/membership-ops/contacts', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: addContactName, email: addContactEmail }),
       });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        setAdded((a) => [data.participant, ...a]);
-        showNotification("Contact added.");
-        closeAddContact();
-      } else if (data.fields?.includes("email")) {
-        setAddContactFieldErrors({ email: data.error });
-      } else {
-        showNotification(data.error || "Failed to add contact", "error");
-      }
-    } catch (err) {
-      console.error("Participants page action failed:", err);
-      showNotification("Network error", "error");
+      setAdded((a) => [participant, ...a]);
+      showSuccess("Contact added.");
+      closeAddContact();
+    } catch (e) {
+      if (e instanceof HttpError && e.fields.includes("email")) setAddContactFieldErrors({ email: e.message });
+      else showError(errorMessage(e), { key: "add-contact" });
     } finally {
       setAddContactSaving(false);
     }
@@ -404,12 +378,8 @@ export default function AdminParticipantsIndex() {
               placeholder="Search households..."
               selectedId={householdId || null}
               selectedLabel={householdSearch}
-              search={async (q) => {
-                const res = await fetch(`/api/membership-ops/households?q=${encodeURIComponent(q)}`);
-                if (!res.ok) return [];
-                const data = await res.json();
-                return data.households || [];
-              }}
+              search={(q) => api<{ households?: HouseholdRef[] }>(`/api/membership-ops/households?q=${encodeURIComponent(q)}`)
+                .then((data) => data.households ?? [], () => [])}
               getOptionLabel={(h) => h.name || `Household #${h.id}`}
               getOptionDescription={(h) => h.householdMembers.map((p) => p.name || p.email || 'Unnamed').join(', ') || 'Empty'}
               onSelect={(h) => { setHouseholdId(h.id.toString()); setHouseholdSearch(h.name || `Household #${h.id}`); }}
@@ -500,7 +470,6 @@ export default function AdminParticipantsIndex() {
         householdId={editHouseholdId}
         opened={editHouseholdId !== null}
         onClose={() => setEditHouseholdId(null)}
-        onSaved={() => void search.reload()}
       />
     </Stack>
   );

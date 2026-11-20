@@ -23,14 +23,16 @@ jest.mock("@/lib/email", () => ({
 
 const TAG = "reconcile-mirror-source-test";
 process.env.NEXTAUTH_SECRET ||= "integration-test-nextauth-secret";
-// One mirror per integration worker DB, so parallel workers never share it.
-const MIRROR_DB = `${new URL(process.env.DATABASE_URL!).pathname.slice(1)}_mirror`;
+// Named after this suite and the worker DB, so no other suite or worker shares it.
+const MIRROR_DB = `${new URL(process.env.DATABASE_URL!).pathname.slice(1)}_reconcile_mirror_source`;
+const PRIOR_MIRROR_URL = process.env.SHOPIFY_READ_DATABASE_URL;
 const MIGRATIONS = path.resolve(__dirname, "../../../../../packages/s-ingest-core/prisma/migrations");
 
 let mirror: Client;
 let restoreBoardSettings: () => Promise<void> = async () => {};
 let nextOrder = 1;
 const MEMBERSHIP_VARIANT = `${TAG}-membership`;
+const MEMBERSHIP_YEAR = 2043;
 
 function urlFor(db: string): string {
     const url = new URL(process.env.DATABASE_URL!);
@@ -87,6 +89,7 @@ async function applicant(email: string, status: "PENDING_PAYMENT" | "ACTIVE", sh
             orgMembershipId: m.id,
             kind: "INITIAL",
             status,
+            contractSignedAt: new Date(),
             bgClearedAt: new Date(),
             shopifyOrderId: shopifyOrderId ?? null,
             paidAt: status === "ACTIVE" ? new Date() : null,
@@ -123,8 +126,9 @@ beforeAll(async () => {
     process.env.SHOPIFY_READ_DATABASE_URL = urlFor(MIRROR_DB);
 
     restoreBoardSettings = await snapshotBoardSettings();
-    const settings = { standardMembershipFeeCents: 5000, volunteerMembershipFeeCents: 2000, orgMembershipVariantId: MEMBERSHIP_VARIANT, orgMembershipYearBoundary: null, shopifyReconcileCursorAt: null };
+    const settings = { standardMembershipFeeCents: 5000, volunteerMembershipFeeCents: 2000, orgMembershipYearBoundary: null, shopifyReconcileCursorAt: null };
     await prisma.boardSettings.upsert({ where: { id: 1 }, create: { id: 1, ...settings }, update: settings });
+    await prisma.membershipYearVariant.create({ data: { membershipYear: MEMBERSHIP_YEAR, shopifyVariantId: MEMBERSHIP_VARIANT } });
 }, 60_000);
 
 afterAll(async () => {
@@ -140,9 +144,11 @@ afterAll(async () => {
     await prisma.person.deleteMany({ where: { householdId: { in: ids } } });
     await prisma.household.deleteMany({ where: { id: { in: ids } } });
     await restoreBoardSettings();
+    await prisma.membershipYearVariant.deleteMany({ where: { membershipYear: MEMBERSHIP_YEAR } });
 
     await mirror?.end();
-    delete process.env.SHOPIFY_READ_DATABASE_URL;
+    if (PRIOR_MIRROR_URL === undefined) delete process.env.SHOPIFY_READ_DATABASE_URL;
+    else process.env.SHOPIFY_READ_DATABASE_URL = PRIOR_MIRROR_URL;
     await withAdmin(`DROP DATABASE IF EXISTS "${MIRROR_DB}" WITH (FORCE)`);
 }, 60_000);
 

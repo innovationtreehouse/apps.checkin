@@ -1,8 +1,7 @@
 # @checkin/quickbooks
 
 QuickBooks Online client: windowed reads plus one closed-enum, create-only writer. How the
-expense lane uses it is in `docs/architecture/EXPENSE_QB.md`; the rules it keeps are under
-*The books are finance's* in `docs/rules/principles.md`.
+expense lane uses it is in `docs/architecture/EXPENSE_QB.md`.
 No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, refresh).
 
 ## Public API
@@ -56,7 +55,7 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
   in the note, for the candidate adapters. Two different markers come back space-joined
   and match no key, so `findMatch` sends the entry to a person.
   Writes re-check the realm guard, so production needs `CHECKIN_ENV=prod` at write time.
-- Every request has a 30 s timeout and retries a 429 once after `Retry-After` (capped at 10 s). Errors name
+- Every request goes through one pacer per process (`pacer.ts`): 5 a second, 4 in flight. A 429 pauses every request for `Retry-After` (at most 120 s) or 60 s, the request is tried once more after the pause, and a second 429 throws `QboThrottledError`. The pacer logs the previous day's request count at the first request of each UTC day. Every request has a 30 s timeout. Errors name
   the status, `intuit_tid` and QBO fault codes only, never the fault text (it can echo names and memos).
 - `findOrCreateInKindJournal(client, request)` creates one in-kind gift as one balanced JournalEntry;
   no other path creates a JournalEntry. Each line names its account: credits go only to in-kind
@@ -65,8 +64,8 @@ No SDK dependency — OAuth2 is three `fetch` calls (authorize, code→token, re
   for the gift, and a crash after QuickBooks accepts is found by key next run. Finance's own booking of a
   gift, a Deposit into and a Purchase out of the in-kind clearing account, is matched by the in-kind lane
   (`packages/bulk-donation`) before it calls this.
-- `findOrCreate(client, request)` (`write.ts`, stateless): the closed-books gate
-  (*Finance's books come first* in `docs/rules/principles.md`). It reads the record's window, runs `findMatch`, and answers
+- `findOrCreate(client, request)` (`write.ts`, stateless): the closed-books gate.
+  It reads the record's window, runs `findMatch`, and answers
   `found` / `ambiguous` (post nothing, closed period included), `closed` (not found and dated on or
   before `closedThrough`), `needs-finance` (not found and `mayCreate` false), `created`, or `failed`
   (any error; nothing is retried here). Before a create it re-reads `bookCloseDate()` and gates on the
