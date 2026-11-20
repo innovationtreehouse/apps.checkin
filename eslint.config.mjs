@@ -67,12 +67,11 @@ const rawNotificationImport = [
 ];
 
 // Files still on raw notifications: background-check pages wait for that process's
-// redesign; the rest are edited by an open PR (attendance/current #2375, useMembershipPage #3486).
+// redesign; attendance/current is edited by open PR #2375.
 const rawNotificationExemptions = [
   "checkin-app/src/app/membership-ops/review/page.tsx",
   "checkin-app/src/app/membership/BackgroundChecksPanel.tsx",
   "checkin-app/src/app/attendance/current/page.tsx",
-  "checkin-app/src/app/membership/useMembershipPage.ts",
 ];
 
 // Client code reads through useLoad and writes through api() from @/lib/api, so a
@@ -98,7 +97,7 @@ const rawFetchExemptions = [
   "checkin-app/src/components/OnboardingGate.tsx",
   // A nav-wide shared store with its own refresh broadcast.
   "checkin-app/src/hooks/useTodoCounts.ts",
-  // Its after-save read retries by hand; open PR #3486 edits it.
+  // Its after-save read retries by hand.
   "checkin-app/src/app/membership/useMembershipPage.ts",
   // Its mount sends a sync POST when the person returns from signing.
   "checkin-app/src/app/membership/KeyVolunteerAgreementPanel.tsx",
