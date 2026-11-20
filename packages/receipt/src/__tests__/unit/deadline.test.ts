@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { byDeadline, DeadlineError } from "../../lib/deadline";
-import { callDeadlines, drainDeadline, MAIL_CATCH_UP_BUDGET_MS, MAIL_TIME_BUDGET_MS, mailLeaseUntil } from "../../services/mailIntake";
+import { callDeadlines, captureDeadlines, drainDeadline, MAIL_CATCH_UP_BUDGET_MS, MAIL_TIME_BUDGET_MS, mailLeaseUntil } from "../../services/mailIntake";
 import { DRAIN_BUDGET_MS } from "../../services/ocrDrain";
 
 const hung = () => new Promise<never>(() => {});
@@ -51,6 +51,22 @@ describe("callDeadlines", () => {
     expect(read).toBeGreaterThan(started + budgetMs);
     expect(read).toBeLessThan(end);
     expect(end).toBeLessThan(leaseUntil);
+  });
+});
+
+describe("captureDeadlines", () => {
+  it.each([MAIL_TIME_BUDGET_MS, MAIL_CATCH_UP_BUDGET_MS])("ends a %i ms run's capture calls with its budget, and its end-of-run calls before the lease's call deadlines", (budgetMs) => {
+    const started = Date.now();
+    const leaseUntil = mailLeaseUntil(started, budgetMs);
+    const { read, end } = captureDeadlines(started, budgetMs, leaseUntil);
+    expect(read).toBe(started + budgetMs);
+    expect(end).toBeGreaterThan(read);
+    expect(end).toBeLessThan(callDeadlines(leaseUntil).read);
+  });
+
+  it("keeps the daily run's every call inside the scheduler's 60-second wait", () => {
+    const { end } = captureDeadlines(0, MAIL_TIME_BUDGET_MS, mailLeaseUntil(0, MAIL_TIME_BUDGET_MS));
+    expect(end).toBeLessThan(60_000);
   });
 });
 

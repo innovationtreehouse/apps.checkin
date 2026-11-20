@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { MailboxReader, MailMessage, MailPart } from "../../contract";
+import type { MailMessage, MailPart } from "../../contract";
 import { BODY_MIN_BYTES, bodyText, isRefusalNote, mailFiles, REFUSAL_NOTE_KEY } from "../../services/mailIntake";
 
-const reader: MailboxReader = { address: "receipts@example.org", listRecent: async () => [], getMessage: async () => { throw new Error("unused"); }, getAttachment: async () => Buffer.alloc(0) };
 const b64 = (s: string) => Buffer.from(s).toString("base64url");
 const PDF: MailPart = { mimeType: "application/pdf", filename: "r.pdf", body: { attachmentId: "a", size: 40 } };
 const message = (mimeType: string, body: string, extra: MailPart[] = []): MailMessage => ({
@@ -10,7 +9,7 @@ const message = (mimeType: string, body: string, extra: MailPart[] = []): MailMe
   internalDate: "0",
   payload: { mimeType: "multipart/mixed", parts: [{ mimeType, body: { data: b64(body), size: body.length } }, ...extra] },
 });
-const read = (mimeType: string, body: string, extra: MailPart[] = []) => mailFiles(message(mimeType, body, extra), reader);
+const read = (mimeType: string, body: string, extra: MailPart[] = []) => mailFiles(message(mimeType, body, extra));
 const kept = (mimeType: string, body: string, extra: MailPart[] = []) => read(mimeType, body, extra).files.some((f) => f.body);
 /** Over the size floor on its own, with no amount in it. */
 const PAD = "Thank you for shopping with us. Please keep this email for your records; it is your proof of purchase.";

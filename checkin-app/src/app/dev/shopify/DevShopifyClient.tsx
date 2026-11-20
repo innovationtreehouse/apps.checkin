@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { errorMessage, showError } from "@checkin/component-ui";
+import { api } from "@/lib/api";
 
 interface PendingProcess {
     id: number;
@@ -37,29 +39,21 @@ export default function DevShopifyClient({
     // Busy key is unique per row across both tables: "m:<id>" / "p:<programId>:<personId>".
     const [busy, setBusy] = useState<string | null>(null);
     const [result, setResult] = useState<string | null>(null);
-    const [error, setError] = useState<string | null>(null);
 
     async function fire(key: string, body: unknown, describe: (data: Record<string, unknown>) => string) {
         setBusy(key);
-        setError(null);
         setResult(null);
         try {
-            const res = await fetch("/api/dev/shopify/orders-paid", {
+            const data = await api<Record<string, unknown>>("/api/dev/shopify/orders-paid", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(body),
             });
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok) {
-                setError(data.error ? `${data.error} (${res.status})` : `Webhook failed (${res.status}). Check server logs.`);
-                return;
-            }
-            setResult(describe(data));
+            setResult(describe(data ?? {}));
             // The fired row is no longer awaiting payment — refresh the
             // server-rendered lists so it (and its 404-on-re-click) disappears.
             router.refresh();
         } catch (e) {
-            setError(e instanceof Error ? e.message : String(e));
+            showError(errorMessage(e));
         } finally {
             setBusy(null);
         }
@@ -84,7 +78,6 @@ export default function DevShopifyClient({
                 real signed <code>orders/paid</code> webhook — <strong>DEV, NO REAL MONEY</strong>.
             </p>
 
-            {error && <p style={{ color: "#b91c1c", marginTop: "1rem" }}>{error}</p>}
             {result && <p style={{ color: "#059669", marginTop: "1rem" }}>{result}</p>}
 
             <h2 style={{ fontSize: "1.1rem", fontWeight: 600, marginTop: "1.75rem" }}>Membership applications</h2>

@@ -7,9 +7,10 @@ Everything here stops being true once the change has run. The design is
 
 - **CR-1 — answered:** mail stays daily inside `reconcile-shopify`. No new route and
   no infra schedule. Caps and thresholds are sized for about 500 receipts a year.
-- **CR-2 — answered:** 90 days after capture, by an S3 lifecycle rule on
-  `mail-raw/`. The app gets put and get, never delete. The owner makes the infra
-  change.
+- **CR-2 — answered:** by S3 lifecycle, per environment: 90 days after capture in
+  prod, by a rule on `mail-raw/`; 30 days in dev and staging, by their existing
+  whole-bucket rule. The app holds the matching number per environment and adapts to
+  the infra. The app gets put and get, never delete.
 - **CR-3 — answered:** finance and sysadmins, the same people as the mail catch-up
   button.
 - **CR-4 — answered:** charge the allowance when a reading starts, uploads included.

@@ -124,12 +124,8 @@ export default function CreateProgramPage() {
               placeholder="Search by name, email, or ID..."
               selectedId={leadMentorId || null}
               selectedLabel={mentorSearch}
-              search={async (q) => {
-                const res = await fetch(`/api/people/search?q=${encodeURIComponent(q)}&filter=adults`);
-                if (!res.ok) return [];
-                const data = await res.json();
-                return data.people || [];
-              }}
+              search={(q) => api<{ people?: ParticipantOption[] }>(`/api/people/search?q=${encodeURIComponent(q)}&filter=adults`)
+                .then((data) => data.people ?? [], () => [])}
               getOptionLabel={(p) => p.name || 'Unnamed'}
               getOptionDescription={(p) => p.email}
               getOptionDisabledReason={(p) => p.leaderIneligibility ?? null}

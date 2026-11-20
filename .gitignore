@@ -56,3 +56,6 @@ checkin-app/src/generated/prisma
 # kiosk client secrets (belt-and-suspenders; client/.gitignore also covers these)
 client/client.key
 client/config.json
+
+# Next.js-generated agent guide; the real one is the root AGENTS.md
+checkin-app/AGENTS.md
