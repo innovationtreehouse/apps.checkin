@@ -71,6 +71,7 @@ const ORACLES = [
     'program-participant-pending-since-strip.test.ts',
     'program-roster-age-strip.test.ts',
     'program-scope-withdrawn.test.ts',
+    'qbo-fault-codes-route.test.ts',
     'receipt-allowance-reset-routes.test.ts',
     'receipt-flow-status-routes.test.ts',
     'receipt-mail-replay-route.test.ts',
