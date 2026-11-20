@@ -204,6 +204,49 @@ describe('unarchiveApplication (Reopen) within the membership year', () => {
         });
     });
 
+    describe('a paid row closed with no year', () => {
+        const paid = (over: Partial<OrgMembershipProcess>) => row({
+            kind: 'RENEWAL', status: 'ARCHIVED', archivedFromStatus: 'PENDING_BG_CLEARANCE',
+            createdAt: new Date('2026-06-05T00:00:00.000Z'), paidAt: new Date('2026-06-10T00:00:00.000Z'), appliesToYear: null, ...over,
+        });
+        const written = () => tx.orgMembershipProcess.updateMany.mock.calls[0][0].data;
+
+        it('reopens with the year its payment falls in, and audits it', async () => {
+            at('2026-12-01T00:00:00.000Z');
+            findUnique.mockResolvedValue(paid({}));
+            await unarchiveApplication(1, 2);
+            expect(written()).toMatchObject({ status: 'PENDING_BG_CLEARANCE', appliesToYear: 2026 });
+            expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+                data: expect.objectContaining({ newData: expect.objectContaining({ appliesToYear: 2026 }) }),
+            }));
+        });
+
+        it('places a payment before the window opens in the year before', async () => {
+            at('2026-12-01T00:00:00.000Z');
+            findUnique.mockResolvedValue(paid({ createdAt: new Date('2026-06-01T00:00:00.000Z'), paidAt: new Date('2026-05-31T00:00:00.000Z') }));
+            await unarchiveApplication(1, 2);
+            expect(written()).toMatchObject({ appliesToYear: 2025 });
+        });
+
+        it.each([
+            ['a recorded year', { appliesToYear: 2025 }],
+            ['no payment', { paidAt: null }],
+        ] as const)('leaves the year alone with %s', async (_label, over) => {
+            at('2026-12-01T00:00:00.000Z');
+            findUnique.mockResolvedValue(paid(over));
+            await unarchiveApplication(1, 2);
+            expect(written()).not.toHaveProperty('appliesToYear');
+        });
+
+        it('writes no year when no boundary is configured', async () => {
+            at('2026-12-01T00:00:00.000Z');
+            tx.boardSettings.findUnique.mockResolvedValue({ orgMembershipYearBoundary: null });
+            findUnique.mockResolvedValue(paid({}));
+            await unarchiveApplication(1, 2);
+            expect(written()).not.toHaveProperty('appliesToYear');
+        });
+    });
+
     it('leaves per-person kinds alone', async () => {
         at('2027-06-02T00:00:00.000Z');
         findUnique.mockResolvedValue(row({ kind: 'PERSON_BG', orgMembershipId: null, subjectPersonId: 7, status: 'ARCHIVED', archivedFromStatus: 'PENDING_BG_REVIEW', createdAt: new Date('2020-07-01T00:00:00.000Z') }));
