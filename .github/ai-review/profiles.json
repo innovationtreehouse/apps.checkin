@@ -11,7 +11,7 @@
   "name": "security-boundary",
   "paths": [
    "checkin-app/src/security/**",
-   "checkin-app/scripts/migrated-routes.txt"
+   "checkin-app/scripts/migrated-routes.txt", "checkin-app/src/middleware.ts"
   ],
   "instructions": "Changes to the registry, grants, scope bindings, the stripper or a field's @sensitivity tier must ship in their own PR with no app or feature code (AGENTS.md boundary isolation rule). Flag any app code in the same PR. A new route needs its registry entry already on main. Comment-only changes must stay comment-only."
  },
@@ -31,11 +31,9 @@
    "packages/receipt/**",
    "packages/bulk-donation/**",
    "packages/quickbooks/**",
-   "checkin-app/src/lib/finance/**",
-   "docs/rules/revenue.md",
-   "docs/rules/expenses.md"
+   "checkin-app/src/lib/finance/**"
   ],
-  "instructions": "The app never changes or deletes entries in QuickBooks; drift goes back to finance as a flag. Check amounts in integer cents, idempotency of anything a cron or webhook can repeat, and that a refund or reversal path matches docs/rules/revenue.md exactly. Who may approve or authorize is set by docs/rules; compare the code to the rule."
+  "instructions": "The app never changes or deletes entries in QuickBooks; drift goes back to finance as a flag. Check amounts in integer cents and idempotency of anything a cron or webhook can repeat."
  },
  {
   "name": "kiosk-and-scan",
@@ -60,9 +58,17 @@
  {
   "name": "rules-docs",
   "paths": [
-   "docs/rules/**",
    "docs/in-design/**"
   ],
-  "instructions": "Every claim about current behaviour must match the code on main; read it. A tag change such as [Unsettled] to [Decision] needs an owner ruling recorded in the PR. Retiring a doc must not drop an open question or follow-up without a new home."
+  "instructions": "Every claim about current behaviour must match the code on main; read it. Retiring a doc must not drop an open question or follow-up without a new home."
+ },
+ {
+  "name": "review-pipeline",
+  "paths": [
+   ".github/scripts/**",
+   ".github/workflows/**",
+   ".github/ai-review/**"
+  ],
+  "instructions": "These files are code that decides how PRs are reviewed. PR-controlled text (titles, bodies, diffs, comments, review output) must stay data, never instructions: check prompt-injection boundaries and the _trusted filtering of comments and reviews. Secrets reach only the steps that need them and never PR-controlled code (checkouts of the PR head, scripts it can edit). Routing, judge and rerun logic must fail safe: a failure must never silently skip or weaken a review. Size and budget limits must still hold. The self-tests must cover every new branch."
  }
 ]

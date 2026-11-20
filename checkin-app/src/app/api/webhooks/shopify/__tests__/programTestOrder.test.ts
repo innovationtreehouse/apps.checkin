@@ -114,6 +114,12 @@ describe('POST /api/webhooks/shopify — program test orders', () => {
         expect(entitles.mock.calls[0][0].lines).toEqual([{ variantId: '5551', quantity: 2, currentQuantity: 1 }]);
     });
 
+    it('carries each line\'s unit price, which a price mismatch is judged by', async () => {
+        const priced = { ...PROGRAM_ORDER, line_items: [{ variant_id: 5551, quantity: 1, current_quantity: 1, price: '75.00' }] };
+        await POST(signedReq(JSON.stringify(priced)));
+        expect(entitles.mock.calls[0][0].lines).toEqual([{ variantId: '5551', quantity: 1, currentQuantity: 1, unitPriceCents: 7500 }]);
+    });
+
     it('a replay of an order whose seats are all spent activates nobody and raises nothing', async () => {
         entitles.mockResolvedValueOnce({ ok: false, kind: null, spent: true });
         await POST(signedReq(JSON.stringify(PROGRAM_ORDER)));

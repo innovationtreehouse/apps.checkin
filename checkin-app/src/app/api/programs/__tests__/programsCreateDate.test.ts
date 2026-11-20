@@ -17,6 +17,14 @@ import prisma from '@/lib/prisma';
 import { ArchivedHouseholdError, lockLiveHouseholdsOf } from '@/lib/household/archiveGuard';
 
 // The archived-household guard has its own tests; here every household is live.
+// A new leader here meets the membership and clearance requirements; leaderEligibility has its own tests.
+jest.mock('@/lib/orgMembership', () => ({ ...jest.requireActual('@/lib/orgMembership'), isActiveOrgMember: jest.fn().mockResolvedValue(true) }));
+jest.mock('@/lib/membership/checkStanding', () => ({
+    ...jest.requireActual('@/lib/membership/checkStanding'),
+    checkStanding: jest.fn().mockReturnValue('CLEARED'),
+    liveBgThreshold: jest.fn().mockResolvedValue(new Date('2000-01-01')),
+    loadCheckReviews: jest.fn().mockResolvedValue(new Map()),
+}));
 jest.mock("@/lib/household/archiveGuard", () => ({
     ...jest.requireActual("@/lib/household/archiveGuard"),
     lockLiveHouseholds: jest.fn(),
@@ -32,8 +40,12 @@ jest.mock('@/lib/notifications', () => ({
 }));
 
 jest.mock('@/lib/shopify/products', () => ({
+    programProductHandle: jest.requireActual('@/lib/shopify/products').programProductHandle,
+    createShopifySingleVariantProgram: jest.fn(),
+    createClaimantProduct: jest.fn(),
 }));
 jest.mock('@/lib/shopify/stock', () => ({
+    adjustProgramInventory: jest.fn().mockResolvedValue(true),
 }));
 
 jest.mock('@/lib/logger', () => ({
@@ -53,6 +65,7 @@ jest.mock('@/lib/prisma', () => {
         },
         program: {
             create: (...args: unknown[]) => mockProgramCreate(...args),
+            update: jest.fn(({ data }: { data: object }) => Promise.resolve({ id: 45, name: 'x', ...data })),
         },
         auditLog: {
             create: (...args: unknown[]) => mockAuditLogCreate(...args),
@@ -98,6 +111,38 @@ describe('POST /api/programs — name', () => {
     it('saves the trimmed name', async () => {
         expect((await post('  Woodshop  ')).status).toBe(200);
         expect(mockProgramCreate.mock.calls[0][0].data.name).toBe('Woodshop');
+    });
+
+    it('writes the name key with the name', async () => {
+        await post('  WoodShop  ');
+        expect(mockProgramCreate.mock.calls[0][0].data).toMatchObject({ name: 'WoodShop', nameKey: 'woodshop' });
+    });
+
+    it('refuses a name its membership year already has with 409, before any store product', async () => {
+        mockProgramCreate.mockRejectedValueOnce({ code: 'P2002', meta: { driverAdapterError: { cause: { constraint: { fields: ['"nameKey"', '"appliesToYear"'] } } } } });
+        const res = await POST(new Request('http://localhost/api/programs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: 'Woodshop', leadMentorId: 7, startAt: '2024-09-01', endAt: '2024-12-15', maxParticipants: 5, nonMemberPrice: '50' }),
+        }) as unknown as import('next/server').NextRequest);
+        expect(res.status).toBe(409);
+        expect((await res.json()).error).toBe('A program with this name already exists for that membership year.');
+        const { createShopifySingleVariantProgram, createClaimantProduct } = jest.requireMock('@/lib/shopify/products');
+        expect(createShopifySingleVariantProgram).not.toHaveBeenCalled();
+        expect(createClaimantProduct).not.toHaveBeenCalled();
+    });
+
+    it('warns, naming the reserved-seat product, when only that product fails', async () => {
+        const { createShopifySingleVariantProgram, createClaimantProduct } = jest.requireMock('@/lib/shopify/products');
+        createShopifySingleVariantProgram.mockResolvedValueOnce({ shopifyProductId: 'p1', shopifyVariantId: 'v1' });
+        createClaimantProduct.mockResolvedValueOnce(null);
+        const res = await POST(new Request('http://localhost/api/programs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: 'Woodshop', leadMentorId: 7, startAt: '2024-09-01', endAt: '2024-12-15', maxParticipants: 5, nonMemberPrice: '50' }),
+        }) as unknown as import('next/server').NextRequest);
+        expect(res.status).toBe(200);
+        expect((await res.json()).warning).toMatch(/reserved-seat product failed/);
     });
 });
 
@@ -310,5 +355,58 @@ describe('POST /api/programs — a leader in an archived household', () => {
         const res = await create();
         expect(res.status).toBe(409);
         expect(mockProgramCreate).not.toHaveBeenCalled();
+    });
+});
+
+describe('POST /api/programs — a leader who does not meet the policy', () => {
+    const create = () => POST(new Request('http://localhost/api/programs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Test Program', leadMentorId: 7, startAt: '2024-09-01', endAt: '2024-12-15', maxParticipants: 50 }),
+    }) as unknown as import('next/server').NextRequest);
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: 1, isBoardMember: true } });
+    });
+
+    it('is refused when not in an ACTIVE household membership, before anything is created', async () => {
+        (jest.requireMock('@/lib/orgMembership').isActiveOrgMember as jest.Mock).mockResolvedValueOnce(false);
+        const res = await create();
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toMatch(/active Treehouse Membership/);
+        expect(mockProgramCreate).not.toHaveBeenCalled();
+    });
+
+    it('is refused without a current background-check clearance', async () => {
+        (jest.requireMock('@/lib/membership/checkStanding').checkStanding as jest.Mock).mockReturnValueOnce('NONE');
+        const res = await create();
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toMatch(/background-check clearance/);
+        expect(mockProgramCreate).not.toHaveBeenCalled();
+    });
+});
+
+describe('POST /api/programs — naming oneself the leader', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: 7, isBoardMember: true } });
+    });
+
+    it('is refused, and the refused attempt is audited', async () => {
+        const res = await POST(new Request('http://localhost/api/programs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: 'Robotics', leadMentorId: 7, startAt: '2024-09-01', endAt: '2024-12-15', maxParticipants: 5 }),
+        }) as unknown as import('next/server').NextRequest);
+
+        expect(res.status).toBe(403);
+        expect(mockProgramCreate).not.toHaveBeenCalled();
+        expect(mockAuditLogCreate).toHaveBeenCalledWith({
+            data: expect.objectContaining({
+                actorId: 7, affectedEntityId: 7, tableName: 'SelfGrantRefusal',
+                newData: expect.objectContaining({ table: 'Program', attempted: { name: 'Robotics', leadMentorId: 7 } }),
+            }),
+        });
     });
 });

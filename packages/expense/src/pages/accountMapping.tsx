@@ -108,7 +108,7 @@ export default function AccountMappingPage() {
           {(mappings.data ?? []).map((m) => (
             <Table.Tr key={m.id}>
               <Table.Td>{m.category}</Table.Td><Table.Td>{m.subcategory}</Table.Td><Table.Td><RulePart partNumber={m.partNumber} /></Table.Td>
-              <Table.Td>{triLabel(m.isDelayed)}</Table.Td><Table.Td>{triLabel(m.isCapital)}</Table.Td><Table.Td>{m.qbAccount}<InactivePickWarning saved={m.qbAccount} options={live.data} advice="Delete it and add an active account." /></Table.Td>
+              <Table.Td>{triLabel(m.isDelayed)}</Table.Td><Table.Td>{triLabel(m.isCapital)}</Table.Td><Table.Td>{m.qbAccount}<InactivePickWarning saved={m.qbAccount} options={live.data} advice={isFinance ? "Delete this rule and add one with an active account." : "Finance can fix this."} /></Table.Td>
               <Table.Td>
                 {isFinance && (
                   <ActionIcon variant="subtle" color="red" aria-label="Delete rule" onClick={async () => { if (await send(`/account-mapping/${m.id}`, "DELETE", {}, "Rule deleted")) mappings.reload(); }}>

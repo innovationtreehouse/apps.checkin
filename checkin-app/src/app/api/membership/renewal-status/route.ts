@@ -2,13 +2,15 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { nextBoundary } from "@/lib/membership/renewal";
+import { isNotRenewingRenewal } from "@/lib/membership/notRenewing";
 import { apiError } from "@/lib/api-response";
 
 export const dynamic = "force-dynamic";
 
 /**
  * Drives the login-time renewal banner. Returns whether the caller is a household
- * lead whose household has an open renewal awaiting confirmation, plus the due date.
+ * lead whose household has an open renewal awaiting confirmation, plus the due date
+ * and whether the household has said it won't renew into that renewal's year.
  * Renewal is lead-driven, so only leads see the nudge.
  */
 export const GET = withAuth({}, async (_req, auth) => {
@@ -24,15 +26,15 @@ export const GET = withAuth({}, async (_req, auth) => {
 
     const open = await prisma.orgMembershipProcess.findFirst({
         where: { kind: "RENEWAL", status: "PENDING_RENEWAL", orgMembership: { householdId: user.householdId } },
-        select: { createdAt: true },
+        select: { kind: true, createdAt: true, orgMembership: { select: { notRenewingYear: true } } },
     });
     if (!open) return NextResponse.json({ renewalDue: false });
 
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
     // Due at the boundary the renewal was opened for, which stays put once it passes.
-    const dueDate = settings?.orgMembershipYearBoundary
-        ? nextBoundary(settings.orgMembershipYearBoundary, open.createdAt).toISOString().slice(0, 10)
-        : null;
+    const boundary = settings?.orgMembershipYearBoundary;
+    const dueDate = boundary ? nextBoundary(boundary, open.createdAt).toISOString().slice(0, 10) : null;
+    const notRenewing = isNotRenewingRenewal(open, open.orgMembership?.notRenewingYear ?? null, boundary);
 
-    return NextResponse.json({ renewalDue: true, dueDate });
+    return NextResponse.json({ renewalDue: true, dueDate, notRenewing });
 });

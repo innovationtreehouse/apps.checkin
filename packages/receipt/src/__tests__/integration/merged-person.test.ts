@@ -5,7 +5,7 @@ import { inertReimbursees } from "../../runtime";
 import { sendOutcomeNotices } from "../../services/outcomeNotices";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
-import { ALICE, BOB, FINANCE, actAs, clearAll, configure, manualDetails, recordingPorts, textFile } from "../helpers/setup";
+import { ALICE, BOB, FINANCE, actAs, clearAll, configure, manualDetails, recordingPorts, textFile, uploadRead } from "../helpers/setup";
 
 /** ALICE merged into SURVIVOR; GONE names nobody. */
 const SURVIVOR: ReceiptPrincipal = { id: 201, name: "sam", firstName: "Sam", lastName: "Stays", isAdult: true };
@@ -50,7 +50,7 @@ function afterMerge(over: Partial<ReceiptConfig> = {}): void {
 async function aliceUploads(input: Record<string, unknown> = {}): Promise<string> {
   beforeMerge();
   actAs(ALICE);
-  return (await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), ...input })).id;
+  return (await uploadRead(textFile(), "text/plain", { details: manualDetails(), ...input })).id;
 }
 
 /** A receipt open for finance to decide. */
@@ -89,7 +89,7 @@ describeDb("after merging A into B", () => {
     const original = await aliceUploads();
     afterMerge();
     actAs(SURVIVOR);
-    const copy = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const copy = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     expect((await receiptService.get(copy.id, "submitter")).duplicateNotice).toMatchObject({ matchId: original, uploadedByUserId: SURVIVOR.id });
   });
 

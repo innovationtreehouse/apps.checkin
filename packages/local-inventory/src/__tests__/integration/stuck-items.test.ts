@@ -53,19 +53,21 @@ describeDb("stuckItems", () => {
     const delta = (orgId: string, sourceKey: string, status: string, receiptId: string | null, firstFailedAt: Date | null = first) =>
       db.receivedInventoryDelta.create({ data: { orgId, sourceKey, receiptId, deltaJson: "{}", status, failureReason: "boom", receivedAt: at, firstFailedAt } });
     await delta(TEST_ORG_ID, "receipt:r1", "failed", "r1");
-    const donation = await delta(TEST_ORG_ID, "donation:d1", "failed", null);
+    await delta(TEST_ORG_ID, "donation:11", "failed", null);
     await delta(TEST_ORG_ID, "receipt:r4", "failed", "r4", null);
     await delta(TEST_ORG_ID, "receipt:r2", "applied", "r2", null);
     await delta(TEST_ORG_ID_2, "receipt:r3", "failed", "r3");
     const event = await db.inventoryReceivedOrgEvent.create({ data: { orgId: TEST_ORG_ID, eventType: "item_reviewed", payload: "{}", receivedAt: at, status: "failed", failureReason: "boom", firstFailedAt: first } });
     await db.inventoryReceivedOrgEvent.create({ data: { orgId: TEST_ORG_ID, eventType: "item_reviewed", payload: "{}", receivedAt: at, status: "processed" } });
 
-    expect(await stuckItems()).toEqual([
+    const items = await stuckItems();
+    expect(items).toHaveLength(4);
+    expect(items).toEqual(expect.arrayContaining([
       { id: "r1", step: "inventory delta", href: "/receipts/r1", failedAt: first },
-      { id: String(donation.id), step: "inventory delta", href: null, failedAt: first },
+      { id: "donation:11", step: "inventory delta", href: "/donations/in-kind/manual/11", failedAt: first },
       { id: "r4", step: "inventory delta", href: "/receipts/r4", failedAt: at },
       { id: String(event.id), step: "catalog event", href: null, failedAt: first },
-    ]);
+    ]));
   });
 
   it("carries no error text", async () => {
@@ -153,10 +155,10 @@ describeDb("retryStuckItem", () => {
     expect(await getServices().receiptService.applyReceipt(TEST_ORG_ID, "r1", "Costco", lines)).toMatchObject({ replayed: true });
   });
 
-  it("applies a failed donation delta, found by its row id", async () => {
-    const row = await failedDelta("donation:7", null, { kind: "donation", donationId: "7" }, [{ gtin13: GTIN, quantityDelta: 1 }]);
+  it("applies a failed donation delta, found by its donation key", async () => {
+    await failedDelta("donation:7", null, { kind: "donation", donationId: "7" }, [{ gtin13: GTIN, quantityDelta: 1 }]);
     const [item] = await stuckItems();
-    expect(item).toMatchObject({ id: String(row.id), href: null });
+    expect(item).toMatchObject({ id: "donation:7", href: "/donations/in-kind/manual/7" });
 
     await retryStuckItem(item);
 

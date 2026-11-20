@@ -103,6 +103,7 @@ export async function answerHouseholdQuestion(personId: number, join: boolean): 
         await removeAliasesForSignInEmail(tx, person.email, personActor(personId), "household_question_no");
         const fresh = await createInOwnHousehold(tx, {
             email: person.email,
+            ageStepPending: true,
             name: nameFromIdToken(account?.id_token) ?? nameWrite(person.email.split("@")[0]) ?? "Member",
         });
         await tx.account.updateMany({ where: { userId: personId }, data: { userId: fresh.id } });

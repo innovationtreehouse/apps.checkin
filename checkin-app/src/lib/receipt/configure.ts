@@ -251,6 +251,8 @@ export function configureRuntime(): void {
     reimbursees: { search: searchReimbursees, byId: reimburseeById, hasAccount: reimburseeHasAccount, addNonMemberAdult: addNonMemberReimbursee },
     alerts,
     mailbox: receiptMailbox(),
+    // Matches the mail-raw/ lifecycle rule on each environment's receipt bucket: 90 days in prod, 30 in dev and staging.
+    rawMailRetentionDays: config.isProd() && !config.isStaging() ? 90 : 30,
     replies,
     outcomeMail,
     reimbursementStatus,
@@ -262,6 +264,5 @@ export function configureRuntime(): void {
     // without the key reads nothing and lands auto uploads in ocr_failed.
     ocr: config.isLocal() ? fixtureOcr : createAnthropicOcr(config.anthropicApiKey() ?? undefined),
     fileStore: receiptFileStore(),
-    storeNewFilesInBucket: config.receiptFilesS3(),
   });
 }

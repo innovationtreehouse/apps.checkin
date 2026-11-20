@@ -2,12 +2,23 @@ import { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
+import type { TxClient } from "@/lib/db-client";
 import { addHouseholdLead, removeHouseholdLead, HouseholdLeadLimitError, HouseholdLeadYouthError, HouseholdLeadDeniedError } from "@/lib/household/leads";
 import { apiError } from "@/lib/api-response";
-import { refuseSelfGrant } from "@/lib/membership/selfGrantGuard";
+import { findSelfGrantRefusal, recordSelfGrantRefusal, type GrantAttempt, type SelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
 import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { ArchivedHouseholdError } from "@/lib/household/archiveGuard";
 import { personActor, recordAudit } from "@/lib/auditActor";
+
+/** The actor shares the target's household, found under its lock; recorded after the rollback. */
+class SelfGrantLeadError extends Error {
+    constructor(public readonly refusal: SelfGrantRefusal) {
+        super("own household");
+    }
+}
+
+const OWN_HOUSEHOLD_LEAD = "You cannot make yourself or someone in your own household a lead — someone outside your household must.";
+const LEAD_ATTEMPT: GrantAttempt = { table: "Person", attempted: { isHouseholdLead: true } };
 
 export const POST = withAuth(
     {},
@@ -45,16 +56,22 @@ export const POST = withAuth(
 
             // A lead promotes within their own household; the board and sysadmin path
             // into any other household may not reach the actor's own.
-            if (!isLeadOfTarget && await refuseSelfGrant(prisma, userId, { personId: participantId, householdId: targetHouseholdId }, {
-                table: "Person",
-                attempted: { isHouseholdLead: true },
-            })) {
-                return apiError("You cannot make yourself or someone in your own household a lead — someone outside your household must.", 403);
+            const subject = { personId: participantId, householdId: targetHouseholdId };
+            const selfGrant = isLeadOfTarget ? null : await findSelfGrantRefusal(prisma, userId, subject, LEAD_ATTEMPT);
+            if (selfGrant) {
+                await recordSelfGrantRefusal(prisma, selfGrant);
+                return apiError(OWN_HOUSEHOLD_LEAD, 403);
             }
+
+            // Re-read under the Household lock, so an actor who joined the household since the check above is refused.
+            const recheckSelfGrant = isLeadOfTarget ? undefined : async (tx: TxClient) => {
+                const lockedRefusal = await findSelfGrantRefusal(tx, userId, subject, LEAD_ATTEMPT);
+                if (lockedRefusal) throw new SelfGrantLeadError(lockedRefusal);
+            };
 
             const newLead = { householdId: targetHouseholdId, participantId };
             const created = await prisma.$transaction(async (tx) => {
-                const { created } = await addHouseholdLead(tx, targetHouseholdId, participantId);
+                const { created } = await addHouseholdLead(tx, targetHouseholdId, participantId, recheckSelfGrant);
                 if (created) {
                     await recordAudit(tx, personActor(userId), {
                         action: "CREATE",
@@ -74,6 +91,10 @@ export const POST = withAuth(
             return NextResponse.json({ lead: newLead, message: "Member promoted to lead successfully." }, { status: 200 });
 
         } catch (error: unknown) {
+            if (error instanceof SelfGrantLeadError) {
+                await recordSelfGrantRefusal(prisma, error.refusal);
+                return apiError(OWN_HOUSEHOLD_LEAD, 403);
+            }
             if (error instanceof ArchivedHouseholdError) return apiError(error.message, error.status);
             if (error instanceof HouseholdLeadLimitError) {
                 return apiError(error.message, 400);

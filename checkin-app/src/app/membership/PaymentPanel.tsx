@@ -92,10 +92,12 @@ export default function PaymentPanel({ processId, bgCleared, saving, setSaving, 
               Your membership activates as soon as both the payment and the check are done.
             </Alert>
           )}
-          <Text size="sm" c="dimmed" mt="md">
-            For any questions, please email{" "}
-            <Anchor href="mailto:finance@innovationtreehouse.org">finance@innovationtreehouse.org</Anchor>.
-          </Text>
+          {payment.financeContactEmail && (
+            <Text size="sm" c="dimmed" mt="md">
+              For any questions, please email{" "}
+              <Anchor href={`mailto:${payment.financeContactEmail}`}>{payment.financeContactEmail}</Anchor>.
+            </Text>
+          )}
         </>
       ) : paymentError ? (
         <LoadError what="your membership fee" message={paymentError} onRetry={reloadPayment} />

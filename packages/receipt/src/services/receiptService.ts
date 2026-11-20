@@ -22,7 +22,7 @@ import { checkReceiptFile } from "../lib/file-type";
 import { insertReceipt, toLineRows, type NewLine } from "../lib/insert";
 import { liveIds } from "../lib/livePeople";
 import { lineTotalAfterEdit } from "../lib/lineMath";
-import { deleteStoredFiles, readStoredFile } from "../lib/fileStorage";
+import { deleteStoredFiles, readStoredFile, RETENTION_FILE_DELETED } from "../lib/fileStorage";
 import { listFilterWhere, type ReceiptListFilter } from "../lib/listFilter";
 import { oweOutcomeNotice, sendOutcomeNotices } from "./outcomeNotices";
 import { BODY_COPY_DISCARDED, checkDuplicate, financialReviewReasons, getOrgSettings, pushReceipt, runFullFlow, SUBMITTER_CORRECTION_FIELDS } from "../lib/receipt-flow";
@@ -33,6 +33,8 @@ import {
   EditLineItemSchema,
   EditReceiptSchema,
   InKindInputSchema,
+  LINE_COST_MESSAGE,
+  MAX_CENTS,
   RotationInputSchema,
   toCents,
   UploadInputSchema,
@@ -43,6 +45,7 @@ import { getOrgId, limits, ports, requireActor } from "../runtime";
 import { OCR_OFF_NOTE } from "../lib/ocrOff";
 import { DAILY_LIMIT_REACHED } from "../lib/ocrAllowance";
 import { DAY_MS } from "../lib/limits";
+import { byDeadline } from "../lib/deadline";
 import { assertExpectedState, assertLegalTransition, NEUTRAL_CONTEXT, WorkflowTransitionError } from "../workflows/receipt.invariants";
 import type { ReceiptEvent } from "../workflows/receipt.events";
 import { FINANCE_ACTION_STATES, SUBMITTER_ACTION_STATES } from "../nav";
@@ -278,6 +281,8 @@ async function checkTypedDonor(input: { isInKind: boolean; donor?: DonorInput },
   if (input.isInKind && input.donor && !("self" in input.donor)) await checkDonor?.(input.donor);
 }
 
+const DONOR_FIELDS = ["donorFirstName", "donorLastName", "donorCompanyName"] as const;
+
 /** "I am the donor" checks the profile name with the donor schema donations uses, and stores it as parsed. */
 function donorNames(donor: DonorInput, actor: ReceiptPrincipal) {
   if (!("self" in donor)) return { donorFirstName: donor.firstName, donorLastName: donor.lastName, donorCompanyName: donor.companyName || null };
@@ -325,7 +330,7 @@ const OCR_ALLOWANCE_RESET = "ocr_allowance_reset";
  * person's latest allowance reset if that is later. A refund row names the call it gives back,
  * and counts only while that call is in the window. Returns the call's row id.
  */
-async function reserveOcrCall(actor: ReceiptPrincipal): Promise<number> {
+async function reserveOcrCall(actor: Actor): Promise<number> {
   const { ocrCallsPerPersonPerDay } = limits();
   return db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${`receipt-ocr:${actor.id}`}, 0))`;
@@ -367,13 +372,6 @@ async function resetOcrAllowance(personId: number, raw: unknown): Promise<{ pers
   return { personId };
 }
 
-/** Gives back `callId` to its person's daily allowance; `receiptId` is null when no receipt was made. */
-async function refundOcrCall(tx: Pick<Prisma.TransactionClient, "receiptAuditLog">, receiptId: string | null, actor: ReceiptPrincipal, callId: number): Promise<void> {
-  await tx.receiptAuditLog.create({
-    data: { receiptId, userId: actor.id, username: actor.name, action: OCR_CALL_REFUNDED, fieldChanged: OCR_CALL, valueBefore: String(callId) },
-  });
-}
-
 type OcrFailure = Extract<OcrResult, { success: false }>;
 
 /** What the submitter reads on a receipt OCR could not read, by the failure's kind. */
@@ -392,18 +390,24 @@ export function ocrFailureNote({ kind, error }: OcrFailure): string {
   }
 }
 
-/** Read the file from `auto_upload` and land in `uploaded` (then the pipeline) or `ocr_failed`. */
-async function applyOcr(id: string, actor: ReceiptPrincipal): Promise<void> {
-  const file = await db.receipt.findUniqueOrThrow({ where: { id }, select: { fileBlob: true, fileKey: true, mimeType: true, rotation: true } });
+/**
+ * Read the file from `auto_upload` and land in `uploaded` (then the pipeline) or `ocr_failed`. A reader
+ * call still out at `deadline` (epoch ms) throws DeadlineError and leaves the receipt in `auto_upload`;
+ * a store read still out then is a store failure.
+ */
+async function applyOcr(id: string, actor: Actor, deadline = Infinity): Promise<void> {
+  const file = await db.receipt.findUniqueOrThrow({ where: { id }, select: { fileKey: true, mimeType: true, rotation: true } });
   // A missing file reads as null; a store outage throws.
-  const stored = await readStoredFile(file).then(
+  const stored = await readStoredFile(file.fileKey, deadline).then(
     (bytes): Uint8Array | OcrFailure => bytes ?? { success: false, kind: "data", error: "the receipt file is missing" },
     (err: unknown): OcrFailure => {
       console.error(`[receipt] could not read the file of ${id}:`, err);
       return { success: false, kind: "system", error: "the receipt file could not be fetched from storage" };
     },
   );
-  const raw: OcrResult = stored instanceof Uint8Array ? await ports().ocr.extract(Buffer.from(stored), file.mimeType, file.rotation) : stored;
+  const raw: OcrResult = stored instanceof Uint8Array
+      ? await byDeadline(deadline, "the receipt reader", () => ports().ocr.extract(Buffer.from(stored), file.mimeType, file.rotation))
+      : stored;
   const parsed = raw.success ? OcrDataSchema.safeParse(raw.data) : null;
   const result: OcrResult = !raw.success
     ? raw
@@ -438,16 +442,20 @@ async function ocrIsOn(): Promise<boolean> {
   return (await getOrgSettings(await getOrgId())).ocrEnabled;
 }
 
-/** Land an auto upload in `ocr_failed` with the switched-off note, spending no call. */
-const failOcrSwitchedOff = (id: string, actor: ReceiptPrincipal) =>
-  failOcr(id, actor, { notes: OCR_OFF_NOTE, action: "ocr_failed", reason: "automatic reading turned off" });
+const ALLOWANCE_USED_NOTE = `Today's automatic reading allowance is used up. Type the details, or press "Read it again" tomorrow.`;
+const SWITCHED_OFF = { notes: OCR_OFF_NOTE, action: "ocr_failed", reason: "automatic reading turned off" };
 
-/** Lands the receipt in `ocr_failed`; a reading's failure is audited as `ocr_failed:<kind>`. */
-async function failOcr(id: string, actor: ReceiptPrincipal, { notes, action, reason }: { notes: string; action: string; reason: string }): Promise<void> {
-  assertExpectedState("auto_upload", { type: "OCR_FAILED" }, NEUTRAL_CONTEXT, "ocr_failed");
+/** Lands the receipt in `ocr_failed` from `from`; a reading's failure is audited as `ocr_failed:<kind>`. */
+async function failOcr(
+  id: string,
+  actor: Actor,
+  { notes, action, reason }: { notes: string; action: string; reason: string },
+  from: "auto_upload" | "ocr_queued" = "auto_upload",
+): Promise<void> {
+  assertExpectedState(from, { type: "OCR_FAILED" }, NEUTRAL_CONTEXT, "ocr_failed");
   await db.$transaction(async (tx) => {
     const moved = await tx.receiptDetail.updateMany({
-      where: { id, state: "auto_upload" },
+      where: { id, state: from },
       data: { state: "ocr_failed", validationNotes: notes },
     });
     if (moved.count === 0) return;
@@ -456,13 +464,59 @@ async function failOcr(id: string, actor: ReceiptPrincipal, { notes, action, rea
 }
 
 /**
- * A mailed file enters as an auto upload by its sender: the upload limits (counting mailed receipts
- * per person against the sender's mail limit), duplicate check and audit of a manual upload, then OCR on the sender's daily allowance. `ledger` runs inside the
- * insert, so the receipt and its mail-ledger row exist together or not at all. A file over the
- * OCR allowance lands in `ocr_failed`, where its uploader types the details. `uploadLimits: false`
+ * Reads one queued receipt. The claim, a compare-and-set from `ocr_queued` to `auto_upload`, is the
+ * lock: false when another reader took it first. Reading then charges `reader`'s daily allowance; over
+ * it, or with reading switched off, the receipt lands in `ocr_failed` with its note. A call still out
+ * at `deadline` (epoch ms) throws and leaves the receipt in `auto_upload`, for the interrupted-OCR sweep.
+ */
+export async function readQueued(id: string, reader: Actor, deadline = Infinity): Promise<boolean> {
+  assertExpectedState("ocr_queued", { type: "OCR_STARTED" }, NEUTRAL_CONTEXT, "auto_upload");
+  const claimed = await db.receiptDetail.updateMany({ where: { id, state: "ocr_queued" }, data: { state: "auto_upload", ocrStartedAt: new Date() } });
+  if (claimed.count === 0) return false;
+  if (!(await ocrIsOn())) {
+    await failOcr(id, reader, SWITCHED_OFF);
+    return true;
+  }
+  try {
+    await reserveOcrCall(reader);
+  } catch (err) {
+    if (!(isServiceError(err) && err.status === 429)) throw err;
+    await failOcr(id, reader, { notes: ALLOWANCE_USED_NOTE, action: "ocr_failed", reason: DAILY_LIMIT_REACHED });
+    return true;
+  }
+  await applyOcr(id, reader, deadline);
+  return true;
+}
+
+/**
+ * Starts reading a queued receipt without waiting for it; `then` runs once this reader has read it.
+ * The returned promise never rejects; callers leave it running.
+ */
+export function readInBackground(id: string, reader: Actor, then?: () => Promise<unknown>): Promise<void> {
+  // ponytail: outlives the response on the long-lived server, as mail catch-up does. A process that
+  // dies before the claim leaves the receipt queued for the daily drain; after it, for the sweep.
+  const reading = readQueued(id, reader)
+    .then(async (claimed) => {
+      if (claimed) await then?.();
+    })
+    .catch((err: unknown) => console.error(`[receipt] OCR failed for ${id}:`, err))
+    .finally(() => readsInFlight.delete(reading));
+  readsInFlight.add(reading);
+  return reading;
+}
+
+/** Background readings not yet settled, so a test can wait for them. */
+export const readsInFlight = new Set<Promise<void>>();
+
+/**
+ * A mailed file enters as an auto upload by its sender, queued to be read: the upload limits (counting
+ * mailed receipts per person against the sender's mail limit), duplicate check and audit of a manual
+ * upload. `ledger` runs inside the insert, so the receipt and its mail-ledger row exist together or not
+ * at all. With reading switched off it lands in `ocr_failed` at once. `uploadLimits: false`
  * skips the daily upload limits for this one file, for a deferred file finance releases.
  * `mailAllowance: false` checks the manual upload limits in place of the mail limit, for a file
  * finance assigns. `heldFileKey` names the mail item's object, deleted once the insert has committed.
+ * A file-store call still out at `deadline` (epoch ms) is abandoned.
  */
 export async function intakeMailedReceipt(
   actor: ReceiptPrincipal,
@@ -474,7 +528,8 @@ export async function intakeMailedReceipt(
     mailAllowance = true,
     heldFileKey = null,
     aroundInsert = (insert) => insert(),
-  }: { uploadLimits?: boolean; mailAllowance?: boolean; heldFileKey?: string | null; aroundInsert?: (insert: () => Promise<string>) => Promise<string> } = {},
+    deadline = Infinity,
+  }: { uploadLimits?: boolean; mailAllowance?: boolean; heldFileKey?: string | null; aroundInsert?: (insert: () => Promise<string>) => Promise<string>; deadline?: number } = {},
 ): Promise<string> {
   const id = await aroundInsert(async () => insertReceipt({
     orgId: await getOrgId(),
@@ -482,7 +537,7 @@ export async function intakeMailedReceipt(
     file,
     mimeType,
     core: { intakeSource: "email" },
-    detail: { state: "auto_upload", ocrStartedAt: new Date() },
+    detail: { state: "ocr_queued", ocrQueuedAt: new Date() },
     lines: [],
     auditAction: "mail_intake",
     limits: uploadLimits ? limits() : undefined,
@@ -494,24 +549,8 @@ export async function intakeMailedReceipt(
         : undefined,
     afterInsert: ledger,
   }));
-  await deleteStoredFiles([heldFileKey]);
-  if (!(await ocrIsOn())) {
-    await failOcrSwitchedOff(id, actor);
-    return id;
-  }
-  try {
-    await reserveOcrCall(actor);
-  } catch (err) {
-    if (!(isServiceError(err) && err.status === 429)) throw err;
-    await failOcr(id, actor, {
-      notes: `Today's automatic reading allowance is used up. Type the details, or press "Read it again" tomorrow.`,
-      action: "ocr_failed",
-      reason: DAILY_LIMIT_REACHED,
-    });
-    return id;
-  }
-  // A failed read leaves the receipt in auto_upload, where the interrupted-OCR sweep finds it.
-  await applyOcr(id, actor).catch((err: unknown) => console.error(`[receipt] OCR failed for ${id}:`, err));
+  await deleteStoredFiles([heldFileKey], deadline);
+  if (!(await ocrIsOn())) await failOcr(id, actor, SWITCHED_OFF, "ocr_queued");
   return id;
 }
 
@@ -849,7 +888,7 @@ export const receiptService = {
 
   /**
    * Upload a receipt. With `details` it is manual: insert at `uploaded` and run the pipeline.
-   * Without, it is auto: insert at `auto_upload` and read it with OCR in this request.
+   * Without, it is auto: insert at `ocr_queued` and answer, then read it after the response.
    */
   async upload(file: Buffer, declaredType: string, rawInput: unknown, checkDonor?: DonorCheck) {
     const actor = await requireActor();
@@ -865,10 +904,7 @@ export const receiptService = {
       : {};
     const inKind = input.isInKind && input.donor ? { isInKind: true, donorSync: "pending", ...donorNames(input.donor, actor) } : {};
     const d = input.details;
-    const ocrOff = !d && !(await ocrIsOn());
-    const callId = d || ocrOff ? null : await reserveOcrCall(actor);
-
-    const insert = insertReceipt({
+    const id = await insertReceipt({
       orgId: await getOrgId(),
       actor,
       file,
@@ -885,7 +921,7 @@ export const receiptService = {
             receiptTotalCents: toCents(d.receiptTotal),
             state: "uploaded",
           }
-        : { state: "auto_upload", ocrStartedAt: new Date() },
+        : { state: "ocr_queued", ocrQueuedAt: new Date() },
       lines: d ? d.lineItems.map(toLine) : [],
       auditAction: "uploaded",
       limits: limits(),
@@ -894,16 +930,17 @@ export const receiptService = {
             audit(tx, receiptId, actor, { action: "reimbursee_named", fieldChanged: "reimburseePersonId", valueAfter: String(reimbursee.id) })
         : undefined,
     });
-    const id = await insert.catch(async (err: unknown) => {
-      if (callId !== null) await refundOcrCall(db, null, actor, callId);
-      throw err;
-    });
 
     if (input.isInKind) await sendDonorSync(id, actor);
-    if (ocrOff) await failOcrSwitchedOff(id, actor);
-    else if (callId === null) await runFlowLogged(id, actor);
-    else await applyOcr(id, actor);
-    return toSubmitterView(await load(id, "submitter", actor));
+    if (d) {
+      await runFlowLogged(id, actor);
+      return toSubmitterView(await load(id, "submitter", actor));
+    }
+    if (!(await ocrIsOn())) await failOcr(id, actor, SWITCHED_OFF, "ocr_queued");
+    // Answers as saved, waiting to be read; the reading starts once the answer is read back.
+    const view = toSubmitterView(await load(id, "submitter", actor));
+    void readInBackground(id, actor);
+    return view;
   },
 
   async edit(id: string, access: Access, rawUpdates: unknown) {
@@ -992,6 +1029,7 @@ export const receiptService = {
 
       const edited = fields.filter((f) => f.after !== undefined && String(f.before) !== String(f.after));
       const totalPriceCents = edit.totalPrice === undefined ? lineTotalAfterEdit(li, { quantity, unitPriceCents }) : toCents(edit.totalPrice);
+      if (totalPriceCents > MAX_CENTS) throw new ServiceError(400, LINE_COST_MESSAGE);
       if (totalPriceCents !== li.totalPriceCents) {
         edited.push({ field: "totalPrice", before: li.totalPriceCents / 100, after: totalPriceCents / 100 });
       }
@@ -1047,16 +1085,10 @@ export const receiptService = {
       transitionError(e);
     }
     if (!(await ocrIsOn())) throw new ServiceError(503, OCR_OFF_NOTE);
-    const callId = await reserveOcrCall(actor);
-    try {
-      await step(row, { type: "OCR_RETRY" }, "auto_upload", { detail: { validationNotes: null, ocrStartedAt: new Date() } }, actor, "ocr_retry_started");
-    } catch (err) {
-      // Another retry moved the receipt first; this one never read it.
-      await refundOcrCall(db, id, actor, callId);
-      throw err;
-    }
-    await applyOcr(id, actor);
-    return load(id, access, actor);
+    await step(row, { type: "OCR_RETRY" }, "ocr_queued", { detail: { validationNotes: null, ocrQueuedAt: new Date() } }, actor, "ocr_retry_started");
+    const view = await load(id, access, actor);
+    void readInBackground(id, actor);
+    return view;
   },
 
   /**
@@ -1319,7 +1351,7 @@ export const receiptService = {
         valueBefore: String(locked.needsReimbursement),
         valueAfter: String(needsReimbursement),
       });
-      // reimbursementFor is only the display name of this person, and a pii value has no place in the personal-tier audit values.
+      // reimbursementFor is only this person's display name, so the id records the change.
       const reimburseePersonId = needsReimbursement ? actor.id : null;
       if (locked.reimburseePersonId !== reimburseePersonId) {
         await audit(tx, id, actor, {
@@ -1356,6 +1388,12 @@ export const receiptService = {
         valueBefore: String(locked.isInKind),
         valueAfter: String(input.isInKind),
       });
+      if (locked.isInKind && input.isInKind) {
+        for (const field of DONOR_FIELDS) {
+          if (locked[field] === donor[field]) continue;
+          await audit(tx, id, actor, { action: "in_kind_updated", fieldChanged: field, valueBefore: locked[field], valueAfter: donor[field] });
+        }
+      }
       return true;
     });
     if (updated) await sendDonorSync(id, actor);
@@ -1428,8 +1466,10 @@ export const receiptService = {
   async getFile(id: string, access: Access): Promise<{ fileBlob: Uint8Array; mimeType: string; uploadedByUserId: number }> {
     const actor = await requireActor();
     const row = await load(id, access, actor);
-    const file = await db.receipt.findUniqueOrThrow({ where: { id }, select: { fileBlob: true, fileKey: true, mimeType: true } });
-    const fileBlob = await readStoredFile(file);
+    const file = await db.receipt.findUniqueOrThrow({ where: { id }, select: { fileKey: true, mimeType: true } });
+    // A file retention deleted is expected to be gone, so it answers 404 without logging an error.
+    const retired = !file.fileKey && (await db.receiptAuditLog.count({ where: { receiptId: id, action: RETENTION_FILE_DELETED } })) > 0;
+    const fileBlob = retired ? null : await readStoredFile(file.fileKey);
     if (!fileBlob) throw new ServiceError(404, "Receipt file not found");
     await audit(db, id, actor, { action: "file_viewed" });
     return { fileBlob, mimeType: file.mimeType, uploadedByUserId: row.uploadedByUserId };

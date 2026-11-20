@@ -6,7 +6,8 @@ import { liveMembershipYear } from "@/lib/membership/renewal";
 import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import * as mirror from "@/lib/shopifyRead/client";
 import type { MirrorOrder } from "@/lib/shopifyRead/client";
-import { raisePaymentException, recordReversal, type PaymentExceptionKind } from "./exceptions";
+import { notifyBoardPaymentException } from "@/lib/membership/boardAlerts";
+import { raisePaymentException, recordPaymentException, recordReversal, type PaymentExceptionKind } from "./exceptions";
 import { isPaid, isReversed } from "./orderStatus";
 
 /**
@@ -18,32 +19,90 @@ export async function raiseMembershipPaymentOutcome(
     outcome: ActivateOutcome,
     ref: { shopifyOrderId: string | null; processId: number },
 ): Promise<void> {
+    if (outcome === "paid_while_blocked") return raisePaidWhileBlocked(ref);
+    if (outcome === "nothing_due") {
+        const settledBy = await howYearWasSettled(ref.processId);
+        if (settledBy) {
+            await raisePaymentException("DUPLICATE_MEMBERSHIP_PAYMENT", { ...ref, evidence: DUPLICATE_MEMBERSHIP_WORDING[settledBy] });
+            return;
+        }
+    }
     const kind: PaymentExceptionKind | null =
-        outcome === "paid_while_blocked" ? "PAID_WHILE_BLOCKED"
-        : outcome === "no_item" ? "NO_ITEM"
-        // Duplicate order, both leads paying, payment after close or certify.
+        outcome === "no_item" ? "NO_ITEM"
+        // Payment after close, or before payment was due.
         : outcome === "nothing_due" ? "UNMATCHED_ORDER"
         : outcome === "refunded" ? "REVERSED_BEFORE_ACTIVATION"
         : null;
     if (kind) await raisePaymentException(kind, { ...ref, ...(outcome === "refunded" ? { severity: "CRITICAL" as const } : {}) });
 }
 
+/** How an application's membership year was already settled when another payment arrived. */
+export type SettledBy = "store" | "certified" | "granted";
+
+/** What the Board reads on a duplicate membership payment, per way the year was settled. */
+export const DUPLICATE_MEMBERSHIP_WORDING: Record<SettledBy, string> = {
+    store: "the household paid twice in the store for the same year: a refund may be needed",
+    certified: "the household paid after the Board certified a plan: a refund may be needed",
+    granted: "the household paid after the Board granted the year: a refund may be needed",
+};
+
+/** The way the year was settled, from the application's recorded payment; null when it was never paid. */
+export function settledByFrom(
+    process: { paidAt: Date | null; shopifyOrderId: string | null; manualPaymentById: number | null },
+    granted: boolean,
+): SettledBy | null {
+    if (!process.paidAt) return null;
+    if (process.shopifyOrderId) return "store";
+    if (process.manualPaymentById === null) return null;
+    return granted ? "granted" : "certified";
+}
+
+async function howYearWasSettled(processId: number): Promise<SettledBy | null> {
+    const process = await prisma.orgMembershipProcess.findUnique({
+        where: { id: processId },
+        select: { paidAt: true, shopifyOrderId: true, manualPaymentById: true },
+    });
+    if (!process) return null;
+    // A grant is a Board settlement that records the year it grants (payment.ts settle's grantAudit).
+    const settlements = process.shopifyOrderId
+        ? []
+        : await prisma.auditLog.findMany({
+              where: { tableName: "OrgMembershipProcess", affectedEntityId: processId, newData: { path: ["via"], equals: "manual" } },
+              select: { newData: true },
+          });
+    const granted = settlements.some((a) => typeof a.newData === "object" && a.newData !== null && "grantedYear" in a.newData);
+    return settledByFrom(process, granted);
+}
+
+/**
+ * Raised under the process lock settleHouseholdBg takes, so an application that has
+ * since activated on this order, and owes no refund, never gets the problem.
+ */
+async function raisePaidWhileBlocked(ref: { shopifyOrderId: string | null; processId: number }): Promise<void> {
+    const notice = await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${ref.processId} FOR UPDATE`;
+        const process = await tx.orgMembershipProcess.findUnique({ where: { id: ref.processId }, select: { status: true, shopifyOrderId: true } });
+        if (process?.status === "ACTIVE" && !!ref.shopifyOrderId && process.shopifyOrderId === ref.shopifyOrderId) return null;
+        return recordPaymentException(tx, "PAID_WHILE_BLOCKED", ref);
+    });
+    if (notice) await notifyBoardPaymentException(notice.kind, notice.severity, notice.exceptionId);
+}
+
 /**
  * Membership variant id → the year it sells: the ONE "is this line a membership?"
  * rule. Exported so matchAudit.ts consumes the same keys as the item gate; a variant
  * missed in a private copy would silently VANISH from the audit (filtered out in
- * SQL), not show as a gap. The BoardSettings variant and the dev-mock variant (when
- * the Shopify mock is active) sell the live year at `paidAt` unless a row claims them.
+ * SQL), not show as a gap. The dev-mock variant (when the Shopify mock is active)
+ * sells the live year at `paidAt` unless a row claims it.
  */
 export async function membershipVariantYears(
-    settings: { orgMembershipVariantId: string | null; orgMembershipYearBoundary: Date | null } | null,
+    settings: { orgMembershipYearBoundary: Date | null } | null,
     paidAt: Date,
 ): Promise<Map<string, number | null>> {
     const rows = await prisma.membershipYearVariant.findMany({ select: { shopifyVariantId: true, membershipYear: true } });
     const years = new Map<string, number | null>(rows.map((r) => [r.shopifyVariantId, r.membershipYear]));
-    const liveYear = liveMembershipYear(settings?.orgMembershipYearBoundary, paidAt);
-    for (const variantId of [settings?.orgMembershipVariantId, config.shopifyMockActive() ? DEV_MOCK_MEMBERSHIP_VARIANT_ID : null]) {
-        if (variantId && !years.has(variantId)) years.set(variantId, liveYear);
+    if (config.shopifyMockActive() && !years.has(DEV_MOCK_MEMBERSHIP_VARIANT_ID)) {
+        years.set(DEV_MOCK_MEMBERSHIP_VARIANT_ID, liveMembershipYear(settings?.orgMembershipYearBoundary, paidAt));
     }
     return years;
 }
@@ -191,7 +250,7 @@ export async function reconcileForwardMembership(order: MirrorOrder): Promise<bo
     // id is stable and can't drift; the order total never decides.
     const settings = await prisma.boardSettings.findUnique({
         where: { id: 1 },
-        select: { orgMembershipVariantId: true, orgMembershipYearBoundary: true, volunteerFamilyDiscountCode: true },
+        select: { orgMembershipYearBoundary: true, volunteerFamilyDiscountCode: true },
     });
     const variantYears = await membershipVariantYears(settings ?? null, order.processedAt ?? new Date());
     const line = findMembershipLine(variantYears, await mirror.orderLineVariantIds(order.orderGid));

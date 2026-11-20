@@ -4,7 +4,7 @@ jest.mock("next-auth/react", () => jest.requireActual<Rtl>("@/test-helpers/rtl")
 import { act, screen, fireEvent } from "@testing-library/react";
 import { invalidateLoads } from "@checkin/component-ui";
 import { renderWithProviders, mockFetchJson, resetRtl, setSession } from "@/test-helpers/rtl";
-import { SystemVersionBox, BadgeScanChart, SReadDiagnosticsBox, CronRunsBox, KioskHeartbeatBox, OpenProblemsBox, ProblemsBox } from "../SystemHealthPanels";
+import { SystemVersionBox, BadgeScanChart, SReadDiagnosticsBox, CronRunsBox, KioskHeartbeatBox, ProblemsBox } from "../SystemHealthPanels";
 
 beforeEach(() => resetRtl());
 
@@ -257,48 +257,6 @@ describe("KioskHeartbeatBox", () => {
   });
 });
 
-describe("OpenProblemsBox", () => {
-  const incident = (over: Record<string, unknown>) => ({
-    key: "quickbooks:connection", status: "open", kind: "connection", cause: "quickbooks",
-    lanes: ["expenses", "gifts"], firstSeenAt: "2026-11-01T12:00:00.000Z", runsSeen: 3, itemsAffected: 7, ...over,
-  });
-
-  it("lists each incident with its kind, cause, lanes and counts, and badges only the open ones", async () => {
-    mockFetchJson({
-      "/api/system-status/config-health": {
-        incidents: [incident({}), incident({ key: "ocr:system", status: "watching", kind: "system", cause: "ocr", lanes: ["receipts"], runsSeen: 1, itemsAffected: 2 })],
-      },
-    });
-    renderWithProviders(<OpenProblemsBox />);
-
-    expect(await screen.findByText("quickbooks")).toBeInTheDocument();
-    expect(screen.getByText("expenses, gifts")).toBeInTheDocument();
-    expect(screen.getByText(/3 runs, 7 items/)).toBeInTheDocument();
-    expect(screen.getByText("● Open")).toBeInTheDocument();
-    expect(screen.getByText("ocr")).toBeInTheDocument();
-    expect(screen.getByText("● Watching")).toBeInTheDocument();
-    expect(screen.getByTitle("1 open problem(s)")).toBeInTheDocument();
-  });
-
-  it("says so when nothing is open", async () => {
-    mockFetchJson({ "/api/system-status/config-health": { incidents: [] } });
-    renderWithProviders(<OpenProblemsBox />);
-    expect(await screen.findByText("No open problems.")).toBeInTheDocument();
-  });
-
-  it("says so when the panel cannot load", async () => {
-    mockFetchJson({});
-    renderWithProviders(<OpenProblemsBox />);
-    expect(await screen.findByText("Unable to load open problems.")).toBeInTheDocument();
-  });
-
-  it("shows the failed state, not Checking forever, when the answer has no incidents", async () => {
-    mockFetchJson({ "/api/system-status/config-health": { checks: [] } });
-    renderWithProviders(<OpenProblemsBox />);
-    expect(await screen.findByText("Unable to load open problems.")).toBeInTheDocument();
-  });
-});
-
 describe("ProblemsBox", () => {
   it("lists each stuck item with its library, step, a link to its page and its time, then each job not on time", async () => {
     mockFetchJson({
@@ -462,7 +420,7 @@ describe("ProblemsBox", () => {
   });
 
   it("shows the failed state when the answer has no problems", async () => {
-    mockFetchJson({ "/api/system-status/config-health": { incidents: [] } });
+    mockFetchJson({ "/api/system-status/config-health": { checks: [] } });
     renderWithProviders(<ProblemsBox />);
     expect(await screen.findByText("Unable to load the Problems list.")).toBeInTheDocument();
   });

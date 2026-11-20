@@ -46,7 +46,7 @@ function jsonReq(body?: unknown) {
 
 describe('POST /api/dev/shopify/orders-paid (dev mock)', () => {
     let originalFetch: typeof global.fetch;
-    let prevSettings: { orgMembershipVariantId: string | null; orgMembershipYearBoundary: Date | null } | null;
+    let prevSettings: { orgMembershipYearBoundary: Date | null } | null;
     const BOUNDARY = new Date('2000-09-01T00:00:00Z');
     const LIVE_ROW_VARIANT = 'dev-mock-variant-route-live-year';
     const liveYear = liveMembershipYear(BOUNDARY, new Date())!;
@@ -71,16 +71,16 @@ describe('POST /api/dev/shopify/orders-paid (dev mock)', () => {
         // No bgClearedAt: activate() deterministically lands PENDING_BG_CLEARANCE
         // (not ACTIVE) when it advances — see payment.ts `activating = !!process.bgClearedAt`.
         const p = await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_PAYMENT' },
+            data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_PAYMENT', contractSignedAt: new Date() },
         });
         return { householdId: hh.id, orgMembershipId: m.id, processId: p.id };
     }
 
-    async function setVariant(variantId: string | null) {
+    async function setBoundary() {
         await prisma.boardSettings.upsert({
             where: { id: 1 },
-            create: { id: 1, orgMembershipVariantId: variantId, orgMembershipYearBoundary: BOUNDARY },
-            update: { orgMembershipVariantId: variantId, orgMembershipYearBoundary: BOUNDARY },
+            create: { id: 1, orgMembershipYearBoundary: BOUNDARY },
+            update: { orgMembershipYearBoundary: BOUNDARY },
         });
     }
 
@@ -103,7 +103,7 @@ describe('POST /api/dev/shopify/orders-paid (dev mock)', () => {
         for (const k of SHOPIFY_ENV_KEYS) delete process.env[k];
 
         const existing = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-        prevSettings = existing ? { orgMembershipVariantId: existing.orgMembershipVariantId, orgMembershipYearBoundary: existing.orgMembershipYearBoundary } : null;
+        prevSettings = existing ? { orgMembershipYearBoundary: existing.orgMembershipYearBoundary } : null;
         prevLiveRow = await prisma.membershipYearVariant.findUnique({ where: { membershipYear: liveYear } });
         await wipe();
 
@@ -125,7 +125,7 @@ describe('POST /api/dev/shopify/orders-paid (dev mock)', () => {
         if (prevSettings) {
             await prisma.boardSettings.update({ where: { id: 1 }, data: prevSettings });
         } else {
-            // Row didn't exist before this suite — remove what setVariant created
+            // Row didn't exist before this suite — remove what setBoundary created
             // so the worker DB is left as found (AGENTS.md: suites self-clean).
             await prisma.boardSettings.deleteMany({ where: { id: 1 } });
         }
@@ -186,7 +186,7 @@ describe('POST /api/dev/shopify/orders-paid (dev mock)', () => {
         // DEV_MOCK_MEMBERSHIP_VARIANT_ID (config), which the inbound handler accepts,
         // so the membership fee still settles end-to-end instead of dead-ending on a 409.
         asSession();
-        await setVariant(null);
+        await setBoundary();
         await prisma.membershipYearVariant.deleteMany({ where: { membershipYear: liveYear } });
         const { processId } = await makeProc();
         const res = await POST(jsonReq({ processId }));
@@ -198,7 +198,7 @@ describe('POST /api/dev/shopify/orders-paid (dev mock)', () => {
 
     it("200s, fires the real inbound webhook with the live year's variant, and advances the process (PENDING_PAYMENT -> PENDING_BG_CLEARANCE)", async () => {
         asSession();
-        await setVariant(null);
+        await setBoundary();
         await prisma.membershipYearVariant.upsert({
             where: { membershipYear: liveYear },
             create: { membershipYear: liveYear, shopifyVariantId: LIVE_ROW_VARIANT },

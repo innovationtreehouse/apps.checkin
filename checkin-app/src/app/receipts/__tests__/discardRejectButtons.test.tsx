@@ -59,7 +59,7 @@ describe("who sees Discard and Reject on an open receipt", () => {
     expect(shown()).toEqual(expected);
   });
 
-  it.each(["uploaded", "auto_upload", "ocr_failed", "validation_failed", "submitter_review", "flow_error"])(
+  it.each(["uploaded", "ocr_queued", "auto_upload", "ocr_failed", "validation_failed", "submitter_review", "flow_error"])(
     "offers finance Reject on someone else's receipt in %s",
     (state) => {
       mockRoles = { isFinance: true, isBoard: false };

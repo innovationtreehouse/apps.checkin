@@ -85,6 +85,7 @@ describe('unsynced-scans record resolution (real DB)', () => {
         expect(visit?.arrivedAt).toEqual(new Date('2026-08-20T19:14:00.000Z'));
         expect(visit?.departedAt).toEqual(new Date('2026-08-20T21:00:00.000Z'));
         expect(visit?.arrivedVia).toBe('SCANNER');
+        expect(visit?.arrivedLive).toBe(false);
 
         const stamped = await prisma.rawBadgeLog.findUnique({ where: { id: row.id } });
         expect(stamped?.reviewedAt).not.toBeNull();

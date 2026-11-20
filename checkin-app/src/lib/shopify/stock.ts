@@ -24,8 +24,13 @@ const STOCK_LEASE_POLL_MS = 250;
  */
 export const programStockTiming = { capMs: 3 * 60_000, requestCapMs: 15_000, maxBackoffMs: 15_000 };
 
-/** A program's stock bookkeeping for a variant it no longer sells: cleared when `shopifyVariantId` changes. */
+/**
+ * A program's stock bookkeeping for a variant it no longer sells: cleared when `shopifyVariantId` changes.
+ * Clearing the lease stops a push still running for the old variant from booking anything after the reset.
+ */
 export const STOCK_BOOKKEEPING_RESET = {
+    shopifyStockLeaseUntil: null,
+    shopifyStockLeaseToken: null,
     shopifyStockCarry: 0,
     shopifyStockPendingWrite: null,
     shopifyStockUnconfirmed: 0,
@@ -156,7 +161,8 @@ const mockShopifyGraphql: Gql = async (query, variables) => {
  * (so the same idempotency key) on a transport failure, 5xx, 429, a transient
  * GraphQL code or a reply with no readable body, with capped exponential backoff,
  * until `deadline`. A 401/403 after an attempt that may have reached Shopify does
- * not say whether that attempt landed, so it is resent too. Throws on a hard error
+ * not say whether that attempt landed, so it is resent too, as is one on the first
+ * attempt when `alreadySent` (an earlier run may have sent it). Throws on a hard error
  * or when the deadline passes unsettled.
  */
 async function untilSettled<T>(
@@ -165,9 +171,10 @@ async function untilSettled<T>(
     variables: Record<string, unknown>,
     deadline: number,
     stillRunning: (data: T) => boolean = () => false,
+    alreadySent = false,
 ): Promise<T> {
     let lastError = "no reply";
-    let maybeSent = false;
+    let maybeSent = alreadySent;
     for (let attempt = 0; ; attempt++) {
         let reply: { status: number; body: GqlBody<T> } | null = null;
         try {
@@ -221,7 +228,7 @@ async function readStock(gql: Gql, variantId: string, deadline: number) {
  * a resend of one that failed returns the original error. So the reply is always
  * definite: "applied", or a hard error (thrown), which means it did not apply.
  */
-async function sendStockWrite(gql: Gql, write: PendingStockWrite, deadline: number): Promise<"applied"> {
+async function sendStockWrite(gql: Gql, write: PendingStockWrite, deadline: number, resent: boolean): Promise<"applied"> {
     const codesOf = (d: { inventoryAdjustQuantities?: UserErrors }) => d.inventoryAdjustQuantities?.userErrors.map((e) => e.code ?? "") ?? [];
     // The write goes out as the Program.shopifyStockPendingWrite it is booked as.
     const data = await outboundCall(
@@ -246,6 +253,7 @@ async function sendStockWrite(gql: Gql, write: PendingStockWrite, deadline: numb
             return untilSettled<{ inventoryAdjustQuantities?: UserErrors }>(
                 gql, ADJUST_STOCK, variables, deadline,
                 (d) => codesOf(d).includes("IDEMPOTENCY_CONCURRENT_REQUEST"),
+                resent,
             );
         },
     );
@@ -312,9 +320,9 @@ async function bookStock(programId: number, token: string, data: Prisma.ProgramU
  * still land (no settled answer before the cap) stays pending, for the next push to
  * resend under its key; a hard error settled it unapplied, so it goes back to owed.
  */
-async function sendBooked(gql: Gql, programId: number, token: string, write: PendingStockWrite, deadline: number): Promise<void> {
+async function sendBooked(gql: Gql, programId: number, token: string, write: PendingStockWrite, deadline: number, resent = false): Promise<void> {
     try {
-        await sendStockWrite(gql, write, deadline);
+        await sendStockWrite(gql, write, deadline, resent);
     } catch (error) {
         if (!(error instanceof StockWriteUnsettledError)) {
             await bookStock(programId, token, { shopifyStockCarry: { increment: stillOwed(write, "notApplied") }, shopifyStockPendingWrite: null });
@@ -408,7 +416,7 @@ async function drainStock(
                     console.log(`[SHOPIFY] Program ${programId} store closed: parked +${pending.delta} (${pending.key}) instead of resending it`);
                 } else {
                     // ponytail: the resend settles whether the +1 landed; if it did, it sits on sale until the -1 right after.
-                    await sendBooked(gql, programId, token, pending, deadline);
+                    await sendBooked(gql, programId, token, pending, deadline, true);
                     console.log(`[SHOPIFY] Program ${programId} settled pending stock write ${pending.key}`);
                 }
                 continue;
@@ -546,7 +554,10 @@ async function pushProgramStock(
             },
         });
 
-        if (result.error) {
+        if (result.error instanceof StockLeaseLostError) {
+            // Another writer, or a variant change, took the lease: what is still owed is theirs to land.
+            console.warn(`[SHOPIFY] Program ${programId} stock push stopped: ${result.error.message}`);
+        } else if (result.error) {
             console.error(`[Shopify Error] Failed to push stock for program ${programId}:`, result.error);
             await alertStockPush(programId, variantId, reason, result.error);
         } else if (carryAfter < Math.min(0, carryBefore) && !(await isProgramStoreClosed())) {

@@ -6,7 +6,7 @@ const row = (state: string, n: number) => ({ state, _count: { _all: n } });
 describe("receipt state tally", () => {
   it("lists every machine state", () => {
     expect([...RECEIPT_STATES].sort()).toEqual([
-      "auto_upload", "discarded", "duplicate_flagged", "financial_review", "flow_error", "ocr_failed",
+      "auto_upload", "discarded", "duplicate_flagged", "financial_review", "flow_error", "ocr_failed", "ocr_queued",
       "receipt_finalized", "rejected", "submitter_review", "uploaded", "validation_failed",
     ]);
   });

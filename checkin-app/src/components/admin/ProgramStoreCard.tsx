@@ -3,12 +3,12 @@
 import { useState } from "react";
 import { Badge, Button, Card, Group, List, Text, Title } from "@mantine/core";
 import { modals } from "@mantine/modals";
-import { notifications } from "@mantine/notifications";
+import { errorMessage, showError, showSuccess } from "@checkin/component-ui";
+import { api } from "@/lib/api";
 
 interface StockResult { name: string; ok: boolean }
 interface SwitchReply {
   programStore?: { zeroed?: StockResult[]; unhidden?: string[]; recounted?: StockResult[] };
-  error?: string;
 }
 
 /**
@@ -23,23 +23,21 @@ export function ProgramStoreCard({ initialClosedAt }: { initialClosedAt: string 
   const send = async (programStore: "close" | "open") => {
     setBusy(true);
     try {
-      const res = await fetch("/api/settings/membership", {
+      const data = await api<SwitchReply>("/api/settings/membership", {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ programStore }),
       });
-      const data = (await res.json().catch(() => ({}))) as SwitchReply;
-      if (!res.ok || !data.programStore) {
-        notifications.show({ color: "red", autoClose: false, message: data.error ?? "The store switch failed" });
+      if (!data?.programStore) {
+        showError("The store switch failed");
         return;
       }
       const { zeroed = [], unhidden = [], recounted = [] } = data.programStore;
       const failed = [...zeroed, ...recounted].filter((r) => !r.ok).map((r) => `Stock not confirmed in Shopify: ${r.name}`);
       setReport([...failed, ...unhidden.map((name) => `Hide not confirmed yet (the daily run retries): ${name}`)]);
       setClosedAt(programStore === "close" ? new Date().toISOString() : null);
-      notifications.show({ color: "green", message: programStore === "close" ? "Store closed to program seats." : "Store reopened. Re-list each program's item in Shopify by hand." });
-    } catch {
-      notifications.show({ color: "red", autoClose: false, message: "Network error on the store switch" });
+      showSuccess(programStore === "close" ? "Store closed to program seats." : "Store reopened. Re-list each program's item in Shopify by hand.");
+    } catch (e) {
+      showError(errorMessage(e));
     } finally {
       setBusy(false);
     }

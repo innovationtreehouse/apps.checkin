@@ -7,6 +7,8 @@
 import type { Program } from '@/generated/prisma/client';
 import { updateProgram } from '@/lib/programs/update';
 
+// A new leader here meets the membership and clearance requirements; leaderEligibility has its own tests.
+jest.mock('@/lib/programs/leaderEligibility', () => ({ ...jest.requireActual('@/lib/programs/leaderEligibility'), programLeaderIneligibility: jest.fn().mockResolvedValue(null) }));
 jest.mock('@/lib/logger', () => ({ logger: { error: jest.fn(), warn: jest.fn() } }));
 jest.mock('@/lib/programAnnounce', () => ({ maybeAnnounceOnOpen: jest.fn().mockResolvedValue(undefined) }));
 jest.mock('@/lib/shopify/stock', () => ({ STOCK_BOOKKEEPING_RESET: {} }));
@@ -72,6 +74,18 @@ describe('updateProgram name', () => {
         await updateProgram(program, { name: '  Woodshop  ' }, actor);
         expect(tx.program.update.mock.calls[0][0].data.name).toBe('Woodshop');
     });
+
+    it('writes the name key with the name', async () => {
+        await updateProgram(program, { name: '  WoodShop  ' }, actor);
+        expect(tx.program.update.mock.calls[0][0].data).toMatchObject({ name: 'WoodShop', nameKey: 'woodshop' });
+    });
+
+    it('refuses a rename into a name its membership year already has as a conflict', async () => {
+        const taken = { code: 'P2002', meta: { driverAdapterError: { cause: { constraint: { fields: ['"nameKey"', '"appliesToYear"'] } } } } };
+        tx.program.update.mockRejectedValueOnce(taken);
+        const result = await updateProgram(program, { name: 'Woodshop' }, actor);
+        expect(result).toEqual({ ok: false, refusal: 'conflict', message: 'A program with this name already exists for that membership year.' });
+    });
 });
 
 describe('updateProgram audit', () => {
@@ -96,8 +110,8 @@ describe('updateProgram audit', () => {
 });
 
 describe('updateProgram post-commit checks', () => {
-    // The caller's copy is stale: a concurrent edit already set the ages and opened the program.
-    const lockedRow = { ...program, phase: 'UPCOMING', enrollmentStatus: 'OPEN', minAge: 10 };
+    // The caller's copy is stale: a concurrent edit already set the ages.
+    const lockedRow = { ...program, minAge: 10 };
 
     it('passes the locked row to the announce check as "before"', async () => {
         tx.program.findUnique.mockResolvedValueOnce(lockedRow);

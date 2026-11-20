@@ -10,6 +10,7 @@ import type { NextRequest } from "next/server";
 import { getServerSession } from "next-auth/next";
 import prisma from "@/lib/prisma";
 import { PATCH } from "@/app/api/household/member/route";
+import { AGE_REQUIRED_REFUSAL } from "@/lib/person/adultDob";
 
 // The archived-household guard has its own tests; here every household is live.
 jest.mock("@/lib/household/archiveGuard", () => ({
@@ -158,14 +159,16 @@ describe("PATCH /api/household/member — declaring someone over 25", () => {
         expect(written()).toMatchObject({ dateOfBirth: null, isDeclaredAdult: true });
     });
 
-    it("accepts a declaration in a later save once the date is cleared", async () => {
+    it("refuses clearing the date with no declaration, then accepts a declaration where no date is on file", async () => {
         findPerson.mockResolvedValue(person(CHILD, YOUTH_DOB));
-        expect((await patch({ participantId: CHILD, dob: "", over25: false })).status).toBe(200);
-        expect(written()).toMatchObject({ dateOfBirth: null, isDeclaredAdult: false });
+        const cleared = await patch({ participantId: CHILD, dob: "", over25: false });
+        expect(cleared.status).toBe(400);
+        expect((await cleared.json()).error).toBe(AGE_REQUIRED_REFUSAL);
+        expect(tx.person.update).not.toHaveBeenCalled();
 
         findPerson.mockResolvedValue(person(CHILD, null));
         expect((await patch({ participantId: CHILD, dob: "", over25: true })).status).toBe(200);
-        expect(tx.person.update.mock.calls[1][0].data).toMatchObject({ dateOfBirth: null, isDeclaredAdult: true });
+        expect(tx.person.update.mock.calls[0][0].data).toMatchObject({ dateOfBirth: null, isDeclaredAdult: true });
     });
 
     it("lets a lead declare an adult with no date on file", async () => {

@@ -18,13 +18,17 @@ export const CRON_STALE_AFTER_MS = 48 * 60 * 60 * 1000;
  * Two independent signals per job, because "did it run" and "did it work" are
  * different questions and one boolean cannot answer both:
  *   - `lastSuccessAt`/`stale` — did the sweep RUN. Only a run that never completed
- *     (a throw, or the route's own error envelope) holds this back.
- *   - `lastError` — was the latest run CLEAN. Set from that run's error, so a sweep
- *     that ran last night and failed 4 rows reads as fresh-but-unhealthy rather
- *     than as stopped. A failure the job has since recovered from is history, not
+ *     (a throw, or the route's own error envelope) holds this back. Null for a job
+ *     that has recorded runs but never completed one; such a job is never stale.
+ *   - `lastError` — was the latest run CLEAN. Set from that run's error, or from its
+ *     failures by kind other than `data`, so a sweep that ran last night and failed
+ *     4 rows reads as fresh-but-unhealthy rather than as stopped. A failure the job has since recovered from is history, not
  *     a status: the next clean run clears it.
  */
-export type CronJobStatus = { job: string; lastSuccessAt: Date; stale: boolean; lastError?: string; lastErrorAt?: Date };
+export type CronJobStatus = { job: string; lastError?: string; lastErrorAt?: Date } & (
+    | { lastSuccessAt: Date; stale: boolean }
+    | { lastSuccessAt: null; stale: false }
+);
 
 /** Route slug for the run ledger: the last path segment of /api/cron/<job>. */
 export function cronJobName(url: string): string {
@@ -71,7 +75,7 @@ export async function recordCronRun(job: string, startedAt: Date, success: boole
  * Most recent COMPLETED run per job — the "did it run" half. A partial sweep counts:
  * it ran, so it must not read as stopped. Whether it was clean is {@link lastRunByJob}.
  *
- * Only jobs with a recorded success appear. A route that has never run is not
+ * Only jobs with a recorded success appear here. A route that has never run is not
  * reported as stale, because the app has no way to know whether infra schedules
  * it at all — absence of evidence isn't a missed run, and it also keeps the badge
  * from firing on all nine routes the moment this table ships. The corollary: a job
@@ -101,14 +105,28 @@ async function lastRunByJob() {
     const rows = await prisma.cronRunLog.findMany({
         orderBy: [{ job: "asc" }, { finishedAt: "desc" }],
         distinct: ["job"],
-        select: { job: true, success: true, error: true, finishedAt: true },
+        select: { job: true, success: true, error: true, failuresByKind: true, finishedAt: true },
     });
     return new Map(rows.map((r) => [r.job, r]));
 }
 
 /**
- * Every job that has ever completed a run, most-stale first so the problems are at
- * the top of the panel. Carries the latest run's error — a red row that names what
+ * The latest run's failures by kind as an error, e.g. "3 item(s) failed: connection 2, system 1",
+ * or null when it has none. `data` failures wait in finance's queue, so they do not count.
+ */
+export function failuresError(failuresByKind: unknown): string | null {
+    if (!failuresByKind || typeof failuresByKind !== "object" || Array.isArray(failuresByKind)) return null;
+    const counts = Object.entries(failuresByKind).filter(
+        (entry): entry is [string, number] => entry[0] !== "data" && typeof entry[1] === "number" && entry[1] > 0,
+    );
+    if (counts.length === 0) return null;
+    const total = counts.reduce((sum, [, n]) => sum + n, 0);
+    return `${total} item(s) failed: ${counts.map(([kind, n]) => `${kind} ${n}`).join(", ")}`;
+}
+
+/**
+ * Every job that has recorded a run, most-stale first so the problems are at the top
+ * of the panel; a job that has never completed a run comes first, failing. Carries the latest run's error — a red row that names what
  * broke is actionable; one that only says "stopped" sends the reader to CloudWatch.
  *
  * The two halves are read independently on purpose: a sweep that ran last night and
@@ -118,19 +136,30 @@ async function lastRunByJob() {
 export async function getCronJobStatuses(now: Date = new Date()): Promise<CronJobStatus[]> {
     const [successes, latestRuns] = await Promise.all([lastSuccessByJob(), lastRunByJob()]);
 
-    return [...successes.entries()]
+    const neverCompleted: CronJobStatus[] = [...latestRuns.values()]
+        .filter((run) => !successes.has(run.job))
+        .map((run) => ({
+            job: run.job,
+            lastSuccessAt: null,
+            stale: false,
+            lastError: run.error ?? failuresError(run.failuresByKind) ?? "unknown error",
+            lastErrorAt: run.finishedAt,
+        }));
+    const completed: CronJobStatus[] = [...successes.entries()]
         .map(([job, lastSuccessAt]) => {
             // Only the LATEST run's error is a status; the next clean run clears it.
             const latest = latestRuns.get(job);
-            const unclean = latest && (latest.error !== null || !latest.success);
+            const failures = latest ? failuresError(latest.failuresByKind) : null;
+            const unclean = latest && (latest.error !== null || !latest.success || failures !== null);
             return {
                 job,
                 lastSuccessAt,
                 stale: now.getTime() - lastSuccessAt.getTime() > CRON_STALE_AFTER_MS,
-                ...(unclean ? { lastError: latest.error ?? "unknown error", lastErrorAt: latest.finishedAt } : {}),
+                ...(unclean ? { lastError: latest.error ?? failures ?? "unknown error", lastErrorAt: latest.finishedAt } : {}),
             };
         })
         .sort((a, b) => a.lastSuccessAt.getTime() - b.lastSuccessAt.getTime());
+    return [...neverCompleted, ...completed];
 }
 
 /**
@@ -141,8 +170,7 @@ export async function getCronJobStatuses(now: Date = new Date()): Promise<CronJo
  * ponytail: shares getCronJobStatuses' two reads rather than keeping a leaner
  * aggregate for the nav-poll path — the panel's "failure detail" IS half the badge,
  * so a second query shape would only be the same reads spelled twice.
- * `skipJobs` are jobs the badge already counts through their open incident.
  */
-export async function countUnhealthyCronJobs(now: Date = new Date(), skipJobs: ReadonlySet<string> = new Set()): Promise<number> {
-    return (await getCronJobStatuses(now)).filter((j) => (j.stale || j.lastError) && !skipJobs.has(j.job)).length;
+export async function countUnhealthyCronJobs(now: Date = new Date()): Promise<number> {
+    return (await getCronJobStatuses(now)).filter((j) => j.stale || j.lastError).length;
 }

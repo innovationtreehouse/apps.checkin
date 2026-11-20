@@ -87,6 +87,8 @@ export function useProgramEnrollment(id: string) {
   const [showEnrollmentSelection, setShowEnrollmentSelection] = useState(false);
   const [selectedParticipantIds, setSelectedParticipantIds] = useState<number[]>([]);
   const [showIntake, setShowIntake] = useState(false);
+  // An unknown age sees no payment surface; the intake panel asks for a DOB (or "over 25") first.
+  const ageUnknown = !!session && session.user.ageBand !== 'adult' && session.user.ageBand !== 'youth';
 
   const householdLoad = useLoad<HouseholdAnswer>(showEnrollmentSelection ? '/api/household' : null);
   // Emergency contact isn't in /api/household; the process-free intake state has it.
@@ -140,7 +142,7 @@ export function useProgramEnrollment(id: string) {
   const hasValidEmergencyContact = !!(prefillHousehold?.emergencyContactName?.trim() && prefillHousehold?.emergencyContactPhone?.trim());
   const hasEnrollable = householdMembers.some((m) => { const r = enrollBlock(m).reason; return r === null || r === 'pending'; });
   // A freshly-signed-in user with no enrollable participant or no emergency contact is offered setup instead of a dead end.
-  const needsSetup = !!householdLoad.data && (!hasEnrollable || !hasValidEmergencyContact);
+  const needsSetup = ageUnknown || (!!householdLoad.data && (!hasEnrollable || !hasValidEmergencyContact));
 
   const startEnrollmentProcess = () => {
     if (!session) {
@@ -152,6 +154,7 @@ export function useProgramEnrollment(id: string) {
     // the account holder, the easiest person to enroll by accident.
     setSelectedParticipantIds([]);
     setShowEnrollmentSelection(true);
+    if (ageUnknown) setShowIntake(true);
   };
 
   // Back from the first-time intake panel: re-read the household so the new
@@ -410,7 +413,7 @@ export function useProgramEnrollment(id: string) {
   };
 
   return {
-    session, status, program, programLoad, successMessage, startEnrollmentProcess, signInToProgram, showEnrollmentSelection,
+    session, status, program, programLoad, successMessage, startEnrollmentProcess, signInToProgram, showEnrollmentSelection, ageUnknown,
     picker: {
       showIntake, setShowIntake, handleIntakeSaved, loadingHousehold, householdError, householdErrorWhat, reloadHousehold, householdMembers, enrollBlock, needsSetup,
       selectedParticipantIds, setSelectedParticipantIds, enrolling, handleEnroll, repeatPayments, setRepeatPayments,

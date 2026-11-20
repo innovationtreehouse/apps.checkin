@@ -161,6 +161,11 @@ describe('receipt runtime: mail intake bindings', () => {
         expect(boundConfig().mailbox).toBeDefined();
     });
 
+    it.each([['prod', 90], ['stg', 30], ['dev', 30], ['local', 30]])('on %s, keeps raw mail %i days, as its bucket does', (env, days) => {
+        process.env.CHECKIN_ENV = env;
+        expect(boundConfig().rawMailRetentionDays).toBe(days);
+    });
+
     it('attributes mail only to the exact sign-in email, never a pattern-like near match', async () => {
         prisma.person.findMany = jest.fn().mockResolvedValue([person({ email: 'pat_x@example.org' })]);
         expect(await boundConfig().people?.submitterByEmail('patax@example.org')).toBeNull();

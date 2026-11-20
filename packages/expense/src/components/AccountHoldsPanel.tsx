@@ -114,6 +114,7 @@ export default function AccountHoldsPanel({ expenseId, holds, lines, currency, i
     return (accounts.data ?? []).filter((a) => allowed.includes(typeOf.get(a.qbAccount) ?? "")).map((a) => ({ value: a.qbAccount, label: `${a.name} (${a.qbAccount})` }));
   };
   const withoutAccount = pending.filter((h) => !lineOf.get(h.lineItemId)?.manualQbAccount).length;
+  const accountsError = accounts.error ?? live.error;
 
   return (
     <Paper withBorder p="sm">
@@ -136,6 +137,7 @@ export default function AccountHoldsPanel({ expenseId, holds, lines, currency, i
           </Group>
         )}
       </Group>
+      {accountsError && <Text size="xs" c="red" mb="xs">Couldn&apos;t read the QuickBooks accounts: {accountsError}</Text>}
       <Table>
         <Table.Tbody>
           {pending.map((h) => {
@@ -180,7 +182,7 @@ export default function AccountHoldsPanel({ expenseId, holds, lines, currency, i
                           if (await send(`${base}/line-items/${h.lineItemId}/account`, "PUT", { qbAccount: picked[h.id] }, "Account set")) onChanged();
                         }}
                       >Set account</Button>
-                      {!picked[h.id] && <InactivePickWarning saved={line?.manualQbAccount} options={live.data} />}
+                      {!picked[h.id] && <InactivePickWarning saved={line?.manualQbAccount} options={live.data} advice="Pick an active one." />}
                     </Group>
                   ) : (line?.manualQbAccount ? accountLabel(line.manualQbAccount) : "—")}
                 </Table.Td>

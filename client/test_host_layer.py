@@ -1,12 +1,15 @@
 """Decisions of client/host/kioskctl, driven through fakes on PATH."""
+import fcntl
 import os
 import stat
 import subprocess
 import tempfile
+import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 KIOSKCTL = os.path.join(HERE, "host", "kioskctl")
+INSTALL = os.path.join(HERE, "host", "install.sh")
 
 A = "sha256:" + "a" * 64
 B = "sha256:" + "b" * 64
@@ -17,7 +20,7 @@ FAKES = {
     "docker": r"""#!/usr/bin/env bash
 echo "docker $*" >>"$FAKE/log"
 case "$1" in
-  buildx) tag=${4##*:}; cat "$FAKE/tags/$tag" 2>/dev/null || exit 1 ;;
+  buildx) [ "$2" = version ] && exit 0; tag=${4##*:}; cat "$FAKE/tags/$tag" 2>/dev/null || exit 1 ;;
   pull) [ ! -e "$FAKE/pull_fails" ] ;;
   exec)
     [ "$3" = touch ] && exit 0
@@ -33,10 +36,62 @@ echo "systemctl $* urgent=$(cat "$KIOSK_STATE_DIR/urgent" 2>/dev/null)" >>"$FAKE
     "date": 'cat "$FAKE/hour"\n',
     "sleep": "",
     "flock": 'echo "flock $*" >>"$FAKE/log"\n[ ! -e "$FAKE/lock_held" ]\n',
+    "timedatectl": r"""#!/usr/bin/env bash
+echo "timedatectl $*" >>"$FAKE/log"
+case "$1" in
+  set-ntp) [ ! -e "$FAKE/no_timesyncd" ] || { echo "Failed to set ntp: NTP not supported" >&2; exit 1; } ;;
+  show) cat "$FAKE/ntp_synced" 2>/dev/null || echo yes ;;
+esac
+""",
+}
+
+# install.sh's own system calls: it runs as root on a Pi with a kiosk user.
+INSTALL_FAKES = {
+    "id": '[ $# -eq 1 ] && echo 0 || echo 1000\n',
+    "getent": r"""case "$1" in
+  group) echo "input:x:105:" ;;
+  passwd) echo "kiosk:x:1000:1000::$FAKE/home:/bin/bash" ;;
+esac
+""",
+    "install": 'echo "install $*" >>"$FAKE/log"\n',
+    "chown": "",
 }
 
 
-class KioskctlTest(unittest.TestCase):
+# flock(1) over flock(2), so locks really contend. A wait of N seconds lasts
+# N * FLOCK_SCALE, so the reboot's 30 minutes fit in a test.
+REAL_FLOCK = r"""#!/usr/bin/env python3
+import fcntl, os, sys, time
+args = sys.argv[1:]
+with open(os.path.join(os.environ["FAKE"], "log"), "a") as log:
+    log.write("flock " + " ".join(args) + "\n")
+fd = int(args[-1])
+if args[0] == "-u":
+    fcntl.flock(fd, fcntl.LOCK_UN)
+    sys.exit(0)
+deadline = time.monotonic() + (float(args[1]) * float(os.environ["FLOCK_SCALE"]) if args[0] == "-w" else 0)
+while True:
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        sys.exit(0)
+    except BlockingIOError:
+        if time.monotonic() >= deadline:
+            sys.exit(1)
+        time.sleep(0.02)
+"""
+
+
+def write_fakes(directory, fakes):
+    for name, body in fakes.items():
+        path = os.path.join(directory, name)
+        with open(path, "w") as f:
+            f.write(body if body.startswith("#!") else "#!/usr/bin/env bash\n" + body)
+        os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR)
+
+
+class HostLayerCase(unittest.TestCase):
+    """Fakes on PATH and a scratch state directory."""
+
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -46,11 +101,7 @@ class KioskctlTest(unittest.TestCase):
         os.mkdir(os.path.join(self.fake, "tags"))
         self.bin = os.path.join(self.fake, "bin")
         os.mkdir(self.bin)
-        for name, body in FAKES.items():
-            path = os.path.join(self.bin, name)
-            with open(path, "w") as f:
-                f.write(body if body.startswith("#!") else "#!/usr/bin/env bash\n" + body)
-            os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR)
+        write_fakes(self.bin, FAKES)
         self.conf = os.path.join(self.fake, "host.conf")
         self.write_conf()
         self.write(self.state, "current.env", f"KIOSK_DIGEST={A}\n")
@@ -79,10 +130,12 @@ class KioskctlTest(unittest.TestCase):
     def mark_bad(self, digest):
         self.write(self.fake, "bad", digest + "\n")
 
+    def env(self, flock_scale=1.0):
+        return dict(os.environ, FAKE=self.fake, KIOSK_CONF=self.conf, KIOSK_STATE_DIR=self.state,
+                    PATH=self.bin + os.pathsep + os.environ["PATH"], FLOCK_SCALE=str(flock_scale))
+
     def run_ctl(self, *args):
-        env = dict(os.environ, FAKE=self.fake, KIOSK_CONF=self.conf, KIOSK_STATE_DIR=self.state,
-                   PATH=self.bin + os.pathsep + os.environ["PATH"])
-        return subprocess.run([KIOSKCTL, *args], env=env, capture_output=True, text=True).returncode
+        return subprocess.run([KIOSKCTL, *args], env=self.env(), capture_output=True, text=True).returncode
 
     def state_of(self, name):
         try:
@@ -104,6 +157,8 @@ class KioskctlTest(unittest.TestCase):
     def restarts(self):
         return [line for line in self.log() if line.startswith("systemctl restart")]
 
+
+class KioskctlTest(HostLayerCase):
     def test_good_image_swaps_inside_window(self):
         self.set_tag("kiosk-release", B)
         self.assertEqual(self.run_ctl("check-release"), 0)
@@ -269,13 +324,98 @@ class KioskctlTest(unittest.TestCase):
 
     def test_reboot_waits_for_the_update_lock_first(self):
         self.assertEqual(self.run_ctl("reboot"), 0)
-        self.assertEqual(self.reboot_steps(), ["flock -w 1800 9", "systemctl reboot"])
+        self.assertEqual(self.reboot_steps(), ["flock -w 60 8", "flock -w 1800 9", "systemctl reboot"])
         self.assertTrue(os.path.exists(os.path.join(self.state, "lock")))
 
     def test_reboot_still_happens_when_the_lock_stays_held(self):
         self.write(self.fake, "lock_held", "")
         self.assertEqual(self.run_ctl("reboot"), 0)
-        self.assertEqual(self.reboot_steps(), ["flock -w 1800 9", "systemctl reboot"])
+        self.assertEqual(self.reboot_steps(), ["flock -w 60 8", "flock -w 1800 9", "systemctl reboot"])
+
+    def use_real_flock(self):
+        path = os.path.join(self.bin, "flock")
+        with open(path, "w") as f:
+            f.write(REAL_FLOCK)
+
+    def hold(self, name):
+        """Takes a kioskctl lock file from outside, as another kioskctl run would."""
+        f = open(os.path.join(self.state, name), "w")
+        self.addCleanup(f.close)
+        fcntl.flock(f, fcntl.LOCK_EX)
+        return f
+
+    def is_held(self, name):
+        with open(os.path.join(self.state, name), "w") as f:
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            fcntl.flock(f, fcntl.LOCK_UN)
+            return False
+
+    def start_reboot(self, flock_scale):
+        proc = subprocess.Popen([KIOSKCTL, "reboot"], env=self.env(flock_scale),
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.addCleanup(proc.kill)
+        return proc
+
+    def wait_until(self, condition, seconds=5):
+        deadline = time.monotonic() + seconds
+        while not condition():
+            self.assertLess(time.monotonic(), deadline, "timed out")
+            time.sleep(0.02)
+
+    def test_reboot_gives_up_on_a_lock_held_past_its_wait(self):
+        self.use_real_flock()
+        self.hold("lock")
+        started = time.monotonic()
+        proc = self.start_reboot(flock_scale=0.5 / 1800)
+        _, err = proc.communicate(timeout=10)
+        self.assertGreaterEqual(time.monotonic() - started, 0.5)
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("lock still held after 30 minutes; rebooting anyway", err)
+        self.assertEqual(self.reboot_steps(), ["flock -w 60 8", "flock -w 1800 9", "systemctl reboot"])
+
+    def test_reboot_waits_for_a_held_lock_to_be_released(self):
+        self.use_real_flock()
+        held = self.hold("lock")
+        proc = self.start_reboot(flock_scale=1.0)
+        self.wait_until(lambda: "flock -w 1800 9" in self.reboot_steps())
+        time.sleep(0.2)
+        self.assertNotIn("systemctl reboot", self.reboot_steps())
+        fcntl.flock(held, fcntl.LOCK_UN)
+        _, err = proc.communicate(timeout=10)
+        self.assertEqual(proc.returncode, 0)
+        self.assertNotIn("rebooting anyway", err)
+        self.assertEqual(self.reboot_steps()[-1], "systemctl reboot")
+
+    def test_a_waiting_reboot_holds_the_timers_off(self):
+        self.use_real_flock()
+        held = self.hold("lock")
+        proc = self.start_reboot(flock_scale=1.0)
+        self.wait_until(lambda: self.is_held("reboot-gate"))
+        fcntl.flock(held, fcntl.LOCK_UN)
+        proc.communicate(timeout=10)
+        self.assertEqual(proc.returncode, 0)
+
+    def test_reboot_says_when_it_waits_without_the_gate(self):
+        self.use_real_flock()
+        self.hold("reboot-gate")
+        proc = self.start_reboot(flock_scale=0.1 / 60)
+        _, err = proc.communicate(timeout=10)
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("reboot gate busy after 60s; waiting without it", err)
+        self.assertEqual(self.reboot_steps()[-1], "systemctl reboot")
+
+    def test_timer_checks_stand_aside_for_a_waiting_reboot(self):
+        self.use_real_flock()
+        self.hold("reboot-gate")
+        self.set_tag("kiosk-release", B)
+        self.set_tag("kiosk-urgent", C)
+        self.assertEqual(self.run_ctl("check-release"), 0)
+        self.assertEqual(self.run_ctl("check-urgent"), 0)
+        self.assertEqual(self.current(), A)
+        self.assertFalse(any(line.startswith("docker") for line in self.log()))
 
     def test_reboot_does_not_need_a_health_command(self):
         self.write_conf(health="")
@@ -294,6 +434,21 @@ class KioskctlTest(unittest.TestCase):
         self.assertIn("EnvironmentFile=/var/lib/kiosk-host/current.env\n", unit)
         self.assertIn("-v /var/lib/kiosk:/data \\\n", unit)
 
+    def test_unsynced_clock_warns_and_the_update_goes_ahead(self):
+        self.write(self.fake, "ntp_synced", "no\n")
+        self.set_tag("kiosk-release", B)
+        result = subprocess.run([KIOSKCTL, "check-release"], env=self.env(), capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("clock is not synced by NTP", result.stderr)
+        self.assertEqual(self.current(), B)
+
+    def test_synced_clock_logs_nothing(self):
+        self.set_tag("kiosk-release", A)
+        result = subprocess.run([KIOSKCTL, "check-release"], env=self.env(), capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("timedatectl show -p NTPSynchronized --value", self.log())
+        self.assertEqual(result.stdout + result.stderr, "")
+
     def test_example_health_command_runs_the_script_in_the_image(self):
         with open(os.path.join(HERE, "host", "host.conf.example")) as f:
             self.assertIn('KIOSK_HEALTH_CMD="python /app/healthcheck.py"\n', f.read())
@@ -301,6 +456,34 @@ class KioskctlTest(unittest.TestCase):
             copies = [line for line in f if line.startswith("COPY") and "healthcheck.py" in line]
         self.assertEqual(len(copies), 1)
         self.assertTrue(copies[0].rstrip().endswith(" /app/"))
+
+
+class InstallTest(HostLayerCase):
+    """install.sh against the same fakes, with config and state already in place."""
+
+    def setUp(self):
+        super().setUp()
+        write_fakes(self.bin, INSTALL_FAKES)
+        self.autostart = os.path.join(self.fake, "home", ".config", "openbox", "autostart")
+        os.makedirs(os.path.dirname(self.autostart))
+
+    def run_install(self):
+        return subprocess.run([INSTALL, "kiosk"], env=self.env(), capture_output=True, text=True)
+
+    def test_install_turns_on_ntp_and_survives_a_rerun(self):
+        for _ in range(2):
+            result = self.run_install()
+            self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.log().count("timedatectl set-ntp true"), 2)
+        with open(self.autostart) as f:
+            self.assertEqual(f.read(), "/usr/local/bin/kiosk-browser &\n")
+
+    def test_install_without_timesyncd_says_what_to_do_and_finishes(self):
+        self.write(self.fake, "no_timesyncd", "")
+        result = self.run_install()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("install systemd-timesyncd, then run: timedatectl set-ntp true", result.stderr)
+        self.assertIn("Installed.", result.stdout)
 
 
 if __name__ == "__main__":

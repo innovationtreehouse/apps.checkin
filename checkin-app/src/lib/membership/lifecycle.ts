@@ -130,6 +130,9 @@ export const IN_FLIGHT_RENEWAL: readonly ProcessStatus[] = [
     "RENEWAL_PENDING_BG",
 ];
 
+/** An in-flight RENEWAL the household has already confirmed: past PENDING_RENEWAL. */
+export const RENEWAL_UNDERWAY: readonly ProcessStatus[] = IN_FLIGHT_RENEWAL.filter((s) => s !== "PENDING_RENEWAL");
+
 /**
  * A PERSON_BG obligation still outstanding for its subject: awaiting review, or
  * BLOCKED (a manual follow-up the board owns, never auto-reopened). NOT a
@@ -428,13 +431,15 @@ export const TRANSITIONS: readonly Transition<TState, string, ProcessKind>[] = [
     { from: "INTAKE", to: "PENDING_EXTERNAL_ACTION", event: "submitIntake", actor: "applicant", guardSite: "intake.ts submitIntake: updateMany CAS from INTAKE", kind: "INITIAL" },
     { from: "PENDING_RENEWAL", to: "PENDING_EXTERNAL_ACTION", event: "beginRenewal", actor: "member", guardSite: "renewal.ts beginRenewal: OrgMembership FOR UPDATE (refuses DENIED/BLOCKED) + updateMany CAS from PENDING_RENEWAL", kind: "RENEWAL" },
     // Advance
-    { from: "PENDING_EXTERNAL_ACTION", to: "PENDING_PAYMENT", event: "advanceExternalIfComplete", actor: "system", guardSite: "external.ts advanceExternalIfComplete: updateMany CAS (signed + check started or cleared)" },
+    { from: "PENDING_EXTERNAL_ACTION", to: "PENDING_PAYMENT", event: "advanceExternalIfComplete", actor: "system", guardSite: "external.ts advanceExternalIfComplete: updateMany CAS (signed + check started or cleared, unpaid)" },
+    { from: "PENDING_EXTERNAL_ACTION", to: "PENDING_BG_CLEARANCE", event: "advanceExternalIfComplete", actor: "system", guardSite: "external.ts advanceExternalIfComplete: updateMany CAS (signed + check started or cleared, paid while blocked)" },
     // Signature completes a person-scoped agreement outright — no payment, no BG gate
     { from: "PENDING_EXTERNAL_ACTION", to: "ACTIVE", event: "markContractSigned", actor: "subject", guardSite: "external.ts markContractSigned: updateMany where contractSignedAt=null + fromWhere", kind: "PERSON_AGREEMENT" },
     { from: "PENDING_EXTERNAL_ACTION", to: "ACTIVE", event: "markContractSigned", actor: "subject/board", guardSite: "external.ts markContractSigned: updateMany where contractSignedAt=null + fromWhere", kind: "KEY_VOLUNTEER_AGREEMENT" },
     // Payment convergence
     { from: "PENDING_PAYMENT", to: "ACTIVE", event: "activate", actor: "shopify/board", guardSite: "payment.ts settle: process + OrgMembership FOR UPDATE, DENIED changes nothing (bgClearedAt set)" },
     { from: "PENDING_PAYMENT", to: "PENDING_BG_CLEARANCE", event: "activate", actor: "shopify/board", guardSite: "payment.ts settle: process + OrgMembership FOR UPDATE, DENIED changes nothing (not cleared)" },
+    { from: "PENDING_PAYMENT", to: "PENDING_EXTERNAL_ACTION", event: "activate", actor: "shopify/board", guardSite: "payment.ts settle: process + OrgMembership FOR UPDATE, DENIED changes nothing (agreement unsigned)" },
     { from: "PENDING_PAYMENT", to: "ACTIVE", event: "grantMembership", actor: "board", guardSite: "grant.ts grantMembership → certifyPaymentPlan (COI) → activate" },
     // Check review (PERSON_BG): two approvals clear it, a rejection blocks it, a Board
     // reset or the rejector's change to approve sends a blocked one back.
@@ -451,20 +456,22 @@ export const TRANSITIONS: readonly Transition<TState, string, ProcessKind>[] = [
     { from: "PENDING_BG_REVIEW", to: "ACTIVE", event: "settleHouseholdBg", actor: "system", guardSite: "settleHouseholdBg.ts: process FOR UPDATE + denied lock (paid legacy row)", legacy: true },
     { from: "PENDING_BG_REVIEW", to: "PENDING_BG_CLEARANCE", event: "settleHouseholdBg", actor: "system", guardSite: "settleHouseholdBg.ts: process FOR UPDATE (paid on a refunded order)", legacy: true },
     { from: "PENDING_BG_CLEARANCE", to: "ACTIVE", event: "settleHouseholdBg", actor: "system", guardSite: "settleHouseholdBg.ts: process FOR UPDATE + denied lock" },
+    { from: "PENDING_BG_CLEARANCE", to: "PENDING_EXTERNAL_ACTION", event: "settleHouseholdBg", actor: "system", guardSite: "settleHouseholdBg.ts: process FOR UPDATE + denied lock (agreement unsigned)" },
+    { from: "PENDING_BG_REVIEW", to: "PENDING_EXTERNAL_ACTION", event: "settleHouseholdBg", actor: "system", guardSite: "settleHouseholdBg.ts: process FOR UPDATE + denied lock (legacy row, agreement unsigned)", legacy: true },
     ...SETTLE_BLOCKABLE_STATUSES.flatMap((from): Transition<TState, string, ProcessKind>[] => [
         { from, to: "BLOCKED", event: "settleHouseholdBg", actor: "system", guardSite: "settleHouseholdBg.ts: process FOR UPDATE, a person in the household has a BLOCKED check review" },
         { from: "BLOCKED", to: from, event: "settleHouseholdBg", actor: "system", guardSite: "settleHouseholdBg.ts resumeStatus: process FOR UPDATE, every recorded blocking review no longer BLOCKED" },
     ]),
     // A household row blocked by a household attestation before cutover: Board reset only.
     { from: "BLOCKED", to: "PENDING_PAYMENT", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI (legacy household row, unpaid)", legacy: true },
-    { from: "BLOCKED", to: "PENDING_BG_CLEARANCE", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI (legacy household row, paid)", legacy: true },
-    { from: "BLOCKED", to: "PENDING_EXTERNAL_ACTION", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI (legacy household row, check not started or unsigned)", legacy: true },
-    // Refund recorded by the board: money undone, background check untouched. Every
+    { from: "BLOCKED", to: "PENDING_BG_CLEARANCE", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI (legacy household row, paid and signed)", legacy: true },
+    { from: "BLOCKED", to: "PENDING_EXTERNAL_ACTION", event: "boardResetReview", actor: "board", guardSite: "review.ts boardResetReview: process FOR UPDATE + COI (legacy household row, unsigned, or unpaid with its check not started)", legacy: true },
+    // Refund recorded by the board, or by a denied household's store refund: money undone, background check untouched. Every
     // other step only loses paidAt (flag-only, no status edge).
     ...ALL_STATUSES.flatMap((from): Transition<TState, string, ProcessKind>[] => {
         const to = refundLandsIn(from);
         return to && to !== from
-            ? [{ from, to, event: "recordRefund", actor: "board/sysadmin", guardSite: "refund.ts updateMany CAS (paidAt set) + COI" }]
+            ? [{ from, to, event: "recordRefund", actor: "board/sysadmin, or a store refund on a DENIED household", guardSite: "refund.ts updateMany CAS (paidAt set) + COI for a person" }]
             : [];
     }),
     // Close application — unpaid steps only

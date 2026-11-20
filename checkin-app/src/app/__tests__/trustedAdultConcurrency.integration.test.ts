@@ -131,4 +131,39 @@ describe('trusted-adult mutation concurrency', () => {
         expect(decisions).toHaveLength(1);
         expect(JSON.stringify(normalizeAuditData(decisions[0].newData))).toContain(`"status":"${review!.status}"`);
     });
+
+    it('a board member who joins the household while the decision waits on its lock is refused', async () => {
+        const ta = await disclose();
+        const reviewId = ta.reviews[0].id;
+        const boardHouseholdId = (await prisma.person.findUniqueOrThrow({ where: { id: boardId } })).householdId;
+
+        // The holder is a move of the board member into the family: it holds the family's
+        // household row, as the move route does, until the decision queues on it.
+        const holder = prisma.$transaction(async (tx) => {
+            await tx.$queryRaw`SELECT id FROM "Household" WHERE id = ${householdId} FOR UPDATE`;
+            for (let i = 0; ; i++) {
+                if (i === 100) throw new Error('The action never queued on the Household lock.');
+                // Postgres caches pg_stat_activity for the transaction unless the snapshot is cleared.
+                await tx.$queryRaw`SELECT pg_stat_clear_snapshot()::text`;
+                const [{ waiting }] = await tx.$queryRaw<{ waiting: number }[]>`
+                    SELECT count(*)::int AS waiting FROM pg_stat_activity
+                    WHERE datname = current_database() AND pid <> pg_backend_pid()
+                      AND wait_event_type = 'Lock' AND query LIKE '%"Household"%'`;
+                if (waiting > 0) break;
+                await new Promise((r) => setTimeout(r, 50));
+            }
+            await tx.person.update({ where: { id: boardId }, data: { householdId } });
+        }, { timeout: 15_000 });
+        const decision = decideReview(reviewId, boardId, { decision: 'APPROVE', sharedNote: SHARED });
+
+        const [, decided] = await Promise.allSettled([holder, decision]);
+        try {
+            expect(code(decided)).toBe('forbidden');
+            expect((await prisma.trustedAdultReview.findUnique({ where: { id: reviewId } }))!.status).toBe('PENDING_BOARD_REVIEW');
+            expect(await prisma.auditLog.count({ where: { tableName: 'SelfGrantRefusal', actorId: boardId, affectedEntityId: reviewId } })).toBe(1);
+        } finally {
+            await prisma.auditLog.deleteMany({ where: { tableName: 'SelfGrantRefusal', actorId: boardId } });
+            await prisma.person.update({ where: { id: boardId }, data: { householdId: boardHouseholdId } });
+        }
+    });
 });

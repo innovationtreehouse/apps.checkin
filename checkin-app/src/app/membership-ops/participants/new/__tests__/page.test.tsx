@@ -35,6 +35,7 @@ describe("membership-ops/participants/new page", () => {
 
     fireEvent.change(screen.getByPlaceholderText("e.g. Jane Doe"), { target: { value: "Jane Doe" } });
     fireEvent.change(screen.getByPlaceholderText("jane.doe@example.com"), { target: { value: "jane@example.com" } });
+    fireEvent.click(screen.getByLabelText("Individual is over 25"));
 
     const submitBtn = screen.getByRole("button", { name: "Create Participant" });
     expect(submitBtn).toBeEnabled();
@@ -51,12 +52,28 @@ describe("membership-ops/participants/new page", () => {
             parentEmail: null,
             parentName: null,
             dob: null,
+            over25: true,
             householdId: null,
           }),
         }),
       ),
     );
     await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Participant Jane Doe successfully!" })));
+  });
+
+  it("needs a date of birth or the over-25 box before it submits", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    mockFetchJson({});
+    renderWithProviders(<NewParticipantPage />);
+    await screen.findByText("Register New User");
+
+    fireEvent.change(screen.getByPlaceholderText("e.g. Jane Doe"), { target: { value: "Jane Doe" } });
+    fireEvent.change(screen.getByPlaceholderText("jane.doe@example.com"), { target: { value: "jane@example.com" } });
+    expect(screen.getByRole("button", { name: "Create Participant" })).toBeDisabled();
+
+    fireEvent.click(screen.getByLabelText("Individual is over 25"));
+    expect(screen.getByRole("button", { name: "Create Participant" })).toBeEnabled();
+    expect(screen.queryByLabelText("Date of Birth")).not.toBeInTheDocument();
   });
 
   it("requires a parent email once a student DOB is entered", async () => {
@@ -122,6 +139,7 @@ describe("membership-ops/participants/new page", () => {
     await screen.findByDisplayValue("Household #8");
 
     fireEvent.change(screen.getByPlaceholderText("e.g. Jane Doe"), { target: { value: "First Kid" } });
+    fireEvent.change(screen.getByLabelText("Date of Birth"), { target: { value: "2015-01-01" } });
     fireEvent.click(screen.getByRole("button", { name: "Create Participant" }));
 
     await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Participant First Kid successfully!" })));
@@ -183,6 +201,7 @@ describe("membership-ops/participants/new page", () => {
     await screen.findByText("Register New User");
 
     fireEvent.change(screen.getByPlaceholderText("jane.doe@example.com"), { target: { value: "jane@example.com" } });
+    fireEvent.click(screen.getByLabelText("Individual is over 25"));
     expect(screen.getByRole("button", { name: "Create Participant" })).toBeDisabled();
 
     fireEvent.change(screen.getByPlaceholderText("e.g. Jane Doe"), { target: { value: "  " } });
@@ -204,6 +223,7 @@ describe("membership-ops/participants/new page", () => {
     fireEvent.change(screen.getByPlaceholderText("e.g. Jane Doe"), { target: { value: "Household Member" } });
     fireEvent.change(screen.getByPlaceholderText("Search households..."), { target: { value: "Does" } });
     fireEvent.click(await screen.findByText("The Does", { exact: false }));
+    fireEvent.click(screen.getByLabelText("Individual is over 25"));
 
     fireEvent.click(screen.getByRole("button", { name: "Create Participant" }));
     await waitFor(() =>
@@ -212,7 +232,7 @@ describe("membership-ops/participants/new page", () => {
         expect.objectContaining({
           method: "POST",
           body: JSON.stringify({
-            name: "Household Member", email: null, parentEmail: null, parentName: null, dob: null, householdId: 9,
+            name: "Household Member", email: null, parentEmail: null, parentName: null, dob: null, over25: true, householdId: 9,
           }),
         }),
       ),
@@ -233,6 +253,8 @@ describe("membership-ops/participants/new page", () => {
     await screen.findByText("Student Detected");
     fireEvent.change(screen.getByLabelText(/Parent \/ Guardian Google Email/), { target: { value: "parent@example.com" } });
     fireEvent.change(screen.getByPlaceholderText("e.g. John Doe"), { target: { value: "Parent Name" } });
+    expect(screen.getByRole("button", { name: "Create Participant" })).toBeDisabled();
+    fireEvent.click(screen.getByLabelText("Parent / guardian is over 25"));
     expect(screen.queryByLabelText(/already a paid member/)).not.toBeInTheDocument();
 
     const submitBtn = screen.getByRole("button", { name: "Create Participant" });
@@ -245,7 +267,7 @@ describe("membership-ops/participants/new page", () => {
         expect.objectContaining({
           method: "POST",
           body: JSON.stringify({
-            name: "Kid Name", email: null, parentEmail: "parent@example.com", parentName: "Parent Name", dob: "2015-01-01", householdId: null,
+            name: "Kid Name", email: null, parentEmail: "parent@example.com", parentName: "Parent Name", parentDob: null, parentOver25: true, dob: "2015-01-01", over25: false, householdId: null,
           }),
         }),
       ),
@@ -258,6 +280,7 @@ describe("membership-ops/participants/new page", () => {
     await screen.findByText("Register New User");
     fireEvent.change(screen.getByPlaceholderText("e.g. Jane Doe"), { target: { value: "Jane Doe" } });
     fireEvent.change(screen.getByPlaceholderText("jane.doe@example.com"), { target: { value: "jane@example.com" } });
+    fireEvent.click(screen.getByLabelText("Individual is over 25"));
 
     const refusal = (body: unknown) => jest.fn(async () => ({ ok: false, status: 409, json: async () => body, text: async () => JSON.stringify(body) })) as unknown as typeof fetch;
     global.fetch = refusal({ error: "Household not found." });
@@ -278,6 +301,7 @@ describe("membership-ops/participants/new page", () => {
     await screen.findByText("Register New User");
     fireEvent.change(screen.getByPlaceholderText("e.g. Jane Doe"), { target: { value: "Jane Doe" } });
     fireEvent.change(screen.getByPlaceholderText("jane.doe@example.com"), { target: { value: "jane@example.com" } });
+    fireEvent.click(screen.getByLabelText("Individual is over 25"));
 
     const body = { error: "A participant with this email already exists", fields: ["email"] };
     global.fetch = jest.fn(async () => ({ ok: false, status: 409, json: async () => body, text: async () => JSON.stringify(body) })) as unknown as typeof fetch;

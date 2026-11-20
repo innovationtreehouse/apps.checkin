@@ -8,14 +8,16 @@
  */
 
 import { attest, boardResetReview } from '@/lib/membership/review';
+import { settleHouseholdBg } from '@/lib/membership/settleHouseholdBg';
 import { activateByProcessId } from '@/lib/membership/payment';
 import { raiseReversalByOrderId } from '@/lib/finance/reconcile/reversals';
-import { isOrderReversed } from '@/lib/finance/reconcile/exceptions';
+import { isOrderReversed, ORDER_REVERSAL_ADVISORY_CLASS, recordReversal } from '@/lib/finance/reconcile/exceptions';
 import { raiseMembershipPaymentOutcome } from '@/lib/finance/reconcile/membership';
 import { resetTokenCache } from '@/lib/shopify/client';
 import prisma from '@/lib/prisma';
 import { setBgRecheckPolicy } from '@/test-helpers/boardSettings';
 import { sendEmail } from '@/lib/email';
+import { Client } from 'pg';
 
 jest.mock('@/lib/email', () => ({
     sendEmail: jest.fn().mockResolvedValue(true),
@@ -205,6 +207,96 @@ describe('a refunded order never activates', () => {
             expect(app?.bgClearedAt).toBeNull();
             expect(await membershipStatusOf(paid.orgMembershipId)).toBe('NONE');
         });
+
+        describe('on a paid application blocked by a rejection, then lifted after the refund', () => {
+            /** A cleared lead and an adult whose review blocks the paid application. */
+            async function blockPaid(oid: string) {
+                const hh = await prisma.household.create({ data: { name: `Lifted ${TAG} ${Math.random()}` } });
+                await prisma.person.create({ data: { email: `lead-${Math.random()}-${TAG}@example.com`, name: 'Lead', householdId: hh.id, isHouseholdLead: true, lastBackgroundCheck: new Date() } });
+                const adult = await prisma.person.create({ data: { email: `adult-${Math.random()}-${TAG}@example.com`, name: 'Adult', householdId: hh.id } });
+                const m = await prisma.orgMembership.create({ data: { householdId: hh.id, status: 'NONE' } });
+                const now = new Date();
+                const proc = await prisma.orgMembershipProcess.create({
+                    data: { orgMembershipId: m.id, kind: 'INITIAL', status: 'PENDING_BG_CLEARANCE', contractSignedAt: now, bgConsentAt: now, paidAt: now, shopifyOrderId: oid },
+                });
+                const review = await prisma.orgMembershipProcess.create({
+                    data: { kind: 'PERSON_BG', subjectPersonId: adult.id, requestedForHouseholdId: hh.id, status: 'BLOCKED', bgConsentAt: now },
+                });
+                shopifyAnswers(unrefundedOrder);
+                expect(await settleHouseholdBg(hh.id)).toEqual(['blocked', 'paidReject']);
+                return { processId: proc.id, orgMembershipId: m.id, householdId: hh.id, adultId: adult.id, reviewId: review.id };
+            }
+            /** The blocked application, then the rejected adult leaves and the review is reset, lifting the block. */
+            async function blockThenLift(oid: string) {
+                const { adultId, reviewId, ...app } = await blockPaid(oid);
+                const elsewhere = await prisma.household.create({ data: { name: `Elsewhere ${TAG} ${Math.random()}` } });
+                await prisma.person.update({ where: { id: adultId }, data: { householdId: elsewhere.id } });
+                await prisma.orgMembershipProcess.update({ where: { id: reviewId }, data: { status: 'PENDING_BG_REVIEW' } });
+                await prisma.auditLog.create({ data: { actorId: 0, action: 'EDIT', tableName: 'OrgMembershipProcess', affectedEntityId: reviewId, oldData: { status: 'BLOCKED' }, newData: { status: 'PENDING_BG_REVIEW', action: 'board reset' } } });
+                return app;
+            }
+            const unrefundedOrder = () => new Response(JSON.stringify({
+                data: { order: { displayFinancialStatus: 'PAID', cancelledAt: null, totalRefundedSet: { shopMoney: { amount: '0.00' } } } },
+            }));
+
+            it('holds it at clearance and raises the refund instead of activating', async () => {
+                const oid = orderId('lifted-refunded');
+                const { processId, orgMembershipId, householdId } = await blockThenLift(oid);
+                shopifyAnswers(refundedOrder);
+
+                expect(await settleHouseholdBg(householdId)).toEqual(['resumed', 'cleared']);
+
+                expect((await processOf(processId))?.status).toBe('PENDING_BG_CLEARANCE');
+                expect(await membershipStatusOf(orgMembershipId)).toBe('NONE');
+                expect(await isOrderReversed(prisma, oid)).toBe(true);
+                expect(await prisma.paymentException.count({ where: { kind: 'REVERSED_BEFORE_ACTIVATION', processId, severity: 'CRITICAL' } })).toBe(1);
+            });
+
+            it('activates it when the order was not refunded', async () => {
+                const { processId, orgMembershipId, householdId } = await blockThenLift(orderId('lifted-paid'));
+
+                expect(await settleHouseholdBg(householdId)).toEqual(['resumed', 'cleared']);
+
+                expect((await processOf(processId))?.status).toBe('ACTIVE');
+                expect(await membershipStatusOf(orgMembershipId)).toBe('ACTIVE');
+            });
+
+            it('does not ask Shopify while the block holds', async () => {
+                const { processId, householdId } = await blockPaid(orderId('held-outage'));
+                shopifyAnswers(() => new Response('down', { status: 503 }));
+
+                expect(await settleHouseholdBg(householdId)).toEqual([]);
+
+                expect((await processOf(processId))?.status).toBe('BLOCKED');
+                expect(global.fetch).not.toHaveBeenCalled();
+            });
+
+            it('decides afresh when a new rejection lands while the order is read', async () => {
+                const { processId, orgMembershipId, householdId } = await blockThenLift(orderId('lifted-reblocked'));
+                const adult = await prisma.person.create({ data: { email: `late-${Math.random()}-${TAG}@example.com`, name: 'Late', householdId } });
+                resetTokenCache();
+                global.fetch = jest.fn(async (url: string | URL | Request) => {
+                    if (String(url).includes('access_token')) return new Response(JSON.stringify({ access_token: 't' }));
+                    await prisma.orgMembershipProcess.create({ data: { kind: 'PERSON_BG', subjectPersonId: adult.id, requestedForHouseholdId: householdId, status: 'BLOCKED', bgConsentAt: new Date() } });
+                    return unrefundedOrder();
+                }) as typeof fetch;
+
+                expect(await settleHouseholdBg(householdId)).toEqual([]);
+
+                expect((await processOf(processId))?.status).toBe('BLOCKED');
+                expect(await membershipStatusOf(orgMembershipId)).toBe('NONE');
+            });
+
+            it('leaves it blocked when Shopify cannot answer', async () => {
+                const { processId, orgMembershipId, householdId } = await blockThenLift(orderId('lifted-outage'));
+                shopifyAnswers(() => new Response('down', { status: 503 }));
+
+                await expect(settleHouseholdBg(householdId)).rejects.toThrow();
+
+                expect((await processOf(processId))?.status).toBe('BLOCKED');
+                expect(await membershipStatusOf(orgMembershipId)).toBe('NONE');
+            });
+        });
     });
 
     it('path B: the Board resolving the refund flag before clearance still does not activate', async () => {
@@ -289,6 +381,36 @@ describe('a refunded order never activates', () => {
 
         expect(await refund).toBe(true);
         expect((await prisma.paymentException.findFirst({ where: { kind: 'REFUND', processId } }))?.severity).toBe('CRITICAL');
+    });
+
+    it('two concurrent reversals of one order queue on its lock and record one ledger row', async () => {
+        const oid = orderId('twice');
+        // A connection outside the app's pool holds the order's lock until both calls wait on it.
+        const holder = new Client({ connectionString: process.env.DATABASE_URL });
+        await holder.connect();
+        try {
+            await holder.query('BEGIN');
+            await holder.query('SELECT pg_advisory_xact_lock($1::int, hashtext($2))', [ORDER_REVERSAL_ADVISORY_CLASS, oid]);
+            const both = Promise.all([recordReversal(oid, 'REFUND'), recordReversal(oid, 'CHARGEBACK')]);
+            let waiting = 0;
+            for (let i = 0; i < 100 && waiting < 2; i++) {
+                await holder.query('SELECT pg_stat_clear_snapshot()');
+                const { rows } = await holder.query<{ n: number }>(
+                    `SELECT count(*)::int AS n FROM pg_stat_activity
+                     WHERE datname = current_database() AND pid <> pg_backend_pid()
+                       AND wait_event_type = 'Lock' AND wait_event = 'advisory' AND query LIKE '%pg_advisory_xact_lock%'`,
+                );
+                waiting = rows[0].n;
+                if (waiting < 2) await new Promise((r) => setTimeout(r, 50));
+            }
+            expect(waiting).toBe(2);
+            await holder.query('COMMIT');
+            await both;
+        } finally {
+            await holder.end();
+        }
+        const rows = await prisma.auditLog.findMany({ where: { tableName: 'ShopifyOrderReversal', newData: { path: ['shopifyOrderId'], equals: oid } } });
+        expect(rows).toHaveLength(1);
     });
 
     it('an unrefunded order still activates, on either path', async () => {

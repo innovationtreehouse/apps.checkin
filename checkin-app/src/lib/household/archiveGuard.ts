@@ -28,6 +28,18 @@ export async function lockLiveHouseholds(db: TxClient, householdIds: readonly nu
     }
 }
 
+/**
+ * Locks the households FOR UPDATE, in id order, archived or not. A household move
+ * holds these rows (through lockLiveHouseholds), so a check that reads who is in a
+ * household after this sees a move either committed or not yet started.
+ */
+export async function lockHouseholdRows(db: TxClient, householdIds: readonly number[]): Promise<void> {
+    if (isRootClient(db)) throw new Error("lockHouseholdRows must run inside a transaction.");
+    for (const id of [...new Set(householdIds)].sort((a, b) => a - b)) {
+        await db.$queryRaw`SELECT id FROM "Household" WHERE id = ${id} FOR UPDATE`;
+    }
+}
+
 /** {@link lockLiveHouseholds} for the households these people are in. A person moved meanwhile is refused. */
 export async function lockLiveHouseholdsOf(db: TxClient, personIds: readonly number[]): Promise<void> {
     const where = { id: { in: [...personIds] } };

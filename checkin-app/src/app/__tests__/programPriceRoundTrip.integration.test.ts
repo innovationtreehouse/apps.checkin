@@ -18,6 +18,9 @@ import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
 import { setMembershipYearBoundary } from '@/test-helpers/boardSettings';
 
+// A new leader here meets the membership and clearance requirements; leaderEligibility has its own tests.
+jest.mock('@/lib/programs/leaderEligibility', () => ({ ...jest.requireActual('@/lib/programs/leaderEligibility'), programLeaderIneligibility: jest.fn().mockResolvedValue(null) }));
+
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
 }));
@@ -26,6 +29,7 @@ jest.mock('@/lib/notifications', () => ({
 }));
 // Avoid hitting the real Shopify API; the route tolerates a null result.
 jest.mock('@/lib/shopify/products', () => ({
+    programProductHandle: jest.requireActual('@/lib/shopify/products').programProductHandle,
     createShopifySingleVariantProgram: jest.fn().mockResolvedValue(null),
 }));
 jest.mock('@/lib/shopify/stock', () => ({

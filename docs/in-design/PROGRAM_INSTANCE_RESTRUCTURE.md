@@ -4,7 +4,7 @@
 **Supersedes:** Audit item **P2-3** (naming confusion around "session"/"program"/"event")
 **Scope:** `checkin-app` (schema + security + UI + data migration)
 **Progress:** P1 (table + backfill, no readers) merged in September 2026 (issue #1361). P2–P5 remain. The `ProgramInstance` table stays; it is not to be dropped.
-**Baseline:** today's `main` (2026-10-16). The earlier draft assumed the member-segment pricing proposal (#929) would ship first; it has not (`docs/in-design/SHOPIFY_MEMBER_SEGMENT_PRICING.md` is still a proposal). Member pricing today is a minted single-use discount code per household checkout (§2a). `Fee`/`FeePayment` were dropped with issue #354 and are not part of this plan.
+**Baseline:** today's `main` (2026-10-16). Member pricing is a minted single-use discount code per household checkout (§2a). `Fee`/`FeePayment` were dropped with issue #354 and are not part of this plan.
 
 **Naming.** This doc says **program leader** for the person who runs a program, matching the rules register. The schema still says `leadMentor` (`Program.leadMentorId`, `ProgramInstance.leadMentorId`, the `programsLed` claim, the `program-lead-mentor` resolver). The architectural review's WI 4.5 renames "lead mentor" to "program leader" in code; that review is not on `main` yet. The two pieces of work touch the same files — see open question Q6. No step of this plan renames a leader column or claim in place.
 
@@ -118,7 +118,7 @@ What `main` does, and what each piece becomes:
 | Product handle | `programProductHandle({id,name})` → `checkin-program-{id}-…` | built from the instance id. Backfilled instances alias program ids, so existing handles still match. |
 | Webhook | paid variant → program via `programVariantIds` | paid variant → instance → program |
 
-Per-instance variants fall out of the existing sync: the sync route already creates both products and records their ids; it moves to the instance. No new Shopify machinery is needed for the restructure. If #929's segment pricing ever ships, its automatic discount would also be per instance; that is #929's design to settle, not this one.
+Per-instance variants fall out of the existing sync: the sync route already creates both products and records their ids; it moves to the instance. No new Shopify machinery is needed for the restructure.
 
 ---
 
@@ -312,8 +312,7 @@ Keeps: every rule above, on the contracted schema.
 1. **Public `/programs` lists instances**, not definitions, as a schedule. (§6)
 2. **`ProgramInstance.name` is a stored, separate run label**, editable by the run operator. (§3)
 3. **Policy narrowing** (§3a): an instance may narrow `minAge`/`maxAge`/`orgMemberOnly`, never widen, enforced at write time.
-4. **Pricing stays on `Program` (single per definition).** Per-run pricing is someday-maybe. Post-#929 the escape hatch is a per-instance automatic discount/price override — not a shareable discount code (#929 retires codes as forgeable). No instance price column and no override today. If it ever becomes real, revisit then. (§2, §2a)
-   > **Contradicted by today's code (reasoning only).** #929 has not shipped: member pricing *is* a discount code, minted per household checkout and bound to that household (`mintMemberDiscountCode`). The decision itself — price on the definition, no instance price column — still holds.
+4. **Pricing stays on `Program` (single per definition).** Per-run pricing is someday-maybe. No instance price column and no override today. If it ever becomes real, revisit then. (§2, §2a)
 
 ## 10. Open questions for the owner
 

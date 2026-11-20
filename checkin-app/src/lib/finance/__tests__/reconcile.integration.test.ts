@@ -13,6 +13,7 @@ import { snapshotBoardSettings } from "@/test-helpers/boardSettings";
 import { runReconcile } from "@/lib/finance/reconcile";
 import { raiseReversalByOrderId, returnTestOrderStock } from "@/lib/finance/reconcile/reversals";
 import { recordPaymentException } from "@/lib/finance/reconcile/exceptions";
+import { refundableApplication } from "@/lib/membership/lifecycle";
 import { orderEntitlesEnrollment, type EntitlementOrder } from "@/lib/finance/reconcile/program";
 import { activateProgramEnrollment } from "@/lib/programs/activateEnrollment";
 import { systemActor } from "@/lib/auditActor";
@@ -50,6 +51,7 @@ import { adjustProgramInventory } from "@/lib/shopify/stock";
 const TAG = "reconcile-matrix-test";
 // A membership variant id the board has configured; the mirror copies it onto order lines.
 const MEMBERSHIP_VARIANT = "variant-normal-1";
+const MEMBERSHIP_YEAR = 2042;
 const ordersChangedSince = mirror.ordersChangedSince as jest.Mock;
 const ordersByLegacyIds = mirror.ordersByLegacyIds as jest.Mock;
 const orderDisputeCounts = mirror.orderDisputeCounts as jest.Mock;
@@ -93,7 +95,7 @@ async function signedAttrs(programId: number, ids: string) {
 /** A household whose lead has `email`, an OrgMembership, and one process. */
 async function makeApplicant(opts: {
     email: string;
-    status: "PENDING_PAYMENT" | "ACTIVE" | "BLOCKED" | "ARCHIVED";
+    status: "PENDING_PAYMENT" | "PENDING_BG_CLEARANCE" | "PENDING_BG_REVIEW" | "ACTIVE" | "BLOCKED" | "ARCHIVED";
     household?: "NONE" | "DENIED";
     bgCleared?: boolean;
     isVolunteerFamily?: boolean;
@@ -112,6 +114,7 @@ async function makeApplicant(opts: {
             orgMembershipId: m.id,
             kind: "INITIAL",
             status: opts.status,
+            contractSignedAt: new Date(),
             bgClearedAt: opts.bgCleared ? new Date() : null,
             shopifyOrderId: opts.shopifyOrderId ?? null,
             paidAt: opts.paid ? new Date() : null,
@@ -162,9 +165,10 @@ beforeAll(async () => {
     restoreBoardSettings = await snapshotBoardSettings();
     await prisma.boardSettings.upsert({
         where: { id: 1 },
-        create: { id: 1, standardMembershipFeeCents: 5000, volunteerMembershipFeeCents: 2000, orgMembershipVariantId: MEMBERSHIP_VARIANT, volunteerFamilyDiscountCode: VOLUNTEER_CODE, orgMembershipYearBoundary: null },
-        update: { standardMembershipFeeCents: 5000, volunteerMembershipFeeCents: 2000, orgMembershipVariantId: MEMBERSHIP_VARIANT, volunteerFamilyDiscountCode: VOLUNTEER_CODE, orgMembershipYearBoundary: null, shopifyReconcileCursorAt: null },
+        create: { id: 1, standardMembershipFeeCents: 5000, volunteerMembershipFeeCents: 2000, volunteerFamilyDiscountCode: VOLUNTEER_CODE, orgMembershipYearBoundary: null },
+        update: { standardMembershipFeeCents: 5000, volunteerMembershipFeeCents: 2000, volunteerFamilyDiscountCode: VOLUNTEER_CODE, orgMembershipYearBoundary: null, shopifyReconcileCursorAt: null },
     });
+    await prisma.membershipYearVariant.create({ data: { membershipYear: MEMBERSHIP_YEAR, shopifyVariantId: MEMBERSHIP_VARIANT } });
 });
 
 beforeEach(() => {
@@ -209,6 +213,7 @@ afterAll(async () => {
     await prisma.paymentException.deleteMany({ where: { shopifyOrderId: { startsWith: `${TAG}-` } } });
     await prisma.auditLog.deleteMany({ where: { tableName: "ShopifyOrderReversal", newData: { path: ["shopifyOrderId"], string_starts_with: `${TAG}-` } } });
     await restoreBoardSettings();
+    await prisma.membershipYearVariant.deleteMany({ where: { membershipYear: MEMBERSHIP_YEAR } });
 });
 
 describe("forward recovery", () => {
@@ -248,9 +253,9 @@ describe("forward recovery", () => {
     });
 
     it.each([
-        ["a closed application", "ARCHIVED", false],
-        ["a second order on an already-paid application", "ACTIVE", true],
-    ] as const)("raises a paid order on %s instead of ignoring it", async (_label, status, paid) => {
+        ["a closed application", "ARCHIVED", false, "UNMATCHED_ORDER"],
+        ["a second order on an already-paid application", "ACTIVE", true, "DUPLICATE_MEMBERSHIP_PAYMENT"],
+    ] as const)("raises a paid order on %s instead of ignoring it", async (_label, status, paid, kind) => {
         const oid = `${TAG}-nothing-due-${status}`;
         const { processId } = await makeApplicant({ email: `nothing-due-${status}-${TAG}@ex.com`, status, paid, shopifyOrderId: paid ? `${TAG}-first` : undefined });
         orderLineVariantIds.mockResolvedValue([MEMBERSHIP_VARIANT]);
@@ -258,7 +263,7 @@ describe("forward recovery", () => {
 
         await runReconcile();
         expect((await prisma.orgMembershipProcess.findUnique({ where: { id: processId } }))?.status).toBe(status);
-        expect(await prisma.paymentException.count({ where: { kind: "UNMATCHED_ORDER", shopifyOrderId: oid, processId } })).toBe(1);
+        expect(await prisma.paymentException.count({ where: { kind, shopifyOrderId: oid, processId } })).toBe(1);
     });
 
     it("never activates a DENIED household: nothing changes", async () => {
@@ -421,21 +426,6 @@ describe("forward recovery", () => {
         expect(await prisma.orgMembershipProcess.findUnique({ where: { id: processId } })).toMatchObject({ status: "ACTIVE", appliesToYear: 2031 });
     });
 
-    it("stamps the single variant with the live year when the order was paid, not when it was found", async () => {
-        const email = `yearpaid-${TAG}@ex.com`;
-        const oid = `${TAG}-131`;
-        const { processId } = await makeApplicant({ email, status: "PENDING_PAYMENT", bgCleared: true });
-        await prisma.boardSettings.update({ where: { id: 1 }, data: { orgMembershipYearBoundary: new Date(Date.UTC(2000, 8, 1)) } });
-        orderLineVariantIds.mockResolvedValue([MEMBERSHIP_VARIANT]);
-        ordersChangedSince.mockResolvedValue([order({ legacyId: oid, customerEmail: email, processedAt: new Date(Date.UTC(2024, 5, 20)) })]);
-        try {
-            await runReconcile();
-        } finally {
-            await prisma.boardSettings.update({ where: { id: 1 }, data: { orgMembershipYearBoundary: null } });
-        }
-        expect(await prisma.orgMembershipProcess.findUnique({ where: { id: processId } })).toMatchObject({ status: "ACTIVE", appliesToYear: 2023 });
-    });
-
     it("raises NO_ITEM when a variant-mirrored order contains no membership product", async () => {
         const email = `noitem-${TAG}@ex.com`;
         const oid = `${TAG}-121`;
@@ -481,7 +471,7 @@ describe("forward recovery", () => {
         const oid = `${TAG}-111`;
         const a = await makeApplicant({ email, status: "PENDING_PAYMENT", bgCleared: true });
         const second = await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: a.membershipId, kind: "RENEWAL", status: "PENDING_PAYMENT", bgClearedAt: new Date() },
+            data: { orgMembershipId: a.membershipId, kind: "RENEWAL", status: "PENDING_PAYMENT", contractSignedAt: new Date(), bgClearedAt: new Date() },
         });
         // Email-only would raise UNMATCHED_ORDER here; the attribute names the process.
         ordersChangedSince.mockResolvedValue([
@@ -510,7 +500,7 @@ describe("forward recovery", () => {
         // A second PENDING_PAYMENT process on the SAME membership (email is @unique, so
         // ambiguity comes from two live processes for one family, not two households).
         await prisma.orgMembershipProcess.create({
-            data: { orgMembershipId: a.membershipId, kind: "RENEWAL", status: "PENDING_PAYMENT", bgClearedAt: new Date() },
+            data: { orgMembershipId: a.membershipId, kind: "RENEWAL", status: "PENDING_PAYMENT", contractSignedAt: new Date(), bgClearedAt: new Date() },
         });
         ordersChangedSince.mockResolvedValue([order({ legacyId: oid, customerEmail: email })]);
         await runReconcile();
@@ -769,7 +759,9 @@ describe("program order entitlement (same check as the webhook)", () => {
         await runReconcile();
         expect(await statusOf(programId, personId)).toBe("PENDING");
         expect(await statusOf(programId, sibId)).toBe("PENDING");
-        expect(await kinds(oid)).toEqual(["AMOUNT_MISMATCH"]);
+        // One per child the order names: which one it pays for is unknown.
+        const raised = await prisma.paymentException.findMany({ where: { shopifyOrderId: oid }, orderBy: { personId: "asc" } });
+        expect(raised.map((e) => [e.kind, e.personId])).toEqual([["AMOUNT_MISMATCH", Math.min(personId, sibId)], ["AMOUNT_MISMATCH", Math.max(personId, sibId)]]);
     });
 
     it("activates nobody and raises MIXED_HOUSEHOLDS when the order names children of two households", async () => {
@@ -785,7 +777,8 @@ describe("program order entitlement (same check as the webhook)", () => {
         await runReconcile();
         expect(await statusOf(programId, personId)).toBe("PENDING");
         expect(await statusOf(programId, other.id)).toBe("PENDING");
-        expect(await kinds(oid)).toEqual(["MIXED_HOUSEHOLDS"]);
+        const raised = await prisma.paymentException.findMany({ where: { shopifyOrderId: oid }, orderBy: { personId: "asc" } });
+        expect(raised.map((e) => [e.kind, e.personId])).toEqual([["MIXED_HOUSEHOLDS", Math.min(personId, other.id)], ["MIXED_HOUSEHOLDS", Math.max(personId, other.id)]]);
     });
 
     it("activates everyone when the order buys a seat per person", async () => {
@@ -1267,6 +1260,42 @@ describe("fast-path reversal webhook helper", () => {
         expect(takenBack()).toEqual([1, -1]);
     });
 
+    // The stock writer drops a raise owed after the sale ends (programStock.test.ts); here the give-back is still claimed once.
+    it("a test order on a program whose sale has ended claims its give-back once, and a later restocked refund takes the seats back", async () => {
+        const e = await makeOnSaleEnrollment({ email: `rs19c-${TAG}@ex.com`, status: "ACTIVE" });
+        await prisma.program.update({ where: { id: e.programId }, data: { saleEndedAt: new Date() } });
+        const oid = `${TAG}-329c`;
+        await returnTestOrderStock(oid, [{ variantId: e.variantId, quantity: 2 }]);
+        await returnTestOrderStock(oid, [{ variantId: e.variantId, quantity: 2 }]);
+        expect(adjustInventory.mock.calls.map(([, delta, , opts]) => [delta, opts])).toEqual([[2, { deferred: true }]]);
+        expect(await prisma.auditLog.count({ where: { tableName: "ShopifyTestOrderStock", secondaryAffectedEntity: e.programId } })).toBe(1);
+        await refund(oid, [{ variantId: e.variantId, quantity: 2, lineQuantity: 2 }]);
+        await refund(oid, [{ variantId: e.variantId, quantity: 2, lineQuantity: 2 }]);
+        expect(takenBack()).toEqual([2, -2]);
+    });
+
+    it("one refund restocking a recorded and an unrecorded program settles each once, on its own program", async () => {
+        const oid = `${TAG}-329d`;
+        const recorded = await makeOnSaleEnrollment({ email: `rs19d-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
+        const unrecorded = await makeOnSaleEnrollment({ email: `rs19e-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: `${TAG}-329e-paid` });
+        await prisma.program.update({ where: { id: unrecorded.programId }, data: { saleEndedAt: new Date() } });
+        orderLines.mockResolvedValue([
+            { variantId: recorded.variantId, quantity: 1, currentQuantity: 1 },
+            { variantId: unrecorded.variantId, quantity: 1, currentQuantity: 1 },
+        ]);
+        const lines = [
+            { variantId: recorded.variantId, quantity: 1, lineQuantity: 1 },
+            { variantId: unrecorded.variantId, quantity: 1, lineQuantity: 1 },
+        ];
+        expect(await refund(oid, lines)).toBe(true);
+        await refund(oid, lines);
+        const byProgram = adjustInventory.mock.calls.map(([program, delta]) => [program.id, delta]);
+        expect(byProgram).toHaveLength(2);
+        expect(byProgram).toEqual(expect.arrayContaining([[recorded.programId, -1], [unrecorded.programId, -1]]));
+        expect(await statusOf(recorded.programId, recorded.personId)).toBe("ACTIVE");
+        expect(await enrolled(unrecorded.programId)).toBe(1);
+    });
+
     it("a redelivered refund naming a sibling keeps both and takes the seat back once", async () => {
         const oid = `${TAG}-323`;
         const e = await makeOnSaleEnrollment({ email: `rs13-${TAG}@ex.com`, status: "ACTIVE", shopifyOrderId: oid });
@@ -1650,5 +1679,136 @@ describe("a resolved exception and the next day's pass", () => {
 
         await runReconcile();
         expectStillResolved(await row(oid, "DISCOUNT_UNAUTHORIZED"));
+    });
+});
+
+describe("a full store refund on a denied household's paid application records itself", () => {
+    const proc = (id: number) => prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id }, select: { status: true, paidAt: true } });
+    /** The red refund-owed count's predicate, for this one application. */
+    const owed = (id: number) => prisma.orgMembershipProcess.count({ where: { AND: [refundableApplication.where, { id, orgMembership: { status: "DENIED" } }] } });
+    const problems = (processId: number) =>
+        prisma.paymentException.findMany({ where: { processId }, select: { kind: true, status: true, resolvedById: true, resolutionNote: true } });
+    const settled = [{ kind: "REFUND", status: "RESOLVED", resolvedById: null, resolutionNote: expect.stringContaining("denied") }];
+    const refundAudits = (id: number) =>
+        prisma.auditLog.count({ where: { tableName: "OrgMembershipProcess", affectedEntityId: id, actorSystem: "webhook:shopify-refund", newData: { path: ["refundRecorded"], equals: true } } });
+    const FULL = { financialStatus: "REFUNDED", totalRefundedCents: 5000 } as const;
+    const PARTIAL = { financialStatus: "PARTIALLY_REFUNDED", totalRefundedCents: 1000 } as const;
+    const deniedPaid = (n: string, status: "PENDING_BG_CLEARANCE" | "PENDING_BG_REVIEW" | "BLOCKED" = "PENDING_BG_CLEARANCE") =>
+        makeApplicant({ email: `dr${n}-${TAG}@ex.com`, status, household: "DENIED", paid: true, shopifyOrderId: `${TAG}-${n}` });
+
+    it("the refunds webhook clears the payment on a full refund and leaves nothing for the Board", async () => {
+        const oid = `${TAG}-900`;
+        const { processId } = await deniedPaid("900");
+        expect(await owed(processId)).toBe(1);
+        ordersByLegacyIds.mockResolvedValue([order({ legacyId: oid, ...FULL })]);
+
+        expect(await raiseReversalByOrderId(oid, "REFUND", [], `${oid}-r1`)).toBe(true);
+        expect(await proc(processId)).toEqual({ status: "PENDING_PAYMENT", paidAt: null });
+        expect(await owed(processId)).toBe(0);
+        expect(await problems(processId)).toEqual(settled);
+        expect(await refundAudits(processId)).toBe(1);
+
+        // A redelivery changes nothing.
+        await raiseReversalByOrderId(oid, "REFUND", [], `${oid}-r1`);
+        expect(await problems(processId)).toEqual(settled);
+        expect(await refundAudits(processId)).toBe(1);
+    });
+
+    it("the refunds webhook keeps the payment on a partial refund and raises it for the Board", async () => {
+        const oid = `${TAG}-907`;
+        const { processId } = await deniedPaid("907");
+        ordersByLegacyIds.mockResolvedValue([order({ legacyId: oid, ...PARTIAL })]);
+
+        await raiseReversalByOrderId(oid, "REFUND", [], `${oid}-r1`);
+        expect((await proc(processId)).paidAt).not.toBeNull();
+        expect(await owed(processId)).toBe(1);
+        expect(await problems(processId)).toEqual([{ kind: "REFUND", status: "OPEN", resolvedById: null, resolutionNote: null }]);
+        expect(await refundAudits(processId)).toBe(0);
+    });
+
+    it("a full refund the mirror does not show yet is raised, then the daily pass records it and resolves the problem", async () => {
+        const oid = `${TAG}-908`;
+        const { processId } = await deniedPaid("908");
+        ordersByLegacyIds.mockResolvedValue([]);
+
+        await raiseReversalByOrderId(oid, "REFUND", [], `${oid}-r1`);
+        expect((await proc(processId)).paidAt).not.toBeNull();
+        expect(await prisma.paymentException.count({ where: { processId, status: "OPEN" } })).toBe(1);
+
+        ordersByLegacyIds.mockResolvedValue([order({ legacyId: oid, ...FULL })]);
+        await runReconcile();
+        expect(await proc(processId)).toEqual({ status: "PENDING_PAYMENT", paidAt: null });
+        expect(await problems(processId)).toEqual(settled);
+    });
+
+    it.each([
+        ["", "901", "PENDING_BG_CLEARANCE", "PENDING_PAYMENT"],
+        [" on a BLOCKED application", "903", "BLOCKED", "BLOCKED"],
+        [" while the check is in review", "906", "PENDING_BG_REVIEW", "PENDING_BG_REVIEW"],
+    ] as const)("the daily pass records a full refund%s the webhook never delivered", async (_label, n, status, landsIn) => {
+        const { processId } = await deniedPaid(n, status);
+        ordersByLegacyIds.mockResolvedValue([order({ legacyId: `${TAG}-${n}`, ...FULL })]);
+
+        await runReconcile();
+        expect(await proc(processId)).toEqual({ status: landsIn, paidAt: null });
+        expect(await owed(processId)).toBe(0);
+        expect(await problems(processId)).toEqual(settled);
+
+        await runReconcile();
+        expect(await problems(processId)).toEqual(settled);
+        expect(await refundAudits(processId)).toBe(1);
+    });
+
+    it.each([
+        ["", "902", "PENDING_BG_CLEARANCE"],
+        [" while the check is in review", "909", "PENDING_BG_REVIEW"],
+        [" on a BLOCKED application", "910", "BLOCKED"],
+    ] as const)("the daily pass keeps the payment on a partial refund%s and raises it for the Board", async (_label, n, status) => {
+        const { processId } = await deniedPaid(n, status);
+        ordersByLegacyIds.mockResolvedValue([order({ legacyId: `${TAG}-${n}`, ...PARTIAL })]);
+
+        await runReconcile();
+        expect((await proc(processId)).paidAt).not.toBeNull();
+        expect(await owed(processId)).toBe(1);
+        expect(await problems(processId)).toEqual([{ kind: "REFUND", status: "OPEN", resolvedById: null, resolutionNote: null }]);
+        expect(await refundAudits(processId)).toBe(0);
+
+        await runReconcile();
+        expect(await prisma.paymentException.count({ where: { processId } })).toBe(1);
+    });
+
+    it("a partial return the mirror shows refunding more than its after-returns total keeps the payment", async () => {
+        const { processId } = await deniedPaid("911");
+        ordersByLegacyIds.mockResolvedValue([order({ legacyId: `${TAG}-911`, financialStatus: "PARTIALLY_REFUNDED", totalCents: 2000, totalRefundedCents: 2500 })]);
+
+        await runReconcile();
+        expect((await proc(processId)).paidAt).not.toBeNull();
+        expect(await owed(processId)).toBe(1);
+    });
+
+    it("a refund on a household that is not denied keeps the payment and is raised for the Board", async () => {
+        const oid = `${TAG}-904`;
+        const { processId } = await makeApplicant({ email: `dr904-${TAG}@ex.com`, status: "PENDING_BG_CLEARANCE", paid: true, shopifyOrderId: oid });
+        ordersByLegacyIds.mockResolvedValue([order({ legacyId: oid, ...FULL })]);
+
+        await raiseReversalByOrderId(oid, "REFUND", [], `${oid}-r1`);
+        expect((await proc(processId)).paidAt).not.toBeNull();
+        expect(await prisma.paymentException.findMany({ where: { processId }, select: { kind: true, status: true, severity: true } }))
+            .toEqual([{ kind: "REFUND", status: "OPEN", severity: "CRITICAL" }]);
+
+        await runReconcile();
+        expect((await proc(processId)).paidAt).not.toBeNull();
+        expect(await prisma.paymentException.count({ where: { processId, status: "OPEN" } })).toBe(1);
+        expect(await refundAudits(processId)).toBe(0);
+    });
+
+    it("a cancellation on a denied household stays with the Board", async () => {
+        const oid = `${TAG}-905`;
+        const { processId } = await deniedPaid("905");
+
+        await raiseReversalByOrderId(oid, "CANCELLED");
+        expect((await proc(processId)).paidAt).not.toBeNull();
+        expect(await owed(processId)).toBe(1);
+        expect(await prisma.paymentException.findMany({ where: { processId }, select: { kind: true, status: true } })).toEqual([{ kind: "CANCELLED", status: "OPEN" }]);
     });
 });

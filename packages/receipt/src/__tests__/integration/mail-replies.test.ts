@@ -1,11 +1,13 @@
-import { beforeEach, expect, it } from "vitest";
-import { db } from "../../db";
+import { createHash } from "node:crypto";
+import { beforeEach, expect, it, vi } from "vitest";
+import { db, getPrisma } from "../../db";
 import type { MailAcknowledgement, MailboxReader, MailMessage, MailPart, ReceiptConfig } from "../../contract";
 import { noticeMessageId } from "../../contract";
 import { MAIL_CAP, MAIL_HELD_CEILING, readMailbox } from "../../services/mailIntake";
 import { mailQueueService } from "../../services/mailQueueService";
 import { REPLY_ATTEMPTS, sendMailReplies } from "../../services/mailReplies";
 import { describeDb } from "../helpers/db";
+import { toRaw } from "../helpers/mime";
 import { actAs, ALICE, BOB, clearAll, configure, FINANCE, okOcr, TEST_ORG_ID } from "../helpers/setup";
 
 const GOOGLE_PASS = "mx.google.com; dkim=pass header.i=@example.org; spf=pass; dmarc=pass header.from=example.org";
@@ -19,13 +21,15 @@ const CONTACTS: Record<number, { email: string; name: string }> = {
 let messages: Map<string, MailMessage>;
 let sent: MailAcknowledgement[];
 let failSends: boolean;
-let attachment: () => Promise<Buffer>;
 
 const reader: MailboxReader = {
   address: "receipts@example.org",
   listRecent: async () => [...messages.keys()],
-  getMessage: async (id) => messages.get(id) ?? Promise.reject(new Error(`no message ${id}`)),
-  getAttachment: async () => attachment(),
+  getRaw: async (id) => {
+    const msg = messages.get(id);
+    if (!msg) throw new Error(`no message ${id}`);
+    return { raw: toRaw(msg), internalDate: msg.internalDate };
+  },
 };
 
 /** A message holding one PDF; `headers` adds to Google's verdict and the From. */
@@ -44,6 +48,9 @@ function send(id: string, { from = "alice@example.org", auth = GOOGLE_PASS, head
 
 const b64 = (text: string) => Buffer.from(text).toString("base64url");
 const NO_RECEIPT = { file: "your email", reason: "no_receipt" };
+const NO_AMOUNT = { file: "your email", reason: "no_amount" };
+/** Over the body size floor, with no amount in it. */
+const LONG_NOTE = "Hi, here are the notes from Tuesday's build session. We finished the frame and need more screws next week.";
 
 /** A message holding the given parts. */
 function mailWith(id: string, parts: MailPart[], { from = "alice@example.org", auth = GOOGLE_PASS, headers = [] as { name: string; value: string }[] } = {}): void {
@@ -59,14 +66,13 @@ beforeEach(async () => {
   messages = new Map();
   sent = [];
   failSends = false;
-  attachment = async () => Buffer.alloc(0);
   setup();
 });
 
 async function fillToCeiling(): Promise<void> {
   await db.receiptMailItem.createMany({
     data: Array.from({ length: MAIL_HELD_CEILING }, (_, i) => ({
-      orgId: TEST_ORG_ID, gmailMessageId: `old${i}`, attachmentHash: `h${i}`, receivedAt: new Date(), senderAddress: "x@example.org", status: "held", mimeType: "application/pdf", fileBlob: new Uint8Array([1]), dmarcVerdict: "pass",
+      orgId: TEST_ORG_ID, gmailMessageId: `old${i}`, attachmentHash: `h${i}`, receivedAt: new Date(), senderAddress: "x@example.org", status: "held", mimeType: "application/pdf", fileKey: `mail-items/old${i}`, dmarcVerdict: "pass",
     })),
   });
 }
@@ -255,7 +261,7 @@ describeDb("mailed receipt acknowledgements", () => {
     expect(sent.map((a) => a.refused)).toEqual([[NO_RECEIPT]]);
   });
 
-  it("tells a verified sender once that a message held no receipt: no file, no amount, only a tiny inline image", async () => {
+  it("tells a verified sender once that a message held no receipt: no file, a short text, only a tiny inline image", async () => {
     const inline = [{ name: "Content-Disposition", value: "inline" }];
     mailWith("m1", [
       { mimeType: "text/plain", body: { data: b64("receipt for the lathe, total $5") } },
@@ -268,6 +274,22 @@ describeDb("mailed receipt acknowledgements", () => {
     expect(await db.receiptMailReply.findFirstOrThrow()).toMatchObject({ refusalSentAt: expect.any(Date), doneAt: expect.any(Date) });
   });
 
+  it("tells a submitter once that a long text held no amount, and stores nothing", async () => {
+    mailWith("m1", [{ mimeType: "text/plain", body: { data: b64(LONG_NOTE) } }]);
+    expect(await readMailbox()).toMatchObject({ receipts: 0, held: 0, replied: 1 });
+    await readMailbox();
+    await sendMailReplies();
+    expect(sent).toEqual([expect.objectContaining({ to: "alice@example.org", receiptId: null, refused: [NO_AMOUNT] })]);
+    expect(await db.receiptMailItem.count()).toBe(0);
+  });
+
+  it("tells an unknown sender nothing about a long text with no amount, which is held for finance", async () => {
+    mailWith("m1", [{ mimeType: "text/plain", body: { data: b64(LONG_NOTE) } }], { from: "stranger@example.org" });
+    expect(await readMailbox()).toMatchObject({ held: 1 });
+    await sendMailReplies();
+    expect(sent).toEqual([]);
+  });
+
   it("tells nobody about a reply to its own notice, or a copy on which the receipt mailbox is only in Cc", async () => {
     const empty = [{ mimeType: "text/plain", body: { data: b64("thanks, see you Tuesday") } }];
     mailWith("cc", empty, { headers: [{ name: "To", value: "bob@example.org" }, { name: "Cc", value: "receipts@example.org" }] });
@@ -276,6 +298,39 @@ describeDb("mailed receipt acknowledgements", () => {
     await sendMailReplies();
     expect(sent).toEqual([]);
     expect(await db.receiptMailReply.count()).toBe(0);
+    expect(await db.receiptMailItem.count()).toBe(0);
+  });
+
+  it("holds a submitter's long reply to its notice with no amount for finance, telling nobody, once", async () => {
+    const reply = `Yes, that was a receipt, it was forty bucks for the lathe belts. ${LONG_NOTE}`;
+    mailWith("reply", [{ mimeType: "text/plain", body: { data: b64(reply) } }], { headers: [{ name: "To", value: "receipts@example.org" }, { name: "In-Reply-To", value: noticeMessageId("a1.refusalSentAt", "receipts@example.org") }] });
+    expect(await readMailbox()).toMatchObject({ held: 1 });
+    await db.receiptMailAtRisk.create({ data: { orgId: TEST_ORG_ID, gmailMessageId: "reply", receivedAt: new Date() } });
+    expect(await readMailbox()).toMatchObject({ held: 0 });
+    await sendMailReplies();
+    expect(sent).toEqual([]);
+    expect(await db.receiptMailReply.count()).toBe(0);
+    expect(await db.receiptMailItem.findMany({ select: { status: true, holdReason: true, fileBlob: true, refusal: true } })).toEqual([
+      { status: "held", holdReason: "side_copy", fileBlob: null, refusal: [{ file: "your email", reason: "no_amount" }] },
+    ]);
+  });
+
+  it("holds a submitter's long Cc-only copy with no amount for finance, telling nobody", async () => {
+    mailWith("cc", [{ mimeType: "text/plain", body: { data: b64(LONG_NOTE) } }], { headers: [{ name: "To", value: "bob@example.org" }, { name: "Cc", value: "receipts@example.org" }] });
+    await readMailbox();
+    await sendMailReplies();
+    expect(sent).toEqual([]);
+    expect(await db.receiptMailItem.findFirstOrThrow()).toMatchObject({ status: "held", holdReason: "side_copy" });
+  });
+
+  it("drops a submitter's automated reply to its notice", async () => {
+    mailWith("ooo", [{ mimeType: "text/plain", body: { data: b64(LONG_NOTE) } }], {
+      headers: [{ name: "Auto-Submitted", value: "auto-replied" }, { name: "In-Reply-To", value: noticeMessageId("a1.refusalSentAt", "receipts@example.org") }],
+    });
+    await readMailbox();
+    expect(sent).toEqual([]);
+    expect(await db.receiptMailItem.count()).toBe(0);
+    expect(await db.receipt.count()).toBe(0);
   });
 
   it("tells a sender who forwards a message with no receipt, though the forward keeps its In-Reply-To", async () => {
@@ -351,17 +406,20 @@ describeDb("mailed receipt acknowledgements", () => {
   });
 
   it("still sends a refusal that arrives after the acknowledgement, on its own", async () => {
-    send("m1");
+    // m1's first file is the run's last receipt, so its acknowledgement goes out while its second file waits.
+    setup({ limits: { mailUploadsPerPersonPerDay: MAIL_CAP * 2 } });
+    for (let i = 0; i < MAIL_CAP - 1; i++) send(`a${i}`);
+    mailWith("m1", [
+      { mimeType: "application/pdf", filename: "first.pdf", body: { data: b64(`%PDF-1.4 first ${Date.now()}`), size: 30 } },
+      { mimeType: "application/pdf", filename: "later.pdf", body: { data: b64(`%PDF-1.4 later ${Date.now()}`), size: 30 } },
+      { mimeType: "application/msword", filename: "r.doc", body: { data: b64("PK"), size: 2 } },
+    ]);
     await readMailbox();
-    const [{ gmailMessageId }] = await db.receiptMailReply.findMany();
-    const msg = messages.get(gmailMessageId)!;
-    msg.payload.parts!.push({ mimeType: "application/msword", filename: "r.doc", body: { attachmentId: "b", size: 100 } });
-    // A file is read on a later pass only when an earlier one left its message at risk.
-    await db.receiptMailAtRisk.create({ data: { orgId: TEST_ORG_ID, gmailMessageId, receivedAt: new Date() } });
+    expect(sent.filter((a) => a.refused.length > 0)).toEqual([]);
+    const acknowledged = sent.length;
     await readMailbox();
     await readMailbox();
-    expect(sent).toHaveLength(2);
-    expect(sent[1]).toMatchObject({ to: "alice@example.org", receiptId: null, refused: [{ file: "r.doc", reason: "wrong_type" }] });
+    expect(sent.slice(acknowledged)).toEqual([expect.objectContaining({ to: "alice@example.org", receiptId: null, refused: [{ file: "r.doc", reason: "wrong_type" }] })]);
   });
 
   it("does not write the refusals of a message with a file put off, until a pass finishes it", async () => {
@@ -415,16 +473,25 @@ describeDb("mailed receipt acknowledgements", () => {
   it("still names a file refused at the ceiling when a later file's read failed on that pass", async () => {
     setup({ limits: { mailUploadsPerPersonPerDay: 0 } });
     await fillToCeiling();
+    const b = Buffer.from(`%PDF-1.4 b ${Date.now()}`);
+    const bHash = createHash("sha256").update(b).digest("hex");
     mailWith("m1", [
       { mimeType: "application/pdf", filename: "a.pdf", body: { data: b64(`%PDF-1.4 a ${Date.now()}`), size: 30 } },
-      { mimeType: "application/pdf", filename: "b.pdf", body: { attachmentId: "b", size: 30 } },
+      { mimeType: "application/pdf", filename: "b.pdf", body: { data: b.toString("base64url"), size: b.length } },
     ]);
-    attachment = () => Promise.reject(new Error("read failed"));
+    // b's ledger lookup fails on this pass, after a was refused at the ceiling.
+    const ledger = getPrisma().receiptMailItem;
+    const findUnique = ledger.findUnique;
+    const lookup = vi.spyOn(ledger, "findUnique").mockImplementation(function (this: typeof ledger, args) {
+      if (args.where.gmailMessageId_attachmentHash?.attachmentHash === bHash) throw new Error("read failed");
+      return findUnique.call(this, args);
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
     expect(await readMailbox()).toMatchObject({ overCeiling: 1, failed: 1 });
     expect(sent).toEqual([]);
 
+    lookup.mockRestore();
     setup();
-    attachment = async () => Buffer.from(`%PDF-1.4 b ${Date.now()}`);
     await readMailbox();
     const [receipt] = await db.receipt.findMany();
     expect(sent).toEqual([expect.objectContaining({ receiptId: receipt.id, refused: [{ file: "a.pdf", reason: "ceiling" }] })]);

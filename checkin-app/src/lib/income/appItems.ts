@@ -12,7 +12,7 @@ const legacyId = (variantId: string) => variantId.replace(/^gid:\/\/shopify\/Pro
 async function appItemNames(): Promise<Map<string, string>> {
   const [programs, settings] = await Promise.all([
     prisma.program.findMany({ select: { name: true, shopifyVariantId: true, claimantShopifyVariantId: true } }),
-    prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipVariantId: true, orgMembershipYearBoundary: true } }),
+    prisma.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } }),
   ]);
   const names = new Map<string, string>();
   for (const [variantId, year] of await membershipVariantYears(settings ?? null, new Date())) {

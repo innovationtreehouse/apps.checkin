@@ -12,6 +12,8 @@ process.env.NEXTAUTH_SECRET ||= 'integration-test-nextauth-secret';
 
 // Mocking dependencies
 // The archived-household guard has its own tests; here every household is live.
+// A new leader here meets the membership and clearance requirements; leaderEligibility has its own tests.
+jest.mock('@/lib/programs/leaderEligibility', () => ({ ...jest.requireActual('@/lib/programs/leaderEligibility'), programLeaderIneligibility: jest.fn().mockResolvedValue(null) }));
 jest.mock("@/lib/household/archiveGuard", () => ({
     ...jest.requireActual("@/lib/household/archiveGuard"),
     lockLiveHouseholds: jest.fn(),
@@ -32,6 +34,7 @@ jest.mock('@/lib/shopify/stock', () => ({
     syncProgramPrice: jest.fn().mockResolvedValue(true),
 }));
 jest.mock('@/lib/shopify/products', () => ({
+    programProductHandle: jest.requireActual('@/lib/shopify/products').programProductHandle,
     createShopifySingleVariantProgram: jest.fn().mockResolvedValue({
         shopifyProductId: 'mock-product-id',
         shopifyVariantId: 'mock-variant-id',
@@ -128,6 +131,7 @@ describe('Full Program Signup Integration Flow', () => {
         mockGetSession.mockResolvedValue({ user: { id: sysAdminId, isSysadmin: true, isBoardMember: true } });
         (prisma.person.findUnique as jest.Mock).mockResolvedValue({ dateOfBirth: null, isDeclaredAdult: true });
         (prisma.program.create as jest.Mock).mockResolvedValue({ id: programId, name: 'Integration Test Program' });
+        (prisma.program.update as jest.Mock).mockResolvedValueOnce({ id: programId, name: 'Integration Test Program', shopifyProductId: 'mock-product-id', shopifyVariantId: 'mock-variant-id' });
         (prisma.auditLog.create as jest.Mock).mockResolvedValue({});
 
         const createProgramReq = new Request('http://localhost/api/programs', {
@@ -212,7 +216,7 @@ describe('Full Program Signup Integration Flow', () => {
             _count: { participants: 0 }
         });
         (prisma.person.findUnique as jest.Mock).mockResolvedValue({ id: childParticipantId, householdId, dateOfBirth: new Date('2015-01-01') });
-        (prisma.person.findFirst as jest.Mock).mockResolvedValue({ id: leadUserId });
+        (prisma.person.findFirst as jest.Mock).mockResolvedValue({ id: leadUserId, dateOfBirth: null, isDeclaredAdult: true });
         (prisma.programParticipant.create as jest.Mock).mockResolvedValue({ programId, personId: childParticipantId, status: 'PENDING' });
 
         const enrollReq = new Request(`http://localhost/api/programs/${programId}/participants`, {

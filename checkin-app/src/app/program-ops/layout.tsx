@@ -50,8 +50,10 @@ export default function ProgramOpsLayout({ children }: { children: React.ReactNo
 
   // Chrome-less (no section tabs) for the lead-mentor edit screens, as under /admin.
   const isChromeless = editProgramId !== null || isSessionFlow;
+  // Finance reaches a program's roster only, to enroll places paid outside the store.
+  const financeRoster = editProgramId !== null && !!user?.isFinance;
   const authorized =
-    isGlobalAdmin || leadsThisProgram || (isSessionFlow && status === "authenticated");
+    isGlobalAdmin || leadsThisProgram || financeRoster || (isSessionFlow && status === "authenticated");
 
   useEffect(() => {
     if (status === "unauthenticated") {

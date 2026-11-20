@@ -3,7 +3,7 @@ import { db } from "../../db";
 import type { ReimbursementAsk, ReimbursementStatus } from "../../contract";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
-import { ALICE, BOB, FINANCE, actAs, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile } from "../helpers/setup";
+import { ALICE, BOB, FINANCE, actAs, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile, uploadRead } from "../helpers/setup";
 
 let ports: ReturnType<typeof recordingPorts>;
 
@@ -15,7 +15,7 @@ beforeEach(async () => {
 
 describeDb("submitter scope", () => {
   it("a submitter cannot see or act on another person's receipt", async () => {
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptTotal: "1" }) });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails({ receiptTotal: "1" }) });
     actAs(BOB);
     await expect(receiptService.get(r.id, "submitter")).rejects.toMatchObject({ status: 404 });
     await expect(receiptService.discard(r.id, "submitter")).rejects.toMatchObject({ status: 404 });
@@ -24,7 +24,7 @@ describeDb("submitter scope", () => {
   });
 
   it("donor names never reach the submitter; finance reads them", async () => {
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), isInKind: true, donor: { self: true } });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails(), isInKind: true, donor: { self: true } });
     expect(r).not.toHaveProperty("donorFirstName");
     const mine = await receiptService.get(r.id, "submitter");
     expect(mine).not.toHaveProperty("donorFirstName");
@@ -34,7 +34,7 @@ describeDb("submitter scope", () => {
   });
 
   it("every file read is audited without bytes", async () => {
-    const r = await receiptService.upload(textFile("file-bytes"), "text/plain", { details: manualDetails() });
+    const r = await uploadRead(textFile("file-bytes"), "text/plain", { details: manualDetails() });
     const file = await receiptService.getFile(r.id, "submitter");
     expect(file.mimeType).toBe("text/plain");
     expect(Buffer.from(file.fileBlob).toString()).toContain("file-bytes");
@@ -44,7 +44,7 @@ describeDb("submitter scope", () => {
   });
 
   it("no receipt read returns the file column", async () => {
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     actAs(FINANCE);
     for (const v of [await receiptService.get(r.id, "finance"), ...(await receiptService.listForOrg())]) {
       expect(v).not.toHaveProperty("fileBlob");
@@ -56,7 +56,7 @@ describeDb("submitter scope", () => {
 describeDb("receipts awaiting their uploader", () => {
   it("counts only the caller's own receipts that wait on them", async () => {
     const upload = (retailer: string, over: Record<string, unknown> = {}, needsReimbursement = false) =>
-      receiptService.upload(textFile(retailer), "text/plain", { details: manualDetails({ retailer, ...over }), needsReimbursement });
+      uploadRead(textFile(retailer), "text/plain", { details: manualDetails({ retailer, ...over }), needsReimbursement });
     expect((await upload("A", { receiptTotal: "1" })).state).toBe("validation_failed");
     expect((await upload("B", {}, true)).state).toBe("submitter_review");
     expect((await upload("C")).state).toBe("receipt_finalized");
@@ -69,7 +69,7 @@ describeDb("receipts awaiting their uploader", () => {
 
 describeDb("submitter review", () => {
   it("confirming an owed receipt finalizes it", async () => {
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });
     expect(r.state).toBe("submitter_review");
     await receiptService.submitterConfirm(r.id);
     expect(await stateOf(r.id)).toBe("receipt_finalized");
@@ -77,7 +77,7 @@ describeDb("submitter review", () => {
   });
 
   it("dropping the reimbursement clears the reimbursee", async () => {
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });
     const after = await receiptService.setReimbursement(r.id, { needsReimbursement: false });
     expect(after).toMatchObject({ needsReimbursement: false, reimburseePersonId: null, reimbursementFor: null });
     const rows = await db.receiptAuditLog.findMany({ where: { receiptId: r.id, action: "reimbursement_updated" }, orderBy: { id: "asc" } });
@@ -88,7 +88,7 @@ describeDb("submitter review", () => {
   });
 
   it("ticking the reimbursement audits the uploader named as reimbursee", async () => {
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });
     await receiptService.setReimbursement(r.id, { needsReimbursement: false });
     await receiptService.setReimbursement(r.id, { needsReimbursement: true });
     const last = await db.receiptAuditLog.findFirst({ where: { receiptId: r.id, fieldChanged: "reimburseePersonId", action: "reimbursement_updated" }, orderBy: { id: "desc" } });
@@ -98,9 +98,9 @@ describeDb("submitter review", () => {
 
 describeDb("My receipts", () => {
   it("an owed receipt reads 'not yet paid' and stays visible under Hide completed until X12 says paid", async () => {
-    const owed = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptTotal: "20" }), needsReimbursement: true });
+    const owed = await uploadRead(textFile(), "text/plain", { details: manualDetails({ receiptTotal: "20" }), needsReimbursement: true });
     await receiptService.submitterConfirm(owed.id);
-    const plain = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptTotal: "20", retailer: "Other" }) });
+    const plain = await uploadRead(textFile(), "text/plain", { details: manualDetails({ receiptTotal: "20", retailer: "Other" }) });
     expect(plain.state).toBe("receipt_finalized");
 
     const all = await receiptService.listMine();
@@ -116,7 +116,7 @@ describeDb("My receipts", () => {
   });
 
   it("a failing X12 reads 'status unavailable', never 'not yet paid' or an error, and keeps the owed receipt listed", async () => {
-    const owed = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });
+    const owed = await uploadRead(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });
     await receiptService.submitterConfirm(owed.id);
     configure({
       receiptSink: ports.receiptSink,
@@ -134,7 +134,7 @@ describeDb("My receipts", () => {
   });
 
   it("a receipt X12 has no status for reads 'status unavailable' and stays listed", async () => {
-    const owed = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });
+    const owed = await uploadRead(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });
     await receiptService.submitterConfirm(owed.id);
     configure({
       receiptSink: ports.receiptSink,
@@ -152,9 +152,9 @@ describeDb("My receipts", () => {
       receiptSink: ports.receiptSink,
       reimbursementStatus: { forReceipts: async (asks) => (asked.push(asks), new Map()) },
     });
-    const mine = await receiptService.upload(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });
+    const mine = await uploadRead(textFile(), "text/plain", { details: manualDetails(), needsReimbursement: true });
     actAs(BOB);
-    await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ retailer: "Bob's" }), needsReimbursement: true });
+    await uploadRead(textFile(), "text/plain", { details: manualDetails({ retailer: "Bob's" }), needsReimbursement: true });
     actAs(ALICE);
     await receiptService.listMine();
     expect(asked.at(-1)).toEqual([{ receiptId: mine.id, qbEntity: null, qbTxnId: null }]);
@@ -163,7 +163,7 @@ describeDb("My receipts", () => {
 
 describeDb("a receipt finance rejected", () => {
   async function rejected(reason = "Personal purchase") {
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptTotal: "1" }) });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails({ receiptTotal: "1" }) });
     actAs(FINANCE);
     await receiptService.rejectFinancial(r.id, reason);
     actAs(ALICE);
@@ -202,7 +202,7 @@ describeDb("a receipt finance rejected", () => {
     await expect(receiptService.acknowledgeRejection(id)).rejects.toMatchObject({ status: 404 });
     expect(await receiptService.countAwaitingSubmitter(ALICE.id)).toBe(1);
     actAs(ALICE);
-    const open = await receiptService.upload(textFile("open"), "text/plain", { details: manualDetails({ retailer: "Open", receiptTotal: "1" }) });
+    const open = await uploadRead(textFile("open"), "text/plain", { details: manualDetails({ retailer: "Open", receiptTotal: "1" }) });
     await expect(receiptService.acknowledgeRejection(open.id)).rejects.toMatchObject({ status: 400 });
   });
 });

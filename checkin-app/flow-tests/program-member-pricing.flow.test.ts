@@ -14,7 +14,7 @@
  * from the seed), and certified.adult@example.com (solo household, no
  * OrgMembership row — a genuine non-member, used read-only here).
  */
-import { loginAs, api } from "./helpers";
+import { loginAs, api, setBgRecheckMonths } from "./helpers";
 
 type ProgramCreate = { success: boolean; program: { id: number; shopifyVariantId: string | null } };
 type DiscountCode = { code: string | null; reason?: string };
@@ -26,11 +26,13 @@ describe("flow: program purchase with member pricing", () => {
         const board = await loginAs("boardmember@example.com");
         const member = await loginAs("member.pricing@example.com");
         const nonMember = await loginAs("certified.adult@example.com");
-        const lead = await loginAs("inventory.manager@example.com");
+        const lead = await loginAs("program.lead@example.com");
 
         const memberId = member.personaId;
 
         const tag = Date.now().toString(36);
+        // The fresh seed sets no background-check interval, and no leader is named without one.
+        const restoreWindow = await setBgRecheckMonths(board, 27);
         const created = await api<ProgramCreate>(board, "/api/programs", {
             method: "POST",
             body: JSON.stringify({
@@ -46,7 +48,7 @@ describe("flow: program purchase with member pricing", () => {
                 nonMemberPrice: "50",
                 maxParticipants: 10,
             }),
-        });
+        }).finally(restoreWindow);
         expect(created.status).toBe(200);
         expect(created.json.success).toBe(true);
         const programId = created.json.program.id;

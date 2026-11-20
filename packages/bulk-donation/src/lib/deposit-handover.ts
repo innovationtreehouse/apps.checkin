@@ -100,7 +100,7 @@ export async function handOverDeposits(orgId: string, disbursementIds: Iterable<
 
 export type HandOverCounts = { acknowledged: number; sent: number; failed: number };
 
-/** Tell finance once about each failure not already raised. The mark follows the alert, so an alert that throws is sent again next run. */
+/** Tell finance once about each failure not already raised. The mark follows the alert, so an alert not sent is sent again next run. */
 async function raiseFailures(deposits: IncomeDeposits, orgId: string, failures: DepositHandOverFailure[]): Promise<void> {
   if (failures.length === 0) return;
   const raised = await db.workflowEvent.findMany({
@@ -110,7 +110,7 @@ async function raiseFailures(deposits: IncomeDeposits, orgId: string, failures: 
   const told = new Set(raised.map((r) => r.disbursementId));
   const fresh = failures.filter((f) => !told.has(f.disbursementId));
   if (fresh.length === 0) return;
-  await deposits.handOverFailing(fresh);
+  if (!(await deposits.handOverFailing(fresh))) return;
   for (const { disbursementId, reason } of fresh) {
     await recordEvent(db, { orgId, disbursementId, entityType: "disbursement", entityId: disbursementId, eventType: RAISED_EVENT, actorUsername: "system:deposit-handover", payload: { reason } });
   }

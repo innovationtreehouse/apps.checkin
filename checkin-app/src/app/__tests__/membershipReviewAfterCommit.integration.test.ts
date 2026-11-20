@@ -2,15 +2,13 @@
  * @jest-environment node
  */
 /**
- * What a saved clearance owes after its transaction. A denied household's board item
- * commits with the attestation, whatever happens to the email; a failed new-member
- * trigger, run when the household's settle activates it, leaves the reviewer with a
- * success, since the clearance saved.
+ * What a saved clearance owes after its transaction. An approval on a denied household
+ * is refused before anything is saved; a failed new-member trigger, run when the
+ * household's settle activates it, leaves the reviewer with a success, since the
+ * clearance saved.
  */
 
-import { attest, clearBackgroundCheck, reviewTransaction } from '@/lib/membership/review';
-import { awaitingBgReview } from '@/lib/membership/lifecycle';
-import { notifyBoardPaymentException } from '@/lib/membership/boardAlerts';
+import { attest } from '@/lib/membership/review';
 import { openPersonBgForNewMember } from '@/lib/membership/personBgTriggers';
 import prisma from '@/lib/prisma';
 import { setBgRecheckPolicy } from '@/test-helpers/boardSettings';
@@ -22,7 +20,6 @@ jest.mock('@/lib/email', () => ({
 jest.mock('@/lib/membership/boardAlerts', () => ({
     notifyBoardPaidReject: jest.fn(),
     notifyBoardCheckRejected: jest.fn(),
-    notifyBoardPaymentException: jest.fn(),
 }));
 jest.mock('@/lib/membership/personBgTriggers', () => ({ openPersonBgForNewMember: jest.fn() }));
 
@@ -93,31 +90,15 @@ describe('after a clearance commits', () => {
         await restorePolicy();
     });
 
-    it('keeps the denied item and the attestation when the board email fails', async () => {
-        const { reviewId } = await makeApplicant({ membership: 'DENIED', paid: false });
-        (notifyBoardPaymentException as jest.Mock).mockRejectedValue(new Error('mail down'));
-        const logged = jest.spyOn(console, 'error').mockImplementation();
-
-        await attest(revA, reviewId, { result: 'APPROVE' });
-        await expect(attest(revB, reviewId, { result: 'APPROVE' })).resolves.toMatchObject({ status: 'PENDING_BG_REVIEW' });
-
-        expect(logged).toHaveBeenCalledWith('clearance denied household email failed:', expect.anything(), expect.any(Error));
-        logged.mockRestore();
-        expect(await deniedItems(reviewId)).toBe(1);
-        expect(await prisma.backgroundCheckAttestation.count({ where: { processId: reviewId } })).toBe(2);
-        expect(notifyBoardPaymentException).toHaveBeenCalledWith('DENIED_HOUSEHOLD_ACTIVITY', 'CRITICAL', expect.any(Number));
-    });
-
-    it('rolls the denied item back with its transaction', async () => {
+    it('refuses an approval on a denied household, saving nothing and raising no item; a rejection still lands', async () => {
         const { reviewId } = await makeApplicant({ membership: 'DENIED', paid: false });
 
-        await expect(reviewTransaction(async (tx) => {
-            await tx.$queryRaw`SELECT id FROM "OrgMembershipProcess" WHERE id = ${reviewId} FOR UPDATE`;
-            await clearBackgroundCheck(tx, reviewId, revA, awaitingBgReview);
-            throw new Error('later step failed');
-        })).rejects.toThrow('later step failed');
-
+        await expect(attest(revA, reviewId, { result: 'APPROVE' })).rejects.toMatchObject({ code: 'wrong_phase' });
+        expect(await prisma.backgroundCheckAttestation.count({ where: { processId: reviewId } })).toBe(0);
         expect(await deniedItems(reviewId)).toBe(0);
+
+        await expect(attest(revB, reviewId, { result: 'REJECT' })).resolves.toMatchObject({ status: 'BLOCKED' });
+        expect(await prisma.backgroundCheckAttestation.count({ where: { processId: reviewId, result: 'REJECT' } })).toBe(1);
     });
 
     it('reports success for a saved activation when a new-member trigger fails', async () => {

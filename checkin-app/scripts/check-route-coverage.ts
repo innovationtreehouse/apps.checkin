@@ -19,6 +19,8 @@
  *   6. RATCHET (blocking even in advisory mode): every exported route method is
  *      either in src/security/registry.ts or in the frozen legacy baseline
  *      (scripts/legacy-authz-routes.txt) — no NEW route can ship on old authz.
+ *   6b. A registered verb a route file exports must be served through handler()/fileHandler():
+ *      a warning while its key is still in the legacy baseline (route PR pending), an error once not.
  *   7. Routes with NO registered verb must not use bare `include: { rel: true }`
  *      — with no handler() response stripper in front of them, every column of
  *      the related model reaches the wire.
@@ -167,6 +169,49 @@ export function findRegistryFirstMarkerErrors(
                 ? `registry-first marker for ${key} has no registry entry — fix the verb, or remove the marker`
                 : null;
         return message ? [{ severity: 'error' as const, rule: 'registry-first-marker', file, message }] : [];
+    });
+}
+
+const SERVED_CALL_RE = /\b(?:file[hH]andler|handler)\s*(?:<[^()]*>)?\s*\(\s*(?:(['"`])([^'"`]+)\1|([A-Za-z_$][\w$]*))/g;
+const ENDPOINT_CONST_RE = /\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*(['"])((?:GET|POST|PUT|PATCH|DELETE) \/api[^'"]*)\2/g;
+
+/** Endpoints each exported verb serves through handler()/fileHandler(): a call belongs to the
+ *  `export const|function VERB` it sits under. The first argument is a literal or a file-level
+ *  `const X = 'VERB /api/…'`. */
+export function extractHandlerServedEndpoints(source: string): Map<string, Set<string>> {
+    const content = blankComments(source);
+    const consts = new Map(Array.from(content.matchAll(ENDPOINT_CONST_RE), m => [m[1], m[3]]));
+    const exports = Array.from(content.matchAll(VERB_EXPORT_RE));
+    const served = new Map<string, Set<string>>();
+    for (const m of content.matchAll(SERVED_CALL_RE)) {
+        const endpoint = m[2] ?? consts.get(m[3]);
+        const owner = exports.filter(e => e.index! < m.index!).pop()?.[1];
+        if (!endpoint || !owner) continue;
+        if (!served.has(owner)) served.set(owner, new Set());
+        served.get(owner)!.add(endpoint);
+    }
+    return served;
+}
+
+/** A registered verb the file exports but does not serve through handler(). While its key
+ *  is in the legacy baseline the route PR is pending (warn); otherwise it is drift (error). */
+export function findRegisteredNotHandlerServed(
+    file: string, verbs: readonly string[], endpointPath: string, source: string,
+    registered: ReadonlySet<string>, legacyAuthz: ReadonlySet<string>,
+): Finding[] {
+    const served = extractHandlerServedEndpoints(source);
+    return verbs.flatMap(verb => {
+        const key = `${verb} ${endpointPath}`;
+        if (!registered.has(key) || served.get(verb)?.has(key)) return [];
+        const pending = legacyAuthz.has(key);
+        return [{
+            severity: pending ? ('warn' as const) : ('error' as const),
+            rule: 'registered-not-handler',
+            file,
+            message: pending
+                ? `${key} is in the security registry but still served by the old wrapper — the register-first state while its route PR is pending.`
+                : `${key} is in the security registry but not served through handler() — convert the route to handler(), or drop the registry entry.`,
+        }];
     });
 }
 
@@ -457,6 +502,8 @@ function main() {
             }
         }
 
+        findings.push(...findRegisteredNotHandlerServed(file, verbs, endpointPath, content, registered, legacyAuthz));
+
         // Rule 7. ponytail: warn, not error — there are pre-existing hits and CI
         // runs this with --strict, so error would break main on contact. Flip to
         // 'error' once the hit list reaches zero; that is this one word and no new
@@ -492,7 +539,7 @@ function main() {
         }
         if (registered.has(key)) {
             report('warn', 'stale-legacy-baseline', 'scripts/legacy-authz-routes.txt',
-                `baseline entry ${key} is now in the security registry — remove the line`);
+                `baseline entry ${key} is in the security registry — the route PR that converts it to handler() removes this line`);
         }
     }
 

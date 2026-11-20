@@ -75,6 +75,7 @@ describe('Membership payment-plan routes', () => {
                 orgMembershipId: m.id,
                 kind: 'INITIAL',
                 status: opts.status ?? 'PENDING_PAYMENT',
+                contractSignedAt: new Date(),
                 bgClearedAt: new Date(),
                 isPaymentPlanRequested: opts.requested,
             },
@@ -141,7 +142,7 @@ describe('Membership payment-plan routes', () => {
 
             const res = await PlansGet(nextReq());
             expect(res.status).toBe(200);
-            const ids = (await res.json()).map((r: { id: number }) => r.id);
+            const ids = (await res.json()).OrgMembershipProcess.map((r: { id: number }) => r.id);
             expect(ids).toContain(leadProcessId);
             expect(ids).not.toContain(notRequested.processId);
             expect(ids).not.toContain(wrongPhase.processId);
@@ -199,12 +200,34 @@ describe('Membership payment-plan routes', () => {
                 where: { tableName: 'OrgMembershipProcess', affectedEntityId: leadProcessId, actorId: boardId },
                 orderBy: { id: 'asc' },
             });
-            expect(audits.length).toBeGreaterThan(0);
             // One row, written inside activate() (via certifyPaymentPlan): the reason and the approval.
+            expect(audits).toHaveLength(1);
             const certifyAudit = audits.find(a => (a.newData as { via?: string })?.via === 'manual');
             expect(certifyAudit).toBeTruthy();
             expect((certifyAudit!.newData as { certificationNote?: string }).certificationNote).toBe('Board approved scholarship');
             expect((certifyAudit!.newData as { paymentPlanApproved?: boolean }).paymentPlanApproved).toBe(true);
+        });
+
+        it('404 when the process does not exist', async () => {
+            mockSession.mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+            const res = await PlansPost(nextReq('http://localhost', { method: 'POST', body: JSON.stringify({ processId: 999999999, reason: 'Board approved scholarship' }) }));
+            expect(res.status).toBe(404);
+        });
+
+        it('403 (conflict of interest) when a board member approves their OWN household; the request is untouched', async () => {
+            const own = await makeProc('ApproveCOI', { requested: true });
+            const boardKin = await prisma.person.create({
+                data: { name: 'Board Kin', email: `approve-kin-${own.processId}-${TAG}@example.com`, isBoardMember: true, householdId: own.householdId },
+            });
+            mockSession.mockResolvedValue({ user: { id: boardKin.id, isBoardMember: true } });
+
+            const res = await PlansPost(nextReq('http://localhost', { method: 'POST', body: JSON.stringify({ processId: own.processId, reason: 'Board approved scholarship' }) }));
+            expect(res.status).toBe(403);
+            const proc = await prisma.orgMembershipProcess.findUnique({ where: { id: own.processId } });
+            expect(proc?.status).toBe('PENDING_PAYMENT');
+            expect(proc?.isPaymentPlanRequested).toBe(true);
+
+            await prisma.person.delete({ where: { id: boardKin.id } });
         });
     });
 

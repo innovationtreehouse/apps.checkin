@@ -6,17 +6,19 @@ import { formatCents } from '@checkin/money';
 import type { ProgramDetail } from './useProgramEnrollment';
 
 /** The program's dates, enrollment state, eligibility, the household's enrollments and prices. */
-export default function ProgramDetailsCard({ program, ageRange, enrolledCount, isFull, myEnrolled, viewerIsYouth, isClosed, hasEnded, onPayNow }: {
+export default function ProgramDetailsCard({ program, ageRange, enrolledCount, isFull, myEnrolled, seesPayment, isClosed, hasEnded, onPayNow }: {
   program: ProgramDetail;
   ageRange: string | null;
   enrolledCount: number;
   isFull: boolean;
   myEnrolled: { name: string; unpaid: boolean }[];
-  viewerIsYouth: boolean;
+  seesPayment: boolean;
   isClosed: boolean;
   hasEnded: boolean;
   onPayNow: () => void;
 }) {
+  // Nobody outside a membership can enroll in a members-only program, whatever price is stored.
+  const nonMemberPriceCents = program.orgMemberOnly ? null : program.nonOrgMemberPriceCents;
   return (
     <Card withBorder radius="md" padding="lg" mb="lg">
       <Title order={4} c="dimmed" mb="md">Details</Title>
@@ -46,7 +48,7 @@ export default function ProgramDetailsCard({ program, ageRange, enrolledCount, i
             {program.orgMemberOnly && <Text><strong>Eligibility:</strong> Treehouse Members only</Text>}
           </>
         )}
-        {myEnrolled.length > 0 && !viewerIsYouth && (
+        {myEnrolled.length > 0 && seesPayment && (
           <>
             <Divider />
             <Text><strong>Already enrolled from your household:</strong></Text>
@@ -61,12 +63,12 @@ export default function ProgramDetailsCard({ program, ageRange, enrolledCount, i
             ))}
           </>
         )}
-        {(program.orgMemberPriceCents !== null || program.nonOrgMemberPriceCents !== null) && (
+        {(program.orgMemberPriceCents !== null || nonMemberPriceCents !== null) && (
           <>
             <Divider />
             {program.orgMemberPriceCents !== null && <Text><strong>Treehouse Member Price:</strong> {formatCents(program.orgMemberPriceCents)}</Text>}
-            {program.nonOrgMemberPriceCents !== null && <Text><strong>Non-Member Price:</strong> {formatCents(program.nonOrgMemberPriceCents)}</Text>}
-            {(!program.orgMemberPriceCents && !program.nonOrgMemberPriceCents) && <Text><strong>Cost:</strong> Free</Text>}
+            {nonMemberPriceCents !== null && <Text><strong>Non-Member Price:</strong> {formatCents(nonMemberPriceCents)}</Text>}
+            {(!program.orgMemberPriceCents && !nonMemberPriceCents) && <Text><strong>Cost:</strong> Free</Text>}
           </>
         )}
       </Stack>

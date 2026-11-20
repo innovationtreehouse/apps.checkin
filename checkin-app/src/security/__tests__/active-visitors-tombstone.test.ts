@@ -47,6 +47,7 @@ const VISITORS_ONLY: CtxNeeds = {
     activeVisitors: true,
     ledHouseholdMembers: false,
     householdMembers: false,
+    enrolledPrograms: false,
 };
 
 function ctx(opts: Partial<CallerContext> = {}): CallerContext {

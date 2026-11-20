@@ -249,9 +249,9 @@ built yet. Each future self-facing route moves its model OUT of the set and INTO
 same PR. **Done when only the "not pending" entries remain.** Pending members (each documented in-file
 with its reader and the future route that would earn it a binding): `PresenceEvent`,
 `OrgMembershipProcess`, `BackgroundCheckAttestation`, `Corporation`, `VolunteerDesignation`,
-`PaymentException`, `PersonRole`, `BulkSendItem`, `ExpenseAuditLog`. The "not pending" entries are
-`InventoryLog` and `LocationLog` (no natural key) and eight finance-marked models (see the
-Opt-out model paragraph above).
+`PaymentException`, `PersonRole`, `BulkSendItem`. The "not pending" entries are
+`InventoryLog` and `LocationLog` (no natural key) and nine finance-marked models, `ExpenseAuditLog`
+among them (see the Opt-out model paragraph above).
 
 ### Residual risk ranking
 

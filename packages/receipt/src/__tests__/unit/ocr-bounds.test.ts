@@ -26,6 +26,7 @@ describe("OCR output carries the manual-entry bounds", () => {
     ["an over-long retailer", { retailer: "x".repeat(501) }],
     ["a total past the cents range", { receiptTotal: 1e12 }],
     ["a negative tax", { tax: -1 }],
+    ["a line with no total whose quantity × unit price is past the cents range", { lineItems: [{ ...line, quantity: 100_000, unitPrice: 1_000_000 }] }],
   ])("rejects %s", (_label, over) => {
     expect(OcrDataSchema.safeParse({ ...valid, ...over }).success).toBe(false);
   });

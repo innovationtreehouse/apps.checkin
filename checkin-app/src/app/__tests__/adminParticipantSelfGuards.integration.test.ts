@@ -114,33 +114,33 @@ describe('admin participant routes keep the own-household and denied rules', () 
         beforeEach(() => actAs(boardId, { isSysadmin: true, isBoardMember: true }));
 
         it('refuses adding a person to the actor’s own household', async () => {
-            const res = await PARTICIPANT_POST(jsonReq('POST', { name: `Added ${TAG}`, householdId: ownHouseholdId }));
+            const res = await PARTICIPANT_POST(jsonReq('POST', { name: `Added ${TAG}`, householdId: ownHouseholdId, over25: true }));
             expect(res.status).toBe(403);
             expect(await prisma.person.count({ where: { name: `Added ${TAG}` } })).toBe(0);
             expect(await lastRefusal(boardId)).toEqual(expect.objectContaining({ reason: 'own_household', attempted: { householdId: ownHouseholdId, name: `Added ${TAG}` } }));
         });
 
         it('refuses adding a child under a parent in the actor’s own household', async () => {
-            const res = await PARTICIPANT_POST(jsonReq('POST', { name: `Child ${TAG}`, parentEmail: `spouse-${TAG}@example.com` }));
+            const res = await PARTICIPANT_POST(jsonReq('POST', { name: `Child ${TAG}`, parentEmail: `spouse-${TAG}@example.com`, dob: '2015-01-01' }));
             expect(res.status).toBe(403);
             expect(await prisma.person.count({ where: { name: `Child ${TAG}` } })).toBe(0);
         });
 
         it('finds the parent by a case variant of their address', async () => {
-            const res = await PARTICIPANT_POST(jsonReq('POST', { name: `Cased ${TAG}`, parentEmail: ` Spouse-${TAG}@Example.com `, parentName: 'Spouse' }));
+            const res = await PARTICIPANT_POST(jsonReq('POST', { name: `Cased ${TAG}`, parentEmail: ` Spouse-${TAG}@Example.com `, parentName: 'Spouse', dob: '2015-01-01' }));
             expect(res.status).toBe(403);
             expect(await prisma.person.count({ where: { name: `Cased ${TAG}` } })).toBe(0);
         });
 
         it('refuses adding a person to a DENIED household and raises it to the board', async () => {
-            const res = await PARTICIPANT_POST(jsonReq('POST', { name: `Denied add ${TAG}`, householdId: deniedHouseholdId }));
+            const res = await PARTICIPANT_POST(jsonReq('POST', { name: `Denied add ${TAG}`, householdId: deniedHouseholdId, over25: true }));
             expect(res.status).toBe(409);
             expect(await prisma.person.count({ where: { name: `Denied add ${TAG}` } })).toBe(0);
             expect(await prisma.paymentException.count({ where: { kind: 'DENIED_HOUSEHOLD_ACTIVITY', personId: deniedMemberId } })).toBe(1);
         });
 
         it('adds a person to another household', async () => {
-            const res = await PARTICIPANT_POST(jsonReq('POST', { name: `Joined ${TAG}`, householdId: otherHouseholdId }));
+            const res = await PARTICIPANT_POST(jsonReq('POST', { name: `Joined ${TAG}`, householdId: otherHouseholdId, over25: true }));
             expect(res.status).toBe(200);
             expect((await prisma.person.findFirst({ where: { name: `Joined ${TAG}` } }))?.householdId).toBe(otherHouseholdId);
         });

@@ -10,6 +10,7 @@ export type SubmitterDiscardedEvent     = { type: 'SUBMITTER_DISCARDED' };
 // ── OCR events ────────────────────────────────────────────────────────────────
 
 export type OcrRetryEvent     = { type: 'OCR_RETRY' };
+export type OcrStartedEvent   = { type: 'OCR_STARTED' };
 export type OcrSucceededEvent = { type: 'OCR_SUCCEEDED' };
 export type OcrFailedEvent    = { type: 'OCR_FAILED' };
 
@@ -22,6 +23,7 @@ export type RejectEvent  = { type: 'REJECT' };
 
 export type ReceiptState =
   | 'uploaded'
+  | 'ocr_queued'
   | 'auto_upload'
   | 'ocr_failed'
   | 'duplicate_flagged'
@@ -43,6 +45,7 @@ export type ReceiptEvent =
   | SubmitterConfirmedEvent
   | SubmitterDiscardedEvent
   | OcrRetryEvent
+  | OcrStartedEvent
   | OcrSucceededEvent
   | OcrFailedEvent
   | DiscardEvent

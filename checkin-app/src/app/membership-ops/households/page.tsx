@@ -6,12 +6,13 @@ import { useRequireRole } from '@/hooks/useRequireRole';
 import { MEMBERSHIP_OPS_ADMIN_ROLES } from '@/lib/nav/sections/membershipOps';
 import { Badge, Button, Group, List, Modal, Stack, Table, Text, Textarea, TextInput, Tooltip } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { notifications } from '@mantine/notifications';
-import { LoadError, showSuccess } from '@checkin/component-ui';
-import { useLoad } from '@/lib/api';
+import { clearError, errorMessage, LoadError, showError, showSuccess } from '@checkin/component-ui';
+import { api, useLoad } from '@/lib/api';
 import { AdminEditHouseholdModal } from '@/components/admin/AdminEditHouseholdModal';
 import { sharesHousehold } from '@/lib/conflictOfInterest';
 import { formatDateOnly } from '@/lib/time';
+import { membershipYearLabel } from '@/lib/programYear';
+import { useOrgTime } from '@/components/TimezoneProvider';
 import { isMembershipLapsed } from '@/lib/membership/lapsed';
 
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -30,6 +31,8 @@ type Household = {
   // An application (joining or renewing) is at PENDING_PAYMENT: granting certifies it.
   awaitingPayment?: boolean;
   bgValidUntil?: string | null;
+  // The household has said it won't renew into `year`, on `since`.
+  notRenewing?: { year: number; since: string } | null;
 };
 
 // Every date this renders (memberSince, validUntil, bgValidUntil) is a calendar
@@ -42,6 +45,7 @@ export default function AdminHouseholdsPage() {
   // Certifying a payment is Board-only (the server 403s a sysadmin), so a Grant that
   // would certify is hidden from anyone else. One that only opens an application stays.
   const isBoard = me?.isBoardMember === true;
+  const { formatDate } = useOrgTime();
   const router = useRouter();
 
   const { data, error, reload } = useLoad<{ households: Household[]; grantYears?: GrantYear[] }>(ready ? '/api/membership-ops/households' : null);
@@ -59,45 +63,30 @@ export default function AdminHouseholdsPage() {
   const [pendingGrantYear, setPendingGrantYear] = useState<GrantYear | null>(null);
 
   const revokeMembership = async (householdId: number) => {
+    clearError('revoke-membership');
     try {
-      const res = await fetch('/api/membership-ops/households', {
+      await api('/api/membership-ops/households', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ householdId, active: false })
       });
-
-      if (res.ok) {
-        reload();
-        showSuccess('Membership revoked.');
-      } else {
-        const data = await res.json().catch(() => ({}));
-        notifications.show({ color: 'red', message: data.error || 'Failed to update membership.', autoClose: false });
-      }
-    } catch {
-      notifications.show({ color: 'red', message: 'Network error.', autoClose: false });
+      showSuccess('Membership revoked.');
+    } catch (e) {
+      showError(errorMessage(e), { key: 'revoke-membership' });
     }
   };
 
   // A grant pays an application (money only) and records the year on its button. The
   // background check still applies, and the server rejects a board member's own household.
   const grant = async (householdId: number, reason: string, grantYear: GrantYear) => {
+    clearError('grant-membership');
     try {
-      const res = await fetch('/api/membership-ops/households', {
+      const data = await api<{ message?: string }>('/api/membership-ops/households', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ householdId, year: grantYear.year, reason })
       });
-
-      if (res.ok) {
-        const data = await res.json().catch(() => ({}));
-        reload();
-        showSuccess(data.message || `Granted ${grantYear.label}.`);
-      } else {
-        const data = await res.json().catch(() => ({}));
-        notifications.show({ color: 'red', message: data.error || 'Failed to grant membership.', autoClose: false });
-      }
-    } catch {
-      notifications.show({ color: 'red', message: 'Network error.', autoClose: false });
+      showSuccess(data?.message || `Granted ${grantYear.label}.`);
+    } catch (e) {
+      showError(errorMessage(e), { key: 'grant-membership' });
     }
   };
 
@@ -129,22 +118,15 @@ export default function AdminHouseholdsPage() {
   };
 
   const doSetDenied = async (householdId: number, deny: boolean) => {
+    clearError('deny-membership');
     try {
-      const res = await fetch('/api/membership-ops/households', {
+      await api('/api/membership-ops/households', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ householdId, deny })
       });
-
-      if (res.ok) {
-        reload();
-        showSuccess(deny ? 'Membership denied — members can no longer log in.' : 'Membership restored.');
-      } else {
-        const data = await res.json().catch(() => ({}));
-        notifications.show({ color: 'red', message: data.error || 'Failed to update membership.', autoClose: false });
-      }
-    } catch {
-      notifications.show({ color: 'red', message: 'Network error.', autoClose: false });
+      showSuccess(deny ? 'Membership denied — members can no longer log in.' : 'Membership restored.');
+    } catch (e) {
+      showError(errorMessage(e), { key: 'deny-membership' });
     }
   };
 
@@ -246,6 +228,11 @@ export default function AdminHouseholdsPage() {
                             ✉ Broken email
                           </Badge>
                         </Tooltip>
+                      )}
+                      {household.notRenewing && (
+                        <Badge color="gray" variant="light" size="sm">
+                          Not renewing {membershipYearLabel(household.notRenewing.year)} · said {formatDate(household.notRenewing.since)}
+                        </Badge>
                       )}
                     </Group>
                   </Table.Td>
@@ -392,7 +379,6 @@ export default function AdminHouseholdsPage() {
         householdId={editHouseholdId}
         opened={editHouseholdId !== null}
         onClose={() => setEditHouseholdId(null)}
-        onSaved={() => reload()}
       />
 
       <Modal

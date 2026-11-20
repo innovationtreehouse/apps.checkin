@@ -38,14 +38,12 @@ if (process.env.INTEGRATION_DB && process.env.TEST_BASE_URL && process.env.TEST_
 // credential login (both local-only) off, just as NODE_ENV=test did.
 process.env.CHECKIN_ENV = 'dev';
 
-// A suite that races transactions needs a pool of 2: on one connection they take
-// turns, so the test passes with the lock removed. Name a racing suite
-// *Concurrency.integration.test.ts to get the pool; the list holds racing suites
-// named otherwise. testPath is populated before setup runs (the prisma mock below
-// relies on it too); @/lib/prisma reads TEST_DB_POOL_MAX when it first loads.
+// A suite that races transactions needs a pool of 2 (test/racingSuites.js).
+// testPath is populated before setup runs (the prisma mock below relies on it
+// too); @/lib/prisma reads TEST_DB_POOL_MAX when it first loads.
 {
   const { testPath } = expect.getState();
-  if (testPath && /(Concurrency|mintId|facilityCloseLock|cronNightlyLock|scanFlushRace|programRefundRace|membershipRefundGate|membershipPaymentPlanRace|participants\/merge\/__tests__\/route)\.integration\.test\.[jt]sx?$/.test(testPath)) {
+  if (testPath && require('./test/racingSuites').RACING_SUITE.test(testPath)) {
     process.env.TEST_DB_POOL_MAX = '2';
   }
 }

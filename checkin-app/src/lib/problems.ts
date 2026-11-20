@@ -5,6 +5,7 @@ import { sendTemplated } from "@/lib/email-templates/send";
 import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
 import { unreadLine } from "@/lib/problemsLines";
+import { currentPostingWarnings } from "@/lib/finance/postingRuns";
 import { APP_TIMEZONE, formatDateTime } from "@/lib/time";
 
 /** One stuck item on the Problems list, named by the library that holds it. */
@@ -52,9 +53,27 @@ const SOURCES: { library: string; env: string; read: () => Promise<StuckItem[]>;
         library: "local inventory",
         env: "LOCAL_INVENTORY_DATABASE_URL",
         read: async () => (await import("@checkin/local-inventory")).stuckItems(),
-        retry: async (item) => (await import("@checkin/local-inventory")).retryStuckItem(item),
+        retry: async (item) => {
+            await (await import("@checkin/local-inventory")).retryStuckItem(item);
+            await markGiftLoaded(item.id);
+        },
     },
 ];
+
+/**
+ * After a retried `donation:<id>` load applies, bulk-donation's own load replays it (a no-op) and
+ * records the gift as loaded. Never fails the retry: the gift page's "Load again" does the same.
+ */
+async function markGiftLoaded(id: string): Promise<void> {
+    const giftId = /^donation:(\d+)$/.exec(id)?.[1];
+    if (!giftId || !process.env.BULK_DONATION_DATABASE_URL) return;
+    try {
+        const gifts = await import("@checkin/bulk-donation");
+        await gifts.manualInKindService.loadInventory(await gifts.getOrgId(), Number(giftId));
+    } catch (err) {
+        logger.error(`[problems] ${id} loaded, but the gift could not be marked loaded:`, err);
+    }
+}
 
 /** The database env var of each library the Problems list reads. */
 export const LIBRARY_DB_VARS = SOURCES.map((s) => s.env);
@@ -117,33 +136,48 @@ export async function getProblems(now = new Date()): Promise<{ items: Problem[];
 const address = (value: string | null | undefined): string | null => value?.trim() || null;
 
 /** A job whose latest run reported failures; a late job is listed as late instead. */
-export const failingJob = (j: CronJobStatus): boolean => Boolean(j.lastError) && !j.stale;
+export const failingJob = (j: CronJobStatus): j is CronJobStatus & { lastError: string; lastErrorAt: Date } =>
+    Boolean(j.lastError && j.lastErrorAt) && !j.stale;
+
+/** The QuickBooks posting warnings in force, whichever of the nightly and posting runs went first; none when they can't be read. */
+async function quickBooksPostingLines(): Promise<string[]> {
+    try {
+        return (await currentPostingWarnings()).map((w) => `QuickBooks posting: ${w.text}`);
+    } catch (err) {
+        logger.error("[problems] could not read the QuickBooks posting warnings:", err);
+        return [];
+    }
+}
 
 /**
  * The daily email: while anything has been stuck more than a day, a job has not run on time or its
  * latest run reported failures, or a library has a line of its own, the alert address gets the list; the Board address gets a copy once anything has been stuck more than
  * two weeks. Ids, steps and dates only. An unset address sends nothing. Never throws.
+ * `tonight` is the calling run's own failures, which its run record does not hold yet.
  *
  * ponytail: it sends on every nightly run, so a same-night rerun of the nightly job sends it twice.
  */
-export async function sendProblemsDigest(now = new Date()): Promise<void> {
+export async function sendProblemsDigest(now = new Date(), tonight: string[] = []): Promise<void> {
     try {
-        const [{ items, unread, notices }, jobs, settings] = await Promise.all([
+        const [{ items, unread, notices }, jobs, settings, quickBooks] = await Promise.all([
             getProblems(now),
             getCronJobStatuses(),
             prisma.boardSettings.findUnique({ where: { id: 1 }, select: { alertEmailAddress: true, boardEmailAddress: true } }),
+            quickBooksPostingLines(),
         ]);
         const age = (at: Date) => now.getTime() - at.getTime();
         const stuck = items.filter((i) => age(i.failedAt) > DAY_MS);
-        const stale = jobs.filter((j) => j.stale);
+        const stale = jobs.filter((j): j is CronJobStatus & { lastSuccessAt: Date } => j.stale && j.lastSuccessAt !== null);
         const failing = jobs.filter(failingJob);
-        if (stuck.length === 0 && stale.length === 0 && failing.length === 0 && unread.length === 0 && notices.length === 0) return;
+        if (stuck.length === 0 && stale.length === 0 && failing.length === 0 && unread.length === 0 && notices.length === 0 && tonight.length === 0 && quickBooks.length === 0) return;
 
         const when = (at: Date) => formatDateTime(at, { timeZone: APP_TIMEZONE, dateStyle: "medium", timeStyle: "short" });
         const lines = [
+            ...tonight,
+            ...quickBooks,
             ...stuck.map((i) => `${i.library}, ${i.step}: ${i.id}, stuck since ${when(i.failedAt)}`),
             ...stale.map((j) => `Scheduled job ${j.job}: last ran ${when(j.lastSuccessAt)}`),
-            ...failing.map((j) => `Scheduled job ${j.job}: last run reported failures, ${when(j.lastErrorAt ?? j.lastSuccessAt)}`),
+            ...failing.map((j) => `Scheduled job ${j.job}: last run reported failures, ${when(j.lastErrorAt)}`),
             ...unread.map(unreadLine),
             ...notices.map((n) => n.text),
         ];

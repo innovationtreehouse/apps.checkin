@@ -131,79 +131,24 @@ If one of them is at fault, fix it and release forward.
 
 ## Alerts
 
-The incident engine (`checkin-app/src/lib/opsIncidents.ts`) turns job failures
-into email: one alert per outage, not one per item or per run. Every scheduled
-job ends its run in one shared step (`checkin-app/src/lib/finishRun.ts`): it
-records the run with its failures by kind, then hands the run to the engine,
-which also checks every job for a stopped schedule.
+Alerts come from the Problems list on System Status → Health and its daily
+email. Every scheduled job ends its run in one shared step
+(`checkin-app/src/lib/finishRun.ts`), which records the run with its error and
+its failures by kind. A run counts as failing when it has an error or any failure
+other than `data`; `data` failures wait in finance's queue.
 
-**What it hears.** The expense, gift-of-goods and income libraries report
-each sorted failure through their "on failure" port; the app files the
-reports under the job run in progress. The receipt library has no such port. The
-daily reconcile job runs expense intake and four receipt steps
-(`sweepInterruptedOcr`, `sweepStuckUploaded`, `readMailbox`,
-`sweepOutcomeNotices`); only a receipt step that crashes reaches the engine. The
-daily posting job runs the expense, gift-of-goods and income posting lanes. A step
-of either job that crashes counts too, as a bug unless its error was sorted. An item counts once
-per run, however often its lane reports it. A run covers only the lanes whose
-work it reached, so a step that crashed or could not run keeps its incident open. A failure outside a job run, such
-as a receipt finalized by hand, is only logged.
+The alert address and the Board address come from app settings (Settings →
+Email). Both are group addresses, and alerts ignore personal email opt-outs.
 
-**Who gets them.** The engine reads the alert address and the Board address
-from app settings (Settings → Email).
-Every alert goes to the alert address; the two-week escalation goes to the
-Board address. Both are group addresses, and alerts ignore personal email
-opt-outs. With no address set, nothing is sent, with no fallback to anyone
-else: the incident stays unannounced, so the next run tries again.
-
-**What opens an incident.** Each failure has a cause (QuickBooks, Gmail, OCR,
-the database, catalog events) and a kind.
-
-| Kind | Alerts when | One incident per |
-| --- | --- | --- |
-| System | Two runs in a row fail, or a lane stops | cause and kind, listing every lane hit |
-| Connection | The first run fails | cause and kind |
-| Settings, with work waiting | The first run fails | cause and kind |
-| Bug | A new code, on its first run | lane and code |
-| Data | Never: it stays in finance's queue | — |
-| Stopped job | No successful run in 48 hours | job (`cron:<job>:stale`) |
-
-A single system failure that heals on the next run stays quiet.
-
-**Where to see them.** System Status → Health has an "Open problems" panel
-listing every incident not yet closed: its kind, cause, lanes, when it was
-first seen, and runs and items so far. *Watching* means seen but below the
-alert threshold; *open* means the notice went out. Open incidents add to the
-red System Status pill. A stopped job with an open incident counts there once,
-not again as an unhealthy scheduled job.
-
-**What arrives, and when.**
-
-1. *Opened*: the first notice, once the threshold is met. It counts as sent
-   only if at least one address took it; a failed send retries next run.
-2. *Reminder*: three days after the notice, then weekly, with the runs seen so far.
-3. *Escalation*: to the Board address, once, after two weeks open.
-4. *Recovered*: when a run covers every lane on the incident without the
-   failure. It is sent only if an opening notice went out.
-5. *Back again*: the same problem within 24 hours of recovering reopens the
-   same incident, and the opened notice says "back again".
-
-The subject reads `[<kind>] <cause>: <lanes> — <status>`. The body says what
-is happening, the lanes, when it was first seen, runs seen, items waiting,
-what to do, and links to System Status. It carries codes and counts only, never
-amounts, donor or vendor names, or memo text. The Board can edit the wording
-under Settings → Email like any other template.
-
-**Acting on one.** Follow the email's "what to do" line. For a QuickBooks
-connection that is [step 3 of the go-live runbook](quickbooks-go-live.md)
-with the infra operator, then reseeding the secret. For a bug, read the job
-logs for the code named. Nothing needs closing by hand: the next clean run
-closes the incident and sends the recovery note.
+**Acting on one.** For a stuck item, open its page, fix the cause, then press
+Retry. For a QuickBooks connection, that is
+[step 3 of the go-live runbook](quickbooks-go-live.md) with the infra operator,
+then reseeding the secret. For a failing or late job, read its last run under
+Scheduled Jobs and the job logs.
 
 ### The Problems list
 
-System Status → Health also has a Problems list, separate from incidents. It
-shows:
+System Status → Health has a Problems list. It shows:
 
 - every item stuck in the receipt flow (receipts, receiving, expenses, gifts,
   local inventory), oldest first, with its step and when it first failed;
@@ -220,5 +165,3 @@ only. With no address set, nothing is sent.
 
 **Retry is manual.** Nothing on the list retries by itself: a stuck item stays
 until a person retries it.
-
-Closed incidents are deleted after 90 days.

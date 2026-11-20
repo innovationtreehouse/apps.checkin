@@ -132,11 +132,11 @@ function actLabel(a: LineAction): string {
   }
 }
 
-/** The approval route an act posts to; Assign bucket settles an exception or fills an unassigned line. */
+/** The approval route an act posts to; Assign bucket fills an unassigned line, or moves one: settling an exception or a system-approved card charge. */
 function approvalRoute(act: Act, approval: Approval): string {
   switch (act) {
     case "reject-exception": return "reject";
-    case "assign-bucket": return approval.status === "exception_raised" ? "finance-assign" : "assign-owner";
+    case "assign-bucket": return approval.ownerId === null ? "assign-owner" : "finance-assign";
     case "resolve-bucket": return "resolve-unknown";
     default: return act;
   }
@@ -405,7 +405,7 @@ function SkipButton({ base, onDecided, onRefused }: { base: string; onDecided: (
 }
 
 /** QuickBooks entries the expense may match: pick one, or exclude one that belongs to nothing, with a reason. */
-function MatchPicker({ base, currency, onDecided }: { base: string; currency: string; onDecided: () => void }) {
+function MatchPicker({ base, currency, entity, onDecided }: { base: string; currency: string; entity: "Bill" | "Purchase"; onDecided: () => void }) {
   const candidates = useLoad<Candidate[]>(`${base}/qb-candidates`);
   const [excluding, setExcluding] = useState<string | null>(null);
   const [why, setWhy] = useState("");
@@ -428,7 +428,7 @@ function MatchPicker({ base, currency, onDecided }: { base: string; currency: st
                 size="xs"
                 disabled={!why.trim()}
                 onClick={async () => {
-                  if (await send("/qb-exclusions", "POST", { qbTxnId: c.id, reason: why }, "Entry excluded from matching")) {
+                  if (await send("/qb-exclusions", "POST", { qbTxnEntity: entity, qbTxnId: c.id, reason: why }, "Entry excluded from matching")) {
                     setExcluding(null);
                     candidates.reload();
                   }
@@ -464,7 +464,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
   const [permanent, setPermanent] = useState(false);
   const [final, setFinal] = useState(false);
   const [authorization, setAuthorization] = useState("");
-  const [capital, setCapital] = useState<Record<number, { isCapital: boolean; years: number | ""; owner: string }>>({});
+  const [capital, setCapital] = useState<Record<number, { isCapital: boolean; years: number | ""; owner: string; seeded?: string }>>({});
   const [taxNote, setTaxNote] = useState("");
 
   const reloadAll = () => { expense.reload(); approvals.reload(); signoffs.reload(); vendor.reload(); };
@@ -591,13 +591,13 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
               >
                 Book it
               </Button>
-              <MatchPicker base={base} currency={e.currency} onDecided={() => void decided()} />
+              <MatchPicker base={base} currency={e.currency} entity={e.needsReimbursement ? "Bill" : "Purchase"} onDecided={() => void decided()} />
             </Stack>
           )}
           {open("QB_AWAITING_MATCH") && (
             <Stack gap="xs">
               <Text size="sm">Several QuickBooks entries match; pick one.</Text>
-              <MatchPicker base={base} currency={e.currency} onDecided={() => void decided()} />
+              <MatchPicker base={base} currency={e.currency} entity={e.needsReimbursement ? "Bill" : "Purchase"} onDecided={() => void decided()} />
             </Stack>
           )}
           {open("QB_VENDOR_MISSING") && (
@@ -785,6 +785,13 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
                   />
                 )}
                 <NumberInput w={140} placeholder="Years" min={1} value={value.years} onChange={(v) => setCapital({ ...capital, [line.id]: { ...value, years: typeof v === "number" ? v : "" } })} />
+                {e.state === "set_depreciation_cycle" && e.backfill && (
+                  <TextInput
+                    w={240} placeholder="ITFA05, ITFA06" aria-label={`Seeded asset numbers for ${line.description}`}
+                    description={`One per unit (${Math.max(1, Math.round(line.quantity))}), seeded first`}
+                    value={value.seeded ?? ""} onChange={(ev) => setCapital({ ...capital, [line.id]: { ...value, seeded: ev.currentTarget.value } })}
+                  />
+                )}
               </Group>
             ))}
           <Button
@@ -800,6 +807,7 @@ export default function ExpenseDetailPage({ id, listHref = "/expense/expenses", 
                 : await send(`${base}/set-depreciation-cycle/submit`, "POST", {
                     items: capitalRows.filter(({ line }) => line.isCapital).map(({ line, value }) => ({
                       lineItemId: line.id, depreciationYears: Number(value.years), ownerId: Number(value.owner),
+                      ...(e.backfill ? { seededAssetNumbers: (value.seeded ?? "").split(",").map((n) => n.trim()).filter(Boolean) } : {}),
                     })),
                   }, "Depreciation cycle set");
               if (ok) await decided();

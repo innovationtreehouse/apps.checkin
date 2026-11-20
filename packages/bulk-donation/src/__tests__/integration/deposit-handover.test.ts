@@ -30,6 +30,7 @@ class FakeIncome implements IncomeDeposits {
   }
   async handOverFailing(failures: DepositHandOverFailure[]) {
     this.raised.push(failures);
+    return true;
   }
   async depositStatus(_orgId: string, ids: string[]) {
     this.calls.push("status");
@@ -194,11 +195,12 @@ describeDb("hand-over after the completion commit, with its re-send job", () => 
     expect(income.expected.size).toBe(0);
   });
 
-  it("raises again next run when the alert itself fails", async () => {
+  it("returns its counts and raises again next run when the alert is not sent", async () => {
     await completed("TEST-ALERT", { date: null });
-    const handOverFailing = vi.spyOn(income, "handOverFailing").mockRejectedValueOnce(new Error("mail is down"));
+    const handOverFailing = vi.spyOn(income, "handOverFailing").mockResolvedValueOnce(false);
 
-    await expect(runDonationDepositHandOver(orgId)).rejects.toThrow("mail is down");
+    expect(await runDonationDepositHandOver(orgId)).toEqual({ acknowledged: 0, sent: 0, failed: 1 });
+    expect(await db.workflowEvent.count({ where: { orgId, disbursementId: "TEST-ALERT", eventType: "DEPOSIT_HANDOVER_RAISED" } })).toBe(0);
     await runDonationDepositHandOver(orgId);
 
     expect(handOverFailing).toHaveBeenCalledTimes(2);

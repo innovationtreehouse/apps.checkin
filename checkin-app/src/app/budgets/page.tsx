@@ -4,8 +4,7 @@ import { useState } from "react";
 import {
   Badge, Button, Card, Center, Checkbox, Group, Loader, Modal, Select, Stack, Table, Text, TextInput, Title,
 } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
-import { errorMessage, InactivePickWarning, LoadError, QuickBooksListsRefresh } from "@checkin/component-ui";
+import { clearError, errorMessage, InactivePickWarning, LoadError, QuickBooksListsRefresh, showError, showSuccess } from "@checkin/component-ui";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { api, useLoad } from "@/lib/api";
@@ -42,16 +41,6 @@ function write<T>(url: string, method: string, body?: unknown): Promise<T> {
   return api<T>(url, { method, body: body === undefined ? undefined : JSON.stringify(body) });
 }
 
-// One chip per action, keyed by its title: a new failure replaces it and a success clears it.
-function showError(title: string, message: string) {
-  notifications.hide(title);
-  notifications.show({ id: title, color: "red", title, message, autoClose: false });
-}
-
-function clearError(title: string) {
-  notifications.hide(title);
-}
-
 export default function BudgetsPage() {
   const { user, loading: authLoading, ready } = useRequireRole(FINANCE_ROLES);
   const isFinance = !!user?.isFinance;
@@ -82,10 +71,10 @@ export default function BudgetsPage() {
     try {
       await write(url, method, body);
     } catch (e) {
-      showError(failed, errorMessage(e));
+      showError(errorMessage(e), { key: failed, title: failed });
       return false;
     }
-    notifications.show({ message: done });
+    showSuccess(done);
     return true;
   };
 
@@ -250,7 +239,7 @@ export default function BudgetsPage() {
             value={editClassId}
             onChange={setEditClassId}
           />
-          {editClassId === editing?.quickBooksClassId && <InactivePickWarning saved={editClassId} options={classes} />}
+          {editClassId === editing?.quickBooksClassId && <InactivePickWarning saved={editClassId} options={classes} advice="Pick an active one." />}
           <QuickBooksListsRefresh />
           <Checkbox
             label="Org-level"
@@ -297,7 +286,7 @@ function ApproversModal({ bucket, canEdit, onClose }: {
       setAnswer(await write<Approver[]>(url, method, body));
       setPick(undefined);
     } catch (e) {
-      showError("Approvers not changed", errorMessage(e));
+      showError(errorMessage(e), { key: "Approvers not changed", title: "Approvers not changed" });
     } finally {
       setChanging(false);
     }

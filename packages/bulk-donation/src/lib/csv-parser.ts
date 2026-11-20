@@ -65,6 +65,7 @@ const moneyCents = z
 const rateNullable = z
   .string()
   .transform((s) => s.trim())
+  .transform((s) => (THOUSANDS.test(s) ? s.replace(/,/g, "") : s))
   .superRefine((s, ctx) => {
     if (s !== "" && dollarsToCentsOrNull(s) === null) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: `not a number: "${s}"` });

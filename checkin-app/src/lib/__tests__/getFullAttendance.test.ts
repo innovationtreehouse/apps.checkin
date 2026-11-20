@@ -8,7 +8,10 @@ const findMany = jest.fn();
 // The keyholder-cover query is the one that selects bare times.
 const coverFindMany = jest.fn();
 const lastCloseFind = jest.fn();
+// Which flagged keyholders the shared keyholder filter keeps.
+const keyholderFind = jest.fn();
 jest.mock("@/lib/prisma", () => ({ __esModule: true, default: {
+    person: { findMany: (args: unknown) => keyholderFind(args) },
     visit: {
         findMany: (args: { select?: unknown }) => (args.select ? coverFindMany(args) : findMany(args)),
     },
@@ -72,6 +75,25 @@ beforeEach(() => {
     supervisingAdultVisits.mockClear();
     lastCloseFind.mockReset();
     lastCloseFind.mockResolvedValue(null);
+    keyholderFind.mockReset();
+    keyholderFind.mockImplementation(async ({ where }: { where: { id: { in: number[] } } }) => where.id.in.map((id) => ({ id })));
+});
+
+describe("a keyholder whose household is denied", () => {
+    beforeEach(() => keyholderFind.mockResolvedValue([]));
+
+    it("does not open the building or count as a keyholder", async () => {
+        const { safety, counts } = await getFullAttendance();
+
+        expect(safety.facilityOpen).toBe(false);
+        expect(counts.keyholders).toBe(0);
+    });
+
+    it("is not shown to the kiosk as a keyholder", async () => {
+        const { attendance } = await getFullAttendance({ kiosk: true });
+
+        expect(attendance.find((v) => v.participant.id === 50)?.participant.isKeyholder).toBe(false);
+    });
 });
 
 describe("facilityOpen", () => {

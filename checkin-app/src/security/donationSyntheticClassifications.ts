@@ -6,15 +6,14 @@
  * like every count model (no actor, no donor, no amount).
  *
  * InKindQueueItemView — one in-kind gift in the finance queue, from either source
- * (`receipt` or `manual`): waiting on its donor, waiting to be accepted, or
- * withdrawn after its money arrived. It carries what the accept screen shows:
- * receipt and join timestamps, the bucket, the value and its lines, the uploader
- * and recorder, when the donor was replaced, the four accept warnings and the
- * caller's conflict state, plus the gift's queue state and what it waits on, its
- * outcome and decision time, a replay conflict, a bucket hold, each booking
- * side's state, when finance settled a withdrawal, and its QuickBooks match state
- * with the note explaining it, all as `internal` facts. It carries no donor
- * field, so a donor name on the row is stripped from every view.
+ * (`receipt` or `manual`): waiting on its donor or waiting to be accepted. It
+ * carries what the accept screen shows: receipt and join timestamps, the bucket,
+ * the value and its lines, the uploader and recorder, when the donor was
+ * replaced, the four accept warnings and the caller's conflict state, plus the
+ * gift's queue state and what it waits on, its outcome and decision time, a
+ * replay conflict, a bucket hold, each booking side's state, and its QuickBooks
+ * match state with the note explaining it, all as `internal` facts. It carries
+ * no donor field, so a donor name on the row is stripped from every view.
  *
  * InKindQueueLineView — one line of a queued gift: the item and its description,
  * its quantity, the value finance set, the value ops suggested, and the
@@ -32,21 +31,25 @@
  * InKindBucketGiftLineView — one line of that gift: item and its description,
  * quantity and value, all `internal`.
  *
- * InKindSettleResult — the reply to finance settling a receipt gift's anomaly (a
- * withdrawal or a replay conflict): which gift, which kind, and when, all
- * `internal`. Settling a withdrawal clears the donor, so the reply carries none.
+ * InKindSettleResult — the reply to finance settling a receipt gift's replay
+ * conflict: which gift, which kind, and when, all `internal`. It carries no
+ * donor.
  *
  * InKindGiftDetailView — one in-kind gift on its own page, from either source:
  * its receipt or donation date, value and lines, the donor (`pii`), who
- * recorded it, its join, anomaly and decision timestamps, the bucket, its queue
- * state and what it waits on, each booking side's state, when its QuickBooks
+ * recorded it, its join, replay-conflict and decision timestamps, the bucket,
+ * its queue state and what it waits on, each booking side's state, when its QuickBooks
  * post first failed and the last error (both null until it fails), and, for a gift
  * without a receipt, its inventory source key, when its goods loaded, and why
- * the last load failed. All but the three donor fields are `internal`.
+ * the last load failed, and whether it met a capital threshold at accept (null
+ * until then). All but the three donor fields are `internal`.
  *
  * InKindGiftDetailLineView — one line of that gift: item and its description,
- * quantity, the value finance set, the value ops suggested, and the QuickBooks
- * account finance set by hand (null until then), all `internal`.
+ * quantity, the value finance set, the value ops suggested, the QuickBooks
+ * account finance set by hand (null until then), and finance's capital decision:
+ * whether the line is capital, its depreciation years, its owning bucket, when
+ * it was decided, and when the expense register issued its asset numbers (each
+ * null until set), all `internal`. It carries no donor and no decider.
  *
  * InKindGiftEventView — one row of that gift's history: the event, who acted
  * and when, and its payload, all `internal`. In-kind event payloads carry
@@ -70,7 +73,6 @@ export const classifications = {
     receiptDate: "internal",
     moneyReceivedAt: "internal",
     donorRecordedAt: "internal",
-    withdrawnAfterMoneyAt: "internal",
     source: "internal",
     budgetOwnerId: "internal",
     budgetOwnerName: "internal",
@@ -93,7 +95,6 @@ export const classifications = {
     bucketHeld: "internal",
     revenueBooking: "internal",
     expenseBooking: "internal",
-    withdrawalSettledAt: "internal",
     donationDate: "internal",
     qbState: "internal",
     qbNote: "internal",
@@ -151,8 +152,6 @@ export const classifications = {
     donorCompanyName: "pii",
     donorRecordedAt: "internal",
     donorReplacedAt: "internal",
-    withdrawnAfterMoneyAt: "internal",
-    withdrawalSettledAt: "internal",
     replayConflictAt: "internal",
     outcome: "internal",
     decidedAt: "internal",
@@ -170,6 +169,7 @@ export const classifications = {
     inventorySourceKey: "internal",
     inventoryLoadedAt: "internal",
     inventoryLoadFailureReason: "internal",
+    capitalReviewNeeded: "internal",
   },
   InKindGiftDetailLineView: {
     id: "internal",
@@ -179,6 +179,11 @@ export const classifications = {
     valueCents: "internal",
     suggestedValueCents: "internal",
     quickBooksAccountId: "internal",
+    isCapital: "internal",
+    depreciationYears: "internal",
+    capitalBucketId: "internal",
+    capitalDecidedAt: "internal",
+    registeredAt: "internal",
   },
   InKindGiftEventView: {
     id: "internal",

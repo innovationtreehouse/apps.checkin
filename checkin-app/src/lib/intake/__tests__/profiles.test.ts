@@ -1,9 +1,9 @@
 import { INTAKE_PROFILES, missingRequiredFields } from "@/lib/intake/profiles";
 
 describe("intake profiles registry", () => {
-    it("membership-initial requires address + emergencyContact + primaryName", () => {
+    it("membership-initial requires address + emergencyContact + primaryName + memberAges", () => {
         const req = INTAKE_PROFILES["membership-initial"].requiredAtSubmit;
-        expect(req).toEqual(["address", "emergencyContact", "primaryName"]);
+        expect(req).toEqual(["address", "emergencyContact", "primaryName", "memberAges"]);
     });
 
     it("program-first-time requires primaryName + emergencyContact + participantDob but NOT address", () => {
@@ -21,6 +21,23 @@ describe("intake profiles registry", () => {
             primaryName: null,
         });
         expect(missing.map((m) => m.field)).toEqual(["address", "emergencyContact", "primaryName"]);
+    });
+
+    it("membership-initial flags a household member with no age on file", () => {
+        const base = {
+            addressLine1: "1 Main St",
+            addressCity: "Austin",
+            addressState: "TX",
+            addressPostalCode: "78701",
+            emergencyContacts: [{ conflictParticipantId: null, name: "Aunt May", phone: "555-2000" }],
+            primaryName: "Primary",
+        };
+        const adult = { dateOfBirth: null, isDeclaredAdult: true };
+        const child = { dateOfBirth: new Date("2015-01-01"), isDeclaredAdult: false };
+        const ageless = { dateOfBirth: null, isDeclaredAdult: false };
+        const profile = INTAKE_PROFILES["membership-initial"];
+        expect(missingRequiredFields(profile, { ...base, members: [adult, child] })).toEqual([]);
+        expect(missingRequiredFields(profile, { ...base, members: [adult, ageless] }).map((m) => m.field)).toEqual(["memberAges"]);
     });
 
     it("missingRequiredFields returns [] when membership-initial is satisfied", () => {

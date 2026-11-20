@@ -32,6 +32,9 @@ import { DEV_MOCK_SHOPIFY_WEBHOOK_SECRET } from '@/lib/config';
 import { setMembershipYearBoundary } from '@/test-helpers/boardSettings';
 import { signCheckout } from '@/lib/programs/checkoutSignature';
 
+// A new leader here meets the membership and clearance requirements; leaderEligibility has its own tests.
+jest.mock('@/lib/programs/leaderEligibility', () => ({ ...jest.requireActual('@/lib/programs/leaderEligibility'), programLeaderIneligibility: jest.fn().mockResolvedValue(null) }));
+
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 jest.mock('@/lib/notifications', () => ({ sendNotification: jest.fn() }));
 

@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
 /**
- * An audit row commits with the change it records (docs/in-design/AUDIT_IN_TRANSACTION.md).
+ * An audit row commits with the change it records.
  * Every audit write on the root client (`prisma.`) or through a `DbClient` parameter
  * (`db.`) is listed here with its reason. The list may only shrink: a new site fails,
  * and a file with fewer sites than its entry fails until the entry is updated.
@@ -25,6 +25,7 @@ const ALLOWLIST: Record<string, { count: number; reason: string }> = {
     "lib/finance/reconcile/reversals.ts": { count: 1, reason: "by design: observation, nothing changed" },
     "app/api/finance-ops/s-read/sync/route.ts": { count: 1, reason: "by design: attempt at an outside system, written before the call" },
     "app/api/system-status/problems/retry/route.ts": { count: 1, reason: "by design: attempt at a library retry, written with its outcome" },
+    "lib/finance/quickBooksPosting.ts": { count: 1, reason: "by design: catch-up request, written before the run it asks for" },
     "lib/shopifyWebhookReceipt.ts": { count: 1, reason: "by design: inbound delivery receipt" },
     "app/api/dev/shopify/orders-paid/route.ts": { count: 1, reason: "by design: dev-only mock marker" },
     "lib/attendance/close.ts": { count: 3, reason: DB_PARAM },

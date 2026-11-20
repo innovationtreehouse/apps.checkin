@@ -218,7 +218,8 @@ export const uploadedFileService = {
     if (!file.allDuplicate) throw new ServiceError(400, "Blob can only be deleted for fully-duplicate uploads");
     if (file.blobDeleted) throw new ServiceError(400, "Blob already deleted");
     await db.$transaction(async (tx) => {
-      await tx.uploadedFile.update({ where: { id }, data: { fileBlob: null, blobDeleted: true } });
+      const { count } = await tx.uploadedFile.updateMany({ where: { id, orgId, blobDeleted: false }, data: { fileBlob: null, blobDeleted: true } });
+      if (count === 0) throw new ServiceError(400, "Blob already deleted");
       await recordEvent(tx, { orgId, entityType: "uploaded_file", entityId: id, eventType: "FILE_BLOB_DELETED", ...audit });
     });
     return { id, blobDeleted: true };

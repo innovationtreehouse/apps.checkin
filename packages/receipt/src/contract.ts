@@ -8,6 +8,7 @@ import { z } from "zod";
 import type { FailureKind } from "@checkin/component-kit";
 import { CURRENCY_CODE, MAX_LINE_QUANTITY, type CompletedReceipt, type InKindDonor } from "@checkin/receipt-types";
 import type { ReceiptLimits } from "./lib/limits";
+import { LINE_COST_RANGE, lineCostFits } from "./lib/schemas";
 
 /** The acting host user, projected from the checkin Person. `id` is the Person.id. */
 export interface ReceiptPrincipal {
@@ -156,7 +157,7 @@ export const OcrLineItemSchema = z.object({
   unitPrice: ocrMoney,
   totalPrice: ocrMoney.optional(),
   isDelayed: z.boolean(),
-});
+}).refine(lineCostFits, LINE_COST_RANGE);
 
 /** What OCR may fill: the receipt's own details. Never reimbursee, vendor or needsReimbursement. */
 export const OcrDataSchema = z.object({
@@ -226,16 +227,6 @@ export interface ReceiptReimbursees {
   addNonMemberAdult(name: string, actorId: number): Promise<ReimburseeOption>;
 }
 
-export const MailPartSchema: z.ZodType<MailPart> = z.lazy(() =>
-  z.object({
-    mimeType: z.string(),
-    filename: z.string().optional(),
-    headers: z.array(z.object({ name: z.string(), value: z.string() })).optional(),
-    body: z.object({ data: z.string().optional(), attachmentId: z.string().optional(), size: z.number().optional() }).optional(),
-    parts: z.array(MailPartSchema).optional(),
-  }),
-);
-
 /** One MIME part as the Gmail API's `format=full` returns it; `body.data` is base64url. */
 export interface MailPart {
   mimeType: string;
@@ -245,8 +236,12 @@ export interface MailPart {
   parts?: MailPart[];
 }
 
-export const MailMessageSchema = z.object({ id: z.string().min(1), internalDate: z.string().regex(/^\d+$/), payload: MailPartSchema });
-export type MailMessage = z.infer<typeof MailMessageSchema>;
+/** A message in the Gmail API's `format=full` shape; `internalDate` is epoch ms as a string. */
+export interface MailMessage {
+  id: string;
+  internalDate: string;
+  payload: MailPart;
+}
 
 /** Read-only access to the receipt mailbox. */
 export interface MailboxReader {
@@ -254,8 +249,8 @@ export interface MailboxReader {
   address: string;
   /** Ids of messages received in the last `days` days, oldest first. Mail the mailbox sent is not listed. */
   listRecent(days: number): Promise<string[]>;
-  getMessage(id: string): Promise<MailMessage>;
-  getAttachment(messageId: string, attachmentId: string): Promise<Buffer>;
+  /** The whole message as the mailbox holds it (Gmail's `format=raw`), and when it arrived (epoch ms, as a string). */
+  getRaw(id: string): Promise<{ raw: Buffer; internalDate: string }>;
 }
 
 /** Mail intake stopped storing mail because too many held or deferred items are stored. */
@@ -277,8 +272,11 @@ export interface MailAgingOutEvent {
 }
 
 /** One acknowledgement of a mailed receipt, to one recipient. */
-/** Why a mailed file was not accepted; `no_receipt` stands for a whole message that held nothing to read. */
-export type MailRefusalReason = "too_large" | "wrong_type" | "empty" | "forwarded" | "ceiling" | "no_receipt";
+/**
+ * Why a mailed file was not accepted. `no_receipt` stands for a whole message that held nothing to
+ * read, `no_amount` for a message whose only candidate was its text, which named no amount.
+ */
+export type MailRefusalReason = "too_large" | "wrong_type" | "empty" | "forwarded" | "ceiling" | "no_receipt" | "no_amount";
 
 export interface MailRefusal {
   file: string;
@@ -371,16 +369,16 @@ export interface ReceiptConfig {
   alerts?: ReceiptAlerts;
   /** Unset means mail intake is unbound and the step does nothing. */
   mailbox?: MailboxReader;
+  /** Days the store keeps a captured message's raw copy (its `mail-raw/` lifecycle rule), set per environment. */
+  rawMailRetentionDays: number;
   /** Unset means acknowledgements wait unsent. */
   replies?: ReceiptReplies;
   /** Unset means outcome emails wait unsent. */
   outcomeMail?: OutcomeMail;
   /** Overrides for the daily intake limits; unset ones keep DEFAULT_LIMITS. */
   limits?: Partial<ReceiptLimits>;
-  /** Unset means no row may have a key: reading or writing one throws. */
+  /** Unset means every file read and write throws. */
   fileStore?: ReceiptFileStore;
-  /** New files go to the store instead of the database. */
-  storeNewFilesInBucket?: boolean;
 }
 
 // ── Route factories (mounted by the host under its handler()) ──────────────────

@@ -13,6 +13,7 @@ const OUTCOME: Readonly<Record<string, ReceivingOutcome>> = {
   applying: "applying",
   apply_failed: "stuck",
   resolved: "received",
+  closed_by_hand: "received",
 };
 
 /** Each named receipt's receiving outcome and its lines still open on the receive queue; a receipt receiving never took is left out. */

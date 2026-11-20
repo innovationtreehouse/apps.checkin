@@ -57,6 +57,12 @@ export const SCOPE_BINDINGS = {
     // row-scoped (see ROW_SCOPE_KEY) so a row without its key fails closed.
     HouseholdPageHousehold: { their_households: { field: 'id', eqCtx: 'householdId' } },
     HouseholdPeer: { their_households: { field: 'householdId', eqCtx: 'householdId' } },
+    // A peer's background-check status: the person themself and a lead of their
+    // household. No their_households binding, so a non-lead sibling holds nothing.
+    HouseholdPeerBgStatus: {
+        their_own: { field: 'personId', eqCtx: 'selfId' },
+        led_households: { field: 'personId', inCtx: 'ledHouseholdMemberIds' },
+    },
     EmergencyContactWarning: { their_households: { field: 'householdId', eqCtx: 'householdId' } },
     Program: {
         their_program_participants: { field: 'id', inCtx: ['programsLed', 'programsCoreVolIn'] },
@@ -264,9 +270,7 @@ export const OPT_OUT_PENDING_ROUTE = new Set<string>([
     'MembershipPaymentPlanDecision',
     'PaymentQueueRow',
     'MatchAuditEnrollmentRow',
-    // Expense audit log. Its `userId` is the acting checkin Person.id, read
-    // only by FINANCE/BOARD (everyones:pii). A "my expense history" view is the
-    // plausible future reader; that is when it earns `their_own` on `userId`.
+    // Read only nested in Expense; a binding would drop staff views only from a top-level read.
     'ExpenseAuditLog',
 ]);
 

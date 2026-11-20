@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { signOut, useSession } from 'next-auth/react';
 import { usePathname } from 'next/navigation';
-import { errorMessage, showError } from '@checkin/component-ui';
+import { errorMessage, HttpError, showError } from '@checkin/component-ui';
 import { api, useLoad } from '@/lib/api';
 import { notifyNavRefresh } from '@/lib/nav-refresh';
 import { isValidEmail } from '@/lib/emergencyContacts/identity';
@@ -13,6 +13,7 @@ import {
   Alert,
   Box,
   Button,
+  Checkbox,
   Group,
   Modal,
   Paper,
@@ -21,6 +22,11 @@ import {
   TextInput,
   Title,
 } from '@mantine/core';
+
+// The onboarding inputs in form order, named by their request keys so a server refusal's `fields` maps straight onto them.
+const FIELD_NAMES = ['phone', 'emergencyContactName', 'emergencyContactPhone', 'emergencyContactEmail'] as const;
+type FieldName = typeof FIELD_NAMES[number];
+type FieldErrors = Partial<Record<FieldName, string>>;
 
 function HouseholdQuestion() {
   const { data, error: loadError } = useLoad<{ household: { name: string } | null }>('/api/profile/household-question', { expireOn401: false });
@@ -65,6 +71,66 @@ function HouseholdQuestion() {
   );
 }
 
+/** Whether a signed-in session must give an age before any page. The `ageStepPending` claim is already false once an age is on file (authClaims). */
+export function needsAgeStep(user: { ageStepPending?: boolean; denied?: boolean; householdJoinPending?: boolean } | undefined): boolean {
+  return user?.ageStepPending === true && !user.denied && !user.householdJoinPending;
+}
+
+function AgeStep() {
+  const [dob, setDob] = useState('');
+  const [over25, setOver25] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!over25 && !dob) {
+      setError('Enter your date of birth, or tick "I am over 25".');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await api('/api/profile', { method: 'PATCH', body: JSON.stringify({ dob: over25 ? null : dob, over25 }) });
+      window.location.reload();
+    } catch (err) {
+      setError(errorMessage(err));
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Box p="xl">
+      <Paper withBorder p="lg" maw={520} mx="auto">
+        <form onSubmit={save}>
+          <Stack>
+            <Title order={3}>Your date of birth</Title>
+            <Text>We need your age on file before you carry on.</Text>
+            <Checkbox
+              label="I am over 25"
+              checked={over25}
+              onChange={(e) => { setOver25(e.currentTarget.checked); setError(null); }}
+            />
+            {!over25 && (
+              <TextInput
+                type="date"
+                label="Date of birth"
+                value={dob}
+                onChange={(e) => { setDob(e.currentTarget.value); setError(null); }}
+              />
+            )}
+            {error && <Alert color="red">{error}</Alert>}
+            <Group>
+              <Button type="submit" loading={saving}>Save &amp; continue</Button>
+              <Button variant="default" disabled={saving} onClick={() => signOut({ callbackUrl: '/signin' })}>Sign out</Button>
+            </Group>
+          </Stack>
+        </form>
+      </Paper>
+    </Box>
+  );
+}
+
 export default function OnboardingGate({ children }: { children: React.ReactNode }) {
   const { data: session, status } = useSession();
   const joinPending = session?.user?.householdJoinPending === true;
@@ -80,10 +146,24 @@ export default function OnboardingGate({ children }: { children: React.ReactNode
   const [emergencyContactEmail, setEmergencyContactEmail] = useState('');
 
   const [saving, setSaving] = useState(false);
-  const [fieldErrors, setFieldErrors] = useState<{ phone?: string; contactPhone?: string; contactEmail?: string }>({});
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const phoneRef = useRef<HTMLInputElement>(null);
+  const contactNameRef = useRef<HTMLInputElement>(null);
   const contactPhoneRef = useRef<HTMLInputElement>(null);
   const contactEmailRef = useRef<HTMLInputElement>(null);
+  const fieldRefs: Record<FieldName, React.RefObject<HTMLInputElement | null>> = {
+    phone: phoneRef,
+    emergencyContactName: contactNameRef,
+    emergencyContactPhone: contactPhoneRef,
+    emergencyContactEmail: contactEmailRef,
+  };
+  const clearFieldError = (name: FieldName) => setFieldErrors((f) => ({ ...f, [name]: undefined }));
+  const flagFields = (errors: FieldErrors) => {
+    setFieldErrors(errors);
+    const firstBroken = FIELD_NAMES.find((name) => errors[name]);
+    if (firstBroken) fieldRefs[firstBroken].current?.focus();
+    return firstBroken !== undefined;
+  };
 
   const checkStatus = useCallback(() => fetch('/api/profile/onboarding-status')
     .then(async (res) => {
@@ -113,19 +193,14 @@ export default function OnboardingGate({ children }: { children: React.ReactNode
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const errors = {
+    const brokenInput = flagFields({
       phone: needsPhone && !isValidPhone(phone) ? PHONE_ERROR : undefined,
-      contactPhone: needsEmergencyContact && !isValidPhone(emergencyContactPhone) ? PHONE_ERROR : undefined,
-      contactEmail: needsEmergencyContact && emergencyContactEmail.trim() && !isValidEmail(emergencyContactEmail)
+      emergencyContactPhone: needsEmergencyContact && !isValidPhone(emergencyContactPhone) ? PHONE_ERROR : undefined,
+      emergencyContactEmail: needsEmergencyContact && emergencyContactEmail.trim() && !isValidEmail(emergencyContactEmail)
         ? "That email doesn't look right."
         : undefined,
-    };
-    setFieldErrors(errors);
-    const firstBroken = errors.phone ? phoneRef : errors.contactPhone ? contactPhoneRef : errors.contactEmail ? contactEmailRef : null;
-    if (firstBroken) {
-      firstBroken.current?.focus();
-      return;
-    }
+    });
+    if (brokenInput) return;
 
     setSaving(true);
 
@@ -145,13 +220,18 @@ export default function OnboardingGate({ children }: { children: React.ReactNode
       await checkStatus();
       notifyNavRefresh();
     } catch (err) {
-      showError(errorMessage(err));
+      const refused: FieldErrors = {};
+      if (err instanceof HttpError) {
+        for (const name of FIELD_NAMES) if (err.fields.includes(name)) refused[name] = err.message;
+      }
+      if (!flagFields(refused)) showError(errorMessage(err));
     } finally {
       setSaving(false);
     }
   };
 
   if (joinPending) return <HouseholdQuestion />;
+  if (needsAgeStep(session?.user)) return <AgeStep />;
 
   const isBlocked = !loading && (needsPhone || needsEmergencyContact);
 
@@ -184,7 +264,7 @@ export default function OnboardingGate({ children }: { children: React.ReactNode
                 ref={phoneRef}
                 value={phone}
                 error={fieldErrors.phone}
-                onChange={(e) => { setPhone(e.currentTarget.value); setFieldErrors((f) => ({ ...f, phone: undefined })); }}
+                onChange={(e) => { setPhone(e.currentTarget.value); clearFieldError('phone'); }}
                 required
               />
             )}
@@ -203,8 +283,10 @@ export default function OnboardingGate({ children }: { children: React.ReactNode
                   <TextInput
                     label="Contact Name"
                     placeholder="Jane Doe"
+                    ref={contactNameRef}
                     value={emergencyContactName}
-                    onChange={(e) => setEmergencyContactName(e.currentTarget.value)}
+                    error={fieldErrors.emergencyContactName}
+                    onChange={(e) => { setEmergencyContactName(e.currentTarget.value); clearFieldError('emergencyContactName'); }}
                     required
                   />
                   <TextInput
@@ -213,8 +295,8 @@ export default function OnboardingGate({ children }: { children: React.ReactNode
                     placeholder="(555) 987-6543"
                     ref={contactPhoneRef}
                     value={emergencyContactPhone}
-                    error={fieldErrors.contactPhone}
-                    onChange={(e) => { setEmergencyContactPhone(e.currentTarget.value); setFieldErrors((f) => ({ ...f, contactPhone: undefined })); }}
+                    error={fieldErrors.emergencyContactPhone}
+                    onChange={(e) => { setEmergencyContactPhone(e.currentTarget.value); clearFieldError('emergencyContactPhone'); }}
                     required
                   />
                   <TextInput
@@ -223,8 +305,8 @@ export default function OnboardingGate({ children }: { children: React.ReactNode
                     placeholder="jane@example.com"
                     ref={contactEmailRef}
                     value={emergencyContactEmail}
-                    error={fieldErrors.contactEmail}
-                    onChange={(e) => { setEmergencyContactEmail(e.currentTarget.value); setFieldErrors((f) => ({ ...f, contactEmail: undefined })); }}
+                    error={fieldErrors.emergencyContactEmail}
+                    onChange={(e) => { setEmergencyContactEmail(e.currentTarget.value); clearFieldError('emergencyContactEmail'); }}
                   />
                 </Stack>
               </Paper>

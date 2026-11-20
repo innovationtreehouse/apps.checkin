@@ -12,7 +12,7 @@ beforeEach(async () => {
 describeDb("receivingStateCounts", () => {
   it("is zero in every state for an org with no received receipts", async () => {
     expect((await receivingStateCounts()).map((s) => [s.state, s.count])).toEqual([
-      ["pending_review", 0], ["applying", 0], ["apply_failed", 0], ["resolved", 0],
+      ["pending_review", 0], ["applying", 0], ["apply_failed", 0], ["resolved", 0], ["closed_by_hand", 0],
     ]);
   });
 
@@ -22,7 +22,7 @@ describeDb("receivingStateCounts", () => {
     await makeReceipt({ state: "resolved" });
     await makeReceipt({ state: "applying", orgId: OTHER_ORG_ID });
     expect((await receivingStateCounts()).map((s) => [s.state, s.count])).toEqual([
-      ["pending_review", 0], ["applying", 2], ["apply_failed", 0], ["resolved", 1],
+      ["pending_review", 0], ["applying", 2], ["apply_failed", 0], ["resolved", 1], ["closed_by_hand", 0],
     ]);
   });
 });

@@ -62,7 +62,7 @@ describe('Membership Intake API', () => {
         await prisma.person.update({ where: { id: leadId }, data: { isHouseholdLead: true } });
 
         const nonLead = await prisma.person.create({
-            data: { email: `nonlead-${TAG}@example.com`, name: 'Non Lead', householdId: leadHouseholdId },
+            data: { email: `nonlead-${TAG}@example.com`, name: 'Non Lead', isDeclaredAdult: true, householdId: leadHouseholdId },
         });
         nonLeadId = nonLead.id;
 
@@ -181,7 +181,7 @@ describe('Membership Intake API', () => {
 
     it('intake start writes a CREATE audit and submit an EDIT audit, both bound to the lead', async () => {
         const lead = await prisma.person.create({
-            data: { email: `audit-lead-${TAG}@example.com`, name: 'Audit Lead', household: { create: { name: 'Audit Intake HH' } } },
+            data: { email: `audit-lead-${TAG}@example.com`, name: 'Audit Lead', isDeclaredAdult: true, household: { create: { name: 'Audit Intake HH' } } },
         });
         await prisma.person.update({ where: { id: lead.id }, data: { isHouseholdLead: true } });
         asUser(lead.id);

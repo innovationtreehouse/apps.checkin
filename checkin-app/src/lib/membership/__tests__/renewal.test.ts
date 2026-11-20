@@ -15,6 +15,7 @@ import { IN_FLIGHT_RENEWAL, handledThisCycleWhere } from '@/lib/membership/lifec
 const mockTx = {
     $queryRaw: jest.fn(),
     orgMembershipProcess: { findFirst: jest.fn(), updateMany: jest.fn() },
+    orgMembership: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
     auditLog: { create: jest.fn() },
 };
 
@@ -237,6 +238,20 @@ describe('beginRenewal', () => {
             expect(notifyReviewers).not.toHaveBeenCalled();
         });
 
+        it('confirming clears a "won\'t renew" note in the same transaction, with its audit row', async () => {
+            mockTx.orgMembership.updateMany.mockResolvedValueOnce({ count: 1 });
+
+            await beginRenewal(5, 42);
+
+            expect(mockTx.orgMembership.updateMany).toHaveBeenCalledWith({
+                where: { id: 9, notRenewingYear: { not: null } },
+                data: { notRenewingYear: null },
+            });
+            expect(mockTx.auditLog.create).toHaveBeenCalledWith({
+                data: expect.objectContaining({ tableName: 'OrgMembership', affectedEntityId: 9, newData: { notRenewingYear: null } }),
+            });
+        });
+
         it('a failed settle is logged and the committed renewal still returns', async () => {
             settleHouseholdBg.mockRejectedValueOnce(new Error('settle failed'));
 
@@ -250,6 +265,7 @@ describe('beginRenewal', () => {
             await beginRenewal(5, 42);
 
             expect(mockTx.auditLog.create).not.toHaveBeenCalled();
+            expect(mockTx.orgMembership.updateMany).not.toHaveBeenCalled();
             expect(settleHouseholdBg).not.toHaveBeenCalled();
             expect(applyVolunteerFamilyStatus).not.toHaveBeenCalled();
             expect(notifyReviewers).not.toHaveBeenCalled();

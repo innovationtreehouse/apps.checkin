@@ -3,7 +3,7 @@ import { db } from "../../db";
 import { runFullFlow } from "../../lib/receipt-flow";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
-import { ALICE, BOB, FINANCE, actAs, actions, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile } from "../helpers/setup";
+import { ALICE, BOB, FINANCE, actAs, actions, clearAll, configure, manualDetails, recordingPorts, stateOf, textFile, uploadRead } from "../helpers/setup";
 
 /** Makes Postgres refuse every audit row with one of these actions, whichever client writes it. */
 async function failAudit(...actionNames: string[]): Promise<void> {
@@ -31,7 +31,7 @@ afterEach(async () => {
 /** ALICE's receipt, never pushed, moved straight to `state`. */
 async function aliceReceiptIn(state: string): Promise<string> {
   actAs(ALICE);
-  const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptTotal: "25.00" }) });
+  const r = await uploadRead(textFile(), "text/plain", { details: manualDetails({ receiptTotal: "25.00" }) });
   await db.receiptDetail.update({ where: { id: r.id }, data: { state } });
   return r.id;
 }
@@ -48,9 +48,9 @@ async function heldPair() {
   const file = textFile();
   const details = manualDetails({ receiptDate: "2999-01-01" });
   actAs(ALICE);
-  const original = await receiptService.upload(file, "text/plain", { details });
+  const original = await uploadRead(file, "text/plain", { details });
   actAs(BOB);
-  const flagged = await receiptService.upload(file, "text/plain", { details });
+  const flagged = await uploadRead(file, "text/plain", { details });
   expect([original.state, flagged.state]).toEqual(["financial_review", "duplicate_flagged"]);
   return { original, flagged };
 }

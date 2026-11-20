@@ -2,6 +2,7 @@ import type { PrismaClient } from "@/generated/prisma/client";
 import { addHouseholdLead } from "@/lib/household/leads";
 import { KEY_VOLUNTEER_GATED_FLAGS, setRoleFlag, type RoleFlag } from "@/lib/roles";
 import { systemActor } from "@/lib/auditActor";
+import { programNameFields } from "@/lib/programs/nameKey";
 import { createKva, currentKvaVersion, findOpenKva, hasSignedCurrentKva } from "@/lib/membership/keyVolunteerProcess";
 import { mintPersonId } from "@/lib/person/mintId";
 import { withTx } from "@/lib/db-client";
@@ -110,7 +111,7 @@ export async function seedBaseline(prisma: Db): Promise<void> {
     // 2. The debug personas (solo personas get a single-person household of their own)
     const isBoardMember = await prisma.person.upsert({
         where: { email: "boardmember@example.com" },
-        update: { name: "Board Member", phone: "555-555-0001", isSysadmin: true, isBoardMember: true, isDeclaredAdult: true },
+        update: { name: "Board Member", phone: "555-555-0001", isSysadmin: true, isBoardMember: true, isDeclaredAdult: true, lastBackgroundCheck: new Date() },
         create: {
             email: "boardmember@example.com",
             name: "Board Member",
@@ -118,6 +119,7 @@ export async function seedBaseline(prisma: Db): Promise<void> {
             isSysadmin: true,
             isBoardMember: true,
             isDeclaredAdult: true,
+            lastBackgroundCheck: new Date(),
             household: { create: { name: "Board Member Household" } },
         },
     });
@@ -128,22 +130,24 @@ export async function seedBaseline(prisma: Db): Promise<void> {
 
     const parentFamily = await prisma.person.upsert({
         where: { email: "parent.family@example.com" },
-        update: { name: "Parent Family", phone: "555-555-0002" },
+        update: { name: "Parent Family", phone: "555-555-0002", isDeclaredAdult: true },
         create: {
             email: "parent.family@example.com",
             name: "Parent Family",
             phone: "555-555-0002",
+            isDeclaredAdult: true,
             householdId: household1.id,
         },
     });
 
     const parent2Family = await prisma.person.upsert({
         where: { email: "parent2.family@example.com" },
-        update: { name: "Parent2 Family", phone: "555-555-0003" },
+        update: { name: "Parent2 Family", phone: "555-555-0003", isDeclaredAdult: true },
         create: {
             email: "parent2.family@example.com",
             name: "Parent2 Family",
             phone: "555-555-0003",
+            isDeclaredAdult: true,
             householdId: household1.id,
         },
     });
@@ -161,22 +165,24 @@ export async function seedBaseline(prisma: Db): Promise<void> {
 
     const parentFamily2 = await prisma.person.upsert({
         where: { email: "parent.family2@example.com" },
-        update: { name: "Parent Family2", phone: "555-555-0004" },
+        update: { name: "Parent Family2", phone: "555-555-0004", isDeclaredAdult: true },
         create: {
             email: "parent.family2@example.com",
             name: "Parent Family2",
             phone: "555-555-0004",
+            isDeclaredAdult: true,
             householdId: household2.id,
         },
     });
 
     const parentFamily3 = await prisma.person.upsert({
         where: { email: "parent.family3@example.com" },
-        update: { name: "Parent Family3", phone: "555-555-0010" },
+        update: { name: "Parent Family3", phone: "555-555-0010", isDeclaredAdult: true },
         create: {
             email: "parent.family3@example.com",
             name: "Parent Family3",
             phone: "555-555-0010",
+            isDeclaredAdult: true,
             householdId: household3.id,
         },
     });
@@ -293,6 +299,20 @@ export async function seedBaseline(prisma: Db): Promise<void> {
         },
     });
 
+    // Created a new household and owes its first age: signing in as them shows the age step.
+    const ageStep = await prisma.person.upsert({
+        where: { email: "age.step@example.com" },
+        update: { name: "Age Step", dateOfBirth: null, isDeclaredAdult: false, ageStepPending: true },
+        create: {
+            email: "age.step@example.com",
+            name: "Age Step",
+            phone: "555-555-0016",
+            ageStepPending: true,
+            household: { create: { name: "Age Step Household" } },
+        },
+    });
+    await addHouseholdLead(prisma, ageStep.householdId, ageStep.id);
+
     // 3. Household assignments & leads
     await prisma.person.update({ where: { id: parentFamily.id }, data: { householdId: household1.id } });
     await prisma.person.update({ where: { id: parent2Family.id }, data: { householdId: household1.id } });
@@ -343,16 +363,10 @@ export async function seedBaseline(prisma: Db): Promise<void> {
     }
 
     // 4. Tools & certifications
-    const tableSaw = await prisma.tool.upsert({
-        where: { id: 1 },
-        update: { name: "Table Saw" },
-        create: { name: "Table Saw", safetyGuide: "https://example.com/table-saw-safety" },
-    });
-    const drillPress = await prisma.tool.upsert({
-        where: { id: 2 },
-        update: { name: "Drill Press" },
-        create: { name: "Drill Press", safetyGuide: "https://example.com/drill-press-safety" },
-    });
+    const tool = async (name: string, safetyGuide: string) =>
+        (await prisma.tool.findFirst({ where: { name } })) ?? prisma.tool.create({ data: { name, safetyGuide } });
+    const tableSaw = await tool("Table Saw", "https://example.com/table-saw-safety");
+    const drillPress = await tool("Drill Press", "https://example.com/drill-press-safety");
     await prisma.toolStatus.upsert({
         where: { personId_toolId: { personId: certifiedAdult.id, toolId: tableSaw.id } },
         update: { level: "CERTIFIED" },
@@ -389,7 +403,7 @@ export async function seedBaseline(prisma: Db): Promise<void> {
         const endAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
         await prisma.program.create({
             data: {
-                name: "Woodworking 101",
+                ...programNameFields("Woodworking 101"),
                 leadMentorId: isBoardMember.id,
                 startAt,
                 endAt,
@@ -483,6 +497,7 @@ async function seedProgramSpread(prisma: Db): Promise<void> {
         const program = await prisma.program.create({
             data: {
                 ...fields,
+                ...programNameFields(fields.name),
                 leadMentorId: leadId,
                 appliesToYear: await seedProgramYear(prisma, spec.startAt, spec.endAt),
                 maxParticipants: spec.maxParticipants ?? 20,
@@ -518,21 +533,23 @@ async function seedProgramSpread(prisma: Db): Promise<void> {
     }
 }
 
-// The spread's own people, apart from the flow-test personas: a lead, and a
-// member household whose two youths fill the enrolled programs.
+// The spread's own people: a lead, an ACTIVE member cleared today who may be named
+// to a new program, and a member household whose two youths fill the enrolled programs.
 async function seedProgramPeople(prisma: Db): Promise<{ leadId: number; youthIds: number[] }> {
     const lead = await prisma.person.upsert({
         where: { email: "program.lead@example.com" },
-        update: {},
+        update: { lastBackgroundCheck: new Date() },
         create: {
             email: "program.lead@example.com",
             name: "Program Lead",
             phone: "555-555-0014",
             dateOfBirth: yearsAgo(45),
+            lastBackgroundCheck: new Date(),
             household: { create: { name: "Program Lead Household", orgMembership: { create: { status: "ACTIVE" } } } },
         },
     });
     await addHouseholdLead(prisma, lead.householdId, lead.id);
+    await seedEmergencyContact(prisma, lead.householdId);
 
     const parent = await prisma.person.upsert({
         where: { email: "program.family@example.com" },
@@ -612,7 +629,7 @@ export async function createProgram(prisma: Db): Promise<string> {
     const endAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
     const program = await prisma.program.create({
         data: {
-            name: `Test Program ${tag}`,
+            ...programNameFields(`Test Program ${tag}`),
             startAt,
             endAt,
             appliesToYear: await seedProgramYear(prisma, startAt, endAt),

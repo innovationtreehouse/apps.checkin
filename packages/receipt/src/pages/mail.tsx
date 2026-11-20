@@ -14,12 +14,23 @@ interface MailItem {
   status: string;
   holdReason: string | null;
   dmarcVerdict: string | null;
-  mimeType: string;
+  mimeType: string | null;
+  /** Set on a message's refusal note, which names what was not accepted and keeps no file. */
+  refusal: { file: string; reason: string }[] | null;
 }
+
+const REFUSED_FILES: Record<string, string> = {
+  wrong_type: "An attachment we can't read",
+  forwarded: "An email attached as a file, which we don't open",
+  too_large: "A file over the 10 MB limit",
+  empty: "An empty file",
+  no_amount: "Text that names no amount",
+};
 
 const HOLD_REASONS: Record<string, string> = {
   unverified_sender: "Sender could not be verified: the mail may not be from this address",
   not_a_submitter: "Verified sender, but no one who may submit receipts uses this address",
+  side_copy: "A submitter's reply to one of our notices, or a copy with the receipt mailbox only in Cc: the sender was not replied to",
 };
 
 const DMARC_VERDICTS: Record<string, string> = {
@@ -89,13 +100,22 @@ function MailItemCard({ item, onDone }: { item: MailItem; onDone: () => void }) 
         </Group>
         {item.status === "held" && <Text size="sm">{HOLD_REASONS[item.holdReason ?? ""] ?? "Reason not recorded"}</Text>}
         <Text size="sm">{DMARC_VERDICTS[item.dmarcVerdict ?? ""] ?? "Sender check: not recorded"}</Text>
-        <ReceiptFile src={`${BASE}${path}/file`} mimeType={item.mimeType} />
+        {item.refusal ? (
+          <Stack gap={4}>
+            {item.refusal.map((r) => (
+              <Text key={`${r.reason}:${r.file}`} size="sm">{REFUSED_FILES[r.reason] ?? "A file we did not accept"} ({r.file})</Text>
+            ))}
+            <Text size="sm" c="dimmed">Nothing was kept: find the email in the mailbox by its sender and date, or discard this.</Text>
+          </Stack>
+        ) : (
+          item.mimeType && <ReceiptFile src={`${BASE}${path}/file`} mimeType={item.mimeType} />
+        )}
         {item.status === "deferred" && (
           <Group>
             <Button onClick={() => act("assign", { release: true }, "Released", "Couldn't release this mail")}>Release now as the sender</Button>
           </Group>
         )}
-        <Group align="end">
+        {!item.refusal && <Group align="end">
           <TextInput label="Assign to (sign-in email)" value={email} onChange={(e) => setEmail(e.currentTarget.value)} style={{ flex: 1 }} />
           <Button disabled={!email.trim()} onClick={() => act("assign", { email }, "Receipt created", "Couldn't assign this mail")}>Assign</Button>
           {item.status === "held" && item.dmarcVerdict === "pass" && (
@@ -107,21 +127,23 @@ function MailItemCard({ item, onDone }: { item: MailItem; onDone: () => void }) 
               Assign and remember this address as theirs
             </Button>
           )}
-        </Group>
-        {item.status === "held" && item.dmarcVerdict !== "pass" && (
+        </Group>}
+        {!item.refusal && item.status === "held" && item.dmarcVerdict !== "pass" && (
           <Text size="sm" c="dimmed">This address can&apos;t be remembered as the assignee&apos;s: its sender check did not pass.</Text>
         )}
         <Group align="end">
           <TextInput label="Discard reason" value={reason} onChange={(e) => setReason(e.currentTarget.value)} style={{ flex: 1 }} />
           <Button color="red" variant="light" disabled={!reason.trim()} onClick={() => act("discard", { reason }, "Discarded", "Couldn't discard this mail")}>Discard</Button>
-          <Button
-            color="red"
-            variant="subtle"
-            disabled={!reason.trim()}
-            onClick={() => act("discard", { reason, ignoreFile: true }, "Discarded; this file is ignored from now on", "Couldn't discard and ignore this file")}
-          >
-            Discard and ignore this file from now on
-          </Button>
+          {!item.refusal && (
+            <Button
+              color="red"
+              variant="subtle"
+              disabled={!reason.trim()}
+              onClick={() => act("discard", { reason, ignoreFile: true }, "Discarded; this file is ignored from now on", "Couldn't discard and ignore this file")}
+            >
+              Discard and ignore this file from now on
+            </Button>
+          )}
         </Group>
       </Stack>
     </Paper>

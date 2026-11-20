@@ -40,7 +40,7 @@ defineRoute({
     orderedView: [
         [
             'authenticated',
-            ['their_own:pii', 'their_own:personal', 'their_own:internal', 'member', 'public'],
+            ['their_own:pii', 'their_own:personal', 'their_own:internal', 'public'],
         ],
     ],
 });
@@ -67,7 +67,7 @@ defineRoute({
     // Bag: { Visit }.
     returns: ['Visit'],
     orderedView: [
-        ['authenticated', ['their_own:personal', 'led_households:personal', 'member', 'public']],
+        ['authenticated', ['their_own:personal', 'led_households:personal', 'public']],
     ],
 });
 
@@ -171,13 +171,17 @@ defineRoute({
     // → emergencyContacts EmergencyContact), events (Event), leadMentor (Person);
     // and { ProgramRosterAge }, each roster person's age at the program's start.
     returns: ['Program', 'ProgramParticipant', 'ProgramVolunteer', 'Person', 'Household', 'EmergencyContact', 'Event', 'ProgramRosterAge'],
+    // Each roster row says who is enrolled, though its fields are public tier:
+    // only staff and an enrolled household receive these rows. The catalog fields and
+    // _count (spots remaining) stay public.
+    rosterModels: ['ProgramParticipant', 'ProgramVolunteer', 'ProgramRosterAge'],
     orderedView: [
-        ['isSysadmin',             ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
-        ['isBoardMember',          ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
+        ['isSysadmin',             ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public', 'roster']],
+        ['isBoardMember',          ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public', 'roster']],
         // Finance reads every roster to enroll places paid outside the store:
         // the Board's view less 'internal', which the
         // roster does not show (Person.isDeclaredAdult is the only such field here).
-        ['isFinance',              ['everyones:pii', 'everyones:personal', 'member', 'public']],
+        ['isFinance',              ['everyones:pii', 'everyones:personal', 'member', 'public', 'roster']],
         // their_program_households delivers the household band leads operationally
         // need: the family's emergency contacts (personal) and the parents' own
         // contact details (pii). Person binds this scope ONLY on isHouseholdLead
@@ -197,13 +201,14 @@ defineRoute({
                                   'their_program_participants:personal',
                                   'their_program_households:pii',
                                   'their_program_households:personal',
-                                  'member', 'public']],
+                                  'member', 'public', 'roster']],
         ['programCoreVolunteer', ['their_program_participants:pii',
                                   'their_program_participants:personal',
                                   'their_program_households:pii',
                                   'their_program_households:personal',
-                                  'member', 'public']],
-        ['authenticated',        ['their_own:pii', 'their_own:personal', 'member', 'public']],
+                                  'member', 'public', 'roster']],
+        ['programEnrolledHousehold', ['their_own:pii', 'their_own:personal', 'public', 'roster']],
+        ['authenticated',        ['their_own:pii', 'their_own:personal', 'public']],
         ['anyone',               ['public']],
     ],
 });
@@ -242,7 +247,7 @@ defineRoute({
                            'their_program_participants:personal',
                            'their_own:pii',
                            'their_own:personal',
-                           'member', 'public']],
+                           'public']],
     ],
 });
 
@@ -336,10 +341,10 @@ defineRoute({
     endpoint: 'GET /api/membership-ops/applications',
     authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
     envelope: 'processes',
-    // Bag: { OrgMembershipProcess } with attestations (BackgroundCheckAttestation),
-    // membership (OrgMembership → household Household → householdMembers Person,
-    // leads flagged isHouseholdLead).
-    returns: ['OrgMembershipProcess', 'BackgroundCheckAttestation', 'OrgMembership', 'Household', 'Person'],
+    // Bag: { MembershipApplicationRow } with attestations (BackgroundCheckAttestation),
+    // subjectPerson (Person), membership (OrgMembership → household Household →
+    // householdMembers Person, leads flagged isHouseholdLead).
+    returns: ['MembershipApplicationRow', 'BackgroundCheckAttestation', 'OrgMembership', 'Household', 'Person'],
     orderedView: [
         ['isSysadmin',    ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
         ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
@@ -358,9 +363,6 @@ defineRoute({
 // is derived from OrgMembershipProcess.status, so a blocked or in-flight
 // application is observable in the response even though the column itself
 // never reaches the wire.
-//
-// Registered ahead of its handler() conversion; inert until the route
-// serves it.
 defineRoute({
     endpoint: 'GET /api/membership-ops/volunteer-memberships',
     authorize: { anyRole: ['isSysadmin', 'isBoardMember'] },
@@ -529,7 +531,7 @@ defineRoute({
     // Bag: { TrustedAdult } with reviews (TrustedAdultReview).
     returns: ['TrustedAdult', 'TrustedAdultReview'],
     orderedView: [
-        ['authenticated', ['their_households:pii', 'their_households:personal', 'their_households:internal', 'member', 'public']],
+        ['authenticated', ['their_households:pii', 'their_households:personal', 'their_households:internal', 'public']],
     ],
 });
 
@@ -568,7 +570,7 @@ defineRoute({
         // Catch-all: program leads (and household members) match here. Scopes are
         // per-row, so a caller only receives 'personal' on rows where they hold
         // their_program_households (a kid in their program) or their_households.
-        ['authenticated', ['their_program_households:personal', 'their_households:personal', 'member', 'public']],
+        ['authenticated', ['their_program_households:personal', 'their_households:personal', 'public']],
     ],
 });
 
@@ -655,12 +657,13 @@ defineRoute({
 // membership + household nested. Board/finance only, no sysadmin, and they hold
 // everyones:* so they see every field — the win is the declared policy: any role
 // later added to this view is field-stripped automatically. everyones:hardship is
-// the request itself; only Board and finance views hold it.
+// the request itself; only Board and finance views hold it. BoardSettings carries
+// orgMembershipYearBoundary alone, the year cutoff after which approval is refused.
 defineRoute({
     endpoint: 'GET /api/finance-ops/membership-payment-plans',
     authorize: 'finance-or-board',
     envelope: null,
-    returns: ['OrgMembershipProcess', 'OrgMembership', 'Household', 'Person'],
+    returns: ['OrgMembershipProcess', 'OrgMembership', 'Household', 'Person', 'BoardSettings'],
     orderedView: [
         ['isFinance',     ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
         ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'everyones:hardship', 'member', 'public']],
@@ -741,6 +744,7 @@ defineRoute({
     orderedView: [
         ['isSysadmin',    ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
         ['isBoardMember', ['everyones:pii', 'everyones:personal', 'everyones:internal', 'member', 'public']],
+        // Tool levels are public by design (posted in the shop), so every signed-in caller sees them.
         ['authenticated', ['member', 'public']],
     ],
 });
@@ -961,7 +965,7 @@ defineRoute({
     // Bag: { Visit } with event (Event).
     returns: ['Visit', 'Event'],
     orderedView: [
-        ['authenticated', ['their_own:personal', 'member', 'public']],
+        ['authenticated', ['their_own:personal', 'public']],
     ],
 });
 
@@ -993,16 +997,22 @@ defineRoute({
 
 // My Household: the caller's household, its members and its membership status.
 // Any session is admitted, a caller with no household included (household null);
-// every sensitive field is gated to the caller's own household.
+// every sensitive field is gated to the caller's own household. A peer's
+// background-check status reaches only that person and a lead of their household
+// (their_own / led_households on HouseholdPeerBgStatus). A sysadmin counts as a
+// lead of their own household (householdLeadship's canManage), so a non-lead
+// sysadmin member reads it there too.
 defineRoute({
     endpoint: 'GET /api/household',
     authorize: 'authenticated',
     envelope: null,
     // Bag: { HouseholdPage } with household (HouseholdPageHousehold →
-    // householdMembers HouseholdPeer, orgMembership OrgMembership).
-    returns: ['HouseholdPage', 'HouseholdPageHousehold', 'HouseholdPeer', 'OrgMembership'],
+    // householdMembers HouseholdPeer → bgStatus HouseholdPeerBgStatus,
+    // orgMembership OrgMembership).
+    returns: ['HouseholdPage', 'HouseholdPageHousehold', 'HouseholdPeer', 'HouseholdPeerBgStatus', 'OrgMembership'],
     orderedView: [
-        ['authenticated', ['their_households:pii', 'their_households:personal', 'their_households:internal', 'member', 'public']],
+        // 'member' carries HouseholdPage.boardReplyTo, the address a locked email's help names.
+        ['authenticated', ['their_households:pii', 'their_households:personal', 'their_households:internal', 'their_own:internal', 'led_households:internal', 'member', 'public']],
     ],
 });
 
@@ -1019,6 +1029,31 @@ defineRoute({
     orderedView: [
         ['authenticated', ['their_households:pii', 'their_households:personal', 'their_households:internal', 'member', 'public']],
     ],
+});
+
+// A household lead says the household won't renew into the year the next
+// renewal run opens (POST), or takes that back (DELETE). Any session is
+// admitted; the service refuses anyone but a lead of an active household. Each
+// returns the household's OrgMembership under GET /api/household's view, minus
+// the peer background-check status scopes.
+const NOT_RENEWING_VIEW: readonly OrderedViewEntry[] = [
+    ['authenticated', ['their_households:pii', 'their_households:personal', 'their_households:internal', 'member', 'public']],
+];
+
+defineRoute({
+    endpoint: 'POST /api/membership/not-renewing',
+    authorize: 'authenticated',
+    envelope: null,
+    returns: ['OrgMembership'],
+    orderedView: NOT_RENEWING_VIEW,
+});
+
+defineRoute({
+    endpoint: 'DELETE /api/membership/not-renewing',
+    authorize: 'authenticated',
+    envelope: null,
+    returns: ['OrgMembership'],
+    orderedView: NOT_RENEWING_VIEW,
 });
 
 // App-localization singleton (timezone/locale) — sysadmin-only surface,

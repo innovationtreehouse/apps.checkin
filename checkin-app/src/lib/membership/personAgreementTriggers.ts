@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { logger } from "@/lib/logger";
 import { calculateAge, orgCalendarDay } from "@/lib/time";
 import { renewalWindow } from "@/lib/membership/renewal";
 import { ENROLLED_PARTICIPANT, recentProgramWhere } from "@/lib/person/filters";
@@ -139,7 +140,7 @@ export async function openPersonAgreement(
             },
         });
         return created;
-    });
+    }, { maxWait: 5_000, timeout: 15_000 });
 }
 
 /** The caller's own open agreement, if any — the process they sign on /membership. */
@@ -180,16 +181,22 @@ export function autoPopulationWhere(now: Date) {
  */
 export async function runPersonAgreementSweep(now: Date) {
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
-    if (!settings?.orgMembershipYearBoundary) return { opened: 0, reason: "no membership-year boundary configured" };
+    if (!settings?.orgMembershipYearBoundary) return { opened: 0, failed: 0, reason: "no membership-year boundary configured" };
 
     const floor = agreementCycleFloor(settings.orgMembershipYearBoundary, now);
     const people = await prisma.person.findMany({ where: { ...autoPopulationWhere(now) }, select: { id: true } });
 
     let opened = 0;
+    let failed = 0;
     for (const p of people) {
-        if (await openPersonAgreement(p.id, now, floor)) opened++;
+        try {
+            if (await openPersonAgreement(p.id, now, floor)) opened++;
+        } catch (err) {
+            failed++;
+            logger.error(`Failed to open an individual membership agreement for person ${p.id}:`, err);
+        }
     }
-    return { opened, floor: floor.toISOString() };
+    return { opened, failed, floor: floor.toISOString() };
 }
 
 /**

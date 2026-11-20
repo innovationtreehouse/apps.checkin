@@ -22,7 +22,7 @@ import { personNamesById } from "@/lib/person/archivedPeople";
  *     scholarships) that an auditor must see separated, not buried.
  *
  * "Should reconcile" is decided by VARIANT ID, the same key the storefront
- * links are built from: BoardSettings holds the membership variants, Program
+ * links are built from: MembershipYearVariant rows hold the membership variants, Program
  * rows hold the program variants. An order with none of those variants on any
  * line (donation, t-shirt) is out of scope by design and never reported.
  *
@@ -73,6 +73,8 @@ export type EnrollmentBucket =
     | "ORDER_MATCHED"
     | "SCHOLARSHIP_APPROVED"
     | "ADMIN_COMPED"
+    // Enrolled by hand by the Board or Finance for a payment made outside the store.
+    | "PAID_OUTSIDE_STORE"
     | "ORDER_NOT_IN_MIRROR"
     | "PRE_MIRROR"
     | "ORDER_REVERSED"
@@ -132,7 +134,7 @@ export async function runMatchAudit(): Promise<MatchAuditResult> {
     const [settings, programs, variantCoverage] = await Promise.all([
         prisma.boardSettings.findUnique({
             where: { id: 1 },
-            select: { orgMembershipVariantId: true, orgMembershipYearBoundary: true },
+            select: { orgMembershipYearBoundary: true },
         }),
         prisma.program.findMany({
             select: { id: true, name: true, shopifyVariantId: true, claimantShopifyVariantId: true },
@@ -286,6 +288,7 @@ export async function runMatchAudit(): Promise<MatchAuditResult> {
                 personId: true,
                 shopifyOrderId: true,
                 wasOrgMemberAtApproval: true,
+                enrollmentBasis: true,
                 program: { select: { name: true } },
                 person: { select: { name: true } },
             },
@@ -441,7 +444,9 @@ export async function runMatchAudit(): Promise<MatchAuditResult> {
                     : "ORDER_MATCHED"
             : e.wasOrgMemberAtApproval != null
                 ? "SCHOLARSHIP_APPROVED"
-                : createdActive(e)
+                : e.enrollmentBasis === "OUTSIDE_PAYMENT"
+                    ? "PAID_OUTSIDE_STORE"
+                    : e.enrollmentBasis === "COMP" || createdActive(e)
                     ? "ADMIN_COMPED"
                     : "NO_PAYMENT_BASIS";
         const bucket: EnrollmentBucket =

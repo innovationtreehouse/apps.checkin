@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { kindOf } from "@checkin/component-kit";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { QboRequestError, QuickBooksClient, WRITABLE_ENTITIES, appKeyOf, assertAppKey, qbKey, type TxnWrite, type WriteRequest } from "../client";
+import { QboRequestError, QboThrottledError, QuickBooksClient, WRITABLE_ENTITIES, appKeyOf, assertAppKey, isThrottled, qbKey, type TxnWrite, type WriteRequest } from "../client";
 import { createVendor, findOrCreate, findOrCreateInKindJournal, postFailure, postFailureError, type FindOrCreateRequest, type InKindJournalRequest } from "../write";
 import type { AccessTokenSource, QboDeposit } from "../types";
 import { CREATE } from "../internal";
@@ -205,7 +205,7 @@ describe("request limits", () => {
     for (const [, init] of fetchMock.mock.calls) expect((init as RequestInit).signal).toBeInstanceOf(AbortSignal);
   });
 
-  it("retries a 429 once after Retry-After, with the same requestid", async () => {
+  it("retries a 429 once after the pacer's Retry-After pause, with the same requestid", async () => {
     fetchMock
       .mockResolvedValueOnce(new Response("", { status: 429, headers: { "Retry-After": "0" } }))
       .mockResolvedValueOnce(json({ Deposit: { Id: "5" } }));
@@ -213,14 +213,25 @@ describe("request limits", () => {
     expect(posts().map((c) => c.url.searchParams.get("requestid"))).toEqual([KEY, KEY]);
   });
 
-  it("fails on a second 429, as a system failure", async () => {
+  it("throws QboThrottledError on a second 429, as a system failure with its resume time", async () => {
     fetchMock
       .mockResolvedValueOnce(new Response("", { status: 429, headers: { "Retry-After": "0" } }))
       .mockResolvedValueOnce(new Response("", { status: 429, headers: { "Retry-After": "0" } }));
     const err = await client()[CREATE](deposit, KEY).catch((e: unknown) => e);
     expect(String(err)).toMatch(/failed 429/);
     expect(kindOf(err)).toBe("system");
+    expect(err).toBeInstanceOf(QboThrottledError);
+    expect(err).toMatchObject({ status: 429, resumeAt: expect.any(Date) });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("findOrCreate marks a create throttled twice as a throttled failure; no other failure is", async () => {
+    const throttled = new Response("", { status: 429, headers: { "Retry-After": "0" } });
+    fetchMock.mockResolvedValueOnce(rows("Deposit", [])).mockResolvedValueOnce(prefs()).mockResolvedValueOnce(throttled).mockResolvedValueOnce(throttled.clone());
+    expect(await findOrCreate(client(), req())).toMatchObject({ kind: "failed", throttled: true, onCreate: true });
+    expect(isThrottled(new QboRequestError("QBO query failed 429", 429, null, []))).toBe(true);
+    expect(isThrottled(new QboRequestError("QBO query failed 503", 503, null, []))).toBe(false);
+    expect(postFailure(new QboRequestError("QBO create failed 503", 503, null, []))).not.toHaveProperty("throttled");
   });
 
   it("logs each refusal once with its lane, operation, status, codes and request id, never the fault text", async () => {

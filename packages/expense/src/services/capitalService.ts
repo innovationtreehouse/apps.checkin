@@ -1,5 +1,6 @@
 // Capital review, depreciation cycle and the ITFA capital register (FE4). FINANCE only.
 import { z } from "zod";
+import type { ExpenseLineItem, Prisma } from "../generated/prisma/client";
 import { db } from "../db";
 import type { ExpensePrincipal } from "../contract";
 import { getOrgId } from "../runtime";
@@ -7,40 +8,18 @@ import { actorOf } from "../lib/caller";
 import { writeAudit, writeOrgAudit } from "../lib/audit";
 import { dropHandSetAccount } from "../lib/account-types";
 import { drainExpense } from "../lib/financial-flow";
-import { advanceWorkflowInTx } from "../lib/workflow-engine";
-import { formatItfa, fullyDepreciatedDate, nextItfaSeq, parseItfa } from "../lib/capital-register";
+import { advanceWorkflowInTx, type Actor } from "../lib/workflow-engine";
+import { formatItfa, fullyDepreciatedDate, linkAssets, parseItfa, raiseHighestIssued, registerAssets, seedCollision, unitCosts, unitsOf, type SeedColumns } from "../lib/capital-register";
+import { bookedLineCents } from "../qb-write";
+import { reimburseeUnknown } from "../lib/signoff";
 import { assertExpectedState, isLegalTransition } from "../workflows/expense.invariants";
 import { NEUTRAL_CONTEXT } from "../workflows/expense.guards";
 import { createExpenseRepository } from "../repositories/expense";
-import { requireFinance, requireLiveBuckets } from "./approvalService";
+import { requireFinance } from "./approvalService";
+import { capitalWaitsOn, designate, setPeriod, type CapitalLineStore, type CapitalReviewInput, type SetDepreciationCycleInput } from "./capitalReview";
 import { ServiceError } from "@checkin/component-kit";
 
 const expenseRepo = createExpenseRepository(db);
-
-export const CapitalReviewSchema = z.object({
-  lineItems: z
-    .array(
-      z.object({
-        lineItemId: z.number().int().positive(),
-        isCapital: z.boolean(),
-        capitalOwnerId: z.number().int().positive().nullable().optional(),
-        depreciationYears: z.number().int().positive().nullable().optional(),
-      }).strict(),
-    )
-    .min(1),
-}).strict();
-
-export const SetDepreciationCycleSchema = z.object({
-  items: z
-    .array(
-      z.object({
-        lineItemId: z.number().int().positive(),
-        depreciationYears: z.number().int().positive(),
-        ownerId: z.number().int().positive(),
-      }),
-    )
-    .min(1),
-});
 
 /** One physical asset per record; the producer expands QB ranges/lists to individual numbers. */
 export const CapitalSeedSchema = z.array(z.object({
@@ -51,138 +30,101 @@ export const CapitalSeedSchema = z.array(z.object({
   depreciationYears: z.number().int().positive().nullable().optional(),
   parentAssetNumber: z.string().max(20).nullable().optional(),
   sourceQbTxnId: z.string().max(100).nullable().optional(),
+  sourceQbTxnEntity: z.enum(["Bill", "Purchase"]).nullable().optional(),
 })).min(1).max(2000);
 
 async function loadExpense(expenseId: string, eventType: string, stateName: string) {
   const expense = await expenseRepo.findExpenseById(expenseId, await getOrgId());
   if (!expense) throw new ServiceError(404, "Expense not found");
   if (!isLegalTransition(expense.state, eventType)) throw new ServiceError(400, `Expense is not in ${stateName} state`);
+  if (reimburseeUnknown(expense)) throw new ServiceError(409, "The reimbursee is unknown; FINANCE sets it before capital review");
   return expense;
+}
+
+/** Binds the capital review to an expense's lines, its audit log and its state, inside its transaction. */
+function expenseLineStore(tx: Prisma.TransactionClient, actor: Actor, expenseId: string) {
+  let rows = new Map<number, ExpenseLineItem>();
+  const store: CapitalLineStore = {
+    async lines() {
+      const found = await tx.expenseLineItem.findMany({ where: { expenseId } });
+      rows = new Map(found.map((r) => [r.id, r]));
+      return found.map((r) => ({ id: r.id, isCapital: r.isCapital, ownerId: r.capitalOwnerId, depreciationYears: r.depreciationYears }));
+    },
+    async save(step, line, before) {
+      if (step === "designated" && before.isCapital !== line.isCapital) await dropHandSetAccount(tx, actor, expenseId, rows.get(line.id)!);
+      await tx.expenseLineItem.update({
+        where: { id: line.id, expenseId },
+        data: { isCapital: line.isCapital, capitalOwnerId: line.ownerId, depreciationYears: line.depreciationYears },
+      });
+      await writeAudit(tx, actor, step === "designated"
+        ? { expenseId, action: "capital_designation_set", lineItemId: line.id, valueAfter: line.isCapital ? "capital" : "non_capital" }
+        : { expenseId, action: "depreciation_cycle_set", lineItemId: line.id, valueAfter: `${line.depreciationYears}y/owner:${line.ownerId}` });
+    },
+    // The only move out of capital_review and set_depreciation_cycle; it lands where the lines say.
+    async afterStep(step) {
+      const lines = await store.lines();
+      const waitsOn = capitalWaitsOn(lines);
+      const landsIn = waitsOn === "designation" ? "capital_review" : waitsOn === "period" ? "set_depreciation_cycle" : "qb_pending";
+      const currentState = step === "designated" ? "capital_review" : "set_depreciation_cycle";
+      const event = step === "designated"
+        ? { type: "CAPITAL_REVIEW_SUBMITTED" as const, hasCapitalItems: lines.some((l) => l.isCapital) }
+        : { type: "DEPRECIATION_SET" as const };
+      assertExpectedState(currentState, event, NEUTRAL_CONTEXT, landsIn);
+      await advanceWorkflowInTx(tx, {
+        expenseId,
+        currentState,
+        event,
+        actor,
+        action: step === "designated" ? "capital_review_submitted" : "depreciation_cycle_set",
+      });
+    },
+  };
+  return { store, rows: () => [...rows.values()] };
 }
 
 export async function submitCapitalReview(
   principal: ExpensePrincipal,
   expenseId: string,
-  input: z.infer<typeof CapitalReviewSchema>,
+  input: CapitalReviewInput,
 ): Promise<void> {
   requireFinance(principal);
   const actor = actorOf(principal);
   const expense = await loadExpense(expenseId, "CAPITAL_REVIEW_SUBMITTED", "capital_review");
-  const { lineItems } = input;
 
-  const submittedIds = new Set(lineItems.map((li) => li.lineItemId));
-  for (const { id } of await expenseRepo.listLineItemIds(expenseId)) {
-    if (!submittedIds.has(id)) throw new ServiceError(400, `Missing designation for line item ${id}`);
-  }
-  await requireLiveBuckets(lineItems.flatMap((li) => (li.isCapital && li.capitalOwnerId != null ? [li.capitalOwnerId] : [])));
+  await db.$transaction((tx) => designate(expenseLineStore(tx, actor, expenseId).store, input));
 
-  const hasAnyCapital = lineItems.some((li) => li.isCapital);
-  const event = { type: "CAPITAL_REVIEW_SUBMITTED" as const, hasCapitalItems: hasAnyCapital };
-  const nextState = hasAnyCapital ? "set_depreciation_cycle" : "qb_pending";
-  assertExpectedState("capital_review", event, NEUTRAL_CONTEXT, nextState);
-
-  // Line item writes, audit records, and state transition are a single atomic unit.
-  await db.$transaction(async (tx) => {
-    const before = new Map((await tx.expenseLineItem.findMany({ where: { expenseId }, select: { id: true, isCapital: true, manualQbAccount: true } })).map((l) => [l.id, l]));
-    for (const li of lineItems) {
-      const was = before.get(li.lineItemId);
-      if (was && was.isCapital !== li.isCapital) await dropHandSetAccount(tx, actor, expenseId, was);
-      await tx.expenseLineItem.update({
-        where: { id: li.lineItemId, expenseId },
-        data: {
-          isCapital: li.isCapital,
-          capitalOwnerId: li.isCapital ? (li.capitalOwnerId ?? null) : null,
-          depreciationYears: null,
-        },
-      });
-      await writeAudit(tx, actor, {
-        expenseId,
-        action: "capital_designation_set",
-        lineItemId: li.lineItemId,
-        valueAfter: li.isCapital ? "capital" : "non_capital",
-      });
-    }
-    await advanceWorkflowInTx(tx, {
-      expenseId,
-      currentState: "capital_review",
-      event,
-      actor,
-      action: "capital_review_submitted",
-    });
-  });
-
-  if (nextState === "qb_pending") await drainExpense(expense.orgId, expenseId);
+  if (!input.lineItems.some((li) => li.isCapital)) await drainExpense(expense.orgId, expenseId);
 }
 
-/** Sets each capital line's cycle and mints one ITFA asset per unit into the register. */
+/** Sets each capital line's cycle and registers one ITFA asset per unit; a backfilled line links its seeded assets instead. */
 export async function setDepreciationCycle(
   principal: ExpensePrincipal,
   expenseId: string,
-  input: z.infer<typeof SetDepreciationCycleSchema>,
+  input: SetDepreciationCycleInput,
 ): Promise<void> {
   requireFinance(principal);
   const actor = actorOf(principal);
   const expense = await loadExpense(expenseId, "DEPRECIATION_SET", "set_depreciation_cycle");
-  const { items } = input;
 
-  const capitalLines = await db.expenseLineItem.findMany({ where: { expenseId, isCapital: true } });
-  const capLineById = new Map(capitalLines.map((li) => [li.id, li]));
-  const submittedIds = new Set(items.map((i) => i.lineItemId));
-  for (const { id } of capitalLines) {
-    if (!submittedIds.has(id)) throw new ServiceError(400, `Missing depreciation for capital line item ${id}`);
-  }
-  for (const item of items) {
-    if (!capLineById.has(item.lineItemId)) throw new ServiceError(400, `Line item ${item.lineItemId} is not a capital item`);
-  }
-  await requireLiveBuckets(items.map((i) => i.ownerId));
-
-  assertExpectedState("set_depreciation_cycle", { type: "DEPRECIATION_SET" }, NEUTRAL_CONTEXT, "qb_pending");
-
-  await db.$transaction(async (tx) => {
-    for (const item of items) {
-      await tx.expenseLineItem.update({
-        where: { id: item.lineItemId, expenseId },
-        data: { depreciationYears: item.depreciationYears, capitalOwnerId: item.ownerId },
-      });
-      await writeAudit(tx, actor, {
-        expenseId,
-        action: "depreciation_cycle_set",
-        lineItemId: item.lineItemId,
-        valueAfter: `${item.depreciationYears}y/owner:${item.ownerId}`,
-      });
-
-      // Idempotent: a line that already has assets (a resubmit) mints none.
-      const line = capLineById.get(item.lineItemId)!;
-      if ((await tx.capitalAsset.count({ where: { sourceLineItemId: line.id } })) === 0) {
-        const units = Math.max(1, Math.round(line.quantity));
-        const fdd = fullyDepreciatedDate(expense.receiptDate, item.depreciationYears);
-        let seq = await nextItfaSeq(tx, expense.orgId);
-        for (let u = 0; u < units; u++) {
-          await tx.capitalAsset.create({
-            data: {
-              orgId: expense.orgId,
-              assetNumber: formatItfa(seq++),
-              description: line.description,
-              acquisitionDate: expense.receiptDate,
-              costCents: line.unitPriceCents,
-              depreciationYears: item.depreciationYears,
-              fullyDepreciatedDate: fdd,
-              status: "tracked",
-              sourceExpenseId: expenseId,
-              sourceLineItemId: line.id,
-              sourceReceiptId: expenseId,
-              seeded: false,
-            },
-          });
-        }
+  await db.$transaction((tx) => {
+    const { store, rows } = expenseLineStore(tx, actor, expenseId);
+    return setPeriod(store, input, async (line, item) => {
+      const row = rows().find((r) => r.id === line.id)!;
+      const units = unitsOf(row.quantity);
+      if (!expense.backfill && item.seededAssetNumbers) throw new ServiceError(400, "Only a backfilled expense links seeded asset numbers");
+      if (expense.backfill && item.seededAssetNumbers?.length !== units) {
+        throw new ServiceError(400, `Line item ${line.id} needs a seeded asset number for each of its ${units} units`);
       }
-    }
-    await advanceWorkflowInTx(tx, {
-      expenseId,
-      currentState: "set_depreciation_cycle",
-      event: { type: "DEPRECIATION_SET" },
-      actor,
-      action: "depreciation_cycle_set",
+      const source = { kind: "expense_line" as const, expenseId, lineItemId: line.id };
+      if (item.seededAssetNumbers) {
+        await linkAssets(tx, actor, expense.orgId, source, item.seededAssetNumbers);
+      } else {
+        const booked = bookedLineCents(expense, rows()).get(line.id)!;
+        const assets = unitCosts(booked, units).map((costCents) => ({
+          costCents, acquisitionDate: expense.receiptDate, depreciationYears: item.depreciationYears, description: row.description,
+        }));
+        await registerAssets(tx, actor, expense.orgId, source, assets);
+      }
     });
   });
 
@@ -196,7 +138,10 @@ export interface CapitalSeedResult {
   results: { assetNumber: string; status: "created" | "skipped" | "error"; error?: string }[];
 }
 
-/** Seeds the register from historical QuickBooks asset numbers. Idempotent per (orgId, assetNumber). */
+/**
+ * Seeds the register from historical QuickBooks asset numbers. An exact repeat of a seeded row is
+ * skipped; a number already held by any other asset is refused for that row.
+ */
 export async function seedCapitalAssets(
   principal: ExpensePrincipal,
   rows: z.infer<typeof CapitalSeedSchema>,
@@ -210,29 +155,37 @@ export async function seedCapitalAssets(
     if (seq === null) { results.push({ assetNumber: r.assetNumber, status: "error", error: "not an ITFA number" }); continue; }
     const assetNumber = formatItfa(seq); // canonicalize (no space/dash, zero-padded)
     const parentSeq = r.parentAssetNumber ? parseItfa(r.parentAssetNumber) : null;
-    const created = await db.$transaction(async (tx) => {
-      const result = await tx.capitalAsset.createMany({
-        data: [{
+    const columns: SeedColumns = {
+      parentAssetNumber: parentSeq === null ? null : formatItfa(parentSeq),
+      description: r.description,
+      acquisitionDate: r.acquisitionDate ?? null,
+      costCents: r.costCents ?? null,
+      depreciationYears: r.depreciationYears ?? null,
+      sourceQbTxnId: r.sourceQbTxnId ?? null,
+      sourceQbTxnEntity: r.sourceQbTxnEntity ?? null,
+    };
+    const result = await db.$transaction(async (tx): Promise<CapitalSeedResult["results"][number]> => {
+      // Raising the mark first takes its lock, so no mint or other seed takes this number meanwhile.
+      await raiseHighestIssued(tx, orgId, seq);
+      const existing = await tx.capitalAsset.findUnique({ where: { capital_assets_org_number_unique: { orgId, assetNumber } } });
+      if (existing) {
+        const error = seedCollision(assetNumber, existing, columns);
+        return error ? { assetNumber, status: "error", error } : { assetNumber, status: "skipped" };
+      }
+      await tx.capitalAsset.create({
+        data: {
           orgId,
           assetNumber,
-          parentAssetNumber: parentSeq === null ? null : formatItfa(parentSeq),
-          description: r.description,
-          acquisitionDate: r.acquisitionDate ?? null,
-          costCents: r.costCents ?? null,
-          depreciationYears: r.depreciationYears ?? null,
+          ...columns,
           fullyDepreciatedDate: fullyDepreciatedDate(r.acquisitionDate, r.depreciationYears),
           status: "tracked",
-          sourceQbTxnId: r.sourceQbTxnId ?? null,
           seeded: true,
-        }],
-        skipDuplicates: true,
+        },
       });
-      if (result.count === 1) {
-        await writeOrgAudit(tx, orgId, actor, { entityType: "capital_asset", entityId: assetNumber, action: "seeded", after: r });
-      }
-      return result;
+      await writeOrgAudit(tx, orgId, actor, { entityType: "capital_asset", entityId: assetNumber, action: "seeded", after: r });
+      return { assetNumber, status: "created" };
     });
-    results.push({ assetNumber, status: created.count === 1 ? "created" : "skipped" });
+    results.push(result);
   }
   return {
     created: results.filter((x) => x.status === "created").length,

@@ -246,12 +246,12 @@ describe("expense — FINANCE journey", () => {
     expect((await send(f, "PUT", "/api/expense/ownership-map", { gtin13: "0000000000017", ownerId: facility.id })).status).toBe(400);
     expect((await send(f, "PUT", "/api/expense/ownership-map", { gtin13: part, ownerId: facility.id })).status).toBe(200);
 
-    // Assign the unassigned line to the org-level bucket: assigning is not the approval, so it waits for a Board member's.
+    // Assign the unassigned card-charge line to the org-level bucket: such a line takes no approval step, so the system approves it.
     const U = `/api/expense/expenses/${UNASSIGNED_EXPENSE}`;
     const [unassigned] = (await api<{ LineItemOwnerApproval: Approval[] }>(f, `${U}/line-item-approvals`)).json.LineItemOwnerApproval;
     const assigned = await send(f, "POST", `${U}/line-item-approvals/${unassigned.id}/assign-owner`, { ownerId: facility.id });
     expect(assigned.status).toBe(200);
-    expect(assigned.json).toMatchObject({ ownerId: facility.id, status: "pending" });
+    expect(assigned.json).toMatchObject({ ownerId: facility.id, status: "approved", decidedByUserId: null });
 
     // Finance queue: the unknown reimbursee and the unreviewed tax are reasons read from the expense.
     type QueueRow = { expenseId: string | null; reasons: { code: string }[] };
@@ -285,7 +285,7 @@ describe("expense — FINANCE journey", () => {
     const seed = await send(f, "POST", "/api/expense/capital-assets/seed", [{ assetNumber: `ITFA${String(stamp).slice(-4)}`, description: "Seed saw" }]);
     expect(seed.status).toBe(200);
     expect(seed.json).toMatchObject({ created: 1, errors: 0 });
-    expect((await send(f, "POST", "/api/expense/qb-exclusions", { qbTxnId: `qb-${stamp}`, reason: "hand-booked" })).status).toBe(200);
+    expect((await send(f, "POST", "/api/expense/qb-exclusions", { qbTxnEntity: "Purchase", qbTxnId: `qb-${stamp}`, reason: "hand-booked" })).status).toBe(200);
     const candidates = await send(f, "GET", `/api/expense/expenses/${HELD_EXPENSE}/qb-candidates`);
     expect(candidates.status).toBe(503);
     expect(JSON.stringify(candidates.json)).toContain("QuickBooks is not connected");

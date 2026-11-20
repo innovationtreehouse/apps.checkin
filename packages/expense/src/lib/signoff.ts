@@ -264,6 +264,19 @@ export function signoffRefusal(
   return facts.board.includes(signerUserId) ? null : "signer is not a Board member";
 }
 
+/**
+ * A card charge in an org-level bucket has no approval step (Financial Policy §XII.4): the system
+ * gives its approval when the line lands in the bucket, recording no approver.
+ */
+export function systemApproves(kind: LineKind, orgLevel: boolean): boolean {
+  return kind === "card_charge" && orgLevel;
+}
+
+/** The line's approval is the system's: an approved org-level card charge with no approver. */
+export function systemApproved(facts: SignoffFacts): boolean {
+  return facts.approved && facts.approver === null && systemApproves(facts.kind, facts.orgLevel);
+}
+
 /** A Board member approving a line they are not a bucket approver of, in place of its approvers. */
 export function approvesAsStandIn(facts: SignoffFacts, userId: number): boolean {
   return !facts.approvers.includes(userId);

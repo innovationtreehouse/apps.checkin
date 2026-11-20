@@ -18,6 +18,8 @@ import type { FacilityCloseVia, Person, Visit } from '@/generated/prisma/client'
 import type { NextRequest } from 'next/server';
 import { SCAN_PROTOCOL_VERSION } from '@/lib/scanProtocol';
 import { lockFacility } from '@/lib/facilityLock';
+import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaClient } from '@/generated/prisma/client';
 
 jest.mock('@/lib/auth', () => ({
     ...jest.requireActual('@/lib/auth'),
@@ -35,6 +37,10 @@ jest.mock('@/lib/email', () => ({
 jest.mock('@/lib/postEventEmails', () => ({
     processPostEventEmails: jest.fn().mockResolvedValue({ processed: 0, sent: 0 }),
 }));
+
+// The test's own held transaction runs on this connection, so the app's single connection waits on the lock, not on the pool.
+const holder = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
+afterAll(() => holder.$disconnect());
 
 const TAG = 'facility-close-record-test';
 const HOUR = 3_600_000;
@@ -254,6 +260,22 @@ describe('facility close record and departure log (real DB)', () => {
             ], keyholder);
             expect(close.executedAt).not.toBeNull();
             expect(close.closerVisitId).toBe(kv.id);
+        });
+
+        it.each(['DENIED', 'REVOKED'] as const)('a keyholder whose household is %s cannot close: the scan is an ordinary checkout', async (status) => {
+            asKiosk();
+            const denial = await prisma.orgMembership.create({ data: { householdId: keyholder2.householdId, status } });
+            try {
+                await open(keyholder2);
+                await open(member);
+
+                const res = await scanPOST(v6({ participantId: keyholder2.id, intent: 'OUT', close: 'alone' }));
+                expect(await res.json()).toMatchObject({ type: 'checkout', facilityClosed: false, closeRefused: true });
+                expect(await prisma.facilityClose.count({ where: { id: { gt: closeIdFloor } } })).toBe(0);
+                expect((await visitOf(member)).departedAt).toBeNull();
+            } finally {
+                await prisma.orgMembership.delete({ where: { id: denial.id } });
+            }
         });
 
         it('a plain OUT with others recorded only leaves; the confirmed close then writes one KIOSK close', async () => {
@@ -537,7 +559,7 @@ describe('facility close record and departure log (real DB)', () => {
 
             it('waits for a check-in holding the facility lock, then sweeps it', async () => {
                 let nightly: ReturnType<typeof nightlyGET> | undefined;
-                const visit = await prisma.$transaction(async (tx) => {
+                const visit = await holder.$transaction(async (tx) => {
                     await lockFacility(tx);
                     const visit = await tx.visit.create({ data: { personId: member.id, arrivedAt: new Date() } });
                     nightly = nightlyGET(cronReq());

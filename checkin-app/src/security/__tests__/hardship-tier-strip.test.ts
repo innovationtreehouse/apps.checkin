@@ -45,7 +45,7 @@ function tokensFor(endpoint: string, role: Role): readonly Token[] {
 }
 
 const HARDSHIP_FIELDS = {
-    OrgMembershipProcess: ['isPaymentPlanRequested', 'scholarshipRequestKind'],
+    OrgMembershipProcess: ['isPaymentPlanRequested', 'scholarshipRequestKind', 'paymentPlanYear'],
     ProgramParticipant: [
         'isPaymentPlanRequested',
         'scholarshipRequestKind',
@@ -53,6 +53,7 @@ const HARDSHIP_FIELDS = {
         'inventoryHeldAt',
         'paymentPlanDeniedAt',
         'seatTakenWithoutSaleAt',
+        'enrollmentBasis',
     ],
     ProgramPaymentPlanDecision: ['outcome', 'decidedAt'],
     MembershipPaymentPlanDecision: ['outcome', 'decidedAt'],
@@ -78,6 +79,7 @@ const participantRow = {
     inventoryHeldAt: '2026-01-06T00:00:00.000Z',
     paymentPlanDeniedAt: '2026-01-08T00:00:00.000Z',
     seatTakenWithoutSaleAt: '2026-01-09T00:00:00.000Z',
+    enrollmentBasis: 'OUTSIDE_PAYMENT',
     shopifyOrderId: '1001',
 };
 
@@ -89,6 +91,7 @@ const processRow = {
     paidAt: null,
     isPaymentPlanRequested: true,
     scholarshipRequestKind: 'PAYMENT_PLAN',
+    paymentPlanYear: 2026,
 };
 
 describe('hardship tier: which fields carry it', () => {

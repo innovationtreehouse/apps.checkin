@@ -8,6 +8,8 @@ import {
   needsBoardApproval,
   needsBoardSeat,
   signoffRefusal,
+  systemApproved,
+  systemApproves,
   withinEverydayLimits,
   type EverydayAmounts,
   type EverydayFacts,
@@ -192,5 +194,56 @@ describe("a purchase of $2,000 or more", () => {
 
   it("a blank record counts as none", () => {
     expect(needsBoardApproval(200_000, 200_000, "  ")).toBe(true);
+  });
+});
+
+describe("who signs a card charge the Treasurer did not make (§XII.4)", () => {
+  // The system's approval: an org-level line, approved with no approver.
+  const org = { ...card, approvers: [], orgLevel: true, approver: null, boardSeat: false };
+  const signers = (facts: SignoffFacts) => (facts.approver === null ? 0 : 1) + missingSeats(facts, []).length;
+
+  it("a program bucket: its approver's approval, then the Treasurer", () => {
+    const program = { ...card, boardSeat: false };
+    expect(systemApproves("card_charge", false)).toBe(false);
+    expect(missingSeats(program, [])).toEqual(["TREASURER"]);
+    expect(signers(program)).toBe(2);
+  });
+
+  it("an org-level bucket takes no approval step: the system gives it, naming nobody", () => {
+    expect(systemApproves("card_charge", true)).toBe(true);
+    expect(systemApproved(org)).toBe(true);
+    expect(systemApproved({ ...org, approver: 5 })).toBe(false);
+    expect(systemApproved({ ...org, approved: false })).toBe(false);
+  });
+
+  it("org-level, Everyday: the Treasurer alone", () => {
+    expect(needsBoardSeat("card_charge", true, false, null)).toBe(false);
+    expect(missingSeats(org, [])).toEqual(["TREASURER"]);
+    expect(signers(org)).toBe(1);
+  });
+
+  it("org-level, not Everyday, with written Board authorization: the Treasurer alone", () => {
+    expect(needsBoardSeat("card_charge", false, false, "Board minutes 2026-10-01, item 4")).toBe(false);
+    expect(signers(org)).toBe(1);
+  });
+
+  it("org-level, not Everyday, without it: the Treasurer and a Board member without a conflict", () => {
+    const unauthorized = { ...org, boardSeat: true };
+    expect(missingSeats(unauthorized, [])).toEqual(["TREASURER", "BOARD"]);
+    expect(signers(unauthorized)).toBe(2);
+    expect(signoffRefusal(unauthorized, [], "TREASURER", 3)).toBeNull();
+    expect(signoffRefusal(unauthorized, treasurer, "BOARD", 5)).toBeNull();
+    expect(signoffRefusal({ ...unauthorized, conflicted: [1, 5, 8] }, treasurer, "BOARD", 5)).toMatch(/household/);
+  });
+
+  it("a bucket a conflicted FINANCE holder made final still takes the Board seat after the Treasurer, in either kind of bucket", () => {
+    for (const facts of [{ ...card, boardSeat: false, conflictedFinal: true }, { ...org, conflictedFinal: true }]) {
+      expect(missingSeats(facts, [])).toEqual(["TREASURER", "BOARD"]);
+      expect(signoffRefusal(facts, [], "BOARD", 5)).toMatch(/Treasurer has not signed/);
+    }
+  });
+
+  it("a reimbursement keeps its approval step in an org-level bucket", () => {
+    expect(systemApproves("reimbursement", true)).toBe(false);
   });
 });

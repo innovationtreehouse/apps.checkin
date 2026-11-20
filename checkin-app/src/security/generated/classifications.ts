@@ -28,6 +28,7 @@ export const classifications = {
         isBackgroundCheckReviewer: 'internal',
         canAccessStaging: 'internal',
         householdJoinPending: 'internal',
+        ageStepPending: 'internal',
     },
     PersonMailAlias: {
         id: 'internal',
@@ -85,6 +86,7 @@ export const classifications = {
         memberSince: 'public',
         status: 'public',
         isVolunteerFamily: 'public',
+        notRenewingYear: 'internal',
         householdId: 'public',
     },
     OrgMembershipProcess: {
@@ -115,6 +117,7 @@ export const classifications = {
         renewalReminderSentAt: 'internal',
         isPaymentPlanRequested: 'hardship',
         scholarshipRequestKind: 'hardship',
+        paymentPlanYear: 'hardship',
     },
     MembershipYearVariant: {
         membershipYear: 'public',
@@ -142,8 +145,6 @@ export const classifications = {
         standardMembershipFeeCents: 'public',
         volunteerMembershipFeeCents: 'public',
         orgMembershipYearBoundary: 'public',
-        orgMembershipVariantId: 'internal',
-        orgMembershipProductUrl: 'internal',
         volunteerFamilyDiscountCode: 'internal',
         bgRecheckMonths: 'public',
         keyVolunteerAgreementVersion: 'public',
@@ -236,6 +237,7 @@ export const classifications = {
     Program: {
         id: 'public',
         name: 'public',
+        nameKey: 'internal',
         leadMentorId: 'public',
         startAt: 'public',
         endAt: 'public',
@@ -304,6 +306,7 @@ export const classifications = {
         paymentPlanDeniedAt: 'hardship',
         shopifyOrderId: 'internal',
         seatTakenWithoutSaleAt: 'hardship',
+        enrollmentBasis: 'hardship',
         endedAt: 'personal',
     },
     Event: {
@@ -586,6 +589,20 @@ export const classifications = {
         entries: 'internal',
         refreshedAt: 'internal',
     },
+    QuickBooksPostingSlot: {
+        orgId: 'internal',
+        holder: 'internal',
+        runId: 'internal',
+        until: 'internal',
+        lastRuns: 'internal',
+    },
+    QuickBooksPostingQueue: {
+        id: 'internal',
+        orgId: 'internal',
+        lane: 'internal',
+        requestedById: 'internal',
+        requestedAt: 'internal',
+    },
 } as const;
 
 export const relations = {
@@ -797,11 +814,15 @@ export const relations = {
     },
     QuickBooksList: {
     },
+    QuickBooksPostingSlot: {
+    },
+    QuickBooksPostingQueue: {
+    },
 } as const;
 
 export const marks = {
-    OrgMembershipProcess: ['isPaymentPlanRequested', 'scholarshipRequestKind'],
-    ProgramParticipant: ['isPaymentPlanRequested', 'scholarshipRequestKind', 'inventoryHeldAt', 'paymentPlanDeniedAt', 'seatTakenWithoutSaleAt'],
+    OrgMembershipProcess: ['isPaymentPlanRequested', 'scholarshipRequestKind', 'paymentPlanYear'],
+    ProgramParticipant: ['isPaymentPlanRequested', 'scholarshipRequestKind', 'inventoryHeldAt', 'paymentPlanDeniedAt', 'seatTakenWithoutSaleAt', 'enrollmentBasis'],
 } as const;
 
 export type Models = keyof typeof classifications;

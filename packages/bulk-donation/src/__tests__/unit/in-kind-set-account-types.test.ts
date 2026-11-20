@@ -1,11 +1,16 @@
-/** Finance's hand-set account on a held gift-of-goods line takes Fixed Asset for equipment, else an expense type. */
+/** Finance's hand-set account on a held gift-of-goods line takes Fixed Asset for a capital line, else an expense type. */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { bulkDonationRuntime, configureBulkDonation } from "../../runtime";
 import { resolveInKindQb } from "../../lib/in-kind-resolve";
 import { db } from "../../db";
 
+const line = vi.hoisted(() => ({ isCapital: false as boolean | null }));
 vi.mock("../../db", () => ({
-  db: { $transaction: vi.fn(async () => {}), inKindDonation: { findFirst: vi.fn(async () => ({ receiptId: "r1" })) } },
+  db: {
+    $transaction: vi.fn(async () => {}),
+    inKindDonation: { findFirst: vi.fn(async () => ({ receiptId: "r1" })) },
+    inKindDonationLine: { findFirst: vi.fn(async () => ({ isCapital: line.isCapital })) },
+  },
   isUniqueConstraintError: () => false,
 }));
 vi.mock("../../services/inKindAcceptService", () => ({ inKindAcceptService: { queueItem: vi.fn(async () => ({})) }, inKindReadiness: vi.fn() }));
@@ -19,10 +24,10 @@ const LATHE = 7;
 const ACTOR = { actorUserId: 1, actorUsername: "finance", correlationId: null };
 
 function configure(assets: number[], quickBooksAccounts?: () => Promise<typeof ACCOUNTS>) {
+  line.isCapital = assets.includes(LATHE);
   configureBulkDonation({
     auth: { getPrincipal: async () => ({ id: 1, name: "finance" }) },
     org: async () => ({ id: ORG, name: "Test Org" }),
-    capital: { submit: async () => {}, awaitingReview: async () => [], assetLineIds: async () => assets },
     quickBooksAccounts,
   });
 }

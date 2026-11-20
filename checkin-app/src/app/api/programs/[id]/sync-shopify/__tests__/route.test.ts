@@ -99,6 +99,29 @@ describe('POST /api/programs/[id]/sync-shopify claim', () => {
         expect(createShopifySingleVariantProgram).toHaveBeenCalledWith('Robotics', 7500, null, 'checkin-program-5-robotics', false);
     });
 
+    it.each([
+        ['an ended sale', { saleEndedAt: new Date('2026-01-01'), startAt: new Date('2099-01-01'), offSaleAt: null }],
+        ['an ended program', { phase: 'FINISHED' }],
+    ])('creates the public item hidden, marked hidden, with no stock pushed, for %s', async (_label, row) => {
+        const capped = { ...program, ...row, maxParticipants: 10 };
+        db.program.findUniqueOrThrow.mockResolvedValue(capped);
+        tx.program.findUniqueOrThrow.mockResolvedValue({ ...capped, shopifyVariantId: 'v1' });
+        expect((await post()).status).toBe(200);
+        expect(createShopifySingleVariantProgram).toHaveBeenCalledWith('Robotics', 7500, 10, 'checkin-program-5-robotics', false);
+        expect(tx.program.updateMany.mock.calls[0][0].data).toMatchObject({ productHiddenAt: expect.any(Date) });
+        expect(jest.requireMock('@/lib/shopify/stock').setProgramInventory).not.toHaveBeenCalled();
+    });
+
+    it('lists the public item and sets its stock for a sale still running', async () => {
+        const capped = { ...program, maxParticipants: 10, phase: 'UPCOMING', startAt: new Date('2099-01-01'), offSaleAt: null, saleEndedAt: null };
+        db.program.findUniqueOrThrow.mockResolvedValue(capped);
+        tx.program.findUniqueOrThrow.mockResolvedValue({ ...capped, shopifyVariantId: 'v1' });
+        expect((await post()).status).toBe(200);
+        expect(createShopifySingleVariantProgram).toHaveBeenCalledWith('Robotics', 7500, 10, 'checkin-program-5-robotics', true);
+        expect(tx.program.updateMany.mock.calls[0][0].data).not.toHaveProperty('productHiddenAt');
+        expect(jest.requireMock('@/lib/shopify/stock').setProgramInventory).toHaveBeenCalled();
+    });
+
     it('is a 409 that records nothing when its claim was taken over mid-run', async () => {
         tx.program.updateMany.mockResolvedValueOnce({ count: 0 });
         expect((await post()).status).toBe(409);

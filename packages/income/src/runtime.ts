@@ -41,8 +41,8 @@ export interface BucketUnusableEvent {
 /** Finance alerts the host binds. The drain creates nothing while they are unbound. */
 export interface IncomeAlerts {
   postCapReached(event: PostCapEvent): Promise<void>;
-  /** Fires once per bucket each time it becomes unusable, not once per sale. */
-  bucketUnusable(event: BucketUnusableEvent): Promise<void>;
+  /** Fires once per bucket each time it becomes unusable, not once per sale. Resolves false when the alert was not sent, so a later run sends it again. */
+  bucketUnusable(event: BucketUnusableEvent): Promise<boolean>;
   /** The orphan sweep read a full page, so some deposits the app created may have gone unchecked. */
   sweepIncomplete(event: { orgId: string; since: Date }): Promise<void>;
 }

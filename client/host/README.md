@@ -23,6 +23,8 @@ sudo client/host/install.sh <kiosk-user>
 Needs Docker with the buildx plugin, and `flock`. The closing lines it prints say
 what to set and what to start.
 
+It turns on NTP; the nightly check logs a warning while the clock is not synced and updates anyway.
+
 ## How an image moves
 
 A check compares the tag's digest with what is recorded. If it differs, the kiosk
@@ -75,7 +77,8 @@ A force published before a new Pi's first urgent check is recorded, not applied.
 Forcing also moves `kiosk-release`, so it lands at the next nightly window.
 
 The nightly reboot waits up to 30 minutes for the update lock, then reboots anyway
-so a hung pull cannot stop reboots for good.
+so a hung pull cannot stop reboots for good. While it waits, the timer checks
+do not start, so they cannot take the lock ahead of it.
 
 ## Tests
 

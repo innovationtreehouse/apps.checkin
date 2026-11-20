@@ -10,7 +10,7 @@ mechanics it builds on.
 ## 1. Shopify is the source of truth for program capacity
 
 A program's enrollment capacity is not tracked as a separate counter in the app — it lives
-in Shopify's own inventory for the program's variant. `Program.maxParticipants` sets the
+in Shopify's own inventory for the program's public variant. `Program.maxParticipants` sets the
 *initial* Shopify inventory at creation time and drives `PATCH /api/programs/[id]`'s
 delta propagation, but from then on Shopify's `available` count for the variant is what's
 authoritative — every seat-consuming or seat-returning event in the app moves it by a
@@ -68,29 +68,56 @@ Every app-initiated stock change goes through ONE writer, `adjustProgramInventor
   `reconcile-shopify` job (`healProgramStock`) re-pushes every program left owing; the flag
   clears once nothing is owed.
 
-## 2. Single pool, single variant
+## 2. Single pool
 
-Each program has **one** Shopify variant, priced at the base (non-member) rate
-(`Program.shopifyVariantId`). Inventory on that one variant IS the program's whole
-capacity — there is no second, member-priced pool to keep numerically consistent.
+Each program's capacity lives on **one** stock-tracked Shopify variant, priced at the
+base (non-member) rate (`Program.shopifyVariantId`). Inventory on that one variant IS the
+program's whole capacity — there is no second, member-priced pool to keep numerically
+consistent. A paid program also has a hidden reserved-seat variant
+(`Program.claimantShopifyVariantId`) that holds no stock; see "Two store items" below.
 
-Members pay less at the same variant via a **server-minted, single-use discount code**
+Members pay less at the base price via a **server-minted, single-use discount code**
 (`mintMemberDiscountCode`, `lib/shopify/discounts.ts`), minted per checkout by
 `POST /api/programs/[id]/discount-code` after recomputing the caller's membership status
 server-side (never trusting a client flag). A failed mint degrades to an undiscounted link
 — checkout is never blocked.
 
-This is an interim mechanism. `docs/in-design/SHOPIFY_MEMBER_SEGMENT_PRICING.md` is the
-planned upgrade — segment-gated automatic discounts, once checkout identity (that doc's
-§5) is solved — at which point per-checkout discount codes go away entirely.
+Checkout is an anonymous Shopify cart permalink: nothing in the URL says who is buying, and
+its cart attributes are values the customer can edit. So entitlement is judged by the app
+at the money event, never trusted from the cart. A minted code names the household it was
+minted for (`PRG{programId}-H{householdId}-…`), and `unentitledMemberCodeUse`
+(`lib/programs/memberDiscountCode.ts`) checks the order's real enrollees against that
+household's fee status. The `orders/paid` webhook and the reconciler's forward pass flag a
+failure `DISCOUNT_UNAUTHORIZED` and do not activate the enrollment. Shopify customer
+segments would gate the discount at checkout instead, but only for a checkout attached to
+a signed-in Shopify customer, which would add a second sign-in for every member.
+
+### Two store items
+
+A paid program has a public item (`shopifyVariantId`), whose stock is counted, and a
+hidden reserved-seat item (`claimantShopifyVariantId`, an unlisted product), which is not
+stock-tracked and never sells out. Every checkout link the app hands out follows a claim,
+so it sells the reserved-seat item when the program has one (`checkoutVariantId`,
+`lib/programs/variants.ts`); a family holding a claim can pay even when the public item
+shows 0. Every filled place ends up exactly
+one unit out of the public item's stock, so the store never offers a place a family
+already holds. A sale on the public item takes its own unit. A reserved-seat sale takes
+none, so activation takes the unit, unless the family's scholarship hold already took it
+(`publicStockDelta`, `lib/programs/activateEnrollment.ts`). A program with no capacity
+tracks no public stock, so nothing is taken.
+
+The public item keeps a counted stock for people buying straight from the store. A change
+to a program's full price is sent to both store items (`syncProgramPrice`,
+`lib/shopify/stock.ts`). A member price is not sent, because members pay the full-price
+item through a discount code.
 
 ### Legacy two-variant shape (removed)
 
 An earlier design gave each program two variants with separate inventory pools kept in
 step by a sibling-adjustment on every seat-consuming event. All of that code is gone
 and the four legacy columns are dropped:
-`shopifyVariantId` is the only variant any program has, and `adjustProgramInventory`
-writes exactly that one pool.
+`shopifyVariantId` is the only stock-tracked variant a program has, and
+`adjustProgramInventory` writes exactly that one pool.
 
 ## 3. Scholarship lifecycle — the hold ledger
 
@@ -279,7 +306,5 @@ remove or reach out. Nothing sends when both lists are empty.
 
 ## 6. Related
 
-- `docs/in-design/SHOPIFY_MEMBER_SEGMENT_PRICING.md` — the segment-gated pricing design
-  that per-checkout discount codes stand in for until checkout identity is solved.
 - `docs/ops/DEPLOY_MIGRATION_ORDER_OF_OPERATIONS.md` — the expand/contract migration
   convention this design's legacy-variant transition follows.

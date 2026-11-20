@@ -47,11 +47,11 @@ model Receipt {
   uploadedByUserId   Int      @map("uploaded_by_user_id")
   /// @sensitivity:internal
   uploadedAt         DateTime @default(now()) @map("uploaded_at")
-  // Null once the file lives in the store under fileKey.
+  // Unused column awaiting its drop: no code reads or writes it. The file lives in the store under fileKey.
   /// @sensitivity:pii
   /// @financeMark
   fileBlob           Bytes?   @map("file_blob")
-  // The object holding the file; null means the bytes are in fileBlob.
+  // The object holding the file; null means no file is kept.
   /// @sensitivity:pii
   fileKey            String?  @map("file_key")
   /// @sensitivity:internal
@@ -151,16 +151,11 @@ model ReceiptDetail {
   state                      String    @default("uploaded")
   /// @sensitivity:internal
   ocrStartedAt               DateTime? @map("ocr_started_at")
+  // When the receipt last entered `ocr_queued`; the drain reads the oldest first.
+  /// @sensitivity:internal
+  ocrQueuedAt                DateTime? @map("ocr_queued_at")
   /// @sensitivity:internal
   duplicateFlaggedAt         DateTime? @map("duplicate_flagged_at")
-  /// @sensitivity:internal
-  duplicateFlagClearedAt     DateTime? @map("duplicate_flag_cleared_at") @ignore
-  /// Another submitter's receipt id: pii keeps it off the submitter's own view.
-  /// @sensitivity:pii
-  duplicateSuspectReceiptId  String?   @map("duplicate_suspect_receipt_id") @ignore
-  /// Status of another submitter's receipt: pii keeps it off the submitter's own view.
-  /// @sensitivity:pii
-  duplicateSuspectIsRejected Boolean?  @map("duplicate_suspect_is_rejected") @ignore
   /// @sensitivity:personal
   validationNotes            String?   @map("validation_notes")
   /// @sensitivity:internal
@@ -342,7 +337,7 @@ model ReceiptMailItem {
   // held | deferred | assigned | discarded | refused
   /// @sensitivity:internal
   status         String    @default("held")
-  // Why a held item was held: unverified_sender | not_a_submitter. Null on items held before it was recorded.
+  // Why a held item was held: unverified_sender | not_a_submitter | side_copy. Null on items held before it was recorded.
   /// @sensitivity:internal
   holdReason     String?   @map("hold_reason")
   // The sender check's outcome: pass | fail | none. Null on items stored before it was recorded.
@@ -351,12 +346,12 @@ model ReceiptMailItem {
   // On a refused item, its { file, reason }, so a later pass can still name it in the sender's notice.
   /// @sensitivity:pii
   refusal        Json?
-  // Kept only while held or deferred; cleared once the item becomes a receipt or is discarded.
+  // Unused column awaiting its drop: no code reads or writes it. The file lives in the store under fileKey.
   /// @sensitivity:pii
   /// @financeMark
   fileBlob       Bytes?    @map("file_blob")
   // The object holding the file. Cleared when the item becomes a receipt; a discarded item keeps it,
-  // to name the object for an admin restore. Null with no fileBlob means no file is kept.
+  // to name the object for an admin restore. Null means no file is kept.
   /// @sensitivity:pii
   fileKey        String?   @map("file_key")
   /// @sensitivity:internal
@@ -367,6 +362,9 @@ model ReceiptMailItem {
   receiptId      String?   @map("receipt_id")
   /// @sensitivity:internal
   createdAt      DateTime  @default(now()) @map("created_at")
+  // When the item last became held; the 90-day auto-discard counts from it. Null while it was never held.
+  /// @sensitivity:internal
+  heldAt         DateTime? @map("held_at")
 
   @@unique([gmailMessageId, attachmentHash])
   @@index([orgId, status])
@@ -449,6 +447,35 @@ model ReceiptMailLease {
   lastRun   Json?     @map("last_run")
 
   @@map("receipt_mail_lease")
+}
+
+// One captured email: its raw copy in the file store under rawKey, kept 90 days by the bucket's
+// lifecycle rule. The row outlives the copy, so a message is never captured twice.
+model ReceiptMailMessage {
+  /// @sensitivity:internal
+  id             Int       @id @default(autoincrement())
+  /// @sensitivity:internal
+  orgId          String    @map("org_id")
+  /// @sensitivity:internal
+  gmailMessageId String    @map("gmail_message_id")
+  /// @sensitivity:internal
+  receivedAt     DateTime  @map("received_at")
+  /// @sensitivity:internal
+  capturedAt     DateTime  @default(now()) @map("captured_at")
+  /// @sensitivity:pii
+  rawKey         String    @map("raw_key")
+  /// @sensitivity:internal
+  rawSha256      String    @map("raw_sha256")
+  /// @sensitivity:internal
+  rawSize        Int       @map("raw_size")
+  /// @sensitivity:internal
+  processedAt    DateTime? @map("processed_at")
+  // The latest processing error's kind and short reason; never message content.
+  /// @sensitivity:pii
+  processError   String?   @map("process_error")
+
+  @@unique([orgId, gmailMessageId])
+  @@map("receipt_mail_message")
 }
 
 // One email owed per receipt outcome: to its uploader, and to the person reimbursed when that

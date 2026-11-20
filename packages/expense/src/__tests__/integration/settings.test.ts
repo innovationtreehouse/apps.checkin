@@ -37,7 +37,8 @@ describeDb("expense settings", () => {
   });
 
   it("refuses a per-run limit above the per-day limit", async () => {
-    await expect(updateExpenseSettings(ORG, { qbMaxCreatesPerDay: 10 }, FINANCE)).rejects.toMatchObject({ status: 400 });
+    await expect(updateExpenseSettings(ORG, { qbMaxCreatesPerRun: 11, qbMaxCreatesPerDay: 10 }, FINANCE)).rejects.toMatchObject({ status: 400 });
+    await updateExpenseSettings(ORG, { qbMaxCreatesPerRun: 10, qbMaxCreatesPerDay: 10 }, FINANCE);
   });
 
   it("lets finance move the match window either way, within 1 to 30", async () => {

@@ -129,7 +129,7 @@ describe('Household API Integration Tests', () => {
 
         it('should return household info if the user belongs to one', async () => {
             (getServerSession as jest.Mock).mockResolvedValue({
-                user: { id: testUserId }
+                user: { id: testUserId, householdId }
             });
 
             const req = new Request('http://localhost:4000/api/household', { method: 'GET' });
@@ -157,7 +157,7 @@ describe('Household API Integration Tests', () => {
         });
 
         it('should reject if the submitting user is not a lead', async () => {
-            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testMemberId } });
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testMemberId, householdId } });
 
             const req = new Request('http://localhost:4000/api/household', {
                 method: 'PATCH',
@@ -171,7 +171,7 @@ describe('Household API Integration Tests', () => {
         });
 
         it('must NOT reparent an existing account in another household — generic error, untouched', async () => {
-            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testUserId } });
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testUserId, householdId } });
 
             const req = new Request('http://localhost:4000/api/household', {
                 method: 'PATCH',
@@ -189,7 +189,7 @@ describe('Household API Integration Tests', () => {
         });
 
         it('should successfully add a new child record', async () => {
-            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testUserId } });
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testUserId, householdId } });
 
             const req = new Request('http://localhost:4000/api/household', {
                 method: 'PATCH',
@@ -203,8 +203,7 @@ describe('Household API Integration Tests', () => {
             expect(data.member).toBeDefined();
             expect(data.member.name).toBe('New Child');
 
-            // householdId is deliberately not on the wire (HOUSEHOLD_PEER_SELECT,
-            // PII minimization) — verify the attachment directly against the DB instead.
+            expect(data.member.householdId).toBe(householdId);
             const created = await prisma.person.findUnique({ where: { id: data.member.id } });
             expect(created?.householdId).toBe(householdId);
             // Allergies (safety data) must persist on the ADD path, no second edit.
@@ -212,7 +211,7 @@ describe('Household API Integration Tests', () => {
         });
 
         it('should default allergies to null when omitted on add', async () => {
-            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testUserId } });
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testUserId, householdId } });
 
             const req = new Request('http://localhost:4000/api/household', {
                 method: 'PATCH',
@@ -228,7 +227,7 @@ describe('Household API Integration Tests', () => {
         });
 
         it('should reject a new member with neither a DoB nor a 25+ declaration (400)', async () => {
-            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testUserId } });
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testUserId, householdId } });
 
             const req = new Request('http://localhost:4000/api/household', {
                 method: 'PATCH',
@@ -242,7 +241,7 @@ describe('Household API Integration Tests', () => {
         });
 
         it('should create a 25+ member without a DoB as a declared adult', async () => {
-            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testUserId } });
+            (getServerSession as jest.Mock).mockResolvedValue({ user: { id: testUserId, householdId } });
 
             const req = new Request('http://localhost:4000/api/household', {
                 method: 'PATCH',
@@ -258,7 +257,7 @@ describe('Household API Integration Tests', () => {
 
         it('should reject a staff (@innovationtreehouse.org) account adding a member (403)', async () => {
             (getServerSession as jest.Mock).mockResolvedValue({
-                user: { id: testUserId, hd: 'innovationtreehouse.org' }
+                user: { id: testUserId, householdId, hd: 'innovationtreehouse.org' }
             });
 
             const req = new Request('http://localhost:4000/api/household', {
@@ -274,7 +273,7 @@ describe('Household API Integration Tests', () => {
 
         it('should allow a non-staff account to add a member', async () => {
             (getServerSession as jest.Mock).mockResolvedValue({
-                user: { id: testUserId, email: 'lead-household-api-test@example.com' }
+                user: { id: testUserId, householdId, email: 'lead-household-api-test@example.com' }
             });
 
             const req = new Request('http://localhost:4000/api/household', {

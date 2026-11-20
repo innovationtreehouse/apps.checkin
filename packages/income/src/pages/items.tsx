@@ -61,12 +61,12 @@ export default function ItemsPage() {
   const [busy, setBusy] = useState<string | null>(null);
 
   /** A bucket id, null for general income, or "undecided" to remove the decision; `account` changes the item's account too. */
-  async function save(variantId: string, budgetOwnerId: number | null | "undecided", account?: { quickBooksAccountId: string | null }) {
+  async function save(variantId: string, change: { budgetOwnerId: number | null } | { quickBooksAccountId: string | null } | "undecided") {
     setBusy(variantId);
     try {
-      await api(`/items/${variantId}/category`, budgetOwnerId === "undecided"
+      await api(`/items/${variantId}/category`, change === "undecided"
         ? { method: "DELETE" }
-        : { method: "PUT", body: JSON.stringify({ budgetOwnerId, ...account }) });
+        : { method: "PUT", body: JSON.stringify(change) });
       notifications.show({ message: "Category saved; applies to deposits created from now on", color: "green" });
       items.reload();
       notifyNavCounts();
@@ -120,7 +120,7 @@ export default function ItemsPage() {
                           placeholder="Undecided"
                           data={options}
                           value={selected(item)}
-                          onChange={(v) => v && save(item.variantId, v === GENERAL ? null : Number(v))}
+                          onChange={(v) => v && save(item.variantId, { budgetOwnerId: v === GENERAL ? null : Number(v) })}
                           disabled={busy === item.variantId}
                         />
                         {item.decision !== "undecided" && (
@@ -142,11 +142,11 @@ export default function ItemsPage() {
                         clearable
                         data={accountChoices(accounts.data, item.quickBooksAccountId)}
                         value={item.quickBooksAccountId}
-                        onChange={(v) => save(item.variantId, item.budgetOwnerId, { quickBooksAccountId: v })}
+                        onChange={(v) => save(item.variantId, { quickBooksAccountId: v })}
                         disabled={busy === item.variantId || item.decision === "undecided"}
                       />
                     ) : item.quickBooksAccountId ? accountLabel(accounts.data, item.quickBooksAccountId) : "Not set"}
-                    {isFinance && <InactivePickWarning saved={item.quickBooksAccountId} options={accounts.data} />}
+                    {isFinance && <InactivePickWarning saved={item.quickBooksAccountId} options={accounts.data} advice="Pick an active one." />}
                     {item.decision !== "undecided" && !item.quickBooksAccountId && <Text size="xs" c="red">No account; its payouts wait</Text>}
                   </Table.Td>
                 </Table.Tr>

@@ -69,6 +69,8 @@ describe('cron run ledger (real DB)', () => {
 
             const row = await prisma.cronRunLog.findFirstOrThrow({ where: { job: JOB_A } });
             expect(row).toMatchObject({ success: false, error: 'sweep exploded' });
+            // Never completed a run, so it is listed as failing rather than left off.
+            expect(await mine()).toEqual([{ job: JOB_A, lastSuccessAt: null, stale: false, lastError: 'sweep exploded', lastErrorAt: expect.any(Date) }]);
         } finally {
             logged.mockRestore();
         }

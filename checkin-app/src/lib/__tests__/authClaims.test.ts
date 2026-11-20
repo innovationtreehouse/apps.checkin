@@ -60,9 +60,30 @@ describe('assignParticipantClaims — household login gate', () => {
             assignParticipantClaims(token, participant({ household }));
 
             expect(token.denied).toBe(false);
-            expect(token.isKeyholder).toBe(true);
+            expect(token.isSysadmin).toBe(true);
         },
     );
+});
+
+describe('assignParticipantClaims — keyholder authority follows household status', () => {
+    it.each([
+        ['ACTIVE', true],
+        ['NONE', true],
+        ['REVOKED', false],
+        ['DENIED', false],
+    ] as const)('%s household: isKeyholder=%s', (status, expected) => {
+        const token = {} as JWT;
+        assignParticipantClaims(token, participant({ household: { orgMembership: { status } } }));
+        expect(token.isKeyholder).toBe(expected);
+    });
+
+    it('a REVOKED household keeps every other role flag', () => {
+        const token = {} as JWT;
+        assignParticipantClaims(token, participant({ household: { orgMembership: { status: 'REVOKED' } } }));
+        expect(token.isBoardMember).toBe(true);
+        expect(token.isOperations).toBe(true);
+        expect(token.toolStatuses).toHaveLength(1);
+    });
 });
 
 describe('assignParticipantClaims — open household question', () => {
@@ -79,6 +100,32 @@ describe('assignParticipantClaims — open household question', () => {
         const token = { name: null } as JWT;
         assignParticipantClaims(token, participant({ name: 'Ana' }));
         expect(token).toMatchObject({ householdJoinPending: false, name: 'Ana', householdId: 99, isBoardMember: true });
+    });
+});
+
+describe('assignParticipantClaims — age step', () => {
+    it('asks for an age while someone who created a household has none on file', () => {
+        const token = {} as JWT;
+        assignParticipantClaims(token, participant({ ageStepPending: true, dateOfBirth: null, isDeclaredAdult: false }));
+        expect(token.ageStepPending).toBe(true);
+    });
+
+    it('stops asking once an age is on file', () => {
+        const token = {} as JWT;
+        assignParticipantClaims(token, participant({ ageStepPending: true, dateOfBirth: null, isDeclaredAdult: true }));
+        expect(token.ageStepPending).toBe(false);
+    });
+
+    it('never asks someone who did not create a household at sign-in', () => {
+        const token = {} as JWT;
+        assignParticipantClaims(token, participant({ dateOfBirth: null, isDeclaredAdult: false }));
+        expect(token.ageStepPending).toBe(false);
+    });
+
+    it('waits for an open household question first', () => {
+        const token = {} as JWT;
+        assignParticipantClaims(token, participant({ ageStepPending: true, householdJoinPending: true, dateOfBirth: null, isDeclaredAdult: false }));
+        expect(token.ageStepPending).toBe(false);
     });
 });
 

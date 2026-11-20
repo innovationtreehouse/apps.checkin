@@ -5,6 +5,7 @@ import { withAuth } from "@/lib/auth";
 import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import { nameWrite, nicknameWrite, isNicknameWrite } from "@/lib/person/name";
 import { apiError } from "@/lib/api-response";
+import { AGE_REQUIRED_REFUSAL, changesAge, leavesAgeUnknown } from "@/lib/person/adultDob";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/selfGrantGuard";
 import { normalizeEmail } from "@/lib/prismaEmailNormalize";
@@ -71,6 +72,11 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
             return apiError("Participant not found", 404);
         }
         const { dateOfBirth: priorDob, householdId, ...prior } = existing;
+
+        const declaration = body.isDeclaredAdult === undefined ? {} : { isDeclaredAdult: Boolean(body.isDeclaredAdult) };
+        if (changesAge(declaration, existing) && leavesAgeUnknown(declaration, existing)) {
+            return apiError(AGE_REQUIRED_REFUSAL, 400);
+        }
 
         if (isBadEmailChange(body.email, prior.email)) {
             return apiError("Invalid email format", 400);

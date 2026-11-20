@@ -4,7 +4,7 @@ import { orgSettingsService } from "../../services/orgSettingsService";
 import { receiptService } from "../../services/receiptService";
 import { describeDb } from "../helpers/db";
 import type { ReceiptPrincipal } from "../../contract";
-import { ALICE, FINANCE, TEST_ORG_ID, actAs, clearAll, configure, manualDetails, okOcr, recordingPorts, stateOf, textFile } from "../helpers/setup";
+import { ALICE, FINANCE, TEST_ORG_ID, actAs, clearAll, configure, manualDetails, okOcr, recordingPorts, stateOf, textFile, uploadRead } from "../helpers/setup";
 
 let ports: ReturnType<typeof recordingPorts>;
 
@@ -24,8 +24,8 @@ describeDb("finance decisions on one's own receipt", () => {
   it("refuses deciding the duplicate group of one's own receipt", async () => {
     actAs(FINANCE);
     const file = textFile();
-    const first = await receiptService.upload(file, "text/plain", { details: manualDetails() });
-    const dup = await receiptService.upload(file, "text/plain", { details: manualDetails() });
+    const first = await uploadRead(file, "text/plain", { details: manualDetails() });
+    const dup = await uploadRead(file, "text/plain", { details: manualDetails() });
     expect(dup.state).toBe("duplicate_flagged");
     await expect(receiptService.differentPurchases(dup.id, [first.id, dup.id])).rejects.toMatchObject({ status: 403 });
     await expect(receiptService.notThisOne(dup.id, first.id)).rejects.toMatchObject({ status: 403 });
@@ -34,14 +34,14 @@ describeDb("finance decisions on one's own receipt", () => {
 
   it("refuses restarting the flow of one's own receipt", async () => {
     actAs(FINANCE);
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     await stuckBeforeDelivery(r.id);
     await expect(receiptService.restartFlow(r.id)).rejects.toMatchObject({ status: 403 });
     expect(await stateOf(r.id)).toBe("flow_error");
   });
 
   it("still lets finance restart someone else's receipt", async () => {
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     await stuckBeforeDelivery(r.id);
     actAs(FINANCE);
     await receiptService.restartFlow(r.id);
@@ -51,7 +51,7 @@ describeDb("finance decisions on one's own receipt", () => {
 
 describeDb("a receipt already sent to part mapping", () => {
   async function pushedThenReopened(state: string) {
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     expect(ports.calls.pushes).toHaveLength(1);
     await db.receiptDetail.update({ where: { id: r.id }, data: { state } });
     return r.id;
@@ -82,7 +82,7 @@ describeDb("a receipt already sent to part mapping", () => {
   });
 
   it("still lets finance re-send it, which the receiver answers as a replay", async () => {
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     actAs(FINANCE);
     expect(await receiptService.push(r.id)).toEqual({ pushed: true });
     expect(ports.calls.pushes.map((p) => p.receiptId)).toEqual([r.id, r.id]);
@@ -112,7 +112,7 @@ describeDb("settings changes", () => {
 
 describeDb("OCR output is a proposal", () => {
   it("an auto upload stops for its uploader to confirm before it finalizes", async () => {
-    const r = await receiptService.upload(textFile(), "text/plain", {});
+    const r = await uploadRead(textFile(), "text/plain", {});
     expect(r.state).toBe("submitter_review");
     expect(ports.calls.pushes).toHaveLength(0);
     await receiptService.submitterConfirm(r.id);
@@ -121,7 +121,7 @@ describeDb("OCR output is a proposal", () => {
   });
 
   it("a manual upload still finalizes without the stop", async () => {
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     expect(r.state).toBe("receipt_finalized");
   });
 });
@@ -132,7 +132,7 @@ describeDb("the tax and date fields", () => {
 
   it("a submitter can correct the tax, audited before and after; finance can too", async () => {
     actAs(ALICE);
-    const r = await receiptService.upload(textFile(), "text/plain", {});
+    const r = await uploadRead(textFile(), "text/plain", {});
     expect(r.state).toBe("submitter_review");
     await receiptService.edit(r.id, "submitter", { tax: 1 });
     expect(await audited(r.id, "taxCents")).toMatchObject({ userId: ALICE.id, valueBefore: "0", valueAfter: "100" });
@@ -143,7 +143,7 @@ describeDb("the tax and date fields", () => {
 
   it("a submitter can correct the date, audited before and after; finance can too", async () => {
     actAs(ALICE);
-    const r = await receiptService.upload(textFile(), "text/plain", {});
+    const r = await uploadRead(textFile(), "text/plain", {});
     await receiptService.edit(r.id, "submitter", { receiptDate: "2020-01-01" });
     expect(await audited(r.id, "receiptDate")).toMatchObject({ userId: ALICE.id, valueBefore: r.receiptDate, valueAfter: "2020-01-01" });
     actAs(FINANCE);
@@ -153,7 +153,7 @@ describeDb("the tax and date fields", () => {
 
   it("a submitter's correction of a misread tax sends the receipt to financial_review", async () => {
     actAs(ALICE);
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ tax: "1.00" }) });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails({ tax: "1.00" }) });
     expect(r.state).toBe("validation_failed");
     await receiptService.edit(r.id, "submitter", { tax: 0 });
     await receiptService.resubmit(r.id, "submitter");
@@ -169,7 +169,7 @@ describeDb("the tax and date fields", () => {
     actAs(FINANCE);
     await orgSettingsService.update({ taxExempt: true });
     actAs(ALICE);
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ tax: "5.00" }) });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails({ tax: "5.00" }) });
     expect(r.state).toBe("validation_failed");
     await receiptService.edit(r.id, "submitter", { tax: 0 });
     await receiptService.resubmit(r.id, "submitter");
@@ -182,7 +182,7 @@ describeDb("the tax and date fields", () => {
 
   it("a finance correction alone does not send the receipt to financial_review", async () => {
     actAs(ALICE);
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ tax: "1.00" }) });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails({ tax: "1.00" }) });
     actAs(FINANCE);
     await receiptService.edit(r.id, "finance", { tax: 0 });
     await receiptService.resubmit(r.id, "finance");
@@ -191,7 +191,7 @@ describeDb("the tax and date fields", () => {
 
   it("finance on its own receipt edits as its submitter: a tax or date correction goes to another finance user", async () => {
     actAs(FINANCE);
-    const r = await receiptService.upload(textFile(), "text/plain", {});
+    const r = await uploadRead(textFile(), "text/plain", {});
     await receiptService.edit(r.id, "finance", { receiptDate: "2020-01-01", retailer: "Typo fixed" });
     await receiptService.submitterConfirm(r.id);
     expect(await stateOf(r.id)).toBe("financial_review");
@@ -218,7 +218,7 @@ describeDb("finance decisions on a receipt one's household is party to", () => {
     ]);
 
   it("refuses approve and reject; an independent finance user approves", async () => {
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails({ receiptDate: "2999-01-01" }) });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails({ receiptDate: "2999-01-01" }) });
     expect(r.state).toBe("financial_review");
     actAs(HOUSEMATE);
     await expect(receiptService.approveFinancial(r.id)).rejects.toMatchObject({ status: 403 });
@@ -231,8 +231,8 @@ describeDb("finance decisions on a receipt one's household is party to", () => {
 
   it("refuses deciding the duplicate group; an independent finance user decides it", async () => {
     const file = textFile();
-    const first = await receiptService.upload(file, "text/plain", { details: manualDetails() });
-    const dup = await receiptService.upload(file, "text/plain", { details: manualDetails() });
+    const first = await uploadRead(file, "text/plain", { details: manualDetails() });
+    const dup = await uploadRead(file, "text/plain", { details: manualDetails() });
     actAs(HOUSEMATE);
     await expect(receiptService.differentPurchases(dup.id, [first.id, dup.id])).rejects.toMatchObject({ status: 403 });
     expect(await refusals(dup.id)).toEqual([[HOUSEMATE.id, "different purchases"]]);
@@ -242,7 +242,7 @@ describeDb("finance decisions on a receipt one's household is party to", () => {
   });
 
   it("refuses restarting the flow; an independent finance user restarts it", async () => {
-    const r = await receiptService.upload(textFile(), "text/plain", { details: manualDetails() });
+    const r = await uploadRead(textFile(), "text/plain", { details: manualDetails() });
     await stuckBeforeDelivery(r.id);
     actAs(HOUSEMATE);
     await expect(receiptService.restartFlow(r.id)).rejects.toMatchObject({ status: 403 });
@@ -252,7 +252,7 @@ describeDb("finance decisions on a receipt one's household is party to", () => {
   });
 
   it("refuses every finance edit, line change, discard and reject; an independent finance user edits and rejects", async () => {
-    const r = await receiptService.upload(textFile(), "text/plain", {});
+    const r = await uploadRead(textFile(), "text/plain", {});
     expect(r.state).toBe("submitter_review");
     const line = await db.receiptLineItem.findFirstOrThrow({ where: { receiptId: r.id } });
     actAs(HOUSEMATE);

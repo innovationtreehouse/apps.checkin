@@ -13,12 +13,14 @@ import type { WorkflowMappingEventType } from "../../workflows/workflow-mapping.
 //   applying       --PUSH_FAILED----> apply_failed
 //   applying       --RETRY----------> applying  (crash recovery)
 //   apply_failed   --RETRY----------> applying
+//   apply_failed   --CLOSE_OUT------> closed_by_hand (final)
 const LEGAL: Array<[ReceivedReceiptState, WorkflowMappingEventType, ReceivedReceiptState]> = [
   ["pending_review", "PROCEED", "applying"],
   ["applying", "PUSH_SUCCEEDED", "resolved"],
   ["applying", "PUSH_FAILED", "apply_failed"],
   ["apply_failed", "RETRY", "applying"],
   ["applying", "RETRY", "applying"],
+  ["apply_failed", "CLOSE_OUT", "closed_by_hand"],
 ];
 
 const ALL_STATES: ReceivedReceiptState[] = [
@@ -26,12 +28,14 @@ const ALL_STATES: ReceivedReceiptState[] = [
   "applying",
   "apply_failed",
   "resolved",
+  "closed_by_hand",
 ];
 const ALL_EVENTS: WorkflowMappingEventType[] = [
   "PROCEED",
   "PUSH_SUCCEEDED",
   "PUSH_FAILED",
   "RETRY",
+  "CLOSE_OUT",
 ];
 
 // Every (state, event) pair NOT in the legal map is illegal.
@@ -67,12 +71,15 @@ describe("assertWorkflowMappingTransition — illegal transitions throw", () => 
     }
   });
 
-  it("treats resolved as terminal — no event escapes the final state", () => {
+  it.each(["resolved", "closed_by_hand"] as const)("treats %s as terminal — no event escapes it", (state) => {
     for (const event of ALL_EVENTS) {
-      expect(() => assertWorkflowMappingTransition("resolved", event)).toThrow(
-        WorkflowTransitionError,
-      );
+      expect(() => assertWorkflowMappingTransition(state, event)).toThrow(WorkflowTransitionError);
     }
+  });
+
+  it("closes out only from apply_failed", () => {
+    const from = ALL_STATES.filter((s) => isWorkflowMappingTransitionLegal(s, "CLOSE_OUT"));
+    expect(from).toEqual(["apply_failed"]);
   });
 });
 

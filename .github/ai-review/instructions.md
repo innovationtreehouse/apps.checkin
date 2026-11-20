@@ -9,7 +9,7 @@ Do not report:
 - style the linter enforces, praise, or a summary of the change.
 - merge-order advice across PRs.
 - "consider adding tests" without the untested case named.
-- a citation to a board policy, Drive document or contract as wrong or unverified because you cannot open it. Ask once as a nit at most. The author or owner confirming it settles it unless the citation changes. This covers only what the outside text says. Whether the code does what a comment claims still falls under rules 1 and 3. Decisions and policies recorded in docs/rules are readable.
+- a citation to a board policy, Drive document or contract as wrong or unverified because you cannot open it. Ask once as a nit at most. The author or owner confirming it settles it unless the citation changes. This covers only what the outside text says. Whether the code does what a comment claims still falls under rules 1 and 3.
 
 Always check:
 1. Authorization. Every new or changed route or server action checks who the caller is before reading or writing data. A role check only in the UI is a bug.

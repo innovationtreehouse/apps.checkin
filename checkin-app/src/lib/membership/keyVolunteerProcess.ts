@@ -17,14 +17,18 @@ export async function currentKvaVersion(db: DbClient): Promise<number> {
     return settings?.keyVolunteerAgreementVersion ?? 1;
 }
 
-/** True when the person's signed agreements include one at the current version. */
-export async function hasSignedCurrentKva(db: DbClient, personId: number): Promise<boolean> {
+/** The person's agreement signed at the current version or later, if any. */
+export async function findSignedCurrentKva(db: DbClient, personId: number): Promise<{ id: number } | null> {
     const version = await currentKvaVersion(db);
-    const signed = await db.orgMembershipProcess.findFirst({
+    return db.orgMembershipProcess.findFirst({
         where: { kind: KVA_KIND, subjectPersonId: personId, status: "ACTIVE", agreementVersion: { gte: version } },
         select: { id: true },
     });
-    return signed !== null;
+}
+
+/** True when the person's signed agreements include one at the current version. */
+export async function hasSignedCurrentKva(db: DbClient, personId: number): Promise<boolean> {
+    return (await findSignedCurrentKva(db, personId)) !== null;
 }
 
 /** The person's open, unsigned agreement, newest first. */

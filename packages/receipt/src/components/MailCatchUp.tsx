@@ -13,6 +13,8 @@ export interface MailRunSummaryView {
   waiting: number;
   failed: number;
   more: boolean;
+  /** The reading drain after the run, when it finished. */
+  drain?: { read: number; failed: number; waiting: number };
 }
 
 export interface MailCatchUpView {
@@ -30,7 +32,8 @@ export function catchUpSummary(run: MailRunSummaryView): string {
   if (run.status === "listing_failed") return "It couldn't read the mailbox. Run it again later.";
   const parts = [`${run.messages} messages read`, `${run.receipts} receipts made`, `${run.held} held`, `${run.waiting} still waiting`];
   if (run.failed > 0) parts.push(`${run.failed} failed`);
-  return `${parts.join(", ")}.${run.more ? " Run it again to continue." : ""}`;
+  const read = run.drain ? ` ${run.drain.read} receipts read, ${run.drain.waiting} waiting to be read.` : "";
+  return `${parts.join(", ")}.${read}${run.more ? " Run it again to continue." : ""}`;
 }
 
 /**

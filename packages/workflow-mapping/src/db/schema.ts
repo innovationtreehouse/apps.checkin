@@ -11,6 +11,7 @@ export const receivedReceiptStateEnum = [
   "applying",
   "apply_failed",
   "resolved",
+  "closed_by_hand",
 ] as const;
 export type ReceivedReceiptState = (typeof receivedReceiptStateEnum)[number];
 
@@ -45,6 +46,8 @@ export const workflowAuditEventTypeEnum = [
   "receipt_apply_succeeded",
   "receipt_apply_failed",
   "receipt_retry_started",
+  "receipt_closed_by_hand",
+  "receipt_applied_after_settle",
   "line_associated",
   "line_marked_non_inventory",
   "line_proposed",
@@ -68,6 +71,8 @@ export const AUDIT_EVENT_LABEL: Record<WorkflowAuditEventType, string> = {
   receipt_apply_succeeded: "Apply succeeded",
   receipt_apply_failed: "Apply failed",
   receipt_retry_started: "Apply retried",
+  receipt_closed_by_hand: "Closed by hand",
+  receipt_applied_after_settle: "Applied after the receipt was settled",
   line_associated: "Line associated with catalog item",
   line_marked_non_inventory: "Line marked non-inventory",
   line_proposed: "New catalog item proposed for line",
