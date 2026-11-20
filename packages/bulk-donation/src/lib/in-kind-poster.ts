@@ -9,6 +9,7 @@ import {
   appKeyOf,
   findOrCreateInKindJournal,
   isThrottled,
+  postFailure,
   roleAccountIds,
   qbGate,
   qbKey,
@@ -413,21 +414,34 @@ export async function writeSettlement(
 export async function postGift(run: Run, source: GiftToBook["source"], id: number, now = new Date()): Promise<InKindPostOutcome | "not_ready" | "busy"> {
   const claimed = await claim(run, source, id, now);
   if (typeof claimed === "string") return claimed;
-  const s = await call(run, claimed.gift, claimed.txnDate, claimed.gate, claimed.attemptedBefore);
   let saved: Settlement | null;
   try {
-    saved = await settle(run, claimed.gift, now, s, claimed.prior);
+    saved = await callAndSettle(run, claimed, now);
   } catch (err) {
-    if (!isUniqueConstraintError(err)) throw err;
-    const ids = s.entries.map((e) => `${e.entity} ${e.id}`).join(", ");
-    const voidIt = s.state === QB_MATCH_STATE.CREATED ? "; the app's entry needs voiding" : "";
-    saved = await settle(run, claimed.gift, now, needsFinance(`QuickBooks ${ids} is already held by another gift${voidIt}`), claimed.prior);
+    // The failing transaction rolled back, so the failure is recorded in a fresh one. The attempt stamp stays, so a retry looks for the entry by key first.
+    console.warn(`[bulk-donation] in-kind post threw for ${giftDetail(source, id)}`, err);
+    const f = postFailure(err);
+    saved = await settle(run, claimed.gift, now, f.throttled ? THROTTLED : failedPost(f.failure, f.error, f.codes), claimed.prior);
   }
   if (!saved) return "waiting";
   if (saved.failure) {
     bulkDonationRuntime.failed("in-kind-posting", Object.assign(new KindedError(saved.failure, saved.note ?? ""), { codes: saved.codes ?? [] }), giftDetail(source, id));
   }
   return outcomeOf(saved);
+}
+
+type Claimed = Exclude<Awaited<ReturnType<typeof claim>>, string>;
+
+async function callAndSettle(run: Run, claimed: Claimed, now: Date): Promise<Settlement | null> {
+  const s = await call(run, claimed.gift, claimed.txnDate, claimed.gate, claimed.attemptedBefore);
+  try {
+    return await settle(run, claimed.gift, now, s, claimed.prior);
+  } catch (err) {
+    if (!isUniqueConstraintError(err)) throw err;
+    const ids = s.entries.map((e) => `${e.entity} ${e.id}`).join(", ");
+    const voidIt = s.state === QB_MATCH_STATE.CREATED ? "; the app's entry needs voiding" : "";
+    return settle(run, claimed.gift, now, needsFinance(`QuickBooks ${ids} is already held by another gift${voidIt}`), claimed.prior);
+  }
 }
 
 function outcomeOf(saved: Settlement): InKindPostOutcome {
@@ -610,7 +624,7 @@ export async function runInKindQbPosting(orgId: string, now = new Date(), turn?:
         const outcome = await postGift(run, gift.source, gift.id);
         return outcome === "not_ready" || outcome === "busy" ? "waiting" : outcome;
       } catch (err) {
-        // The entry may already be in QuickBooks, so the gift keeps its claim: a post taking over the stale claim looks for the entry by key first.
+        // A claim, or a failure's record, that threw leaves the gift as it was; a post taking over a stale claim looks for the entry by key first.
         console.warn(`[bulk-donation] in-kind post failed for ${gift.source} gift ${gift.id}`, err);
         bulkDonationRuntime.failed("in-kind-posting", err, giftDetail(gift.source, gift.id));
         return "failed";

@@ -5,7 +5,7 @@
  * Finance books, skips or matches by id what the drain hands over.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { MAX_DRIFT_CHECKS_PER_RUN, Pacer, QuickBooksClient, STALE_CLAIM_MS, appKeyOf, type BooksMapRole, type QboAccount, type QboDeposit, type QboJournalEntry, type QboPurchase } from "@checkin/quickbooks";
+import { MAX_DRIFT_CHECKS_PER_RUN, Pacer, QboThrottledError, QuickBooksClient, STALE_CLAIM_MS, appKeyOf, type BooksMapRole, type QboAccount, type QboDeposit, type QboJournalEntry, type QboPurchase } from "@checkin/quickbooks";
 import type { FailureReport } from "@checkin/component-kit";
 import type { CompletedReceipt } from "@checkin/receipt-types";
 import { describeDb } from "../helpers/db";
@@ -524,30 +524,54 @@ describeDb("in-kind drain", () => {
     expect(await bookings(id)).toMatchObject([{ side: "journal", qbTxnId: "9000" }]);
   });
 
-  it("a settle that throws after the create leaves the gift POSTING, the run carries on, and the stale claim links the entry without a second create", async () => {
+  it("a settle that throws after the create leaves the gift stuck with its error, the run carries on, and a retry links the entry without a second create", async () => {
     await switchOn();
     const stuck = await acceptedGift();
     // Another value: an unclaimed entry of the same value and date would send this gift to finance.
     const next = await acceptedGift({ totalCents: 4400 });
     const transaction = vi.spyOn(getPrisma(), "$transaction");
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     qbo.afterCreate = async () => {
       qbo.afterCreate = null;
       transaction.mockRejectedValueOnce(new Error("deadlock detected"));
     };
 
-    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 1, posted: 1, sweep: { entries: 2, flagged: 0 } });
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ failed: 1, posted: 1 });
     transaction.mockRestore();
-    expect(await posting(stuck)).toMatchObject({ matchState: "POSTING", claimedAt: expect.any(Date) });
+    expect(await posting(stuck)).toMatchObject({ matchState: "NEEDS_FINANCE", claimedAt: null, qbCreateAttemptedAt: expect.any(Date), qbFirstFailedAt: expect.any(Date), qbLastError: expect.stringMatching(/deadlock detected/) });
     expect(await bookings(stuck)).toEqual([]);
     expect(await posting(next)).toMatchObject({ matchState: "CREATED" });
+    expect(await stuckItems()).toEqual([expect.objectContaining({ id: `receipt ${stuck}`, step: "QuickBooks posting" })]);
+    expect(failures).toEqual([expect.objectContaining({ lane: "in-kind-posting", detail: `receipt gift ${stuck}` })]);
 
     await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ waiting: 1, posted: 0 });
     expect(qbo.posts).toHaveLength(2);
 
-    await db.inKindPosting.update({ where: { orgId_source_giftId: { orgId, source: "receipt", giftId: stuck } }, data: { claimedAt: new Date(Date.now() - STALE_CLAIM_MS - 1000) } });
-    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ posted: 1, failed: 0 });
+    await retryStuckItem({ id: `receipt ${stuck}`, step: "QuickBooks posting" });
     expect(qbo.posts).toHaveLength(2);
     expect(await bookings(stuck)).toMatchObject([{ side: "journal", qbTxnId: "9000" }]);
+    expect(await stuckItems()).toEqual([]);
+  });
+
+  it("a settle that throws a throttle releases the claim unfailed; the run's one retry links the entry and goes on to the next gift", async () => {
+    await switchOn();
+    const throttled = await acceptedGift();
+    const next = await acceptedGift({ totalCents: 4400 });
+    const transaction = vi.spyOn(getPrisma(), "$transaction");
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    qbo.afterCreate = async () => {
+      qbo.afterCreate = null;
+      transaction.mockRejectedValueOnce(new QboThrottledError("QBO create failed 429", "tid", new Date()));
+    };
+
+    await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ throttled: 1, posted: 2, failed: 0 });
+    transaction.mockRestore();
+    expect(await posting(throttled)).toMatchObject({ matchState: "CREATED", qbFirstFailedAt: null, qbLastError: null });
+    expect(await bookings(throttled)).toMatchObject([{ side: "journal", qbTxnId: "9000" }]);
+    expect(await posting(next)).toMatchObject({ matchState: "CREATED" });
+    expect(qbo.posts).toHaveLength(2);
+    expect(failures).toEqual([]);
+    expect(await stuckItems()).toEqual([]);
   });
 
   it("claims that throw are counted failed and the run goes on to every gift", async () => {
