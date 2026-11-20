@@ -6,7 +6,7 @@ import { logBackendError } from "@/lib/logger";
 import { isOrderReversed } from "@/lib/finance/reconcile/exceptions";
 import { recordUnreportedReversalOnProcess } from "@/lib/finance/reconcile/liveOrder";
 import { notifyBoardPaidReject } from "@/lib/membership/boardAlerts";
-import { householdCheckStandings, householdCheckStarted, householdQualifies, jsonField, legacyHouseholdCheckStarted, liveBgThreshold, reviewHoldsRejection } from "@/lib/membership/checkStanding";
+import { checkValidForApplication, householdCheckStandings, householdCheckStarted, householdQualifies, jsonField, legacyHouseholdCheckStarted, reviewHoldsRejection } from "@/lib/membership/checkStanding";
 import { advanceExternalIfComplete } from "@/lib/membership/external";
 import { lockAndFindDeniedHousehold, setHouseholdStatus } from "@/lib/membership/householdStatus";
 import { lockProcessRows } from "@/lib/lockOrder";
@@ -53,11 +53,11 @@ export async function settleHouseholdBg(householdId: number, opts: { reviewJustC
     const app = await prisma.orgMembershipProcess.findFirst({
         where: { orgMembership: { householdId }, kind: { in: ["INITIAL", "RENEWAL"] }, ...openProcess.where },
         orderBy: { id: "desc" },
-        select: { id: true, status: true },
+        select: { id: true, status: true, appliesToYear: true, createdAt: true },
     });
     if (!app) return [];
     if (CONVERGES.includes(app.status)) await recordUnreportedReversalOnProcess(app.id);
-    const threshold = await liveBgThreshold();
+    const threshold = await checkValidForApplication(app);
 
     let result = await prisma.$transaction((tx) => settleInTx(tx, app.id, householdId, threshold, opts.trigger, false));
     if (result.needsOrderRead) {

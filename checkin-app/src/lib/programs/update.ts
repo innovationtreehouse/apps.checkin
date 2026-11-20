@@ -150,6 +150,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
 
     const { name, startAt, endAt, orgMemberOnly, publiclyVisible, announceOnOpen, phase, enrollmentStatus, minAge, maxAge, maxParticipants, leadMentorNotificationSettings, memberPrice, nonMemberPrice, shopifyProductId, shopifyVariantId } = patch;
     let leadMentorId: number | undefined;
+    let namedLeader: { lastBackgroundCheck: Date | null } | undefined;
 
     let newName: string | undefined;
     if (name !== undefined) {
@@ -208,11 +209,6 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         if (!isLeaderAgeEligible(mentor)) {
             return refuse("invalid", "Program Leader must be at least 23 years old");
         }
-        // A leader already in place stays; only a new assignment meets the membership and clearance requirements.
-        if (leadMentorId !== currentProgram.leadMentorId) {
-            const ineligible = await programLeaderIneligibility(leadMentorId, mentor);
-            if (ineligible) return refuse("invalid", ineligible);
-        }
         // Nobody names themself or their household as a program's leader (Ethics
         // Policy III.5). The edit form resends the current lead on every save, so
         // only a change is refused.
@@ -226,6 +222,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
             });
             return refuse("forbidden", "Forbidden: You cannot make yourself or a member of your household a program lead");
         }
+        if (leadMentorId !== currentProgram.leadMentorId) namedLeader = mentor;
     }
 
     // An ended program stays ended: no other phase, and enrollment never reopens.
@@ -369,6 +366,12 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         });
         if (!year.ok) return year;
         if (year.appliesToYear !== currentProgram.appliesToYear) newAppliesToYear = year.appliesToYear;
+    }
+    // A leader already in place stays; only a new assignment meets the membership and
+    // clearance requirements, measured at the start of the program's membership year.
+    if (leadMentorId !== undefined && namedLeader) {
+        const ineligible = await programLeaderIneligibility(leadMentorId, namedLeader, newAppliesToYear ?? currentProgram.appliesToYear);
+        if (ineligible) return refuse("invalid", ineligible);
     }
 
     const updateData: Record<string, unknown> = {

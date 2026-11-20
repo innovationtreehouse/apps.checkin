@@ -6,7 +6,7 @@
  * and the renewal background-review path reusing the 2-of-N flow.
  */
 
-import { runRenewalSweep, beginRenewal, nextBoundary } from '@/lib/membership/renewal';
+import { runRenewalSweep, beginRenewal, nextBoundary, monthsBefore } from '@/lib/membership/renewal';
 import { attest } from '@/lib/membership/review';
 import { markContractSigned } from '@/lib/membership/external';
 import { markCheckStarted } from '@/lib/membership/checkStarted';
@@ -205,5 +205,22 @@ describe('Membership renewal', () => {
         const renewal = await prisma.orgMembershipProcess.findUnique({ where: { id: proc.id } });
         expect(renewal?.status).toBe('PENDING_PAYMENT');
         expect(renewal?.bgClearedAt).not.toBeNull();
+    });
+
+    it('beginRenewal begun after the boundary measures the check at the start of the year the renewal opened for', async () => {
+        // The boundary passed 30 days ago; the renewal opened 10 days before it. The
+        // lead's check is valid at that boundary but not at the next one.
+        const day = 86_400_000;
+        const today = new Date();
+        const passed = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()) - 30 * day);
+        await setBoundary(passed);
+        const checkedOn = new Date(monthsBefore(passed, BG_RECHECK_MONTHS).getTime() + 5 * day);
+        const m = await makeActiveMembership('Late', checkedOn);
+        const proc = await prisma.orgMembershipProcess.create({
+            data: { orgMembershipId: m.orgMembershipId, kind: 'RENEWAL', status: 'PENDING_RENEWAL', createdAt: new Date(passed.getTime() - 10 * day) },
+        });
+        const out = await beginRenewal(proc.id, m.leadId);
+        expect(out.status).toBe('PENDING_EXTERNAL_ACTION');
+        expect(out.bgClearedAt).not.toBeNull();
     });
 });

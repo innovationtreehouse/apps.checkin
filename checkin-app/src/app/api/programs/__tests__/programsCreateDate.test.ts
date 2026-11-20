@@ -22,7 +22,7 @@ jest.mock('@/lib/orgMembership', () => ({ ...jest.requireActual('@/lib/orgMember
 jest.mock('@/lib/membership/checkStanding', () => ({
     ...jest.requireActual('@/lib/membership/checkStanding'),
     checkStanding: jest.fn().mockReturnValue('CLEARED'),
-    liveBgThreshold: jest.fn().mockResolvedValue(new Date('2000-01-01')),
+    checkValidFor: jest.fn().mockResolvedValue(new Date('2000-01-01')),
     loadCheckReviews: jest.fn().mockResolvedValue(new Map()),
 }));
 jest.mock("@/lib/household/archiveGuard", () => ({

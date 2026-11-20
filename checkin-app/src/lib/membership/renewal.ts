@@ -9,7 +9,7 @@ import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { personActor, systemActor } from "@/lib/auditActor";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { clearNotRenewingInTx } from "@/lib/membership/notRenewing";
-import { membershipYearLabel, membershipYearOf, nextBoundary, monthsBefore, renewalWindow, membershipYearCycle, liveMembershipYear, RENEWAL_LEAD_MONTHS } from "@/lib/programYear";
+import { membershipYearLabel, membershipYearOf, membershipYearStart, nextBoundary, monthsBefore, renewalWindow, membershipYearCycle, liveMembershipYear, RENEWAL_LEAD_MONTHS } from "@/lib/programYear";
 import { lockProcessRows } from "@/lib/lockOrder";
 
 export { nextBoundary, monthsBefore, renewalWindow, membershipYearCycle, liveMembershipYear };
@@ -338,4 +338,9 @@ export async function beginRenewalForUser(userId: number) {
 export function bgFreshThreshold(boundary: Date | null, recheckMonths: number | null | undefined): Date | null {
     if (!isRecheckPolicySet(recheckMonths) || !boundary) return null;
     return monthsBefore(boundary, recheckMonths);
+}
+
+/** The earliest check date still valid at the start of membership year `year`, or null when any input is unset. */
+export function bgThresholdForYear(boundary: Date | null, recheckMonths: number | null | undefined, year: number | null): Date | null {
+    return boundary && year != null ? bgFreshThreshold(membershipYearStart(boundary, year), recheckMonths) : null;
 }

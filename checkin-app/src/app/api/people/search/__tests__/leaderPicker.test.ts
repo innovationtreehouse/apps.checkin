@@ -15,7 +15,10 @@ jest.mock('@/lib/programs/leaderEligibility', () => ({ leaderIneligibilities: je
 const findManyMock = jest.fn();
 jest.mock('@/lib/prisma', () => ({
     __esModule: true,
-    default: { person: { findMany: (...args: unknown[]) => findManyMock(...args) } },
+    default: {
+        person: { findMany: (...args: unknown[]) => findManyMock(...args) },
+        boardSettings: { findUnique: jest.fn().mockResolvedValue({ orgMembershipYearBoundary: new Date('2020-09-01') }) },
+    },
 }));
 
 const checked = new Date('2099-06-01');
@@ -39,8 +42,13 @@ describe('GET /api/people/search — leader picker', () => {
         expect(leaderIneligibilities).toHaveBeenCalledWith(expect.anything(), [
             { id: 1, isMember: true, lastBackgroundCheck: checked },
             { id: 2, isMember: false, lastBackgroundCheck: checked },
-        ]);
+        ], expect.any(Number));
         expect(people.map((p: { leaderIneligibility: string | null }) => p.leaderIneligibility)).toEqual([null, expect.stringMatching(/active Treehouse Membership/)]);
+    });
+
+    it("judges a program's picker for that program's membership year", async () => {
+        await get('q=p&filter=adults&year=2031');
+        expect(leaderIneligibilities).toHaveBeenCalledWith(expect.anything(), expect.anything(), 2031);
     });
 
     it('leaves the plain directory search unmarked', async () => {
