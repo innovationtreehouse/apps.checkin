@@ -27,12 +27,13 @@ import {
   type QuickBooksClient,
 } from "@checkin/quickbooks";
 import { db, isUniqueConstraintError, type DbOrTx } from "../db";
-import { bulkDonationRuntime, getInKindAccounts, getInKindCapital, getInKindQbPosting } from "../runtime";
+import { bulkDonationRuntime, getInKindAccounts, getInKindQbPosting } from "../runtime";
 import type { InKindQbPosting } from "../contract";
 import { recordEvent } from "../repositories/audit";
 import { readDonationSettings, type DonationSettings } from "../services/settingsService";
 import type { AuditContext } from "../workflows/disbursement.actor";
 import { inKindReadiness, type GiftToBook, type ReadinessContext } from "../services/inKindAcceptService";
+import { registerCapitalLines, type RegisterCounts } from "../services/inKindCapitalService";
 import { checkInKindQbDrift, type InKindDriftCounts } from "./in-kind-drift";
 import { QB_MATCH_STATE } from "./qb-match";
 import { lineAccounts } from "./in-kind-accounts";
@@ -264,7 +265,7 @@ function inWindow(date: string, around: string, days: number): boolean {
 
 /**
  * The gift's one journal entry: its total credited to in-kind income, each line debited to finance's
- * hand-set account or its part's expense account rule, an asset line through a rule marked capital.
+ * hand-set account or its part's expense account rule, a line finance made capital through a rule marked capital.
  * Any line without a usable account holds the gift as NEEDS_ACCOUNT, which each run tries again.
  */
 async function journalLines(run: Run, gift: GiftToBook): Promise<InKindJournalLine[] | Settlement> {
@@ -273,8 +274,8 @@ async function journalLines(run: Run, gift: GiftToBook): Promise<InKindJournalLi
   const income = run.accounts.INKIND_INCOME;
   if (!income) return heldNoCall("The books map has no in-kind income account");
   const { lines } = gift;
-  const assets = new Set(await getInKindCapital().assetLineIds(run.orgId, { giftSource: gift.source, giftId: gift.id }));
-  const parts = lines.flatMap((l) => (l.quickBooksAccountId || !l.gtin13 ? [] : [{ lineId: l.id, gtin13: l.gtin13, isCapital: assets.has(l.id) }]));
+  const assets = new Set(lines.filter((l) => l.isCapital).map((l) => l.id));
+  const parts = lines.flatMap((l) => (l.quickBooksAccountId || !l.gtin13 ? [] : [{ lineId: l.id, gtin13: l.gtin13, isCapital: l.isCapital }]));
   const [ruled, qb] = await Promise.all([getInKindAccounts().resolve(run.orgId, parts), run.qbAccounts()]);
   const accounts = lineAccounts(lines, assets, new Map(ruled.map(({ lineId, ...r }) => [lineId, r])), qb, roleAccountIds(run.accounts));
   if (typeof accounts === "string") return { state: QB_MATCH_STATE.NEEDS_ACCOUNT, note: accounts, entries: [] };
@@ -559,6 +560,7 @@ export interface InKindDrainCounts {
   closeDateRead: boolean;
   sweep: InKindSweepCounts;
   drift: InKindDriftCounts;
+  capital: RegisterCounts;
 }
 
 /** The books map lacks an in-kind role; `waiting` counts gifts that would otherwise post. */
@@ -568,32 +570,34 @@ export interface InKindUnconfigured {
 }
 
 /**
- * The in-kind drain, run from the daily cron. It runs only with QuickBooks bound and every in-kind
+ * The in-kind drain, run from the daily cron. It first registers each capital gift line whose period
+ * is set, so the gift can book; that needs no QuickBooks. It posts only with QuickBooks bound and every in-kind
  * role in the books map, then switches the lane on (once, for good) and reads the books closing
  * date once for the run. Each gift waiting on nothing but booking posts, oldest first, until the
  * per-run create limit. A gift whose post fails is stuck and the run goes on; the drain never takes
  * a stuck gift. The orphan sweep and the drift check run last.
  */
 export async function runInKindQbPosting(orgId: string, now = new Date(), turn?: PostingTurn): Promise<InKindDrainCounts | "unbound" | InKindUnconfigured> {
+  const capital = await registerCapitalLines(orgId);
   const posting = getInKindQbPosting();
   const client = await posting?.client();
   if (!posting || !client) return "unbound";
   const [accounts, classes] = await Promise.all([posting.booksMap.accounts(), posting.booksMap.classes()]);
   if (!inKindAccountsReady(accounts)) {
-    const { ready } = await inKindReadiness.giftsToBook(orgId, await inKindReadiness.readReadiness(orgId));
+    const { ready } = await inKindReadiness.giftsToBook(orgId, await inKindReadiness.readReadiness());
     return { unconfigured: true, waiting: ready.length };
   }
   const onAt = await switchInKindPostingOn(orgId, now);
   const close = await readCloseDate(client);
   if (!close.ok) console.warn(`[bulk-donation] books closing date read failed; this in-kind run creates nothing: ${close.error}`);
-  const ctx = await inKindReadiness.readReadiness(orgId);
+  const ctx = await inKindReadiness.readReadiness();
   const { ready, open } = await inKindReadiness.giftsToBook(orgId, ctx);
   const settings = await readDonationSettings(db, orgId);
   const run: Run = { orgId, book: false, actor: SYSTEM, client, accounts, classes, close, onAt, ctx, open, settings, qbAccounts: chartOfAccounts(client) };
 
   const counts: InKindDrainCounts = {
     posted: 0, matched: 0, unbooked: 0, needs_finance: 0, held: 0, failed: 0, throttled: 0, waiting: 0,
-    capped: false, closeDateRead: close.ok, sweep: { entries: 0, flagged: 0, full: false }, drift: { checked: 0, drifted: 0 },
+    capped: false, closeDateRead: close.ok, sweep: { entries: 0, flagged: 0, full: false }, drift: { checked: 0, drifted: 0 }, capital,
   };
   const stop = await runDrain<GiftToBook, InKindPostOutcome>([...ready].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()), {
     counts,

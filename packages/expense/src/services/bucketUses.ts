@@ -12,14 +12,12 @@ export interface BucketUse {
 /** What in the expense library still needs bucket `id`, one line per kind; empty when nothing does. */
 export async function unfinishedBucketUses(id: number): Promise<BucketUse[]> {
   const orgId = await getOrgId();
-  const [lines, donated, parts] = await Promise.all([
+  const [lines, parts] = await Promise.all([
     db.expenseLineItem.count({ where: { expense: { orgId, state: { notIn: [...CLOSED_STATES] } }, approvals: { some: { ownerId: id } } } }),
-    db.donatedCapitalLine.count({ where: { orgId, budgetOwnerId: id, reviewedAt: null } }),
     db.partOwnerMap.count({ where: { orgId, ownerId: id } }),
   ]);
   return [
     { what: "open expense lines", count: lines, where: "Finance › Expenses" },
-    { what: "donated lines waiting for capital review", count: donated, where: "Finance › Donated Equipment" },
     { what: "parts mapped to it for future receipts", count: parts, where: "Finance › Part Buckets" },
   ].filter((use) => use.count > 0);
 }

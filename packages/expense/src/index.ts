@@ -29,6 +29,7 @@ export * from "./services/capitalReview";
 export * from "./services/catalogEventConsumer";
 export * from "./services/donatedCapitalService";
 export * from "./services/donatedPartAccounts";
+export * from "./services/giftCapitalService";
 export * from "./services/expenseOutcomes";
 export * from "./services/financeQueueService";
 export * from "./services/flagService";

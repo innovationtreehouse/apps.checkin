@@ -20,14 +20,12 @@ const ACCOUNTS = [
   { id: "150", name: "Equipment", accountType: "Fixed Asset", active: true },
 ];
 const LATHE = 7;
-const assetLineIds = vi.fn(async (): Promise<number[]> => []);
 
 beforeEach(() => {
   vi.clearAllMocks();
   configureBulkDonation({
     auth: { getPrincipal: async () => ({ id: 1, name: "finance" }) },
     org: async () => ({ id: ORG, name: "Test Org" }),
-    capital: { submit: async () => {}, awaitingReview: async () => [], assetLineIds },
   });
 });
 afterEach(() => bulkDonationRuntime.reset());
@@ -51,20 +49,17 @@ describe("bulk-donation misTypedQuickBooksPicks", () => {
     ]);
   });
 
-  it("checks a capital line against Fixed Asset", async () => {
-    assetLineIds.mockResolvedValueOnce([LATHE]);
-    vi.mocked(db.inKindDonationLine.findMany).mockResolvedValueOnce([{ id: LATHE, donationId: 3, quickBooksAccountId: "600" }] as never);
+  it("checks a line finance made capital against Fixed Asset", async () => {
+    vi.mocked(db.inKindDonationLine.findMany).mockResolvedValueOnce([{ id: LATHE, donationId: 3, quickBooksAccountId: "600", isCapital: true }] as never);
     expect(await misTypedQuickBooksPicks(ACCOUNTS)).toEqual([
       "Gifts of goods, receipt gift 3, line 7: Donated equipment takes a Fixed Asset account; QuickBooks' list in the app shows Supplies as Expense",
     ]);
-    expect(assetLineIds).toHaveBeenCalledWith(ORG, { giftSource: "receipt", giftId: 3 });
   });
 
   it("skips a line on a gift already booked", async () => {
     vi.mocked(db.inKindPosting.findMany).mockResolvedValueOnce([{ source: "receipt", giftId: 3 }] as never);
     vi.mocked(db.inKindDonationLine.findMany).mockResolvedValueOnce([{ id: 1, donationId: 3, quickBooksAccountId: "400" }] as never);
     expect(await misTypedQuickBooksPicks(ACCOUNTS)).toEqual([]);
-    expect(assetLineIds).not.toHaveBeenCalled();
     expect(db.inKindPosting.findMany).toHaveBeenCalledWith({
       where: { orgId: ORG, matchState: { in: ["MATCHED", "CREATED", "POSTING", "DISMISSED"] } },
       select: { source: true, giftId: true },

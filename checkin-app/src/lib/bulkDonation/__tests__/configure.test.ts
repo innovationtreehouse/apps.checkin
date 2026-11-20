@@ -31,9 +31,11 @@ const signoff = {
 };
 jest.mock("@/lib/expense/configure", () => ({ signoff }));
 const getExpenseSettings = jest.fn();
-const donatedAssetLineIds = jest.fn();
 const resolveDonatedPartAccounts = jest.fn();
-jest.mock("@checkin/expense", () => ({ getExpenseSettings, donatedAssetLineIds, resolveDonatedPartAccounts }));
+const giftCapitalReviewNeeded = jest.fn();
+const registerGiftLineAssets = jest.fn();
+const review = { CapitalReviewSchema: {}, SetDepreciationCycleSchema: {}, designate: jest.fn(), setPeriod: jest.fn() };
+jest.mock("@checkin/expense", () => ({ getExpenseSettings, resolveDonatedPartAccounts, giftCapitalReviewNeeded, registerGiftLineAssets, ...review }));
 const booksMap = { accounts: jest.fn(), classes: jest.fn() };
 jest.mock("@/lib/finance/booksMap", () => ({ booksMap }));
 const emailAlert = jest.fn().mockResolvedValue(true);
@@ -207,10 +209,20 @@ describe("bulk-donation wiring", () => {
     expect(emailAlert.mock.calls[0][1].since).toBe("2026-10-01");
   });
 
-  it("reads which donated lines became assets from the expense library's capital review", async () => {
-    donatedAssetLineIds.mockResolvedValue([3]);
+  it("binds a gift's capital review to the expense library's one review module", async () => {
     const { capital } = await config();
-    await expect(capital!.assetLineIds(ORG.id, { giftSource: "receipt", giftId: 9 })).resolves.toEqual([3]);
-    expect(donatedAssetLineIds).toHaveBeenCalledWith(ORG.id, { giftSource: "receipt", giftId: 9 });
+    expect(capital!.review).toEqual({ designationInput: review.CapitalReviewSchema, periodInput: review.SetDepreciationCycleSchema, designate: review.designate, setPeriod: review.setPeriod });
+  });
+
+  it("tests a gift against the expense library's capital thresholds and registers its lines there", async () => {
+    giftCapitalReviewNeeded.mockResolvedValue(true);
+    registerGiftLineAssets.mockResolvedValue(["ITFA07"]);
+    const { capital } = await config();
+    const gift = { totalCents: 270_000, lines: [{ costCents: 270_000, quantity: 6 }] };
+    await expect(capital!.reviewNeeded(ORG.id, gift)).resolves.toBe(true);
+    expect(giftCapitalReviewNeeded).toHaveBeenCalledWith(ORG.id, gift);
+    const line = { giftSource: "receipt" as const, giftId: 9, giftLineId: 3, description: "Lathe", costCents: 113_000, quantity: 1, acquisitionDate: "2026-11-01", depreciationYears: 7 };
+    await expect(capital!.register(ORG.id, line)).resolves.toEqual(["ITFA07"]);
+    expect(registerGiftLineAssets).toHaveBeenCalledWith(ORG.id, line);
   });
 });
