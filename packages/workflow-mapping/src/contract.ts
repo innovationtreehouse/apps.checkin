@@ -61,6 +61,11 @@ export type RefCheckResult = z.infer<typeof refCheckResultSchema>;
 export const activeCatalogItemSchema = z.object({ gtin13: z.string(), name: z.string() }).nullable();
 export type ActiveCatalogItem = z.infer<typeof activeCatalogItemSchema>;
 
+export const orgProvisionalItemSchema = z
+  .object({ status: z.string(), proposedName: z.string(), resolvedToGtin13: z.string().nullable() })
+  .nullable();
+export type OrgProvisionalItem = z.infer<typeof orgProvisionalItemSchema>;
+
 export const createdIdSchema = z.object({ id: z.number().int() });
 export const gtin13Schema = z.string().min(1);
 
@@ -70,6 +75,8 @@ export interface CatalogReader {
   checkReferences(fields: CatalogCheckReferences): Promise<RefCheckResult>;
   /** The approved, non-archived item with this GTIN, or null. Gates an association, so it fails closed. */
   getActiveItem(gtin13: string): Promise<ActiveCatalogItem>;
+  /** The injected org's provisional part with this GTIN, or null; another org's part is null. */
+  getOrgProvisionalItem(gtin13: string): Promise<OrgProvisionalItem>;
 }
 
 /** Catalog writes. The adapter stamps the injected org; `localUserId` is the acting Person.id. */
@@ -132,6 +139,7 @@ export const inertCatalogReader: CatalogReader = {
   lookupItems: async () => notWired("CatalogReader.lookupItems"),
   checkReferences: async () => notWired("CatalogReader.checkReferences"),
   getActiveItem: async () => notWired("CatalogReader.getActiveItem"),
+  getOrgProvisionalItem: async () => notWired("CatalogReader.getOrgProvisionalItem"),
 };
 
 export const inertCatalogSubmissions: CatalogSubmissions = {
