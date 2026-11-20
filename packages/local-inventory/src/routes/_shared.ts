@@ -7,10 +7,10 @@ export function pageArgs(sp: URLSearchParams): { skip: number; take: number } {
   return { skip: (page - 1) * take, take };
 }
 
-/** The org's provisional parts among these GTINs, for the names the catalog doesn't hold. */
+/** The org's provisional parts among these GTINs, for the names the catalog doesn't hold and the local-only mark. */
 export function provisionalNames(orgId: string, gtin13s: readonly string[]) {
   return db.inventoryProvisionalItem.findMany({
     where: { orgId, provisionalGtin13: { in: [...new Set(gtin13s)] } },
-    select: { provisionalGtin13: true, name: true },
+    select: { provisionalGtin13: true, name: true, status: true },
   });
 }
