@@ -14,7 +14,7 @@ jest.mock("@/lib/prisma", () => ({
     },
 }));
 
-import { supervisingAdultCount, supervisingAdultVisits } from "@/lib/supervision";
+import { supervisingAdultCount, supervisingAdultVisits, uncoveredYouth } from "@/lib/supervision";
 
 const yearsAgo = (n: number) => {
     const d = new Date();
@@ -143,5 +143,26 @@ describe("the programme-in-session probe", () => {
             { startAt: { lte: expect.any(Date) }, endAt: { gte: expect.any(Date) } },
             { phase: "RUNNING", startAt: { lte: expect.any(Date) } },
         ]);
+    });
+});
+
+describe("uncoveredYouth", () => {
+    const youth = (householdId: number) => ({ youth: true, householdId });
+    const adult = (householdId: number) => ({ youth: false, householdId });
+
+    it("covers a youth with an adult of their own household present", () => {
+        expect(uncoveredYouth([youth(10), adult(10)])).toEqual([]);
+    });
+
+    it("leaves a youth uncovered when only other households' adults are present", () => {
+        expect(uncoveredYouth([youth(10), adult(20)])).toEqual([youth(10)]);
+    });
+
+    it("sorts a mix of covered and uncovered youth", () => {
+        expect(uncoveredYouth([youth(10), youth(30), adult(10), adult(20)])).toEqual([youth(30)]);
+    });
+
+    it("does not let a youth cover a sibling", () => {
+        expect(uncoveredYouth([youth(10), youth(10)])).toHaveLength(2);
     });
 });

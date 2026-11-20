@@ -31,6 +31,11 @@ jest.mock("@/lib/attendanceTransitions", () => ({
 const adult = { id: 1, isKeyholder: false, isDeclaredAdult: true, dateOfBirth: null } as Person;
 const youth = { id: 9, isKeyholder: false, isDeclaredAdult: false, dateOfBirth: new Date("2015-01-01") } as Person;
 
+const ARRIVING_VISIT = 500;
+const YOUTH_DOB = new Date("2015-01-01");
+/** A household no adult in these tests belongs to. */
+const LONE_HOUSEHOLD = 999;
+
 const DEPARTING_VISIT = 42;
 
 /** One open visit per household id, all fully qualifying supervising adults. */
@@ -48,10 +53,19 @@ function openVisits(householdIds: number[]) {
     }));
 }
 
+/** A youth's open visit; `id` {@link ARRIVING_VISIT} is the check-in under test. */
+const youthVisit = (id: number, householdId: number) =>
+    ({ id, person: { householdId, isDeclaredAdult: false, dateOfBirth: YOUTH_DOB } });
+
 /** The supervising-adult query and the youth probe both hit `visit.findMany`;
- *  the probe is the one filtering on `isDeclaredAdult: false`. Youth present by
- *  default — the confirm rung is gated on it. */
-function fakeDb(householdIds: number[], warnedAt: Date | null = null, youthPresent = true) {
+ *  the supervising query is the one selecting `lastBackgroundCheck`. One youth
+ *  no adult covers is present by default — the confirm rung is gated on it. */
+function fakeDb(
+    householdIds: number[],
+    warnedAt: Date | null = null,
+    youthPresent = true,
+    youthRows: ReturnType<typeof youthVisit>[] = youthPresent ? [youthVisit(900, LONE_HOUSEHOLD)] : [],
+) {
     const update = jest.fn().mockResolvedValue({});
     const db = {
         // The facility advisory lock is a no-op against a fake client.
@@ -60,10 +74,10 @@ function fakeDb(householdIds: number[], warnedAt: Date | null = null, youthPrese
         visit: {
             findFirst: jest.fn().mockResolvedValue(null),
             count: jest.fn().mockResolvedValue(1),
-            findMany: jest.fn().mockImplementation(({ where }) =>
-                where.person?.isDeclaredAdult === false
-                    ? (youthPresent ? [{ person: { dateOfBirth: new Date("2015-01-01") } }] : [])
-                    : openVisits(householdIds)),
+            findMany: jest.fn().mockImplementation(({ where, select }) =>
+                select.person.select.lastBackgroundCheck
+                    ? openVisits(householdIds)
+                    : [...openVisits(householdIds), ...youthRows].filter(v => v.id !== where.id?.not)),
             findUnique: jest.fn().mockResolvedValue({ supervisionWarnedAt: warnedAt }),
             create: jest.fn().mockResolvedValue({ id: 500 }),
             update,
@@ -72,8 +86,13 @@ function fakeDb(householdIds: number[], warnedAt: Date | null = null, youthPrese
     return { db: db as unknown as DbClient, update };
 }
 
-async function checkout(householdIds: number[], warnedAt: Date | null = null, youthPresent = true) {
-    const { db, update } = fakeDb(householdIds, warnedAt, youthPresent);
+async function checkout(
+    householdIds: number[],
+    warnedAt: Date | null = null,
+    youthPresent = true,
+    youthRows?: ReturnType<typeof youthVisit>[],
+) {
+    const { db, update } = fakeDb(householdIds, warnedAt, youthPresent, youthRows);
     const res = await wire(processCheckout(adult, DEPARTING_VISIT, db));
     return { res, body: await res.json(), update, db };
 }
@@ -159,6 +178,39 @@ describe("the confirm rung is youth-gated", () => {
     });
 });
 
+describe("a youth an adult of their own household covers", () => {
+    // The departing visit is household 10's adult; household 20's adult stays.
+    it("owes no confirm when every youth left has a household adult inside", async () => {
+        const { res, body, update } = await checkout([10, 20], null, true, [youthVisit(900, 20)]);
+
+        expect(res.status).toBe(200);
+        expect(body.warning).toMatch(/leaves only 1 supervising adult/i);
+        expect(update).not.toHaveBeenCalled();
+    });
+
+    it("confirms when one covered and one uncovered youth are inside", async () => {
+        const { res, body } = await checkout([10, 20], null, true, [youthVisit(900, 20), youthVisit(901, LONE_HOUSEHOLD)]);
+
+        expect(res.status).toBe(400);
+        expect(body.type).toBe("warning");
+    });
+
+    it("confirms when the departing adult is their youth's only household adult", async () => {
+        const { res, body } = await checkout([10, 20], null, true, [youthVisit(900, 10)]);
+
+        expect(res.status).toBe(400);
+        expect(body.type).toBe("warning");
+    });
+
+    it("owes no confirm when another adult of the departing household stays with the youth", async () => {
+        // Households 10, 10, 20: the count stays at two, so nothing is crossed at all.
+        const { res, body } = await checkout([10, 10, 20], null, true, [youthVisit(900, 10)]);
+
+        expect(res.status).toBe(200);
+        expect(body.warning).toBeUndefined();
+    });
+});
+
 describe("same household counts as one", () => {
     it("does not interrupt when the departing adult's household stays represented", async () => {
         // Three present, but two share household 10 — so two supervising adults
@@ -201,6 +253,16 @@ describe("youth check-in below two supervising adults", () => {
     it("says nothing when the room is two deep", async () => {
         const { db } = fakeDb([10, 20]);
         expect((await (await wire(processCheckin(youth, db))).json()).warning).toBeUndefined();
+    });
+
+    it("says nothing when an adult of the youth's own household is inside", async () => {
+        const { db } = fakeDb([10], null, false, [youthVisit(ARRIVING_VISIT, 10)]);
+        expect((await (await wire(processCheckin(youth, db))).json()).warning).toBeUndefined();
+    });
+
+    it("warns a youth whose household has no adult inside, though another's does", async () => {
+        const { db } = fakeDb([10], null, false, [youthVisit(901, 10), youthVisit(ARRIVING_VISIT, LONE_HOUSEHOLD)]);
+        expect((await (await wire(processCheckin(youth, db))).json()).warning).toMatch(/fewer than 2 supervising adults/i);
     });
 
     it("costs an adult check-in no supervision query at all", async () => {
