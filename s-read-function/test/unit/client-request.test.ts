@@ -179,6 +179,7 @@ describe("createShopifyClient.request — exhaustion and hard failures", () => {
     const err = await createShopifyClient(cfg).request("q").catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ShopifyGraphQLError);
     expect((err as Error).message).toBe("Shopify GraphQL error: Field 'x' doesn't exist");
+    expect((err as ShopifyGraphQLError).codes).toEqual([]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 

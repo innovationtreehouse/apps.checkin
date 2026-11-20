@@ -85,14 +85,15 @@ export async function startOrdersBackfill(client: ShopifyClient, cutoverIso: str
 
 /**
  * Null when Shopify no longer knows the id. A GraphQL error on this lookup also counts as
- * unknown, so a tracked id Shopify rejects cannot fail every later backfill run.
+ * unknown, so a tracked id Shopify rejects cannot fail every later backfill run. Shopify's
+ * INTERNAL_SERVER_ERROR is transient and rethrows, so the running export stays tracked.
  */
 export async function getBulkOperation(client: ShopifyClient, id: string): Promise<BulkOperation | null> {
   try {
     const data = await client.request<{ bulkOperation: BulkOperation | null }>(BULK_OPERATION_QUERY, { id });
     return data.bulkOperation;
   } catch (err) {
-    if (!(err instanceof ShopifyGraphQLError)) throw err;
+    if (!(err instanceof ShopifyGraphQLError) || err.codes.includes("INTERNAL_SERVER_ERROR")) throw err;
     logger.warn("bulk operation lookup rejected; treating the tracked id as unknown", { id, error: err.message });
     return null;
   }

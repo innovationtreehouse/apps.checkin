@@ -56,8 +56,13 @@ describe("getBulkOperation", () => {
   });
 
   it("returns null when Shopify rejects the id with a GraphQL error", async () => {
-    const client = fakeClient(new ShopifyGraphQLError(["Invalid global id 'gid://op/9'"]));
+    const client = fakeClient(new ShopifyGraphQLError([{ message: "Invalid global id 'gid://op/9'" }]));
     expect(await getBulkOperation(client, "gid://op/9")).toBeNull();
+  });
+
+  it("rethrows Shopify's INTERNAL_SERVER_ERROR so the running export stays tracked", async () => {
+    const err = new ShopifyGraphQLError([{ message: "Internal error", extensions: { code: "INTERNAL_SERVER_ERROR" } }]);
+    await expect(getBulkOperation(fakeClient(err), "gid://op/9")).rejects.toBe(err);
   });
 
   it("rethrows a transport failure rather than forgetting the tracked op", async () => {
