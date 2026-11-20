@@ -129,6 +129,8 @@ describe('Ownership-boundary authorization', () => {
         hhA = await mkHousehold('HH_A');
         leadA = await mkMember(hhA, 'LeadA', true);
         memberA = await mkMember(hhA, 'MemberA');
+        await prisma.person.update({ where: { id: leadA }, data: { dateOfBirth: new Date('1980-01-01'), email: `leada-${TAG}@example.com` } });
+        await prisma.person.update({ where: { id: memberA }, data: { allergies: 'peanuts' } });
 
         hhB = await mkHousehold('HH_B');
         leadB = await mkMember(hhB, 'LeadB', true);
@@ -383,8 +385,9 @@ describe('Ownership-boundary authorization', () => {
     });
 
     // ---- membership (GET) and household/intake (GET) — self-scoped ------------
-    // Both read the caller's own intake state. Only a lead gets the household's
-    // people, address and emergency contact back; another member sees none of it.
+    // Both read the caller's own intake state. A lead gets every household detail;
+    // another member gets names and the address, but no ages, allergies, emails or
+    // emergency contact.
     describe.each([
         ['GET /api/membership', MEMBERSHIP_GET],
         ['GET /api/household/intake', HOUSEHOLD_INTAKE_GET],
@@ -401,11 +404,11 @@ describe('Ownership-boundary authorization', () => {
             expect(body.isLead).toBe(true);
             expect(body.hasEmergencyContact).toBe(true);
             expect(body.prefill.household.emergencyContactName).toEqual(expect.any(String));
-            expect(body.prefill.primaryParent.id).toBe(leadA);
-            expect(body.prefill.children.map((c: { id: number }) => c.id)).toEqual([memberA]);
+            expect(body.prefill.primaryParent).toEqual(expect.objectContaining({ id: leadA, dob: '1980-01-01', email: `leada-${TAG}@example.com` }));
+            expect(body.prefill.children).toEqual([expect.objectContaining({ id: memberA, allergies: 'peanuts' })]);
             expect(JSON.stringify(body)).not.toContain('LeadB');
         });
-        it('a non-lead member gets their own state but no household details', async () => {
+        it('a non-lead member gets names and the address, but no ages, allergies, emails or emergency contact', async () => {
             as(memberA, { householdId: hhA });
             const res = await GET(req());
             expect(res.status).toBe(200);
@@ -413,8 +416,13 @@ describe('Ownership-boundary authorization', () => {
             expect(body.hasHousehold).toBe(true);
             expect(body.isLead).toBe(false);
             expect(body.hasEmergencyContact).toBe(true);
-            expect(body.prefill).toEqual({ household: null, primaryParent: null, secondaryParent: null, children: [] });
-            expect(JSON.stringify(body)).not.toMatch(/LeadA|Contact (One|Two)/);
+            expect(body.prefill.household).toEqual(expect.objectContaining({
+                emergencyContactName: null, emergencyContactPhone: null, emergencyContactEmail: null,
+            }));
+            const people = [body.prefill.primaryParent, body.prefill.secondaryParent, ...body.prefill.children].filter(Boolean);
+            expect(people.map((p: { id: number }) => p.id).sort()).toEqual([leadA, memberA].sort());
+            for (const p of people) expect(p).toEqual(expect.objectContaining({ email: null, dob: null, over25: false, allergies: null }));
+            expect(JSON.stringify(body)).not.toMatch(/Contact (One|Two)|555-555-|peanuts|1980-01-01|@example\.com/);
         });
         it("another household's lead sees none of HH_A", async () => {
             as(leadB, { householdId: hhB });

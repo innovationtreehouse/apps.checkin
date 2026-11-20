@@ -120,19 +120,19 @@ export async function getIntakeState(userId: number) {
     const primary = parents.find((p) => p.id === userId) ?? null;
     const secondary = parents.find((p) => p.id !== userId) ?? null;
 
+    // Someone who may edit the household gets every detail back; another member gets
+    // names and the address, but no ages, allergies, emails or emergency contact.
+    const mayEdit = leadIds.has(userId) || user.isSysadmin;
+    const contact = household?.emergencyContacts[0];
+
     const shape = (p: { id: number; name: string | null; email: string | null; dateOfBirth: Date | null; isDeclaredAdult: boolean; allergies: string | null }) => ({
         id: p.id,
         name: p.name,
-        email: p.email,
-        dob: p.dateOfBirth ? p.dateOfBirth.toISOString().slice(0, 10) : null,
-        over25: !p.dateOfBirth && !!p.isDeclaredAdult,
-        allergies: p.allergies,
+        email: mayEdit ? p.email : null,
+        dob: mayEdit && p.dateOfBirth ? p.dateOfBirth.toISOString().slice(0, 10) : null,
+        over25: mayEdit && !p.dateOfBirth && !!p.isDeclaredAdult,
+        allergies: mayEdit ? p.allergies : null,
     });
-
-    // Only someone who may edit the household's details gets them back; another member
-    // sees only their own state and whether an emergency contact is on file.
-    const mayEdit = leadIds.has(userId) || user.isSysadmin;
-    const contact = household?.emergencyContacts[0];
 
     const external = process ? await getExternalStatus(process) : null;
 
@@ -153,20 +153,20 @@ export async function getIntakeState(userId: number) {
         ownBackgroundCheck,
         hasEmergencyContact: !!(contact?.name?.trim() && contact?.phone?.trim()),
         prefill: {
-            household: household && mayEdit
+            household: household
                 ? {
                       name: household.name,
                       ...pickAddress(household),
                       // The primary (lowest-priority) contact backs the single-field
                       // form. Shown even when flagged invalid so the lead can fix it.
-                      emergencyContactName: contact?.name ?? null,
-                      emergencyContactPhone: contact?.phone ?? null,
-                      emergencyContactEmail: contact?.email ?? null,
+                      emergencyContactName: mayEdit ? contact?.name ?? null : null,
+                      emergencyContactPhone: mayEdit ? contact?.phone ?? null : null,
+                      emergencyContactEmail: mayEdit ? contact?.email ?? null : null,
                   }
                 : null,
-            primaryParent: primary && mayEdit ? shape(primary) : null,
-            secondaryParent: secondary && mayEdit ? shape(secondary) : null,
-            children: mayEdit ? children.map(shape) : [],
+            primaryParent: primary ? shape(primary) : null,
+            secondaryParent: secondary ? shape(secondary) : null,
+            children: children.map(shape),
         },
     };
 }

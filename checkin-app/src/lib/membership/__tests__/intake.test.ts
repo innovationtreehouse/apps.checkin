@@ -300,7 +300,7 @@ describe('getIntakeState', () => {
         expect(state.prefill.household?.emergencyContactName).toBe('Aunt');
     });
 
-    it("a non-lead member gets no household details, only whether an emergency contact is on file", async () => {
+    it("a non-lead member gets names and the address, but no ages, allergies, emails or emergency contact", async () => {
         prisma.person.findUnique.mockResolvedValue({
             id: 3,
             householdId: 7,
@@ -321,7 +321,12 @@ describe('getIntakeState', () => {
 
         expect(state.isLead).toBe(false);
         expect(state.hasEmergencyContact).toBe(true);
-        expect(state.prefill).toEqual({ household: null, primaryParent: null, secondaryParent: null, children: [] });
+        expect(state.prefill.household).toEqual(expect.objectContaining({
+            name: 'Test Household', line1: '1 Main St', city: 'Austin',
+            emergencyContactName: null, emergencyContactPhone: null, emergencyContactEmail: null,
+        }));
+        expect(state.prefill.secondaryParent).toEqual({ id: 1, name: 'Primary', email: null, dob: null, over25: false, allergies: null });
+        expect(state.prefill.children).toEqual([{ id: 3, name: 'Kid', email: null, dob: null, over25: false, allergies: null }]);
     });
 
     it('a sysadmin outside the lead role still gets the prefill, since they may save it', async () => {
