@@ -73,6 +73,7 @@ const ORACLES = [
     'program-scope-withdrawn.test.ts',
     'receipt-allowance-reset-routes.test.ts',
     'receipt-flow-status-routes.test.ts',
+    'receipt-mail-replay-route.test.ts',
     'receipt-ocr-switch-routes.test.ts',
     'receipt-public-fields.test.ts',
     'receipt-routes.test.ts',
