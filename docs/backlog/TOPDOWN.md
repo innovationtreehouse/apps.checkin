@@ -81,7 +81,7 @@ QB is the sink; the **control layer between an event and QB is the gap**, not th
   **restriction capture (Written Confirmation)** + **IRS thank-you letter** → QB. INDEX FD covers import/entry, not
   restriction-capture or acknowledgment.
 - **Reconciliation window ⚠**: **Aug 15** discount ↔ **Sep 1** year-start ↔ **Sep 30** tolerance. Payment date, activation
-  date, and membership-year boundary diverge → the recurring Shopify↔activation reconciliation pain (INDEX CO2/CO6/P7).
+  date, and membership-year boundary diverge → the recurring Shopify↔activation reconciliation pain (INDEX CO6/P7).
   This is a *timing* gap, not just a feature.
 - **Cross-system identity**: Checkin(person) ↔ Shopify(customer) ↔ QB(customer/vendor) ↔ Benevity(donor). Dedup/reconcile
   across all four = INDEX RB9 but scoped only as a concept. → widen RB9.
@@ -179,7 +179,7 @@ Donations are **varied**; the real gap is **intake across channels**, all landin
 
 ## INDEX items that are really subepics (too broad to be one issue)
 - **FE3 "QuickBooks posting"** → actually the whole GC-FIN-CONTROL layer (budget/approval/allocation/capital/card/recon). Split.
-- **CI1 global catalog**, **FR3 receipt state machine**, **CO1 segment-pricing**, **P1 program-instance** — already XL; explicitly epics.
+- **CI1 global catalog**, **FR3 receipt state machine**, **P1 program-instance** — already XL; explicitly epics.
 - **M9 Org-Partner** → policy adds Partner Contact / Partner Participants / Partner Program entitlement tiers. Subepic.
 - **RB1–RB6 roles** → each should carry its policy duties/eligibility, not a bare "add role" line.
 - **RB9 identity reconciliation** → widen to the 4-system dedup (Checkin/Shopify/QB/Benevity).
