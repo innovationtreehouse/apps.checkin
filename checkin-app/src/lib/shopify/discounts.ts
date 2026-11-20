@@ -78,9 +78,10 @@ export async function mintMemberDiscountCode(
             Program: { id: programId, shopifyVariantId: program.shopifyVariantId, claimantShopifyVariantId: program.claimantShopifyVariantId },
             Household: { id: householdId },
         };
+        let sentCode = code;
         const res = await outboundCall('shopify.discount.create', bag, (stripped) => {
             const sentProgram = stripped.Program as DiscountProgramFields;
-            const sentCode = `${householdMemberCodePrefix(sentProgram.id, (stripped.Household as { id: number }).id)}${suffix}`;
+            sentCode = `${householdMemberCodePrefix(sentProgram.id, (stripped.Household as { id: number }).id)}${suffix}`;
             return shopifyFetch(`https://${storeDomain}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
                 method: 'POST',
                 headers: {
@@ -117,8 +118,8 @@ export async function mintMemberDiscountCode(
         if (result?.userErrors?.length) throw new Error(`Shopify discount create userErrors: ${JSON.stringify(result.userErrors)}`);
         if (!result?.codeDiscountNode?.id) throw new Error("Shopify discount create response missing codeDiscountNode id");
 
-        console.log(`[SHOPIFY] Minted single-use discount code ${code} for program ${programId} (-${formatCents(amountOffCents)}, expires ${endsAt.toISOString()})`);
-        return code;
+        console.log(`[SHOPIFY] Minted single-use discount code ${sentCode} for program ${programId} (-${formatCents(amountOffCents)}, expires ${endsAt.toISOString()})`);
+        return sentCode;
     } catch (error) {
         console.error("[Shopify Error] Failed to mint member discount code:", error);
         // Quieter than reportShopifyFailure (no admin email): a per-checkout mint
