@@ -118,6 +118,24 @@ describe('Admin Roles API Integration Tests', () => {
             expect(data.error).toContain('Forbidden');
         });
 
+        it.each(['isKeyholder', 'isBackgroundCheckReviewer', 'isFinance', 'isOperations', 'isKeyVolunteer'])(
+            'should return 403 for a %s who is not Board or sysadmin',
+            async (flag) => {
+                asSession({ id: testUserId, [flag]: true });
+                const res = await GET(getReq());
+                expect(res.status).toBe(403);
+                expect(await res.json()).not.toHaveProperty('people');
+            },
+        );
+
+        it('should list people for a Board member', async () => {
+            asSession({ id: testUserId, isBoardMember: true });
+            const res = await GET(getReq());
+            expect(res.status).toBe(200);
+            const ids = (await res.json()).people.map((p: { id?: number }) => p.id);
+            expect(ids).toContain(testTargetUserId);
+        });
+
         it('should return all participants (youth flagged, dob hidden) for a isSysadmin', async () => {
             asSession({ id: testSysAdminId, isSysadmin: true });
             const res = await GET(getReq());
