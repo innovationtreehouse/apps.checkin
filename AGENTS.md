@@ -278,6 +278,15 @@ on the thread. Do not leave it and start something else.
   reads as feedback evasion, and it costs the reviewer the same work twice.
 - Same rule for a finding already **rejected**. Re-raising it needs new evidence
   named in the body, not a new PR number.
+- **A later release waits for the earlier one to reach prod.** When a design
+  names releases that must reach prod in a set order, such as code that stops
+  reading a column and then a later `DROP COLUMN`, the later release's PR
+  stays unopened or in draft until the earlier PR has merged and a published
+  release has deployed it to prod. Merging to `main` deploys only dev; prod
+  deploys from a published release, so every PR merged since the last release
+  reaches prod at once, and two ordered PRs merged before the same release
+  lose their order. A draft opened early is based on `main`, not on the
+  earlier PR's branch.
 
 ## AI review and approval
 
