@@ -13,6 +13,8 @@ import BadgeDocument from "@/components/admin/BadgeDocument";
 import StickerDocument from "@/components/admin/StickerDocument";
 import { computeDisplayNames } from "@/components/admin/badgeNames";
 import { goesBy } from "@/lib/person/name";
+import { isLiveKeyholder } from "@/lib/visit/filters";
+import type { OrgMembershipStatus } from "@/generated/prisma/client";
 
 type ParticipantRow = {
   id: number;
@@ -23,6 +25,7 @@ type ParticipantRow = {
   isSysadmin?: boolean;
   isBoardMember?: boolean;
   isKeyholder?: boolean;
+  household?: { orgMembership?: { status: OrgMembershipStatus } | null } | null;
 };
 
 type SavedNickname = { id: number; nickname: string | null };
@@ -375,8 +378,8 @@ export default function PrintBadgesPage() {
         <Group gap={4}>
           {p.isSysadmin && <Badge size="xs" color="red">ADMIN</Badge>}
           {p.isBoardMember && <Badge size="xs" color="blue">BOARD</Badge>}
-          {p.isKeyholder && <Badge size="xs" color="orange">KEYHOLDER</Badge>}
-          {!p.isSysadmin && !p.isBoardMember && !p.isKeyholder && p.isMember && (
+          {isLiveKeyholder(p) && <Badge size="xs" color="orange">KEYHOLDER</Badge>}
+          {!p.isSysadmin && !p.isBoardMember && !isLiveKeyholder(p) && p.isMember && (
             <Badge size="xs">MEMBER</Badge>
           )}
         </Group>
