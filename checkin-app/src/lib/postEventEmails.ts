@@ -2,7 +2,6 @@ import { Prisma } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import { config } from "@/lib/config";
 import { sendTemplated } from "@/lib/email-templates/send";
-import { logIntegrationError } from "@/lib/logger";
 
 /** Failed sends of one event's email before the runs give up and tell the Board. */
 export const POST_EVENT_EMAIL_MAX_ATTEMPTS = 5;
@@ -23,17 +22,21 @@ interface ProcessPostEventEmailsOptions {
 }
 
 /**
- * Clears a capped event's claim and notes the Board. A claim still set at the cap means
- * no note yet, so only the run whose clear lands writes one.
+ * Clears a capped event's claim and notes the Board in one transaction. A claim still set
+ * at the cap means no note yet, so only the run whose clear lands writes one.
  */
-async function giveUp(event: { id: number; name: string }, where: Prisma.EventWhereInput, data: Prisma.EventUpdateManyMutationInput = {}) {
-    const cleared = await prisma.event.updateMany({ where, data: { ...data, postEventEmailClaimedAt: null } });
-    if (cleared.count !== 1) return;
-    await logIntegrationError(
-        "post-event-email",
-        `Post-event email for "${event.name}" (event ${event.id}) failed ${POST_EVENT_EMAIL_MAX_ATTEMPTS} times; no more attempts. Remind the program lead to confirm attendance.`,
-        { eventId: event.id },
-    );
+async function giveUp(event: { id: number; name: string }, where: Prisma.EventWhereInput, why: string, data: Prisma.EventUpdateManyMutationInput = {}) {
+    await prisma.$transaction(async (tx) => {
+        const cleared = await tx.event.updateMany({ where, data: { ...data, postEventEmailClaimedAt: null } });
+        if (cleared.count !== 1) return;
+        await tx.integrationErrorLog.create({
+            data: {
+                source: "post-event-email",
+                message: `Post-event email for "${event.name}" (event ${event.id}) ${why}; no more attempts. Remind the program lead to confirm attendance.`,
+                context: { eventId: event.id },
+            },
+        });
+    });
 }
 
 /**
@@ -179,7 +182,7 @@ export async function processPostEventEmails(options: ProcessPostEventEmailsOpti
                 where: { ...mine, postEventEmailAttempts: { lt: POST_EVENT_EMAIL_MAX_ATTEMPTS - (tookOver ? 0 : 1) } },
                 data: { postEventEmailClaimedAt: null, ...counted },
             });
-            if (released.count === 0) await giveUp(event, mine, counted);
+            if (released.count === 0) await giveUp(event, mine, `failed ${POST_EVENT_EMAIL_MAX_ATTEMPTS} times`, counted);
         }
 
         // Update cursor to the last fetched event ID
@@ -191,12 +194,17 @@ export async function processPostEventEmails(options: ProcessPostEventEmailsOpti
         where: {
             postEventEmailSent: false,
             postEventEmailAttempts: { gte: POST_EVENT_EMAIL_MAX_ATTEMPTS },
+            attendanceConfirmedAt: null,
             postEventEmailClaimedAt: { lt: new Date(now.getTime() - CLAIM_STALE_AFTER_MS) },
         },
         select: { id: true, name: true, postEventEmailClaimedAt: true },
     });
     for (const event of stranded) {
-        await giveUp(event, { id: event.id, postEventEmailClaimedAt: event.postEventEmailClaimedAt });
+        await giveUp(
+            event,
+            { id: event.id, postEventEmailClaimedAt: event.postEventEmailClaimedAt },
+            `reached ${POST_EVENT_EMAIL_MAX_ATTEMPTS} attempts; the last attempt did not finish, and the email may have sent`,
+        );
     }
 
     return { processedEvents: processedEventsCount, emailsSent };
