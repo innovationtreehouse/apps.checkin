@@ -90,4 +90,22 @@ describe("Pacer", () => {
     (await p.acquire())();
     expect(info).toHaveBeenCalledWith("[quickbooks] requests per day", { day: "2026-11-18", requests: 3 });
   });
+
+  it("answers the pause in force, and none once it has passed", () => {
+    const p = new Pacer();
+    expect(p.pauseEnds()).toBeNull();
+    p.throttle(null);
+    expect(p.pauseEnds()).toEqual(new Date("2026-11-18T12:01:00Z"));
+    vi.setSystemTime(new Date("2026-11-18T12:01:00Z"));
+    expect(p.pauseEnds()).toBeNull();
+  });
+
+  it("counts today's requests, and none on a day with no request yet", async () => {
+    const p = new Pacer();
+    expect(p.requestsToday()).toBe(0);
+    for (let i = 0; i < 2; i++) (await p.acquire())();
+    expect(p.requestsToday()).toBe(2);
+    vi.setSystemTime(new Date("2026-11-19T00:00:01Z"));
+    expect(p.requestsToday()).toBe(0);
+  });
 });

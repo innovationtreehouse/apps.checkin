@@ -44,6 +44,16 @@ export class Pacer {
     return new Date(this.pausedUntil);
   }
 
+  /** When the throttle pause ends; null when none is in force. */
+  pauseEnds(): Date | null {
+    return this.pausedUntil > Date.now() ? new Date(this.pausedUntil) : null;
+  }
+
+  /** Requests started so far this UTC day. */
+  requestsToday(): number {
+    return this.countDay === new Date().toISOString().slice(0, 10) ? this.count : 0;
+  }
+
   private async take(): Promise<() => void> {
     for (;;) {
       // Only the request at the head of the line waits here, so one waiter slot is enough.

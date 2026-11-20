@@ -1,11 +1,12 @@
 import { logger } from "@/lib/logger";
-import { finishRun, inRun, newRun, stepCrashed } from "@/lib/finishRun";
+import { finishRun, inRun, newRun, reportTo, stepCrashed } from "@/lib/finishRun";
 import { getOrg } from "@/lib/components/host";
 import { handler } from "@/security/handler";
 import { runDonationDepositHandOver } from "@checkin/bulk-donation";
 import { runIncomeOrphanSweep } from "@checkin/income";
 import { refreshQuickBooksLists } from "@/lib/finance/quickBooksLists";
 import { requestPostingRun, runPostingQueue, type PostingLane } from "@/lib/finance/quickBooksPosting";
+import { currentPostingWarnings } from "@/lib/finance/postingRuns";
 
 /** The run ledger's name for this job: the route's last path segment. */
 const JOB = "qbo-posting";
@@ -28,7 +29,7 @@ async function inSlot<L extends PostingLane>(lane: L) {
 /**
  * Daily QuickBooks posting: first the refresh of the app's copy of QuickBooks' account and Class lists, then expense's step (stranded recovery, the outbox drain, the drift check, the
  * retry of outcome emails still owed),
- * then donation handing completed disbursements to income, then the in-kind drain, then income's drain (reconcile, then the outbox), then income's orphan sweep, then any lane still queued for the posting slot.
+ * then donation handing completed disbursements to income, then the in-kind drain, then income's drain (reconcile, then the outbox), then income's orphan sweep, then any lane still queued for the posting slot, then the lanes' posting warnings (a lane throttled three runs in a row, or a run that lapsed holding the slot), each a failure of the run.
  * The expense, in-kind and income steps each take the posting slot, so a finance catch-up queued meanwhile runs between them. Answers only to QBO_POSTING_CRON_SECRET (registry `cronSecret`).
  *
  * Each step is isolated, so one failing never stops the other; a failed step is recorded on the
@@ -102,6 +103,16 @@ async function postAll(): Promise<string[]> {
         logger.error("[qbo-posting] queued QuickBooks posting failed:", err);
         stepCrashed(JOB, "queue", err);
         failed.push("queue");
+    }
+    try {
+        for (const { lane, cause, text } of await currentPostingWarnings()) {
+            reportTo("quickbooks")({ lane: "posting-slot", kind: cause === "throttled" ? "connection" : "system", faultCodes: [`qb_${cause}`], detail: `${lane}: ${text}` });
+            failed.push(`${lane} posting warning`);
+        }
+    } catch (err) {
+        logger.error("[qbo-posting] reading the posting warnings failed:", err);
+        stepCrashed(JOB, "warnings", err);
+        failed.push("warnings");
     }
 
     return failed;
