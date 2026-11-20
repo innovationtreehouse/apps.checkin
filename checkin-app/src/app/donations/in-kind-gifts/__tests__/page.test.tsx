@@ -12,7 +12,7 @@ const mockReload = jest.fn();
 const mockApi = jest.fn<Promise<unknown>, unknown[]>();
 
 jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 1 } } }) }));
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn() } }));
 jest.mock("@checkin/component-ui", () => ({
   ...jest.requireActual("@checkin/component-ui"),
   useViewer: () => ({ id: 1, isInventoryManager: true }),

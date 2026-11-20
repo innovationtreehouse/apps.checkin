@@ -3,7 +3,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Alert, Anchor, Badge, Button, Group, SegmentedControl, Table, Text, Title } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
+import { showError, showSuccess, showWarning } from "@checkin/component-ui";
 import { api, stateColor, stateLabel, errorMessage, notifyNavCounts, useCanManage, useLoad } from "../components/api";
 import { formatCents } from "@checkin/money";
 import { isUnreadableReceiptNote } from "../lib/unreadable-receipt";
@@ -67,11 +67,9 @@ export default function ReceivingPage() {
   async function retry(id: number) {
     setRetrying(id);
     const result = await retryOne(id);
-    notifications.show(
-      result.outcome === "failed" ? { message: result.message, color: "red", autoClose: false }
-        : result.outcome === "sending" ? { message: "Still sending: it stays In progress and the system retries it automatically.", color: "orange", autoClose: false }
-        : { message: "Applied", color: "green" },
-    );
+    if (result.outcome === "failed") showError(result.message);
+    else if (result.outcome === "sending") showWarning("Still sending: it stays In progress and the system retries it automatically.");
+    else showSuccess("Applied");
     setRetrying(null);
     reloadAll();
   }
@@ -95,7 +93,8 @@ export default function ReceivingPage() {
       skipped ? `${skipped} skipped (stored data unreadable)` : "",
     ].filter(Boolean).join(", ");
     const allApplied = tally.applied === ids.length;
-    notifications.show(allApplied ? { message, color: "green" } : { message, color: "red", autoClose: false });
+    if (allApplied) showSuccess(message);
+    else showError(message);
     reloadAll();
   }
 

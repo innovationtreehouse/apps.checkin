@@ -2,7 +2,7 @@ import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { renderWithProviders } from "@/test-helpers/rtl";
 import ReceivingPage from "@checkin/workflow-mapping/pages/receiving";
 
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn() } }));
 import { notifications } from "@mantine/notifications";
 
 let mockSearch = new URLSearchParams("queue=failed");
@@ -99,7 +99,7 @@ describe("Receiving › Apply failed Retry all", () => {
     await waitFor(() => expect(notifications.show).toHaveBeenCalled());
     expect(calls()).toEqual(["1/retry-apply", "2/retry-apply", "2/apply", "3/retry-apply", "3/apply"]);
     expect(notifications.show).toHaveBeenCalledTimes(1);
-    expect(notifications.show).toHaveBeenCalledWith({ message: "1 applied, 2 still failed", color: "red", autoClose: false });
+    expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "1 applied, 2 still failed", color: "red", autoClose: false }));
     // One reload each for rows and counts.
     expect(mockReload).toHaveBeenCalledTimes(2);
   });
@@ -114,7 +114,7 @@ describe("Receiving › Apply failed Retry all", () => {
     fireEvent.click(screen.getByRole("button", { name: "Retry all (3)" }));
 
     await waitFor(() => expect(notifications.show).toHaveBeenCalled());
-    expect(notifications.show).toHaveBeenCalledWith({ message: "1 applied, 1 still sending, 1 still failed", color: "red", autoClose: false });
+    expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "1 applied, 1 still sending, 1 still failed", color: "red", autoClose: false }));
   });
 
   it("skips receipts whose stored data can't be read", async () => {
@@ -125,10 +125,10 @@ describe("Receiving › Apply failed Retry all", () => {
 
     await waitFor(() => expect(notifications.show).toHaveBeenCalled());
     expect(calls()).toEqual(["1/retry-apply", "1/apply"]);
-    expect(notifications.show).toHaveBeenCalledWith({
+    expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
       message: "1 applied, 0 still failed, 2 skipped (stored data unreadable)",
       color: "green",
-    });
+    }));
   });
 
   it("hides Retry all when every row's stored data is unreadable", () => {

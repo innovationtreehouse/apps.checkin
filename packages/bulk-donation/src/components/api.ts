@@ -1,6 +1,6 @@
 "use client";
-import { createClient, HttpError, refusalMessage, useViewer, type Loaded } from "@checkin/component-ui";
-import { notifications } from "@mantine/notifications";
+import { createElement } from "react";
+import { createClient, errorMessage, HttpError, refusalMessage, showError, showSuccess, useViewer, type Loaded } from "@checkin/component-ui";
 
 /**
  * Client fetch helpers. Every donation read and write goes through the host's
@@ -49,16 +49,12 @@ export function when(iso: string | null | undefined): string {
 export async function act(call: () => Promise<unknown>, ok: string | ((result: unknown) => string), reload: () => void): Promise<boolean> {
   try {
     const result = await call();
-    notifications.show({ message: typeof ok === "string" ? ok : ok(result), color: "green" });
+    showSuccess(typeof ok === "string" ? ok : ok(result));
     reload();
     return true;
   } catch (e) {
-    notifications.show({
-      message: refusalMessage(e),
-      color: "red",
-      autoClose: false,
-      styles: { description: { whiteSpace: "pre-line", maxHeight: "50vh", overflowY: "auto" } },
-    });
+    const pane = { whiteSpace: "pre-line", maxHeight: "50vh", overflowY: "auto" } as const;
+    showError(createElement("div", { style: pane }, refusalMessage(e)), { key: errorMessage(e) });
     return false;
   }
 }

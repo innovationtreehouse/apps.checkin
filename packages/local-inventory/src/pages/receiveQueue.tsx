@@ -1,13 +1,12 @@
 "use client";
 import { useState } from "react";
 import { ActionIcon, Button, Checkbox, Group, Modal, Table, Text, Textarea, Title, Tooltip } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
 import { IconCheck, IconTrash } from "@tabler/icons-react";
 import { formatGtinDisplay } from "../lib/gtin";
 import {
   api, CatalogNamesUnavailable, errorMessage, notifyNavCounts, useCanManage, useCatalogNames, useLoad, withProvisionalNames, type ProvisionalName,
 } from "../components/api";
-import { LoadError } from "@checkin/component-ui";
+import { LoadError, showError, showSuccess } from "@checkin/component-ui";
 
 interface QueueRow {
   id: number;
@@ -38,11 +37,11 @@ export default function ReceiveQueuePage() {
     try {
       await api(path, init);
       notifyNavCounts();
-      notifications.show({ message, color: "green" });
+      showSuccess(message);
       queue.reload();
       return true;
     } catch (err) {
-      notifications.show({ message: errorMessage(err), color: "red", autoClose: false });
+      showError(errorMessage(err));
       return false;
     } finally {
       setBusy(false);
