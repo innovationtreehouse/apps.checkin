@@ -11,6 +11,7 @@
  */
 import { configureWorkflowMapping, type ExpenseSink } from "@checkin/workflow-mapping";
 import { expenseIntake } from "@checkin/expense";
+import { readService } from "@checkin/global-catalog";
 import { ingestInKind } from "@checkin/bulk-donation";
 import { catalogEventsSince, getOrg, getPrincipal } from "@/lib/components/host";
 import { catalogReader } from "@/lib/catalog/reader";
@@ -32,7 +33,10 @@ export function configureRuntime(): void {
   configureWorkflowMapping({
     auth: { getPrincipal },
     org: getOrg,
-    catalogReader,
+    catalogReader: {
+      ...catalogReader,
+      getOrgProvisionalItem: async (gtin13) => readService.getOrgProvisionalItem((await getOrg()).id, gtin13),
+    },
     catalogSubmissions: createCatalogSubmissions(getOrg),
     inventorySink: createLocalInventorySink(getOrg),
     catalogEventSource: { eventsSince: catalogEventsSince },
