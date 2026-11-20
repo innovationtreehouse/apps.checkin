@@ -1121,6 +1121,11 @@ describeDb("in-kind drain settings", () => {
     await expect(readDonationSettings(db, orgId)).resolves.toEqual(DEFAULT_DONATION_SETTINGS);
   });
 
+  it("answers a save with the per-run limit as read, a stored one above 100 as 100", async () => {
+    await db.donationOrgSettings.create({ data: { orgId, qbMaxCreatesPerRun: 1_000 } });
+    await expect(updateDonationSettings(orgId, { qbMatchWindowDays: 3 }, { isFinance: true, isBoard: false }, ACTOR)).resolves.toEqual({ qbMatchWindowDays: 3, qbMaxCreatesPerRun: 100 });
+  });
+
   it("records a change with its before and after", async () => {
     await updateDonationSettings(orgId, { qbMatchWindowDays: 3 }, { isFinance: true, isBoard: false }, ACTOR);
 
@@ -1338,8 +1343,11 @@ describeDb("in-kind drain — a QuickBooks throttle", () => {
     await switchOn();
     const gifts = [await acceptedGift(), await acceptedGift()];
     qbo.createAnswer = () => ({ status: 429 });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     await expect(runInKindQbPosting(orgId)).resolves.toMatchObject({ throttled: 2, failed: 0, posted: 0 });
+    expect(warn).toHaveBeenCalledWith("[bulk-donation] qb_drain_throttled", { remaining: 2 });
+    warn.mockRestore();
     for (const id of gifts) expect((await posting(id).catch(() => null))?.qbFirstFailedAt ?? null).toBeNull();
     expect(failures).toEqual([]);
     expect(await stuckItems()).toEqual([]);

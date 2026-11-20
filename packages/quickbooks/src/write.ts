@@ -174,15 +174,15 @@ export interface InKindJournalRequest extends Pick<MatchRequest, "window" | "cla
 /**
  * The only way the app creates a JournalEntry: one in-kind gift. Credits go only to in-kind
  * income and debits to no books-map role's account, every amount positive and the entry
- * balanced, or it throws before reading QuickBooks. Matching is by the app's key alone: a hand
- * entry of the same amount is never taken as the gift's.
+ * balanced, or it answers failed before reading QuickBooks. Matching is by the app's key alone:
+ * a hand entry of the same amount is never taken as the gift's.
  */
 export async function findOrCreateInKindJournal(client: QuickBooksClient, req: InKindJournalRequest): Promise<FindOrCreateResult> {
-  const fields: JournalEntryFields = { txnDate: req.txnDate, memo: req.memo, lines: req.lines.map((l) => inKindLine(l, req.accounts)) };
-  const total = (side: JournalLine["postingType"]) => sumCents(...fields.lines.filter((l) => l.postingType === side).map((l) => l.amountCents));
-  if (fields.lines.some((l) => !Number.isSafeInteger(l.amountCents) || l.amountCents <= 0)) throw new Error("In-kind journal amounts must be positive whole cents");
-  if (total("Credit") === 0 || total("Debit") !== total("Credit")) throw new Error("In-kind journal entry is not balanced");
   try {
+    const fields: JournalEntryFields = { txnDate: req.txnDate, memo: req.memo, lines: req.lines.map((l) => inKindLine(l, req.accounts)) };
+    const total = (side: JournalLine["postingType"]) => sumCents(...fields.lines.filter((l) => l.postingType === side).map((l) => l.amountCents));
+    if (fields.lines.some((l) => !Number.isSafeInteger(l.amountCents) || l.amountCents <= 0)) throw new Error("In-kind journal amounts must be positive whole cents");
+    if (total("Credit") === 0 || total("Debit") !== total("Credit")) throw new Error("In-kind journal entry is not balanced");
     assertAppKey(req.key);
     checkDates(req.txnDate, req);
     const read = (await client.journalEntriesBetween(req.window.from, req.window.to)).map((j) => journalCandidate(j, appKeyOf)).filter((c) => c.appKey !== undefined);
