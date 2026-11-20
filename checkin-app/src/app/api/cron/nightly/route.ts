@@ -149,7 +149,7 @@ export const GET = withCron(() => duringNightlyRun(async () => {
         // age-gated program can target anyone over 25 (MAX_PROGRAM_AGE), so a DoB for
         // a 26+ person is dead weight on our most-sensitive field. Strip it and set the
         // declared-adult flag so age gates / search / UI still see them as an adult.
-        // Runs nightly to catch members as they age in. Raw SQL so age is judged in the DB, tombstones included.
+        // Runs nightly to catch members as they age in. Raw SQL so age is judged in the DB.
         const purgedPeople = await prisma.$transaction(async (tx) => {
             const purged = await tx.$queryRaw<{ id: number }[]>`
                 UPDATE "Person"
