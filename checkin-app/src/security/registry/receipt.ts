@@ -9,7 +9,7 @@ import { defineFileRoute, defineRoute, type OrderedViewEntry } from '../core';
 // (__tests__/receipt-public-fields.test.ts). FINANCE acts org-wide; BOARD reads alongside
 // FINANCE (finance's superuser) but takes no finance action. Sysadmins get
 // nothing extra (revenue.md), except the automatic-reading switch below, which
-// the owner opened to sysadmins (expenses.md), and mail replay. A route shared by both audiences lists
+// the owner opened to sysadmins (expenses.md). A route shared by both audiences lists
 // isFinance first; the route passes `access: "finance"` to the library exactly
 // when that view matched, else `"submitter"`.
 const FINANCE = ['everyones:pii', 'everyones:personal', 'everyones:internal', 'public'] as const;
@@ -110,9 +110,9 @@ defineRoute({ endpoint: 'POST /api/receipts/mail-items/[id]/discard', authorize:
 // Finance's mail catch-up: POST starts one background intake pass under the mail lease; GET reads whether one is running and the last run's counts. FINANCE only, like the queue.
 defineRoute({ endpoint: 'GET /api/receipts/mail-items/catch-up', authorize: 'finance', envelope: null, returns: ['ReceiptMailCatchUp'], orderedView: FINANCE_VIEW });
 defineRoute({ endpoint: 'POST /api/receipts/mail-items/catch-up', authorize: 'finance', envelope: null, returns: ['ReceiptMailCatchUp'], orderedView: FINANCE_VIEW });
-// Replay of one captured email from the stored copy: FINANCE and sysadmins.
-// The answer is the outcome alone, never the email, its key or headers.
-defineRoute({ endpoint: 'POST /api/receipts/mail-messages/[id]/replay', authorize: { anyRole: ['isFinance', 'isSysadmin'] }, envelope: null, returns: ['ReceiptMailReplay'], orderedView: [['isFinance', ['everyones:internal']], ['isSysadmin', ['everyones:internal']]] });
+// Replay of one captured email from the stored copy, for the catch-up button's
+// people: FINANCE only. The answer is the outcome, never the email, its key or headers.
+defineRoute({ endpoint: 'POST /api/receipts/mail-messages/[id]/replay', authorize: 'finance', envelope: null, returns: ['ReceiptMailReplay'], orderedView: FINANCE_VIEW });
 
 // Mail aliases: the extra addresses a person's
 // receipt mail may come from. FINANCE and the BOARD list, add, remove and

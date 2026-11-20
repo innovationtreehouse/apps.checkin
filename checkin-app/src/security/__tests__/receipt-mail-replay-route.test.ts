@@ -3,7 +3,7 @@
  */
 /**
  * Admission and view for replaying one captured email (registry/receipt.ts):
- * FINANCE and sysadmins only. Auth runs through the real authenticateRequest;
+ * FINANCE only, like the mail catch-up button. Auth runs through the real authenticateRequest;
  * only next-auth's getServerSession is stubbed (jest.setup.js mocks it).
  */
 import type { NextRequest as NextRequestType } from 'next/server';
@@ -36,8 +36,10 @@ function signIn(claims: Claims) {
     });
 }
 
-async function call() {
-    const impl = jest.fn(async () => ({ ReceiptMailReplay: { status: 'expired', message: 'This email’s stored copy expired.' } }));
+const EXPIRED = { status: 'expired', message: "This email's stored copy expired 90 days after capture." };
+
+async function call(outcome: Record<string, string> = EXPIRED) {
+    const impl = jest.fn(async () => ({ ReceiptMailReplay: outcome }));
     const req = new NextRequest('http://localhost/api/receipts/mail-messages/7/replay', { method: 'POST' });
     const res = await handler(POST, impl)(req, { params: Promise.resolve({ id: '7' }) });
     return { res, impl };
@@ -50,17 +52,15 @@ describe('receipt mail replay route', () => {
         expect(getRoute(POST)?.returns).toEqual(['ReceiptMailReplay']);
     });
 
-    it.each([
-        ['FINANCE', { isFinance: true }],
-        ['a sysadmin', { isSysadmin: true }],
-    ] as const)('lets %s replay and read the outcome', async (_who, claims) => {
-        signIn(claims);
-        const { res } = await call();
+    it.each([{ status: 'processed' }, { status: 'waiting' }, EXPIRED])('lets FINANCE replay and read the outcome %j', async (outcome) => {
+        signIn({ isFinance: true });
+        const { res } = await call(outcome);
         expect(res.status).toBe(200);
-        expect(await res.json()).toEqual({ status: 'expired', message: 'This email’s stored copy expired.' });
+        expect(await res.json()).toEqual(outcome);
     });
 
     it.each([
+        ['a sysadmin', { isSysadmin: true }],
         ['a Board-only member', { isBoardMember: true }],
         ['an adult member who submits receipts', { isActiveOrgMember: true, ageBand: 'adult' }],
         ['an inventory manager', { isInventoryManager: true }],
