@@ -5,7 +5,7 @@ import type { DbClient, TxClient } from "@/lib/db-client";
 import { withFacilityLock } from "@/lib/facilityLock";
 import { KEYHOLDER_IN_BUILDING, LIVE_VISIT, actsAsKeyholder } from "@/lib/visit/filters";
 import { LATE_CLOSE_SKEW_MS, MAX_VISIT_MS } from "@/lib/visitTimes";
-import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits, youthIsPresent } from "@/lib/supervision";
+import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits, uncoveredYouthVisitIds } from "@/lib/supervision";
 import { isYouth } from "@/lib/time";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { auditKioskLeave, closeVia, recordClose } from "@/lib/attendance/close";
@@ -53,7 +53,7 @@ export type ScanOutcome =
         kind: "checkin";
         person: Person;
         visit: Visit;
-        /** A youth arrived into a room short of supervising adults. */
+        /** A youth no adult of their own household covers arrived into a room short of supervising adults. */
         supervisionShort: boolean;
         /** A replayed arrival departed at a close that reached the server first. */
         departedAtClose: boolean;
@@ -135,11 +135,13 @@ export async function processCheckin(
 
     // A youth arriving into a room short of supervision is WARNED, never blocked:
     // opening the door before the second adult is the keyholder's call to
-    // make, and the app's job is to tell the room. Only asked for youth, so an
-    // ordinary adult check-in still costs no extra query.
+    // make, and the app's job is to tell the room. A youth an adult of their own
+    // household covers owes no two-deep. Only asked for youth, so an ordinary
+    // adult check-in still costs no extra query.
     const isYouthArrival = !participant.isDeclaredAdult
         && isYouth(participant.dateOfBirth, { unknownIs: "youth" });
     const supervisionShort = isYouthArrival
+        && (await uncoveredYouthVisitIds(tx)).includes(newVisit.id)
         && supervisingAdultCount(await supervisingAdultVisits(tx)) < MIN_SUPERVISING_ADULTS;
 
     return { kind: "checkin", person: participant, visit: newVisit, supervisionShort, departedAtClose: false };
@@ -276,9 +278,11 @@ export async function processCheckout(
  * the household is still represented; that is the same-household rule.
  *
  *   remaining === 2 (the third supervising adult leaves) → warn, do not confirm.
- *   remaining  <  2 (the next one leaves), youth present → warn AND confirm.
- *   remaining  <  2 with no youth in the building        → warn, do not confirm.
+ *   remaining  <  2, an uncovered youth would remain      → warn AND confirm.
+ *   remaining  <  2, no uncovered youth would remain      → warn, do not confirm.
  *
+ * An uncovered youth is one with no adult of their own household inside
+ * ({@link uncoveredYouthVisitIds}), counted as if this visit had already ended.
  * Only the confirm rung is youth-gated; the warn rung over-warns deliberately.
  *
  * The confirm is bound to the warning having been SHOWN, not to badge adjacency:
@@ -297,10 +301,10 @@ async function supervisionInterrupt(
 
     if (remaining === MIN_SUPERVISING_ADULTS) return { remaining, confirm: false };
 
-    // The confirm rung is youth-gated: policy's floor is two
-    // adults whenever a youth is, so an adult-only room locking up warns and goes.
+    // The confirm rung is youth-gated: two-deep is owed only while a youth no
+    // household adult covers is inside, so any other room warns and goes.
     // Probed on this rung only — every quieter departure pays nothing for it.
-    if (!(await youthIsPresent(db))) return { remaining, confirm: false };
+    if ((await uncoveredYouthVisitIds(db, activeVisitId)).length === 0) return { remaining, confirm: false };
 
     const ownVisit = await db.visit.findUnique({
         where: { id: activeVisitId },

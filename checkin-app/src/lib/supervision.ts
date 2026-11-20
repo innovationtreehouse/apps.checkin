@@ -119,17 +119,30 @@ export async function supervisingAdultVisits(
 }
 
 /**
- * Is a youth in the building? The adult prong inverted, over the same open
- * visits: not declared adult, and not 18+ by date of birth — unknown age fails
- * closed as youth. Only the `isDeclaredAdult` half is a query filter; the
- * age half stays with {@link isYouth} so the rule keeps one expression.
+ * The youth among `present` with no adult of their own household present. An
+ * adult covers their own household's youth whether or not they are cleared;
+ * two-deep is owed only while this list is non-empty.
  */
-export async function youthIsPresent(db: DbClient = prisma): Promise<boolean> {
-    const candidates = await db.visit.findMany({
-        where: { departedAt: null, deletedAt: null, person: { isDeclaredAdult: false } },
-        select: { person: { select: { dateOfBirth: true } } },
+export function uncoveredYouth<T extends { youth: boolean; householdId: number }>(present: T[]): T[] {
+    const householdsWithAdult = new Set(present.filter(p => !p.youth).map(p => p.householdId));
+    return present.filter(p => p.youth && !householdsWithAdult.has(p.householdId));
+}
+
+/**
+ * Open visits of youth no adult of their own household covers ({@link uncoveredYouth}).
+ * Unknown age fails closed as youth. Pass `excludeVisitId` to ask as if that
+ * visit had already ended.
+ */
+export async function uncoveredYouthVisitIds(db: DbClient = prisma, excludeVisitId?: number): Promise<number[]> {
+    const open = await db.visit.findMany({
+        where: { departedAt: null, deletedAt: null, ...(excludeVisitId === undefined ? {} : { id: { not: excludeVisitId } }) },
+        select: { id: true, person: { select: { householdId: true, isDeclaredAdult: true, dateOfBirth: true } } },
     });
-    return candidates.some(v => isYouth(v.person.dateOfBirth, { unknownIs: "youth" }));
+    return uncoveredYouth(open.map(v => ({
+        id: v.id,
+        householdId: v.person.householdId,
+        youth: !v.person.isDeclaredAdult && isYouth(v.person.dateOfBirth, { unknownIs: "youth" }),
+    }))).map(v => v.id);
 }
 
 /**
