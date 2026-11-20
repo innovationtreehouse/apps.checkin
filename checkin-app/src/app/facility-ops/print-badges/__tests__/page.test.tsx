@@ -87,6 +87,24 @@ describe("facility-ops/print-badges page", () => {
     expect(screen.getByText("BOARD")).toBeInTheDocument();
   });
 
+  it("shows KEYHOLDER only for a keyholder whose household is not DENIED or REVOKED", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const keyholder = (id: number, name: string, status: string, isMember: boolean) =>
+      ({ id, name, email: `k${id}@example.com`, isMember, isKeyholder: true, household: { orgMembership: { status } } });
+    mockFetchJson({ "/api/people/search": { people: [
+      keyholder(1, "Active Kim", "ACTIVE", true),
+      keyholder(2, "Revoked Rae", "REVOKED", false),
+      keyholder(3, "Denied Dee", "DENIED", false),
+    ] } });
+    renderWithProviders(<PrintBadgesPage />);
+    await screen.findByText("Active Kim");
+    fireEvent.click(screen.getByRole("checkbox", { name: /hide inactive/i }));
+
+    expect(cell("Active Kim", 7)).toContain("KEYHOLDER");
+    expect(cell("Revoked Rae", 7)).not.toContain("KEYHOLDER");
+    expect(cell("Denied Dee", 7)).not.toContain("KEYHOLDER");
+  });
+
   it("re-searches participants as the search box changes", async () => {
     setSession({ id: 1, isSysadmin: true });
     const fetchMock = mockFetchJson({ "/api/people/search": { people: participants } });

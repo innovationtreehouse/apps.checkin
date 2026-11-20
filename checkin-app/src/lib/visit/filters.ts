@@ -27,6 +27,15 @@ export const LIVE_KEYHOLDER: Prisma.PersonWhereInput = {
     NOT: { household: { orgMembership: { status: { in: KEYHOLDER_VOID_STATUSES } } } },
 };
 
+/** {@link LIVE_KEYHOLDER} applied to a person already read with its household's status. */
+export function isLiveKeyholder(person: {
+    isKeyholder?: boolean;
+    household?: { orgMembership?: { status: OrgMembershipStatus } | null } | null;
+}): boolean {
+    const status = person.household?.orgMembership?.status;
+    return !!person.isKeyholder && !(status && KEYHOLDER_VOID_STATUSES.includes(status));
+}
+
 /** Whether this person acts as a keyholder: flagged, and {@link LIVE_KEYHOLDER} holds now. */
 export async function actsAsKeyholder(person: Pick<Person, "id" | "isKeyholder">, db: DbClient): Promise<boolean> {
     return person.isKeyholder && (await db.person.count({ where: { id: person.id, ...LIVE_KEYHOLDER } })) > 0;
