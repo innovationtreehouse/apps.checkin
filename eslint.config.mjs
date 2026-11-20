@@ -107,8 +107,6 @@ const rawFetchExemptions = [
   "checkin-app/src/app/attendance/certifications/page.tsx",
   // A 409 refusal carries the matching people, which HttpError cannot hold.
   "checkin-app/src/app/membership-ops/volunteer-memberships/page.tsx",
-  // Its reads are sequenced by hand and its nickname save uses keepalive.
-  "checkin-app/src/app/facility-ops/print-badges/page.tsx",
   // Background-check pages wait for that process's redesign.
   "checkin-app/src/app/membership-ops/review/page.tsx",
   "checkin-app/src/app/membership/BackgroundChecksPanel.tsx",
