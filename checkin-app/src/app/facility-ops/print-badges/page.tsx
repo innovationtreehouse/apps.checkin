@@ -4,7 +4,8 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import QRCode from "qrcode";
 import { pdf } from "@react-pdf/renderer";
 import { Badge, Button, Checkbox, Group, Select, Stack, Text, TextInput } from "@mantine/core";
-import { errorMessage, FAILURE_TEXT, HttpError, LoadError, showError } from "@checkin/component-ui";
+import { LoadError, showError } from "@checkin/component-ui";
+import { api, useLoad } from "@/lib/api";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { FACILITY_AGGREGATE_ROLES } from "@/lib/nav/sections/facilityOps";
 import { PageLoader } from "@/components/ui/PageLoader";
@@ -29,6 +30,26 @@ type ParticipantRow = {
 };
 
 type SavedNickname = { id: number; nickname: string | null };
+type RosterMember = { id: number; name: string; nickname: string | null; year: string | null };
+
+const PEOPLE_SEARCH = "/api/people/search";
+
+/**
+ * `rows` with this page's saved nicknames laid over them, so a save shows at once. The
+ * next answer for `data` — the re-read every save triggers — replaces them.
+ */
+function useSavedNicknames<T extends { id: number; nickname: string | null }>(rows: T[] | null, data: unknown) {
+  const [saved, setSaved] = useState<{ data: unknown; byId: ReadonlyMap<number, string | null> }>({ data, byId: new Map() });
+  if (saved.data !== data) setSaved({ data, byId: new Map() });
+  const merged = useMemo(
+    () => (rows && saved.byId.size ? rows.map(r => (saved.byId.has(r.id) ? { ...r, nickname: saved.byId.get(r.id) ?? null } : r)) : rows),
+    [rows, saved],
+  );
+  const keep = useCallback((id: number, nickname: string | null) => {
+    setSaved(prev => ({ data: prev.data, byId: new Map(prev.byId).set(id, nickname) }));
+  }, []);
+  return [merged, keep] as const;
+}
 
 export default function PrintBadgesPage() {
   const { user, ready, loading: authLoading } = useRequireRole(FACILITY_AGGREGATE_ROLES);
@@ -37,11 +58,6 @@ export default function PrintBadgesPage() {
   // names; only board/sysadmin can change one.
   const canEditNickname = !!user?.isSysadmin || !!user?.isBoardMember;
 
-  const [participants, setParticipants] = useState<ParticipantRow[]>([]);
-  // Every ACTIVE member org-wide — the population printed names disambiguate against.
-  // Separate from `participants`, which is whatever the search box last matched.
-  // `year` is per person: only a household that settled this renewal cycle gets one.
-  const [roster, setRoster] = useState<{ id: number; name: string; nickname: string | null; year: string | null }[] | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [hideInactive, setHideInactive] = useState(true);
@@ -50,10 +66,6 @@ export default function PrintBadgesPage() {
   // Filtering by year on by default would hide exactly those rows.
   const [filterByYear, setFilterByYear] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [searchError, setSearchError] = useState<string | null>(null);
-  const [searchAttempt, setSearchAttempt] = useState(0);
-  const [availableYears, setAvailableYears] = useState<string[]>([]);
   const [selectedYear, setSelectedYear] = useState<string | null>(null);
   // What the admin has typed into a Nickname box, keyed by person. Held apart from
   // `participants` so a keystroke never waits on the save that follows it.
@@ -63,69 +75,23 @@ export default function PrintBadgesPage() {
   const pendingSaves = useRef<Record<number, { value: string; timer: ReturnType<typeof setTimeout> }>>({});
   const inflightSaves = useRef(new Set<Promise<SavedNickname | null>>());
 
-  // Only the current search term's answer lands, so a slower earlier search never replaces it.
-  useEffect(() => {
-    if (!ready) return;
-    let current = true;
-    const url = new URL('/api/people/search', window.location.origin);
-    if (searchTerm) url.searchParams.set('q', searchTerm);
-    fetch(url.toString())
-      .then(async (res) => {
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new HttpError(typeof data.error === 'string' && data.error.trim() ? data.error : FAILURE_TEXT, res.status);
-        if (!current) return;
-        setParticipants(data.people ?? []);
-        setSearchError(null);
-      })
-      .catch((e: unknown) => {
-        if (current) setSearchError(errorMessage(e));
-      })
-      .finally(() => {
-        if (current) setLoading(false);
-      });
-    return () => { current = false; };
-  }, [ready, searchTerm, searchAttempt]);
+  const search = useLoad<{ people?: ParticipantRow[] }>(
+    ready ? `${PEOPLE_SEARCH}${searchTerm ? `?${new URLSearchParams({ q: searchTerm })}` : ""}` : null,
+    { keepPrevious: true },
+  );
+  const years = useLoad<{ years?: string[]; current?: string | null }>(ready ? `${PEOPLE_SEARCH}?roster=years` : null);
+  const year = selectedYear ?? years.data?.current ?? null;
+  // Every ACTIVE member org-wide — the population printed names disambiguate against.
+  // Separate from `participants`, which is whatever the search box last matched.
+  // `year` is per person: only a household that settled this renewal cycle gets one.
+  // It waits for the years so it reads the shown year's roster only.
+  const rosterLoad = useLoad<{ people?: RosterMember[] }>(
+    years.data ? `${PEOPLE_SEARCH}?${new URLSearchParams({ roster: "active", ...(year ? { year } : {}) })}` : null,
+  );
 
-  // Load available membership years on mount.
-  useEffect(() => {
-    if (!ready) return;
-    const url = new URL('/api/people/search', window.location.origin);
-    url.searchParams.set('roster', 'years');
-    fetch(url.toString())
-      .then(res => res.ok ? res.json() : Promise.reject(new Error(`years request failed: ${res.status}`)))
-      .then(data => {
-        setAvailableYears(data.years ?? []);
-        if (!selectedYear && data.current) {
-          setRoster(null);
-          setSelectedYear(data.current);
-        }
-      })
-      .catch(e => console.error("Failed to load membership years:", e));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready]);
-
-  // Reload the roster when the selected year changes. Only the selected year's answer
-  // lands: the opening no-year read is still in flight when the current year is picked.
-  useEffect(() => {
-    if (!ready) return;
-    let current = true;
-    const url = new URL('/api/people/search', window.location.origin);
-    url.searchParams.set('roster', 'active');
-    if (selectedYear) url.searchParams.set('year', selectedYear);
-    fetch(url.toString())
-      .then(res => {
-        if (!res.ok) throw new Error(`roster request failed: ${res.status}`);
-        return res.json();
-      })
-      .then(data => { if (current) setRoster(data.people ?? []); })
-      .catch(e => {
-        if (!current) return;
-        console.error("Failed to load the active-member roster for badge names:", e);
-        setRoster(null);
-        showError('Could not load the active member roster, so badge names cannot be resolved. Reload to retry.');
-      });
-    return () => { current = false; };
-  }, [ready, selectedYear]);
+  const [searchRows, keepSavedParticipant] = useSavedNicknames(search.data?.people ?? null, search.data);
+  const [roster, keepSavedRosterMember] = useSavedNicknames(rosterLoad.data?.people ?? null, rosterLoad.data);
+  const participants = useMemo(() => searchRows ?? [], [searchRows]);
 
   // The draft is dropped once the record holds its value, so the box goes back to
   // reading the person record and a nickname changed elsewhere is not shadowed by
@@ -143,10 +109,10 @@ export default function PrintBadgesPage() {
   // A saved nickname lands in `roster` as well as `participants`: the roster is what
   // disambiguation runs over, so this is what keeps the Printed Name column honest.
   const applyNickname = useCallback((id: number, nickname: string | null) => {
-    setParticipants(prev => prev.map(p => (p.id === id ? { ...p, nickname } : p)));
-    setRoster(prev => prev?.map(m => (m.id === id ? { ...m, nickname } : m)) ?? prev);
+    keepSavedParticipant(id, nickname);
+    keepSavedRosterMember(id, nickname);
     dropSavedDraft(id, nickname);
-  }, [dropSavedDraft]);
+  }, [keepSavedParticipant, keepSavedRosterMember, dropSavedDraft]);
 
   // Read through a ref so a debounced save compares against the participants as of
   // when it fires, not as of the keystroke that scheduled it.
@@ -164,13 +130,11 @@ export default function PrintBadgesPage() {
     }
     try {
       // keepalive lets the write finish when the tab closes right after typing.
-      const res = await fetch(`/api/membership-ops/participants/${id}`, {
+      await api(`/api/membership-ops/participants/${id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nickname }),
         keepalive: true,
       });
-      if (!res.ok) throw new Error(`nickname save failed: ${res.status}`);
       applyNickname(id, nickname);
       return { id, nickname };
     } catch (e) {
@@ -245,7 +209,7 @@ export default function PrintBadgesPage() {
   // not for wearing a badge on the floor, so a badge never prints for one by default.
   const visible = participants.filter(p =>
     (!hideInactive || (p.isMember && !p.isSysadmin)) &&
-    (!filterByYear || roster === null || !selectedYear || printedYears.get(p.id) === selectedYear)
+    (!filterByYear || roster === null || !year || printedYears.get(p.id) === year)
   );
   // Counts the two filters own separately, so each label names only its own hidden rows.
   const inactiveHidden = hideInactive ? participants.filter(p => !p.isMember || p.isSysadmin).length : 0;
@@ -399,19 +363,13 @@ export default function PrintBadgesPage() {
           placeholder="Search by name, email, or ID..."
           style={{ flex: 1, minWidth: 200 }}
           value={searchTerm}
-          onChange={(e) => {
-            setLoading(true);
-            setSearchTerm(e.currentTarget.value);
-          }}
+          onChange={(e) => setSearchTerm(e.currentTarget.value)}
         />
         <Select
           label="Membership year"
-          data={availableYears}
-          value={selectedYear}
-          onChange={(year) => {
-            if (year !== selectedYear) setRoster(null);
-            setSelectedYear(year);
-          }}
+          data={years.data?.years ?? []}
+          value={year}
+          onChange={setSelectedYear}
           style={{ minWidth: 140 }}
           allowDeselect={false}
         />
@@ -435,21 +393,16 @@ export default function PrintBadgesPage() {
         </Button>
       </Group>
 
-      {searchError ? (
-        <LoadError
-          what="participants"
-          message={searchError}
-          onRetry={() => {
-            setLoading(true);
-            setSearchAttempt(n => n + 1);
-          }}
-        />
+      {years.error && <LoadError what="membership years" message={years.error} onRetry={years.reload} />}
+      {rosterLoad.error && <LoadError what="active member roster" message={rosterLoad.error} onRetry={rosterLoad.reload} />}
+      {search.error ? (
+        <LoadError what="participants" message={search.error} onRetry={search.reload} />
       ) : (
         <DataTable
           columns={columns}
           rows={visible}
           getRowKey={(p) => p.id}
-          loading={loading}
+          loading={search.loading}
           emptyMessage={hidden > 0
             ? `No active people match — ${hidden} hidden by the filter.`
             : "No participants found."}
