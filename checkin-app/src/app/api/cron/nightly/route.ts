@@ -145,11 +145,11 @@ export const GET = withCron(() => duringNightlyRun(async () => {
         // 2. Process all pending post-event emails immediately, regardless of 1-hour delay
         const emailResult = await processPostEventEmails({ forceImmediate: true });
 
-        // 3. Delete DoB for anyone who has crossed 26 since the last run. No
+        // 3. Delete DoB for everyone aged 26 or over. No
         // age-gated program can target anyone over 25 (MAX_PROGRAM_AGE), so a DoB for
         // a 26+ person is dead weight on our most-sensitive field. Strip it and set the
         // declared-adult flag so age gates / search / UI still see them as an adult.
-        // Runs nightly to catch members as they age in. Raw SQL so age is judged in the DB, tombstones included.
+        // Runs nightly to catch members as they age in. Raw SQL so age is judged in the DB.
         const purgedPeople = await prisma.$transaction(async (tx) => {
             const purged = await tx.$queryRaw<{ id: number }[]>`
                 UPDATE "Person"
