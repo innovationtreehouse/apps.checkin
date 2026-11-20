@@ -5,7 +5,7 @@ import prisma from "@/lib/prisma";
 import { processPostEventEmails } from "@/lib/postEventEmails";
 import { processVisitCheckout } from "@/lib/attendanceTransitions";
 import { type DepartureChange, executePendingCloses, logCloseDepartures } from "@/lib/attendance/close";
-import { LIVE_VISIT } from "@/lib/visit/filters";
+import { LIVE_KEYHOLDER, LIVE_VISIT } from "@/lib/visit/filters";
 import { runPersonAgreementSweep } from "@/lib/membership/personAgreementTriggers";
 import { systemActor } from "@/lib/auditActor";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
@@ -114,9 +114,15 @@ export const GET = withCron(() => duringNightlyRun(async () => {
             // Every visit the sweep closed is a missed badge-out the board should see.
             // An abandoned keyholder means the facility was left open, so it is
             // reported even when its own checkout failed — but not when someone
-            // else departed the visit before the sweep took the lock.
+            // else departed the visit before the sweep took the lock. The flag alone
+            // is not authority: only those the shared keyholder filter keeps are named.
             const nameOf = (v: (typeof abandonedVisits)[number]) => v.person.name || v.person.email;
-            const keyholderNames = [...forceClosed, ...stillOpen].filter(v => v.person.isKeyholder).map(nameOf).join(', ');
+            const flagged = [...forceClosed, ...stillOpen].filter(v => v.person.isKeyholder);
+            const liveIds = new Set(flagged.length === 0 ? [] : (await prisma.person.findMany({
+                where: { id: { in: flagged.map(v => v.personId) }, ...LIVE_KEYHOLDER },
+                select: { id: true },
+            })).map(p => p.id));
+            const keyholderNames = flagged.filter(v => liveIds.has(v.personId)).map(nameOf).join(', ');
             const closedNames = forceClosed.map(nameOf).join(', ');
 
             if (closedNames || keyholderNames) {
