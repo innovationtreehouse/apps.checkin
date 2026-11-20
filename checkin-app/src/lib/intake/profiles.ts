@@ -14,6 +14,7 @@
  */
 
 import { ageBand } from "@/lib/programAge";
+import { isValidContact } from "@/lib/emergencyContacts/valid";
 
 export type FieldKey = "address" | "emergencyContact" | "primaryName" | "participantDob" | "memberAges";
 
@@ -60,7 +61,7 @@ const FIELD_RULES: Record<FieldKey, { label: string; isSatisfied: (ctx: IntakeSu
     emergencyContact: {
         // A household must keep >= 1 valid (non-member, complete) emergency contact.
         label: "a valid emergency contact (someone outside the household)",
-        isSatisfied: (ctx) => ctx.emergencyContacts.some((c) => c.conflictParticipantId === null && c.name.trim() && c.phone.trim()),
+        isSatisfied: (ctx) => ctx.emergencyContacts.some(isValidContact),
     },
     primaryName: {
         label: "primary parent name",

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { VALID_CONTACT_WHERE } from "@/lib/emergencyContacts/valid";
 import { logger } from "@/lib/logger";
 import { withAuth, authenticateRequest } from "@/lib/auth";
 import prisma from "@/lib/prisma";
@@ -179,7 +180,7 @@ const getProgram = handler<{ id: string }>(ENDPOINT, async ({ auth, params, role
                                                   select: { id: true, householdId: true, isHouseholdLead: true, name: true, email: true, phone: true },
                                               },
                                               emergencyContacts: {
-                                                  where: { conflictParticipantId: null, name: { not: "" }, phone: { not: "" } },
+                                                  where: VALID_CONTACT_WHERE,
                                                   orderBy: [{ priority: "asc" }, { id: "asc" }],
                                                   // householdId is the EmergencyContact ROW_SCOPE_KEY: without it
                                                   // scopesHeld() fails closed (empty scope set) and the stripper drops
