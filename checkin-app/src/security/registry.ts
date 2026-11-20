@@ -941,6 +941,20 @@ defineRoute({
     ],
 });
 
+// QuickBooks fault codes seen: code, kind, count, dates, last lane. No finance
+// content, so sysadmins read it too, and it is not an audited read.
+defineRoute({
+    endpoint: 'GET /api/quickbooks/fault-codes',
+    authorize: { anyRole: ['isFinance', 'isBoardMember', 'isSysadmin'] },
+    envelope: 'codes',
+    returns: ['QboFaultCodeSeen'],
+    orderedView: [
+        ['isFinance',     ['everyones:internal', 'public']],
+        ['isBoardMember', ['everyones:internal', 'public']],
+        ['isSysadmin',    ['everyones:internal', 'public']],
+    ],
+});
+
 // Volunteer designations (dues-discount allowlist; email is pii) — admin
 // surface. GET is a pure findMany (create/delete live on other HTTP methods).
 defineRoute({

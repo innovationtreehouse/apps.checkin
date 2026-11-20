@@ -51,7 +51,7 @@ type HouseholdAnswer = { household: { householdMembers?: HouseholdMember[] } | n
 type CheckoutPlan = { enrolledIds: number[]; variantId: string; storeDomain: string | undefined; mockPay: boolean; pricingEligible: boolean };
 /** Who was refused and why, and the checkout for the rest (null when nobody was accepted). */
 export type RefusedPause = { refusals: { name: string; reason: string }[]; accepted: string[]; plan: CheckoutPlan | null };
-type IntakeAnswer = { prefill?: { household?: { emergencyContactName?: string | null; emergencyContactPhone?: string | null } | null } };
+type IntakeAnswer = { hasEmergencyContact?: boolean };
 
 /** A write's refusal as an outcome, so one member's refusal doesn't stop the rest. Anything else still throws. */
 async function attempt(write: Promise<unknown>): Promise<{ status: number; error?: string }> {
@@ -138,8 +138,7 @@ export function useProgramEnrollment(id: string) {
   const householdError = householdLoad.error ?? intakeLoad.error;
   const householdErrorWhat = householdLoad.error ? "your household" : "your emergency contact";
   const reloadHousehold = () => Promise.all([householdLoad.reload(), intakeLoad.reload()]);
-  const prefillHousehold = intakeLoad.data?.prefill?.household;
-  const hasValidEmergencyContact = !!(prefillHousehold?.emergencyContactName?.trim() && prefillHousehold?.emergencyContactPhone?.trim());
+  const hasValidEmergencyContact = intakeLoad.data?.hasEmergencyContact === true;
   const hasEnrollable = householdMembers.some((m) => { const r = enrollBlock(m).reason; return r === null || r === 'pending'; });
   // A freshly-signed-in user with no enrollable participant or no emergency contact is offered setup instead of a dead end.
   const needsSetup = ageUnknown || (!!householdLoad.data && (!hasEnrollable || !hasValidEmergencyContact));
