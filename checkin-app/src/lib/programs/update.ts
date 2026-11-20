@@ -268,12 +268,12 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         return refuse("invalid", "Invalid end date");
     }
     // Effective values (body overrides current) so a one-sided edit can't invert the range.
-    // Checked on a date change or a publish, so a program saved with inverted dates can still save other fields.
+    // Checked on a date change or a move into a live phase, so a program saved with inverted dates can still save other fields.
     const effStartAt = newStartAt ?? currentProgram.startAt;
     const effEndAt = newEndAt ?? currentProgram.endAt;
     const datesMoved = effStartAt.getTime() !== currentProgram.startAt.getTime() || effEndAt.getTime() !== currentProgram.endAt.getTime();
-    const publishing = phase === 'UPCOMING' && currentProgram.phase !== 'UPCOMING';
-    if ((datesMoved || publishing) && effStartAt > effEndAt) {
+    const goesLive = (phase === 'UPCOMING' || phase === 'RUNNING') && phase !== currentProgram.phase;
+    if ((datesMoved || goesLive) && effStartAt > effEndAt) {
         return refuse("invalid", "Start date must be on or before the end date");
     }
     // A program's leader marks it finished on or after its end date; before that, ending it is the Board's alone.

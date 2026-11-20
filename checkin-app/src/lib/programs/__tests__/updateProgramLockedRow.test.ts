@@ -135,6 +135,17 @@ describe('a program stored with its start after its end', () => {
         expect(tx.program.update).not.toHaveBeenCalled();
     });
 
+    it('refuses a move to running until its dates are fixed', async () => {
+        rowAtWrite = inverted;
+        expect(await updateProgram(inverted, { phase: 'RUNNING' }, actor)).toMatchObject({ ok: false, refusal: 'invalid' });
+        expect(tx.program.update).not.toHaveBeenCalled();
+    });
+
+    it('still saves when the form resends the current phase', async () => {
+        rowAtWrite = inverted;
+        expect((await updateProgram(inverted, { phase: 'UPCOMING', announceOnOpen: true }, actor)).ok).toBe(true);
+    });
+
     it('refuses a date change that leaves the range inverted', async () => {
         rowAtWrite = inverted;
         expect(await updateProgram(inverted, { endAt: '2099-12-10' }, actor)).toMatchObject({ ok: false, refusal: 'invalid' });
