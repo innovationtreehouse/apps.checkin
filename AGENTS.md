@@ -270,6 +270,11 @@ soft reservation, and never trust it as the only claim signal.
   abandoned and why; nothing else records that a second pass happened.
 - **Done is final**: a regression in shipped work is a new issue that
   references the old one, never a reopen.
+- **Not doing it**: when we decide not to do an issue, close it as not
+  planned, with a comment giving the reason.
+- **Priority**: never set an issue's Priority to Urgent. Urgent means a person
+  has decided the issue jumps the queue, so it is a human's call; an agent may
+  propose it in a comment.
 - **Record linkage**: when an issue relates to another issue or a PR (it
   supersedes or duplicates it, is superseded by or blocked on it, or is the PR
   that will close it), say so in a comment on the issue. An issue whose only
