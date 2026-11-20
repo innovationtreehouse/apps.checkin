@@ -56,9 +56,8 @@ export const GET = withAuth(
                                 // enforces (see @/lib/person/merge/guard.ts).
                                 orgMembership: { select: { status: true } },
                                 householdMembers: {
-                                    // Tombstones are not members: the page's
-                                    // isLeadWithOthers guard must match the POST's, and
-                                    // the membership block counts live members only.
+                                    // The same member set the POST reads, so the page's
+                                    // isLeadWithOthers guard and membership block match it.
                                     select: { id: true, name: true, isHouseholdLead: true }
                                 }
                             }

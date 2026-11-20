@@ -15,14 +15,14 @@ function fakeDb(people: { id: number; name: string | null }[], archive: { fromId
 describe("archivedPeople", () => {
     it("reads name and survivor from the snapshot, and skips ids with no archive row", async () => {
         const { client } = fakeDb([], [{ fromId: 7, toId: 3, snapshot: { name: "Jane", email: "j@example.com" } }]);
-        expect(await archivedPeople(client, [7, 8])).toEqual([{ id: 7, name: "Jane", mergedIntoId: 3 }]);
+        expect(await archivedPeople(client, [7, 8])).toEqual([{ id: 7, name: "Jane", survivorId: 3 }]);
     });
 
     it("reads a malformed snapshot as no name", async () => {
         const { client } = fakeDb([], [{ fromId: 7, toId: 3, snapshot: ["not", "an", "object"] }, { fromId: 9, toId: 3, snapshot: { name: 42 } }]);
         expect(await archivedPeople(client, [7, 9])).toEqual([
-            { id: 7, name: null, mergedIntoId: 3 },
-            { id: 9, name: null, mergedIntoId: 3 },
+            { id: 7, name: null, survivorId: 3 },
+            { id: 9, name: null, survivorId: 3 },
         ]);
     });
 

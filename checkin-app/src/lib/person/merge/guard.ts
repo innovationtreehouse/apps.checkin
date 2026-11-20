@@ -32,8 +32,8 @@ export type MergeSubjectMembership = {
 /**
  * Why this merge must be refused on household membership grounds, or null.
  *
- * OrgMembership is 1:1 with Household and a merge never moves it: the tombstone
- * keeps its householdId and the keeper stays in its own household. Two harms
+ * OrgMembership is 1:1 with Household and a merge never moves it: the merged-away
+ * record's household keeps its membership and the keeper stays in its own household. Two harms
  * follow, and both are asymmetric — which side is merged away decides them.
  *
  * 1. A restriction on one side only. `denied` is derived live from the person's
@@ -64,8 +64,8 @@ export function membershipMergeBlock(
 
 /**
  * Why moving the merged-away record's roles onto the keeper must be refused, or
- * null. The merge moves each role with `setRoleFlag` (revoke from the tombstone,
- * grant to the keeper), so it must pass that function's refusals; checking them
+ * null. The merge moves each role with `setRoleFlag` (revoke from the merged-away
+ * record, grant to the keeper), so it must pass that function's refusals; checking them
  * here refuses the merge before anything is written. The own-household rule is
  * prepareMerge's household conflict check.
  */
