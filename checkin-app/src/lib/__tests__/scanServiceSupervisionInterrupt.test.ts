@@ -64,7 +64,7 @@ function fakeDb(
     householdIds: number[],
     warnedAt: Date | null = null,
     youthPresent = true,
-    youthRows: ReturnType<typeof youthVisit>[] = youthPresent ? [youthVisit(900, LONE_HOUSEHOLD)] : [],
+    youthRows: ReturnType<typeof youthVisit>[] = youthPresent ? [youthVisit(ARRIVING_VISIT, LONE_HOUSEHOLD)] : [],
 ) {
     const update = jest.fn().mockResolvedValue({});
     const db = {
