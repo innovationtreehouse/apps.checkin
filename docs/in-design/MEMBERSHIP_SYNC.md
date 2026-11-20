@@ -31,7 +31,7 @@ Their engine design is carried forward here largely unchanged (§2). What change
 
 Existing machinery this design reuses:
 
-- `AuditLog` (`actorId`, `action`, `tableName`, `affectedEntityId`, `oldData`, `newData`). A change to a `Person` column is filed under `Person`, not under whatever table the *route* is about.
+- `AuditLog` (`actorId`, `action`, `tableName`, `affectedEntityId`, `secondaryAffectedEntity`, `oldData`, `newData`). A change to a `Person` column is filed under `Person`, not under whatever table the *route* is about.
 - `Person.emailUndeliverableAt` — the bounce stamp maintained by the Resend webhook, cleared on a later delivery; consulted by the classification guards (§3.3).
 - `setHouseholdStatus` (`lib/membership/householdStatus.ts`) — the one writer of `OrgMembership.status`; the activation, DENIED and restore triggers hook it (§8).
 - `lib/household/archiveAction.ts` and `IN_LIVE_HOUSEHOLD` (`lib/household/archived.ts`) — household archive. Row security hides an archived household, not its people, so every person query in `computeDesiredState` filters with `IN_LIVE_HOUSEHOLD`.
@@ -59,7 +59,7 @@ Everything awkward falls out of a plain diff against observed reality: program-b
 |---|---|---|---|
 | `google_group` | program team-list email | `program:<id>` | when no longer desired (§2.6 for ongoing programs), at next reconcile or immediate trigger |
 | `google_group` | members list email | `org` | when no longer desired, at next reconcile or immediate trigger |
-| `newsletter` | newsletter email | `org` | **only on DENIED or household archive** — never for revoke or any other reason; a restore does not re-add (§2.3) |
+| `newsletter` | newsletter email | `org` | the person's own OUT (§3.2) always removes; otherwise **only DENIED or household archive** — never revoke or any other status change; a restore does not re-add (§2.3) |
 | `slack_channel` | channel id | `program:<id>` | when no longer desired, with an audit entry and no grace period (§3.6) |
 
 Nothing runs between triggers: removal happens at the next nightly reconcile, or sooner when an immediate trigger fires (§8).
@@ -228,7 +228,7 @@ Uniqueness: one non-`RESOLVED` row per `(kind, personId, targetRef)` — nightly
 
 Slack: a per-program config table (channel id + reference to `ProgramSlackAuth`), attached to `Program`; presence of a row = the program uses Slack. `Program` gains the team-list group email field (§2.4). `PersonRoleKind` gains `IT_STEWARD` (§2.5).
 
-No change to `AuditLog`. Entries are filed under `tableName: "ListSyncState"` with the target in `newData`.
+No change to `AuditLog`. Entries are filed under `tableName: "ListSyncState"`, with `affectedEntityId` = the ledger row, `secondaryAffectedEntity` = the person, and the target in `newData`.
 
 ## 7. Adoption and initial rollout
 
@@ -259,7 +259,7 @@ Nightly `listMembers` across every program group + members list + newsletter, pl
 
 - **Household status** — `setHouseholdStatus` (`lib/membership/householdStatus.ts`), the one writer of `OrgMembership.status`. Activation, revoke, DENIED and the DENIED → NONE restore all pass through it, so no route can flip a status without the trigger firing.
 - **Household archive** — `lib/household/archiveAction.ts` (archive and restore).
-- **Email** — `Person.email` is written at several sites (Board participant edit, household member edit, intake, merge, first Google sign-in). Each already calls `removeAliasesForSignInEmail` in its transaction, enforced by `mailAliases.test.ts`; the sync trigger sits beside it at each site, with a test that holds every email write to it.
+- **Email** — `Person.email` writers are the set `mailAliases.test.ts` discovers: the household and household-member routes, the two Board participant routes, `lib/auth-options.ts`, `lib/household/joinQuestion.ts`, `lib/membership/intake.ts`, `lib/person/ownHousehold.ts` and the merge executor. Most call `removeAliasesForSignInEmail` in their transaction; the merge moves aliases itself (`moveMailAliases`) and `ownHousehold.ts` leaves the call to its caller. The sync's after-commit email trigger is required at **every** discovered writer, those two included, and that test gains the assertion, so a new writer cannot skip it.
 - **Merge** — the guard and the row move run inside the merge transaction (§4.1), not as a trigger.
 
 ### 8.1 Visibility — borrows the lifecycle oracle pattern, does not join the machine registry
@@ -277,7 +277,7 @@ What it does take: the ops sync status surface is a `validate()`-style **invaria
 ## 9. What this does *not* do
 
 - **No auto-removal of members the sync did not add** — detection and a review screen only (§5).
-- **No newsletter removal except DENIED or household archive**, and no re-add on restore (§2.3).
+- **No newsletter removal the person did not ask for, except DENIED or household archive**, and no re-add on restore (§2.3). A person's own opt-out or unsubscribe always removes them (§3.2).
 - **No date-based removal on ongoing programs** — only a rollover removes (§2.6).
 - **No auto re-add on coverage loss** (§3.5).
 - **No parents-only / mentors-only lists yet** (§2.4).
