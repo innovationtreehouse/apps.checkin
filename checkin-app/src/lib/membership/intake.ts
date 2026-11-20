@@ -129,6 +129,11 @@ export async function getIntakeState(userId: number) {
         allergies: p.allergies,
     });
 
+    // Only someone who may edit the household's details gets them back; another member
+    // sees only their own state and whether an emergency contact is on file.
+    const mayEdit = leadIds.has(userId) || user.isSysadmin;
+    const contact = household?.emergencyContacts[0];
+
     const external = process ? await getExternalStatus(process) : null;
 
     // The caller's own individual agreement, if they have one open. Person-scoped,
@@ -146,21 +151,22 @@ export async function getIntakeState(userId: number) {
         external,
         personAgreement: ownAgreement ? { id: ownAgreement.id, started: !!ownAgreement.zohoEnvelopeId } : null,
         ownBackgroundCheck,
+        hasEmergencyContact: !!(contact?.name?.trim() && contact?.phone?.trim()),
         prefill: {
-            household: household
+            household: household && mayEdit
                 ? {
                       name: household.name,
                       ...pickAddress(household),
                       // The primary (lowest-priority) contact backs the single-field
                       // form. Shown even when flagged invalid so the lead can fix it.
-                      emergencyContactName: household.emergencyContacts[0]?.name ?? null,
-                      emergencyContactPhone: household.emergencyContacts[0]?.phone ?? null,
-                      emergencyContactEmail: household.emergencyContacts[0]?.email ?? null,
+                      emergencyContactName: contact?.name ?? null,
+                      emergencyContactPhone: contact?.phone ?? null,
+                      emergencyContactEmail: contact?.email ?? null,
                   }
                 : null,
-            primaryParent: primary ? shape(primary) : null,
-            secondaryParent: secondary ? shape(secondary) : null,
-            children: children.map(shape),
+            primaryParent: primary && mayEdit ? shape(primary) : null,
+            secondaryParent: secondary && mayEdit ? shape(secondary) : null,
+            children: mayEdit ? children.map(shape) : [],
         },
     };
 }

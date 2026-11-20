@@ -62,7 +62,7 @@ async function requestPlan(kind: RegExp = /^Payment plan$/) {
 }
 
 // The intake state the emergency-contact probe reads: a valid contact on file.
-const intakeWithContact = { prefill: { household: { emergencyContactName: "Aunt May", emergencyContactPhone: "5125550000" } } };
+const intakeWithContact = { hasEmergencyContact: true };
 
 const household = {
     household: {
@@ -200,6 +200,7 @@ describe("ProgramEnrollmentPage", () => {
         // Process-free intake state; the POST mutates it (child + emergency
         // contact now saved) so the subsequent EC probe reads them back.
         const intakeState = {
+            hasEmergencyContact: false,
             prefill: {
                 household: { emergencyContactName: null, emergencyContactPhone: null, emergencyContactEmail: null, line1: null },
                 primaryParent: { id: 500, name: "New Parent", email: null, dob: null, over25: false, allergies: null },
@@ -218,6 +219,7 @@ describe("ProgramEnrollmentPage", () => {
                     setSession({ id: 500, ageBand: 'adult' });
                     intakeState.prefill.household.emergencyContactName = "Aunt May" as unknown as null;
                     intakeState.prefill.household.emergencyContactPhone = "5125550000" as unknown as null;
+                    intakeState.hasEmergencyContact = true;
                     return json({ state: intakeState, rejections: [] });
                 }
                 return json(intakeState);

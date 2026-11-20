@@ -300,6 +300,51 @@ describe('getIntakeState', () => {
         expect(state.prefill.household?.emergencyContactName).toBe('Aunt');
     });
 
+    it("a non-lead member gets no household details, only whether an emergency contact is on file", async () => {
+        prisma.person.findUnique.mockResolvedValue({
+            id: 3,
+            householdId: 7,
+            isSysadmin: false,
+            household: {
+                name: 'Test Household',
+                line1: '1 Main St', line2: null, city: 'Austin', state: 'TX', postalCode: '78701',
+                householdMembers: [
+                    { id: 1, name: 'Primary', email: 'p@x.com', dateOfBirth: new Date('1980-01-01'), allergies: null, isHouseholdLead: true },
+                    { id: 3, name: 'Kid', email: null, dateOfBirth: new Date('2010-01-01'), allergies: 'peanuts', isHouseholdLead: false },
+                ],
+                orgMembership: { status: 'ACTIVE', processes: [] },
+                emergencyContacts: [{ name: 'Aunt', phone: '555-555-2000', email: 'a@x.com' }],
+            },
+        });
+
+        const state = await getIntakeState(3);
+
+        expect(state.isLead).toBe(false);
+        expect(state.hasEmergencyContact).toBe(true);
+        expect(state.prefill).toEqual({ household: null, primaryParent: null, secondaryParent: null, children: [] });
+    });
+
+    it('a sysadmin outside the lead role still gets the prefill, since they may save it', async () => {
+        prisma.person.findUnique.mockResolvedValue({
+            id: 3,
+            householdId: 7,
+            isSysadmin: true,
+            household: {
+                name: 'Test Household',
+                line1: null, line2: null, city: null, state: null, postalCode: null,
+                householdMembers: [{ id: 3, name: 'Admin', email: null, dateOfBirth: null, allergies: null, isHouseholdLead: false }],
+                orgMembership: null,
+                emergencyContacts: [{ name: ' ', phone: '555-555-2000', email: null }],
+            },
+        });
+
+        const state = await getIntakeState(3);
+
+        expect(state.hasEmergencyContact).toBe(false);
+        expect(state.prefill.household?.name).toBe('Test Household');
+        expect(state.prefill.children.map((c) => c.id)).toEqual([3]);
+    });
+
     it('every process ACTIVE → process is null, no external lookup', async () => {
         prisma.person.findUnique.mockResolvedValue({
             id: 1,

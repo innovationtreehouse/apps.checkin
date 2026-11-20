@@ -35,6 +35,8 @@ import { POST as TA_RENEW } from '@/app/api/trusted-adults/[id]/renew/route';
 import { GET as PAYMENT_GET } from '@/app/api/membership/payment/route';
 import { POST as RENEW_POST } from '@/app/api/membership/renew/route';
 import { GET as RENEWAL_STATUS_GET } from '@/app/api/membership/renewal-status/route';
+import { GET as MEMBERSHIP_GET } from '@/app/api/membership/route';
+import { GET as HOUSEHOLD_INTAKE_GET } from '@/app/api/household/intake/route';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
 
@@ -377,6 +379,48 @@ describe('Ownership-boundary authorization', () => {
             as(renewalLead, { householdId: hhRenewal });
             const json = await (await RENEWAL_STATUS_GET(req())).json();
             expect(json.renewalDue).toBe(true);
+        });
+    });
+
+    // ---- membership (GET) and household/intake (GET) — self-scoped ------------
+    // Both read the caller's own intake state. Only a lead gets the household's
+    // people, address and emergency contact back; another member sees none of it.
+    describe.each([
+        ['GET /api/membership', MEMBERSHIP_GET],
+        ['GET /api/household/intake', HOUSEHOLD_INTAKE_GET],
+    ])('%s', (_name, GET) => {
+        it('401 unauthenticated', async () => {
+            anon();
+            expect((await GET(req())).status).toBe(401);
+        });
+        it("the lead gets their own household's details, and no other household's", async () => {
+            as(leadA, { householdId: hhA });
+            const res = await GET(req());
+            expect(res.status).toBe(200);
+            const body = await res.json();
+            expect(body.isLead).toBe(true);
+            expect(body.hasEmergencyContact).toBe(true);
+            expect(body.prefill.household.emergencyContactName).toEqual(expect.any(String));
+            expect(body.prefill.primaryParent.id).toBe(leadA);
+            expect(body.prefill.children.map((c: { id: number }) => c.id)).toEqual([memberA]);
+            expect(JSON.stringify(body)).not.toContain('LeadB');
+        });
+        it('a non-lead member gets their own state but no household details', async () => {
+            as(memberA, { householdId: hhA });
+            const res = await GET(req());
+            expect(res.status).toBe(200);
+            const body = await res.json();
+            expect(body.hasHousehold).toBe(true);
+            expect(body.isLead).toBe(false);
+            expect(body.hasEmergencyContact).toBe(true);
+            expect(body.prefill).toEqual({ household: null, primaryParent: null, secondaryParent: null, children: [] });
+            expect(JSON.stringify(body)).not.toMatch(/LeadA|Contact (One|Two)/);
+        });
+        it("another household's lead sees none of HH_A", async () => {
+            as(leadB, { householdId: hhB });
+            const body = await (await GET(req())).json();
+            expect(body.prefill.primaryParent.id).toBe(leadB);
+            expect(JSON.stringify(body)).not.toMatch(/LeadA|MemberA|Contact (One|Two)/);
         });
     });
 });
