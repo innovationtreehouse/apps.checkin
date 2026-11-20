@@ -1,6 +1,6 @@
 # Membership Sync — Google Groups (email) + Slack channels
 
-**Status:** Design v3, for review. No code. Development is gated on backlog P25 (#1248, §2.6). Supersedes PRs #1156 and #1157 (both closed in favour of this doc).
+**Status:** Design v3, for review. No code. Development is gated on the #1248 program rollover design (§2.6). Supersedes PRs #1156 and #1157 (both closed in favour of this doc).
 **Date:** 2026-11-20
 **Purpose:** Keep Google Group membership (program groups, the members list, the newsletter) and Slack channel membership in step with who is actually enrolled and current — while treating a person's decision to join or leave a list as a first-class, auditable intent that the sync must never silently override.
 
@@ -12,7 +12,7 @@ This doc is written so an implementation session can pick it up cold. Read §1 f
 - Yearly "you're off this list" notice plus a **Board action** that records an IN or OUT the person asked for (§3.2, §10.1).
 - The members list follows `OrgMembership.status` alone; lapse is the Board's revoke (§2.1).
 - Newsletter removal: **DENIED or household archive**; a restore does not re-add (§2.1, §2.3).
-- Team lists count `ACTIVE` places plus carried-over pending places; ongoing programs leave the list only at a leader-run **rollover**, which P25 builds (§2.3, §2.6).
+- Runs, carry-over and `RESERVED` places come from the #1248 rollover design; team lists count carried-over people in any state and new people once `ACTIVE`, and an **ongoing** run keeps its people through the gap until the next run starts (§2.3, §2.6).
 - A **person merge is refused** while the two records' list choices differ (§4.1).
 - Google credentials follow the Gmail receipt refresh-token pattern (§1).
 - The sync lives in the host (`lib/sync/`); the Google and Slack clients are two database-less packages (§1, §10.6).
@@ -80,7 +80,7 @@ Every person query filters with `IN_LIVE_HOUSEHOLD`, so an archived household's 
 
 - **Program team list:** every household lead of **any enrolled minor** (regardless of the minor's age), plus enrolled persons **13+** themselves, plus the program's leader and core volunteers (`ProgramVolunteer.isCore`). A household with only an 8-year-old enrolled is on the list via its leads — the younger the child, the more the parent needs the list.
 
-  **Who counts as enrolled [Decision — owner, 2026-11-20]:** a participant whose enrollment is `ACTIVE` on any run with the list's address, plus a participant holding a **carried-over** pending place (any `PENDING_*` state) created by a rollover (§2.6). A new family joins once its place is settled; a returning family the leader carried over stays in the loop while it sorts out payment or fee help. `WITHDRAWN` and removed enrollments never count.
+  **Who counts as enrolled [Decision — owner, 2026-11-20; #1248 Q29]:** someone carried over from the previous run counts in any state (`RESERVED`, any `PENDING_*`, `ACTIVE`); someone new to the chain counts only once their place is `ACTIVE` (paid, comped or free). A declined or released reservation stops counting. `WITHDRAWN` and removed enrollments never count. When an ended run's people come off is §2.6.
 - **Members list:** baseline = the household leads of every ACTIVE household — minimum one per household (§3.5 covers opt-outs dropping a household below that). Others — including 13+ youth — may join at their own discretion; there are no secrets on the members list. Discretionary joins arrive by hand (Google-side) or by in-app opt-in and are respected per §3.2/§5.
 - **Newsletter:** default = one household lead per family, opted in on activation (per CM10); anyone else opts in freely. The default records an IN (`DEFAULT`) the first time it applies, so it never re-applies. DENIED or household archive records an OUT (`BOARD`, the acting Board member as actor) on every newsletter row of that household, so a later restore (DENIED → NONE, or un-archive) re-adds no one; the person opts in again from the app [Decision — owner, 2026-11-19].
 - **Under-13:** no one under 13 is on any app-managed list or channel, by any path: the sync never adds them, and an in-app opt-in is refused. Their household leads are on the program list in their place.
@@ -99,18 +99,26 @@ Per-program Slack bot tokens live in their own table, never as a column on `Prog
 
 **IT Stewards.** A new role (`PersonRoleKind.IT_STEWARD`, granted through `PersonRole`) may edit integration settings, this bot key among them, and nothing else: it grants no access to people, households, money or any other settings. Sysadmins keep the access they have. The role is a boundary change and ships in its own PR, ahead of the settings screen (§11).
 
-### 2.6 Ongoing programs and rollover (depends on P25)
+### 2.6 Runs, carry-over and ongoing programs (#1248)
 
-**Decided [Decision — owner, 2026-11-20].** Example: Robotics runs Competition (Sept 1 – May 31) and Summer (June 1 – Aug 31) every year under one list address.
+**Runs and carry-over are the #1248 design's** (`PROGRAM_ROLLOVER.md`); this section states only what the sync reads from it and decides on top of it [Decision — owner, 2026-11-20].
 
-- **Ongoing programs and rollover runs.** A program can be tagged **ongoing**, and an ongoing program's runs can be flagged as **rollover** points (Competition is one; Summer is not). Neither exists on `main`; P25 adds both.
-- **Rollover is a program-leader action.** Before a rollover run starts, its leader opens the rollover: everyone on the program's runs since the last rollover (Competition and Summer, Summer-only joiners included) is listed, ticked by default. The leader unticks the graduates; each ticked person gets a pending place on the new run, marked carried over, and settles it through the normal enrollment states.
-- **Joining the list.** Anyone `ACTIVE` on a run with the address, plus carried-over pending places. A non-rollover run such as Summer only adds people.
-- **Leaving the list happens only at a rollover, never on a date.** When a rollover run starts with its rollover done, everyone from earlier runs who was not carried over (the graduates) stops being desired and comes off at the next reconcile or trigger. Program end dates remove no one on an ongoing program.
-- **A missed rollover removes no one.** If a rollover run starts with no rollover done, the list keeps everyone; the leader is warned before the start date and gets a follow-up after it.
-- **A program that is not ongoing** comes off the list when its run ends.
+What the sync reads from #1248:
 
-**Dependency — development is gated on P25 (#1248).** The ongoing tag, the rollover flag, the leader's rollover screen and the carried-over marker on a pending place belong to the P25 rollover design (seats, payment, Shopify stock and claim-first seats are its concern). This design only consumes them. No PR in §11 starts until P25 ships.
+- **A chain of runs.** Each run is its own `Program` row; `Program.previousRunId` links it to the run it follows, segments and years alike: Fall Training 2026 → Competition 2026 → Championships 2026 → Summer 2026 → Fall Training 2027. Every link is a carry-over point.
+- **Carry-over.** The leader or a program administrator carries over the immediately previous run's roster, unticking graduates. Each ticked person gets a `RESERVED` place that holds a seat and owes nothing; the family confirms (→ `PENDING_*`, or `ACTIVE` on a free run) or declines (row removed) by the run's confirmation deadline, and the nightly sweep releases unconfirmed reservations at the deadline. "Carried over" is derived: the person was on the previous run's roster.
+- **The ongoing checkbox.** A run (its `Program` row) is marked **ongoing** when a next run is expected. Links alone cannot tell "finished for good" from "next run not created yet"; the checkbox records that intent. #1248 also uses it for a Board reminder when an ongoing run has ended with no next run.
+
+What the sync decides on top:
+
+- **A run's people stay desired while it runs.** Anyone counted on a run (§2.3) is desired from the day they count until the run ends.
+- **An ended ongoing run keeps its people until its next run starts.** Through the gap (Summer ends Aug 31; Fall Training starts Sept 8), no one comes off and no one is re-added, so Google sends no add/remove churn.
+- **At the next run's start, the next run's roster takes over.** Carried-over people stay (they count in any state on the new run); graduates and anyone who declined or was released come off at the next reconcile or trigger.
+- **A decline or release takes effect at the hand-over, not the day it happens [Decision — owner, 2026-11-20].** A family that declines Fall Training 2027 in July while still `ACTIVE` on Summer 2026 stays on the list through Summer, and comes off when Summer ends (or, if Summer is ongoing, when Fall Training starts). It no longer counts on the next run; it still counts on the run it is on.
+- **A missed carry-over removes no one.** If the next run starts with no carry-over done (no reservations from the previous roster), the ended run's people stay; the leader gets a `CARRY_OVER_MISSED` follow-up.
+- **A run not marked ongoing** comes off the list when it ends.
+
+**Dependency — development is gated on #1248.** `previousRunId`, `RESERVED`, the carry-over screen and the ongoing checkbox are #1248's. No PR in §11 starts until it ships.
 
 ## 3. Intent, consent, and audit
 
@@ -218,9 +226,9 @@ New table **`SyncFollowUp`** — modeled on `PaymentException`'s shape (kind/sta
 
 | field | notes |
 |---|---|
-| `kind` | `EXTERNAL_REMOVAL` · `COVERAGE_DROP` · `DELIVERY_EJECT` · `ROLLOVER_MISSED` |
+| `kind` | `EXTERNAL_REMOVAL` · `COVERAGE_DROP` · `DELIVERY_EJECT` · `CARRY_OVER_MISSED` |
 | `audience` | `BOARD` · `PROGRAM_LEAD` — drives which surface shows it |
-| `personId` (null for `ROLLOVER_MISSED`), `targetKind`, `targetRef` | what happened where |
+| `personId` (null for `CARRY_OVER_MISSED`), `targetKind`, `targetRef` | what happened where |
 | `status` | `OPEN` · `ACKNOWLEDGED` · `RESOLVED` |
 | `resolvedById`, `resolvedAt`, `resolutionNote` | resolve-with-note, like PaymentException |
 
@@ -252,7 +260,7 @@ Nightly `listMembers` across every program group + members list + newsletter, pl
 
 ## 8. Triggers
 
-- **Nightly reconcile** is the backbone — full desired-state diff, guards, follow-ups, ghost detection, yearly notices, missed-rollover warnings.
+- **Nightly reconcile** is the backbone — full desired-state diff, guards, follow-ups, ghost detection, yearly notices, missed carry-over follow-ups.
 - **Immediate triggers** (the `lib/programAnnounce.ts` shape) fire the relevant slice of reconcile after commit for: in-app opt-in/opt-out, Board intent actions, email change (§4), household status change, household archive and un-archive, and rollover. Anything a trigger misses, the nightly catches.
 
 **Hook points:**
@@ -278,7 +286,7 @@ What it does take: the ops sync status surface is a `validate()`-style **invaria
 
 - **No auto-removal of members the sync did not add** — detection and a review screen only (§5).
 - **No newsletter removal the person did not ask for, except DENIED or household archive**, and no re-add on restore (§2.3). A person's own opt-out or unsubscribe always removes them (§3.2).
-- **No date-based removal on ongoing programs** — only a rollover removes (§2.6).
+- **No removal in the gap after an ongoing run ends** — its people stay until the next run starts (§2.6).
 - **No auto re-add on coverage loss** (§3.5).
 - **No parents-only / mentors-only lists yet** (§2.4).
 
@@ -287,7 +295,7 @@ What it does take: the ops sync status surface is a `validate()`-style **invaria
 IDs are stable; a resolved question keeps its number.
 
 1. **Cross-year opt-out identity.** Decided.
-   - **Identity [Decision — owner, 2026-11-19]:** intent is keyed by the list address (or Slack channel id), not by program id. Teams reuse their address year over year (P25), so an OUT carries to next year's run of the same team; a new address is a new list. Program and instance rows only decide who is *desired*, so the program→instance restructure changes `computeDesiredState` and nothing in the ledger.
+   - **Identity [Decision — owner, 2026-11-19]:** intent is keyed by the list address (or Slack channel id), not by program id. Teams reuse their address year over year, so an OUT carries to next year's run of the same team; a new address is a new list. Program and instance rows only decide who is *desired*, so the program→instance restructure changes `computeDesiredState` and nothing in the ledger.
    - **New-year handling [Decision — owner, 2026-11-19]:** yearly notice plus a Board action, for team lists and the members list only. The first time in a new membership year that the sync would have re-added a person whose OUT suppresses the add, it sends one email saying they are off that list and how to rejoin, stamps `lastNoticeYear`, and does not re-add them. A Board member can record an IN on the person's behalf when they ask in person (source `BOARD`, named actor, required note). The newsletter gets neither: an unsubscribe is a compliance matter and a reminder is itself unwanted mail.
 2. **Slack boundary-removal grace.** Decided: no grace. Removal is immediate, with an audit entry (§3.6).
 3. **Slack token provisioning.** Decided: people set up each program's Slack by hand, and an administrator pastes the bot key into a settings screen. A new IT Stewards role may edit integration settings only (§2.5).
@@ -297,7 +305,7 @@ IDs are stable; a resolved question keeps its number.
 
 ## 11. Rollout
 
-**Gate:** no PR below starts until backlog P25 (#1248; ongoing programs and rollover, §2.6) has shipped.
+**Gate:** no PR below starts until the #1248 rollover design (runs, carry-over, `RESERVED`, the ongoing checkbox; §2.6) has shipped.
 
 | PR | contents | inert? |
 |---|---|---|
@@ -312,8 +320,8 @@ B1 lands before PR 1, because the package egress files must already be on the al
 
 ## 12. Testing
 
-- **Unit — desired state:** the §2.3 rules: leads of an under-13 participant, a participant turning 13, leader + core volunteer, revoke mid-program, an archived household desired nowhere, `ACTIVE` vs carried-over pending vs plain pending, DENIED and archive recording the newsletter OUT.
-- **Unit — rollover (§2.6):** a non-rollover run only adds; a rollover run with its rollover done drops the unticked; a rollover run without one drops no one and raises `ROLLOVER_MISSED`; a non-ongoing program drops at its end.
+- **Unit — desired state:** the §2.3 rules: leads of an under-13 participant, a participant turning 13, leader + core volunteer, revoke mid-program, an archived household desired nowhere, carried-over `RESERVED` vs new `PENDING_*` vs `ACTIVE`, DENIED and archive recording the newsletter OUT.
+- **Unit — runs and carry-over (§2.6):** a carried-over person counts as `RESERVED`, `PENDING_*` and `ACTIVE`; a new person only once `ACTIVE`; an ended ongoing run keeps its people until the next run starts; at the next run's start graduates, declined and released people drop; a next run with no carry-over drops no one and raises `CARRY_OVER_MISSED`; a run not marked ongoing drops at its end.
 - **Unit — email-level diff:** the §4 swap yields exactly `{add C@, remove B_old}`; adds sequence before removes; `a.b+x@gmail.com` and `ab@gmail.com` compare equal.
 - **Integration — OUT sticks:** an applied+desired row absent externally (guards passing) records OUT, writes one audit row, raises one audience-routed follow-up, and **no subsequent reconcile re-adds it**. That last assertion is the feature.
 - **Integration — last intent wins:** external OUT then in-app IN (after observation) ⇒ re-added exactly once; an in-app IN inside the ambiguity window loses to the observed removal.
