@@ -45,6 +45,14 @@ interface GraphQLResponse<T> {
   extensions?: { cost?: QueryCost };
 }
 
+/** A non-throttle GraphQL error: Shopify answered, but rejected the request. */
+export class ShopifyGraphQLError extends Error {
+  constructor(messages: string[]) {
+    super(`Shopify GraphQL error: ${messages.join("; ")}`);
+    this.name = "ShopifyGraphQLError";
+  }
+}
+
 // --- pure, unit-tested helpers ----------------------------------------------
 
 /**
@@ -173,7 +181,7 @@ export function createShopifyClient(cfg: ShopifyConfig): ShopifyClient {
       }
 
       if (body.errors && body.errors.length > 0) {
-        throw new Error(`Shopify GraphQL error: ${body.errors.map((e) => e.message).join("; ")}`);
+        throw new ShopifyGraphQLError(body.errors.map((e) => e.message));
       }
       if (!body.data) {
         throw new Error("Shopify GraphQL response had no data");
