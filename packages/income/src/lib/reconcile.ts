@@ -1,4 +1,4 @@
-import { findMatch, qbKey, type MatchCandidate } from "@checkin/quickbooks";
+import { STALE_CLAIM_MS, findMatch, qbKey, type MatchCandidate } from "@checkin/quickbooks";
 import { db } from "../db";
 import type { PayoutReconciliation } from "../generated/prisma/client";
 import type { MirrorPayout, MirrorSource, PayoutMirror, QbDeposit } from "../contract";
@@ -52,12 +52,9 @@ export const RECON_ORIGIN = { MATCHED: "matched", CREATED: "created" } as const;
 export const SETTLED_STATUSES: string[] = [RECON_STATUS.MATCHED, RECON_STATUS.POSTED, RECON_STATUS.RESOLVED];
 
 export const DEFAULT_WINDOW_DAYS = 7;
-/** A claim older than this belongs to a post that died between claim and settle; it may be taken over. */
-export const CLAIM_TTL_MS = 10 * 60_000;
-
 /** Whether a post holds this payout right now. */
 export function isClaimed(row: Pick<PayoutReconciliation, "postClaimedAt">, now: number = Date.now()): boolean {
-  return row.postClaimedAt !== null && now - row.postClaimedAt.getTime() <= CLAIM_TTL_MS;
+  return row.postClaimedAt !== null && now - row.postClaimedAt.getTime() <= STALE_CLAIM_MS;
 }
 
 /** The app entry a stray-entry warning names ("may need voiding", "is not linked"), or null for any other note. */
