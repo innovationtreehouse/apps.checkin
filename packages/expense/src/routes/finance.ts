@@ -231,15 +231,15 @@ export const ownershipMap: ExpenseRouteHandler = async ({ req }) => {
 };
 
 /**
- * Why a new write may not name this part, or null for an active catalog item or a pending
- * provisional part of this org. A resolved provisional's GTIN is dead: its stock lives on the real part.
+ * Why a new write may not name this part, or null for an active catalog item or one of this
+ * org's provisional parts that is pending or catalog-rejected (a local-only part). An approved or
+ * mapped provisional's GTIN is dead: its stock lives on the real part.
  */
 async function partRefusal(orgId: string, gtin13: string): Promise<string | null> {
   const provisional = await db.provisionalItemMap.findFirst({ where: { orgId, provisionalGtin13: gtin13 }, select: { status: true, resolvedToGtin13: true } });
   const id = formatGtinDisplay(gtin13);
-  if (provisional?.status === "pending") return null;
   if (provisional?.resolvedToGtin13) return `${id} is now ${formatGtinDisplay(provisional.resolvedToGtin13)}; pick that part instead`;
-  if (provisional) return `${id} was rejected by the catalog`;
+  if (provisional) return null;
   const active = await getActiveItem(gtin13).catch((err: unknown) => {
     refuseCatalogSettings(err);
     console.error("[expense] catalog check failed", err);

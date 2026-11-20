@@ -41,9 +41,10 @@ describeDb("GTIN writes", () => {
     await expect(own(PROVISIONAL)).rejects.toMatchObject({ status: 400, message: `P000123 is now ${CATALOG_GTIN}; pick that part instead` });
   });
 
-  it("refuses a rejected provisional part", async () => {
+  it("maps a catalog-rejected provisional part, a local-only part, to a bucket", async () => {
     await db.provisionalItemMap.create({ data: { orgId: ORG, provisionalGtin13: PROVISIONAL, status: "rejected" } });
-    await expect(own(PROVISIONAL)).rejects.toMatchObject({ status: 400, message: "P000123 was rejected by the catalog" });
+    await own(PROVISIONAL);
+    expect(await db.partOwnerMap.count({ where: { orgId: ORG, gtin13: PROVISIONAL } })).toBe(1);
   });
 
   it("refuses another org's pending provisional part", async () => {

@@ -26,14 +26,17 @@ export function withLookup(prev: CatalogNames, gtin13: string, outcome: unknown)
 }
 
 /** A provisional part's name, which the stock and receiving reads return beside their rows. */
-export interface ProvisionalName { provisionalGtin13: string; name: string }
+export interface ProvisionalName { provisionalGtin13: string; name: string; status?: string }
+
+/** A provisional part's label: its name, marked "Local only" once the catalog rejected it. */
+export const provisionalLabel = (p: ProvisionalName): string => (p.status === "rejected" ? `${p.name} (Local only)` : p.name);
 
 /** The text for each looked-up GTIN: the catalog's name, else the provisional part's, else why there is no name. */
 export function withProvisionalNames(lookup: CatalogNames, provisionals: readonly ProvisionalName[] = []): ReadonlyMap<string, string> {
   return new Map([
     ...[...lookup.failed].map((g) => [g, "Name unavailable"] as const),
     ...[...lookup.missing].map((g) => [g, "Not in catalog"] as const),
-    ...provisionals.map((p) => [p.provisionalGtin13, p.name] as const),
+    ...provisionals.map((p) => [p.provisionalGtin13, provisionalLabel(p)] as const),
     ...lookup.names,
   ]);
 }
