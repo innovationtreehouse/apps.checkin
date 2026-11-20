@@ -342,3 +342,17 @@ describe("countHouseholdsMissingValidContact — admin alarm", () => {
         expect(await findHouseholdsMissingValidContact(prisma)).not.toContain(hh);
     });
 });
+
+describe("stored name and phone are trimmed", () => {
+    it.each([
+        ["name", { name: "  ", phone: "555-555-2000" }],
+        ["name", { name: "Sam Outside\t", phone: "555-555-2000" }],
+        ["phone", { name: "Sam Outside", phone: " 555-555-2000" }],
+        ["phone", { name: "Sam Outside", phone: "\n" }],
+    ])("the database refuses an untrimmed %s", async (field, fields) => {
+        const hh = await makeHousehold(`untrimmed-${field}`);
+        await expect(
+            prisma.emergencyContact.create({ data: { householdId: hh, phoneDigits: "5555552000", ...fields } }),
+        ).rejects.toThrow(/EmergencyContact_(name|phone)_trimmed/);
+    });
+});
