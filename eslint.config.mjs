@@ -67,7 +67,7 @@ const rawNotificationImport = [
 ];
 
 // Files still on raw notifications: background-check pages wait for that process's
-// redesign; attendance/current is edited by open PR #2375.
+// redesign; attendance/current is open in another change.
 const rawNotificationExemptions = [
   "checkin-app/src/app/membership-ops/review/page.tsx",
   "checkin-app/src/app/membership/BackgroundChecksPanel.tsx",
