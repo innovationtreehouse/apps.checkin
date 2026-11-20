@@ -18,10 +18,7 @@ type DiscountProgramFields = { id: number; shopifyVariantId?: string | null; cla
  * payment side refuses it on anyone else's order (unentitledMemberCodeUse). Single-pool programs ({@link Program.shopifyVariantId})
  * sell at the base/non-member price; an ACTIVE org member gets this code
  * appended to their cart link (`?discount=<code>`) to bring the price down to
- * the member rate. Interim mechanism —
- * docs/in-design/SHOPIFY_MEMBER_SEGMENT_PRICING.md's segment-gated automatic
- * discount (its §5) is the planned upgrade once checkout identity is solved;
- * this mints one real Shopify object per checkout in the meantime.
+ * the member rate.
  *
  * Implemented via GraphQL `discountCodeBasicCreate` (scope: write_discounts).
  * NOT the legacy REST price_rules API: that needs the separate
@@ -32,8 +29,7 @@ type DiscountProgramFields = { id: number; shopifyVariantId?: string | null; cla
  * seat gets the member price (amount-off-once would overcharge N-1 seats).
  *
  * ponytail: one discount code per checkout — fine at Treehouse's
- * program-enrollment volume. Upgrade to the segment design above if that
- * stops being true.
+ * program-enrollment volume.
  *
  * The code applies to the program's checkout variant ({@link checkoutVariantId}).
  *
