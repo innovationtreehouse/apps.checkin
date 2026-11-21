@@ -131,8 +131,9 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
     const peopleMissingDob: PersonRow[] = [];
     if (isRecheckPolicySet(bgRecheckMonths) && boundary) {
         const threshold = bgFreshThreshold(boundary, bgRecheckMonths);
-        // Same population the PERSON_BG triggers open for, so every obligation they
-        // create has a row here with a submit action behind it.
+        // A superset of who the new-member trigger opens for (it takes the
+        // program-attached arm only), so every obligation it creates has a row here.
+        // The submit action opens or reuses a person's review for anyone listed.
         const people = await prisma.person.findMany({
             where: bgObligatedWhere(now),
             select: {
