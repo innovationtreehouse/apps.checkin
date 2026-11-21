@@ -20,6 +20,7 @@ import { loginAs, api } from "./helpers";
 const yearsAgo = (n: number) => `${new Date().getUTCFullYear() - n}-06-01`;
 
 describe("flow: household lead manages the household (CUJS A3)", () => {
+    // First hit of each route compiles it under `next dev`, so the test outlasts the 20 s default.
     it("lead-only actions succeed for the lead and are refused for a non-lead member", async () => {
         const lead = await loginAs("household.lead@example.com");
         const partner = await loginAs("household.partner@example.com");
@@ -75,5 +76,5 @@ describe("flow: household lead manages the household (CUJS A3)", () => {
         const mine = await api<{ trustedAdults: { id: number }[] }>(lead, "/api/trusted-adults/mine");
         expect(mine.status).toBe(200);
         expect(mine.json.trustedAdults.map((t) => t.id)).not.toContain(disclosed.json.id);
-    });
+    }, 60_000);
 });
