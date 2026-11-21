@@ -44,9 +44,7 @@ jobs:
           persist-credentials: false
       - id: cfg
         run: |
-          if [ -f .ai-review-base/.github/scripts/ai-review-route.py ] &&
-             [ -f .ai-review-base/.github/ai-review/profiles.json ] &&
-             [ -f .ai-review-base/.github/ai-review/instructions.md ]; then
+          if [ -f .ai-review-base/.github/scripts/ai-review-route.py ]; then
             echo "AI review config from $(git -C .ai-review-base rev-parse --short HEAD)"
             echo "dir=.ai-review-base" >> "$GITHUB_OUTPUT"
           else

@@ -106,9 +106,14 @@ jobs:
       # producer takes SIGPIPE, so a match reads as no match. Use a here-string.
       - name: Check for piped grep -q
         run: |
-          if grep -rnE '(^|[^|])\|\s*grep(\s+-\S+)*\s+-[a-zA-Z]*q' .github scripts checkin-app/scripts deploy client \
-            --include='*.sh' --include='*.yml' --include='*.yaml' --exclude=security-boundary-isolation-diff.selfcheck.sh; then
+          rc=0
+          grep -rnE '(^|[^|])\|&?\s*grep(\s+-\S+)*\s+-[a-zA-Z]*q' .github scripts checkin-app/scripts deploy client \
+            --include='*.sh' --include='*.yml' --include='*.yaml' --exclude=security-boundary-isolation-diff.selfcheck.sh || rc=$?
+          if [ "$rc" -eq 0 ]; then
             echo "::error::pipe into grep -q can misfire under pipefail; use grep -q PATTERN <<<\"\$VAR\" instead"
+            exit 1
+          elif [ "$rc" -ne 1 ]; then
+            echo "::error::the piped grep -q scan itself failed (grep exit $rc)"
             exit 1
           fi
 
