@@ -48,6 +48,7 @@ const TYPE_LABEL: Record<string, string> = {
   lead_attendance_correction: "Attendance correction",
   staff_correction: "Staff correction",
   staff_removal: "Staff removal",
+  staff_restore: "Staff restore",
   conflict_resolution: "Conflict resolution",
 };
 
