@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import SystemStatusLayout from "../layout";
+import { QBO_CODES_PATH, SYSTEM_STATUS } from "@/lib/nav/sections/systemStatus";
 
 const push = jest.fn();
 let mockPathname = "/system-status/health";
@@ -108,6 +109,31 @@ describe("SystemStatusLayout role gate", () => {
     expect(screen.queryByText(CHILD)).not.toBeInTheDocument();
     expect(push).toHaveBeenCalledWith("/");
   });
+
+  it("admits finance on QuickBooks codes and shows no other tab", () => {
+    renderLayout(QBO_CODES_PATH, {
+      data: { user: { id: 6, isFinance: true } },
+      status: "authenticated",
+    });
+    expect(screen.getByText(CHILD)).toBeInTheDocument();
+    expect(screen.getByText("QuickBooks codes")).toBeInTheDocument();
+    for (const link of SYSTEM_STATUS.links.filter((l) => l.href !== QBO_CODES_PATH)) {
+      expect(screen.queryByText(link.name)).not.toBeInTheDocument();
+    }
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it.each(SYSTEM_STATUS.links.filter((l) => l.href !== QBO_CODES_PATH).map((l) => l.href))(
+    "redirects finance off %s",
+    (href) => {
+      renderLayout(href, {
+        data: { user: { id: 6, isFinance: true } },
+        status: "authenticated",
+      });
+      expect(screen.queryByText(CHILD)).not.toBeInTheDocument();
+      expect(push).toHaveBeenCalledWith("/");
+    },
+  );
 
   it("does not admit operations on unsynced-scans", () => {
     renderLayout("/system-status/unsynced-scans", {
