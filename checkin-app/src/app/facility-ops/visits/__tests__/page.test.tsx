@@ -260,5 +260,8 @@ describe("facility-ops/visits page", () => {
       ),
     );
     await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Visit restored." })));
+    // The write re-reads both lists, so the restored visit moves to the live list.
+    const removedReads = () => fetchMock.mock.calls.filter(([url]) => String(url).includes("?removed=true")).length;
+    await waitFor(() => expect(removedReads()).toBeGreaterThan(1));
   });
 });

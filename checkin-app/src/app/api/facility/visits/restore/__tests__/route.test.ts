@@ -9,6 +9,8 @@
 import type { NextRequest } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { POST } from '../route';
+import { invalidateAttendanceCache } from '@/lib/getFullAttendance';
+import { ARCHIVED_HOUSEHOLD_REFUSAL } from '@/lib/household/archiveGuard';
 
 jest.mock('next-auth/next', () => ({ getServerSession: jest.fn() }));
 
@@ -77,6 +79,7 @@ it.each([
             newData: expect.objectContaining({ type: 'staff_restore', deletedAt: null }),
         }),
     });
+    expect(invalidateAttendanceCache).toHaveBeenCalledTimes(1);
 });
 
 it.each([
@@ -101,6 +104,18 @@ it('answers 404 for a visit that is not removed, and writes nothing', async () =
     expect((await POST(req({ visitId: 11 }))).status).toBe(404);
     expect(tx.visit.update).not.toHaveBeenCalled();
     expect(tx.auditLog.create).not.toHaveBeenCalled();
+    expect(invalidateAttendanceCache).not.toHaveBeenCalled();
+});
+
+it('refuses while the person is in an archived household', async () => {
+    tx.$queryRaw.mockResolvedValue([{ archivedAt: new Date('2026-11-03T00:00:00Z') }]);
+
+    const res = await POST(req({ visitId: 11 }));
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe(ARCHIVED_HOUSEHOLD_REFUSAL);
+    expect(tx.visit.update).not.toHaveBeenCalled();
+    expect(invalidateAttendanceCache).not.toHaveBeenCalled();
 });
 
 it('answers 404 for an unknown visit', async () => {

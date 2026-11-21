@@ -72,9 +72,12 @@ it('lists removed visits with when and by whom, and names each remover once', as
     expect(body.visits.Visit[0]).toMatchObject({ id: 1, deletedById: 9, deletedAt: deletedAt.toISOString() });
 });
 
-it('the live list never reads removers', async () => {
-    await GET(req());
+it('the live list answers a bare array and never reads removers', async () => {
+    findMany.mockResolvedValue([{ id: 1, personId: 2 }]);
 
+    const body = await (await GET(req())).json();
+
+    expect(body.visits).toEqual([{ id: 1, personId: 2 }]);
     expect(findMany.mock.calls[0][0].where).toEqual({ deletedAt: null });
     expect(findPeople).not.toHaveBeenCalled();
 });
