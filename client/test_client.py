@@ -512,6 +512,18 @@ class TestKioskClose(unittest.TestCase):
         self.assertEqual(backend.post_scan.call_args.kwargs["intent"], "OUT", "never toggles back IN")
         self.assertIn("BUILDING CLOSED", events[-1]["html"])
 
+    def test_stopped_departure_keeps_the_adult_inside_for_the_confirm(self):
+        state = self._state()
+        state.push_event = lambda e: None
+        backend = self._backend({"type": "warning", "error": "Badge again within 15 seconds to confirm."}, 400)
+        backend.attendance_path = "/api/attendance"
+        backend.get_attendance.return_value = ({}, 503)
+
+        handle_scan(backend, state, Outbox(":memory:"), 5)
+        self.assertEqual(backend.post_scan.call_args.kwargs["intent"], "OUT")
+        handle_scan(backend, state, Outbox(":memory:"), 5)
+        self.assertEqual(backend.post_scan.call_args.kwargs["intent"], "OUT", "the confirm is a departure")
+
     def test_another_badge_cancels_the_prompt_and_scans_normally(self):
         state = self._state()
         state.push_event = lambda e: None
