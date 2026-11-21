@@ -99,9 +99,13 @@ describe("parseId", () => {
     expect(parseId("12")).toBe(12);
   });
 
+  it("accepts the largest int4 id", () => {
+    expect(parseId("2147483647")).toBe(2147483647);
+  });
+
   it.each([
     "12abc", "abc", "", "0", "-3", "1.5", undefined, null,
-    "0x1f", "0b11", "0o7", "1e2", " 42", "42 ", "012", "+5", "Infinity", "9007199254740993",
+    "0x1f", "0b11", "0o7", "1e2", " 42", "42 ", "012", "+5", "Infinity", "2147483648", "9007199254740993",
   ])("rejects %p with a 400", (raw) => {
     expect(() => parseId(raw, "item id")).toThrow(expect.objectContaining({ status: 400, message: "Invalid item id" }));
   });
