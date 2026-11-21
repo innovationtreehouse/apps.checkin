@@ -63,7 +63,7 @@ jobs:
           fi
           changed="$(git diff --name-only "$PR_BASE_SHA...$PR_HEAD_SHA")"
           echo "Changed files:"; printf '%s\n' "$changed"
-          if printf '%s\n' "$changed" | grep -qvE '(^docs/|^client/|\.md$)'; then
+          if grep -qvE '(^docs/|^client/|\.md$)' <<<"$changed"; then
             echo "flow=true" >> "$GITHUB_OUTPUT"
           else
             echo "Docs- or client-only change — skipping flow tests (the required check still passes)."
