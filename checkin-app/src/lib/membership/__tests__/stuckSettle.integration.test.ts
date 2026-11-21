@@ -33,7 +33,7 @@ let seq = 0;
 let restorePolicy: () => Promise<void> = async () => {};
 
 /** A household whose lead holds a check done today, with an INITIAL application waiting on it. */
-async function waitingFamily(fields: { contractSignedAt?: Date } = {}) {
+async function waitingFamily(fields: { contractSignedAt?: Date; paidAt?: Date } = {}) {
     const n = seq++;
     const household = await prisma.household.create({ data: { name: `${TAG} ${n}` } });
     await prisma.person.create({ data: { name: `Lead ${n}`, email: `lead-${n}-${TAG}@example.com`, householdId: household.id, isHouseholdLead: true, lastBackgroundCheck: new Date() } });
@@ -122,6 +122,22 @@ describe('a settle that fails after its event', () => {
 
         await retryStuckSettle({ id: String(f.appId), step: 'background-check settle' });
         expect(await row(f.appId)).toMatchObject({ status: 'PENDING_PAYMENT', bgSettleFailedAt: null, bgSettleError: null });
+    });
+
+    it('stays stuck when a paid application advances on Retry and its own settle fails', async () => {
+        const realCheck = jest.requireActual<typeof import('@/lib/membership/checkStanding')>('@/lib/membership/checkStanding').checkValidForApplication;
+        const f = await waitingFamily({ contractSignedAt: new Date(), paidAt: new Date() });
+        jest.mocked(advanceExternalIfComplete).mockRejectedValueOnce(new Error('advance lost'));
+        await settleAfterEvent(f.householdId, 'intake');
+        const first = await row(f.appId);
+        expect(first.bgSettleFailedAt).not.toBeNull();
+
+        // The Retry's own settle reads the yardstick first; the paid advance's settle fails on the second read.
+        jest.mocked(checkValidForApplication).mockImplementationOnce(realCheck).mockRejectedValueOnce(new Error('nested settle lost'));
+        await expect(retryStuckSettle({ id: String(f.appId), step: 'background-check settle' })).rejects.toMatchObject({ status: 409 });
+        expect(await row(f.appId)).toMatchObject({ status: 'PENDING_BG_CLEARANCE', bgClearedAt: null, bgSettleFailedAt: first.bgSettleFailedAt, bgSettleError: 'nested settle lost' });
+        expect((await stuckSettles()).map((i) => i.id)).toContain(String(f.appId));
+        expect(stuckEmails()).toHaveLength(1);
     });
 });
 

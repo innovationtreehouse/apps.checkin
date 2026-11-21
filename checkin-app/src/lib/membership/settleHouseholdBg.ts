@@ -58,6 +58,7 @@ export async function settleHouseholdBg(householdId: number, opts: SettleOptions
         select: { id: true, status: true, appliesToYear: true, createdAt: true, bgSettleFailedAt: true },
     });
     if (!app) return [];
+    const failuresBefore = settleFailures;
     if (CONVERGES.includes(app.status)) await recordUnreportedReversalOnProcess(app.id);
     const threshold = await checkValidForApplication(app);
 
@@ -75,7 +76,8 @@ export async function settleHouseholdBg(householdId: number, opts: SettleOptions
     if (result.clearance) {
         await notifyClearanceOutcome(result.clearance, opts.reviewJustCleared ? undefined : { paymentOpenNotice: notifyPaymentOpenOnExistingCheck });
     }
-    if (app.bgSettleFailedAt) await prisma.orgMembershipProcess.update({ where: { id: app.id }, data: { bgSettleFailedAt: null, bgSettleError: null } });
+    // A nested settle (a paid application's advance) records its own failure; that keeps the mark.
+    if (app.bgSettleFailedAt && settleFailures === failuresBefore) await prisma.orgMembershipProcess.update({ where: { id: app.id }, data: { bgSettleFailedAt: null, bgSettleError: null } });
     return result.steps;
 }
 
@@ -108,9 +110,12 @@ async function settleFailed(householdId: number, event: string, error: unknown, 
 }
 
 const STUCK_STEP = "background-check settle";
+// ponytail: process-wide count, so a failure elsewhere can only keep a mark until the next settle, never clear one.
+let settleFailures = 0;
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error)).slice(0, 1000);
 
 async function recordStuckSettle(householdId: number, error: unknown): Promise<void> {
+    settleFailures++;
     const app = await prisma.orgMembershipProcess.findFirst({ where: openApplicationOf(householdId), orderBy: { id: "desc" }, select: { id: true } });
     if (!app) return;
     const first = await prisma.orgMembershipProcess.updateMany({ where: { id: app.id, bgSettleFailedAt: null }, data: { bgSettleFailedAt: new Date(), bgSettleError: errorText(error) } });
@@ -155,6 +160,8 @@ export async function retryStuckSettle({ id, step }: { id: string; step: string 
         await prisma.orgMembershipProcess.updateMany({ where: { id: Number(id), bgSettleFailedAt: { not: null } }, data: { bgSettleError: errorText(error) } });
         throw new ServiceError(409, "The settle failed again");
     }
+    const after = await prisma.orgMembershipProcess.findUnique({ where: { id: Number(id) }, select: { bgSettleFailedAt: true } });
+    if (after?.bgSettleFailedAt) throw new ServiceError(409, "The settle failed again");
 }
 
 /**
