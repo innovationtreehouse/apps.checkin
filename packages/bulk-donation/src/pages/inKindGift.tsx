@@ -2,12 +2,11 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
 import { useParams } from "next/navigation";
-import { notifications } from "@mantine/notifications";
 import { Alert, Anchor, Badge, Button, Group, NumberInput, Paper, Select, Stack, Switch, Table, Text, Title } from "@mantine/core";
 import { act, api, errorMessage, isRefusal, loadError, ownerName, useCanWrite, useLoad, useOwners, when, type OwnerOption } from "../components/api";
 import { formatGtinDisplay } from "@checkin/gtin";
 import { formatCents } from "@checkin/money";
-import { LoadError } from "@checkin/component-ui";
+import { LoadError, showError, showSuccess } from "@checkin/component-ui";
 import { IN_KIND_STATE, type InKindSource, type WaitingOn } from "../components/inKindState";
 
 interface GiftLine {
@@ -115,11 +114,11 @@ function InventoryPanel({ gift, onReload }: { gift: Gift; onReload: () => void }
     setBusy(true);
     try {
       await api(`/in-kind/manual/${gift.id}/load-inventory`, { method: "POST" });
-      notifications.show({ message: "Goods loaded into inventory", color: "green" });
+      showSuccess("Goods loaded into inventory");
       onReload();
     } catch (e) {
       if (isRefusal(e)) setRefusal(e.message);
-      else notifications.show({ title: "Goods not loaded into inventory", message: errorMessage(loadError(e)), color: "red", autoClose: false });
+      else showError(errorMessage(loadError(e)), { title: "Goods not loaded into inventory" });
     } finally {
       setBusy(false);
     }

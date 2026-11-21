@@ -1,9 +1,8 @@
 "use client";
 import { useEffect } from "react";
 import Link from "next/link";
-import { notifications } from "@mantine/notifications";
 import { Anchor, Badge, Table, Text } from "@mantine/core";
-import { FAILURE_TEXT } from "@checkin/component-ui";
+import { FAILURE_TEXT, showError } from "@checkin/component-ui";
 import { formatCents } from "@checkin/money";
 import { useLoad, type ReceiptListRow } from "../components/api";
 import ReceiptTable from "../components/ReceiptTable";
@@ -20,13 +19,10 @@ function useLoadErrorChip(error: string | null, status: number | null, path: str
     if (!error) return;
     const wordless = error === FAILURE_TEXT && status !== null;
     const server = error === "Internal Server Error" || (wordless && status >= 500);
-    notifications.show({
-      id,
-      title: "Couldn't load these receipts",
-      message: server ? `GET ${route} failed on the server (HTTP ${status}); the server log names the cause under that route.` : `GET ${route} answered: ${wordless ? `HTTP ${status}` : error}`,
-      color: "red",
-      autoClose: false,
-    });
+    showError(
+      server ? `GET ${route} failed on the server (HTTP ${status}); the server log names the cause under that route.` : `GET ${route} answered: ${wordless ? `HTTP ${status}` : error}`,
+      { key: id, title: "Couldn't load these receipts" },
+    );
   }, [error, status, path, id, route]);
 }
 

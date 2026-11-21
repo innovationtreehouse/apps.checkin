@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { notifications } from "@mantine/notifications";
+import { showError } from "@checkin/component-ui";
 import { api, errorMessage } from "./api";
 
 /**
@@ -16,7 +16,7 @@ export function useRotation(receiptId: string, saved = 0): [number, (by: number)
     setTurned(next);
     api(`/${encodeURIComponent(receiptId)}/rotation`, { method: "PUT", body: JSON.stringify({ rotation: next }) }).catch((err: unknown) => {
       setTurned(turn);
-      notifications.show({ title: "Couldn't save the rotation", message: errorMessage(err), color: "red", autoClose: false });
+      showError(errorMessage(err), { title: "Couldn't save the rotation" });
     });
   };
   return [turn, rotate];

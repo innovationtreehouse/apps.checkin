@@ -1,8 +1,7 @@
 "use client";
 import { useState } from "react";
 import { Button, NumberInput, Paper, Stack, Text, Title } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
-import { LoadError } from "@checkin/component-ui";
+import { LoadError, showError, showSuccess } from "@checkin/component-ui";
 import { api, refusalMessage, useIsBoard, useLoad } from "../components/api";
 
 interface Settings {
@@ -42,11 +41,11 @@ export default function IncomeSettingsPage() {
     setBusy(true);
     try {
       await api("/settings", { method: "PATCH", body: JSON.stringify(patch) });
-      notifications.show({ message: "Settings saved", color: "green" });
+      showSuccess("Settings saved");
       setEdits({});
       settings.reload();
     } catch (err) {
-      notifications.show({ message: refusalMessage(err), color: "red", autoClose: false });
+      showError(refusalMessage(err));
     } finally {
       setBusy(false);
     }
