@@ -616,7 +616,6 @@ export async function runInKindQbPosting(orgId: string, now = new Date(), turn?:
   const stop = await runDrain<GiftToBook, InKindPostOutcome>([...ready].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime()), {
     counts,
     maxCreatesPerRun: settings.qbMaxCreatesPerRun,
-    failures: [],
     throttled: "throttled",
     turn,
     post: async (gift) => {

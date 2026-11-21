@@ -691,7 +691,6 @@ export async function drainIncomeOutbox(orgId: string, now: Date = new Date(), t
 
   const stop = await runDrain<PayoutReconciliation, PostOutcome>(due, {
     counts: post,
-    failures: [],
     throttled: "throttled",
     turn,
     // The org's own count cap stops the run in postDue, with its alert; this is only the shared ceiling.
