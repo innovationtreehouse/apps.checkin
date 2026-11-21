@@ -647,8 +647,9 @@ async function afterClearanceCommitted(step: string, outcome: ClearanceOutcome, 
  * The sends every clearance owes after it commits: the board item for a refunded
  * order, congrats + the new-member triggers
  * on activation, else the payment-open notice. Never throws. What a failed step leaves
- * behind is picked up later: the daily reconcile raises a refunded order, and the
- * nightly and annual sweeps open what the triggers missed.
+ * behind is picked up later: the daily reconcile raises a refunded order, the nightly
+ * sweep opens a missed agreement, and the compliance page lists anyone whose check
+ * the trigger missed.
  */
 export async function notifyClearanceOutcome(outcome: ClearanceOutcome, opts?: { paymentOpenNotice?: (householdId: number) => Promise<void> }) {
     const { refunded, householdId } = outcome;

@@ -28,7 +28,6 @@ POST /api/auth/dev-personas
 GET /api/cron/lifecycle-reconcile
 GET /api/cron/nightly
 GET /api/cron/pending-participants
-GET /api/cron/person-bg-annual
 GET /api/cron/post-event
 GET /api/cron/reconcile-shopify
 GET /api/cron/trusted-adult-expiry
