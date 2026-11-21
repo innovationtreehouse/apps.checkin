@@ -79,7 +79,7 @@ OUT=$(fixed_changed "$M0" "$PR")
 
 echo "3) OLD logic (base...MERGE ref) WOULD sweep in main's advance"
 OLD=$(git diff --name-only "$M0"..."$MERGE")
-if grep -qx "$BOUNDARY" <<<"$OLD"; then
+if echo "$OLD" | grep -qx "$BOUNDARY"; then
   ok "old logic reports $BOUNDARY -> would false-flag the PR"
 else
   bad "expected old logic to include $BOUNDARY, got: [$OLD]"

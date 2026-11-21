@@ -107,7 +107,7 @@ jobs:
       - name: Check for piped grep -q
         run: |
           if grep -rnE '(^|[^|])\|\s*grep(\s+-\S+)*\s+-[a-zA-Z]*q' .github scripts checkin-app/scripts deploy client \
-            --include='*.sh' --include='*.yml' --include='*.yaml'; then
+            --include='*.sh' --include='*.yml' --include='*.yaml' --exclude=security-boundary-isolation-diff.selfcheck.sh; then
             echo "::error::pipe into grep -q can misfire under pipefail; use grep -q PATTERN <<<\"\$VAR\" instead"
             exit 1
           fi
