@@ -4,8 +4,8 @@
 /**
  * Integration coverage for the supervising-adult test against a
  * real Postgres — the half the unit tests mock away is the query itself: the
- * nested membership filter, and the participant-seat probe's "programme in
- * session now" OR (an event bracketing now, or the programme's own dates).
+ * nested membership filter, and the participant-seat probe's "a meeting of the
+ * programme is under way now".
  *
  * Also drives the two surfaces that consume it end to end: the departure
  * interrupt ladder (processCheckout) and the compliance banner
@@ -101,7 +101,7 @@ describe('supervising adults (integration)', () => {
         });
         householdIds.push(people.fay.householdId);
 
-        // In session by EVENT: no programme dates at all, one event bracketing now.
+        // Meeting now: one event brackets now.
         const byEvent = await prisma.program.create({ data: { appliesToYear: 2026, startAt: new Date('2026-01-01'), endAt: new Date('2026-12-31'), name: `Event Prog ${TAG}` } });
         programIds.push(byEvent.id);
         await prisma.event.create({
@@ -114,7 +114,7 @@ describe('supervising adults (integration)', () => {
         });
         await enrol('dee', byEvent.id);
 
-        // In session by DATES: no events, the programme's own dates cover today.
+        // Between meetings: RUNNING, its dates cover today, its only meeting is over.
         const byDates = await prisma.program.create({
             data: {
                 appliesToYear: 2026,
@@ -125,6 +125,14 @@ describe('supervising adults (integration)', () => {
             },
         });
         programIds.push(byDates.id);
+        await prisma.event.create({
+            data: {
+                name: `Earlier ${TAG}`,
+                programId: byDates.id,
+                startAt: new Date(Date.now() - 3 * HOUR),
+                endAt: new Date(Date.now() - 2 * HOUR),
+            },
+        });
         await enrol('gil', byDates.id);
     });
 
@@ -163,12 +171,18 @@ describe('supervising adults (integration)', () => {
             expect(await count()).toBe(2);
         });
 
-        it('never counts an adult holding a seat on a programme in session now', async () => {
+        it('never counts an adult holding a seat on a programme meeting now', async () => {
             await checkIn('ann');
             await checkIn('dee');
-            await checkIn('gil');
 
             expect(await count()).toBe(1);
+        });
+
+        it('counts a participant whose programme is between meetings', async () => {
+            await checkIn('ann');
+            await checkIn('gil');
+
+            expect(await count()).toBe(2);
         });
 
         it('never counts an adult with no background check on file', async () => {
