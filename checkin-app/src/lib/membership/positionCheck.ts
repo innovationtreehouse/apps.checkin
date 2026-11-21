@@ -7,7 +7,8 @@ import { sendTemplated } from "@/lib/email-templates/send";
 import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
 import { isYouth } from "@/lib/time";
-import { checkStanding, liveBgThreshold, loadCheckReviews } from "@/lib/membership/checkStanding";
+import { checkStanding, checkValidFor, loadCheckReviews } from "@/lib/membership/checkStanding";
+import { liveMembershipYear } from "@/lib/programYear";
 import { CHECK_ACKNOWLEDGEMENT_CODE } from "@/lib/membership/positionCheckCode";
 
 /**
@@ -34,9 +35,10 @@ export const POSITION_LABELS = {
 
 export type Position = keyof typeof POSITION_LABELS;
 
-/** The earliest check date that counts for a position served now; null while the Board has set no interval. */
-export function positionCheckThreshold(db: DbClient, now = new Date()): Promise<Date | null> {
-    return liveBgThreshold(db, now);
+/** The earliest check date valid at the start of the membership year served now; null while the Board has set no interval or boundary. */
+export async function positionCheckThreshold(db: DbClient, now = new Date()): Promise<Date | null> {
+    const settings = await db.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true } });
+    return checkValidFor(liveMembershipYear(settings?.orgMembershipYearBoundary, now), db);
 }
 
 /** Whether `personId` lacks a current check that a position needs. Under-18s are never checked; an unknown age counts as adult. */
