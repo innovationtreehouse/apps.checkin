@@ -2,7 +2,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import type { DbClient } from "@/lib/db-client";
 import prisma from "@/lib/prisma";
 import { personBgOpen, type ProcessStatus } from "@/lib/membership/lifecycle";
-import { bgFreshThreshold, nextBoundary } from "@/lib/membership/renewal";
+import { bgThresholdForYear, liveMembershipYear } from "@/lib/membership/renewal";
 
 /**
  * A person's background-check standing, derived from their own check reviews
@@ -96,11 +96,28 @@ export function householdQualifies({ members, awaitingNaming }: { members: reado
     return !awaitingNaming && members.some((m) => m.isHouseholdLead && m.standing === "CLEARED") && !members.some((m) => m.standing === "DISPUTED");
 }
 
-/** The earliest check date valid at the next membership-year boundary, from live board settings; null when the policy is unset. */
-export async function liveBgThreshold(db: DbClient = prisma, now = new Date()): Promise<Date | null> {
-    const settings = await db.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true, bgRecheckMonths: true } });
-    const boundary = settings?.orgMembershipYearBoundary ? nextBoundary(settings.orgMembershipYearBoundary, now) : null;
-    return bgFreshThreshold(boundary, settings?.bgRecheckMonths);
+const bgPolicy = (db: DbClient) => db.boardSettings.findUnique({ where: { id: 1 }, select: { orgMembershipYearBoundary: true, bgRecheckMonths: true } });
+
+/**
+ * The earliest check date valid at the start of membership year `year`, from live
+ * board settings; null when the policy, the boundary or the year is unset. Every
+ * gate on "is this check current" measures with this yardstick.
+ */
+export async function checkValidFor(year: number | null, db: DbClient = prisma): Promise<Date | null> {
+    const settings = await bgPolicy(db);
+    return bgThresholdForYear(settings?.orgMembershipYearBoundary ?? null, settings?.bgRecheckMonths, year);
+}
+
+/**
+ * checkValidFor the year a household application is for: the year it paid for, else
+ * the live year when it was created (a renewal opens in its year's window; a join in
+ * renewal season is for the coming year).
+ */
+export async function checkValidForApplication(app: { appliesToYear: number | null; createdAt: Date }, db: DbClient = prisma): Promise<Date | null> {
+    const settings = await bgPolicy(db);
+    const boundary = settings?.orgMembershipYearBoundary ?? null;
+    const year = app.appliesToYear ?? liveMembershipYear(boundary, app.createdAt);
+    return bgThresholdForYear(boundary, settings?.bgRecheckMonths, year);
 }
 
 /** Each open or blocked check review naming one of `personIds`, keyed by subject. */
