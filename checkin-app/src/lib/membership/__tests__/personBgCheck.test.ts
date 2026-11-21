@@ -54,18 +54,15 @@ describe("personBgVerdict adult/freshness/data-hygiene", () => {
     });
 });
 
-describe("as-of date drives the trigger (Trigger A boundary vs Trigger C activation)", () => {
-    // Worked example: turns 18 on Nov 1 2026, takes a role Nov 15. The Sept-1-2026
-    // annual boundary run (Trigger A) still sees a 17-year-old → MINOR, opens
-    // nothing. A later new-member activation as-of Nov 20 (Trigger C) sees ≥18 →
-    // NEEDED. Same person, opposite verdict, decided purely by the as-of date —
-    // which is why role-assignment is NOT a trigger.
+describe("as-of date drives the verdict (boundary vs activation)", () => {
+    // Turns 18 on Nov 1 2026: a 17-year-old as of the Sept-1-2026 boundary, an adult
+    // as of a Nov 20 activation. Same person, opposite verdict, decided by the as-of date.
     const turns18Nov1 = { dateOfBirth: new Date(Date.UTC(2008, 10, 1)), isDeclaredAdult: false, lastBackgroundCheck: null };
-    it("MINOR as of the annual boundary (Trigger A)", () => {
+    it("MINOR as of the membership-year boundary", () => {
         const boundary = new Date(Date.UTC(2026, 8, 1));
         expect(personBgVerdict(turns18Nov1, boundary, bgFreshThreshold(boundary, 12))).toBe("MINOR");
     });
-    it("NEEDED as of a later activation date (Trigger C)", () => {
+    it("NEEDED as of a later activation date", () => {
         const activation = new Date(Date.UTC(2026, 10, 20));
         expect(personBgVerdict(turns18Nov1, activation, bgFreshThreshold(activation, 12))).toBe("NEEDED");
     });
