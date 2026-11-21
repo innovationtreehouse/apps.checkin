@@ -691,7 +691,6 @@ export async function drainIncomeOutbox(orgId: string, now: Date = new Date(), t
 
   const stop = await runDrain<PayoutReconciliation, PostOutcome>(due, {
     counts: post,
-    failures: [],
     throttled: "throttled",
     turn,
     // The org's own count cap stops the run in postDue, with its alert; this is only the shared ceiling.
@@ -707,6 +706,7 @@ export async function drainIncomeOutbox(orgId: string, now: Date = new Date(), t
     },
   });
   if (busy) return { reconcile, post: "busy" };
+  if (stop?.by === "throttled") console.warn("[income] qb_drain_throttled", { remaining: stop.remaining });
   if (stop?.by === "count") {
     post.capped = "count";
     await alert("count", stop.remaining, due[due.length - stop.remaining].source);

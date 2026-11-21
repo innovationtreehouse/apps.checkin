@@ -24,8 +24,7 @@ The page reads live rows, so a code seen this morning is on it this morning.
 - **Recorded** by the host's binding of each library's "on failure" port, which
   already receives every kinded failure with its fault codes. No lane's behaviour
   changes, and a failed write never fails the lane.
-- **Unchanged:** how a code is sorted, the run-level rule (three refusals with one
-  code in a run stop it as a setting), and what finance is told about a held item.
+- **Unchanged:** how a code is sorted, and what finance is told about a held item.
 - **Cost:** one new table, one route, one page, and a registry entry that
   ships alone first.
 
@@ -52,8 +51,7 @@ A new host table, `QboFaultCodeSeen`, one row per code and kind:
 | `lastSeenAt` | timestamp | internal | Latest report |
 | `lastLane` | text | internal | Library and lane of the latest report ("expense posting") |
 
-Primary key `(code, kind)`. A report carrying two codes counts toward each, the same
-way the run-level rule counts them.
+Primary key `(code, kind)`. A report carrying two codes counts toward each.
 
 A row per kind, not per code, because one code can arrive under different statuses:
 a 401 with a code is connection, a 400 with the same code is data. The page shows
@@ -162,8 +160,8 @@ Then a table, one row per code:
   unclassified codes, arrive with the PR that adds it. The panel will import the
   table, so the response still carries only stored rows.
 - **Last lane** shows the lane name as the binding stores it.
-- **Sorted as** has one pill per kind with its count, in the kind colours the rest
-  of the app uses.
+- **Sorted as** has one pill per kind with its count, in colours the panel
+  defines: system gray, connection orange, settings yellow, data blue, bug red.
 - The panel refreshes on focus and every minute. Empty, it says "QuickBooks hasn't
   refused anything yet."
 

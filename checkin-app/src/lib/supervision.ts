@@ -18,9 +18,9 @@ import { isYouth, orgCalendarDay } from "@/lib/time";
  *     ACTIVE (ACTIVE is what encodes "background check cleared", see
  *     lib/orgMembership) AND their own `lastBackgroundCheck` has not expired under
  *     the board's recheck policy,
- *   - who holds no ACTIVE participant seat on a program that is in session now.
- *     A transition-year 18+ participant with a clearance is being supervised, not
- *     supervising; the same person counts later as a volunteer on another program.
+ *   - who holds no ACTIVE participant seat on a program with a meeting under way
+ *     now. A cleared 18+ participant is being supervised during their program's
+ *     meeting, and counts like any volunteer outside it.
  *
  * Two people from one household count as ONE, so the unit of counting is the
  * household, not the person.
@@ -32,21 +32,9 @@ import { isYouth, orgCalendarDay } from "@/lib/time";
 /** Policy's two-deep floor. Below this the room is short of supervision. */
 export const MIN_SUPERVISING_ADULTS = 2;
 
-/**
- * A program is in session now: one of its events brackets this instant, or the
- * program's own dates cover today. An open-ended RUNNING program counts from its
- * start — an unset end date must not read as "not in session". A RUNNING program
- * with no start date either: `lte` never matches null, so without the fourth arm
- * its participants fail OPEN into the supervising count.
- */
-function programInSessionNow(now: Date, today: Date): Prisma.ProgramWhereInput {
-    return {
-        OR: [
-            { events: { some: { startAt: { lte: now }, endAt: { gte: now } } } },
-            { startAt: { lte: today }, endAt: { gte: today } },
-            { startAt: { lte: today }, phase: "RUNNING" },
-        ],
-    };
+/** A meeting of this program is under way now. Between meetings its participants supervise like anyone else. */
+function programMeetingUnderWay(now: Date): Prisma.ProgramWhereInput {
+    return { events: { some: { startAt: { lte: now }, endAt: { gte: now } } } };
 }
 
 /**
@@ -94,9 +82,9 @@ export async function supervisingAdultVisits(
                     isDeclaredAdult: true,
                     lastBackgroundCheck: true,
                     household: { select: { orgMembership: { select: { status: true } } } },
-                    // Seat on a program in session now — one row is enough to exclude.
+                    // Seat on a program meeting now — one row is enough to exclude.
                     programParticipants: {
-                        where: { status: "ACTIVE", program: programInSessionNow(now, today) },
+                        where: { status: "ACTIVE", program: programMeetingUnderWay(now) },
                         select: { programId: true },
                         take: 1,
                     },
@@ -128,21 +116,37 @@ export function uncoveredYouth<T extends { youth: boolean; householdId: number }
     return present.filter(p => p.youth && !householdsWithAdult.has(p.householdId));
 }
 
-/**
- * Open visits of youth no adult of their own household covers ({@link uncoveredYouth}).
- * Unknown age fails closed as youth. Pass `excludeVisitId` to ask as if that
- * visit had already ended.
- */
-export async function uncoveredYouthVisitIds(db: DbClient = prisma, excludeVisitId?: number): Promise<number[]> {
+/** Every open visit, as the youth/household rows {@link uncoveredYouth} reads. Unknown age fails closed as youth. */
+async function openPresence(db: DbClient) {
     const open = await db.visit.findMany({
-        where: { departedAt: null, deletedAt: null, ...(excludeVisitId === undefined ? {} : { id: { not: excludeVisitId } }) },
+        where: { departedAt: null, deletedAt: null },
         select: { id: true, person: { select: { householdId: true, isDeclaredAdult: true, dateOfBirth: true } } },
     });
-    return uncoveredYouth(open.map(v => ({
+    return open.map(v => ({
         id: v.id,
         householdId: v.person.householdId,
         youth: !v.person.isDeclaredAdult && isYouth(v.person.dateOfBirth, { unknownIs: "youth" }),
-    }))).map(v => v.id);
+    }));
+}
+
+/** Open visits of youth no adult of their own household covers ({@link uncoveredYouth}). */
+export async function uncoveredYouthVisitIds(db: DbClient = prisma): Promise<number[]> {
+    return uncoveredYouth(await openPresence(db)).map(v => v.id);
+}
+
+/**
+ * The uncovered youth now and as if `departingVisitId` had already ended, from
+ * ONE read of the open visits so the two answers describe the same room.
+ */
+export async function uncoveredYouthAroundDeparture(
+    db: DbClient,
+    departingVisitId: number,
+): Promise<{ before: number[]; after: number[] }> {
+    const present = await openPresence(db);
+    return {
+        before: uncoveredYouth(present).map(v => v.id),
+        after: uncoveredYouth(present.filter(v => v.id !== departingVisitId)).map(v => v.id),
+    };
 }
 
 /**

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_CONSECUTIVE_FAILURES, MAX_CREATES_PER_DAY, MAX_CREATES_PER_RUN, MAX_CREATES_PER_RUN_CEILING, MAX_SAME_CODE_REFUSALS, qbGate, runDrain, type Posted } from "../drain";
+import { MAX_CREATES_PER_DAY, MAX_CREATES_PER_RUN, MAX_CREATES_PER_RUN_CEILING, qbGate, runDrain } from "../drain";
 
 type Outcome = "posted" | "failed" | "skipped";
 
@@ -9,56 +9,32 @@ const rows = (n: number) => Array.from({ length: n }, (_, i) => i);
 describe("runDrain", () => {
   it("posts every row when nothing stops it", async () => {
     const counts = fresh();
-    const stop = await runDrain<number, Outcome>(rows(3), { counts, failures: ["failed"], post: async () => "posted" });
+    const stop = await runDrain<number, Outcome>(rows(3), { counts, post: async () => "posted" });
     expect(stop).toBeNull();
     expect(counts.posted).toBe(3);
   });
 
   it("stops at the run cap, and only with a row still to post", async () => {
     const over = fresh();
-    expect(await runDrain<number, Outcome>(rows(MAX_CREATES_PER_RUN + 2), { counts: over, failures: [], post: async () => "posted" })).toEqual({ by: "count", remaining: 2 });
+    expect(await runDrain<number, Outcome>(rows(MAX_CREATES_PER_RUN + 2), { counts: over, post: async () => "posted" })).toEqual({ by: "count", remaining: 2 });
     expect(over.posted).toBe(MAX_CREATES_PER_RUN);
-    expect(await runDrain<number, Outcome>(rows(MAX_CREATES_PER_RUN), { counts: fresh(), failures: [], post: async () => "posted" })).toBeNull();
+    expect(await runDrain<number, Outcome>(rows(MAX_CREATES_PER_RUN), { counts: fresh(), post: async () => "posted" })).toBeNull();
   });
 
   it("checks the daily cap before the run cap", async () => {
     const counts = { ...fresh(), posted: MAX_CREATES_PER_RUN };
-    const stop = await runDrain<number, Outcome>(rows(1), { counts, failures: [], createdToday: MAX_CREATES_PER_DAY - MAX_CREATES_PER_RUN, post: async () => "posted" });
+    const stop = await runDrain<number, Outcome>(rows(1), { counts, createdToday: MAX_CREATES_PER_DAY - MAX_CREATES_PER_RUN, post: async () => "posted" });
     expect(stop).toEqual({ by: "day", remaining: 1 });
   });
 
   it("holds a lane with no createdToday to no daily cap", async () => {
-    const stop = await runDrain<number, Outcome>(rows(1), { counts: fresh(), failures: [], post: async () => "posted" });
+    const stop = await runDrain<number, Outcome>(rows(1), { counts: fresh(), post: async () => "posted" });
     expect(stop).toBeNull();
-  });
-
-  it("stops after the failure streak, counting what it left", async () => {
-    const counts = fresh();
-    const stop = await runDrain<number, Outcome>(rows(MAX_CONSECUTIVE_FAILURES + 2), { counts, failures: ["failed"], post: async () => "failed" });
-    expect(stop).toEqual({ by: "failures", remaining: 2 });
-    expect(counts.failed).toBe(MAX_CONSECUTIVE_FAILURES);
-  });
-
-  it("resets the streak on any other outcome, unless that outcome made no call", async () => {
-    const script = (o: Outcome[]) => {
-      const q = [...o];
-      return async () => q.shift() as Outcome;
-    };
-    const pattern: Outcome[] = ["failed", "failed", "skipped", "failed"];
-    expect(await runDrain<number, Outcome>(rows(4), { counts: fresh(), failures: ["failed"], post: script(pattern) })).toBeNull();
-    expect(await runDrain<number, Outcome>(rows(4), { counts: fresh(), failures: ["failed"], noCall: ["skipped"], post: script(pattern) })).toEqual({ by: "failures", remaining: 0 });
-  });
-
-  it("ends the run on a stopNow outcome, tallying it", async () => {
-    const counts = fresh();
-    const stop = await runDrain<number, Outcome>(rows(3), { counts, failures: ["failed"], stopNow: ["skipped"], post: async () => "skipped" });
-    expect(stop).toEqual({ by: "stopNow", remaining: 2 });
-    expect(counts.skipped).toBe(1);
   });
 
   it("ends the run when the lane's post returns null, tallying nothing", async () => {
     const counts = fresh();
-    const stop = await runDrain<number, Outcome>(rows(2), { counts, failures: [], post: async () => null });
+    const stop = await runDrain<number, Outcome>(rows(2), { counts, post: async () => null });
     expect(stop).toEqual({ by: "post", remaining: 2 });
     expect(counts).toEqual(fresh());
   });
@@ -67,7 +43,7 @@ describe("runDrain", () => {
     const post = async (): Promise<Outcome> => {
       throw new Error("boom");
     };
-    await expect(runDrain<number, Outcome>(rows(1), { counts: fresh(), failures: [], post })).rejects.toThrow("boom");
+    await expect(runDrain<number, Outcome>(rows(1), { counts: fresh(), post })).rejects.toThrow("boom");
   });
 
   it("tries a throttled record again once, then ends the run on the second throttle, leaving that record to post", async () => {
@@ -77,7 +53,6 @@ describe("runDrain", () => {
     const seen: number[] = [];
     const stop = await runDrain<number, T>(rows(5), {
       counts,
-      failures: ["failed"],
       throttled: "throttled",
       post: async (row) => {
         seen.push(row);
@@ -89,11 +64,11 @@ describe("runDrain", () => {
     expect(counts).toMatchObject({ posted: 2, throttled: 2, failed: 0 });
   });
 
-  it("ends the run when the retried record is throttled again, and never counts a throttle as a failure", async () => {
+  it("ends the run when the retried record is throttled again", async () => {
     type T = Outcome | "throttled";
     const counts = { ...fresh(), throttled: 0 };
-    const stop = await runDrain<number, T>(rows(MAX_CONSECUTIVE_FAILURES + 2), { counts, failures: ["failed"], throttled: "throttled", post: async () => "throttled" });
-    expect(stop).toEqual({ by: "throttled", remaining: MAX_CONSECUTIVE_FAILURES + 2 });
+    const stop = await runDrain<number, T>(rows(5), { counts, throttled: "throttled", post: async () => "throttled" });
+    expect(stop).toEqual({ by: "throttled", remaining: 5 });
     expect(counts.throttled).toBe(2);
   });
 
@@ -102,7 +77,7 @@ describe("runDrain", () => {
     const script: T[] = ["posted", "throttled", "throttled"];
     let renews = 0;
     const turn = { yielded: false, renew: async () => (renews++, true) };
-    const stop = await runDrain<number, T>(rows(3), { counts: { ...fresh(), throttled: 0 }, failures: [], throttled: "throttled", turn, post: async () => script.shift() ?? "posted" });
+    const stop = await runDrain<number, T>(rows(3), { counts: { ...fresh(), throttled: 0 }, throttled: "throttled", turn, post: async () => script.shift() ?? "posted" });
     expect(stop).toEqual({ by: "throttled", remaining: 2 });
     expect(renews).toBe(3);
     expect(turn.yielded).toBe(true);
@@ -112,67 +87,10 @@ describe("runDrain", () => {
     let held = 2;
     const turn = { yielded: false, renew: async () => held-- > 0 };
     const counts = fresh();
-    const stop = await runDrain<number, Outcome>(rows(5), { counts, failures: [], turn, post: async () => "posted" });
+    const stop = await runDrain<number, Outcome>(rows(5), { counts, turn, post: async () => "posted" });
     expect(stop).toEqual({ by: "slot", remaining: 3 });
     expect(counts.posted).toBe(2);
     expect(turn.yielded).toBe(false);
-  });
-});
-
-describe("runDrain on repeated refusal codes", () => {
-  type Refusal = string | string[] | null;
-  const refusing = (codes: Refusal[]) => {
-    const q = [...codes];
-    return async (): Promise<Posted<Outcome>> => {
-      const code = q.shift();
-      return code ? { outcome: "skipped", refusedCodes: typeof code === "string" ? [code] : code } : "posted";
-    };
-  };
-  const lane = (codes: Refusal[], returned: number[][]) => ({
-    counts: fresh(),
-    failures: ["failed"] as Outcome[],
-    post: refusing(codes),
-    unrefuse: async (rs: readonly number[]) => {
-      returned.push([...rs]);
-      return rs.length;
-    },
-  });
-
-  it("keeps going after two refusals with one code, returning nothing", async () => {
-    const returned: number[][] = [];
-    const l = lane(["6000", "6000", null], returned);
-    expect(await runDrain<number, Outcome>(rows(3), l)).toBeNull();
-    expect(returned).toEqual([]);
-    expect(l.counts).toEqual({ posted: 1, failed: 0, skipped: 2 });
-  });
-
-  it("stops on the third refusal with one code and returns all three", async () => {
-    expect(MAX_SAME_CODE_REFUSALS).toBe(3);
-    const returned: number[][] = [];
-    const l = lane(["6000", null, "6000", "6000", null], returned);
-    expect(await runDrain<number, Outcome>(rows(5), l)).toEqual({ by: "refusals", code: "6000", returned: 3, remaining: 1 });
-    expect(returned).toEqual([[0, 2, 3]]);
-  });
-
-  it("reports how many records the lane returned, which may be fewer than it was handed", async () => {
-    const l = { ...lane(["6000", "6000", "6000"], []), unrefuse: async () => 2 };
-    expect(await runDrain<number, Outcome>(rows(3), l)).toEqual({ by: "refusals", code: "6000", returned: 2, remaining: 0 });
-  });
-
-  it("counts every fault code a refusal carries toward that code", async () => {
-    const returned: number[][] = [];
-    expect(await runDrain<number, Outcome>(rows(4), lane(["6000", ["6190", "6000"], null, "6000"], returned))).toEqual({ by: "refusals", code: "6000", returned: 3, remaining: 0 });
-    expect(returned).toEqual([[0, 1, 3]]);
-  });
-
-  it("does not stop on three refusals with mixed codes", async () => {
-    const returned: number[][] = [];
-    expect(await runDrain<number, Outcome>(rows(4), lane(["6000", "6190", "6000", "2020"], returned))).toBeNull();
-    expect(returned).toEqual([]);
-  });
-
-  it("never stops on refusals for a lane that cannot return them", async () => {
-    expect(await runDrain<number, Outcome>(rows(3), { counts: fresh(), failures: ["failed"], post: refusing(["6000", "6000", "6000"]) })).toBeNull();
   });
 });
 
@@ -204,16 +122,16 @@ describe("runDrain limits passed by the lane", () => {
   const fresh = () => ({ posted: 0 });
   it("stops at the lane's per-run limit", async () => {
     const counts = fresh();
-    expect(await runDrain<number, "posted">([1, 2, 3], { counts, failures: [], maxCreatesPerRun: 2, post: async () => "posted" })).toEqual({ by: "count", remaining: 1 });
+    expect(await runDrain<number, "posted">([1, 2, 3], { counts, maxCreatesPerRun: 2, post: async () => "posted" })).toEqual({ by: "count", remaining: 1 });
     expect(counts.posted).toBe(2);
   });
   it("holds a per-run limit above the ceiling to the ceiling", async () => {
     const counts = fresh();
     const rows = Array.from({ length: MAX_CREATES_PER_RUN_CEILING + 5 }, (_, i) => i);
-    expect(await runDrain<number, "posted">(rows, { counts, failures: [], maxCreatesPerRun: 500, post: async () => "posted" })).toEqual({ by: "count", remaining: 5 });
+    expect(await runDrain<number, "posted">(rows, { counts, maxCreatesPerRun: 500, post: async () => "posted" })).toEqual({ by: "count", remaining: 5 });
     expect(counts.posted).toBe(MAX_CREATES_PER_RUN_CEILING);
   });
   it("stops at the lane's per-day limit", async () => {
-    expect(await runDrain<number, "posted">([1], { counts: fresh(), failures: [], createdToday: 3, maxCreatesPerDay: 3, post: async () => "posted" })).toEqual({ by: "day", remaining: 1 });
+    expect(await runDrain<number, "posted">([1], { counts: fresh(), createdToday: 3, maxCreatesPerDay: 3, post: async () => "posted" })).toEqual({ by: "day", remaining: 1 });
   });
 });

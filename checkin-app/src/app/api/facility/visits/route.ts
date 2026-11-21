@@ -20,8 +20,13 @@ import { findVisitOverlaps, openOverlapRefusal, overlapFlag } from "@/lib/visit/
 // first. Visit.facilityCloseId says which close: after a pull-back the close log
 // names both closes, and this column names the one that stands. Each row carries
 // its close's closer name; a nightly sweep has no closer.
+//
+// ?removed=true lists removed visits, newest removal first, with deletedAt and
+// deletedById; the bag's Person list names each remover.
 export const GET = handler('GET /api/facility/visits', async ({ req }) => {
-    const closedOut = new URL(req.url).searchParams.get('closedOut') === 'true';
+    const params = new URL(req.url).searchParams;
+    if (params.get('removed') === 'true') return removedVisits();
+    const closedOut = params.get('closedOut') === 'true';
     const visits = await prisma.visit.findMany({
         take: closedOut ? 500 : 50,
         where: closedOut
@@ -29,21 +34,40 @@ export const GET = handler('GET /api/facility/visits', async ({ req }) => {
             : { deletedAt: null },
         orderBy: closedOut ? [{ facilityCloseId: "desc" }, { arrivedAt: "desc" }] : { arrivedAt: "desc" },
         select: {
-            id: true,
-            personId: true,
-            arrivedAt: true,
-            departedAt: true,
-            arrivedVia: true,
-            departedVia: true,
-            facilityCloseId: true,
-            person: { select: { email: true, name: true } },
-            event: { select: { name: true } },
+            ...VISIT_LOG_SELECT,
             ...(closedOut ? { facilityClose: { select: { closedBy: { select: { name: true } } } } } : {}),
         },
     });
 
     return { Visit: visits };
 });
+
+const VISIT_LOG_SELECT = {
+    id: true,
+    personId: true,
+    arrivedAt: true,
+    departedAt: true,
+    arrivedVia: true,
+    departedVia: true,
+    facilityCloseId: true,
+    person: { select: { email: true, name: true } },
+    event: { select: { name: true } },
+} as const;
+
+async function removedVisits() {
+    const visits = await prisma.visit.findMany({
+        take: 50,
+        where: { deletedAt: { not: null } },
+        orderBy: { deletedAt: "desc" },
+        select: { ...VISIT_LOG_SELECT, deletedAt: true, deletedById: true },
+    });
+    const removerIds = [...new Set(visits.flatMap((v) => (v.deletedById === null ? [] : [v.deletedById])))];
+    const removers = removerIds.length === 0 ? [] : await prisma.person.findMany({
+        where: { id: { in: removerIds } },
+        select: { id: true, name: true },
+    });
+    return { Visit: visits, Person: removers };
+}
 
 export const PATCH = withAuth(
     { roles: ['isSysadmin', 'isBoardMember'] },

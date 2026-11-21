@@ -230,4 +230,38 @@ describe("facility-ops/visits page", () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/insert"))).toBe(false);
     expect(notifications.show).not.toHaveBeenCalled();
   });
+  it("show removed lists removed visits beside live ones, naming who removed each", async () => {
+    setSession({ id: 1, isSysadmin: true });
+    const fetchMock = mockFetchJson({
+      "/api/facility/visits/restore": {},
+      "/api/facility/visits?removed=true": { visits: {
+        Visit: [{ ...visits[0], id: 9, person: { name: "Rae Removed" }, deletedAt: "2026-01-03T10:00:00.000Z", deletedById: 4 }],
+        Person: [{ id: 4, name: "Bo Board" }],
+      } },
+      "/api/facility/visits": { visits },
+    });
+    renderWithProviders(<AdminVisitsPage />);
+    await screen.findByText("Val Volunteer");
+    expect(screen.queryByText("Rae Removed")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("switch", { name: "Show removed" }));
+
+    const row = (await screen.findByText("Rae Removed")).closest("tr") as HTMLElement;
+    expect(screen.getByText("Val Volunteer")).toBeInTheDocument();
+    expect(row).toHaveTextContent(/Bo Board · /);
+    expect(within(row).queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+
+    fireEvent.click(within(row).getByRole("button", { name: "Restore" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/facility/visits/restore",
+        expect.objectContaining({ method: "POST", body: JSON.stringify({ visitId: 9 }) }),
+      ),
+    );
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Visit restored." })));
+    // The write re-reads both lists, so the restored visit moves to the live list.
+    const removedReads = () => fetchMock.mock.calls.filter(([url]) => String(url).includes("?removed=true")).length;
+    await waitFor(() => expect(removedReads()).toBeGreaterThan(1));
+  });
 });
