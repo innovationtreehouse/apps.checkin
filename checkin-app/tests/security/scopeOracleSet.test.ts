@@ -94,6 +94,7 @@ const ORACLES = [
     'visit-household-lead-scope.test.ts',
     'visit-program-scope.test.ts',
     'volunteer-roster-strip.test.ts',
+    'workflow-provisional-parts-route.test.ts',
     'workflow-strip.test.ts',
 ] as const;
 

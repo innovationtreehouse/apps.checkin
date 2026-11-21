@@ -63,6 +63,13 @@ export const classifications = {
     apply_failed: "public",
     applying: "public",
   },
+  // A provisional catalog part on the receipt picker: the public fields of
+  // ProvisionalItem (provisionalGtin13, proposedName, status), no rejection detail.
+  WorkflowProvisionalPart: {
+    gtin13: "public",
+    name: "public",
+    status: "public",
+  },
 } as const;
 
 export const relations = {
