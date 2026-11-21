@@ -63,8 +63,9 @@ export const classifications = {
     apply_failed: "public",
     applying: "public",
   },
-  // A provisional catalog part on the receipt picker: the public fields of
-  // ProvisionalItem (provisionalGtin13, proposedName, status), no rejection detail.
+  // A provisional catalog part on the receipt picker, keyed by these response
+  // names: gtin13 ← ProvisionalItem.provisionalGtin13, name ← proposedName,
+  // status ← status (all public). No rejection detail.
   WorkflowProvisionalPart: {
     gtin13: "public",
     name: "public",
