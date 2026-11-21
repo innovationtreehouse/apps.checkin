@@ -8,7 +8,7 @@ import { db } from "../db";
 import type { Prisma } from "../generated/prisma/client";
 import type { ReceiptPrincipal } from "../contract";
 import { getOrgId, ports, requireActor } from "../runtime";
-import { intakeDeferred, isRefusalNote, MAIL_CATCH_UP_BUDGET_MS, MAIL_CATCH_UP_CAP, mailRunState, startMailRun, STORED_STATUSES, type DmarcVerdict } from "./mailIntake";
+import { intakeDeferred, isRefusalNote, MAIL_CATCH_UP_BUDGET_MS, MAIL_CATCH_UP_CAP, mailRunState, processCapturedMessage, startMailRun, STORED_STATUSES, type CapturedOutcome, type DmarcVerdict } from "./mailIntake";
 import { intakeMailedReceipt, readInBackground } from "./receiptService";
 import { settleMailedBody } from "./ocrDrain";
 import { closeUnreplyable } from "./mailReplies";
@@ -268,5 +268,10 @@ export const mailQueueService = {
     if (run.status === "started") run.done.catch((err: unknown) => console.error("[receipt] mail catch-up run failed:", err));
     const { lastRunAt, lastRun } = await mailRunState();
     return { status: run.status, lastRunAt, lastRun };
+  },
+
+  /** Processes one captured email again from its stored copy, audited with who asked; the answer is the outcome alone. */
+  async replay(id: number): Promise<CapturedOutcome> {
+    return processCapturedMessage(id, await requireActor());
   },
 };

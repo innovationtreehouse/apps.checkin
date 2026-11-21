@@ -1,4 +1,4 @@
-/** The held-mail queue and the ignored-file list, both FINANCE surfaces behind the registry. */
+/** The held-mail queue, the ignored-file list, catch-up and replay: FINANCE surfaces behind the registry. */
 import { parseId, readJson } from "@checkin/component-kit";
 import type { ReceiptFileRouteHandler, ReceiptRouteHandler } from "../contract";
 import { mailQueueService } from "../services/mailQueueService";
@@ -38,3 +38,7 @@ export const removeIgnored: ReceiptRouteHandler = async ({ params }) => ({
 export const catchUpState: ReceiptRouteHandler = async () => ({ ReceiptMailCatchUp: await mailQueueService.catchUpState() });
 
 export const catchUp: ReceiptRouteHandler = async () => ({ ReceiptMailCatchUp: await mailQueueService.catchUp() });
+
+export const replay: ReceiptRouteHandler = async ({ params }) => ({
+  ReceiptMailReplay: await mailQueueService.replay(parseId(params.id, "captured email id")),
+});
