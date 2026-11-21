@@ -25,13 +25,13 @@ const STUCK_IN = {
 export const STILL_STUCK = "Retried, and it failed again; the receipt's page shows why";
 
 /**
- * Captured emails not processed WAITING_NOTICE_MS after capture and still inside their stored copy's
+ * Captured emails unprocessed more than WAITING_NOTICE_MS after capture and still inside their stored copy's
  * retention, which a replay can still process.
  */
 const stuckMail = (orgId: string, now = Date.now()): Prisma.ReceiptMailMessageWhereInput => ({
   orgId,
   processedAt: null,
-  capturedAt: { lte: new Date(now - WAITING_NOTICE_MS), gt: new Date(now - rawMailRetentionDays() * DAY_MS) },
+  capturedAt: { lt: new Date(now - WAITING_NOTICE_MS), gt: new Date(now - rawMailRetentionDays() * DAY_MS) },
 });
 
 /**
