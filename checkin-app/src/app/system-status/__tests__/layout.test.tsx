@@ -123,6 +123,21 @@ describe("SystemStatusLayout role gate", () => {
     expect(push).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["a board member", { isBoardMember: true }],
+    ["a sysadmin", { isSysadmin: true }],
+  ])("admits %s on QuickBooks codes with the sysadmin and board tabs", (_who, flags) => {
+    renderLayout(QBO_CODES_PATH, {
+      data: { user: { id: 7, ...flags } },
+      status: "authenticated",
+    });
+    expect(screen.getByText(CHILD)).toBeInTheDocument();
+    for (const name of ["QuickBooks codes", "Errors", "Audit Log", "Unsynced Scans"]) {
+      expect(screen.getByText(name)).toBeInTheDocument();
+    }
+    expect(push).not.toHaveBeenCalled();
+  });
+
   it.each(SYSTEM_STATUS.links.filter((l) => l.href !== QBO_CODES_PATH).map((l) => l.href))(
     "redirects finance off %s",
     (href) => {

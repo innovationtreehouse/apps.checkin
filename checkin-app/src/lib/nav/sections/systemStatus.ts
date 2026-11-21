@@ -6,7 +6,7 @@
  */
 import type { RoleFlag } from "@/lib/roles";
 import type { NavSection } from "@/lib/nav/types";
-import { SYSADMIN_OR_BOARD, anyRole } from "@/lib/nav/gates";
+import { SYSADMIN_OR_BOARD, anyRole, firstVisibleHref } from "@/lib/nav/gates";
 
 export const SYSTEM_STATUS_ROLES = SYSADMIN_OR_BOARD;
 export const UNSYNCED_REVIEW_ROLES: readonly RoleFlag[] = [...SYSADMIN_OR_BOARD, "isKeyholder"];
@@ -31,4 +31,5 @@ export const SYSTEM_STATUS: NavSection = {
     { name: "QuickBooks codes", href: QBO_CODES_PATH, icon: "🧾", visible: anyRole(QBO_CODES_ROLES) },
   ],
   visible: anyRole(QBO_CODES_ROLES),
+  hrefFor: (u, c) => firstVisibleHref(SYSTEM_STATUS, u, c),
 };
