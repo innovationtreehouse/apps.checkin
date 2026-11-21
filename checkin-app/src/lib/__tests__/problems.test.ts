@@ -119,6 +119,12 @@ describe("retryProblem", () => {
         });
     });
 
+    it("hands the receipt library who pressed Retry", async () => {
+        await retryProblem({ library: "receipt", step: "mail message", id: "7" }, BY);
+
+        expect(receipt.retryStuckItem).toHaveBeenCalledWith({ id: "7", step: "mail message" }, BY);
+    });
+
     it("passes the library's refusal through", async () => {
         receipt.retryStuckItem.mockRejectedValue(new ServiceError(409, "failed again"));
 

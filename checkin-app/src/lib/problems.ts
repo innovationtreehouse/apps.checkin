@@ -29,7 +29,7 @@ const SOURCES: { library: string; env?: string; read: () => Promise<StuckItem[]>
         library: "receipt",
         env: "RECEIPT_DATABASE_URL",
         read: async () => (await import("@checkin/receipt")).stuckItems(),
-        retry: async (item) => (await import("@checkin/receipt")).retryStuckItem(item),
+        retry: async (item, by) => (await import("@checkin/receipt")).retryStuckItem(item, by),
         notices: async () => (await (await import("@checkin/receipt")).problemNotices()).map((text) => ({ text, href: null })),
     },
     {

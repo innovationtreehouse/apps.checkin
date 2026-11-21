@@ -5,9 +5,11 @@ import { db } from "../../db";
 import type { MailboxReader, MailMessage } from "../../contract";
 import { createMemoryFileStore } from "../../lib/fileStorage";
 import { processCapturedMessage, readMailbox } from "../../services/mailIntake";
+import { mailQueueService } from "../../services/mailQueueService";
+import { MAIL_STILL_STUCK, retryStuckItem, stuckItems, WAITING_NOTICE_MS } from "../../stuckItems";
 import { describeDb } from "../helpers/db";
 import { toRaw } from "../helpers/mime";
-import { ALICE, clearAll, configure, okOcr, TEST_ORG_ID } from "../helpers/setup";
+import { actAs, ALICE, clearAll, configure, FINANCE, okOcr, TEST_ORG_ID } from "../helpers/setup";
 
 const GOOGLE_PASS = "mx.google.com; dkim=pass header.i=@example.org; spf=pass; dmarc=pass header.from=example.org";
 const DAY_MS = 24 * 60 * 60_000;
@@ -231,5 +233,75 @@ describeDb("replaying a captured message", () => {
       data: { orgId: "00000000-0000-0000-0000-000000000002", gmailMessageId: "x", receivedAt: new Date(), rawKey: "mail-raw/x", rawSha256: "x", rawSize: 1 },
     });
     await expect(processCapturedMessage(other.id)).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+describeDb("replay from the mail page", () => {
+  it("audits who asked, and answers the outcome alone", async () => {
+    send("m1");
+    await readMailbox();
+    const { id } = await db.receiptMailMessage.findFirstOrThrow();
+    actAs(FINANCE);
+    expect(await mailQueueService.replay(id)).toEqual({ status: "processed" });
+    expect(await db.receiptAuditLog.findFirst({ where: { action: "mail_replayed" } })).toMatchObject({
+      receiptId: null,
+      userId: FINANCE.id,
+      username: FINANCE.name,
+      fieldChanged: "mail_message",
+      valueBefore: String(id),
+    });
+  });
+});
+
+describeDb("a captured email stuck on the Problems list", () => {
+  const BY = { userId: FINANCE.id, username: FINANCE.name };
+
+  /** Captures m1 with its processing failing, then dates its capture `ageMs` ago. */
+  async function stuckMessage(ageMs = WAITING_NOTICE_MS + 60_000) {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    bind({ people: { submitterByEmail: async () => { throw new Error("people lookup down"); } } });
+    send("m1");
+    await readMailbox();
+    const capturedAt = new Date(Date.now() - ageMs);
+    const { id } = await db.receiptMailMessage.findFirstOrThrow({ where: { gmailMessageId: "m1" } });
+    const row = await db.receiptMailMessage.update({ where: { id }, data: { capturedAt }, select: { id: true, processedAt: true } });
+    expect(row.processedAt).toBeNull();
+    return { id: row.id, capturedAt };
+  }
+
+  it("lists an email unprocessed 25 hours after capture, timed from capture", async () => {
+    const { id, capturedAt } = await stuckMessage();
+    expect(await stuckItems()).toEqual([{ id: String(id), step: "mail message", href: "/receipts/mail", failedAt: capturedAt }]);
+  });
+
+  it("leaves out one captured within 25 hours, one processed, and one past its stored copy's retention", async () => {
+    const { id } = await stuckMessage(WAITING_NOTICE_MS - 60_000);
+    expect(await stuckItems()).toEqual([]);
+    await db.receiptMailMessage.update({ where: { id }, data: { capturedAt: new Date(Date.now() - 31 * DAY_MS) } });
+    expect(await stuckItems()).toEqual([]);
+    await db.receiptMailMessage.update({ where: { id }, data: { capturedAt: new Date(Date.now() - 2 * DAY_MS), processedAt: new Date() } });
+    expect(await stuckItems()).toEqual([]);
+  });
+
+  it("Retry replays it from the stored copy, audited with who pressed it, and it leaves the list", async () => {
+    const { id } = await stuckMessage();
+    bind();
+    await retryStuckItem({ id: String(id), step: "mail message" }, BY);
+    expect(await db.receiptMailMessage.findUniqueOrThrow({ where: { id } })).toMatchObject({ processedAt: expect.any(Date), processError: null });
+    expect(await db.receipt.count()).toBe(1);
+    expect(await db.receiptAuditLog.findFirst({ where: { action: "mail_replayed" } })).toMatchObject({ userId: FINANCE.id, valueBefore: String(id) });
+    expect(await stuckItems()).toEqual([]);
+    await expect(retryStuckItem({ id: String(id), step: "mail message" }, BY)).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("answers 409, with no error text, when the replay fails again", async () => {
+    const { id } = await stuckMessage();
+    await expect(retryStuckItem({ id: String(id), step: "mail message" }, BY)).rejects.toMatchObject({ status: 409, message: MAIL_STILL_STUCK });
+    expect(await stuckItems()).toEqual([expect.objectContaining({ id: String(id), step: "mail message" })]);
+  });
+
+  it("answers 404 for an id that is not a stuck captured email", async () => {
+    await expect(retryStuckItem({ id: "not-a-number", step: "mail message" }, BY)).rejects.toMatchObject({ status: 404 });
+    await expect(retryStuckItem({ id: "12345", step: "mail message" }, BY)).rejects.toMatchObject({ status: 404 });
   });
 });
