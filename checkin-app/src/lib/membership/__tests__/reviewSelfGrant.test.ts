@@ -3,7 +3,7 @@ import type { TxClient } from "@/lib/db-client";
 import { attest, clearBackgroundCheck, ReviewError, SelfGrantRefusedError } from "@/lib/membership/review";
 import { SELF_GRANT_REFUSAL_TABLE } from "@/lib/membership/selfGrantGuard";
 
-jest.mock("@/lib/membership/settleHouseholdBg", () => ({ settleHouseholdBg: jest.fn(async () => []), blockedByCheckReview: jest.fn(async () => false) }));
+jest.mock("@/lib/membership/settleHouseholdBg", () => ({ settleAfterEvent: jest.fn(async () => []), blockedByCheckReview: jest.fn(async () => false) }));
 
 jest.mock("@/lib/prisma", () => ({
     __esModule: true,

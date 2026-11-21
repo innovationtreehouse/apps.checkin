@@ -12,7 +12,7 @@ import type { KeepSubject, MergeSubject } from "../plan";
 
 jest.mock("@/lib/prisma", () => ({ __esModule: true, default: { $transaction: jest.fn() } }));
 jest.mock("@/lib/membership/boardAlerts", () => ({ notifyBoardOfYouthLeads: jest.fn() }));
-jest.mock("@/lib/membership/settleHouseholdBg", () => ({ settleHouseholdBg: jest.fn() }));
+jest.mock("@/lib/membership/settleHouseholdBg", () => ({ settleAfterEvent: jest.fn() }));
 jest.mock("@/lib/membership/householdStatus", () => ({ lockAndFindDeniedHousehold: jest.fn() }));
 jest.mock("@/lib/household/archiveGuard", () => ({ ...jest.requireActual("@/lib/household/archiveGuard"), lockLiveHouseholds: jest.fn() }));
 jest.mock("@/lib/getFullAttendance", () => ({ invalidateAttendanceCache: jest.fn() }));
