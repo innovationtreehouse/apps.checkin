@@ -8,7 +8,7 @@ import type { Program } from '@/generated/prisma/client';
 import { updateProgram } from '@/lib/programs/update';
 import { programLeaderIneligibility } from '@/lib/programs/leaderEligibility';
 import { isActiveOrgMember } from '@/lib/orgMembership';
-import { liveBgThreshold, loadCheckReviews } from '@/lib/membership/checkStanding';
+import { checkValidFor, loadCheckReviews } from '@/lib/membership/checkStanding';
 
 jest.mock('@/lib/logger', () => ({ logger: { error: jest.fn(), warn: jest.fn() } }));
 jest.mock('@/lib/programAnnounce', () => ({ maybeAnnounceOnOpen: jest.fn().mockResolvedValue(undefined) }));
@@ -19,7 +19,7 @@ jest.mock('@/lib/household/archiveGuard', () => ({ lockLiveHouseholdsOf: jest.fn
 jest.mock('@/lib/orgMembership', () => ({ isActiveOrgMember: jest.fn() }));
 jest.mock('@/lib/membership/checkStanding', () => ({
     ...jest.requireActual('@/lib/membership/checkStanding'),
-    liveBgThreshold: jest.fn(),
+    checkValidFor: jest.fn(),
     loadCheckReviews: jest.fn(),
 }));
 
@@ -62,33 +62,33 @@ beforeEach(() => {
     jest.clearAllMocks();
     mockPerson.mockResolvedValue(fresh);
     (isActiveOrgMember as jest.Mock).mockResolvedValue(true);
-    (liveBgThreshold as jest.Mock).mockResolvedValue(threshold);
+    (checkValidFor as jest.Mock).mockResolvedValue(threshold);
     (loadCheckReviews as jest.Mock).mockImplementation(async (_db: unknown, ids: number[]) => new Map(ids.map((id) => [id, []])));
 });
 
 describe('programLeaderIneligibility', () => {
     it('admits an ACTIVE member with a clearance inside the window', async () => {
-        expect(await programLeaderIneligibility(9, fresh)).toBeNull();
+        expect(await programLeaderIneligibility(9, fresh, 2026)).toBeNull();
     });
 
     it('refuses someone outside an ACTIVE household membership', async () => {
         (isActiveOrgMember as jest.Mock).mockResolvedValue(false);
-        expect(await programLeaderIneligibility(9, fresh)).toMatch(/active Treehouse Membership/);
+        expect(await programLeaderIneligibility(9, fresh, 2026)).toMatch(/active Treehouse Membership/);
     });
 
     it('refuses a clearance older than the window, or none', async () => {
-        expect(await programLeaderIneligibility(9, { lastBackgroundCheck: new Date('2098-01-01') })).toMatch(/background-check clearance/);
-        expect(await programLeaderIneligibility(9, { lastBackgroundCheck: null })).toMatch(/background-check clearance/);
+        expect(await programLeaderIneligibility(9, { lastBackgroundCheck: new Date('2098-01-01') }, 2026)).toMatch(/background-check clearance/);
+        expect(await programLeaderIneligibility(9, { lastBackgroundCheck: null }, 2026)).toMatch(/background-check clearance/);
     });
 
     it('refuses a disputed check, however recent the clearance', async () => {
         (loadCheckReviews as jest.Mock).mockResolvedValue(new Map([[9, [{ id: 1, status: 'BLOCKED', bgConsentAt: true, sentBack: false }]]]));
-        expect(await programLeaderIneligibility(9, fresh)).toMatch(/background-check clearance/);
+        expect(await programLeaderIneligibility(9, fresh, 2026)).toMatch(/background-check clearance/);
     });
 
     it('refuses everyone while the Board has set no recheck window', async () => {
-        (liveBgThreshold as jest.Mock).mockResolvedValue(null);
-        expect(await programLeaderIneligibility(9, fresh)).toMatch(/Board must set the background-check interval/);
+        (checkValidFor as jest.Mock).mockResolvedValue(null);
+        expect(await programLeaderIneligibility(9, fresh, 2026)).toMatch(/Board must set the background-check interval/);
     });
 });
 
@@ -104,6 +104,11 @@ describe('assigning a leader on edit', () => {
         (isActiveOrgMember as jest.Mock).mockResolvedValue(false);
         expect((await updateProgram(program, { leadMentorId: 7, name: 'Robotics 2' }, board)).ok).toBe(true);
         expect(isActiveOrgMember).not.toHaveBeenCalled();
+    });
+
+    it("measures a new leader's clearance at the start of the program's membership year", async () => {
+        await updateProgram(program, { leadMentorId: 9 }, board);
+        expect(checkValidFor).toHaveBeenCalledWith(2099);
     });
 
     it('saves a new leader who meets every requirement', async () => {

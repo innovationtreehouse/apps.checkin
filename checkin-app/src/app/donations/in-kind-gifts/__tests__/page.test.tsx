@@ -12,7 +12,7 @@ const mockReload = jest.fn();
 const mockApi = jest.fn<Promise<unknown>, unknown[]>();
 
 jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 1 } } }) }));
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn() } }));
 jest.mock("@checkin/component-ui", () => ({
   ...jest.requireActual("@checkin/component-ui"),
   useViewer: () => ({ id: 1, isInventoryManager: true }),
@@ -56,7 +56,7 @@ describe("in-kind gifts without a receipt: retrying a failed load", () => {
     mockApi.mockRejectedValue(new HttpError("Inventory is unavailable", 503));
     wrap();
     fireEvent.click(screen.getByRole("button", { name: "Retry load" }));
-    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ message: "Inventory is unavailable", color: "red" })));
+    await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ id: "Inventory is unavailable", color: "red" })));
     expect(screen.getByRole("button", { name: "Retry load" })).toBeEnabled();
   });
 
@@ -66,7 +66,7 @@ describe("in-kind gifts without a receipt: retrying a failed load", () => {
     fireEvent.click(screen.getByRole("button", { name: "Retry load" }));
     expect(await screen.findByRole("button", { name: "Can't be loaded: adjust stock by hand" })).toBeDisabled();
     expect(notifications.show).toHaveBeenCalledWith(
-      expect.objectContaining({ message: "This source was already applied with a different inventory delta.", color: "red" }),
+      expect.objectContaining({ id: "This source was already applied with a different inventory delta.", color: "red" }),
     );
     expect(mockReload).not.toHaveBeenCalled();
   });
@@ -77,7 +77,7 @@ describe("in-kind gifts without a receipt: retrying a failed load", () => {
     fireEvent.click(screen.getByRole("button", { name: "Retry load" }));
     await waitFor(() =>
       expect(notifications.show).toHaveBeenCalledWith(
-        expect.objectContaining({ message: "You don't have permission to load goods into inventory.", color: "red" }),
+        expect.objectContaining({ id: "You don't have permission to load goods into inventory.", color: "red" }),
       ),
     );
     expect(screen.queryByRole("button", { name: "Can't be loaded: adjust stock by hand" })).not.toBeInTheDocument();

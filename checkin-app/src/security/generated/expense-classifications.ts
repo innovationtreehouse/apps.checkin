@@ -169,6 +169,8 @@ export const classifications = {
         reimburseeSentAt: 'internal',
         doneAt: 'internal',
         attempts: 'internal',
+        firstFailedAt: 'internal',
+        failureReason: 'internal',
         createdAt: 'internal',
     },
     ExpenseQbAccount: {

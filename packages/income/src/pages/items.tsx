@@ -1,9 +1,8 @@
 "use client";
 import { useState } from "react";
 import { Button, Code, Group, Select, Table, Text, Title } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
 import { api, notifyNavCounts, refusalMessage, useIsFinance, useLoad } from "../components/api";
-import { InactivePickWarning, LoadError, QuickBooksListsRefresh } from "@checkin/component-ui";
+import { InactivePickWarning, LoadError, QuickBooksListsRefresh, showError, showSuccess } from "@checkin/component-ui";
 import { LINE_ACCOUNT_TYPES } from "@checkin/quickbooks/accountTypes";
 
 interface ItemRow {
@@ -67,11 +66,11 @@ export default function ItemsPage() {
       await api(`/items/${variantId}/category`, change === "undecided"
         ? { method: "DELETE" }
         : { method: "PUT", body: JSON.stringify(change) });
-      notifications.show({ message: "Category saved; applies to deposits created from now on", color: "green" });
+      showSuccess("Category saved; applies to deposits created from now on");
       items.reload();
       notifyNavCounts();
     } catch (err) {
-      notifications.show({ message: refusalMessage(err), color: "red", autoClose: false });
+      showError(refusalMessage(err));
     } finally {
       setBusy(null);
     }

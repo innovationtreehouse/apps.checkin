@@ -1,11 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
 import { Badge, Button, Group, Table, Text, Title } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
 import { formatGtinDisplay } from "../lib/gtin";
 import { methodsFor, type QuantityMethod } from "../lib/mergeConflictMethods";
 import { api, errorMessage, notifyNavCounts, useLoad } from "../components/api";
-import { LoadError } from "@checkin/component-ui";
+import { LoadError, showError, showSuccess } from "@checkin/component-ui";
 
 interface ConflictRow {
   id: number;
@@ -58,10 +57,10 @@ export default function MergeConflictsPage() {
     try {
       await api(`/inventory-merge-conflicts/${id}/resolve`, { method: "PUT", body: JSON.stringify({ quantityMethod }) });
       notifyNavCounts();
-      notifications.show({ message: "Conflict resolved", color: "green" });
+      showSuccess("Conflict resolved");
       conflicts.reload();
     } catch (err) {
-      notifications.show({ message: errorMessage(err), color: "red", autoClose: false });
+      showError(errorMessage(err));
     } finally {
       setBusy(null);
     }

@@ -8,7 +8,7 @@ const push = jest.fn();
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
 let mockUser: Record<string, unknown> = { id: 7, ageBand: "adult" };
 jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: mockUser } }) }));
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn() } }));
 jest.mock("@checkin/receipt/components/api", () => ({
   ...jest.requireActual("@checkin/receipt/components/api"),
   upload: jest.fn(),
@@ -128,12 +128,12 @@ describe("Required details", () => {
   it("refuses to upload without the retailer, date and total, naming each", () => {
     renderManual(false);
     fireEvent.click(screen.getByRole("button", { name: "Upload" }));
-    expect(notifications.show).toHaveBeenCalledWith({
+    expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
       title: "Receipt not uploaded",
       message: "Fill in the retailer, date and total.",
       color: "red",
       autoClose: false,
-    });
+    }));
     expect(uploadMock).not.toHaveBeenCalled();
   });
 

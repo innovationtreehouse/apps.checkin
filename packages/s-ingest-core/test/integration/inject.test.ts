@@ -44,6 +44,18 @@ describeDb("inject path", () => {
     expect(events.every((e) => e.source === EventSource.TEST_LOADED)).toBe(true);
   });
 
+  it("refuses a fixture stamped in the future, writing nothing", async () => {
+    const node = {
+      id: "gid://shopify/ShopifyPaymentsPayout/5099",
+      issuedAt: "2999-01-01T00:00:00Z",
+      net: { amount: "1.00", currencyCode: "USD" },
+    };
+    await expect(injectFixtures(prisma, [{ objectType: ObjectType.PAYOUT, node }], { storeId: STORE })).rejects.toThrow(
+      /stamped in the future: gid:\/\/shopify\/ShopifyPaymentsPayout\/5099/,
+    );
+    expect(await prisma.shopifyRawEvent.count({ where: { storeId: STORE } })).toBe(0);
+  });
+
   it("projects a standalone REFUND node into shop_refund, keyed to its order", async () => {
     await injectFixtures(
       prisma,

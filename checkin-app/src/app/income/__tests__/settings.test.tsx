@@ -15,7 +15,7 @@ jest.mock("@checkin/income/components/api", () => ({
   refusalMessage: (e: unknown) => (e instanceof Error ? e.message : String(e)),
 }));
 
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn() } }));
 
 beforeAll(() => {
   window.matchMedia =

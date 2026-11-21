@@ -60,6 +60,12 @@ export async function createProvisionalItem(
     throw new ServiceError(400, `proposedUsageBehavior must be one of: ${usageBehaviorEnum.join(", ")}`);
   }
   await assertAllocatedProvisionalGtin(params.provisionalGtin13);
+  if (params.proposedSubcategoryId != null) {
+    const sub = await catalogRepo.findSubcategoryById(params.proposedSubcategoryId);
+    if (sub?.categoryId !== params.proposedCategoryId) {
+      throw new ServiceError(400, "proposedSubcategoryId must belong to proposedCategoryId");
+    }
+  }
 
   return proposalRepo.createProvisionalItem({
     provisionalGtin13: params.provisionalGtin13,

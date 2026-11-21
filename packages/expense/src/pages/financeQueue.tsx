@@ -1,10 +1,9 @@
 "use client";
-import { FAILURE_TEXT } from "@checkin/component-ui";
+import { FAILURE_TEXT, showError } from "@checkin/component-ui";
 import { formatCents } from "@checkin/money";
 import { useEffect } from "react";
 import Link from "next/link";
 import { Anchor, Badge, Chip, Group, Table, Text } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
 import { useLoad } from "../components/api";
 import SignAllButton from "../components/SignAllButton";
 import {
@@ -28,7 +27,7 @@ export function loadFailure(path: string, error: string, status: number | null):
 /** A failed load as a red chip that stays up until dismissed. */
 export function useLoadFailedChip(id: string, what: string, path: string, error: string | null, status: number | null): void {
   useEffect(() => {
-    if (error) notifications.show({ id, title: `Couldn't load ${what}`, message: loadFailure(path, error, status), color: "red", autoClose: false });
+    if (error) showError(loadFailure(path, error, status), { key: id, title: `Couldn't load ${what}` });
   }, [id, what, path, error, status]);
 }
 
