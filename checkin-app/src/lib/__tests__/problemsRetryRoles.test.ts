@@ -23,6 +23,11 @@ describe("mayRetry", () => {
         }
     });
 
+    it("keeps replaying a captured email from a sysadmin, and lets the Board do it", () => {
+        expect(mayRetry(SYSADMIN, { library: "receipt", step: "mail message" })).toBe(false);
+        expect(mayRetry({ isBoardMember: true }, { library: "receipt", step: "mail message" })).toBe(true);
+    });
+
     it("lets a sysadmin retry a step that does not post to QuickBooks", () => {
         expect(mayRetry(SYSADMIN, { library: "expense", step: "intake" })).toBe(true);
     });
