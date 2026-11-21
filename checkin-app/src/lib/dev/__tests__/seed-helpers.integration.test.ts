@@ -172,11 +172,13 @@ describe("dev seed-helpers (integration)", () => {
             const { id } = await prisma.program.findFirstOrThrow({ where: { name } });
             await prisma.event.deleteMany({ where: { programId: id } });
             await prisma.program.delete({ where: { id } });
-            await prisma.$executeRawUnsafe(`ALTER TABLE "Event" ADD CONSTRAINT seed_spread_fail CHECK (name <> 'Seed: upcoming session')`);
+            const dropFixture = () => prisma.$executeRawUnsafe(`ALTER TABLE "Event" DROP CONSTRAINT IF EXISTS seed_spread_fail`);
             try {
+                await dropFixture();
+                await prisma.$executeRawUnsafe(`ALTER TABLE "Event" ADD CONSTRAINT seed_spread_fail CHECK (name <> 'Seed: upcoming session')`);
                 await expect(seedBaseline(prisma)).rejects.toThrow();
             } finally {
-                await prisma.$executeRawUnsafe(`ALTER TABLE "Event" DROP CONSTRAINT seed_spread_fail`);
+                await dropFixture();
             }
             expect(await prisma.program.findFirst({ where: { name } })).toBeNull();
 
