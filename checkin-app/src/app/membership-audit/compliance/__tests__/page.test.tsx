@@ -117,6 +117,24 @@ describe("the Cleared since filter while the list reloads", () => {
   const answer = (body: unknown) => ({ ok: true, status: 200, ...jsonBody(body) }) as Response;
   const household = (name: string) => [{ ...blanketStamped[0], householdName: name }];
 
+  it("lists position holders needing attention first, and filters to current ones", async () => {
+    const row = (personId: number, name: string, standing: string) => ({
+      personId, name, householdId: 4, year: 2026, lastBackgroundCheck: null, standing,
+      positions: [{ kind: "KEYHOLDER", label: "Role: Keyholder", year: 2026 }, { kind: "VOLUNTEER", label: "Volunteer: Robotics", year: 2026 }],
+    });
+    mockFetchJson({ "/api/membership-audit/compliance": { positionHolders: [row(1, "Lapsed Lee", "NOT_CURRENT"), row(2, "Current Cam", "CURRENT")] } });
+    renderPage();
+
+    expect(await screen.findByText("Lapsed Lee")).toBeInTheDocument();
+    expect(screen.getAllByText("Role: Keyholder · Volunteer: Robotics")).toHaveLength(1);
+    expect(screen.queryByText("Current Cam")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Everyone is in compliance/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Current"));
+    expect(await screen.findByText("Current Cam")).toBeInTheDocument();
+    expect(screen.queryByText("Lapsed Lee")).not.toBeInTheDocument();
+  });
+
   it("stays mounted and focused while the filtered list loads", async () => {
     let finish: () => void = () => {};
     global.fetch = jest.fn(async (input: RequestInfo | URL) => {
