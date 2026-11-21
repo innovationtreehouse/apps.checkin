@@ -11,7 +11,9 @@
  *   3. The stripper, under the read view's tokens (public + everyones:internal),
  *      drops the blob and any submitter/reimbursement key a projection grows,
  *      and keeps the nested line items.
- *   4. Admission: INVENTORY_MANAGER, FINANCE and BOARD read; only
+ *   4. Admission (provisional parts aside, which
+ *      workflow-provisional-parts-route.test.ts covers): INVENTORY_MANAGER,
+ *      FINANCE and BOARD read; only
  *      INVENTORY_MANAGER writes, except close-out, which BOARD may also call; an
  *      id-less session is 401 on every route through the real authenticateRequest (only next-auth is mocked) and is denied the
  *      reads at the resolveAccess layer too; no route view-selects a sysadmin.
@@ -125,7 +127,8 @@ describe('workflow-mapping stripper under the read view', () => {
 
 describe('workflow-mapping admission', () => {
     const PREFIX = 'GET /api/workflow-mapping/';
-    const routes = [...allRoutes()].filter(([e]) => e.includes(' /api/workflow-mapping/'));
+    const PROVISIONAL_PARTS = 'GET /api/workflow-mapping/provisional-parts';
+    const routes = [...allRoutes()].filter(([e]) => e.includes(' /api/workflow-mapping/') && e !== PROVISIONAL_PARTS);
     const reads = routes.filter(([e]) => e.startsWith(PREFIX)).map(([e]) => e);
     const CLOSE_OUT = 'POST /api/workflow-mapping/receipts/[id]/close-out';
     const writes = routes.filter(([e]) => !e.startsWith(PREFIX) && e !== CLOSE_OUT).map(([e]) => e);
