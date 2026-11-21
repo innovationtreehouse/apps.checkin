@@ -12,9 +12,12 @@ legal states and its transition table:
   (paid and check cleared) makes it ACTIVE; DENIED's one exit is the board's
   restore to NONE. `setHouseholdStatus` is its one writer, and
   `noRawStatusWrites.test.ts` fails CI on a status write anywhere else.
-- **Program sale** (`Program` start, off-sale and sale-ended dates): a program's time
-  on sale — NOT_ON_SALE, ON_SALE, SALE_ENDED, then FINISHED. The state is
-  classified from the dates, not stored in a column of its own.
+- **Program sale** (`Program.phase`, `enrollmentStatus` and the start, off-sale and
+  sale-ended dates): a program's time on sale — NOT_ON_SALE, ON_SALE,
+  SALE_ENDED, then FINISHED. `classify` reads those columns: phase FINISHED
+  gives FINISHED, a passed off-sale date gives SALE_ENDED, and otherwise
+  `enrollmentStatus` OPEN gives ON_SALE and CLOSED gives NOT_ON_SALE. The state
+  has no column of its own.
 
 Enrollment and the membership process also name the query filter for each state
 set and a `validate()` that flags rows sitting off the diagram.
