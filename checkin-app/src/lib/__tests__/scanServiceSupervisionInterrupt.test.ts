@@ -75,10 +75,10 @@ function fakeDb(
         visit: {
             findFirst: jest.fn().mockResolvedValue(null),
             count: jest.fn().mockResolvedValue(1),
-            findMany: jest.fn().mockImplementation(({ where, select }) =>
+            findMany: jest.fn().mockImplementation(({ select }) =>
                 select.person.select.lastBackgroundCheck
                     ? openVisits(householdIds)
-                    : [...openVisits(householdIds), ...youthRows].filter(v => v.id !== where.id?.not)),
+                    : [...openVisits(householdIds), ...youthRows]),
             findUnique: jest.fn().mockResolvedValue({ supervisionWarnedAt: warnedAt }),
             create: jest.fn().mockResolvedValue({ id: 500 }),
             update,
@@ -246,13 +246,16 @@ describe("a departure by someone who is not a supervising adult", () => {
         const { db, update } = fakeDb([]);
         const staying = openVisits([0, ...supervisors]).slice(1);
         const parent = { id: DEPARTING_VISIT, person: { householdId: 30, isDeclaredAdult: true, dateOfBirth: null } };
-        (db.visit.findMany as jest.Mock).mockImplementation(({ where, select }) =>
-            select.person.select.lastBackgroundCheck
-                ? staying
-                : [...staying, parent, ...others].filter(v => v.id !== where.id?.not));
+        (db.visit.findMany as jest.Mock).mockImplementation(({ select }) =>
+            select.person.select.lastBackgroundCheck ? staying : [...staying, parent, ...others]);
         const res = await wire(processCheckout(adult, DEPARTING_VISIT, db));
-        return { res, body: await res.json(), update };
+        return { res, body: await res.json(), update, db };
     }
+
+    it("reads the room once for both the before and after answers", async () => {
+        const { db } = await parentLeaves([20]);
+        expect(db.visit.findMany).toHaveBeenCalledTimes(2);
+    });
 
     it("is stopped when it leaves their own youth in a room short of supervising adults", async () => {
         const { res, body, update } = await parentLeaves([20]);

@@ -80,7 +80,7 @@ describe("who counts as a supervising adult", () => {
         expect(await count([visit(1, 10), visit(2, 20, { lastBackgroundCheck: null })])).toBe(1);
     });
 
-    it("excludes an adult holding a participant seat on a programme in session now", async () => {
+    it("excludes an adult holding a participant seat on a programme meeting now", async () => {
         const participant = visit(2, 20, { programParticipants: [{ programId: 7 }] });
         expect(await count([visit(1, 10), participant])).toBe(1);
     });

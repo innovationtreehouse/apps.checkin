@@ -5,7 +5,7 @@ import type { DbClient, TxClient } from "@/lib/db-client";
 import { withFacilityLock } from "@/lib/facilityLock";
 import { KEYHOLDER_IN_BUILDING, LIVE_VISIT, actsAsKeyholder } from "@/lib/visit/filters";
 import { LATE_CLOSE_SKEW_MS, MAX_VISIT_MS } from "@/lib/visitTimes";
-import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits, uncoveredYouthVisitIds } from "@/lib/supervision";
+import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits, uncoveredYouthAroundDeparture, uncoveredYouthVisitIds } from "@/lib/supervision";
 import { isYouth } from "@/lib/time";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { auditKioskLeave, closeVia, recordClose } from "@/lib/attendance/close";
@@ -286,7 +286,7 @@ export async function processCheckout(
  *                                                            adult leaves, else nothing.
  *
  * An uncovered youth is one with no adult of their own household inside
- * ({@link uncoveredYouthVisitIds}), counted as if this visit had already ended.
+ * ({@link uncoveredYouthAroundDeparture}), counted as if this visit had already ended.
  * Only the confirm rung is youth-gated; the warn rung over-warns deliberately.
  *
  * The confirm is bound to the warning having been SHOWN, not to badge adjacency:
@@ -306,14 +306,10 @@ async function supervisionInterrupt(
     if (remaining === MIN_SUPERVISING_ADULTS) return removesSupervisor ? { remaining, confirm: false } : null;
 
     // Probed below two only, so every quieter departure pays nothing for it.
-    const uncoveredAfter = await uncoveredYouthVisitIds(db, activeVisitId);
-    const warnOnly = removesSupervisor ? { remaining, confirm: false } : null;
-    if (uncoveredAfter.length === 0) return warnOnly;
-    if (!removesSupervisor) {
-        // Someone who is not a supervising adult stops only by taking a youth's own household adult away.
-        const uncoveredBefore = new Set(await uncoveredYouthVisitIds(db));
-        if (uncoveredAfter.every(id => uncoveredBefore.has(id))) return null;
-    }
+    const { before, after } = await uncoveredYouthAroundDeparture(db, activeVisitId);
+    if (after.length === 0) return removesSupervisor ? { remaining, confirm: false } : null;
+    // Someone who is not a supervising adult stops only by taking a youth's own household adult away.
+    if (!removesSupervisor && after.every(id => before.includes(id))) return null;
 
     const ownVisit = await db.visit.findUnique({
         where: { id: activeVisitId },

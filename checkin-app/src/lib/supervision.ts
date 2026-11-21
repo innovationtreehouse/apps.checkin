@@ -116,21 +116,37 @@ export function uncoveredYouth<T extends { youth: boolean; householdId: number }
     return present.filter(p => p.youth && !householdsWithAdult.has(p.householdId));
 }
 
-/**
- * Open visits of youth no adult of their own household covers ({@link uncoveredYouth}).
- * Unknown age fails closed as youth. Pass `excludeVisitId` to ask as if that
- * visit had already ended.
- */
-export async function uncoveredYouthVisitIds(db: DbClient = prisma, excludeVisitId?: number): Promise<number[]> {
+/** Every open visit, as the youth/household rows {@link uncoveredYouth} reads. Unknown age fails closed as youth. */
+async function openPresence(db: DbClient) {
     const open = await db.visit.findMany({
-        where: { departedAt: null, deletedAt: null, ...(excludeVisitId === undefined ? {} : { id: { not: excludeVisitId } }) },
+        where: { departedAt: null, deletedAt: null },
         select: { id: true, person: { select: { householdId: true, isDeclaredAdult: true, dateOfBirth: true } } },
     });
-    return uncoveredYouth(open.map(v => ({
+    return open.map(v => ({
         id: v.id,
         householdId: v.person.householdId,
         youth: !v.person.isDeclaredAdult && isYouth(v.person.dateOfBirth, { unknownIs: "youth" }),
-    }))).map(v => v.id);
+    }));
+}
+
+/** Open visits of youth no adult of their own household covers ({@link uncoveredYouth}). */
+export async function uncoveredYouthVisitIds(db: DbClient = prisma): Promise<number[]> {
+    return uncoveredYouth(await openPresence(db)).map(v => v.id);
+}
+
+/**
+ * The uncovered youth now and as if `departingVisitId` had already ended, from
+ * ONE read of the open visits so the two answers describe the same room.
+ */
+export async function uncoveredYouthAroundDeparture(
+    db: DbClient,
+    departingVisitId: number,
+): Promise<{ before: number[]; after: number[] }> {
+    const present = await openPresence(db);
+    return {
+        before: uncoveredYouth(present).map(v => v.id),
+        after: uncoveredYouth(present.filter(v => v.id !== departingVisitId)).map(v => v.id),
+    };
 }
 
 /**
