@@ -70,7 +70,8 @@ export async function settleHouseholdBg(householdId: number, opts: SettleOptions
 
     if (result.steps.includes("opened")) await notifyReviewers();
     if (result.steps.includes("paidReject")) await notifyBoardPaidReject(app.id);
-    if (result.advanceExternal) await advanceExternalIfComplete(app.id);
+    // A stuck application may have been stamped before its advance failed, so its settle runs the advance again.
+    if (result.advanceExternal || (app.bgSettleFailedAt && app.status === "PENDING_EXTERNAL_ACTION")) await advanceExternalIfComplete(app.id);
     if (result.clearance) {
         await notifyClearanceOutcome(result.clearance, opts.reviewJustCleared ? undefined : { paymentOpenNotice: notifyPaymentOpenOnExistingCheck });
     }

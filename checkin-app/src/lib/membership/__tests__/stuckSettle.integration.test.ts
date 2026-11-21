@@ -9,6 +9,7 @@
 import prisma from '@/lib/prisma';
 import { emailBoardMembers } from '@/lib/emailRecipients';
 import { checkValidForApplication } from '@/lib/membership/checkStanding';
+import { advanceExternalIfComplete } from '@/lib/membership/external';
 import { retryStuckSettle, settleAfterEvent, settleApplicationsAwaitingCheck, stuckSettles } from '@/lib/membership/settleHouseholdBg';
 import { setBgRecheckPolicy } from '@/test-helpers/boardSettings';
 
@@ -22,18 +23,22 @@ jest.mock('@/lib/membership/checkStanding', () => {
     const actual = jest.requireActual('@/lib/membership/checkStanding');
     return { ...actual, checkValidForApplication: jest.fn((...args: Parameters<typeof actual.checkValidForApplication>) => actual.checkValidForApplication(...args)) };
 });
+jest.mock('@/lib/membership/external', () => {
+    const actual = jest.requireActual('@/lib/membership/external');
+    return { ...actual, advanceExternalIfComplete: jest.fn((...args: Parameters<typeof actual.advanceExternalIfComplete>) => actual.advanceExternalIfComplete(...args)) };
+});
 
 const TAG = 'stuck-settle-test';
 let seq = 0;
 let restorePolicy: () => Promise<void> = async () => {};
 
 /** A household whose lead holds a check done today, with an INITIAL application waiting on it. */
-async function waitingFamily() {
+async function waitingFamily(fields: { contractSignedAt?: Date } = {}) {
     const n = seq++;
     const household = await prisma.household.create({ data: { name: `${TAG} ${n}` } });
     await prisma.person.create({ data: { name: `Lead ${n}`, email: `lead-${n}-${TAG}@example.com`, householdId: household.id, isHouseholdLead: true, lastBackgroundCheck: new Date() } });
     const membership = await prisma.orgMembership.create({ data: { householdId: household.id, status: 'NONE' } });
-    const app = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: membership.id, kind: 'INITIAL', status: 'PENDING_EXTERNAL_ACTION' } });
+    const app = await prisma.orgMembershipProcess.create({ data: { orgMembershipId: membership.id, kind: 'INITIAL', status: 'PENDING_EXTERNAL_ACTION', ...fields } });
     return { householdId: household.id, appId: app.id };
 }
 
@@ -103,6 +108,20 @@ describe('a settle that fails after its event', () => {
 
         await settleAfterEvent(f.householdId, 'check started');
         expect(await row(f.appId)).toMatchObject({ bgSettleFailedAt: null, bgSettleError: null });
+    });
+
+    it('sticks when the advance after a committed stamp fails, and Retry runs the advance', async () => {
+        const f = await waitingFamily({ contractSignedAt: new Date() });
+        jest.mocked(advanceExternalIfComplete).mockRejectedValueOnce(new Error('advance lost'));
+
+        await settleAfterEvent(f.householdId, 'intake');
+        const stuck = await row(f.appId);
+        expect(stuck).toMatchObject({ status: 'PENDING_EXTERNAL_ACTION', bgSettleError: 'advance lost' });
+        expect(stuck.bgClearedAt).not.toBeNull();
+        expect(stuck.bgSettleFailedAt).not.toBeNull();
+
+        await retryStuckSettle({ id: String(f.appId), step: 'background-check settle' });
+        expect(await row(f.appId)).toMatchObject({ status: 'PENDING_PAYMENT', bgSettleFailedAt: null, bgSettleError: null });
     });
 });
 
