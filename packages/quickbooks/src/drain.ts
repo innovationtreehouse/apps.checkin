@@ -10,8 +10,6 @@ export const MAX_CREATES_PER_RUN = 25;
 /** The most entries one run of any lane may create, whatever its setting says; a stored setting above it reads as it. */
 export const MAX_CREATES_PER_RUN_CEILING = 100;
 export const MAX_CREATES_PER_DAY = 50;
-/** Failed posts before the drain stops retrying and hands the record to finance. */
-export const MAX_POST_ATTEMPTS = 5;
 /** A claim older than this belongs to a post that died between claim and settle; it may be taken over. */
 export const STALE_CLAIM_MS = 10 * 60_000;
 /** How far back the daily sweep looks for create attempts. */
