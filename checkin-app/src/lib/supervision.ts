@@ -18,9 +18,9 @@ import { isYouth, orgCalendarDay } from "@/lib/time";
  *     ACTIVE (ACTIVE is what encodes "background check cleared", see
  *     lib/orgMembership) AND their own `lastBackgroundCheck` has not expired under
  *     the board's recheck policy,
- *   - who holds no ACTIVE participant seat on a program that is in session now.
- *     A transition-year 18+ participant with a clearance is being supervised, not
- *     supervising; the same person counts later as a volunteer on another program.
+ *   - who holds no ACTIVE participant seat on a program with a meeting under way
+ *     now. A cleared 18+ participant is being supervised during their program's
+ *     meeting, and counts like any volunteer outside it.
  *
  * Two people from one household count as ONE, so the unit of counting is the
  * household, not the person.
@@ -32,21 +32,9 @@ import { isYouth, orgCalendarDay } from "@/lib/time";
 /** Policy's two-deep floor. Below this the room is short of supervision. */
 export const MIN_SUPERVISING_ADULTS = 2;
 
-/**
- * A program is in session now: one of its events brackets this instant, or the
- * program's own dates cover today. An open-ended RUNNING program counts from its
- * start — an unset end date must not read as "not in session". A RUNNING program
- * with no start date either: `lte` never matches null, so without the fourth arm
- * its participants fail OPEN into the supervising count.
- */
-function programInSessionNow(now: Date, today: Date): Prisma.ProgramWhereInput {
-    return {
-        OR: [
-            { events: { some: { startAt: { lte: now }, endAt: { gte: now } } } },
-            { startAt: { lte: today }, endAt: { gte: today } },
-            { startAt: { lte: today }, phase: "RUNNING" },
-        ],
-    };
+/** A meeting of this program is under way now. Between meetings its participants supervise like anyone else. */
+function programMeetingUnderWay(now: Date): Prisma.ProgramWhereInput {
+    return { events: { some: { startAt: { lte: now }, endAt: { gte: now } } } };
 }
 
 /**
@@ -94,9 +82,9 @@ export async function supervisingAdultVisits(
                     isDeclaredAdult: true,
                     lastBackgroundCheck: true,
                     household: { select: { orgMembership: { select: { status: true } } } },
-                    // Seat on a program in session now — one row is enough to exclude.
+                    // Seat on a program meeting now — one row is enough to exclude.
                     programParticipants: {
-                        where: { status: "ACTIVE", program: programInSessionNow(now, today) },
+                        where: { status: "ACTIVE", program: programMeetingUnderWay(now) },
                         select: { programId: true },
                         take: 1,
                     },

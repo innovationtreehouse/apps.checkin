@@ -273,13 +273,17 @@ export async function processCheckout(
 
 /**
  * The two-rung supervision ladder for a departure, keyed on how many
- * supervising adults would REMAIN — and only when this departure is what removes
- * one. A second adult from the same household leaving changes nothing, because
- * the household is still represented; that is the same-household rule.
+ * supervising adults would REMAIN. A second adult from the same household
+ * leaving changes nothing, because the household is still represented; that is
+ * the same-household rule.
  *
- *   remaining === 2 (the third supervising adult leaves) → warn, do not confirm.
- *   remaining  <  2, an uncovered youth would remain      → warn AND confirm.
- *   remaining  <  2, no uncovered youth would remain      → warn, do not confirm.
+ *   remaining === 2, a supervising adult leaves            → warn, do not confirm.
+ *   remaining  <  2, a supervising adult leaves and an
+ *                    uncovered youth would remain          → warn AND confirm.
+ *   remaining  <  2, anyone else leaves and that uncovers
+ *                    a youth                               → warn AND confirm.
+ *   remaining  <  2, no uncovered youth would remain       → warn if a supervising
+ *                                                            adult leaves, else nothing.
  *
  * An uncovered youth is one with no adult of their own household inside
  * ({@link uncoveredYouthVisitIds}), counted as if this visit had already ended.
@@ -295,16 +299,21 @@ async function supervisionInterrupt(
     db: DbClient,
 ): Promise<{ remaining: number; confirm: boolean } | null> {
     const supervising = await supervisingAdultVisits(db);
-    const before = supervisingAdultCount(supervising);
     const remaining = supervisingAdultCount(supervising, activeVisitId);
-    if (remaining >= before || remaining > MIN_SUPERVISING_ADULTS) return null;
+    if (remaining > MIN_SUPERVISING_ADULTS) return null;
+    const removesSupervisor = remaining < supervisingAdultCount(supervising);
 
-    if (remaining === MIN_SUPERVISING_ADULTS) return { remaining, confirm: false };
+    if (remaining === MIN_SUPERVISING_ADULTS) return removesSupervisor ? { remaining, confirm: false } : null;
 
-    // The confirm rung is youth-gated: two-deep is owed only while a youth no
-    // household adult covers is inside, so any other room warns and goes.
-    // Probed on this rung only — every quieter departure pays nothing for it.
-    if ((await uncoveredYouthVisitIds(db, activeVisitId)).length === 0) return { remaining, confirm: false };
+    // Probed below two only, so every quieter departure pays nothing for it.
+    const uncoveredAfter = await uncoveredYouthVisitIds(db, activeVisitId);
+    const warnOnly = removesSupervisor ? { remaining, confirm: false } : null;
+    if (uncoveredAfter.length === 0) return warnOnly;
+    if (!removesSupervisor) {
+        // Someone who is not a supervising adult stops only by taking a youth's own household adult away.
+        const uncoveredBefore = new Set(await uncoveredYouthVisitIds(db));
+        if (uncoveredAfter.every(id => uncoveredBefore.has(id))) return null;
+    }
 
     const ownVisit = await db.visit.findUnique({
         where: { id: activeVisitId },

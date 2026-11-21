@@ -130,19 +130,17 @@ describe("supervisingAdultCount(excludeVisitId)", () => {
     });
 });
 
-describe("the programme-in-session probe", () => {
-    it("asks for an event bracketing now, dates covering today, or a RUNNING programme", async () => {
+describe("the programme-meeting probe", () => {
+    it("excludes a participant only while a meeting of their programme brackets now", async () => {
         const now = new Date("2026-08-18T15:00:00Z");
         findMany.mockResolvedValue([]);
         await supervisingAdultVisits(undefined, now);
 
         const where = findMany.mock.calls[0][0].select.person.select.programParticipants.where;
-        expect(where.status).toBe("ACTIVE");
-        expect(where.program.OR).toEqual([
-            { events: { some: { startAt: { lte: now }, endAt: { gte: now } } } },
-            { startAt: { lte: expect.any(Date) }, endAt: { gte: expect.any(Date) } },
-            { phase: "RUNNING", startAt: { lte: expect.any(Date) } },
-        ]);
+        expect(where).toEqual({
+            status: "ACTIVE",
+            program: { events: { some: { startAt: { lte: now }, endAt: { gte: now } } } },
+        });
     });
 });
 
