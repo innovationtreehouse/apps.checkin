@@ -1,6 +1,5 @@
 "use client";
-import { createClient, notifyNavCounts, refusalMessage, useViewer } from "@checkin/component-ui";
-import { notifications } from "@mantine/notifications";
+import { createClient, notifyNavCounts, refusalMessage, showError, showSuccess, useViewer } from "@checkin/component-ui";
 import { bucketChoices, type Bucket } from "../lib/buckets";
 
 /**
@@ -20,11 +19,11 @@ export async function send(path: string, method: string, body: unknown, success:
   try {
     await api(path, { method, body: JSON.stringify(body) });
     notifyNavCounts();
-    notifications.show({ message: success, color: "green" });
+    showSuccess(success);
     return true;
   } catch (err) {
     // A refusal stays on screen until dismissed.
-    notifications.show({ message: refusalMessage(err), color: "red", autoClose: false });
+    showError(refusalMessage(err));
     return false;
   }
 }

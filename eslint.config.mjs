@@ -164,6 +164,14 @@ const eslintConfig = defineConfig([
     },
   },
   {
+    // The kit wraps @mantine/notifications for every package page.
+    files: ["packages/*/src/**/*.{ts,tsx}"],
+    ignores: ["packages/component-ui/**", "**/__tests__/**", "**/*.test.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": ["error", { paths: rawNotificationImport }],
+    },
+  },
+  {
     files: [
       "checkin-app/src/app/**/*.{ts,tsx}",
       "checkin-app/src/components/**/*.{ts,tsx}",

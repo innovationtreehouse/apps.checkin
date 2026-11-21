@@ -3,6 +3,7 @@ import { db } from "./db";
 import { getOrgId } from "./runtime";
 import { checkAndProcessExpense, retryQbPost } from "./lib/expense-qb-processor";
 import { FAILED_AGAIN } from "./lib/retry";
+import { retryOutcomeNotice, STUCK_NOTICE } from "./lib/outcome-notices";
 import type { Actor } from "./lib/workflow-engine";
 import { NO_SINGLE_ACCOUNT, retryRefusal } from "./services/holdService";
 import { retryCatalogEvent } from "./services/catalogEventConsumer";
@@ -12,24 +13,26 @@ const INTAKE = "intake";
 const CATALOG_EVENT = "catalog event";
 const QB_PROCESSING = "QuickBooks processing";
 const QB_POSTING = "QuickBooks posting";
+const OUTCOME_EMAIL = "outcome email";
 
 /** An open expense whose QuickBooks post failed and waits, stuck. */
 const FAILED_POST = { state: { notIn: ["qb_error", "rejected"] }, qbMatchState: "NEEDS_FINANCE", qbFirstFailedAt: { not: null } };
 
 /**
  * Receipt payloads and catalog events that failed to apply, expenses that failed to prepare for
- * QuickBooks (qb_error), and expenses whose QuickBooks post failed (NEEDS_FINANCE with a first
- * failure), each timed by its first failure. A qb_error expense with no stamp is timed from its submission.
+ * QuickBooks (qb_error), expenses whose QuickBooks post failed (NEEDS_FINANCE with a first
+ * failure), and outcome emails that failed to send, each timed by its first failure. A qb_error expense with no stamp is timed from its submission.
  */
 export async function stuckItems(): Promise<StuckItem[]> {
   const orgId = await getOrgId();
-  const [payloads, events, expenses] = await Promise.all([
+  const [payloads, events, expenses, notices] = await Promise.all([
     db.receivedExpensePayload.findMany({ where: { orgId, status: "failed" }, select: { receiptId: true, receivedAt: true, firstFailedAt: true } }),
     db.expenseReceivedOrgEvent.findMany({ where: { orgId, status: "failed" }, select: { id: true, receivedAt: true, firstFailedAt: true } }),
     db.expense.findMany({
       where: { orgId, OR: [{ state: "qb_error" }, FAILED_POST] },
       select: { id: true, state: true, qbFirstFailedAt: true, submittedAt: true },
     }),
+    db.expenseOutcomeNotice.findMany({ where: { orgId, ...STUCK_NOTICE }, select: { id: true, expenseId: true, firstFailedAt: true } }),
   ]);
   return [
     ...payloads.map((p) => ({ id: p.receiptId, step: INTAKE, href: `/receipts/${p.receiptId}`, failedAt: p.firstFailedAt ?? p.receivedAt })),
@@ -40,6 +43,7 @@ export async function stuckItems(): Promise<StuckItem[]> {
       href: `/expense/expenses/${e.id}`,
       failedAt: e.qbFirstFailedAt ?? e.submittedAt,
     })),
+    ...notices.flatMap((n) => (n.firstFailedAt ? [{ id: String(n.id), step: OUTCOME_EMAIL, href: `/expense/expenses/${n.expenseId}`, failedAt: n.firstFailedAt }] : [])),
   ];
 }
 
@@ -71,6 +75,8 @@ export async function retryStuckItem({ id, step }: { id: string; step: string },
       if (refusal) throw refusal;
       return;
     }
+    case OUTCOME_EMAIL:
+      return retryOutcomeNotice(Number(id));
     default:
       throw new ServiceError(404, `No step ${step} in expense`);
   }

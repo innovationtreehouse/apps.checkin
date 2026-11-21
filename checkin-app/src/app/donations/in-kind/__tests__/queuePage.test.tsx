@@ -9,7 +9,7 @@ let mockQueue: unknown[] = [];
 let mockLive: unknown[] = [];
 
 jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: mockUser } }) }));
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn() } }));
 jest.mock("@checkin/bulk-donation/components/api", () => ({
   ...jest.requireActual("@checkin/bulk-donation/components/api"),
   useLoad: (path: string) => ({ data: path === "/in-kind/queue" ? mockQueue : path === "/api/books-map/quickbooks-accounts" ? mockLive : [], error: null, reload: mockReload }),

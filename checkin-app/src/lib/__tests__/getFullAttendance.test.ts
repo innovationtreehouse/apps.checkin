@@ -27,6 +27,7 @@ jest.mock("@/lib/supervision", () => ({
     MIN_SUPERVISING_ADULTS: 2,
     supervisingAdultVisits: (...a: unknown[]) => supervisingAdultVisits(...a),
     supervisingAdultCount: () => 1,
+    uncoveredYouth: jest.requireActual("@/lib/supervision").uncoveredYouth,
 }));
 
 import {

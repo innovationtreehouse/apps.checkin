@@ -13,7 +13,7 @@ import { checkStartedRows, markCheckStarted } from '@/lib/membership/checkStarte
 import { advanceExternalIfComplete } from '@/lib/membership/external';
 import { notifyReviewers } from '@/lib/membership/review';
 import { settleAfterEvent } from '@/lib/membership/settleHouseholdBg';
-import { liveBgThreshold } from '@/lib/membership/checkStanding';
+import { checkValidForApplication } from '@/lib/membership/checkStanding';
 
 function mockMakeDb() {
     return {
@@ -32,7 +32,7 @@ jest.mock('@/lib/membership/external', () => {
 jest.mock('@/lib/membership/review', () => ({ notifyReviewers: jest.fn() }));
 jest.mock('@/lib/membership/settleHouseholdBg', () => ({ settleAfterEvent: jest.fn() }));
 jest.mock('@/lib/logger', () => ({ ...jest.requireActual('@/lib/logger'), logBackendError: jest.fn() }));
-jest.mock('@/lib/membership/checkStanding', () => ({ liveBgThreshold: jest.fn() }));
+jest.mock('@/lib/membership/checkStanding', () => ({ checkValidForApplication: jest.fn() }));
 jest.mock('@/lib/membership/background-check/manual-adapter', () => ({ backgroundCheckProvider: { getConsentDeepLink: jest.fn() } }));
 
 const prisma = jest.requireMock<{ default: ReturnType<typeof mockMakeDb> }>('@/lib/prisma').default;
@@ -175,7 +175,7 @@ describe('markCheckStarted — the review', () => {
 describe('checkStartedRows', () => {
     const me = { id: 1, name: 'Me', householdId: 10, isHouseholdLead: true, ...adult, lastBackgroundCheck: null };
 
-    beforeEach(() => jest.mocked(liveBgThreshold).mockResolvedValue(new Date('2026-01-01')));
+    beforeEach(() => jest.mocked(checkValidForApplication).mockResolvedValue(new Date('2026-01-01')));
 
     it("returns a lead's own row and each other non-minor member, with only personId, name and state", async () => {
         person.findUnique.mockResolvedValue(me);
@@ -206,8 +206,16 @@ describe('checkStartedRows', () => {
         await expect(checkStartedRows(1)).resolves.toEqual([{ personId: 1, name: 'Me', state: 'NOTHING_TO_DO' }]);
     });
 
+    it("measures against the year of the household's open application", async () => {
+        person.findUnique.mockResolvedValue({ ...me, isHouseholdLead: false });
+        const app = { appliesToYear: null, createdAt: new Date('2026-07-15') };
+        process_.findFirst.mockResolvedValue(app);
+        await checkStartedRows(1);
+        expect(checkValidForApplication).toHaveBeenCalledWith(app);
+    });
+
     it('with no recheck policy no clearance counts, so a check needs marking', async () => {
-        jest.mocked(liveBgThreshold).mockResolvedValue(null);
+        jest.mocked(checkValidForApplication).mockResolvedValue(null);
         person.findUnique.mockResolvedValue({ ...me, isHouseholdLead: false, lastBackgroundCheck: new Date() });
         await expect(checkStartedRows(1)).resolves.toEqual([{ personId: 1, name: 'Me', state: 'NEEDS_MARKING' }]);
     });

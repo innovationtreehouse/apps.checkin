@@ -8,7 +8,7 @@
  */
 import prisma from '@/lib/prisma';
 import { emailBoardMembers } from '@/lib/emailRecipients';
-import { liveBgThreshold } from '@/lib/membership/checkStanding';
+import { checkValidForApplication } from '@/lib/membership/checkStanding';
 import { retryStuckSettle, settleAfterEvent, settleApplicationsAwaitingCheck, stuckSettles } from '@/lib/membership/settleHouseholdBg';
 import { setBgRecheckPolicy } from '@/test-helpers/boardSettings';
 
@@ -20,7 +20,7 @@ jest.mock('@/lib/finance/reconcile/liveOrder', () => ({
 }));
 jest.mock('@/lib/membership/checkStanding', () => {
     const actual = jest.requireActual('@/lib/membership/checkStanding');
-    return { ...actual, liveBgThreshold: jest.fn((...args: Parameters<typeof actual.liveBgThreshold>) => actual.liveBgThreshold(...args)) };
+    return { ...actual, checkValidForApplication: jest.fn((...args: Parameters<typeof actual.checkValidForApplication>) => actual.checkValidForApplication(...args)) };
 });
 
 const TAG = 'stuck-settle-test';
@@ -39,7 +39,7 @@ async function waitingFamily() {
 
 const row = (id: number) => prisma.orgMembershipProcess.findUniqueOrThrow({ where: { id } });
 const stuckEmails = () => jest.mocked(emailBoardMembers).mock.calls.filter(([key]) => key === 'board.bgSettleStuck');
-const failNextSettle = () => jest.mocked(liveBgThreshold).mockRejectedValueOnce(new Error('database went away'));
+const failNextSettle = () => jest.mocked(checkValidForApplication).mockRejectedValueOnce(new Error('database went away'));
 
 async function wipe() {
     const households = await prisma.household.findMany({ where: { name: { startsWith: TAG } }, select: { id: true } });
@@ -78,7 +78,7 @@ describe('a settle that fails after its event', () => {
         expect(await stuckSettles()).toContainEqual({ id: String(f.appId), step: 'background-check settle', href: `/membership-ops/households/${f.householdId}`, failedAt: first.bgSettleFailedAt });
         expect(stuckEmails()).toEqual([['board.bgSettleStuck', expect.objectContaining({ processId: String(f.appId) }), expect.any(String)]]);
 
-        jest.mocked(liveBgThreshold).mockRejectedValueOnce(new Error('still down'));
+        jest.mocked(checkValidForApplication).mockRejectedValueOnce(new Error('still down'));
         await settleAfterEvent(f.householdId, 'renewal');
         expect(await row(f.appId)).toMatchObject({ bgSettleFailedAt: first.bgSettleFailedAt, bgSettleError: 'still down' });
         expect(stuckEmails()).toHaveLength(1);

@@ -1,5 +1,6 @@
-/** Associate's GTIN gate: only a well-formed GTIN-13 naming an approved, non-archived catalog item reaches the line. */
+/** Associate's GTIN gate: only a well-formed GTIN-13 naming an approved, non-archived catalog item, or the org's pending or local-only provisional part, reaches the line. */
 import { NotWiredError, ServiceError } from "@checkin/component-kit";
+import { buildProvisionalGtin13 } from "@checkin/gtin";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CatalogReader, CatalogSubmissions } from "../../contract";
 import { configure } from "../helpers/setup";
@@ -25,10 +26,13 @@ const foreignNotWired = (port: string) =>
 const noRef = { exists: false, gtin13: null, id: null, conversionFactor: 1, conversionVersion: 1 };
 
 const getActiveItem = vi.fn<CatalogReader["getActiveItem"]>();
+const getOrgProvisionalItem = vi.fn<CatalogReader["getOrgProvisionalItem"]>();
+const checkReferences = vi.fn<CatalogReader["checkReferences"]>();
 const catalogReader: CatalogReader = {
   lookupItems: async () => [],
-  checkReferences: async () => ({ mfr_part: noRef, retailer_part: noRef, mfr_desc: noRef, wouldCreateNewReference: false }),
+  checkReferences,
   getActiveItem,
+  getOrgProvisionalItem,
 };
 const catalogSubmissions: CatalogSubmissions = {
   proposeItemReference: async () => ({ id: 1 }),
@@ -50,6 +54,7 @@ beforeEach(() => {
   updateEditableLine.mockResolvedValue(true);
   // The catalog port answers null for an archived GTIN, as it does for an unknown one.
   getActiveItem.mockImplementation(async (gtin13) => (gtin13 === ACTIVE ? { gtin13, name: "Cordless Drill" } : null));
+  checkReferences.mockResolvedValue({ mfr_part: noRef, retailer_part: noRef, mfr_desc: noRef, wouldCreateNewReference: false });
   configure({ catalogReader, catalogSubmissions });
 });
 
@@ -166,5 +171,68 @@ describe("associateGtin repeat", () => {
     expect(unchanged({ ...associated, conversionFactor: 6 })).toBe(false);
     expect(unchanged({ ...associated, assignedGtin13: "0000000000024" })).toBe(false);
     expect(unchanged({ ...associated, recognitionStatus: "provisional" })).toBe(false);
+  });
+});
+
+describe("associateGtin to a provisional part", () => {
+  const PENDING = buildProvisionalGtin13(1);
+  const LOCAL_ONLY = buildProvisionalGtin13(2);
+  const APPROVED = buildProvisionalGtin13(3);
+  const UNKNOWN = buildProvisionalGtin13(4);
+  const proposeItemReference = vi.fn<CatalogSubmissions["proposeItemReference"]>(async () => ({ id: 1 }));
+  const reportConflict = vi.fn<CatalogSubmissions["reportConflict"]>(async () => ({ id: 2 }));
+
+  beforeEach(() => {
+    // The port answers null for another org's provisional part, as it does for an unknown one.
+    getOrgProvisionalItem.mockImplementation(async (gtin13) => ({
+      [PENDING]: { status: "pending", proposedName: "Shelf bracket", resolvedToGtin13: null },
+      [LOCAL_ONLY]: { status: "rejected", proposedName: "Custom jig", resolvedToGtin13: null },
+      [APPROVED]: { status: "approved", proposedName: "Hex bolt", resolvedToGtin13: ACTIVE },
+    })[gtin13] ?? null);
+    configure({ catalogReader, catalogSubmissions: { ...catalogSubmissions, proposeItemReference, reportConflict } });
+  });
+
+  it.each([
+    ["pending", PENDING, "Shelf bracket"],
+    ["local-only", LOCAL_ONLY, "Custom jig"],
+  ])("maps the line to a %s part as provisional, with no catalog reference work", async (_case, gtin13, proposedName) => {
+    await lineItemService.associateGtin(1, 2, { gtin13, conversionFactor: 3 });
+    expect(updateEditableLine).toHaveBeenCalledWith(
+      expect.anything(),
+      { recognitionStatus: "provisional", assignedGtin13: null, provisionalItemGtin13: gtin13, proposedName, conversionFactor: 3, conversionVersion: 1 },
+      expect.objectContaining({ eventType: "line_associated" }),
+      expect.any(Function),
+    );
+    expect(getActiveItem).not.toHaveBeenCalled();
+    expect(checkReferences).not.toHaveBeenCalled();
+    expect(proposeItemReference).not.toHaveBeenCalled();
+    expect(reportConflict).not.toHaveBeenCalled();
+  });
+
+  it("409 for a provisional part the catalog resolved, naming the real part", async () => {
+    await expect(lineItemService.associateGtin(1, 2, { gtin13: APPROVED })).rejects.toMatchObject({
+      status: 409,
+      message: "P000003 is now 0011111111110; pick that part instead",
+    });
+    expect(updateEditableLine).not.toHaveBeenCalled();
+  });
+
+  it("404 for a provisional GTIN that is not this org's part", async () => {
+    await expect(lineItemService.associateGtin(1, 2, { gtin13: UNKNOWN })).rejects.toMatchObject({ status: 404 });
+    expect(getOrgProvisionalItem).toHaveBeenCalledWith(UNKNOWN);
+    expect(updateEditableLine).not.toHaveBeenCalled();
+  });
+
+  it("503 when the provisional read is unbound, never treating it as not found", async () => {
+    getOrgProvisionalItem.mockRejectedValue(new NotWiredError("CatalogReader.getOrgProvisionalItem"));
+    await expect(lineItemService.associateGtin(1, 2, { gtin13: PENDING })).rejects.toMatchObject({ status: 503 });
+    expect(updateEditableLine).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when the line is already provisional on the same part and factor", async () => {
+    loadEditableLine.mockResolvedValue(editableLine({ id: 2, recognitionStatus: "provisional", provisionalItemGtin13: LOCAL_ONLY, conversionFactor: 3 }));
+    await lineItemService.associateGtin(1, 2, { gtin13: LOCAL_ONLY, conversionFactor: 3 });
+    expect(getOrgProvisionalItem).not.toHaveBeenCalled();
+    expect(updateEditableLine).not.toHaveBeenCalled();
   });
 });

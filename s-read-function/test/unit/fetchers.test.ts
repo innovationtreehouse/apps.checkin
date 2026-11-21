@@ -3,12 +3,13 @@
  * connection pickers). Drives each fetcher with a scripted fake client and asserts:
  * cursor threading across pages, termination on hasNextPage=false and on a null
  * endCursor, an absent/null connection yielding nothing, the per-stream page sizes,
+ * an order's line items fetched past the first page,
  * and that the payouts/balance-txn pickers reach through the singleton
  * `shopifyPaymentsAccount`.
  */
 import { describe, it, expect } from "vitest";
 import { fetchOrders, fetchPayouts, fetchBalanceTransactions } from "../../src/shopify/fetchers.js";
-import { BALANCE_TRANSACTIONS_QUERY } from "../../src/shopify/queries.js";
+import { BALANCE_TRANSACTIONS_QUERY, ORDER_LINES_QUERY } from "../../src/shopify/queries.js";
 import { fakeClient, queue } from "../helpers/fakeClient.js";
 
 async function drain<T>(gen: AsyncGenerator<T>): Promise<T[]> {
@@ -64,6 +65,45 @@ describe("fetchOrders pagination", () => {
   it("yields nothing for an empty edge set", async () => {
     const client = fakeClient(ordersPage([], false, null));
     expect(await drain(fetchOrders(client, "f"))).toEqual([]);
+  });
+});
+
+const lines = (ids: string[], hasNextPage: boolean, endCursor: string | null) => ({
+  nodes: ids.map((id) => ({ id })),
+  pageInfo: { hasNextPage, endCursor },
+});
+
+describe("fetchOrders line items past the first page", () => {
+  it("fetches the remaining lines by order id and marks the node complete", async () => {
+    const order = { id: "gid://shopify/Order/1", lineItems: lines(["l1"], true, "lc1") };
+    const client = fakeClient(
+      queue(
+        ordersPage([order], false, null),
+        { order: { lineItems: lines(["l2"], true, "lc2") } },
+        { order: { lineItems: lines(["l3"], false, "lc3") } },
+      ),
+    );
+    const [node] = await drain(fetchOrders(client, "f"));
+
+    expect(node).toEqual({ id: "gid://shopify/Order/1", lineItems: lines(["l1", "l2", "l3"], false, "lc3") });
+    expect(client.calls.slice(1).map((c) => c.query)).toEqual([ORDER_LINES_QUERY, ORDER_LINES_QUERY]);
+    expect(client.calls[1].variables).toEqual({ id: "gid://shopify/Order/1", after: "lc1" });
+    expect(client.calls[2].variables).toEqual({ id: "gid://shopify/Order/1", after: "lc2" });
+  });
+
+  it("keeps the node incomplete when the order is gone mid-walk", async () => {
+    const order = { id: "gid://shopify/Order/1", lineItems: lines(["l1"], true, "lc1") };
+    const client = fakeClient(queue(ordersPage([order], false, null), { order: null }));
+    const [node] = await drain(fetchOrders(client, "f"));
+
+    expect(node).toEqual({ id: "gid://shopify/Order/1", lineItems: lines(["l1"], true, "lc1") });
+  });
+
+  it("makes no extra call for an order whose lines fit one page", async () => {
+    const order = { id: "gid://shopify/Order/1", lineItems: lines(["l1"], false, "lc1") };
+    const client = fakeClient(ordersPage([order], false, null));
+    expect(await drain(fetchOrders(client, "f"))).toEqual([order]);
+    expect(client.calls).toHaveLength(1);
   });
 });
 

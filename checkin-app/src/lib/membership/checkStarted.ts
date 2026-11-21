@@ -2,7 +2,7 @@ import prisma from "@/lib/prisma";
 import { personActor } from "@/lib/auditActor";
 import { calculateAge } from "@/lib/time";
 import { backgroundCheckProvider } from "@/lib/membership/background-check/manual-adapter";
-import { liveBgThreshold } from "@/lib/membership/checkStanding";
+import { checkValidForApplication } from "@/lib/membership/checkStanding";
 import { advanceExternalIfComplete, ExternalError } from "@/lib/membership/external";
 import { fromWhere, openProcess, personBgOpen } from "@/lib/membership/lifecycle";
 import { notifyReviewers } from "@/lib/membership/review";
@@ -125,7 +125,8 @@ export async function markCheckStarted(subjectPersonId: number, actorId: number)
  * The rows /membership offers for marking: the caller's own, and for a household
  * lead each other member of their household who is not a known minor. A row needs
  * marking while none of its person's open or blocked reviews has the check started
- * and they hold no clearance valid at the next membership-year boundary; anything
+ * and they hold no clearance valid at the start of the year their household
+ * application is for (the live year when none is open); anything
  * else, including a known minor's own row, is "nothing to do".
  */
 export async function checkStartedRows(callerId: number): Promise<CheckStartedRow[]> {
@@ -137,8 +138,13 @@ export async function checkStartedRows(callerId: number): Promise<CheckStartedRo
         ? (await prisma.person.findMany({ where: { householdId: caller.householdId, id: { not: callerId } }, orderBy: { id: "asc" }, select })).filter((p) => !isKnownMinor(p, now))
         : [];
     const people = [caller, ...others];
+    const app = caller.householdId === null ? null : await prisma.orgMembershipProcess.findFirst({
+        where: { orgMembership: { householdId: caller.householdId }, kind: { in: ["INITIAL", "RENEWAL"] }, ...openProcess.where },
+        orderBy: { id: "desc" },
+        select: { appliesToYear: true, createdAt: true },
+    });
     const [threshold, flagged] = await Promise.all([
-        liveBgThreshold(prisma, now),
+        checkValidForApplication(app ?? { appliesToYear: null, createdAt: now }),
         prisma.orgMembershipProcess.findMany({
             where: { kind: "PERSON_BG", subjectPersonId: { in: people.map((p) => p.id) }, bgConsentAt: { not: null }, ...personBgOpen.where },
             select: { subjectPersonId: true },

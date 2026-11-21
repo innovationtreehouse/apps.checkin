@@ -37,6 +37,7 @@ function catalog() {
         }));
       },
       checkReferences: unused,
+      getOrgProvisionalItem: async () => null,
       getActiveItem: unused,
     },
   };

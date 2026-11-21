@@ -533,6 +533,17 @@ describeDb("postPayout — claim, lookup and settle", () => {
     expect(qbo.posts).toHaveLength(1);
   });
 
+  it("a retry that fails again saves its error on the payout and audits it", async () => {
+    const p = payout(2, "2026-06-28", 500);
+    qbo.mode = "reject";
+    await drain();
+    await db.payoutReconciliation.update({ where: { id: (await rowFor(p)).id }, data: { reason: null } });
+
+    await resolve(p, { action: "retry" });
+    expect(await rowFor(p)).toMatchObject({ kind: "POST_FAILED", reason: "QuickBooks refused: code 6000 (request tid)" });
+    expect(await db.incomeAuditLog.count({ where: { action: "reconciliation.post_failed" } })).toBe(2);
+  });
+
   it("a warning about another stray app entry survives a failed retry and a later post", async () => {
     const p = payout(2, "2026-06-28", 500);
     qbo.mode = "reject";
@@ -810,7 +821,7 @@ describeDb("drainIncomeOutbox — every findOrCreate outcome", () => {
     const p = payout(2, "2026-06-28", 500);
     qbo.mode = "reject";
     expect(await drain()).toMatchObject({ post: { failed: 1 } });
-    expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "POST_FAILED", depositId: null });
+    expect(await rowFor(p)).toMatchObject({ status: "OPEN", kind: "POST_FAILED", depositId: null, reason: "QuickBooks refused: code 6000 (request tid)" });
     const failed = await db.incomeAuditLog.findFirstOrThrow({ where: { action: "reconciliation.post_failed" } });
     expect(failed.reason).toContain("400");
 

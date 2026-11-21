@@ -4,10 +4,10 @@ import { Alert, Button, Group, Pagination, Text } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import useSWR from "swr";
 import { clearLoads, countFailure, endRetryChain, forgetFailures, holdFromInvalidation, invalidateLoads, loadGeneration, scheduleRetry } from "./loadCache";
-import { errorMessage, FAILURE_TEXT, HttpError, request, type RequestOptions } from "./http";
+import { errorMessage, FAILURE_TEXT, HttpError, NETWORK_FAILURE_TEXT, request, type RequestOptions } from "./http";
 
 export { invalidateLoads };
-export { errorMessage, FAILURE_TEXT, HttpError, request, type RequestOptions };
+export { errorMessage, FAILURE_TEXT, HttpError, NETWORK_FAILURE_TEXT, request, type RequestOptions };
 
 /** The signed-in person as package UIs see them. The host maps its session onto this once. */
 export interface Viewer {
@@ -267,24 +267,24 @@ export function showSuccess(message: string, { title }: { title?: string } = {})
 type StickyOptions = { key?: string; title?: string };
 
 /**
- * A message that stays until dismissed or cleared. The same `key` changes the message in place, so a
- * repeat from a poll neither animates nor announces again; `show` ignores an id already on screen.
- * A string message is its own key when none is given.
+ * A keyed message, sticky unless `autoClose` gives it milliseconds. The same `key` changes the message
+ * in place, so a repeat from a poll neither animates nor announces again; `show` ignores an id already
+ * on screen. A string message is its own key when none is given.
  */
-function showSticky(color: string, message: ReactNode, { key, title }: StickyOptions): void {
+function showKeyed(color: string, message: ReactNode, { key, title }: StickyOptions, autoClose: number | false = false): void {
   const id = key ?? (typeof message === "string" ? message : undefined);
   if (id) notifications.update({ id, title, message });
-  notifications.show({ id, color, title, message, autoClose: false });
+  notifications.show({ id, color, title, message, autoClose });
 }
 
 /** An action that failed. `message` is the server's chosen words or fixed text, never exception text. */
 export function showError(message: ReactNode, options: StickyOptions = {}): void {
-  showSticky("red", message, options);
+  showKeyed("red", message, options);
 }
 
-/** Something a save leaves the person to read that is not a failure: yellow, and stays until dismissed. */
-export function showWarning(message: ReactNode, options: StickyOptions = {}): void {
-  showSticky("yellow", message, options);
+/** Something a save leaves the person to read that is not a failure: yellow, and stays until dismissed unless `autoClose` gives milliseconds. */
+export function showWarning(message: ReactNode, { autoClose = false, ...options }: StickyOptions & { autoClose?: number | false } = {}): void {
+  showKeyed("yellow", message, options, autoClose);
 }
 
 /** Removes the standing error under `key`, once a retry or a later attempt worked. */

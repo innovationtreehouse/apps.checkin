@@ -3,10 +3,9 @@ import { useState } from "react";
 import {
   ActionIcon, Button, Divider, Group, Modal, Paper, Select, Stack, Text, TextInput, Title, Tooltip,
 } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
 import { IconArrowsExchange, IconEdit, IconPlus, IconSearch, IconTrash } from "@tabler/icons-react";
 import { api, errorMessage, useCanManage, useLoad } from "../components/api";
-import { LoadError } from "@checkin/component-ui";
+import { LoadError, showError, showSuccess } from "@checkin/component-ui";
 
 interface LocationRow {
   id: number;
@@ -41,11 +40,11 @@ export default function LocationsPage() {
     setSaving(true);
     try {
       await call();
-      notifications.show({ message, color: "green" });
+      showSuccess(message);
       setDialog(null);
       locations.reload();
     } catch (err) {
-      notifications.show({ message: errorMessage(err), color: "red", autoClose: false });
+      showError(errorMessage(err));
     } finally {
       setSaving(false);
     }

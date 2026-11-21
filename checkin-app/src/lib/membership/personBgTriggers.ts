@@ -4,6 +4,7 @@ import { nextBoundary } from "@/lib/membership/renewal";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { personBgOpen } from "@/lib/membership/lifecycle";
 import { bgObligatedWhere } from "@/lib/person/filters";
+import { checkValidForApplication } from "@/lib/membership/checkStanding";
 import { systemActor } from "@/lib/auditActor";
 
 /**
@@ -20,8 +21,8 @@ import { systemActor } from "@/lib/auditActor";
 
 /**
  * Open one PERSON_BG obligation for `personId`, evaluated as of `asOf` (the annual
- * boundary for the cron, activation time for a new join; `threshold` is
- * bgFreshThreshold(asOf, bgRecheckMonths)). Idempotent + concurrency-safe: a FOR
+ * boundary for the cron, activation time for a new join) against `threshold`, the
+ * earliest check date that still counts. Idempotent + concurrency-safe: a FOR
  * UPDATE lock on the Person row serializes the check-then-insert (mirrors
  * createRenewalProcess in renewal.ts), so the daily cron and a near-cutoff
  * activation can't both open one.
@@ -93,7 +94,9 @@ export async function runPersonBgAnnualSweep(now: Date) {
 /**
  * Trigger C — new-member activation. When a brand-new membership (INITIAL) first
  * goes ACTIVE, open a PERSON_BG for each check-obligated person in that household
- * who is ≥18 as of activation and not fresh. Age is judged as-of `asOf` (join),
+ * who is ≥18 as of activation and whose check is not valid at the start of the
+ * membership year the join paid for (activation minus the interval when no
+ * boundary is set). Age is judged as-of `asOf` (join),
  * NOT the annual boundary — this is what catches a just-turned-18 joiner the
  * boundary run would still classify as a minor. The lead the INITIAL check named is
  * freshly stamped and skipped by the dedup guard; the lead it did not name is
@@ -105,7 +108,12 @@ export async function openPersonBgForNewMember(householdId: number, asOf: Date) 
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
     const months = settings?.bgRecheckMonths;
     if (!isRecheckPolicySet(months)) return;
-    const threshold = bgFreshThreshold(asOf, months);
+    const activated = await prisma.orgMembershipProcess.findFirst({
+        where: { orgMembership: { householdId }, kind: "INITIAL", status: "ACTIVE" },
+        orderBy: { id: "desc" },
+        select: { appliesToYear: true },
+    });
+    const threshold = (await checkValidForApplication({ appliesToYear: activated?.appliesToYear ?? null, createdAt: asOf })) ?? bgFreshThreshold(asOf, months);
     const people = await prisma.person.findMany({
         where: { householdId, ...bgObligatedWhere(asOf) },
         select: { id: true },

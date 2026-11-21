@@ -13,7 +13,7 @@ let mockError: string | null = null;
 
 jest.mock("next/navigation", () => ({ useParams: () => ({ id: "4" }) }));
 jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { user: { id: 1 } } }) }));
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
+jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn() } }));
 jest.mock("@checkin/bulk-donation/components/api", () => ({
   ...jest.requireActual("@checkin/bulk-donation/components/api"),
   useOwners: () => ({ data: [{ id: 1, name: "Robotics" }, { id: 2, name: "Shop" }], error: null, reload: jest.fn() }),

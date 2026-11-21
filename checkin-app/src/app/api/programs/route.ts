@@ -216,8 +216,6 @@ export const POST = withAuth({ roles: ['isBoardMember'] }, async (req, auth) => 
         if (!isLeaderAgeEligible(mentor)) {
             return apiError("Program Leader must be at least 23 years old", 400);
         }
-        const ineligible = await programLeaderIneligibility(mentorId, mentor);
-        if (ineligible) return apiError(ineligible, 400);
         // Nobody names themself or their household as a program's leader (Ethics Policy III.5).
         if (mentorId === auth.user.id || await hasHouseholdConflict(prisma, auth.user.id, mentor.householdId)) {
             await recordSelfGrantRefusal(prisma, {
@@ -254,6 +252,8 @@ export const POST = withAuth({ roles: ['isBoardMember'] }, async (req, auth) => 
             isBoardMember: auth.user.isBoardMember,
         });
         if (!year.ok) return apiError(year.message, year.refusal === "forbidden" ? 403 : 400);
+        const ineligible = await programLeaderIneligibility(mentorId, mentor, year.appliesToYear);
+        if (ineligible) return apiError(ineligible, 400);
 
         const maxPart = maxParticipants != null ? parseInt(maxParticipants, 10) : null;
         if (maxPart == null || isNaN(maxPart) || maxPart < 1) {

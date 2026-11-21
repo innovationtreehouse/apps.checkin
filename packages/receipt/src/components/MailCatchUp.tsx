@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { Button, Group, Paper, Stack, Text } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
+import { showError, showWarning } from "@checkin/component-ui";
 import { api, errorMessage, useLoad } from "./api";
 import { MAIL_CATCH_UP_CAP } from "../lib/mailCatchUpCap";
 
@@ -62,9 +62,9 @@ export default function MailCatchUp({ onDone }: { onDone: () => void }) {
     setStarting(true);
     try {
       const answer = await api<MailCatchUpView>(PATH, { method: "POST" });
-      if (answer.status === "busy") notifications.show({ color: "yellow", message: "Mail intake is already running. This page shows when it ends." });
+      if (answer.status === "busy") showWarning("Mail intake is already running. This page shows when it ends.", { autoClose: 4000 });
     } catch (err) {
-      notifications.show({ title: "Couldn't start catching up", message: errorMessage(err), color: "red", autoClose: false });
+      showError(errorMessage(err), { title: "Couldn't start catching up" });
     }
     setStarting(false);
     await reload();
