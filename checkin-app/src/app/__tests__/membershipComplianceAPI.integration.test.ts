@@ -5,11 +5,14 @@
  * Integration tests for the read-only Membership Compliance dashboard
  * (GET /api/membership-audit/compliance). Asserts each out-of-compliance
  * bucket surfaces with the right reason tag, a fresh ACTIVE household does not,
- * and a non-board user is forbidden.
+ * a household is judged at the start of the year its application paid for, and a
+ * non-board user is forbidden.
  */
 
 import { GET } from '@/app/api/membership-audit/compliance/route';
 import prisma from '@/lib/prisma';
+import { liveMembershipYear } from '@/lib/membership/renewal';
+import { membershipYearStart } from '@/lib/programYear';
 import { snapshotBoardSettings } from '@/test-helpers/boardSettings';
 import { getServerSession } from 'next-auth/next';
 
@@ -19,6 +22,8 @@ jest.mock('next-auth/next', () => ({
 
 const TAG = 'compliance-api-test';
 const RECHECK_MONTHS = 12;
+const BOUNDARY = new Date('2000-06-01');
+const DAY = 86_400_000;
 
 function get() {
     return GET(new Request('http://localhost:4000/api/membership-audit/compliance', {
@@ -50,6 +55,8 @@ describe('GET /api/membership-audit/compliance', () => {
     let stuckId: number;
     let disputedHhId: number;
     let disputedPersonId: number;
+    let paidId: number;
+    let secondLeadId: number;
     let restoreBoardSettings: () => Promise<void> = async () => {};
 
     const cleanup = async () => {
@@ -69,8 +76,8 @@ describe('GET /api/membership-audit/compliance', () => {
         restoreBoardSettings = await snapshotBoardSettings();
         await prisma.boardSettings.upsert({
             where: { id: 1 },
-            create: { id: 1, bgRecheckMonths: RECHECK_MONTHS, orgMembershipYearBoundary: new Date('2000-06-01') },
-            update: { bgRecheckMonths: RECHECK_MONTHS, orgMembershipYearBoundary: new Date('2000-06-01') },
+            create: { id: 1, bgRecheckMonths: RECHECK_MONTHS, orgMembershipYearBoundary: BOUNDARY },
+            update: { bgRecheckMonths: RECHECK_MONTHS, orgMembershipYearBoundary: BOUNDARY },
         });
 
         const board = await prisma.person.create({
@@ -93,6 +100,18 @@ describe('GET /api/membership-audit/compliance', () => {
         const spouse = await prisma.person.create({ data: { email: `spouse-${TAG}@example.com`, name: 'Disputed spouse', householdId: disputedHhId } });
         disputedPersonId = spouse.id;
         await prisma.orgMembershipProcess.create({ data: { kind: 'PERSON_BG', status: 'BLOCKED', subjectPersonId: spouse.id, bgConsentAt: new Date() } });
+
+        // ACTIVE, paid for the live year; one lead's check is valid at that year's start
+        // but not at the next boundary, and the second lead has none → covered.
+        const liveYear = liveMembershipYear(BOUNDARY, new Date())!;
+        const validFrom = new Date(membershipYearStart(BOUNDARY, liveYear));
+        validFrom.setUTCMonth(validFrom.getUTCMonth() - RECHECK_MONTHS);
+        paidId = await makeHousehold('paid', new Date(validFrom.getTime() + 30 * DAY));
+        const paidMembership = await prisma.orgMembership.create({ data: { householdId: paidId, status: 'ACTIVE' } });
+        await prisma.orgMembershipProcess.create({ data: { orgMembershipId: paidMembership.id, kind: 'INITIAL', status: 'ACTIVE', appliesToYear: liveYear } });
+        const second = await prisma.person.create({ data: { email: `second-${TAG}@example.com`, name: 'Second lead', householdId: paidId, dateOfBirth: new Date('1980-01-01') } });
+        await prisma.person.update({ where: { id: second.id }, data: { isHouseholdLead: true } });
+        secondLeadId = second.id;
 
         // REVOKED membership.
         revokedId = await makeHousehold('revoked', new Date());
@@ -127,6 +146,15 @@ describe('GET /api/membership-audit/compliance', () => {
         expect(byId.get(stuckId)?.reasons).toContain('STUCK_BG_CLEARANCE');
         expect(byId.has(freshId)).toBe(false);
         expect(byId.get(disputedHhId)?.reasons).toContain('STALE_BG');
+    });
+
+    it('covers a household by one lead checked for the year it paid for, and lists neither lead', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+
+        const { households, peopleNeedingBgCheck } = await (await get()).json();
+        expect(households.some((h: { id: number }) => h.id === paidId)).toBe(false);
+        expect(peopleNeedingBgCheck.some((p: { householdId: number }) => p.householdId === paidId)).toBe(false);
+        expect(peopleNeedingBgCheck.some((p: { personId: number }) => p.personId === secondLeadId)).toBe(false);
     });
 
     it('lists a person whose check is disputed under BG_DISPUTED, and nobody undisputed', async () => {

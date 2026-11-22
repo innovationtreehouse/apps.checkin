@@ -4,9 +4,10 @@
 /**
  * Integration tests for the person-scoped PERSON_BG_NEEDED / DOB_MISSING buckets
  * of GET /api/membership-audit/compliance (warn-only). Asserts a ≥18
- * non-fresh program participant / volunteer / lead surfaces, under-18 and fresh
- * people are omitted, a program volunteer with no membership still appears in the
- * person-level list, and a missing-DOB person lands in the data-hygiene bucket.
+ * non-fresh program participant / volunteer / lead and position holder surfaces,
+ * a household lead holding no position does not, under-18 and fresh people are
+ * omitted, a program volunteer with no membership still appears in the person-level
+ * list, and a missing-DOB person lands in the data-hygiene bucket.
  */
 
 import { GET } from '@/app/api/membership-audit/compliance/route';
@@ -62,6 +63,10 @@ describe('GET /api/membership-audit/compliance — person BG buckets', () => {
     let minorId: number;
     let freshId: number;
     let missingDobId: number;
+    let plainLeadId: number;
+    let roleLeadId: number;
+    let ownerId: number;
+    let treasurerId: number;
     let savedSettings: { bgRecheckMonths: number; orgMembershipYearBoundary: Date | null } | null = null;
 
     const cleanup = async () => {
@@ -71,8 +76,11 @@ describe('GET /api/membership-audit/compliance — person BG buckets', () => {
         await prisma.programVolunteer.deleteMany({ where: { programId: { in: progIds } } });
         // Drop the leadMentor FK before deleting the lead person.
         await prisma.program.deleteMany({ where: { id: { in: progIds } } });
+        await prisma.budgetOwnerTreasurer.deleteMany({ where: { budgetOwner: { name: { contains: TAG } } } });
+        await prisma.budgetOwner.deleteMany({ where: { name: { contains: TAG } } });
         const hhs = await prisma.household.findMany({ where: { name: { contains: TAG } }, select: { id: true } });
         const hhIds = hhs.map(h => h.id);
+        await prisma.orgMembership.deleteMany({ where: { householdId: { in: hhIds } } });
         await prisma.person.deleteMany({ where: { OR: [{ email: { contains: TAG } }, { householdId: { in: hhIds } }] } });
         await prisma.household.deleteMany({ where: { id: { in: hhIds } } });
     };
@@ -113,6 +121,21 @@ describe('GET /api/membership-audit/compliance — person BG buckets', () => {
         await prisma.programParticipant.create({ data: { programId, personId: missingDobId } });
         await prisma.programVolunteer.create({ data: { programId, personId: volunteerId } });
         await prisma.programVolunteer.create({ data: { programId, personId: minorId } });
+
+        // Leads of ACTIVE member households, no check, attached to no program.
+        const lead = async (slug: string) => {
+            const p = await makePerson(slug, { dateOfBirth: new Date('1982-01-01') });
+            await prisma.person.update({ where: { id: p.id }, data: { isHouseholdLead: true } });
+            await prisma.orgMembership.create({ data: { householdId: p.householdId, status: 'ACTIVE' } });
+            return p.id;
+        };
+        plainLeadId = await lead('plainlead');
+        roleLeadId = await lead('rolelead');
+        await prisma.personRole.create({ data: { personId: roleLeadId, role: 'KEYHOLDER' } });
+        ownerId = (await makePerson('owner', { dateOfBirth: new Date('1979-01-01') })).id;
+        treasurerId = (await makePerson('treasurer', { dateOfBirth: new Date('1978-01-01') })).id;
+        const bucket = await prisma.budgetOwner.create({ data: { name: `${TAG} bucket`, ownerId } });
+        await prisma.budgetOwnerTreasurer.create({ data: { budgetOwnerId: bucket.id, personId: treasurerId } });
     });
 
     afterAll(async () => {
@@ -154,5 +177,16 @@ describe('GET /api/membership-audit/compliance — person BG buckets', () => {
         expect(needIds.has(missingDobId)).toBe(false);
         const miss = peopleMissingDob.find((p: { personId: number }) => p.personId === missingDobId);
         expect(miss.reason).toBe('DOB_MISSING');
+    });
+
+    it('lists position holders, and no household lead for being a lead', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+
+        const { peopleNeedingBgCheck } = await (await get()).json();
+        const needIds = new Set(peopleNeedingBgCheck.map((p: { personId: number }) => p.personId));
+        expect(needIds.has(plainLeadId)).toBe(false);
+        expect(needIds.has(roleLeadId)).toBe(true);
+        expect(needIds.has(ownerId)).toBe(true);
+        expect(needIds.has(treasurerId)).toBe(true);
     });
 });

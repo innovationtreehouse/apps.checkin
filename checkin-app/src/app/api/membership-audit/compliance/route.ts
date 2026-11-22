@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { nextBoundary } from "@/lib/membership/renewal";
-import { disputingReviews, householdCheckStandings, householdQualifies, loadCheckReviews } from "@/lib/membership/checkStanding";
+import { checkValidForApplication, disputingReviews, householdCheckStandings, householdQualifies, loadCheckReviews } from "@/lib/membership/checkStanding";
 import { personBgOpen } from "@/lib/membership/lifecycle";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { bgFreshThreshold, personBgVerdict } from "@/lib/membership/personBgCheck";
@@ -33,8 +33,8 @@ function mergeSourceIdentities(s: { mergedArchive: { fromId: number; snapshot: u
  * never auto-revokes — a human must follow up). Surfaces only what's knowable
  * from real data; there is no GRACE status modeled, so no grace bucket. Reasons:
  *   STALE_BG  — ACTIVE household that no longer qualifies on its people's checks:
- *               no lead's check is valid at the boundary, or an adult's check is
- *               disputed (householdQualifies; skipped when the board hasn't set
+ *               no lead's check is valid at the start of the year its application
+ *               paid for, or an adult's check is disputed (householdQualifies; skipped when the board hasn't set
  *               the policy — bgRecheckMonths = 0 or no membership-year boundary).
  *   REVOKED / DENIED — OrgMembership status.
  *   STUCK_BG_CLEARANCE — a process parked at PENDING_BG_CLEARANCE (paid, never cleared).
@@ -53,8 +53,8 @@ function mergeSourceIdentities(s: { mergedArchive: { fromId: number; snapshot: u
  *                          role position, one row per person with their positions
  *                          and whether their check is valid at the start of the
  *                          year they serve. Skipped when the policy is unset.
- * Check-obligated = bgObligatedWhere: program-attached, or a signing adult (lead)
- * of an ACTIVE member household.
+ * Check-obligated = bgObligatedWhere: program-attached, or holding a position. Being a
+ * household lead adds nobody; the household's own check is STALE_BG's.
  *
  * And two lists of background-check dates that trace to no named person:
  *   blanketStamped          — households cleared with no per-adult subject, where
@@ -86,13 +86,23 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
     // 1. Stale background check — only when the board has configured a window AND a
     //    membership-year boundary. With either half unset no household qualifies, so
     //    skip the whole bucket rather than tag every household.
+    //    A household's check is judged at the start of the year its application paid
+    //    for, or the live year when no paid application names one.
     if (isRecheckPolicySet(bgRecheckMonths) && boundary) {
-        const threshold = bgFreshThreshold(boundary, bgRecheckMonths);
         const active = await prisma.orgMembership.findMany({
             where: { status: "ACTIVE" },
-            select: { householdId: true },
+            select: {
+                householdId: true,
+                processes: {
+                    where: { kind: { in: ["INITIAL", "RENEWAL"] }, status: "ACTIVE" },
+                    orderBy: { id: "desc" },
+                    take: 1,
+                    select: { appliesToYear: true },
+                },
+            },
         });
         for (const m of active) {
+            const threshold = await checkValidForApplication({ appliesToYear: m.processes[0]?.appliesToYear ?? null, createdAt: now });
             if (!householdQualifies(await householdCheckStandings(prisma, m.householdId, threshold))) add(m.householdId, "STALE_BG");
         }
     }
@@ -114,7 +124,8 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
 
     // 4. Check-obligated people ≥18 without a fresh background check (warn-only).
     //    Subject = bgObligatedWhere: (ProgramParticipant ∪ ProgramVolunteer ∪
-    //    Program.leadMentor) ∪ the leads of ACTIVE member households.
+    //    Program.leadMentor) ∪ position holders (run leaders, bucket owners and
+    //    treasurers, role holders).
     //    A program lead/volunteer may sit in a household that isn't a member household,
     //    so these are person-scoped, NOT folded into the householdId reason map above.
     //    Skip the whole bucket when the board hasn't set a recheck window or a
