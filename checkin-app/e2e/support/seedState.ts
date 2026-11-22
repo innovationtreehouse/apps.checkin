@@ -44,9 +44,9 @@ export async function bucket(name: string, ownerEmail: string, treasurerEmail?: 
   expect(created.status).toBe(200);
   const id = (created.json as { id: number }).id;
   const owner = await loginAs(ownerEmail);
-  expect((await send(board, "PUT", `/api/budget-owners/${id}/owner`, { personId: owner.personaId })).status).toBe(200);
+  expect((await send(board, "PUT", `/api/budget-owners/${id}/owner`, { personId: owner.personaId, acknowledgeCheck: true })).status).toBe(200);
   const treasurer = treasurerEmail ? await loginAs(treasurerEmail) : null;
-  if (treasurer) expect((await send(board, "PUT", `/api/budget-owners/${id}/treasurers/${treasurer.personaId}`)).status).toBe(200);
+  if (treasurer) expect((await send(board, "PUT", `/api/budget-owners/${id}/treasurers/${treasurer.personaId}`, { acknowledgeCheck: true })).status).toBe(200);
   return {
     id,
     name,

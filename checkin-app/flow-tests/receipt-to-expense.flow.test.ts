@@ -52,7 +52,7 @@ beforeAll(async () => {
   const bucket = await post<{ id: number }>(finance, "/api/budget-owners", { name: `Receipt journey ${stamp}`, quickBooksClassId: newClassId() });
   expect(bucket.status).toBe(200);
   bucketId = bucket.json.id;
-  expect((await send(board, "PUT", `/api/budget-owners/${bucketId}/owner`, { personId: approver.personaId })).status).toBe(200);
+  expect((await send(board, "PUT", `/api/budget-owners/${bucketId}/owner`, { personId: approver.personaId, acknowledgeCheck: true })).status).toBe(200);
 });
 
 afterAll(async () => {

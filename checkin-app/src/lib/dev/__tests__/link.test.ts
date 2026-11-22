@@ -30,6 +30,7 @@ jest.mock("@/lib/config", () => ({
     config: {
         checkinEnv: () => env(),
         shopifyStoreDomain: () => "dev-store.myshopify.com",
+        resendApiKey: () => undefined,
     },
 }));
 jest.mock("@/lib/finance/quickBooksLists", () => ({ refreshQuickBooksLists: () => refresh() }));
