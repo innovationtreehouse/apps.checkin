@@ -604,12 +604,17 @@ describe("facility-ops/print-badges page", () => {
     setSession({ id: 1, isSysadmin: true });
     let rosterFails = true;
     global.fetch = jest.fn(async (input: RequestInfo | URL) => {
-      const isRoster = String(input).includes("roster=active");
+      const url = String(input);
+      if (url.includes("roster=years")) {
+        return { ok: true, status: 200, ...jsonBody({ years: ["2026-2027"], current: "2026-2027" }) } as Response;
+      }
+      const isRoster = url.includes("roster=active");
       if (isRoster && rosterFails) return { ok: false, status: 400, ...jsonBody({ error: "Refused" }) } as Response;
       return { ok: true, status: 200, ...jsonBody({ people: isRoster ? johnRoster : johns }) } as Response;
     }) as unknown as typeof fetch;
     renderWithProviders(<PrintBadgesPage />);
     expect(await screen.findByText("Couldn't load active member roster")).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't load membership years")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Select all" }));
     expect(screen.getByRole("button", { name: "Generate Badge (2)" })).toBeDisabled();
