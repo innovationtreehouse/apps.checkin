@@ -318,7 +318,7 @@ async function settle(
     if (result.outcome === "paid_while_blocked") await notifyBoardPaidReject(processId);
     if ("disputed" in result && result.disputed && result.householdId !== undefined) {
         const { householdId } = result;
-        await afterActivationCommitted("background-check settle", processId, householdId, async () => (await settleModule()).settleHouseholdBg(householdId));
+        await (await settleModule()).settleAfterEvent(householdId, "payment", {}, { processId });
     }
     return result;
 }

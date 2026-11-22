@@ -31,7 +31,7 @@ jest.mock('@/lib/prisma', () => ({
 
 jest.mock('@/lib/membership/external', () => ({ advanceExternalIfComplete: jest.fn() }));
 jest.mock('@/lib/membership/householdStatus', () => ({ raiseDeniedHouseholdActivity: jest.fn() }));
-jest.mock('@/lib/membership/settleHouseholdBg', () => ({ settleHouseholdBg: jest.fn() }));
+jest.mock('@/lib/membership/settleHouseholdBg', () => ({ settleAfterEvent: jest.fn() }));
 jest.mock('@/lib/membership/payment', () => ({ liveYearVariantId: jest.fn() }));
 jest.mock('@/lib/logger', () => ({ logger: { info: jest.fn(), error: jest.fn() }, logBackendError: jest.fn() }));
 
@@ -49,9 +49,7 @@ const { advanceExternalIfComplete } = require('@/lib/membership/external');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { raiseDeniedHouseholdActivity } = require('@/lib/membership/householdStatus');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { settleHouseholdBg } = require('@/lib/membership/settleHouseholdBg');
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { logBackendError } = require('@/lib/logger');
+const { settleAfterEvent } = require('@/lib/membership/settleHouseholdBg');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { liveYearVariantId } = require('@/lib/membership/payment');
 
@@ -233,7 +231,7 @@ describe('beginRenewal', () => {
                 data: expect.not.objectContaining({ bgClearedAt: expect.anything() }),
             });
             // Settle stamps a qualifying household, and blocks one whose adult is disputed.
-            expect(settleHouseholdBg).toHaveBeenCalledWith(7);
+            expect(settleAfterEvent).toHaveBeenCalledWith(7, expect.any(String), {}, expect.anything());
             expect(applyVolunteerFamilyStatus).not.toHaveBeenCalled();
             expect(notifyReviewers).not.toHaveBeenCalled();
         });
@@ -252,12 +250,6 @@ describe('beginRenewal', () => {
             });
         });
 
-        it('a failed settle is logged and the committed renewal still returns', async () => {
-            settleHouseholdBg.mockRejectedValueOnce(new Error('settle failed'));
-
-            await expect(beginRenewal(5, 42)).resolves.toEqual({ ...pending, status: 'PENDING_PAYMENT' });
-            expect(logBackendError).toHaveBeenCalledWith(expect.any(Error), expect.any(String), { householdId: 7, processId: 5 });
-        });
 
         it('double-submit loser (count 0) → no audit, no allowlist match, no ping', async () => {
             mockTx.orgMembershipProcess.updateMany.mockResolvedValue({ count: 0 });
@@ -266,7 +258,7 @@ describe('beginRenewal', () => {
 
             expect(mockTx.auditLog.create).not.toHaveBeenCalled();
             expect(mockTx.orgMembership.updateMany).not.toHaveBeenCalled();
-            expect(settleHouseholdBg).not.toHaveBeenCalled();
+            expect(settleAfterEvent).not.toHaveBeenCalled();
             expect(applyVolunteerFamilyStatus).not.toHaveBeenCalled();
             expect(notifyReviewers).not.toHaveBeenCalled();
         });

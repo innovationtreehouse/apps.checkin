@@ -5,8 +5,7 @@ import { fromWhere, personBgOpen } from "@/lib/membership/lifecycle";
 import { KVA_KIND, findSignedCurrentKva } from "@/lib/membership/keyVolunteerProcess";
 import { recallSigningRequests } from "@/lib/membership/keyVolunteer";
 import { disputingReviews, loadCheckReviews } from "@/lib/membership/checkStanding";
-import { settleHouseholdBg } from "@/lib/membership/settleHouseholdBg";
-import { logBackendError } from "@/lib/logger";
+import { settleAfterEvent } from "@/lib/membership/settleHouseholdBg";
 import { findSelfGrantRefusal, recordSelfGrantRefusal, type SelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
 import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
 import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
@@ -267,13 +266,9 @@ export async function executeMerge(plan: MergePlan, actor: AuthenticatedUser | n
 
     // The keeper may now carry a newer check date or another person's review, and the
     // merged-away record has left its household: settle both on their people's checks.
-    // Post-commit, so a failure is logged rather than reported as a failed merge.
+    // Post-commit, so a failure becomes a stuck settle rather than a failed merge.
     for (const householdId of new Set([keep.householdId, merge.householdId])) {
-        try {
-            await settleHouseholdBg(householdId, { trigger: { kind: "merge", personMergeId } });
-        } catch (error) {
-            await logBackendError(error, "household background-check settle after merge", { householdId, keepId, mergeId });
-        }
+        await settleAfterEvent(householdId, "merge", { trigger: { kind: "merge", personMergeId } }, { keepId, mergeId });
     }
     await notifyBoardOfYouthLeads([lockedKeeper]);
     await recallSigningRequests(recallRequestIds);

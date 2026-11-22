@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { logger, logBackendError } from "@/lib/logger";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
-import { addHouseholdLead, removeHouseholdLead, HouseholdLeadLimitError, HouseholdLeadDeniedError } from "@/lib/household/leads";
+import { addHouseholdLead, removeHouseholdLead, HouseholdLeadLimitError, HouseholdLeadDeniedError, HouseholdLeadYouthError } from "@/lib/household/leads";
 import { reconcileAndWarn } from "@/lib/emergencyContacts/service";
 import { isValidPhone, formatPhone, PHONE_ERROR } from "@/lib/phone";
 import { HOUSEHOLD_PEER_SELECT } from "@/lib/household/participantProjection";
@@ -26,6 +26,7 @@ import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
 import { personActor } from "@/lib/auditActor";
 import { notifyBoardOfYouthLeads } from "@/lib/membership/boardAlerts";
 import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
+import { settleAfterEvent } from "@/lib/membership/settleHouseholdBg";
 
 class BecameTrustedError extends Error {}
 
@@ -132,7 +133,7 @@ export const PATCH = withAuth(
                 return apiError(await designatedEmailRefusalForBoard(), 400);
             }
 
-            const { updatedHouseholdMember, leadRejection, deniedLead, warning } = await prisma.$transaction(async (tx) => {
+            const { updatedHouseholdMember, leadRejection, deniedLead, warning, promoted } = await prisma.$transaction(async (tx) => {
                 await lockLiveHouseholds(tx, [householdId]);
                 if (email && !holdsGrant && email.toLowerCase() !== targetHouseholdMember.email?.toLowerCase()) {
                     await removeAliasesForSignInEmail(tx, email, personActor(userId), "household_card_edit");
@@ -157,11 +158,12 @@ export const PATCH = withAuth(
                 }
 
                 // Set when the field edits saved but the requested promotion to lead
-                // was declined by the per-household cap. We report this back
-                // rather than 400 the whole edit, so the form can say the member's
-                // details were saved even though they weren't made a lead.
+                // was refused (lead cap, youth, or denied household). Reported back
+                // rather than failing the whole edit, so the form can say the household
+                // member's details were saved even though they weren't made a lead.
                 let leadRejection: string | null = null;
                 let deniedLead: HouseholdLeadDeniedError | null = null;
+                let promoted = false;
 
                 if (isLead !== undefined && participantId !== userId) {
                     const currentTarget = await tx.person.findUnique({
@@ -172,7 +174,7 @@ export const PATCH = withAuth(
 
                     if (isLead && !currentLead) {
                         try {
-                            await addHouseholdLead(tx, householdId, participantId);
+                            promoted = (await addHouseholdLead(tx, householdId, participantId)).created;
                             await tx.auditLog.create({
                                 data: {
                                     actorId: userId,
@@ -183,7 +185,7 @@ export const PATCH = withAuth(
                                 }
                             });
                         } catch (e) {
-                            if (e instanceof HouseholdLeadLimitError) {
+                            if (e instanceof HouseholdLeadLimitError || e instanceof HouseholdLeadYouthError) {
                                 leadRejection = e.message;
                             } else if (e instanceof HouseholdLeadDeniedError) {
                                 leadRejection = e.message;
@@ -225,10 +227,12 @@ export const PATCH = withAuth(
                 // emergency contact (direction B): re-evaluate and warn if so.
                 const warning = await reconcileAndWarn(tx, householdId);
 
-                return { updatedHouseholdMember, leadRejection, deniedLead, warning };
+                return { updatedHouseholdMember, leadRejection, deniedLead, warning, promoted };
             });
             invalidateAttendanceCache();
             if (dob !== undefined) await notifyBoardOfYouthLeads([targetHouseholdMember]);
+            // A lead who already holds a current check can qualify the household's waiting application.
+            if (promoted) await settleAfterEvent(householdId, "lead promotion", {}, { personId: participantId });
             if (deniedLead) {
                 const ref = { householdId: deniedLead.householdId, personId: deniedLead.personId };
                 try {

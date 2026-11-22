@@ -1,6 +1,5 @@
 import type { Prisma, OrgMembershipProcess } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
-import { logBackendError } from "@/lib/logger";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { ReviewError, applicantHousehold, reviewHouseholds, wrongPersonClosedAt } from "@/lib/membership/review";
 import { reviewHoldsRejection } from "@/lib/membership/checkStanding";
@@ -275,13 +274,9 @@ export async function unarchiveApplication(processId: number, actorId: number) {
         throw e;
     }
     if (reopened && !reopened.forgotRequest) await pickUpMissedSignature(process);
-    const { settleHouseholdBg } = await settleModule();
+    const { settleAfterEvent } = await settleModule();
     for (const id of await reviewHouseholds(prisma, process)) {
-        try {
-            await settleHouseholdBg(id);
-        } catch (error) {
-            await logBackendError(error, "household background-check settle after reopen", { householdId: id, processId });
-        }
+        await settleAfterEvent(id, "reopen", {}, { processId });
     }
     const advanced = await advanceExternalIfComplete(processId);
     return { status: advanced?.status ?? target };

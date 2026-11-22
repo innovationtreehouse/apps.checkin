@@ -339,20 +339,13 @@ export async function attest(reviewerId: number, processId: number, input: Attes
 }
 
 /**
- * Runs settleHouseholdBg for each household a review outcome touched, returning every
- * step taken. The outcome has committed, so a failure here is logged rather than
- * reported as a failed decision; the next settle (another decision, a reopen, the
- * daily sweep) repeats it.
+ * Settles each household a review outcome touched, returning every step taken. The
+ * outcome has committed, so a failure becomes a stuck settle rather than a failed decision.
  */
 async function settleAfterReview(householdIds: readonly number[], opts: { reviewJustCleared?: boolean } = {}): Promise<SettleStep[]> {
     const steps: SettleStep[] = [];
     for (const householdId of householdIds) {
-        try {
-            steps.push(...await (await settleModule()).settleHouseholdBg(householdId, opts));
-        } catch (error) {
-            logger.error("settle after review failed:", { householdId }, error);
-            await logBackendError(error, "settle after review", { householdId });
-        }
+        steps.push(...await (await settleModule()).settleAfterEvent(householdId, "review", opts));
     }
     return steps;
 }
