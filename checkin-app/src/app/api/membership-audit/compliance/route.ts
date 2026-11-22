@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
-import { nextBoundary } from "@/lib/membership/renewal";
+import { bgThresholdForYear, liveMembershipYear } from "@/lib/membership/renewal";
+import { membershipYearStart } from "@/lib/programYear";
 import { disputingReviews, householdCheckStandings, householdQualifies, loadCheckReviews } from "@/lib/membership/checkStanding";
 import { personBgOpen } from "@/lib/membership/lifecycle";
 import { isRecheckPolicySet } from "@/lib/membership/bgRecheckPolicy";
 import { bgFreshThreshold, personBgVerdict } from "@/lib/membership/personBgCheck";
 import { agreementCycleFloor, autoPopulationWhere } from "@/lib/membership/personAgreementTriggers";
-import { bgObligatedWhere, ENROLLED_PARTICIPANT } from "@/lib/person/filters";
+import { bgObligatedWhere, ENROLLED_PARTICIPANT, recentProgramWhere } from "@/lib/person/filters";
 import { positionHolders } from "@/lib/membership/positionHolders";
 
 export const dynamic = "force-dynamic";
@@ -33,17 +34,18 @@ function mergeSourceIdentities(s: { mergedArchive: { fromId: number; snapshot: u
  * never auto-revokes — a human must follow up). Surfaces only what's knowable
  * from real data; there is no GRACE status modeled, so no grace bucket. Reasons:
  *   STALE_BG  — ACTIVE household that no longer qualifies on its people's checks:
- *               no lead's check is valid at the boundary, or an adult's check is
- *               disputed (householdQualifies; skipped when the board hasn't set
- *               the policy — bgRecheckMonths = 0 or no membership-year boundary).
+ *               no lead's check is valid at the start of the year its application
+ *               paid for, or an adult's check is disputed (householdQualifies).
+ *               Skipped when the policy is unset (bgRecheckMonths = 0 or no boundary).
  *   REVOKED / DENIED — OrgMembership status.
  *   STUCK_BG_CLEARANCE — a process parked at PENDING_BG_CLEARANCE (paid, never cleared).
  * A household with multiple problems gets all its reason tags.
  *
  * Also returns three PERSON-scoped lists (program people may not sit in a member
  * household, so they can't key on householdId):
- *   peopleNeedingBgCheck — check-obligated people ≥18 (as of the boundary) with no
- *                          fresh check. Skipped when the policy is unset.
+ *   peopleNeedingBgCheck — check-obligated people ≥18 whose check is not valid at
+ *                          the start of the year they serve. Skipped when the
+ *                          policy is unset.
  *   peopleMissingDob     — check-obligated people whose age is unknown (no DOB,
  *                          not declared 25+): data hygiene, NOT bg-needed.
  *   peopleWithDisputedCheck — people whose own check review is rejected, or whose
@@ -53,8 +55,8 @@ function mergeSourceIdentities(s: { mergedArchive: { fromId: number; snapshot: u
  *                          role position, one row per person with their positions
  *                          and whether their check is valid at the start of the
  *                          year they serve. Skipped when the policy is unset.
- * Check-obligated = bgObligatedWhere: program-attached, or a signing adult (lead)
- * of an ACTIVE member household.
+ * Check-obligated = bgObligatedWhere: program-attached, or holding a position. Being a
+ * household lead adds nobody; the household's own check is STALE_BG's.
  *
  * And two lists of background-check dates that trace to no named person:
  *   blanketStamped          — households cleared with no per-adult subject, where
@@ -71,9 +73,8 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
     const bgClearedSince = since && !Number.isNaN(since.getTime()) ? since : null;
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 } });
     const bgRecheckMonths = settings?.bgRecheckMonths;
-    const boundary = settings?.orgMembershipYearBoundary
-        ? nextBoundary(settings.orgMembershipYearBoundary, now)
-        : null;
+    const boundary = settings?.orgMembershipYearBoundary ?? null;
+    const liveYear = liveMembershipYear(boundary, now);
 
     // householdId -> Set<reason>
     const reasons = new Map<number, Set<string>>();
@@ -86,13 +87,23 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
     // 1. Stale background check — only when the board has configured a window AND a
     //    membership-year boundary. With either half unset no household qualifies, so
     //    skip the whole bucket rather than tag every household.
-    if (isRecheckPolicySet(bgRecheckMonths) && boundary) {
-        const threshold = bgFreshThreshold(boundary, bgRecheckMonths);
+    //    A household's check is judged at the start of the year its application paid
+    //    for, or the live year when no paid application names one.
+    if (isRecheckPolicySet(bgRecheckMonths) && boundary && liveYear !== null) {
         const active = await prisma.orgMembership.findMany({
             where: { status: "ACTIVE" },
-            select: { householdId: true },
+            select: {
+                householdId: true,
+                processes: {
+                    where: { kind: { in: ["INITIAL", "RENEWAL"] }, status: "ACTIVE" },
+                    orderBy: { id: "desc" },
+                    take: 1,
+                    select: { appliesToYear: true },
+                },
+            },
         });
         for (const m of active) {
+            const threshold = bgThresholdForYear(boundary, bgRecheckMonths, m.processes[0]?.appliesToYear ?? liveYear);
             if (!householdQualifies(await householdCheckStandings(prisma, m.householdId, threshold))) add(m.householdId, "STALE_BG");
         }
     }
@@ -114,9 +125,13 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
 
     // 4. Check-obligated people ≥18 without a fresh background check (warn-only).
     //    Subject = bgObligatedWhere: (ProgramParticipant ∪ ProgramVolunteer ∪
-    //    Program.leadMentor) ∪ the leads of ACTIVE member households.
+    //    Program.leadMentor) ∪ position holders (run leaders, bucket owners and
+    //    treasurers, role holders).
     //    A program lead/volunteer may sit in a household that isn't a member household,
     //    so these are person-scoped, NOT folded into the householdId reason map above.
+    //    Each person is judged at the start of the latest year they serve, as
+    //    positionHolders does: a program's year for a program place, the live year
+    //    for a bucket place or role. Age is judged at that same year start.
     //    Skip the whole bucket when the board hasn't set a recheck window or a
     //    membership-year boundary, exactly like STALE_BG — no policy, nothing is stale.
     type PersonRow = {
@@ -129,8 +144,9 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
     };
     const peopleNeedingBgCheck: PersonRow[] = [];
     const peopleMissingDob: PersonRow[] = [];
-    if (isRecheckPolicySet(bgRecheckMonths) && boundary) {
-        const threshold = bgFreshThreshold(boundary, bgRecheckMonths);
+    if (isRecheckPolicySet(bgRecheckMonths) && boundary && liveYear !== null) {
+        const recent = recentProgramWhere(now);
+        const programSelect = { select: { id: true, name: true, appliesToYear: true } };
         // A superset of who the new-member trigger opens for (it takes the
         // program-attached arm only), so every obligation it creates has a row here.
         // The submit action opens or reuses a person's review for anyone listed.
@@ -143,14 +159,29 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
                 dateOfBirth: true,
                 isDeclaredAdult: true,
                 lastBackgroundCheck: true,
-                programParticipants: { where: ENROLLED_PARTICIPANT, select: { program: { select: { id: true, name: true } } } },
-                programVolunteers: { select: { program: { select: { id: true, name: true } } } },
-                programsLed: { select: { id: true, name: true } },
+                programParticipants: { where: { ...ENROLLED_PARTICIPANT, program: recent }, select: { program: programSelect } },
+                programVolunteers: { where: { program: recent }, select: { program: programSelect } },
+                programsLed: { where: recent, ...programSelect },
+                instancesLed: { where: { program: recent }, select: { program: programSelect } },
+                _count: {
+                    select: {
+                        budgetOwnersOwned: { where: { archivedAt: null } },
+                        budgetOwnerTreasurerships: { where: { budgetOwner: { archivedAt: null } } },
+                        roles: true,
+                    },
+                },
             },
             orderBy: { name: "asc" },
         });
         for (const p of people) {
-            const verdict = personBgVerdict(p, boundary, threshold);
+            const programYears = [
+                ...[...p.programParticipants, ...p.programVolunteers, ...p.instancesLed].map((a) => a.program.appliesToYear),
+                ...p.programsLed.map((l) => l.appliesToYear),
+            ];
+            const holdsLivePosition = p._count.budgetOwnersOwned + p._count.budgetOwnerTreasurerships + p._count.roles > 0;
+            const year = Math.max(...programYears, ...(holdsLivePosition || !programYears.length ? [liveYear] : []));
+            const yearStart = membershipYearStart(boundary, year);
+            const verdict = personBgVerdict(p, yearStart, bgFreshThreshold(yearStart, bgRecheckMonths));
             if (verdict === "FRESH" || verdict === "MINOR") continue;
             // One program for context — first attachment found across the three roles.
             const prog =

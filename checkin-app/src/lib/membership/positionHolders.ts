@@ -2,7 +2,7 @@ import type { PersonRoleKind } from "@/generated/prisma/client";
 import type { DbClient } from "@/lib/db-client";
 import { bgFreshThreshold } from "@/lib/membership/personBgCheck";
 import { liveMembershipYear } from "@/lib/programYear";
-import { calculateAge } from "@/lib/time";
+import { calculateAge, orgCalendarDay } from "@/lib/time";
 
 /** A position that needs a current background check: six program and bucket kinds, plus every role. */
 export type PositionKind = "VOLUNTEER" | "CORE_VOLUNTEER" | "PROGRAM_LEADER" | "RUN_LEADER" | "BUCKET_OWNER" | "BUCKET_TREASURER" | PersonRoleKind;
@@ -58,7 +58,7 @@ export function positionCheckStanding(lastBackgroundCheck: Date | null, validFro
  */
 export async function positionHolders(db: DbClient, boundary: Date, recheckMonths: number, now: Date): Promise<PositionHolderRow[]> {
     const liveYear = liveMembershipYear(boundary, now)!;
-    const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const today = orgCalendarDay(now);
     const runningProgram = { endAt: { gte: today } };
     const [volunteers, programs, runs, buckets, treasurers, roles] = await Promise.all([
         db.programVolunteer.findMany({ where: { program: runningProgram }, select: { personId: true, isCore: true, program: { select: { name: true, appliesToYear: true } } } }),
