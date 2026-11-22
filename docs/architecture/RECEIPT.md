@@ -93,13 +93,14 @@ Taking a receipt in and reading it are separate steps. A receipt nobody typed
 details for is saved at `ocr_queued`, with `ocrQueuedAt`, and no request waits for
 its reading.
 
-**Readers.** Three things read a queued receipt, all through `readQueued` in
+**Readers.** Four things read a queued receipt, all through `readQueued` in
 `src/services/receiptService.ts`:
 
 | Reader | When | Cap |
 |---|---|---|
 | The upload's background read (`readInBackground`) | started as the upload answers, in the process that took it | that one receipt |
 | "Read it again" | moves `ocr_failed` back to `ocr_queued`, answers, then reads in the background the same way | that one receipt |
+| Finance assigning a held mail item, or releasing a deferred one (`src/services/mailQueueService.ts`) | reads the new receipt in the background the same way, then checks a mailed body for a copy | that one receipt |
 | The drain (`drainOcrQueue` in `src/services/ocrDrain.ts`) | after the daily mail run and after finance's catch-up, under the mail lease | 20 readings, one at a time, oldest `ocrQueuedAt` first, within 10 minutes |
 
 The background read is not awaited and holds no lease. A process that dies before
@@ -181,8 +182,8 @@ Reading comes before the chain:
 
 ```
 ocr_queued ──OCR_STARTED──▶ auto_upload ──OCR_SUCCEEDED──▶ uploaded ─▶ (the chain above)
-    │                            └────────OCR_FAILED─────▶ ocr_failed
-    ├──OCR_FAILED──▶ ocr_failed      (reading switched off, allowance used up, file missing)
+    │                            └────────OCR_FAILED─────▶ ocr_failed   (a failed reading, reading switched off, allowance used up, file missing)
+    ├──OCR_FAILED──▶ ocr_failed      (reading switched off when the receipt is saved)
     ├──DISCARD──▶ discarded
     └──REJECT───▶ rejected
 ocr_failed ──OCR_RETRY──▶ ocr_queued
@@ -238,7 +239,7 @@ depends on Gmail's 30-day window.
 **Replay.** `processCapturedMessage(id)` runs step 4 for one captured message from
 its stored copy. It is the same code the run uses, so a replay creates only what is
 missing. Each replay writes a `mail_replayed` audit row naming who asked, before it
-runs, and has 30 seconds for its outside calls. Its receipts are not read in the
+runs, and has 30 seconds in all. Its receipts are not read in the
 background: they wait at `ocr_queued` for the next daily drain. Replay is finance's
 work:
 
@@ -334,9 +335,8 @@ for a receipt not stuck in that step and 409 when the receipt is still stuck aft
 capture (`WAITING_NOTICE_MS`), so the next daily run failed it too, as step "mail message",
 timed from capture and linking to the mail page. Its Retry replays the email, is the Board's
 only (see [Mail](#mail)), and answers 409 when the email is still not processed afterwards.
-A captured email whose stored copy expires before it is processed stays listed as a stuck
-"mail message", marked "expired, can't be replayed", with Dismiss only, until a person
-dismisses it. It is never dropped silently.
+A captured email whose stored copy expires before it is processed drops off the list at
+expiry. The decided design keeps it listed instead; see "Not built" under [File storage](#file-storage).
 
 A failed reading leaves nothing stuck: the receipt waits in `ocr_failed` for its submitter. So
 `problemNotices()` counts the `ocr_failed:<kind>` audit rows of the last day, and at
@@ -433,13 +433,17 @@ stays after the copy expires, so a message is never captured twice.
   message and a replay answers "This email's stored copy expired N days after
   capture." Inside it, a missing copy is an error, recorded in `processError`.
 - A raw copy is the whole email: other recipients, signatures, quoted threads, and
-  mail that is no receipt. No route serves it, and no response or log carries its
+  mail that is no receipt. No route serves the raw copy, and no response or log carries its
   bytes, key or headers; errors record their kind and a short reason only. Files
   taken from it are stored as receipts or mail items with their own keys and
   lifetimes, and the copy expiring changes none of them.
 
 **Not built.**
 
+- Keeping expired captured mail on the stuck list, the decided design: a captured
+  email whose stored copy expires before it is processed stays on the Problems list
+  as a stuck "mail message", marked "expired, can't be replayed", with Dismiss only,
+  until a person dismisses it, and is never dropped silently.
 - Dropping the `file_blob` column, after re-pointing both file routes' registry
   entries from `fileBlob` to `fileKey`.
 
