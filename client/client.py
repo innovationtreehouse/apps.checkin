@@ -596,6 +596,12 @@ class AttendanceState:
             else:
                 self.present_ids.discard(pid)
 
+    def restore_presence(self, participant_id):
+        """Puts a departure the server refused back inside, keeping its arrival time."""
+        with self.lock:
+            self.presence_seq += 1
+            self.present_ids.add(int(participant_id))
+
     def seed_from_attendance(self, att_data, pending=(), since_seq=None):
         """Replace the local presence view with the server roster, plus this
         kiosk's undelivered outbox rows, which the roster does not show yet. Snapshot `pending` BEFORE the fetch: a
@@ -1597,6 +1603,9 @@ def handle_scan(backend, state, outbox, participant_id):
     # Answered definitively (ack, or a rejection the screen shows now):
     # the row is settled either way and must not replay.
     outbox.ack(client_event_id)
+    if status == 400 and body.get("type") == "warning" and intent == "OUT":
+        # The server kept the visit open; the confirming badge must go out as OUT.
+        state.restore_presence(participant_id)
 
     if outcome == "ack" and close and body.get("facilityClosed") is False and body.get("closePrompt"):
         # Someone checked in after this kiosk's roster was taken: the keyholder

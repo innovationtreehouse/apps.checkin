@@ -30,11 +30,11 @@ runs:
           # Before infra provisions the function, the deploy role also lacks
           # lambda:GetFunction on it, so AWS answers AccessDenied rather than
           # ResourceNotFound.
-          if printf '%s' "$OUT" | grep -q ResourceNotFoundException; then
+          if grep -q ResourceNotFoundException <<<"$OUT"; then
             echo "::notice::Lambda $FUNCTION_NAME does not exist yet; skipping its code deploy."
             exit 0
           fi
-          if printf '%s' "$OUT" | grep -q AccessDeniedException; then
+          if grep -q AccessDeniedException <<<"$OUT"; then
             echo "::warning::No access to Lambda $FUNCTION_NAME (not provisioned yet, or the deploy role lacks its grant); skipping its code deploy."
             exit 0
           fi
@@ -50,5 +50,5 @@ runs:
         aws lambda update-function-code \
           --function-name "$FUNCTION_NAME" \
           --zip-file "fileb://$ZIP" >/dev/null
-        aws lambda wait function-updated --function-name "$FUNCTION_NAME"
+        aws lambda wait function-updated-v2 --function-name "$FUNCTION_NAME"
         echo "Deployed $FUNCTION_NAME."

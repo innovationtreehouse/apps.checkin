@@ -166,6 +166,25 @@ describe("dev seed-helpers (integration)", () => {
             expect(seeded).toHaveLength(10);
             expect(seeded.every((g) => g._count === 1)).toBe(true);
         });
+
+        it("a program whose event fails to write is rolled back, so the next seed builds it whole", async () => {
+            const name = "Seed: upcoming";
+            const { id } = await prisma.program.findFirstOrThrow({ where: { name } });
+            await prisma.event.deleteMany({ where: { programId: id } });
+            await prisma.program.delete({ where: { id } });
+            const dropFixture = () => prisma.$executeRawUnsafe(`ALTER TABLE "Event" DROP CONSTRAINT IF EXISTS seed_spread_fail`);
+            try {
+                await dropFixture();
+                await prisma.$executeRawUnsafe(`ALTER TABLE "Event" ADD CONSTRAINT seed_spread_fail CHECK (name <> 'Seed: upcoming session')`);
+                await expect(seedBaseline(prisma)).rejects.toThrow();
+            } finally {
+                await dropFixture();
+            }
+            expect(await prisma.program.findFirst({ where: { name } })).toBeNull();
+
+            await seedBaseline(prisma);
+            expect((await byName(name)).events).toHaveLength(1);
+        });
     });
 
     it("+ Family adds a household with a lead, a partner, and a youth", async () => {

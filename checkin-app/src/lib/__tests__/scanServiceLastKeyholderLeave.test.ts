@@ -33,6 +33,7 @@ jest.mock("@/lib/supervision", () => ({
     supervisingAdultVisits: jest.fn().mockResolvedValue([]),
     supervisingAdultCount: jest.fn().mockReturnValue(0),
     uncoveredYouthVisitIds: jest.fn().mockResolvedValue([]),
+    uncoveredYouthAroundDeparture: jest.fn().mockResolvedValue({ before: [], after: [] }),
 }));
 
 const keyholder = { id: 1, isKeyholder: true } as Person;

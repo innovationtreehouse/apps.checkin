@@ -591,7 +591,6 @@ export async function drainExpenseOutbox(now = new Date(), turn?: PostingTurn): 
     maxCreatesPerRun: settings.qbMaxCreatesPerRun,
     maxCreatesPerDay: settings.qbMaxCreatesPerDay,
     createdToday: await qbCreatesToday(),
-    failures: [],
     throttled: "throttled",
     turn,
     post: async (e) => {

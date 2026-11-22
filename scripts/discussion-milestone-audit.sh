@@ -114,7 +114,7 @@ if [ -n "$MSNUM" ]; then
     --jq '.[] | select(.pull_request == null) | [.number, .state] | @tsv')
   while IFS=$'\t' read -r n state; do
     [ -n "${n:-}" ] || continue
-    cut -f2 <<<"$CANDS" | grep -qx "$n" && continue
+    grep -qx "$n" <<<"$(cut -f2 <<<"$CANDS")" && continue
     if grep -qE "(^|[^0-9])#$n([^0-9]|$)" <<<"$BODY"; then
       unlisted+=("- **#$n** ($state) — mentioned in the body's prose, but not a candidate box")
     else

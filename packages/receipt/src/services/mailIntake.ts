@@ -15,6 +15,7 @@ import { fileStore, getOrgId, mailbox, ports, rawMailRetentionDays } from "../ru
 import { intakeMailedReceipt } from "./receiptService";
 import { DRAIN_BUDGET_MS, drainOcrQueue, type DrainCounts } from "./ocrDrain";
 import { OrgUploadLimitError } from "../lib/insert";
+import type { Actor } from "../repositories/receipt";
 import { byDeadline, DeadlineError } from "../lib/deadline";
 import { isAutomated, sendMailReplies } from "./mailReplies";
 
@@ -914,14 +915,18 @@ export const REPLAY_BUDGET_MS = 30_000;
 
 /**
  * Processes one captured message again from its stored copy, creating only what is missing. Answers
- * `expired`, with no store call, once the copy is past the environment's retention.
+ * `expired`, with no store call, once the copy is past the environment's retention. A replay is
+ * audited with who asked before it runs; a null `askedBy` is a system step.
  */
-export async function processCapturedMessage(id: number): Promise<CapturedOutcome> {
+export async function processCapturedMessage(id: number, askedBy: Actor | null = null): Promise<CapturedOutcome> {
   const orgId = await getOrgId();
   const row = await db.receiptMailMessage.findFirst({ where: { id, orgId } });
   if (!row) throw new ServiceError(404, "No such captured email.");
   const reader = mailbox();
   if (!reader) throw new ServiceError(409, "The receipt mailbox is not set up.");
+  await db.receiptAuditLog.create({
+    data: { receiptId: null, userId: askedBy?.id ?? null, username: askedBy?.name ?? null, action: "mail_replayed", fieldChanged: "mail_message", valueBefore: String(id) },
+  });
   const deadline = Date.now() + REPLAY_BUDGET_MS;
   return processCaptured(row, await createPass(orgId, MAIL_CAP, { read: deadline, end: deadline }, reader.address, deadline));
 }

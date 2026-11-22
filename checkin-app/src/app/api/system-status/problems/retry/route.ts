@@ -7,7 +7,7 @@ import { mayRetry } from "@/lib/problemsRetryRoles";
 import { badRequest, forbidden, handler, unauthorized } from "@/security/handler";
 
 // Registry-governed (POST /api/system-status/problems/retry): sysadmin or Board, envelope 'results';
-// a step that posts to QuickBooks is the Board's alone (mayRetry). Body `{ library, step, id }`, one
+// a step that posts to QuickBooks, or replays a captured email, is the Board's alone (mayRetry). Body `{ library, step, id }`, one
 // item per press; Retry all presses once per item.
 const ENDPOINT = "POST /api/system-status/problems/retry";
 

@@ -6,6 +6,7 @@ import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
 import { unreadLine } from "@/lib/problemsLines";
 import { currentPostingWarnings } from "@/lib/finance/postingRuns";
+import { checkEmailStuckItems, retryCheckEmail } from "@/lib/membership/positionCheck";
 import { APP_TIMEZONE, formatDateTime } from "@/lib/time";
 
 /** One stuck item on the Problems list, named by the library that holds it. */
@@ -20,14 +21,15 @@ type Retry = (item: { id: string; step: string }, by: ProblemRetrier) => Promise
 
 /**
  * Each receipt-flow library's "stuck items" and "retry" ports, and its own Problems lines where it
- * has them; one with no database configured is not read. Membership lives in the app's own database.
+ * has them; one with no database configured is not read. A source with no `env` lives in the app's
+ * own database and is always read.
  */
 const SOURCES: { library: string; env?: string; read: () => Promise<StuckItem[]>; retry: Retry; notices?: () => Promise<Notice[]> }[] = [
     {
         library: "receipt",
         env: "RECEIPT_DATABASE_URL",
         read: async () => (await import("@checkin/receipt")).stuckItems(),
-        retry: async (item) => (await import("@checkin/receipt")).retryStuckItem(item),
+        retry: async (item, by) => (await import("@checkin/receipt")).retryStuckItem(item, by),
         notices: async () => (await (await import("@checkin/receipt")).problemNotices()).map((text) => ({ text, href: null })),
     },
     {
@@ -63,7 +65,14 @@ const SOURCES: { library: string; env?: string; read: () => Promise<StuckItem[]>
             await markGiftLoaded(item.id);
         },
     },
+    {
+        library: "background check",
+        read: checkEmailStuckItems,
+        retry: retryCheckEmail,
+    },
 ];
+
+const isWired = (s: { env?: string }): boolean => !s.env || Boolean(process.env[s.env]);
 
 /**
  * After a retried `donation:<id>` load applies, bulk-donation's own load replays it (a no-op) and
@@ -79,8 +88,6 @@ async function markGiftLoaded(id: string): Promise<void> {
         logger.error(`[problems] ${id} loaded, but the gift could not be marked loaded:`, err);
     }
 }
-
-const wired = (s: { env?: string }) => !s.env || Boolean(process.env[s.env]);
 
 /** The database env var of each library the Problems list reads. */
 export const LIBRARY_DB_VARS = SOURCES.flatMap((s) => (s.env ? [s.env] : []));
@@ -105,7 +112,7 @@ async function emailFailureNotices(now: Date): Promise<Notice[]> {
  * that is not listed or has no database answers 404; the library's own retry answers the rest.
  */
 export async function retryProblem({ library, step, id }: { library: string; step: string; id: string }, by: ProblemRetrier): Promise<void> {
-    const source = SOURCES.find((s) => s.library === library && wired(s));
+    const source = SOURCES.find((s) => s.library === library && isWired(s));
     if (!source) throw new ServiceError(404, "No such library on the Problems list");
     await source.retry({ id, step }, by);
 }
@@ -115,7 +122,7 @@ export async function retryProblem({ library, step, id }: { library: string; ste
  * libraries' own and failed email sends. A source whose read fails is named in `unread`.
  */
 export async function getProblems(now = new Date()): Promise<{ items: Problem[]; unread: string[]; notices: Notice[] }> {
-    const sources = SOURCES.filter(wired);
+    const sources = SOURCES.filter(isWired);
     const results = await Promise.allSettled([
         ...sources.map(async (s) => ({
             items: await s.read(),
