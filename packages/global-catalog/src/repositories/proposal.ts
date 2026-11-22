@@ -54,6 +54,19 @@ export function createProposalRepository(db: PrismaClient) {
         select: { status: true, proposedName: true, resultGtin13: true },
       }),
 
+    /** Up to `take` of the org's pending or rejected provisional parts named like `q` in any case, or with GTIN `q`. */
+    searchOrgOpenProvisionalItems: (orgId: string, q: string, take: number) =>
+      db.provisionalItem.findMany({
+        where: {
+          orgId,
+          status: { in: ["pending", "rejected"] },
+          OR: [{ proposedName: { contains: q, mode: "insensitive" } }, { provisionalGtin13: q }],
+        },
+        select: { provisionalGtin13: true, proposedName: true, status: true },
+        orderBy: [{ proposedName: "asc" }, { provisionalGtin13: "asc" }],
+        take,
+      }),
+
     createProvisionalItem: (data: Prisma.ProvisionalItemUncheckedCreateInput) =>
       db.provisionalItem.create({ data }),
 

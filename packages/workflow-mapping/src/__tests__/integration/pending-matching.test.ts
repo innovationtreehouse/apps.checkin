@@ -38,6 +38,7 @@ function catalog() {
       },
       checkReferences: unused,
       getOrgProvisionalItem: async () => null,
+      searchOrgProvisionalItems: async () => [],
       getActiveItem: unused,
     },
   };

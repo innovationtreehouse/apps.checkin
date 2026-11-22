@@ -7,7 +7,7 @@ import {
   catalogReferenceConflictSchema,
 } from "@checkin/receipt-types";
 import { z } from "zod";
-import { activeCatalogItemSchema, createdIdSchema, gtin13Schema, orgProvisionalItemSchema, refCheckResultSchema } from "../contract";
+import { activeCatalogItemSchema, createdIdSchema, gtin13Schema, orgProvisionalItemSchema, orgProvisionalPartsSchema, refCheckResultSchema, type OrgProvisionalPart } from "../contract";
 import { tryAutoProceedApply } from "../lib/auto-proceed";
 import { ports, requireActor } from "../runtime";
 import type { NewWorkflowAuditEvent, ReceivedReceiptLineStatusRow } from "../db/schema";
@@ -56,7 +56,18 @@ async function viaCatalog<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+export const PROVISIONAL_PARTS_LIMIT = 20;
+
 export const lineItemService = {
+  /** The org's pending and local-only parts the associate picker offers for `q`; a blank `q` lists none. */
+  async searchProvisionalParts(q: string): Promise<OrgProvisionalPart[]> {
+    const term = q.trim();
+    if (!term) return [];
+    const { catalogReader } = ports();
+    const parts = await viaCatalog(async () => orgProvisionalPartsSchema.parse(await catalogReader.searchOrgProvisionalItems(term)));
+    return parts.slice(0, PROVISIONAL_PARTS_LIMIT).map(({ gtin13, name, status }) => ({ gtin13, name, status }));
+  },
+
   /**
    * CI3: optimistic association. The line is recognized with the manager's GTIN at once; a
    * reference proposal and any conflict reports go to the catalog without gating the receipt.
