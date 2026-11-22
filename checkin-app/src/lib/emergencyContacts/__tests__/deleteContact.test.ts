@@ -41,7 +41,7 @@ describe("deleteContact guard", () => {
     });
 
     it("refuses to delete the last valid contact", async () => {
-        const { db, tx } = fakeDb([valid(1), { ...valid(2), conflictParticipantId: 9 }, { ...valid(3), phone: " " }]);
+        const { db, tx } = fakeDb([valid(1), { ...valid(2), conflictParticipantId: 9 }, { ...valid(3), phone: "" }]);
         await expect(deleteContact(db, 7, 1)).rejects.toMatchObject({ code: "last_valid" });
         expect(tx.emergencyContact.delete).not.toHaveBeenCalled();
         expect(invalidateAttendanceCache).not.toHaveBeenCalled();

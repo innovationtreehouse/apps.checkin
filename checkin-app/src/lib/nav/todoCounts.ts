@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { VALID_CONTACT_WHERE } from "@/lib/emergencyContacts/valid";
 import type { OrgMembershipProcessStatus, TrustedAdultReviewStatus } from "@/generated/prisma/client";
 import type { AuthenticatedUser } from "@/types/auth";
 import { countHouseholdsMissingValidContact } from "@/lib/emergencyContacts/service";
@@ -221,7 +222,7 @@ async function memberCounts(user: AuthenticatedUser): Promise<TodoCounts["member
                       // A household needs the todo when it has no valid (non-member,
                       // complete) emergency contact. Emergency contacts are their own entity.
                       emergencyContacts: {
-                          where: { conflictParticipantId: null, name: { not: "" }, phone: { not: "" } },
+                          where: VALID_CONTACT_WHERE,
                           select: { id: true },
                           take: 1,
                       },

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isValidContact } from "@/lib/emergencyContacts/valid";
 import prisma from "@/lib/prisma";
 import { withAuth } from "@/lib/auth";
 import { logBackendError } from "@/lib/logger";
@@ -43,8 +44,8 @@ export const GET = withAuth(
                     phone: c.phone,
                     email: c.email,
                     relationship: c.relationship,
-                    // Invalid == flagged as a household member (kept for audit).
-                    invalid: c.conflictParticipantId !== null || !c.name.trim() || !c.phone.trim(),
+                    // Invalid: flagged as a household member, or missing a name or phone (kept for audit).
+                    invalid: !isValidContact(c),
                 }));
                 const primaryValid = contacts.find(c => !c.invalid) ?? null;
 
