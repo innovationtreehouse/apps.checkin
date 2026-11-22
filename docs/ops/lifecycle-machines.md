@@ -15,9 +15,10 @@ legal states and its transition table:
 - **Program sale** (`Program.phase`, `enrollmentStatus` and the start, off-sale and
   sale-ended dates): a program's time on sale — NOT_ON_SALE, ON_SALE,
   SALE_ENDED, then FINISHED. `classify` reads those columns: phase FINISHED
-  gives FINISHED, a passed off-sale date gives SALE_ENDED, and otherwise
-  `enrollmentStatus` OPEN gives ON_SALE and CLOSED gives NOT_ON_SALE. The state
-  has no column of its own.
+  gives FINISHED, a set sale-ended date, or an off-sale date (else the start
+  date) on or before today, gives SALE_ENDED, and otherwise `enrollmentStatus`
+  OPEN gives ON_SALE and CLOSED gives NOT_ON_SALE. The state has no column of
+  its own.
 
 Enrollment and the membership process also name the query filter for each state
 set and a `validate()` that flags rows sitting off the diagram.
