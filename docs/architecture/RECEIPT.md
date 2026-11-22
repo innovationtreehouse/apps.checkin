@@ -334,9 +334,9 @@ for a receipt not stuck in that step and 409 when the receipt is still stuck aft
 capture (`WAITING_NOTICE_MS`), so the next daily run failed it too, as step "mail message",
 timed from capture and linking to the mail page. Its Retry replays the email, is the Board's
 only (see [Mail](#mail)), and answers 409 when the email is still not processed afterwards.
-**[Placeholder, owner decision pending]** A captured email whose stored copy has expired
-drops off the stuck list today, because a replay can no longer process it; whether it should
-instead stay listed, with dismiss only, is not yet decided.
+A captured email whose stored copy expires before it is processed stays listed as a stuck
+"mail message", marked "expired, can't be replayed", with Dismiss only, until a person
+dismisses it. It is never dropped silently.
 
 A failed reading leaves nothing stuck: the receipt waits in `ocr_failed` for its submitter. So
 `problemNotices()` counts the `ocr_failed:<kind>` audit rows of the last day, and at
