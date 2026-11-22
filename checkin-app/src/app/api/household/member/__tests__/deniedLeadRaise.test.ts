@@ -1,8 +1,9 @@
 /**
  * @jest-environment node
  *
- * The board item for a lead promotion refused on a denied household is raised after
- * the member edit commits, so its failure is logged and the save still reads as saved.
+ * A refused lead promotion still saves the household member's edit and says why. The
+ * board item for a denied household is raised after the edit commits, so its failure is
+ * logged and the save still reads as saved.
  */
 
 import type { NextRequest } from "next/server";
@@ -44,10 +45,11 @@ jest.mock("@/lib/prisma", () => ({
     },
 }));
 
-const { householdLeadship, addHouseholdLead, HouseholdLeadDeniedError } = jest.requireMock("@/lib/household/leads") as {
+const { householdLeadship, addHouseholdLead, HouseholdLeadDeniedError, HouseholdLeadYouthError } = jest.requireMock("@/lib/household/leads") as {
     householdLeadship: jest.Mock;
     addHouseholdLead: jest.Mock;
     HouseholdLeadDeniedError: new (householdId: number, personId: number) => Error;
+    HouseholdLeadYouthError: new (householdId: number, personId: number) => Error;
 };
 const raise = raiseDeniedHouseholdActivity as jest.Mock;
 
@@ -113,5 +115,21 @@ describe("PATCH /api/household/member — denied household raise after commit", 
         expect(raise).toHaveBeenCalledWith({ householdId: HOUSEHOLD, personId: OTHER, what: "household lead promotion refused" });
         expect(logger.error).not.toHaveBeenCalled();
         expect(logBackendError).not.toHaveBeenCalled();
+    });
+});
+
+describe("PATCH /api/household/member — youth promotion", () => {
+    it("saves the edit and returns the youth refusal instead of a 500", async () => {
+        addHouseholdLead.mockRejectedValue(new HouseholdLeadYouthError(HOUSEHOLD, OTHER));
+
+        const res = await patchPromotion();
+
+        expect(res.status).toBe(200);
+        const body = await res.json();
+        expect(body.message).toBe("Household member updated, but not added as a lead.");
+        expect(body.leadRejection).toBe("A youth cannot be a household lead.");
+        expect(tx.person.update).toHaveBeenCalled();
+        expect(raise).not.toHaveBeenCalled();
+        expect(logger.error).not.toHaveBeenCalled();
     });
 });
