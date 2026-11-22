@@ -41,6 +41,7 @@ beforeEach(() => {
     mapping.problemNotices.mockResolvedValue([]);
     prisma.boardSettings.findUnique = findSettings;
     prisma.integrationErrorLog.count = countEmailFailures;
+    prisma.orgMembershipProcess.findMany = jest.fn().mockResolvedValue([]);
     countEmailFailures.mockResolvedValue(0);
     findSettings.mockResolvedValue({ alertEmailAddress: "alerts@example.org", boardEmailAddress: "board@example.org" });
     jest.mocked(getCronJobStatuses).mockResolvedValue([{ job: "nightly", lastSuccessAt: hoursAgo(1), stale: false }]);

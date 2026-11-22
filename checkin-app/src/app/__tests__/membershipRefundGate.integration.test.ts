@@ -192,19 +192,17 @@ describe('a refunded order never activates', () => {
             const unpaid = await makeApplicant({ status: 'PENDING_PAYMENT', bgCleared: true });
             const paid = await makeApplicant({ status: 'PENDING_BG_CLEARANCE', paid: true, shopifyOrderId: oid });
             shopifyAnswers(() => new Response('down', { status: 503 }));
-            const logged = jest.spyOn(console, 'error').mockImplementation();
 
             await expect(activateByProcessId(unpaid.processId, oid, { appliesToYear: 2026 })).rejects.toThrow();
-            // The reviewers' decisions are about the person and save; the household's settle fails and is retried later.
+            // The reviewers' decisions are about the person and save; the household's settle fails and becomes a stuck item.
             await attest(revA, paid.reviewId, { result: 'APPROVE' });
             await attest(revB, paid.reviewId, { result: 'APPROVE' });
-            expect(logged).toHaveBeenCalled();
-            logged.mockRestore();
 
             expect((await processOf(unpaid.processId))?.status).toBe('PENDING_PAYMENT');
             const app = await processOf(paid.processId);
             expect(app?.status).toBe('PENDING_BG_CLEARANCE');
             expect(app?.bgClearedAt).toBeNull();
+            expect(app?.bgSettleFailedAt).not.toBeNull();
             expect(await membershipStatusOf(paid.orgMembershipId)).toBe('NONE');
         });
 

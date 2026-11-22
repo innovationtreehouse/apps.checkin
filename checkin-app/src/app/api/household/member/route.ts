@@ -26,6 +26,7 @@ import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
 import { personActor } from "@/lib/auditActor";
 import { notifyBoardOfYouthLeads } from "@/lib/membership/boardAlerts";
 import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
+import { settleAfterEvent } from "@/lib/membership/settleHouseholdBg";
 
 class BecameTrustedError extends Error {}
 
@@ -132,7 +133,7 @@ export const PATCH = withAuth(
                 return apiError(await designatedEmailRefusalForBoard(), 400);
             }
 
-            const { updatedHouseholdMember, leadRejection, deniedLead, warning } = await prisma.$transaction(async (tx) => {
+            const { updatedHouseholdMember, leadRejection, deniedLead, warning, promoted } = await prisma.$transaction(async (tx) => {
                 await lockLiveHouseholds(tx, [householdId]);
                 if (email && !holdsGrant && email.toLowerCase() !== targetHouseholdMember.email?.toLowerCase()) {
                     await removeAliasesForSignInEmail(tx, email, personActor(userId), "household_card_edit");
@@ -162,6 +163,7 @@ export const PATCH = withAuth(
                 // details were saved even though they weren't made a lead.
                 let leadRejection: string | null = null;
                 let deniedLead: HouseholdLeadDeniedError | null = null;
+                let promoted = false;
 
                 if (isLead !== undefined && participantId !== userId) {
                     const currentTarget = await tx.person.findUnique({
@@ -172,7 +174,7 @@ export const PATCH = withAuth(
 
                     if (isLead && !currentLead) {
                         try {
-                            await addHouseholdLead(tx, householdId, participantId);
+                            promoted = (await addHouseholdLead(tx, householdId, participantId)).created;
                             await tx.auditLog.create({
                                 data: {
                                     actorId: userId,
@@ -225,10 +227,12 @@ export const PATCH = withAuth(
                 // emergency contact (direction B): re-evaluate and warn if so.
                 const warning = await reconcileAndWarn(tx, householdId);
 
-                return { updatedHouseholdMember, leadRejection, deniedLead, warning };
+                return { updatedHouseholdMember, leadRejection, deniedLead, warning, promoted };
             });
             invalidateAttendanceCache();
             if (dob !== undefined) await notifyBoardOfYouthLeads([targetHouseholdMember]);
+            // A lead who already holds a current check can qualify the household's waiting application.
+            if (promoted) await settleAfterEvent(householdId, "lead promotion", {}, { personId: participantId });
             if (deniedLead) {
                 const ref = { householdId: deniedLead.householdId, personId: deniedLead.personId };
                 try {

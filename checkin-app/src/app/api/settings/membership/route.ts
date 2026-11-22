@@ -8,6 +8,7 @@ import { isLibraryKey, type LibraryKey } from "@/lib/libraryRelease";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
 import { variantSlotYears } from "@/lib/programYear";
 import { closeProgramStore, openProgramStore, storeSwitchRefusalMessage } from "@/lib/programs/storeSwitch";
+import { settleApplicationsAwaitingCheck } from "@/lib/membership/settleHouseholdBg";
 
 export const dynamic = "force-dynamic";
 
@@ -142,6 +143,7 @@ export const PUT = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
     }
 
     const save = prisma.$transaction(async (tx) => {
+        const before = await tx.boardSettings.findUnique({ where: { id: 1 }, select: { bgRecheckMonths: true, orgMembershipYearBoundary: true } });
         await tx.boardSettings.upsert({
             where: { id: 1 },
             create: { ...DEFAULTS, ...data },
@@ -170,11 +172,15 @@ export const PUT = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
                 })),
             },
         });
-        return tx.boardSettings.findUniqueOrThrow({ where: { id: 1 } });
+        const settings = await tx.boardSettings.findUniqueOrThrow({ where: { id: 1 } });
+        return { settings, checkYardstickChanged: before?.bgRecheckMonths !== settings.bgRecheckMonths || before?.orgMembershipYearBoundary?.getTime() !== settings.orgMembershipYearBoundary?.getTime() };
     });
 
     try {
-        return NextResponse.json({ settings: await save });
+        const { settings, checkYardstickChanged } = await save;
+        // The recheck window and the year boundary decide whose check is current, so every waiting application is settled again.
+        if (checkYardstickChanged) await settleApplicationsAwaitingCheck("a Board settings change");
+        return NextResponse.json({ settings });
     } catch (err) {
         if (isPrismaError(err, "P2002")) return apiError("Another membership year already holds that variant", 409);
         throw err;

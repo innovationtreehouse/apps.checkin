@@ -1,3 +1,4 @@
+import { ServiceError, type StuckItem } from "@checkin/component-kit";
 import type { OrgMembershipProcessStatus, Prisma } from "@/generated/prisma/client";
 import prisma from "@/lib/prisma";
 import type { DbClient, TxClient } from "@/lib/db-client";
@@ -5,7 +6,7 @@ import { personActor, recordAudit, systemActor } from "@/lib/auditActor";
 import { logBackendError } from "@/lib/logger";
 import { isOrderReversed } from "@/lib/finance/reconcile/exceptions";
 import { recordUnreportedReversalOnProcess } from "@/lib/finance/reconcile/liveOrder";
-import { notifyBoardPaidReject } from "@/lib/membership/boardAlerts";
+import { notifyBoardPaidReject, notifyBoardSettleStuck } from "@/lib/membership/boardAlerts";
 import { checkValidForApplication, householdCheckStandings, householdCheckStarted, householdQualifies, jsonField, legacyHouseholdCheckStarted, reviewHoldsRejection } from "@/lib/membership/checkStanding";
 import { advanceExternalIfComplete } from "@/lib/membership/external";
 import { lockAndFindDeniedHousehold, setHouseholdStatus } from "@/lib/membership/householdStatus";
@@ -47,15 +48,17 @@ import { refuseSelfGrant, type GrantSubject } from "@/lib/membership/selfGrantGu
  *
  * `reviewJustCleared` picks the payment-open email: a review completed, or a check
  * the household already held was recognised. `trigger` names what prompted the
- * settle (a person merge, say) on every audit row it writes.
+ * settle (a person merge, say) on every audit row it writes. A settle that succeeds
+ * clears the application's stuck settle (`settleAfterEvent`).
  */
-export async function settleHouseholdBg(householdId: number, opts: { reviewJustCleared?: boolean; trigger?: SettleTrigger } = {}): Promise<SettleStep[]> {
+export async function settleHouseholdBg(householdId: number, opts: SettleOptions = {}): Promise<SettleStep[]> {
     const app = await prisma.orgMembershipProcess.findFirst({
-        where: { orgMembership: { householdId }, kind: { in: ["INITIAL", "RENEWAL"] }, ...openProcess.where },
+        where: openApplicationOf(householdId),
         orderBy: { id: "desc" },
-        select: { id: true, status: true, appliesToYear: true, createdAt: true },
+        select: { id: true, status: true, appliesToYear: true, createdAt: true, bgSettleFailedAt: true },
     });
     if (!app) return [];
+    const failuresBefore = settleFailures;
     if (CONVERGES.includes(app.status)) await recordUnreportedReversalOnProcess(app.id);
     const threshold = await checkValidForApplication(app);
 
@@ -68,18 +71,105 @@ export async function settleHouseholdBg(householdId: number, opts: { reviewJustC
 
     if (result.steps.includes("opened")) await notifyReviewers();
     if (result.steps.includes("paidReject")) await notifyBoardPaidReject(app.id);
-    if (result.advanceExternal) await advanceExternalIfComplete(app.id);
+    // A stuck application may have been stamped before its advance failed, so its settle runs the advance again.
+    if (result.advanceExternal || (app.bgSettleFailedAt && app.status === "PENDING_EXTERNAL_ACTION")) await advanceExternalIfComplete(app.id);
     if (result.clearance) {
         await notifyClearanceOutcome(result.clearance, opts.reviewJustCleared ? undefined : { paymentOpenNotice: notifyPaymentOpenOnExistingCheck });
     }
+    // A nested settle (a paid application's advance) records its own failure; that keeps the mark.
+    if (app.bgSettleFailedAt && settleFailures === failuresBefore) await prisma.orgMembershipProcess.update({ where: { id: app.id }, data: { bgSettleFailedAt: null, bgSettleError: null } });
     return result.steps;
 }
 
+type SettleOptions = { reviewJustCleared?: boolean; trigger?: SettleTrigger };
+
+const openApplicationOf = (householdId: number) => ({ orgMembership: { householdId }, kind: { in: ["INITIAL" as const, "RENEWAL" as const] }, ...openProcess.where });
+
 /**
- * Settles every household whose open application is waiting on its check. Each
- * household is settled on its own; a failure is logged and the rest carry on.
+ * Settles a household after an event that has already committed, so it never throws. A failure
+ * leaves the household's open application in its step as a stuck settle, listed on the Problems
+ * list with a Retry, until a settle succeeds; the Board is emailed when the application first
+ * sticks, not on each later failure.
  */
-export async function settleApplicationsAwaitingCheck(): Promise<{ households: number; opened: number; failed: number }> {
+export async function settleAfterEvent(householdId: number, event: string, opts: SettleOptions = {}, context: Record<string, unknown> = {}): Promise<SettleStep[]> {
+    try {
+        return await settleHouseholdBg(householdId, opts);
+    } catch (error) {
+        await settleFailed(householdId, event, error, context);
+        return [];
+    }
+}
+
+async function settleFailed(householdId: number, event: string, error: unknown, context: Record<string, unknown>): Promise<void> {
+    await logBackendError(error, `household background-check settle after ${event}`, { householdId, ...context });
+    try {
+        await recordStuckSettle(householdId, error);
+    } catch (recordError) {
+        await logBackendError(recordError, "recording a stuck household background-check settle", { householdId });
+    }
+}
+
+const STUCK_STEP = "background-check settle";
+// ponytail: process-wide count, so a failure elsewhere can only keep a mark until the next settle, never clear one.
+let settleFailures = 0;
+const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error)).slice(0, 1000);
+
+async function recordStuckSettle(householdId: number, error: unknown): Promise<void> {
+    settleFailures++;
+    const app = await prisma.orgMembershipProcess.findFirst({ where: openApplicationOf(householdId), orderBy: { id: "desc" }, select: { id: true } });
+    if (!app) return;
+    const first = await prisma.orgMembershipProcess.updateMany({ where: { id: app.id, bgSettleFailedAt: null }, data: { bgSettleFailedAt: new Date(), bgSettleError: errorText(error) } });
+    if (first.count === 0) {
+        await prisma.orgMembershipProcess.update({ where: { id: app.id }, data: { bgSettleError: errorText(error) } });
+        return;
+    }
+    await notifyBoardSettleStuck(app.id);
+}
+
+/** Open applications whose settle failed after its event, each named by its application id and timed by its first failure. */
+export async function stuckSettles(): Promise<StuckItem[]> {
+    const apps = await prisma.orgMembershipProcess.findMany({
+        where: { kind: { in: ["INITIAL", "RENEWAL"] }, bgSettleFailedAt: { not: null }, ...openProcess.where },
+        select: { id: true, bgSettleFailedAt: true, orgMembership: { select: { householdId: true } } },
+    });
+    return apps.flatMap((a) => (a.bgSettleFailedAt ? [{
+        id: String(a.id),
+        step: STUCK_STEP,
+        href: a.orgMembership ? `/membership-ops/households/${a.orgMembership.householdId}` : null,
+        failedAt: a.bgSettleFailedAt,
+    }] : []));
+}
+
+/**
+ * Settles a stuck application's household once. Success clears the item; a failure keeps it
+ * stuck with its first failure time, records the new error, sends no email and answers 409 with
+ * no error text. An item that is not stuck answers 404.
+ */
+export async function retryStuckSettle({ id, step }: { id: string; step: string }): Promise<void> {
+    if (step !== STUCK_STEP || !/^\d+$/.test(id)) throw new ServiceError(404, `No step ${step} in membership`);
+    const app = await prisma.orgMembershipProcess.findFirst({
+        where: { id: Number(id), kind: { in: ["INITIAL", "RENEWAL"] }, bgSettleFailedAt: { not: null }, ...openProcess.where },
+        select: { orgMembership: { select: { householdId: true } } },
+    });
+    const householdId = app?.orgMembership?.householdId;
+    if (householdId === undefined) throw new ServiceError(404, "No stuck background-check settle for that application");
+    try {
+        await settleHouseholdBg(householdId);
+    } catch (error) {
+        await logBackendError(error, "household background-check settle retry", { householdId, processId: Number(id) });
+        await prisma.orgMembershipProcess.updateMany({ where: { id: Number(id), bgSettleFailedAt: { not: null } }, data: { bgSettleError: errorText(error) } });
+        throw new ServiceError(409, "The settle failed again");
+    }
+    const after = await prisma.orgMembershipProcess.findUnique({ where: { id: Number(id) }, select: { bgSettleFailedAt: true } });
+    if (after?.bgSettleFailedAt) throw new ServiceError(409, "The settle failed again");
+}
+
+/**
+ * Settles every household whose open application is waiting on its check, after `event`
+ * has committed. Each household is settled on its own; a failure becomes a stuck settle
+ * (`settleAfterEvent`) and the rest carry on.
+ */
+export async function settleApplicationsAwaitingCheck(event = "a household background-check settle sweep"): Promise<{ households: number; opened: number; failed: number }> {
     const apps = await prisma.orgMembershipProcess.findMany({
         where: { kind: { in: ["INITIAL", "RENEWAL"] }, bgClearedAt: null, ...openProcess.where },
         select: { orgMembership: { select: { householdId: true } } },
@@ -92,7 +182,7 @@ export async function settleApplicationsAwaitingCheck(): Promise<{ households: n
             if ((await settleHouseholdBg(householdId)).includes("opened")) opened++;
         } catch (error) {
             failed++;
-            await logBackendError(error, "household background-check settle sweep", { householdId });
+            await settleFailed(householdId, event, error, {});
         }
     }
     return { households: households.length, opened, failed };

@@ -52,6 +52,11 @@ const SOURCES: { library: string; env?: string; read: () => Promise<StuckItem[]>
         retry: async (item) => (await import("@checkin/bulk-donation")).retryStuckItem(item),
     },
     {
+        library: "membership",
+        read: async () => (await import("@/lib/membership/settleHouseholdBg")).stuckSettles(),
+        retry: async (item) => (await import("@/lib/membership/settleHouseholdBg")).retryStuckSettle(item),
+    },
+    {
         library: "local inventory",
         env: "LOCAL_INVENTORY_DATABASE_URL",
         read: async () => (await import("@checkin/local-inventory")).stuckItems(),
@@ -113,13 +118,13 @@ export async function retryProblem({ library, step, id }: { library: string; ste
 }
 
 /**
- * Every stuck item across the receipt flow, oldest first, and the count lines (`notices`): the
+ * Every stuck item across the receipt flow and membership, oldest first, and the count lines (`notices`): the
  * libraries' own and failed email sends. A source whose read fails is named in `unread`.
  */
 export async function getProblems(now = new Date()): Promise<{ items: Problem[]; unread: string[]; notices: Notice[] }> {
-    const wired = SOURCES.filter(isWired);
+    const sources = SOURCES.filter(isWired);
     const results = await Promise.allSettled([
-        ...wired.map(async (s) => ({
+        ...sources.map(async (s) => ({
             items: await s.read(),
             notices: s.notices ? await s.notices() : [],
         })),
@@ -129,7 +134,7 @@ export async function getProblems(now = new Date()): Promise<{ items: Problem[];
     const unread: string[] = [];
     const notices: Notice[] = [];
     results.forEach((result, i) => {
-        const library = wired[i]?.library ?? "email";
+        const library = sources[i]?.library ?? "email";
         if (result.status === "fulfilled") {
             items.push(...result.value.items.map((item) => ({ ...item, library })));
             notices.push(...result.value.notices);

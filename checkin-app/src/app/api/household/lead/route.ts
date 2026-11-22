@@ -9,6 +9,7 @@ import { findSelfGrantRefusal, recordSelfGrantRefusal, type GrantAttempt, type S
 import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { ArchivedHouseholdError } from "@/lib/household/archiveGuard";
 import { personActor, recordAudit } from "@/lib/auditActor";
+import { settleAfterEvent } from "@/lib/membership/settleHouseholdBg";
 
 /** The actor shares the target's household, found under its lock; recorded after the rollback. */
 class SelfGrantLeadError extends Error {
@@ -87,6 +88,8 @@ export const POST = withAuth(
             if (!created) {
                 return NextResponse.json({ message: "Member is already a lead" }, { status: 200 });
             }
+            // A lead who already holds a current check can qualify the household's waiting application.
+            await settleAfterEvent(targetHouseholdId, "lead promotion", {}, { personId: participantId });
 
             return NextResponse.json({ lead: newLead, message: "Member promoted to lead successfully." }, { status: 200 });
 

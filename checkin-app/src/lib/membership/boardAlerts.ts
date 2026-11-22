@@ -26,6 +26,17 @@ export async function notifyBoardPaidReject(processId: number): Promise<void> {
 }
 
 /**
+ * Email board members that a household's background-check settle failed after its event and the
+ * application is now stuck, waiting on a Retry from System Status. Ids only. Never throws.
+ */
+export async function notifyBoardSettleStuck(processId: number): Promise<void> {
+    await emailBoardMembers("board.bgSettleStuck", {
+        processId: String(processId),
+        actionLink: `${config.baseUrl()}/system-status/health`,
+    }, "Stuck-settle board ping failed:");
+}
+
+/**
  * Email board members that a check review was rejected where no paid application
  * was blocked: an ACTIVE household, one with no open application, or one
  * whose open application is unpaid. Nothing changes on the membership; the Board decides.

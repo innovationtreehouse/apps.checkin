@@ -3,7 +3,7 @@ import prisma from "@/lib/prisma";
 import { ServiceError } from "@checkin/component-kit";
 import { RENEWAL_ERROR_STATUS } from "@/lib/domainErrorResponse";
 import { isPrismaError } from "@/lib/prismaUniqueViolation";
-import { logger, logBackendError } from "@/lib/logger";
+import { logger } from "@/lib/logger";
 import { IN_FLIGHT_INITIAL, IN_FLIGHT_RENEWAL, asHouseholdProcess, handledThisCycleWhere, fromWhere } from "@/lib/membership/lifecycle";
 import { raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { personActor, systemActor } from "@/lib/auditActor";
@@ -244,12 +244,8 @@ export async function beginRenewal(processId: number, actorId: number) {
     }
     // Lazy, like external.ts below: settle pulls in the review and payment modules.
     if (outcome === "moved") {
-        const { settleHouseholdBg } = await import("@/lib/membership/settleHouseholdBg");
-        try {
-            await settleHouseholdBg(membership.householdId);
-        } catch (error) {
-            await logBackendError(error, "household background-check settle after renewal", { householdId: membership.householdId, processId });
-        }
+        const { settleAfterEvent } = await import("@/lib/membership/settleHouseholdBg");
+        await settleAfterEvent(membership.householdId, "renewal", {}, { processId });
     }
 
     // The gate can already be met on arrival (bgClearedAt stamped by settle, a board

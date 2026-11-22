@@ -12,7 +12,7 @@ import { householdApplicationOpenOrBlockedWhere } from "@/lib/membership/renewal
 import { ensureHouseholdMembership, lockAndFindDeniedHousehold, raiseDeniedHouseholdActivity } from "@/lib/membership/householdStatus";
 import { fromWhere, openProcess } from "@/lib/membership/lifecycle";
 import { findOpenPersonAgreement } from "@/lib/membership/personAgreementTriggers";
-import { settleHouseholdBg } from "@/lib/membership/settleHouseholdBg";
+import { settleAfterEvent } from "@/lib/membership/settleHouseholdBg";
 import { addHouseholdLead, HouseholdLeadLimitError, HouseholdLeadDeniedError, HouseholdLeadYouthError, MAX_HOUSEHOLD_LEADS } from "@/lib/household/leads";
 import { upsertPrimaryContact, reconcileHouseholdConflicts } from "@/lib/emergencyContacts/service";
 import { normalizeAddressInput, pickAddress, type StructuredAddress } from "@/lib/address";
@@ -594,11 +594,7 @@ export async function submitIntake(userId: number) {
 
     // A household that already qualifies on its people's checks is stamped cleared here,
     // so the applicant only signs and pays; one with a disputed adult is blocked.
-    try {
-        await settleHouseholdBg(household.id);
-    } catch (error) {
-        await logBackendError(error, "household background-check settle after intake", { householdId: household.id, processId: process.id });
-    }
+    await settleAfterEvent(household.id, "intake", {}, { processId: process.id });
 
     // The external actions (contract sign, a lead's check started) can already be
     // satisfied the moment we land at PENDING_EXTERNAL_ACTION: settle stamps

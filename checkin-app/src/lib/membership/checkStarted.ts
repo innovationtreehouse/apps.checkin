@@ -1,5 +1,4 @@
 import prisma from "@/lib/prisma";
-import { logBackendError } from "@/lib/logger";
 import { personActor } from "@/lib/auditActor";
 import { calculateAge } from "@/lib/time";
 import { backgroundCheckProvider } from "@/lib/membership/background-check/manual-adapter";
@@ -7,7 +6,7 @@ import { checkValidForApplication } from "@/lib/membership/checkStanding";
 import { advanceExternalIfComplete, ExternalError } from "@/lib/membership/external";
 import { fromWhere, openProcess, personBgOpen } from "@/lib/membership/lifecycle";
 import { notifyReviewers } from "@/lib/membership/review";
-import { settleHouseholdBg } from "@/lib/membership/settleHouseholdBg";
+import { settleAfterEvent } from "@/lib/membership/settleHouseholdBg";
 
 /**
  * "Check started": someone marks that a person's background check was started in
@@ -111,11 +110,7 @@ export async function markCheckStarted(subjectPersonId: number, actorId: number)
 
     if (outcome.stamped) await notifyReviewers();
     if (outcome.settles && subject.householdId !== null) {
-        try {
-            await settleHouseholdBg(subject.householdId);
-        } catch (error) {
-            await logBackendError(error, "household background-check settle after check started", { householdId: subject.householdId, processId: outcome.processId });
-        }
+        await settleAfterEvent(subject.householdId, "check started", {}, { processId: outcome.processId });
         const app = await prisma.orgMembershipProcess.findFirst({
             where: { orgMembership: { householdId: subject.householdId }, kind: { in: ["INITIAL", "RENEWAL"] }, ...openProcess.where },
             orderBy: { id: "desc" },

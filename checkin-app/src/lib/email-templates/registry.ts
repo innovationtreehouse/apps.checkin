@@ -143,6 +143,12 @@ export const REGISTRY = {
         defaultSubject: "Membership: a paid application was blocked at background check",
         defaultBody: "A household that already paid did not pass background-check review (application #{{processId}}). The membership has not been activated and a refund may be needed — please review and contact the household. {{actionLink}}",
     },
+    "board.bgSettleStuck": {
+        allowedTokens: { processId: text, actionLink: link("Open System Status") },
+        sampleCtx: { processId: "318", actionLink: SAMPLE_URL },
+        defaultSubject: "Membership: an application is stuck at its background-check step",
+        defaultBody: "The background-check step for application #{{processId}} failed after the household's last change, so the application is waiting where it was. It is on the System Status Problems list; a sysadmin or Board member can press Retry there. {{actionLink}}",
+    },
     "board.checkRejected": {
         allowedTokens: { personName: text, householdName: text, reviewId: text, actionLink: link("Open applications") },
         sampleCtx: { personName: "Alex Rivera", householdName: "Rivera", reviewId: "412", actionLink: SAMPLE_URL },

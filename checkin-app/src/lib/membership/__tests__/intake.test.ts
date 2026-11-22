@@ -66,7 +66,7 @@ jest.mock('@/lib/household/leads', () => {
 jest.mock('@/lib/membership/renewal', () => ({
     householdApplicationOpenOrBlockedWhere: { OR: [] },
 }));
-jest.mock('@/lib/membership/settleHouseholdBg', () => ({ settleHouseholdBg: jest.fn() }));
+jest.mock('@/lib/membership/settleHouseholdBg', () => ({ settleAfterEvent: jest.fn() }));
 jest.mock('@/lib/membership/householdStatus', () => ({
     ensureHouseholdMembership: jest.fn(),
     lockAndFindDeniedHousehold: jest.fn(),
@@ -85,7 +85,7 @@ const { upsertPrimaryContact, reconcileHouseholdConflicts } = require('@/lib/eme
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { addHouseholdLead, HouseholdLeadLimitError, HouseholdLeadDeniedError, HouseholdLeadYouthError, MAX_HOUSEHOLD_LEADS } = require('@/lib/household/leads');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { settleHouseholdBg } = require('@/lib/membership/settleHouseholdBg');
+const { settleAfterEvent } = require('@/lib/membership/settleHouseholdBg');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { applyVolunteerFamilyStatus } = require('@/lib/membership/review');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -990,17 +990,11 @@ describe('submitIntake', () => {
             data: expect.not.objectContaining({ bgClearedAt: expect.anything() }),
         });
         // Settle stamps a qualifying household, and blocks one whose adult is disputed.
-        expect(settleHouseholdBg).toHaveBeenCalledWith(7);
-        expect(settleHouseholdBg.mock.invocationCallOrder[0]).toBeLessThan(advanceExternalIfComplete.mock.invocationCallOrder[0]);
+        expect(settleAfterEvent).toHaveBeenCalledWith(7, expect.any(String), {}, expect.anything());
+        expect(settleAfterEvent.mock.invocationCallOrder[0]).toBeLessThan(advanceExternalIfComplete.mock.invocationCallOrder[0]);
         expect(applyVolunteerFamilyStatus).not.toHaveBeenCalled();
     });
 
-    it('a failed settle is logged and the committed intake still returns', async () => {
-        settleHouseholdBg.mockRejectedValueOnce(new Error('settle failed'));
-
-        await expect(submitIntake(1)).resolves.toEqual({ id: 11, status: 'PENDING_EXTERNAL_ACTION' });
-        expect(logBackendError).toHaveBeenCalledWith(expect.any(Error), expect.any(String), { householdId: 7, processId: 11 });
-    });
 
     it('re-runs the external advance after landing at PENDING_EXTERNAL_ACTION and returns its result', async () => {
         // Board pre-marked contract + BG consent on the INTAKE row, so the gate is
