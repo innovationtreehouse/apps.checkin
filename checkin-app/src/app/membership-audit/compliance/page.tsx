@@ -277,7 +277,7 @@ export default function CompliancePage() {
 
       <PersonSection
         title="Background check needed"
-        description="People 18 or older with no current background check: anyone attached to a program, plus volunteers, program and run leaders, bucket owners and treasurers, and anyone holding a role. A household lead is listed only for one of these: the household's own check is shown above. Warn-only — nothing is blocked. Once an external check exists, submit it below for two-reviewer approval."
+        description="People 18 or older in a program or holding a position whose check is not valid for the year they serve. Household checks are shown above. Warn-only — nothing is blocked. Once an external check exists, submit it below for two-reviewer approval."
         color="orange"
         people={peopleNeedingBgCheck}
         renderAction={(p) =>

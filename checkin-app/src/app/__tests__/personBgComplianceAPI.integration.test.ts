@@ -11,7 +11,7 @@
  */
 
 import { GET } from '@/app/api/membership-audit/compliance/route';
-import { nextBoundary } from '@/lib/membership/renewal';
+import { liveMembershipYear, nextBoundary } from '@/lib/membership/renewal';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
 
@@ -67,6 +67,7 @@ describe('GET /api/membership-audit/compliance — person BG buckets', () => {
     let roleLeadId: number;
     let ownerId: number;
     let treasurerId: number;
+    let keyholderId: number;
     let savedSettings: { bgRecheckMonths: number; orgMembershipYearBoundary: Date | null } | null = null;
 
     const cleanup = async () => {
@@ -136,6 +137,12 @@ describe('GET /api/membership-audit/compliance — person BG buckets', () => {
         treasurerId = (await makePerson('treasurer', { dateOfBirth: new Date('1978-01-01') })).id;
         const bucket = await prisma.budgetOwner.create({ data: { name: `${TAG} bucket`, ownerId } });
         await prisma.budgetOwnerTreasurer.create({ data: { budgetOwnerId: bucket.id, personId: treasurerId } });
+
+        // Checked on September 1 before the live year opened (2025-09-01 for the
+        // 2026-2027 year): valid at that year's start, stale at the next boundary.
+        const liveYear = liveMembershipYear(BOUNDARY_SEED, new Date())!;
+        keyholderId = (await makePerson('keyholder', { dateOfBirth: new Date('1975-01-01'), lastBackgroundCheck: new Date(Date.UTC(liveYear - 1, 8, 1)) })).id;
+        await prisma.personRole.create({ data: { personId: keyholderId, role: 'KEYHOLDER' } });
     });
 
     afterAll(async () => {
@@ -188,5 +195,13 @@ describe('GET /api/membership-audit/compliance — person BG buckets', () => {
         expect(needIds.has(roleLeadId)).toBe(true);
         expect(needIds.has(ownerId)).toBe(true);
         expect(needIds.has(treasurerId)).toBe(true);
+    });
+
+    it('judges a role holder at the start of the year they serve, agreeing with the positions list', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId, isBoardMember: true } });
+
+        const { peopleNeedingBgCheck, positionHolders } = await (await get()).json();
+        expect(peopleNeedingBgCheck.some((p: { personId: number }) => p.personId === keyholderId)).toBe(false);
+        expect(positionHolders.find((p: { personId: number }) => p.personId === keyholderId)?.standing).toBe('CURRENT');
     });
 });
