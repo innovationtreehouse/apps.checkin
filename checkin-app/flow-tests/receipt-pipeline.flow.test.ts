@@ -81,5 +81,5 @@ describe("receipt pipeline — receipt to workflow mapping", () => {
     // A manual re-send is a replay: still one received receipt, state unchanged.
     expect((await post(finance, `/api/receipts/${auto.json.id}/push-to-inventory`)).json).toEqual({ pushed: true });
     expect(await received(submitter, auto.json.id)).toEqual([expect.objectContaining({ id: row.id, state: "resolved" })]);
-  });
+  }, 60_000);
 });

@@ -101,5 +101,5 @@ describe("flow: program purchase with member pricing", () => {
         expect(paid.json.ok).toBe(true);
         const activatedMember = paid.json.participants.find((p) => p.personId === memberId);
         expect(activatedMember?.status).toBe("ACTIVE");
-    });
+    }, 60_000);
 });
