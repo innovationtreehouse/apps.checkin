@@ -21,7 +21,7 @@ const ACK_TABLE = "BG_CHECK_ACKNOWLEDGED";
 const EMAIL_TABLE = "BG_CHECK_EMAIL";
 export const CHECK_EMAIL_STEP = "check email";
 
-const ROLE_LABELS = {
+const ROLE_POSITION_LABELS = {
     SYSADMIN: "Sysadmin",
     BOARD: "Board member",
     KEYHOLDER: "Keyholder",
@@ -34,7 +34,7 @@ const ROLE_LABELS = {
 
 /** Every position that needs a current check, by the name the audit row and the email use. */
 export const POSITION_LABELS = {
-    ...ROLE_LABELS,
+    ...ROLE_POSITION_LABELS,
     BUDGET_OWNER: "Budget bucket owner",
     BUDGET_TREASURER: "Budget bucket treasurer",
 } as const;
