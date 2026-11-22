@@ -116,16 +116,18 @@ export default function AdminVisitsPage() {
     ready ? (closedOut ? '/api/facility/visits?closedOut=true' : '/api/facility/visits') : null,
   );
   const [showRemoved, setShowRemoved] = useState(false);
+  // No standing close ends a removed visit, so the closed-out view never lists one.
+  const listRemoved = showRemoved && !closedOut;
   const { data: removedData, error: removedError, reload: reloadRemoved } = useLoad<RemovedAnswer>(
-    ready && showRemoved ? '/api/facility/visits?removed=true' : null,
+    ready && listRemoved ? '/api/facility/visits?removed=true' : null,
   );
   const removerNames = useMemo(
     () => new Map((removedData?.visits.Person ?? []).map((p) => [p.id, p.name])),
     [removedData],
   );
   const visits = useMemo(
-    () => [...(data?.visits ?? []), ...(showRemoved ? removedData?.visits.Visit ?? [] : [])],
-    [data, removedData, showRemoved],
+    () => [...(data?.visits ?? []), ...(listRemoved ? removedData?.visits.Visit ?? [] : [])],
+    [data, removedData, listRemoved],
   );
   const { data: peopleAnswer, error: peopleError, reload: reloadPeople } = useLoad<{ people?: { id: number; name: string | null; email: string }[] }>(
     addOpened ? '/api/people/search' : null,
@@ -292,13 +294,14 @@ export default function AdminVisitsPage() {
         <Switch
           label="Show removed"
           checked={showRemoved}
+          disabled={closedOut}
           onChange={(e) => setShowRemoved(e.currentTarget.checked)}
         />
         <Button size="xs" fz={15} onClick={openAddModal}>Add Visit</Button>
       </Group>
 
       {error && <LoadError what="the visits" message={error} onRetry={reload} />}
-      {removedError && <LoadError what="the removed visits" message={removedError} onRetry={reloadRemoved} />}
+      {listRemoved && removedError && <LoadError what="the removed visits" message={removedError} onRetry={reloadRemoved} />}
       {!data && !error && <Center py="xl"><Loader /></Center>}
 
       {data && <Table.ScrollContainer minWidth={800}>
@@ -311,7 +314,7 @@ export default function AdminVisitsPage() {
               <SortableTh sort={sort} onSort={toggleSort} k="arrivedAt" label="Arrived" />
               <SortableTh sort={sort} onSort={toggleSort} k="departedAt" label="Departed" />
               {closedOut && <Table.Th>Close</Table.Th>}
-              {showRemoved && <Table.Th>Removed</Table.Th>}
+              {listRemoved && <Table.Th>Removed</Table.Th>}
               <Table.Th>Actions</Table.Th>
             </Table.Tr>
           </Table.Thead>
@@ -345,7 +348,7 @@ export default function AdminVisitsPage() {
                       />
                     </Table.Td>
                     {closedOut && <Table.Td>#{v.facilityCloseId}</Table.Td>}
-                    {showRemoved && <Table.Td />}
+                    {listRemoved && <Table.Td />}
                     <Table.Td>
                       <Group gap="xs" wrap="nowrap">
                         <Button size="xs" fz={15} onClick={() => handleSaveEdit(v.id)}>Save</Button>
@@ -372,7 +375,7 @@ export default function AdminVisitsPage() {
                     {closedOut && (
                       <Table.Td>{v.facilityCloseId ? <>#{v.facilityCloseId} · {v.departedVia === 'AUTO_CLOSE' ? 'Nightly' : (v.facilityClose?.closedBy?.name ?? 'Closer deleted')}</> : null}</Table.Td>
                     )}
-                    {showRemoved && (
+                    {listRemoved && (
                       <Table.Td>
                         {v.deletedAt ? `${removerNames.get(v.deletedById ?? -1) ?? 'Unknown'} · ${formatDateTime(v.deletedAt)}` : null}
                       </Table.Td>
