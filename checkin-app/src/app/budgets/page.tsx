@@ -4,11 +4,13 @@ import { useState } from "react";
 import {
   Badge, Button, Card, Center, Checkbox, Group, Loader, Modal, Select, Stack, Table, Text, TextInput, Title,
 } from "@mantine/core";
-import { clearError, errorMessage, InactivePickWarning, LoadError, QuickBooksListsRefresh, showError, showSuccess } from "@checkin/component-ui";
+import { clearError, errorMessage, HttpError, InactivePickWarning, LoadError, QuickBooksListsRefresh, showError, showSuccess } from "@checkin/component-ui";
+import { modals } from "@mantine/modals";
 import { PageLoader } from "@/components/ui/PageLoader";
 import { useRequireRole } from "@/hooks/useRequireRole";
 import { api, useLoad } from "@/lib/api";
 import { FINANCE_ROLES } from "@/lib/nav/sections/finance";
+import { CHECK_ACKNOWLEDGEMENT_CODE } from "@/lib/membership/positionCheckCode";
 
 interface Bucket {
   id: number;
@@ -279,22 +281,36 @@ function ApproversModal({ bucket, canEdit, onClose }: {
   const [savingOwner, setSavingOwner] = useState(false);
   const [changing, setChanging] = useState(false);
 
-  const change = async (url: string, method: string, body?: unknown) => {
+  const change = async (url: string, method: string, body?: Record<string, unknown>, name?: string): Promise<void> => {
     setChanging(true);
     clearError("Approvers not changed");
     try {
       setAnswer(await write<Approver[]>(url, method, body));
       setPick(undefined);
     } catch (e) {
+      // Nothing is refused for a check that isn't current: the Board acknowledges it and the save goes through.
+      if (e instanceof HttpError && e.code === CHECK_ACKNOWLEDGEMENT_CODE && !body?.acknowledgeCheck) {
+        return new Promise<void>((resolve) => {
+          modals.openConfirmModal({
+            title: `${name ?? "This person"} isn't current on their background check`,
+            children: <Text size="sm">{e.message}</Text>,
+            labels: { confirm: "Got it", cancel: "Cancel" },
+            onConfirm: () => resolve(change(url, method, { ...body, acknowledgeCheck: true }, name)),
+            onCancel: () => resolve(),
+          });
+        });
+      }
       showError(errorMessage(e), { key: "Approvers not changed", title: "Approvers not changed" });
     } finally {
       setChanging(false);
     }
   };
 
+  const nameOf = (personId: string | null) => options.find((o) => o.value === personId)?.label;
+
   const saveOwner = async () => {
     setSavingOwner(true);
-    await change(`/api/budget-owners/${bucket.id}/owner`, "PUT", { personId: ownerPick ? Number(ownerPick) : null });
+    await change(`/api/budget-owners/${bucket.id}/owner`, "PUT", { personId: ownerPick ? Number(ownerPick) : null }, nameOf(ownerPick));
     setSavingOwner(false);
   };
 
@@ -364,7 +380,7 @@ function ApproversModal({ bucket, canEdit, onClose }: {
                 <Button
                   disabled={changing || !newTreasurer}
                   onClick={async () => {
-                    await change(`/api/budget-owners/${bucket.id}/treasurers/${newTreasurer}`, "PUT");
+                    await change(`/api/budget-owners/${bucket.id}/treasurers/${newTreasurer}`, "PUT", undefined, nameOf(newTreasurer));
                     setNewTreasurer(null);
                   }}
                 >

@@ -10,5 +10,6 @@ export const PUT = handler<{ id: string }>("PUT /api/budget-owners/[id]/owner", 
     if (personId !== null && (typeof personId !== "number" || !Number.isInteger(personId))) {
         throw badRequest("personId must be an integer or null");
     }
-    return { BudgetOwnerApprover: await setBucketOwner(auth.user.id, id, personId) };
+    const acknowledgeCheck = body?.acknowledgeCheck === true;
+    return { BudgetOwnerApprover: await setBucketOwner(auth.user.id, id, personId, acknowledgeCheck) };
 });

@@ -2,9 +2,12 @@ type Rtl = typeof import("@/test-helpers/rtl");
 jest.mock("next/navigation", () => jest.requireActual<Rtl>("@/test-helpers/rtl").navMock());
 jest.mock("next-auth/react", () => jest.requireActual<Rtl>("@/test-helpers/rtl").authMock());
 jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
+jest.mock("@mantine/modals", () => ({ modals: { openConfirmModal: jest.fn() } }));
 
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { notifications } from "@mantine/notifications";
+import { modals } from "@mantine/modals";
+import { CHECK_ACKNOWLEDGEMENT_CODE } from "@/lib/membership/positionCheckCode";
 import { renderWithProviders, setSession, resetRtl } from "@/test-helpers/rtl";
 import BudgetsPage from "../page";
 
@@ -65,6 +68,7 @@ beforeEach(() => {
   resetRtl();
   (notifications.show as jest.Mock).mockClear();
   (notifications.hide as jest.Mock).mockClear();
+  (modals.openConfirmModal as jest.Mock).mockReset();
   setSession({ id: 1, isFinance: true, isBoardMember: true });
 });
 
@@ -504,5 +508,85 @@ describe("budgets approvers owner", () => {
     answer(await withOwner());
     await waitFor(() => expect(within(dialog).getByRole("textbox", { name: "Owner" })).toBeEnabled());
     expect(within(dialog).getByRole("button", { name: "Remove" })).toBeEnabled();
+  });
+});
+
+describe("budgets approvers background check", () => {
+  const people = async () => jsonResponse(200, [{ id: 9, name: "Tess Treasurer" }, { id: 11, name: "Olive Owner" }]);
+  const writes = () => (global.fetch as jest.Mock).mock.calls.filter(([, init]) => init?.method);
+  const needsAck = () => jsonResponse(409, { error: "This person isn't current on their background check.", code: CHECK_ACKNOWLEDGEMENT_CODE });
+  const saved = async () => jsonResponse(200, [{ budgetOwnerId: 7, personId: 11, name: "Olive Owner", role: "OWNER" }]);
+  type ConfirmOpts = { title: string; labels: { confirm: string }; onConfirm: () => void; onCancel: () => void };
+  const confirmOpts = () => (modals.openConfirmModal as jest.Mock).mock.calls[0][0] as ConfirmOpts;
+
+  // The first write answers that the check isn't current; later ones save.
+  function needsAckThenSaves() {
+    let first = true;
+    mockServer(async () => {
+      if (first) { first = false; return needsAck(); }
+      return saved();
+    }, { approverOptions: people });
+  }
+
+  async function openApprovers() {
+    renderWithProviders(<BudgetsPage />);
+    fireEvent.click(await screen.findByRole("button", { name: "Approvers" }));
+    const dialog = await screen.findByRole("dialog");
+    await within(dialog).findByRole("textbox", { name: "Owner" });
+    return dialog;
+  }
+
+  async function saveOwner(name: string) {
+    const dialog = await openApprovers();
+    fireEvent.click(within(dialog).getByRole("textbox", { name: "Owner" }));
+    fireEvent.click(await screen.findByRole("option", { name }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    return dialog;
+  }
+
+  it("asks the Board to acknowledge an owner's check, then resends the save with the acknowledgement", async () => {
+    needsAckThenSaves();
+    await saveOwner("Olive Owner");
+
+    await waitFor(() => expect(modals.openConfirmModal).toHaveBeenCalledTimes(1));
+    expect(confirmOpts().title).toBe("Olive Owner isn't current on their background check");
+    expect(confirmOpts().labels.confirm).toBe("Got it");
+    expect(notifications.show).not.toHaveBeenCalledWith(expect.objectContaining({ color: "red" }));
+
+    await act(async () => confirmOpts().onConfirm());
+    await waitFor(() => expect(writes()).toHaveLength(2));
+    expect(writes()[1]).toEqual([
+      "/api/budget-owners/7/owner",
+      expect.objectContaining({ method: "PUT", body: JSON.stringify({ personId: 11, acknowledgeCheck: true }) }),
+    ]);
+  });
+
+  it("sends nothing more when the Board cancels", async () => {
+    needsAckThenSaves();
+    const dialog = await saveOwner("Olive Owner");
+
+    await waitFor(() => expect(modals.openConfirmModal).toHaveBeenCalledTimes(1));
+    await act(async () => confirmOpts().onCancel());
+    expect(writes()).toHaveLength(1);
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Save" })).toBeEnabled());
+  });
+
+  it("asks the Board to acknowledge a treasurer's check, then resends the add with the acknowledgement", async () => {
+    needsAckThenSaves();
+    const dialog = await openApprovers();
+    fireEvent.click(within(dialog).getByRole("textbox", { name: "Add treasurer" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Olive Owner" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
+
+    await waitFor(() => expect(modals.openConfirmModal).toHaveBeenCalledTimes(1));
+    expect(confirmOpts().title).toBe("Olive Owner isn't current on their background check");
+    expect(writes()[0]).toEqual(["/api/budget-owners/7/treasurers/11", expect.objectContaining({ method: "PUT", body: undefined })]);
+
+    await act(async () => confirmOpts().onConfirm());
+    await waitFor(() => expect(writes()).toHaveLength(2));
+    expect(writes()[1]).toEqual([
+      "/api/budget-owners/7/treasurers/11",
+      expect.objectContaining({ method: "PUT", body: JSON.stringify({ acknowledgeCheck: true }) }),
+    ]);
   });
 });
