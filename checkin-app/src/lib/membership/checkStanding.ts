@@ -1,6 +1,7 @@
 import type { Prisma } from "@/generated/prisma/client";
 import type { DbClient } from "@/lib/db-client";
 import prisma from "@/lib/prisma";
+import { householdLeadsWhere } from "@/lib/household/leads";
 import { personBgOpen, type ProcessStatus } from "@/lib/membership/lifecycle";
 import { bgThresholdForYear, liveMembershipYear } from "@/lib/membership/renewal";
 
@@ -194,7 +195,7 @@ export async function householdCheckStarted(db: DbClient, householdId: number, a
             kind: "PERSON_BG",
             ...personBgOpen.where,
             OR: [
-                { bgConsentAt: { not: null }, subjectPerson: { householdId, isHouseholdLead: true } },
+                { bgConsentAt: { not: null }, subjectPerson: householdLeadsWhere(householdId) },
                 { requestedForHouseholdId: householdId, subjectPersonId: null },
             ],
         },

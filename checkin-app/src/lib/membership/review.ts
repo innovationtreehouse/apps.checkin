@@ -17,6 +17,7 @@ import { type DbClient, type TxClient } from "@/lib/db-client";
 import { awaitingBgReview, fromWhere, personBgOpen } from "@/lib/membership/lifecycle";
 import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
 import { lockHouseholdRows } from "@/lib/household/archiveGuard";
+import { householdLeadsWhere } from "@/lib/household/leads";
 import { lockPersonRows, lockProcessRows } from "@/lib/lockOrder";
 import { SIGN_IN_VERIFIED_PERSON } from "@/lib/person/filters";
 import { householdCheckStarted, jsonField, reviewHoldsRejection } from "@/lib/membership/checkStanding";
@@ -149,7 +150,7 @@ export async function reviewHouseholds(db: DbClient, process: ReviewTarget): Pro
 
 /** The adults a consent review may name: the requested household's live leads. */
 async function liveHouseholdLeadIds(db: DbClient, householdId: number): Promise<number[]> {
-    const leads = await db.person.findMany({ where: { householdId, isHouseholdLead: true }, select: { id: true } });
+    const leads = await db.person.findMany({ where: householdLeadsWhere(householdId), select: { id: true } });
     return leads.map((l) => l.id);
 }
 
@@ -688,7 +689,7 @@ export function matchesVolunteerDesignation(parentEmails: string[], designationE
 export async function applyVolunteerFamilyStatus(db: DbClient, orgMembershipId: number, householdId: number, markedByReviewer: boolean) {
     let isVolunteerFamily = markedByReviewer;
     if (!isVolunteerFamily) {
-        const parents = await db.person.findMany({ where: { householdId, isHouseholdLead: true, email: { not: null }, ...SIGN_IN_VERIFIED_PERSON }, select: { email: true } });
+        const parents = await db.person.findMany({ where: { ...householdLeadsWhere(householdId), email: { not: null }, ...SIGN_IN_VERIFIED_PERSON }, select: { email: true } });
         const designations = await db.volunteerDesignation.findMany({ select: { email: true } });
         isVolunteerFamily = matchesVolunteerDesignation(parents.map((p) => p.email!), designations.map((d) => d.email));
     }
