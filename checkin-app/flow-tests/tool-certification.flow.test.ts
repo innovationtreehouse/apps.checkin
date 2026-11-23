@@ -17,7 +17,6 @@
 import { loginAs, api, type Session } from "./helpers";
 
 type Cert = { personId: number; toolId: number; level: string; tool: { id: number; name: string }; person?: Record<string, unknown> };
-type CertList = { ToolStatus: Cert[] };
 
 describe("flow: certify a member on a tool", () => {
     // First hit of each route compiles it under `next dev`, so the test outlasts the 20 s default.
@@ -42,9 +41,9 @@ describe("flow: certify a member on a tool", () => {
                 body: JSON.stringify({ personId, toolId: tool, level }),
             });
         const ownList = async (s: Session) => {
-            const res = await api<CertList>(s, "/api/shop/certifications");
+            const res = await api<Cert[]>(s, "/api/shop/certifications");
             expect(res.status).toBe(200);
-            return res.json.ToolStatus;
+            return res.json;
         };
         const levelOn = async (s: Session, tool: number) => (await ownList(s)).find((c) => c.toolId === tool)?.level;
 
@@ -89,11 +88,11 @@ describe("flow: certify a member on a tool", () => {
         ]);
 
         // Any signed-in member can read the tool's roster; it names each person and nothing more.
-        const roster = await api<CertList>(nonCertifier, `/api/shop/certifications?toolId=${tableSaw}`);
+        const roster = await api<Cert[]>(nonCertifier, `/api/shop/certifications?toolId=${tableSaw}`);
         expect(roster.status).toBe(200);
-        const row = roster.json.ToolStatus.find((c) => c.personId === member.personaId);
+        const row = roster.json.find((c) => c.personId === member.personaId);
         expect(row?.level).toBe("CERTIFIED");
-        for (const c of roster.json.ToolStatus) expect(Object.keys(c.person ?? {}).sort()).toEqual(["id", "name"]);
+        for (const c of roster.json) expect(Object.keys(c.person ?? {}).sort()).toEqual(["id", "name"]);
 
         // The certifier lowers the level; the same row changes rather than a second appearing.
         const lowered = await certify(certifier, member.personaId, tableSaw, "BASIC");
