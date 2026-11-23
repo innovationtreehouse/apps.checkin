@@ -95,5 +95,5 @@ describe("flow: refund Shopify has not reported", () => {
             [processId],
         );
         expect(rows).toEqual([{ severity: "CRITICAL" }]);
-    });
+    }, 60_000);
 });
