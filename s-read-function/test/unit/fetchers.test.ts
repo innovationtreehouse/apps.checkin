@@ -9,7 +9,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { fetchOrders, fetchPayouts, fetchBalanceTransactions } from "../../src/shopify/fetchers.js";
-import { BALANCE_TRANSACTIONS_QUERY, ORDER_LINES_QUERY } from "../../src/shopify/queries.js";
+import { BALANCE_TRANSACTIONS_QUERY, ORDER_LINES_QUERY, PAYOUTS_QUERY } from "../../src/shopify/queries.js";
 import { fakeClient, queue } from "../helpers/fakeClient.js";
 
 async function drain<T>(gen: AsyncGenerator<T>): Promise<T[]> {
@@ -126,6 +126,17 @@ describe("fetchPayouts pagination (singleton account)", () => {
     expect(await drain(fetchPayouts(client, "f"))).toEqual([{ id: "p1" }, { id: "p2" }]);
     expect(client.calls[1].variables.after).toBe("pc1");
   });
+
+  it("sends reverse only when asked for newest first", async () => {
+    const forward = fakeClient(payoutsPage([{ id: "p1" }], false, null));
+    await drain(fetchPayouts(forward, "f"));
+    expect(forward.calls[0].variables).not.toHaveProperty("reverse");
+
+    const newest = fakeClient(payoutsPage([{ id: "p1" }], false, null));
+    await drain(fetchPayouts(newest, "f", { newestFirst: true }));
+    expect(newest.calls[0].variables).toMatchObject({ reverse: true });
+    expect(PAYOUTS_QUERY).toMatch(/reverse: \$reverse/);
+  });
 });
 
 describe("fetchBalanceTransactions pagination (singleton account)", () => {
@@ -147,5 +158,16 @@ describe("fetchBalanceTransactions pagination (singleton account)", () => {
   // would break the monotonic walk, so guard against it.
   it("does not override sortKey (relies on the default PROCESSED_AT ascending)", () => {
     expect(BALANCE_TRANSACTIONS_QUERY).not.toMatch(/sortKey/);
+  });
+
+  it("sends reverse only when asked for newest first, on every page", async () => {
+    const forward = fakeClient(balanceTxnPage([{ id: "b1" }], false, null));
+    await drain(fetchBalanceTransactions(forward, "f"));
+    expect(forward.calls[0].variables).not.toHaveProperty("reverse");
+
+    const newest = fakeClient(queue(balanceTxnPage([{ id: "b2" }], true, "bc1"), balanceTxnPage([{ id: "b1" }], false, null)));
+    await drain(fetchBalanceTransactions(newest, "f", { newestFirst: true }));
+    expect(newest.calls.map((c) => c.variables.reverse)).toEqual([true, true]);
+    expect(BALANCE_TRANSACTIONS_QUERY).toMatch(/reverse: \$reverse/);
   });
 });
