@@ -151,7 +151,7 @@ export default function PaymentProblemsPage() {
 
   // Force an s-read incremental sync. The mirror behind "Live payment" refreshes once
   // a day, so a problem fixed in Shopify this morning still reads stale here until
-  // tomorrow. The POST only STARTS the sync, so we then poll the run's status and
+  // tomorrow. The POST only STARTS the sync, so we then poll for the run it started and
   // refetch the table once it lands — "Live payment" reads straight from the mirror,
   // so those amounts can differ the moment the sync finishes.
   //
@@ -161,25 +161,40 @@ export default function PaymentProblemsPage() {
   const triggerSync = async () => {
     setSyncing(true);
     try {
+      // The run in the mirror before the click. Only a run that started after it is
+      // this click's; both timestamps come from s-read, so clock skew between the
+      // browser, the app and the reader cannot misplace it.
+      const before = await fetchSyncRun();
       await api('/api/finance-ops/s-read/sync', { method: 'POST' });
       showSuccess('Shopify sync started…');
+
+      // The read failed — the mirror is unwired or unreadable. The sync itself was
+      // started regardless (s-read is off doing it), so say exactly that: we cannot
+      // watch it. Reporting "still running" here would be inventing a status, and it
+      // would hide the actual fault behind a plausible sentence.
+      const statusUnreadable = () => showError("Shopify sync started, but its status can't be read in this environment. Run diagnostics on the System Status page to see why.");
+      if (!before.ok) {
+        statusUnreadable();
+        return;
+      }
+      const baseline = before.run;
+      const startedAfterClick = (run: SyncRun) =>
+        !baseline || Date.parse(run.startedAt) > Date.parse(baseline.startedAt);
+      let sawNewRun = false;
 
       for (let i = 0; i < POLL_MAX_ATTEMPTS; i++) {
         await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
         const res = await fetchSyncRun();
-
-        // The read failed — the mirror is unwired or unreadable. The sync itself was
-        // started regardless (s-read is off doing it), so say exactly that: we cannot
-        // watch it. Reporting "still running" here would be inventing a status, and it
-        // would hide the actual fault behind a plausible sentence.
         if (!res.ok) {
-          showError("Shopify sync started, but its status can't be read in this environment. Run diagnostics on the System Status page to see why.");
+          statusUnreadable();
           return;
         }
 
-        // Read fine, but no run row yet — s-read stamps one at start, so keep waiting
-        // rather than treating an empty mirror as a failure.
-        if (!res.run || !isTerminal(res.run.status)) continue;
+        // No run newer than the pre-click one yet: s-read stamps a row when it starts,
+        // so keep waiting rather than reporting an earlier run's result.
+        if (!res.run || !startedAfterClick(res.run)) continue;
+        sawNewRun = true;
+        if (!isTerminal(res.run.status)) continue;
 
         const { status } = res.run;
         await fetchRows();
@@ -188,6 +203,10 @@ export default function PaymentProblemsPage() {
         } else {
           showError(`Shopify sync ${status.toLowerCase()}. Live payment amounts may still be stale.`);
         }
+        return;
+      }
+      if (!sawNewRun) {
+        showError("The sync was requested but hasn't started yet. Check back in a few minutes.");
         return;
       }
       // The run is still going and nothing has failed, so this is a success message.
