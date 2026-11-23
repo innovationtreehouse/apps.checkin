@@ -13,6 +13,7 @@ import { ensureStore } from "./sync/store.js";
 import { runIncremental } from "./sync/incremental.js";
 import { runBackfill } from "./sync/backfill.js";
 import { buildHeartbeatSink } from "./monitoring.js";
+import { syncDeadlineMinutes } from "./deadline.js";
 
 /**
  * The EventBridge invocation contract. Validated with Zod at the boundary — the Lambda
@@ -34,7 +35,7 @@ export type SyncEvent = z.input<typeof SyncEventSchema>;
  * ingest steps on very large stores may need more than the default 55m).
  */
 export function armSyncDeadline(mode: string): void {
-  const minutes = Math.max(1, Number(process.env.SYNC_DEADLINE_MINUTES) || 55);
+  const minutes = syncDeadlineMinutes();
   const timer = setTimeout(() => {
     logger.error("sync deadline exceeded — exiting so the task cannot run unbounded", { mode, minutes });
     process.exit(1);
