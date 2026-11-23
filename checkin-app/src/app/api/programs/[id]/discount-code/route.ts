@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { apiError } from "@/lib/api-response";
+import { isComponentHttpError, parseId } from "@checkin/component-kit";
 import { isMembershipFeeSettled, isMembershipFeeSettledThrough, programCoverageDate } from "@/lib/orgMembership";
 import { mintMemberDiscountCode } from "@/lib/shopify/discounts";
 import { checkoutVariantId } from "@/lib/programs/variants";
@@ -26,8 +27,13 @@ import { householdMayEnrol, NO_EMERGENCY_CONTACT_TO_ENROL } from "@/lib/emergenc
 export const POST = withAuth({}, async (req, auth, { params }: { params: Promise<{ id: string }> }) => {
     if (auth.type !== 'session') return apiError("Unauthorized", 401);
     const { id } = await params;
-    const programId = parseInt(id, 10);
-    if (isNaN(programId)) return apiError("Invalid program ID", 400);
+    let programId: number;
+    try {
+        programId = parseId(id, "program ID");
+    } catch (error) {
+        if (isComponentHttpError(error)) return apiError(error.message, error.status);
+        throw error;
+    }
 
     const body: unknown = await req.json().catch(() => null);
     const raw = body && typeof body === "object" && "participantIds" in body ? body.participantIds : null;
