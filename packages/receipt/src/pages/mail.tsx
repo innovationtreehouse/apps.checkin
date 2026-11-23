@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { Alert, Button, Group, Modal, Paper, Stack, Table, Text, TextInput, Title } from "@mantine/core";
-import { HttpError, showError, showSuccess } from "@checkin/component-ui";
+import { HttpError, showError, showSuccess, showWarning } from "@checkin/component-ui";
 import MailCatchUp from "../components/MailCatchUp";
 import ReceiptFile from "../components/ReceiptFile";
 import { api, BASE, errorMessage, send, useLoad } from "../components/api";
@@ -188,6 +188,7 @@ interface CapturedEmail {
 type ReplayOutcome = { status: "processed" | "waiting" } | { status: "expired"; message: string };
 
 const REPLAY_FAILED = "Couldn't process this email again";
+const REPLAY_WAITING_TITLE = "Processed; a file waits for a later run";
 const REPLAY_WAITING = "Processed again, but a file in it waits for a later run: a sender's daily upload limit or the held-mail limit put it off";
 const REPLAY_CRASHED = "Processing it again failed. The reason is recorded on the email, not shown here; try again later";
 
@@ -205,7 +206,8 @@ function CapturedEmails({ emails, onDone }: { emails: CapturedEmail[]; onDone: (
     try {
       const out = await api<ReplayOutcome>(`/mail-messages/${id}/replay`, { method: "POST" });
       if (out.status === "processed") showSuccess("Processed");
-      else showError(out.status === "expired" ? out.message : REPLAY_WAITING, { title: REPLAY_FAILED });
+      else if (out.status === "waiting") showWarning(REPLAY_WAITING, { title: REPLAY_WAITING_TITLE });
+      else showError(out.message, { title: REPLAY_FAILED });
     } catch (err) {
       showError(replayRefusal(err), { title: REPLAY_FAILED });
     } finally {
@@ -259,7 +261,7 @@ export default function ReceiptMailQueuePage() {
     items.reload();
     ignored.reload();
   };
-  const replayed = () => {
+  const reloadMail = () => {
     captured.reload();
     items.reload();
   };
@@ -271,11 +273,11 @@ export default function ReceiptMailQueuePage() {
   return (
     <>
       <Title order={3} mb="md">Incoming receipt queue</Title>
-      <MailCatchUp onDone={items.reload} />
+      <MailCatchUp onDone={reloadMail} />
       {items.error && <Alert color="red" mb="md">{items.error}</Alert>}
       {ignored.error && <Alert color="red" mb="md">{ignored.error}</Alert>}
       {captured.error && <Alert color="red" mb="md">{captured.error}</Alert>}
-      <CapturedEmails emails={captured.data ?? []} onDone={replayed} />
+      <CapturedEmails emails={captured.data ?? []} onDone={reloadMail} />
       {items.data?.length === 0 && <Text c="dimmed">No held mail.</Text>}
       {deferred.length > 0 && (
         <Stack mb="xl">
