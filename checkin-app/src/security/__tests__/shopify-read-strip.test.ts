@@ -201,7 +201,7 @@ describe('mirror registry — stripping', () => {
         const impl = async () => ({ PaymentReconcileRun: { ...run, error: 'order for buyer@example.com failed' } });
         const res = await handler(RECONCILE, impl)(new NextRequest('http://localhost/api/finance-ops/payments/reconcile', { method: 'POST' }));
         expect(res.status).toBe(200);
-        expect((await res.json()).PaymentReconcileRun).toEqual(run);
+        expect(await res.json()).toEqual(run);
     });
 
     it('the match-audit report keeps its nested rows for the board', () => {
