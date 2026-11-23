@@ -7,9 +7,10 @@ import { apiError } from "@/lib/api-response";
 import { isKnownAdult } from "@/lib/programAge";
 import { refuseSelfGrant, SELF_GRANT_REFUSAL_MESSAGE } from "@/lib/membership/selfGrantGuard";
 import { lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
-import { httpError, isComponentHttpError, parseId, ServiceError } from "@checkin/component-kit";
+import { isComponentHttpError, parseId, ServiceError } from "@checkin/component-kit";
 import { personActor, recordAudit } from "@/lib/auditActor";
 import { emailAfterAssignment, gatePositionCheck } from "@/lib/membership/positionCheck";
+import { parseParticipantId, readObjectBody } from "@/app/api/programs/[id]/requestBody";
 
 /** A ServiceError's answer, keeping its code so the picker can ask for the check acknowledgement. */
 function serviceErrorResponse(error: ServiceError) {
@@ -28,12 +29,6 @@ async function refuseOwnHousehold(actorId: number, personId: number, programId: 
     return refused ? apiError(SELF_GRANT_REFUSAL_MESSAGE, 403) : null;
 }
 
-function parseParticipantId(raw: unknown): number {
-    if (raw === undefined || raw === null) throw httpError(400, "participantId is required");
-    if (typeof raw !== "number") throw httpError(400, "Invalid participantId");
-    return parseId(String(raw), "participantId");
-}
-
 export const POST = withAuth({}, async (req, auth, { params }: { params: Promise<{ id: string }> }) => {
     if (auth.type !== 'session') return apiError("Unauthorized", 401);
     const { id } = await params;
@@ -41,7 +36,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
     try {
         const programId = parseId(id, "program ID");
 
-        const body = await req.json();
+        const body = await readObjectBody(req);
         const participantId = parseParticipantId(body.participantId);
         const { acknowledgeCheck } = body;
 
@@ -114,7 +109,7 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
     try {
         const programId = parseId(id, "program ID");
 
-        const body = await req.json();
+        const body = await readObjectBody(req);
         const participantId = parseParticipantId(body.participantId);
 
         const currentProgram = await prisma.program.findUnique({ where: { id: programId } });
@@ -164,20 +159,18 @@ export const PATCH = withAuth({}, async (req, auth, { params }: { params: Promis
     const { id } = await params;
 
     try {
-        const programId = parseInt(id, 10);
-        if (isNaN(programId)) {
-            return apiError("Invalid program ID", 400);
-        }
+        const programId = parseId(id, "program ID");
 
-        const body = await req.json();
-        const { participantId, isCore, acknowledgeCheck } = body;
+        const body = await readObjectBody(req);
+        const { isCore, acknowledgeCheck } = body;
 
-        if (!participantId || isCore === undefined) {
+        if (!body.participantId || isCore === undefined) {
             return apiError("participantId and isCore are required", 400);
         }
-        if (typeof participantId !== 'number' || typeof isCore !== 'boolean') {
+        if (typeof body.participantId !== 'number' || typeof isCore !== 'boolean') {
             return apiError("participantId must be a number and isCore a boolean", 400);
         }
+        const participantId = parseParticipantId(body.participantId);
 
         const currentProgram = await prisma.program.findUnique({ where: { id: programId } });
         if (!currentProgram) {
@@ -239,6 +232,9 @@ export const PATCH = withAuth({}, async (req, auth, { params }: { params: Promis
 
         return NextResponse.json({ success: true, assignment });
     } catch (error) {
+        if (isComponentHttpError(error)) {
+            return apiError(error.message, error.status);
+        }
         if (error instanceof ServiceError) {
             return serviceErrorResponse(error);
         }
