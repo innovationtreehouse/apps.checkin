@@ -185,7 +185,7 @@ interface CapturedEmail {
   expired: boolean;
 }
 
-type ReplayOutcome = { status: "processed" | "waiting" } | { status: "expired"; message: string };
+type ReplayOutcome = { status: "processed" } | { status: "waiting" } | { status: "expired"; message: string };
 
 const REPLAY_FAILED = "Couldn't process this email again";
 const REPLAY_WAITING_TITLE = "Processed; a file waits for a later run";
