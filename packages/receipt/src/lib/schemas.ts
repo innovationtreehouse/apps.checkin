@@ -19,7 +19,8 @@ export const MAX_CENTS = 2 ** 31 - 1;
 const DOLLAR_RANGE = { message: "must be a number from 0 to 21,474,836.47" };
 const CENTS_RANGE = { message: "must be a whole number of cents from 0 to 2,147,483,647" };
 const quantity = z.number().finite().positive().max(MAX_LINE_QUANTITY);
-const dollars = z.number().finite().min(0, DOLLAR_RANGE).refine((v) => dollarsToCents(v) <= MAX_CENTS, DOLLAR_RANGE);
+/** A dollar amount whose cents fit a money column. */
+export const DollarsSchema = z.number().finite().min(0, DOLLAR_RANGE).refine((v) => dollarsToCents(v) <= MAX_CENTS, DOLLAR_RANGE);
 const cents = z.number().int(CENTS_RANGE).min(0, CENTS_RANGE).max(MAX_CENTS, CENTS_RANGE);
 const currencyCode = z.string().regex(CURRENCY_CODE, { message: "Currency must be a 3-letter code, like USD" });
 const dollarString = z.string().refine((v) => {
@@ -46,7 +47,7 @@ export const LineItemSchema = z.object({
   partNumber: z.string().max(MAX_LINE_LABEL).nullable().optional(),
   manufacturer: z.string().max(MAX_LINE_LABEL).nullable().optional(),
   quantity,
-  unitPrice: dollars,
+  unitPrice: DollarsSchema,
   isDelayed: z.boolean().optional(),
 }).refine(lineCostFits, LINE_COST_RANGE);
 
@@ -117,8 +118,8 @@ export const AddLineItemSchema = z.object({
   partNumber: z.string().max(MAX_LINE_LABEL).nullable().optional(),
   manufacturer: z.string().max(MAX_LINE_LABEL).nullable().optional(),
   quantity: quantity.optional(),
-  unitPrice: dollars.optional(),
-  totalPrice: dollars.optional(),
+  unitPrice: DollarsSchema.optional(),
+  totalPrice: DollarsSchema.optional(),
   isDelayed: z.boolean().optional(),
 }).refine(lineCostFits, LINE_COST_RANGE);
 
@@ -127,10 +128,10 @@ export const EditReceiptSchema = z
     retailer: requiredText("The retailer", 500).optional(),
     receiptDate: isoDate.optional(),
     currency: currencyCode.optional(),
-    shipping: dollars.optional(),
-    tax: dollars.optional(),
-    discount: dollars.optional(),
-    receiptTotal: dollars.optional(),
+    shipping: DollarsSchema.optional(),
+    tax: DollarsSchema.optional(),
+    discount: DollarsSchema.optional(),
+    receiptTotal: DollarsSchema.optional(),
   })
   .strict();
 
@@ -140,8 +141,8 @@ export const EditLineItemSchema = z
     partNumber: z.string().max(MAX_LINE_LABEL).nullable().optional(),
     manufacturer: z.string().max(MAX_LINE_LABEL).nullable().optional(),
     quantity: quantity.optional(),
-    unitPrice: dollars.optional(),
-    totalPrice: dollars.optional(),
+    unitPrice: DollarsSchema.optional(),
+    totalPrice: DollarsSchema.optional(),
     isDelayed: z.boolean().optional(),
   })
   .strict();

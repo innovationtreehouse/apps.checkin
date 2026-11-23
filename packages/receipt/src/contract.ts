@@ -8,7 +8,7 @@ import { z } from "zod";
 import type { FailureKind } from "@checkin/component-kit";
 import { CURRENCY_CODE, MAX_LINE_QUANTITY, type CompletedReceipt, type InKindDonor } from "@checkin/receipt-types";
 import type { ReceiptLimits } from "./lib/limits";
-import { LINE_COST_RANGE, lineCostFits } from "./lib/schemas";
+import { DollarsSchema, LINE_COST_RANGE, lineCostFits } from "./lib/schemas";
 
 /** The acting host user, projected from the checkin Person. `id` is the Person.id. */
 export interface ReceiptPrincipal {
@@ -144,18 +144,14 @@ export interface ReceiptPersonIds {
 
 // ── OCR provider ─────────────────────────────────────────────────────────────
 
-// OCR output is untrusted: it carries the manual-entry bounds, and money stays inside the
-// int4 cents columns.
-const MAX_DOLLARS = 10_000_000;
-const ocrMoney = z.number().finite().nonnegative().max(MAX_DOLLARS);
-
+// OCR output is untrusted, so it carries the manual-entry bounds.
 export const OcrLineItemSchema = z.object({
   description: z.string().min(1).max(500),
   partNumber: z.string().max(100).optional(),
   manufacturer: z.string().max(100).optional(),
   quantity: z.number().finite().positive().max(MAX_LINE_QUANTITY),
-  unitPrice: ocrMoney,
-  totalPrice: ocrMoney.optional(),
+  unitPrice: DollarsSchema,
+  totalPrice: DollarsSchema.optional(),
   isDelayed: z.boolean(),
 }).refine(lineCostFits, LINE_COST_RANGE);
 
@@ -166,11 +162,11 @@ export const OcrDataSchema = z.object({
   orderNumber: z.string().max(200).optional(),
   receiptDate: z.string().max(50),
   currency: z.string().regex(CURRENCY_CODE),
-  shipping: ocrMoney,
-  tax: ocrMoney,
-  discount: ocrMoney,
+  shipping: DollarsSchema,
+  tax: DollarsSchema,
+  discount: DollarsSchema,
   // Null when the reading found no total; the submitter fills it in.
-  receiptTotal: ocrMoney.nullable(),
+  receiptTotal: DollarsSchema.nullable(),
   receiptTotalText: z.string().max(100).optional(),
   lineItems: z.array(OcrLineItemSchema).max(200),
 });
