@@ -409,11 +409,6 @@ drop. The buckets are set up outside this repo.
 - Assigning or discarding a stored mail item deletes its object after the commit.
   A discarded item keeps its `fileKey`, to name the object for an admin restore; an
   assigned one clears it.
-- `backfillFiles` and `verifyFiles` in `src/services/fileBackfill.ts`, run by
-  `checkin-app/scripts/receipt-file-backfill.ts`, copy existing rows' bytes to the
-  store and check the copy. The copy sets `file_key` and `file_size` and never
-  touches `file_blob`. How and when to run it is in
-  `docs/ops/receipt-files-backfill.md`.
 - Retention (`src/services/retention.ts`): an approved receipt's file is kept until
   7 years after its fiscal year's Form 990 deadline (November 15; the fiscal year
   ends June 30), dated by the receipt's date, else its approval; a rejected or
