@@ -67,6 +67,7 @@ describe("retryClearanceStep", () => {
     it.each([
         ["an unknown step", { id: "12", step: "congrats email" }],
         ["a non-numeric id", { id: "12; drop", step: "person agreement trigger" }],
+        ["an id of zero", { id: "0", step: "person agreement trigger" }],
     ])("answers 404 for %s", async (_what, item) => {
         await expect(retryClearanceStep(item)).rejects.toMatchObject({ status: 404 });
         expect(findStuck).not.toHaveBeenCalled();

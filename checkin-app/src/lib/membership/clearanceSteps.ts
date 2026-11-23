@@ -79,7 +79,7 @@ export async function stuckClearanceSteps(): Promise<StuckItem[]> {
  */
 export async function retryClearanceStep({ id, step: name }: { id: string; step: string }): Promise<void> {
     const step = stepNamed(name);
-    if (!step || !/^\d+$/.test(id)) throw new ServiceError(404, `No step ${name} in membership`);
+    if (!step || !/^[1-9]\d*$/.test(id)) throw new ServiceError(404, `No step ${name} in membership`);
     const processId = Number(id);
     const stuck = await prisma.clearanceStepFailure.findUnique({
         where: { processId_step: { processId, step } },
