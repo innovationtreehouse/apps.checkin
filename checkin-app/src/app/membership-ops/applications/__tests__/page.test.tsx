@@ -709,3 +709,73 @@ describe("Reset for re-review while the reload is in flight", () => {
         await waitFor(() => expect(screen.queryByRole("button", { name: "Reset for re-review" })).not.toBeInTheDocument());
     });
 });
+
+describe("Fix pending background checks", () => {
+    const answer = (status: number, body: unknown) => ({ ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) }) as Response;
+    const serve = (settle: () => Response) => {
+        const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            void init;
+            return String(input).includes("/settle-waiting") ? settle() : answer(200, { processes: rows });
+        });
+        global.fetch = fetchMock as unknown as typeof fetch;
+        return fetchMock;
+    };
+    const settleCalls = (fetchMock: jest.Mock) => fetchMock.mock.calls.filter(([url]) => String(url).includes("/settle-waiting"));
+
+    it("is offered to the board only", async () => {
+        setSession({ id: 99, householdId: 99, isSysadmin: true });
+        serve(() => answer(200, {}));
+        renderPage();
+        await screen.findByText("Awaiting Family");
+        expect(screen.queryByRole("button", { name: "Fix pending background checks" })).not.toBeInTheDocument();
+    });
+
+    it("asks first, and a cancel sends nothing", async () => {
+        setSession({ id: 99, householdId: 99, isBoardMember: true });
+        const fetchMock = serve(() => answer(200, { households: 0, opened: 0, failed: 0 }));
+        renderPage();
+        fireEvent.click(await screen.findByRole("button", { name: "Fix pending background checks" }));
+        expect(await screen.findByText("Re-check every application waiting on a background check?")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+        await waitFor(() => expect(screen.queryByText("Re-check every application waiting on a background check?")).not.toBeInTheDocument());
+        expect(settleCalls(fetchMock)).toHaveLength(0);
+    });
+
+    it("shows the counts after a confirm", async () => {
+        setSession({ id: 99, householdId: 99, isBoardMember: true });
+        const fetchMock = serve(() => answer(200, { households: 7, opened: 7, failed: 0 }));
+        renderPage();
+        fireEvent.click(await screen.findByRole("button", { name: "Fix pending background checks" }));
+        fireEvent.click(await screen.findByRole("button", { name: "Re-check" }));
+        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({ color: "green", message: "Re-checked 7 household(s); 7 moved on." })));
+        expect(settleCalls(fetchMock)).toHaveLength(1);
+        expect(settleCalls(fetchMock)[0][1]).toMatchObject({ method: "POST" });
+    });
+
+    it("names failed households and points at System Status, in a message that stays", async () => {
+        setSession({ id: 99, householdId: 99, isBoardMember: true });
+        serve(() => answer(200, { households: 7, opened: 5, failed: 2 }));
+        renderPage();
+        fireEvent.click(await screen.findByRole("button", { name: "Fix pending background checks" }));
+        fireEvent.click(await screen.findByRole("button", { name: "Re-check" }));
+        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
+            color: "yellow",
+            message: "Re-checked 7 household(s); 5 moved on. 2 failed: see System Status.",
+            autoClose: false,
+        })));
+    });
+
+    it("shows the server's refusal in a red chip that does not close itself", async () => {
+        setSession({ id: 99, householdId: 99, isBoardMember: true });
+        serve(() => answer(403, { error: "Forbidden" }));
+        renderPage();
+        fireEvent.click(await screen.findByRole("button", { name: "Fix pending background checks" }));
+        fireEvent.click(await screen.findByRole("button", { name: "Re-check" }));
+        await waitFor(() => expect(notifications.show).toHaveBeenCalledWith(expect.objectContaining({
+            color: "red",
+            title: "Fix pending background checks",
+            message: "Forbidden",
+            autoClose: false,
+        })));
+    });
+});

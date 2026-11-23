@@ -3,7 +3,7 @@
 import { useRef, useState, Suspense } from "react";
 import { Alert, Button, Card, Center, Group, Loader, Modal, Select, Stack, Switch, Text, Textarea } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
-import { errorMessage, HttpError, LoadError, showError, showSuccess } from "@checkin/component-ui";
+import { clearError, errorMessage, HttpError, LoadError, showError, showSuccess, showWarning } from "@checkin/component-ui";
 import { modals } from "@mantine/modals";
 import { useSession } from "next-auth/react";
 import { api, useLoad } from "@/lib/api";
@@ -439,6 +439,41 @@ function ApplicationsBoard() {
     return hh.name || parents.join(" & ") || `Household #${r.orgMembership?.householdId}`;
   };
 
+  const [settling, setSettling] = useState(false);
+  const settleWaiting = async () => {
+    setSettling(true);
+    try {
+      const { households, opened, failed } = await api<{ households: number; opened: number; failed: number }>(
+        "/api/membership-ops/applications/settle-waiting",
+        { method: "POST", invalidate: false },
+      );
+      clearError("settle-waiting");
+      const failedNote = failed > 0 ? ` ${failed} failed: see System Status.` : "";
+      const summary = `Re-checked ${households} household(s); ${opened} moved on.${failedNote}`;
+      if (failed > 0) showWarning(summary, { key: "settle-waiting" });
+      else showSuccess(summary);
+      notifyNavRefresh();
+      await reload();
+    } catch (e) {
+      showError(errorMessage(e), { key: "settle-waiting", title: "Fix pending background checks" });
+    } finally {
+      setSettling(false);
+    }
+  };
+  const confirmSettleWaiting = () => {
+    modals.openConfirmModal({
+      title: "Re-check every application waiting on a background check?",
+      children: (
+        <Text size="sm">
+          Each household whose application waits on a background check is checked again. One whose
+          lead already holds a valid check moves on.
+        </Text>
+      ),
+      labels: { confirm: "Re-check", cancel: "Cancel" },
+      onConfirm: () => { void settleWaiting(); },
+    });
+  };
+
   const statusCounts = rows.reduce<Record<string, number>>((acc, r) => { acc[r.status] = (acc[r.status] || 0) + 1; return acc; }, {});
   // The status-filter badges/notice are meaningless on the closed view (every
   // row is ARCHIVED) — the filter itself is ignored there too.
@@ -452,6 +487,12 @@ function ApplicationsBoard() {
         or to mark a lead&apos;s background check started. (The contract is also confirmed
         automatically once the Zoho webhook is configured.)
       </Text>
+
+      {me?.isBoardMember && !showArchived && (
+        <Group>
+          <Button variant="light" loading={settling} onClick={confirmSettleWaiting}>Fix pending background checks</Button>
+        </Group>
+      )}
 
       <Switch
         label="Show closed applications"
