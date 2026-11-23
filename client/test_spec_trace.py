@@ -190,7 +190,7 @@ class TestSpecTraceScenarios(unittest.TestCase):
 
     def test_parked_replay(self):
         server, state = self.begin("kiosk_parked_replay", {K1})
-        server.answer({"error": f"Participant {U1} not found."}, 404)
+        server.answer({"error": f"Person {U1} not found."}, 404)
         handle_scan(server, state, self.outbox, U1)
         self.assertEqual(self.outbox.pending_rows(), [], "a live refusal is settled, not queued")
         server.answer(*OFFLINE)
