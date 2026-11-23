@@ -348,8 +348,9 @@ defineRoute({
 
 // Board runs the waiting-application settle sweep once: every household
 // application waiting on its background check is settled, as the bg-settle cron
-// does. Board-only, the same set as review-override and refund: settling moves membership
-// state. The bag is { ApplicationSettleCounts }, three counts, sent unwrapped.
+// does. Board-only, as refund here and review-override's withAuth gate: settling
+// moves membership state. The bag is { ApplicationSettleCounts }, three counts,
+// sent unwrapped.
 defineRoute({
     endpoint: 'POST /api/membership-ops/applications/settle-waiting',
     authorize: { anyRole: ['isBoardMember'] },
