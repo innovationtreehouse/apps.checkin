@@ -11,7 +11,8 @@ import { stuckSince, stuckUndelivered } from "./repositories/receipt";
 const FLOW = "flow";
 const PUSH = "push to mapping";
 const OUTCOME_EMAIL = "outcome email";
-const MAIL_MESSAGE = "mail message";
+/** The Problems list's step for a captured email left unprocessed. */
+export const MAIL_MESSAGE = "mail message";
 
 /** How long a captured email or a queued receipt waits before the Problems list shows it: past one daily run. */
 export const WAITING_NOTICE_MS = 25 * 60 * 60_000;
