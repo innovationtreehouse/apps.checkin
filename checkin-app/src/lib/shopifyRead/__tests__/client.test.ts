@@ -159,6 +159,41 @@ describe('latestSyncRun', () => {
     });
 });
 
+describe('syncStatus', () => {
+    type Where = { kind: unknown; finishedAt?: unknown };
+    const at = (iso: string) => new Date(iso);
+    const daily = { status: 'FAILED', kind: 'INCREMENTAL', startedAt: at('2026-11-23T06:00:00Z'), finishedAt: at('2026-11-23T06:05:00Z'), counts: null, error: 'boom' };
+    const repair = { status: 'COMPLETED', kind: 'ADMIN', startedAt: at('2026-11-23T08:00:00Z'), finishedAt: at('2026-11-23T08:10:00Z'), counts: null, error: null };
+
+    it('reads the latest finished daily read, then only a repair that finished after it', async () => {
+        db.syncRun.findFirst.mockImplementation(async ({ where }: { where: Where }) => (where.kind === 'INCREMENTAL' ? daily : repair));
+
+        expect(await freshClient().syncStatus()).toEqual({ scheduled: daily, laterRepair: repair });
+        const [scheduled, later] = db.syncRun.findFirst.mock.calls.map((c) => c[0]);
+        expect(scheduled).toMatchObject({
+            where: { kind: 'INCREMENTAL', status: { not: 'RUNNING' }, objectScope: { not: 'retention' } },
+            orderBy: { startedAt: 'desc' },
+        });
+        expect(later).toMatchObject({
+            where: { kind: { in: ['ADMIN', 'BACKFILL'] }, status: { not: 'RUNNING' }, objectScope: { not: 'retention' }, finishedAt: { gt: daily.finishedAt } },
+            orderBy: { finishedAt: 'desc' },
+        });
+    });
+
+    it('reports no repair when none finished after the daily read', async () => {
+        db.syncRun.findFirst.mockImplementation(async ({ where }: { where: Where }) => (where.kind === 'INCREMENTAL' ? daily : null));
+
+        expect(await freshClient().syncStatus()).toEqual({ scheduled: daily, laterRepair: null });
+    });
+
+    it('reports no daily read when none has finished, and any finished repair', async () => {
+        db.syncRun.findFirst.mockImplementation(async ({ where }: { where: Where }) => (where.kind === 'INCREMENTAL' ? null : repair));
+
+        expect(await freshClient().syncStatus()).toEqual({ scheduled: null, laterRepair: repair });
+        expect(db.syncRun.findFirst.mock.calls[1][0].where.finishedAt).toEqual({ not: null });
+    });
+});
+
 describe('scheduledReadState', () => {
     it('reads only scheduled INCREMENTAL runs, so a replay, reset or backfill is not the daily read', async () => {
         const finishedAt = new Date('2026-11-23T06:05:00Z');

@@ -307,6 +307,37 @@ export async function scheduledReadState(): Promise<ScheduledReadState | null> {
     return { latestStatus: latest?.status ?? null, lastCompletedAt: completed?.finishedAt ?? null };
 }
 
+const SYNC_RUN_SELECT = { status: true, kind: true, startedAt: true, finishedAt: true, counts: true, error: true } as const;
+
+/** The latest finished daily read, and the latest repair (ADMIN or BACKFILL run) that finished after it. */
+export interface MirrorSyncStatus {
+    scheduled: MirrorSyncRun | null;
+    laterRepair: MirrorSyncRun | null;
+}
+
+/** The daily read and any later repair, or null when the mirror is unconfigured. A manual sync is an INCREMENTAL run, so it counts as a daily read. */
+export async function syncStatus(): Promise<MirrorSyncStatus | null> {
+    const db = await getClient();
+    if (!db) return null;
+    const scheduled = await db.syncRun.findFirst({
+        where: { kind: "INCREMENTAL", status: { not: "RUNNING" }, objectScope: { not: RETENTION_SCOPE } },
+        orderBy: { startedAt: "desc" },
+        select: SYNC_RUN_SELECT,
+    });
+    const after = scheduled ? scheduled.finishedAt ?? scheduled.startedAt : null;
+    const laterRepair = await db.syncRun.findFirst({
+        where: {
+            kind: { in: ["ADMIN", "BACKFILL"] },
+            status: { not: "RUNNING" },
+            objectScope: { not: RETENTION_SCOPE },
+            finishedAt: after ? { gt: after } : { not: null },
+        },
+        orderBy: { finishedAt: "desc" },
+        select: SYNC_RUN_SELECT,
+    });
+    return { scheduled, laterRepair };
+}
+
 /**
  * Diagnostic probe: how many sync runs the mirror holds. One round trip whose
  * FAILURE is as informative as its success — the thrown pg error's `code`
