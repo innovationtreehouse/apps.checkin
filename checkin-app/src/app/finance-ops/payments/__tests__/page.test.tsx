@@ -25,9 +25,23 @@ const shown = notifications.show as jest.Mock;
 
 type GetReply = { status: number; body?: unknown };
 
-/** POST always succeeds (the sync really did start); the GET replies per `gets`, last repeating. */
-function mockSync(gets: GetReply[]) {
+const OLD_START = "2026-07-15T09:00:00.000Z";
+const NEW_START = "2026-07-16T09:00:00.000Z";
+
+const run = (status: string, startedAt = NEW_START) => ({
+    run: { status, kind: "INCREMENTAL", startedAt, finishedAt: null, error: null },
+});
+
+/** Yesterday's finished run: what the mirror holds when the button is clicked. */
+const previousRun = run("COMPLETED", OLD_START);
+
+/**
+ * POST always succeeds (the sync really did start). A GET before the POST replies
+ * `before`; each GET after it replies per `gets`, last repeating.
+ */
+function mockSync(gets: GetReply[], before: GetReply = { status: 200, body: previousRun }) {
     let i = 0;
+    let posted = false;
     const fn = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = typeof input === "string" ? input : input.toString();
         const method = init?.method ?? "GET";
@@ -35,8 +49,11 @@ function mockSync(gets: GetReply[]) {
             ({ ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) }) as Response;
 
         if (url.includes("/api/finance-ops/s-read/sync")) {
-            if (method === "POST") return reply(200, { success: true });
-            const g = gets[Math.min(i++, gets.length - 1)];
+            if (method === "POST") {
+                posted = true;
+                return reply(200, { success: true });
+            }
+            const g = posted ? gets[Math.min(i++, gets.length - 1)] : before;
             return reply(g.status, g.body ?? {});
         }
         if (url.includes("/api/finance-ops/payments")) return reply(200, []);
@@ -45,10 +62,6 @@ function mockSync(gets: GetReply[]) {
     global.fetch = fn as unknown as typeof fetch;
     return fn;
 }
-
-const run = (status: string) => ({
-    run: { status, kind: "INCREMENTAL", startedAt: "2026-07-16T09:00:00.000Z", finishedAt: null, error: null },
-});
 
 /** Click "Sync Shopify now" and let the poll interval (6s) elapse `polls` times. */
 async function syncAndPoll(polls: number) {
@@ -77,7 +90,8 @@ describe("finance-ops/payments — sync status", () => {
 
     it("says nothing about freshness when the mirror can't be read", async () => {
         // A 503/500 must not render a status line at all — better silent than wrong.
-        mockSync([{ status: 503, body: { error: "not wired" } }]);
+        const notWired = { status: 503, body: { error: "not wired" } };
+        mockSync([notWired], notWired);
         renderWithProviders(<PaymentProblemsPage />);
 
         await screen.findByRole("button", { name: /Sync Shopify now/ });
@@ -182,6 +196,114 @@ describe("finance-ops/payments — sync status", () => {
             // Nothing went wrong — the sync is proceeding, the page just stopped watching.
             expect(lastShown().color).toBe("green");
             expect(lastShown().autoClose).not.toBe(false);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("ignores the run that was already in the mirror at click time", async () => {
+        jest.useFakeTimers();
+        try {
+            // Yesterday's COMPLETED run is still the latest for the first polls; its
+            // result is not this click's and must not be announced.
+            mockSync([{ status: 200, body: previousRun }, { status: 200, body: previousRun }, { status: 200, body: run("COMPLETED") }]);
+            renderWithProviders(<PaymentProblemsPage />);
+            await syncAndPoll(2);
+
+            expect(shown.mock.calls.map(([c]) => c.message)).not.toContainEqual(expect.stringMatching(/sync finished/i));
+
+            await act(async () => {
+                await jest.advanceTimersByTimeAsync(6_000);
+            });
+            expect(lastMessage()).toMatch(/sync finished/i);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("says the sync hasn't started when no new run appears within the poll window", async () => {
+        jest.useFakeTimers();
+        try {
+            mockSync([{ status: 200, body: previousRun }]);
+            renderWithProviders(<PaymentProblemsPage />);
+            await syncAndPoll(21); // past the 20-attempt cap
+
+            expect(lastMessage()).toMatch(/requested but hasn't started yet/i);
+            expect(lastShown()).toMatchObject({ color: "red", autoClose: false });
+            expect(shown.mock.calls.map(([c]) => c.message)).not.toContainEqual(expect.stringMatching(/sync finished|still running/i));
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("reports a new run that fails as failed", async () => {
+        jest.useFakeTimers();
+        try {
+            mockSync([{ status: 200, body: run("RUNNING") }, { status: 200, body: run("FAILED") }]);
+            renderWithProviders(<PaymentProblemsPage />);
+            await syncAndPoll(2);
+
+            expect(lastMessage()).toMatch(/sync failed/i);
+            expect(lastShown()).toMatchObject({ color: "red", autoClose: false });
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("reports an unreadable mirror at click time without polling for a run it can't tell apart", async () => {
+        jest.useFakeTimers();
+        try {
+            const fetchMock = mockSync([{ status: 200, body: previousRun }], { status: 500, body: {} });
+            renderWithProviders(<PaymentProblemsPage />);
+            await syncAndPoll(1);
+
+            expect(lastMessage()).toMatch(/status can't be read/i);
+            expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(true);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("follows a run already running at click time and reports how it ended", async () => {
+        jest.useFakeTimers();
+        try {
+            // s-read's lock skips the new request, so the in-flight run is the one to watch.
+            const inFlight = run("RUNNING", OLD_START);
+            mockSync([{ status: 200, body: inFlight }, { status: 200, body: run("COMPLETED", OLD_START) }], { status: 200, body: inFlight });
+            renderWithProviders(<PaymentProblemsPage />);
+            await syncAndPoll(2);
+
+            expect(lastMessage()).toMatch(/^A sync was already running; it finished/);
+            expect(shown.mock.calls.map(([c]) => c.message)).not.toContainEqual(expect.stringMatching(/hasn't started yet/i));
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("reports an already-running run that fails as failed", async () => {
+        jest.useFakeTimers();
+        try {
+            const inFlight = run("RUNNING", OLD_START);
+            mockSync([{ status: 200, body: run("FAILED", OLD_START) }], { status: 200, body: inFlight });
+            renderWithProviders(<PaymentProblemsPage />);
+            await syncAndPoll(1);
+
+            expect(lastMessage()).toMatch(/^A sync was already running; it failed/);
+            expect(lastShown()).toMatchObject({ color: "red", autoClose: false });
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("says a still-running followed run is still running, not that it hasn't started", async () => {
+        jest.useFakeTimers();
+        try {
+            const inFlight = run("RUNNING", OLD_START);
+            mockSync([{ status: 200, body: inFlight }], { status: 200, body: inFlight });
+            renderWithProviders(<PaymentProblemsPage />);
+            await syncAndPoll(21);
+
+            expect(lastMessage()).toMatch(/still running/i);
         } finally {
             jest.useRealTimers();
         }
