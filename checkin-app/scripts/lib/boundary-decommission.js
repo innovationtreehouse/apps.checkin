@@ -11,7 +11,9 @@
  * (model dropped from schema.prisma; route file/verb deleted). Such a diff
  * cannot add exposure: partial edits inside a surviving entry (e.g. deleting
  * one element of an `all:` match, which WIDENS the grant), additions,
- * reorders, re-tiers, and engine-file changes never qualify.
+ * reorders, re-tiers, and engine-file changes never qualify. The one app-file
+ * edit it admits is deleting FINANCE_VIEW_MODELS elements whose models leave
+ * the registry with an entry this PR removes.
  *
  * Fails closed: any parse surprise or unmet condition is a non-certification,
  * and the workflow falls back to requiring the boundary change to ship alone.
@@ -371,20 +373,114 @@ function exportsVerb(source, verb) {
     return new RegExp(`export\\s+(?:const|async\\s+function|function)\\s+${verb}\\b`).test(source);
 }
 
+// ── FINANCE_VIEW_MODELS ────────────────────────────────────────────────────
+//
+// financeViewKinds.ts lists every model a finance view log row can name, and a
+// test pins that list to the registry's financeView records. Removing the last
+// entry that names a model therefore forces the element out of the list in the
+// same PR. The certifier admits that one app-file edit: whole element lines
+// deleted from the array, nothing else in the file changed, and each deleted
+// model named by a financeView record of an entry this PR removes and quoted
+// nowhere in the registry at head.
+
+const FINANCE_VIEW_KINDS_FILE = 'checkin-app/src/lib/finance/financeViewKinds.ts';
+const FINANCE_VIEW_MODELS_OPEN = 'export const FINANCE_VIEW_MODELS = [';
+const FINANCE_VIEW_MODELS_CLOSE = '] as const;';
+const FINANCE_VIEW_MODEL_ELEMENT = /^ {2}"([A-Za-z0-9_.]+)",$/;
+
+/** @returns {{ prefix: string[], elements: string[], suffix: string[] } | { error: string }} */
+function splitFinanceViewModels(source) {
+    const lines = source.split('\n');
+    const opens = lines.flatMap((l, i) => (l === FINANCE_VIEW_MODELS_OPEN ? [i] : []));
+    if (opens.length !== 1) return { error: `${opens.length} '${FINANCE_VIEW_MODELS_OPEN}' lines` };
+    const open = opens[0];
+    const close = lines.indexOf(FINANCE_VIEW_MODELS_CLOSE, open + 1);
+    if (close === -1) return { error: 'unterminated FINANCE_VIEW_MODELS array' };
+    const elements = [];
+    for (let i = open + 1; i < close; i++) {
+        const m = lines[i].match(FINANCE_VIEW_MODEL_ELEMENT);
+        if (!m) return { error: `line ${i + 1} is not a FINANCE_VIEW_MODELS element: ${lines[i].trim()}` };
+        elements.push(m[1]);
+    }
+    if (new Set(elements).size !== elements.length) return { error: 'duplicate FINANCE_VIEW_MODELS element' };
+    return { prefix: lines.slice(0, open + 1), elements, suffix: lines.slice(close) };
+}
+
+/** @returns {{ removed?: string[], error?: string }} */
+function diffFinanceViewModels(base, head) {
+    const b = splitFinanceViewModels(base);
+    if ('error' in b) return { error: `base: ${b.error}` };
+    const h = splitFinanceViewModels(head);
+    if ('error' in h) return { error: `head: ${h.error}` };
+    if (b.prefix.join('\n') !== h.prefix.join('\n') || b.suffix.join('\n') !== h.suffix.join('\n')) {
+        return { error: 'content outside the FINANCE_VIEW_MODELS elements changed' };
+    }
+    const kept = new Set(h.elements);
+    const added = h.elements.filter(e => !b.elements.includes(e));
+    if (added.length) return { error: `FINANCE_VIEW_MODELS element added: ${added.join(', ')}` };
+    if (b.elements.filter(e => kept.has(e)).join('\n') !== h.elements.join('\n')) {
+        return { error: 'FINANCE_VIEW_MODELS elements reordered' };
+    }
+    const removed = b.elements.filter(e => !kept.has(e));
+    if (!removed.length) return { error: 'no FINANCE_VIEW_MODELS element removed' };
+    return { removed };
+}
+
+// Models a call's financeView records name with a string literal. A model named
+// through a constant is not seen, so removing it is refused.
+function financeViewRecordModels(call) {
+    const code = stripComments(call);
+    const at = code.search(/\bfinanceView\s*:/);
+    if (at === -1) return [];
+    return [...code.slice(at).matchAll(/\bmodel\s*:\s*'([^']+)'/g)].map(m => m[1]);
+}
+
+const quotesModel = (source, model) => source.includes(`'${model}'`) || source.includes(`"${model}"`);
+
+// The FINANCE_VIEW_MODELS elements a PR deletes, or why the edit is refused.
+/** @returns {{ removed?: string[], error?: string }} */
+function certifyFinanceViewModelsEdit({ changed, readBase, readHead, listHead, removedEntryTexts }) {
+    if (!changed.some(c => c.path === FINANCE_VIEW_KINDS_FILE && c.status === 'M')) {
+        return { error: 'added or deleted outright — only element deletions from FINANCE_VIEW_MODELS are admitted' };
+    }
+    const base = readBase(FINANCE_VIEW_KINDS_FILE);
+    const head = readHead(FINANCE_VIEW_KINDS_FILE);
+    if (base == null || head == null) return { error: 'unreadable at base or head' };
+    const d = diffFinanceViewModels(base, head);
+    if (d.error) return d;
+    if (!listHead) return { error: 'no head file listing — cannot prove the registry no longer names the model' };
+    const headRegistry = listHead('checkin-app/src/security/')
+        .filter(isRegistryFile)
+        .map(p => readHead(p) ?? '');
+    const named = new Set(removedEntryTexts.flatMap(financeViewRecordModels));
+    for (const model of d.removed) {
+        if (!named.has(model)) {
+            return { error: `FINANCE_VIEW_MODELS element '${model}' removed, but no registry entry this PR removes names it in a financeView record` };
+        }
+        if (headRegistry.some(src => quotesModel(src, model))) {
+            return { error: `FINANCE_VIEW_MODELS element '${model}' removed, but the registry still names it at head` };
+        }
+    }
+    return { removed: d.removed };
+}
+
 // ── certification ──────────────────────────────────────────────────────────
 
 /**
- * @param {{ changed: ChangedFile[], boundaryChanged: string[], violations: string[], readBase: FileReader, readHead: FileReader }} args
+ * @param {{ changed: ChangedFile[], boundaryChanged: string[], violations: string[], readBase: FileReader, readHead: FileReader, listHead?: (dir: string) => string[] }} args
  *   changed: git diff --name-status rows (merge-base...head); boundaryChanged:
  *   the subset the workflow's is_boundary matched (the single source of truth
  *   for what a boundary file is); violations: paths the workflow found to be
- *   neither boundary nor companion.
- * @returns {{ ok: boolean, reasons: string[], removedModels: string[], removedEndpoints: string[] }}
+ *   neither boundary nor companion; listHead: every file path under a directory
+ *   at head, needed only to admit a FINANCE_VIEW_MODELS edit.
+ * @returns {{ ok: boolean, reasons: string[], removedModels: string[], removedEndpoints: string[], removedFinanceViewModels: string[] }}
  */
-function certifyDecommission({ changed, boundaryChanged, violations, readBase, readHead }) {
+function certifyDecommission({ changed, boundaryChanged, violations, readBase, readHead, listHead }) {
     /** @type {string[]} */ const reasons = [];
     /** @type {string[]} */ const removedModels = [];
     /** @type {string[]} */ const removedEndpoints = [];
+    /** @type {string[]} */ const removedFinanceViewModels = [];
+    /** @type {string[]} */ const removedEntryTexts = [];
 
     const droppedModels = modelsDroppedFromSchema(readBase, readHead);
 
@@ -394,7 +490,7 @@ function certifyDecommission({ changed, boundaryChanged, violations, readBase, r
             reasons.push(`${p}: non-declarative boundary file — direction undecidable, never decommission-eligible`);
         }
     }
-    if (reasons.length) return { ok: false, reasons, removedModels, removedEndpoints };
+    if (reasons.length) return { ok: false, reasons, removedModels, removedEndpoints, removedFinanceViewModels };
 
     if (boundaryChanged.includes(DECLARATIVE_FILES.bindings)) {
         const base = readBase(DECLARATIVE_FILES.bindings);
@@ -419,9 +515,14 @@ function certifyDecommission({ changed, boundaryChanged, violations, readBase, r
         if (base == null || head == null) {
             reasons.push(`${file}: added or deleted outright — not a decommission`);
         } else {
-            const d = diffSegmentations(segmentTopLevelCalls(base), head, segmentTopLevelCalls, droppedModels);
+            const baseSegments = segmentTopLevelCalls(base);
+            const d = diffSegmentations(baseSegments, head, segmentTopLevelCalls, droppedModels);
             if (d.error) reasons.push(`${file}: ${d.error}`);
             else {
+                const removedKeys = new Set(d.removed.map(r => `${r.container} ${r.name}`));
+                for (const s of baseSegments.segments ?? []) {
+                    if (s.type === 'entity' && removedKeys.has(`${s.container} ${s.name}`)) removedEntryTexts.push(s.text);
+                }
                 for (const r of d.removed) {
                     if (r.container === 'defineOutbound') {
                         reasons.push(`outbound surface '${r.name}': sender code is not tracked, removal must ship alone`);
@@ -478,6 +579,12 @@ function certifyDecommission({ changed, boundaryChanged, violations, readBase, r
     for (const v of violations) {
         if (v.startsWith(MIGRATIONS_DIR)) continue;
         if (deleted.has(v) && impliedDeletions.has(v)) continue;
+        if (v === FINANCE_VIEW_KINDS_FILE) {
+            const f = certifyFinanceViewModelsEdit({ changed, readBase, readHead, listHead, removedEntryTexts });
+            if (f.error) reasons.push(`${v}: ${f.error}`);
+            else removedFinanceViewModels.push(...f.removed);
+            continue;
+        }
         reasons.push(
             deleted.has(v)
                 ? `${v}: deleted, but not a route file of a removed registry entry — unrelated deletions must ship separately`
@@ -485,10 +592,12 @@ function certifyDecommission({ changed, boundaryChanged, violations, readBase, r
         );
     }
 
-    return { ok: reasons.length === 0, reasons, removedModels, removedEndpoints };
+    return { ok: reasons.length === 0, reasons, removedModels, removedEndpoints, removedFinanceViewModels };
 }
 
 module.exports = {
+    diffFinanceViewModels,
+    FINANCE_VIEW_KINDS_FILE,
     normalizeEntry,
     BINDINGS_CONTAINERS,
     DECLARATIVE_FILES,

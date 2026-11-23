@@ -20,7 +20,8 @@
  * file", so the certifier never re-derives it.
  *
  * Exit 0: the boundary diff is a certified whole-entity decommission and every
- * violation is a migration or a deletion. Exit 1 with reasons otherwise, and
+ * violation is a migration, an implied deletion, or an admitted
+ * FINANCE_VIEW_MODELS element deletion. Exit 1 with reasons otherwise, and
  * the workflow falls back to its ship-alone error. Runs on bare node.
  */
 
@@ -84,6 +85,7 @@ function main(argv) {
         violations,
         readBase: p => gitShow(mergeBase, p),
         readHead: p => gitShow(headSha, p),
+        listHead: dir => git(['ls-tree', '-r', '--name-only', headSha, '--', dir]).split('\n').filter(Boolean),
     });
 
     if (!result.ok) {
@@ -94,6 +96,7 @@ function main(argv) {
     console.log('Certified whole-entity decommission:');
     for (const m of [...new Set(result.removedModels)]) console.log(`  - model ${m} (dropped from schema in this PR)`);
     for (const e of result.removedEndpoints) console.log(`  - route ${e} (no longer served at head)`);
+    for (const m of result.removedFinanceViewModels) console.log(`  - FINANCE_VIEW_MODELS element ${m} (no longer named in the registry)`);
     return 0;
 }
 
