@@ -33,6 +33,30 @@ export function scheduleRetry(url: string, delayMs: number, retry: () => void): 
   retries.set(url, setTimeout(retry, delayMs));
 }
 
+const stamps = new Map<string, number>();
+const stampListeners = new Map<string, Set<() => void>>();
+
+/** Records that `key` just answered with a body, whichever reader asked. */
+export function stampAnswer(key: string): void {
+  stamps.set(key, Date.now());
+  stampListeners.get(key)?.forEach((listener) => listener());
+}
+
+/** When `key` last answered with a body, in epoch milliseconds; null before its first. */
+export function answeredAt(key: string): number | null {
+  return stamps.get(key) ?? null;
+}
+
+export function subscribeAnswers(key: string, listener: () => void): () => void {
+  const listeners = stampListeners.get(key) ?? new Set<() => void>();
+  listeners.add(listener);
+  stampListeners.set(key, listeners);
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) stampListeners.delete(key);
+  };
+}
+
 const held = new Map<string, number>();
 
 /** Keeps `invalidateLoads` off `url` until the returned release runs; holds on one key stack. */
@@ -54,6 +78,8 @@ export function invalidateLoads(): void {
 export function clearLoads(): void {
   generation += 1;
   failures.clear();
+  stamps.clear();
+  stampListeners.forEach((listeners) => listeners.forEach((listener) => listener()));
   retries.forEach((retry) => clearTimeout(retry));
   retries.clear();
   void mutate(() => true, undefined, { revalidate: true });

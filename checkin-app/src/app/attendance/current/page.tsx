@@ -1,10 +1,11 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { usePolling, POLL_IDLE_STOP_MS } from "@/hooks/usePolling";
-import { notifications } from "@mantine/notifications";
+import { LoadError } from "@checkin/component-ui";
+import { useLoad } from "@/lib/api";
 import { IconHeartHandshake, IconKey, IconSchool, type Icon } from "@tabler/icons-react";
 import {
   Alert, Anchor, Badge, Box, Button, Card, Center, Group, Loader, Modal, Paper,
@@ -51,28 +52,58 @@ type Counts = { keyholders: number; volunteers: number; youth: number; total: nu
 type SafetyFlags = { facilityOpen: boolean; isLastKeyholder: boolean; isTwoDeepViolation: boolean };
 // kioskAsOf: the kiosk proxy served its own view (server unreachable)
 // from the roster it received at this time; null when it never had one.
-type FullResponse = { access: "full"; attendance: Visit[]; counts: Counts; safety?: SafetyFlags; building?: BuildingLink; kioskAsOf?: string | null };
-type LimitedResponse = { access: "limited"; counts: Counts; safety?: SafetyFlags; building?: BuildingLink; self: Visit | null; household: Visit[] };
+type FullResponse = { access: "full"; attendance: Visit[]; counts: Counts; safety?: SafetyFlags; building?: BuildingLink; kioskAsOf?: string | null; signedRequest?: boolean };
+type LimitedResponse = { access: "limited"; counts: Counts; safety?: SafetyFlags; building?: BuildingLink; self: Visit | null; household: Visit[]; signedRequest?: boolean };
 type AttendanceResponse = FullResponse | LimitedResponse;
+
+function isRoster(answer: unknown): answer is AttendanceResponse {
+  return typeof answer === "object" && answer !== null && "access" in answer && (answer.access === "full" || answer.access === "limited");
+}
+
+const shownError = (error: string) => (error === "Unauthorized" ? "Access Denied: Please sign in to view attendance." : error);
 
 function KioskDisplayInner() {
   const { formatTime } = useOrgTime();
   const searchParams = useSearchParams();
-  const [isKioskMode, setIsKioskMode] = useState(searchParams.get("mode") === "kiosk");
   const { data: session } = useSession();
-  const [data, setData] = useState<AttendanceResponse | null>(null);
-  // When `data` was current: the kiosk's roster time, else when it was loaded.
-  const [asOf, setAsOf] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [selectedParticipant, setSelectedParticipant] = useState<Person | null>(null);
+
+  // Unattended kiosk displays must not idle-stop. The gate includes mode=kiosk
+  // because the Pi proxy loads that URL without sig/ts/nonce on it.
+  const sig = searchParams.get("sig");
+  const ts = searchParams.get("ts");
+  const nonce = searchParams.get("nonce");
+  const signedHeaders = sig && ts && nonce ? { "x-kiosk-signature": sig, "x-kiosk-timestamp": ts, "x-kiosk-nonce": nonce } : undefined;
+  const isSignedKiosk = signedHeaders !== undefined;
+  const isKioskDisplay = searchParams.get("mode") === "kiosk" || isSignedKiosk;
+
+  // A 401 here reaches a denied household or a kiosk, and neither is sent to sign in.
+  const load = useLoad<unknown>("/api/attendance", { headers: signedHeaders, expireOn401: false, stampAnswers: true });
+  const fetched = isRoster(load.data) ? load.data : null;
+  const { error } = load;
   // The kiosk proxy answers 204 while the building is known empty.
-  const [kioskResting, setKioskResting] = useState(false);
+  const kioskResting = load.resting;
+
+  // A roster the framing wrapper pushed stands until the next load answers.
+  const [pushed, setPushed] = useState<{ roster: FullResponse; over: unknown; at: string } | null>(null);
+  const showingPushed = pushed !== null && pushed.over === load.data;
+  const data: AttendanceResponse | null = showingPushed ? pushed.roster : fetched;
+  const loading = load.loading && !showingPushed;
+
+  // When `data` was current: the kiosk's roster time, else when it was last answered.
+  const answeredAt = load.answeredAt === null ? null : new Date(load.answeredAt).toISOString();
+  const asOf = showingPushed
+    ? pushed.at
+    : fetched?.access === "full" && fetched.kioskAsOf !== undefined ? fetched.kioskAsOf : answeredAt;
+
+  const [signedSeen, setSignedSeen] = useState(false);
+  if (fetched?.signedRequest === true && !signedSeen) setSignedSeen(true);
+  const isKioskMode = searchParams.get("mode") === "kiosk" || signedSeen;
   // Whether the roster in `data` already carries kiosk labels. The signed kiosk payload and the
   // roster the proxy pushes do; labelling those again would shorten an already-shortened name.
   // A `mode=kiosk` preview opened by a privileged session carries full names, so it is labelled
   // here instead.
-  const [namesAreKioskLabels, setNamesAreKioskLabels] = useState(false);
-  const [selectedParticipant, setSelectedParticipant] = useState<Person | null>(null);
+  const namesAreKioskLabels = showingPushed || fetched?.signedRequest === true;
 
   const currentUserIsSysadmin = session?.user?.isSysadmin || false;
   const currentUserIsKeyholder = session?.user?.isKeyholder || false;
@@ -110,51 +141,17 @@ function KioskDisplayInner() {
   const householdVolunteers = limitedHousehold.filter(v => !v.participant.isKeyholder && !visitIsYouth(v));
   const householdYouth = limitedHousehold.filter(v => visitIsYouth(v));
 
-  // Unattended kiosk displays must not idle-stop. The gate includes mode=kiosk
-  // because the Pi proxy loads that URL without sig/ts/nonce on it.
-  const isSignedKiosk = !!(searchParams.get("sig") && searchParams.get("ts") && searchParams.get("nonce"));
-  const isKioskDisplay = searchParams.get("mode") === "kiosk" || isSignedKiosk;
-
-  const fetchAttendance = useCallback(async () => {
-    try {
-      const headers: Record<string, string> = {};
-      const sigParamsUrl = searchParams.get("sig");
-      const tsParamsUrl = searchParams.get("ts");
-      const nonceParamsUrl = searchParams.get("nonce");
-      if (sigParamsUrl && tsParamsUrl && nonceParamsUrl) {
-        headers["x-kiosk-signature"] = sigParamsUrl;
-        headers["x-kiosk-timestamp"] = tsParamsUrl;
-        headers["x-kiosk-nonce"] = nonceParamsUrl;
-      }
-
-      const res = await fetch("/api/attendance", { headers });
-      setKioskResting(res.status === 204);
-      if (res.status === 204) {
-        setError(null);
-        return;
-      }
-      const json = await res.json().catch(() => ({}));
-      if (res.ok && (json.access === "full" || json.access === "limited")) {
-        setData(json);
-        setAsOf(json.kioskAsOf !== undefined ? json.kioskAsOf : new Date().toISOString());
-        setError(null);
-        setNamesAreKioskLabels(json.signedRequest === true);
-        if (json.signedRequest === true) setIsKioskMode(true);
-      } else if (!res.ok) {
-        setError(json.error || "Failed to load attendance");
-      }
-    } catch (error) {
-      console.error("Failed to fetch attendance:", error);
-      setError("Network error occurred.");
-      if (!isKioskDisplay) notifications.show({ color: "red", message: "Network error", autoClose: false });
-    } finally {
-      setLoading(false);
-    }
-  }, [searchParams, isKioskDisplay]);
+  const { reload } = load;
+  // The load reads on mount, so the poll's opening tick is skipped.
+  const polled = useRef(false);
+  const poll = () => {
+    if (polled.current) void reload();
+    polled.current = true;
+  };
 
   // The door screen never blanks, and never passes a kept or kiosk-served roster off as fresh.
-  const kioskStale = isKioskDisplay && data !== null && (error !== null || (isFull && (data as FullResponse).kioskAsOf !== undefined));
-  usePolling(fetchAttendance, 60000, { idleStopMs: isKioskDisplay ? undefined : POLL_IDLE_STOP_MS });
+  const kioskStale = isKioskDisplay && data !== null && (error !== null || load.retrying || (isFull && (data as FullResponse).kioskAsOf !== undefined));
+  usePolling(poll, 60000, { idleStopMs: isKioskDisplay ? undefined : POLL_IDLE_STOP_MS });
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -163,20 +160,21 @@ function KioskDisplayInner() {
       if (typeof event.data === "object" && event.data?.type === "refresh-attendance") {
         // A partial push would render missing counts as an empty building, so it reloads instead.
         if (!event.data.attendance || !event.data.counts || !event.data.safety) {
-          fetchAttendance();
+          void reload();
           return;
         }
-        setData({ access: "full", attendance: event.data.attendance, counts: event.data.counts, safety: event.data.safety });
-        setAsOf(new Date().toISOString());
-        setNamesAreKioskLabels(true);
-        setLoading(false);
+        setPushed({
+          roster: { access: "full", attendance: event.data.attendance, counts: event.data.counts, safety: event.data.safety },
+          over: load.data,
+          at: new Date().toISOString(),
+        });
       } else if (event.data === "refresh-attendance") {
-        fetchAttendance();
+        void reload();
       }
     };
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [fetchAttendance]);
+  }, [reload, load.data]);
 
 
 
@@ -291,7 +289,9 @@ function KioskDisplayInner() {
         {loading ? (
           <Center py="xl"><Loader /></Center>
         ) : error && !kioskStale ? (
-          <Alert color="red">{error === "Unauthorized" ? "Access Denied: Please sign in to view attendance." : error}</Alert>
+          isKioskDisplay
+            ? <Alert color="red">{shownError(error)}</Alert>
+            : <LoadError what="attendance" message={shownError(error)} onRetry={() => void reload()} />
         ) : !data && kioskResting ? (
           <Center py="xl"><Text c="dimmed">Kiosk resting — zzz. Badge in to wake it.</Text></Center>
         ) : !data ? (

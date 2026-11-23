@@ -1,5 +1,6 @@
 import { act, render, renderHook } from "@testing-library/react";
 import { useEffect, type ReactNode } from "react";
+import { useSWRConfig } from "swr";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HttpError, ViewerProvider, createClient, errorMessage, type Loaded, type Viewer } from "./index";
 import { clearLoads } from "./loadCache";
@@ -479,7 +480,8 @@ describe("loads that opt out of re-reads", () => {
     await api("/y", { method: "POST" });
     await advance();
     expect(gets(fetchMock)).toBe(1);
-    await act(() => result.current.reload());
+    act(() => { void result.current.reload(); });
+    await advance();
     expect(gets(fetchMock)).toBe(2);
   });
 
@@ -549,5 +551,158 @@ describe("the promise from reload", () => {
     await advance(0);
     expect(outcome).toBe("resolved");
     expect(result.current.error).toBe("No such thing");
+  });
+});
+
+describe("per-load headers", () => {
+  const signed = { "x-kiosk-signature": "abc", "x-kiosk-nonce": "n" };
+
+  it("sends the headers on the read", async () => {
+    const fetchMock = stubFetch(() => json({ n: 1 }));
+    renderHook(() => useLoad("/signed", { headers: signed }));
+    await advance();
+    expect(fetchMock.mock.calls[0][1]?.headers).toEqual(signed);
+  });
+
+  it("keys a load with no headers by its bare URL", async () => {
+    const fetchMock = stubFetch(() => json({ n: 1 }));
+    renderHook(() => useLoad("/bare"));
+    await advance();
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/things/bare");
+    const { result } = renderHook(() => useSWRConfig());
+    expect([...result.current.cache.keys()]).toContain("/api/things/bare");
+  });
+
+  it("gives a signed and an unsigned reader of one URL their own answers", async () => {
+    const fetchMock = stubFetch((_url, init) => json({ signed: Boolean((init?.headers as Record<string, string> | undefined)?.["x-kiosk-signature"]) }));
+    const { result } = renderHook(() => [useLoad<{ signed: boolean }>("/both"), useLoad<{ signed: boolean }>("/both", { headers: signed })]);
+    await advance();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.current.map((l) => l.data)).toEqual([{ signed: false }, { signed: true }]);
+  });
+
+  it("keys the same headers in any order as one load", async () => {
+    const fetchMock = stubFetch(() => json({ n: 1 }));
+    renderHook(() => [useLoad("/order", { headers: { a: "1", b: "2" } }), useLoad("/order", { headers: { b: "2", a: "1" } })]);
+    await advance();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a 204 answer", () => {
+  const noContent = () => new Response(null, { status: 204 });
+
+  it("is resting with no data when nothing came before it", async () => {
+    stubFetch(noContent);
+    const { result } = renderHook(() => useLoad<{ n: number }>("/rest"));
+    await advance();
+    expect(result.current).toMatchObject({ data: null, resting: true, error: null, loading: false });
+  });
+
+  it("keeps the last answer that had a body, and a later body ends resting", async () => {
+    const answers = [() => json({ n: 1 }), noContent, () => json({ n: 2 })];
+    let reads = 0;
+    stubFetch(() => answers[Math.min(reads++, answers.length - 1)]());
+    const { result } = renderHook(() => useLoad<{ n: number }>("/rest-after"));
+    await advance();
+    expect(result.current).toMatchObject({ data: { n: 1 }, resting: false });
+    const first = result.current.data;
+
+    act(() => { void result.current.reload(); });
+    await advance();
+    expect(result.current).toMatchObject({ data: { n: 1 }, resting: true });
+    expect(result.current.data).toBe(first);
+
+    act(() => { void result.current.reload(); });
+    await advance();
+    expect(result.current).toMatchObject({ data: { n: 2 }, resting: false });
+  });
+
+  it("clears an earlier error", async () => {
+    let reads = 0;
+    stubFetch(() => (reads++ === 0 ? json({ error: "No such thing" }, 404) : noContent()));
+    const { result } = renderHook(() => useLoad("/rest-error"));
+    await advance();
+    expect(result.current.error).toBe("No such thing");
+    act(() => { void result.current.reload(); });
+    await advance();
+    expect(result.current).toMatchObject({ error: null, resting: true, data: null });
+  });
+});
+
+describe("stampAnswers", () => {
+  const noContent = () => new Response(null, { status: 204 });
+
+  it("stamps every answer with a body, even one identical to the last", async () => {
+    vi.setSystemTime(1_000_000);
+    stubFetch(() => json({ n: 1 }));
+    const { result } = renderHook(() => useLoad<{ n: number }>("/stamp", { stampAnswers: true }));
+    await advance();
+    expect(result.current.answeredAt).toBeGreaterThanOrEqual(1_000_000);
+    expect(result.current.answeredAt).toBeLessThan(2_000_000);
+
+    vi.setSystemTime(2_000_000);
+    act(() => { void result.current.reload(); });
+    await advance();
+    expect(result.current.answeredAt).toBeGreaterThanOrEqual(2_000_000);
+  });
+
+  it("carries the stamp over a 204", async () => {
+    vi.setSystemTime(1_000_000);
+    let reads = 0;
+    stubFetch(() => (reads++ === 0 ? json({ n: 1 }) : noContent()));
+    const { result } = renderHook(() => useLoad<{ n: number }>("/stamp-rest", { stampAnswers: true }));
+    await advance(0);
+    const first = result.current.answeredAt;
+    expect(first).not.toBeNull();
+
+    vi.setSystemTime(2_000_000);
+    act(() => { void result.current.reload(); });
+    await advance();
+    expect(result.current).toMatchObject({ resting: true, answeredAt: first });
+  });
+
+  it("is null without the option, and an identical answer keeps the same data", async () => {
+    stubFetch(() => json({ n: 1 }));
+    const { result } = renderHook(() => useLoad<{ n: number }>("/no-stamp"));
+    await advance();
+    const first = result.current.data;
+    act(() => { void result.current.reload(); });
+    await advance();
+    expect(result.current.answeredAt).toBeNull();
+    expect(result.current.data).toBe(first);
+  });
+
+  it("gives two readers of one key, one stamping and one not, each what it would get alone", async () => {
+    vi.setSystemTime(1_000_000);
+    stubFetch(() => json({ n: 1 }));
+    let plainRenders = 0;
+    const plain = renderHook(() => { plainRenders += 1; return useLoad<{ n: number }>("/shared"); });
+    const stamping = renderHook(() => useLoad<{ n: number }>("/shared", { stampAnswers: true }));
+    await advance();
+    const firstData = plain.result.current.data;
+    const firstStamp = stamping.result.current.answeredAt;
+    const rendersBefore = plainRenders;
+
+    vi.setSystemTime(2_000_000);
+    act(() => { void plain.result.current.reload(); });
+    await advance();
+
+    expect(firstStamp).toBeLessThan(2_000_000);
+    expect(stamping.result.current.answeredAt).toBeGreaterThanOrEqual(2_000_000);
+    expect(plain.result.current.answeredAt).toBeNull();
+    expect(plain.result.current.data).toBe(firstData);
+    expect(plainRenders).toBe(rendersBefore);
+  });
+
+  it("is emptied by clearLoads", async () => {
+    stubFetch(() => json({ n: 1 }));
+    const { result } = renderHook(() => useLoad<{ n: number }>("/stamp-clear", { stampAnswers: true }));
+    await advance();
+    expect(result.current.answeredAt).not.toBeNull();
+    stubFetch(() => new Promise<Response>(() => {}));
+    act(() => clearLoads());
+    await advance();
+    expect(result.current.answeredAt).toBeNull();
   });
 });

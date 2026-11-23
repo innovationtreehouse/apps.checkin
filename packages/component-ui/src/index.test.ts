@@ -111,6 +111,11 @@ describe("createClient api", () => {
     expect(errorMessage(thrown)).toBe("Couldn't reach the server. Check your connection and try again.");
   });
 
+  it("answers null for a 204", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 204 })));
+    await expect(api("/x")).resolves.toBeNull();
+  });
+
   it("does not hand the invalidate option to fetch", async () => {
     const fetchMock = stub(200, "{}");
     await api("/x", { method: "POST", invalidate: false });

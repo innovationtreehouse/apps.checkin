@@ -46,7 +46,12 @@ function gatewayMessage(res: Response, isJson: boolean, isRead: boolean): string
 }
 
 /** Fetches `url` and returns its JSON body; a failure throws `HttpError`. A successful write re-reads every cached load. */
-export async function request<T>(url: string, { invalidate = true, ...options }: RequestOptions = {}): Promise<T> {
+export async function request<T>(url: string, options: RequestOptions = {}): Promise<T> {
+  return (await requestAnswer<T>(url, options)).data;
+}
+
+/** `request`, keeping the answer's status, so a reader can tell a 204 from a body of null. */
+export async function requestAnswer<T>(url: string, { invalidate = true, ...options }: RequestOptions = {}): Promise<{ status: number; data: T }> {
   const isForm = options.body instanceof FormData;
   const method = (options.method ?? "GET").toUpperCase();
   let res: Response;
@@ -77,7 +82,7 @@ export async function request<T>(url: string, { invalidate = true, ...options }:
       typeof code === "string" ? code : null,
     );
   }
-  return data as T;
+  return { status: res.status, data: data as T };
 }
 
 /** The text a person sees for a failure: the route's words, or fixed text for anything else, never exception text. */

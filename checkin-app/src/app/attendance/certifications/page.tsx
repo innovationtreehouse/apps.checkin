@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, Suspense, useCallback, useSyncExternalStore } from "react";
+import { Suspense, useRef, useSyncExternalStore } from "react";
 import { useSearchParams } from "next/navigation";
 import { Alert, Badge, Box, Card, Center, Group, Loader, Text, Title } from "@mantine/core";
-import { clearError, NETWORK_FAILURE_TEXT, showError } from "@checkin/component-ui";
+import { LoadError } from "@checkin/component-ui";
+import { useLoad } from "@/lib/api";
 import { useAutoCycle } from "../../../hooks/useAutoCycle";
 import { usePolling } from "@/hooks/usePolling";
 import { goesBy } from "@/lib/person/name";
@@ -11,7 +12,6 @@ import { ToolLevelBadge, toToolLevel, toolLevelDot } from "@/components/ToolLeve
 
 import { PageLoader } from "@/components/ui/PageLoader";
 import { useOrgTime } from "@/components/TimezoneProvider";
-const NETWORK_ERROR_KEY = "certifications-network";
 
 type ToolStatusLevel = "BASIC" | "DOF" | "CERTIFIED" | "INSTRUCTOR" | "MAY_CERTIFY_OTHERS";
 
@@ -30,6 +30,13 @@ type Tool = {
   id: number;
   name: string;
 };
+
+type CertificationsResponse = { participants: Person[]; tools: Tool[]; building?: { reachable?: boolean } };
+
+function isGrid(answer: unknown): answer is CertificationsResponse {
+  return typeof answer === "object" && answer !== null && "participants" in answer && Array.isArray(answer.participants)
+    && "tools" in answer && Array.isArray(answer.tools);
+}
 
 // Cert levels shown in the legend; the dot colors come from the regulated ToolLevelBadge.
 const LEGEND_LEVELS: ToolStatusLevel[] = ["BASIC", "CERTIFIED", "DOF", "INSTRUCTOR", "MAY_CERTIFY_OTHERS"];
@@ -53,70 +60,38 @@ export default function KioskCertificationsDisplay() {
 function KioskCertificationsInner() {
   const searchParams = useSearchParams();
   const limitToPresent = searchParams.get('limit_to_present') !== 'false';
-  const [isKioskMode, setIsKioskMode] = useState(searchParams.get('mode') === 'kiosk' || !!searchParams.get('sig'));
-  const [participants, setParticipants] = useState<Person[]>([]);
-  const [tools, setTools] = useState<Tool[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  // The kiosk proxy answers 204 while the building is known empty.
-  const [kioskResting, setKioskResting] = useState(false);
-  const [loaded, setLoaded] = useState(false);
-  const [unreachable, setUnreachable] = useState(false);
-  // Off the kiosk, "present" is stated as fact only while the kiosk is reachable.
-  const [presenceConfirmed, setPresenceConfirmed] = useState(false);
+  const sig = searchParams.get("sig");
+  const ts = searchParams.get("ts");
+  const nonce = searchParams.get("nonce");
+  const isKioskMode = searchParams.get('mode') === 'kiosk' || !!sig;
   const minute = useSyncExternalStore(subscribeToClock, currentMinute, noMinute);
   const currentTime = minute === null ? null : new Date(minute * 60000);
   const { formatTime } = useOrgTime();
 
-  const fetchData = useCallback(async () => {
-    try {
-      // Pass kiosk signature headers if present in URL params
-      const headers: Record<string, string> = {};
-      const sigParam = searchParams.get("sig");
-      const tsParam = searchParams.get("ts");
-      const nonceParam = searchParams.get("nonce");
-
-      if (sigParam && tsParam && nonceParam) {
-        headers["x-kiosk-signature"] = sigParam;
-        headers["x-kiosk-timestamp"] = tsParam;
-        headers["x-kiosk-nonce"] = nonceParam;
-      }
-
-      const res = await fetch(`/api/kioskdisplay/certifications?limit_to_present=${limitToPresent}`, { headers });
-      setUnreachable(false);
-      clearError(NETWORK_ERROR_KEY);
-      setKioskResting(res.status === 204);
-      if (res.status === 204) {
-        setError(null);
-        return;
-      }
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.participants && data.tools) {
-        setLoaded(true);
-        setParticipants(data.participants);
-        setTools(data.tools);
-        setPresenceConfirmed(data.building?.reachable === true);
-        setError(null);
-        if (sigParam) {
-          setIsKioskMode(true);
-        }
-      } else if (!res.ok) {
-        setError(data.error || "Failed to load certifications data");
-      }
-    } catch (error) {
-      console.error("Failed to fetch certifications data:", error);
-      setUnreachable(true);
-      // Nobody can dismiss a message on the door screen, so the kiosk shows staleness inline only.
-      if (!isKioskMode) showError(NETWORK_FAILURE_TEXT, { key: NETWORK_ERROR_KEY });
-    } finally {
-      setLoading(false);
-    }
-  }, [searchParams, limitToPresent, isKioskMode]);
+  // A 401 here reaches a kiosk, which is never sent to sign in.
+  const load = useLoad<unknown>(`/api/kioskdisplay/certifications?limit_to_present=${limitToPresent}`, {
+    headers: sig && ts && nonce ? { "x-kiosk-signature": sig, "x-kiosk-timestamp": ts, "x-kiosk-nonce": nonce } : undefined,
+    expireOn401: false,
+  });
+  const grid = isGrid(load.data) ? load.data : null;
+  const participants = grid?.participants ?? [];
+  const tools = grid?.tools ?? [];
+  const { error, loading, reload } = load;
+  // The kiosk proxy answers 204 while the building is known empty.
+  const kioskResting = load.resting;
+  const notUpToDate = grid !== null && (error !== null || load.retrying);
+  // Off the kiosk, "present" is stated as fact only while the kiosk is reachable.
+  const presenceConfirmed = grid?.building?.reachable === true;
 
   // Visibility gate only, NO idle-stop: this is an unattended wall display, so
   // idle-stop would freeze it. On the kiosk, the Pi's proxy answers these polls
-  // itself (204) while the building is known empty.
-  usePolling(fetchData, 10000);
+  // itself (204) while the building is known empty. The load reads on mount, so
+  // the poll's opening tick is skipped.
+  const polled = useRef(false);
+  usePolling(() => {
+    if (polled.current) void reload();
+    polled.current = true;
+  }, 10000);
 
   const getColorForLevel = (level: ToolStatusLevel | undefined) =>
     level ? toolLevelDot(toToolLevel(level)) : "transparent";
@@ -198,7 +173,7 @@ function KioskCertificationsInner() {
                     ? `${participants.length} People Present`
                     : `${participants.length} Checked In (unconfirmed)`}
               </Badge>
-              {loaded && unreachable && <Text size="sm" c="dimmed">Not up to date</Text>}
+              {notUpToDate && <Text size="sm" c="dimmed">Not up to date</Text>}
             </Group>
             <Group gap="sm" align="center">
               <Text fw={700} size="sm">Legend:</Text>
@@ -221,13 +196,13 @@ function KioskCertificationsInner() {
           )}
         </Group>
 
-        {loading ? (
+        {loading || (load.retrying && !grid) ? (
           <Center py="xl"><Loader /></Center>
-        ) : error ? (
+        ) : error && !isKioskMode ? (
+          <LoadError what="certifications" message={error} onRetry={() => void reload()} />
+        ) : error && !grid ? (
           <Alert color="red">{error}</Alert>
-        ) : !loaded && unreachable ? (
-          <Alert color="red">{NETWORK_FAILURE_TEXT}</Alert>
-        ) : !loaded && kioskResting ? (
+        ) : !grid && kioskResting ? (
           <Center py="xl"><Text c="dimmed">Kiosk resting — zzz. Badge in to wake it.</Text></Center>
         ) : participants.length === 0 || tools.length === 0 ? (
           <Center py="xl"><Text c="dimmed">No {limitToPresent ? "active people" : "people"} found.</Text></Center>

@@ -1,10 +1,10 @@
 "use client";
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Alert, Button, Group, Pagination, Text } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
-import useSWR from "swr";
-import { clearLoads, countFailure, endRetryChain, forgetFailures, holdFromInvalidation, invalidateLoads, loadGeneration, scheduleRetry } from "./loadCache";
-import { errorMessage, FAILURE_TEXT, HttpError, NETWORK_FAILURE_TEXT, request, type RequestOptions } from "./http";
+import useSWR, { useSWRConfig } from "swr";
+import { answeredAt, clearLoads, countFailure, endRetryChain, forgetFailures, holdFromInvalidation, invalidateLoads, loadGeneration, scheduleRetry, stampAnswer, subscribeAnswers } from "./loadCache";
+import { errorMessage, FAILURE_TEXT, HttpError, NETWORK_FAILURE_TEXT, request, requestAnswer, type RequestOptions } from "./http";
 
 export { invalidateLoads };
 export { errorMessage, FAILURE_TEXT, HttpError, NETWORK_FAILURE_TEXT, request, type RequestOptions };
@@ -60,6 +60,10 @@ export interface Loaded<T> {
   retrying: boolean;
   /** The HTTP status of a failed read; null for a network failure or no failure. */
   status: number | null;
+  /** The latest answer was 204 No Content; `data` still holds the last answer that had a body. */
+  resting: boolean;
+  /** When the last answer with a body arrived, in epoch milliseconds; null unless `stampAnswers` is set. */
+  answeredAt: number | null;
   /** Settles once the re-read has answered, and never rejects: a failed read lands in `error`. */
   reload: () => Promise<void>;
 }
@@ -71,6 +75,18 @@ interface LoadFailure {
   status: number | null;
   attempt: number;
   retrying: boolean;
+}
+
+/** One answer as the cache holds it: a 204 carries the previous body forward. */
+interface Answered<T> {
+  body: T | null;
+  resting: boolean;
+}
+
+/** The cache key: the URL alone, or the URL and its headers, so a signed answer never reaches an unsigned reader. */
+function loadKey(url: string, headers: Record<string, string> | undefined): string {
+  const entries = Object.entries(headers ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  return entries.length ? `${url} ${JSON.stringify(entries)}` : url;
 }
 
 function loadFailure(url: string, e: unknown, retry: boolean): LoadFailure {
@@ -98,20 +114,32 @@ export function createClient(base: string) {
    * next-auth reports as signed in, such as a denied household, so it must not move anyone.
    * `reconnect: false` and `skipWriteReload: true` are for a read that logs a view or wakes a sleeping
    * database: no re-read on reconnect, and none after another page's write; `reload()` still re-reads.
+   * `headers` go on every read of this load, and are part of its cache key. `stampAnswers` reports
+   * `answeredAt` and re-renders on every answer, even one identical to the last.
    */
   function useLoad<T>(
     path: string | null,
-    { retry = true, keepPrevious = false, expireOn401 = true, reconnect = true, skipWriteReload = false }: { retry?: boolean; keepPrevious?: boolean; expireOn401?: boolean; reconnect?: boolean; skipWriteReload?: boolean } = {},
+    { retry = true, keepPrevious = false, expireOn401 = true, reconnect = true, skipWriteReload = false, headers, stampAnswers = false }: { retry?: boolean; keepPrevious?: boolean; expireOn401?: boolean; reconnect?: boolean; skipWriteReload?: boolean; headers?: Record<string, string>; stampAnswers?: boolean } = {},
   ): Loaded<T> {
     const url = path === null ? null : resolve(path);
-    useEffect(() => () => { if (url !== null) forgetFailures(url); }, [url]);
-    useEffect(() => (url !== null && skipWriteReload ? holdFromInvalidation(url) : undefined), [url, skipWriteReload]);
-    const swr = useSWR<T, LoadFailure>(
-      url,
-      (key: string) =>
-        request<T>(key).then(
-          (answer) => { endRetryChain(key); return answer; },
-          (e: unknown) => { throw loadFailure(key, e, retry); },
+    const key = url === null ? null : loadKey(url, headers);
+    useEffect(() => () => { if (key !== null) forgetFailures(key); }, [key]);
+    useEffect(() => (key !== null && skipWriteReload ? holdFromInvalidation(key) : undefined), [key, skipWriteReload]);
+    const { cache } = useSWRConfig();
+    const swr = useSWR<Answered<T>, LoadFailure>(
+      key,
+      url === null ? null : (cacheKey: string) =>
+        requestAnswer<T>(url, headers ? { headers } : {}).then(
+          ({ status, data }): Answered<T> => {
+            endRetryChain(cacheKey);
+            if (status !== 204) {
+              stampAnswer(cacheKey);
+              return { body: data, resting: false };
+            }
+            const previous: Answered<T> | undefined = cache.get(cacheKey)?.data;
+            return { body: previous?.body ?? null, resting: true };
+          },
+          (e: unknown) => { throw loadFailure(cacheKey, e, retry); },
         ),
       {
         revalidateOnFocus: false,
@@ -122,10 +150,14 @@ export function createClient(base: string) {
         },
       },
     );
+    const stamped = key !== null && stampAnswers ? key : null;
+    const subscribeStamp = useCallback((listener: () => void) => (stamped === null ? () => {} : subscribeAnswers(stamped, listener)), [stamped]);
+    const stampedAt = useSyncExternalStore(subscribeStamp, () => (stamped === null ? null : answeredAt(stamped)), () => null);
     const generation = loadGeneration();
-    const [kept, setKept] = useState<{ data: T; generation: number } | null>(null);
-    if (keepPrevious && swr.data !== undefined && kept?.data !== swr.data) setKept({ data: swr.data, generation });
-    const previous = keepPrevious && url !== null && kept?.generation === generation && !(Array.isArray(kept.data) && kept.data.length === 0) ? kept.data : null;
+    const body = swr.data === undefined ? undefined : swr.data.body;
+    const [kept, setKept] = useState<{ data: T | null; generation: number } | null>(null);
+    if (keepPrevious && body !== undefined && kept?.data !== body) setKept({ data: body, generation });
+    const previous = keepPrevious && key !== null && kept?.generation === generation && !(Array.isArray(kept.data) && kept.data.length === 0) ? kept.data : null;
     const retrying = swr.error?.retrying ?? false;
     const status = swr.error?.status ?? null;
     const onSessionExpired = useContext(SessionExpiredContext);
@@ -135,11 +167,13 @@ export function createClient(base: string) {
     const { mutate } = swr;
     const reload = useCallback(() => mutate().then(() => undefined, () => undefined), [mutate]);
     return {
-      data: swr.data !== undefined ? swr.data : previous,
+      data: body !== undefined ? body : previous,
       error: swr.error && !retrying ? swr.error.message : null,
       loading: swr.isLoading && !retrying,
       retrying,
       status,
+      resting: swr.data?.resting ?? false,
+      answeredAt: stampedAt,
       reload,
     };
   }
