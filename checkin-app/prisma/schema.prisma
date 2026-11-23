@@ -846,9 +846,6 @@ model BoardSettings {
   /// orders changed after this are re-scanned each run. Null = scan from the start.
   /// @sensitivity:internal
   shopifyReconcileCursorAt   DateTime?
-  /// Unused column awaiting its drop. Hidden from the client so no code reads or
-  /// writes it before the column goes. @sensitivity:public
-  scholarshipDenialGraceDays Int?      @ignore
   /// Library keys (lib/libraryRelease.ts) the board has released: their nav
   /// entries show to everyone with access, not just board members. UI-only.
   /// @sensitivity:public
