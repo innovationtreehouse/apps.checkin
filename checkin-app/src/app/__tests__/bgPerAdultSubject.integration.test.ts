@@ -139,8 +139,7 @@ describe('Per-adult background-check subjects', () => {
         const threshold = bgFreshThreshold(boundary, 12);
         const [alex, sam] = await prisma.person.findMany({ where: { id: { in: [hh.alex, hh.sam] } }, orderBy: { id: 'asc' }, select: { dateOfBirth: true, isDeclaredAdult: true, lastBackgroundCheck: true } });
         expect(personBgVerdict(alex, boundary, threshold)).toBe('FRESH');
-        // Reading NEEDED is what keeps Sam in peopleNeedingBgCheck and in every PERSON_BG
-        // trigger.
+        // Naming Alex stamps Alex alone: Sam's own check is still missing.
         expect(personBgVerdict(sam, boundary, threshold)).toBe('NEEDED');
     });
 

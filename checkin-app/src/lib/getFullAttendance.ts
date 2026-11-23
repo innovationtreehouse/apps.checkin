@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { VALID_CONTACT_WHERE } from "@/lib/emergencyContacts/valid";
 import { isYouth } from "@/lib/time";
 import { LIVE_KEYHOLDER, LIVE_VISIT } from "@/lib/visit/filters";
 import { MIN_SUPERVISING_ADULTS, supervisingAdultCount, supervisingAdultVisits, uncoveredYouth } from "@/lib/supervision";
@@ -104,7 +105,7 @@ async function computeFullAttendance(kiosk: boolean) {
                             id: true,
                             // Only valid (non-member, complete) contacts, primary first.
                             emergencyContacts: {
-                                where: { conflictParticipantId: null, name: { not: "" }, phone: { not: "" } },
+                                where: VALID_CONTACT_WHERE,
                                 orderBy: [{ priority: "asc" }, { id: "asc" }],
                                 select: { id: true, name: true, phone: true, relationship: true },
                             },

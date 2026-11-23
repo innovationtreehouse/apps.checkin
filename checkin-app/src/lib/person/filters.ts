@@ -59,15 +59,26 @@ export function programAttachedWhere(now: Date): Prisma.PersonWhereInput {
 }
 
 /**
- * Person who owes a background check of their own: program-attached, or a signing
- * adult of an ACTIVE member household. Clearing a household review stamps only the one
- * adult its reviewers named, so without the lead arm the other signing adult — the
- * parent who signs and drops off, attached to no program — is on no track at all.
- *
- * The ACTIVE bound keeps it to members: `isHouseholdLead` marks the lead of EVERY
- * household the app creates: imported legacy, program-only, abandoned intakes
- * (startIntake anchors a membership at status NONE), DENIED and REVOKED. Mirrors the
- * agreement track's autoPopulationWhere.
+ * Person holding a position that needs a check of their own and that program attachment
+ * does not already cover: a run leader, a bucket owner or treasurer of a live bucket, or
+ * anyone with a role (the positions `positionHolders` lists). A run counts under the
+ * same program window as the program arms.
+ */
+export function positionHeldWhere(now: Date): Prisma.PersonWhereInput {
+    return {
+        OR: [
+            { instancesLed: { some: { program: recentProgramWhere(now) } } },
+            { budgetOwnersOwned: { some: { archivedAt: null } } },
+            { budgetOwnerTreasurerships: { some: { budgetOwner: { archivedAt: null } } } },
+            { roles: { some: {} } },
+        ],
+    };
+}
+
+/**
+ * Person who owes a background check of their own: program-attached, or holding a
+ * position. Being a household lead adds nobody: a household needs one lead's check,
+ * which its application decides.
  *
  * The board's compliance worklist reads it. The new-member PERSON_BG trigger opens for
  * the program-attached arm only.
@@ -75,6 +86,6 @@ export function programAttachedWhere(now: Date): Prisma.PersonWhereInput {
 export function bgObligatedWhere(now: Date): Prisma.PersonWhereInput {
     return {
         household: { archivedAt: null },
-        OR: [programAttachedWhere(now), { isHouseholdLead: true, household: { orgMembership: { status: "ACTIVE" } } }],
+        OR: [programAttachedWhere(now), positionHeldWhere(now)],
     };
 }

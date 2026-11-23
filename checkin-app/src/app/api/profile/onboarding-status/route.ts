@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { isValidContact } from "@/lib/emergencyContacts/valid";
 import { logger } from "@/lib/logger";
 import prisma from '@/lib/prisma';
 import { withAuth } from "@/lib/auth";
@@ -30,9 +31,7 @@ export const GET = withAuth(
             const isLead = user.isHouseholdLead;
 
             // A lead needs a contact when no valid (non-member, complete) one exists.
-            const validContact = user.household?.emergencyContacts.find(
-                (c) => c.conflictParticipantId === null && c.name.trim() && c.phone.trim(),
-            );
+            const validContact = user.household?.emergencyContacts.find(isValidContact);
             const primaryContact = user.household?.emergencyContacts[0];
             const needsEmergencyContact = isLead && !validContact;
 

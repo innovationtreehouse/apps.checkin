@@ -6,7 +6,7 @@ import { type DbClient, withTx } from "@/lib/db-client";
 import { lockLiveHouseholds } from "@/lib/household/archiveGuard";
 import { invalidateAttendanceCache } from "@/lib/getFullAttendance";
 import { openProcess } from "@/lib/membership/lifecycle";
-import { householdHasValidContact } from "./valid";
+import { householdHasValidContact, isValidContact, VALID_CONTACT_WHERE } from "./valid";
 
 /**
  * Emergency-contact write/read model. Enforces the not-a-household-member rule
@@ -53,7 +53,7 @@ export function present(c: { id: number; name: string; phone: string; email: str
         email: c.email,
         relationship: c.relationship,
         priority: c.priority,
-        invalid: !isValid(c),
+        invalid: !isValidContact(c),
     };
 }
 
@@ -180,10 +180,6 @@ export async function updateContact(client: Db, householdId: number, contactId: 
     return result;
 }
 
-function isValid(c: { name: string; phone: string; conflictParticipantId: number | null }): boolean {
-    return c.conflictParticipantId === null && !!c.name.trim() && !!c.phone.trim();
-}
-
 /**
  * Removes a contact, refusing to remove the household's last valid one. An
  * invalid contact can always go: it doesn't count toward the floor.
@@ -196,7 +192,7 @@ export async function deleteContact(db: Db, householdId: number, contactId: numb
         const contacts = await tx.emergencyContact.findMany({ where: { householdId } });
         const target = contacts.find((c) => c.id === contactId);
         if (!target) throw new EmergencyContactError("not_found", "Emergency contact not found.");
-        if (isValid(target) && !contacts.some((c) => c.id !== contactId && isValid(c))) {
+        if (isValidContact(target) && !contacts.some((c) => c.id !== contactId && isValidContact(c))) {
             throw new EmergencyContactError(
                 "last_valid",
                 "Add a second emergency contact before removing this one — your household must always have at least one valid emergency contact.",
@@ -283,7 +279,7 @@ export function listContacts(db: Db, householdId: number): Promise<EmergencyCont
 
 export function listValidContacts(db: Db, householdId: number): Promise<EmergencyContact[]> {
     return db.emergencyContact.findMany({
-        where: { householdId, conflictParticipantId: null, name: { not: "" }, phone: { not: "" } },
+        where: { householdId, ...VALID_CONTACT_WHERE },
         orderBy: [{ priority: "asc" }, { id: "asc" }],
     });
 }
@@ -374,9 +370,7 @@ export async function findHouseholdsMissingValidContact(db: Db = prisma): Promis
     const withValid = await db.emergencyContact.findMany({
         where: {
             householdId: { in: scoped.map((h) => h.id) },
-            conflictParticipantId: null,
-            name: { not: "" },
-            phone: { not: "" },
+            ...VALID_CONTACT_WHERE,
         },
         select: { householdId: true },
         distinct: ["householdId"],

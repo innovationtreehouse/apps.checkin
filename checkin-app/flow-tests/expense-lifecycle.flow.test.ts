@@ -42,7 +42,7 @@ async function newBucket(name: string, ownerId: number | null): Promise<number> 
   const bucket = await post<{ id: number }>(finance, "/api/budget-owners", { name: `${name} ${stamp}`, quickBooksClassId: newClassId() });
   expect(bucket.status).toBe(200);
   buckets.push(bucket.json.id);
-  if (ownerId !== null) expect((await send(board, "PUT", `/api/budget-owners/${bucket.json.id}/owner`, { personId: ownerId })).status).toBe(200);
+  if (ownerId !== null) expect((await send(board, "PUT", `/api/budget-owners/${bucket.json.id}/owner`, { personId: ownerId, acknowledgeCheck: true })).status).toBe(200);
   return bucket.json.id;
 }
 

@@ -37,6 +37,8 @@ export const POSITION_LABELS = {
     ...ROLE_POSITION_LABELS,
     PROGRAM_VOLUNTEER: "Volunteer",
     CORE_VOLUNTEER: "Core volunteer",
+    BUDGET_OWNER: "Budget bucket owner",
+    BUDGET_TREASURER: "Budget bucket treasurer",
 } as const;
 
 export type Position = keyof typeof POSITION_LABELS;
