@@ -16,11 +16,16 @@ operations over the same core.
 EventBridge (cron)  ─▶  handler  ─┬─ incremental sync (orders + payouts, updated_at cursor)
                                    └─ backfill (Bulk Operation lifecycle, from cutover date)
                                             │
-   Shopify Admin GraphQL  ──fetch──▶  shopify_raw_event   (append-only log, never mutated)
+   Shopify Admin GraphQL  ──fetch──▶  shopify_raw_event   (append-only log, never updated)
                                             │  (separate, replayable step)
                                    loader / projection  ──upsert by GID──▶  shop_* live tables
 ```
 
+- **Retention** runs after each daily incremental sync, capped per run and recorded as an
+  ADMIN `sync_run` (`retention`). A raw event is deleted seven years after the Form 990
+  deadline for its store event's fiscal year, and only once a later entry for the same gid
+  supersedes it, so a replay still rebuilds every live row. A bulk export is deleted 90 days
+  after its run ended.
 - **`shopify_raw_event`** is an append-only diagnosis log. Every row records how it
   arrived via the `source` column (`BACKFILL` / `INCREMENTAL` / `HAND_LOADED` /
   `TEST_LOADED`), so synthetic rows stay distinguishable from real API data forever.

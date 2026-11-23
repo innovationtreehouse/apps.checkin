@@ -107,3 +107,30 @@ export function redactSecrets(text: string, maxChars = REDACT_MAX_CHARS): string
     : text;
   return PATTERNS.reduce((s, [re, sub]) => s.replace(re, sub), capped);
 }
+
+// The organization's fiscal year ends June 30, so its Form 990 is due November 15.
+const FISCAL_YEAR_END_MONTH = 6;
+const FORM_990_DUE = { month: 11, day: 15 };
+
+/**
+ * The first day a record dated `day` (YYYY-MM-DD, or an ISO timestamp read in UTC) may be deleted,
+ * when it is kept `keepYears` past its fiscal year's Form 990 deadline. It is kept through the
+ * deadline day itself.
+ */
+export function form990DeleteAfter(day: string, keepYears: number): Date {
+  const year = Number(day.slice(0, 4));
+  const fiscalYearEnd = Number(day.slice(5, 7)) > FISCAL_YEAR_END_MONTH ? year + 1 : year;
+  return new Date(Date.UTC(fiscalYearEnd + keepYears, FORM_990_DUE.month - 1, FORM_990_DUE.day + 1));
+}
+
+/**
+ * The start of the oldest fiscal year still kept at `now`: every record dated before it is past
+ * form990DeleteAfter, and none dated at or after it is.
+ */
+export function form990DueBefore(now: Date, keepYears: number): Date {
+  let fiscalYearEnd = now.getUTCFullYear() - keepYears;
+  const lastMonth = `${fiscalYearEnd}-${String(FISCAL_YEAR_END_MONTH).padStart(2, "0")}-01`;
+  if (form990DeleteAfter(lastMonth, keepYears) > now) fiscalYearEnd--;
+  // Date.UTC months count from 0, so FISCAL_YEAR_END_MONTH is the month after the year ends.
+  return new Date(Date.UTC(fiscalYearEnd, FISCAL_YEAR_END_MONTH, 1));
+}

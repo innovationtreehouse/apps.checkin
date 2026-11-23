@@ -1,7 +1,8 @@
 /**
  * Append-only writer for `shopify_raw_event`.
  *
- * Rows are never updated or deleted. As a bloat guard we skip the insert when the
+ * Rows are never updated. Retention (sync/retention.ts) deletes an entry only once its period has
+ * ended and a later entry for the same gid supersedes it. As a bloat guard we skip the insert when the
  * incoming payload is byte-identical to the most recent event already logged for
  * the same (store, objectType, gid) — a no-op re-read adds nothing. Anything that
  * differs (including a revert to an earlier payload) is always appended.

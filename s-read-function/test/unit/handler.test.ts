@@ -21,6 +21,7 @@ vi.mock("@checkin/s-ingest-core", () => ({
   loadDbConfig: vi.fn(() => ({ storeId: "configured-store" })),
   loadShopifyConfig: vi.fn(() => ({ endpoint: "https://x/graphql.json", adminToken: "t", cutoverDate: "2026-01-01" })),
   reapStaleRuns: vi.fn(),
+  runRetention: vi.fn(),
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   ConcurrentRunError,
 }));
@@ -32,7 +33,7 @@ vi.mock("../../src/sync/backfill.js", () => ({ runBackfill: vi.fn() }));
 vi.mock("../../src/monitoring.js", () => ({ buildHeartbeatSink: vi.fn(() => undefined) }));
 
 import { handler } from "../../src/handler.js";
-import { prisma, reapStaleRuns, loadDbConfig } from "@checkin/s-ingest-core";
+import { prisma, reapStaleRuns, runRetention, loadDbConfig } from "@checkin/s-ingest-core";
 import { buildHeartbeatSink } from "../../src/monitoring.js";
 import { ensureStore } from "../../src/sync/store.js";
 import { runIncremental } from "../../src/sync/incremental.js";
@@ -52,12 +53,13 @@ beforeEach(() => {
     return { storeId: "live-store", shopGid: "gid://shopify/Shop/1", numericId: "1", name: "Shop" };
   });
   vi.mocked(runIncremental).mockResolvedValue({ orders: 1, payouts: 0, balanceTransactions: 0 });
+  vi.mocked(runRetention).mockResolvedValue({ rawEvents: 2, exports: 1, failed: 0 });
   vi.mocked(runBackfill).mockResolvedValue({ ordersBulk: { action: "NONE" }, payouts: 0, balanceTransactions: 0 });
 });
 
-it("defaults to an incremental run and returns its result", async () => {
+it("defaults to an incremental run and returns its result with the retention pass's", async () => {
   const res = await handler({});
-  expect(res).toEqual({ orders: 1, payouts: 0, balanceTransactions: 0 });
+  expect(res).toEqual({ orders: 1, payouts: 0, balanceTransactions: 0, retention: { rawEvents: 2, exports: 1, failed: 0 } });
   expect(runIncremental).toHaveBeenCalledTimes(1);
   expect(runBackfill).not.toHaveBeenCalled();
 });
@@ -66,6 +68,32 @@ it("routes mode=backfill to runBackfill", async () => {
   await handler({ mode: "backfill" });
   expect(runBackfill).toHaveBeenCalledTimes(1);
   expect(runIncremental).not.toHaveBeenCalled();
+  expect(runRetention).not.toHaveBeenCalled();
+});
+
+it("runs retention on the live store after the incremental sync", async () => {
+  vi.mocked(runIncremental).mockImplementation(async () => {
+    order.push("incremental");
+    return { orders: 0, payouts: 0, balanceTransactions: 0 };
+  });
+  vi.mocked(runRetention).mockImplementation(async () => {
+    order.push("retention");
+    return { rawEvents: 0, exports: 0, failed: 0 };
+  });
+  await handler({});
+  expect(order).toEqual(["reap", "ensureStore", "incremental", "retention"]);
+  expect(vi.mocked(runRetention).mock.calls[0]).toEqual([prisma, "live-store"]);
+});
+
+it("keeps the sync's result when retention loses the run lock", async () => {
+  vi.mocked(runRetention).mockRejectedValue(new ConcurrentRunError());
+  const res = await handler({});
+  expect(res).toEqual({ orders: 1, payouts: 0, balanceTransactions: 0, retention: { skipped: true } });
+});
+
+it("rethrows a retention failure other than the run lock", async () => {
+  vi.mocked(runRetention).mockRejectedValue(new Error("db down"));
+  await expect(handler({})).rejects.toThrow("db down");
 });
 
 it("reaps stale runs before resolving the store, and uses the configured store id as the seed", async () => {
