@@ -44,7 +44,7 @@ a change to it (FC3, FC4 below).
 
 ## Open question
 
-**Q1. Build the column and the code table?** Not decided.
+**Q5. Build the column and the code table?** Not decided.
 
 - **Build it.** Codes become classified one PR at a time, as they appear on the
   page and finance says what each means.

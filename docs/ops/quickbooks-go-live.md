@@ -16,7 +16,7 @@ has been done; the System Status page and QuickBooks answer that.
 | Finance | Access to close the books in QuickBooks; the FINANCE role in the app | 2, 5, 6 |
 | QuickBooks authoriser | A login allowed to connect apps to the production company | 3 |
 | Infra operator | AWS access to the production secret; the infra repository | 3, 4, 7 |
-| Sysadmin or Board member | Access to System Status, the only roles that can read it | The check after each step from 4 onward |
+| Sysadmin or Board member | Access to System Status's health panel, which only these roles can read | The check after each step from 4 onward |
 
 ## How to read System Status
 
