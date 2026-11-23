@@ -871,6 +871,9 @@ async function createPass(orgId: string, cap: number, deadlines: { read: number;
 /** What processing a captured message came to: done, put off in part for a later pass, or past its stored copy's retention. */
 export type CapturedOutcome = { status: "processed" | "waiting" } | { status: "expired"; message: string };
 
+/** Whether a captured email's stored copy is past the environment's retention, decided by capture time alone. */
+export const copyExpired = (capturedAt: Date, now = Date.now()): boolean => now - capturedAt.getTime() >= rawMailRetentionDays() * DAY_MS;
+
 /** The kind and a short reason of a processing failure; never message content. */
 function processErrorOf(err: unknown): string {
   const reason = isServiceError(err) || err instanceof KindedError ? `: ${err.message.slice(0, 200)}` : "";
@@ -885,9 +888,8 @@ type CapturedRow = { id: number; gmailMessageId: string; receivedAt: Date; captu
  * it, a missing copy is an error. A message the ledger already covers creates nothing twice.
  */
 async function processCaptured(row: CapturedRow, pass: Pass): Promise<CapturedOutcome> {
-  const days = rawMailRetentionDays();
-  if (Date.now() - row.capturedAt.getTime() >= days * DAY_MS) {
-    return { status: "expired", message: `This email's stored copy expired ${days} days after capture.` };
+  if (copyExpired(row.capturedAt)) {
+    return { status: "expired", message: `This email's stored copy expired ${rawMailRetentionDays()} days after capture.` };
   }
   const deferredBefore = pass.counts.deferred;
   const overCeilingBefore = pass.counts.overCeiling;

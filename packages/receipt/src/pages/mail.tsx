@@ -1,10 +1,10 @@
 "use client";
 import { useState } from "react";
 import { Alert, Button, Group, Modal, Paper, Stack, Table, Text, TextInput, Title } from "@mantine/core";
-import { showError, showSuccess } from "@checkin/component-ui";
+import { HttpError, showError, showSuccess } from "@checkin/component-ui";
 import MailCatchUp from "../components/MailCatchUp";
 import ReceiptFile from "../components/ReceiptFile";
-import { BASE, send, useLoad } from "../components/api";
+import { api, BASE, errorMessage, send, useLoad } from "../components/api";
 import { releaseAll, releaseOne } from "../components/releaseAll";
 
 interface MailItem {
@@ -178,19 +178,90 @@ function IgnoredFiles({ entries, onDone }: { entries: IgnoredFile[]; onDone: () 
   );
 }
 
+interface CapturedEmail {
+  id: number;
+  receivedAt: string;
+  capturedAt: string;
+  expired: boolean;
+}
+
+type ReplayOutcome = { status: "processed" | "waiting" } | { status: "expired"; message: string };
+
+const REPLAY_FAILED = "Couldn't process this email again";
+const REPLAY_WAITING = "Processed again, but a file in it waits for a later run: a sender's daily upload limit or the held-mail limit put it off";
+const REPLAY_CRASHED = "Processing it again failed. The reason is recorded on the email, not shown here; try again later";
+
+/** The words a refused replay shows: the server's own reason, or fixed text when a server failure brings none. */
+function replayRefusal(err: unknown): string {
+  return err instanceof HttpError && err.status >= 500 ? REPLAY_CRASHED : errorMessage(err);
+}
+
+/** Captured emails not yet processed; each one inside retention can be processed again from its stored copy. */
+function CapturedEmails({ emails, onDone }: { emails: CapturedEmail[]; onDone: () => void }) {
+  const [busy, setBusy] = useState<number | null>(null);
+  if (emails.length === 0) return null;
+  const replay = async (id: number) => {
+    setBusy(id);
+    try {
+      const out = await api<ReplayOutcome>(`/mail-messages/${id}/replay`, { method: "POST" });
+      if (out.status === "processed") showSuccess("Processed");
+      else showError(out.status === "expired" ? out.message : REPLAY_WAITING, { title: REPLAY_FAILED });
+    } catch (err) {
+      showError(replayRefusal(err), { title: REPLAY_FAILED });
+    } finally {
+      setBusy(null);
+      onDone();
+    }
+  };
+  return (
+    <Stack mb="xl">
+      <Title order={4}>Captured emails not yet processed</Title>
+      <Text c="dimmed">These emails were saved from the mailbox but not yet turned into receipts or held mail.</Text>
+      <Table>
+        <Table.Thead>
+          <Table.Tr><Table.Th>Received</Table.Th><Table.Th>Captured</Table.Th><Table.Th /></Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {emails.map((e) => (
+            <Table.Tr key={e.id}>
+              <Table.Td>{new Date(e.receivedAt).toLocaleString()}</Table.Td>
+              <Table.Td>{new Date(e.capturedAt).toLocaleString()}</Table.Td>
+              <Table.Td>
+                {e.expired ? (
+                  <Text size="sm" c="dimmed">Expired, can&apos;t be replayed</Text>
+                ) : (
+                  <Button size="compact-sm" variant="light" loading={busy === e.id} disabled={busy !== null} onClick={() => void replay(e.id)}>
+                    Process again
+                  </Button>
+                )}
+              </Table.Td>
+            </Table.Tr>
+          ))}
+        </Table.Tbody>
+      </Table>
+    </Stack>
+  );
+}
+
 /**
  * /receipts/mail — mailed receipts awaiting finance. Deferred items, from known senders over their
  * daily upload limit, can be released as their sender, one by one, by sender, or all at once.
  * Held items, from unknown senders, are assigned or discarded one by one. Discarding can also add
  * the file to the ignore list, listed below the queue. "Catch up now" reads the mailbox without
- * waiting for the daily run. FINANCE only.
+ * waiting for the daily run. Captured emails not yet processed are listed first, each with
+ * "Process again" until its stored copy expires. FINANCE only.
  */
 export default function ReceiptMailQueuePage() {
   const items = useLoad<MailItem[]>("/mail-items");
   const ignored = useLoad<IgnoredFile[]>("/ignored-files");
+  const captured = useLoad<CapturedEmail[]>("/mail-messages");
   const reload = () => {
     items.reload();
     ignored.reload();
+  };
+  const replayed = () => {
+    captured.reload();
+    items.reload();
   };
   const deferred = items.data?.filter((i) => i.status === "deferred") ?? [];
   const held = items.data?.filter((i) => i.status !== "deferred") ?? [];
@@ -203,6 +274,8 @@ export default function ReceiptMailQueuePage() {
       <MailCatchUp onDone={items.reload} />
       {items.error && <Alert color="red" mb="md">{items.error}</Alert>}
       {ignored.error && <Alert color="red" mb="md">{ignored.error}</Alert>}
+      {captured.error && <Alert color="red" mb="md">{captured.error}</Alert>}
+      <CapturedEmails emails={captured.data ?? []} onDone={replayed} />
       {items.data?.length === 0 && <Text c="dimmed">No held mail.</Text>}
       {deferred.length > 0 && (
         <Stack mb="xl">
