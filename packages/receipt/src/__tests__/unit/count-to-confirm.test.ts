@@ -45,6 +45,7 @@ const fakePorts = {
   },
   submitterConfirmations: {
     awaiting: vi.fn(async () => awaiting),
+    awaitingFor: vi.fn(async (ids: number[]) => awaiting.filter((a) => ids.includes(a.reimburseePersonId))),
     confirmable: vi.fn(async (ids: string[], signer: number) => ids.filter((id) => !(refusedSeat.get(id) ?? []).includes(signer))),
   },
 };
@@ -179,5 +180,14 @@ describe("countToConfirm's reads do not grow with the receipts", () => {
 
   it("makes the same number of reads for 1 extra receipt of each kind as for 40", async () => {
     expect(await readsWith(40)).toBe(await readsWith(1));
+  });
+
+  it("reads the org's awaiting confirmations once for a Board member and never for anyone else", async () => {
+    await receiptService.countToConfirm(BOARD, true);
+    expect(fakePorts.submitterConfirmations.awaiting).toHaveBeenCalledTimes(1);
+    vi.clearAllMocks();
+    await receiptService.countToConfirm(SURVIVOR, false);
+    expect(fakePorts.submitterConfirmations.awaiting).not.toHaveBeenCalled();
+    expect(fakePorts.submitterConfirmations.awaitingFor).toHaveBeenCalledWith([SURVIVOR, MERGED_AWAY]);
   });
 });

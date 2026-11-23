@@ -116,6 +116,8 @@ export interface AwaitedConfirmation {
 export interface SubmitterConfirmations {
   /** The org's reimbursements whose expense waits for the confirmation. */
   awaiting(): Promise<AwaitedConfirmation[]>;
+  /** The same, only for reimbursees the expense stores under one of the given ids. */
+  awaitingFor(reimburseePersonIds: number[]): Promise<AwaitedConfirmation[]>;
   /**
    * Records the confirmation on every line of the receipt's expense still waiting for it, signed by
    * `signer`: the reimbursee, or a Board member on their behalf giving `reason`. False when none waits.

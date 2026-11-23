@@ -21,6 +21,7 @@ const refuses = (receiptId: string, signerId: number) => refused.get(receiptId)?
 
 const confirmations: SubmitterConfirmations = {
   awaiting: async () => awaiting,
+  awaitingFor: async (ids) => awaiting.filter((a) => ids.includes(a.reimburseePersonId)),
   confirm: async (receiptId, reimburseePersonId, signer, reason) => {
     if (!awaiting.some((a) => a.receiptId === receiptId && a.reimburseePersonId === reimburseePersonId)) return false;
     if (refuses(receiptId, signer.id)) throw new ServiceError(403, "signer already signs another step on this expense");

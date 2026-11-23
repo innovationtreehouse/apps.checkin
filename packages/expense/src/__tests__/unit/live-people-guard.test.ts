@@ -40,9 +40,10 @@ const REVIEWED = [
   "services/signoffService.ts: await tx.expense.update({ where: { id: expenseId }, data: { reimburseePersonId: personId } });",
   "services/intakeService.ts: const reimburseePersonId = await resolvedReimbursee(receipt.reimburseePersonId ?? null);",
   "services/intakeService.ts: submitterId: receipt.submitterId,",
-  // The receipt library resolves `awaiting`'s stored id and hands it back to `confirm`, which resolves it.
+  // The receipt library resolves `awaiting`'s stored id and hands it back to `confirm`, which resolves it;
+  // `awaitingFor` takes every stored id the receipt library holds for the person.
   'services/submitterSeatService.ts: const onBehalf = signer.userId === confirmation.reimburseePersonId ? "" : ` on behalf of ${confirmation.reimburseePersonId}`;',
-  'services/submitterSeatService.ts: where: { orgId: await getOrgId(), ...TAKES_SUBMITTER_SEAT, reimburseePersonId: { not: null }, lineItems: { some: { signoffs: { none: { seat: "SUBMITTER" } } } } },',
+  "services/submitterSeatService.ts: reimburseePersonId: { not: null, ...(reimburseePersonIds ? { in: reimburseePersonIds } : {}) },",
   "services/submitterSeatService.ts: select: { id: true, reimburseePersonId: true },",
   "services/submitterSeatService.ts: return expenses.map((e) => ({ receiptId: e.id, reimburseePersonId: e.reimburseePersonId!, changedFields: latest.get(e.id) ?? [] }));",
   // Handed to signoffFactsForExpenses, which resolves them; reimburseeUnknown reads only whether one is set.

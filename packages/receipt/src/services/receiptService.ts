@@ -696,9 +696,13 @@ async function onBehalfConfirmations(actor: ReceiptPrincipal): Promise<{ rows: A
   return { rows, changed: new Map(awaited.map((a) => [a.receiptId, a.changedFields])) };
 }
 
-/** What waits on expense, with the live reimbursee; `storedReimburseeId` is the id expense knows them by. */
-async function awaitedConfirmations() {
-  const awaited = await ports().submitterConfirmations.awaiting();
+/**
+ * What waits on expense, with the live reimbursee; `storedReimburseeId` is the id expense knows them by.
+ * Given stored reimbursee ids, only what waits on them.
+ */
+async function awaitedConfirmations(storedReimburseeIds?: number[]) {
+  const confirmations = ports().submitterConfirmations;
+  const awaited = await (storedReimburseeIds ? confirmations.awaitingFor(storedReimburseeIds) : confirmations.awaiting());
   const live = await liveIds(awaited.map((a) => a.reimburseePersonId));
   return awaited.map((a) => ({ ...a, storedReimburseeId: a.reimburseePersonId, reimburseePersonId: live.get(a.reimburseePersonId) ?? a.reimburseePersonId }));
 }
@@ -711,7 +715,7 @@ async function inReviewFor(personId: number): Promise<Prisma.ReceiptWhereInput> 
 
 /** What waits on expense for this person's confirmation, with the fields finance changed. */
 async function sentFor(personId: number): Promise<Map<string, string[]>> {
-  const awaited = await awaitedConfirmations();
+  const awaited = await awaitedConfirmations(await ports().personIds.storedIdsOf(personId));
   return new Map(awaited.filter((a) => a.reimburseePersonId === personId).map((a) => [a.receiptId, a.changedFields]));
 }
 
