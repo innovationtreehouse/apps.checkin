@@ -24,6 +24,7 @@ function fakeTx() {
         program: { findFirst: none() },
         programInstance: { findFirst: none() },
         budgetOwner: { findFirst: none() },
+        budgetOwnerTreasurer: { findFirst: none() },
         trustedAdultReview: { findFirst: none() },
         auditLog: { create: jest.fn() },
         $queryRaw: jest.fn().mockResolvedValue([]),
@@ -48,7 +49,20 @@ describe("archiveHousehold bucket refusals", () => {
             status: 409,
             message: "Someone in this household owns a bucket. Name a new owner before archiving the household.",
         });
-        expect(tx.budgetOwner.findFirst).toHaveBeenCalledWith({ where: { owner: { householdId: 7 } }, select: { id: true } });
+        expect(tx.budgetOwner.findFirst).toHaveBeenCalledWith({ where: { owner: { householdId: 7 }, archivedAt: null }, select: { id: true } });
+        expect(tx.household.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("refuses while a member is a treasurer of a bucket, and archives nothing", async () => {
+        tx.budgetOwnerTreasurer.findFirst.mockResolvedValue({ personId: 5 });
+        await expect(archiveHousehold(7, 1)).rejects.toMatchObject({
+            status: 409,
+            message: "Someone in this household is a treasurer of a bucket. Remove them as treasurer before archiving the household.",
+        });
+        expect(tx.budgetOwnerTreasurer.findFirst).toHaveBeenCalledWith({
+            where: { person: { householdId: 7 }, budgetOwner: { archivedAt: null } },
+            select: { personId: true },
+        });
         expect(tx.household.updateMany).not.toHaveBeenCalled();
     });
 });

@@ -149,6 +149,21 @@ describe('archive refusals', () => {
         await expectRefused(householdId, 'owns a bucket');
     });
 
+    it('refuses a household whose member is a treasurer of a bucket', async () => {
+        const { householdId, personId } = await household();
+        await prisma.budgetOwner.create({ data: { name: `Bucket ${TAG}`, treasurers: { create: { personId } } } });
+        await expectRefused(householdId, 'treasurer of a bucket');
+    });
+
+    it('archives a household whose only bucket positions are on archived buckets', async () => {
+        const { householdId, personId } = await household();
+        await prisma.budgetOwner.create({ data: { name: `Bucket ${TAG}`, ownerId: personId, archivedAt: new Date() } });
+        await prisma.budgetOwner.create({ data: { name: `Bucket ${TAG}`, archivedAt: new Date(), treasurers: { create: { personId } } } });
+        asBoard();
+        expect((await post(householdId, { archive: true })).status).toBe(200);
+        expect((await archivedAt(householdId))?.archivedAt).not.toBeNull();
+    });
+
     it('refuses a denied household', async () => {
         const { householdId } = await household('DENIED');
         await expectRefused(householdId, 'denied household cannot be archived');
