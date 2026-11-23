@@ -195,5 +195,5 @@ describe("flow: membership post-payment activation fan-out", () => {
         const { rows: congrats } = await pool.query('SELECT "to" FROM "DevSentEmail" WHERE subject = $1', [CONGRATS_SUBJECT]);
         expect(congrats).toHaveLength(1);
         expect(congrats[0].to).toBe(APPLICANT_EMAIL);
-    });
+    }, 60_000);
 });

@@ -183,11 +183,12 @@ export const GET = withAuth({ roles: ["isSysadmin", "isBoardMember"] }, async (r
             const yearStart = membershipYearStart(boundary, year);
             const verdict = personBgVerdict(p, yearStart, bgFreshThreshold(yearStart, bgRecheckMonths));
             if (verdict === "FRESH" || verdict === "MINOR") continue;
-            // One program for context — first attachment found across the three roles.
+            // One program for context — first attachment found across the four roles.
             const prog =
                 p.programParticipants[0]?.program ??
                 p.programVolunteers[0]?.program ??
                 p.programsLed[0] ??
+                p.instancesLed[0]?.program ??
                 null;
             const row: PersonRow = {
                 personId: p.id,

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { withAuth } from "@/lib/auth";
 import { apiError } from "@/lib/api-response";
 import prisma from "@/lib/prisma";
-import { alertAddressCheck, getConfigHealth } from "@/lib/configHealth";
+import { emailAddressChecks, getConfigHealth, REQUIRED_EMAIL_SELECT } from "@/lib/configHealth";
 import { getCronJobStatuses } from "@/lib/cronRuns";
 import { getProblems } from "@/lib/problems";
 import { legacyCheckFlagCheck } from "@/lib/membership/legacyCheckFlagHealth";
@@ -18,7 +18,7 @@ export const dynamic = "force-dynamic";
  *
  * Two halves, both feeding the same red nav badge via /api/nav/todo-counts (which reads
  * only the counts; this is the detail view):
- *   - `checks`   — static env/config presence (lib/configHealth.ts), the alert address, then
+ *   - `checks`   — static env/config presence (lib/configHealth.ts), the Settings → Email addresses, then
  *                  the receipt mailbox and QuickBooks rows (lib/receipt/mailboxHealth.ts,
  *                  lib/quickbooks/health.ts) and the legacy check-flag count
  *                  (lib/membership/legacyCheckFlagHealth.ts), which read live and so stay off the badge.
@@ -33,12 +33,12 @@ export const GET = withAuth({}, async (_req, auth) => {
     if (auth.type !== "session") return apiError("Unauthorized", 401);
     if (!(auth.user.isSysadmin || auth.user.isBoardMember)) return apiError("Forbidden", 403);
     const [settings, quickBooks, mailbox, legacyCheckFlag, cronJobs, problems] = await Promise.all([
-        prisma.boardSettings.findUnique({ where: { id: 1 }, select: { alertEmailAddress: true } }),
+        prisma.boardSettings.findUnique({ where: { id: 1 }, select: REQUIRED_EMAIL_SELECT }),
         getQuickBooksHealth(),
         getReceiptMailboxHealth(),
         legacyCheckFlagCheck(),
         getCronJobStatuses(),
         getProblems(),
     ]);
-    return NextResponse.json({ checks: [...getConfigHealth(), alertAddressCheck(settings?.alertEmailAddress), ...mailbox, ...quickBooks, legacyCheckFlag], cronJobs, problems });
+    return NextResponse.json({ checks: [...getConfigHealth(), ...emailAddressChecks(settings), ...mailbox, ...quickBooks, legacyCheckFlag], cronJobs, problems });
 });

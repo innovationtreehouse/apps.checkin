@@ -151,7 +151,7 @@ export default function PaymentProblemsPage() {
 
   // Force an s-read incremental sync. The mirror behind "Live payment" refreshes once
   // a day, so a problem fixed in Shopify this morning still reads stale here until
-  // tomorrow. The POST only STARTS the sync, so we then poll the run's status and
+  // tomorrow. The POST only STARTS the sync, so we then poll for the run it started and
   // refetch the table once it lands — "Live payment" reads straight from the mirror,
   // so those amounts can differ the moment the sync finishes.
   //
@@ -161,33 +161,58 @@ export default function PaymentProblemsPage() {
   const triggerSync = async () => {
     setSyncing(true);
     try {
+      // The run in the mirror before the click. Only a run that started after it is
+      // this click's; both timestamps come from s-read, so clock skew between the
+      // browser, the app and the reader cannot misplace it. A run still RUNNING at the
+      // click holds s-read's lock and the new request is skipped, so that run is the
+      // one to follow.
+      const before = await fetchSyncRun();
       await api('/api/finance-ops/s-read/sync', { method: 'POST' });
       showSuccess('Shopify sync started…');
+
+      // The read failed — the mirror is unwired or unreadable. The sync itself was
+      // started regardless (s-read is off doing it), so say exactly that: we cannot
+      // watch it. Reporting "still running" here would be inventing a status, and it
+      // would hide the actual fault behind a plausible sentence.
+      const statusUnreadable = () => showError("Shopify sync started, but its status can't be read in this environment. Run diagnostics on the System Status page to see why.");
+      if (!before.ok) {
+        statusUnreadable();
+        return;
+      }
+      const baseline = before.run;
+      const alreadyRunning = baseline !== null && !isTerminal(baseline.status);
+      const isBaseline = (run: SyncRun) =>
+        baseline !== null && Date.parse(run.startedAt) === Date.parse(baseline.startedAt);
+      const isFollowed = (run: SyncRun) =>
+        !baseline || Date.parse(run.startedAt) > Date.parse(baseline.startedAt) || (alreadyRunning && isBaseline(run));
+      let sawFollowedRun = alreadyRunning;
 
       for (let i = 0; i < POLL_MAX_ATTEMPTS; i++) {
         await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
         const res = await fetchSyncRun();
-
-        // The read failed — the mirror is unwired or unreadable. The sync itself was
-        // started regardless (s-read is off doing it), so say exactly that: we cannot
-        // watch it. Reporting "still running" here would be inventing a status, and it
-        // would hide the actual fault behind a plausible sentence.
         if (!res.ok) {
-          showError("Shopify sync started, but its status can't be read in this environment. Run diagnostics on the System Status page to see why.");
+          statusUnreadable();
           return;
         }
 
-        // Read fine, but no run row yet — s-read stamps one at start, so keep waiting
-        // rather than treating an empty mirror as a failure.
-        if (!res.run || !isTerminal(res.run.status)) continue;
+        // No followed run yet: s-read stamps a row when it starts, so keep waiting
+        // rather than reporting an earlier run's result.
+        if (!res.run || !isFollowed(res.run)) continue;
+        sawFollowedRun = true;
+        if (!isTerminal(res.run.status)) continue;
 
         const { status } = res.run;
+        const subject = isBaseline(res.run) ? 'A sync was already running; it' : 'Shopify sync';
         await fetchRows();
         if (status === 'COMPLETED') {
-          showSuccess('Shopify sync finished. Live payment amounts are up to date.');
+          showSuccess(`${subject} finished. Live payment amounts are up to date.`);
         } else {
-          showError(`Shopify sync ${status.toLowerCase()}. Live payment amounts may still be stale.`);
+          showError(`${subject} ${status.toLowerCase()}. Live payment amounts may still be stale.`);
         }
+        return;
+      }
+      if (!sawFollowedRun) {
+        showError("The sync was requested but hasn't started yet. Check back in a few minutes.");
         return;
       }
       // The run is still going and nothing has failed, so this is a success message.

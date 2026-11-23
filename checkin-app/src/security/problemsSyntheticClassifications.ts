@@ -8,11 +8,21 @@
  * library's error can be `personal`, and the item's own page shows it under
  * that page's access.
  *
+ * ProblemDismissResult — one item's outcome from Dismiss (POST
+ * /api/system-status/problems/dismiss): the step, the stuck row's id as the
+ * caller sent it, and whether it left the list. All `internal`, and no error
+ * text, for the same reason.
+ *
  * Hand-authored, not generated: this describes an API response, not a table.
  * This is a security-boundary artifact — changes ship in a boundary PR.
  */
 export const classifications = {
   ProblemRetryResult: {
+    step: "internal",
+    id: "internal",
+    ok: "internal",
+  },
+  ProblemDismissResult: {
     step: "internal",
     id: "internal",
     ok: "internal",

@@ -85,7 +85,7 @@ class TestScannerHeld(unittest.TestCase):
     def test_missing_evdev_is_not_held_and_shows_disconnected(self):
         state = AttendanceState()
         with patch.dict(sys.modules, {"evdev": None}):
-            usb_scanner_listener(MagicMock(), state, MagicMock(), "Scanner")
+            usb_scanner_listener(state, MagicMock(), "Scanner")
         self.assertFalse(state.scanner_held)
         self.assertFalse(state.scanner_ok)
 
@@ -106,7 +106,7 @@ class TestScannerHeld(unittest.TestCase):
         with patch.dict(sys.modules, {"evdev": evdev}), \
                 patch("client.time.sleep", side_effect=_Stop), \
                 self.assertRaises(_Stop):
-            usb_scanner_listener(MagicMock(), state, MagicMock(), "Scanner")
+            usb_scanner_listener(state, MagicMock(), "Scanner")
         device.grab.assert_called_once()
         self.assertEqual(held_while_reading, [True])
         self.assertFalse(state.scanner_held)
@@ -118,7 +118,7 @@ class TestScannerHeld(unittest.TestCase):
         with patch.dict(sys.modules, {"evdev": evdev}), \
                 patch("client.time.sleep", side_effect=_Stop), \
                 self.assertRaises(_Stop):
-            usb_scanner_listener(MagicMock(), state, MagicMock(), "Scanner")
+            usb_scanner_listener(state, MagicMock(), "Scanner")
         self.assertFalse(state.scanner_held)
 
 

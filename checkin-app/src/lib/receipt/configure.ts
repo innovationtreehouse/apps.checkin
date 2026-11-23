@@ -164,9 +164,12 @@ async function reimburseeById(personId: number): Promise<(ReimburseeOption & { i
 }
 
 /** Whether a live person has an account to sign in with. */
-async function reimburseeHasAccount(personId: number): Promise<boolean> {
+async function reimburseesWithoutAccount(personIds: number[]): Promise<number[]> {
+  if (personIds.length === 0) return [];
   const [{ default: prisma }, { SIGN_IN_VERIFIED_PERSON }] = await Promise.all([import("@/lib/prisma"), import("@/lib/person/filters")]);
-  return (await prisma.person.count({ where: { id: personId, ...SIGN_IN_VERIFIED_PERSON } })) > 0;
+  const withAccount = await prisma.person.findMany({ where: { id: { in: personIds }, ...SIGN_IN_VERIFIED_PERSON }, select: { id: true } });
+  const signsIn = new Set(withAccount.map((p) => p.id));
+  return personIds.filter((id) => !signsIn.has(id));
 }
 
 async function addNonMemberReimbursee(name: string, actorId: number): Promise<ReimburseeOption> {
@@ -248,7 +251,7 @@ export function configureRuntime(): void {
     personIds: { liveIds, storedIdsOf },
     people: { submitterByEmail, rememberMailAlias },
     personNames: { namesOf: personNames },
-    reimbursees: { search: searchReimbursees, byId: reimburseeById, hasAccount: reimburseeHasAccount, addNonMemberAdult: addNonMemberReimbursee },
+    reimbursees: { search: searchReimbursees, byId: reimburseeById, withoutAccount: reimburseesWithoutAccount, addNonMemberAdult: addNonMemberReimbursee },
     alerts,
     mailbox: receiptMailbox(),
     // Matches the mail-raw/ lifecycle rule on each environment's receipt bucket: 90 days in prod, 30 in dev and staging.

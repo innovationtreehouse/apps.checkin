@@ -66,6 +66,10 @@ export const orgProvisionalItemSchema = z
   .nullable();
 export type OrgProvisionalItem = z.infer<typeof orgProvisionalItemSchema>;
 
+/** A pending or local-only (rejected) provisional part of the injected org, as the receipt picker lists it. */
+export const orgProvisionalPartsSchema = z.array(z.object({ gtin13: z.string(), name: z.string(), status: z.string() }));
+export type OrgProvisionalPart = z.infer<typeof orgProvisionalPartsSchema>[number];
+
 export const createdIdSchema = z.object({ id: z.number().int() });
 export const gtin13Schema = z.string().min(1);
 
@@ -77,6 +81,8 @@ export interface CatalogReader {
   getActiveItem(gtin13: string): Promise<ActiveCatalogItem>;
   /** The injected org's provisional part with this GTIN, or null; another org's part is null. */
   getOrgProvisionalItem(gtin13: string): Promise<OrgProvisionalItem>;
+  /** Up to 20 of the injected org's pending or local-only parts whose name contains `q` in any case, or whose GTIN is `q`. */
+  searchOrgProvisionalItems(q: string): Promise<OrgProvisionalPart[]>;
 }
 
 /** Catalog writes. The adapter stamps the injected org; `localUserId` is the acting Person.id. */
@@ -140,6 +146,7 @@ export const inertCatalogReader: CatalogReader = {
   checkReferences: async () => notWired("CatalogReader.checkReferences"),
   getActiveItem: async () => notWired("CatalogReader.getActiveItem"),
   getOrgProvisionalItem: async () => notWired("CatalogReader.getOrgProvisionalItem"),
+  searchOrgProvisionalItems: async () => notWired("CatalogReader.searchOrgProvisionalItems"),
 };
 
 export const inertCatalogSubmissions: CatalogSubmissions = {

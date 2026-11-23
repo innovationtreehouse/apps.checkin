@@ -431,7 +431,7 @@ async function applyOcr(id: string, actor: Actor, deadline = Infinity): Promise<
       return true;
     });
     if (!landed) throw new ServiceError(409, "Receipt left OCR while it was being read");
-    await runFullFlow(id, actor);
+    await runFlowLogged(id, actor);
   } else {
     await failOcr(id, actor, { notes: ocrFailureNote(result), action: `ocr_failed:${result.kind}`, reason: result.error });
   }
@@ -642,10 +642,34 @@ async function confirmationView(row: ReceiptRow & { reimburseePersonId: number }
  * behalf of a reimbursee with no account, if no party to the receipt; else null.
  */
 async function confirmerRole(row: Parties, actor: ReceiptPrincipal): Promise<"self" | "on_behalf" | null> {
-  if (row.reimburseePersonId == null) return null;
-  if (row.reimburseePersonId === actor.id) return "self";
-  if (!actor.isBoardMember || (await ports().reimbursees.hasAccount(row.reimburseePersonId))) return null;
-  return (await isConflicted(row, actor.id)) ? null : "on_behalf";
+  const reimburseePersonId = row.reimburseePersonId;
+  if (reimburseePersonId == null) return null;
+  if (reimburseePersonId === actor.id) return "self";
+  return (await confirmableOnBehalf([{ ...row, reimburseePersonId }], actor)).length > 0 ? "on_behalf" : null;
+}
+
+/**
+ * The rows `actor` may confirm as a Board member on behalf of a reimbursee with no account: none
+ * reimbursing the actor, and none the actor or their household is party to. A party naming nobody
+ * live refuses the row. Three host reads, however many rows.
+ */
+async function confirmableOnBehalf<R extends Parties & { reimburseePersonId: number }>(rows: R[], actor: ReceiptPrincipal): Promise<R[]> {
+  const others = actor.isBoardMember ? rows.filter((r) => r.reimburseePersonId !== actor.id) : [];
+  if (others.length === 0) return [];
+  const noAccount = new Set(await ports().reimbursees.withoutAccount([...new Set(others.map((r) => r.reimburseePersonId))]));
+  const accountless = others.filter((r) => noAccount.has(r.reimburseePersonId));
+  if (accountless.length === 0) return [];
+  const [live, household] = await Promise.all([
+    liveIds(accountless.flatMap((r) => [r.uploadedByUserId, r.reimburseePersonId])),
+    ports().households.householdOf([actor.id]),
+  ]);
+  // One household per person, so the actor shares a household with a party exactly when that party is in the actor's.
+  const conflicted = new Set([actor.id, ...household]);
+  const clear = (id: number) => {
+    const person = live.get(id);
+    return person != null && !conflicted.has(person);
+  };
+  return accountless.filter((r) => clear(r.uploadedByUserId) && clear(r.reimburseePersonId));
 }
 
 /**
@@ -665,8 +689,7 @@ async function onBehalfConfirmations(actor: ReceiptPrincipal): Promise<{ rows: A
     ...inReview.map((r) => ({ ...r, reimburseePersonId: r.reimburseePersonId! })),
     ...sent.map((r) => ({ ...r, reimburseePersonId: reimburseeOnExpense.get(r.id)! })),
   ];
-  const onBehalf: Array<ReceiptRow & { reimburseePersonId: number }> = [];
-  for (const r of candidates) if ((await confirmerRole(r, actor)) === "on_behalf") onBehalf.push(r);
+  const onBehalf = await confirmableOnBehalf(candidates, actor);
   const sentIds = new Set(sent.map((r) => r.id));
   const signable = new Set(await ports().submitterConfirmations.confirmable(onBehalf.filter((r) => sentIds.has(r.id)).map((r) => r.id), actor.id));
   const rows = onBehalf.filter((r) => !sentIds.has(r.id) || signable.has(r.id));
@@ -680,17 +703,25 @@ async function awaitedConfirmations() {
   return awaited.map((a) => ({ ...a, storedReimburseeId: a.reimburseePersonId, reimburseePersonId: live.get(a.reimburseePersonId) ?? a.reimburseePersonId }));
 }
 
-/** Reimbursements waiting for this person's confirmation, before finance and once their expense exists. */
-async function awaitingConfirmation(personId: number): Promise<{ inReview: ReceiptRow[]; sent: Map<string, string[]> }> {
-  const orgId = await getOrgId();
-  const ids = await ports().personIds.storedIdsOf(personId);
-  const [inReview, awaited] = await Promise.all([
-    receiptRepo.list({ orgId, needsReimbursement: true, reimburseePersonId: { in: ids }, uploadedByUserId: { notIn: ids }, details: { state: "submitter_review" } }),
-    awaitedConfirmations(),
-  ]);
-  return { inReview, sent: new Map(awaited.filter((a) => a.reimburseePersonId === personId).map((a) => [a.receiptId, a.changedFields])) };
+/** Reimbursements in submitter review that this person confirms, under any id a row may hold for them. */
+async function inReviewFor(personId: number): Promise<Prisma.ReceiptWhereInput> {
+  const [orgId, ids] = await Promise.all([getOrgId(), ports().personIds.storedIdsOf(personId)]);
+  return { orgId, needsReimbursement: true, reimburseePersonId: { in: ids }, uploadedByUserId: { notIn: ids }, details: { state: "submitter_review" } };
 }
 
+/** What waits on expense for this person's confirmation, with the fields finance changed. */
+async function sentFor(personId: number): Promise<Map<string, string[]>> {
+  const awaited = await awaitedConfirmations();
+  return new Map(awaited.filter((a) => a.reimburseePersonId === personId).map((a) => [a.receiptId, a.changedFields]));
+}
+
+/** Reimbursements waiting for this person's confirmation, before finance and once their expense exists. */
+async function awaitingConfirmation(personId: number): Promise<{ inReview: ReceiptRow[]; sent: Map<string, string[]> }> {
+  const [inReview, sent] = await Promise.all([inReviewFor(personId).then((where) => receiptRepo.list(where)), sentFor(personId)]);
+  return { inReview, sent };
+}
+
+/** Runs the flow after a step that has committed. A failure is recorded on the receipt as `flow_error`, so the step still answers as done. */
 async function runFlowLogged(id: string, actor: Actor | null): Promise<void> {
   await runFullFlow(id, actor).catch((err: unknown) => {
     console.error(`[receipt] pipeline failed for ${id}:`, err);
@@ -1114,7 +1145,7 @@ export const receiptService = {
     const now = new Date();
     const set = { core: recordFinanceReview("approved", row, reasons, actor, null, now), detail: { approvedAt: now } };
     await step(row, { type: "FINANCIAL_APPROVED" }, "uploaded", set, actor, "financial_approved");
-    await runFullFlow(id, actor);
+    await runFlowLogged(id, actor);
     return load(id, "finance", actor);
   },
 
@@ -1245,7 +1276,7 @@ export const receiptService = {
     const row = await loadForChange(id, access, actor);
     await writeAccess(row, access, actor, "resubmit");
     await step(row, { type: "RESUBMIT" }, "uploaded", { detail: { validationNotes: null } }, actor, "resubmitted");
-    await runFullFlow(id, actor);
+    await runFlowLogged(id, actor);
     return load(id, access, actor);
   },
 
@@ -1260,7 +1291,7 @@ export const receiptService = {
     if (missing.length > 0) throw new ServiceError(400, `Fill in the ${listWords(missing)} before confirming this receipt`);
     if (reimburseeConfirms(row)) throw new ServiceError(403, "The person reimbursed confirms this receipt");
     await step(row, { type: "SUBMITTER_CONFIRMED" }, "uploaded", { detail: { reviewedAt: new Date(), reviewedByUserId: actor.id, validationNotes: null } }, actor, "submitter_review_confirmed");
-    await runFullFlow(id, actor);
+    await runFlowLogged(id, actor);
     return toSubmitterView(await load(id, "submitter", actor));
   },
 
@@ -1312,7 +1343,7 @@ export const receiptService = {
       if (missing.length > 0) throw new ServiceError(400, `Fill in the ${listWords(missing)} before confirming this receipt`);
       const detail = { reviewedAt: new Date(), reviewedByUserId: actor.id, reviewedOnBehalfReason: reason, validationNotes: null };
       await step(row, { type: "SUBMITTER_CONFIRMED" }, "uploaded", { detail }, actor, "submitter_review_confirmed", onBehalf);
-      await runFullFlow(id, actor);
+      await runFlowLogged(id, actor);
     }
     const after = (await receiptRepo.find(id, row.orgId))!;
     return confirmationView({ ...after, reimburseePersonId: reimbursee }, role === "on_behalf", []);
@@ -1679,11 +1710,12 @@ export const receiptService = {
    * with no account.
    */
   async countToConfirm(personId: number, isBoardMember = false): Promise<number> {
-    const [mine, onBehalf] = await Promise.all([
-      awaitingConfirmation(personId),
+    const [inReview, sent, onBehalf] = await Promise.all([
+      inReviewFor(personId).then((where) => receiptRepo.count(where)),
+      sentFor(personId),
       onBehalfConfirmations({ id: personId, name: null, firstName: "", lastName: "", isAdult: true, isBoardMember }),
     ]);
-    return mine.inReview.length + mine.sent.size + onBehalf.rows.length;
+    return inReview + sent.size + onBehalf.rows.length;
   },
 
   async listAuditLogs(id: string) {

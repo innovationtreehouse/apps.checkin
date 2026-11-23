@@ -3,6 +3,7 @@
 import { useCallback, useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { Anchor, Badge, Button, Card, Center, Code, Group, List, Loader, Stack, Text, Title } from "@mantine/core";
+import type { ConfigCheck } from "@/lib/configHealth";
 import { LoadError } from "@checkin/component-ui";
 import { useLoad } from "@/lib/api";
 import { unreadLine } from "@/lib/problemsLines";
@@ -88,8 +89,6 @@ function SvgLineChart({ data }: { data: DailyStat[] }) {
   );
 }
 
-type ConfigCheck = { id: string; label: string; ok: boolean; detail: string };
-
 /**
  * System-config health — one row per check (Zoho e-sign, agreement PDF, webhook
  * secret, email). Fed by GET /api/system-status/config-health (admins + board only).
@@ -130,7 +129,9 @@ export function ConfigHealthBox() {
                   ● {c.ok ? 'Configured' : 'NOT configured'}
                 </Text>
               </Group>
-              <Text size="xs" c="dimmed">{c.detail}</Text>
+              {c.href && !c.ok
+                ? <Anchor href={c.href} size="xs">{c.detail}</Anchor>
+                : <Text size="xs" c="dimmed">{c.detail}</Text>}
             </List.Item>
           ))}
         </List>

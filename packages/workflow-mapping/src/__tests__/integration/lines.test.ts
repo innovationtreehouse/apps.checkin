@@ -26,6 +26,7 @@ function catalog(): { catalogReader: CatalogReader; catalogSubmissions: CatalogS
       lookupItems: async () => [],
       checkReferences: async () => refCheck,
       getOrgProvisionalItem: async () => null,
+      searchOrgProvisionalItems: async () => [],
       getActiveItem: async (gtin13) => (ACTIVE_GTINS.has(gtin13) ? { gtin13, name: "Hex bolt" } : null),
     },
     catalogSubmissions: {

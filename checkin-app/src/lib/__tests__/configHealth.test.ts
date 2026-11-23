@@ -1,4 +1,4 @@
-import { alertAddressCheck, getConfigHealth, openConfigIssues, type ConfigCheck } from "@/lib/configHealth";
+import { emailAddressChecks, getConfigHealth, openConfigIssues, REQUIRED_EMAIL_SELECT, type ConfigCheck } from "@/lib/configHealth";
 
 // config.ts reads process.env live through getters, so these tests just set/clear
 // env vars — no module mocking needed. CHECKIN_ENV is the single fuse for the
@@ -161,18 +161,50 @@ describe("getConfigHealth — receipt OCR", () => {
     });
 });
 
-describe("alertAddressCheck", () => {
-    it("fails when the alert address is unset, naming where to set it", () => {
+describe("emailAddressChecks", () => {
+    const FIELDS = [
+        ["finance-alert-address", "financeAlertEmailAddress", "Finance alert address"],
+        ["board-address", "boardEmailAddress", "Board address"],
+        ["sysadmin-address", "sysadminEmailAddress", "Sysadmin list"],
+        ["bg-reviewer-address", "bgReviewerEmailAddress", "Background-check reviewer list"],
+        ["finance-contact-address", "financeContactEmail", "Finance contact address"],
+    ] as const;
+    const ALL_SET = Object.fromEntries(FIELDS.map(([, field]) => [field, "list@example.org"]));
+    const checkFor = (id: string, settings: Record<string, string | null | undefined>): ConfigCheck => {
+        const check = emailAddressChecks(settings).find((c) => c.id === id);
+        if (!check) throw new Error(`no check ${id}`);
+        return check;
+    };
+
+    it("selects exactly the five addresses", () => {
+        expect(Object.keys(REQUIRED_EMAIL_SELECT).sort()).toEqual(FIELDS.map(([, field]) => field).sort());
+    });
+
+    it.each(FIELDS)("%s fails when %s is unset, naming the field and linking to Settings → Email", (id, field, label) => {
         for (const unset of [null, undefined, ""]) {
-            const check = alertAddressCheck(unset);
+            const check = checkFor(id, { ...ALL_SET, [field]: unset });
             expect(check.ok).toBe(false);
+            expect(check.detail).toContain(label);
             expect(check.detail).toContain("Settings → Email");
+            expect(check.href).toBe("/settings/email");
         }
     });
 
-    it("passes when set, without echoing the address", () => {
-        const check = alertAddressCheck("finance@example.org");
+    it.each(FIELDS)("%s passes when %s is set, without echoing the address", (id) => {
+        const check = checkFor(id, ALL_SET);
         expect(check.ok).toBe(true);
-        expect(check.detail).not.toContain("finance@example.org");
+        expect(check.detail).not.toContain("list@example.org");
+    });
+
+    it("has one check per address and none for the scholarship notify list", () => {
+        expect(emailAddressChecks(ALL_SET).map((c) => c.id)).toEqual(FIELDS.map(([id]) => id));
+    });
+
+    it("fails all five when the settings row is missing, and each counts toward the badge", () => {
+        const checks = emailAddressChecks(null);
+        expect(checks.map((c) => c.ok)).toEqual([false, false, false, false, false]);
+        const ok: ConfigCheck = { id: "x", label: "x", ok: true, detail: "" };
+        expect(openConfigIssues([ok, ...checks])).toBe(5);
+        expect(openConfigIssues([ok, ...emailAddressChecks({ ...ALL_SET, boardEmailAddress: null })])).toBe(1);
     });
 });

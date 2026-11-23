@@ -15,6 +15,7 @@ const catalog = {
     lookupItems: async () => [],
     checkReferences: async () => ({ mfr_part: noRef, retailer_part: noRef, mfr_desc: noRef, wouldCreateNewReference: true }),
     getOrgProvisionalItem: async () => null,
+    searchOrgProvisionalItems: async () => [],
     getActiveItem: async (gtin13: string) => ({ gtin13, name: "Hex bolt" }),
   },
   catalogSubmissions: {

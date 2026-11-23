@@ -50,7 +50,7 @@ describe("Receipts to confirm", () => {
     expect(screen.getByText("Hinge")).toBeInTheDocument();
     expect(screen.queryByLabelText(/Why the Board confirms/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "These lines and amounts are right" }));
-    expect(mockSend).toHaveBeenCalledWith("/f/confirmation", "POST", {}, "Confirmed", "Couldn't confirm this receipt");
+    expect(mockSend).toHaveBeenCalledWith("/f/confirmation", "POST", {}, "Confirmed", "Couldn't confirm this receipt", { runsFlow: true });
   });
 
   it("names what finance changed, and asks a Board member for the reason before confirming on someone's behalf", () => {
@@ -62,7 +62,7 @@ describe("Receipts to confirm", () => {
     expect(confirm).toBeDisabled();
     fireEvent.change(screen.getByLabelText(/Why the Board confirms on their behalf/), { target: { value: "No email address" } });
     fireEvent.click(confirm);
-    expect(mockSend).toHaveBeenCalledWith("/f/confirmation", "POST", { reason: "No email address" }, "Confirmed", "Couldn't confirm this receipt");
+    expect(mockSend).toHaveBeenCalledWith("/f/confirmation", "POST", { reason: "No email address" }, "Confirmed", "Couldn't confirm this receipt", { runsFlow: true });
   });
 });
 

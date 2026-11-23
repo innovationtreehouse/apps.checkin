@@ -10,6 +10,7 @@ import { isProgramStoreClosed } from "@/lib/programs/storeClosed";
 import { isSaleEnded } from "@/lib/programs/saleState";
 import { logBackendError } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
+import { isComponentHttpError, parseId } from "@checkin/component-kit";
 
 /** A sync claim this old belongs to a run that died; the next run may take it over. Well past the creation calls' 20s-per-request deadlines. */
 const SYNC_CLAIM_STALE_MS = 10 * 60_000;
@@ -22,8 +23,13 @@ const SYNC_CLAIM_STALE_MS = 10 * 60_000;
 export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (_req, auth, ctx: { params: Promise<{ id: string }> }) => {
     if (auth.type !== 'session') return apiError("Unauthorized", 401);
     const { id } = await ctx.params;
-    const programId = parseInt(id, 10);
-    if (isNaN(programId)) return apiError("Invalid program ID", 400);
+    let programId: number;
+    try {
+        programId = parseId(id, "program ID");
+    } catch (error) {
+        if (isComponentHttpError(error)) return apiError(error.message, error.status);
+        throw error;
+    }
 
     // One sync per program at a time, claimed on the row so no transaction stays open
     // across the Shopify calls. Products are created under a stable handle, so a run

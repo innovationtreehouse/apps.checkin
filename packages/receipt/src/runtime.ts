@@ -83,7 +83,7 @@ export const inertPersonNames: ReceiptPersonNames = {
 export const inertReimbursees: ReceiptReimbursees = {
   search: async () => [],
   byId: async () => null,
-  hasAccount: async () => true,
+  withoutAccount: async () => [],
   addNonMemberAdult: async () => {
     throw new Error("No people directory is bound to add a person");
   },

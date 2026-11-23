@@ -1,5 +1,5 @@
 /**
- * Receipt mapping: the persona matrix over all 10 routes, and a manager
+ * Receipt mapping: the persona matrix over all 11 routes, and a manager
  * journey from proceed through apply into org inventory (X4) and expense (X5).
  * Real HTTP against the running dev server and the seeded workflow-mapping DB
  * (see docker-compose.flow.yml + packages/workflow-mapping/prisma/seed.ts).
@@ -22,6 +22,8 @@ const READS = [
   "/api/workflow-mapping/receipts/1",
   "/api/workflow-mapping/audit-log",
 ];
+/** Reads only the inventory manager may make. */
+const MANAGER_READS = ["/api/workflow-mapping/provisional-parts?q=seed"];
 const WRITES: Array<[string, unknown?]> = [
   ["/api/workflow-mapping/receipts/1/proceed"],
   ["/api/workflow-mapping/receipts/1/apply"],
@@ -67,7 +69,7 @@ async function seeded(s: Session, vendor: string): Promise<ReceiptRow> {
 describe("workflow mapping — route auth", () => {
   it("rejects every route without a session", async () => {
     // CHECKIN_ENV=local resolves a cookieless request as the keyless kiosk (403); elsewhere 401.
-    for (const path of READS) {
+    for (const path of [...READS, ...MANAGER_READS]) {
       expect([path, [401, 403].includes((await api(null, path)).status)]).toEqual([path, true]);
     }
     for (const [path, body] of WRITES) {
@@ -79,19 +81,28 @@ describe("workflow mapping — route auth", () => {
   it("denies every route to a member and to a catalog viewer who holds no read role", async () => {
     for (const email of [MEMBER, CATALOG_VIEWER]) {
       const s = await loginAs(email);
-      for (const path of READS) expect([email, path, (await api(s, path)).status]).toEqual([email, path, 403]);
+      for (const path of [...READS, ...MANAGER_READS]) expect([email, path, (await api(s, path)).status]).toEqual([email, path, 403]);
       for (const [path, body] of WRITES) expect([email, path, (await post(s, path, body)).status]).toEqual([email, path, 403]);
     }
   });
 
-  it("lets finance and the board read, and denies them every write", async () => {
+  it("lets finance and the board read, and denies them every write and manager-only read", async () => {
     for (const email of [FINANCE, BOARD]) {
       const s = await loginAs(email);
       const { id } = await seeded(s, "Seed Supply");
       for (const path of READS.map((p) => p.replace("/receipts/1", `/receipts/${id}`))) {
         expect([email, path, (await api(s, path)).status]).toEqual([email, path, 200]);
       }
+      for (const path of MANAGER_READS) expect([email, path, (await api(s, path)).status]).toEqual([email, path, 403]);
       for (const [path, body] of WRITES) expect([email, path, (await post(s, path, body)).status]).toEqual([email, path, 403]);
+    }
+  });
+
+  it("lets the manager search the org's local-only and pending parts", async () => {
+    const m = await loginAs(MANAGER);
+    for (const path of MANAGER_READS) {
+      const res = await api(m, path);
+      expect([path, res.status, Array.isArray(res.json)]).toEqual([path, 200, true]);
     }
   });
 

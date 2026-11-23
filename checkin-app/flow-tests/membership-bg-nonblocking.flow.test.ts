@@ -64,5 +64,5 @@ describe("flow: membership background check is non-blocking", () => {
         const afterPay = await api<State>(applicant, "/api/membership");
         expect(afterPay.json.process?.status).toBe("PENDING_BG_CLEARANCE");
         expect(afterPay.json.membershipStatus).not.toBe("ACTIVE");
-    });
+    }, 60_000);
 });

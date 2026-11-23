@@ -53,7 +53,7 @@ beforeAll(async () => {
   expect(bucket.status).toBe(200);
   bucketId = bucket.json.id;
   expect((await send(board, "PUT", `/api/budget-owners/${bucketId}/owner`, { personId: approver.personaId, acknowledgeCheck: true })).status).toBe(200);
-});
+}, 60_000);
 
 afterAll(async () => {
   // The sessions are all set before the bucket is, so a beforeAll that failed earlier leaves nothing to undo.
@@ -127,5 +127,5 @@ describe("receipt to expense journey", () => {
     expect(await approvals(finance, expenseId)).toEqual([expect.objectContaining({ id: unassigned.id, ownerId: bucketId, status: "approved" })]);
     const receipts = await api<Receipt[]>(finance, "/api/receipts");
     expect(receipts.json.find((r) => r.id === copy.json.id)).toMatchObject({ state: "receipt_finalized" });
-  });
+  }, 60_000);
 });

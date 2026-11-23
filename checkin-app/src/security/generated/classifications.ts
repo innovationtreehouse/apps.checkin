@@ -121,6 +121,13 @@ export const classifications = {
         scholarshipRequestKind: 'hardship',
         paymentPlanYear: 'hardship',
     },
+    ClearanceStepFailure: {
+        id: 'public',
+        processId: 'internal',
+        step: 'internal',
+        failedAt: 'internal',
+        error: 'internal',
+    },
     MembershipYearVariant: {
         membershipYear: 'public',
         shopifyVariantId: 'internal',
@@ -157,6 +164,9 @@ export const classifications = {
         alertEmailAddress: 'internal',
         boardEmailAddress: 'internal',
         financeContactEmail: 'public',
+        financeAlertEmailAddress: 'internal',
+        sysadminEmailAddress: 'internal',
+        bgReviewerEmailAddress: 'internal',
         scholarshipAckSubject: 'internal',
         scholarshipAckMembershipBody: 'internal',
         scholarshipAckProgramBody: 'internal',
@@ -673,6 +683,10 @@ export const relations = {
         requestedForHousehold: { model: 'Household', isList: false },
         zohoSigner: { model: 'Person', isList: false },
         attestations: { model: 'BackgroundCheckAttestation', isList: true },
+        clearanceStepFailures: { model: 'ClearanceStepFailure', isList: true },
+    },
+    ClearanceStepFailure: {
+        process: { model: 'OrgMembershipProcess', isList: false },
     },
     MembershipYearVariant: {
     },

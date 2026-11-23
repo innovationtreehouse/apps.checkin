@@ -33,6 +33,7 @@ const catalogReader: CatalogReader = {
   checkReferences,
   getActiveItem,
   getOrgProvisionalItem,
+  searchOrgProvisionalItems: async () => [],
 };
 const catalogSubmissions: CatalogSubmissions = {
   proposeItemReference: async () => ({ id: 1 }),
