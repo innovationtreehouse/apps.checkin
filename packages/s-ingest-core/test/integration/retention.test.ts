@@ -9,6 +9,7 @@ import {
   EXPORT_CAP,
   RAW_EVENT_CAP,
   RETENTION_ACTOR,
+  RETENTION_SCOPE,
   runRetention,
   sweepExports,
   sweepRawEvents,
@@ -158,7 +159,7 @@ describeDb("reader retention", () => {
     );
     await capture(daysBefore(100));
     expect(await runRetention(prisma, STORE, NOW)).toEqual({ rawEvents: 1, exports: 1, failed: 0 });
-    const run = await prisma.syncRun.findFirst({ where: { storeId: STORE, objectScope: "retention" } });
+    const run = await prisma.syncRun.findFirst({ where: { storeId: STORE, objectScope: RETENTION_SCOPE } });
     expect(run).toMatchObject({ kind: SyncKind.ADMIN, status: SyncStatus.COMPLETED, actor: RETENTION_ACTOR, counts: { rawEvents: 1, exports: 1, failed: 0 } });
   });
 });

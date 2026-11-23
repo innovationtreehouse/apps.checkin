@@ -15,6 +15,8 @@ export const EXPORT_KEEP_MS = 90 * 24 * 60 * 60 * 1000;
 export const RAW_EVENT_CAP = 1000;
 export const EXPORT_CAP = 50;
 export const RETENTION_ACTOR = "s-read:retention";
+/** The sync_run scope of a retention pass; checkin-app/src/lib/shopifyRead/client.ts skips it as not a sync. */
+export const RETENTION_SCOPE = "retention";
 
 export interface SweepResult {
   deleted: number;
@@ -94,7 +96,7 @@ export async function sweepExports(prisma: PrismaClient, storeId: string, now: D
 
 /** One capped retention pass for a store, under the store's run lock so no sync or replay interleaves. */
 export function runRetention(prisma: PrismaClient, storeId: string, now: Date = new Date()): Promise<RetentionResult> {
-  return withSyncRun(prisma, storeId, SyncKind.ADMIN, "retention", async () => {
+  return withSyncRun(prisma, storeId, SyncKind.ADMIN, RETENTION_SCOPE, async () => {
     const raw = await sweepRawEvents(prisma, storeId, now);
     const exp = await sweepExports(prisma, storeId, now);
     return { rawEvents: raw.deleted, exports: exp.deleted, failed: raw.failed + exp.failed };
