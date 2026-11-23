@@ -46,6 +46,12 @@
  * (processed, waiting or expired) and, when expired, the `message` saying so.
  * No email content, key or header. `internal`.
  *
+ * ReceiptMailMessageView — one captured email not yet processed, as the mail
+ * page lists it for replay: its `id`, when it was received and captured, and
+ * whether its stored copy has `expired`. Never the storage key, the processing
+ * error or any email content: the stripper drops every other column of
+ * `ReceiptMailMessage`. `internal`.
+ *
  * ReceiptFlowStatus — how many records sit in each state of the receipt flow:
  * receipts (plus finalized ones not yet delivered), receiving records and
  * expenses, each a list of `{ state, label, count }`, and when they were read.
@@ -270,6 +276,7 @@ export const classifications = {
   },
   ReceiptMailCatchUp: { status: "internal", lastRunAt: "internal", lastRun: "internal" },
   ReceiptMailReplay: { status: "internal", message: "internal" },
+  ReceiptMailMessageView: { id: "internal", receivedAt: "internal", capturedAt: "internal", expired: "internal" },
 } as const;
 
 export const relations = {
