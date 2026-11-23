@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, Mock, patch
@@ -518,9 +519,16 @@ class TestKioskClose(unittest.TestCase):
         backend = self._backend({"type": "warning", "error": "Badge again within 15 seconds to confirm."}, 400)
         backend.attendance_path = "/api/attendance"
         backend.get_attendance.return_value = ({}, 503)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = os.path.join(tmp.name, "outbox.db")
+        state.snapshot_store = Outbox(path)
 
-        handle_scan(backend, state, Outbox(":memory:"), 5)
+        handle_scan(backend, state, state.snapshot_store, 5)
         self.assertEqual(backend.post_scan.call_args.kwargs["intent"], "OUT")
+        restarted = AttendanceState()
+        restarted.restore_from(Outbox(path))
+        self.assertIn(5, restarted.present_ids, "a restart keeps the stopped departure inside")
         handle_scan(backend, state, Outbox(":memory:"), 5)
         self.assertEqual(backend.post_scan.call_args.kwargs["intent"], "OUT", "the confirm is a departure")
 
