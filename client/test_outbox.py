@@ -5,12 +5,13 @@ banner (#1257)."""
 import os
 import tempfile
 import threading
+import time
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from outbox import (Outbox, classify_response, replay_drain, new_event_id, now_iso,
                     in_closed_window, MIN_BACKOFF_SECONDS, DRAIN_PACE_SECONDS)
-from client import handle_scan, _saved_banner_html, ClockWatch, SCAN_PROTOCOL_VERSION
+from client import handle_scan, _saved_banner_html, ClockWatch, open_outbox, SCAN_PROTOCOL_VERSION, CLOCK_STEP_SECONDS
 
 
 class _StopLoop(Exception):
@@ -579,6 +580,61 @@ class TestEnqueueBeforeSend(unittest.TestCase):
         backend.post_scan.return_value = self.CHECKIN
         handle_scan(backend, FakeState(), ob, "9")
         backend.post_scan.assert_called_once()
+
+
+class TestClockStepFlagsQueuedScans(unittest.TestCase):
+    """Rule ATT-046: a scan queued across a wall-clock step goes out
+    clockSuspect, whether the drain or a restart comes before the next badge."""
+
+    def _drain_once(self, ob, clock_check_fn=lambda: False):
+        sent = []
+
+        def send_fn(participant_id, **kwargs):
+            sent.append(kwargs)
+            return {"type": "checkin"}, 200, None
+
+        def stop(_secs):
+            raise _StopLoop()
+
+        with self.assertRaises(_StopLoop):
+            replay_drain(ob, send_fn, sleep_fn=stop, clock_check_fn=clock_check_fn)
+        return sent
+
+    def test_a_drain_after_a_clock_step_sends_the_queued_row_flagged(self):
+        with tempfile.TemporaryDirectory() as d:
+            ob = Outbox(os.path.join(d, "outbox.db"))
+            watch = ClockWatch()
+            ob.enqueue("evt-1", "42", now_iso(), intent="IN")
+            stepped = time.time() + CLOCK_STEP_SECONDS * 10
+            with patch("time.time", return_value=stepped):
+                sent = self._drain_once(ob, watch.check)
+            self.assertEqual(len(sent), 1)
+            self.assertTrue(sent[0]["clock_suspect"])
+
+    def test_a_drain_with_no_clock_step_sends_the_row_unflagged(self):
+        with tempfile.TemporaryDirectory() as d:
+            ob = Outbox(os.path.join(d, "outbox.db"))
+            watch = ClockWatch()
+            ob.enqueue("evt-1", "42", now_iso(), intent="IN")
+            sent = self._drain_once(ob, watch.check)
+            self.assertEqual(len(sent), 1)
+            self.assertFalse(sent[0]["clock_suspect"])
+
+    def test_a_restart_with_queued_rows_sends_them_flagged(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "outbox.db")
+            Outbox(path).enqueue("evt-1", "42", now_iso(), intent="IN")
+            ob = open_outbox(path)  # restart; the step happened while down
+            sent = self._drain_once(ob, ClockWatch().check)
+            self.assertEqual(len(sent), 1)
+            self.assertTrue(sent[0]["clock_suspect"])
+
+    def test_a_scan_queued_after_the_restart_with_no_step_is_unflagged(self):
+        with tempfile.TemporaryDirectory() as d:
+            ob = open_outbox(os.path.join(d, "outbox.db"))
+            ob.enqueue("evt-1", "42", now_iso(), intent="IN")
+            sent = self._drain_once(ob, ClockWatch().check)
+            self.assertFalse(sent[0]["clock_suspect"])
 
 
 if __name__ == "__main__":

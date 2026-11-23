@@ -299,19 +299,31 @@ SCAN_PROTOCOL_VERSION = 7
 
 
 class ClockWatch:
-    """Detect a large step in wall time that would stamp scannedAt wrong."""
+    """Detect a large step in wall time that would stamp scannedAt wrong.
+    The scanner and the drain both call check(), so it takes a lock."""
 
     def __init__(self):
+        self._lock = threading.Lock()
         self._last_wall = time.time()
         self._last_mono = time.monotonic()
 
     def check(self):
-        wall = time.time()
-        mono = time.monotonic()
-        jumped = abs((wall - self._last_wall) - (mono - self._last_mono)) > CLOCK_STEP_SECONDS
-        self._last_wall = wall
-        self._last_mono = mono
-        return jumped
+        with self._lock:
+            wall = time.time()
+            mono = time.monotonic()
+            jumped = abs((wall - self._last_wall) - (mono - self._last_mono)) > CLOCK_STEP_SECONDS
+            self._last_wall = wall
+            self._last_mono = mono
+            return jumped
+
+
+def open_outbox(path):
+    """The outbox with every queued scan marked clockSuspect. Monotonic time
+    restarts with the Pi, so a step while the client was down can't be
+    measured; a queued row may carry a scannedAt from before such a step."""
+    outbox = Outbox(path)
+    outbox.mark_clock_suspect()
+    return outbox
 
 
 class AttendanceState:
@@ -1848,7 +1860,7 @@ def main():
 
     backend = BackendClient(backend_url, signing_key, attendance_path or None)
     state = AttendanceState()
-    outbox = Outbox(config.get("outbox_path", DEFAULT_OUTBOX_PATH))
+    outbox = open_outbox(config.get("outbox_path", DEFAULT_OUTBOX_PATH))
     log.info(f"Outbox:  {outbox.path} ({outbox.pending_count()} pending on start)")
 
     state.restore_from(outbox)
@@ -1890,7 +1902,9 @@ def main():
     # re-signing and resubmitting each one, once the backend is reachable.
     drain = threading.Thread(
         target=replay_drain, args=(outbox, backend.post_scan, state.push_event),
-        kwargs={"protocol_ok_fn": lambda: state.scan_protocol >= SCAN_PROTOCOL_VERSION}, daemon=True
+        kwargs={"protocol_ok_fn": lambda: state.scan_protocol >= SCAN_PROTOCOL_VERSION,
+                "clock_check_fn": state.clock_watch.check},
+        daemon=True
     )
     drain.start()
 
