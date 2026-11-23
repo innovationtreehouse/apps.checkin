@@ -767,9 +767,9 @@ model ExpenseQbMatchExclusion {
   orgId              String   @map("org_id")
   /// @sensitivity:internal
   qbTxnId            String   @map("qb_txn_id")
-  // QuickBooks entity type of qb_txn_id (Bill | Purchase); null excludes the id for both types.
+  // QuickBooks entity type of qb_txn_id (Bill | Purchase); QuickBooks ids are unique per entity type only.
   /// @sensitivity:internal
-  qbTxnEntity        String?  @map("qb_txn_entity")
+  qbTxnEntity        String   @map("qb_txn_entity")
   /// @sensitivity:personal
   reason             String
   /// @sensitivity:pii

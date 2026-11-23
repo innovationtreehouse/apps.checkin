@@ -647,18 +647,6 @@ describeDb("QuickBooks match inputs", () => {
     expect((await qbMatchInputs("Purchase")).skipIds).toEqual(["qb-5"]);
   });
 
-  it("an exclusion with no type skips the id for both types", async () => {
-    await db.expenseQbMatchExclusion.create({ data: { orgId: ORG, qbTxnId: "qb-6", reason: "untyped", excludedByUserId: 3 } });
-    expect((await qbMatchInputs("Bill")).skipIds).toEqual(["qb-6"]);
-    expect((await qbMatchInputs("Purchase")).skipIds).toEqual(["qb-6"]);
-  });
-
-  it("a typed exclusion of an id an untyped exclusion already covers is refused", async () => {
-    await db.expenseQbMatchExclusion.create({ data: { orgId: ORG, qbTxnId: "qb-7", reason: "untyped", excludedByUserId: 3 } });
-    await expect(excludeQbTxn(FINANCE, "Bill", "qb-7", "again")).rejects.toMatchObject({ status: 409 });
-    expect(await db.expenseQbMatchExclusion.count({ where: { orgId: ORG, qbTxnId: "qb-7" } })).toBe(1);
-  });
-
   it("with nothing claimed or excluded there is nothing to skip", async () => {
     expect(await qbMatchInputs("Purchase")).toEqual({ skipIds: [] });
   });

@@ -91,10 +91,10 @@ export interface QbMatchInputs {
   skipIds: string[];
 }
 
-/** QuickBooks ids of one entity type finance excluded from matching; a row without a type excludes both. */
-export async function excludedQbTxnIds(orgId: string, qbTxnEntity: string): Promise<string[]> {
+/** QuickBooks ids of one entity type finance excluded from matching. */
+export async function excludedQbTxnIds(orgId: string, qbTxnEntity: QbMatchEntity): Promise<string[]> {
   const rows = await db.expenseQbMatchExclusion.findMany({
-    where: { orgId, OR: [{ qbTxnEntity }, { qbTxnEntity: null }] },
+    where: { orgId, qbTxnEntity },
     select: { qbTxnId: true },
   });
   return rows.map((r) => r.qbTxnId);
@@ -112,8 +112,6 @@ export async function excludeQbTxn(principal: ExpensePrincipal, qbTxnEntity: QbM
   const actor = actorOf(principal);
   if (!reason.trim()) throw new ServiceError(400, "A reason is required");
   const orgId = await getOrgId();
-  // A row without a type does not trip the unique index, so it is checked here.
-  if ((await excludedQbTxnIds(orgId, qbTxnEntity)).includes(qbTxnId)) throw new ServiceError(409, "Already excluded");
   try {
     await db.$transaction(async (tx) => {
       await tx.expenseQbMatchExclusion.create({

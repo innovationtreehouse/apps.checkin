@@ -15,7 +15,7 @@ async function exclusions(query: string): Promise<unknown> {
 describeDb("list routes page", () => {
   beforeEach(async () => {
     await db.expenseQbMatchExclusion.createMany({
-      data: Array.from({ length: ROWS }, (_, i) => ({ orgId: ORG, qbTxnId: `qb-${i}`, reason: "test", excludedByUserId: 1 })),
+      data: Array.from({ length: ROWS }, (_, i) => ({ orgId: ORG, qbTxnEntity: "Purchase", qbTxnId: `qb-${i}`, reason: "test", excludedByUserId: 1 })),
     });
   });
 
