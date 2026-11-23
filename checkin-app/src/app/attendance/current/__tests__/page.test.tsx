@@ -9,6 +9,7 @@ import { act, screen, fireEvent, waitFor, within } from "@testing-library/react"
 import { notificationsStore } from "@mantine/notifications";
 import { renderWithProviders, mockFetchJson, setSession, setSearchParams, resetRtl } from "@/test-helpers/rtl";
 import { jsonBody } from "@/test-helpers/jsonBody";
+import { APP_TIMEZONE, formatTime } from "@/lib/time";
 import KioskDisplay from "../page";
 
 beforeEach(() => resetRtl());
@@ -536,6 +537,27 @@ describe("attendance/current page", () => {
     expect(await screen.findByText(/^Not up to date — as of /)).toBeInTheDocument();
     expect(screen.getByText("Karen")).toBeInTheDocument();
     expect(screen.queryByText("Refused")).not.toBeInTheDocument();
+  });
+
+  it("kiosk dates a kept roster by the last poll that answered, not by when the roster first arrived", async () => {
+    jest.useFakeTimers({ now: new Date("2026-07-01T15:00:00Z"), doNotFake: ["nextTick", "setImmediate"] });
+    try {
+      setSearchParams("mode=kiosk");
+      setSession({ id: 999 });
+      let calls = 0;
+      stubAttendance(() => (++calls <= 2 ? answer(200, attendanceData) : ({ ok: false, status: 502, text: async () => "" }) as unknown as Response));
+      renderWithProviders(<KioskDisplay />);
+      expect(await screen.findByText("Karen")).toBeInTheDocument();
+
+      await act(async () => { jest.advanceTimersByTime(60_000); });
+      await act(async () => { jest.advanceTimersByTime(60_000); });
+
+      const lastAnswered = formatTime("2026-07-01T15:01:00Z", { timeZone: APP_TIMEZONE });
+      expect(screen.getByText(`Not up to date — as of ${lastAnswered}`)).toBeInTheDocument();
+      expect(screen.getByText("Karen")).toBeInTheDocument();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it("kiosk marks the proxy's own view (offline or overnight) with the roster's time", async () => {

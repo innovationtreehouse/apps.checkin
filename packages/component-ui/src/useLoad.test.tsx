@@ -629,3 +629,80 @@ describe("a 204 answer", () => {
     expect(result.current).toMatchObject({ error: null, resting: true, data: null });
   });
 });
+
+describe("stampAnswers", () => {
+  const noContent = () => new Response(null, { status: 204 });
+
+  it("stamps every answer with a body, even one identical to the last", async () => {
+    vi.setSystemTime(1_000_000);
+    stubFetch(() => json({ n: 1 }));
+    const { result } = renderHook(() => useLoad<{ n: number }>("/stamp", { stampAnswers: true }));
+    await advance();
+    expect(result.current.answeredAt).toBeGreaterThanOrEqual(1_000_000);
+    expect(result.current.answeredAt).toBeLessThan(2_000_000);
+
+    vi.setSystemTime(2_000_000);
+    act(() => { void result.current.reload(); });
+    await advance();
+    expect(result.current.answeredAt).toBeGreaterThanOrEqual(2_000_000);
+  });
+
+  it("carries the stamp over a 204", async () => {
+    vi.setSystemTime(1_000_000);
+    let reads = 0;
+    stubFetch(() => (reads++ === 0 ? json({ n: 1 }) : noContent()));
+    const { result } = renderHook(() => useLoad<{ n: number }>("/stamp-rest", { stampAnswers: true }));
+    await advance(0);
+    const first = result.current.answeredAt;
+    expect(first).not.toBeNull();
+
+    vi.setSystemTime(2_000_000);
+    act(() => { void result.current.reload(); });
+    await advance();
+    expect(result.current).toMatchObject({ resting: true, answeredAt: first });
+  });
+
+  it("is null without the option, and an identical answer keeps the same data", async () => {
+    stubFetch(() => json({ n: 1 }));
+    const { result } = renderHook(() => useLoad<{ n: number }>("/no-stamp"));
+    await advance();
+    const first = result.current.data;
+    act(() => { void result.current.reload(); });
+    await advance();
+    expect(result.current.answeredAt).toBeNull();
+    expect(result.current.data).toBe(first);
+  });
+
+  it("gives two readers of one key, one stamping and one not, each what it would get alone", async () => {
+    vi.setSystemTime(1_000_000);
+    stubFetch(() => json({ n: 1 }));
+    let plainRenders = 0;
+    const plain = renderHook(() => { plainRenders += 1; return useLoad<{ n: number }>("/shared"); });
+    const stamping = renderHook(() => useLoad<{ n: number }>("/shared", { stampAnswers: true }));
+    await advance();
+    const firstData = plain.result.current.data;
+    const firstStamp = stamping.result.current.answeredAt;
+    const rendersBefore = plainRenders;
+
+    vi.setSystemTime(2_000_000);
+    act(() => { void plain.result.current.reload(); });
+    await advance();
+
+    expect(firstStamp).toBeLessThan(2_000_000);
+    expect(stamping.result.current.answeredAt).toBeGreaterThanOrEqual(2_000_000);
+    expect(plain.result.current.answeredAt).toBeNull();
+    expect(plain.result.current.data).toBe(firstData);
+    expect(plainRenders).toBe(rendersBefore);
+  });
+
+  it("is emptied by clearLoads", async () => {
+    stubFetch(() => json({ n: 1 }));
+    const { result } = renderHook(() => useLoad<{ n: number }>("/stamp-clear", { stampAnswers: true }));
+    await advance();
+    expect(result.current.answeredAt).not.toBeNull();
+    stubFetch(() => new Promise<Response>(() => {}));
+    act(() => clearLoads());
+    await advance();
+    expect(result.current.answeredAt).toBeNull();
+  });
+});

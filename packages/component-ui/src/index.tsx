@@ -1,9 +1,9 @@
 "use client";
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Alert, Button, Group, Pagination, Text } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import useSWR, { useSWRConfig } from "swr";
-import { clearLoads, countFailure, endRetryChain, forgetFailures, holdFromInvalidation, invalidateLoads, loadGeneration, scheduleRetry } from "./loadCache";
+import { answeredAt, clearLoads, countFailure, endRetryChain, forgetFailures, holdFromInvalidation, invalidateLoads, loadGeneration, scheduleRetry, stampAnswer, subscribeAnswers } from "./loadCache";
 import { errorMessage, FAILURE_TEXT, HttpError, NETWORK_FAILURE_TEXT, request, requestAnswer, type RequestOptions } from "./http";
 
 export { invalidateLoads };
@@ -62,6 +62,8 @@ export interface Loaded<T> {
   status: number | null;
   /** The latest answer was 204 No Content; `data` still holds the last answer that had a body. */
   resting: boolean;
+  /** When the last answer with a body arrived, in epoch milliseconds; null unless `stampAnswers` is set. */
+  answeredAt: number | null;
   /** Settles once the re-read has answered, and never rejects: a failed read lands in `error`. */
   reload: () => Promise<void>;
 }
@@ -112,11 +114,12 @@ export function createClient(base: string) {
    * next-auth reports as signed in, such as a denied household, so it must not move anyone.
    * `reconnect: false` and `skipWriteReload: true` are for a read that logs a view or wakes a sleeping
    * database: no re-read on reconnect, and none after another page's write; `reload()` still re-reads.
-   * `headers` go on every read of this load, and are part of its cache key.
+   * `headers` go on every read of this load, and are part of its cache key. `stampAnswers` reports
+   * `answeredAt` and re-renders on every answer, even one identical to the last.
    */
   function useLoad<T>(
     path: string | null,
-    { retry = true, keepPrevious = false, expireOn401 = true, reconnect = true, skipWriteReload = false, headers }: { retry?: boolean; keepPrevious?: boolean; expireOn401?: boolean; reconnect?: boolean; skipWriteReload?: boolean; headers?: Record<string, string> } = {},
+    { retry = true, keepPrevious = false, expireOn401 = true, reconnect = true, skipWriteReload = false, headers, stampAnswers = false }: { retry?: boolean; keepPrevious?: boolean; expireOn401?: boolean; reconnect?: boolean; skipWriteReload?: boolean; headers?: Record<string, string>; stampAnswers?: boolean } = {},
   ): Loaded<T> {
     const url = path === null ? null : resolve(path);
     const key = url === null ? null : loadKey(url, headers);
@@ -129,7 +132,10 @@ export function createClient(base: string) {
         requestAnswer<T>(url, headers ? { headers } : {}).then(
           ({ status, data }): Answered<T> => {
             endRetryChain(cacheKey);
-            if (status !== 204) return { body: data, resting: false };
+            if (status !== 204) {
+              stampAnswer(cacheKey);
+              return { body: data, resting: false };
+            }
             const previous: Answered<T> | undefined = cache.get(cacheKey)?.data;
             return { body: previous?.body ?? null, resting: true };
           },
@@ -144,6 +150,9 @@ export function createClient(base: string) {
         },
       },
     );
+    const stamped = key !== null && stampAnswers ? key : null;
+    const subscribeStamp = useCallback((listener: () => void) => (stamped === null ? () => {} : subscribeAnswers(stamped, listener)), [stamped]);
+    const stampedAt = useSyncExternalStore(subscribeStamp, () => (stamped === null ? null : answeredAt(stamped)), () => null);
     const generation = loadGeneration();
     const body = swr.data === undefined ? undefined : swr.data.body;
     const [kept, setKept] = useState<{ data: T | null; generation: number } | null>(null);
@@ -164,6 +173,7 @@ export function createClient(base: string) {
       retrying,
       status,
       resting: swr.data?.resting ?? false,
+      answeredAt: stampedAt,
       reload,
     };
   }

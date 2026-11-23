@@ -78,7 +78,7 @@ function KioskDisplayInner() {
   const isKioskDisplay = searchParams.get("mode") === "kiosk" || isSignedKiosk;
 
   // A 401 here reaches a denied household or a kiosk, and neither is sent to sign in.
-  const load = useLoad<unknown>("/api/attendance", { headers: signedHeaders, expireOn401: false });
+  const load = useLoad<unknown>("/api/attendance", { headers: signedHeaders, expireOn401: false, stampAnswers: true });
   const fetched = isRoster(load.data) ? load.data : null;
   const { error } = load;
   // The kiosk proxy answers 204 while the building is known empty.
@@ -90,12 +90,11 @@ function KioskDisplayInner() {
   const data: AttendanceResponse | null = showingPushed ? pushed.roster : fetched;
   const loading = load.loading && !showingPushed;
 
-  const [arrived, setArrived] = useState<{ answer: unknown; at: string }>({ answer: null, at: "" });
-  if (arrived.answer !== load.data) setArrived({ answer: load.data, at: new Date().toISOString() });
-  // When `data` was current: the kiosk's roster time, else when it was loaded.
+  // When `data` was current: the kiosk's roster time, else when it was last answered.
+  const answeredAt = load.answeredAt === null ? null : new Date(load.answeredAt).toISOString();
   const asOf = showingPushed
     ? pushed.at
-    : fetched?.access === "full" && fetched.kioskAsOf !== undefined ? fetched.kioskAsOf : arrived.at || null;
+    : fetched?.access === "full" && fetched.kioskAsOf !== undefined ? fetched.kioskAsOf : answeredAt;
 
   const [signedSeen, setSignedSeen] = useState(false);
   if (fetched?.signedRequest === true && !signedSeen) setSignedSeen(true);
