@@ -244,8 +244,8 @@ beforeAll(async () => {
   bucketId = (bucket.json as { id: number }).id;
   const approver = await loginAs(APPROVER);
   const treasurer = await loginAs(TREASURER);
-  expect((await send(board, "PUT", `/api/budget-owners/${bucketId}/owner`, { personId: approver.personaId })).status).toBe(200);
-  expect((await send(board, "PUT", `/api/budget-owners/${bucketId}/treasurers/${treasurer.personaId}`)).status).toBe(200);
+  expect((await send(board, "PUT", `/api/budget-owners/${bucketId}/owner`, { personId: approver.personaId, acknowledgeCheck: true })).status).toBe(200);
+  expect((await send(board, "PUT", `/api/budget-owners/${bucketId}/treasurers/${treasurer.personaId}`, { acknowledgeCheck: true })).status).toBe(200);
   for (const email of Object.keys(EXPECTED_PAGES)) viewers.set(email, await viewer(email));
 });
 

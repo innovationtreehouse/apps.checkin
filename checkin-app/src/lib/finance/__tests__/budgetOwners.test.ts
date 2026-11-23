@@ -9,6 +9,8 @@
  * approvers. Whether a bucket is org-level changes only when no approver or
  * awaited Board seat depends on it, and a restore brings an archived bucket back.
  * Archive is refused while any library still has unfinished work in the bucket.
+ * Naming an owner or treasurer runs the background-check gate in the same
+ * transaction; a clear, a removal or an unchanged name does not.
  */
 import { archiveBudgetOwner, createBudgetOwner, findQuickBooksClass, listQuickBooksClasses, LOCAL_QUICKBOOKS_CLASSES, setBucketOwner, setBucketTreasurer, updateBudgetOwner, OWN_HOUSEHOLD_MESSAGE } from '../budgetOwners';
 import { getQuickBooks } from '@/lib/quickbooks/client';
@@ -16,6 +18,8 @@ import { holdBucketLines, unfinishedBucketUses as expenseUses } from '@checkin/e
 import { ServiceError } from '@checkin/component-kit';
 import { unfinishedBucketUses as donationUses } from '@checkin/bulk-donation';
 import { unfinishedBucketUses as incomeUses } from '@checkin/income';
+import { emailAfterAssignment, gatePositionCheck } from '@/lib/membership/positionCheck';
+import { CHECK_ACKNOWLEDGEMENT_CODE } from '@/lib/membership/positionCheckCode';
 
 const households: Record<number, number> = { 1: 10, 2: 10, 3: 20, 4: 30, 5: 40 };
 const buckets: Record<number, { isOrgLevel: boolean; ownerId: number | null; archivedAt?: Date }> = {
@@ -41,6 +45,8 @@ jest.mock('@/lib/household/archiveGuard', () => ({
 jest.mock('@checkin/expense', () => ({ holdBucketLines: jest.fn(), unfinishedBucketUses: jest.fn() }));
 jest.mock('@checkin/bulk-donation', () => ({ unfinishedBucketUses: jest.fn() }));
 jest.mock('@checkin/income', () => ({ unfinishedBucketUses: jest.fn() }));
+// The gate has its own integration tests; here it passes unless a test says otherwise.
+jest.mock('@/lib/membership/positionCheck', () => ({ gatePositionCheck: jest.fn(), emailAfterAssignment: jest.fn() }));
 jest.mock('@/lib/prisma', () => ({
     __esModule: true,
     default: {
@@ -69,6 +75,7 @@ beforeEach(() => {
     tx.$queryRaw.mockResolvedValue([{ isOrgLevel: false }]);
     for (const read of [expenseUses, donationUses, incomeUses]) jest.mocked(read).mockResolvedValue([]);
     savedList.mockResolvedValue({ entries: COPY });
+    jest.mocked(gatePositionCheck).mockResolvedValue(null);
 });
 
 // The copy of QuickBooks' Class list: 12 and 13 active, 14 inactive; 99 is not in it.
@@ -161,6 +168,52 @@ describe('setBucketOwner', () => {
     test('refuses an org-level bucket', async () => {
         await expect(setBucketOwner(1, 8, 3)).rejects.toMatchObject({ status: 409 });
         nothingWritten();
+    });
+});
+
+describe('the background-check gate', () => {
+    const needsAck = new ServiceError(409, "This person isn't current on their background check", CHECK_ACKNOWLEDGEMENT_CODE);
+
+    test('gates a new owner in the transaction and emails after it commits', async () => {
+        jest.mocked(gatePositionCheck).mockResolvedValue(41);
+        await setBucketOwner(5, 9, 3, true);
+        expect(gatePositionCheck).toHaveBeenCalledWith(tx, { personId: 3, position: 'BUDGET_OWNER', actorId: 5, acknowledged: true });
+        expect(emailAfterAssignment).toHaveBeenCalledWith([41], 5);
+    });
+
+    test('gates a new treasurer in the transaction and emails after it commits', async () => {
+        jest.mocked(gatePositionCheck).mockResolvedValue(42);
+        await setBucketTreasurer(1, 7, 3, true, true);
+        expect(gatePositionCheck).toHaveBeenCalledWith(tx, { personId: 3, position: 'BUDGET_TREASURER', actorId: 1, acknowledged: true });
+        expect(emailAfterAssignment).toHaveBeenCalledWith([42], 1);
+    });
+
+    test('sends no email when the gate passes on a current check', async () => {
+        await setBucketOwner(1, 7, 3);
+        await setBucketTreasurer(1, 7, 3, true);
+        expect(gatePositionCheck).toHaveBeenCalledTimes(2);
+        expect(emailAfterAssignment).not.toHaveBeenCalled();
+    });
+
+    test.each([
+        ['an owner', () => setBucketOwner(1, 7, 3)],
+        ['a treasurer', () => setBucketTreasurer(1, 7, 3, true)],
+    ])('answers naming %s without the acknowledgement with its code, writing nothing', async (_label, save) => {
+        jest.mocked(gatePositionCheck).mockRejectedValue(needsAck);
+        await expect(save()).rejects.toMatchObject({ status: 409, code: CHECK_ACKNOWLEDGEMENT_CODE });
+        expect(tx.budgetOwner.update).not.toHaveBeenCalled();
+        expect(tx.budgetOwnerTreasurer.create).not.toHaveBeenCalled();
+        expect(emailAfterAssignment).not.toHaveBeenCalled();
+    });
+
+    test('never gates a cleared owner, a removed treasurer or an unchanged one', async () => {
+        await setBucketOwner(5, 9, null);
+        tx.budgetOwnerTreasurer.findUnique.mockResolvedValue({ personId: 3 });
+        await setBucketTreasurer(1, 7, 3, false);
+        await setBucketTreasurer(1, 7, 3, true);
+        await setBucketOwner(5, 9, 2);
+        expect(gatePositionCheck).not.toHaveBeenCalled();
+        expect(emailAfterAssignment).not.toHaveBeenCalled();
     });
 });
 

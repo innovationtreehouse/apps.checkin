@@ -21,8 +21,7 @@ const ACK_TABLE = "BG_CHECK_ACKNOWLEDGED";
 const EMAIL_TABLE = "BG_CHECK_EMAIL";
 export const CHECK_EMAIL_STEP = "check email";
 
-/** Every position that needs a current check, by the name the audit row and the email use. */
-export const POSITION_LABELS = {
+const ROLE_POSITION_LABELS = {
     SYSADMIN: "Sysadmin",
     BOARD: "Board member",
     KEYHOLDER: "Keyholder",
@@ -32,6 +31,13 @@ export const POSITION_LABELS = {
     FINANCE: "Finance",
     KEY_VOLUNTEER: "Key Volunteer",
 } as const satisfies Record<PersonRoleKind, string>;
+
+/** Every position that needs a current check, by the name the audit row and the email use. */
+export const POSITION_LABELS = {
+    ...ROLE_POSITION_LABELS,
+    BUDGET_OWNER: "Budget bucket owner",
+    BUDGET_TREASURER: "Budget bucket treasurer",
+} as const;
 
 export type Position = keyof typeof POSITION_LABELS;
 

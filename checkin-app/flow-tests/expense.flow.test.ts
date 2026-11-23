@@ -94,7 +94,7 @@ type SignoffStatus = { lineItemId: number; filled: string[]; missing: string[] }
 let bucketId: number;
 
 async function setOwner(board: Session, personId: number | null): Promise<void> {
-  const res = await send(board, "PUT", `/api/budget-owners/${bucketId}/owner`, { personId });
+  const res = await send(board, "PUT", `/api/budget-owners/${bucketId}/owner`, { personId, acknowledgeCheck: true });
   expect(res.status).toBe(200);
 }
 
