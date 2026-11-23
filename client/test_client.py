@@ -449,7 +449,7 @@ class TestKioskClose(unittest.TestCase):
             post.return_value = Mock(status_code=200, json=Mock(return_value={}))
             client.post_scan(7)
             self.assertEqual(json.loads(post.call_args.kwargs["data"]),
-                             {"participantId": 7, "protocolVersion": SCAN_PROTOCOL_VERSION})
+                             {"personId": 7, "protocolVersion": SCAN_PROTOCOL_VERSION})
             client.post_scan(7, close="alone")
             self.assertEqual(json.loads(post.call_args.kwargs["data"])["close"], "alone")
 

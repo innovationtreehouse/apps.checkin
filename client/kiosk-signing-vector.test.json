@@ -13,9 +13,9 @@
   "nonce": "4b2f8c1d6a3e9f0752c8d1b4a7e30695",
   "method": "POST",
   "path": "/api/scan",
-  "body": "{\"participantId\": 5}",
+  "body": "{\"personId\": 5}",
 
   "test_only_private_key_seed_hex": "c4f45bf4a58def991ad1c9d6d59e4a0ef3b5a9b79c04a79925a02aaeb21d79f7",
   "test_only_public_key_hex": "11632e15edf89e27aa86610691c86c9f98cf7d3d4992f192a5d6f05526c57755",
-  "expected_signature_hex": "8ff4906b6c33ba9d8e6a05abcc6c578ab86b3698b84ade626cd8b75d348a8ea99836e39a49fbe6f393d8e593c1ef1e15badf4d293a91f580e8d649f2dd400600"
+  "expected_signature_hex": "bd7918f2727476c54023f06375243780af8cd4272d200ae8ada97f8005beaeecd0aeaefeb3fe2d00b970b551aabba702af8b9bfc2b53c61666f10a4d7a7fe80e"
 }

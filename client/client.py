@@ -185,16 +185,16 @@ class BackendClient:
         h["Content-Type"] = "application/json"
         return h
 
-    def post_scan(self, participant_id, force_close_token=None,
+    def post_scan(self, person_id, force_close_token=None,
                   client_event_id=None, scanned_at=None, replay=False,
                   intent=None, clock_suspect=False,
                   force_close_confirmed=False, close=None, roster_as_of=None, shown_empty=None):
         path = "/api/scan"
         payload = {"protocolVersion": SCAN_PROTOCOL_VERSION}
         try:
-            payload["participantId"] = int(participant_id)
+            payload["personId"] = int(person_id)
         except ValueError:
-            payload["participantId"] = participant_id
+            payload["personId"] = person_id
         if force_close_token:
             payload["forceCloseToken"] = force_close_token
         if client_event_id:

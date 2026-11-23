@@ -5,9 +5,9 @@ import argparse
 
 API_URL = "http://localhost:3002/api/scan"
 
-def scan_badge(participant_id: int):
-    print(f"Pinging scanner API for Participant ID: {participant_id}")
-    payload = {"participantId": participant_id}
+def scan_badge(person_id: int):
+    print(f"Pinging scanner API for Person ID: {person_id}")
+    payload = {"personId": person_id}
     headers = {"Content-Type": "application/json"}
     
     try:
@@ -27,7 +27,7 @@ def scan_badge(participant_id: int):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Mock a Raspberry Pi Badge Scanner for CheckMeIn-next")
-    parser.add_argument("--id", type=int, required=True, help="The Participant ID to scan")
+    parser.add_argument("--id", type=int, required=True, help="The Person ID to scan")
     args = parser.parse_args()
     
     scan_badge(args.id)

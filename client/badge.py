@@ -2,7 +2,7 @@
 """Simulate a badge scan by sending a signed POST to the backend.
 
 Usage:
-    ./badge.py <participant_id>
+    ./badge.py <person_id>
     ./badge.py 5
 """
 
@@ -25,11 +25,11 @@ def load_config(path="config.json"):
 
 def main():
     if len(sys.argv) != 2:
-        print("Usage: ./badge.py <participant_id>")
+        print("Usage: ./badge.py <person_id>")
         sys.exit(1)
 
     try:
-        participant_id = int(sys.argv[1])
+        person_id = int(sys.argv[1])
     except ValueError:
         print(f"Error: '{sys.argv[1]}' is not a valid integer ID")
         sys.exit(1)
@@ -46,13 +46,13 @@ def main():
     signing_key = load_signing_key(key_path)
 
     path = "/api/scan"
-    body = json.dumps({"participantId": participant_id})
+    body = json.dumps({"personId": person_id})
     headers = sign_request(signing_key, "POST", path, body)
     headers["Content-Type"] = "application/json"
 
     url = base_url + path
     print(f"POST {url}")
-    print(f"  participantId: {participant_id}")
+    print(f"  personId: {person_id}")
 
     r = requests.post(url, headers=headers, data=body, timeout=10)
     data = r.json()
