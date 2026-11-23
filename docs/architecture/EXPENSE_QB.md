@@ -149,8 +149,7 @@ with fault 6210 counts as closed.
 those ids are unique per entity only. A claim covers expenses and lines alike, so
 two records never hold one entry. Every other QuickBooks key carries the entity too:
 a line's link is unique on entity and id, and `ExpenseQbMatchExclusion` is unique on
-org, entity and id, so excluding Bill N leaves Purchase N a candidate. An exclusion
-with no entity drops that id for both types.
+org, entity and id, so excluding Bill N leaves Purchase N a candidate.
 
 ### Voided entries
 
@@ -286,7 +285,7 @@ expense's state.
 | Book it | `bookExpenseToQb` | One post with creating allowed; still matches first and stops at the closing date |
 | Retry | `retryQbPost` | Re-resolves accounts from the current mappings and the live catalog, posts once |
 | Skip, with a reason | `skipExpenseQb` | `SKIPPED` for good; refused to a conflicted person |
-| Exclude an entry, with a reason | `excludeQbTxn` | That id is never a candidate again for that entity type; an exclusion recorded without a type covers both |
+| Exclude an entry, with a reason | `excludeQbTxn` | That id is never a candidate again for that entity type |
 | Link or create a Vendor | `reimburseeVendorService` | The reimbursee's Vendor is set; a same-name Vendor must be confirmed by picking it |
 | Set an account on a held line | `setHeldLineAccount` | Clears the hold on resubmit |
 
