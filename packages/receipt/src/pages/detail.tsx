@@ -231,7 +231,8 @@ export default function ReceiptDetailPage({ queueBase }: { queueBase?: string })
   const reimburseeConfirms = confirmedByReimbursee(r);
   // `decides` marks an action that moves the receipt out of the queue it was opened from; `runsFlow` one that runs the intake flow.
   const act = async (path: string, method: string, body: unknown, success: string, failed: string, decides = false, runsFlow = false) => {
-    if (await send(`/${id}${path}`, method, body, success, failed, { runsFlow })) {
+    const sent = runsFlow ? send(`/${id}${path}`, method, body, success, failed, { runsFlow }) : send(`/${id}${path}`, method, body, success, failed);
+    if (await sent) {
       if (decides && fromReview) {
         router.push(back.href);
         return;
