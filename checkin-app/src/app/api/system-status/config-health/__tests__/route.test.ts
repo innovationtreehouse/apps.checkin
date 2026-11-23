@@ -81,8 +81,16 @@ describe('GET /api/system-status/config-health — auth gate', () => {
     it('reports each unset Settings → Email address as a failing check linking to the page', async () => {
         const res = await call({ type: 'session', user: { isSysadmin: false, isBoardMember: true } });
         const body = await res.json();
-        expect(body.checks).toContainEqual(expect.objectContaining({ id: 'finance-alert-address', ok: false, href: '/settings/email' }));
-        expect(body.checks).toContainEqual(expect.objectContaining({ id: 'board-address', ok: true }));
+        const addressChecks = body.checks
+            .filter((c: { href?: string }) => c.href === '/settings/email')
+            .map(({ id, ok }: { id: string; ok: boolean }) => ({ id, ok }));
+        expect(addressChecks).toEqual([
+            { id: 'finance-alert-address', ok: false },
+            { id: 'board-address', ok: true },
+            { id: 'sysadmin-address', ok: false },
+            { id: 'bg-reviewer-address', ok: false },
+            { id: 'finance-contact-address', ok: false },
+        ]);
     });
 
     it('carries the cron run ledger alongside the config checks', async () => {

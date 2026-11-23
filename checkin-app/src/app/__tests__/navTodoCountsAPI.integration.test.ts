@@ -385,12 +385,17 @@ describe('Nav todo-counts API', () => {
             await prisma.boardSettings.update({ where: { id: 1 }, data: saved });
         });
 
-        it('each unset address adds one to the red System Status count', async () => {
+        it.each(Object.keys(ADDRESSES))('an unset %s adds one to the red System Status count', async (field) => {
             await prisma.boardSettings.update({ where: { id: 1 }, data: ADDRESSES });
             const allSet = await openIssues();
 
-            await prisma.boardSettings.update({ where: { id: 1 }, data: { sysadminEmailAddress: null } });
+            await prisma.boardSettings.update({ where: { id: 1 }, data: { [field]: null } });
             expect(await openIssues()).toBe(allSet + 1);
+        });
+
+        it('all five unset add five', async () => {
+            await prisma.boardSettings.update({ where: { id: 1 }, data: ADDRESSES });
+            const allSet = await openIssues();
 
             await prisma.boardSettings.update({ where: { id: 1 }, data: UNSET });
             expect(await openIssues()).toBe(allSet + 5);

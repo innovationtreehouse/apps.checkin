@@ -55,9 +55,10 @@ describe('PUT /api/settings/email — group and contact addresses', () => {
         expect(audit).toHaveBeenCalledWith({ data: expect.objectContaining({ newData: written }) });
     });
 
-    it('ignores a posted alertEmailAddress', async () => {
+    it('ignores a posted alertEmailAddress on both the update and the create path', async () => {
         await put({ alertEmailAddress: 'old@example.org' });
         expect(upsert.mock.calls[0][0].update).toEqual({});
+        expect(upsert.mock.calls[0][0].create).toEqual({ id: 1 });
     });
 
     it.each([
