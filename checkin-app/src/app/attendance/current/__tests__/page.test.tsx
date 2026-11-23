@@ -2,16 +2,33 @@
 jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 // eslint-disable-next-line @typescript-eslint/no-require-imports -- jest.mock factories run hoisted, before imports exist
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
-jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn() } }));
 
 import fs from "fs";
 import path from "path";
-import { screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { act, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { notificationsStore } from "@mantine/notifications";
 import { renderWithProviders, mockFetchJson, setSession, setSearchParams, resetRtl } from "@/test-helpers/rtl";
-import { notifications } from "@mantine/notifications";
+import { jsonBody } from "@/test-helpers/jsonBody";
 import KioskDisplay from "../page";
 
-beforeEach(() => { resetRtl(); (notifications.show as jest.Mock).mockClear(); });
+beforeEach(() => resetRtl());
+
+const answer = (status: number, body: unknown) => ({ ok: status < 400, status, ...jsonBody(body) }) as Response;
+const noContent = () => ({ ok: true, status: 204, json: async () => Promise.reject(new SyntaxError("no body")), text: async () => "" }) as unknown as Response;
+
+/** Answers `/api/attendance` with `attendance`; anything else gets an empty JSON body. */
+function stubAttendance(attendance: () => Response | Promise<Response>) {
+  global.fetch = jest.fn(async (input: RequestInfo | URL) =>
+    String(input).includes("/api/attendance") ? attendance() : answer(200, {}),
+  ) as unknown as typeof fetch;
+}
+
+/** Runs fake time a second at a time until `text` shows, past the kit's retries. */
+async function advanceUntilShown(text: string) {
+  for (let i = 0; i < 60 && !screen.queryByText(text); i++) {
+    await act(async () => { jest.advanceTimersByTime(1000); });
+  }
+}
 
 const attendanceData = {
   access: "full",
@@ -151,37 +168,62 @@ describe("attendance/current page", () => {
 
   it("shows a server error message when loading attendance fails", async () => {
     setAdminSession();
-    global.fetch = jest.fn(async (input: RequestInfo | URL) => {
-      if (String(input).includes("/api/attendance")) return { ok: false, json: async () => ({ error: "Server exploded" }) } as Response;
-      return { ok: true, json: async () => ({}) } as Response;
-    }) as unknown as typeof fetch;
+    stubAttendance(() => answer(400, { error: "Server exploded" }));
     renderWithProviders(<KioskDisplay />);
 
-    expect(await screen.findByText("Server exploded")).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load attendance")).toBeInTheDocument();
+    expect(screen.getByText("Server exploded")).toBeInTheDocument();
+  });
+
+  it("off the kiosk, Retry on the load failure reads the roster again", async () => {
+    setAdminSession();
+    let refuse = true;
+    stubAttendance(() => (refuse ? answer(400, { error: "Refused" }) : answer(200, attendanceData)));
+    renderWithProviders(<KioskDisplay />);
+    expect(await screen.findByText("Couldn't load attendance")).toBeInTheDocument();
+
+    refuse = false;
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByText("People Present: 3")).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't load attendance")).not.toBeInTheDocument();
   });
 
   it("shows a friendly access-denied message for an Unauthorized error", async () => {
     setAdminSession();
-    global.fetch = jest.fn(async (input: RequestInfo | URL) => {
-      if (String(input).includes("/api/attendance")) return { ok: false, json: async () => ({ error: "Unauthorized" }) } as Response;
-      return { ok: true, json: async () => ({}) } as Response;
-    }) as unknown as typeof fetch;
+    stubAttendance(() => answer(401, { error: "Unauthorized" }));
     renderWithProviders(<KioskDisplay />);
 
     expect(await screen.findByText("Access Denied: Please sign in to view attendance.")).toBeInTheDocument();
   });
 
-  it("shows a network-error message when the attendance request throws", async () => {
-    setAdminSession();
-    global.fetch = jest.fn(async () => { throw new Error("down"); }) as unknown as typeof fetch;
-    renderWithProviders(<KioskDisplay />);
+  describe("when the attendance request never gets an answer", () => {
+    const unreachable = "Couldn't reach the server. Check your connection and try again.";
+    beforeEach(() => jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] }));
+    afterEach(() => jest.useRealTimers());
 
-    await waitFor(() =>
-      expect(notifications.show).toHaveBeenCalledWith(
-        expect.objectContaining({ color: "red", message: "Network error", autoClose: false }),
-      ),
-    );
-    expect(await screen.findByText("Network error occurred.")).toBeInTheDocument();
+    it("off the kiosk, shows the failure in place of the roster once the retries run out, and raises no toast", async () => {
+      setAdminSession();
+      stubAttendance(() => { throw new TypeError("fetch failed"); });
+      renderWithProviders(<KioskDisplay />);
+      await advanceUntilShown(unreachable);
+
+      expect(screen.getByText("Couldn't load attendance")).toBeInTheDocument();
+      expect(screen.getByText(unreachable)).toBeInTheDocument();
+      expect(notificationsStore.getState().notifications).toHaveLength(0);
+    });
+
+    it("on the kiosk, says so inline with no Retry and nothing that waits", async () => {
+      setSearchParams("mode=kiosk");
+      stubAttendance(() => { throw new TypeError("fetch failed"); });
+      renderWithProviders(<KioskDisplay />);
+      await advanceUntilShown(unreachable);
+
+      expect(screen.getByText(unreachable)).toBeInTheDocument();
+      expect(screen.queryByText("Couldn't load attendance")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+      expect(notificationsStore.getState().notifications).toHaveLength(0);
+    });
   });
 
   it("reports an unknown supervision state instead of an empty facility when the initial load throws", async () => {
@@ -197,10 +239,7 @@ describe("attendance/current page", () => {
 
   it("reports an unknown supervision state when the initial load returns a server error", async () => {
     setAdminSession();
-    global.fetch = jest.fn(async (input: RequestInfo | URL) => {
-      if (String(input).includes("/api/attendance")) return { ok: false, json: async () => ({ error: "Server exploded" }) } as Response;
-      return { ok: true, json: async () => ({}) } as Response;
-    }) as unknown as typeof fetch;
+    stubAttendance(() => answer(400, { error: "Server exploded" }));
     renderWithProviders(<KioskDisplay />);
 
     expect(await screen.findByText("Supervision status unknown")).toBeInTheDocument();
@@ -264,12 +303,7 @@ describe("attendance/current page", () => {
       let calls = 0;
       global.fetch = jest.fn(async () => {
         calls += 1;
-        const resting = first === "resting" || calls > 1;
-        return {
-          ok: true,
-          status: resting ? 204 : 200,
-          json: async () => (resting ? Promise.reject(new SyntaxError("no body")) : attendanceData),
-        } as unknown as Response;
+        return first === "resting" || calls > 1 ? noContent() : answer(200, attendanceData);
       }) as unknown as typeof fetch;
     }
 
@@ -288,22 +322,24 @@ describe("attendance/current page", () => {
       let calls = 0;
       global.fetch = jest.fn(async () => {
         calls += 1;
-        if (calls === 1) {
-          return { ok: false, status: 502, json: async () => ({}) } as unknown as Response;
-        }
-        return {
-          ok: true,
-          status: 204,
-          json: async () => Promise.reject(new SyntaxError("no body")),
-        } as unknown as Response;
+        return calls === 1 ? answer(400, { error: "Kiosk not ready" }) : noContent();
       }) as unknown as typeof fetch;
       renderWithProviders(<KioskDisplay />);
-      expect(await screen.findByText("Failed to load attendance")).toBeInTheDocument();
+      expect(await screen.findByText("Kiosk not ready")).toBeInTheDocument();
 
       postFromWrapper("refresh-attendance");
 
       expect(await screen.findByText("Kiosk resting — zzz. Badge in to wake it.")).toBeInTheDocument();
-      expect(screen.queryByText("Failed to load attendance")).not.toBeInTheDocument();
+      expect(screen.queryByText("Kiosk not ready")).not.toBeInTheDocument();
+    });
+
+    it("raises nothing that waits while resting", async () => {
+      setSearchParams("mode=kiosk");
+      mockResting("resting");
+      renderWithProviders(<KioskDisplay />);
+
+      expect(await screen.findByText("Kiosk resting — zzz. Badge in to wake it.")).toBeInTheDocument();
+      expect(notificationsStore.getState().notifications).toHaveLength(0);
     });
 
     it("keeps the last real roster instead of replacing it", async () => {
@@ -468,17 +504,11 @@ describe("attendance/current page", () => {
     );
   });
 
-  // First /api/attendance call answers the roster; later ones fail like the proxy's bodiless 502.
-  function rosterThenFailure() {
+  // The first /api/attendance call answers the roster; later ones answer `failure`,
+  // by default the proxy's bodiless 502, which the kit retries.
+  function rosterThenFailure(failure: () => Response = () => ({ ok: false, status: 502, text: async () => "" }) as unknown as Response) {
     let calls = 0;
-    global.fetch = jest.fn(async (input: RequestInfo | URL) => {
-      if (String(input).includes("/api/attendance")) {
-        calls += 1;
-        if (calls === 1) return { ok: true, json: async () => attendanceData } as Response;
-        return { ok: false, status: 502, json: async () => { throw new Error("no body"); } } as unknown as Response;
-      }
-      return { ok: true, json: async () => ({}) } as Response;
-    }) as unknown as typeof fetch;
+    stubAttendance(() => (++calls === 1 ? answer(200, attendanceData) : failure()));
   }
 
   it("kiosk keeps the last roster, marked not up to date, when a refresh fails", async () => {
@@ -492,7 +522,20 @@ describe("attendance/current page", () => {
 
     expect(await screen.findByText(/^Not up to date — as of /)).toBeInTheDocument();
     expect(screen.getByText("Karen")).toBeInTheDocument();
-    expect(screen.queryByText("Failed to load attendance")).not.toBeInTheDocument();
+  });
+
+  it("kiosk keeps the last roster, marked not up to date, when a refresh is refused", async () => {
+    setSearchParams("mode=kiosk");
+    setSession({ id: 999 });
+    rosterThenFailure(() => answer(400, { error: "Refused" }));
+    renderWithProviders(<KioskDisplay />);
+    await screen.findByText("Karen");
+
+    postFromWrapper("refresh-attendance");
+
+    expect(await screen.findByText(/^Not up to date — as of /)).toBeInTheDocument();
+    expect(screen.getByText("Karen")).toBeInTheDocument();
+    expect(screen.queryByText("Refused")).not.toBeInTheDocument();
   });
 
   it("kiosk marks the proxy's own view (offline or overnight) with the roster's time", async () => {
@@ -526,13 +569,14 @@ describe("attendance/current page", () => {
 
   it("off the kiosk a failed refresh still replaces the roster with the error", async () => {
     setAdminSession();
-    rosterThenFailure();
+    rosterThenFailure(() => answer(400, { error: "Refused" }));
     renderWithProviders(<KioskDisplay />);
     await screen.findByText("Karen Keyholder");
 
     postFromWrapper("refresh-attendance");
 
-    expect(await screen.findByText("Failed to load attendance")).toBeInTheDocument();
+    expect(await screen.findByText("Couldn't load attendance")).toBeInTheDocument();
+    expect(screen.getByText("Refused")).toBeInTheDocument();
     expect(screen.queryByText("Karen Keyholder")).not.toBeInTheDocument();
     expect(screen.queryByText(/Not up to date/)).not.toBeInTheDocument();
   });

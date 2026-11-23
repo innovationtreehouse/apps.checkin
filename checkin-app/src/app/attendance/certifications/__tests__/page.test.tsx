@@ -1,12 +1,16 @@
 /* eslint-disable @typescript-eslint/no-require-imports -- jest.mock factories are hoisted above imports */
-import { act, screen } from "@testing-library/react";
+import { act, fireEvent, screen } from "@testing-library/react";
 jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 import { notifications, notificationsStore } from "@mantine/notifications";
 import { renderWithProviders, mockFetchJson, resetRtl, setSearchParams } from "@/test-helpers/rtl";
+import { jsonBody } from "@/test-helpers/jsonBody";
 import KioskCertificationsDisplay from "../page";
 
 beforeEach(() => resetRtl());
+
+const answer = (status: number, body: unknown) => ({ ok: status < 400, status, ...jsonBody(body) }) as Response;
+const noContent = () => ({ ok: true, status: 204, json: async () => Promise.reject(new SyntaxError("no body")), text: async () => "" }) as unknown as Response;
 
 const tools = [{ id: 1, name: "3D Printer" }, { id: 2, name: "Laser Cutter" }];
 // `name` is what the route sends: the kiosk label, already resolved server-side.
@@ -64,29 +68,34 @@ describe("KioskCertificationsDisplay", () => {
     });
 
     it("says the kiosk is resting, not that nobody was found, on a 204 with no grid yet", async () => {
-        global.fetch = jest.fn(async () => ({
-            ok: true,
-            status: 204,
-            json: async () => Promise.reject(new SyntaxError("no body")),
-        } as unknown as Response)) as unknown as typeof fetch;
+        global.fetch = jest.fn(async () => noContent()) as unknown as typeof fetch;
         renderWithProviders(<KioskCertificationsDisplay />);
 
         expect(await screen.findByText("Kiosk resting — zzz. Badge in to wake it.")).toBeInTheDocument();
         expect(screen.queryByText("No active people found.")).not.toBeInTheDocument();
     });
 
+    it("clears an earlier error once the kiosk answers 204", async () => {
+        setSearchParams("mode=kiosk");
+        let calls = 0;
+        global.fetch = jest.fn(async () => (++calls === 1 ? answer(400, { error: "Kiosk not ready" }) : noContent())) as unknown as typeof fetch;
+        jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] });
+        try {
+            renderWithProviders(<KioskCertificationsDisplay />);
+            expect(await screen.findByText("Kiosk not ready")).toBeInTheDocument();
+            await act(async () => { jest.advanceTimersByTime(10_000); });
+            expect(screen.getByText("Kiosk resting — zzz. Badge in to wake it.")).toBeInTheDocument();
+            expect(screen.queryByText("Kiosk not ready")).not.toBeInTheDocument();
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
     it("keeps the grid it has when the kiosk answers 204", async () => {
         let calls = 0;
         global.fetch = jest.fn(async () => {
             calls += 1;
-            if (calls === 1) {
-                return { ok: true, status: 200, json: async () => ({ participants, tools }) } as unknown as Response;
-            }
-            return {
-                ok: true,
-                status: 204,
-                json: async () => Promise.reject(new SyntaxError("no body")),
-            } as unknown as Response;
+            return calls === 1 ? answer(200, { participants, tools }) : noContent();
         }) as unknown as typeof fetch;
         jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] });
         try {
@@ -106,7 +115,7 @@ describe("KioskCertificationsDisplay", () => {
             let calls = 0;
             global.fetch = jest.fn(async () => {
                 calls += 1;
-                if (calls === 1) return { ok: true, status: 200, json: async () => ({ participants, tools }) } as unknown as Response;
+                if (calls === 1) return answer(200, { participants, tools });
                 throw new TypeError("fetch failed");
             }) as unknown as typeof fetch;
         }
@@ -123,11 +132,7 @@ describe("KioskCertificationsDisplay", () => {
             }
         }
 
-        beforeEach(() => jest.spyOn(console, "error").mockImplementation(() => {}));
-        afterEach(() => {
-            act(() => notifications.clean());
-            jest.mocked(console.error).mockRestore();
-        });
+        afterEach(() => act(() => notifications.clean()));
 
         it("on the kiosk, keeps the grid, says it is not up to date, and raises nothing that waits", async () => {
             setSearchParams("mode=kiosk");
@@ -138,32 +143,52 @@ describe("KioskCertificationsDisplay", () => {
             expect(notificationsStore.getState().notifications).toHaveLength(0);
         });
 
-        it("off the kiosk, shows one standing error however many polls fail", async () => {
+        it("off the kiosk, keeps the grid marked not up to date while it retries, with no toast", async () => {
             answerOnceThenFail();
             await pollTwice();
+            expect(screen.getByText("Alex")).toBeInTheDocument();
             expect(screen.getByText("Not up to date")).toBeInTheDocument();
-            const shown = notificationsStore.getState().notifications;
-            expect(shown).toHaveLength(1);
-            expect(shown[0]).toMatchObject({ color: "red", autoClose: false, message: "Couldn't reach the server. Check your connection and try again." });
+            expect(notificationsStore.getState().notifications).toHaveLength(0);
         });
     });
 
-    it("says the server can't be reached when the first load never gets an answer", async () => {
-        const logged = jest.spyOn(console, "error").mockImplementation(() => {});
+    it("on the kiosk, says the server can't be reached once the first load's retries run out", async () => {
+        const unreachable = "Couldn't reach the server. Check your connection and try again.";
         global.fetch = jest.fn(async () => { throw new TypeError("fetch failed"); }) as unknown as typeof fetch;
         setSearchParams("mode=kiosk");
+        jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] });
         try {
             renderWithProviders(<KioskCertificationsDisplay />);
-            expect(await screen.findByText("Couldn't reach the server. Check your connection and try again.")).toBeInTheDocument();
+            for (let i = 0; i < 60 && !screen.queryByText(unreachable); i++) {
+                await act(async () => { jest.advanceTimersByTime(1000); });
+            }
+            expect(screen.getByText(unreachable)).toBeInTheDocument();
             expect(screen.queryByText(/No active people found/)).not.toBeInTheDocument();
+            expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+            expect(notificationsStore.getState().notifications).toHaveLength(0);
         } finally {
-            logged.mockRestore();
+            jest.useRealTimers();
         }
     });
 
-    it("shows an error message when the fetch fails", async () => {
-        mockFetchJson({});
+    it("off the kiosk, shows a failed load in place of the grid, and Retry reads it again", async () => {
+        let refuse = true;
+        global.fetch = jest.fn(async () => (refuse ? answer(400, { error: "Refused" }) : answer(200, { participants, tools }))) as unknown as typeof fetch;
         renderWithProviders(<KioskCertificationsDisplay />);
-        expect(await screen.findByText("Failed to load certifications data")).toBeInTheDocument();
+        expect(await screen.findByText("Couldn't load certifications")).toBeInTheDocument();
+        expect(screen.getByText("Refused")).toBeInTheDocument();
+
+        refuse = false;
+        fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+        expect(await screen.findByText("Alex")).toBeInTheDocument();
+        expect(screen.queryByText("Couldn't load certifications")).not.toBeInTheDocument();
+    });
+
+    it("sends the kiosk-signature headers from the URL", async () => {
+        setSearchParams("sig=abc&ts=123&nonce=xyz");
+        const fetchMock = mockFetchJson({ "/api/kioskdisplay/certifications": { participants, tools } });
+        renderWithProviders(<KioskCertificationsDisplay />);
+        expect(await screen.findByText("Alex")).toBeInTheDocument();
+        expect(fetchMock.mock.calls[0][1]?.headers).toEqual({ "x-kiosk-signature": "abc", "x-kiosk-timestamp": "123", "x-kiosk-nonce": "xyz" });
     });
 });

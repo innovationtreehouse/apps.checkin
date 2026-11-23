@@ -66,12 +66,10 @@ const rawNotificationImport = [
   },
 ];
 
-// Files still on raw notifications: background-check pages wait for that process's
-// redesign; attendance/current is open in another change.
+// Files still on raw notifications: background-check pages wait for that process's redesign.
 const rawNotificationExemptions = [
   "checkin-app/src/app/membership-ops/review/page.tsx",
   "checkin-app/src/app/membership/BackgroundChecksPanel.tsx",
-  "checkin-app/src/app/attendance/current/page.tsx",
 ];
 
 // Client code reads through useLoad and writes through api() from @/lib/api, so a
@@ -101,10 +99,6 @@ const rawFetchExemptions = [
   "checkin-app/src/app/membership/useMembershipPage.ts",
   // Its mount sends a sync POST when the person returns from signing.
   "checkin-app/src/app/membership/KeyVolunteerAgreementPanel.tsx",
-  // Kiosk reads send signed headers from the URL; open PR #2375 edits it.
-  "checkin-app/src/app/attendance/current/page.tsx",
-  // Kiosk reads send signed headers from the URL and handle a 204 resting answer.
-  "checkin-app/src/app/attendance/certifications/page.tsx",
   // A 409 refusal carries the matching people, which HttpError cannot hold.
   "checkin-app/src/app/membership-ops/volunteer-memberships/page.tsx",
   // Background-check pages wait for that process's redesign.
