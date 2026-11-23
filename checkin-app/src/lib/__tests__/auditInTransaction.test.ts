@@ -20,11 +20,6 @@ const ALLOWLIST: Record<string, { count: number; reason: string }> = {
         reason: "by design: close summary is a board notice, each closed visit has its own row",
     },
 
-    "app/api/membership-ops/applications/settle-waiting/route.ts": {
-        count: 1,
-        reason: "by design: sweep summary, each settled household writes its own rows in its transaction",
-    },
-
     "lib/receipt/mailAliases.ts": { count: 1, reason: REFUSAL },
     "lib/membership/selfGrantGuard.ts": { count: 1, reason: `${REFUSAL}; the refusal paths pass the root client` },
     "lib/finance/reconcile/reversals.ts": { count: 1, reason: "by design: observation, nothing changed" },

@@ -1,4 +1,4 @@
-import { personActor } from "@/lib/auditActor";
+import { personActor, recordAudit } from "@/lib/auditActor";
 import prisma from "@/lib/prisma";
 import { settleApplicationsAwaitingCheck } from "@/lib/membership/settleHouseholdBg";
 import { handler, unauthorized } from "@/security/handler";
@@ -14,14 +14,9 @@ export const dynamic = "force-dynamic";
 export const POST = handler("POST /api/membership-ops/applications/settle-waiting", async ({ auth }) => {
     if (auth.type !== "session") throw unauthorized();
     const counts = await settleApplicationsAwaitingCheck("a Board fix-pending-checks click");
-    await prisma.auditLog.create({
-        data: {
-            ...personActor(auth.user.id),
-            action: "EDIT",
-            tableName: "APPLICATION_SETTLE_SWEEP",
-            affectedEntityId: 0,
-            newData: counts,
-        },
-    });
+    const actor = personActor(auth.user.id);
+    await prisma.$transaction((tx) =>
+        recordAudit(tx, actor, { action: "EDIT", tableName: "APPLICATION_SETTLE_SWEEP", affectedEntityId: 0, newData: counts }),
+    );
     return { ApplicationSettleCounts: counts };
 });

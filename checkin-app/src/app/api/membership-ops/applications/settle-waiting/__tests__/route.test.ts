@@ -3,21 +3,27 @@
  */
 /**
  * POST /api/membership-ops/applications/settle-waiting: a Board click settles every application
- * waiting on its check once, answers the counts only, and leaves one audit row naming who ran it.
+ * waiting on its check once, answers the counts only, and leaves one audit row naming who ran it,
+ * written through recordAudit inside a transaction.
  * Auth runs through the real handler; only next-auth's getServerSession is stubbed.
  */
 import type { NextRequest as NextRequestType } from 'next/server';
 import { getServerSession } from 'next-auth/next';
-import prisma from '@/lib/prisma';
 import { settleApplicationsAwaitingCheck } from '@/lib/membership/settleHouseholdBg';
 import { POST } from '../route';
 
 jest.mock('@/lib/membership/settleHouseholdBg', () => ({ settleApplicationsAwaitingCheck: jest.fn() }));
 
+const mockAuditCreate = jest.fn();
+jest.mock('@/lib/prisma', () => ({
+    __esModule: true,
+    default: { $transaction: jest.fn((fn: (tx: unknown) => unknown) => fn({ auditLog: { create: mockAuditCreate } })) },
+}));
+
 const { NextRequest } = jest.requireActual<{ NextRequest: typeof NextRequestType }>('next/server');
 const mockSession = getServerSession as jest.MockedFunction<typeof getServerSession>;
 const settle = jest.mocked(settleApplicationsAwaitingCheck);
-const auditCreate = jest.fn();
+const auditCreate = mockAuditCreate;
 
 function signIn(claims: Record<string, boolean>) {
     mockSession.mockResolvedValue({
@@ -42,7 +48,6 @@ beforeEach(() => {
     mockSession.mockReset();
     settle.mockReset();
     auditCreate.mockReset().mockResolvedValue({});
-    prisma.auditLog.create = auditCreate as unknown as typeof prisma.auditLog.create;
 });
 
 afterEach(() => jest.restoreAllMocks());
