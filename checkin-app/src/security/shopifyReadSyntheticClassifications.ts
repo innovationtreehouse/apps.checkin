@@ -37,6 +37,9 @@ export const classifications = {
     totalRefundedCents: "internal",
     cancelledAt: "internal",
   },
+  // `{ scheduled, laterRepair }` from GET /api/finance-ops/s-read/sync/status: the latest
+  // daily read, and the latest repair that finished after it. Both are SyncRun rows.
+  SReadSyncStatus: {},
   // `{ success }` from POST /api/finance-ops/s-read/sync.
   SReadSyncTrigger: {
     success: "internal",
@@ -100,6 +103,10 @@ export const classifications = {
 export const relations = {
   PaymentQueueRow: {
     live: { model: "PaymentQueueLiveOrder", isList: false },
+  },
+  SReadSyncStatus: {
+    scheduled: { model: "SyncRun", isList: false },
+    laterRepair: { model: "SyncRun", isList: false },
   },
   MatchAuditReport: {
     variantCoverage: { model: "MatchAuditVariantCoverage", isList: false },
