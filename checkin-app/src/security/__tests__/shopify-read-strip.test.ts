@@ -35,11 +35,13 @@ const ENDPOINTS = [
     'GET /api/finance-ops/payments',
     'GET /api/finance-ops/s-read/sync',
     'POST /api/finance-ops/s-read/sync',
+    'POST /api/finance-ops/payments/reconcile',
     'GET /api/finance-ops/s-read/diagnose',
     'GET /api/finance-ops/s-read/match-audit',
     'POST /api/finance-ops/s-read/match-audit/track',
 ];
 const MATCH_AUDIT = 'GET /api/finance-ops/s-read/match-audit';
+const RECONCILE = 'POST /api/finance-ops/payments/reconcile';
 
 const SECRET = { ShopifyRawEvent: ['payload'], ShopifyBulkExport: ['jsonl'] };
 const PERSONAL = { ShopOrder: ['customerEmail', 'customerName'], ShopRefund: ['note'] };
@@ -117,7 +119,7 @@ describe('mirror tiering', () => {
 
 describe('mirror registry — admission', () => {
     it('registers exactly the mirror routes', () => {
-        const registered = [...allRoutes()].map(([e]) => e).filter(e => / \/api\/finance-ops\/(payments$|s-read\/)/.test(e));
+        const registered = [...allRoutes()].map(([e]) => e).filter(e => / \/api\/finance-ops\/(payments(\/reconcile)?$|s-read\/)/.test(e));
         expect(registered.sort()).toEqual([...ENDPOINTS].sort());
     });
 
@@ -191,6 +193,15 @@ describe('mirror registry — stripping', () => {
         const bag = leakyBag();
         expect(stripValue('ShopifyRawEvent', bag.ShopifyRawEvent, all, ctx())).not.toHaveProperty('payload');
         expect(stripValue('ShopifyBulkExport', bag.ShopifyBulkExport, all, ctx())).not.toHaveProperty('jsonl');
+    });
+
+    it('the reconcile run ships its four counts to the board and no error text', async () => {
+        signIn(['isBoardMember']);
+        const run = { configured: true, ordersScanned: 12, reversalsRaised: 1, failed: 1 };
+        const impl = async () => ({ PaymentReconcileRun: { ...run, error: 'order for buyer@example.com failed' } });
+        const res = await handler(RECONCILE, impl)(new NextRequest('http://localhost/api/finance-ops/payments/reconcile', { method: 'POST' }));
+        expect(res.status).toBe(200);
+        expect((await res.json()).PaymentReconcileRun).toEqual(run);
     });
 
     it('the match-audit report keeps its nested rows for the board', () => {
