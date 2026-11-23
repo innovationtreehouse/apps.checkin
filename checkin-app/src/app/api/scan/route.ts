@@ -1,9 +1,8 @@
-import { createHash } from "node:crypto";
 import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
 import { processCheckin, processCheckout, type LegacyKiosk, SUPERVISION_CONFIRM_MS, SUPERVISION_CONFIRM_DEADFRONT_MS } from "@/lib/attendance/scan";
-import { processCloseRequest, executePendingCloses, type CloseKind, LIVE_ARRIVAL_WINDOW_MS } from "@/lib/attendance/close";
+import { processCloseRequest, executePendingCloses, LIVE_ARRIVAL_WINDOW_MS } from "@/lib/attendance/close";
 import { notifyScanOutcome } from "@/lib/attendance/scanNotify";
 import { appendPresenceEvent, parkReasonToClass, PresenceClass } from "@/lib/presence/events";
 import { applyPresenceIntent, flagForReview } from "@/lib/presence/project";
@@ -19,6 +18,7 @@ import { specTrace, traceOnCommit } from "@/lib/specTrace";
 import type { Prisma } from "@/generated/prisma/client";
 import { lastNightlyCloseAt } from "@/lib/attendance/nightlyClose";
 import { type ScanResult, toResponse } from "./scanResponse";
+import { parseScanBody } from "./scanBody";
 
 // A replayed scan older
 // than this still applies, and is also flagged for human review — state may
@@ -28,15 +28,6 @@ const REPLAY_FRESHNESS_WINDOW_MS = 10 * 60 * 1000;
 // A replay stamped further ahead of server now than this came from a kiosk
 // whose clock is wrong; it applies at server now, flagged clock_suspect.
 const REPLAY_FUTURE_TOLERANCE_MS = 2 * 60 * 1000;
-
-// Far beyond any honest kiosk figure (about a second online, some seconds after
-// a night offline). A wider one means the kiosk does not know the time.
-const MAX_SCAN_TIME_UNCERTAINTY_MS = 60 * 60 * 1000;
-
-// Bounded to Postgres int4 (see lib/searchId.ts): a larger id makes the
-// lookup throw instead of matching nothing.
-const isPersonId = (v: unknown): v is number =>
-    typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 2147483647;
 
 // Whether the open visit began with a live badge IN, as its arrivedLive says.
 // A visit older than that column falls back to the badge log: a live IN is
@@ -68,7 +59,7 @@ const maxDate = (a: Date | null, b: Date | null): Date | null =>
 // reads the raw body and authenticates it; only a signed kiosk scans.
 export const POST = withKiosk(
     { rateLimit: { name: "scan", limit: 300 } },
-    async (_req, body: { personId?: unknown; participantId?: unknown; clientEventId?: unknown; scannedAt?: unknown; replay?: unknown; forceCloseToken?: unknown; forceCloseConfirmed?: unknown; dead?: unknown; deadStatus?: unknown; intent?: unknown; clockSuspect?: unknown; shownEmpty?: unknown; rosterAsOf?: unknown; protocolVersion?: unknown; close?: unknown; scanTimeUncertaintyMs?: unknown }, auth) => {
+    async (_req, body: unknown, auth) => {
     if (auth.type !== 'kiosk') return apiError("Check in at the kiosk.", 403);
 
     const startTime = Date.now();
@@ -76,110 +67,16 @@ export const POST = withKiosk(
     let seenVersion: number | null = null;
 
     try {
-        // Older kiosks name the badge participantId.
-        const rawId = body.personId ?? body.participantId;
-        const idConflict = body.personId != null && body.participantId != null && body.personId !== body.participantId;
-        const personId = !idConflict && isPersonId(rawId) ? rawId : null;
-        // A queued row (dead-lettered or replayed) is the exception: it is
-        // parked below whatever it carries, so a corrupt read reaches the
-        // review queue instead of bouncing on the kiosk forever.
-        if (personId === null && body.dead !== true && body.replay !== true) {
-            return apiError(idConflict ? "personId and participantId disagree." : "A valid numeric personId is required.", 400);
-        }
-
-        // Optional replay fields from a queued kiosk scan. Absent → a live scan.
-        // An unparseable scannedAt
-        // normalizes to null, which parks a replay below.
-        const sentEventId = (typeof body.clientEventId === 'string' && body.clientEventId) || null;
-        const parsedScannedAt = typeof body.scannedAt === 'string' ? new Date(body.scannedAt) : null;
-        const scannedAt = parsedScannedAt && !isNaN(parsedScannedAt.getTime()) ? parsedScannedAt : null;
-
-        // Replay-ness is explicit: only the outbox drain sets it. It cannot be
-        // inferred from clientEventId, because the try-first rule puts that id
-        // on the LIVE attempt too so a later redelivery dedups.
-        if (body.replay !== undefined && typeof body.replay !== 'boolean') {
-            return apiError("replay must be a boolean.", 400);
-        }
-
-        // A terminally-failed outbox row rides this same endpoint to reach
-        // the server-side DLQ instead of being lost on the kiosk. It shares
-        // replay's identity requirements (clientEventId + scannedAt) but is a
-        // distinct signal -- never a redelivery attempt, so the two are exclusive.
-        if (body.dead !== undefined && typeof body.dead !== 'boolean') {
-            return apiError("dead must be a boolean.", 400);
-        }
-        if (body.dead === true && body.replay === true) {
-            return apiError("dead and replay are mutually exclusive.", 400);
-        }
-        if (body.dead === true && !sentEventId) {
-            return apiError("A dead-lettered scan requires clientEventId.", 400);
-        }
-        if (body.dead === true && !scannedAt) {
-            return apiError("A dead-lettered scan requires a valid scannedAt.", 400);
-        }
-
-        // The token an older kiosk echoes on a close's second scan. Anything that
-        // isn't a non-empty string is simply "no token".
-        const confirmToken =
-            typeof body.forceCloseToken === 'string' && body.forceCloseToken.length > 0
-                ? body.forceCloseToken
-                : null;
-
-        // A keyholder's close, decided at the kiosk. An older kiosk's offline confirm flag, or a token it
-        // echoes on the second scan of the same badge, is the same decision.
-        const requestedClose: CloseKind | null = body.close === 'alone' || body.close === 'confirmed'
-            ? body.close
-            : body.forceCloseConfirmed === true || confirmToken !== null
-                ? 'confirmed'
-                : body.shownEmpty === true
-                    ? 'alone'
-                    : null;
-        // Server time of the kiosk's last roster: a check-in after it is one the
-        // keyholder could not have seen on the kiosk.
-        const parsedRosterAsOf = typeof body.rosterAsOf === 'string' ? new Date(body.rosterAsOf) : null;
-        const rosterAsOfValid = parsedRosterAsOf !== null && !isNaN(parsedRosterAsOf.getTime());
-
-        // A replay must carry its own id and event time: falling back to now
-        // would make the freshness check pass trivially and toggle a scan that
-        // should park. intent is the displayed direction; absent, a legacy
-        // live-state toggle. protocolVersion is the contract bit.
-        const invalid =
-            body.replay === true && !sentEventId ? "A replayed scan requires clientEventId." :
-            body.replay === true && !scannedAt ? "A replayed scan requires a valid scannedAt." :
-            body.intent !== undefined && body.intent !== 'IN' && body.intent !== 'OUT' ? "intent must be IN or OUT." :
-            body.close !== undefined && body.close !== 'alone' && body.close !== 'confirmed' ? "close must be alone or confirmed." :
-            requestedClose && body.intent === 'IN' ? "A close is a checkout; intent must be OUT." :
-            body.rosterAsOf !== undefined && !rosterAsOfValid ? "rosterAsOf must be a timestamp." :
-            body.scanTimeUncertaintyMs !== undefined && !(typeof body.scanTimeUncertaintyMs === 'number' && Number.isFinite(body.scanTimeUncertaintyMs) && body.scanTimeUncertaintyMs >= 0)
-                ? "scanTimeUncertaintyMs must be a non-negative number." :
-            body.clockSuspect !== undefined && typeof body.clockSuspect !== 'boolean' ? "clockSuspect must be a boolean." :
-            body.shownEmpty !== undefined && typeof body.shownEmpty !== 'boolean' ? "shownEmpty must be a boolean." :
-            body.protocolVersion !== undefined && !(typeof body.protocolVersion === 'number' && Number.isInteger(body.protocolVersion) && body.protocolVersion >= 1)
-                ? "protocolVersion must be a positive integer." :
-            null;
-        // A replay is never refused: a refusal would block the head of the
-        // kiosk's queue. One the server cannot apply is ingested as a dead
-        // letter instead, and parks for review without closing anything.
-        if (invalid && body.replay !== true) {
-            return apiError(invalid, 400);
-        }
-        // An absent version is 1; a replay whose own version is invalid parks and is not recorded.
-        seenVersion = body.protocolVersion === undefined ? 1
-            : typeof body.protocolVersion === 'number' && Number.isInteger(body.protocolVersion) && body.protocolVersion >= 1 ? body.protocolVersion
-            : null;
-        const isReplay = body.replay === true && !invalid;
-        const isDead = body.dead === true || (body.replay === true && invalid !== null);
-        // A parked replay that sent no id of its own is keyed by its body, so a resend dedups.
-        const clientEventId = sentEventId
-            ?? (isDead ? `body:${createHash("sha256").update(JSON.stringify(body)).digest("hex")}` : null);
-        // A replay with no usable scan time parks at server now, which only bounds it from above.
-        const noScanTime = body.replay === true && !scannedAt;
-        const deadStatus = noScanTime ? 'no_scan_time'
-            : invalid ? 400
-            : typeof body.deadStatus === 'number' && Number.isFinite(body.deadStatus) ? body.deadStatus
-            : 'unknown';
-        const closeKind = invalid ? null : requestedClose;
-        const rosterAsOf = rosterAsOfValid ? parsedRosterAsOf : null;
+        const parsed = parseScanBody(body);
+        if (!parsed.ok) return apiError(parsed.error, 400);
+        const scan = parsed.scan;
+        seenVersion = scan.recordedVersion;
+        const { rawId, personId, clientEventId, scannedAt, intent, clockSuspect, rosterAsOf, slot } = scan;
+        const isReplay = slot === "replay";
+        const isDead = slot === "dead";
+        const closeKind = scan.kind === "close" ? scan.close : null;
+        const deadStatus = scan.slot === "dead" ? scan.status : null;
+        const uncertaintyMs = scan.slot === "replay" ? scan.uncertaintyMs : 0;
 
         // A live scan is happening now and never inherits the kiosk's clock (the
         // freshness window and the debounce both measure against server now).
@@ -189,12 +86,6 @@ export const POST = withKiosk(
         const clockAhead = isReplay && eventTime.getTime() - Date.now() > REPLAY_FUTURE_TOLERANCE_MS;
         if (clockAhead) eventTime = new Date();
 
-        const intent = body.intent === 'IN' || body.intent === 'OUT' ? body.intent : null;
-        const sentUncertaintyMs = isReplay && typeof body.scanTimeUncertaintyMs === 'number' ? body.scanTimeUncertaintyMs : 0;
-        const uncertaintyTooWide = sentUncertaintyMs > MAX_SCAN_TIME_UNCERTAINTY_MS;
-        const clockSuspect = body.clockSuspect === true || uncertaintyTooWide || noScanTime;
-        const uncertaintyMs = uncertaintyTooWide ? 0 : sentUncertaintyMs;
-        const slot = isDead ? "dead" : isReplay ? "replay" : "live";
         specTrace("ScanRequest", {
             slot, p: rawId, cid: clientEventId, intent, close: closeKind,
             t: eventTime.getTime(), scannedAt: scannedAt?.getTime() ?? null, rosterAsOf: rosterAsOf?.getTime() ?? null,
@@ -209,15 +100,15 @@ export const POST = withKiosk(
         // closes the rolling-deploy race for future bumps: a too-new replay
         // landing on a not-yet-upgraded instance bounces instead of being
         // misread, whatever the advertised version said.
-        if ((isReplay || isDead) && typeof body.protocolVersion === 'number' && body.protocolVersion > SCAN_PROTOCOL_VERSION) {
-            return apiError(`Unsupported protocolVersion ${body.protocolVersion}; this server speaks ${SCAN_PROTOCOL_VERSION}.`, 426);
+        if ((isReplay || isDead) && scan.protocolVersion > SCAN_PROTOCOL_VERSION) {
+            return apiError(`Unsupported protocolVersion ${scan.protocolVersion}; this server speaks ${SCAN_PROTOCOL_VERSION}.`, 426);
         }
         // A kiosk below the close-request generation still has its keyholder
         // checkout decide the close (whether the kiosk showed anyone else inside,
         // else the server's records); from that generation on, only a close
         // request closes.
-        const legacyKiosk: LegacyKiosk | null = (typeof body.protocolVersion === 'number' ? body.protocolVersion : 1) < CLOSE_REQUEST_PROTOCOL_VERSION
-            ? { shownEmpty: typeof body.shownEmpty === 'boolean' ? body.shownEmpty : null, clientEventId }
+        const legacyKiosk: LegacyKiosk | null = scan.protocolVersion < CLOSE_REQUEST_PROTOCOL_VERSION
+            ? { shownEmpty: scan.shownEmpty, clientEventId }
             : null;
 
         // A dead-lettered read that names no person can never project. It still
@@ -371,11 +262,9 @@ export const POST = withKiosk(
             // the touch must never be silently dropped by a debounce window.
             // A current kiosk filters repeat reads at the reader, so only exact
             // duplicates (clientEventId, above) are dropped for it.
-            const kioskDebounces = typeof body.protocolVersion === 'number'
-                && body.protocolVersion >= KIOSK_DEBOUNCE_PROTOCOL_VERSION;
+            const kioskDebounces = scan.protocolVersion >= KIOSK_DEBOUNCE_PROTOCOL_VERSION;
             // An older kiosk's late, out-of-order or clock-suspect scan still parks.
-            const trustsReplays = typeof body.protocolVersion === 'number'
-                && body.protocolVersion >= TRUSTED_REPLAY_PROTOCOL_VERSION;
+            const trustsReplays = scan.protocolVersion >= TRUSTED_REPLAY_PROTOCOL_VERSION;
             const threeSecondsAgo = new Date(Date.now() - 3000);
             const recentScan = (kioskDebounces || isDead || await isConfirm()) ? null : await tx.rawBadgeLog.findFirst({
                 where: {

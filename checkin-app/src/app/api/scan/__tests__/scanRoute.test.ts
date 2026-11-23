@@ -144,6 +144,18 @@ describe('POST /api/scan', () => {
         expect(json.error).toBe('A valid numeric personId is required.');
     });
 
+    it.each(['null', '5', '[]'])('400s a JSON %s body as having no badge id', async (body) => {
+        (authenticateRequest as jest.Mock).mockResolvedValue({ type: 'kiosk' });
+        const req = new Request('http://localhost/api/scan', {
+            method: 'POST',
+            body,
+        }) as unknown as import('next/server').NextRequest;
+
+        const res = await POST(req);
+        expect(res.status).toBe(400);
+        expect((await res.json()).error).toBe('A valid numeric personId is required.');
+    });
+
     it('should return 400 if participantId is not a number', async () => {
         (authenticateRequest as jest.Mock).mockResolvedValue({ type: 'kiosk' });
         const req = new Request('http://localhost/api/scan', {
