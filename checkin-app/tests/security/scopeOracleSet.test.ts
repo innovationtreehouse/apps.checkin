@@ -85,6 +85,7 @@ const ORACLES = [
     'roster-token.test.ts',
     'rsvp-program-scope.test.ts',
     'scopeValidators.test.ts',
+    'settle-waiting-applications-route.test.ts',
     'shop-certifications-strip.test.ts',
     'shop-org-members-strip.test.ts',
     'shopify-read-strip.test.ts',
