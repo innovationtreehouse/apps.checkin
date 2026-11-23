@@ -7,13 +7,13 @@
  * model, and that the latest-failure-per-job read (`distinct` over an ordered scan)
  * actually returns one row per job rather than the whole table.
  *
- * Also covers the write path end to end through withCron — the same wrapper all nine
- * /api/cron routes go through.
+ * Also covers the write path end to end through withCron — the same wrapper every
+ * /api/cron route goes through.
  */
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { withCron } from '@/lib/cronAuth';
-import { CRON_STALE_AFTER_MS, getCronJobStatuses, recordCronRun } from '@/lib/cronRuns';
+import { getCronJobStatuses, recordCronRun } from '@/lib/cronRuns';
 
 const TAG = 'cron-runs-int';
 const JOB_A = `${TAG}-alpha`;
@@ -23,19 +23,27 @@ const SECRET = 'integration-cron-secret';
 const HOUR = 60 * 60 * 1000;
 const ago = (ms: number) => new Date(Date.now() - ms);
 
+// JOB_A was last due on 2020-01-01; JOB_B has no schedule.
+const DUE_A = new Date('2020-01-01T00:00:00.000Z');
+const SCHEDULES = JSON.stringify([{ job: JOB_A, schedule: 'cron(0 0 1 1 ? 2020)', timezone: 'UTC' }]);
+
 /** Statuses for this suite's jobs only — the DB may hold rows from other suites. */
 const mine = async () => (await getCronJobStatuses()).filter((s) => s.job.startsWith(TAG));
 
 describe('cron run ledger (real DB)', () => {
     const prevSecret = process.env.CRON_SECRET;
+    const prevSchedules = process.env.CRON_SCHEDULES;
 
     beforeAll(() => {
         process.env.CRON_SECRET = SECRET;
+        process.env.CRON_SCHEDULES = SCHEDULES;
     });
 
     afterAll(async () => {
         if (prevSecret === undefined) delete process.env.CRON_SECRET;
         else process.env.CRON_SECRET = prevSecret;
+        if (prevSchedules === undefined) delete process.env.CRON_SCHEDULES;
+        else process.env.CRON_SCHEDULES = prevSchedules;
         await prisma.cronRunLog.deleteMany({ where: { job: { startsWith: TAG } } });
     });
 
@@ -52,7 +60,7 @@ describe('cron run ledger (real DB)', () => {
 
         const [status] = await mine();
         expect(status.job).toBe(JOB_A);
-        expect(status.stale).toBe(false);
+        expect(status.late).toBe(false);
         expect(status.lastError).toBeUndefined();
     });
 
@@ -70,7 +78,7 @@ describe('cron run ledger (real DB)', () => {
             const row = await prisma.cronRunLog.findFirstOrThrow({ where: { job: JOB_A } });
             expect(row).toMatchObject({ success: false, error: 'sweep exploded' });
             // Never completed a run, so it is listed as failing rather than left off.
-            expect(await mine()).toEqual([{ job: JOB_A, lastSuccessAt: null, stale: false, lastError: 'sweep exploded', lastErrorAt: expect.any(Date) }]);
+            expect(await mine()).toEqual([{ job: JOB_A, lastSuccessAt: null, lastDueAt: DUE_A, late: true, lastError: 'sweep exploded', lastErrorAt: expect.any(Date) }]);
         } finally {
             logged.mockRestore();
         }
@@ -79,8 +87,8 @@ describe('cron run ledger (real DB)', () => {
     it('reports only the newest failure per job, and only while it is unresolved', async () => {
         await prisma.cronRunLog.createMany({
             data: [
-                // JOB_A: stale, and broken since — two failures, only the newest is reported.
-                { job: JOB_A, startedAt: ago(CRON_STALE_AFTER_MS + 5 * HOUR), finishedAt: ago(CRON_STALE_AFTER_MS + 5 * HOUR), success: true },
+                // JOB_A: late, and broken since — two failures, only the newest is reported.
+                { job: JOB_A, startedAt: new Date('2019-12-31T00:00:00.000Z'), finishedAt: new Date('2019-12-31T00:00:00.000Z'), success: true },
                 { job: JOB_A, startedAt: ago(3 * HOUR), finishedAt: ago(3 * HOUR), success: false, error: 'older failure' },
                 { job: JOB_A, startedAt: ago(HOUR), finishedAt: ago(HOUR), success: false, error: 'newest failure' },
                 // JOB_B: failed, then recovered — healthy, no error surfaced.
@@ -89,11 +97,11 @@ describe('cron run ledger (real DB)', () => {
             ],
         });
 
-        // Stalest first.
+        // Oldest completed run first.
         const statuses = await mine();
         expect(statuses).toEqual([
-            { job: JOB_A, lastSuccessAt: expect.any(Date), stale: true, lastError: 'newest failure', lastErrorAt: expect.any(Date) },
-            { job: JOB_B, lastSuccessAt: expect.any(Date), stale: false },
+            { job: JOB_A, lastSuccessAt: expect.any(Date), lastDueAt: DUE_A, late: true, lastError: 'newest failure', lastErrorAt: expect.any(Date) },
+            { job: JOB_B, lastSuccessAt: expect.any(Date), lastDueAt: null, late: false },
         ]);
         expect(Math.abs((statuses[0].lastErrorAt?.getTime() ?? 0) - ago(HOUR).getTime())).toBeLessThan(60_000);
     });

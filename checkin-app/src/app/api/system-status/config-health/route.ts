@@ -22,7 +22,7 @@ export const dynamic = "force-dynamic";
  *                  the receipt mailbox and QuickBooks rows (lib/receipt/mailboxHealth.ts,
  *                  lib/quickbooks/health.ts) and the legacy check-flag count
  *                  (lib/membership/legacyCheckFlagHealth.ts), which read live and so stay off the badge.
- *   - `cronJobs` — last successful run per cron sweep (lib/cronRuns.ts). Rides on this
+ *   - `cronJobs` — last completed run, last due time and lateness per cron sweep (lib/cronRuns.ts). Rides on this
  *                  route rather than its own: same page, same gate, same question, and a
  *                  new registered route would need its registry entry landed separately.
  *   - `problems` — the receipt flow's stuck items, oldest first, the libraries' own lines

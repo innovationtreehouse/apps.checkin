@@ -1,6 +1,7 @@
 import { ServiceError, type StuckItem } from "@checkin/component-kit";
 import { config } from "@/lib/config";
 import { getCronJobStatuses, type CronJobStatus } from "@/lib/cronRuns";
+import { cronScheduleNotices } from "@/lib/cronSchedules";
 import { sendTemplated } from "@/lib/email-templates/send";
 import { logger } from "@/lib/logger";
 import prisma from "@/lib/prisma";
@@ -114,7 +115,8 @@ export async function retryProblem({ library, step, id }: { library: string; ste
 
 /**
  * Every stuck item across the receipt flow, oldest first, and the count lines (`notices`): the
- * libraries' own and failed email sends. A source whose read fails is named in `unread`.
+ * libraries' own, failed email sends, and the scheduled-job list's own problems. A source whose
+ * read fails is named in `unread`.
  */
 export async function getProblems(now = new Date()): Promise<{ items: Problem[]; unread: string[]; notices: Notice[] }> {
     const wired = SOURCES.filter(isWired);
@@ -138,6 +140,7 @@ export async function getProblems(now = new Date()): Promise<{ items: Problem[];
             unread.push(library);
         }
     });
+    notices.push(...cronScheduleNotices().map((text) => ({ text, href: "/system-status/health" })));
     items.sort((a, b) => a.failedAt.getTime() - b.failedAt.getTime());
     return { items, unread, notices };
 }
@@ -146,7 +149,7 @@ const address = (value: string | null | undefined): string | null => value?.trim
 
 /** A job whose latest run reported failures; a late job is listed as late instead. */
 export const failingJob = (j: CronJobStatus): j is CronJobStatus & { lastError: string; lastErrorAt: Date } =>
-    Boolean(j.lastError && j.lastErrorAt) && !j.stale;
+    Boolean(j.lastError && j.lastErrorAt) && !j.late;
 
 /** The QuickBooks posting warnings in force, whichever of the nightly and posting runs went first; none when they can't be read. */
 async function quickBooksPostingLines(): Promise<string[]> {
@@ -176,16 +179,16 @@ export async function sendProblemsDigest(now = new Date(), tonight: string[] = [
         ]);
         const age = (at: Date) => now.getTime() - at.getTime();
         const stuck = items.filter((i) => age(i.failedAt) > DAY_MS);
-        const stale = jobs.filter((j): j is CronJobStatus & { lastSuccessAt: Date } => j.stale && j.lastSuccessAt !== null);
+        const late = jobs.filter((j): j is CronJobStatus & { lastDueAt: Date } => j.late && j.lastDueAt !== null);
         const failing = jobs.filter(failingJob);
-        if (stuck.length === 0 && stale.length === 0 && failing.length === 0 && unread.length === 0 && notices.length === 0 && tonight.length === 0 && quickBooks.length === 0) return;
+        if (stuck.length === 0 && late.length === 0 && failing.length === 0 && unread.length === 0 && notices.length === 0 && tonight.length === 0 && quickBooks.length === 0) return;
 
         const when = (at: Date) => formatDateTime(at, { timeZone: APP_TIMEZONE, dateStyle: "medium", timeStyle: "short" });
         const lines = [
             ...tonight,
             ...quickBooks,
             ...stuck.map((i) => `${i.library}, ${i.step}: ${i.id}, stuck since ${when(i.failedAt)}`),
-            ...stale.map((j) => `Scheduled job ${j.job}: last ran ${when(j.lastSuccessAt)}`),
+            ...late.map((j) => `Scheduled job ${j.job}: due ${when(j.lastDueAt)}, ${j.lastSuccessAt ? `last ran ${when(j.lastSuccessAt)}` : "no completed run on record"}`),
             ...failing.map((j) => `Scheduled job ${j.job}: last run reported failures, ${when(j.lastErrorAt)}`),
             ...unread.map(unreadLine),
             ...notices.map((n) => n.text),
@@ -194,7 +197,7 @@ export async function sendProblemsDigest(now = new Date(), tonight: string[] = [
 
         const alertTo = address(settings?.alertEmailAddress);
         const boardTo = address(settings?.boardEmailAddress);
-        const forBoard = stuck.some((i) => age(i.failedAt) > BOARD_AFTER_MS) || stale.some((j) => age(j.lastSuccessAt) > BOARD_AFTER_MS);
+        const forBoard = stuck.some((i) => age(i.failedAt) > BOARD_AFTER_MS) || late.some((j) => j.lastSuccessAt !== null && age(j.lastSuccessAt) > BOARD_AFTER_MS);
         if (alertTo) await sendTemplated("ops.problemsDigest", alertTo, ctx);
         if (boardTo && forBoard) await sendTemplated("ops.problemsDigest", boardTo, ctx);
     } catch (err) {

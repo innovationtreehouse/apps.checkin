@@ -3,17 +3,24 @@
  */
 /**
  * Health derivation for the cron run ledger. The DB half is two stubbed reads; what
- * is worth testing is the rule applied to their rows — one coarse staleness window
- * for every job, a job that has NEVER run is not reported as stale (the app can't
- * know whether infra schedules it at all), and above all that "did it run" and "did
- * it work" stay independent of each other.
+ * is worth testing is the rule applied to their rows — a job is late against the
+ * schedule in CRON_SCHEDULES, not against a fixed window, a job with no known schedule
+ * is never late, and "did it run" and "did it work" stay independent of each other.
  */
 import prisma from '@/lib/prisma';
-import { CRON_STALE_AFTER_MS, cronJobName, countUnhealthyCronJobs, getCronJobStatuses } from '@/lib/cronRuns';
+import { cronJobName, countUnhealthyCronJobs, getCronJobStatuses } from '@/lib/cronRuns';
 
+// 12:00 UTC: today's 09:00 UTC run is three hours old, one hour past its grace.
 const NOW = new Date('2026-08-06T12:00:00.000Z');
 const ago = (ms: number) => new Date(NOW.getTime() - ms);
 const HOUR = 60 * 60 * 1000;
+const DUE = new Date('2026-08-06T09:00:00.000Z');
+
+const schedule = (job: string, expression = 'cron(0 9 * * ? *)', timezone = 'UTC') => ({ job, schedule: expression, timezone });
+const setSchedules = (list: ReturnType<typeof schedule>[] | undefined) => {
+    if (list === undefined) delete process.env.CRON_SCHEDULES;
+    else process.env.CRON_SCHEDULES = JSON.stringify(list);
+};
 
 /**
  * Stub the two reads: the last-completed-run aggregate, and the latest-run-per-job
@@ -31,6 +38,13 @@ function stubGroupBy(
     );
 }
 
+const previousSchedules = process.env.CRON_SCHEDULES;
+afterAll(() => {
+    if (previousSchedules === undefined) delete process.env.CRON_SCHEDULES;
+    else process.env.CRON_SCHEDULES = previousSchedules;
+});
+beforeEach(() => setSchedules([schedule('nightly')]));
+
 describe('cronJobName', () => {
     it('takes the last path segment and ignores the query string', () => {
         expect(cronJobName('http://localhost/api/cron/nightly')).toBe('nightly');
@@ -43,44 +57,83 @@ describe('cronJobName', () => {
 });
 
 describe('getCronJobStatuses', () => {
-    it('marks a job stale once its last success is older than the window', async () => {
-        stubGroupBy([{ job: 'nightly', finishedAt: ago(CRON_STALE_AFTER_MS + HOUR) }]);
+    it('is late when it was due and has not run since, past the grace', async () => {
+        stubGroupBy([{ job: 'nightly', finishedAt: ago(27 * HOUR) }]);
 
-        const statuses = await getCronJobStatuses(NOW);
-
-        expect(statuses).toEqual([{ job: 'nightly', lastSuccessAt: ago(CRON_STALE_AFTER_MS + HOUR), stale: true }]);
+        expect(await getCronJobStatuses(NOW)).toEqual([{ job: 'nightly', lastSuccessAt: ago(27 * HOUR), lastDueAt: DUE, late: true }]);
+        expect(await countUnhealthyCronJobs(NOW)).toBe(1);
     });
 
-    it('leaves a healthy daily job alone — one missed run is inside the window', async () => {
-        // 30h since the last success: a daily job that skipped one run. The window is
-        // deliberately coarse enough that this must NOT alarm.
-        stubGroupBy([{ job: 'nightly', finishedAt: ago(30 * HOUR) }]);
+    it('is not late inside the grace after the due time', async () => {
+        stubGroupBy([{ job: 'nightly', finishedAt: ago(27 * HOUR) }]);
 
-        expect((await getCronJobStatuses(NOW))[0].stale).toBe(false);
+        expect((await getCronJobStatuses(new Date('2026-08-06T10:59:00.000Z')))[0].late).toBe(false);
     });
 
-    it('omits a job that has never recorded a successful run', async () => {
-        // A route nothing schedules has no rows at all — absence of evidence is not a
-        // missed run, and this is what stops the badge firing on all nine routes the
-        // day the table ships.
-        stubGroupBy([]);
+    it('is not late when it ran after it was due', async () => {
+        stubGroupBy([{ job: 'nightly', finishedAt: ago(2.5 * HOUR) }]);
 
-        expect(await getCronJobStatuses(NOW)).toEqual([]);
+        expect(await getCronJobStatuses(NOW)).toEqual([{ job: 'nightly', lastSuccessAt: ago(2.5 * HOUR), lastDueAt: DUE, late: false }]);
         expect(await countUnhealthyCronJobs(NOW)).toBe(0);
     });
 
-    it('puts the stalest job first and counts only the stale ones', async () => {
+    it('is late when a scheduled job has never run', async () => {
+        stubGroupBy([]);
+
+        expect(await getCronJobStatuses(NOW)).toEqual([{ job: 'nightly', lastSuccessAt: null, lastDueAt: DUE, late: true }]);
+        expect(await countUnhealthyCronJobs(NOW)).toBe(1);
+    });
+
+    it('judges a Chicago schedule in Chicago time across the change from daylight saving', async () => {
+        // 22:50 Chicago is 03:50 UTC under CDT and 04:50 UTC under CST; DST ends 2026-11-01.
+        setSchedules([schedule('nightly', 'cron(50 22 * * ? *)', 'America/Chicago')]);
+        const ranAt = new Date('2026-11-01T03:55:00.000Z');
+        stubGroupBy([{ job: 'nightly', finishedAt: ranAt }]);
+
+        const before = await getCronJobStatuses(new Date('2026-11-02T06:00:00.000Z'));
+        expect(before[0]).toMatchObject({ lastDueAt: new Date('2026-11-02T04:50:00.000Z'), late: false });
+
+        const after = await getCronJobStatuses(new Date('2026-11-02T07:00:00.000Z'));
+        expect(after[0]).toMatchObject({ lastDueAt: new Date('2026-11-02T04:50:00.000Z'), late: true });
+    });
+
+    it('judges nothing late while CRON_SCHEDULES is unset, however long ago the job ran', async () => {
+        setSchedules(undefined);
+        stubGroupBy([{ job: 'nightly', finishedAt: ago(30 * 24 * HOUR) }]);
+
+        expect(await getCronJobStatuses(NOW)).toEqual([{ job: 'nightly', lastSuccessAt: ago(30 * 24 * HOUR), lastDueAt: null, late: false }]);
+        expect(await countUnhealthyCronJobs(NOW)).toBe(0);
+    });
+
+    it('judges nothing late while CRON_SCHEDULES is malformed', async () => {
+        process.env.CRON_SCHEDULES = '[{"job":"nightly"}]';
+        stubGroupBy([{ job: 'nightly', finishedAt: ago(30 * 24 * HOUR) }]);
+
+        expect((await getCronJobStatuses(NOW))[0]).toMatchObject({ lastDueAt: null, late: false });
+    });
+
+    it('judges a job with runs but no schedule as never late', async () => {
         stubGroupBy([
-            { job: 'nightly', finishedAt: ago(CRON_STALE_AFTER_MS + HOUR) },
+            { job: 'nightly', finishedAt: ago(HOUR) },
+            { job: 'bg-settle', finishedAt: ago(30 * 24 * HOUR) },
+        ]);
+
+        expect((await getCronJobStatuses(NOW)).find((s) => s.job === 'bg-settle')).toMatchObject({ lastDueAt: null, late: false });
+    });
+
+    it('puts jobs with no completed run first, then the oldest run', async () => {
+        setSchedules([schedule('nightly'), schedule('post-event'), schedule('reconcile-shopify'), schedule('qbo-posting')]);
+        stubGroupBy([
+            { job: 'nightly', finishedAt: ago(27 * HOUR) },
             { job: 'post-event', finishedAt: ago(2 * HOUR) },
             { job: 'reconcile-shopify', finishedAt: ago(10 * 24 * HOUR) },
         ]);
 
         const statuses = await getCronJobStatuses(NOW);
 
-        expect(statuses.map((s) => s.job)).toEqual(['reconcile-shopify', 'nightly', 'post-event']);
-        expect(statuses.filter((s) => s.stale).map((s) => s.job)).toEqual(['reconcile-shopify', 'nightly']);
-        expect(await countUnhealthyCronJobs(NOW)).toBe(2);
+        expect(statuses.map((s) => s.job)).toEqual(['qbo-posting', 'reconcile-shopify', 'nightly', 'post-event']);
+        expect(statuses.filter((s) => s.late).map((s) => s.job)).toEqual(['qbo-posting', 'reconcile-shopify', 'nightly']);
+        expect(await countUnhealthyCronJobs(NOW)).toBe(3);
     });
 
     it('reports the error of a job whose latest run failed outright', async () => {
@@ -90,22 +143,20 @@ describe('getCronJobStatuses', () => {
         );
 
         expect(await getCronJobStatuses(NOW)).toEqual([
-            { job: 'nightly', lastSuccessAt: ago(3 * 24 * HOUR), stale: true, lastError: 'connection refused', lastErrorAt: ago(HOUR) },
+            { job: 'nightly', lastSuccessAt: ago(3 * 24 * HOUR), lastDueAt: DUE, late: true, lastError: 'connection refused', lastErrorAt: ago(HOUR) },
         ]);
     });
 
     it('drops a failure the job has since recovered from', async () => {
-        // Latest run is clean, so the older failure is history rather than status.
         stubGroupBy([{ job: 'nightly', finishedAt: ago(2 * HOUR) }]);
 
         const [status] = await getCronJobStatuses(NOW);
         expect(status.lastError).toBeUndefined();
-        expect(status.stale).toBe(false);
+        expect(status.late).toBe(false);
     });
 
     it('names a failure even when the ledger row recorded no message', async () => {
-        // Guard: `error` is nullable, and a row that failed with nothing written must
-        // still render a red line rather than silently reading as clean.
+        // `error` is nullable; a row that failed with nothing written still renders a red line.
         stubGroupBy(
             [{ job: 'nightly', finishedAt: ago(3 * 24 * HOUR) }],
             [{ job: 'nightly', success: false, error: null }],
@@ -124,8 +175,8 @@ describe('getCronJobStatuses', () => {
         );
 
         expect(await getCronJobStatuses(NOW)).toEqual([
-            { job: 'new-job', lastSuccessAt: null, stale: false, lastError: 'boom', lastErrorAt: ago(HOUR) },
-            { job: 'nightly', lastSuccessAt: ago(2 * HOUR), stale: false },
+            { job: 'new-job', lastSuccessAt: null, lastDueAt: null, late: false, lastError: 'boom', lastErrorAt: ago(HOUR) },
+            { job: 'nightly', lastSuccessAt: ago(2 * HOUR), lastDueAt: DUE, late: false },
         ]);
         expect(await countUnhealthyCronJobs(NOW)).toBe(1);
     });
@@ -133,10 +184,9 @@ describe('getCronJobStatuses', () => {
 
 /**
  * The two signals are independent. A sweep that runs every night but cannot process
- * one poison row is NOT the same as a sweep that stopped running, and the ledger has
- * to say so: judging both off `success` alone freezes `lastSuccessAt` on the first
- * permanently-failing row, and the badge then calls a job that ran last night "not
- * running" for as long as the row stays broken.
+ * one poison row is NOT the same as a late sweep, and the ledger has
+ * to say so: a job that ran last night must not read as late for as long as one row
+ * stays broken.
  */
 describe('a run that completed but could not do all of its work', () => {
     const partial = () =>
@@ -145,11 +195,11 @@ describe('a run that completed but could not do all of its work', () => {
             [{ job: 'nightly', success: true, error: '1 item(s) failed', finishedAt: ago(2 * HOUR) }],
         );
 
-    it('is not stale — it ran, so lastSuccessAt keeps moving', async () => {
+    it('is not late — it ran, so lastSuccessAt keeps moving', async () => {
         partial();
 
         const [status] = await getCronJobStatuses(NOW);
-        expect(status.stale).toBe(false);
+        expect(status.late).toBe(false);
         expect(status.lastSuccessAt).toEqual(ago(2 * HOUR));
     });
 
@@ -165,16 +215,16 @@ describe('a run that completed but could not do all of its work', () => {
         expect((await getCronJobStatuses(NOW))[0].lastErrorAt).toEqual(ago(2 * HOUR));
     });
 
-    it('counts toward the nav badge even though nothing is stale', async () => {
+    it('counts toward the nav badge even though nothing is late', async () => {
         // Without this the pill goes green on a nightly sweep that fails every row.
         partial();
 
         expect(await countUnhealthyCronJobs(NOW)).toBe(1);
     });
 
-    it('is counted once when the job is BOTH stale and failing', async () => {
+    it('is counted once when the job is BOTH late and failing', async () => {
         stubGroupBy(
-            [{ job: 'nightly', finishedAt: ago(CRON_STALE_AFTER_MS + HOUR) }],
+            [{ job: 'nightly', finishedAt: ago(30 * HOUR) }],
             [{ job: 'nightly', success: false, error: 'connection refused' }],
         );
 
@@ -183,8 +233,8 @@ describe('a run that completed but could not do all of its work', () => {
 
     it('is failing when its lanes reported failures other than data, even with no error', async () => {
         const run = (failuresByKind: Record<string, number>) => stubGroupBy(
-            [{ job: 'qbo-posting', finishedAt: ago(2 * HOUR) }],
-            [{ job: 'qbo-posting', success: true, error: null, finishedAt: ago(2 * HOUR), failuresByKind }],
+            [{ job: 'nightly', finishedAt: ago(2 * HOUR) }],
+            [{ job: 'nightly', success: true, error: null, finishedAt: ago(2 * HOUR), failuresByKind }],
         );
 
         run({ connection: 2, system: 1, data: 5 });

@@ -98,8 +98,8 @@ export type TodoCounts = {
     // Status nav badge; the full detail lives at /api/system-status/config-health.
     // `openIssues` = failing system-config checks (e.g. Zoho e-sign unconfigured) —
     // synchronous env presence checks, see lib/configHealth.ts.
-    // `unhealthyCronJobs` = cron sweeps that have stopped running (no completed run
-    // inside CRON_STALE_AFTER_MS) OR whose latest run could not process every row.
+    // `unhealthyCronJobs` = cron sweeps that are late (no completed run since they were
+    // last due, plus a grace period) OR whose latest run could not process every row.
     // Both mean "go look at Scheduled Jobs"; the panel says which. Computed here
     // rather than in getConfigHealth() because it needs a DB read and that function
     // is deliberately synchronous. See lib/cronRuns.ts.
@@ -543,9 +543,7 @@ async function boardCounts(user: AuthenticatedUser): Promise<Required<Pick<TodoC
             where: { id: 1 },
             select: { volunteerFamilyDiscountCode: true, bgRecheckMonths: true, orgMembershipYearBoundary: true, alertEmailAddress: true },
         }),
-        // Cron sweeps that stopped running, plus ones running but failing rows. The
-        // schedule lives in a separate infra repo, so this is the app's only way to
-        // notice its own nightly sweep stopped working. See lib/cronRuns.ts.
+        // Late cron sweeps, plus ones running but failing rows. See lib/cronRuns.ts.
         countUnhealthyCronJobs(),
     ]);
     const settingsMisconfig =

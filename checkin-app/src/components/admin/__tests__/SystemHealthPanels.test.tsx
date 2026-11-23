@@ -115,15 +115,15 @@ describe("CronRunsBox", () => {
   const twoJobs = (now: number) => ({
     "/api/system-status/config-health": {
       cronJobs: [
-        // Stale: no completed run in over 48h.
-        { job: "post-event", lastSuccessAt: new Date(now - 72 * 3600_000).toISOString(), stale: true },
+        // Late: no completed run since it was due.
+        { job: "post-event", lastSuccessAt: new Date(now - 72 * 3600_000).toISOString(), lastDueAt: new Date(now - 5 * 3600_000).toISOString(), late: true },
         // Ran two hours ago, but could not process every row.
-        { job: "nightly", lastSuccessAt: new Date(now - 2 * 3600_000).toISOString(), stale: false, lastError: "3 item(s) failed" },
+        { job: "nightly", lastSuccessAt: new Date(now - 2 * 3600_000).toISOString(), lastDueAt: null, late: false, lastError: "3 item(s) failed" },
       ],
     },
   });
 
-  it("counts a job that ran-but-failed toward the badge, not just the stale one", async () => {
+  it("counts a job that ran-but-failed toward the badge, not just the late one", async () => {
     mockFetchJson(twoJobs(Date.now()));
     renderWithProviders(<CronRunsBox />);
 
@@ -131,7 +131,7 @@ describe("CronRunsBox", () => {
     expect(await screen.findByTitle("2 job(s) need attention")).toBeInTheDocument();
   });
 
-  it("shows the failing job as recently-run rather than as stopped", async () => {
+  it("shows the failing job as recently-run rather than as late", async () => {
     mockFetchJson(twoJobs(Date.now()));
     renderWithProviders(<CronRunsBox />);
 
@@ -141,6 +141,14 @@ describe("CronRunsBox", () => {
     // did run last night, and must not read as "not running".
     expect(screen.getByText(/2 hours ago/)).toBeInTheDocument();
     expect(screen.getByText(/3 days ago/)).toBeInTheDocument();
+  });
+
+  it("says when each job was last due, or that its schedule is unknown", async () => {
+    mockFetchJson(twoJobs(Date.now()));
+    renderWithProviders(<CronRunsBox />);
+
+    expect(await screen.findByText("Last due 5 hours ago")).toBeInTheDocument();
+    expect(screen.getByText("Schedule unknown")).toBeInTheDocument();
   });
 });
 
@@ -273,8 +281,8 @@ describe("ProblemsBox", () => {
           ],
         },
         cronJobs: [
-          { job: "nightly", lastSuccessAt: "2026-11-07T12:00:00.000Z", stale: false },
-          { job: "qbo-posting", lastSuccessAt: "2026-11-03T12:00:00.000Z", stale: true },
+          { job: "nightly", lastSuccessAt: "2026-11-07T12:00:00.000Z", lastDueAt: "2026-11-07T09:00:00.000Z", late: false },
+          { job: "qbo-posting", lastSuccessAt: "2026-11-03T12:00:00.000Z", lastDueAt: "2026-11-07T09:00:00.000Z", late: true },
         ],
       },
     });
@@ -302,8 +310,8 @@ describe("ProblemsBox", () => {
       "/api/system-status/config-health": {
         problems,
         cronJobs: [
-          { job: "reconcile-shopify", lastSuccessAt: "2026-11-07T12:00:00.000Z", stale: false, lastError: "1 item(s) failed", lastErrorAt: "2026-11-07T12:00:00.000Z" },
-          { job: "nightly", lastSuccessAt: "2026-11-03T12:00:00.000Z", stale: true, lastError: "boom", lastErrorAt: "2026-11-07T12:00:00.000Z" },
+          { job: "reconcile-shopify", lastSuccessAt: "2026-11-07T12:00:00.000Z", lastDueAt: "2026-11-07T09:00:00.000Z", late: false, lastError: "1 item(s) failed", lastErrorAt: "2026-11-07T12:00:00.000Z" },
+          { job: "nightly", lastSuccessAt: "2026-11-03T12:00:00.000Z", lastDueAt: "2026-11-07T09:00:00.000Z", late: true, lastError: "boom", lastErrorAt: "2026-11-07T12:00:00.000Z" },
         ],
       },
     });
@@ -321,7 +329,7 @@ describe("ProblemsBox", () => {
     mockFetchJson({
       "/api/system-status/config-health": {
         problems: { items: [], unread: [], notices: [] },
-        cronJobs: [{ job: "reconcile-shopify", lastSuccessAt: "2026-11-07T12:00:00.000Z", stale: false }],
+        cronJobs: [{ job: "reconcile-shopify", lastSuccessAt: "2026-11-07T12:00:00.000Z", lastDueAt: "2026-11-07T09:00:00.000Z", late: false }],
       },
     });
     renderWithProviders(<ProblemsBox />);

@@ -15,7 +15,7 @@
 import { GET } from '@/app/api/nav/todo-counts/route';
 import prisma from '@/lib/prisma';
 import { getServerSession } from 'next-auth/next';
-import { CRON_STALE_AFTER_MS, getCronJobStatuses } from '@/lib/cronRuns';
+import { getCronJobStatuses } from '@/lib/cronRuns';
 
 jest.mock('next-auth/next', () => ({
     getServerSession: jest.fn(),
@@ -357,12 +357,22 @@ describe('Nav todo-counts API', () => {
         await prisma.orgMembership.delete({ where: { id: reviewerMembership.id } });
     });
 
-    // Nothing in this repo schedules the crons, so a sweep that stops firing is
-    // invisible until the ledger goes cold. That has to reach the board's red System
-    // Status pill — and only the board's — as does a sweep that runs but cannot
-    // finish its work.
+    // A late sweep has to reach the board's red System Status pill — and only the
+    // board's — as does a sweep that runs but cannot finish its work.
     describe('unhealthy cron jobs', () => {
         const JOB = `nav-badge-${TAG}`;
+        // Last due 2020-01-01, so a run from before then is late and any later run is not.
+        const BEFORE_DUE = new Date('2019-12-31T00:00:00.000Z');
+        const prevSchedules = process.env.CRON_SCHEDULES;
+
+        beforeAll(() => {
+            process.env.CRON_SCHEDULES = JSON.stringify([{ job: JOB, schedule: 'cron(0 0 1 1 ? 2020)', timezone: 'UTC' }]);
+        });
+
+        afterAll(() => {
+            if (prevSchedules === undefined) delete process.env.CRON_SCHEDULES;
+            else process.env.CRON_SCHEDULES = prevSchedules;
+        });
 
         const unhealthyCount = async (user: object) => {
             const res = await callAs(user);
@@ -379,59 +389,55 @@ describe('Nav todo-counts API', () => {
             await prisma.cronRunLog.deleteMany({ where: { job: JOB } });
         });
 
-        it('a recent success does not count', async () => {
+        it('a success since the due time clears a job that had never run', async () => {
             const before = (await unhealthyCount(board()))!;
             await prisma.cronRunLog.create({
                 data: { job: JOB, startedAt: new Date(), finishedAt: new Date(), success: true },
             });
 
-            expect(await unhealthyCount(board())).toBe(before);
+            expect(await unhealthyCount(board())).toBe(before - 1);
         });
 
         // The freeze this split exists to prevent: one poison row must not make a job
         // that ran last night read as stopped, and must not go unreported either.
-        it('a completed-but-unclean run raises the count without ever going stale', async () => {
+        it('a completed-but-unclean run counts without being late', async () => {
             const before = (await unhealthyCount(board()))!;
             await prisma.cronRunLog.create({
                 data: { job: JOB, startedAt: new Date(), finishedAt: new Date(), success: true, error: '1 item(s) failed' },
             });
 
-            expect(await unhealthyCount(board())).toBe(before + 1);
+            // Still counted once: it moves from late (never ran) to failing.
+            expect(await unhealthyCount(board())).toBe(before);
 
-            // ...and the panel shows it as run-recently, not as stopped.
+            // ...and the panel shows it as run-recently, not as late.
             const status = (await getCronJobStatuses()).find((j) => j.job === JOB);
-            expect(status?.stale).toBe(false);
+            expect(status?.late).toBe(false);
             expect(status?.lastError).toBe('1 item(s) failed');
         });
 
-        it('a job whose last success is older than the threshold raises the count', async () => {
+        it('a job whose last success is before its due time counts', async () => {
             const before = (await unhealthyCount(board()))!;
-            const long = new Date(Date.now() - (CRON_STALE_AFTER_MS + 60 * 60 * 1000));
             await prisma.cronRunLog.create({
-                data: { job: JOB, startedAt: long, finishedAt: long, success: true },
+                data: { job: JOB, startedAt: BEFORE_DUE, finishedAt: BEFORE_DUE, success: true },
             });
 
-            expect(await unhealthyCount(board())).toBe(before + 1);
+            expect(await unhealthyCount(board())).toBe(before);
+            expect((await getCronJobStatuses()).find((j) => j.job === JOB)?.late).toBe(true);
         });
 
-        it('failed runs do not refresh a stale job — only a success clears it', async () => {
-            const before = (await unhealthyCount(board()))!;
-            const long = new Date(Date.now() - (CRON_STALE_AFTER_MS + 60 * 60 * 1000));
+        it('failed runs do not clear a late job — only a success does', async () => {
             await prisma.cronRunLog.createMany({
                 data: [
-                    { job: JOB, startedAt: long, finishedAt: long, success: true },
+                    { job: JOB, startedAt: BEFORE_DUE, finishedAt: BEFORE_DUE, success: true },
                     { job: JOB, startedAt: new Date(), finishedAt: new Date(), success: false, error: 'boom' },
                 ],
             });
 
-            expect(await unhealthyCount(board())).toBe(before + 1);
+            const status = (await getCronJobStatuses()).find((j) => j.job === JOB);
+            expect(status).toMatchObject({ late: true, lastError: 'boom' });
         });
 
         it('a non-board, non-admin caller gets no count at all', async () => {
-            const long = new Date(Date.now() - (CRON_STALE_AFTER_MS + 60 * 60 * 1000));
-            await prisma.cronRunLog.create({
-                data: { job: JOB, startedAt: long, finishedAt: long, success: true },
-            });
 
             const res = await callAs(nonAdmin());
             const data = await res.json();

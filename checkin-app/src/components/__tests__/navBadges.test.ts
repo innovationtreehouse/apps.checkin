@@ -393,13 +393,13 @@ describe('system-status infra-health badge', () => {
     expect(badges[0].label).toBe('1 config issue');
   });
 
-  it('a stale cron job alone raises the red pill', () => {
+  it('a late cron job alone raises the red pill', () => {
     const badges = navBadgeFor('/system-status', { ...base, configHealth: { openIssues: 0, unhealthyCronJobs: 1 } });
     expect(badges).toEqual([{ count: 1, color: 'red', label: '1 cron job unhealthy' }]);
   });
 
   // One pill, not two: both halves are "infra broken" on the same page.
-  it('folds stale cron jobs into the same count as config issues', () => {
+  it('folds unhealthy cron jobs into the same count as config issues', () => {
     const badges = navBadgeFor('/system-status', { ...base, configHealth: { openIssues: 2, unhealthyCronJobs: 3 } });
     expect(badges).toEqual([{ count: 5, color: 'red', label: '2 config issues, 3 cron jobs unhealthy' }]);
   });

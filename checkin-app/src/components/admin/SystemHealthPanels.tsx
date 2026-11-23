@@ -152,7 +152,7 @@ type ProblemsPayload = { problems?: { items?: unknown; unread?: unknown; notices
  * Retry and Retry all POST /api/system-status/problems/retry.
  */
 export function ProblemsBox() {
-  const [data, setData] = useState<{ items: StuckItem[]; unread: string[]; notices: Notice[]; staleJobs: CronJob[]; failingJobs: CronJob[] } | null>(null);
+  const [data, setData] = useState<{ items: StuckItem[]; unread: string[]; notices: Notice[]; lateJobs: CronJob[]; failingJobs: CronJob[] } | null>(null);
   const [failed, setFailed] = useState(false);
 
   const viewer = useSession().data?.user;
@@ -168,9 +168,9 @@ export function ProblemsBox() {
           items: problems.items as StuckItem[],
           unread: problems.unread as string[],
           notices: problems.notices as Notice[],
-          staleJobs: (cronJobs as CronJob[]).filter((j) => j.stale),
+          lateJobs: (cronJobs as CronJob[]).filter((j) => j.late),
           // Mirrors failingJob in lib/problems.ts: a late job is listed as late only.
-          failingJobs: (cronJobs as CronJob[]).filter((j) => j.lastError && !j.stale),
+          failingJobs: (cronJobs as CronJob[]).filter((j) => j.lastError && !j.late),
         });
       })
       .catch(() => setFailed(true)), []);
@@ -198,7 +198,7 @@ export function ProblemsBox() {
   };
 
   const retryable = data ? data.items.filter((i) => mayRetry(viewer, i)) : [];
-  const total = data ? data.items.length + data.staleJobs.length + data.failingJobs.length + data.unread.length + data.notices.length : 0;
+  const total = data ? data.items.length + data.lateJobs.length + data.failingJobs.length + data.unread.length + data.notices.length : 0;
 
   return (
     <Card withBorder radius="md" padding="lg">
@@ -253,13 +253,13 @@ export function ProblemsBox() {
               <Text size="xs" c="dimmed" title={i.failedAt}>Failed {timeAgo(i.failedAt)}</Text>
             </List.Item>
           ))}
-          {data.staleJobs.map((j) => (
+          {data.lateJobs.map((j) => (
             <List.Item key={`job-${j.job}`}>
               <Group gap="xs">
                 <Badge variant="light" color="orange">scheduled job</Badge>
                 <Code>{j.job}</Code>
               </Group>
-              <Text size="xs" c="dimmed" title={j.lastSuccessAt ?? undefined}>Has not run on time; last ran {lastRan(j.lastSuccessAt)}</Text>
+              <Text size="xs" c="dimmed" title={j.lastDueAt ?? undefined}>Has not run on time: due {lastRan(j.lastDueAt)}, last ran {lastRan(j.lastSuccessAt)}</Text>
             </List.Item>
           ))}
           {data.failingJobs.map((j) => (
@@ -279,7 +279,7 @@ export function ProblemsBox() {
 }
 
 // Mirrors CronJobStatus in lib/cronRuns.ts (its dates arrive JSON-serialized).
-type CronJob = { job: string; lastSuccessAt: string | null; stale: boolean; lastError?: string; lastErrorAt?: string };
+type CronJob = { job: string; lastSuccessAt: string | null; lastDueAt: string | null; late: boolean; lastError?: string; lastErrorAt?: string };
 
 /** "3 hours ago" / "2 days ago" — coarse on purpose; the exact stamp is the title text. */
 function timeAgo(iso: string): string {
@@ -299,8 +299,8 @@ const lastRan = (iso: string | null | undefined): string => (iso ? timeAgo(iso) 
  * (admins + board only). Nothing in this repo schedules the crons — the schedule and
  * the caller live in a separate infra repo — so this panel is the app's only view of
  * whether its own nightly sweeps are still firing. Two separate failures show here and
- * both add to the red System Status nav pill: a job past the staleness window (stopped
- * running) and a job whose latest run could not finish its work. See lib/cronRuns.ts.
+ * both add to the red System Status nav pill: a late job (no completed run since it was
+ * due, plus a grace period) and a job whose latest run could not finish its work. See lib/cronRuns.ts.
  */
 export function CronRunsBox() {
   const [jobs, setJobs] = useState<CronJob[] | null>(null);
@@ -314,8 +314,8 @@ export function CronRunsBox() {
   }, []);
 
   // Mirrors countUnhealthyCronJobs so the panel badge and the nav pill agree: a job
-  // that ran last night but failed rows is not stale, and still needs attention.
-  const alertCount = jobs?.filter((j) => j.stale || j.lastError).length ?? 0;
+  // that ran last night but failed rows is not late, and still needs attention.
+  const alertCount = jobs?.filter((j) => j.late || j.lastError).length ?? 0;
 
   return (
     <Card withBorder radius="md" padding="lg">
@@ -324,9 +324,9 @@ export function CronRunsBox() {
         {alertCount > 0 && <Badge color="red" circle title={`${alertCount} job(s) need attention`} />}
       </Group>
       <Text size="sm" c="dimmed" mb="md">
-        Last completed run of each nightly sweep. A red timestamp means the job has not run
-        in over 48 hours — treat it as stopped and check the scheduler. A red line beneath a
-        green timestamp means the job ran, but could not finish its work.
+        Last completed run of each scheduled job. A red timestamp means the job has not
+        completed a run since it was last due, two hours ago or more: check the scheduler. A red
+        line beneath a green timestamp means the job ran, but could not finish its work.
       </Text>
 
       {failed ? (
@@ -341,10 +341,13 @@ export function CronRunsBox() {
             <List.Item key={j.job}>
               <Group justify="space-between" wrap="nowrap" align="flex-start">
                 <Code>{j.job}</Code>
-                <Text c={j.stale || !j.lastSuccessAt ? 'red' : 'green'} fw={j.stale || !j.lastSuccessAt ? 700 : undefined} ta="right" title={j.lastSuccessAt ?? undefined}>
+                <Text c={j.late || !j.lastSuccessAt ? 'red' : 'green'} fw={j.late || !j.lastSuccessAt ? 700 : undefined} ta="right" title={j.lastSuccessAt ?? undefined}>
                   ● {lastRan(j.lastSuccessAt)}
                 </Text>
               </Group>
+              <Text size="xs" c="dimmed" title={j.lastDueAt ?? undefined}>
+                {j.lastDueAt ? `Last due ${timeAgo(j.lastDueAt)}` : 'Schedule unknown'}
+              </Text>
               {j.lastError && (
                 <Text size="xs" c="red">Last run: {j.lastError}</Text>
               )}

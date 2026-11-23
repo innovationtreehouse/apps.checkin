@@ -43,7 +43,7 @@ beforeEach(() => {
     prisma.integrationErrorLog.count = countEmailFailures;
     countEmailFailures.mockResolvedValue(0);
     findSettings.mockResolvedValue({ alertEmailAddress: "alerts@example.org", boardEmailAddress: "board@example.org" });
-    jest.mocked(getCronJobStatuses).mockResolvedValue([{ job: "nightly", lastSuccessAt: hoursAgo(1), stale: false }]);
+    jest.mocked(getCronJobStatuses).mockResolvedValue([{ job: "nightly", lastSuccessAt: hoursAgo(1), lastDueAt: hoursAgo(2), late: false }]);
     jest.mocked(sendTemplated).mockResolvedValue(true);
     currentPostingWarnings.mockResolvedValue([]);
     positionCheck.checkEmailStuckItems.mockResolvedValue([]);
@@ -181,6 +181,38 @@ describe("getProblems", () => {
         expect(JSON.stringify(notices)).not.toMatch(/@|subject/i);
     });
 
+    describe("the scheduled-job list", () => {
+        const previous = process.env.CRON_SCHEDULES;
+        afterEach(() => {
+            if (previous === undefined) delete process.env.CRON_SCHEDULES;
+            else process.env.CRON_SCHEDULES = previous;
+        });
+
+        it("has no line while the list is unset", async () => {
+            delete process.env.CRON_SCHEDULES;
+            expect((await getProblems(NOW)).notices).toEqual([]);
+        });
+
+        it("says when the list cannot be read", async () => {
+            process.env.CRON_SCHEDULES = "{oops";
+            expect((await getProblems(NOW)).notices).toEqual([
+                { text: "The scheduled-job list (CRON_SCHEDULES) can't be read: it is not JSON. No job is judged late.", href: "/system-status/health" },
+            ]);
+        });
+
+        it("lists each route with no schedule and each schedule with no route on its own line", async () => {
+            const daily = { schedule: "cron(0 9 * * ? *)", timezone: "UTC" };
+            process.env.CRON_SCHEDULES = JSON.stringify(
+                ["lifecycle-reconcile", "nightly", "pending-participants", "qbo-posting", "reconcile-shopify", "trusted-adult-expiry", "person-bg-annual"].map((job) => ({ job, ...daily })),
+            );
+            expect((await getProblems(NOW)).notices.map((n) => n.text)).toEqual([
+                "Scheduled job bg-settle: has a route but no schedule",
+                "Scheduled job post-event: has a route but no schedule",
+                "Scheduled job person-bg-annual: has a schedule but no route",
+            ]);
+        });
+    });
+
     it("names email as unread when its failures cannot be counted", async () => {
         jest.spyOn(console, "error").mockImplementation(() => undefined);
         countEmailFailures.mockRejectedValue(new Error("db down"));
@@ -295,18 +327,33 @@ describe("sendProblemsDigest", () => {
         expect(jest.mocked(sendTemplated).mock.calls.map((c) => c[1])).toEqual(["alerts@example.org", "board@example.org"]);
     });
 
-    it("counts a job that has not run on time", async () => {
-        jest.mocked(getCronJobStatuses).mockResolvedValue([{ job: "qbo-posting", lastSuccessAt: hoursAgo(72), stale: true }]);
+    it("counts a job that has not run since it was due", async () => {
+        jest.mocked(getCronJobStatuses).mockResolvedValue([{ job: "qbo-posting", lastSuccessAt: hoursAgo(72), lastDueAt: hoursAgo(5), late: true }]);
 
         await sendProblemsDigest(NOW);
 
-        const ctx = digestCtx();
-        expect(ctx.items).toContain("qbo-posting");
+        expect(digestCtx().items).toMatch(/^Scheduled job qbo-posting: due .+, last ran /);
+    });
+
+    it("counts a scheduled job that has never completed a run", async () => {
+        jest.mocked(getCronJobStatuses).mockResolvedValue([{ job: "qbo-posting", lastSuccessAt: null, lastDueAt: hoursAgo(5), late: true }]);
+
+        await sendProblemsDigest(NOW);
+
+        expect(digestCtx().items).toMatch(/^Scheduled job qbo-posting: due .+, no completed run on record$/);
+    });
+
+    it("copies the Board once a late job last ran more than two weeks ago", async () => {
+        jest.mocked(getCronJobStatuses).mockResolvedValue([{ job: "qbo-posting", lastSuccessAt: hoursAgo(15 * 24), lastDueAt: hoursAgo(5), late: true }]);
+
+        await sendProblemsDigest(NOW);
+
+        expect(jest.mocked(sendTemplated).mock.calls.map((c) => c[1])).toEqual(["alerts@example.org", "board@example.org"]);
     });
 
     it("sends a job whose latest run reported failures, without its error text", async () => {
         jest.mocked(getCronJobStatuses).mockResolvedValue([
-            { job: "reconcile-shopify", lastSuccessAt: hoursAgo(2), stale: false, lastError: "1 item(s) failed", lastErrorAt: hoursAgo(2) },
+            { job: "reconcile-shopify", lastSuccessAt: hoursAgo(2), lastDueAt: hoursAgo(3), late: false, lastError: "1 item(s) failed", lastErrorAt: hoursAgo(2) },
         ]);
 
         await sendProblemsDigest(NOW);
@@ -318,7 +365,7 @@ describe("sendProblemsDigest", () => {
 
     it("sends a job that has never completed a run", async () => {
         jest.mocked(getCronJobStatuses).mockResolvedValue([
-            { job: "new-job", lastSuccessAt: null, stale: false, lastError: "boom", lastErrorAt: hoursAgo(1) },
+            { job: "new-job", lastSuccessAt: null, lastDueAt: null, late: false, lastError: "boom", lastErrorAt: hoursAgo(1) },
         ]);
 
         await sendProblemsDigest(NOW);
@@ -327,20 +374,20 @@ describe("sendProblemsDigest", () => {
     });
 
     it("sends nothing for a job once a later run is clean", async () => {
-        jest.mocked(getCronJobStatuses).mockResolvedValue([{ job: "reconcile-shopify", lastSuccessAt: hoursAgo(1), stale: false }]);
+        jest.mocked(getCronJobStatuses).mockResolvedValue([{ job: "reconcile-shopify", lastSuccessAt: hoursAgo(1), lastDueAt: hoursAgo(2), late: false }]);
         await sendProblemsDigest(NOW);
         expect(sendTemplated).not.toHaveBeenCalled();
     });
 
     it("lists a job that is late and failing once, as late", async () => {
         jest.mocked(getCronJobStatuses).mockResolvedValue([
-            { job: "nightly", lastSuccessAt: hoursAgo(72), stale: true, lastError: "boom", lastErrorAt: hoursAgo(1) },
+            { job: "nightly", lastSuccessAt: hoursAgo(72), lastDueAt: hoursAgo(5), late: true, lastError: "boom", lastErrorAt: hoursAgo(1) },
         ]);
 
         await sendProblemsDigest(NOW);
 
         expect(digestCtx().count).toBe("1");
-        expect(digestCtx().items).toMatch(/^Scheduled job nightly: last ran /);
+        expect(digestCtx().items).toMatch(/^Scheduled job nightly: due .+, last ran /);
     });
 
     it("an unset address sends nothing, with no fallback", async () => {
