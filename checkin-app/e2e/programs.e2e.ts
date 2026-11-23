@@ -40,10 +40,14 @@ async function pickYouth(page: Page, button: string, youth: string): Promise<voi
   await page.getByRole("checkbox", { name: youth }).check();
 }
 
-async function requestScholarship(page: Page): Promise<void> {
+async function sendScholarshipRequest(page: Page): Promise<void> {
   await page.getByRole("button", { name: /^Request a scholarship or payment plan/ }).click();
   await dialog(page).getByRole("radio", { name: "Scholarship" }).check();
   await dialog(page).getByRole("button", { name: "Send request" }).click();
+}
+
+async function requestScholarship(page: Page): Promise<void> {
+  await sendScholarshipRequest(page);
   await expect(page.getByText(/^Requested!/)).toBeVisible();
 }
 
@@ -121,11 +125,12 @@ test.describe("programs in the browser", () => {
     });
   });
 
-  test("P3: a scholarship is requested, denied, asked again and approved", async ({ browser }) => {
+  test("P3: a denied scholarship cannot be asked again, and the family can still pay", async ({ browser }) => {
     const program = await newProgram();
     const email = await adultFamily();
     const youth = await addYouth(email);
     const request = (page: Page) => page.getByRole("row").filter({ hasText: youth.name });
+    const refused = /was not approved, so it can't be sent again\. You can still pay for the place\./;
 
     await asViewer(browser, email, async (page) => {
       await programPage(page, program.id);
@@ -150,23 +155,13 @@ test.describe("programs in the browser", () => {
       await programPage(page, program.id);
       await expect(page.getByText(/Capacity:\s*1\/2/)).toBeVisible();
       await pickYouth(page, "Continue enrollment", youth.name);
-      await requestScholarship(page);
-    });
+      await sendScholarshipRequest(page);
+      await expect(page.getByRole("alert").filter({ hasText: refused })).toBeVisible();
 
-    await asViewer(browser, BOARD, async (page) => {
-      await page.goto("/finance-ops/payment-plan");
-      await request(page).getByRole("button", { name: "Approve & Mark Active" }).click();
-      await dialog(page).getByRole("button", { name: "Approve & Mark Active" }).click();
-      await expect(page.getByText("Scholarship / payment plan approved.")).toBeVisible();
-    });
-
-    await asViewer(browser, email, async (page) => {
-      const enrolled = await myPrograms(page, program.name);
-      await expect(enrolled).not.toContainText("Not paid yet");
-      await expect(enrolled).not.toContainText("Awaiting finance approval");
-      await programPage(page, program.id);
+      await page.getByRole("button", { name: "Pay on Shopify" }).click();
+      await expect(page.getByText("Payment mocked (local) — enrollment activated.")).toBeVisible();
       await expect(page.getByText(`${youth.name} — Enrolled`, { exact: true })).toBeVisible();
-    });
+    }, refused);
   });
 
   test("P4: a program leader cannot add participants; the Board can", async ({ browser }) => {
@@ -325,5 +320,34 @@ test.describe("programs in the browser", () => {
       await expect(page.getByRole("button", { name: "Enrollment Closed (Sales ended)" })).toBeDisabled();
     });
     await expect(claim(email, program.id, [youth.id])).rejects.toThrow(ended);
+  });
+
+  test("P10: an approved scholarship enrolls the youth without payment", async ({ browser }) => {
+    const program = await newProgram();
+    const email = await adultFamily();
+    const youth = await addYouth(email);
+    const request = (page: Page) => page.getByRole("row").filter({ hasText: youth.name });
+
+    await asViewer(browser, email, async (page) => {
+      await programPage(page, program.id);
+      await pickYouth(page, "Enroll", youth.name);
+      await requestScholarship(page);
+      await expect(await myPrograms(page, program.name)).toContainText("Awaiting finance approval");
+    });
+
+    await asViewer(browser, BOARD, async (page) => {
+      await page.goto("/finance-ops/payment-plan");
+      await request(page).getByRole("button", { name: "Approve & Mark Active" }).click();
+      await dialog(page).getByRole("button", { name: "Approve & Mark Active" }).click();
+      await expect(page.getByText("Scholarship / payment plan approved.")).toBeVisible();
+    });
+
+    await asViewer(browser, email, async (page) => {
+      const enrolled = await myPrograms(page, program.name);
+      await expect(enrolled).not.toContainText("Not paid yet");
+      await expect(enrolled).not.toContainText("Awaiting finance approval");
+      await programPage(page, program.id);
+      await expect(page.getByText(`${youth.name} — Enrolled`, { exact: true })).toBeVisible();
+    });
   });
 });
