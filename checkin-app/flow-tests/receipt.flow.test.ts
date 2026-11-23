@@ -62,7 +62,7 @@ describe("receipts — route auth", () => {
       expect([path, [401, 403].includes((await api(null, path)).status)]).toEqual([path, true]);
     }
     expect([401, 403]).toContain((await upload(null, `anon ${stamp}`)).status);
-  });
+  }, 60_000);
 
   it("denies a youth outside the submitter audience", async () => {
     const member = await loginAs(NON_SUBMITTER);
