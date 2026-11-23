@@ -264,7 +264,7 @@ All 40 open issues are associated above **except** these, which are pure bugs/ch
 
 Owner-assigned relative priority. Not a schedule — a lean. Still high-level (discovery), no deep-dive committed.
 - **A convergence candidate (not confirmed the priority):** the **receipt → catalog → inventory → QB** pipeline (GC-INVENTORY + GC-QB + expense port). Noted as a natural grouping, not an agreed center of gravity. See TOPDOWN.
-- **Soon / near-top:** **M6** per-≥18-child agreement · **M1** board "who hasn't paid since Sept 1" dashboard · **SA6** delete-DOB for all adults (#1165) · 
+- **Soon / near-top:** **M6** per-≥18-child agreement · **M1** board "who hasn't paid since Sept 1" dashboard · **SA6** delete-DOB for all adults (#1165)
 - **Short term:** **P1** program→instance restructure · **P4/#82** auto-close enrollment · **M13** settings-400 bug (#1130) · **M16** BLOCKED-recovery flow · **P14** program calendar load (Google Calendar).
 - **Short–medium:** **P9** copy-program (#156) · **P13** manual-only-program flag (ops/leader manual-add bypassing Shopify cap).
 - **Medium term:** **P2/P3** seat reservation + waitlist (#942) · **P10** member-visibility timing (#152).
