@@ -79,13 +79,18 @@ describe('POST /api/finance-ops/payments/reconcile', () => {
     it('500 when the check throws', async () => {
         asBoard();
         reconcile.mockRejectedValue(new Error('mirror down'));
+        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
         expect((await POST(req())).status).toBe(500);
+        expect(logged).toHaveBeenCalled();
+        logged.mockRestore();
     });
 
     it('500 without running the check when the audit row cannot be written', async () => {
         asBoard();
         auditCreateMock.mockRejectedValueOnce(new Error('db down'));
+        const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
         expect((await POST(req())).status).toBe(500);
         expect(reconcile).not.toHaveBeenCalled();
+        logged.mockRestore();
     });
 });
