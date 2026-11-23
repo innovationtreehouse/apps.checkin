@@ -42,6 +42,7 @@ beforeEach(() => {
     prisma.boardSettings.findUnique = findSettings;
     prisma.integrationErrorLog.count = countEmailFailures;
     prisma.orgMembershipProcess.findMany = jest.fn().mockResolvedValue([]);
+    prisma.clearanceStepFailure.findMany = jest.fn().mockResolvedValue([]);
     countEmailFailures.mockResolvedValue(0);
     findSettings.mockResolvedValue({ alertEmailAddress: "alerts@example.org", boardEmailAddress: "board@example.org" });
     jest.mocked(getCronJobStatuses).mockResolvedValue([{ job: "nightly", lastSuccessAt: hoursAgo(1), stale: false }]);
@@ -120,6 +121,20 @@ describe("retryProblem", () => {
         });
     });
 
+    it("sends a stuck clearance step to its own retry, and a stuck settle to the settle's", async () => {
+        const failedAt = hoursAgo(3);
+        prisma.clearanceStepFailure.findUnique = jest.fn().mockResolvedValue({ id: 1, failedAt, process: { shopifyOrderId: "77", orgMembership: { householdId: 4 } } });
+        const cleared = jest.fn().mockResolvedValue({ count: 1 });
+        prisma.clearanceStepFailure.deleteMany = cleared;
+
+        await retryProblem({ library: "membership", step: "person agreement trigger", id: "12" }, BY);
+        expect(cleared).toHaveBeenCalledWith({ where: { id: 1 } });
+
+        prisma.orgMembershipProcess.findFirst = jest.fn().mockResolvedValue(null);
+        await expect(retryProblem({ library: "membership", step: "background-check settle", id: "12" }, BY)).rejects.toMatchObject({ status: 404 });
+        expect(cleared).toHaveBeenCalledTimes(1);
+    });
+
     it("hands the receipt library who pressed Retry", async () => {
         await retryProblem({ library: "receipt", step: "mail message", id: "7" }, BY);
 
@@ -148,10 +163,12 @@ describe("getProblems", () => {
         expense.stuckItems.mockResolvedValue([{ id: "e1", step: "QuickBooks posting", href: null, failedAt: hoursAgo(5) }]);
         mapping.stuckItems.mockResolvedValue([{ id: "r1", step: "apply", href: null, failedAt: hoursAgo(50) }]);
         positionCheck.checkEmailStuckItems.mockResolvedValue([{ id: "9", step: "check email", href: "/membership-ops/roles", failedAt: hoursAgo(2) }]);
+        prisma.clearanceStepFailure.findMany = jest.fn().mockResolvedValue([{ processId: 31, step: "PERSON_BG_TRIGGER", failedAt: hoursAgo(4), process: { orgMembership: { householdId: 8 } } }]);
 
         const { items, unread, notices } = await getProblems();
 
-        expect(items.map((i) => [i.library, i.id])).toEqual([["workflow mapping", "r1"], ["expense", "e1"], ["background check", "9"]]);
+        expect(items.map((i) => [i.library, i.id])).toEqual([["workflow mapping", "r1"], ["expense", "e1"], ["membership", "31"], ["background check", "9"]]);
+        expect(items[2]).toMatchObject({ step: "person background-check trigger", href: "/membership-ops/households/8" });
         expect(items[1]).toMatchObject({ step: "QuickBooks posting" });
         expect(unread).toEqual([]);
         expect(notices).toEqual([]);

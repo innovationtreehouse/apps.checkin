@@ -53,8 +53,15 @@ const SOURCES: { library: string; env?: string; read: () => Promise<StuckItem[]>
     },
     {
         library: "membership",
-        read: async () => (await import("@/lib/membership/settleHouseholdBg")).stuckSettles(),
-        retry: async (item) => (await import("@/lib/membership/settleHouseholdBg")).retryStuckSettle(item),
+        read: async () => [
+            ...(await (await import("@/lib/membership/settleHouseholdBg")).stuckSettles()),
+            ...(await (await import("@/lib/membership/clearanceSteps")).stuckClearanceSteps()),
+        ],
+        retry: async (item) => {
+            const steps = await import("@/lib/membership/clearanceSteps");
+            if (steps.isClearanceStepName(item.step)) return steps.retryClearanceStep(item);
+            return (await import("@/lib/membership/settleHouseholdBg")).retryStuckSettle(item);
+        },
     },
     {
         library: "local inventory",
