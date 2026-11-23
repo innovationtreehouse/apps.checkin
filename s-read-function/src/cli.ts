@@ -4,18 +4,18 @@
  *
  *   npm run sync:incremental
  *   npm run sync:backfill
- *   INJECT_ALLOW=1 npm run inject -- <fixture.json> --reason "<why>" [--test]
+ *   INJECT_ALLOW=1 npm run inject -- <fixture.json> --reason "<why>" [--test | --historic]
  */
 import os from "node:os";
 import {
   prisma,
   loadDbConfig,
+  loadCutoverDate,
   loadShopifyConfig,
   injectFile,
   logger,
   withSyncRun,
   SyncKind,
-  PROD_STORE_DOMAIN,
 } from "@checkin/s-ingest-core";
 import { handler, armSyncDeadline } from "./handler.js";
 import { createShopifyClient } from "./shopify/client.js";
@@ -209,20 +209,17 @@ async function main(): Promise<void> {
     }
     case "inject": {
       // Injected rows land in the same live tables checkin reconciles memberships and
-      // payments from, so every inject is deliberate, attributed, and never test data in prod.
+      // payments from, so every inject is deliberate and attributed. injectFile refuses the
+      // production copy unless the load is --historic.
       const test = rest.includes("--test");
+      const historic = rest.includes("--historic");
       const reason = parseFlag(rest, "reason")?.trim();
       const file = rest.find((a, i) => !a.startsWith("--") && rest[i - 1] !== "--reason");
-      if (!file) throw new Error('Usage: INJECT_ALLOW=1 inject <fixture.json> --reason "<why>" [--test]');
+      if (!file) throw new Error('Usage: INJECT_ALLOW=1 inject <fixture.json> --reason "<why>" [--test | --historic]');
       if (process.env.INJECT_ALLOW !== "1") throw new Error("inject refused: set INJECT_ALLOW=1 to write to the mirror");
       if (!reason) throw new Error("inject refused: --reason is required (recorded on the ADMIN sync_run)");
       const { storeId } = loadDbConfig();
-      if (test) {
-        const prodHere = await prisma.store.findUnique({ where: { myshopifyDomain: PROD_STORE_DOMAIN } });
-        if (storeId === PROD_STORE_DOMAIN || prodHere) {
-          throw new Error(`inject refused: --test fixtures may not be loaded into the ${PROD_STORE_DOMAIN} mirror`);
-        }
-      }
+      const historicCutover = historic ? loadCutoverDate() : undefined;
       const source = test ? "TEST_LOADED" : "HAND_LOADED";
       const actor = `cli:${os.userInfo().username}`;
       const summary = await withSyncRun(
@@ -231,10 +228,11 @@ async function main(): Promise<void> {
         SyncKind.ADMIN,
         "inject",
         async (syncRunId) => {
-          const results = await injectFile(prisma, file, { storeId, test, syncRunId });
+          const results = await injectFile(prisma, file, { storeId, test, syncRunId, historicCutover });
           return {
             file,
             source,
+            historic,
             count: results.length,
             inserted: results.filter((r) => r.inserted).length,
             gids: results.map((r) => r.shopifyGid),

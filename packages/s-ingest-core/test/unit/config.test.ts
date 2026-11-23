@@ -4,7 +4,7 @@
  * (DB only) never trips over missing Shopify credentials — both halves are covered here.
  */
 import { describe, it, expect } from "vitest";
-import { loadDbConfig, loadShopifyConfig } from "../../src/config.js";
+import { loadCutoverDate, loadDbConfig, loadShopifyConfig } from "../../src/config.js";
 
 describe("loadDbConfig", () => {
   it("loads the database url and derives storeId from STORE_ID", () => {
@@ -82,5 +82,16 @@ describe("loadShopifyConfig", () => {
     expect(() =>
       loadShopifyConfig({ SHOPIFY_SHOP: "s", SHOPIFY_CLIENT_ID: "cid", CUTOVER_DATE: "2026-01-01" } as NodeJS.ProcessEnv),
     ).toThrow();
+  });
+});
+
+describe("loadCutoverDate", () => {
+  it("parses CUTOVER_DATE without needing Shopify credentials", () => {
+    expect(loadCutoverDate({ CUTOVER_DATE: "2026-01-01" } as NodeJS.ProcessEnv)).toEqual(new Date("2026-01-01T00:00:00Z"));
+  });
+
+  it("throws when CUTOVER_DATE is missing or not a date", () => {
+    expect(() => loadCutoverDate({} as NodeJS.ProcessEnv)).toThrow();
+    expect(() => loadCutoverDate({ CUTOVER_DATE: "soon" } as NodeJS.ProcessEnv)).toThrow(/must be a date/);
   });
 });

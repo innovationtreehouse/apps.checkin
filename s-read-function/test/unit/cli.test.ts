@@ -13,21 +13,21 @@ const m = vi.hoisted(() => ({
   handler: vi.fn(),
   injectFile: vi.fn(),
   loadDbConfig: vi.fn(),
+  loadCutoverDate: vi.fn(),
   loadShopifyConfig: vi.fn(),
   disconnect: vi.fn(),
-  findStore: vi.fn(),
   withSyncRun: vi.fn(),
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
 vi.mock("@checkin/s-ingest-core", () => ({
-  prisma: { $disconnect: m.disconnect, store: { findUnique: m.findStore } },
+  prisma: { $disconnect: m.disconnect },
   loadDbConfig: m.loadDbConfig,
+  loadCutoverDate: m.loadCutoverDate,
   loadShopifyConfig: m.loadShopifyConfig,
   injectFile: m.injectFile,
   withSyncRun: m.withSyncRun,
   SyncKind: { ADMIN: "ADMIN" },
-  PROD_STORE_DOMAIN: "prod.myshopify.com",
   logger: m.logger,
 }));
 vi.mock("../../src/handler.js", () => ({ handler: m.handler, armSyncDeadline: vi.fn() }));
@@ -42,7 +42,6 @@ beforeEach(() => {
   m.loadShopifyConfig.mockReturnValue({ endpoint: "https://shop/graphql.json", apiVersion: "2026-04", adminToken: "t" });
   m.loadDbConfig.mockReturnValue({ storeId: "s1" });
   m.disconnect.mockResolvedValue(undefined);
-  m.findStore.mockResolvedValue(null);
   m.withSyncRun.mockImplementation((_p, _s, _k, _scope, fn) => fn(77n));
   process.env.INJECT_ALLOW = "1";
   process.exitCode = undefined;
@@ -207,6 +206,29 @@ describe("cli — inject & guard rails", () => {
     expect(logged("inject done")).toMatchObject({ source: "TEST_LOADED" });
   });
 
+  it("inject --historic: passes the cutover to injectFile and tags HAND_LOADED", async () => {
+    const cutover = new Date("2026-01-01T00:00:00Z");
+    m.loadCutoverDate.mockReturnValue(cutover);
+    m.injectFile.mockResolvedValue([]);
+
+    await runCli(["inject", "exports.json", "--historic", "--reason", "historic CSV load"]);
+
+    expect(m.injectFile).toHaveBeenCalledWith(expect.anything(), "exports.json", {
+      storeId: "s1",
+      test: false,
+      syncRunId: 77n,
+      historicCutover: cutover,
+    });
+    expect(logged("inject done")).toMatchObject({ source: "HAND_LOADED", historic: true, reason: "historic CSV load" });
+  });
+
+  it("inject without --historic does not read the cutover", async () => {
+    m.injectFile.mockResolvedValue([]);
+    await runCli(["inject", "f.json", "--reason", "x"]);
+
+    expect(m.loadCutoverDate).not.toHaveBeenCalled();
+  });
+
   it("inject without a file path fails with a usage error (exitCode 1)", async () => {
     await runCli(["inject", "--test"]);
 
@@ -230,30 +252,12 @@ describe("cli — inject & guard rails", () => {
     expect(process.exitCode).toBe(1);
   });
 
-  it("inject --test refuses when the target store is prod", async () => {
-    m.loadDbConfig.mockReturnValue({ storeId: "prod.myshopify.com" });
-    await runCli(["inject", "f.json", "--test", "--reason", "x"]);
+  it("inject surfaces the library's production refusal and exits 1", async () => {
+    m.injectFile.mockRejectedValue(new Error("inject refused: hand-loading is not allowed into the production copy"));
+    await runCli(["inject", "f.json", "--reason", "x"]);
 
-    expect(cliError().message).toMatch(/prod\.myshopify\.com/);
-    expect(m.injectFile).not.toHaveBeenCalled();
-  });
-
-  it("inject --test refuses when the mirror DB holds the prod store, whatever STORE_ID says", async () => {
-    m.findStore.mockResolvedValue({ myshopifyDomain: "prod.myshopify.com" });
-    await runCli(["inject", "f.json", "--test", "--reason", "x"]);
-
-    expect(cliError().message).toMatch(/may not be loaded/);
-    expect(m.injectFile).not.toHaveBeenCalled();
-  });
-
-  it("a HAND_LOADED inject into the prod mirror is allowed", async () => {
-    m.findStore.mockResolvedValue({ myshopifyDomain: "prod.myshopify.com" });
-    m.loadDbConfig.mockReturnValue({ storeId: "prod.myshopify.com" });
-    m.injectFile.mockResolvedValue([]);
-    await runCli(["inject", "f.json", "--reason", "historical CSV load"]);
-
-    expect(m.injectFile).toHaveBeenCalled();
-    expect(process.exitCode).toBeUndefined();
+    expect(cliError().message).toMatch(/production copy/);
+    expect(process.exitCode).toBe(1);
   });
 
   it("an unknown command fails with exitCode 1 and still disconnects", async () => {

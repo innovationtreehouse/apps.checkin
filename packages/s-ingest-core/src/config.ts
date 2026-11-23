@@ -11,7 +11,7 @@
  */
 import { z } from "zod";
 
-/** The production Shopify store. Test fixtures must never be injected against it. */
+/** The production Shopify store. Its copy accepts only a historic inject. */
 export const PROD_STORE_DOMAIN = "9jhydb-ka.myshopify.com";
 
 const dbSchema = z.object({
@@ -69,6 +69,18 @@ export function loadDbConfig(env: NodeJS.ProcessEnv = process.env): DbConfig {
     databaseUrl: parsed.SHOPIFY_READ_DATABASE_URL,
     storeId: parsed.STORE_ID ?? env.SHOPIFY_SHOP ?? "default",
   };
+}
+
+const cutoverSchema = z.object({
+  CUTOVER_DATE: z
+    .string()
+    .min(1, "CUTOVER_DATE is required")
+    .refine((v) => !Number.isNaN(new Date(v).getTime()), "CUTOVER_DATE must be a date"),
+});
+
+/** The API cutover, for the inject path, which has no Shopify credentials to load the full config. */
+export function loadCutoverDate(env: NodeJS.ProcessEnv = process.env): Date {
+  return new Date(cutoverSchema.parse(env).CUTOVER_DATE);
 }
 
 export function loadShopifyConfig(env: NodeJS.ProcessEnv = process.env): ShopifyConfig {
