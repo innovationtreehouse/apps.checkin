@@ -108,6 +108,36 @@ run("s-replay-function admin operations", () => {
     });
   });
 
+  describe("an order's source after a rebuild", () => {
+    const handLoad = (node: unknown) => injectFixtures(prisma, [{ objectType: ObjectType.ORDER, node }], { storeId: STORE });
+    const storeRead = (node: unknown) =>
+      ingestNode(prisma, { storeId: STORE, objectType: ObjectType.ORDER, node, source: EventSource.INCREMENTAL });
+    const rebuild = () => replay(prisma, { storeId: STORE, objectType: ObjectType.ORDER, actor: "test", reason: "rebuild" });
+
+    it("keeps the store's source when the store served the hand-loaded version unchanged", async () => {
+      const gid = orderGid(8101);
+      await handLoad(orderNode(gid));
+      await storeRead(orderNode(gid));
+      expect((await liveOrder(gid))?.source).toBe("INCREMENTAL");
+
+      await rebuild();
+      expect((await liveOrder(gid))?.source).toBe("INCREMENTAL");
+
+      await prisma.shopOrder.deleteMany({ where: { storeId: STORE } });
+      await rebuild();
+      expect((await liveOrder(gid))?.source).toBe("INCREMENTAL");
+    });
+
+    it("still rebuilds a genuinely hand-loaded order as hand-loaded", async () => {
+      const gid = orderGid(8102);
+      await handLoad(orderNode(gid));
+
+      await prisma.shopOrder.deleteMany({ where: { storeId: STORE } });
+      await rebuild();
+      expect((await liveOrder(gid))?.source).toBe("HAND_LOADED");
+    });
+  });
+
   it("records partial progress on the FAILED run when projection dies mid-stream", async () => {
     // Row 1 is valid; row 2 (created after → higher id, processed second) has no `id` so the
     // order schema parse throws. Row 1 is already committed when row 2 fails.

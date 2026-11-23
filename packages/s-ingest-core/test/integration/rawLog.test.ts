@@ -31,7 +31,12 @@ const node = (status: string) => ({
 });
 
 const countEvents = () => prisma.shopifyRawEvent.count({ where: { storeId: STORE, shopifyGid: GID } });
-const args = (n: unknown) => ({ storeId: STORE, objectType: ObjectType.ORDER, node: n, source: EventSource.HAND_LOADED });
+const args = (n: unknown, source: EventSource = EventSource.HAND_LOADED) => ({
+  storeId: STORE,
+  objectType: ObjectType.ORDER,
+  node: n,
+  source,
+});
 
 describeDb("appendRawEvent", () => {
   beforeEach(async () => {
@@ -48,6 +53,34 @@ describeDb("appendRawEvent", () => {
     expect(first.inserted).toBe(true);
     expect(second.inserted).toBe(false);
     expect(second.rawEventId).toBe(first.rawEventId); // points back at the existing row
+    expect(await countEvents()).toBe(1);
+  });
+
+  it("skips the store's identical re-read of its own latest event", async () => {
+    await appendRawEvent(prisma, args(node("PAID"), EventSource.BACKFILL));
+    const reread = await appendRawEvent(prisma, args(node("PAID"), EventSource.INCREMENTAL));
+    expect(reread.inserted).toBe(false);
+    expect(await countEvents()).toBe(1);
+  });
+
+  it("appends the store's identical read of a hand-made latest event", async () => {
+    const handMade = await appendRawEvent(prisma, args(node("PAID"), EventSource.HAND_LOADED));
+    const store = await appendRawEvent(prisma, args(node("PAID"), EventSource.INCREMENTAL));
+    expect(store.inserted).toBe(true);
+    expect(store.rawEventId).not.toBe(handMade.rawEventId);
+    const latest = await prisma.shopifyRawEvent.findFirst({
+      where: { storeId: STORE, shopifyGid: GID },
+      orderBy: { id: "desc" },
+      select: { source: true },
+    });
+    expect(latest?.source).toBe(EventSource.INCREMENTAL);
+    expect(await countEvents()).toBe(2);
+  });
+
+  it("skips a hand-made identical re-load of a hand-made latest event", async () => {
+    await appendRawEvent(prisma, args(node("PAID"), EventSource.HAND_LOADED));
+    const reload = await appendRawEvent(prisma, args(node("PAID"), EventSource.TEST_LOADED));
+    expect(reload.inserted).toBe(false);
     expect(await countEvents()).toBe(1);
   });
 
