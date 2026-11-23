@@ -2,6 +2,7 @@ import inspect
 import io
 import json
 import os
+import queue
 import re
 import shutil
 import subprocess
@@ -35,6 +36,8 @@ from client import (
     latest_release_tag,
     main,
     resolve_update_target,
+    scan_worker,
+    stdin_scanner_listener,
     building_known_empty,
     skip_roster_get,
 )
@@ -1046,6 +1049,48 @@ class TestRepeatReadFilter(unittest.TestCase):
         intents = [c.kwargs["intent"] for c in backend.post_scan.call_args_list]
         self.assertEqual(intents, ["IN", "OUT"])
 
+    def _slow(self, body, seconds=5.0):
+        """An online backend whose POST takes `seconds` of kiosk time."""
+        backend = Mock(attendance_path=None)
+
+        def post_scan(*args, **kwargs):
+            self.now += seconds
+            return body, 200, None
+        backend.post_scan.side_effect = post_scan
+        return backend
+
+    def test_double_read_behind_a_slow_post_is_one_scan(self):
+        backend = self._slow({"type": "checkin", "participant": {"id": 7}})
+        read_at = self.now
+        handle_scan(backend, self.state, self.outbox, 7, read_at=read_at)
+        self.assertGreater(self.now - read_at, REPEAT_READ_SECONDS, "handled after the window")
+        handle_scan(backend, self.state, self.outbox, 7, read_at=read_at + 0.3)
+        self.assertEqual(backend.post_scan.call_count, 1)
+
+    def test_double_read_behind_a_slow_post_never_confirms_a_close(self):
+        backend = self._slow({"type": "checkout", "participant": {"id": 9}}, seconds=0.1)
+        backend.attendance_path = "/api/attendance"
+
+        def get_attendance():                                # the roster GET outlasts the close wait
+            self.now += REPEAT_READ_SECONDS + 1
+            return {}, 503
+        backend.get_attendance.side_effect = get_attendance
+        self.state.known_keyholders = {9}
+        self.state.present_ids = {9, 5}
+        read_at = self.now
+        handle_scan(backend, self.state, self.outbox, 9, read_at=read_at)        # OUT, close prompt armed
+        handle_scan(backend, self.state, self.outbox, 9, read_at=read_at + 0.3)  # double read
+        self.assertEqual(backend.post_scan.call_count, 1)
+        self.assertEqual(self.state.local_close_participant, 9, "the prompt stays armed")
+
+    def test_second_badge_after_the_window_by_read_time_counts_behind_a_slow_post(self):
+        backend = self._slow({"type": "checkin", "participant": {"id": 7}})
+        read_at = self.now
+        handle_scan(backend, self.state, self.outbox, 7, read_at=read_at)
+        handle_scan(backend, self.state, self.outbox, 7, read_at=read_at + REPEAT_READ_SECONDS + 0.1)
+        intents = [c.kwargs["intent"] for c in backend.post_scan.call_args_list]
+        self.assertEqual(intents, ["IN", "OUT"])
+
     def test_in_then_out_four_seconds_apart_is_two_scans_offline(self):
         backend = self._offline()
         handle_scan(backend, self.state, self.outbox, 7)
@@ -1148,6 +1193,48 @@ class TestRepeatReadFilter(unittest.TestCase):
         self.now += REPEAT_READ_SECONDS + 16
         self.assertIsNone(self.state.slide_close(9))
         self.assertIsNone(self.state.local_close_banner)
+
+
+class TestReadsAreStampedWhenRead(unittest.TestCase):
+    """The listener stamps each read as it completes; the worker handles it
+    later, judged by that stamp."""
+
+    class _Reads:
+        """A queue that ends the worker's loop once its reads are taken."""
+
+        def __init__(self, items):
+            self.items = list(items)
+
+        def get(self):
+            if not self.items:
+                raise _StopLoop()
+            return self.items.pop(0)
+
+    def test_stdin_reads_are_queued_with_their_read_time(self):
+        reads = queue.Queue()
+        lines = iter(["7", "  ", "8"])
+
+        def fake_input():
+            try:
+                return next(lines)
+            except StopIteration:
+                raise EOFError
+        with patch("builtins.input", fake_input), patch("client.time.monotonic", side_effect=[10.0, 11.5]):
+            stdin_scanner_listener(reads)
+        self.assertEqual([reads.get_nowait(), reads.get_nowait()], [("7", 10.0), ("8", 11.5)])
+        self.assertTrue(reads.empty())
+
+    def test_worker_handles_each_read_at_its_read_time(self):
+        with patch("client.handle_scan") as handle:
+            with self.assertRaises(_StopLoop):
+                scan_worker("backend", "state", "outbox", self._Reads([("7", 10.0), ("7", 10.3)]))
+        self.assertEqual([c.kwargs["read_at"] for c in handle.call_args_list], [10.0, 10.3])
+
+    def test_a_failed_scan_does_not_stop_the_worker(self):
+        with patch("client.handle_scan", side_effect=[RuntimeError("boom"), None]) as handle:
+            with self.assertRaises(_StopLoop):
+                scan_worker("backend", "state", "outbox", self._Reads([("7", 10.0), ("8", 12.0)]))
+        self.assertEqual(handle.call_count, 2)
 
 
 class TestCloseWait(unittest.TestCase):
