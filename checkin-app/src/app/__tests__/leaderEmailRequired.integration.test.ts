@@ -154,13 +154,14 @@ describe('a household edit clearing an email', () => {
         return { lead, member };
     }
 
-    it('is refused for a member who leads an unfinished program', async () => {
+    // Leading a program locks the email on this path, so only the Board changes it.
+    it('is refused for a member who leads a program', async () => {
         const { lead, member } = await leadAndMember();
         await program(member.id);
         signedInAs(lead.id);
         const res = await patch({ participantId: member.id, email: '' });
-        expect(res.status).toBe(409);
-        expect(await errorOf(res)).toBe(LEADER_EMAIL_REQUIRED);
+        expect(res.status).toBe(400);
+        expect(await errorOf(res)).toMatch(/contact the Board/);
         expect(await storedEmail(member.id)).toBe(member.email);
     });
 
@@ -168,15 +169,8 @@ describe('a household edit clearing an email', () => {
         const { lead } = await leadAndMember();
         await program(lead.id);
         signedInAs(lead.id);
-        expect((await patch({ participantId: lead.id, email: '' })).status).toBe(409);
-    });
-
-    it('goes through once the program has finished', async () => {
-        const { lead, member } = await leadAndMember();
-        await finish((await program(member.id)).id);
-        signedInAs(lead.id);
-        expect((await patch({ participantId: member.id, email: '' })).status).toBe(200);
-        expect(await storedEmail(member.id)).toBeNull();
+        expect((await patch({ participantId: lead.id, email: '' })).status).toBe(400);
+        expect(await storedEmail(lead.id)).toBe(lead.email);
     });
 
     it('goes through once another leader is named', async () => {
@@ -184,6 +178,7 @@ describe('a household edit clearing an email', () => {
         await reassign((await program(member.id)).id, otherLeaderId);
         signedInAs(lead.id);
         expect((await patch({ participantId: member.id, email: '' })).status).toBe(200);
+        expect(await storedEmail(member.id)).toBeNull();
     });
 });
 
