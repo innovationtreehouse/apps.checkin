@@ -327,3 +327,14 @@ QuickBooks stay; voiding one is finance's job.
 **If the refresh token dies** (an alarm on `QBO_INVALID_GRANT`, or the connection
 row saying QuickBooks needs reconnecting), finance repeats step 3 with the infra operator and reseeds the secret. The other
 settings stay as they are.
+
+**Which fault codes QuickBooks has sent.** System Status → QuickBooks codes
+(`/system-status/qbo-codes`) lists every code a QuickBooks lane has reported, each
+with the kinds the app sorted it as, how often, when it was first and last seen, and
+the lane that last reported it. Finance, the Board and sysadmins can open it; it is
+the one System Status tab finance sees. Use it to check that a code sorted as the
+item's data isn't really a books-map setting. A row holds no request id or detail:
+those stay on the log line and the held item. Counts never reset. A create refused
+for closed books (fault 6210) is never listed, because it ends as "Not booked" rather
+than as a failure. A count can fall short after a database outage, since a failed
+write is dropped; the log is the full record.
