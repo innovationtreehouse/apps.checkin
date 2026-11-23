@@ -38,6 +38,7 @@ export * from "./loader/projectPayouts.js";
 // Watermark / cursor + run bookkeeping
 export * from "./sync/cursor.js";
 export * from "./sync/run.js";
+export * from "./sync/retention.js";
 
 // Concurrency guard: advisory-lock helper that defends the single-flight assumption
 export * from "./sync/locks.js";

@@ -1,6 +1,7 @@
 // Retention steps for the host's daily cron: held mail nobody acts on is discarded, and stored
 // files past the Board's retention period are deleted. Each is idempotent, capped, and returns
 // counts only.
+import { form990DeleteAfter } from "@checkin/utils";
 import { db } from "../db";
 import { audit } from "../repositories/receipt";
 import { fileStore, getOrgId } from "../runtime";
@@ -16,9 +17,6 @@ export const AUTO_DISCARD_REASON = "Held 90 days with no action";
 /** How long prod keeps a deleted object restorable; a discarded mail item's key names it until then. */
 export const RESTORE_WINDOW_MS = 30 * DAY_MS;
 
-// The organization's fiscal year ends June 30, so its Form 990 is due November 15.
-const FISCAL_YEAR_END_MONTH = 6;
-const FORM_990_DUE = { month: 11, day: 15 };
 const APPROVED_KEEP_YEARS = 7;
 const ENDED_KEEP_YEARS = 1;
 
@@ -43,11 +41,7 @@ const addYears = (at: Date, years: number) => {
 export function fileDeleteAfter(r: { state: string; receiptDate: string | null; approvedAt: Date | null; endedAt: Date | null }): Date | null {
   if (r.state === "receipt_finalized") {
     const day = r.receiptDate && /^\d{4}-\d{2}-\d{2}$/.test(r.receiptDate) ? r.receiptDate : (r.approvedAt ?? r.endedAt)?.toISOString();
-    if (!day) return null;
-    const year = Number(day.slice(0, 4));
-    const fiscalYearEnd = Number(day.slice(5, 7)) > FISCAL_YEAR_END_MONTH ? year + 1 : year;
-    // The day after the deadline: the file is kept through November 15 itself.
-    return new Date(Date.UTC(fiscalYearEnd + APPROVED_KEEP_YEARS, FORM_990_DUE.month - 1, FORM_990_DUE.day + 1));
+    return day ? form990DeleteAfter(day, APPROVED_KEEP_YEARS) : null;
   }
   if (r.state === "rejected" || r.state === "discarded") return r.endedAt ? addYears(r.endedAt, ENDED_KEEP_YEARS) : null;
   return null;
