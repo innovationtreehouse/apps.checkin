@@ -13,6 +13,7 @@ const m = vi.hoisted(() => ({
   handler: vi.fn(),
   injectFile: vi.fn(),
   loadDbConfig: vi.fn(),
+  loadCutoverDate: vi.fn(),
   loadShopifyConfig: vi.fn(),
   disconnect: vi.fn(),
   withSyncRun: vi.fn(),
@@ -22,6 +23,7 @@ const m = vi.hoisted(() => ({
 vi.mock("@checkin/s-ingest-core", () => ({
   prisma: { $disconnect: m.disconnect },
   loadDbConfig: m.loadDbConfig,
+  loadCutoverDate: m.loadCutoverDate,
   loadShopifyConfig: m.loadShopifyConfig,
   injectFile: m.injectFile,
   withSyncRun: m.withSyncRun,
@@ -202,6 +204,29 @@ describe("cli — inject & guard rails", () => {
 
     expect(m.injectFile).toHaveBeenCalledWith(expect.anything(), "fixtures/t.json", { storeId: "s1", test: true, syncRunId: 77n });
     expect(logged("inject done")).toMatchObject({ source: "TEST_LOADED" });
+  });
+
+  it("inject --historic: passes the cutover to injectFile and tags HAND_LOADED", async () => {
+    const cutover = new Date("2026-01-01T00:00:00Z");
+    m.loadCutoverDate.mockReturnValue(cutover);
+    m.injectFile.mockResolvedValue([]);
+
+    await runCli(["inject", "exports.json", "--historic", "--reason", "historic CSV load"]);
+
+    expect(m.injectFile).toHaveBeenCalledWith(expect.anything(), "exports.json", {
+      storeId: "s1",
+      test: false,
+      syncRunId: 77n,
+      historicCutover: cutover,
+    });
+    expect(logged("inject done")).toMatchObject({ source: "HAND_LOADED", historic: true, reason: "historic CSV load" });
+  });
+
+  it("inject without --historic does not read the cutover", async () => {
+    m.injectFile.mockResolvedValue([]);
+    await runCli(["inject", "f.json", "--reason", "x"]);
+
+    expect(m.loadCutoverDate).not.toHaveBeenCalled();
   });
 
   it("inject without a file path fails with a usage error (exitCode 1)", async () => {

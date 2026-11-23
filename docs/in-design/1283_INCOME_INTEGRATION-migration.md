@@ -37,7 +37,8 @@ marketplace sales tax and advances are dropped.
    port) is deployed to the target environment. Income reads that mark.
 1. **Trim every export to dates before s-read's `CUTOVER_DATE`.** Rows from the
    cutover on already came from the API under the same Shopify ids. Loading them
-   would overwrite those rows with the less detailed CSV values.
+   would overwrite those rows with the less detailed CSV values. `inject --historic`
+   refuses the whole file if any record is undated or dated on or after the cutover.
 2. **Set `STORE_ID` to the live store's myshopify domain**, the value s-read's
    `store` table records, so the loaded rows sit with the API's.
 3. **Run the conversion and read its warnings.** Count the payouts whose id came
@@ -59,7 +60,8 @@ node income-app/scripts/csv-to-fixtures.mjs <csvDir> fixtures.json
 ```
 
 ```bash
-SHOPIFY_READ_DATABASE_URL=<mirror> STORE_ID=<store> npm run inject -w s-read-function -- fixtures.json
+SHOPIFY_READ_DATABASE_URL=<mirror> STORE_ID=<store> CUTOVER_DATE=<cutover> INJECT_ALLOW=1 \
+  npm run inject -w s-read-function -- fixtures.json --historic --reason "<why>"
 ```
 
 Load dev first, then prod.

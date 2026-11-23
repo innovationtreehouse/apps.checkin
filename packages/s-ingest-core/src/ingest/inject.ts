@@ -3,8 +3,8 @@
  * Zod schemas the API path uses, logs it tagged HAND_LOADED (or TEST_LOADED), then
  * projects it into the live tables — identical to a real API ingest, but auditable
  * via the raw log's `source` column. Used by the `inject` CLI command and by test
- * / batch infrastructure to seed matching raw events without calling Shopify, in dev
- * and staging only.
+ * / batch infrastructure to seed matching raw events without calling Shopify. Single
+ * loads run in dev and staging only; the production copy accepts only a historic load.
  */
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
@@ -28,6 +28,11 @@ export interface InjectOptions {
   test?: boolean;
   /** The ADMIN sync_run recording who injected and why. */
   syncRunId?: bigint | null;
+  /**
+   * Historic mode: the one-time bulk load of pre-cutover exports, the only inject the
+   * production copy accepts. Every record must be dated before this instant.
+   */
+  historicCutover?: Date;
 }
 
 /** A TEST_LOADED order must carry Shopify's own test flag, which every downstream reader filters on. */
@@ -36,18 +41,34 @@ function asTestNode(objectType: ObjectType, node: unknown): unknown {
   return { ...node, test: true };
 }
 
-/**
- * Inject is a dev and staging tool: it refuses the production store, by the target store
- * or by the production store's registry row in this database, in either mode.
- */
-async function assertNotProductionCopy(prisma: PrismaClient, storeId: string): Promise<void> {
+async function isProductionCopy(prisma: PrismaClient, storeId: string): Promise<boolean> {
+  if (storeId === PROD_STORE_DOMAIN) return true;
   const prodHere = await prisma.store.findUnique({
     where: { myshopifyDomain: PROD_STORE_DOMAIN },
     select: { myshopifyDomain: true },
   });
-  if (storeId === PROD_STORE_DOMAIN || prodHere) {
+  return prodHere !== null;
+}
+
+/**
+ * Single loads are a dev and staging tool. The production copy, by the target store or by
+ * the production store's registry row in this database, accepts only a historic load.
+ */
+async function assertModeAllowed(prisma: PrismaClient, opts: InjectOptions): Promise<void> {
+  if (opts.historicCutover && opts.test) {
+    throw new Error("inject refused: a historic load cannot also be a test load");
+  }
+  if (!opts.historicCutover && (await isProductionCopy(prisma, opts.storeId))) {
     throw new Error("inject refused: hand-loading is not allowed into the production copy");
   }
+}
+
+/** Fixture GIDs that are undated or dated on or after the cutover. */
+export function notBeforeCutoverGids(fixtures: Array<{ objectType: ObjectType; node: unknown }>, cutover: Date): string[] {
+  return fixtures
+    .map((f) => rawMetaForNode(f.objectType, f.node))
+    .filter((m) => m.occurredAt === null || m.occurredAt >= cutover)
+    .map((m) => m.shopifyGid);
 }
 
 /** An API-synced row (or one written before `source` existed) is Shopify's truth. */
@@ -105,15 +126,24 @@ export function futureStampedGids(fixtures: Array<{ objectType: ObjectType; node
 
 /**
  * Inject one or many fixtures already parsed into objects. Refuses the whole batch,
- * before writing anything, against the production copy, or if any fixture reuses the
- * GID of an API-owned row or is stamped in the future.
+ * before writing anything, when the mode is not allowed for the target, when a historic
+ * load holds a record not dated before the cutover, or when any fixture reuses the GID
+ * of an API-owned row or is stamped in the future.
  */
 export async function injectFixtures(
   prisma: PrismaClient,
   fixtures: Array<{ objectType: ObjectType; node: unknown }>,
   opts: InjectOptions,
 ): Promise<IngestNodeResult[]> {
-  await assertNotProductionCopy(prisma, opts.storeId);
+  await assertModeAllowed(prisma, opts);
+  if (opts.historicCutover) {
+    const late = notBeforeCutoverGids(fixtures, opts.historicCutover);
+    if (late.length > 0) {
+      throw new Error(
+        `inject refused: ${late.length} GID(s) are not dated before the cutover ${opts.historicCutover.toISOString()}: ${late.join(", ")}`,
+      );
+    }
+  }
   const taken = await apiOwnedGids(prisma, opts.storeId, fixtures);
   if (taken.length > 0) {
     throw new Error(`inject refused: ${taken.length} GID(s) already hold API-synced rows: ${taken.join(", ")}`);
