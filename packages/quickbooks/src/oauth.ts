@@ -33,7 +33,30 @@ function basicAuth(cfg: OauthConfig): string {
   return Buffer.from(`${cfg.clientId}:${cfg.clientSecret}`).toString("base64");
 }
 
-async function tokenRequest(cfg: OauthConfig, body: URLSearchParams): Promise<{ access_token: string; refresh_token: string; expires_in: number }> {
+interface TokenResponse {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// Refuses a malformed body so a bad response never overwrites the stored tokens; the message names fields, never values.
+function parseTokenResponse(body: unknown, intuitTid: string | null): TokenResponse {
+  const fail = (problem: string): never => {
+    throw new Error(`QBO token response ${problem} (intuit_tid=${intuitTid})`);
+  };
+  if (!isRecord(body)) return fail("is not a JSON object");
+  const { access_token, refresh_token, expires_in } = body;
+  if (typeof access_token !== "string" || access_token === "") return fail("is missing access_token");
+  if (typeof refresh_token !== "string" || refresh_token === "") return fail("is missing refresh_token");
+  if (typeof expires_in !== "number" || !Number.isFinite(expires_in) || expires_in <= 0) return fail("has no positive numeric expires_in");
+  return { access_token, refresh_token, expires_in };
+}
+
+async function tokenRequest(cfg: OauthConfig, body: URLSearchParams): Promise<TokenResponse> {
   const res = await fetch(TOKEN_URL, {
     method: "POST",
     headers: {
@@ -44,7 +67,14 @@ async function tokenRequest(cfg: OauthConfig, body: URLSearchParams): Promise<{ 
     body,
   });
   if (!res.ok) throw new Error(`QBO token request failed ${res.status} (intuit_tid=${res.headers.get("intuit_tid")}): ${await res.text()}`);
-  return res.json() as Promise<{ access_token: string; refresh_token: string; expires_in: number }>;
+  const tid = res.headers.get("intuit_tid");
+  let json: unknown;
+  try {
+    json = await res.json();
+  } catch {
+    throw new Error(`QBO token response is not valid JSON (intuit_tid=${tid})`);
+  }
+  return parseTokenResponse(json, tid);
 }
 
 export async function exchangeCode(cfg: OauthConfig, code: string, realmId: string): Promise<QboTokens> {
