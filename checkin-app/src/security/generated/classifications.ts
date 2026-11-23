@@ -484,24 +484,6 @@ export const classifications = {
         error: 'internal',
         failuresByKind: 'internal',
     },
-    OpsIncident: {
-        id: 'internal',
-        key: 'internal',
-        openKey: 'internal',
-        cause: 'internal',
-        kind: 'internal',
-        lanes: 'internal',
-        firstSeenAt: 'internal',
-        lastSeenAt: 'internal',
-        notifiedAt: 'internal',
-        lastRemindedAt: 'internal',
-        escalatedAt: 'internal',
-        closedAt: 'internal',
-        recoveryNotifiedAt: 'internal',
-        runsSeen: 'internal',
-        itemsAffected: 'internal',
-        detail: 'internal',
-    },
     QboFaultCodeSeen: {
         code: 'internal',
         kind: 'internal',
@@ -801,8 +783,6 @@ export const relations = {
     IntegrationErrorLog: {
     },
     CronRunLog: {
-    },
-    OpsIncident: {
     },
     QboFaultCodeSeen: {
     },

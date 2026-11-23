@@ -70,7 +70,7 @@ describe("spliceCheckConstraints", () => {
     });
 
     it("throws when the constraint's table has no CREATE TABLE in the baseline", () => {
-        const orphan = { ...NAME_NOT_BLANK, tablename: "OpsIncident", conname: "OpsIncident_openKey_check" };
-        expect(() => spliceCheckConstraints(BASELINE, [orphan])).toThrow(/Cannot place CHECK constraint "OpsIncident_openKey_check"/);
+        const orphan = { ...NAME_NOT_BLANK, tablename: "Program", conname: "Program_capacity_check" };
+        expect(() => spliceCheckConstraints(BASELINE, [orphan])).toThrow(/Cannot place CHECK constraint "Program_capacity_check"/);
     });
 });
