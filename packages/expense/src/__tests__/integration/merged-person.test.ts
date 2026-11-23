@@ -108,6 +108,25 @@ describeDb("after merging A into B", () => {
     expect(audit.notes).not.toContain("on behalf");
   });
 
+  it("awaitingFor finds the reimbursement A was owed by A's stored id, as awaiting does", async () => {
+    await seed({ submitterId: UNRELATED, reimburseePersonId: A, needsReimbursement: true });
+    const all = await submitterConfirmations.awaiting();
+    expect(all.map((a) => a.reimburseePersonId)).toEqual([A]);
+    expect(await submitterConfirmations.awaitingFor([A, B])).toEqual(all);
+    expect(await submitterConfirmations.awaitingFor([UNRELATED])).toEqual([]);
+  });
+
+  it("awaitingFor with no ids returns nothing without reading expenses", async () => {
+    await seed({ submitterId: UNRELATED, reimburseePersonId: A, needsReimbursement: true });
+    const read = vi.spyOn(db.expense, "findMany");
+    try {
+      expect(await submitterConfirmations.awaitingFor([])).toEqual([]);
+      expect(read).not.toHaveBeenCalled();
+    } finally {
+      read.mockRestore();
+    }
+  });
+
   it("the API names B, while the stored row still names A", async () => {
     const id = await seed({ reimburseePersonId: A, needsReimbursement: true });
     const { Expense } = await expenses.detail({ req: new Request("http://test"), params: { id }, principal: principal(FINANCE, { isFinance: true }) });
