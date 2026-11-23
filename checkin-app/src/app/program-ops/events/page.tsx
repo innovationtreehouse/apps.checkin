@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { Card, Center, Checkbox, Group, Loader, Stack, Table, Text, TextInput } from "@mantine/core";
 import { LoadError } from "@checkin/component-ui";
 import { useLoad } from "@/lib/api";
+import { useOrgTime } from "@/components/TimezoneProvider";
 
 type OneTimeEvent = {
   id: number;
@@ -13,15 +14,13 @@ type OneTimeEvent = {
   description: string | null;
 };
 
-const fmt = (iso: string) =>
-  new Date(iso).toLocaleString("en-US", {
-    timeZone: "America/Chicago",
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
-
 export default function OneTimeEventsList() {
   const { data: events, error, reload } = useLoad<OneTimeEvent[]>("/api/events");
+  const { formatDateTime } = useOrgTime();
+  const fmt = useCallback(
+    (iso: string) => formatDateTime(iso, { dateStyle: "medium", timeStyle: "short" }),
+    [formatDateTime],
+  );
   const [search, setSearch] = useState("");
   const [futureOnly, setFutureOnly] = useState(true);
   // Snapshot "now" once on mount — Date.now() is impure and can't run during render.
@@ -36,7 +35,7 @@ export default function OneTimeEventsList() {
       const hay = [e.name, e.description ?? "", fmt(e.startAt), fmt(e.endAt)].join(" ").toLowerCase();
       return hay.includes(q);
     });
-  }, [events, search, futureOnly, now]);
+  }, [events, search, futureOnly, now, fmt]);
 
   return (
     <Stack>

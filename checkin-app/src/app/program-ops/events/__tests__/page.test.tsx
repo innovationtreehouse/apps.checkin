@@ -4,7 +4,10 @@ jest.mock("next/navigation", () => require("@/test-helpers/rtl").navMock());
 jest.mock("next-auth/react", () => require("@/test-helpers/rtl").authMock());
 
 import { screen, fireEvent } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { renderWithProviders, mockFetchJson, resetRtl } from "@/test-helpers/rtl";
+import { pinTimezone } from "@/test-helpers/tz";
+import { TimezoneProvider } from "@/components/TimezoneProvider";
 import OneTimeEventsList from "../page";
 
 beforeEach(() => resetRtl());
@@ -18,6 +21,8 @@ const events = [
 ];
 
 describe("OneTimeEventsList", () => {
+  pinTimezone("America/Chicago");
+
   it("loads and shows only future events by default", async () => {
     mockFetchJson({ "/api/events": events });
     renderWithProviders(<OneTimeEventsList />);
@@ -37,6 +42,17 @@ describe("OneTimeEventsList", () => {
     fireEvent.change(screen.getByPlaceholderText("Search events…"), { target: { value: "Future" } });
     expect(screen.getByText("Future Woodshop")).toBeInTheDocument();
     expect(screen.queryByText("Past Woodshop")).not.toBeInTheDocument();
+  });
+
+  it("formats event times in the org's zone, not the browser's", async () => {
+    // 9:30 PM Aug 31 in Chicago, 11:30 AM Sep 1 in Tokyo.
+    const at = "2030-09-01T02:30:00.000Z";
+    mockFetchJson({ "/api/events": [{ id: 3, name: "Open House", startAt: at, endAt: at, description: null }] });
+    renderWithProviders(<OneTimeEventsList />, {
+      wrapper: ({ children }: { children: ReactNode }) => <TimezoneProvider value="Asia/Tokyo">{children}</TimezoneProvider>,
+    });
+
+    expect(await screen.findAllByText("Sep 1, 2030, 11:30 AM")).toHaveLength(2);
   });
 
   it("shows an empty state when there are no events", async () => {

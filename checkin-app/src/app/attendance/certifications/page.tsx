@@ -10,6 +10,7 @@ import { goesBy } from "@/lib/person/name";
 import { ToolLevelBadge, toToolLevel, toolLevelDot } from "@/components/ToolLevelBadge";
 
 import { PageLoader } from "@/components/ui/PageLoader";
+import { useOrgTime } from "@/components/TimezoneProvider";
 const NETWORK_ERROR_KEY = "certifications-network";
 
 type ToolStatusLevel = "BASIC" | "DOF" | "CERTIFIED" | "INSTRUCTOR" | "MAY_CERTIFY_OTHERS";
@@ -65,6 +66,7 @@ function KioskCertificationsInner() {
   const [presenceConfirmed, setPresenceConfirmed] = useState(false);
   const minute = useSyncExternalStore(subscribeToClock, currentMinute, noMinute);
   const currentTime = minute === null ? null : new Date(minute * 60000);
+  const { formatTime } = useOrgTime();
 
   const fetchData = useCallback(async () => {
     try {
@@ -213,7 +215,7 @@ function KioskCertificationsInner() {
                 </Text>
               )}
               <Text fz="clamp(2rem, 5vw, 3.5rem)" fw={700} lh={1} style={{ fontVariantNumeric: 'tabular-nums' }}>
-                {currentTime.toLocaleTimeString("en-US", { timeZone: "America/Chicago", hour: "numeric", minute: "2-digit" })}
+                {formatTime(currentTime, { hour: "numeric", minute: "2-digit" })}
               </Text>
             </Group>
           )}
