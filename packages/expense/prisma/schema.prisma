@@ -173,12 +173,6 @@ model Expense {
   qbTxnEntity        String?   @map("qb_txn_entity")
   /// @sensitivity:internal
   qbVendorId         String?   @map("qb_vendor_id")
-  // Not read or written; dropped in a later release, once no running code writes it.
-  /// @sensitivity:internal
-  qbPostAttempts     Int       @default(0) @map("qb_post_attempts") @ignore
-  // Not read or written; dropped in a later release, once no running code writes it.
-  /// @sensitivity:internal
-  qbFailureKind      String?   @map("qb_failure_kind") @ignore
   // When the expense first failed to prepare for QuickBooks (qb_error) or to post; set while null,
   // cleared when that step succeeds. Set means stuck.
   /// @sensitivity:internal
@@ -609,9 +603,6 @@ model ReceivedExpensePayload {
   failureReason String?  @map("failure_reason")
   /// @sensitivity:internal
   receivedAt    DateTime @default(now()) @map("received_at")
-  // Not read or written; dropped in a later release, once no running code writes it.
-  /// @sensitivity:internal
-  replayAttempts Int?    @map("replay_attempts") @ignore
   // When the payload first failed to build; set while null, cleared when it applies.
   /// @sensitivity:internal
   firstFailedAt  DateTime? @map("first_failed_at")
