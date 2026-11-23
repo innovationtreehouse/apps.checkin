@@ -82,7 +82,7 @@ describeDb("manual upload", () => {
     const reimbursees = {
       search: async () => [],
       byId: async (id: number) => people.get(id) ?? null,
-      hasAccount: async () => true,
+      withoutAccount: async () => [],
       addNonMemberAdult: async (name: string) => {
         added.push(name);
         return { id: 555, name };

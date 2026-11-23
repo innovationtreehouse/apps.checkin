@@ -217,8 +217,8 @@ export interface ReceiptReimbursees {
   search(query: string, limit: number): Promise<ReimburseeOption[]>;
   /** The live person with this id and whether they are a known adult, else null. */
   byId(personId: number): Promise<(ReimburseeOption & { isAdult: boolean }) | null>;
-  /** Whether this person has an account to sign in with, and so confirms for themself. */
-  hasAccount(personId: number): Promise<boolean>;
+  /** Those of these people with no account to sign in with, who so cannot confirm for themselves. */
+  withoutAccount(personIds: number[]): Promise<number[]>;
   /** Adds a non-member adult known only by name, in a household of their own, audited as added by `actorId`. */
   addNonMemberAdult(name: string, actorId: number): Promise<ReimburseeOption>;
 }
