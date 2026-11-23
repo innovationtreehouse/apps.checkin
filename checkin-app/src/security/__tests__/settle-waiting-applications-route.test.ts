@@ -49,7 +49,7 @@ function signIn(claims: Claims) {
 async function call(claims: Claims | null, settled: object = COUNTS) {
     if (claims) signIn(claims);
     else mockSession.mockResolvedValue(null);
-    const impl = jest.fn(async () => ({ WaitingApplicationSettleResult: settled }));
+    const impl = jest.fn(async () => ({ ApplicationSettleCounts: settled }));
     const req = new NextRequest('http://localhost/api/membership-ops/applications/settle-waiting', { method: 'POST' });
     const res = await handler(ENDPOINT, impl)(req, { params: Promise.resolve({}) });
     return { res, impl };
@@ -58,26 +58,26 @@ async function call(claims: Claims | null, settled: object = COUNTS) {
 beforeEach(() => mockSession.mockReset());
 
 describe('Waiting-application settle route', () => {
-    it('is registered for WaitingApplicationSettleResult alone, Board only', () => {
+    it('is registered for ApplicationSettleCounts alone, Board only', () => {
         const route = getRoute(ENDPOINT);
-        expect(route?.returns).toEqual(['WaitingApplicationSettleResult']);
+        expect(route?.returns).toEqual(['ApplicationSettleCounts']);
         expect(route?.authorize).toEqual({ anyRole: ['isBoardMember'] });
     });
 
     it('classifies the three counts as internal, with no finance mark', () => {
-        expect(classifications.WaitingApplicationSettleResult).toEqual({
+        expect(classifications.ApplicationSettleCounts).toEqual({
             households: 'internal',
             opened: 'internal',
             failed: 'internal',
         });
-        expect(marks.WaitingApplicationSettleResult ?? []).toEqual([]);
+        expect(marks.ApplicationSettleCounts ?? []).toEqual([]);
     });
 
     it('lets the Board run the sweep and read the counts', async () => {
         const { res, impl } = await call({ isBoardMember: true });
         expect(res.status).toBe(200);
         expect(impl).toHaveBeenCalledTimes(1);
-        expect(await res.json()).toEqual({ settled: COUNTS });
+        expect(await res.json()).toEqual(COUNTS);
     });
 
     it('returns only the counts, whatever else the sweep hands back', async () => {
@@ -86,7 +86,7 @@ describe('Waiting-application settle route', () => {
             householdIds: [11, 12],
             error: 'Household 12: lead jane@example.org has no consent',
         });
-        expect(await res.json()).toEqual({ settled: COUNTS });
+        expect(await res.json()).toEqual(COUNTS);
     });
 
     it.each([

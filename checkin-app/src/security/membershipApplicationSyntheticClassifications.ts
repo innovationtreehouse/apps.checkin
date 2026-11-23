@@ -13,7 +13,7 @@
  * Every mirrored field's tier is pinned to its schema field's tier by
  * __tests__/membership-application-strip.test.ts.
  *
- * WaitingApplicationSettleResult — the counts from one run of the waiting-
+ * ApplicationSettleCounts — the counts from one run of the waiting-
  * application settle sweep (POST /api/membership-ops/applications/settle-waiting):
  * households swept, check reviews opened, households that failed. All
  * `internal`, and no field names a household or person.
@@ -35,7 +35,7 @@ export const classifications = {
     requestedForHouseholdId: "public",
     notRenewing: "internal",
   },
-  WaitingApplicationSettleResult: {
+  ApplicationSettleCounts: {
     households: "internal",
     opened: "internal",
     failed: "internal",
