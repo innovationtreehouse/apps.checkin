@@ -8,12 +8,10 @@ import type { Prisma } from "../generated/prisma/client.js";
 import { logger } from "@checkin/telemetry";
 import { redactSecrets } from "@checkin/utils";
 import { ConcurrentRunError, withAdvisoryLock } from "./locks.js";
-
-/** Default staleness cutoff (~Lambda max timeout): older RUNNING runs must be dead. */
-export const DEFAULT_STALE_RUN_MS = 15 * 60 * 1000;
+import { staleRunMs } from "./deadline.js";
 
 /**
- * Relabel `sync_run` rows stuck in RUNNING past the staleness threshold to ABANDONED.
+ * Relabel `sync_run` rows stuck in RUNNING past the run deadline plus a margin to ABANDONED.
  * These are runs whose process died (Lambda timeout/OOM/kill) before writing a terminal
  * status. It touches no watermark or data; the next scheduled run already self-heals via
  * the watermark. Run at handler startup so a dead run never masquerades as in-flight.
@@ -23,10 +21,10 @@ export const DEFAULT_STALE_RUN_MS = 15 * 60 * 1000;
 export async function reapStaleRuns(
   prisma: PrismaClient,
   heartbeat?: HeartbeatSink,
-  staleMs: number = DEFAULT_STALE_RUN_MS,
+  staleMs: number = staleRunMs(),
 ): Promise<number> {
   const cutoff = new Date(Date.now() - staleMs);
-  const error = "reaped: still RUNNING past the staleness threshold (process likely timed out or was killed)";
+  const error = "reaped: still RUNNING past the run deadline (process likely timed out or was killed)";
   const reaped = await prisma.syncRun.updateManyAndReturn({
     where: { status: SyncStatus.RUNNING, startedAt: { lt: cutoff } },
     data: { status: SyncStatus.ABANDONED, finishedAt: new Date(), error },
@@ -44,8 +42,7 @@ export async function reapStaleRuns(
 /**
  * Report a reaped run as failed at its start time: a later success then already covers it,
  * so reaping a long-dead run can't raise ERRORING. The store's run lock being held means a
- * process is still working, possibly this very row (a run may outlive the staleness
- * threshold), so no beat goes out and that run reports its own outcome.
+ * process is still working, possibly this very row, so no beat goes out and that run reports its own outcome.
  */
 async function pushAbandonedBeat(
   sink: HeartbeatSink,

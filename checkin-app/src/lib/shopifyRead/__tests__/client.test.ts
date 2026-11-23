@@ -100,6 +100,7 @@ describe('wiring', () => {
 
         expect(client.isConfigured()).toBe(false);
         expect(await client.latestSyncRun()).toBeNull();
+        expect(await client.scheduledReadState()).toBeNull();
         expect(await client.ordersChangedSince(null)).toEqual([]);
         expect(await client.ordersByLegacyIds(['123'])).toEqual([]);
         expect(await client.minRealOrderLegacyId()).toBeNull();
@@ -155,6 +156,24 @@ describe('latestSyncRun', () => {
     it('skips the retention pass, which is recorded as a run but is not a sync', async () => {
         await freshClient().latestSyncRun();
         expect(db.syncRun.findFirst.mock.calls[0][0].where).toEqual({ objectScope: { not: 'retention' } });
+    });
+});
+
+describe('scheduledReadState', () => {
+    it('reads only scheduled INCREMENTAL runs, so a replay, reset or backfill is not the daily read', async () => {
+        const finishedAt = new Date('2026-11-23T06:05:00Z');
+        db.syncRun.findFirst.mockImplementation(async ({ where }: { where: { status: unknown } }) =>
+            where.status === 'COMPLETED' ? { finishedAt } : { status: 'FAILED' });
+
+        expect(await freshClient().scheduledReadState()).toEqual({ latestStatus: 'FAILED', lastCompletedAt: finishedAt });
+        const [latest, completed] = db.syncRun.findFirst.mock.calls.map((c) => c[0]);
+        expect(latest).toMatchObject({ where: { kind: 'INCREMENTAL', status: { not: 'RUNNING' } }, orderBy: { startedAt: 'desc' } });
+        expect(completed).toMatchObject({ where: { kind: 'INCREMENTAL', status: 'COMPLETED' }, orderBy: { finishedAt: 'desc' } });
+    });
+
+    it('reads a reader with no finished scheduled run as never read', async () => {
+        db.syncRun.findFirst.mockResolvedValue(null);
+        expect(await freshClient().scheduledReadState()).toEqual({ latestStatus: null, lastCompletedAt: null });
     });
 });
 

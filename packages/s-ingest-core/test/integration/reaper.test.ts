@@ -26,9 +26,9 @@ describeDb("reapStaleRuns", () => {
     });
 
   it("relabels only RUNNING runs older than the threshold", async () => {
-    const old = await mkRun(SyncStatus.RUNNING, new Date(Date.now() - 30 * 60 * 1000)); // 30m ago
-    const recent = await mkRun(SyncStatus.RUNNING, new Date()); // just now
-    const done = await mkRun(SyncStatus.COMPLETED, new Date(Date.now() - 60 * 60 * 1000));
+    const old = await mkRun(SyncStatus.RUNNING, new Date(Date.now() - 61 * 60 * 1000)); // past the 55m deadline + margin
+    const recent = await mkRun(SyncStatus.RUNNING, new Date(Date.now() - 20 * 60 * 1000)); // inside the deadline
+    const done = await mkRun(SyncStatus.COMPLETED, new Date(Date.now() - 2 * 60 * 60 * 1000));
 
     const count = await reapStaleRuns(prisma);
     expect(count).toBe(1);
@@ -50,7 +50,7 @@ describeDb("reapStaleRuns", () => {
 
   it("pushes no beat while another session holds the store's run lock, and pushes one once it is free", async () => {
     const sink = vi.fn();
-    const staleStart = new Date(Date.now() - 30 * 60 * 1000);
+    const staleStart = new Date(Date.now() - 61 * 60 * 1000);
     const staleRun = () => mkRun(SyncStatus.RUNNING, staleStart);
 
     await staleRun();

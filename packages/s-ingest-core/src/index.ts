@@ -39,6 +39,7 @@ export * from "./loader/projectPayouts.js";
 export * from "./sync/cursor.js";
 export * from "./sync/run.js";
 export * from "./sync/retention.js";
+export * from "./sync/deadline.js";
 
 // Concurrency guard: advisory-lock helper that defends the single-flight assumption
 export * from "./sync/locks.js";

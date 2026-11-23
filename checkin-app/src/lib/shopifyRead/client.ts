@@ -280,6 +280,33 @@ export async function latestSyncRun(): Promise<MirrorSyncRun | null> {
     });
 }
 
+/** Where the scheduled (INCREMENTAL) reads stand; ADMIN replays and resets and BACKFILL runs are not counted. */
+export interface ScheduledReadState {
+    /** The status the latest finished scheduled read ended in, or null when none has finished. */
+    latestStatus: string | null;
+    /** When a scheduled read last completed, or null when none has. */
+    lastCompletedAt: Date | null;
+}
+
+/** The scheduled reads' state, or null when the mirror is unconfigured. */
+export async function scheduledReadState(): Promise<ScheduledReadState | null> {
+    const db = await getClient();
+    if (!db) return null;
+    const [latest, completed] = await Promise.all([
+        db.syncRun.findFirst({
+            where: { kind: "INCREMENTAL", status: { not: "RUNNING" } },
+            orderBy: { startedAt: "desc" },
+            select: { status: true },
+        }),
+        db.syncRun.findFirst({
+            where: { kind: "INCREMENTAL", status: "COMPLETED" },
+            orderBy: { finishedAt: "desc" },
+            select: { finishedAt: true },
+        }),
+    ]);
+    return { latestStatus: latest?.status ?? null, lastCompletedAt: completed?.finishedAt ?? null };
+}
+
 /**
  * Diagnostic probe: how many sync runs the mirror holds. One round trip whose
  * FAILURE is as informative as its success — the thrown pg error's `code`

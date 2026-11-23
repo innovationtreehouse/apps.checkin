@@ -31,8 +31,8 @@ export type SyncEvent = z.input<typeof SyncEventSchema>;
  * infra contract: trigger Lambda → one-off ECS task). ECS RunTask has no native
  * max-duration, so a wedged run would otherwise bill until someone notices.
  * The timer is unref'd: a completed run lets the process exit naturally before
- * it fires; a hung run gets force-failed, and the next tick's reapStaleRuns
- * relabels the interrupted row. Override with SYNC_DEADLINE_MINUTES (backfill
+ * it fires; a hung run gets force-failed, and once the row is past the deadline plus
+ * a margin, the next tick's reapStaleRuns relabels it. Override with SYNC_DEADLINE_MINUTES (backfill
  * ingest steps on very large stores may need more than the default 55m).
  */
 export function armSyncDeadline(mode: string): void {
