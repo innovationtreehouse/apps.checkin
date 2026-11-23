@@ -5,6 +5,7 @@ import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import { Badge, Button, Card, Group, Stack, Text, TextInput, Title } from '@mantine/core';
 import { IconCalendarCheck, IconSearch } from '@tabler/icons-react';
+import { useOrgTime } from '@/components/TimezoneProvider';
 import { useTodoCounts } from '@/hooks/useTodoCounts';
 import type { TodoCounts } from '@/lib/nav/todoCounts';
 
@@ -56,9 +57,6 @@ export default function ProgramsILeadHome() {
   );
 }
 
-const fmtSession = (iso: string) =>
-  new Date(iso).toLocaleDateString("en-US", { timeZone: "America/Chicago", month: "short", day: "numeric" });
-
 type RsvpTally = LedProgram['upcoming'][number]['participants'];
 
 function RsvpRow({ label, tally }: { label: string; tally: RsvpTally }) {
@@ -75,6 +73,7 @@ function RsvpRow({ label, tally }: { label: string; tally: RsvpTally }) {
 }
 
 function ProgramSection({ program }: { program: LedProgram }) {
+  const { formatDate } = useOrgTime();
   return (
     <Card withBorder radius="md" padding="lg">
       <Group justify="space-between" align="flex-start" mb="sm">
@@ -93,7 +92,7 @@ function ProgramSection({ program }: { program: LedProgram }) {
           <Text fw={600} size="sm">Next sessions</Text>
           {program.upcoming.map((s) => (
             <div key={s.eventId}>
-              <Text size="sm" fw={500}>{fmtSession(s.startAt)} — {s.name}</Text>
+              <Text size="sm" fw={500}>{formatDate(s.startAt, { month: "short", day: "numeric" })} — {s.name}</Text>
               <RsvpRow label="Participants" tally={s.participants} />
               <RsvpRow label="Volunteers" tally={s.volunteers} />
             </div>
