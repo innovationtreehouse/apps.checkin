@@ -604,6 +604,7 @@ class AttendanceState:
         with self.lock:
             self.presence_seq += 1
             self.present_ids.add(int(participant_id))
+        self.save_view_if_changed()
 
     def seed_from_attendance(self, att_data, pending=(), since_seq=None):
         """Replace the local presence view with the server roster, plus this

@@ -140,6 +140,7 @@ describe('Program Volunteers API Integration Tests', () => {
         }
     });
 
+    // Every assignment here acknowledges the background-check warning; positionCheckVolunteers covers the warning itself.
     const createParams = (id: number) => ({ params: Promise.resolve({ id: id.toString() }) });
 
     describe('POST /api/programs/[id]/volunteers', () => {
@@ -148,7 +149,7 @@ describe('Program Volunteers API Integration Tests', () => {
 
              const req = new Request(`http://localhost:4000/api/programs/${targetProgramId}/volunteers`, {
                  method: 'POST',
-                 body: JSON.stringify({ participantId: candidateId })
+                 body: JSON.stringify({ participantId: candidateId, acknowledgeCheck: true })
              });
              const res = await POST(req as unknown as import("next/server").NextRequest, createParams(targetProgramId) as unknown as never);
              expect(res.status).toBe(401);
@@ -159,7 +160,7 @@ describe('Program Volunteers API Integration Tests', () => {
 
              const req = new Request(`http://localhost:4000/api/programs/${targetProgramId}/volunteers`, {
                  method: 'POST',
-                 body: JSON.stringify({ participantId: candidateId })
+                 body: JSON.stringify({ participantId: candidateId, acknowledgeCheck: true })
              });
              const res = await POST(req as unknown as import("next/server").NextRequest, createParams(targetProgramId) as unknown as never);
              expect(res.status).toBe(403);
@@ -173,7 +174,7 @@ describe('Program Volunteers API Integration Tests', () => {
 
              const req = new Request(`http://localhost:4000/api/programs/${targetProgramId}/volunteers`, {
                  method: 'POST',
-                 body: JSON.stringify({ participantId: candidateId })
+                 body: JSON.stringify({ participantId: candidateId, acknowledgeCheck: true })
              });
              const res = await POST(req as unknown as import("next/server").NextRequest, createParams(targetProgramId) as unknown as never);
              expect(res.status).toBe(200);
@@ -197,7 +198,7 @@ describe('Program Volunteers API Integration Tests', () => {
 
              const req = new Request(`http://localhost:4000/api/programs/${targetProgramId}/volunteers`, {
                  method: 'POST',
-                 body: JSON.stringify({ participantId: candidateId })
+                 body: JSON.stringify({ participantId: candidateId, acknowledgeCheck: true })
              });
              const res = await POST(req as unknown as import("next/server").NextRequest, createParams(targetProgramId) as unknown as never);
              expect(res.status).toBe(409);
@@ -267,7 +268,7 @@ describe('Program Volunteers API Integration Tests', () => {
 
              const req = new Request(`http://localhost:4000/api/programs/${targetProgramId}/volunteers`, {
                  method: 'PATCH',
-                 body: JSON.stringify({ participantId: existingVolunteerId, isCore: true })
+                 body: JSON.stringify({ participantId: existingVolunteerId, isCore: true, acknowledgeCheck: true })
              });
              const res = await PATCH(req as unknown as import("next/server").NextRequest, createParams(targetProgramId) as unknown as never);
              expect(res.status).toBe(403);
@@ -290,7 +291,7 @@ describe('Program Volunteers API Integration Tests', () => {
         const patch = (participantId: number, isCore: boolean) => PATCH(
             new Request(`http://localhost:4000/api/programs/${targetProgramId}/volunteers`, {
                 method: 'PATCH',
-                body: JSON.stringify({ participantId, isCore })
+                body: JSON.stringify({ participantId, isCore, acknowledgeCheck: true })
             }) as unknown as import("next/server").NextRequest,
             createParams(targetProgramId) as unknown as never
         );
@@ -319,7 +320,7 @@ describe('Program Volunteers API Integration Tests', () => {
 
              const req = new Request(`http://localhost:4000/api/programs/${targetProgramId}/volunteers`, {
                  method: 'PATCH',
-                 body: JSON.stringify({ participantId: leadSpouseId, isCore: true })
+                 body: JSON.stringify({ participantId: leadSpouseId, isCore: true, acknowledgeCheck: true })
              });
              const res = await PATCH(req as unknown as import("next/server").NextRequest, createParams(targetProgramId) as unknown as never);
              expect(res.status).toBe(403);
@@ -350,7 +351,7 @@ describe('Program Volunteers API Integration Tests', () => {
 
              const req = new Request(`http://localhost:4000/api/programs/${targetProgramId}/volunteers`, {
                  method: 'PATCH',
-                 body: JSON.stringify({ participantId: existingVolunteerId, isCore: true })
+                 body: JSON.stringify({ participantId: existingVolunteerId, isCore: true, acknowledgeCheck: true })
              });
              const res = await PATCH(req as unknown as import("next/server").NextRequest, createParams(targetProgramId) as unknown as never);
              expect(res.status).toBe(200);
@@ -361,7 +362,7 @@ describe('Program Volunteers API Integration Tests', () => {
 
              const req = new Request(`http://localhost:4000/api/programs/${targetProgramId}/volunteers`, {
                  method: 'PATCH',
-                 body: JSON.stringify({ participantId: existingVolunteerId, isCore: true })
+                 body: JSON.stringify({ participantId: existingVolunteerId, isCore: true, acknowledgeCheck: true })
              });
              const res = await PATCH(req as unknown as import("next/server").NextRequest, createParams(targetProgramId) as unknown as never);
              expect(res.status).toBe(200);

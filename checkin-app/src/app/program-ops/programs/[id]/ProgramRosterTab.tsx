@@ -4,11 +4,13 @@ import { useCallback, useState } from 'react';
 import { ActionIcon, Alert, Badge, Box, Button, Card, Checkbox, Flex, Group, Menu, Modal, Radio, SimpleGrid, Stack, Text, Textarea, TextInput, Title } from '@mantine/core';
 import { IconDotsVertical } from '@tabler/icons-react';
 import { useDisclosure } from '@mantine/hooks';
+import { modals } from '@mantine/modals';
 import { errorMessage, HttpError, showError, showWarning } from '@checkin/component-ui';
 import { api } from '@/lib/api';
 import { EntityPicker } from '@/components/admin/EntityPicker';
 import { useOrgTime } from '@/components/TimezoneProvider';
 import { formatPhone } from '@/lib/phone';
+import { CHECK_ACKNOWLEDGEMENT_CODE } from '@/lib/membership/positionCheckCode';
 import type { ProgramDetail, EligibleOption } from './page';
 
 type Participant = ProgramDetail['participants'][number];
@@ -105,6 +107,34 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
     }
   };
 
+  // A volunteer whose background check isn't current is never refused: the assigner presses
+  // Got it and the save is sent again with the acknowledgement.
+  const saveVolunteer = async (method: 'POST' | 'PATCH', body: Record<string, unknown>, name: string, onSaved?: () => void): Promise<void> => {
+    try {
+      await api<ApiFeedback>(`/api/programs/${programId}/volunteers`, { method, body: JSON.stringify(body) });
+      onSaved?.();
+      await fetchProgram();
+    } catch (e) {
+      if (e instanceof HttpError && e.code === CHECK_ACKNOWLEDGEMENT_CODE && !body.acknowledgeCheck) {
+        modals.openConfirmModal({
+          title: `${name} isn't current on their background check`,
+          children: <Text size="sm">{e.message}</Text>,
+          labels: { confirm: 'Got it', cancel: 'Cancel' },
+          onConfirm: async () => {
+            setSaving(true);
+            try {
+              await saveVolunteer(method, { ...body, acknowledgeCheck: true }, name, onSaved);
+            } finally {
+              setSaving(false);
+            }
+          },
+        });
+        return;
+      }
+      showError(errorMessage(e));
+    }
+  };
+
   // Volunteer + participant pickers both search this program's eligible members.
   const searchEligible = useCallback((query: string): Promise<EligibleOption[]> =>
     api<{ members?: EligibleOption[] }>(`/api/programs/${programId}/eligible-participants?q=${encodeURIComponent(query)}`)
@@ -115,11 +145,7 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
     if (!newVolId) return;
     setSaving(true);
     try {
-      const ok = await mutate(`/api/programs/${programId}/volunteers`, {
-        method: 'POST',
-        body: JSON.stringify({ participantId: parseInt(newVolId) })
-      });
-      if (ok) { setNewVolId(""); setVolLabel(""); await fetchProgram(); }
+      await saveVolunteer('POST', { participantId: parseInt(newVolId) }, volLabel || 'This person', () => { setNewVolId(""); setVolLabel(""); });
     } finally {
       setSaving(false);
     }
@@ -139,11 +165,10 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
     if (ok) await fetchProgram();
   };
 
-  const handleToggleCore = async (participantId: number, isCore: boolean) => {
+  const handleToggleCore = async (participantId: number, isCore: boolean, name: string) => {
     setSaving(true);
     try {
-      const ok = await mutate(`/api/programs/${programId}/volunteers`, { method: 'PATCH', body: JSON.stringify({ participantId, isCore }) });
-      if (ok) await fetchProgram();
+      await saveVolunteer('PATCH', { participantId, isCore }, name);
     } finally {
       setSaving(false);
     }
@@ -247,7 +272,7 @@ export function ProgramRosterTab({ programId, program, isSysAdminOrBoard, isBoar
               <Group key={v.personId} justify="space-between" p="sm" style={{ borderRadius: 6, background: 'var(--mantine-color-default-hover)' }}>
                 <Group gap="md" wrap="wrap">
                   <Text fw={500}>{v.person.name || 'Unnamed'} <Text component="span" c="dimmed" size="sm">({v.person.email})</Text></Text>
-                  <Checkbox size="xs" checked={v.isCore} disabled={saving} onChange={e => handleToggleCore(v.personId, e.currentTarget.checked)}
+                  <Checkbox size="xs" checked={v.isCore} disabled={saving} onChange={e => handleToggleCore(v.personId, e.currentTarget.checked, v.person.name || 'This person')}
                     label={<Text size="sm" c={v.isCore ? 'yellow' : undefined}>Core Volunteer</Text>} />
                 </Group>
                 <Button size="compact-xs" variant="subtle" color="red" onClick={() => handleRemoveVolunteer(v.personId)}>Remove</Button>
