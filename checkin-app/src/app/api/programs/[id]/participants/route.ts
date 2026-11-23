@@ -10,7 +10,7 @@ import { ENROLLMENT_WRITES } from "@/lib/programs/enrollmentState";
 import { deleteAndReleaseHold, type ExitOptions, lockProgramForClaim, PROGRAM_ENDED_NO_CLAIMS, ProgramCapacityError, withdrawParticipant } from "@/lib/program/capacity";
 import { checkProgramAge, isKnownAdult } from "@/lib/programAge";
 import { hasHouseholdConflict, sharesHousehold } from "@/lib/conflictOfInterest";
-import { householdLeadship } from "@/lib/household/leads";
+import { householdLeadship, householdLeadsWhere } from "@/lib/household/leads";
 import { isMembershipFeeSettled } from "@/lib/orgMembership";
 import { isProgramCheckoutBroken } from "@/lib/programCheckout";
 import { isProgramStoreClosed } from "@/lib/programs/storeClosed";
@@ -67,11 +67,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
 
         const leadRecord = participantData?.householdId
             ? await prisma.person.findFirst({
-                where: {
-                    id: currentUserId,
-                    householdId: participantData.householdId,
-                    isHouseholdLead: true
-                },
+                where: { id: currentUserId, ...householdLeadsWhere(participantData.householdId) },
                 select: { dateOfBirth: true, isDeclaredAdult: true }
             })
             : null;

@@ -469,6 +469,57 @@ describe('Program payment-plan routes', () => {
             expect(row?.isPaymentPlanRequested).toBe(true);
         });
 
+        describe('acting for the participant as a household lead', () => {
+            const ADULT_DOB = new Date(Date.now() - (40 * 31556952000));
+            let selfLeadId: number;
+            let selfKinId: number;
+            let otherLeadId: number;
+
+            beforeAll(async () => {
+                const { householdId } = await prisma.person.findUniqueOrThrow({ where: { id: selfId }, select: { householdId: true } });
+                selfLeadId = (await prisma.person.create({
+                    data: { name: 'PP Self Lead', email: `selflead-${TAG}@example.com`, dateOfBirth: ADULT_DOB, isHouseholdLead: true, householdId },
+                })).id;
+                selfKinId = (await prisma.person.create({
+                    data: { name: 'PP Self Kin', email: `selfkin-${TAG}@example.com`, dateOfBirth: ADULT_DOB, householdId },
+                })).id;
+                const otherLead = await prisma.person.create({
+                    data: {
+                        name: 'PP Other Lead', email: `otherlead-${TAG}@example.com`, dateOfBirth: ADULT_DOB, isHouseholdLead: true,
+                        household: { create: { name: "Test HH", ...WITH_EMERGENCY_CONTACT } },
+                    },
+                });
+                otherLeadId = otherLead.id;
+                householdIds.push(otherLead.householdId);
+            });
+
+            afterAll(async () => {
+                await prisma.person.deleteMany({ where: { id: { in: [selfLeadId, selfKinId, otherLeadId] } } });
+            });
+
+            const requestAs = async (actorId: number) => {
+                await enroll(selfId, { requested: false });
+                mockSession.mockResolvedValue({ user: { id: actorId } });
+                const res = await RequestPost(requestReq({ participantId: selfId }), params(programId));
+                const row = await prisma.programParticipant.findUnique({
+                    where: { programId_personId: { programId, personId: selfId } },
+                });
+                return { status: res.status, requested: row?.isPaymentPlanRequested };
+            };
+
+            it("200 when a lead of the participant's household requests", async () => {
+                await expect(requestAs(selfLeadId)).resolves.toEqual({ status: 200, requested: true });
+            });
+
+            it('403 when a lead of another household requests', async () => {
+                await expect(requestAs(otherLeadId)).resolves.toEqual({ status: 403, requested: false });
+            });
+
+            it("403 when a non-lead of the participant's household requests", async () => {
+                await expect(requestAs(selfKinId)).resolves.toEqual({ status: 403, requested: false });
+            });
+        });
+
         it('records the kind the family stated', async () => {
             await enroll(selfId, { requested: false });
             mockSession.mockResolvedValue({ user: { id: selfId } });

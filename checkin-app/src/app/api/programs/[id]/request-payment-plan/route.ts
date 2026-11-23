@@ -12,6 +12,7 @@ import { scholarshipRequestKindLabel } from "@/lib/scholarshipRequestKind";
 import { resolveScholarshipRecipients, notifyReviewTeam, sendScholarshipAck } from "@/lib/scholarshipEmails";
 import { config } from "@/lib/config";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
+import { householdLeadsWhere } from "@/lib/household/leads";
 import { householdMayEnrol, NO_EMERGENCY_CONTACT_TO_ENROL } from "@/lib/emergencyContacts/service";
 import { parseParticipantId, readObjectBody } from "@/app/api/programs/[id]/requestBody";
 
@@ -71,11 +72,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
 
         const leadRecord = !isSelf && !isSysAdminOrBoard && participant.person?.householdId
             ? await prisma.person.findFirst({
-                where: {
-                    id: currentUserId,
-                    householdId: participant.person.householdId,
-                    isHouseholdLead: true
-                },
+                where: { id: currentUserId, ...householdLeadsWhere(participant.person.householdId) },
                 select: { dateOfBirth: true, isDeclaredAdult: true }
             })
             : null;

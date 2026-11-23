@@ -37,9 +37,9 @@ const TEST_FILE = /\.test\.tsx?$/;
 
 type Entry = { file: string; count: number; reason: string };
 
-const HELPER = 'householdLeadsWhere fits';
 const RELATION = 'relation-scoped; needs a sibling helper';
 const ANY_LEAD = 'any lead, not by household; needs a sibling helper';
+const LEAD_BY_ID = 'lead by id; the household is the output, not an input';
 
 const ALLOWLIST: Entry[] = [
     { file: 'app/api/finance-ops/membership-payment-plans/route.ts', count: 1, reason: RELATION },
@@ -50,8 +50,6 @@ const ALLOWLIST: Entry[] = [
     { file: 'app/api/membership-ops/volunteer-memberships/route.ts', count: 3, reason: `2 ${RELATION}; 1 ${ANY_LEAD}` },
     { file: 'app/api/membership/request-payment-plan/route.ts', count: 1, reason: RELATION },
     { file: 'app/api/membership/reviews/route.ts', count: 1, reason: RELATION },
-    { file: 'app/api/programs/[id]/participants/route.ts', count: 1, reason: `${HELPER}; gates enrolment` },
-    { file: 'app/api/programs/[id]/request-payment-plan/route.ts', count: 1, reason: `${HELPER}; gates the request` },
     { file: 'app/api/programs/[id]/route.ts', count: 1, reason: RELATION },
     { file: 'app/api/safety/trusted-adults/route.ts', count: 1, reason: RELATION },
     { file: 'lib/emailRecipients.ts', count: 2, reason: RELATION },
@@ -60,8 +58,7 @@ const ALLOWLIST: Entry[] = [
     { file: 'lib/household/filters.ts', count: 3, reason: RELATION },
     { file: 'lib/membership/boardAlerts.ts', count: 1, reason: ANY_LEAD },
     { file: 'lib/outreach/recipients.ts', count: 1, reason: ANY_LEAD },
-    { file: 'lib/programs/paymentVisibility.ts', count: 1, reason: `${ANY_LEAD}; gates payment visibility` },
-    { file: 'lib/trusted-adult/service.ts', count: 1, reason: `${HELPER}; gates trusted-adult writes` },
+    { file: 'lib/programs/paymentVisibility.ts', count: 1, reason: `${LEAD_BY_ID}; gates payment visibility` },
 ];
 
 type Context = 'filter' | 'ignored' | 'unknown';
