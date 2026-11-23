@@ -14,6 +14,7 @@ import { settleMailedBody } from "./ocrDrain";
 import { closeUnreplyable } from "./mailReplies";
 import { deleteStoredFiles, readStoredFile } from "../lib/fileStorage";
 import { ServiceError } from "@checkin/component-kit";
+import { MAIL_MESSAGE } from "../stuckItems";
 
 const ITEM_FIELDS = { id: true, receivedAt: true, senderAddress: true, status: true, holdReason: true, dmarcVerdict: true, mimeType: true, receiptId: true, refusal: true } as const;
 
@@ -271,8 +272,9 @@ export const mailQueueService = {
   },
 
   /**
-   * Every captured email not yet processed, oldest capture first: its id, times, and whether its stored copy is
-   * past retention, when a replay can no longer process it. Never its key, error or content.
+   * Every captured email not yet processed that no person has dismissed from the Problems list at its capture time,
+   * oldest capture first: its id, times, and whether its stored copy is past retention, when a replay can no longer
+   * process it. Never its key, error or content.
    */
   async listUnprocessed(): Promise<{ id: number; receivedAt: Date; capturedAt: Date; expired: boolean }[]> {
     const now = Date.now();
@@ -281,7 +283,11 @@ export const mailQueueService = {
       select: { id: true, receivedAt: true, capturedAt: true },
       orderBy: [{ capturedAt: "asc" }, { id: "asc" }],
     });
-    return rows.map((row) => ({ ...row, expired: copyExpired(row.capturedAt, now) }));
+    const listed = await ports().problemDismissals.withoutDismissed(
+      MAIL_MESSAGE,
+      rows.map((row) => ({ row, id: String(row.id), failedAt: row.capturedAt })),
+    );
+    return listed.map(({ row }) => ({ ...row, expired: copyExpired(row.capturedAt, now) }));
   },
 
   /** Processes one captured email again from its stored copy, audited with who asked; the answer is the outcome alone. */

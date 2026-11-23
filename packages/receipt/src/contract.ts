@@ -349,6 +349,12 @@ export interface ReceiptFileStore {
   delete(key: string): Promise<void>;
 }
 
+/** A stuck item a person took off the host's Problems list, keyed by its step, id and the failure time it was listed with. */
+export interface ReceiptProblemDismissals {
+  /** The items not dismissed at their current `failedAt`, in order. */
+  withoutDismissed<T extends { id: string; failedAt: Date }>(step: string, items: T[]): Promise<T[]>;
+}
+
 export interface ReceiptConfig {
   auth: ReceiptAuth;
   /** Async accessor, resolved per call: the host may read the org from its own store. */
@@ -365,6 +371,7 @@ export interface ReceiptConfig {
   personNames?: ReceiptPersonNames;
   reimbursees?: ReceiptReimbursees;
   alerts?: ReceiptAlerts;
+  problemDismissals?: ReceiptProblemDismissals;
   /** Unset means mail intake is unbound and the step does nothing. */
   mailbox?: MailboxReader;
   /** Days the store keeps a captured message's raw copy (its `mail-raw/` lifecycle rule), set per environment. */

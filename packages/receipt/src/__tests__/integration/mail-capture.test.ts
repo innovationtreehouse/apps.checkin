@@ -342,6 +342,25 @@ describeDb("the mail page's list of captured emails not yet processed", () => {
     ]);
   });
 
+  it("leaves out an email the host reports dismissed from the Problems list, asking by step, id and capture time", async () => {
+    const dismissedSince = await captured("dismissed", 2 * DAY_MS);
+    const kept = await captured("kept", 2 * DAY_MS);
+    const asked: { step: string; id: string; failedAt: Date }[] = [];
+    bind({
+      problemDismissals: {
+        withoutDismissed: async (step, items) => {
+          asked.push(...items.map(({ id, failedAt }) => ({ step, id, failedAt })));
+          return items.filter((i) => i.id !== String(dismissedSince.id));
+        },
+      },
+    });
+    expect(await mailQueueService.listUnprocessed()).toEqual([{ ...kept, expired: false }]);
+    expect(asked).toEqual([
+      { step: "mail message", id: String(dismissedSince.id), failedAt: dismissedSince.capturedAt },
+      { step: "mail message", id: String(kept.id), failedAt: kept.capturedAt },
+    ]);
+  });
+
   it("leaves out processed emails and other orgs' emails", async () => {
     const done = await captured("done", 60_000);
     await db.receiptMailMessage.update({ where: { id: done.id }, data: { processedAt: new Date() } });

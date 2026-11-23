@@ -5,14 +5,21 @@ import { HttpError } from "@checkin/component-ui";
 import ReceiptMailQueuePage from "@checkin/receipt/pages/mail";
 
 const mockReload = jest.fn();
+const mockReloads: Record<string, jest.Mock> = {};
 const mockApi = jest.fn();
 
 jest.mock("@mantine/notifications", () => ({ notifications: { show: jest.fn(), update: jest.fn(), hide: jest.fn() } }));
-jest.mock("@checkin/receipt/components/MailCatchUp", () => ({ __esModule: true, default: () => <div /> }));
+jest.mock("@checkin/receipt/components/MailCatchUp", () => ({
+  __esModule: true,
+  default: ({ onDone }: { onDone: () => void }) => <button onClick={onDone}>Mail run finished</button>,
+}));
 jest.mock("@checkin/receipt/components/api", () => ({
   ...jest.requireActual("@checkin/receipt/components/api"),
   api: (...args: unknown[]) => mockApi(...args),
-  useLoad: (path: string) => ({ data: path === "/mail-messages" ? EMAILS : [], error: null, reload: mockReload }),
+  useLoad: (path: string) => {
+    mockReloads[path] ??= jest.fn(() => mockReload());
+    return { data: path === "/mail-messages" ? EMAILS : [], error: null, reload: mockReloads[path] };
+  },
 }));
 
 const EMAILS = [
@@ -29,6 +36,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   mockReload.mockClear();
+  Object.values(mockReloads).forEach((reload) => reload.mockClear());
   mockApi.mockReset();
   show.mockClear();
 });
@@ -58,11 +66,6 @@ describe("captured emails not yet processed on the mail page", () => {
 
   it.each<[string, () => Promise<unknown>, string]>([
     ["an expired outcome", async () => ({ status: "expired", message: "This email's stored copy expired 30 days after capture." }), "This email's stored copy expired 30 days after capture."],
-    [
-      "a waiting outcome",
-      async () => ({ status: "waiting" }),
-      "Processed again, but a file in it waits for a later run: a sender's daily upload limit or the held-mail limit put it off",
-    ],
     ["a 404", async () => { throw new HttpError("No such captured email.", 404); }, "No such captured email."],
     ["a 409", async () => { throw new HttpError("The receipt mailbox is not set up.", 409); }, "The receipt mailbox is not set up."],
     [
@@ -75,5 +78,27 @@ describe("captured emails not yet processed on the mail page", () => {
     await processAgain();
     expect(show).toHaveBeenCalledWith(expect.objectContaining({ title: "Couldn't process this email again", message: text, color: "red", autoClose: false }));
     expect(mockReload).toHaveBeenCalled();
+  });
+
+  it("shows a waiting outcome as a yellow notice, not a refusal", async () => {
+    mockApi.mockResolvedValue({ status: "waiting" });
+    await processAgain();
+    expect(show).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Processed; a file waits for a later run",
+        message: "Processed again, but a file in it waits for a later run: a sender's daily upload limit or the held-mail limit put it off",
+        color: "yellow",
+        autoClose: false,
+      }),
+    );
+    expect(show).not.toHaveBeenCalledWith(expect.objectContaining({ color: "red" }));
+    expect(mockReload).toHaveBeenCalled();
+  });
+
+  it("reloads the captured emails and the queue when a mail run finishes", () => {
+    page();
+    fireEvent.click(screen.getByRole("button", { name: "Mail run finished" }));
+    expect(mockReloads["/mail-messages"]).toHaveBeenCalled();
+    expect(mockReloads["/mail-items"]).toHaveBeenCalled();
   });
 });

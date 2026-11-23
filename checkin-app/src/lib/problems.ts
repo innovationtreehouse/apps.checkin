@@ -10,6 +10,9 @@ import { currentPostingWarnings } from "@/lib/finance/postingRuns";
 import { checkEmailStuckItems, retryCheckEmail } from "@/lib/membership/positionCheck";
 import { APP_TIMEZONE, formatDateTime } from "@/lib/time";
 
+/** The name the Problems list gives the receipt library's items. */
+export const RECEIPT_LIBRARY = "receipt";
+
 /** One stuck item on the Problems list, named by the library that holds it. */
 export interface Problem extends StuckItem {
     library: string;
@@ -27,7 +30,7 @@ type Retry = (item: { id: string; step: string }, by: ProblemRetrier) => Promise
  */
 const SOURCES: { library: string; env?: string; read: () => Promise<StuckItem[]>; retry: Retry; notices?: () => Promise<Notice[]> }[] = [
     {
-        library: "receipt",
+        library: RECEIPT_LIBRARY,
         env: "RECEIPT_DATABASE_URL",
         read: async () => (await import("@checkin/receipt")).stuckItems(),
         retry: async (item, by) => (await import("@checkin/receipt")).retryStuckItem(item, by),
@@ -154,8 +157,11 @@ export async function dismissProblem({ library, step, id }: { library: string; s
     });
 }
 
-/** The items no person has dismissed at their current `failedAt`. */
-async function withoutDismissed(items: Problem[]): Promise<Problem[]> {
+/** What a dismissal is keyed by: the item's library, step and id, and the `failedAt` it was listed with. */
+export type DismissalKey = Pick<Problem, "library" | "step" | "id" | "failedAt">;
+
+/** The items no person has dismissed at their current `failedAt`, in order. */
+export async function withoutDismissed<T extends DismissalKey>(items: T[]): Promise<T[]> {
     if (items.length === 0) return items;
     const dismissed = await prisma.problemDismissal.findMany({
         where: { OR: items.map((i) => ({ library: i.library, step: i.step, itemId: i.id, failedAt: i.failedAt })) },

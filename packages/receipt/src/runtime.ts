@@ -10,6 +10,7 @@ import type {
   ReceiptAlerts,
   ReceiptPeople,
   ReceiptPersonNames,
+  ReceiptProblemDismissals,
   ReceiptReplies,
   ReceiptReimbursees,
   ReceiptPrincipal,
@@ -100,6 +101,11 @@ export const inertAlerts: ReceiptAlerts = {
   },
 };
 
+/** Knows no dismissals: every item stays listed. */
+export const inertProblemDismissals: ReceiptProblemDismissals = {
+  withoutDismissed: async (_step, items) => items,
+};
+
 export const inertOcr: OcrProvider = {
   extract: async () => ({ success: false, kind: "settings", error: "OCR is not configured" }),
 };
@@ -142,6 +148,7 @@ export function ports(): Required<Omit<ReceiptConfig, "auth" | "org" | "limits" 
     personNames: r.personNames ?? inertPersonNames,
     reimbursees: r.reimbursees ?? inertReimbursees,
     alerts: r.alerts ?? inertAlerts,
+    problemDismissals: r.problemDismissals ?? inertProblemDismissals,
   };
 }
 
