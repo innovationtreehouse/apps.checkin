@@ -12,6 +12,7 @@ import { authorizedReview, expiringApprovals, isAuthorizedApproval } from "@/lib
 import { config } from "@/lib/config";
 import { validateContact } from "@/lib/trusted-adult/contact";
 import { lockAndFindDeniedHousehold } from "@/lib/membership/householdStatus";
+import { householdLeadsWhere } from "@/lib/household/leads";
 import type { DbClient, TxClient } from "@/lib/db-client";
 
 /**
@@ -956,7 +957,7 @@ export async function runExpirySweep(now: Date) {
 /** Actor must be a lead of the given household, and the household not archived. */
 export async function assertHouseholdLead(householdId: number, actorId: number) {
     const lead = await prisma.person.findFirst({
-        where: { id: actorId, householdId, isHouseholdLead: true },
+        where: { id: actorId, ...householdLeadsWhere(householdId) },
         select: { id: true },
     });
     if (!lead) throw new TrustedAdultError("forbidden", "You must be a lead of this household.");

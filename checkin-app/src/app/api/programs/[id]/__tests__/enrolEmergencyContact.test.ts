@@ -47,6 +47,7 @@ jest.mock("@/lib/conflictOfInterest", () => ({
     sharesHousehold: jest.fn(),
 }));
 jest.mock("@/lib/household/leads", () => ({
+    ...jest.requireActual("@/lib/household/leads"),
     householdLeadship: jest.fn().mockResolvedValue({ householdId: 100, canManage: true }),
 }));
 jest.mock("@/lib/orgMembership", () => ({

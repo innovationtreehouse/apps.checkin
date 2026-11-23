@@ -36,6 +36,7 @@ describe('Trusted Adults service', () => {
     let householdId = 0;
     let leadId = 0;
     let outsiderId = 0;
+    let otherLeadId = 0; // a lead, but of a different household
     let boardId = 0;
     let boardLeadId = 0; // board member who is ALSO a lead of householdId — the self-conflict actor
 
@@ -68,6 +69,8 @@ describe('Trusted Adults service', () => {
 
         const outHh = await prisma.household.create({ data: { name: `Outsider HH ${TAG}` } });
         outsiderId = (await prisma.person.create({ data: { name: 'Outsider', householdId: outHh.id } })).id;
+        const otherLeadHh = await prisma.household.create({ data: { name: `Other Lead HH ${TAG}` } });
+        otherLeadId = (await prisma.person.create({ data: { name: 'Other Lead', householdId: otherLeadHh.id, isHouseholdLead: true } })).id;
         const boardHh = await prisma.household.create({ data: { name: `Board HH ${TAG}` } });
         boardId = (await prisma.person.create({ data: { name: 'Boardie', email: `board-${TAG}@ex.com`, isBoardMember: true, householdId: boardHh.id } })).id;
     });
@@ -214,6 +217,13 @@ describe('Trusted Adults service', () => {
         await expect(renewTrustedAdult(ta.id, outsiderId)).rejects.toMatchObject({ code: 'forbidden' });
         const review = await renewTrustedAdult(ta.id, leadId);
         expect(review.status).toBe('PENDING_BOARD_REVIEW');
+    });
+
+    it('a lead of another household may not renew', async () => {
+        const ta = await discloseOne();
+        await decideReview(ta.reviews[0].id, boardId, { decision: 'APPROVE', sharedNote: SHARED });
+        await intoRenewalWindow(ta.id);
+        await expect(renewTrustedAdult(ta.id, otherLeadId)).rejects.toMatchObject({ code: 'forbidden' });
     });
 
     it('resubmit-with-changes opens a MODIFIED review holding the proposed edits, WITHOUT disturbing a live approval', async () => {

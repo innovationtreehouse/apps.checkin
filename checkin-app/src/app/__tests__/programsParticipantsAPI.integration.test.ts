@@ -794,6 +794,34 @@ describe('Program Participants API Integration Tests', () => {
              expect((await res.json()).enrollment.personId).toBe(youthDepId);
         });
 
+        it("should block a household lead from enrolling another household's person", async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardId } }); // lead of boardHousehold only
+
+             const res = await POST(
+                 new Request(`http://localhost:4000/api/programs/${freeProgramId}/participants`, {
+                     method: 'POST',
+                     body: JSON.stringify({ participantId: commonId })
+                 }) as unknown as import("next/server").NextRequest,
+                 createParams(freeProgramId) as unknown as never,
+             );
+             expect(res.status).toBe(403);
+             expect((await res.json()).error).toMatch(/Forbidden/);
+        });
+
+        it('should block a non-lead from enrolling someone in their own household', async () => {
+             (getServerSession as jest.Mock).mockResolvedValue({ user: { id: boardNonLeadId } }); // no board flag on the session
+
+             const res = await POST(
+                 new Request(`http://localhost:4000/api/programs/${freeProgramId}/participants`, {
+                     method: 'POST',
+                     body: JSON.stringify({ participantId: dep2Id })
+                 }) as unknown as import("next/server").NextRequest,
+                 createParams(freeProgramId) as unknown as never,
+             );
+             expect(res.status).toBe(403);
+             expect((await res.json()).error).toMatch(/Forbidden/);
+        });
+
         it('should return 409 (not 500) when enrolling the same participant twice', async () => {
              (getServerSession as jest.Mock).mockResolvedValue({ user: { id: leadId } });
 
