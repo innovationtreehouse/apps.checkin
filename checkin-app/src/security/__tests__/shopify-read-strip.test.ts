@@ -34,6 +34,7 @@ const mockSession = getServerSession as jest.MockedFunction<typeof getServerSess
 const ENDPOINTS = [
     'GET /api/finance-ops/payments',
     'GET /api/finance-ops/s-read/sync',
+    'GET /api/finance-ops/s-read/sync/status',
     'POST /api/finance-ops/s-read/sync',
     'POST /api/finance-ops/payments/reconcile',
     'GET /api/finance-ops/s-read/diagnose',
@@ -42,6 +43,7 @@ const ENDPOINTS = [
 ];
 const MATCH_AUDIT = 'GET /api/finance-ops/s-read/match-audit';
 const RECONCILE = 'POST /api/finance-ops/payments/reconcile';
+const SYNC_STATUS = 'GET /api/finance-ops/s-read/sync/status';
 
 const SECRET = { ShopifyRawEvent: ['payload'], ShopifyBulkExport: ['jsonl'] };
 const PERSONAL = { ShopOrder: ['customerEmail', 'customerName'], ShopRefund: ['note'] };
@@ -202,6 +204,26 @@ describe('mirror registry — stripping', () => {
         const res = await handler(RECONCILE, impl)(new NextRequest('http://localhost/api/finance-ops/payments/reconcile', { method: 'POST' }));
         expect(res.status).toBe(200);
         expect(await res.json()).toEqual(run);
+    });
+
+    it('the sync status ships both runs to the board and drops unknown keys', async () => {
+        signIn(['isBoardMember']);
+        const scheduled = { id: 9, kind: 'INCREMENTAL', status: 'SUCCEEDED', finishedAt: '2026-11-23T09:05:00.000Z' };
+        const laterRepair = { id: 10, kind: 'ADMIN', status: 'SUCCEEDED', finishedAt: '2026-11-23T11:00:00.000Z', actor: 'sysadmin', reason: 'repair' };
+        const impl = async () => ({
+            SReadSyncStatus: { scheduled: { ...scheduled, rawPayload: 'x' }, laterRepair, latest: scheduled },
+            Unclassified: { id: 1 },
+        });
+        const res = await handler(SYNC_STATUS, impl)(new NextRequest('http://localhost/api/finance-ops/s-read/sync/status'));
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual({ scheduled, laterRepair });
+    });
+
+    it('the sync status keeps a missing run as null', async () => {
+        signIn(['isBoardMember']);
+        const impl = async () => ({ SReadSyncStatus: { scheduled: null, laterRepair: null } });
+        const res = await handler(SYNC_STATUS, impl)(new NextRequest('http://localhost/api/finance-ops/s-read/sync/status'));
+        expect(await res.json()).toEqual({ scheduled: null, laterRepair: null });
     });
 
     it('the match-audit report keeps its nested rows for the board', () => {
