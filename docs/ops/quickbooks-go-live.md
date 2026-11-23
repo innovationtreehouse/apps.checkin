@@ -333,8 +333,11 @@ settings stay as they are.
 with the kinds the app sorted it as, how often, when it was first and last seen, and
 the lane that last reported it. Finance, the Board and sysadmins can open it; it is
 the one System Status tab finance sees. Use it to check that a code sorted as the
-item's data isn't really a books-map setting. A row holds no request id or detail:
-those stay on the log line and the held item. Counts never reset. A create refused
+item's data isn't really a books-map setting. The page only reads: how a code is
+sorted lives in the QuickBooks package and changes only by a PR there, so a code
+finance finds sorted wrongly goes to an engineer. A row holds no request id or detail:
+those stay on the log line and the held item. Counts never reset, including when a
+code's sorting changes. A create refused
 for closed books (fault 6210) is never listed, because it ends as "Not booked" rather
 than as a failure. A count can fall short after a database outage, since a failed
 write is dropped; the log is the full record.
