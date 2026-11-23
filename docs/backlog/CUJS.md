@@ -106,7 +106,7 @@ _Extraction adds (2026-07-22):_
 ### A8. Tool certifier  [bucket Tools]  — validated V4
 1. ✅ Certifier status (`ToolStatus.level = MAY_CERTIFY_OTHERS`; cert reads public-by-design)
 2. ✅ Grant/change tool level — ladder ceiling enforced (a tool-certifier may NOT mint `MAY_CERTIFY_OTHERS`; only board/sysadmin can); audit row on every upsert
-3. ❌ Certifier ∈ member-family (`M15` HIGH-RISK) — **NOT ENFORCED**: no member-family predicate on actor **or** target `personId` (cert-of-non-member/archived possible); matches #164. Only gate is not-denied + holds-cert
+3. ✅ Certifier ∈ member-family (`M15`, built) — `POST /api/shop/certifications` refuses unless the **target** belongs to an active member family, and unless the **certifier** does too (`isActiveOrgMember`, `route.ts`; sysadmin/board are exempt from the certifier check, never from the target check). No test covers either refusal yet
 4. ✅ Cert display in shop
 5. 🟡 Oversight: no revoke/expiry review surface — downgrade is just a lower-level POST + audit; certs never expire (**deliberate** — Q72)
 6. ❌ Cert-upgrade request queue — member proposes upgrade, tool's certifiers tagged to review (`SA10`); member-facing cert visibility is `SA9` (A3-10)
