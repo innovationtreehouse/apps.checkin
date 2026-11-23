@@ -1278,13 +1278,17 @@ def _full_roster(text):
 # ---------------------------------------------------------------------------
 def scan_worker(backend, state, outbox, reads):
     """Handles queued reads in order, each judged by the time it was read, so
-    a slow live POST never makes a double read look like a second scan."""
+    a slow live POST never makes a double read look like a second scan. A
+    scan that fails asks the person to scan again; the worker keeps going."""
     while True:
         participant_id, read_at = reads.get()
         try:
             handle_scan(backend, state, outbox, participant_id, read_at=read_at)
         except Exception:
             log.exception(f"Scan of {participant_id} failed")
+            state.push_event({"html": BADGE_NOT_READ_HTML})
+        finally:
+            reads.task_done()
 
 
 def usb_scanner_listener(state, reads, device_path):
@@ -1497,16 +1501,17 @@ def _saved_banner_html(queued, intent=None):
 # Server ids are Postgres int4. A longer read is two badges run together (a
 # lost Enter) or a product barcode -- never a person, and must not be queued.
 MAX_PARTICIPANT_ID = 2147483647
+BADGE_NOT_READ_HTML = '<div class="banner banner-error">✗ Badge not read — please scan again</div>'
 
 def _is_valid_participant_id(participant_id):
     raw = str(participant_id)
     return raw.isascii() and raw.isdigit() and 0 < int(raw) <= MAX_PARTICIPANT_ID
 
 def handle_scan(backend, state, outbox, participant_id, read_at=None):
-    """read_at is the monotonic time the scanner read the badge; it defaults to now."""
+    """read_at is the monotonic time the scanner read the badge; None means now."""
     if not _is_valid_participant_id(participant_id):
         log.warning(f"Rejected malformed scan: {participant_id!r}")
-        state.push_event({"html": '<div class="banner banner-error">✗ Badge not read — please scan again</div>'})
+        state.push_event({"html": BADGE_NOT_READ_HTML})
         return
     if state.is_repeat_read(participant_id, read_at) or state.in_close_wait(participant_id):
         # One scan, filtered before it is queued or sent, so online and offline

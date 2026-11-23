@@ -6,6 +6,8 @@ import queue
 import re
 import shutil
 import subprocess
+import threading
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, Mock, patch
@@ -14,6 +16,7 @@ from nacl.signing import SigningKey
 
 from client import (
     AttendanceState,
+    BADGE_NOT_READ_HTML,
     RELEASE_CHANNEL_MARKER,
     RELEASE_TAG_GLOB,
     BackendClient,
@@ -1210,6 +1213,9 @@ class TestReadsAreStampedWhenRead(unittest.TestCase):
                 raise _StopLoop()
             return self.items.pop(0)
 
+        def task_done(self):
+            pass
+
     def test_stdin_reads_are_queued_with_their_read_time(self):
         reads = queue.Queue()
         lines = iter(["7", "  ", "8"])
@@ -1230,11 +1236,42 @@ class TestReadsAreStampedWhenRead(unittest.TestCase):
                 scan_worker("backend", "state", "outbox", self._Reads([("7", 10.0), ("7", 10.3)]))
         self.assertEqual([c.kwargs["read_at"] for c in handle.call_args_list], [10.0, 10.3])
 
-    def test_a_failed_scan_does_not_stop_the_worker(self):
+    def test_a_failed_scan_asks_for_a_rescan_and_does_not_stop_the_worker(self):
+        state = Mock()
         with patch("client.handle_scan", side_effect=[RuntimeError("boom"), None]) as handle:
             with self.assertRaises(_StopLoop):
-                scan_worker("backend", "state", "outbox", self._Reads([("7", 10.0), ("8", 12.0)]))
+                scan_worker("backend", state, "outbox", self._Reads([("7", 10.0), ("8", 12.0)]))
         self.assertEqual(handle.call_count, 2)
+        state.push_event.assert_called_once_with({"html": BADGE_NOT_READ_HTML})
+
+    def test_double_read_queued_while_the_worker_is_busy_is_one_scan(self):
+        now = [1000.0]
+        started, release = threading.Event(), threading.Event()
+        backend = Mock(attendance_path=None)
+
+        def post_scan(*args, **kwargs):
+            started.set()
+            self.assertTrue(release.wait(5), "the test releases the slow POST")
+            now[0] += 5.0
+            return {"type": "checkin", "participant": {"id": 7}}, 200, None
+        backend.post_scan.side_effect = post_scan
+        state = AttendanceState()
+        state.scan_protocol = SCAN_PROTOCOL_VERSION
+        state.push_event = lambda event: None
+        reads = queue.Queue()
+        with patch("client.time.monotonic", lambda: now[0]):
+            threading.Thread(target=scan_worker, args=(backend, state, Outbox(":memory:"), reads),
+                             daemon=True).start()
+            reads.put(("7", 1000.0))
+            self.assertTrue(started.wait(5), "the worker is in the slow POST")
+            reads.put(("7", 1000.3))                       # the double read lands while it waits
+            release.set()
+            for _ in range(500):                           # the fake clock is patched; count polls
+                if not reads.unfinished_tasks:
+                    break
+                time.sleep(0.01)
+        self.assertEqual(reads.unfinished_tasks, 0, "the worker handled both reads")
+        self.assertEqual(backend.post_scan.call_count, 1)
 
 
 class TestCloseWait(unittest.TestCase):
