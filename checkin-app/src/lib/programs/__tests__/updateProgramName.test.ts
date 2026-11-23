@@ -43,7 +43,7 @@ jest.mock('@/lib/prisma', () => ({
         $transaction: (fn: (t: unknown) => unknown) => fn(tx),
         auditLog: { create: jest.fn().mockResolvedValue({}) },
         programParticipant: { findMany: jest.fn().mockResolvedValue([]) },
-        person: { findUnique: jest.fn().mockResolvedValue({ dateOfBirth: null, isDeclaredAdult: true, householdId: 3 }) },
+        person: { findUnique: jest.fn().mockResolvedValue({ dateOfBirth: null, isDeclaredAdult: true, householdId: 3, email: 'lead@example.com' }) },
     },
 }));
 

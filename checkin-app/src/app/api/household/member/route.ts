@@ -27,6 +27,7 @@ import { personActor } from "@/lib/auditActor";
 import { notifyBoardOfYouthLeads } from "@/lib/membership/boardAlerts";
 import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
 import { settleAfterEvent } from "@/lib/membership/settleHouseholdBg";
+import { leaderEmailClearRefusal } from "@/lib/programs/leaderEligibility";
 
 class BecameTrustedError extends Error {}
 
@@ -126,6 +127,9 @@ export const PATCH = withAuth(
                 const { replyTo } = await getEmailSenderIdentity();
                 return apiError(lockedEmailHelp(replyTo?.[0]), 400);
             }
+
+            const leaderKeepsEmail = holdsGrant ? null : await leaderEmailClearRefusal(prisma, participantId, email);
+            if (leaderKeepsEmail) return apiError(leaderKeepsEmail, 409);
 
             // The form resends an unchanged email on every save; only a change is refused.
             const emailChanged = email && canonicalizeEmail(email) !== canonicalizeEmail(targetHouseholdMember.email ?? "");

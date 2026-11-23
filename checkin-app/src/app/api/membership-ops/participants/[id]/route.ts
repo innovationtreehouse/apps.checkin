@@ -14,6 +14,7 @@ import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
 import { personActor } from "@/lib/auditActor";
 import { isYouth } from "@/lib/time";
 import { ArchivedHouseholdError, lockLiveHouseholds } from "@/lib/household/archiveGuard";
+import { leaderEmailClearRefusal } from "@/lib/programs/leaderEligibility";
 
 export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
     { roles: ['isSysadmin', 'isBoardMember'] },
@@ -81,6 +82,8 @@ export const PUT = withAuth<{ params: Promise<{ id: string }> }>(
         if (isBadEmailChange(body.email, prior.email)) {
             return apiError("Invalid email format", 400);
         }
+        const leaderKeepsEmail = await leaderEmailClearRefusal(prisma, id, body.email);
+        if (leaderKeepsEmail) return apiError(leaderKeepsEmail, 409);
 
         // A date of birth on file supersedes the over-25 declaration (normalizeAdultDob):
         // a person has one or the other, never both. Coerced rather than refused so a row

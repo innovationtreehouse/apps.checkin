@@ -1,7 +1,7 @@
 /**
  * @jest-environment node
  */
-import { leaderIneligibilities, leaderIneligibilityReason } from '@/lib/programs/leaderEligibility';
+import { LEADER_EMAIL_REQUIRED, LEADER_NEEDS_EMAIL, leaderEmailClearRefusal, leaderEmailRefusal, leaderIneligibilities, leaderIneligibilityReason, leadsUnfinishedProgram } from '@/lib/programs/leaderEligibility';
 import { checkValidFor, loadCheckReviews } from '@/lib/membership/checkStanding';
 import type { DbClient } from '@/lib/db-client';
 
@@ -54,5 +54,47 @@ describe('leaderIneligibilities', () => {
     it('reads nothing for nobody', async () => {
         expect((await leaderIneligibilities(db, [], 2099)).size).toBe(0);
         expect(checkValidFor).not.toHaveBeenCalled();
+    });
+});
+
+describe('leaderEmailRefusal', () => {
+    it('refuses a person with no email, or a blank one', () => {
+        expect(leaderEmailRefusal({ email: null })).toBe(LEADER_NEEDS_EMAIL);
+        expect(leaderEmailRefusal({ email: '  ' })).toBe(LEADER_NEEDS_EMAIL);
+    });
+
+    it('admits a person with an email', () => {
+        expect(leaderEmailRefusal({ email: 'lead@example.com' })).toBeNull();
+    });
+});
+
+describe('leaderEmailClearRefusal', () => {
+    const count = jest.fn();
+    const programs = { program: { count } } as unknown as DbClient;
+
+    beforeEach(() => count.mockReset());
+
+    it('refuses blanking the email of a leader of an unfinished program', async () => {
+        count.mockResolvedValue(1);
+        for (const email of [null, '', '   ']) {
+            expect(await leaderEmailClearRefusal(programs, 7, email)).toBe(LEADER_EMAIL_REQUIRED);
+        }
+        expect(count).toHaveBeenCalledWith({ where: { leadMentorId: { in: [7] }, phase: { not: 'FINISHED' } } });
+    });
+
+    it('allows blanking it once no unfinished program has them as leader', async () => {
+        count.mockResolvedValue(0);
+        expect(await leaderEmailClearRefusal(programs, 7, '')).toBeNull();
+    });
+
+    it('never looks when the save keeps or changes the address', async () => {
+        expect(await leaderEmailClearRefusal(programs, 7, undefined)).toBeNull();
+        expect(await leaderEmailClearRefusal(programs, 7, 'new@example.com')).toBeNull();
+        expect(count).not.toHaveBeenCalled();
+    });
+
+    it('counts nobody as leading for an empty list', async () => {
+        expect(await leadsUnfinishedProgram(programs, [])).toBe(false);
+        expect(count).not.toHaveBeenCalled();
     });
 });

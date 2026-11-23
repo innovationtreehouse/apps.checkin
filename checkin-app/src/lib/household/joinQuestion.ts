@@ -8,8 +8,9 @@ import { personActor } from "@/lib/auditActor";
 import { removeAliasesForSignInEmail } from "@/lib/person/mailAliases";
 import { isYouth } from "@/lib/time";
 import { lockLiveHouseholds } from "@/lib/household/archiveGuard";
+import { leadsUnfinishedProgram } from "@/lib/programs/leaderEligibility";
 
-export type JoinRefusal = "not_pending" | "youth" | "denied";
+export type JoinRefusal = "not_pending" | "youth" | "denied" | "leads_program";
 
 export class JoinQuestionError extends Error {
     constructor(public readonly refusal: JoinRefusal) {
@@ -97,6 +98,8 @@ export async function answerHouseholdQuestion(personId: number, join: boolean): 
             return;
         }
 
+        // A no takes the address off this record, and a sitting program leader keeps one.
+        if (await leadsUnfinishedProgram(tx, [personId])) throw new JoinQuestionError("leads_program");
         const account = await tx.account.findFirst({ where: { userId: personId }, select: { id_token: true } });
         // Cleared first: Person.email is unique and the new person takes it.
         await close({ email: null, emailVerified: null, googleId: null, image: null });
