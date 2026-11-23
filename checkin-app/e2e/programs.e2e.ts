@@ -174,7 +174,7 @@ test.describe("programs in the browser", () => {
 
     await asViewer(browser, program.leader, async (page) => {
       await roster(page, program.id);
-      await expect(page.getByText(/Program Leads cannot manually enroll participants/)).toBeVisible();
+      await expect(page.getByText(/Only the Board or Finance enroll participants here/)).toBeVisible();
       await expect(page.getByRole("button", { name: "Enroll", exact: true })).toHaveCount(0);
     });
 
@@ -255,7 +255,8 @@ test.describe("programs in the browser", () => {
       await page.getByLabel("Assign Participant").fill(youth.name);
       await page.getByText(youth.name, { exact: true }).click();
       await page.getByRole("button", { name: "Enroll", exact: true }).click();
-      await dialog(page).getByRole("button", { name: "Add Participant" }).click();
+      await dialog(page).getByRole("radio", { name: "No payment (comp)" }).check();
+      await dialog(page).getByRole("button", { name: "Enroll", exact: true }).click();
       await expect(page.getByRole("heading", { name: "Active Participants (3)" })).toBeVisible();
       await expect(place(page, youth.name)).toBeVisible();
     });
