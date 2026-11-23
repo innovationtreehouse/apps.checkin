@@ -9,6 +9,7 @@ const notFound = () => new ServiceError(404, "Household not found");
 const refuse = (message: string) => new ServiceError(409, message);
 
 const UNFINISHED = { phase: { not: "FINISHED" as const } };
+const LIVE_BUCKET = { archivedAt: null };
 
 /** Why the household cannot be archived, or null. Runs under the application, membership and household locks. */
 async function archiveRefusal(tx: TxClient, householdId: number, membership: { status: string } | null): Promise<string | null> {
@@ -28,6 +29,12 @@ async function archiveRefusal(tx: TxClient, householdId: number, membership: { s
         (await tx.programInstance.findFirst({ where: { leadMentor: members, ...UNFINISHED }, select: { id: true } }));
     if (programRole) {
         return "Someone in this household volunteers on or leads a program that has not finished. Remove them from the program before archiving the household.";
+    }
+    if (await tx.budgetOwner.findFirst({ where: { owner: members, ...LIVE_BUCKET }, select: { id: true } })) {
+        return "Someone in this household owns a bucket. Name a new owner before archiving the household.";
+    }
+    if (await tx.budgetOwnerTreasurer.findFirst({ where: { person: members, budgetOwner: LIVE_BUCKET }, select: { personId: true } })) {
+        return "Someone in this household is a treasurer of a bucket. Remove them as treasurer before archiving the household.";
     }
     if (await tx.trustedAdultReview.findFirst({ where: { householdId, status: { in: ["PENDING_BOARD_REVIEW", "PENDING_SUBJECT_ACTION"] } }, select: { id: true } })) {
         return "Can't archive: a trusted-adult review is pending for this household. Decide or withdraw it first.";
