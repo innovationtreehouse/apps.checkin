@@ -163,7 +163,9 @@ export default function PaymentProblemsPage() {
     try {
       // The run in the mirror before the click. Only a run that started after it is
       // this click's; both timestamps come from s-read, so clock skew between the
-      // browser, the app and the reader cannot misplace it.
+      // browser, the app and the reader cannot misplace it. A run still RUNNING at the
+      // click holds s-read's lock and the new request is skipped, so that run is the
+      // one to follow.
       const before = await fetchSyncRun();
       await api('/api/finance-ops/s-read/sync', { method: 'POST' });
       showSuccess('Shopify sync started…');
@@ -178,9 +180,12 @@ export default function PaymentProblemsPage() {
         return;
       }
       const baseline = before.run;
-      const startedAfterClick = (run: SyncRun) =>
-        !baseline || Date.parse(run.startedAt) > Date.parse(baseline.startedAt);
-      let sawNewRun = false;
+      const alreadyRunning = baseline !== null && !isTerminal(baseline.status);
+      const isBaseline = (run: SyncRun) =>
+        baseline !== null && Date.parse(run.startedAt) === Date.parse(baseline.startedAt);
+      const isFollowed = (run: SyncRun) =>
+        !baseline || Date.parse(run.startedAt) > Date.parse(baseline.startedAt) || (alreadyRunning && isBaseline(run));
+      let sawFollowedRun = alreadyRunning;
 
       for (let i = 0; i < POLL_MAX_ATTEMPTS; i++) {
         await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
@@ -190,22 +195,23 @@ export default function PaymentProblemsPage() {
           return;
         }
 
-        // No run newer than the pre-click one yet: s-read stamps a row when it starts,
-        // so keep waiting rather than reporting an earlier run's result.
-        if (!res.run || !startedAfterClick(res.run)) continue;
-        sawNewRun = true;
+        // No followed run yet: s-read stamps a row when it starts, so keep waiting
+        // rather than reporting an earlier run's result.
+        if (!res.run || !isFollowed(res.run)) continue;
+        sawFollowedRun = true;
         if (!isTerminal(res.run.status)) continue;
 
         const { status } = res.run;
+        const subject = isBaseline(res.run) ? 'A sync was already running; it' : 'Shopify sync';
         await fetchRows();
         if (status === 'COMPLETED') {
-          showSuccess('Shopify sync finished. Live payment amounts are up to date.');
+          showSuccess(`${subject} finished. Live payment amounts are up to date.`);
         } else {
-          showError(`Shopify sync ${status.toLowerCase()}. Live payment amounts may still be stale.`);
+          showError(`${subject} ${status.toLowerCase()}. Live payment amounts may still be stale.`);
         }
         return;
       }
-      if (!sawNewRun) {
+      if (!sawFollowedRun) {
         showError("The sync was requested but hasn't started yet. Check back in a few minutes.");
         return;
       }

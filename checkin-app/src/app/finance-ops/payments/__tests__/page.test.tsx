@@ -264,6 +264,51 @@ describe("finance-ops/payments — sync status", () => {
         }
     });
 
+    it("follows a run already running at click time and reports how it ended", async () => {
+        jest.useFakeTimers();
+        try {
+            // s-read's lock skips the new request, so the in-flight run is the one to watch.
+            const inFlight = run("RUNNING", OLD_START);
+            mockSync([{ status: 200, body: inFlight }, { status: 200, body: run("COMPLETED", OLD_START) }], { status: 200, body: inFlight });
+            renderWithProviders(<PaymentProblemsPage />);
+            await syncAndPoll(2);
+
+            expect(lastMessage()).toMatch(/^A sync was already running; it finished/);
+            expect(shown.mock.calls.map(([c]) => c.message)).not.toContainEqual(expect.stringMatching(/hasn't started yet/i));
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("reports an already-running run that fails as failed", async () => {
+        jest.useFakeTimers();
+        try {
+            const inFlight = run("RUNNING", OLD_START);
+            mockSync([{ status: 200, body: run("FAILED", OLD_START) }], { status: 200, body: inFlight });
+            renderWithProviders(<PaymentProblemsPage />);
+            await syncAndPoll(1);
+
+            expect(lastMessage()).toMatch(/^A sync was already running; it failed/);
+            expect(lastShown()).toMatchObject({ color: "red", autoClose: false });
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("says a still-running followed run is still running, not that it hasn't started", async () => {
+        jest.useFakeTimers();
+        try {
+            const inFlight = run("RUNNING", OLD_START);
+            mockSync([{ status: 200, body: inFlight }], { status: 200, body: inFlight });
+            renderWithProviders(<PaymentProblemsPage />);
+            await syncAndPoll(21);
+
+            expect(lastMessage()).toMatch(/still running/i);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
     it("only ever speaks the kit's red/green notification vocabulary", async () => {
         // Payment problems speak only showError (red) or showSuccess (green).
         jest.useFakeTimers();
