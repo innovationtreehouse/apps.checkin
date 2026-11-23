@@ -25,6 +25,7 @@ jest.mock('@/lib/prisma', () => {
         boardSettings: { findUnique: jest.fn() },
         auditLog: { create: jest.fn(), findFirst: jest.fn().mockResolvedValue(null) },
         paymentException: { findFirst: jest.fn().mockResolvedValue(null) },
+        clearanceStepFailure: { upsert: jest.fn().mockResolvedValue({}) },
         person: { findMany: jest.fn().mockResolvedValue([]), findUnique: jest.fn() },
         $queryRaw: jest.fn(),
         $executeRaw: jest.fn().mockResolvedValue(0),
@@ -193,7 +194,7 @@ describe('work after the payment commits', () => {
         openAgreement.mockResolvedValue(undefined);
     });
 
-    it('a failed trigger leaves the activation reported, logs it, and still runs the next trigger', async () => {
+    it('a failed trigger leaves the activation reported, keeps a stuck item, and still runs the next trigger', async () => {
         prisma.orgMembershipProcess.findUnique.mockResolvedValue({
             id: PROCESS_ID, kind: 'INITIAL', status: 'PENDING_PAYMENT', paidAt: null, contractSignedAt: new Date(), bgClearedAt: new Date(), orgMembershipId: MEMBERSHIP_ID,
         });
@@ -205,6 +206,10 @@ describe('work after the payment commits', () => {
         expect(outcome).toBe('active');
         expect(openAgreement).toHaveBeenCalledWith(3, expect.any(Date));
         expect(logBackendError).toHaveBeenCalledWith(failure, expect.stringContaining('background-check trigger'), { processId: PROCESS_ID, householdId: 3 });
+        expect(prisma.clearanceStepFailure.upsert).toHaveBeenCalledTimes(1);
+        expect(prisma.clearanceStepFailure.upsert).toHaveBeenCalledWith(expect.objectContaining({
+            create: expect.objectContaining({ processId: PROCESS_ID, step: 'PERSON_BG_TRIGGER', error: 'trigger failed' }),
+        }));
     });
 
     it('a board certify succeeds when a trigger fails', async () => {
@@ -214,6 +219,9 @@ describe('work after the payment commits', () => {
         openAgreement.mockRejectedValue(new Error('trigger failed'));
 
         await expect(activate(PROCESS_ID, { via: 'manual', actorId: 1 })).resolves.toBeDefined();
+        expect(prisma.clearanceStepFailure.upsert).toHaveBeenCalledWith(expect.objectContaining({
+            create: expect.objectContaining({ processId: PROCESS_ID, step: 'PERSON_AGREEMENT_TRIGGER' }),
+        }));
     });
 
     it('a failed raise on a DENIED household still throws, so the webhook redelivers', async () => {
