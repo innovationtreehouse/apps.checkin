@@ -14,6 +14,7 @@ import { adultPhoneOnly, emailWithheldParticipants, rosterHousehold, rosterPerso
 import { householdPaymentViewer } from "@/lib/programs/paymentVisibility";
 import { authorizeProgramEdit, updateProgram, type ProgramRefusal } from "@/lib/programs/update";
 import { enrollmentClosedBy } from "@/lib/programs/saleState";
+import { orgToday } from "@/lib/appSettings";
 import { calculateAge } from "@/lib/time";
 
 // ORDER MATTERS: this export sits ABOVE getProgram so the routeAuthDrift
@@ -36,7 +37,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     if (res.status !== 200) return res;
 
     const body = withRosterAges((await res.json()) as ProgramBag);
-    const closure = { enrollmentClosedBy: closedBy(body) };
+    const closure = { enrollmentClosedBy: closedBy(body, await orgToday()) };
 
     const auth = await authenticateRequest(req);
     if (auth.type !== 'session') return NextResponse.json({ ...body, ...closure });
@@ -74,14 +75,14 @@ function withRosterAges({ Program, ProgramRosterAge }: ProgramBag): ProgramBag['
 }
 
 // saleEndedAt is internal-tier and absent here; the off-sale date alone decides, as the claim route does until the sweep runs.
-function closedBy(body: ProgramBody) {
+function closedBy(body: ProgramBody, today: Date) {
     return enrollmentClosedBy({
         enrollmentStatus: body.enrollmentStatus,
         startAt: new Date(body.startAt),
         offSaleAt: body.offSaleAt ? new Date(body.offSaleAt) : null,
         saleEndedAt: null,
         maxParticipants: body.maxParticipants,
-    }, body._count?.participants);
+    }, body._count?.participants, today);
 }
 
 const ENDPOINT = 'GET /api/programs/[id]';

@@ -9,6 +9,7 @@ import { takeBackRestockedSeats } from "@/lib/finance/reconcile/reversals";
 import { peopleSpentBy, surplusSeats, type Surplus } from "@/lib/finance/reconcile/program";
 import { programVariantIds } from "@/lib/programs/variants";
 import { formatCents } from "@checkin/money";
+import { orgToday } from "@/lib/appSettings";
 
 /**
  * Activate paid program enrollments — the single choke point the Shopify
@@ -128,6 +129,7 @@ export async function activateProgramEnrollment(input: ActivateEnrollmentInput):
         where: { id: programId },
         select: { shopifyVariantId: true, claimantShopifyVariantId: true, maxParticipants: true, startAt: true, offSaleAt: true, saleEndedAt: true, nonOrgMemberPriceCents: true },
     });
+    const today = await orgToday();
 
     const claimantVariantId = program?.claimantShopifyVariantId;
     const claimantPaid = claimantVariantId
@@ -177,7 +179,7 @@ export async function activateProgramEnrollment(input: ActivateEnrollmentInput):
         // Uncapped programs don't track public stock, so there is nothing to take a claimant seat from.
         const claimantSeatCount = program?.maxParticipants != null ? Math.min(claimantPaid, activatedCount) : 0;
         // Once the sale has ended only a reduction goes through, so no seat goes back on sale.
-        const delta = program ? saleStockDelta(program, publicStockDelta(releasedHoldCount, claimantSeatCount)) : 0;
+        const delta = program ? saleStockDelta(program, publicStockDelta(releasedHoldCount, claimantSeatCount), today) : 0;
         return { result: { activatedCount, activatedPersonIds, releasedHoldCount, claimantSeatCount, delta, reversed: false, refusedPersonIds, surplus }, delta };
     }, { deferred: true });
 

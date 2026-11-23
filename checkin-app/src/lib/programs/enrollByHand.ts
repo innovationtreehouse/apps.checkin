@@ -71,6 +71,7 @@ export async function enrollByHandIn(
     order: MatchedOrder | null,
     actorId: number,
     note: string,
+    today: Date,
 ): Promise<{ row: ProgramParticipant; delta: number }> {
     const matched = basis === "MATCHED_ORDER";
     if (matched !== !!order) throw new ServiceError(400, "A store order is matched only with its id.");
@@ -117,5 +118,5 @@ export async function enrollByHandIn(
         secondaryAffectedEntity: program.id,
         newData: { ...row, ...(note && { note }) },
     });
-    return { row, delta: saleStockDelta(program, raw) };
+    return { row, delta: saleStockDelta(program, raw, today) };
 }

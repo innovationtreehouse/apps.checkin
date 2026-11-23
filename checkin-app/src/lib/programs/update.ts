@@ -9,7 +9,8 @@ import { recordSelfGrantRefusal } from "@/lib/membership/selfGrantGuard";
 import { hasHouseholdConflict } from "@/lib/conflictOfInterest";
 import { emailBoardMembers } from "@/lib/emailRecipients";
 import { config } from "@/lib/config";
-import { orgCalendarDay, parseDateOnly } from "@/lib/time";
+import { parseDateOnly } from "@/lib/time";
+import { orgToday } from "@/lib/appSettings";
 import { leaderEmailRefusal, programLeaderIneligibility } from "@/lib/programs/leaderEligibility";
 import { classify, isSaleEnded, saleStockDelta } from "@/lib/programs/saleState";
 import { countStockTakenSeats } from "@/lib/program/capacity";
@@ -147,6 +148,7 @@ export async function authorizeProgramEdit(programId: number, actor: ProgramEdit
 export async function updateProgram(currentProgram: Program, patch: ProgramPatch, actor: ProgramEditor): Promise<ProgramUpdateResult> {
     const programId = currentProgram.id;
     const isSysAdminOrBoard = actor.isSysadmin || actor.isBoardMember;
+    const today = await orgToday();
 
     const { name, startAt, endAt, orgMemberOnly, publiclyVisible, announceOnOpen, phase, enrollmentStatus, minAge, maxAge, maxParticipants, leadMentorNotificationSettings, memberPrice, nonMemberPrice, shopifyProductId, shopifyVariantId } = patch;
     let leadMentorId: number | undefined;
@@ -276,7 +278,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         return refuse("invalid", "Start date must be on or before the end date");
     }
     // A program's leader marks it finished on or after its end date; before that, ending it is the Board's alone.
-    if (phase === 'FINISHED' && currentProgram.phase !== 'FINISHED' && !actor.isBoardMember && currentProgram.endAt > orgCalendarDay()) {
+    if (phase === 'FINISHED' && currentProgram.phase !== 'FINISHED' && !actor.isBoardMember && currentProgram.endAt > today) {
         return refuse("forbidden", `Only the Board can end this program before its end date (${currentProgram.endAt.toISOString().slice(0, 10)}).`);
     }
 
@@ -290,7 +292,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
     if (offSaleAt != null && (typeof offSaleAt !== "string" || isNaN(Date.parse(offSaleAt)))) {
         return refuse("invalid", "Invalid off-sale date");
     }
-    const saleEndedNow = isSaleEnded(currentProgram);
+    const saleEndedNow = isSaleEnded(currentProgram, today);
     const followsStart = currentProgram.offSaleAt == null
         || currentProgram.offSaleAt.getTime() === currentProgram.startAt.getTime();
     const newOffSaleAt = offSaleAt !== undefined
@@ -301,7 +303,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
     // Only the board reopens an ended sale, by moving the off-sale date itself
     // later: that re-arms the sweep. Enrollment stays closed unless this save opens it.
     const rearmSale = actor.isBoardMember && saleEndedNow && offSaleAt !== undefined
-        && !isSaleEnded({ startAt: newStartAt ?? currentProgram.startAt, offSaleAt: newOffSaleAt ?? null, saleEndedAt: null });
+        && !isSaleEnded({ startAt: newStartAt ?? currentProgram.startAt, offSaleAt: newOffSaleAt ?? null, saleEndedAt: null }, today);
     if (enrollmentStatus === 'OPEN' && currentProgram.enrollmentStatus !== 'OPEN' && saleEndedNow && !rearmSale) {
         return refuse("conflict", "Sales for this program have ended. To reopen enrollment, move the off-sale date later.");
     }
@@ -316,7 +318,7 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
         startAt: effStartAt,
         offSaleAt: newOffSaleAt !== undefined ? newOffSaleAt : currentProgram.offSaleAt,
         saleEndedAt: rearmSale ? null : currentProgram.saleEndedAt,
-    });
+    }, today);
     if (phase === 'FINISHED' && currentProgram.phase !== 'FINISHED' && saleAfterSave === 'ON_SALE') {
         return refuse("conflict", "This program is still on sale. Close enrollment or end the sale before ending the program.");
     }
@@ -481,11 +483,11 @@ export async function updateProgram(currentProgram: Program, patch: ProgramPatch
     } else if (oldMax !== newMax && hasShopifyVariant) {
         if (oldMax !== null && newMax !== null) {
             // After the sale ends a cut still goes through; a raise does not.
-            const delta = saleStockDelta(updatedProgram, newMax - oldMax);
+            const delta = saleStockDelta(updatedProgram, newMax - oldMax, today);
             if (delta !== 0 && !(await adjustProgramInventory(updatedProgram, delta, "capacity-edit", { inRequest: true }))) {
                 warning = "Program updated, but the Shopify inventory adjustment failed. Capacity may be out of sync — check System Status > Link Status.";
             }
-        } else if (!isSaleEnded(updatedProgram)) {
+        } else if (!isSaleEnded(updatedProgram, today)) {
             // Null transition (capped <-> uncapped): a relative adjust can't express
             // "start/stop tracking inventory" — that needs an inventory_management
             // flip on the variant, which is not attempted here.

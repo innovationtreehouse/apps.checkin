@@ -11,6 +11,7 @@ import { isSaleEnded } from "@/lib/programs/saleState";
 import { logBackendError } from "@/lib/logger";
 import { apiError } from "@/lib/api-response";
 import { isComponentHttpError, parseId } from "@checkin/component-kit";
+import { orgToday } from "@/lib/appSettings";
 
 /** A sync claim this old belongs to a run that died; the next run may take it over. Well past the creation calls' 20s-per-request deadlines. */
 const SYNC_CLAIM_STALE_MS = 10 * 60_000;
@@ -65,7 +66,7 @@ export const POST = withAuth({ roles: ['isSysadmin', 'isBoardMember'] }, async (
         }
 
         // An ended sale or program never goes back on sale: its public item is created hidden, with no stock.
-        const ended = program.phase === "FINISHED" || isSaleEnded(program);
+        const ended = program.phase === "FINISHED" || isSaleEnded(program, await orgToday());
         const publicData = needsPublic && basePriceCents
             ? await createShopifySingleVariantProgram(program.name, basePriceCents, program.maxParticipants, programProductHandle(program, "public"), !ended && !(await isProgramStoreClosed()))
             : null;

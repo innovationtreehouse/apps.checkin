@@ -1,5 +1,5 @@
 import prisma from "@/lib/prisma";
-import { APP_TIMEZONE } from "@/lib/time";
+import { APP_TIMEZONE, calendarDayIn } from "@/lib/time";
 
 /** Default locale, mirrors the AppSettings.locale schema default. */
 export const APP_LOCALE = "en-US";
@@ -41,4 +41,9 @@ export async function resolveDisplayTimezone(): Promise<string> {
     } catch {
         return cachedTimezone?.value ?? APP_TIMEZONE;
     }
+}
+
+/** Today's calendar day (UTC midnight, the `@db.Date` shape) in the organisation's configured zone. */
+export async function orgToday(now: Date = new Date()): Promise<Date> {
+    return calendarDayIn(now, await resolveDisplayTimezone());
 }

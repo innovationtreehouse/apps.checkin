@@ -2,7 +2,7 @@ import prisma from "@/lib/prisma";
 import { config } from "@/lib/config";
 import { logger } from "@/lib/logger";
 import { emailBoardMembers } from "@/lib/emailRecipients";
-import { orgCalendarDay } from "@/lib/time";
+import { orgToday } from "@/lib/appSettings";
 import { reportShopifyFailure } from "@/lib/shopify/client";
 import { setProgramProductOffSale } from "@/lib/shopify/stock";
 import { isProgramStoreClosed } from "@/lib/programs/storeClosed";
@@ -21,9 +21,9 @@ const offSaleOnOrBefore = (at: Date) => ({
  * A program without a hidden reserved-seat product, which is how families who
  * claimed in time pay, keeps its public product; the admins are alerted once.
  */
-async function endDueSales(now: Date): Promise<number> {
+async function endDueSales(now: Date, today: Date): Promise<number> {
     const due = await prisma.program.findMany({
-        where: { saleEndedAt: null, phase: { not: "FINISHED" }, ...offSaleOnOrBefore(orgCalendarDay(now)) },
+        where: { saleEndedAt: null, phase: { not: "FINISHED" }, ...offSaleOnOrBefore(today) },
         select: { id: true, name: true, shopifyProductId: true, claimantShopifyVariantId: true },
     });
     let ended = 0;
@@ -149,7 +149,7 @@ async function notifyUnpaidClaims(now: Date): Promise<number> {
 /** Daily program-sale sweep. Idempotent; never throws. */
 export async function runSaleSweep(now: Date = new Date()): Promise<{ salesEnded: number; productsHidden: number; unpaidNotified: number } | { error: string }> {
     try {
-        const salesEnded = await endDueSales(now);
+        const salesEnded = await endDueSales(now, await orgToday(now));
         const productsHidden = await hideEndedProducts(now) + await hideFinishedProducts(now);
         return { salesEnded, productsHidden, unpaidNotified: await notifyUnpaidClaims(now) };
     } catch (e) {

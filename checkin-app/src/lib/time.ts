@@ -134,29 +134,38 @@ export function parseDayAt(value: string, time: string): Date | null {
     return d.getFullYear() === year && d.getMonth() + 1 === month && d.getDate() === day ? d : null;
 }
 
-/** Numeric y/m/d parts of an instant in the organisation's zone. */
-const ORG_DAY_PARTS = new Intl.DateTimeFormat('en-US', {
-    timeZone: APP_TIMEZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-});
+const dayPartsByZone = new Map<string, Intl.DateTimeFormat>();
+
+/** Numeric y/m/d parts of an instant in `timeZone`, one formatter per zone. */
+function dayParts(timeZone: string): Intl.DateTimeFormat {
+    let parts = dayPartsByZone.get(timeZone);
+    if (!parts) {
+        parts = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
+        dayPartsByZone.set(timeZone, parts);
+    }
+    return parts;
+}
 
 /**
- * The calendar day an instant falls on in the organisation's zone, as a UTC-midnight
- * Date — the storage shape of every `@db.Date` column. The sanctioned way to take a
- * day from a moment: the zone is named rather than inherited from the process.
+ * The calendar day an instant falls on in `timeZone`, as a UTC-midnight Date — the
+ * storage shape of every `@db.Date` column. The sanctioned way to take a day from a
+ * moment: the zone is named rather than inherited from the process.
  * See docs/conventions.md, "A day is not a moment".
- *
- * Pinned to APP_TIMEZONE, not the configured display zone, so a server age gate and
- * the browser cannot disagree about who is 18. ponytail: a settings-aware variant has
- * to be async (the zone comes from the database), so it waits until the org moves zones.
  */
-export function orgCalendarDay(instant: Date | string | number = new Date()): Date {
+export function calendarDayIn(instant: Date | string | number, timeZone: string): Date {
     const p = Object.fromEntries(
-        ORG_DAY_PARTS.formatToParts(new Date(instant)).map(({ type, value }) => [type, value]),
+        dayParts(timeZone).formatToParts(new Date(instant)).map(({ type, value }) => [type, value]),
     );
     return new Date(`${p.year}-${p.month}-${p.day}T00:00:00.000Z`);
+}
+
+/**
+ * `calendarDayIn` pinned to APP_TIMEZONE, not the configured zone, so a server age gate
+ * and the browser cannot disagree about who is 18. Server code that needs the configured
+ * zone's day uses `orgToday()` (lib/appSettings.ts).
+ */
+export function orgCalendarDay(instant: Date | string | number = new Date()): Date {
+    return calendarDayIn(instant, APP_TIMEZONE);
 }
 
 /**

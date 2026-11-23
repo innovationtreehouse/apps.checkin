@@ -82,7 +82,7 @@ describe("dev seed-helpers (integration)", () => {
 
         it("keeps Woodworking 101 for the flow tests", async () => {
             const program = await byName("Woodworking 101");
-            expect(classify(program)).toBe("ON_SALE");
+            expect(classify(program, orgCalendarDay())).toBe("ON_SALE");
         });
 
         it.each([
@@ -97,7 +97,7 @@ describe("dev seed-helpers (integration)", () => {
             ["Seed: ages 12-17", "ON_SALE"],
         ])("%s is in sale state %s with a lead and an event", async (name, state) => {
             const program = await byName(name);
-            expect(classify(program)).toBe(state);
+            expect(classify(program, orgCalendarDay())).toBe(state);
             expect(program.leadMentorId).not.toBeNull();
             expect(program.events.length).toBeGreaterThanOrEqual(1);
         });
@@ -129,7 +129,7 @@ describe("dev seed-helpers (integration)", () => {
             const full = await byName("Seed: full");
             const active = full.participants.filter((p) => p.status === "ACTIVE").length;
             expect(active).toBe(full.maxParticipants);
-            expect(enrollmentClosedBy(full, active)).toBe("FULL");
+            expect(enrollmentClosedBy(full, active, orgCalendarDay())).toBe("FULL");
         });
 
         it("the next-year program runs in the membership year after this one", async () => {

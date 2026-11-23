@@ -12,6 +12,7 @@ import { refundableApplication } from "@/lib/membership/lifecycle";
 import { raisePaymentException, recordReversal, recordSettledPaymentException, type PaymentExceptionKind } from "./exceptions";
 import { isFullyRefunded, isReversed } from "./orderStatus";
 import { membershipVariantYears, usesVolunteerCodeUnentitled } from "./membership";
+import { orgToday } from "@/lib/appSettings";
 
 function classifyReversal(o: MirrorOrder, disputed: boolean): PaymentExceptionKind | null {
     if (o.cancelledAt) return "CANCELLED";
@@ -105,9 +106,10 @@ async function settleUnrecordedRestock(orderLegacyId: string, refundId: string, 
         where: { shopifyVariantId: { in: restocked.map((l) => l.variantId) }, id: { notIn: [...recorded] } },
         select: { id: true, shopifyVariantId: true, startAt: true, offSaleAt: true, saleEndedAt: true },
     });
+    const today = await orgToday();
     for (const program of programs) {
         const testOrder = await testOrderStockReturned(orderLegacyId, program.id);
-        if (!testOrder && !isSaleEnded(program)) continue;
+        if (!testOrder && !isSaleEnded(program, today)) continue;
         if (!(await claimRefundSettlement(refundId, orderLegacyId, program.id))) continue;
         const k = publicSeats(program, restocked);
         if (testOrder) {
@@ -315,7 +317,7 @@ async function settleRestockedSeats(
         }
     }
     const variant = { id: programId, shopifyVariantId: program.shopifyVariantId };
-    if (isSaleEnded(program)) {
+    if (isSaleEnded(program, await orgToday())) {
         await takeBackAfterSale(orderLegacyId, variant, k);
         return;
     }

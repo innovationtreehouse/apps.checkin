@@ -23,6 +23,7 @@ import { validate as validateMembership } from "@/lib/membership/lifecycle";
 import { recordAudit, systemActor } from "@/lib/auditActor";
 import { changeProgramStockWith } from "@/lib/shopify/stock";
 import { isSaleEnded } from "@/lib/programs/saleState";
+import { orgToday } from "@/lib/appSettings";
 
 const DRIFT_SOURCE = "lifecycle-drift";
 
@@ -140,6 +141,7 @@ async function healEnrollmentI1(): Promise<{ healed: number; failed: number }> {
         },
     });
 
+    const today = await orgToday();
     let healed = 0;
     let failed = 0;
     for (const row of stranded) {
@@ -147,7 +149,7 @@ async function healEnrollmentI1(): Promise<{ healed: number; failed: number }> {
             // Guarded CAS: only the caller that flips held→null gets count 1 and
             // owns the compensating +1; a racing release/withdrawal takes count 0.
             // The clear and its +1 commit together. Once the sale has ended the seat is not resold: no +1.
-            const saleEnded = isSaleEnded(row.program);
+            const saleEnded = isSaleEnded(row.program, today);
             const { result: cleared, landed: shopifyOk } = await changeProgramStockWith(
                 { id: row.programId, shopifyVariantId: row.program.shopifyVariantId },
                 "reconcile-heal",

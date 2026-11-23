@@ -16,6 +16,7 @@ import { isProgramCheckoutBroken } from "@/lib/programCheckout";
 import { isProgramStoreClosed } from "@/lib/programs/storeClosed";
 import { changeProgramStockWith } from "@/lib/shopify/stock";
 import { isSaleEnded } from "@/lib/programs/saleState";
+import { orgToday } from "@/lib/appSettings";
 import { PROGRAM_ENDED_PAYMENT } from "@/lib/programs/checkoutSignature";
 import { apiError } from "@/lib/api-response";
 import { isComponentHttpError, parseId, ServiceError } from "@checkin/component-kit";
@@ -54,6 +55,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         if (!currentProgram) {
             return apiError("Program not found", 404);
         }
+        const today = await orgToday();
 
         const currentUserId = auth.user.id;
         const isSelfEnrollment = currentUserId === participantId;
@@ -116,7 +118,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
                 const { result: enrollment, landed } = await changeProgramStockWith(currentProgram, "enroll-by-hand",
                     async (tx) => {
                         await lockLiveHouseholdsOf(tx, [participantId]);
-                        const { row, delta } = await enrollByHandIn(tx, currentProgram, participantId, basis, order, currentUserId, note);
+                        const { row, delta } = await enrollByHandIn(tx, currentProgram, participantId, basis, order, currentUserId, note, today);
                         return { result: row, delta };
                     }, { inRequest: true });
                 return NextResponse.json({ success: true, enrollment, ...(!landed && { warning: STOCK_WARNING }) });
@@ -156,7 +158,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
             }
             // The off-sale date closes new claims at once; the daily sweep only
             // records it. Claims made in time returned 409 above and still pay.
-            if (isSaleEnded(currentProgram)) {
+            if (isSaleEnded(currentProgram, today)) {
                 return NextResponse.json({ error: "Sales for this program have ended.", requiresOverride: true }, { status: 400 });
             }
 
@@ -227,7 +229,7 @@ export const POST = withAuth({}, async (req, auth, { params }: { params: Promise
         // so a crash leaves all or none. What a crash can still leave is a recorded change
         // not yet pushed; it stays owed in the carry and the daily heal lands it.
         const byHand = (tx: TxClient) => basis && initialStatus === 'PENDING'
-            ? enrollByHandIn(tx, currentProgram, participantId, basis, order, currentUserId, note)
+            ? enrollByHandIn(tx, currentProgram, participantId, basis, order, currentUserId, note, today)
             : null;
         const { result: enrollment, landed: stockLanded } = await changeProgramStockWith(currentProgram, "enroll", async (tx) => {
             await lockLiveHouseholdsOf(tx, [participantId]);
@@ -498,7 +500,7 @@ export const DELETE = withAuth({}, async (req, auth, { params }: { params: Promi
         const hasShopifyVariant = !!currentProgram.shopifyVariantId;
         // After the sale ends a freed seat is not resold, so there is nothing to advise.
         // An over-capacity program (negative carry) owes this seat to its shortfall, not to the store.
-        if (isSysAdminOrBoard && !released && current.status === 'ACTIVE' && currentProgram.maxParticipants !== null && hasShopifyVariant && !isSaleEnded(currentProgram)
+        if (isSysAdminOrBoard && !released && current.status === 'ACTIVE' && currentProgram.maxParticipants !== null && hasShopifyVariant && !isSaleEnded(currentProgram, await orgToday())
             && !(await owesShortfall(programId))) {
             responseObj.notice = "Seat freed. This enrollment held a seat in Shopify; it was NOT put back on sale automatically. If you want it available for a paying family, add +1 to this program's inventory in Shopify.";
         }

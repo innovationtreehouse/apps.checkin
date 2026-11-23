@@ -1,4 +1,4 @@
-import { formatDate, formatTime, formatDateTime, formatVisitRange, APP_TIMEZONE, toDatetimeLocal, fromDatetimeLocal, formatDateOnly, parseDateOnly, parseDayAt, isYouth, calculateAge, orgCalendarDay } from '../time';
+import { formatDate, formatTime, formatDateTime, formatVisitRange, APP_TIMEZONE, toDatetimeLocal, fromDatetimeLocal, formatDateOnly, parseDateOnly, parseDayAt, isYouth, calculateAge, orgCalendarDay, calendarDayIn } from '../time';
 
 describe('parseDayAt', () => {
   it.each(['2026-02-31', '2026-13-01', '2026-00-10', '2026-04-31'])('rejects %s, a day the calendar lacks', (value) => {
@@ -117,6 +117,15 @@ describe('calculateAge default asOf', () => {
     expect(calculateAge('2008-01-15T00:00:00.000Z')).toBe(17);
     jest.setSystemTime(new Date('2026-01-15T06:00:00.000Z'));
     expect(calculateAge('2008-01-15T00:00:00.000Z')).toBe(18);
+  });
+});
+
+describe('calendarDayIn', () => {
+  it('takes the day from the named zone', () => {
+    const instant = '2026-10-12T04:30:00.000Z';
+    expect(calendarDayIn(instant, 'America/New_York').toISOString()).toBe('2026-10-12T00:00:00.000Z');
+    expect(calendarDayIn(instant, 'America/Chicago').toISOString()).toBe('2026-10-11T00:00:00.000Z');
+    expect(calendarDayIn(instant, 'Asia/Tokyo').toISOString()).toBe('2026-10-12T00:00:00.000Z');
   });
 });
 
