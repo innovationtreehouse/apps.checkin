@@ -1,6 +1,4 @@
 import { isServiceError } from "@checkin/component-kit";
-import { personActor } from "@/lib/auditActor";
-import prisma from "@/lib/prisma";
 import { dismissProblem } from "@/lib/problems";
 import { mayRetry } from "@/lib/problemsRetryRoles";
 import { badRequest, forbidden, handler, notFound, unauthorized } from "@/security/handler";
@@ -17,7 +15,7 @@ function parseItem(body: unknown): Item | null {
     return typeof library === "string" && typeof step === "string" && typeof id === "string" ? { library, step, id } : null;
 }
 
-/** Takes one listed stuck item off the Problems list until it fails again; 404 when it is not listed now. */
+/** Takes one listed stuck item off the Problems list until it fails again, audited with who pressed; 404 when it is not listed now. */
 export const POST = handler(ENDPOINT, async ({ req, auth }) => {
     if (auth.type !== "session") throw unauthorized();
     const item = parseItem(await req.json().catch(() => null));
@@ -31,14 +29,5 @@ export const POST = handler(ENDPOINT, async ({ req, auth }) => {
         // The library's message can carry personal data, so only the item's names reach the log.
         throw new Error(`${item.library} dismiss of ${item.step} threw`);
     }
-    await prisma.auditLog.create({
-        data: {
-            ...personActor(auth.user.id),
-            action: "CREATE",
-            tableName: "PROBLEM_DISMISS",
-            affectedEntityId: 0,
-            newData: { ...item, ok: true },
-        },
-    });
     return { ProblemDismissResult: [{ step: item.step, id: item.id, ok: true }] };
 });

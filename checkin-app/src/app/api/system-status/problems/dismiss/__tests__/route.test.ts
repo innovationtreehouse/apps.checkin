@@ -3,13 +3,12 @@
  */
 /**
  * POST /api/system-status/problems/dismiss: one press takes one listed item off the Problems list for
- * whoever may retry it, answers `{ results: [{ step, id, ok }] }`, and leaves one audit row naming who
- * pressed. Auth runs through the real handler; only next-auth's getServerSession is stubbed.
+ * whoever may retry it and answers `{ results: [{ step, id, ok }] }`; dismissProblem writes the audit row.
+ * Auth runs through the real handler; only next-auth's getServerSession is stubbed.
  */
 import type { NextRequest as NextRequestType } from 'next/server';
 import { getServerSession } from 'next-auth/next';
 import { ServiceError } from '@checkin/component-kit';
-import prisma from '@/lib/prisma';
 import { dismissProblem } from '@/lib/problems';
 import { POST } from '../route';
 
@@ -18,7 +17,6 @@ jest.mock('@/lib/problems', () => ({ dismissProblem: jest.fn() }));
 const { NextRequest } = jest.requireActual<{ NextRequest: typeof NextRequestType }>('next/server');
 const mockSession = getServerSession as jest.MockedFunction<typeof getServerSession>;
 const dismiss = jest.mocked(dismissProblem);
-const auditCreate = jest.fn();
 
 const ITEM = { library: 'receipt', step: 'flow', id: 'r1' };
 const MAIL = { library: 'receipt', step: 'mail message', id: '12' };
@@ -46,15 +44,13 @@ const press = (body: unknown = ITEM) =>
 beforeEach(() => {
     mockSession.mockReset();
     dismiss.mockReset();
-    auditCreate.mockReset().mockResolvedValue({});
-    prisma.auditLog.create = auditCreate;
 });
 
 describe('POST /api/system-status/problems/dismiss', () => {
     it.each([
         ['a sysadmin', { isSysadmin: true }],
         ['BOARD', { isBoardMember: true }],
-    ])('lets %s dismiss an item, answers ok and records who pressed', async (_who, claims) => {
+    ])('lets %s dismiss an item as themself and answers ok', async (_who, claims) => {
         signIn(claims);
         dismiss.mockResolvedValue();
 
@@ -63,14 +59,6 @@ describe('POST /api/system-status/problems/dismiss', () => {
         expect(res.status).toBe(200);
         expect(await res.json()).toEqual({ results: [{ step: 'flow', id: 'r1', ok: true }] });
         expect(dismiss).toHaveBeenCalledWith(ITEM, { userId: 5 });
-        expect(auditCreate.mock.calls[0][0].data).toEqual({
-            actorId: 5,
-            actorSystem: null,
-            action: 'CREATE',
-            tableName: 'PROBLEM_DISMISS',
-            affectedEntityId: 0,
-            newData: { ...ITEM, ok: true },
-        });
     });
 
     it('lets BOARD dismiss a captured email', async () => {
@@ -85,14 +73,13 @@ describe('POST /api/system-status/problems/dismiss', () => {
         ['receipt', 'mail message'],
         ['expense', 'QuickBooks posting'],
         ['gifts', 'QuickBooks posting'],
-    ])('403s a sysadmin dismissing %s %s, a Board-only step, without dismissing or auditing', async (library, step) => {
+    ])('403s a sysadmin dismissing %s %s, a Board-only step, without dismissing', async (library, step) => {
         signIn({ isSysadmin: true });
 
         const res = await press({ library, step, id: '12' });
 
         expect(res.status).toBe(403);
         expect(dismiss).not.toHaveBeenCalled();
-        expect(auditCreate).not.toHaveBeenCalled();
     });
 
     it.each([
@@ -105,7 +92,7 @@ describe('POST /api/system-status/problems/dismiss', () => {
         expect(dismiss).not.toHaveBeenCalled();
     });
 
-    it('answers 404, with no library text and no audit row, for an item not on the list', async () => {
+    it('answers 404, with no library text, for an item not on the list', async () => {
         signIn({ isBoardMember: true });
         dismiss.mockRejectedValue(new ServiceError(404, 'No such item for Pat Example'));
 
@@ -113,13 +100,12 @@ describe('POST /api/system-status/problems/dismiss', () => {
 
         expect(res.status).toBe(404);
         expect(await res.text()).not.toMatch(/Pat/);
-        expect(auditCreate).not.toHaveBeenCalled();
     });
 
     it.each([
         ['a library that cannot be read', new ServiceError(503, 'Database for Pat Example unavailable')],
         ['anything else', new Error('connection to Pat Example lost')],
-    ])('answers an opaque 500, logged with no error text and no audit row, for %s', async (_what, err) => {
+    ])('answers an opaque 500, logged with no error text, for %s', async (_what, err) => {
         signIn({ isBoardMember: true });
         const logged = jest.spyOn(console, 'error').mockImplementation(() => {});
         dismiss.mockRejectedValue(err);
@@ -130,7 +116,6 @@ describe('POST /api/system-status/problems/dismiss', () => {
         expect(await res.text()).not.toMatch(/Pat/);
         expect(logged).toHaveBeenCalled();
         expect(JSON.stringify(logged.mock.calls, (_k, v: unknown) => (v instanceof Error ? v.message : v))).not.toMatch(/Pat/);
-        expect(auditCreate).not.toHaveBeenCalled();
         logged.mockRestore();
     });
 

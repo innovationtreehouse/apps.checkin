@@ -1,4 +1,5 @@
 import { ServiceError, type StuckItem } from "@checkin/component-kit";
+import { personActor, recordAudit } from "@/lib/auditActor";
 import { config } from "@/lib/config";
 import { getCronJobStatuses, type CronJobStatus } from "@/lib/cronRuns";
 import { sendTemplated } from "@/lib/email-templates/send";
@@ -129,16 +130,27 @@ type ProblemDismisser = { userId: number };
 
 /**
  * Takes one listed item off the Problems list until it fails again: the dismissal is kept against the item's
- * current `failedAt`. An item not listed now, already dismissed included, answers 404.
+ * current `failedAt`, with its PROBLEM_DISMISS audit row in the same transaction. An item not listed now,
+ * already dismissed included, answers 404.
  */
 export async function dismissProblem({ library, step, id }: { library: string; step: string; id: string }, by: ProblemDismisser): Promise<void> {
     const source = SOURCES.find((s) => s.library === library && isWired(s));
     if (!source) throw new ServiceError(404, "No such library on the Problems list");
     const [item] = await withoutDismissed((await source.read()).filter((i) => i.step === step && i.id === id).map((i) => ({ ...i, library })));
     if (!item) throw new ServiceError(404, "No such item on the Problems list");
-    await prisma.problemDismissal.createMany({
-        data: [{ library, step, itemId: id, failedAt: item.failedAt, dismissedById: by.userId }],
-        skipDuplicates: true,
+    await prisma.$transaction(async (tx) => {
+        const { count } = await tx.problemDismissal.createMany({
+            data: [{ library, step, itemId: id, failedAt: item.failedAt, dismissedById: by.userId }],
+            skipDuplicates: true,
+        });
+        // A concurrent press dismissed it first, and wrote the audit row.
+        if (count === 0) throw new ServiceError(404, "No such item on the Problems list");
+        await recordAudit(tx, personActor(by.userId), {
+            action: "CREATE",
+            tableName: "PROBLEM_DISMISS",
+            affectedEntityId: 0,
+            newData: { library, step, id },
+        });
     });
 }
 

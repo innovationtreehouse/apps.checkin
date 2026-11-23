@@ -8,6 +8,17 @@ import { sendTemplated } from "@/lib/email-templates/send";
 import prisma from "@/lib/prisma";
 import { dismissProblem, getProblems, LIBRARY_DB_VARS, retryProblem, sendProblemsDigest } from "../problems";
 
+// Model objects made on first use and open to assignment, $transaction included, which the shared mock does not take.
+jest.mock("@/lib/prisma", () => ({
+    __esModule: true,
+    default: new Proxy<Record<string | symbol, unknown>>({}, {
+        get: (models, key) => (models[key] ??= {}),
+        set: (models, key, value) => {
+            models[key] = value;
+            return true;
+        },
+    }),
+}));
 jest.mock("@/lib/cronRuns", () => ({ getCronJobStatuses: jest.fn() }));
 jest.mock("@/lib/email-templates/send", () => ({ sendTemplated: jest.fn() }));
 jest.mock("@checkin/receipt", () => ({ stuckItems: jest.fn(), problemNotices: jest.fn(), retryStuckItem: jest.fn() }));
@@ -36,9 +47,12 @@ type Wanted = { library: string; step: string; itemId: string; failedAt: Date };
 const findDismissals = jest.fn().mockImplementation(async ({ where }: { where: { OR: Wanted[] } }) =>
     dismissals.filter((d) => where.OR.some((w) => w.library === d.library && w.step === d.step && w.itemId === d.itemId && w.failedAt.getTime() === d.failedAt.getTime())));
 const createDismissals = jest.fn().mockImplementation(async ({ data }: { data: Dismissal[] }) => {
-    dismissals.push(...data);
-    return { count: data.length };
+    const fresh = data.filter((d) => !dismissals.some((e) => e.library === d.library && e.step === d.step && e.itemId === d.itemId && e.failedAt.getTime() === d.failedAt.getTime()));
+    dismissals.push(...fresh);
+    return { count: fresh.length };
 });
+const auditCreate = jest.fn();
+const tx = { problemDismissal: { createMany: createDismissals }, auditLog: { create: auditCreate } };
 const digestCtx = () => jest.mocked(sendTemplated).mock.calls[0][2] as TemplateCtx<"ops.problemsDigest">;
 
 beforeEach(() => {
@@ -52,7 +66,8 @@ beforeEach(() => {
     prisma.integrationErrorLog.count = countEmailFailures;
     dismissals = [];
     prisma.problemDismissal.findMany = findDismissals;
-    prisma.problemDismissal.createMany = createDismissals;
+    auditCreate.mockResolvedValue({});
+    prisma.$transaction = jest.fn().mockImplementation(async (fn: (client: typeof tx) => Promise<unknown>) => fn(tx));
     prisma.orgMembershipProcess.findMany = jest.fn().mockResolvedValue([]);
     prisma.clearanceStepFailure.findMany = jest.fn().mockResolvedValue([]);
     countEmailFailures.mockResolvedValue(0);
@@ -174,11 +189,28 @@ describe("dismissProblem", () => {
     const BY = { userId: 5 };
     const stuck = (failedAt: Date) => [{ id: "e1", step: "intake", href: null, failedAt }];
 
-    it("takes a listed item off the list, recording its failure time and who dismissed it", async () => {
+    it("takes a listed item off the list, recording its failure time and who dismissed it, audited in the same transaction", async () => {
         expense.stuckItems.mockResolvedValue(stuck(hoursAgo(30)));
         await dismissProblem({ library: "expense", step: "intake", id: "e1" }, BY);
         expect(dismissals).toEqual([{ library: "expense", step: "intake", itemId: "e1", failedAt: hoursAgo(30), dismissedById: 5 }]);
+        expect(auditCreate).toHaveBeenCalledTimes(1);
+        expect(auditCreate.mock.calls[0][0].data).toEqual({
+            actorId: 5,
+            actorSystem: null,
+            action: "CREATE",
+            tableName: "PROBLEM_DISMISS",
+            affectedEntityId: 0,
+            newData: { library: "expense", step: "intake", id: "e1" },
+        });
         expect((await getProblems()).items).toEqual([]);
+    });
+
+    it("answers 404 with no audit row when a concurrent press dismissed it first", async () => {
+        expense.stuckItems.mockResolvedValue(stuck(hoursAgo(30)));
+        findDismissals.mockResolvedValueOnce([]);
+        dismissals.push({ library: "expense", step: "intake", itemId: "e1", failedAt: hoursAgo(30), dismissedById: 7 });
+        await expect(dismissProblem({ library: "expense", step: "intake", id: "e1" }, BY)).rejects.toMatchObject({ status: 404 });
+        expect(auditCreate).not.toHaveBeenCalled();
     });
 
     it("lists the item again once it fails again later", async () => {
