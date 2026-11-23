@@ -840,6 +840,11 @@ model BoardSettings {
   /// orders changed after this are re-scanned each run. Null = scan from the start.
   /// @sensitivity:internal
   shopifyReconcileCursorAt   DateTime?
+  /// Lease that lets one Shopify reconcile pass run at a time (the daily cron or
+  /// the payments page's refresh). @sensitivity:internal
+  shopifyReconcileLeaseUntil DateTime?
+  /// @sensitivity:internal
+  shopifyReconcileLeaseToken String?
   /// Library keys (lib/libraryRelease.ts) the board has released: their nav
   /// entries show to everyone with access, not just board members. UI-only.
   /// @sensitivity:public

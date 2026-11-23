@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import prisma from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import * as mirror from "@/lib/shopifyRead/client";
@@ -18,7 +19,9 @@ import { reconcileReversals } from "./reversals";
  *              board removes a paid place.
  *
  * Runs once daily from api/cron/reconcile-shopify (09:15 UTC, just behind s-read's
- * 09:00 sync — the cadence is a scale-to-zero constraint, see that route).
+ * 09:00 sync — the cadence is a scale-to-zero constraint, see that route), and from
+ * the payments page after its "Sync now" read completes. A lease on BoardSettings
+ * lets one pass run at a time; a pass that finds it held does nothing.
  * Idempotent: forward recovery is a no-op once activate() has recorded the order
  * (activate stores shopifyOrderId and short-circuits on paidAt), and every
  * exception upserts on (kind, order, person).
@@ -58,16 +61,63 @@ export interface ReconcileResult {
      *  going and the run still counts as having RUN, but it is not clean. Do not
      *  reuse this key for anything else: withCron reads `failed` by name. */
     failed: number;
+    /** Another pass held the lease, so this one scanned nothing. */
+    leaseHeld?: true;
+}
+
+/** How long one pass may hold the lease; a pass that crashed frees it when this runs out. */
+const RECONCILE_LEASE_MS = 15 * 60_000;
+
+/** Take the reconcile lease if it is free or expired. One short statement; no transaction stays open. */
+async function takeReconcileLease(): Promise<string | null> {
+    const token = crypto.randomUUID();
+    const now = new Date();
+    const { count } = await prisma.boardSettings.updateMany({
+        where: { id: 1, OR: [{ shopifyReconcileLeaseUntil: null }, { shopifyReconcileLeaseUntil: { lt: now } }] },
+        data: { shopifyReconcileLeaseUntil: new Date(now.getTime() + RECONCILE_LEASE_MS), shopifyReconcileLeaseToken: token },
+    });
+    return count === 1 ? token : null;
 }
 
 /**
- * One reconciliation pass. No-op (configured:false) when the mirror isn't wired.
- * Advances BoardSettings.shopifyReconcileCursorAt to the newest order it processed
- * so the next run only re-scans changed orders.
+ * Free the lease, writing the new cursor in the same statement so only the lease
+ * holder ever moves it. A pass whose lease expired and was taken writes nothing.
+ */
+async function releaseReconcileLease(token: string, advanceTo: Date | null): Promise<void> {
+    const { count } = await prisma.boardSettings.updateMany({
+        where: { id: 1, shopifyReconcileLeaseToken: token },
+        data: {
+            shopifyReconcileLeaseUntil: null,
+            shopifyReconcileLeaseToken: null,
+            ...(advanceTo ? { shopifyReconcileCursorAt: advanceTo } : {}),
+        },
+    });
+    if (count !== 1) logger.error("[reconcile] the lease expired before the pass finished; the cursor was not advanced");
+}
+
+/**
+ * One reconciliation pass. No-op (configured:false) when the mirror isn't wired, and
+ * `leaseHeld` when another pass is running. Advances BoardSettings.shopifyReconcileCursorAt
+ * to the newest order it processed so the next run only re-scans changed orders.
  */
 export async function runReconcile(): Promise<ReconcileResult> {
     if (!mirror.isConfigured()) return { configured: false, ordersScanned: 0, reversalsRaised: 0, failed: 0 };
 
+    const token = await takeReconcileLease();
+    if (!token) return { configured: true, ordersScanned: 0, reversalsRaised: 0, failed: 0, leaseHeld: true };
+
+    let advanceTo: Date | null = null;
+    try {
+        const pass = await reconcilePass();
+        advanceTo = pass.advanceTo;
+        return pass.result;
+    } finally {
+        await releaseReconcileLease(token, advanceTo);
+    }
+}
+
+/** The pass itself, under the lease. `advanceTo` is the cursor to write, or null to leave it. */
+async function reconcilePass(): Promise<{ result: ReconcileResult; advanceTo: Date | null }> {
     const settings = await prisma.boardSettings.findUnique({ where: { id: 1 }, select: { shopifyReconcileCursorAt: true } });
     const cursor = settings?.shopifyReconcileCursorAt ?? null;
 
@@ -100,12 +150,11 @@ export async function runReconcile(): Promise<ReconcileResult> {
         if (!cursorFrozen && order.updatedAt && (!newCursor || order.updatedAt > newCursor)) newCursor = order.updatedAt;
     }
 
+    // A throw here leaves the cursor where it was, so the next run re-scans.
     const reversalsRaised = await reconcileReversals();
 
-    // Advance the cursor only after a clean pass, so a mid-run failure re-scans.
-    if (newCursor && newCursor !== cursor) {
-        await prisma.boardSettings.update({ where: { id: 1 }, data: { shopifyReconcileCursorAt: newCursor } });
-    }
-
-    return { configured: true, ordersScanned: orders.length, reversalsRaised, failed };
+    return {
+        result: { configured: true, ordersScanned: orders.length, reversalsRaised, failed },
+        advanceTo: newCursor && newCursor !== cursor ? newCursor : null,
+    };
 }

@@ -49,6 +49,9 @@ type SyncRun = {
   error: string | null;
 };
 
+// Mirrors POST /api/finance-ops/payments/reconcile.
+type ReconcileRun = { configured: boolean; ordersScanned: number; reversalsRaised: number; failed: number };
+
 // The outcome of one status read. `ok: false` means the read itself failed (the mirror
 // is unwired or unreadable); `{ ok: true, run: null }` means it succeeded and the mirror
 // simply has no runs. Keeping them apart is the whole point — see fetchSyncRun.
@@ -149,15 +152,29 @@ export default function PaymentProblemsPage() {
     }
   };
 
+  // Re-run the payment check on the freshly synced mirror, then reload the rows it writes.
+  // The sync's own success message stays; a check that can't run adds its own chip.
+  const refreshProblems = async () => {
+    try {
+      const run = await api<ReconcileRun>('/api/finance-ops/payments/reconcile', { method: 'POST' });
+      if (run.failed > 0) {
+        showError(`Shopify data is fresh, but ${run.failed} order(s) couldn't be checked, so the payment problems may be incomplete.`);
+      }
+    } catch (e) {
+      if (e instanceof HttpError && e.status === 409) {
+        showError('Shopify data is fresh, but the daily payment check is running now. Reload in a few minutes to see the payment problems it finds.');
+      } else {
+        showError("Shopify data is fresh, but the payment problems couldn't be refreshed.");
+      }
+    }
+    await fetchRows();
+  };
+
   // Force an s-read incremental sync. The mirror behind "Live payment" refreshes once
   // a day, so a problem fixed in Shopify this morning still reads stale here until
-  // tomorrow. The POST only STARTS the sync, so we then poll for the run it started and
-  // refetch the table once it lands — "Live payment" reads straight from the mirror,
-  // so those amounts can differ the moment the sync finishes.
-  //
-  // Note the queue ROWS themselves are the reconciler's output, not the sync's, and
-  // the reconciler runs on its own daily tick — so a finished sync refreshes the live
-  // amounts, but a problem it resolves stays listed until the next reconcile.
+  // tomorrow. The POST only STARTS the sync, so we then poll for the run it started.
+  // Once it completes, the payment check re-runs on the fresh mirror and the table
+  // reloads; a sync that ends any other way only reloads the table.
   const triggerSync = async () => {
     setSyncing(true);
     try {
@@ -203,10 +220,11 @@ export default function PaymentProblemsPage() {
 
         const { status } = res.run;
         const subject = isBaseline(res.run) ? 'A sync was already running; it' : 'Shopify sync';
-        await fetchRows();
         if (status === 'COMPLETED') {
           showSuccess(`${subject} finished. Live payment amounts are up to date.`);
+          await refreshProblems();
         } else {
+          await fetchRows();
           showError(`${subject} ${status.toLowerCase()}. Live payment amounts may still be stale.`);
         }
         return;
