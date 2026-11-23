@@ -39,6 +39,13 @@ export interface AppendRawEventResult {
   inserted: boolean;
 }
 
+const HAND_MADE: ReadonlySet<EventSource> = new Set([EventSource.HAND_LOADED, EventSource.TEST_LOADED]);
+
+/** Whether `incoming` is the store's own read of a version the log holds only as hand-made. */
+function confirmsHandMade(latest: EventSource, incoming: EventSource): boolean {
+  return HAND_MADE.has(latest) && !HAND_MADE.has(incoming);
+}
+
 function hashPayload(node: unknown): string {
   return crypto.createHash("sha256").update(JSON.stringify(node)).digest("hex");
 }
@@ -88,10 +95,10 @@ export async function appendRawEvent(
     const latest = await tx.shopifyRawEvent.findFirst({
       where: { storeId: args.storeId, objectType: args.objectType, shopifyGid: meta.shopifyGid },
       orderBy: { id: "desc" },
-      select: { id: true, payloadHash: true },
+      select: { id: true, payloadHash: true, source: true },
     });
 
-    if (latest && latest.payloadHash === payloadHash) {
+    if (latest && latest.payloadHash === payloadHash && !confirmsHandMade(latest.source, args.source)) {
       return { rawEventId: latest.id, shopifyGid: meta.shopifyGid, occurredAt: meta.occurredAt, inserted: false };
     }
 
