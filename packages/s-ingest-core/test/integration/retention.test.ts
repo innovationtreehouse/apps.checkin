@@ -34,7 +34,9 @@ const rawEvent = (gid: string, occurredAt: Date | null, fetchedAt = occurredAt ?
   payloadHash: `h${seq++}`,
 });
 
-async function logEvents(...events: ReturnType<typeof rawEvent>[]) {
+type RawEventData = Omit<ReturnType<typeof rawEvent>, "objectType"> & { objectType: ObjectType };
+
+async function logEvents(...events: RawEventData[]) {
   const ids: bigint[] = [];
   for (const data of events) ids.push((await prisma.shopifyRawEvent.create({ data, select: { id: true } })).id);
   return ids;
@@ -107,6 +109,33 @@ describeDb("reader retention", () => {
     );
     expect(await sweepRawEvents(prisma, STORE, NOW)).toEqual({ deleted: 1, failed: 0 });
     expect(await remainingIds()).toEqual([only, newestByTime, laterSnapshot, kept]);
+  });
+
+  it("deletes an older payout or balance transaction entry once a later-logged one exists, with the same store time", async () => {
+    const issued = new Date("2019-01-01T00:00:00Z");
+    const [, newestPayout, , newestTxn] = await logEvents(
+      { ...rawEvent("gid://shopify/ShopifyPaymentsPayout/1", issued), objectType: ObjectType.PAYOUT },
+      { ...rawEvent("gid://shopify/ShopifyPaymentsPayout/1", issued), objectType: ObjectType.PAYOUT },
+      { ...rawEvent("gid://shopify/ShopifyPaymentsBalanceTransaction/1", issued), objectType: ObjectType.BALANCE_TXN },
+      { ...rawEvent("gid://shopify/ShopifyPaymentsBalanceTransaction/1", issued), objectType: ObjectType.BALANCE_TXN },
+    );
+    expect(await sweepRawEvents(prisma, STORE, NOW)).toEqual({ deleted: 2, failed: 0 });
+    expect(await remainingIds()).toEqual([newestPayout, newestTxn]);
+  });
+
+  it("keeps the only payout entry for its gid past retention", async () => {
+    const [only] = await logEvents(
+      { ...rawEvent("gid://shopify/ShopifyPaymentsPayout/2", new Date("2019-01-01T00:00:00Z")), objectType: ObjectType.PAYOUT },
+    );
+    expect(await sweepRawEvents(prisma, STORE, NOW)).toEqual({ deleted: 0, failed: 0 });
+    expect(await remainingIds()).toEqual([only]);
+  });
+
+  it("keeps an order entry a later-logged entry with the same store time follows", async () => {
+    const updated = new Date("2019-01-01T00:00:00Z");
+    const ids = await logEvents(rawEvent("gid://shopify/Order/8", updated), rawEvent("gid://shopify/Order/8", updated));
+    expect(await sweepRawEvents(prisma, STORE, NOW)).toEqual({ deleted: 0, failed: 0 });
+    expect(await remainingIds()).toEqual(ids);
   });
 
   it("dates an entry with no store time by its fetch", async () => {

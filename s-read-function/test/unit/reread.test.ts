@@ -63,9 +63,17 @@ function sinceOf(filter: string): string {
   return match[1];
 }
 
-async function* matching<T>(nodes: T[], at: (n: T) => string, filter: string): AsyncGenerator<T> {
+/** The store's answer to a filter: oldest first by default, newest first when asked. */
+async function* matching<T>(
+  nodes: T[],
+  at: (n: T) => string,
+  filter: string,
+  opts: { newestFirst?: boolean } = {},
+): AsyncGenerator<T> {
   const since = new Date(sinceOf(filter));
-  for (const n of nodes) if (new Date(at(n)) >= since) yield structuredClone(n);
+  const inWindow = nodes.filter((n) => new Date(at(n)) >= since);
+  if (opts.newestFirst) inWindow.reverse();
+  for (const n of inWindow) yield structuredClone(n);
 }
 
 function copied<T>(gid: string): T {
@@ -92,9 +100,11 @@ beforeEach(() => {
   rawAppends = 0;
   watermarks = new Map();
 
-  vi.mocked(fetchPayouts).mockImplementation((_c, filter) => matching(storePayouts, (p) => p.issuedAt, filter));
-  vi.mocked(fetchBalanceTransactions).mockImplementation((_c, filter) =>
-    matching(storeTxns, (t) => t.transactionDate, filter),
+  vi.mocked(fetchPayouts).mockImplementation((_c, filter, opts) =>
+    matching(storePayouts, (p) => p.issuedAt, filter, opts),
+  );
+  vi.mocked(fetchBalanceTransactions).mockImplementation((_c, filter, opts) =>
+    matching(storeTxns, (t) => t.transactionDate, filter, opts),
   );
   vi.mocked(ingestNode).mockImplementation(async (_p, { objectType, node }) => {
     const n = node as Partial<PayoutNode & TxnNode> & { id: string };
@@ -129,6 +139,17 @@ describe("re-reading the recent window", () => {
     expect(REREAD_WINDOW_DAYS).toBe(30);
     expect(vi.mocked(fetchPayouts).mock.calls[0][1]).toBe("issued_at:>='2026-10-21T00:00:00.000Z'");
     expect(vi.mocked(fetchBalanceTransactions).mock.calls[0][1]).toBe("processed_at:>='2026-10-21T00:00:00.000Z'");
+  });
+
+  it("reads the window newest first, while the forward pull keeps the default order", async () => {
+    await run("2026-11-20T00:00:00Z");
+
+    const [forwardPayouts, rereadPayoutsCall] = vi.mocked(fetchPayouts).mock.calls;
+    const [forwardTxns, rereadTxnsCall] = vi.mocked(fetchBalanceTransactions).mock.calls;
+    expect(forwardPayouts[2]).toBeUndefined();
+    expect(forwardTxns[2]).toBeUndefined();
+    expect(rereadPayoutsCall[2]).toEqual({ newestFirst: true });
+    expect(rereadTxnsCall[2]).toEqual({ newestFirst: true });
   });
 
   it("marks a payout paid that was read in transit and paid at the store after a newer payout was read", async () => {
@@ -222,5 +243,26 @@ describe("rereadStream time limit", () => {
     expect(summary).toEqual({ count: 1, changed: 1, stopped: true });
     expect(copy.has("a")).toBe(true);
     expect(copy.has("b")).toBe(false);
+  });
+
+  it("reaches the newest transaction in the first run even when every run stops after three reads", async () => {
+    for (let day = 1; day <= 10; day++) {
+      storeTxns.push({ id: `t${day}`, transactionDate: `2026-11-${String(day).padStart(2, "0")}T00:00:00Z`, associatedPayout: null });
+    }
+    await run("2026-11-10T12:00:00Z");
+    storeTxns[9].associatedPayout = { id: "p1" };
+
+    // Each read takes a minute; the run's limit allows three.
+    const ingest = vi.mocked(ingestNode).getMockImplementation();
+    if (!ingest) throw new Error("ingestNode has no implementation");
+    vi.mocked(ingestNode).mockImplementation(async (...args) => {
+      vi.setSystemTime(new Date(Date.now() + 60_000));
+      return ingest(...args);
+    });
+    vi.setSystemTime(new Date("2026-11-11T12:00:00Z"));
+    const summary = await rereadBalanceTransactions(prismaSentinel, client, "store-1", new Date("2026-11-11T12:03:00Z"));
+
+    expect(summary).toEqual({ count: 3, changed: 1, stopped: true });
+    expect(copied<TxnNode>("t10").associatedPayout).toEqual({ id: "p1" });
   });
 });

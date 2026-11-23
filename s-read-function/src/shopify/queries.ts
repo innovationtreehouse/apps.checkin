@@ -202,9 +202,9 @@ const PAYOUT_FIELDS = `
 
 /** Paginated payouts query. Pass query: "issued_at:>='<iso>'" (datetime quoted — see streams.ts). */
 export const PAYOUTS_QUERY = `
-  query Payouts($first: Int!, $after: String, $query: String) {
+  query Payouts($first: Int!, $after: String, $query: String, $reverse: Boolean = false) {
     shopifyPaymentsAccount {
-      payouts(first: $first, after: $after, query: $query) {
+      payouts(first: $first, after: $after, query: $query, reverse: $reverse) {
         edges { node { ${PAYOUT_FIELDS} } }
         pageInfo { hasNextPage endCursor }
       }
@@ -230,12 +230,13 @@ const BALANCE_TXN_FIELDS = `
  * instant the node exposes as `transactionDate`, the field the watermark advances on. So the
  * filter axis equals the watermark axis: no skipped rows, no silent full re-pull. `sortKey` is
  * deliberately omitted so the connection uses its default (PROCESSED_AT, ascending), which the
- * watermark walk relies on — do not add a sortKey here. Other valid scopes: `payout_id:<legacyId>`.
+ * watermark walk relies on — do not add a sortKey here. `reverse` reads newest first; only the
+ * re-read sets it. Other valid scopes: `payout_id:<legacyId>`.
  */
 export const BALANCE_TRANSACTIONS_QUERY = `
-  query BalanceTransactions($first: Int!, $after: String, $query: String) {
+  query BalanceTransactions($first: Int!, $after: String, $query: String, $reverse: Boolean = false) {
     shopifyPaymentsAccount {
-      balanceTransactions(first: $first, after: $after, query: $query) {
+      balanceTransactions(first: $first, after: $after, query: $query, reverse: $reverse) {
         edges { node { ${BALANCE_TXN_FIELDS} } }
         pageInfo { hasNextPage endCursor }
       }

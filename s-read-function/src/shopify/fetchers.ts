@@ -21,11 +21,17 @@ async function* paginate<T>(
   pickConnection: (data: unknown) => Connection<T> | null | undefined,
   pageSize: number,
   queryFilter?: string,
+  newestFirst = false,
 ): AsyncGenerator<T> {
   let after: string | null = null;
 
   while (true) {
-    const data = await client.request<unknown>(query, { first: pageSize, after, query: queryFilter });
+    const data = await client.request<unknown>(query, {
+      first: pageSize,
+      after,
+      query: queryFilter,
+      ...(newestFirst ? { reverse: true } : {}),
+    });
     const conn = pickConnection(data);
     if (!conn) return;
     for (const edge of conn.edges) yield edge.node;
@@ -68,17 +74,31 @@ export async function* fetchOrders(client: ShopifyClient, queryFilter: string): 
   for await (const order of orders) yield await withAllLines(client, order);
 }
 
-export function fetchPayouts(client: ShopifyClient, queryFilter: string): AsyncGenerator<unknown> {
+export interface PaymentsFetchOptions {
+  /** Read newest first instead of the connection's default oldest-first order. */
+  newestFirst?: boolean;
+}
+
+export function fetchPayouts(
+  client: ShopifyClient,
+  queryFilter: string,
+  opts: PaymentsFetchOptions = {},
+): AsyncGenerator<unknown> {
   return paginate(
     client,
     PAYOUTS_QUERY,
     (d) => (d as { shopifyPaymentsAccount?: { payouts?: Connection<unknown> } }).shopifyPaymentsAccount?.payouts,
     PAYMENTS_PAGE,
     queryFilter,
+    opts.newestFirst,
   );
 }
 
-export function fetchBalanceTransactions(client: ShopifyClient, queryFilter: string): AsyncGenerator<unknown> {
+export function fetchBalanceTransactions(
+  client: ShopifyClient,
+  queryFilter: string,
+  opts: PaymentsFetchOptions = {},
+): AsyncGenerator<unknown> {
   return paginate(
     client,
     BALANCE_TRANSACTIONS_QUERY,
@@ -87,5 +107,6 @@ export function fetchBalanceTransactions(client: ShopifyClient, queryFilter: str
         ?.balanceTransactions,
     PAYMENTS_PAGE,
     queryFilter,
+    opts.newestFirst,
   );
 }

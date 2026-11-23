@@ -33,9 +33,10 @@ const errorText = (err: unknown) => (err instanceof Error ? err.message : String
 
 /**
  * Deletes raw log entries past retention, oldest first, at most RAW_EVENT_CAP. An entry is kept
- * while it is the newest for its gid by log order or by store time, because a replay rebuilds the
- * live row from whichever of those wins; only an entry a later-logged, later-dated one supersedes
- * goes. Columns hold UTC without a zone, so the cutoff is passed as a zone-less timestamp.
+ * while a replay could still rebuild the live row from it. Replay folds payouts and balance
+ * transactions by log order alone, so for those a later-logged entry supersedes. Orders fold by
+ * store time, so an order entry goes only once a later-logged, later-dated one supersedes it.
+ * Columns hold UTC without a zone, so the cutoff is passed as a zone-less timestamp.
  */
 export async function sweepRawEvents(prisma: PrismaClient, storeId: string, now: Date): Promise<SweepResult> {
   const dueBefore = form990DueBefore(now, RAW_EVENT_KEEP_YEARS).toISOString();
@@ -50,7 +51,8 @@ export async function sweepRawEvents(prisma: PrismaClient, storeId: string, now:
             AND n.object_type = e.object_type
             AND n.shopify_gid = e.shopify_gid
             AND n.id > e.id
-            AND COALESCE(n.occurred_at, n.fetched_at) > COALESCE(e.occurred_at, e.fetched_at))
+            AND (e.object_type IN ('PAYOUT', 'BALANCE_TXN')
+              OR COALESCE(n.occurred_at, n.fetched_at) > COALESCE(e.occurred_at, e.fetched_at)))
       ORDER BY e.id
       LIMIT ${RAW_EVENT_CAP}`;
     if (due.length === 0) return { deleted: 0, failed: 0 };
