@@ -19,6 +19,7 @@ import { parseProgramName, resolveProgramYear } from "@/lib/programs/update";
 import { leaderEmailRefusal, programLeaderIneligibility } from "@/lib/programs/leaderEligibility";
 import { isProgramNameTaken, PROGRAM_NAME_TAKEN, programNameFields } from "@/lib/programs/nameKey";
 import { enrollmentClosedBy } from "@/lib/programs/saleState";
+import { orgToday } from "@/lib/appSettings";
 import { isLiveHousehold } from "@/lib/household/archived";
 import { ARCHIVED_HOUSEHOLD_REFUSAL, lockLiveHouseholdsOf } from "@/lib/household/archiveGuard";
 import { ServiceError } from "@checkin/component-kit";
@@ -171,9 +172,11 @@ export async function GET(req: Request) {
                 new Promise<null>((resolve) => { const t = setTimeout(() => resolve(null), 2_500); t.unref?.(); }),
             ]);
             const countById = new Map((counts ?? []).map((c) => [c.id, c._count]));
-            return NextResponse.json(staticRows.map((prg) => withClosedBy({ ...prg, _count: countById.get(prg.id) })));
+            const today = await orgToday();
+            return NextResponse.json(staticRows.map((prg) => withClosedBy({ ...prg, _count: countById.get(prg.id) }, today)));
         }
-        return NextResponse.json((await fetchPrograms()).map(withClosedBy));
+        const today = await orgToday();
+        return NextResponse.json((await fetchPrograms()).map((prg) => withClosedBy(prg, today)));
     } catch (error) {
         await logBackendError(error, "GET /api/programs");
         return apiError("Failed to fetch programs", 500);
@@ -181,8 +184,8 @@ export async function GET(req: Request) {
 }
 
 // saleEndedAt is internal-tier and not selected; the off-sale date alone decides, as the claim route does until the sweep runs.
-function withClosedBy<P extends Omit<Parameters<typeof enrollmentClosedBy>[0], 'saleEndedAt'> & { _count?: { participants: number } }>(prg: P) {
-    return { ...prg, enrollmentClosedBy: enrollmentClosedBy({ ...prg, saleEndedAt: null }, prg._count?.participants) };
+function withClosedBy<P extends Omit<Parameters<typeof enrollmentClosedBy>[0], 'saleEndedAt'> & { _count?: { participants: number } }>(prg: P, today: Date) {
+    return { ...prg, enrollmentClosedBy: enrollmentClosedBy({ ...prg, saleEndedAt: null }, prg._count?.participants, today) };
 }
 
 // Creating a program names its lead, and only the Board assigns one.

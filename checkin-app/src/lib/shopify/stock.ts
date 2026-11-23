@@ -12,6 +12,7 @@ import { isProgramStoreClosed } from "@/lib/programs/storeClosed";
 import { programVariantIds } from "@/lib/programs/variants";
 import { getAccessToken, reportShopifyFailure, shopifyFetch, SHOPIFY_API_VERSION, SHOPIFY_INVENTORY_API_VERSION } from "@/lib/shopify/client";
 import { outboundCall } from "@/security/outbound";
+import { orgToday } from "@/lib/appSettings";
 
 /** A stock lease outlives its push's cap by this much, so it can't expire under a writer still inside its cap. */
 const STOCK_LEASE_SLACK_MS = 30_000;
@@ -341,7 +342,7 @@ async function sendBooked(gql: Gql, programId: number, token: string, write: Pen
 async function landedAfterSale(programId: number, write: PendingStockWrite): Promise<number> {
     if (write.delta <= 0) return 0;
     const sale = await prisma.program.findUnique({ where: { id: programId }, select: { startAt: true, offSaleAt: true, saleEndedAt: true } });
-    if (!sale || !isSaleEnded(sale)) return 0;
+    if (!sale || !isSaleEnded(sale, await orgToday())) return 0;
     console.log(`[SHOPIFY] Program ${programId} sale ended while +${write.delta} (${write.key}) was in flight: taking it back off sale`);
     return write.delta;
 }
@@ -452,7 +453,7 @@ async function drainStock(
             const available = stock.available;
 
             // After the sale has ended, or while the store is closed, owed stock may only come off sale, never go back on.
-            const afterSale = saleStockDelta(row, row.shopifyStockCarry);
+            const afterSale = saleStockDelta(row, row.shopifyStockCarry, await orgToday());
             const total = afterSale > 0 && await isProgramStoreClosed() ? 0 : afterSale;
             if (total !== row.shopifyStockCarry) {
                 console.log(`[SHOPIFY] Program ${programId} ${total === afterSale ? "sale has ended" : "store is closed"}: dropping ${row.shopifyStockCarry - total} owed seat(s) instead of putting them back on sale`);

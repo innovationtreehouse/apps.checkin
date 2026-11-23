@@ -9,7 +9,6 @@
  * Client-safe: no Prisma value imports.
  */
 import { assertNever, type Transition } from '@/lib/lifecycle';
-import { orgCalendarDay } from '@/lib/time';
 
 export type SaleStateName = 'NOT_ON_SALE' | 'ON_SALE' | 'SALE_ENDED' | 'FINISHED';
 export type SaleLifecycleState = SaleStateName | '∅';
@@ -27,29 +26,30 @@ export function effectiveOffSaleAt(p: Pick<SaleRow, 'startAt' | 'offSaleAt'>): D
     return p.offSaleAt ?? p.startAt;
 }
 
-/** True once the sale is over: the sweep has ended it, or its date has arrived in
- *  the org's zone (the sweep runs once a day, so the date alone counts in the meantime).
- *  Only real dates count, so a row loaded without these fields reads as still on sale. */
-export function isSaleEnded(p: Pick<SaleRow, 'startAt' | 'offSaleAt' | 'saleEndedAt'>, now: Date = new Date()): boolean {
+/** True once the sale is over: the sweep has ended it, or its date is on or before
+ *  `today`, the org's calendar day from `orgToday()` (the sweep runs once a day, so the
+ *  date alone counts in the meantime). Only real dates count, so a row loaded without
+ *  these fields reads as still on sale. */
+export function isSaleEnded(p: Pick<SaleRow, 'startAt' | 'offSaleAt' | 'saleEndedAt'>, today: Date): boolean {
     if (p.saleEndedAt instanceof Date) return true;
     const offSale = effectiveOffSaleAt(p);
-    return offSale instanceof Date && offSale <= orgCalendarDay(now);
+    return offSale instanceof Date && offSale <= today;
 }
 
 /** The public-stock change allowed for a program: after its sale has ended a
  *  change may only take stock away, never put a seat back on sale. */
-export function saleStockDelta(p: Pick<SaleRow, 'startAt' | 'offSaleAt' | 'saleEndedAt'>, delta: number, now: Date = new Date()): number {
-    return isSaleEnded(p, now) ? Math.min(delta, 0) : delta;
+export function saleStockDelta(p: Pick<SaleRow, 'startAt' | 'offSaleAt' | 'saleEndedAt'>, delta: number, today: Date): number {
+    return isSaleEnded(p, today) ? Math.min(delta, 0) : delta;
 }
 
-export function classify(p: SaleRow, now: Date = new Date()): SaleStateName {
+export function classify(p: SaleRow, today: Date): SaleStateName {
     switch (p.phase) {
         case 'FINISHED':
             return 'FINISHED';
         case 'PLANNING':
         case 'UPCOMING':
         case 'RUNNING':
-            if (isSaleEnded(p, now)) return 'SALE_ENDED';
+            if (isSaleEnded(p, today)) return 'SALE_ENDED';
             return p.enrollmentStatus === 'OPEN' ? 'ON_SALE' : 'NOT_ON_SALE';
         default:
             return assertNever(p.phase);
@@ -77,10 +77,10 @@ export type EnrollmentClosedBy = 'FULL' | 'SALE_ENDED' | 'CLOSED';
 export function enrollmentClosedBy(
     p: Pick<SaleRow, 'enrollmentStatus' | 'startAt' | 'offSaleAt' | 'saleEndedAt'> & { maxParticipants: number | null },
     enrolledCount: number | undefined,
-    now: Date = new Date(),
+    today: Date,
 ): EnrollmentClosedBy | null {
     if (p.maxParticipants != null && enrolledCount != null && enrolledCount >= p.maxParticipants) return 'FULL';
-    if (isSaleEnded(p, now)) return 'SALE_ENDED';
+    if (isSaleEnded(p, today)) return 'SALE_ENDED';
     if (p.enrollmentStatus === 'CLOSED') return 'CLOSED';
     return null;
 }

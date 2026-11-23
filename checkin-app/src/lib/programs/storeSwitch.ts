@@ -6,6 +6,7 @@ import { hideEndedProducts } from "@/lib/programs/saleSweep";
 import { isSaleEnded } from "@/lib/programs/saleState";
 import { isProgramStoreClosed } from "@/lib/programs/storeClosed";
 import { setProgramInventory } from "@/lib/shopify/stock";
+import { orgToday } from "@/lib/appSettings";
 
 /** Why the Board's store switch did nothing. Each list names what a person must fix first. */
 export type StoreSwitchRefusal =
@@ -110,7 +111,8 @@ export async function openProgramStore(actorId: number, now: Date = new Date()):
         orderBy: { id: "asc" },
     });
     const recounted: ProgramStockResult[] = [];
-    for (const program of programs.filter((p) => !isSaleEnded(p, now))) {
+    const today = await orgToday(now);
+    for (const program of programs.filter((p) => !isSaleEnded(p, today))) {
         const max = program.maxParticipants;
         const ok = max === null || await setProgramInventory(program, async (db) => max - await countStockTakenSeats(program.id, db), "store-reopened");
         // A re-count Shopify did not confirm leaves the item marked hidden and is reported, so nobody re-lists it on a wrong count.

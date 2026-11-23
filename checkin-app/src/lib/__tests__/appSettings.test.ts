@@ -46,3 +46,26 @@ describe('resolveDisplayTimezone', () => {
         await expect(resolveDisplayTimezone()).resolves.toBe(APP_TIMEZONE);
     });
 });
+
+describe('orgToday', () => {
+    let orgToday: (now?: Date) => Promise<Date>;
+    let upsert: jest.Mock;
+    beforeEach(() => {
+        jest.resetModules();
+        upsert = require('@/lib/prisma').default.appSettings.upsert;
+        orgToday = require('@/lib/appSettings').orgToday;
+    });
+
+    // 11:30 PM on the 11th in Chicago, 12:30 AM on the 12th in New York.
+    const instant = new Date('2026-10-12T04:30:00Z');
+
+    it("takes today's day from the org's configured zone", async () => {
+        upsert.mockResolvedValue({ timezone: 'America/New_York', locale: 'en-US' });
+        expect((await orgToday(instant)).toISOString()).toBe('2026-10-12T00:00:00.000Z');
+    });
+
+    it('falls back to APP_TIMEZONE when the settings row cannot be read', async () => {
+        upsert.mockRejectedValue(new Error('database is starting up'));
+        expect((await orgToday(instant)).toISOString()).toBe('2026-10-11T00:00:00.000Z');
+    });
+});
