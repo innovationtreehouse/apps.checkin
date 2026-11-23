@@ -51,7 +51,7 @@ class FakeState:
     def arm_local_close(self, participant_id, seconds, banner_html=None, wait_html=None):
         return
 
-    def is_repeat_read(self, participant_id):
+    def is_repeat_read(self, participant_id, read_at=None):
         return False
 
     def in_close_wait(self, participant_id):
