@@ -1,8 +1,9 @@
 /**
  * The System Status tools (system-status/layout.tsx); /system-status redirects
  * to the first tab. Sysadmin or board, except Unsynced Scans, which keyholders
- * also review, Finance Views, which only the Board reads (B11), and QuickBooks
- * codes, which finance also reads (FC1) and is finance's only tab here.
+ * also review, Finance Views, which only the Board reads, and QuickBooks
+ * codes, which finance also reads, since its rows hold no sensitive fields, and
+ * is finance's only tab here.
  */
 import type { RoleFlag } from "@/lib/roles";
 import type { NavSection } from "@/lib/nav/types";
