@@ -597,12 +597,6 @@ model InKindPosting {
   claimedAt           DateTime? @map("claimed_at")
   /// @sensitivity:internal
   qbCreateAttemptedAt DateTime? @map("qb_create_attempted_at")
-  // Not read or written; dropped in a later release, once no running code writes it.
-  /// @sensitivity:internal
-  qbPostAttempts      Int       @default(0) @map("qb_post_attempts") @ignore
-  // Not read or written; dropped in a later release, once no running code writes it.
-  /// @sensitivity:internal
-  qbFailureKind       String?   @map("qb_failure_kind") @ignore
   // When the gift's post first failed; set while null, cleared when a post settles without failing. Set means stuck.
   /// @sensitivity:internal
   qbFirstFailedAt     DateTime? @map("qb_first_failed_at")
