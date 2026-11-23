@@ -209,15 +209,31 @@ type Parties = Pick<ReceiptRow, "uploadedByUserId" | "reimburseePersonId">;
  * nobody live, since their household cannot then be known and nobody can be cleared.
  */
 async function conflictedParties(row: Parties): Promise<number[] | null> {
-  const parties = [row.uploadedByUserId, row.reimburseePersonId].filter((id): id is number => id != null);
+  const parties = partiesOf(row);
   const live = await liveIds(parties);
   const people = parties.flatMap((id) => live.get(id) ?? []);
   if (people.length !== parties.length) return null;
   return [...people, ...(await ports().households.householdOf(people))];
 }
 
-async function isConflicted(row: Parties, personId: number): Promise<boolean> {
-  return (await conflictedParties(row))?.includes(personId) ?? true;
+function partiesOf(row: Parties): number[] {
+  return [row.uploadedByUserId, row.reimburseePersonId].filter((id): id is number => id != null);
+}
+
+/**
+ * Whether `personId` is party to each row: its uploader or reimbursee, or in either one's household.
+ * A party naming nobody live refuses the row. Two host reads, however many rows; none for no rows.
+ */
+async function conflictsOf(rows: Parties[], personId: number): Promise<(row: Parties) => boolean> {
+  if (rows.length === 0) return () => true;
+  const [live, household] = await Promise.all([liveIds(rows.flatMap(partiesOf)), ports().households.householdOf([personId])]);
+  // One household per person, so `personId` shares a household with a party exactly when that party is in theirs.
+  const conflicted = new Set([personId, ...household]);
+  const clear = (id: number) => {
+    const person = live.get(id);
+    return person != null && !conflicted.has(person);
+  };
+  return (row) => !partiesOf(row).every(clear);
 }
 
 /** The receipt write that records finance's decision, replacing any earlier one. */
@@ -658,18 +674,8 @@ async function confirmableOnBehalf<R extends Parties & { reimburseePersonId: num
   if (others.length === 0) return [];
   const noAccount = new Set(await ports().reimbursees.withoutAccount([...new Set(others.map((r) => r.reimburseePersonId))]));
   const accountless = others.filter((r) => noAccount.has(r.reimburseePersonId));
-  if (accountless.length === 0) return [];
-  const [live, household] = await Promise.all([
-    liveIds(accountless.flatMap((r) => [r.uploadedByUserId, r.reimburseePersonId])),
-    ports().households.householdOf([actor.id]),
-  ]);
-  // One household per person, so the actor shares a household with a party exactly when that party is in the actor's.
-  const conflicted = new Set([actor.id, ...household]);
-  const clear = (id: number) => {
-    const person = live.get(id);
-    return person != null && !conflicted.has(person);
-  };
-  return accountless.filter((r) => clear(r.uploadedByUserId) && clear(r.reimburseePersonId));
+  const conflicted = await conflictsOf(accountless, actor.id);
+  return accountless.filter((r) => !conflicted(r));
 }
 
 /**
@@ -1649,8 +1655,8 @@ export const receiptService = {
     });
     if (access !== "finance") return rows.map(toSubmitterView);
     const stopped = await receiptRepo.list({ orgId, ...stuckUndelivered() });
-    const [failed, conflicted] = await Promise.all([firstFailures(stopped.map((r) => r.id)), Promise.all(stopped.map((r) => isConflicted(r, actor.id)))]);
-    return [...rows, ...stopped.flatMap((r, i) => (conflicted[i] ? [] : [{ ...r, ...failed.get(r.id) }]))];
+    const [failed, conflicted] = await Promise.all([firstFailures(stopped.map((r) => r.id)), conflictsOf(stopped, actor.id)]);
+    return [...rows, ...stopped.flatMap((r) => (conflicted(r) ? [] : [{ ...r, ...failed.get(r.id) }]))];
   },
 
   /**
